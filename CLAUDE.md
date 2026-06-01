@@ -80,3 +80,8 @@ Python 3.10+，见 `requirements.txt`。关键依赖：opencv-contrib-python（C
 - 准星位置硬编码为画面中心（`cross_pos = (width // 2, height // 2)`），不追踪实际游戏准星。PTC 测量的是"目标相对于画面中心的运动"而非"玩家的肌肉张力响应"——目标远离中心时误差被放大。适用于目标保持在画面中心附近的场景
 - CSRT tracker 需要 `opencv-contrib-python`，标准 `opencv-python` 不含此模块。如果 contrib 不可用，自动回退到 KCF tracker
 - `Analyze.py` 的 `--fps` 参数默认从 `output/calib_config.json` 自动读取
+
+## 规划文档
+
+- `docs/product-strategy.md` — 产品战略：轻量版（录像上传）+ 专业版（本地采集+手部摄像头）两条产品线
+- `docs/flicking-analysis-plan.md` — Flicking 分析方案：通过 KovaaK's 场景数据扩展 flicking 支持
