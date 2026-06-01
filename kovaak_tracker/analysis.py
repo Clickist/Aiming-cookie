@@ -129,7 +129,7 @@ def evaluate_mechanics(kdf: pd.DataFrame) -> dict:
     total_off_time = total_miss_frames / inferred_fps
 
     return {
-        "accuracy": round(float(accuracy), 1),
+        "on_target_pct": round(float(accuracy), 1),
         "speed_mismatch": round(float(mean_v_mismatch), 1),
         "accel_mismatch": round(float(mean_a_mismatch), 0),
         "ptc": round(float(ptc), 1),
@@ -153,7 +153,7 @@ def export_analysis(kdf: pd.DataFrame, metrics: dict, output_dir: Path = OUTPUT_
             "ptc": float(metrics["ptc"]),
         },
         "loss": {
-            "on_target_pct": float(metrics["accuracy"]),
+            "on_target_pct": float(metrics["on_target_pct"]),
             "loss_count": int(metrics["loss_count"]),
             "total_off_time": float(metrics["total_off_time"]),
         },
@@ -176,7 +176,7 @@ def _print_report(metrics: dict) -> None:
     print(f"  Accel Mismatch           : {metrics['accel_mismatch']:>8.0f} px/s²")
     print(f"  Global Spatial Error     : {metrics['avg_error_px']:>8.1f} px")
     print("\n[ 🎯 Hit Performance ]")
-    print(f"  Accuracy (On-Target)     : {metrics['accuracy']:>8.1f} %")
+    print(f"  Accuracy (On-Target)     : {metrics['on_target_pct']:>8.1f} %")
     print(f"  Loss Count / Duration    : {metrics['loss_count']:>8} times / {metrics['total_off_time']:.2f} s")
     print("═" * 70 + "\n")
 

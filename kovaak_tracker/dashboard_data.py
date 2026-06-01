@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -64,28 +65,45 @@ def build_error_timeline(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def render_review_frame(video_path: str, row: pd.Series):
-    cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, row["frame"])
-    ok, frame = cap.read()
-    cap.release()
-    if not ok:
-        return None
+def render_review_frame(
+    video_path: str,
+    row: pd.Series,
+    cap: cv2.VideoCapture | None = None,
+) -> np.ndarray | None:
+    """Render a single frame with detection overlay.
 
-    vis = frame.copy()
-    cross_pos = (int(row["cross_x"]), int(row["cross_y"]))
-    cv2.drawMarker(vis, cross_pos, (0, 180, 255), cv2.MARKER_CROSS, 20, 2)
+    Args:
+        video_path: Path to video file.
+        row: DataFrame row with frame coordinates.
+        cap: Optional pre-opened VideoCapture (caller manages lifecycle).
+             If None, opens and closes one internally.
+    """
+    own_cap = cap is None
+    if own_cap:
+        cap = cv2.VideoCapture(video_path)
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(row["frame"]))
+        ok, frame = cap.read()
+        if not ok:
+            return None
 
-    if pd.notna(row["ball_w"]):
-        cx, cy = int(row["ball_x"]), int(row["ball_y"])
-        width, height = int(row["ball_w"]), int(row["ball_h"])
-        top_left = (int(cx - width / 2), int(cy - height / 2))
-        bottom_right = (int(cx + width / 2), int(cy + height / 2))
-        color = (0, 255, 0) if row["on_target"] == 1 else (0, 0, 255)
+        vis = frame.copy()
+        cross_pos = (int(row["cross_x"]), int(row["cross_y"]))
+        cv2.drawMarker(vis, cross_pos, (0, 180, 255), cv2.MARKER_CROSS, 20, 2)
 
-        cv2.rectangle(vis, top_left, bottom_right, color, 2)
-        cv2.circle(vis, (cx, cy), 2, color, -1)
-        cv2.line(vis, (cx, cy), cross_pos, color, 1)
+        if pd.notna(row["ball_w"]):
+            cx, cy = int(row["ball_x"]), int(row["ball_y"])
+            width, height = int(row["ball_w"]), int(row["ball_h"])
+            top_left = (int(cx - width / 2), int(cy - height / 2))
+            bottom_right = (int(cx + width / 2), int(cy + height / 2))
+            color = (0, 255, 0) if row["on_target"] == 1 else (0, 0, 255)
 
-    return cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
+            cv2.rectangle(vis, top_left, bottom_right, color, 2)
+            cv2.circle(vis, (cx, cy), 2, color, -1)
+            cv2.line(vis, (cx, cy), cross_pos, color, 1)
+
+        return cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
+    finally:
+        if own_cap:
+            cap.release()
 

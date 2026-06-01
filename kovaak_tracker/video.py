@@ -38,12 +38,28 @@ def get_video_metadata(video_path: str | Path) -> VideoMetadata:
     return metadata
 
 
-def read_frame(video_path: str | Path, frame_idx: int) -> np.ndarray:
-    cap = cv2.VideoCapture(str(video_path))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-    ok, frame = cap.read()
-    cap.release()
-    if not ok:
-        raise RuntimeError(f"Cannot read frame {frame_idx} from {video_path}")
-    return frame
+def read_frame(
+    video_path: str | Path,
+    frame_idx: int,
+    cap: cv2.VideoCapture | None = None,
+) -> np.ndarray:
+    """Read a single frame from a video file.
+
+    Args:
+        video_path: Path to video file.
+        cap: Optional pre-opened VideoCapture (caller manages lifecycle).
+             If None, opens and closes one internally.
+    """
+    own_cap = cap is None
+    if own_cap:
+        cap = cv2.VideoCapture(str(video_path))
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok, frame = cap.read()
+        if not ok:
+            raise RuntimeError(f"Cannot read frame {frame_idx} from {video_path}")
+        return frame
+    finally:
+        if own_cap:
+            cap.release()
 

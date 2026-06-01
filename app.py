@@ -184,6 +184,6 @@ if st.button("Run Deep Analysis", type="primary"):
             col.image(img)
 
     st.success(
-        f"Data Saved! You can now run Analyze.py in your terminal:\n"
-        f"python Analyze.py --csv output/calibration_raw.csv --fps {fps}"
+        "Data Saved! You can now run Analyze.py in your terminal:\n"
+        "python Analyze.py --csv output/calibration_raw.csv"
     )

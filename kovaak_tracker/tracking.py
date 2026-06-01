@@ -11,7 +11,7 @@ import pandas as pd
 
 from .settings import OUTPUT_DIR, ensure_output_dir
 from .video import get_video_metadata
-from .vision import detect_ball_by_color, frame_to_rgb, get_tracker
+from .vision import detect_ball_by_color, detect_crosshair_by_color, frame_to_rgb, get_tracker
 
 
 ProgressCallback = Callable[[float, str | None], None]
@@ -35,6 +35,8 @@ def run_tracking_analysis(
     ball_bgr: list[int],
     ball_hsv_lo: np.ndarray,
     ball_hsv_hi: np.ndarray,
+    crosshair_hsv_lo: np.ndarray | None = None,
+    crosshair_hsv_hi: np.ndarray | None = None,
     output_dir: Path = OUTPUT_DIR,
     preview_stride: int = 20,
     progress_callback: ProgressCallback | None = None,
@@ -63,6 +65,13 @@ def run_tracking_analysis(
 
         vis = frame.copy()
         absolute_frame_idx = start_frame + offset
+
+        # Detect crosshair if HSV bounds provided, else keep screen center default
+        if crosshair_hsv_lo is not None and crosshair_hsv_hi is not None:
+            cross_result, _, _ = detect_crosshair_by_color(frame, crosshair_hsv_lo, crosshair_hsv_hi)
+            if cross_result is not None:
+                cross_pos = cross_result
+
         cv2.drawMarker(vis, cross_pos, (0, 180, 255), cv2.MARKER_CROSS, 18, 2)
 
         ball_pos = None
@@ -130,7 +139,7 @@ def run_tracking_analysis(
         "ball_bgr": ball_bgr,
         "ball_hsv_lo": ball_hsv_lo.tolist(),
         "ball_hsv_hi": ball_hsv_hi.tolist(),
-        "crosshair_mode": "center",
+        "crosshair_mode": "detected" if crosshair_hsv_lo is not None else "center",
         "fps": metadata.fps,
         "resolution": [metadata.width, metadata.height],
     }

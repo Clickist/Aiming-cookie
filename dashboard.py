@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import cv2
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -162,6 +163,17 @@ with tab_vod:
             video_path = save_uploaded_video(video_file, Path(video_file.name).suffix)
 
     if video_path:
+        # Cache VideoCapture in session state to avoid re-opening per slider move
+        prev_path = st.session_state.get("_vod_video_path")
+        if prev_path != video_path:
+            # Video changed — close old capture if any
+            old_cap = st.session_state.get("vod_cap")
+            if old_cap is not None:
+                old_cap.release()
+            st.session_state.vod_cap = cv2.VideoCapture(video_path)
+            st.session_state._vod_video_path = video_path
+        cap = st.session_state.vod_cap
+
         max_frame_idx = len(df) - 1
         frame_idx = st.slider(
             "Scrub to view tracked frames",
@@ -170,7 +182,7 @@ with tab_vod:
             value=0,
         )
         row = df.iloc[frame_idx]
-        frame = render_review_frame(video_path, row)
+        frame = render_review_frame(video_path, row, cap=cap)
         if frame is not None:
             st.image(frame, use_container_width=True)
             # Show frame info
