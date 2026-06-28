@@ -40,3 +40,26 @@ def test_comparison_handles_none():
     d = replace(d, comparison=None)
     figs = build_figures(d)  # must not raise
     assert "comparison" in figs
+
+
+import plotly.graph_objects as go
+from kovaak_tracker.coach.visualization import build_trend_figure, build_comparison_figure
+
+
+def test_trend_figure_is_figure():
+    trend = {"linearity": [("2026-06-01", 0.20), ("2026-06-10", 0.17)]}
+    fig = build_trend_figure(trend)
+    assert isinstance(fig, go.Figure)
+
+
+def test_trend_figure_skips_empty_metrics():
+    trend = {"linearity": [("t1", 0.2)], "sparc": []}  # sparc empty
+    fig = build_trend_figure(trend)  # must not raise
+    assert isinstance(fig, go.Figure)
+
+
+def test_comparison_figure_is_figure():
+    comparison = [{"metric": "linearity", "current": 0.17, "baseline": 0.20,
+                   "last": 0.18, "ref": 0.12, "verdict": "better"}]
+    fig = build_comparison_figure(comparison)
+    assert isinstance(fig, go.Figure)

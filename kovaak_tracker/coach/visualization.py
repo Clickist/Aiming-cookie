@@ -110,3 +110,32 @@ def _issue_list(diagnosis):
         for p in i.prescriptions:
             lines.append(f"    → {p.scenario}: {p.reason}")
     return "\n".join(lines) if lines else "无明显问题"
+
+
+def build_trend_figure(trend):
+    """Multi-metric trend lines: x=timestamp, y=med. Frontend-agnostic."""
+    fig = go.Figure()
+    for metric, series in trend.items():
+        if not series:
+            continue
+        xs = [s[0] for s in series]
+        ys = [s[1] for s in series]
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name=metric))
+    fig.update_layout(title="指标趋势（med 随 session）", xaxis_title="session", yaxis_title="med")
+    return fig
+
+
+def build_comparison_figure(comparison):
+    """Grouped bars: current vs baseline vs last vs ref."""
+    metrics = [r["metric"] for r in comparison]
+    fig = go.Figure()
+    for key, name, color in [
+        ("current", "你", "#63636e"),
+        ("baseline", "基线", "#aab0b8"),
+        ("last", "上次", "#4a90d9"),
+        ("ref", "参考", "#cccccc"),
+    ]:
+        ys = [r.get(key) if r.get(key) is not None else 0 for r in comparison]
+        fig.add_trace(go.Bar(name=name, x=metrics, y=ys, marker_color=color))
+    fig.update_layout(barmode="group", title="对比（current vs 基线/上次/参考）")
+    return fig
