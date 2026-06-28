@@ -159,4 +159,49 @@ def advise(
     return f
 
 
-__all__ = ["Prescription", "Finding", "advise", "THRESHOLDS"]
+# metrics where lower is better (cleaner / more stopped / shorter decel);
+# the rest are higher-is-better (faster / straighter).
+_LOWER_BETTER = {"linearity", "reverse_ratio", "endpoint_peak", "decel_frac"}
+# non-monotone metrics: no simple better/worse (band- or context-dependent)
+_NO_VERDICT = {"peak_position_pct", "path_length_deg"}
+
+
+def compare_table(self_summary: dict, reference_summary: dict) -> list[dict]:
+    """Per-metric self-vs-reference comparison rows for reporting.
+
+    Each row: ``{metric, self, ref, delta, verdict}`` where verdict is
+    ``"better"`` / ``"worse"`` / ``"same"`` / ``"info"`` from your perspective
+    (±10% band). Non-monotone metrics (peak position, path length) are marked
+    ``"info"`` — :func:`advise` handles their band-aware diagnosis.
+    """
+    metrics = (
+        "peak_speed_deg", "linearity", "reverse_ratio", "decel_frac",
+        "peak_position_pct", "path_efficiency", "path_length_deg", "endpoint_peak",
+    )
+    rows = []
+    for m in metrics:
+        s = _med(self_summary, m)
+        r = _med(reference_summary, m)
+        if s is None or r is None:
+            continue
+        if m in _NO_VERDICT:
+            verdict = "info"
+        else:
+            verdict = "same"
+            if m in _LOWER_BETTER:
+                if s < r * 0.9:
+                    verdict = "better"
+                elif s > r * 1.1:
+                    verdict = "worse"
+            elif s > r * 1.1:
+                verdict = "better"
+            elif s < r * 0.9:
+                verdict = "worse"
+        rows.append({
+            "metric": m, "self": round(s, 3), "ref": round(r, 3),
+            "delta": round(s - r, 3), "verdict": verdict,
+        })
+    return rows
+
+
+__all__ = ["Prescription", "Finding", "advise", "compare_table", "THRESHOLDS"]
