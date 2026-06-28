@@ -233,7 +233,7 @@ def lock_challenge_window(
     )
 
 
-def _has_ui_element(frame, area_frac):
+def _has_ui_element(frame, area_frac, max_width=960):
     """True if the frame has a large non-background element (a countdown/results UI).
 
     Color- and position-agnostic: compares each pixel to the frame's median
@@ -244,20 +244,30 @@ def _has_ui_element(frame, area_frac):
     countdown numbers and results panels are large, so this separates them no
     matter where on screen the UI sits. A 40-distance floor keeps a uniform,
     target-less frame from degenerating Otsu to ~0 and merging the whole frame.
+
+    Runs on a frame downsampled to <= ``max_width`` px wide for speed (the
+    full-res distance map was the per-frame hot spot). ``area_frac`` is
+    relative, so downscaling preserves the size test.
     """
     h, w = frame.shape[:2]
-    bg = np.median(cv2.resize(frame, (80, 45)).reshape(-1, 3), axis=0)
-    dist = np.linalg.norm(frame.astype(np.float32) - bg, axis=2)
+    scale = max(1.0, w / max_width)
+    if scale > 1.0:
+        sw, sh = max(1, int(round(w / scale))), max(1, int(round(h / scale)))
+        small = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_AREA)
+    else:
+        sw, sh, small = w, h, frame
+    bg = np.median(cv2.resize(small, (80, 45)).reshape(-1, 3), axis=0)
+    dist = np.linalg.norm(small.astype(np.float32) - bg, axis=2)
     otsu_thr, _ = cv2.threshold(dist.astype(np.uint8), 0, 255,
                                 cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     thr = max(40.0, float(otsu_thr))
     mask = (dist > thr).astype(np.uint8) * 255
-    mask[:int(h * 0.12), :] = 0  # exclude top HUD
-    mask[int(h * 0.90):, :] = 0  # exclude bottom HUD
+    mask[:int(sh * 0.12), :] = 0  # exclude top HUD
+    mask[int(sh * 0.90):, :] = 0  # exclude bottom HUD
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    min_area = area_frac * w * h
+    min_area = area_frac * sw * sh
     return any(cv2.contourArea(c) > min_area for c in contours)
 
 

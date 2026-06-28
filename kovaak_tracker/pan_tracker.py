@@ -47,8 +47,9 @@ def detect_targets(
     min_area_frac: float = 1e-5,
     max_area_frac: float = 0.02,
     aspect=(0.5, 1.8),
-    ui_band=(0.12, 0.90),
+    ui_band=(0.15, 0.90),
     crosshair_radius: int = 30,
+    max_width: int = 960,
 ):
     """Detect all target centroids in a frame, colour-agnostic.
 
@@ -57,21 +58,32 @@ def detect_targets(
     percentile, floored) threshold. The top/bottom HUD bands and the central
     crosshair are masked out. Returns an ``(N, 2)`` array of ``(x, y)``
     centroids (empty array if none).
+
+    Runs on a frame downsampled to <= ``max_width`` px wide for speed: the
+    full-res ``np.linalg.norm`` was the hot spot (~106ms/frame at 1920x1080);
+    at <=960px it drops ~4x. min/max area are scaled with the frame, and
+    centroids are mapped back to full-res by ``scale``.
     """
     h, w = frame.shape[:2]
-    bg = np.median(cv2.resize(frame, (80, 45)).reshape(-1, 3), axis=0)
-    dist = np.linalg.norm(frame.astype(np.float32) - bg, axis=2)
+    scale = max(1.0, w / max_width)
+    if scale > 1.0:
+        sw, sh = max(1, int(round(w / scale))), max(1, int(round(h / scale)))
+        small = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_AREA)
+    else:
+        sw, sh, small = w, h, frame
+    bg = np.median(cv2.resize(small, (80, 45)).reshape(-1, 3), axis=0)
+    dist = np.linalg.norm(small.astype(np.float32) - bg, axis=2)
     thr = max(dist_floor, float(np.percentile(dist, dist_percentile)))
     mask = (dist > thr).astype(np.uint8) * 255
-    mask[: int(h * ui_band[0]), :] = 0
-    mask[int(h * ui_band[1]) :, :] = 0
-    cv2.circle(mask, (w // 2, h // 2), crosshair_radius, 0, -1)
+    mask[: int(sh * ui_band[0]), :] = 0
+    mask[int(sh * ui_band[1]) :, :] = 0
+    cv2.circle(mask, (sw // 2, sh // 2), max(1, int(crosshair_radius / scale)), 0, -1)
     mask = cv2.morphologyEx(
         mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     )
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    min_area = min_area_frac * w * h
-    max_area = max_area_frac * w * h
+    min_area = min_area_frac * sw * sh
+    max_area = max_area_frac * sw * sh
     pts = []
     for c in contours:
         area = cv2.contourArea(c)
@@ -82,7 +94,7 @@ def detect_targets(
             continue
         m = cv2.moments(c)
         if m["m00"]:
-            pts.append((m["m10"] / m["m00"], m["m01"] / m["m00"]))
+            pts.append((m["m10"] / m["m00"] * scale, m["m01"] / m["m00"] * scale))
     return np.array(pts) if pts else np.empty((0, 2))
 
 
@@ -112,8 +124,11 @@ def compute_pan_trajectory(
     rows = []
     prev = None
     total = max(1, end_frame - start_frame + 1)
+    # Seek ONCE to start_frame, then read sequentially. Per-frame cap.set is
+    # O(frame_no) on H.264 (re-decodes from the last keyframe each call) and was
+    # dominating runtime (~10+ min on a 60s clip). Sequential read is O(1)/frame.
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     for off, f in enumerate(range(start_frame, end_frame + 1)):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
         ok, frame = cap.read()
         if not ok:
             break
