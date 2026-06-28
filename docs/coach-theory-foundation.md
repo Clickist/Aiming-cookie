@@ -230,17 +230,32 @@ Socratic 教练（苏格拉底式提问）在运动学习语境的核心思想�
 
 ---
 
-## 被反驳的 claim（透明，对抗投票淘汰，未进文档主体）
+## 被反驳的 claim（透明，完整 18 条，对抗投票淘汰，未进文档主体）
 
-deep-research 的 3 票对抗验证（2/3 反驳才淘汰）淘汰了 18 个 claim，多数是「过强版本」。关键几个（避免系统误用）：
+deep-research 的 3 票对抗验证（存活需 ≥2 票确认；<2 票即淘汰）淘汰了 18 个 claim。**完整列出**（每条 = 中文摘要 / 投票 / 不纳入原因）——这些理论知识本身有出处，但未达系统根基门槛：
 
-- **多模态 > 单模态反馈**（0-3 全票淘汰）—— 系统不应默认「更多反馈渠道 = 更好」
-- **同步（实时）> 终端反馈**（0-3 全票淘汰）—— 实时反馈非总更好（与 §2.2 guidance hypothesis 一致：实时反馈最易触发依赖）
-- **Ericsson「单调收益假设」/「10 年规则」/ 精确方差百分比（29%/14%/61%）**（1-0 / 0-1 淘汰）—— 过强断言，不进系统
-- **descriptive KP < KR alone**（0-0 未达共识）—— KP 内容设计（descriptive vs prescriptive）无定论
-- **KR + prescriptive KP > KR alone（novice）**（0-1，方向支持但未达阈值）—— 趋势支持但证据不足
+| # | claim（中文摘要）| 投票 | 不纳入原因 |
+|---|---|---|---|
+| 1 | 显式策略完美抵消误差不停止隐式适应（产生 paradoxical drift）| 1-0 | 未达 2 票阈值；窄发现，与系统诊断无直接映射 |
+| 2 | 策略 vs 适应用不同 error signal（策略=goal error，适应=prediction error）| 1-0 | 未达阈值；理论映射（→KR/KP），非可操作规则 |
+| 3 | **单调收益假设**（练习时长与表现单调正相关）| 1-0 | 过强断言；Macnamara 2014 批判（方差仅 14-26%）|
+| 4 | deliberate practice 4 要素定义（设计/专注/即时反馈/重复修正）| 1-0 | 定义性描述，非可操作规则 |
+| 5 | **10 年规则** + violin 7410h/5301h/3420h 分层 | 0-1 | 过强 + 旧数据；Ericsson 2019 自己警告外推 |
+| 6 | deliberate practice 解释 29% 方差（校正 61%）| 0-1 | 精确百分比过强，争议大 |
+| 7 | deliberate vs purposeful vs structured vs naive 四区分 | 0-2 | 概念区分，非可操作 |
+| 8 | CI 保持效应对 implicit learner 也成立 | 1-0 | 未达阈值；CI 细化（§1.3 已纳主结论）|
+| 9 | 频繁 KR → 忽略 kinesthetic feedback | 1-0 | 未达阈值；guidance hypothesis（§2.2）的机制细化 |
+| 10 | reduced/delayed KR → 练习期差但长期保持好 | 0-1 | 方向支持但未达阈值 |
+| 11 | **多模态 > 单模态反馈** | **0-3** | **全票反驳**；过强断言，证据否定 |
+| 12 | **实时反馈减少认知过载 → 增强学习** | **0-3** | **全票反驳**；与 guidance hypothesis 冲突（实时最易致依赖）|
+| 13 | 多元 skill training communication model（Otte，教练当 facilitator）| 1-0 | 未达阈值；教练学模型，B 形多轮可参考 |
+| 14 | novice: KR + prescriptive KP > KR alone | 0-1 | 方向支持但未达阈值 |
+| 15 | descriptive KP < KR alone（KP 内容是关键）| 0-0 | 未达共识；KP 设计（descriptive vs prescriptive）无定论 |
+| 16 | augmented feedback 约束 perceptual-motor workspace 搜索 | 0-1 | 理论框架，非可操作 |
+| 17 | motor-neuron CV 10-25%（speed-accuracy 生理根）| 1-2 | 未达阈值；生理细节，远离应用 |
+| 18 | Fitts's Law 是 signal-dependent noise 的派生预测 | 1-0 | 未达阈值；理论推导（§1.6 已纳 min-jerk 派生）|
 
-> **教训**：反馈理论里「更多 / 实时 / 多模态反馈总是更好」是过强断言，被证据否定。系统反馈设计应基于 §2 学术根基（KR/KP 分类 + guidance hypothesis），而非「更多即更好」。
+> **教训**：反馈理论里「更多 / 实时 / 多模态反馈总是更好」（#11/#12）是过强断言，被全票反驳——系统**不默认「更多反馈=更好」**。Ericsson 的强断言（#3/#5/#6）也被淘汰——刻意练习有用，但「越多越好/10 年/精确方差」过强。系统设计只基于存活的 §1-§2 学术根基。
 
 ---
 

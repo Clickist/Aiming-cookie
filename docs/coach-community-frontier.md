@@ -58,21 +58,33 @@
 
 ---
 
-## §2 被反驳的 claim（透明，19 个关键的，对抗投票淘汰）
+## §2 被反驳的 claim（透明，完整 19 条，对抗投票淘汰）
 
-这些 claim 在 3 票对抗验证中未达存活阈值（需 ≥2 票确认），多为**时间敏感的具体数字/rank/方法论**或**单源**：
+3 票对抗验证（存活需 ≥2 票确认）淘汰 19 个社区 claim。**完整列出**——社区内容信源差（论坛/视频）+ 时间敏感，淘汰率 >50% 是常态：
 
-- **mattyow #1 S5 1312 energy + rank 2-5 列表**（具体数字）—— 时间敏感，投票分歧淘汰（注：v0 确认 high，但汇总未达阈值，保守不引用）
-- **harmonic mean 排序方法**（"overall energy = 调和平均，需每子类至少 1 分"）—— v0 verbatim 确认，但汇总 1-0 淘汰（保守不引用，需直接 voltaic.gg 文档确认）
-- **underflicking（故意欠冲再修）是 2025 主导练习法** —— 淘汰
-- **VDIM two-day-per-category 结构**（clicking/tracking/switching 各 2 playlist × 6 benchmark）—— 淘汰
-- **tracking reactivity spectrum 演变**（raw reactive → ... → raw smoothness）—— 淘汰
-- **bardozz method + 65-80 cm/360 static** —— 淘汰（单源）
-- **VDIM accuracy ceiling/floor（~90%+ / 低于 85-90% 太快）** —— 淘汰
-- **stair-stepping progression**（子类 favorite/middle/least 分层推 energy）—— 淘汰
-- **deceleration/tension management 是 VDIM 独立子技能**（Pokeball fire-held 训减速）—— 淘汰
+| # | claim（中文摘要）| 投票 | 不纳入原因 |
+|---|---|---|---|
+| 1 | mattyow #1 S5 1312 energy + rank 2-5 列表 | 1-0 | 时间敏感具体数字；投票分歧 |
+| 2 | harmonic mean 排序 + 每子类≥1 分才得 energy | 1-0 | v0 verbatim 确认但汇总未达阈值；保守（需直接 voltaic.gg 文档）|
+| 3 | Corporate Serf 3305 runs/55h 单场景刷到顶峰 | 1-0 | 单源个案，不可推广 |
+| 4 | VDIM（LG56/4RK）two-day-per-category 结构 | 0-0 | 未达共识 |
+| 5 | tracking 演变 S1→S5 reactivity spectrum（7 档）| 0-0 | 未达共识 |
+| 6 | tracking 评估用 3 compound categories | 0-1 | 方向支持但未达阈值 |
+| 7 | S5 consolidate 3 principles + hybrid | 0-1 | 与 §1.1 finding 重叠，未达阈值 |
+| 8 | S5 dynamic vs linear clicking 区分（speed vs smoothness）| 0-0 | 未达共识 |
+| 9 | bardozz method + 65-80 cm/360 static | 0-0 | 单源 |
+| 10 | underflicking（故意欠冲再修）是 2025 主导练习法 | 0-1 | 方向支持但未达阈值 |
+| 11 | tracking 学习顺序：precise→control→reactive→switching | 0-1 | 个人理论（Corporate Serf），未达阈值 |
+| 12 | weakness-specific routines 分 Easy/Int/Adv 难度层 | 1-0 | 未达阈值 |
+| 13 | VDIM static playlist 子技能 progression | 0-1 | 未达阈值 |
+| 14 | VDIM accuracy ceiling/floor（~90%+ / 低于 85-90% 太快）| 1-0 | 未达阈值 |
+| 15 | deceleration/tension 是 VDIM 独立子技能（Pokeball 训）| 0-1 | 未达阈值（但呼应学术减速段焦点）|
+| 16 | FOV 103+ 是 leaderboard 硬要求 | 0-0 | 未达共识 |
+| 17 | stair-stepping progression（分层推 energy）| 1-0 | 未达阈值；个案 |
+| 18 | S5 strafe scenarios（bounce aim PGTI）是新技能 | 0-1 | 未达阈值 |
+| 19 | 4 scenarios 最权重 tracking 评估 | 0-1 | 未达阈值；时间敏感 |
 
-> **教训**：社区具体数字/rank/方法论多为单源或时间敏感，对抗验证淘汰率高。系统引用社区内容须**保守**（标未经验证），具体数字不入逻辑。
+> **教训**：社区**具体数字/rank/方法论**淘汰率极高（时间敏感 + 单源）。系统只引用**稳定的大框架**（§1 三支柱/分类/static clicking 三步），具体数字不入逻辑、定期复核。#15（减速/tension 子技能）虽淘汰但**呼应学术减速段焦点**（`coach-theory-foundation.md` §1.7 + `aim-kinematics-research.md` Becker），narrator 可谨慎引用。
 
 ---
 
