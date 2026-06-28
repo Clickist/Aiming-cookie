@@ -1,6 +1,47 @@
 # Flicking 模块进度
 
-> 最后更新：2026-06-27
+> 最后更新：2026-06-28
+
+## 2026-06-28：方法论修正 + 分析-对比-建议流程固化
+
+用高手参考视频（`high-level-1w6ts.mp4`，80 cm/360，无 CSV）对比后，修正了真实数据上的两个方法论问题，并把整条"分析→对比→建议"流程固化成正式模块。
+
+### 方法论修正（真实数据验证）
+
+| 弃用 | 原因 | 替代 |
+|---|---|---|
+| 减速段加速度 std 跨人对比 | 与 peak_speed 强相关（corr=0.76），对高速玩家不公平 | 减速段线性度 `linearity`（归一化 RMSE，无量纲）|
+| 静止间隙切分（`extract_flicks`）| 高手连续甩、无静止间隙 → 合并成长段，flick 数少 2/3 | 速度谷切分 `segment_by_valleys` |
+
+新增维度：`decel_frac`（减速段占比）、路径几何（`path_efficiency` / `path_length_deg` / `direction`）。角度量用 `deg = px * FOV / width` 跨分辨率可比；cm/s 仅作自参考（被 sens 主导，不跨人比）。
+
+### 固化的模块
+
+| 模块 | 能力 |
+|---|---|
+| `docs/aim-kinematics-research.md` | 知识底座：min-jerk 黄金标准 + Becker 2020 + Voltaic/社区处方 + 诊断→处方表 |
+| `flicking.py` +`segment_by_valleys` / `compute_fair_metrics` / `FlickFairMetrics` | 谷切分 + 公平指标 + 路径几何 |
+| `pan_tracker.py` +`analyze_flicking_reference` / `ReferenceAnalysis` | 无 CSV 参考模式（手动窗口修 HUD 误判）|
+| `advice.py`（新）| 规则引擎 `advise`（诊断 + 处方）+ `compare_table`（你 vs 参考）|
+
+### 端到端验证（你 48 cm/360 vs 高手 80 cm/360）
+
+| 指标 | 你 | 高手 | verdict |
+|---|---|---|---|
+| linearity | 0.171 | 0.099 | worse |
+| reverse_ratio | 0.232 | 0.167 | worse |
+| decel_frac | 0.750 | 0.455 | worse |
+| path_efficiency | 0.967 | 0.928 | same |
+| peak_speed °/s | 106 | 125 | worse |
+
+`advise` 产出 4 findings：decel_frac / linearity / reverse（fix）+ peak_position（watch）。
+
+### 已知缺口 / 下一步
+
+1. `analyze_flicking_video`（有 CSV）仍输出旧 summary（`decel_smoothness`）；自己的有 CSV 视频要用 `analyze_flicking_reference`（手动窗口）才拿到公平 summary。**待统一**（让有 CSV 入口也输出公平 summary）。
+2. dashboard 未接 advice / compare。
+3. 二期未做：target_selection、overshoot、reaction（需目标检测，噪声大）。
+4. 手部镜头分析（后续，`product-strategy.md` 已规划）。
 
 ## 2026-06-27：真实数据端到端跑通 + 流水线重构为可复用
 
