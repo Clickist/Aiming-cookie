@@ -152,6 +152,7 @@ CSRT 单目标追踪在快速甩枪段丢目标，forward-fill 在缺口恢复�
 ## 7. 当前状态与后续
 
 ### 已就绪 ✅
+- **`kovaak_tracker.coach.build_report`**：完整单次 coaching 输出（画像 + 三层根因链 + 5 类可视化 + LLM 讲解），含 PROGRESS [A] CSV 统一入口。设计见 `docs/superpowers/specs/2026-06-28-ai-aim-coach-design.md`，25 测试全过
 - 无 CSV 参考模式（`analyze_flicking_reference`）：录像 → 公平指标 → summary，完整跑通
 - `advise` / `compare_table`：消费公平 summary 输出诊断 + 对比表
 - 真实验证：你（48 cm/360）vs 高手（80 cm/360）的 1w6ts 对比，产出 4+ findings

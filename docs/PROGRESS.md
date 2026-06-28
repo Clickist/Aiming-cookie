@@ -70,6 +70,25 @@
 - `sparc_low` / `two_stage_overlap` 阈值为理论初始值，需真实数据校准（同 linearity 当初）。
 - effective-target-width 版 throughput（We=4.133·SDx）需多次击中同类目标的端点分布，后续。
 
+### 2026-06-28 续二：AI coach 实现（单次 coaching 输出体验）
+
+按 spec（`docs/superpowers/specs/2026-06-28-ai-aim-coach-design.md`）+ plan（`docs/superpowers/plans/2026-06-28-ai-aim-coach.md`）实现 `kovaak_tracker/coach/` 子包。一次 fair summary → `build_report` → `CoachReport`（画像 + 优先级问题[三层根因链] + 5 类 Plotly 图表 + LLM 讲解）。
+
+| 模块 | 能力 |
+|---|---|
+| `coach/profiles.py` | 画像典型集 + 根因映射表（数据，便于调词）|
+| `coach/diagnosis.py` | `build_diagnosis`：画像匹配（典型+规则补偏差）+ 根因链（症状→物理→训练）+ 优先级 |
+| `coach/visualization.py` | 5 类 plotly 图表（雷达/减速曲线/对比/问题列表/画像卡），前端无关 |
+| `coach/providers.py` | LLM backend（借鉴 pi 骨架：按协议分类 Anthropic/OpenAI-compat + 配置 + 凭据），无 agent 框架 |
+| `coach/narrator.py` | 讲解（结构化→教练人话，防幻觉 prompt）|
+| `coach/report.py` | `build_report` 端到端 + 降级（讲解失败不阻塞）|
+
+含 PROGRESS [A]：`analyze_flicking_fair_summary`（pan_tracker）让有 CSV 录像也产公平 summary。
+
+**验证**：25 测试全过（pytest，全 mock 不依赖真实 LLM/SDK）。Batch 2（T2/T3/T4/T5）用 dispatch 并行 agent 执行。
+
+**已知后续**：真实 LLM 联调（装 anthropic/openai + 配 key）/ 进步闭环（独立 spec）/ 多轮对话 B（需先补瞄准社区理论）/ web 前端。
+
 ## 2026-06-27：真实数据端到端跑通 + 流水线重构为可复用
 
 这个 session 用真实 1w6ts 录像（`6月23日.mp4` + 配套 CSV `1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv`）跑通了整条链路，并发现+修复了一个根本性问题（CSRT 不适用 flicking），最终把全流程固化成可复用、零人工校准的模块。
