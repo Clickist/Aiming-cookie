@@ -58,33 +58,37 @@
 
 ---
 
-## §2 被反驳的 claim（透明，完整 19 条，对抗投票淘汰）
+## §2 社区经验补充（19 条，理论重审：保留）
 
-3 票对抗验证（存活需 ≥2 票确认）淘汰 19 个社区 claim。**完整列出**——社区内容信源差（论坛/视频）+ 时间敏感，淘汰率 >50% 是常态：
+> **方法论修正（2026-06-29）**：社区内容不能用学术标准（peer review / 多源交叉 / 对抗投票 2-3 票）严苛要求——社区本质是论坛/视频/个人经验，信源天然弱。判定社区内容应用**理论一致性**：与学术根基（`coach-theory-foundation.md` / `aim-kinematics-research.md`）**冲突 → 排除**；**不冲突 → 保留**（标社区经验/未经验证），进 narrator 文案库。deep-research 默认的「信源形式淘汰（单源/时间敏感/未达 2 票）」对社区**过严**，会粗暴排除有价值的实战经验——这里用理论重审。
 
-| # | claim（中文摘要）| 投票 | 不纳入原因 |
+deep-research 对抗投票淘汰了 19 条社区 claim（多数仅因「单源/时间敏感/未达 2 票」这类**信源形式**理由）。**理论重审发现：19 条无一与学术根基冲突**——它们是社区训练法/技术/配置/评估法，与学术**互补**（更具体，不否认学术）。故**全部保留**为社区经验素材（标信源等级，进 narrator 文案，**不进诊断规则**——诊断只用学术根基）：
+
+| # | claim（中文摘要）| 与学术的关系 | 保留定位 |
 |---|---|---|---|
-| 1 | mattyow #1 S5 1312 energy + rank 2-5 列表 | 1-0 | 时间敏感具体数字；投票分歧 |
-| 2 | harmonic mean 排序 + 每子类≥1 分才得 energy | 1-0 | v0 verbatim 确认但汇总未达阈值；保守（需直接 voltaic.gg 文档）|
-| 3 | Corporate Serf 3305 runs/55h 单场景刷到顶峰 | 1-0 | 单源个案，不可推广 |
-| 4 | VDIM（LG56/4RK）two-day-per-category 结构 | 0-0 | 未达共识 |
-| 5 | tracking 演变 S1→S5 reactivity spectrum（7 档）| 0-0 | 未达共识 |
-| 6 | tracking 评估用 3 compound categories | 0-1 | 方向支持但未达阈值 |
-| 7 | S5 consolidate 3 principles + hybrid | 0-1 | 与 §1.1 finding 重叠，未达阈值 |
-| 8 | S5 dynamic vs linear clicking 区分（speed vs smoothness）| 0-0 | 未达共识 |
-| 9 | bardozz method + 65-80 cm/360 static | 0-0 | 单源 |
-| 10 | underflicking（故意欠冲再修）是 2025 主导练习法 | 0-1 | 方向支持但未达阈值 |
-| 11 | tracking 学习顺序：precise→control→reactive→switching | 0-1 | 个人理论（Corporate Serf），未达阈值 |
-| 12 | weakness-specific routines 分 Easy/Int/Adv 难度层 | 1-0 | 未达阈值 |
-| 13 | VDIM static playlist 子技能 progression | 0-1 | 未达阈值 |
-| 14 | VDIM accuracy ceiling/floor（~90%+ / 低于 85-90% 太快）| 1-0 | 未达阈值 |
-| 15 | deceleration/tension 是 VDIM 独立子技能（Pokeball 训）| 0-1 | 未达阈值（但呼应学术减速段焦点）|
-| 16 | FOV 103+ 是 leaderboard 硬要求 | 0-0 | 未达共识 |
-| 17 | stair-stepping progression（分层推 energy）| 1-0 | 未达阈值；个案 |
-| 18 | S5 strafe scenarios（bounce aim PGTI）是新技能 | 0-1 | 未达阈值 |
-| 19 | 4 scenarios 最权重 tracking 评估 | 0-1 | 未达阈值；时间敏感 |
+| 1 | mattyow #1 S5 1312 + rank 列表 | 事实（无理论冲突）| 时间敏感参考，narrator 对标 |
+| 2 | harmonic mean 排序 + 每子类≥1 分 | Voltaic 机制设计 | v0 确认；社区机制事实 |
+| 3 | Corporate Serf 3305 runs/55h 单场景 | 与 CI 张力但不否认（block 也能进步，交错更优）| 个案，标「单场景有效但 CI 更优」|
+| 4 | VDIM two-day-per-category | 与 CI **一致**（跨天交错）| 训练编排经验 |
+| 5 | tracking reactivity spectrum（7 档）| 分类细化，无冲突 | 社区分类法 |
+| 6 | tracking 评估 3 compound categories | 评估法，无冲突 | 社区评估 |
+| 7 | S5 consolidate 3 + hybrid | 与 §1.1 一致 | 已 §1.1 |
+| 8 | S5 dynamic vs linear clicking | 子类区分，无冲突 | 社区分类 |
+| 9 | bardozz method + 65-80cm static | sens 数值（与 sens-放大器不冲突）| 社区数值建议 |
+| 10 | underflicking 2025 主导 | 与 submovement **一致**（欠冲再修=corrective 策略）| 社区技术 |
+| 11 | tracking 学习顺序 precise→...→switching | progressive 训练，无冲突 | 个人训练理论 |
+| 12 | weakness-specific routines 分难度层 | 训练设计，无冲突 | 社区设计 |
+| 13 | VDIM static playlist 子技能 progression | 训练设计，无冲突 | 社区设计 |
+| 14 | VDIM accuracy 90% ceiling/floor | 与 guidance hypothesis **一致**（自调难度不追即期）| 社区自调法 |
+| 15 | deceleration/tension VDIM 子技能（Pokeball）| 与 Becker 减速段焦点 **一致** | 社区技术（学术呼应）|
+| 16 | FOV 103+ leaderboard 要求 | 规则事实，无冲突 | 社区规则 |
+| 17 | stair-stepping progression | 训练设计，无冲突 | 个人方法 |
+| 18 | S5 strafe scenarios（bounce aim）| 新场景类型，无冲突 | 社区新实践 |
+| 19 | 4 scenarios 最权重 tracking | 评估法，无冲突 | 社区评估 |
 
-> **教训**：社区**具体数字/rank/方法论**淘汰率极高（时间敏感 + 单源）。系统只引用**稳定的大框架**（§1 三支柱/分类/static clicking 三步），具体数字不入逻辑、定期复核。#15（减速/tension 子技能）虽淘汰但**呼应学术减速段焦点**（`coach-theory-foundation.md` §1.7 + `aim-kinematics-research.md` Becker），narrator 可谨慎引用。
+**结论**：19 条全部保留为社区经验素材。它们未被学术验证（信源弱），但**不与学术冲突**——是社区在学术之上的**具体实践层**。narrator 可引用（标「社区经验/未经验证」），诊断规则仍只用学术根基。
+
+> **排除规则**：只有当社区内容**与学术冲突**（如否认 Fitts law、主张"反馈越多越好"等已被学术证伪的）才用理论证伪排除。本轮 19 条无此情况——所以零排除。
 
 ---
 

@@ -153,7 +153,7 @@ deep-research workflow（5 angle fan-out → 22 源 → 64 claim → 25 对抗�
 - Voltaic **三 benchmark track**（KovaaK S5 旗舰 + Aimlabs S3 + Valorant S1）
 - 经典 **static clicking 三步**：big flick → micro-correction → hit-confirm（呼应学术 corrective submovement）
 
-**被反驳（19，透明）**：harmonic mean 排序方法、underflicking 主导论断、VDIM two-day 结构、具体 energy/rank 数字、bardozz method + 65-80cm 等——对抗验证淘汰率高（社区内容时间敏感 + 单源）。
+**被反驳（19，deep-research 默认淘汰）→ 理论重审全部保留**：deep-research 用学术标准（投票+多源）淘汰 19 条社区 claim，但**方法论修正**（点点指出：社区不能用学术标准严苛要求）后**理论重审**——19 条**无一与学术根基冲突**（多是训练法/技术/配置，与学术互补），故**全部保留**为社区经验素材（标未经验证，进 narrator 文案，不进诊断）。**社区判定 = 理论一致性**（冲突→排除；不冲突→保留），非信源形式（单源/时间敏感）。只有与学术冲突才理论证伪排除（本轮零排除）。详见 `coach-community-frontier.md` §2。
 
 **关键约束**：社区内容**只进 narrator 文案 + profile 标签 + 训练处方理由**，**不进诊断规则**（学术根基 `coach-theory-foundation.md` 的领地）。时间敏感内容（顶级玩家名/rank/S5/energy 数字）定期复核。社区↔学术呼应点：micro-correction = corrective submovement。
 
