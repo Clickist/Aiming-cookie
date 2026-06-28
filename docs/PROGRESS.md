@@ -47,6 +47,29 @@
 
 **复测基线（下次自测对比用同一管线 + 谷切分）**：decel_frac 0.75→<0.55、linearity 0.171→<0.12、reverse_ratio 0.232→<0.18。
 
+### 2026-06-28 续：flicking 理论深化（三缺口 deep research）
+
+对 flicking 指标做理论审查发现三个缺口，deep research 补强（三条理论全是 Becker 2020 核心引用，谱系一致）。详见 `docs/aim-kinematics-research.md` §6。
+
+| 缺口 | deep research 结论 | 改动 |
+|---|---|---|
+| 减速段理想曲线 | min-jerk 速度 v(τ)∝30τ²(1-τ)² 是**曲线**；linearity 拟合的"匀减速直线"=恒定负加速度**≠ min-jerk**，归因错误。减速平滑度金标准是 **SPARC**（Balasubramanian 2012，频域、无量纲——正是 decel_smoothness corr=0.76 不公平的正解） | `flicking.py` 新增 `_segment_sparc`+`sparc` 字段（整段速度算）；linearity 归因改 constant-deceleration；advice linearity 诊断从"减速抖动"改"制动不匀"，新增 sparc 规则 |
+| 两段式 vs 流体 | 原 `is_two_stage` 被删、靠社区流派词。学术谱系：Woodworth 1899(initial ballistic+corrective)→Meyer 1988(optimized)→Novak 2002(overlapping=流体/discrete=两段式)；切分标准 Rouse 2022 | `flicking.py` 新增 `_submovement_structure`（主峰后固定窗口扫 corrective，独立于 valley 切分）+`corrective_count`/`submovement_overlap` 字段；advice 新增 two_stage 规则 |
+| peak_speed 公平性 | peak_speed 没距离归一化（同类公平性问题）。**Fitts TP=ID/MT**，ID=log₂(D/W+1)，跨距离可比 | `flicking.py` 新增 `throughput` 字段（TP=log₂(D/W+1)/MT，W 从 `target_width_deg` 传入）；advice 新增 throughput 规则 |
+
+**验证**（合成 fluid + two-stage 数据）：sparc 整段后数值进文献范围（fluid −4.4 / two-stage −7.3）；two-stage 的 micro 被 valley 切成独立段后，主峰段仍通过向后窗口抓到（corrective=1, overlap=0.10=深谷离散）；advice 产出 6 findings（含新 sparc/two_stage/throughput）；compare_table 12 行新指标 verdict 正确（sparc 负值 higher-better 逻辑成立）。
+
+**保守增量**：现有 linearity/decel_frac/reverse_ratio 数值与复测基线**不变**（新指标是新增维度 + 文档归因修正），不破坏既有流程。
+
+**实现教训（goal-driven 验证抓到两个缺陷）**：
+1. 初版 `_submovement_structure` 在 valley 单段内找次峰——逻辑死局（任何它该抓的 corrective 早被 valley 切分阈值 0.15 拆走，单段内只剩单峰）。改为主峰后固定窗口扫，独立于切分。
+2. 初版 sparc 只喂减速段（半钟形）——频谱破碎、数值虚高（−21~−29）。改为整段钟形，落进文献范围。
+
+**已知后续**：
+- throughput 当前 reference 模式（无 CSV）不传 W → NaN。完整接线需 `detect_targets` 目标宽度 → `compute_fair_metrics(target_width_deg=...)`（属 [C] 目标检测方向）。
+- `sparc_low` / `two_stage_overlap` 阈值为理论初始值，需真实数据校准（同 linearity 当初）。
+- effective-target-width 版 throughput（We=4.133·SDx）需多次击中同类目标的端点分布，后续。
+
 ## 2026-06-27：真实数据端到端跑通 + 流水线重构为可复用
 
 这个 session 用真实 1w6ts 录像（`6月23日.mp4` + 配套 CSV `1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv`）跑通了整条链路，并发现+修复了一个根本性问题（CSRT 不适用 flicking），最终把全流程固化成可复用、零人工校准的模块。

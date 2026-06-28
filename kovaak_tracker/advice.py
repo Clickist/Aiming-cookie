@@ -36,11 +36,14 @@ THRESHOLDS = {
     "decel_frac_high": 0.65,
     "decel_frac_low": 0.40,
     "linearity_high": 0.13,
+    "sparc_low": -5.0,        # SPARC < this (more negative) = decel not smooth (§6.1, calibrate on real data)
     "reverse_high": 0.20,
+    "two_stage_overlap": 0.30,  # corrective/primary overlap < this = discrete two-stage (§6.2)
     "peak_pos_low": 30.0,
     "peak_pos_high": 60.0,
     "path_eff_low": 0.85,
     "peak_below_ref": 0.70,   # self peak / ref peak
+    "throughput_below_ref": 0.70,  # self TP / ref TP (§6.3)
     "sens_high_cm360": 25.0,  # < this = sensitivity too high (too fast)
 }
 
@@ -95,8 +98,19 @@ def advise(
         f.append(Finding(
             "linearity high", "fix",
             f"减速段速度曲线偏离匀减速直线 {linearity:.2f}（健康 <0.12）——"
-            "减速过程抖动，张力释放不平滑。",
-            [Prescription("pasu", "clean lines，减速段走匀减速直线"),
+            "制动不匀（恒定制动线性度差）。注：这度量的是制动节奏，不是抖动；"
+            "抖动看 SPARC。",
+            [Prescription("pasu", "clean lines，减速段匀速制动一次到位"),
+             Prescription("1w4ts 30% larger", "减速段精度专项")],
+        ))
+
+    sparc = _med(self_summary, "sparc")
+    if sparc is not None and sparc < THRESHOLDS["sparc_low"]:
+        f.append(Finding(
+            "sparc low", "fix",
+            f"减速段平滑度 SPARC={sparc:.1f}（健康 >-5）——张力释放抖动、频域高频"
+            "成分多。这才是'减速抖动'的理论正解（SPARC 频域、无量纲、跨速度公平）。",
+            [Prescription("pasu", "clean lines，减速段走平滑钟形，张力匀速释放"),
              Prescription("1w4ts 30% larger", "减速段精度专项")],
         ))
 
@@ -107,6 +121,16 @@ def advise(
             f"减速段有 {reverse*100:.0f}% 的帧在反向加速（锯齿 / 反复修正），"
             "不是单调制动。",
             [Prescription("pasu", "转流体派：减速段即微调，别 readjust"),
+             Prescription("Multiclick", "落点精度，减少二次修正")],
+        ))
+
+    overlap = _med(self_summary, "submovement_overlap")
+    if overlap is not None and overlap < THRESHOLDS["two_stage_overlap"]:
+        f.append(Finding(
+            "submovement two-stage", "watch",
+            f"corrective 与 primary submovement 重叠度 {overlap:.2f}（低=离散两段式）——"
+            "flick→急停→独立 micro 修正，有延迟（Bardpill 模式，§6.2）。",
+            [Prescription("pasu", "转流体派：corrective 与 primary 重叠（overlapping submovements），减速段即微调"),
              Prescription("Multiclick", "落点精度，减少二次修正")],
         ))
 
@@ -148,6 +172,20 @@ def advise(
                      Prescription("speed 类场景", "大胆加速，先求速度再收精度")],
                 ))
 
+        self_tp = _med(self_summary, "throughput")
+        ref_tp = _med(reference_summary, "throughput")
+        if self_tp and ref_tp:
+            tp_ratio = self_tp / ref_tp
+            if tp_ratio < THRESHOLDS["throughput_below_ref"]:
+                f.append(Finding(
+                    "throughput below reference", "fix",
+                    f"Fitts throughput {self_tp:.1f} bits/s 只有参考的 {tp_ratio*100:.0f}%"
+                    f"（{ref_tp:.1f}）——跨距离发力能力不足（已按目标距离/宽度归一化，"
+                    "比峰值速度更公平，§6.3）。",
+                    [Prescription("Tile Frenzy", "练 arm 发力与动态速度"),
+                     Prescription("speed 类场景", "先求速度再收精度")],
+                ))
+
     if cm_per_360 is not None and cm_per_360 < THRESHOLDS["sens_high_cm360"]:
         f.append(Finding(
             "sensitivity high", "watch",
@@ -160,10 +198,13 @@ def advise(
 
 
 # metrics where lower is better (cleaner / more stopped / shorter decel);
-# the rest are higher-is-better (faster / straighter).
+# the rest are higher-is-better (faster / straighter / smoother-sparc).
 _LOWER_BETTER = {"linearity", "reverse_ratio", "endpoint_peak", "decel_frac"}
 # non-monotone metrics: no simple better/worse (band- or context-dependent)
-_NO_VERDICT = {"peak_position_pct", "path_length_deg"}
+_NO_VERDICT = {
+    "peak_position_pct", "path_length_deg",
+    "submovement_overlap", "corrective_count",  # fluid vs two-stage is style, not strictly better
+}
 
 
 def compare_table(self_summary: dict, reference_summary: dict) -> list[dict]:
@@ -175,8 +216,9 @@ def compare_table(self_summary: dict, reference_summary: dict) -> list[dict]:
     ``"info"`` — :func:`advise` handles their band-aware diagnosis.
     """
     metrics = (
-        "peak_speed_deg", "linearity", "reverse_ratio", "decel_frac",
-        "peak_position_pct", "path_efficiency", "path_length_deg", "endpoint_peak",
+        "peak_speed_deg", "throughput", "linearity", "sparc", "reverse_ratio",
+        "decel_frac", "peak_position_pct", "path_efficiency", "path_length_deg",
+        "endpoint_peak", "submovement_overlap", "corrective_count",
     )
     rows = []
     for m in metrics:

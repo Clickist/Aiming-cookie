@@ -387,8 +387,20 @@ class FlickFairMetrics:
     """Speed-fair, cross-player-comparable flick metrics.
 
     Decel quality uses normalized/shape metrics that do not scale with peak
-    speed: ``linearity`` (decel-phase speed vs its linear fit, /peak),
-    ``reverse_ratio`` (positive-accel fraction in decel phase), ``decel_frac``.
+    speed. Theoretical anchors in docs/aim-kinematics-research.md §6:
+
+    - ``linearity`` — decel-phase speed vs its *constant-deceleration* (linear)
+      fit, /peak. NOT min-jerk (min-jerk decel is a curve). Measures braking
+      evenness, not jitter (§6.1).
+    - ``sparc`` — decel-phase SPARC (spectral arc length, Balasubramanian 2012);
+      the speed-fair gold standard for smoothness and the correct proxy for
+      "decel jitter / tense release" (§6.1).
+    - ``corrective_count`` / ``submovement_overlap`` — submovement structure
+      (Woodworth/Meyer/Novak, §6.2): overlap high = overlapping/fluid, low =
+      discrete/two-stage.
+    - ``throughput`` — Fitts TP = log2(D/W+1)/MT in bits/s, distance-normalized
+      speed (§6.3); NaN when target width is unavailable.
+
     Path geometry comes from the integrated pan trajectory. Angular quantities
     use ``deg_per_px = FOV / width`` so they are comparable across resolution
     and sensitivity.
@@ -396,13 +408,17 @@ class FlickFairMetrics:
 
     peak_speed_deg: float
     peak_position_pct: float
-    linearity: float        # lower = cleaner brake
-    reverse_ratio: float    # lower = monotonic decel
-    decel_frac: float       # decel-phase length / flick length
-    endpoint_peak: float    # valley speed / peak speed
-    path_efficiency: float  # straight / actual path (1 = straight)
+    linearity: float             # lower = more even (constant-deceleration) brake
+    sparc: float                 # higher (≈0) = smoother decel; speed-fair (§6.1)
+    reverse_ratio: float         # lower = monotonic decel
+    decel_frac: float            # decel-phase length / flick length
+    endpoint_peak: float         # valley speed / peak speed
+    corrective_count: int        # corrective submovements after initial (§6.2)
+    submovement_overlap: float   # high = fluid/overlapping, low = two-stage (§6.2)
+    path_efficiency: float       # straight / actual path (1 = straight)
     path_length_deg: float
-    direction_deg: float    # overall pan direction
+    direction_deg: float         # overall pan direction
+    throughput: float            # Fitts bits/s, distance-normalized (§6.3)
 
 
 def segment_by_valleys(
@@ -441,6 +457,72 @@ def segment_by_valleys(
     return flicks
 
 
+def _segment_sparc(speed: np.ndarray, fps: float, amp_th: float = 0.05) -> float:
+    """SPARC (spectral arc length) smoothness of a flick's speed profile.
+
+    Balasubramanian et al. 2012 (IEEE TBME). Computed on the whole flick
+    segment (the bell-shaped speed curve), matching the metric's design — a
+    decel-only half-bell has a ragged spectrum that inflates the arc length.
+    Returns the negative arc length of the DC-normalized speed-magnitude
+    spectrum; closer to 0 = smoother. Frequency-domain so dimensionless and
+    speed-fair — the gold-standard fix for the decel_smoothness-vs-peak-speed
+    coupling (§6.1). NaN for segments too short to resolve a spectrum.
+    """
+    n = len(speed)
+    if n < 8:
+        return float("nan")
+    spectrum = np.abs(np.fft.rfft(speed))
+    dc = spectrum[0]
+    if dc <= 0:
+        return float("nan")
+    spectrum = spectrum / dc
+    freqs = np.fft.rfftfreq(n, d=1.0 / fps)
+    # Adaptive cutoff: largest frequency index beyond which amplitude stays < amp_th.
+    above = np.where(spectrum > amp_th)[0]
+    if above.size == 0 or above.max() < 2:
+        return float("nan")
+    fc = int(above.max())
+    f_v = freqs[1:fc + 1]
+    V_v = spectrum[1:fc + 1]
+    return float(-np.sum(np.sqrt(np.diff(f_v) ** 2 + np.diff(V_v) ** 2)))
+
+
+def _submovement_structure(
+    speed: np.ndarray, fps: float, peak_idx: int, peak_v: float,
+    *, window_s: float = 0.4, corr_frac: float = 0.7,
+) -> tuple[int, float]:
+    """Corrective submovements in the deceleration tail of a flick (§6.2).
+
+    Scans a fixed window after the primary peak — independent of valley
+    segmentation, which can split a two-stage flick into separate segments and
+    hide the corrective inside another segment. A corrective submovement is a
+    secondary speed peak shorter than ``corr_frac`` x primary rising within
+    ``window_s`` after the peak: the "急停 micro" of a Bardpill two-stage flick
+    (Schwartze 2024: corrective submovements have smaller magnitude than initial).
+
+    ``overlap`` = lowest trough between primary peak and first corrective /
+    peak_v: high = fused/overlapping (fluid, Novak 2002), low = discrete
+    (two-stage). Returns ``(corrective_count, overlap)``; overlap is NaN when no
+    corrective is found (a single clean bell = fully fluid).
+    """
+    if peak_v <= 0 or not (0 <= peak_idx < len(speed)):
+        return 0, float("nan")
+    hi = min(len(speed), peak_idx + int(window_s * fps))
+    tail = speed[peak_idx:hi]
+    if len(tail) < 5:
+        return 0, float("nan")
+    peaks, _ = find_peaks(
+        tail, prominence=peak_v * 0.2, distance=max(1, int(0.08 * fps))
+    )
+    # keep only peaks shorter than the primary (correctives are smaller)
+    peaks = [pk for pk in peaks if tail[pk] < peak_v * corr_frac]
+    if not peaks:
+        return 0, float("nan")
+    first = peaks[0]
+    trough = float(tail[1:first].min()) if first > 1 else float(tail[0])
+    return len(peaks), float(trough / peak_v)
+
+
 def compute_fair_metrics(
     flick: tuple,
     speed: np.ndarray,
@@ -448,14 +530,20 @@ def compute_fair_metrics(
     df: pd.DataFrame,
     *,
     deg_per_px: float,
+    fps: float,
+    target_width_deg: float | None = None,
 ) -> FlickFairMetrics:
     """Speed-fair metrics for one valley-segmented flick.
 
     ``accel`` should be lightly smoothed (so ``reverse_ratio`` is not noise).
     ``deg_per_px`` converts px-native pan quantities to visual degrees
-    (``deg = px * FOV / width``).
+    (``deg = px * FOV / width``). ``fps`` drives the SPARC and submovement
+    analyses. ``target_width_deg`` enables the Fitts ``throughput`` metric
+    (§6.3); omit it (e.g. no-CSV reference mode without target detection) to
+    leave throughput NaN.
     """
-    s, p, e, peak_v, _ = flick
+    s, p, e, peak_v, duration_s = flick
+    seg_speed = speed[s:e + 1]
     decel = speed[p:e + 1]
     if len(decel) >= 3:
         t = np.arange(len(decel))
@@ -464,22 +552,33 @@ def compute_fair_metrics(
         linearity = float(np.sqrt(np.mean(resid ** 2)) / peak_v)
     else:
         linearity = float("nan")
+    sparc = _segment_sparc(seg_speed, fps)
+    corrective, overlap = _submovement_structure(speed, fps, p, peak_v)
     da = accel[p:e + 1]
     reverse = float(np.mean(da > 0)) if len(da) else float("nan")
     decfrac = (e - p) / max(1.0, (e - s))
     endpk = float(speed[e] / peak_v)
     peak_pos = round(100.0 * (p - s) / max(1, (e - s)), 1)
     path_eff = path_len_deg = direction = float("nan")
+    throughput = float("nan")
+    straight_px = 0.0
     if "ball_x" in df.columns and "ball_y" in df.columns and e > s:
         xs = df["ball_x"].astype(float).to_numpy()[s:e + 1]
         ys = df["ball_y"].astype(float).to_numpy()[s:e + 1]
         seg_len = float(np.sum(np.hypot(np.diff(xs), np.diff(ys))))
-        straight = float(np.hypot(xs[-1] - xs[0], ys[-1] - ys[0]))
+        straight_px = float(np.hypot(xs[-1] - xs[0], ys[-1] - ys[0]))
         if seg_len > 0:
-            path_eff = straight / seg_len
+            path_eff = straight_px / seg_len
             path_len_deg = seg_len * deg_per_px
-        if straight > 0:
+        if straight_px > 0:
             direction = float(np.degrees(np.arctan2(ys[-1] - ys[0], xs[-1] - xs[0])))
+    # Fitts throughput: TP = log2(D/W + 1) / MT, with D the start->end amplitude
+    # (deg), W the target width (deg), MT the flick duration. Distance-normalized
+    # speed proxy (§6.3); needs target width, else NaN.
+    if (target_width_deg and target_width_deg > 0 and duration_s > 0
+            and straight_px > 0):
+        D_deg = straight_px * deg_per_px
+        throughput = float(np.log2(D_deg / target_width_deg + 1)) / duration_s
 
     def rnd(v, n):
         return round(v, n) if not np.isnan(v) else float("nan")
@@ -488,12 +587,16 @@ def compute_fair_metrics(
         peak_speed_deg=round(peak_v * deg_per_px, 2),
         peak_position_pct=peak_pos,
         linearity=rnd(linearity, 4),
+        sparc=rnd(sparc, 3),
         reverse_ratio=rnd(reverse, 3),
         decel_frac=round(decfrac, 3),
         endpoint_peak=round(endpk, 3),
+        corrective_count=int(corrective),
+        submovement_overlap=rnd(overlap, 3),
         path_efficiency=rnd(path_eff, 3),
         path_length_deg=rnd(path_len_deg, 2),
         direction_deg=rnd(direction, 1),
+        throughput=rnd(throughput, 3),
     )
 
 
