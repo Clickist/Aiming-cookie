@@ -38,10 +38,14 @@
 
 ### 已知缺口 / 下一步
 
-1. `analyze_flicking_video`（有 CSV）仍输出旧 summary（`decel_smoothness`）；自己的有 CSV 视频要用 `analyze_flicking_reference`（手动窗口）才拿到公平 summary。**待统一**（让有 CSV 入口也输出公平 summary）。
-2. dashboard 未接 advice / compare。
-3. 二期未做：target_selection、overshoot、reaction（需目标检测，噪声大）。
+**下个 session 接续点 —— 推荐顺序 A → B → C：**
+
+1. **[A] 统一 summary 入口**：`analyze_flicking_video`（有 CSV）目前仍输出旧 summary（`decel_smoothness`）；自己的有 CSV 视频要用 `analyze_flicking_reference`（手动窗口）才拿到公平 summary。让有 CSV 入口也输出公平 summary（复用 `segment_by_valleys` + `compute_fair_metrics`），自己的视频就能直接进 `advice.advise` / `compare_table`。**最小改动，解锁完整流程，应最先做。**
+2. **[B] dashboard 接入**：上传视频 → `compare_table` + `advise` 的 UI 展示（对比表 + 诊断 + 处方）。
+3. **[C] 二期**：`target_selection`（目标选择策略）、`overshoot`、`reaction`——需目标检测，噪声大，单独立项。
 4. 手部镜头分析（后续，`product-strategy.md` 已规划）。
+
+**复测基线（下次自测对比用同一管线 + 谷切分）**：decel_frac 0.75→<0.55、linearity 0.171→<0.12、reverse_ratio 0.232→<0.18。
 
 ## 2026-06-27：真实数据端到端跑通 + 流水线重构为可复用
 
