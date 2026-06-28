@@ -141,6 +141,22 @@ deep-research workflow（5 angle fan-out → 22 源 → 64 claim → 25 对抗�
 
 **workflow 透明**：遭遇大量 429 限流，部分 verify 失败，但 7 存活 claim 均 2-0/3-0/2-1 投票 + peer-reviewed 主源确认，根基扎实。
 
+### 2026-06-29 续六：瞄准社区前沿 deep research（第二轮）
+
+第二轮 deep research，专攻**社区前沿**（学术不研究 KovaaK's/aim trainer 消费品，瞄准实际前沿在社区）。5 angle → 12 源 → 35 claim → 25 对抗验证 → 6 存活 + 19 被反驳透明。产出 `docs/coach-community-frontier.md`。
+
+**6 个社区共识**（信源【权威社区共识】/【个人经验·视频】）：
+- Voltaic **S5 分类法**：3 支柱（clicking/tracking/switching）× 3 子类 = 9（含新增 hybrid 第三类 linear/control/stability）
+- 三支柱 + **颜色编码**（red/blue/purple），S5 仍用无争议
+- 顶级玩家**子技能分化**（smoothness/stability vs explosive-speed/reactive 很少同时顶峰）
+- 2025 May 顶级 tracking 玩家列表（VT Matty #1；时间敏感，编辑榜单非官方）
+- Voltaic **三 benchmark track**（KovaaK S5 旗舰 + Aimlabs S3 + Valorant S1）
+- 经典 **static clicking 三步**：big flick → micro-correction → hit-confirm（呼应学术 corrective submovement）
+
+**被反驳（19，透明）**：harmonic mean 排序方法、underflicking 主导论断、VDIM two-day 结构、具体 energy/rank 数字、bardozz method + 65-80cm 等——对抗验证淘汰率高（社区内容时间敏感 + 单源）。
+
+**关键约束**：社区内容**只进 narrator 文案 + profile 标签 + 训练处方理由**，**不进诊断规则**（学术根基 `coach-theory-foundation.md` 的领地）。时间敏感内容（顶级玩家名/rank/S5/energy 数字）定期复核。社区↔学术呼应点：micro-correction = corrective submovement。
+
 ### 下个 session 接续点（2026-06-29）
 
 理论底座现已**双层就位**（运动学指标层 `aim-kinematics-research.md` + 教练/反馈/习得层 `coach-theory-foundation.md`），coach 实现完成（单次 `build_report` + 跨次 `build_progress_report`），视频分析加速 7x（1111→160s）。43 测试全过，工作树仅 `output/ref_pan_trajectory.csv`（联调产物，regenerable）。
