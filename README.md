@@ -68,7 +68,7 @@ prog = build_progress_report("output/history/sessions.jsonl", current_summary, b
 
 ## 性能
 
-视频分析 ~160s（60s 录像；P6 lock 采样 + P4 detect 降采样优化后 7x 加速，指标保持 ±6%）。
+视频分析 ~160s（60s 录像；经 lock 段采样 + 目标检测降采样优化后 7x 加速，指标保持 ±6%——采样损失远小于匹配容差，详见 `docs/PROGRESS.md` 2026-06-28 续三）。
 
 ## tracking 部分（早期，待重构）
 
