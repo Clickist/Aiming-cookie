@@ -103,6 +103,25 @@
 
 **不做 P2（抽帧）**：抽帧损 flick 形态 + SPARC（频域）精度，得不偿失。lock 34s + LLM 10s 是固定下限；<60s 体验需 web 前端 + 服务端异步，非单机优化。
 
+### 2026-06-28 续四：进步闭环（progress loop，scope B）
+
+按 spec（`docs/superpowers/specs/2026-06-28-progress-loop-design.md`）+ plan 实现。coach 从单次输出 → 跨次跟踪。
+
+| 模块 | 能力 |
+|---|---|
+| `coach/progress.py` | Session JSONL 持久化（`output/history/sessions.jsonl`）+ `build_trend`/`build_comparison`（5 核心指标，verdict 符号感知 delta）+ `ProgressReport` |
+| `coach/visualization.py` | + `build_trend_figure` / `build_comparison_figure` |
+| `coach/narrator.py` | + `PROGRESS_SYSTEM_PROMPT` / `generate_progress_narration`（进步解读，防幻觉）|
+| `coach/report.py` | `build_report(+history_path)` 存历史 + `build_progress_report`（趋势 + 对比 + 进步讲解）|
+
+**用法**：
+- `build_report(summary, ..., history_path=P)` —— 跑完自动存历史
+- `build_progress_report(P, current_summary, ref_summary?, backend?)` —— 趋势图 + 对比图 + 对比表 + 进步讲解
+
+**验证**：43 测试全过（progress T0-T4 + 原 coach）。dispatch（T1/T2/T3 并行 agent，T0/T4 串行我做）。T1 修正了 plan 的 verdict 负值 bug（sparc -5 vs -7 ratio 0.71<0.95 误判 worse → 改 `delta/|baseline|` 符号感知）。
+
+**不做**（留后续）：④计划调整（动态处方）；多用户/云端；web 趋势页。
+
 ## 2026-06-27：真实数据端到端跑通 + 流水线重构为可复用
 
 这个 session 用真实 1w6ts 录像（`6月23日.mp4` + 配套 CSV `1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv`）跑通了整条链路，并发现+修复了一个根本性问题（CSRT 不适用 flicking），最终把全流程固化成可复用、零人工校准的模块。
