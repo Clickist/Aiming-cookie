@@ -44,3 +44,21 @@ def build_user_prompt(diagnosis: CoachDiagnosis) -> str:
         "meta": diagnosis.meta,
     }
     return json.dumps(payload, ensure_ascii=False)
+
+
+PROGRESS_SYSTEM_PROMPT = (
+    "你是一位 KovaaK's flicking 教练。你会收到玩家的历史趋势 + 多基准对比数据（JSON）。"
+    "请用中文写一段进步解读（150-300 字）：先总结进步方向（哪些指标改善了/退步了，"
+    "引用趋势和对比 verdict），再结合基线/上次/高手参考定位当前水平，"
+    "最后给下一阶段训练重点。"
+    "铁律：只基于提供的数据讲解，不要编造任何指标数值或未给出的信息；数据缺失就略过。"
+)
+
+
+def generate_progress_narration(trend, comparison, backend) -> str:
+    return backend.generate(PROGRESS_SYSTEM_PROMPT, _build_progress_user_prompt(trend, comparison))
+
+
+def _build_progress_user_prompt(trend, comparison) -> str:
+    payload = {"trend": {m: series for m, series in trend.items()}, "comparison": comparison}
+    return json.dumps(payload, ensure_ascii=False, default=str)
