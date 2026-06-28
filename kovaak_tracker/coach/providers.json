@@ -1,0 +1,11 @@
+{
+  "anthropic": {
+    "model": "claude-sonnet-4-6",
+    "api_key_env": "ANTHROPIC_API_KEY"
+  },
+  "local": {
+    "base_url": "http://localhost:11434/v1",
+    "model": "qwen2.5",
+    "api_key_env": "OLLAMA_API_KEY"
+  }
+}
