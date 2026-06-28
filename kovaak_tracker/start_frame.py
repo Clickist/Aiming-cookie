@@ -185,11 +185,19 @@ def lock_challenge_window(
     ui_events: list = []
     g_start = None  # first frame of current gameplay run
     u_start = None  # first frame of current UI run
-    for f in range(total):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+    # Sample every `stride` frames (~10 Hz) + seek once + read sequentially.
+    # Per-frame cap.set is O(frame_no) on H.264 (the original hot loop). UI
+    # screens persist >1s, so 10 Hz sampling never misses one; gameplay-run
+    # boundaries land within +/- stride of truth, far inside the duration tol.
+    stride = max(1, int(round(fps / 10.0)))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    for off in range(total):
         ok, frame = cap.read()
         if not ok:
             break
+        if off % stride != 0:
+            continue
+        f = off
         if _has_ui_element(frame, ui_area_frac):
             if g_start is not None:
                 gameplay_runs.append((g_start, f - 1)); g_start = None
