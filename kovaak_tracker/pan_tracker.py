@@ -219,8 +219,9 @@ class ReferenceAnalysis:
 
 def _summarize_reference(metrics: list, cm_per_deg) -> dict:
     names = (
-        "peak_speed_deg", "linearity", "reverse_ratio", "decel_frac",
-        "endpoint_peak", "peak_position_pct", "path_efficiency", "path_length_deg",
+        "peak_speed_deg", "linearity", "sparc", "reverse_ratio", "decel_frac",
+        "endpoint_peak", "peak_position_pct", "corrective_count",
+        "submovement_overlap", "path_efficiency", "path_length_deg", "throughput",
     )
     out: dict = {}
     for name in names:
@@ -299,7 +300,9 @@ def analyze_flicking_reference(
 
     flicks = segment_by_valleys(speed, fps)
     metrics = [
-        compute_fair_metrics(f, speed, accel, track_df, deg_per_px=deg_per_px)
+        compute_fair_metrics(
+            f, speed, accel, track_df, deg_per_px=deg_per_px, fps=fps
+        )
         for f in flicks
     ]
     cm_per_deg = (cm_per_360 / 360.0) if cm_per_360 else None
@@ -310,10 +313,57 @@ def analyze_flicking_reference(
     )
 
 
+def analyze_flicking_fair_summary(
+    video_path,
+    csv_path,
+    *,
+    fov: float = 103.0,
+    cm_per_360=None,
+    ui_area_frac: float = 0.01,
+    output_dir=OUTPUT_DIR,
+    progress_callback=None,
+):
+    """CSV-mode fair-summary entry (PROGRESS A).
+
+    Same shape as ``analyze_flicking_reference``'s summary, but driven by a
+    KovaaK stats CSV (duration from kills) instead of a manual duration. This
+    unblocks the user's own CSV recordings for the coaching pipeline.
+    """
+    import math
+    stats = parse_stats_csv(csv_path)
+    duration_s = float(math.ceil(stats.kills["time_s"].max()))
+
+    meta = get_video_metadata(video_path)
+    fps = meta.fps
+    deg_per_px = fov / meta.width
+
+    window = lock_challenge_window(video_path, duration_s, fps=fps, ui_area_frac=ui_area_frac)
+    track_df = compute_pan_trajectory(
+        video_path, window.start_frame, window.end_frame,
+        fps=fps, progress_callback=progress_callback,
+    )
+
+    speed = _ball_speed(track_df, fps)
+    accel = calc_derivative(speed, fps)
+    win = max(5, int(fps * 0.05))
+    if win % 2 == 0:
+        win += 1
+    accel = apply_smoothing(accel, win)
+
+    flicks = segment_by_valleys(speed, fps)
+    metrics = [
+        compute_fair_metrics(f, speed, accel, track_df, deg_per_px=deg_per_px, fps=fps)
+        for f in flicks
+    ]
+    cm_per_deg = (cm_per_360 / 360.0) if cm_per_360 else None
+    return _summarize_reference(metrics, cm_per_deg)
+
+
 __all__ = [
     "detect_targets",
     "compute_pan_trajectory",
     "analyze_flicking_video",
     "analyze_flicking_reference",
+    "analyze_flicking_fair_summary",
     "ReferenceAnalysis",
 ]
