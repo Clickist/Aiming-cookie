@@ -92,6 +92,49 @@ deep-research 对抗投票淘汰了 19 条社区 claim（多数仅因「单源/�
 
 ---
 
+## 社区具体实践手册（怎么练——deep-research 丢弃上下文的恢复）
+
+> 上面 §1/§2 是 claim 级摘要（deep-research synth 产物，泛泛）。这一节恢复 fetch 阶段抓到的**具体可操作内容**——社区实际怎么练、什么配置、什么技术要点。这才是 narrator 文案和训练处方的**实操素材**。
+> 来源：r/FPSAimTrainer 多帖（Proper Static Clicking Form / how to improve / critique / tension management）、Voltaic VDIM guide（Scribd/YouTube, Lowgravity56）、Voltaic sensitivity chart（X/Twitter + r/Voltaic）。
+
+### static clicking（静态点击）技术
+
+社区共识（多帖汇聚）的具体打法：
+- **两阶段动作**：fast flick（arm 驱动）→ slow micro-correction（wrist/指尖）。两动作**先分开练到自动化**，再合一
+- **micro 用 wrist/指尖**（fine motor）——arm 只负责到位，wrist 负责精修，不要再 arm 甩
+- **click 时机**：micro-correction 落地后才点（hit-confirm），**不要边甩边点**
+- **平滑**：当 tracking 练——快接近、慢落地、再点，全程平滑（"it's just the same as tracking — speed up to the target quickly then slow down and click, all done smoothly"）
+- **降 sens 助 micro**：lower sens → smoother stop + faster microing（static 推荐 40+ cm/360，见配置节）
+- **张力**：proper form 随时间自然降张力——不是硬放松，是技术对了张力自然降（"focus on proper technique will lower tension over time"）
+- **流派分歧**：underflick 派（欠冲再修上去）vs overflick 派（过冲收回）——社区有争论，主流是「到位 + 微修」，underflick 是常见练习法
+- **常见错误**：flick preparation 差 + 过度平滑掩盖大欠冲（"overly smooth to mask underflicks that miss by large margins"）
+
+### VDIM（Voltaic Daily Improvement Method）训练编排
+
+Lowgravity56（VT 成员）创建的结构化训练法：
+- **每日隔离一种技术**：每天一个 playlist 集中练一类（clicking/tracking/switching 按天），不混合
+- **playlist 结构**：6-7 个 playlist（按天轮转），每个含多场景，按子技能**渐进**（fingertip micro-corrections → precision off wide flicks → reactive/unplanned flicking → cluster-speed bursting → benchmark-specific multishot）
+- **技能分层**：Initiate → Intermediate → Advanced → Advanced Plus，按水平选层
+- **目的**：isolate 技术建 proper mechanics，提升 benchmark 分数
+- **平台**：KovaaK's（主）+ Aimlabs（适配版）
+- **理念**：**proactive**（主动补弱项，在弱项显现前练）vs weakness-specific（reactive 补已显现弱项）——VDIM 是 proactive 派
+
+### 配置（cm/360）社区推荐
+
+Voltaic sensitivity chart（[X/Twitter 官方](https://x.com/VoltaicAim/status/1561917098745630720)）+ 社区共识：
+
+| 类别 | 推荐 cm/360 | 原因 |
+|---|---|---|
+| static clicking | **40+** | 慢、精、micro 稳 |
+| dynamic clicking / tracking | **30-** | 快、反应 |
+| 通用最优 | **28-43** | 平衡（aiming.pro） |
+
+**铁律**（与学术 `aim-kinematics-research.md` §4 一致）：sens 是放大器/缩小器，**不是根因**。制动失控根因是发力-释放不对称，调 sens 是辅助实验，**必须复测验证**。
+
+> 这些具体内容**进 narrator 文案 + 训练处方**（如「练 static 时 flick 到位后用 wrist micro，别边甩边点」+「static 推荐 40+ cm/360」），**不进诊断规则**（学术根基领地）。
+
+---
+
 ## §3 Open Questions（理论锚定但未解决）
 
 1. **Voltaic 官方排序方法**（harmonic vs arithmetic vs 几何平均 + 每子类最低分门槛）—— 需直接 voltaic.gg/about 文档
