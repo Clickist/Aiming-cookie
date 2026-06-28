@@ -89,4 +89,4 @@ prog = build_progress_report("output/history/sessions.jsonl", current_summary, b
 
 ---
 
-Developed by Jianrui (Jerry) Zhang.
+Developed by Jianrui (Jerry) Zhang & Gearclickist.
