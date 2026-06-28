@@ -27,6 +27,50 @@ def load_dashboard_data(output_dir: Path = OUTPUT_DIR) -> tuple[dict | None, pd.
     return metrics, df
 
 
+def load_flicking_data(output_dir: Path = OUTPUT_DIR) -> tuple[dict | None, pd.DataFrame | None]:
+    """Load flicking artifacts written by ``flicking.export_flicking``.
+
+    Returns ``(payload, segments_df)`` where payload is the raw JSON dict
+    (with ``summary`` and ``flicks`` keys) and segments_df is the per-flick
+    table. Returns ``(None, None)`` when no flicking analysis has been run.
+    """
+    metrics_path = output_dir / "flicking_metrics.json"
+    csv_path = output_dir / "flicking_segments.csv"
+    if not metrics_path.exists() or not csv_path.exists():
+        return None, None
+    with open(metrics_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    segments_df = pd.read_csv(csv_path)
+    return payload, segments_df
+
+
+def build_decel_smoothness_chart(segments_df: pd.DataFrame) -> go.Figure:
+    """Per-flick deceleration smoothness (lower = smoother tension release)."""
+    fig = px.bar(
+        segments_df,
+        x=segments_df.index,
+        y="decel_smoothness",
+        color="is_two_stage",
+        labels={"index": "flick #", "decel_smoothness": "decel std (px/s²)", "is_two_stage": "two-stage"},
+        title="Deceleration Smoothness per Flick",
+    )
+    fig.update_layout(showlegend=True)
+    return fig
+
+
+def build_peak_position_chart(segments_df: pd.DataFrame) -> go.Figure:
+    """Where the peak speed lands within each flick (50% = symmetric)."""
+    fig = px.bar(
+        segments_df,
+        x=segments_df.index,
+        y="peak_position_pct",
+        color="is_two_stage",
+        labels={"index": "flick #", "peak_position_pct": "peak position (% of flick)", "is_two_stage": "two-stage"},
+        title="Peak Speed Position (early peak = long decel)",
+    )
+    fig.update_layout(showlegend=True)
+    return fig
+
 def build_error_timeline(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     colors = px.colors.qualitative.Plotly

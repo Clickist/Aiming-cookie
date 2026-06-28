@@ -14,10 +14,12 @@ from pathlib import Path
 import cv2
 import plotly.graph_objects as go
 import streamlit as st
-
 from kovaak_tracker.dashboard_data import (
+    build_decel_smoothness_chart,
     build_error_timeline,
+    build_peak_position_chart,
     load_dashboard_data,
+    load_flicking_data,
     render_review_frame,
 )
 from kovaak_tracker.video import save_uploaded_video
@@ -30,51 +32,62 @@ OUTPUT_DIR = Path("output")
 st.set_page_config(page_title="Aim Tension Dashboard", layout="wide")
 
 # ---------------------------------------------------------------------------
-# Load data
+# Load data (tracking + flicking are parallel pipelines)
 # ---------------------------------------------------------------------------
 metrics, df = load_dashboard_data(OUTPUT_DIR)
-if metrics is None or df is None:
-    st.warning("Analysis data not found. Run Analyze.py first.")
+flick_payload, flick_df = load_flicking_data(OUTPUT_DIR)
+
+if (metrics is None or df is None) and flick_payload is None:
+    st.warning("No analysis data found. Run Analyze.py (tracking) or the flicking pipeline first.")
     st.stop()
 
-t = metrics.get("tension", {})
-l = metrics.get("loss", {})
+has_tracking = metrics is not None and df is not None
+has_flicking = flick_payload is not None and flick_df is not None
 
-# ---------------------------------------------------------------------------
-# Top metrics row
-# ---------------------------------------------------------------------------
-st.title("Aim Tension & Speed Matching Analysis")
-st.caption(
-    "Diagnostics from tracking error, speed mismatch, and acceleration mismatch."
-)
+if has_tracking:
+    t = metrics.get("tension", {})
+    l = metrics.get("loss", {})
 
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("PTC (Hz²)", f"{t.get('ptc', 0):.1f}")
-m2.metric("Avg Error (px)", f"{t.get('avg_error_px', 0):.1f}")
-m3.metric("Accuracy (%)", f"{l.get('on_target_pct', 0):.1f}")
-m4.metric("Loss Count", f"{l.get('loss_count', 0)}")
-m5.metric("Off-Target Time (s)", f"{l.get('total_off_time', 0):.2f}")
-
-# Optional kinematics row if speed/accel mismatch are available
-if "speed_mismatch" in t or "accel_mismatch" in t:
-    st.divider()
-    k1, k2 = st.columns(2)
-    k1.metric(
-        "Speed Mismatch (px/s)",
-        f"{t.get('speed_mismatch', 0):.1f}",
-        help="Magnitude of velocity difference between crosshair and target.",
-    )
-    k2.metric(
-        "Accel Mismatch (px/s²)",
-        f"{t.get('accel_mismatch', 0):.0f}",
-        help="Magnitude of acceleration difference.",
+    # -----------------------------------------------------------------------
+    # Top metrics row
+    # -----------------------------------------------------------------------
+    st.title("Aim Tension & Speed Matching Analysis")
+    st.caption(
+        "Diagnostics from tracking error, speed mismatch, and acceleration mismatch."
     )
 
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("PTC (Hz²)", f"{t.get('ptc', 0):.1f}")
+    m2.metric("Avg Error (px)", f"{t.get('avg_error_px', 0):.1f}")
+    m3.metric("Accuracy (%)", f"{l.get('on_target_pct', 0):.1f}")
+    m4.metric("Loss Count", f"{l.get('loss_count', 0)}")
+    m5.metric("Off-Target Time (s)", f"{l.get('total_off_time', 0):.2f}")
+
+    # Optional kinematics row if speed/accel mismatch are available
+    if "speed_mismatch" in t or "accel_mismatch" in t:
+        st.divider()
+        k1, k2 = st.columns(2)
+        k1.metric(
+            "Speed Mismatch (px/s)",
+            f"{t.get('speed_mismatch', 0):.1f}",
+            help="Magnitude of velocity difference between crosshair and target.",
+        )
+        k2.metric(
+            "Accel Mismatch (px/s²)",
+            f"{t.get('accel_mismatch', 0):.0f}",
+            help="Magnitude of acceleration difference.",
+        )
+else:
+    st.title("Flicking Analysis")
+    st.caption("Tracking data not found — showing flicking analysis only.")
+    t = {}
+    l = {}
+
 # ---------------------------------------------------------------------------
-# Tabs: Overview / Timeline / VOD Review
+# Tabs: tracking tabs + a Flicking tab (parallel pipeline)
 # ---------------------------------------------------------------------------
-tab_overview, tab_timeline, tab_vod = st.tabs(
-    ["Overview", "Error Timeline", "VOD Review"]
+tab_overview, tab_timeline, tab_vod, tab_flicking = st.tabs(
+    ["Overview", "Error Timeline", "VOD Review", "Flicking"]
 )
 
 # -- Tab 1: Overview -- Tension Quadrant --
@@ -141,7 +154,10 @@ with tab_overview:
 # -- Tab 2: Error Timeline --
 with tab_timeline:
     st.subheader("Spatial Error Timeline")
-    st.plotly_chart(build_error_timeline(df), use_container_width=True)
+    if df is not None:
+        st.plotly_chart(build_error_timeline(df), use_container_width=True)
+    else:
+        st.info("No tracking data.")
 
 # -- Tab 3: VOD Review --
 with tab_vod:
@@ -162,7 +178,7 @@ with tab_vod:
         if video_file:
             video_path = save_uploaded_video(video_file, Path(video_file.name).suffix)
 
-    if video_path:
+    if video_path and df is not None:
         # Cache VideoCapture in session state to avoid re-opening per slider move
         prev_path = st.session_state.get("_vod_video_path")
         if prev_path != video_path:
@@ -195,3 +211,43 @@ with tab_vod:
             )
         else:
             st.warning("Could not render frame from video.")
+
+
+# -- Tab 4: Flicking Analysis (parallel pipeline) --
+with tab_flicking:
+    if not has_flicking:
+        st.info(
+            "No flicking data. Run the flicking pipeline:\n\n"
+            "`python -c \"from kovaak_tracker.flicking import run_flicking_analysis; "
+            "run_flicking_analysis(csv_path=..., track_csv='output/calibration_raw.csv', "
+            "fps=360, start_frame=0, crosshair=(cx,cy))\"`"
+        )
+    else:
+        st.subheader("Flicking Deceleration Diagnosis")
+        summary = flick_payload["summary"]
+
+        f1, f2, f3, f4 = st.columns(4)
+        f1.metric("Flicks Analyzed", summary.get("scored_count", 0))
+        f2.metric(
+            "Two-Stage %",
+            f"{summary.get('two_stage_pct', 0):.1f}",
+            help="Share of flicks showing a flick→micro dip (Bardpill pattern). "
+            "Lower = more fluid (Zeonlo) release.",
+        )
+        f3.metric(
+            "Median Decel Smoothness",
+            f"{summary.get('median_decel_smoothness') or 0:.0f}",
+            help="Std of deceleration-phase acceleration. Lower = smoother tension release.",
+        )
+        f4.metric(
+            "Median Peak Position %",
+            f"{summary.get('median_peak_position_pct') or 0:.1f}",
+            help="Where peak speed lands in the flick. <50% = early peak, long decel.",
+        )
+
+        st.divider()
+        st.plotly_chart(build_decel_smoothness_chart(flick_df), use_container_width=True)
+        st.plotly_chart(build_peak_position_chart(flick_df), use_container_width=True)
+
+        st.subheader("Per-Flick Breakdown")
+        st.dataframe(flick_df, use_container_width=True)
