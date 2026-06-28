@@ -86,3 +86,4 @@ Python 3.10+，见 `requirements.txt`。关键依赖：opencv-contrib-python（C
 - `docs/product-strategy.md` — 产品战略：轻量版（录像上传）+ 专业版（本地采集+手部摄像头）两条产品线
 - `docs/flicking-analysis-plan.md` — Flicking 分析方案：通过 KovaaK's 场景数据扩展 flicking 支持
 - `docs/flicking-aim-coach.md` — Flicking AI 教练：分析+建议模块完整介绍（原理→实现→诊断处方），独立于 dashboard
+- `docs/coach-theory-foundation.md` — 教练/反馈/技能习得理论底座（deep research，信源分级 + 经久度 + 异见）

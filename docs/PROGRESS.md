@@ -122,6 +122,25 @@
 
 **不做**（留后续）：④计划调整（动态处方）；多用户/云端；web 趋势页。
 
+### 2026-06-29：理论底座 deep research（教练/反馈/技能习得）
+
+deep-research workflow（5 angle fan-out → 22 源 → 64 claim → 25 对抗验证 → 7 存活 + 18 被反驳透明列）。产出 `docs/coach-theory-foundation.md`。
+
+**7 个经久系统根基理论**（peer-reviewed，可作系统根基）：
+- 双过程运动学习（Taylor & Ivry 2012，挑战 Fitts & Posner 串行观）
+- deliberate practice 时长上限（Ericsson 1993：>4h/day 无益、>2h 减益、elite ~80min/session）
+- contextual interference（交错 > 块状长期保留；实验室强、应用域弱）
+- KR/KP 反馈分类（Gentile 1972，50 年经典）
+- guidance hypothesis（Salmoni 1984：反馈过频损害学习——依赖）
+- min-jerk 是派生结果非 CNS 原则（Harris & Wolpert 1998）—— 强化现有 metric 基础
+- corrective submovement 神经编码差异（Schwartze/Rouse 2024）—— 强化 two_stage 维度
+
+**关键约束落地**：诊断规则（advice/diagnosis）只用学术根基；社区/经验层（Voltaic 流派 / target selection / sensitivity）标「易过时」，只进 narrator 内容 + profile 标签，**不进诊断逻辑**。被反驳的（多模态/实时总更好、Ericsson 单调收益/10 年规则等）透明列出，系统不默认「更多反馈=更好」。
+
+**支撑哪里的设计**：progress loop（不鼓励过量练习/高频复测，§1.2+§2.2）；narrator（先 KR 后 KP，§2.1）；B 形多轮（guidance fading + Socratic，§2.2+§2.3）。
+
+**workflow 透明**：遭遇大量 429 限流，部分 verify 失败，但 7 存活 claim 均 2-0/3-0/2-1 投票 + peer-reviewed 主源确认，根基扎实。
+
 ## 2026-06-27：真实数据端到端跑通 + 流水线重构为可复用
 
 这个 session 用真实 1w6ts 录像（`6月23日.mp4` + 配套 CSV `1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv`）跑通了整条链路，并发现+修复了一个根本性问题（CSRT 不适用 flicking），最终把全流程固化成可复用、零人工校准的模块。
