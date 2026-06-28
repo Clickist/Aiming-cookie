@@ -89,6 +89,20 @@
 
 **已知后续**：真实 LLM 联调（装 anthropic/openai + 配 key）/ 进步闭环（独立 spec）/ 多轮对话 B（需先补瞄准社区理论）/ web 前端。
 
+### 2026-06-28 续三：视频分析加速（P1/P6/P4，1111s → 160s，7x）
+
+真实联调 `6月23日.mp4` 暴露：`analyze_flicking_reference` 一次 **1111s（18.5min）**，UX 不可接受。profile 后三处优化：
+
+| 优化 | 瓶颈 | 效果 |
+|---|---|---|
+| P1 compute seek 一次 | 逐帧 `cap.set` O(n²) | compute 的 seek 部分（有限——detect 才是主因）|
+| P6 lock 10Hz 采样 + seek 一次 | lock 逐帧 seek + `_has_ui_element` 每帧 | lock **697s → 88s** |
+| P4 detect/has_ui 降采样 ≤960px | 全帧 `np.linalg.norm`（106ms/帧）| detect **106 → 26ms**，has_ui 148 → 21ms |
+
+结果：**1111s → 160s（7x）**，指标保持（flick 73/74, linearity 0.174/0.17, decel_frac 0.741/0.746, 全 ±6%）。`ui_band` 顶部 0.12→0.15 排除降采样 promoted 的 HUD（击杀数/timer）假阳性。
+
+**不做 P2（抽帧）**：抽帧损 flick 形态 + SPARC（频域）精度，得不偿失。lock 34s + LLM 10s 是固定下限；<60s 体验需 web 前端 + 服务端异步，非单机优化。
+
 ## 2026-06-27：真实数据端到端跑通 + 流水线重构为可复用
 
 这个 session 用真实 1w6ts 录像（`6月23日.mp4` + 配套 CSV `1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv`）跑通了整条链路，并发现+修复了一个根本性问题（CSRT 不适用 flicking），最终把全流程固化成可复用、零人工校准的模块。
