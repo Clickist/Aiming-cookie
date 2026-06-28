@@ -269,3 +269,22 @@ KovaaK 3.9.x 另在 `performances/` 生成 `.perf`（与 CSV 同名配对）。�
 
 - 扁平结构，不拆 tracking/ flicking/ 子包。
 - Flicking 用独立减速诊断视图，不融合进 Tension Quadrant（维度映射待真实数据验证后再说——现在真实数据有了，可重新评估）。
+
+## 2026-06-29 续五：④ 计划调整（动态处方）完成
+
+处方层 deep research（`wf_7793cb5f-265`，105 agents / 2.19M tokens / 22 确认 + 3 否决 + 7 caveats）→ `docs/coach-prescription-manual.md`（诊断信号→处方映射，标信源级别；社区判定宽松=理论一致性）。用 research 结论回填 ④ spec §11.1（interleave 升级渐进 hybrid + 元认知对抗话术 Simon&Bjork 2001）。
+
+实现（分支 `coach/plan-adjustment`，6 commit，TDD）：
+
+| 模块 | 改动 |
+|---|---|
+| `coach/planning.py`（新）| `build_plan` 规则引擎 + `TrainingPlan`/`PlanAdjustment`。stall(verdict=same,history≥N_MIN=3)→渐进hybrid interleave（reason 必带元认知对抗）；worse→regress_focus；better→maintain；最近两次 session 间隔<REST_GAP_DAYS=1.0→rest；history<N_MIN→仅观测 |
+| `progress.py` | `ProgressReport` 加 `plan`/`plan_narration`（向后兼容 Any/None）|
+| `narrator.py` | `PLAN_SYSTEM_PROMPT` + `generate_plan_narration`（外部焦点 + 元认知对抗 + 交错渐进话术）|
+| `report.py` | `build_progress_report` 编排（现跑 advise 取处方池）|
+
+**验证**：57 测试全过（含 8 planning + I1 逆序回归）。subagent-driven：Task 1（planning）dispatch implementer+reviewer approved；Task 2/3/4 inline（plan 代码 verbatim）；final whole-branch review（opus）Ready-to-merge-with-fixes → 修 I1（`_maybe_rest` `timedelta(0) <= gap` guard）+ 记 §11.2 偏差（trend reserved / per-metric adjustment / now dropped）。
+
+**理论锚点（全学术根基进规则）**：§1.3 CI 交错 / §1.2 Ericsson 训练量上限 / §2.2 guidance hypothesis + Simon&Bjork 2001 元认知过度自信。社区经验（VDIM/weakness-specific/技术要领）只进 narrator 文案 + 处方理由，不进诊断规则。
+
+**待点点**：review 分支 `coach/plan-adjustment`（`git log main..coach/plan-adjustment` / `git diff main...coach/plan-adjustment`）→ 决定 merge。**未碰 main、未 push**。工作树仅 `output/ref_pan_trajectory.csv`（先前联调 regenerable 产物，与 ④ 无关）。
