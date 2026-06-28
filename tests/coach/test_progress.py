@@ -105,3 +105,15 @@ def test_comparison_verdicts_vs_baseline():
 def test_comparison_empty_history_info_verdict():
     rows = build_comparison([], {"linearity": {"med": 0.15}})
     assert rows[0]["verdict"] == "info"
+
+
+def test_progress_report_plan_fields_default_none():
+    """新字段 plan/plan_narration 默认 None，向后兼容旧构造。"""
+    from kovaak_tracker.coach.progress import ProgressReport
+    rep = ProgressReport(
+        trend_figure=None, comparison_figure=None,
+        comparison_table=[], progress_narration=None,
+    )
+    assert rep.plan is None
+    assert rep.plan_narration is None
+    assert rep.notes == []

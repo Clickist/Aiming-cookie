@@ -34,6 +34,8 @@ class ProgressReport:
     comparison_figure: Any
     comparison_table: list[dict]
     progress_narration: str | None
+    plan: Any = None              # TrainingPlan | None（分层：progress 数据层不依赖 planning，用 Any）
+    plan_narration: str | None = None
     notes: list[str] = field(default_factory=list)
 
 
