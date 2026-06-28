@@ -82,3 +82,43 @@ def test_build_progress_report_empty_history(tmp_path):
     rep = build_progress_report(p, _summary(), backend=None)
     assert any("首次" in n for n in rep.notes)
 
+
+# --- plan integration tests (④ Task 4) ---
+
+def test_build_progress_report_includes_plan(tmp_path):
+    """build_progress_report 应产出 TrainingPlan + schedule_note。"""
+    p = tmp_path / "sessions.jsonl"
+    p.write_text(
+        '{"timestamp":"2026-06-01","video_ref":"old.mp4","cm_per_360":48,'
+        '"summary":{"linearity":{"med":0.25},"sparc":{"med":-9.0},'
+        '"decel_frac":{"med":0.80},"reverse_ratio":{"med":0.30},'
+        '"peak_speed_deg":{"med":90}},'
+        '"profile":{},"issues":[],"narration":null}\n',
+        encoding="utf-8",
+    )
+    cur = {k: {"med": v} for k, v in {
+        "linearity": 0.17, "sparc": -6.0, "decel_frac": 0.74,
+        "reverse_ratio": 0.22, "peak_speed_deg": 110,
+    }.items()}
+    rep = build_progress_report(p, cur, ref_summary=None, backend=None)
+    assert rep.plan is not None
+    assert "每周" in rep.plan.schedule_note or "间隔" in rep.plan.schedule_note
+    assert rep.plan_narration is None  # backend=None
+
+
+def test_build_progress_report_plan_narration_best_effort(tmp_path):
+    """backend 失败时 plan_narration=None + note，plan 结构照常返回。"""
+    p = tmp_path / "sessions.jsonl"
+    p.write_text(
+        '{"timestamp":"2026-06-01","video_ref":"v.mp4","cm_per_360":48,'
+        '"summary":{"linearity":{"med":0.20}},'
+        '"profile":{},"issues":[],"narration":null}\n',
+        encoding="utf-8",
+    )
+    class _Boom:
+        def generate(self, s, u):
+            raise RuntimeError("down")
+    rep = build_progress_report(p, {"linearity": {"med": 0.18}}, backend=_Boom())
+    assert rep.plan is not None
+    assert any("不可用" in n for n in rep.notes)
+
