@@ -6,7 +6,8 @@ from __future__ import annotations
 from ..advice import advise, compare_table
 from .diagnosis import build_diagnosis, CoachReport
 from .visualization import build_figures, build_trend_figure, build_comparison_figure
-from .narrator import generate_narration, generate_progress_narration
+from .narrator import generate_narration, generate_progress_narration, generate_plan_narration
+from .planning import build_plan
 from .progress import (
     save_session, load_history, build_trend, build_comparison, ProgressReport,
 )
@@ -43,26 +44,38 @@ def build_report(summary, reference_summary=None, meta=None,
 
 def build_progress_report(history_path, current_summary, ref_summary=None,
                           meta=None, backend: LLMBackend | None = None) -> ProgressReport:
-    """Trend + comparison + progress narration over saved history."""
+    """Trend + comparison + plan + narrations over saved history."""
+    meta = meta or {}
     history = load_history(history_path)
     trend = build_trend(history)
     comparison = build_comparison(history, current_summary, ref_summary)
+
+    # 处方场景池：现跑 advise（自包含，纯函数开销可忽略）
+    findings = advise(current_summary, ref_summary, cm_per_360=meta.get("cm_per_360"))
+    plan = build_plan(trend, comparison, history, findings)
 
     notes: list[str] = []
     if not history:
         notes.append("首次分析，无历史可比")
 
-    narration = None
+    progress_narration = None
+    plan_narration = None
     if backend is not None:
         try:
-            narration = generate_progress_narration(trend, comparison, backend)
+            progress_narration = generate_progress_narration(trend, comparison, backend)
         except Exception as e:
             notes.append(f"进步讲解不可用: {e}")
+        try:
+            plan_narration = generate_plan_narration(plan, backend)
+        except Exception as e:
+            notes.append(f"计划讲解不可用: {e}")
 
     return ProgressReport(
         trend_figure=build_trend_figure(trend),
         comparison_figure=build_comparison_figure(comparison),
         comparison_table=comparison,
-        progress_narration=narration,
+        progress_narration=progress_narration,
+        plan=plan,
+        plan_narration=plan_narration,
         notes=notes,
     )
