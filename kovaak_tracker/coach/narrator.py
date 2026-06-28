@@ -13,6 +13,7 @@ from dataclasses import asdict
 
 from .diagnosis import CoachDiagnosis
 from .knowledge import KNOWLEDGE
+from .planning import TrainingPlan
 from .providers import LLMBackend
 
 # 常驻框架：角色 + 讲解规则 + 铁律 + 最核心理论锚。
@@ -106,4 +107,44 @@ def generate_progress_narration(trend, comparison, backend) -> str:
 
 def _build_progress_user_prompt(trend, comparison) -> str:
     payload = {"trend": {m: series for m, series in trend.items()}, "comparison": comparison}
+    return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+PLAN_SYSTEM_PROMPT = (
+    "你是一位 KovaaK's flicking 教练，精通运动学理论（min-jerk / Becker 减速段 / "
+    "submovement / Fitts / SPARC / contextual interference）+ Voltaic 社区实践。\n"
+    "你会收到玩家的训练计划结构（JSON）：焦点指标、调整项（交错/退步/保持/休息）、"
+    "复测频率建议。请用中文写一段「下次该怎么练」的讲解（150-300 字）："
+    "先说清楚下阶段的训练重点（哪些指标停滞/退步→为什么换结构而非加量），"
+    "再给具体场景编排（强调交错而非磨单一场景），最后提醒复测节奏与休息。\n\n"
+    "【关键话术】（理论支撑，必带相关项）：\n"
+    "- 交错练习（interleaved）：多个场景交替练，虽当下手感差，但长期保留/迁移更好"
+    "（contextual interference）；新手可先块状几轮建模式再交错（渐进 hybrid）\n"
+    "- 元认知对抗：「感觉进步快≠长期记住」——磨单一场景会让人过度自信（Simon & Bjork 2001）\n"
+    "- 外部注意焦点（external focus）：提示看准星/目标/命中点，不是看手/腕——更省力、"
+    "张力浪费更少；但应在准备阶段施加（<200ms 弹道动作衰减）\n"
+    "- 休息也是训练：过度练习有 staleness/burnout 风险（Ericsson 1993）；"
+    "反馈过频损害长期学习（guidance hypothesis）\n\n"
+    "**英文术语必须配人话解释**——首次出现写成「中文（英文）」并一句话说清。\n"
+    "铁律：只基于提供的计划数据讲解，不要编造任何指标数值或未给出的信息；数据缺失就略过。"
+)
+
+
+def generate_plan_narration(plan: TrainingPlan, backend) -> str:
+    return backend.generate(PLAN_SYSTEM_PROMPT, build_plan_user_prompt(plan))
+
+
+def build_plan_user_prompt(plan: TrainingPlan) -> str:
+    payload = {
+        "focus_metrics": plan.focus_metrics,
+        "adjustments": [
+            {"kind": a.kind, "target_metric": a.target_metric,
+             "scenarios": [{"scenario": p.scenario, "reason": p.reason} for p in a.scenarios],
+             "reason": a.reason, "evidence": a.evidence}
+            for a in plan.adjustments
+        ],
+        "schedule_note": plan.schedule_note,
+        "evidence_anchors": plan.evidence_anchors,
+        "notes": plan.notes,
+    }
     return json.dumps(payload, ensure_ascii=False, default=str)
