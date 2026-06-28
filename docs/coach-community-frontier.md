@@ -135,6 +135,37 @@ Voltaic sensitivity chart（[X/Twitter 官方](https://x.com/VoltaicAim/status/1
 
 ---
 
+### 场景设计哲学（每个场景练什么）
+
+社区核心理念：**KovaaK's 的本质是 pattern learning**——每个场景有独特的目标 pattern，需要特定方法才能高分。不是"点得快"，是"学会这个场景的 pattern"（神经/肌肉记忆特定模式）。
+
+经典场景练什么（社区共识 + S5 分类）：
+
+| 场景 | 类别（S5）| 练什么 |
+|---|---|---|
+| 1w4ts / 1w6ts | static clicking（multishot）| 多目标 static + 路线规划（cluster farming）|
+| Pasu | dynamic clicking | 目标 pop 后 flick + click（加速→减速完整循环）|
+| Multiclick | static clicking | 落点精度 + micro correction（小目标密集）|
+| Pokeball | static clicking（fire-held）| **减速/张力释放**——按住 fire 训 landing deceleration（呼应学术减速段焦点）|
+| Tile Frenzy | static clicking（speed）| 基本功 + 速度/发力 |
+| linetrace | path efficiency | 直线 flick（path_efficiency 低时专项）|
+
+Voltaic Routines 2.0 weakness 框架：smoothness / precision / speed / static / reactivity——按弱项选场景。
+
+### 高手方法（Corporate Serf 等）
+
+Corporate Serf（Celestial 级，Voltaic precise tracking 世界 #1）的训练方法（社区广泛引用）：
+- **structured progression**：按 rank 分层（Novice→Expert→Master），严格按 progression 顺序练到 Masters 再扩其他
+- **click vs hold 分离**：clicking 场景（flick+click）与 smoothness/dynamic（持续）分开练
+- **5-10 runs/scenario/session**：每场景 5-10 次，日练（Corporate Serf 自述极端个案单场景 3305 runs/55h 刷到顶峰，但**那是异常值**；常态 5-10 runs/session 持续）
+- **smoothness 早期优先**：smoothness drill（水平/垂直平滑）在 progression 早期
+- **Personal Best (PB) Method**：刷 PB——单场景持续刷到突破 plateau
+- **underflick 练习法**：故意欠冲再修，练 corrective submovement 速度（与学术 submovement 理论呼应）
+
+> 这些进 narrator 文案（"Pasu 练完整加减速循环"/"Multiclick 练落点精度"）+ 训练处方（"按 progression 分层"/"5-10 runs/session"），不进诊断规则。
+
+---
+
 ## §3 Open Questions（理论锚定但未解决）
 
 1. **Voltaic 官方排序方法**（harmonic vs arithmetic vs 几何平均 + 每子类最低分门槛）—— 需直接 voltaic.gg/about 文档
