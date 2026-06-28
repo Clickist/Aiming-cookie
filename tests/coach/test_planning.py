@@ -92,6 +92,17 @@ def test_build_plan_no_rest_when_spaced():
     assert not any(a.kind == "rest" for a in plan.adjustments)
 
 
+def test_build_plan_no_rest_when_reversed():
+    # 逆序 history（history[-1] < history[-2]）不应触发 rest（I1 回归）
+    hist = [
+        _session({}, "2026-06-01"),
+        _session({}, "2026-06-10T18:00:00"),
+        _session({}, "2026-06-10T10:00:00"),  # 比 prev 早 → gap 负
+    ]
+    plan = build_plan({}, [], hist, [])
+    assert not any(a.kind == "rest" for a in plan.adjustments)
+
+
 # --- focus 按 severity 排序 ---
 def test_build_plan_focus_severity_order():
     hist = [_session({}, f"2026-06-0{i}") for i in range(1, 5)]

@@ -58,6 +58,9 @@ class TrainingPlan:
 def build_plan(trend, comparison, history, findings) -> TrainingPlan:
     """trend/comparison/history -> adaptive TrainingPlan.
 
+    `trend` 目前未参与规则判定（stall 用 comparison.verdict，见 spec §11 Q2），
+    保留签名供未来 slope-based 停滞检测。
+
     Rules (see docs/coach-prescription-manual.md):
       verdict=worse                       -> regress_focus (换/补处方, 交错)
       verdict=same & len(history)>=N_MIN  -> interleave (渐进 hybrid + 元认知对抗)
@@ -150,7 +153,8 @@ def _maybe_rest(history) -> PlanAdjustment | None:
     if last is None or prev is None:
         return None
     gap = last - prev
-    if gap < timedelta(days=REST_GAP_DAYS):
+    # gap>=0 防逆序/未来时间戳的 history 假触发（save_session 时序下不发生，防御）
+    if timedelta(0) <= gap < timedelta(days=REST_GAP_DAYS):
         return PlanAdjustment(
             kind="rest", target_metric=None, scenarios=[],
             reason=f"最近两次复测间隔 {gap.total_seconds()/86400:.1f} 天 < {REST_GAP_DAYS}"

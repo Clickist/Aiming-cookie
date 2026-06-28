@@ -195,6 +195,16 @@ return ProgressReport(..., plan=plan, plan_narration=plan_narration, notes=notes
 
 **advice.py 改进（标后续，不阻塞 ④）**：submovement 处方分支化（Type 1 终止型 vs Type 2/3 修正型，手册 §1.2，需分类算法）、`reverse_ratio` 时长归一化（手册 §1.4）。④ 实现不依赖这些，它们是 advice 自身的精度提升项。
 
+## 11.2 实现偏差记录（2026-06-29 final whole-branch review，opus）
+
+final review 发现实现与 spec §6 的三处偏差，均判定为「实现更简洁、用户可见等价」，记录如下（改文档非改代码）：
+
+- **`trend` 参数保留未用（§6 签名含 trend）**：stall 用 `comparison.verdict` 判定（§11 Q2 确认），trend 当前不参与；保留签名 + docstring 注明，供未来 slope-based 停滞检测（§11 Q2 后续）。
+- **多 focus 场景不合并去重（§6「合并去重场景池」）**：实现按 per-metric 产独立 `PlanAdjustment`，各自带处方。理由：每个 adjustment self-contained、可独立测试；narrator/UI 可 union。无测试断言合并，用户可见结果等价。
+- **`now` 参数被丢（§6 签名 `now=None`）**：规则只用 history 的存储 timestamp，不依赖 wall-clock，故 `now` 测试 hook 不需要。
+
+final review 同时修了一处 Important：`_maybe_rest` 加 `timedelta(0) <= gap` guard 防逆序 history 假触发 rest（负 gap < REST_GAP_DAYS）+ 回归测试 `test_build_plan_no_rest_when_reversed`。
+
 ## 12. 后续（不在本次 spec）
 
 - 真实数据校准 `N_MIN` / `REST_GAP_DAYS`（同 linearity/threshold 当初，需真实趋势样本）
