@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 import cv2
 import numpy as np
@@ -14,7 +14,7 @@ from .video import get_video_metadata
 from .vision import detect_ball_by_color, detect_crosshair_by_color, frame_to_rgb, get_tracker
 
 
-ProgressCallback = Callable[[float, str | None], None]
+ProgressCallback = Callable[[float, Optional[str]], None]
 
 
 @dataclass(frozen=True)

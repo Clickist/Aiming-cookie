@@ -65,6 +65,7 @@ def detect_point_by_color(
     max_area_ratio: float = 0.05,
     max_aspect_ratio: float | None = None,
     ignore_top_ui: bool = False,
+    ignore_bottom_ui: bool = False,
 ) -> tuple[Point | None, int | None, int | None]:
     """Find the color blob closest to the screen center."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -107,6 +108,8 @@ def detect_point_by_color(
 
         if ignore_top_ui and cy < h_img * 0.12 and width > 60:
             continue
+        if ignore_bottom_ui and cy > h_img * 0.88:
+            continue
 
         dist = (cx - center_x) ** 2 + (cy - center_y) ** 2
         if dist < min_dist:
@@ -132,6 +135,7 @@ def detect_ball_by_color(
         max_area_ratio=0.05,
         max_aspect_ratio=1.3,
         ignore_top_ui=True,
+        ignore_bottom_ui=True,
     )
 
 
