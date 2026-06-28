@@ -216,7 +216,22 @@ KovaaK's 内置自动导出每次 Challenge/Training 的统计数据为 CSV 文�
 - Shots≥3 占比 <2%，可忽略
 - 汇总区包含完整的灵敏度/FOV/DPI 元数据
 
-### Phase 1：CSV Parser + 时间对齐
+### Phase 1：CSV Parser + 时间对齐 🟡 进行中（对齐逻辑已验证，真实验收待真实配套视频）
+
+**已交付：**
+- `kovaak_tracker/csv_parser.py` — `parse_stats_csv()` 解析三段式 CSV（kill 表 + summary + config），输出 `KovaaKStats` dataclass，预计算 `time_s`（场景相对秒）
+- `kovaak_tracker/aligner.py` — `align()` 把 CSV 击杀事件映射到视频帧 + 插值 ball 位置；`coverage_report()` 报告可分析样本比例
+
+**验证（真实 1w6ts CSV, 123 击杀）：**
+- Shots 分布 113/9/1（Shots≥3 = 0.8%，符合 <2%）
+- time_s 换算：首 kill 0.745s = `38.379 - 37.634` ✓
+- 多 shot kill 的 `first_shot_frame = kill_frame - TTK×fps` 精确匹配（±0.4 帧）
+- ball 位置插值与合成数据逐像素吻合
+- 全覆盖场景 99.2% 命中、10 个多 shot 全部进 track
+
+**已知现实约束：** 现有 `output/calibration_raw.csv` 是 10s 演示轨迹，与 60s CSV 不配套 → 真实覆盖率 17.9%。等有真实配套视频再验。
+
+**架构决策（lean 流程，不提前抽象）：** 新文件放扁平 `kovaak_tracker/` 下（`csv_parser.py`、`aligner.py`、`flicking.py`），未拆 `tracking/` `flicking/` 子包。复用函数直接 import，子包迁移推到后续 cleanup。
 
 #### 时间对齐方案（2026-06-10 讨论）
 
@@ -241,26 +256,44 @@ KovaaK's 内置自动导出每次 Challenge/Training 的统计数据为 CSV 文�
 
 **首批场景范围：** 只支持动态/静态各一个场景，先跑通再扩展。
 
-#### 实现步骤
+**实现状态：**
+1. ✅ CSV parser（`csv_parser.py`）
+2. ✅ `Challenge Start` → 相对时间换算（`time_s` 预计算）
+3. 🟡 场景起始帧自动检测器已写（`start_frame.py`），但**未验证**——shell 环境无 cv2，算法/阈值待真实 KovaaK's 录像调参。尚未接进 `app.py` UI（Auto-detect 按钮 → 预设进 slider）。
+4. ✅ 视频 time_s ↔ CSV Timestamp 对齐 + 插值（`aligner.py`）
+5. ⏳ 用实际 flicking 录像验证对齐精度 — 等真实配套视频
 
-1. 写 CSV parser 读取 stats 目录，解析逐击杀数据 + 汇总区元数据
-2. 实现 `Challenge Start` 解析 → 相对时间换算
-3. 实现场景起始帧自动检测（CV 检测 UI 切换）+ 用户手动校准交互
-4. 实现视频 time_s ↔ CSV Timestamp 的对齐 + 插值
-5. 用实际 flicking CSV + 对应录像验证对齐精度
+### Phase 2：Flick 轨迹提取 + 指标设计 🟡 进行中（合成数据验证通过，真实数据区分度待验）
 
-### Phase 2：Flick 轨迹提取 + 指标设计
+**已交付：** `kovaak_tracker/flicking.py`
+- `extract_flicks()` — 速度阈值扫描找运动段 + lookback 合并（保留两段式 flick 不被拆开）+ kill-cut（CSV 击杀时刻截断）
+- `compute_metrics()` — 5 个减速段指标 + 两段式检测
+- `analyze_flicks()` / `run_flicking_analysis()` — 端到端管线 + 产物导出
 
-1. 从对齐后的 CV 轨迹中提取每次 flick 的运动段（速度特征切分）
-2. 计算速度/加速度曲线，识别加速段和减速段
-3. 设计减速段质量指标（平滑度、过冲量、不对称度、端点精度等）
-4. 用实际数据验证指标区分度
+**核心认知：** KovaaK's 准星锁屏中心，移动鼠标 = 平移整个画面 → **目标屏幕速度 = flick 速度**。ball 的运动学就是 flick 运动学。
 
-### Phase 3：集成到现有系统
+**指标实现与验证（合成 3 fluid + 2 twostage）：**
 
-1. 新的分析管线（flicking analysis pipeline），与 tracking 平行
-2. Dashboard 新增 flicking 标签页
-3. 和 tracking 指标统一展示（Tension Quadrant 等）
+| 指标 | 实现 | 区分度 |
+|---|---|---|
+| 峰值速度位置 % | `(peak_idx-start)/(end-start)` | fluid 31% / twostage 21% |
+| 加减速面积比 | `trapz(accel)/trapz(decel)` | fluid 0.66 / twostage 0.34 |
+| 减速段平滑度 | `std(accel[decel_phase])` | fluid 1575 / twostage 6946（4.4×）|
+| 端点速度 | `speed[-1]` | ✓ |
+| 过冲量 | `hypot(ball - crosshair)` | ✓ |
+| 两段式检测 | `find_peaks(prominence≥0.4×peak)` ≥2 峰 | fluid→False, twostage→True，5/5 正确 |
+
+分段 5/5 正确，两段式检测 5/5 正确。**以上为合成数据验证；真实 KovaaK's flicking 录像的指标区分度未验——等 Phase 1 配套视频就绪后顺带验证。**
+
+### Phase 3：集成到现有系统 ✅ 已完成（2026-06-12）
+
+**已交付：**
+1. ✅ `run_flicking_analysis()` 端到端管线，写 `flicking_metrics.json` + `flicking_segments.csv`（与 tracking 的 `metrics.json` + `frame_errors.csv` 平行）
+2. ✅ Dashboard 新增 "Flicking" 标签页（`dashboard.py`）：4 个 summary 指标卡 + 减速平滑度柱状图 + 峰值位置柱状图 + 逐 flick 表格
+3. ✅ `dashboard_data.py` 新增 `load_flicking_data()` + 两个图表构造器
+4. ⏳ "和 tracking 指标统一展示（Tension Quadrant）" — 推迟，flicking 暂用独立减速诊断视图，Tension Quadrant 融合待指标在真实数据上验证后再做
+
+**Dashboard 行为：** tracking 数据缺失时 3 个 tracking tab 显示空状态，Flicking tab 独立可用；两者齐全时 4 tab 共存。
 
 ## 架构定位（2026-06-10 讨论）
 
