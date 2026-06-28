@@ -141,6 +141,19 @@ deep-research workflow（5 angle fan-out → 22 源 → 64 claim → 25 对抗�
 
 **workflow 透明**：遭遇大量 429 限流，部分 verify 失败，但 7 存活 claim 均 2-0/3-0/2-1 投票 + peer-reviewed 主源确认，根基扎实。
 
+### 下个 session 接续点（2026-06-29）
+
+理论底座现已**双层就位**（运动学指标层 `aim-kinematics-research.md` + 教练/反馈/习得层 `coach-theory-foundation.md`），coach 实现完成（单次 `build_report` + 跨次 `build_progress_report`），视频分析加速 7x（1111→160s）。43 测试全过，工作树仅 `output/ref_pan_trajectory.csv`（联调产物，regenerable）。
+
+下个 session 候选（按依赖/价值）：
+
+1. **④计划调整（动态处方）** — 闭环最后一块。理论已就位：CI 交错练习（§1.3）+ deliberate practice 上限（§1.2）+ guidance hypothesis（§2.2）。设计基于趋势的自适应训练计划（指标 stall → 调处方 / 推交错多场景 / 提示休息而非「练不够」）。
+2. **B 多轮对话** — Socratic + guidance fading。理论锚点：`coach-theory-foundation.md` §2.2 + §2.3。需 LLM tool-use 或对话状态管理；本地后端 tool-use 弱（可能仅 Claude 启用）。
+3. **真实联调进步讲解** — deepseek key 跑 `build_progress_report`（需先积累 ≥2 次历史 session；可用合成历史先验验趋势/对比图）。
+4. **web 前端** — Plotly 图表层已前端无关，迁 web 直接嵌。
+
+**约束提醒**（来自理论调研）：诊断规则（advice/diagnosis）只用学术根基；社区/经验层（Voltaic 流派 / target selection / sensitivity）只进 narrator 文案 + profile 标签，**不进诊断逻辑**（防随版本过时）。系统不默认「更多反馈=更好」（多模态/实时被对抗投票淘汰）。
+
 ## 2026-06-27：真实数据端到端跑通 + 流水线重构为可复用
 
 这个 session 用真实 1w6ts 录像（`6月23日.mp4` + 配套 CSV `1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv`）跑通了整条链路，并发现+修复了一个根本性问题（CSRT 不适用 flicking），最终把全流程固化成可复用、零人工校准的模块。
