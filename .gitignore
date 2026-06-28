@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+
+# videos (large: user recordings + reference downloads)
+*.mp4
+
+# throwaway analysis scripts (logic to be promoted into kovaak_tracker/)
+_tmp_*.py
