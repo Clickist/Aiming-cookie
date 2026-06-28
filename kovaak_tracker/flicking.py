@@ -374,6 +374,129 @@ def run_flicking_analysis(
     return analysis
 
 
+# === Valley segmentation + speed-fair metrics (2026-06-28) ===
+# Validated on real 1w6ts data: still-gap segmentation (extract_flicks above)
+# over-merges fast consecutive flicks, and decel_smoothness scales with peak
+# speed (corr~0.76) so it is unfair across players. These replace both for
+# reference/no-CSV analysis and cross-player comparison. Rationale + sources:
+# docs/aim-kinematics-research.md
+
+
+@dataclass(frozen=True)
+class FlickFairMetrics:
+    """Speed-fair, cross-player-comparable flick metrics.
+
+    Decel quality uses normalized/shape metrics that do not scale with peak
+    speed: ``linearity`` (decel-phase speed vs its linear fit, /peak),
+    ``reverse_ratio`` (positive-accel fraction in decel phase), ``decel_frac``.
+    Path geometry comes from the integrated pan trajectory. Angular quantities
+    use ``deg_per_px = FOV / width`` so they are comparable across resolution
+    and sensitivity.
+    """
+
+    peak_speed_deg: float
+    peak_position_pct: float
+    linearity: float        # lower = cleaner brake
+    reverse_ratio: float    # lower = monotonic decel
+    decel_frac: float       # decel-phase length / flick length
+    endpoint_peak: float    # valley speed / peak speed
+    path_efficiency: float  # straight / actual path (1 = straight)
+    path_length_deg: float
+    direction_deg: float    # overall pan direction
+
+
+def segment_by_valleys(
+    speed: np.ndarray,
+    fps: float,
+    *,
+    prom_frac: float = 0.15,
+    min_gap_s: float = 0.08,
+    min_dur_s: float = 0.06,
+) -> list[tuple]:
+    """Segment flicks by speed valleys (robust to fast consecutive flicks).
+
+    Each flick is bounded by adjacent speed valleys, so it does not rely on the
+    player fully stopping between flicks — the failure mode of
+    :func:`extract_flicks` on fast players. Returns ``(start, peak, end,
+    peak_v, duration_s)`` tuples indexing into ``speed``.
+    """
+    peakmax = float(np.nanmax(speed))
+    prom = peakmax * prom_frac
+    dist = max(1, int(fps * min_gap_s))
+    valleys, _ = find_peaks(-speed, prominence=prom, distance=dist)
+    bounds = [0] + list(valleys) + [len(speed) - 1]
+    flicks = []
+    for i in range(len(bounds) - 1):
+        s, e = bounds[i], bounds[i + 1]
+        seg = speed[s:e + 1]
+        if len(seg) < 4:
+            continue
+        p = s + int(np.argmax(seg))
+        peak_v = float(seg[p - s])
+        if peak_v < prom * 1.5:
+            continue
+        if (e - s + 1) / fps < min_dur_s:
+            continue
+        flicks.append((s, p, e, peak_v, (e - s + 1) / fps))
+    return flicks
+
+
+def compute_fair_metrics(
+    flick: tuple,
+    speed: np.ndarray,
+    accel: np.ndarray,
+    df: pd.DataFrame,
+    *,
+    deg_per_px: float,
+) -> FlickFairMetrics:
+    """Speed-fair metrics for one valley-segmented flick.
+
+    ``accel`` should be lightly smoothed (so ``reverse_ratio`` is not noise).
+    ``deg_per_px`` converts px-native pan quantities to visual degrees
+    (``deg = px * FOV / width``).
+    """
+    s, p, e, peak_v, _ = flick
+    decel = speed[p:e + 1]
+    if len(decel) >= 3:
+        t = np.arange(len(decel))
+        fit = np.polyfit(t, decel, 1)
+        resid = decel - np.polyval(fit, t)
+        linearity = float(np.sqrt(np.mean(resid ** 2)) / peak_v)
+    else:
+        linearity = float("nan")
+    da = accel[p:e + 1]
+    reverse = float(np.mean(da > 0)) if len(da) else float("nan")
+    decfrac = (e - p) / max(1.0, (e - s))
+    endpk = float(speed[e] / peak_v)
+    peak_pos = round(100.0 * (p - s) / max(1, (e - s)), 1)
+    path_eff = path_len_deg = direction = float("nan")
+    if "ball_x" in df.columns and "ball_y" in df.columns and e > s:
+        xs = df["ball_x"].astype(float).to_numpy()[s:e + 1]
+        ys = df["ball_y"].astype(float).to_numpy()[s:e + 1]
+        seg_len = float(np.sum(np.hypot(np.diff(xs), np.diff(ys))))
+        straight = float(np.hypot(xs[-1] - xs[0], ys[-1] - ys[0]))
+        if seg_len > 0:
+            path_eff = straight / seg_len
+            path_len_deg = seg_len * deg_per_px
+        if straight > 0:
+            direction = float(np.degrees(np.arctan2(ys[-1] - ys[0], xs[-1] - xs[0])))
+
+    def rnd(v, n):
+        return round(v, n) if not np.isnan(v) else float("nan")
+
+    return FlickFairMetrics(
+        peak_speed_deg=round(peak_v * deg_per_px, 2),
+        peak_position_pct=peak_pos,
+        linearity=rnd(linearity, 4),
+        reverse_ratio=rnd(reverse, 3),
+        decel_frac=round(decfrac, 3),
+        endpoint_peak=round(endpk, 3),
+        path_efficiency=rnd(path_eff, 3),
+        path_length_deg=rnd(path_len_deg, 2),
+        direction_deg=rnd(direction, 1),
+    )
+
+
 __all__ = [
     "FlickSegment",
     "FlickMetrics",
@@ -383,4 +506,7 @@ __all__ = [
     "analyze_flicks",
     "export_flicking",
     "run_flicking_analysis",
+    "FlickFairMetrics",
+    "segment_by_valleys",
+    "compute_fair_metrics",
 ]
