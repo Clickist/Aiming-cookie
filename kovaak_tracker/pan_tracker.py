@@ -19,14 +19,21 @@ score flick metrics. No manual start-frame or colour calibration required.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pandas as pd
 
+from .analysis import apply_smoothing, calc_derivative
 from .csv_parser import parse_stats_csv
-from .flicking import run_flicking_analysis
+from .flicking import (
+    _ball_speed,
+    compute_fair_metrics,
+    run_flicking_analysis,
+    segment_by_valleys,
+)
 from .settings import OUTPUT_DIR, ensure_output_dir
 from .start_frame import lock_challenge_window
 from .video import get_video_metadata
@@ -193,4 +200,120 @@ def analyze_flicking_video(
     return analysis, window
 
 
-__all__ = ["detect_targets", "compute_pan_trajectory", "analyze_flicking_video"]
+@dataclass
+class ReferenceAnalysis:
+    """Result of no-CSV reference analysis (valley-segmented, speed-fair).
+
+    ``metrics`` is a list of :class:`~flicking.FlickFairMetrics`; ``summary``
+    holds median/p75/p90 per metric. ``window`` is the ``ChallengeWindow`` used
+    (``None`` when start/end were given manually).
+    """
+
+    flicks: list
+    metrics: list
+    summary: dict
+    window: object
+    start_frame: int
+    end_frame: int
+
+
+def _summarize_reference(metrics: list, cm_per_deg) -> dict:
+    names = (
+        "peak_speed_deg", "linearity", "reverse_ratio", "decel_frac",
+        "endpoint_peak", "peak_position_pct", "path_efficiency", "path_length_deg",
+    )
+    out: dict = {}
+    for name in names:
+        vals = [
+            getattr(m, name) for m in metrics
+            if not (isinstance(getattr(m, name), float) and np.isnan(getattr(m, name)))
+        ]
+        if not vals:
+            out[name] = None
+            continue
+        a = np.array(vals, dtype=float)
+        out[name] = {
+            "med": round(float(np.median(a)), 3),
+            "p75": round(float(np.percentile(a, 75)), 3),
+            "p90": round(float(np.percentile(a, 90)), 3),
+        }
+    if cm_per_deg:
+        peaks = [
+            m.peak_speed_deg for m in metrics
+            if not (isinstance(m.peak_speed_deg, float) and np.isnan(m.peak_speed_deg))
+        ]
+        if peaks:
+            out["peak_cm_per_s"] = round(float(np.median(peaks)) * cm_per_deg, 2)
+    out["flick_count"] = len(metrics)
+    return out
+
+
+def analyze_flicking_reference(
+    video_path,
+    *,
+    duration_s: float = 60.0,
+    start_frame=None,
+    end_frame=None,
+    fov: float = 103.0,
+    cm_per_360=None,
+    ui_area_frac: float = 0.01,
+    output_dir=OUTPUT_DIR,
+    progress_callback=None,
+):
+    """No-CSV reference analysis: video only -> valley-segmented speed-fair metrics.
+
+    For downloaded reference gameplay where no KovaaK stats CSV exists. Uses
+    valley segmentation + fair metrics so results are comparable across players
+    and resolutions (see docs/aim-kinematics-research.md). Auto-locks the
+    challenge window unless ``start_frame``/``end_frame`` are given — pass them
+    manually when the auto-lock is unreliable (e.g. a clipped video with a
+    persistent HUD that trips the UI detector, which the higher default
+    ``ui_area_frac`` here mitigates).
+
+    Returns a :class:`ReferenceAnalysis`. Writes ``ref_pan_trajectory.csv``.
+    """
+    meta = get_video_metadata(video_path)
+    fps = meta.fps
+    deg_per_px = fov / meta.width
+
+    window = None
+    if start_frame is None or end_frame is None:
+        window = lock_challenge_window(
+            video_path, duration_s, fps=fps, ui_area_frac=ui_area_frac
+        )
+        start_frame = window.start_frame
+        end_frame = window.end_frame
+
+    track_df = compute_pan_trajectory(
+        video_path, start_frame, end_frame, fps=fps, progress_callback=progress_callback
+    )
+    output_dir = ensure_output_dir(Path(output_dir))
+    track_df.to_csv(output_dir / "ref_pan_trajectory.csv", index=False)
+
+    speed = _ball_speed(track_df, fps)
+    accel = calc_derivative(speed, fps)
+    win = max(5, int(fps * 0.05))
+    if win % 2 == 0:
+        win += 1
+    accel = apply_smoothing(accel, win)
+
+    flicks = segment_by_valleys(speed, fps)
+    metrics = [
+        compute_fair_metrics(f, speed, accel, track_df, deg_per_px=deg_per_px)
+        for f in flicks
+    ]
+    cm_per_deg = (cm_per_360 / 360.0) if cm_per_360 else None
+    summary = _summarize_reference(metrics, cm_per_deg)
+    return ReferenceAnalysis(
+        flicks=flicks, metrics=metrics, summary=summary, window=window,
+        start_frame=start_frame, end_frame=end_frame,
+    )
+
+
+__all__ = [
+    "detect_targets",
+    "compute_pan_trajectory",
+    "analyze_flicking_video",
+    "analyze_flicking_reference",
+    "ReferenceAnalysis",
+]
