@@ -108,3 +108,48 @@ def test_progress_prompt_contains_data_json():
 
 def test_progress_system_prompt_forbids_fabrication():
     assert "不编造" in PROGRESS_SYSTEM_PROMPT or "不要编造" in PROGRESS_SYSTEM_PROMPT
+
+
+# --- plan narration tests (④ Task 3) ---
+
+from kovaak_tracker.coach.planning import TrainingPlan, PlanAdjustment
+from kovaak_tracker.coach.narrator import (
+    generate_plan_narration, build_plan_user_prompt, PLAN_SYSTEM_PROMPT,
+)
+
+
+def _plan():
+    return TrainingPlan(
+        focus_metrics=["sparc"],
+        adjustments=[PlanAdjustment(
+            kind="interleave", target_metric="sparc", scenarios=[],
+            reason="交错多场景长期保留更好。感觉进步快≠长期记住。",
+            evidence="§4.2 渐进 hybrid",
+        )],
+        schedule_note="每周复测 2-3 次、间隔练习。",
+        evidence_anchors=["§4.2 渐进 hybrid"],
+        notes=[],
+    )
+
+
+def test_plan_system_prompt_has_anti_hallucination():
+    assert "不要编造" in PLAN_SYSTEM_PROMPT or "铁律" in PLAN_SYSTEM_PROMPT
+
+
+def test_build_plan_user_prompt_contains_plan_data():
+    payload = build_plan_user_prompt(_plan())
+    assert "sparc" in payload
+    assert "interleave" in payload
+
+
+def test_generate_plan_narration_calls_backend():
+    class _Mock:
+        def __init__(self):
+            self.calls = 0
+        def generate(self, system, user):
+            self.calls += 1
+            assert "教练" in system or "flicking" in system
+            return "计划讲解文本"
+    m = _Mock()
+    out = generate_plan_narration(_plan(), m)
+    assert out == "计划讲解文本" and m.calls == 1
