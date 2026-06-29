@@ -1,6 +1,6 @@
 # Flicking 模块进度
 
-> 最后更新：2026-06-28
+> 最后更新：2026-06-29
 
 ## 2026-06-28：方法论修正 + 分析-对比-建议流程固化
 
@@ -157,9 +157,29 @@ deep-research workflow（5 angle fan-out → 22 源 → 64 claim → 25 对抗�
 
 **关键约束**：社区内容**只进 narrator 文案 + profile 标签 + 训练处方理由**，**不进诊断规则**（学术根基 `coach-theory-foundation.md` 的领地）。时间敏感内容（顶级玩家名/rank/S5/energy 数字）定期复核。社区↔学术呼应点：micro-correction = corrective submovement。
 
+### 2026-06-29 续七：YouTube 知识接入 coach（渐进式检索 + 全维度查证）
+
+YouTube 创作者素材（MattyOW / bardOZ / Viscose 等）整理成核实过的知识文档，并接入 narrator——从「静态全量 prompt」改为「signal 驱动的渐进式检索」。
+
+| 工作 | 结果 |
+|---|---|
+| 5 份整合报告去重 | 1 份 `youtube doc/YouTube 瞄准训练内容综合.md`（10 章）|
+| 学术引用核实（gemini-grounding-search）| 剔除编造（Mariano 2024 = 真人 + 编造结论，36.75 亿实为 ZK 空投数字）、纠正（Semmler 2000 结论被颠倒、Van Beek 数字编造），保留真实文献 |
+| 全维度查证（tracking / 动态 / 流动性 / 健康 / 握法）| **全部方向准确、未发现编造**，补学术锚点（Kowler 1978 / Lisberger 2015 / Lemon 2008 / Forman 2024）|
+
+**narrator 渐进式检索**：
+
+- `coach/knowledge.py`（新）：signal → {community, cues} 知识库，12 条，KEY 与 `advice.advise()` 的 `Finding.signal` **1:1 对齐**（无 miss）。
+- `coach/narrator.py`：静态全量 SYSTEM_PROMPT → BASE 框架 + `build_system_prompt(diagnosis)`（按触发的 signal 拼装，prompt ∝ 信号数而非 KB 总量）。守住 anti-hallucination：社区知识仅供解释已给诊断，禁反推。
+- `coach/__init__.py`：`from .report import` → PEP 562 `__getattr__` 惰性导入；纯逻辑模块（narrator / advice / diagnosis / knowledge）不再被 report → visualization → numpy 拖累。
+
+**验证**：narrator 8 测试全过（含 2 个渐进式新测试）；纯逻辑测试 26 项零依赖可跑（lazy import 前 7 个 collection error）。重依赖测试（report / visualization / e2e）仍需 numpy / plotly，与本次改动无关。
+
+**结构化路线**：knowledge.py 只 flicking 一维；tracking 高潜力待结构化（SPARC 对连续有效已证实，等 signal）；动态 / 流动性中潜力；健康 / 握法性质不同（独立模块 / 配置类），不进 knowledge.py。详见记忆 `coach-knowledge-structuring-roadmap`。
+
 ### 下个 session 接续点（2026-06-29）
 
-理论底座现已**双层就位**（运动学指标层 `aim-kinematics-research.md` + 教练/反馈/习得层 `coach-theory-foundation.md`），coach 实现完成（单次 `build_report` + 跨次 `build_progress_report`），视频分析加速 7x（1111→160s）。43 测试全过，工作树仅 `output/ref_pan_trajectory.csv`（联调产物，regenerable）。
+理论底座**双层就位**（运动学指标层 + 教练/反馈/习得层），**YouTube 创作者知识已核实并接入 narrator（渐进式 signal 驱动检索）**，全维度（flicking / tracking / 动态 / 流动性 / 健康 / 握法）查证完成。coach 实现完成（单次 `build_report` + 跨次 `build_progress_report`），视频分析加速 7x（1111→160s）。纯逻辑测试 26 项零依赖可跑（lazy import 解耦）；重依赖测试待装 numpy/plotly。
 
 下个 session 候选（按依赖/价值）：
 
