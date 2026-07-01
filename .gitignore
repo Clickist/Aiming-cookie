@@ -6,3 +6,6 @@ __pycache__/
 
 # throwaway analysis scripts (logic to be promoted into kovaak_tracker/)
 _tmp_*.py
+
+# macOS filesystem metadata
+.DS_Store
