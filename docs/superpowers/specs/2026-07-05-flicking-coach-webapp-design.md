@@ -87,7 +87,7 @@
 
 | 层 | 选型 | 备注 |
 |---|---|---|
-| 前端 | Next.js 14 + Tailwind + shadcn/ui | A+D 极简风(Linear/Stripe) |
+| 前端 | Next.js 14 + Tailwind + shadcn/ui | 遵循 `DESIGN-cursor.md`(Cursor 风:暖奶油 + hairline + 杂志感) |
 | 后端 API | FastAPI | `import kovaak_tracker` 直接用 |
 | Auth | Clerk(email code OTP) | 大陆邮件可达,浏览器保留登录态 |
 | DB | Postgres 16 | 单机 Docker |
@@ -106,7 +106,7 @@
 | 结果 | 见 wireframe |
 | 历史 | 过往分析列表(日期 + 头号信号 + 一句话)→ 点进详情 |
 
-**结果页 wireframe**(A+D 风:聚焦头号问题,不堆图表):
+**结果页 wireframe**(Cursor 风:聚焦头号问题,不堆图表):
 
 ```
 ┌──────────────────────────────────────┐
@@ -139,6 +139,19 @@
 
 **设计要点**:聚焦"头号问题"大字 + 根因 + 知识 + cues + narration,其他信号折叠。**不堆 metrics 卡片墙**(那是 dashboard 难看的根源)。`knowledge.py` 12 条知识库 + cues 第一次直接亮给用户,而不是藏在 LLM prompt 里。
 
+### 设计规范(遵循 `DESIGN-cursor.md`)
+
+点点已定:前端直接用 `DESIGN-cursor.md`(Cursor 编辑器营销站设计系统)。关键 token:
+
+- **画布**:暖奶油 `#f7f7f4`(非纯白);墨色暖近黑 `#26251e`
+- **品牌色**:Cursor Orange `#f54e00`(CTA + wordmark,极少用)— 保留或换"瞄准主题色",实现时点点定
+- **字体**:CursorGothic(licensed)→ MVP 开源替代 **Inter**(weight 400 + 负 letter-spacing 杂志感);代码用 JetBrains Mono
+- **深度**:hairline(1px 边框)only,无阴影
+- **AI timeline pills**(peach/mint/blue/lavender/gold)→ 用于"分析进度"展示(追踪中 / 算指标 / 教练生成),高度契合
+- **圆角**:CTA 8px,卡片 12px
+- **节律**:80px section
+- **light + dark 双模式**:`DESIGN-cursor.md` 主要描述 light(暖奶油),dark 模式实现时按反相补(暖墨画布 + 奶油文字)
+
 ## 6. 错误处理
 
 | 场景 | 处理 |
@@ -149,6 +162,7 @@
 | LLM 超时 / 失败 | **降级**:展示诊断 + cues,不显示 narration |
 | Worker 崩 | 自动重试 1 次,再失败标 `failed`,用户可手动重试 |
 | 并发滥用 | 单用户同时只 1 个 job |
+| **LLM 限额(试用期)** | 每用户每天 **3 次**分析(防刷点点 key);超出提示"明日再来"或 Phase 3 接订阅 |
 
 ## 7. 测试策略
 
@@ -185,6 +199,7 @@
 - 视频上传慢(大陆家庭宽带上行小 + 香港服务器,需进度条 + 文案安抚)
 - Cloudflare 大陆偶抽风
 - **Clerk 验证码邮件大陆偶有延迟 / 进垃圾箱风险**(MVP 可接受,用户重试;Phase 3 可换自建 SMTP 或国内邮件服务)
+- **DESIGN-cursor.md 是 Cursor 品牌规范**,MVP 借用其视觉系统(暖奶油/hairline/杂志感);品牌名/品牌色/字体实现时调整为点点自己的(CursorGothic licensed → Inter 替代;Cursor Orange 可保留或换瞄准主题色)
 - 无多 session 计划(④ 暂未接前端)
 
 **Phase 2**(下次 spec):
