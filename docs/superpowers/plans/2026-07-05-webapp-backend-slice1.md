@@ -10,6 +10,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-05-flicking-coach-webapp-design.md`
 
+> **⚠️ 环境适配注记(2026-07-05 实现时)**:点点本机 Python 3.9.7,**无 Docker / Postgres**。本地开发改用 **SQLite**(`aiosqlite`,零配置);部署时(spec §3 香港服务器 Docker Compose)换 Postgres。Task 1-3 因此用 SQLite 语法(`BIGSERIAL→INTEGER PRIMARY KEY AUTOINCREMENT`、`JSONB→TEXT` 存 JSON、`FOR UPDATE SKIP LOCKED→BEGIN IMMEDIATE + UPDATE...LIMIT`)。**spec §4 Postgres 是部署架构**,本地开发环境分离不算偏离。点点睡醒若坚持本地也 Postgres,装 Docker 后迁。
+>
+> **执行策略**:切片 1 inline 执行(环境适配需判断 + 点点睡觉无人协调 subagent),每 task TDD + self-review,最后 dispatch final reviewer 把关。
+
 ## Global Constraints
 
 - **复用 `kovaak_tracker` 包**,不重写分析逻辑;webapp 是应用层,import 现有包
