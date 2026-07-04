@@ -9,3 +9,6 @@ _tmp_*.py
 
 # macOS filesystem metadata
 .DS_Store
+
+# webapp local SQLite (dev/test 产物)
+aiming_cookie*.db
