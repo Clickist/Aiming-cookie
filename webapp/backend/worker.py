@@ -81,11 +81,17 @@ async def process_one() -> bool:
     try:
         summary = run_analysis(job["video_path"], job["csv_path"])
         report_dict = build_report(summary)
+        from . import llm_budget
         try:
-            narration, cost = call_llm(report_dict)
-            report_dict["narration"] = narration
+            estimated_cost = _estimate_llm_cost_cny("")
+            if not await llm_budget.check_and_record(job["user_id"], estimated_cost):
+                log.warning("用户 %s 今日 LLM 超额,降级无 narration", job["user_id"])
+                cost = 0.0
+            else:
+                narration, cost = call_llm(report_dict)
+                report_dict["narration"] = narration
         except Exception as e:
-            log.warning("LLM 失败,降级无 narration: %s", e)
+            log.warning("LLM 调用失败,降级无 narration: %s", e)
             cost = 0.0
         await queue.mark_done(sid, report_dict, cost)
     except Exception as e:
