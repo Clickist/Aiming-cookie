@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
-from typing import Tuple
 
 from . import queue
 from .config import LLM_PROVIDER
@@ -12,45 +10,37 @@ from .config import LLM_PROVIDER
 log = logging.getLogger(__name__)
 
 
-# --- 包装 kovaak_tracker(隔离 + 便于 mock;真实对接 Task 8 E2E 校准)---
+# --- 包装 kovaak_tracker(隔离 + 便于 mock)---
 
 def run_analysis(video_path: str, csv_path: str) -> dict:
-    """调 kovaak_tracker.analyze_flicking_video,返回 summary dict。
+    """调 kovaak_tracker.analyze_flicking_video,返回 FlickAnalysis.summary。
 
-    实际签名/返回结构在 Task 8 E2E 对照真实接口调整。
+    analyze_flicking_video 返回 (FlickAnalysis, ChallengeWindow);
+    FlickAnalysis.summary 是 {metric: {"med": v, ...}} dict(build_report 期望格式)。
     """
     from kovaak_tracker.pan_tracker import analyze_flicking_video
-    return analyze_flicking_video(video_path, csv_path)
+    fa, _window = analyze_flicking_video(video_path, csv_path)
+    return fa.summary
 
 
-def build_report(summary: dict) -> dict:
-    """调 coach.build_report,返回结构化诊断(dataclass → dict)。"""
+def run_report(summary: dict, backend) -> dict:
+    """调 coach.build_report(传 backend 拿 narration),返回 CoachReport dict。
+
+    build_report 内部 best-effort 调 generate_narration:LLM 失败时 narration=None
+    + notes 记错,**不崩**。所以 worker 不用单独 try LLM。
+    """
     from dataclasses import asdict, is_dataclass
-    from kovaak_tracker.coach.report import build_report as _br
-    report = _br(summary)
+    from kovaak_tracker.coach.report import build_report
+    report = build_report(summary, backend=backend)
     if is_dataclass(report):
         return asdict(report)
     return {"_raw": str(report)}
 
 
-def call_llm(report_dict: dict) -> Tuple[str, float]:
-    """调 DeepSeek 生成 narration,返回 (文本, 成本 ¥)。失败 raise。
-
-    report_dict → CoachDiagnosis 的重建在 Task 8 E2E 按真实字段对接。
-    """
+def _load_backend():
+    """加载 LLM backend(DeepSeek 默认,providers.json 配置)。"""
     from kovaak_tracker.coach.providers import load_backend
-    from kovaak_tracker.coach.narrator import generate_narration
-    backend = load_backend(LLM_PROVIDER)
-    diagnosis = _diagnosis_from_report(report_dict)
-    narration = generate_narration(diagnosis, backend)
-    cost = _estimate_llm_cost_cny(narration)
-    return narration, cost
-
-
-def _diagnosis_from_report(report_dict: dict):
-    """从 report dict 取 CoachDiagnosis 给 narrator。Task 8 E2E 调整真实字段。"""
-    d = report_dict.get("diagnosis") if isinstance(report_dict, dict) else None
-    return d if d is not None else report_dict
+    return load_backend(LLM_PROVIDER)
 
 
 def _estimate_llm_cost_cny(text: str, input_tokens: int = 2000) -> float:
@@ -58,7 +48,7 @@ def _estimate_llm_cost_cny(text: str, input_tokens: int = 2000) -> float:
 
     真实 token 数要 backend 返回 usage,切片 3 部署时接 DeepSeek 真实字段。
     """
-    output_tokens = len(text) // 2  # 中文 ~2 字/token
+    output_tokens = len(text or "") // 2  # 中文 ~2 字/token
     return input_tokens * 1e-6 * 1 + output_tokens * 1e-6 * 2
 
 
@@ -80,19 +70,16 @@ async def process_one() -> bool:
     sid = job["id"]
     try:
         summary = run_analysis(job["video_path"], job["csv_path"])
-        report_dict = build_report(summary)
         from . import llm_budget
-        try:
-            estimated_cost = _estimate_llm_cost_cny("")
-            if not await llm_budget.check_and_record(job["user_id"], estimated_cost):
-                log.warning("用户 %s 今日 LLM 超额,降级无 narration", job["user_id"])
-                cost = 0.0
-            else:
-                narration, cost = call_llm(report_dict)
-                report_dict["narration"] = narration
-        except Exception as e:
-            log.warning("LLM 调用失败,降级无 narration: %s", e)
+        estimated_cost = _estimate_llm_cost_cny("")
+        if not await llm_budget.check_and_record(job["user_id"], estimated_cost):
+            log.warning("用户 %s 今日 LLM 超额,narration 跳过", job["user_id"])
+            report_dict = run_report(summary, backend=None)
             cost = 0.0
+        else:
+            backend = _load_backend()
+            report_dict = run_report(summary, backend=backend)
+            cost = _estimate_llm_cost_cny(report_dict.get("narration") or "")
         await queue.mark_done(sid, report_dict, cost)
     except Exception as e:
         log.exception("分析失败 session=%s", sid)
