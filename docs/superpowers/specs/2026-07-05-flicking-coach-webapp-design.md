@@ -162,7 +162,7 @@
 | LLM 超时 / 失败 | **降级**:展示诊断 + cues,不显示 narration |
 | Worker 崩 | 自动重试 1 次,再失败标 `failed`,用户可手动重试 |
 | 并发滥用 | 单用户同时只 1 个 job |
-| **LLM 限额(试用期)** | 每用户每天 **3 次**分析(防刷点点 key);超出提示"明日再来"或 Phase 3 接订阅 |
+| **LLM 限额(试用期)** | **不限次数,限金额**:每用户每天 ¥X 上限(后端按 token 计费累计);DeepSeek 单次约 ¥0.003 → 金额限制宽松,故**叠加并发限制**(单用户同时 1 个 job)防脚本刷。具体金额睡醒定 |
 
 ## 7. 测试策略
 
@@ -199,7 +199,7 @@
 - 视频上传慢(大陆家庭宽带上行小 + 香港服务器,需进度条 + 文案安抚)
 - Cloudflare 大陆偶抽风
 - **Clerk 验证码邮件大陆偶有延迟 / 进垃圾箱风险**(MVP 可接受,用户重试;Phase 3 可换自建 SMTP 或国内邮件服务)
-- **DESIGN-cursor.md 是 Cursor 品牌规范**,MVP 借用其视觉系统(暖奶油/hairline/杂志感);品牌名/品牌色/字体实现时调整为点点自己的(CursorGothic licensed → Inter 替代;Cursor Orange 可保留或换瞄准主题色)
+- **产品名:Aiming Cookie**(对应 GitHub repo `Clickist/Aiming-cookie`);品牌色 MVP 默认 Cursor Orange(点点看渲染再调);字体 Inter 替代 licensed CursorGothic;DESIGN-cursor.md 视觉系统(暖奶油/hairline/杂志感)直接借用
 - 无多 session 计划(④ 暂未接前端)
 
 **Phase 2**(下次 spec):
@@ -221,7 +221,9 @@
 - **账号提到 MVP**:点点要结果对应账号持久化 + 访问,且为 Phase 2 ④ 计划铺路
 - **单机 Docker Compose**:MVP 流量小,简化运维;Phase 3 扩展再拆服务
 - **邮箱 OTP 而非 magic link**:留在本页输码,体验连贯(Linear/Vercel 同款)
-- **A+D 极简风**:点点否决了 dashboard(数据仪表盘风,信息密度高),聚焦头号问题、其他折叠
+- **设计遵循 DESIGN-cursor.md**:点点否决 dashboard(信息密度高),选 Cursor 风(暖奶油 + hairline + 杂志感 + AI timeline pills 契合分析进度展示)
+- **产品名 Aiming Cookie**:点点定,对应 GitHub repo
+- **LLM 限金额不限次数**:DeepSeek 单次约 ¥0.003(极便宜),金额限制宽松,故叠加并发限制(单用户同时 1 个 job)防脚本刷
 
 ## 关联
 
