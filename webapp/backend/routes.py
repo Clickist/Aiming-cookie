@@ -27,8 +27,13 @@ async def analyze(
     if len(content) > MAX_VIDEO_BYTES:
         raise HTTPException(413, "视频超过 100MB 限制")
 
-    video_path = VIDEO_TMP_DIR / f"{x_user_id}_{video.filename}"
-    csv_path = VIDEO_TMP_DIR / f"{x_user_id}_{csv.filename}"
+    # 文件名 sanitize:uuid 防冲突 + 防路径遍历(不信任用户 filename)
+    import os
+    import uuid
+    video_ext = os.path.splitext(video.filename or "video.mp4")[1] or ".mp4"
+    csv_ext = os.path.splitext(csv.filename or "stats.csv")[1] or ".csv"
+    video_path = VIDEO_TMP_DIR / f"{x_user_id}_{uuid.uuid4().hex[:8]}{video_ext}"
+    csv_path = VIDEO_TMP_DIR / f"{x_user_id}_{uuid.uuid4().hex[:8]}{csv_ext}"
     video_path.write_bytes(content)
     csv_path.write_bytes(await csv.read())
 
