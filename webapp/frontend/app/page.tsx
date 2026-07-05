@@ -221,7 +221,7 @@ export default function HomePage() {
                 placeholder="e.g. 48"
               />
               <p className="text-label-sm text-on-surface-variant/70 -mt-xs">
-                KovaaK&apos;s 设置里读取（CSV 不直接含 cm/360，公式估算不准）
+                后端从 CSV 自动算(DPI + Horiz Sens + game yaw 表)。想最准:KovaaK&apos;s 里选 &quot;cm/360&quot; scale,Horiz Sens 直接是 cm/360。也可手填覆盖。
               </p>
 
               {/* FOV — auto-filled from CSV config block on CSV select */}
