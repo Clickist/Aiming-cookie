@@ -12,15 +12,71 @@ log = logging.getLogger(__name__)
 
 # --- 包装 kovaak_tracker(隔离 + 便于 mock)---
 
-def run_analysis(video_path: str, csv_path: str) -> dict:
-    """调 kovaak_tracker.analyze_flicking_video,返回 FlickAnalysis.summary。
+def run_analysis(
+    video_path: str, csv_path: str,
+    cm_per_360: float | None = None, fov: float | None = None,
+) -> tuple[dict, dict]:
+    """调 kovaak_tracker.analyze_flicking_fair_summary,返回 (summary, extras)。
 
-    analyze_flicking_video 返回 (FlickAnalysis, ChallengeWindow);
-    FlickAnalysis.summary 是 {metric: {"med": v, ...}} dict(build_report 期望格式)。
+    cm_per_360 / fov 优先用 caller 传的(用户填);若 None,从 CSV fallback:
+      - fov:csv_parser stats.fov(KovaaK CSV 的 FOV 字段)
+      - cm_per_360:csv_parser stats.cm_per_360(DPI + Horiz Sens + Sens Scale yaw 表)
+    传给 analyze_flicking_fair_summary 影响 deg_per_px(fov) + peak_cm_per_s(cm/360)。
     """
-    from kovaak_tracker.pan_tracker import analyze_flicking_video
-    fa, _window = analyze_flicking_video(video_path, csv_path)
-    return fa.summary
+    from kovaak_tracker.csv_parser import parse_stats_csv
+    from kovaak_tracker.pan_tracker import analyze_flicking_fair_summary
+
+    # CSV fallback(若 caller 没传):从 KovaaK CSV config 块读真实值
+    if cm_per_360 is None or fov is None:
+        stats = parse_stats_csv(csv_path)
+        if cm_per_360 is None:
+            cm_per_360 = stats.cm_per_360
+        if fov is None:
+            fov = stats.fov
+
+    summary, extras = analyze_flicking_fair_summary(
+        video_path, csv_path, fov=fov, cm_per_360=cm_per_360, return_extras=True,
+    )
+    return summary, extras
+
+
+def _build_timeline(extras: dict) -> list[dict]:
+    """把 analyze_flicking_fair_summary 的 extras 转成 timeline events 列表。
+
+    schema(routes.get_session_timeline 消费):
+        {"frame": int, "time_s": float, "type": str, "label": str}
+    types: "kill" | "peak" | "corrective"。flicking pipeline 没有 miss 概念
+    (那是 tracking 的事),所以这里不产 miss markers。
+    """
+    if not isinstance(extras, dict):
+        return []
+    fps = extras.get("fps") or 60
+    if fps <= 0:
+        fps = 60
+    events: list[dict] = []
+
+    def _add(frame: int, type_: str, label: str) -> None:
+        if frame is None or frame < 0:
+            return
+        events.append({
+            "frame": int(frame),
+            "time_s": round(frame / fps, 3),
+            "type": type_,
+            "label": label,
+        })
+
+    for flick in extras.get("flicks") or []:
+        peak_frame = flick.get("peak_frame")
+        if peak_frame is not None:
+            _add(peak_frame, "peak", "速度峰值")
+    for frame in extras.get("corrective_frames") or []:
+        _add(frame, "corrective", "修正")
+    for frame in extras.get("kill_frames") or []:
+        _add(frame, "kill", "击杀")
+
+    # 按 frame 升序排,方便前端顺序渲染。
+    events.sort(key=lambda e: e["frame"])
+    return events
 
 
 def run_report(summary: dict, backend) -> dict:
@@ -50,12 +106,16 @@ def _load_backend():
     return load_backend(LLM_PROVIDER)
 
 
-def _estimate_llm_cost_cny(text: str, input_tokens: int = 2000) -> float:
+def _estimate_llm_cost_cny(
+    text: str, input_tokens: int = 2000, min_output_tokens: int = 500,
+) -> float:
     """DeepSeek deepseek-chat 粗估:¥1/1M input,¥2/1M output。
 
     真实 token 数要 backend 返回 usage,切片 3 部署时接 DeepSeek 真实字段。
+    min_output_tokens 给保守下界——预检查时 narration 还没生成,按至少
+    500 output 估算,避免低估让预算检查形同虚设(review:之前传空串 cost≈0)。
     """
-    output_tokens = len(text or "") // 2  # 中文 ~2 字/token
+    output_tokens = max(len(text or "") // 2, min_output_tokens)  # 中文 ~2 字/token
     return input_tokens * 1e-6 * 1 + output_tokens * 1e-6 * 2
 
 
@@ -76,7 +136,11 @@ async def process_one() -> bool:
         return False
     sid = job["id"]
     try:
-        summary = run_analysis(job["video_path"], job["csv_path"])
+        summary, extras = run_analysis(
+            job["video_path"], job["csv_path"],
+            cm_per_360=job.get("cm_per_360"), fov=job.get("fov"),
+        )
+        timeline_events = _build_timeline(extras)
         from . import llm_budget
         estimated_cost = _estimate_llm_cost_cny("")
         if not await llm_budget.check_and_record(job["user_id"], estimated_cost):
@@ -87,11 +151,15 @@ async def process_one() -> bool:
             backend = _load_backend()
             report_dict = run_report(summary, backend=backend)
             cost = _estimate_llm_cost_cny(report_dict.get("narration") or "")
+        # 注入 timeline markers(独立于 coach pipeline,LLM 走降级也保留)
+        report_dict["timeline"] = timeline_events
         await queue.mark_done(sid, report_dict, cost)
+        # 视频不再删除——coach 页 /api/sessions/{id}/video 需要播放。
+        # sessions.video_path 字段已记录路径,文件保留在 VIDEO_TMP_DIR。
+        # 归档/清理策略由部署层另行处理(磁盘累积风险,点点 TODO)。
     except Exception as e:
         log.exception("分析失败 session=%s", sid)
         await queue.mark_failed(sid, str(e))
-    finally:
         _delete_video_safely(job["video_path"])
     return True
 

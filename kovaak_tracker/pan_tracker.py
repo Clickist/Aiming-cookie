@@ -337,12 +337,19 @@ def analyze_flicking_fair_summary(
     ui_area_frac: float = 0.01,
     output_dir=OUTPUT_DIR,
     progress_callback=None,
+    return_extras: bool = False,
 ):
     """CSV-mode fair-summary entry (PROGRESS A).
 
     Same shape as ``analyze_flicking_reference``'s summary, but driven by a
     KovaaK stats CSV (duration from kills) instead of a manual duration. This
     unblocks the user's own CSV recordings for the coaching pipeline.
+
+    ``return_extras=True`` additionally returns a second element: a dict of
+    timeline-friendly metadata (fps, duration_frames, per-flick landmarks,
+    kill frames, corrective markers) for callers that want to build video
+    timeline markers. Defaults to False so existing callers keep getting a
+    bare summary dict.
     """
     import math
     stats = parse_stats_csv(csv_path)
@@ -371,7 +378,57 @@ def analyze_flicking_fair_summary(
         for f in flicks
     ]
     cm_per_deg = (cm_per_360 / 360.0) if cm_per_360 else None
-    return _summarize_reference(metrics, cm_per_deg)
+    summary = _summarize_reference(metrics, cm_per_deg)
+
+    if not return_extras:
+        return summary
+
+    # track_df is indexed from window.start_frame; flick tuple indices reference
+    # this DataFrame. Map each flick's idx back to the absolute video frame and
+    # time so the timeline markers line up with the player's video scrubber.
+    frames_col = track_df["frame"].to_numpy() if "frame" in track_df.columns else None
+    duration_frames = int(window.end_frame - window.start_frame + 1)
+
+    def _abs(idx: int) -> int:
+        if frames_col is not None and 0 <= idx < len(frames_col):
+            return int(frames_col[idx])
+        return int(window.start_frame + idx)
+
+    flick_records = []
+    corrective_frames = []
+    for flick, m in zip(flicks, metrics):
+        s_idx, p_idx, e_idx, peak_v, dur_s = flick
+        flick_records.append({
+            "start_frame": _abs(s_idx),
+            "peak_frame": _abs(p_idx),
+            "end_frame": _abs(e_idx),
+            "peak_speed_px": round(float(peak_v), 2),
+            "duration_s": round(float(dur_s), 4),
+        })
+        # Corrective submovements sit in the deceleration tail after the peak.
+        # Approximate the corrective marker at the midpoint between peak and end
+        # (submovement centroid, not exact) — good enough for a timeline pin.
+        if getattr(m, "corrective_count", 0) and m.corrective_count > 0:
+            mid = p_idx + max(1, (e_idx - p_idx) // 2)
+            corrective_frames.append(_abs(mid))
+
+    # Kills: csv time_s → absolute video frame via the locked window.
+    # window.start_frame is the video frame at scenario t=0.
+    kill_frames = []
+    for t_s in stats.kills["time_s"].tolist():
+        try:
+            kill_frames.append(int(round(window.start_frame + float(t_s) * fps)))
+        except (TypeError, ValueError):
+            continue
+
+    extras = {
+        "fps": int(fps),
+        "duration_frames": duration_frames,
+        "flicks": flick_records,
+        "kill_frames": kill_frames,
+        "corrective_frames": corrective_frames,
+    }
+    return summary, extras
 
 
 __all__ = [

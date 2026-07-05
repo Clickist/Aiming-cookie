@@ -20,7 +20,7 @@ def test_build_report_without_backend():
 
 def test_build_report_llm_failure_degrades():
     class _Boom:
-        def generate(self, s, u):
+        def messages_create(self, *, system, messages, tools, max_tokens=2048):
             raise RuntimeError("network down")
     r = build_report(_summary(), None, {}, backend=_Boom())
     assert r.narration is None
@@ -116,7 +116,7 @@ def test_build_progress_report_plan_narration_best_effort(tmp_path):
         encoding="utf-8",
     )
     class _Boom:
-        def generate(self, s, u):
+        def messages_create(self, *, system, messages, tools, max_tokens=2048):
             raise RuntimeError("down")
     rep = build_progress_report(p, {"linearity": {"med": 0.18}}, backend=_Boom())
     assert rep.plan is not None

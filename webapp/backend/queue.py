@@ -6,12 +6,15 @@ from typing import Optional
 from .db import get_conn
 
 
-async def enqueue(user_id: str, video_path: str, csv_path: str) -> int:
+async def enqueue(
+    user_id: str, video_path: str, csv_path: str,
+    cm_per_360: float | None = None, fov: float | None = None,
+) -> int:
     conn = await get_conn()
     cur = await conn.execute(
-        "INSERT INTO sessions(user_id, video_path, csv_path) "
-        "VALUES(?, ?, ?) RETURNING id",
-        (user_id, video_path, csv_path),
+        "INSERT INTO sessions(user_id, video_path, csv_path, cm_per_360, fov) "
+        "VALUES(?, ?, ?, ?, ?) RETURNING id",
+        (user_id, video_path, csv_path, cm_per_360, fov),
     )
     row = await cur.fetchone()
     await conn.commit()
@@ -43,7 +46,8 @@ async def claim_next() -> Optional[dict]:
             (sid,),
         )
         cur = await conn.execute(
-            "SELECT id, user_id, video_path, csv_path FROM sessions WHERE id=?",
+            "SELECT id, user_id, video_path, csv_path, cm_per_360, fov "
+            "FROM sessions WHERE id=?",
             (sid,),
         )
         claimed = await cur.fetchone()
@@ -70,6 +74,22 @@ async def mark_failed(session_id: int, error: str) -> None:
         "UPDATE sessions SET status='failed', error=?, "
         "updated_at=CURRENT_TIMESTAMP WHERE id=?",
         (error, session_id),
+    )
+    await conn.commit()
+
+
+async def add_llm_cost(session_id: int, delta: float) -> None:
+    """累加 LLM cost 到已 done 的 session(用于 chat 等非 worker 路径记账)。
+
+    worker 路径用 mark_done 一次性设 cost;chat 在 session 已 done 后追加,
+    用 UPDATE 累加,这样下次 llm_budget.check_and_record 反映真实累计
+    (避免反复调 chat 绕过日预算限制)。
+    """
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE sessions SET llm_cost_cny = COALESCE(llm_cost_cny, 0) + ?, "
+        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (delta, session_id),
     )
     await conn.commit()
 

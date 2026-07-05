@@ -96,6 +96,41 @@ KNOWLEDGE = {
             "复测 linearity/reverse 是否下降，没降就调回——别迷信 sens 一致性",
         ],
     },
+    # ============================================================
+    # Tracking signals (spec 2026-07-05-tracking-coach-design §4.3)
+    # ============================================================
+    "accuracy low": {
+        "community": "Voltaic tracking benchmark 健康线 70%+；命中率是 tracking 金标准量。",
+        "cues": ["pasu 练连续追踪基础", "VT Multiclick 30% larger 练落点精度"],
+    },
+    "loss count high": {
+        "community": "频繁断追踪 = 速度匹配跟不上目标变向（MattyOW reactive tracking 概念）。",
+        "cues": ["VT reactive tracking 应对瞬时加速度", "Clover Raw Control 速度匹配 + 侧向挤压稳准星"],
+    },
+    "off target long": {
+        "community": "脱靶后回位慢 = 视觉重新锁定延迟（catch-up saccade 文献）。",
+        "cues": ["VT evasive tracking 练视觉读取", "锁定目标整体运动矢量，不被局部小动作干扰"],
+    },
+    "avg error high": {
+        "community": "临界命中（Fitts：精度 = 1/目标宽）。bardOZ 推荐带 gap 准星，注意力锁中心。",
+        "cues": ["VT precise tracking 专项", "用带 gap 准星，注意力集中在空隙中心"],
+    },
+    "speed mismatch high": {
+        "community": "smooth pursuit 速度匹配（Kowler 1978）——目标屏幕速度快时失手多。",
+        "cues": ["VT control tracking 持续中速追踪", "前臂大平稳位移 + 手腕抵消微小误差"],
+    },
+    "accel mismatch high": {
+        "community": "reactive tracking（Voltaic S5 子类）——目标瞬时变向时失手。",
+        "cues": ["VT reactive tracking 应对瞬时加速度", "极短张力爆发应对变向，随后立即释放"],
+    },
+    "ptc high": {
+        "community": "张力预算（Viscose）：手部张力是有限预算，超支会震颤并剥夺视觉读取（lockout）。",
+        "cues": [
+            "暴露疗法：高 sens + 低 FOV 精准追踪放大微颤，逼大脑修正张力分配",
+            "侧向挤压鼠标侧面而非向下垂直按压——侧向给纯摩擦力控制",
+            "（生物力学假设，未 EMG 验证；作提示性诊断，需结合 SPARC / 反向修正一起读）",
+        ],
+    },
 }
 
 
