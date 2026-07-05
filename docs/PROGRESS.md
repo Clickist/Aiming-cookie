@@ -288,3 +288,73 @@ KovaaK 3.9.x 另在 `performances/` 生成 `.perf`（与 CSV 同名配对）。�
 **理论锚点（全学术根基进规则）**：§1.3 CI 交错 / §1.2 Ericsson 训练量上限 / §2.2 guidance hypothesis + Simon&Bjork 2001 元认知过度自信。社区经验（VDIM/weakness-specific/技术要领）只进 narrator 文案 + 处方理由，不进诊断规则。
 
 **待点点**：review 分支 `coach/plan-adjustment`（`git log main..coach/plan-adjustment` / `git diff main...coach/plan-adjustment`）→ 决定 merge。**未碰 main、未 push**。工作树仅 `output/ref_pan_trajectory.csv`（先前联调 regenerable 产物，与 ④ 无关）。
+
+## 2026-07-05 webapp 切片 1+2(后端 API+Worker / 前端骨架)状态 + 暴露问题
+
+> ⚠️ **下个 session 必读**:暴露了真实项目债,点点判定"降智",开新 session 重来。问题全记录于此。
+
+### 完成
+- **spec** `docs/superpowers/specs/2026-07-05-flicking-coach-webapp-design.md`:产品 Aiming Cookie,FastAPI + Next.js + DeepSeek,香港部署不备案,品牌色 Cursor Orange
+- **切片 1(后端 API+Worker)已 merge main**(14 commit):FastAPI POST/GET + SQLite 队列(BEGIN IMMEDIATE 替代 SKIP LOCKED)+ Worker + LLM 金额限额;22 单元测试 + 1 E2E(6月23日.mp4 真实视频 161s 跑通)
+- **切片 2(前端骨架)分支 `webapp-slice2-frontend`**(未 merge,6 commit):Next.js 16 + Tailwind v4 + DESIGN-cursor tokens + 上传/等待/结果页;`npm run build` 过
+
+### 🔴 核心问题(webapp 后端不通的根)
+
+**1. coach 系统是 tracking 时代的,跟 flicking scope 冲突**
+- memory `current-scope-flicking-only` 明确"只管 flicking",**我没贯彻**
+- `coach/build_report` + `advise` + `knowledge.py` 12 signals 全是 tracking 时代(PTC/J-E Ratio)写的
+- 期望 summary 格式:`{peak_speed_deg, linearity, sparc, reverse_ratio, decel_frac, ...}`
+- 我切片 1 直接 `build_report(flicking summary)` 是错的——硬把 flicking 塞进 tracking 教练
+
+**2. `analyze_flicking_video` 仍用旧指标(PROGRESS [A] 待办,`flicking-aim-coach.md` §7 明确)**
+- `analyze_flicking_video` 走旧 `run_flicking_analysis`(静止间隙切分 + 旧 `decel_smoothness`)
+- 实测产 summary keys:`flick_count, median_decel_smoothness, median_peak_position_pct, avg_peak_speed...`
+- **不是公平指标**(`decel_frac/sparc/linearity` 等)。advise 不认 → `diagnosis.issues=[]` → ResultView 空
+- 文档 §7 原话:"让 `analyze_flicking_video` 也输出公平 summary(复用 `segment_by_valleys` + `compute_fair_metrics`)是 PROGRESS [A]——最小改动,解锁完整流程,应最先做"
+- **webapp 后端不通的根因就在此**:我跳过 PROGRESS [A] 直接接 build_report
+- DB `aiming_cookie_dev.db` session 1 实测:`status=done` 但 `issues=[]` + `narration=None`
+
+**3. LLM narration 没 key**
+- worker 调 DeepSeek,`DEEPSEEK_API_KEY` 没设 → Connection error → build_report best-effort catch → `narration=None`
+- `notes: ['讲解不可用: Connection error.']`
+
+### 🟡 前端问题
+
+**4. 非常丑(点点 review)**
+- DESIGN-cursor tokens 配了(`globals.css` @theme inline v4),Inter 字体装了
+- 原生 file input → DropZone(虚线+图标+拖拽)改了
+- 但点点说"非常难看",具体哪没说(没截图)。可能:暖奶油没渲染?布局粗糙?没视觉冲击?
+- **没真验证渲染**(我没浏览器,点点只说丑)
+
+### ⚙️ 环境折腾记录(Windows)
+
+**5. uvicorn `--reload` 孤儿进程**
+- 8000 端口被孤儿占,杀不掉:`Get-WmiObject` 没匹配;Git Bash `taskkill /F` 被转义成 `F:/`;`Stop-Process` 杀不掉 reloader
+- 临时换 8001(`lib/api.ts` 默认改 8001),8000 孤儿仍在(重启电脑才能清)
+
+**6. 切片 2 测试忘了启 worker 进程**
+- 只启了 uvicorn(API),session 卡 queued 轮询几十次(我的疏忽)
+- worker 启动后 session 1 才跑完
+
+### 修复路径(下个 session 决定)
+
+**根问题是 PROGRESS [A]**:`analyze_flicking_video` 接公平指标。两条:
+- **(a) 正路**:做 PROGRESS [A]——改 `analyze_flicking_video` 用 `segment_by_valleys` + `compute_fair_metrics` 产公平 summary。然后 worker → build_report → advise 自然 work(coach 设计本身 OK)
+- (b) worker 改用 `analyze_flicking_reference`(无 CSV,已跑通公平指标)——但要配套无 CSV 录像路径
+
+**(a) 是正路**。文档早说了"应最先做",我跳过才撞墙。
+
+### ④ 计划调整也是 tracking 时代的债
+
+- `build_plan` 用 `findings`(来自 advise)→ 间接依赖 tracking advise
+- ④ 已 merge main,但 flicking scope 下也是债
+- 暂不展开,先解决 PROGRESS [A]
+
+### 待点点(下个 session)
+
+1. **PROGRESS [A]**:改 `analyze_flicking_video` 接公平指标(正路)
+2. **前端重做**:点点 review 具体丑在哪,按 DESIGN-cursor.md 重做
+3. **设 `DEEPSEEK_API_KEY`**(环境变量)
+4. **清 8000 孤儿**(或重启电脑)
+5. **切片 2 分支 `webapp-slice2-frontend` 处理**:merge / 重做 / 弃
+6. **重读** `docs/flicking-aim-coach.md`(flicking coach 设计基础,我之前没读是大错)
