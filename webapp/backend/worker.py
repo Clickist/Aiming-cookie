@@ -28,13 +28,20 @@ def run_report(summary: dict, backend) -> dict:
 
     build_report 内部 best-effort 调 generate_narration:LLM 失败时 narration=None
     + notes 记错,**不崩**。所以 worker 不用单独 try LLM。
+    figures(plotly Figure)转 to_dict() 使其 JSON 可序列化(mark_done 要 json.dumps)。
     """
     from dataclasses import asdict, is_dataclass
     from kovaak_tracker.coach.report import build_report
     report = build_report(summary, backend=backend)
-    if is_dataclass(report):
-        return asdict(report)
-    return {"_raw": str(report)}
+    d = asdict(report) if is_dataclass(report) else {"_raw": str(report)}
+    # plotly Figure 不可 JSON 序列化 → 转 dict
+    figures = d.get("figures")
+    if isinstance(figures, dict):
+        d["figures"] = {
+            k: (f.to_dict() if hasattr(f, "to_dict") else f)
+            for k, f in figures.items()
+        }
+    return d
 
 
 def _load_backend():
