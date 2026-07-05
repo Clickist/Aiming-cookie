@@ -47,7 +47,7 @@
 
 **两个入口**：
 - **无 CSV**（`analyze_flicking_reference`）：给一段录像就能分析，用速度谷切分 + 公平指标。适合下载高手录像做参考对比。
-- **有 CSV**（`analyze_flicking_video`）：录像 + KovaaK stats CSV，能拿到击杀时刻/命中率/灵敏度元数据。**注意**：当前仍走旧的 `run_flicking_analysis`（静止间隙切分 + 旧减速指标），统一到公平指标是已知待办（PROGRESS [A]）。
+- **有 CSV**（`analyze_flicking_fair_summary`，主线入口）：录像 + KovaaK stats CSV，能拿到击杀时刻/命中率/灵敏度元数据，已统一走 `segment_by_valleys` + `compute_fair_metrics` 产出公平 summary（PROGRESS [A]，已完成）。原 `analyze_flicking_video`（旧 `run_flicking_analysis` 静止间隙切分 + `decel_smoothness`）是历史入口，不再推荐。
 
 **建议模块目前对接的是 reference 模式产出的公平 summary**——这是完整跑通的链路。
 
@@ -152,13 +152,13 @@ CSRT 单目标追踪在快速甩枪段丢目标，forward-fill 在缺口恢复�
 ## 7. 当前状态与后续
 
 ### 已就绪 ✅
-- **`kovaak_tracker.coach.build_report`**：完整单次 coaching 输出（画像 + 三层根因链 + 5 类可视化 + LLM 讲解），含 PROGRESS [A] CSV 统一入口。设计见 `docs/superpowers/specs/2026-06-28-ai-aim-coach-design.md`，25 测试全过
+- **`kovaak_tracker.coach.build_report`**：完整单次 coaching 输出（画像 + 三层根因链 + 5 类可视化 + LLM 讲解），消费 `analyze_flicking_fair_summary` 产出的公平 summary（PROGRESS [A]，已完成）。设计见 `docs/superpowers/specs/2026-06-28-ai-aim-coach-design.md`，25 测试全过
 - 无 CSV 参考模式（`analyze_flicking_reference`）：录像 → 公平指标 → summary，完整跑通
 - `advise` / `compare_table`：消费公平 summary 输出诊断 + 对比表
 - 真实验证：你（48 cm/360）vs 高手（80 cm/360）的 1w6ts 对比，产出 4+ findings
 
 ### 已知缺口（诚实记录）
-1. **有 CSV 模式未统一**：`analyze_flicking_video` 仍走旧的 `run_flicking_analysis`（静止间隙切分 + 旧减速指标 `decel_smoothness`）。让它也输出公平 summary（复用 `segment_by_valleys` + `compute_fair_metrics`）是 PROGRESS [A]——最小改动，解锁完整流程，应最先做。
+1. **有 CSV 模式 PROGRESS [A]——已完成**：`analyze_flicking_fair_summary`（在 `pan_tracker.py`）已统一走 `segment_by_valleys` + `compute_fair_metrics`，产出公平 summary；webapp 后端 worker（Phase 1A）已切换到这个入口。原 `analyze_flicking_video`（旧 `run_flicking_analysis` 静止间隙切分 + `decel_smoothness`）仍是历史入口，不再推荐使用。
 2. **throughput 接线**：reference 模式（无 CSV）拿不到目标宽度 W → NaN。完整接线需 `detect_targets` 的目标尺寸 → `compute_fair_metrics(target_width_deg=...)`。
 3. **阈值校准**：`sparc_low` / `two_stage_overlap` 是理论初始值，需真实数据校准（同 linearity / decel_frac 当初的轨迹）。
 4. **目标检测类指标未实现**：overshoot / reaction / target_selection——需要单目标落点追踪，噪声大，属后续二期。
