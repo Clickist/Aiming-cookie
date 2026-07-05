@@ -71,9 +71,9 @@ export default function ReportView({ report, sessionId }: ReportViewProps) {
             <div className="glass-card p-xl flex flex-col md:flex-row justify-between items-start md:items-end gap-md relative overflow-hidden">
               <div className="z-10 w-full md:w-2/3">
                 <span className="inline-block bg-surface-container-highest text-on-surface px-sm py-base rounded-full font-mono text-label-sm uppercase mb-sm tracking-widest">
-                  Player Archetype
+                  Player archetype
                 </span>
-                <h1 className="text-display-lg text-on-surface mb-sm tracking-tight">
+                <h1 className="font-display text-display-lg text-on-surface mb-sm tracking-tight">
                   {profile.label}
                 </h1>
                 {profile.secondary_tags.length > 0 && (
@@ -107,7 +107,7 @@ export default function ReportView({ report, sessionId }: ReportViewProps) {
           <div className="editorial-grid">
             {/* Coach narration (8 cols, left orange border) */}
             <section className="col-span-12 md:col-span-8 glass-card p-xl border-l-4 border-l-primary">
-              <h2 className="text-headline-sm text-on-surface mb-md flex items-center gap-xs">
+              <h2 className="font-display text-headline-sm text-on-surface mb-md flex items-center gap-xs">
                 <span className="font-mono text-primary font-bold">§</span>
                 教练讲解
               </h2>
@@ -150,8 +150,8 @@ export default function ReportView({ report, sessionId }: ReportViewProps) {
 
             {/* Prioritized issues (7 cols) */}
             <section className="col-span-12 md:col-span-7 space-y-md">
-              <h2 className="text-headline-sm text-on-surface mb-sm px-base">
-                Prioritized Mechanical Issues
+              <h2 className="font-display text-headline-sm text-on-surface mb-sm px-base">
+                Prioritized mechanical issues
               </h2>
               {issues.length === 0 ? (
                 <div className="glass-card p-md">
@@ -195,13 +195,17 @@ export default function ReportView({ report, sessionId }: ReportViewProps) {
           <div className="flex gap-md items-center w-full md:w-auto">
             <button
               type="button"
-              className="flex-grow md:flex-none px-xl py-md bg-surface-container border border-outline text-on-surface font-mono text-label-md uppercase tracking-widest hover:bg-surface-container-high transition-colors"
+              disabled
+              title="待接通(切片 4)"
+              className="flex-grow md:flex-none px-xl py-md bg-transparent border border-outline text-on-surface-variant/60 font-mono text-label-md uppercase tracking-widest cursor-not-allowed"
             >
               导出 PDF
             </button>
             <button
               type="button"
-              className="flex-grow md:flex-none px-xl py-md bg-secondary-container text-on-secondary-container font-mono text-label-md uppercase tracking-widest hover:brightness-110 transition-all border border-outline-variant"
+              disabled
+              title="待接通(切片 4)"
+              className="flex-grow md:flex-none px-xl py-md bg-transparent border border-outline text-on-surface-variant/60 font-mono text-label-md uppercase tracking-widest cursor-not-allowed"
             >
               复测
             </button>

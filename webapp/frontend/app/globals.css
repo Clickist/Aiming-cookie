@@ -23,7 +23,7 @@
   --color-surface-container-high: #372620;
   --color-surface-container-highest: #43302a;
 
-  --color-on-surface: #e6e5e0;
+  --color-on-surface: #fadcd3;
   --color-on-surface-variant: #807d72;
 
   --color-primary: #f54e00;
@@ -69,6 +69,7 @@
   /* ---- typography ---- */
   --font-sans: "Inter", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: var(--font-outfit), "Outfit", "Microsoft YaHei", "PingFang SC", ui-sans-serif, system-ui, sans-serif;
 
   /* ---- spacing (editorial rhythm) ---- */
   --spacing-base: 4px;
@@ -143,6 +144,10 @@
   color-scheme: dark;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 html,
 body {
   background-color: var(--color-background);
@@ -151,6 +156,29 @@ body {
   font-family: var(--font-sans), "Inter", ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Visible focus ring for keyboard navigation (redesign: a11y requirement). */
+*:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Balance headings to prevent orphaned words (redesign polish). */
+h1, h2, h3 {
+  text-wrap: balance;
+}
+
+/* Subtle grain overlay to break digital flatness (redesign surface upgrade). */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* Editorial hairline: 1px outline tokens are the primary divider — see DESIGN.md

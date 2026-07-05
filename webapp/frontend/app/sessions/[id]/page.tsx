@@ -212,7 +212,7 @@ export default function SessionProcessingPage({
     if (status === null) return "连接中…";
     if (status === "queued") return "排队中…";
     if (status === "running") return "分析中…";
-    return "Loading Report";
+    return "Loading report";
   })();
 
   return (
@@ -243,11 +243,11 @@ function TopAppBar() {
   return (
     <header className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-md border-b border-outline-variant">
       <div className="max-w-[var(--spacing-container-max)] mx-auto px-md lg:px-lg h-16 flex items-center justify-between">
-        <span className="font-headline-sm text-headline-sm font-bold text-primary">
-          Cookie AI
+        <span className="font-display text-headline-sm font-bold text-primary">
+          Aiming Cookie
         </span>
         <span className="hidden md:inline text-label-md text-on-surface-variant/60">
-          Processing Analysis…
+          Processing analysis…
         </span>
       </div>
     </header>
@@ -263,7 +263,7 @@ function Header({ statusLabel }: { statusLabel: string }) {
           {statusLabel}
         </span>
       </div>
-      <h1 className="font-display-lg text-display-lg text-on-surface mb-sm tracking-tight">
+      <h1 className="font-display font-display-lg text-display-lg text-on-surface mb-sm tracking-tight">
         正在构建你的<span className="text-primary italic">饼干</span>策略
       </h1>
       <p className="text-body-lg text-on-surface-variant max-w-[32rem] mx-auto">
@@ -363,7 +363,7 @@ function CoachTipCard({ tip }: { tip: { tag: string; body: string } }) {
           <BulbIcon className="w-5 h-5 text-primary" />
         </div>
         <div>
-          <h3 className="font-headline-sm text-headline-sm text-on-surface mb-xs flex items-center gap-xs">
+          <h3 className="font-display text-headline-sm text-on-surface mb-xs flex items-center gap-xs">
             教练小贴士
             <span className="text-label-sm uppercase bg-primary/5 px-2 py-0.5 rounded text-primary">
               {tip.tag}
@@ -421,7 +421,7 @@ function ErrorCard({
           <WarnIcon className="w-5 h-5 text-error" />
         </div>
         <div className="flex-1">
-          <h3 className="font-headline-sm text-headline-sm text-on-surface mb-xs">
+          <h3 className="font-display text-headline-sm text-on-surface mb-xs">
             {title}
           </h3>
           <p className="text-body-md text-on-surface-variant leading-relaxed break-words">
@@ -473,7 +473,7 @@ function CheckIcon({ className }: IconProps) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={2.5}
+      strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}

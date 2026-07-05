@@ -15,6 +15,11 @@ aiming_cookie*.db
 aiming_cookie*.db-shm
 aiming_cookie*.db-wal
 
+# taste-skill (frontend design skill — development tool, not project code)
+.agents/
+.claude/skills/
+skills-lock.json
+
 # secrets (LLM API keys etc.)
 .env
 .env.*
