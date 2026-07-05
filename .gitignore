@@ -12,3 +12,10 @@ _tmp_*.py
 
 # webapp local SQLite (dev/test 产物)
 aiming_cookie*.db
+aiming_cookie*.db-shm
+aiming_cookie*.db-wal
+
+# secrets (LLM API keys etc.)
+.env
+.env.*
+*.secret

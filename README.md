@@ -72,9 +72,9 @@ prog = build_progress_report("output/history/sessions.jsonl", current_summary, b
 
 ## tracking 部分（早期，待重构）
 
-`app.py` / `Analyze.py` / `dashboard.py` 是早期 tracking（跟枪）分析器。
+`app.py` / `Analyze.py`（CLI 仍可跑）是早期 tracking（跟枪）分析器；`dashboard.py` 已在 Phase 1B 删除（webapp 前端 `webapp/frontend/` 接替）。
 
-> **注意**：早期 README 提到的 **J/E Ratio / TBR (Tension Balance Ratio) 在代码中尚未实现**——`analysis.py` 只有 PTC（Pure Tension Coeff）。tracking 部分待重构对齐文档。
+**理论状态**：早期 README / CLAUDE.md 提到的 **J/E (Jitter/Error) Ratio / TBR (Tension Balance Ratio) 已确认不成立**——`analysis.py` 实际只有 PTC（公式 `mean(a_rel | miss) / max(mean(error_px | miss), 1.0)`），J/E Ratio 在代码中没有独立实现（字面最贴近的就是 PTC 本身），TBR 没有可计算定义、其 1.8/0.6 阈值在仓库内无任何推导或人群标定来源。**"Pure Tension Coeff"命名误导**：它不是直接测肌肉张力（张力需手部摄像头/EMG 验证）。tracking coach v1 不依赖 PTC/J-E/TBR，改用 accuracy / loss_count / off_time / avg_error 等 solid 量——详见 [`docs/superpowers/specs/2026-07-05-tracking-coach-design.md`](docs/superpowers/specs/2026-07-05-tracking-coach-design.md) §2。
 
 ## 后续
 

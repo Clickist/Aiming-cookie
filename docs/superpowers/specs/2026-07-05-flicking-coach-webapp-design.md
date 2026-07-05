@@ -41,7 +41,7 @@
 |---|---|
 | Next.js 前端 | 上传/等待/结果/历史/登录页 |
 | FastAPI 后端 API | 接收上传、入队、查询、auth 中间件 |
-| Worker(异步进程) | 跑 `analyze_flicking_video` + `build_report` + LLM narration |
+| Worker(异步进程) | 跑 `analyze_flicking_fair_summary` + `build_report` + LLM narration |
 | Postgres | 用户映射 + 结果历史 + 任务队列(`FOR UPDATE SKIP LOCKED`) |
 | Nginx | 反代 + HTTPS |
 
@@ -69,7 +69,7 @@
 ```
 用户上传 mp4+csv
   → FastAPI 校验 + 入队 Postgres + 临时存视频(/tmp)
-  → Worker 消费 → 跑 analyze_flicking_video (~160s)
+  → Worker 消费 → 跑 analyze_flicking_fair_summary (~160s)
                 → build_report(诊断)
                 → DeepSeek narration(后端调,key 在环境变量)
                 → 结果写 Postgres(关联 user_id)
@@ -83,11 +83,13 @@
 - `sessions`:一次分析记录(id, user_id, video_meta, status, created_at, ...)
 - `diagnosis_results`:诊断结果(session_id, signals, metrics, narration, cues, ...)
 
+> **实现状态(2026-07-05)**:当前 webapp 后端(`webapp/backend/db.py`)只有 **`sessions` 一张表**(SQLite,`user_id` 硬编码 `'dev'`),没有 `users` 表、没有 Clerk auth、没有 per-user 配额。`diagnosis_results` 内联在 sessions 表(`signals` / `metrics` / `narration` / `cues` 列)。`users` + auth + per-user 配额 **Phase 2D 决定要加**(Wave 2D,见 `docs/PROGRESS.md` 2026-07-05 续 + webapp 切片 1+2 记录)。
+
 ## 4. 技术栈
 
 | 层 | 选型 | 备注 |
 |---|---|---|
-| 前端 | Next.js 14 + Tailwind + shadcn/ui | 遵循 `DESIGN-cursor.md`(Cursor 风:暖奶油 + hairline + 杂志感) |
+| 前端 | Next.js 16 + Tailwind v4 + shadcn/ui | 遵循 `DESIGN-cursor.md`(Cursor 风:暖奶油 + hairline + 杂志感)。实际版本见 `webapp/frontend/package.json`(Next.js 16.2.10 / React 19) |
 | 后端 API | FastAPI | `import kovaak_tracker` 直接用 |
 | Auth | Clerk(email code OTP) | 大陆邮件可达,浏览器保留登录态 |
 | DB | Postgres 16 | 单机 Docker |
@@ -158,7 +160,7 @@
 |---|---|
 | 上传格式错 / 缺 CSV | 前端校验,红字提示 |
 | 视频太大 | 限 100MB,超出提示 |
-| 目标检测失败 / CSRT 崩 | job `failed` + 返回"已知限制"说明(`PROGRESS.md` 那 6 条) |
+| 目标检测失败 / 视频分析异常 | job `failed` + 返回"已知限制"说明(`PROGRESS.md` 那 6 条) |
 | LLM 超时 / 失败 | **降级**:展示诊断 + cues,不显示 narration |
 | Worker 崩 | 自动重试 1 次,再失败标 `failed`,用户可手动重试 |
 | 并发滥用 | 单用户同时只 1 个 job |
