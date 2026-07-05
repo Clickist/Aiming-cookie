@@ -358,3 +358,132 @@ KovaaK 3.9.x 另在 `performances/` 生成 `.perf`（与 CSV 同名配对）。�
 4. **清 8000 孤儿**(或重启电脑)
 5. **切片 2 分支 `webapp-slice2-frontend` 处理**:merge / 重做 / 弃
 6. **重读** `docs/flicking-aim-coach.md`(flicking coach 设计基础,我之前没读是大错)
+
+## 2026-07-05 续：上述诊断修正
+
+> 这一段是后一个 session 的修正,不重写上面的历史——上面记录的是当时 session 的真实判断,留下来路。下面是事后核实的事实。
+
+### 修正 1:advise / build_report / knowledge.py 不是"tracking 时代"
+
+**上面"核心问题 1"判断错了**。审计 `kovaak_tracker/advice.py:64-197` 的 `advise()`,它消费的 signal 全是 flicking 公平指标(`decel_frac` / `linearity` / `sparc` / `reverse_ratio` / `submovement_overlap` / `peak_position` / `path_efficiency` / `peak_speed_deg` / `throughput` / `cm_per_360`),不是 tracking 的 PTC/J-E Ratio。`coach/knowledge.py` 12 条 KNOWLEDGE 也全是 flicking signal(sparc low / decel_frac high 等)。
+
+也就是说:**coach 系统从一开始就是按 flicking 公平指标设计的**,"硬把 flicking 塞进 tracking 教练"这个诊断是反的——它本来就是 flicking 教练。
+
+### 修正 2:真问题是 worker 调错入口函数(Phase 1A 已修)
+
+webapp 后端不通的真原因:**worker 切片 1 调的是 `analyze_flicking_video`(旧 `run_flicking_analysis`,产 `decel_smoothness` 等旧 key)**,而 `advise()` 期望的是公平 summary keys(`decel_frac` / `sparc` 等)。所以 summary 喂进去全部 `None`-skip,`findings=[]`,`issues=[]`,ResultView 空。
+
+**Phase 1A 已修**:`webapp/backend/worker.py:21-22` 已改为调 `analyze_flicking_fair_summary`(`pan_tracker.py`),它直接返回 `{metric: {med, p75, p90}, ...}` 公平 summary。这就是上面"修复路径 (a)"的正路落地。
+
+### 修正 3:dashboard 已删(Phase 1B)
+
+`dashboard.py`(Streamlit)已在 Phase 1B 从仓库删除。webapp 前端(`webapp/frontend/`,Next.js 16 + Tailwind v4 + Cursor 风设计系统)接替展示层。tracking 分析代码(`app.py` / `Analyze.py` / `analysis.py` / `tracking.py` / `vision.py`)仍保留待 v1 重构。
+
+### 修正 4:④ 计划调整也不是"tracking 时代的债"
+
+`build_plan` 用 `findings`(来自 `advise()`)→ 因为 advise 本来就是 flicking 规则(见修正 1),④ 计划调整在 flicking scope 下是有效的,不是债。
+
+## 2026-07-05 续二：webapp frontend 重写 + coach agent + tracking v1
+
+接修正 1-4 后分三个 phase 推进,所有改动**截至本段写作时仍在工作树未 commit**。
+
+### Phase 1：worker 入口修复 + dashboard 删除
+
+- **1A**：`webapp/backend/worker.py` 入口从 `analyze_flicking_video` 改为 `analyze_flicking_fair_summary`(`pan_tracker.py`),直接返回 `{metric: {med, p75, p90}, ...}` 公平 summary。`advise()` 终于收到正确的 keys,`findings` 不再空。E2E 真实视频跑通。
+- **1B**：`dashboard.py` + `kovaak_tracker/dashboard_data.py` 从仓库删除。webapp 前端接替展示层。
+
+### Phase 2：agent loop + DeepSeek + tracking v1 + chat backend
+
+- **agent loop**：新建 `kovaak_tracker/coach/agent.py`(替换 narrator.py 单次 LLM,运行时入口)。3 个 narration 入口(`narrate_diagnosis` / `narrate_progress` / `narrate_plan`)+ 1 个 chat 入口(`chat_with_coach`),共用 tool-use loop。`agent_tools.py`(tool schema + handlers)+ `agent_kb.py`(按 signal / topic 索引的预备知识切片)配套。防幻觉铁律:诊断 payload 是 ground truth,数值必须来自 payload 或 tool 切片。`narrator.py` 保留作 manual fallback。
+- **DeepSeek 接通**：`coach/providers.py` DeepSeek 后端调通(OpenAI 兼容 endpoint)。
+- **tracking coach v1**：新建 `kovaak_tracker/advice_tracking.py`,7 个 signal(accuracy / loss_count / off_time / avg_error / speed / accel / ptc)。后三个标 None = uncalibrated,emit `info` / `watch` 级别(spec §7 解释性假设而非硬诊断)。复用 flicking `Prescription` / `Finding` dataclass,下游(diagnosis / visualization / narrator)统一。
+- **chat backend**：`POST /api/sessions/{id}/chat` + `GET /api/sessions/{id}/chat`(`webapp/backend/routes.py`)。history 持久化在 SQLite(`db.load_chat_history` / `save_chat_message`)。chat 调用 `chat_with_coach` agent 入口,失败 best-effort 降级。
+
+### Phase 3：前端 fresh 重写 + 4 屏 + Stitch 设计 + coach 页时间戳联动
+
+点点 review 旧 slice 2 前端("非常难看")后决定起 fresh。旧分支 `webapp-slice2-frontend`(暖奶油风)未 merge,代码已删。
+
+- **新前端** `webapp/frontend/`：Next.js 16 + React 19 + Tailwind v4,**dark 风落地**
+- **4 屏全齐**:
+  - `app/page.tsx` upload(CSV 必填 + 视频上传)
+  - `app/sessions/[id]/page.tsx` processing(删渐变,dark)
+  - `app/sessions/[id]/report/` report(dark bento + Plotly chart 组件 `components/PlotlyChart.tsx`)
+  - `app/sessions/[id]/coach/` coach(左 65% `<video>` + 自定义 timeline,右 35% 聊天;点 chat 消息跳视频时间点)
+- **设计依据**:`stitch_cursor_design_system/`(点点用 Stitch 跑出来的 dark 设计 + `obsidian_hearth` design tokens),多版本 dark 风 HTML 原型供参考
+- **视频流**:`GET /api/sessions/{id}/video` 流式返回给 coach 页 `<video>` 标签
+
+### 测试
+
+新增 `tests/coach/test_advice_tracking.py` / `test_agent.py` / `test_agent_chat.py` + `webapp/tests/test_routes_chat.py` / `test_routes_coach.py`。webapp 总测试数 ~40。
+
+### 待点点(下个 session)
+
+1. **分批 commit Phase 1/2/3**(目前全在工作树)
+2. **tracking 真实数据校准**:speed/accel/ptc threshold 当前是 None / 初值,需真实 tracking session 标定
+3. **timeline markers**:worker 持久化 miss-frame 时间戳到 DB,coach 页自定义 timeline 直接读
+4. **auth + per-user quota**(Wave 2D 待定)
+5. **CLAUDE.md 更新**:本 phase 改动(architecture / flicking+tracking 双 scope / agent 取代 narrator 单次)需要落进 CLAUDE.md(部分已落)
+
+## 2026-07-05 续三：全量 code review + Critical 修复 + cm/360 全链路接通
+
+接续二(Phase 1/2/3 改动堆积未 commit),用 5 个并行 subagent(同步模式)做全量 review,发现 4 Critical + 多 Warning。同时 cm/360 公式调研修正 memory 错误结论,接通全链路。
+
+### Review 方法
+
+5 个 domain 各派一个 general-purpose subagent(同步模式 `run_in_background=false`,final message 直接返回,绕开 teammate 通信坑——teammate 模式在此环境挂了:plain text 不可见 + SendMessage API 400):coach agent loop / tracking v1 / coach 核心+providers / webapp backend / webapp frontend。
+
+### Critical(4 条,已全部修复)
+
+| # | 位置 | 问题 | 修复 |
+|---|---|---|---|
+| C1 | routes.py:49-50 | X-User-Id 未校验直接拼路径 → 路径穿越 | `_USER_ID_RE` 正则 + 扩展名白名单 + 2 渗透测试 |
+| C2 | test_e2e.py:51 | 断言 `not exists` vs worker 保留视频行为相反 | 改 `assert exists` |
+| C3 | (原诊断错,见下) | cm/360 + FOV 链路断(worker 不传 + csv_parser 提取未用) | 全链路接通(见下) |
+| C4 | agent.py:229,242 | max_turns/max_tokens 返回半截 preamble 当 narration | 异常路径 `narration=None` + 2 回归测试 |
+
+### C3 cm/360 全链路接通(诊断修正 + 公式调研)
+
+**原 C3 诊断错**:agent 报"前端收集 cm/360+FOV 但 FormData 没 append,后端不用"。核实发现更严重——后端 `analyze_flicking_fair_summary` 有 `fov` + `cm_per_360` 参数且真用(pan_tracker.py:360 `deg_per_px` + :380 `cm_per_deg` + :262 `peak_cm_per_s`),但:
+1. `worker.run_analysis` 没传(用 default 103/None)
+2. `analyze_flicking_fair_summary` 内部 parse csv_parser 拿到 stats(dpi/horiz_sens/fov 属性),但只读 `stats.kills`,没用 `stats.fov`
+
+**公式调研**(点点要"搜如何计算"):Gemini grounding search(2026-07-05,WebSearch/web-search-prime 限流,用 gemini-grounding-search skill 走 Google OAuth)确认公式 `cm/360 = 914.4 / (yaw × Horiz_Sens × DPI)`,yaw 依赖 game:
+- Valorant yaw=**0.07**(第一次 Gemini 搜错说 0.022,第二次专门确认 0.07)
+- 点点 CSV(DPI 1600, Horiz Sens 0.16, Sens Scale=Valorant)→ **51.03 cm**(点点确认对,之前 memory 记 48 是记错)
+- memory `kovaak-cm360-approx-wrong` 原结论"公式不准"已修正——根因是漏 yaw 因子,含 yaw 后公式完全准确
+
+**全链路接通**:
+- `csv_parser.py`:加 `GAME_YAW` 表(Valorant=0.07, Source/CSGO/Quake/Apex/Fortnite=0.022, OW/OW2/COD=0.0066) + `cm_per_360` 属性(含 KovaaK's `"cm/360"` scale 特殊处理——Horiz Sens 直接是 cm/360)
+- `db.py`:sessions 表加 `cm_per_360` + `fov` 列 + migration(`_migrate_add_column_if_missing`,兼容旧 db)
+- `queue.py`:enqueue 接收 + claim_next 返回
+- `routes.py`:`/analyze` 加 Form 字段(`Optional[float]`,Python 3.9 兼容——`float | None` 在 3.9 FastAPI 反射失败)
+- `worker.py`:`run_analysis` 从 job 读 + csv_parser fallback → 传 `analyze_flicking_fair_summary`
+- 前端:撤回 disabled + FormData append cm_per_360 + fov
+
+**数据流**:用户 UI 填(主) > CSV `csv_parser.cm_per_360` fallback(DPI + Horiz Sens + Sens Scale yaw 表) > None。
+
+### LLM 预算三连(部分修)
+
+- **W2** `worker.py _estimate_llm_cost_cny("")` 空字符串 cost≈0 → 加 `min_output_tokens=500` 保守下界(已修)
+- **W1** `routes.py` chat 不调 budget → 加 `check_and_record` 预检查(429) + `queue.add_llm_cost` 累加记账(已修)
+- budget wrapper(架构性,所有 LLM 入口统一走 budget)未做,跟点点决策
+
+### 未修(跟下个 phase 决策)
+
+- IDOR / session ownership check:跟 slice 3 Clerk
+- budget wrapper 架构性修复
+- 其余 Warning/Nit:chat 长度上限 / history 无界 / 轮询退避 / RSC localhost / 图标 aria-label / 导出 PDF 占位 / font-headline-sm 无效 utility / next lint 废弃等
+
+### 验证
+
+- coach 全套 **108 passed**(含 C4 的 2 新回归测试)
+- webapp 全套 **44 passed**(含 C1 的 2 新渗透测试)
+- 前端 `npm run build` ✓绿(TypeScript 全过,3 静态 + 3 动态路由)
+- cm/360 e2e 验证:点点真实 CSV → `cm_per_360=51.03, fov=103.0`(公式对)
+
+### 待点点
+
+1. **commit 策略**:本轮修复 + Phase 1/2/3 + cm/360 接通叠加在同文件,无法文件级分离。建议按主题分 commit(review fix / cm/360 接通 / Phase 1/2/3)。
+2. budget wrapper 架构性修复
+3. IDOR 跟 Clerk
+4. Warning/Nit backlog
