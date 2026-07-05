@@ -4,7 +4,7 @@
 点点睡醒后设环境变量跑:
     E2E_VIDEO="6月23日.mp4" E2E_CSV="stats.csv" pytest webapp/tests/test_e2e.py -v -s
 
-验证:Worker ↔ kovaak_tracker 真实衔接(analyze_flicking_video → FlickAnalysis.summary
+验证:Worker ↔ kovaak_tracker 真实衔接(analyze_flicking_fair_summary → fair-summary dict
 → build_report(backend=) → CoachReport)。真实 LLM 需配 DeepSeek key,无 key 时
 build_report best-effort(narration=None)。
 """
@@ -47,5 +47,6 @@ async def test_full_pipeline_real_video():
     s = await queue.get_session(sid)
     assert s["status"] == "done"
     assert isinstance(s["result"], dict)
-    # 视频源文件已删(隐私)
-    assert not os.path.exists(s["video_path"])
+    # 视频保留——coach 页 /api/sessions/{id}/video 流式播放依赖此文件。
+    # worker 成功路径不删(仅失败路径删),与 worker.process_one 现行行为一致。
+    assert os.path.exists(s["video_path"])
