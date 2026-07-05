@@ -33,7 +33,7 @@ interface CoachViewProps {
   archetypeLabel: string;
 }
 
-const STARTER_CHIPS = ["减速段分析", "握持建议", "0:12 异常点"];
+const STARTER_CHIPS = ["减速段分析", "握持建议", "我的反向修正太多?"];
 const SPEED_OPTIONS = [0.5, 1, 2] as const;
 
 /** 区间时间戳,如 "0:12-0:15"。点 = seek 到 start,高亮 [start, end]。 */
@@ -161,7 +161,7 @@ export default function CoachView({ sessionId, archetypeLabel }: CoachViewProps)
           href={`/sessions/${sessionId}/report`}
           className="text-primary text-label-md flex items-center gap-1 hover:opacity-80 transition-opacity"
         >
-          <span className="material-symbols-outlined text-sm">arrow_back</span>
+          <span className="material-symbols-outlined text-sm" aria-hidden="true">arrow_back</span>
           返回报告
         </Link>
       </header>
@@ -515,16 +515,13 @@ function ChatPane({ sessionId, archetypeLabel }: ChatPaneProps) {
       <div className="flex items-center justify-between px-md py-sm border-b border-outline bg-surface-container shrink-0">
         <div className="flex items-center gap-sm">
           <div className="w-8 h-8 rounded bg-primary-container flex items-center justify-center">
-            <span className="material-symbols-outlined text-on-primary-container text-md">
+            <span className="material-symbols-outlined text-on-primary-container text-base">
               psychology
             </span>
           </div>
           <div className="flex flex-col">
             <span className="font-sans text-label-md font-bold text-on-surface">
               AI 教练 · {archetypeLabel} 专项
-            </span>
-            <span className="text-[10px] text-on-surface-variant uppercase tracking-tighter font-mono">
-              Neural Analysis Mode
             </span>
           </div>
         </div>
@@ -533,7 +530,7 @@ function ChatPane({ sessionId, archetypeLabel }: ChatPaneProps) {
           className="text-on-surface-variant hover:text-on-surface transition-colors"
           aria-label="返回报告"
         >
-          <span className="material-symbols-outlined text-sm">open_in_full</span>
+          <span className="material-symbols-outlined text-sm" aria-hidden="true">close</span>
         </Link>
       </div>
 
@@ -625,6 +622,7 @@ function ChatPane({ sessionId, archetypeLabel }: ChatPaneProps) {
               type="button"
               onClick={lockCurrentTime}
               title="锁定当前时间轴"
+              aria-label="锁定当前时间轴"
               className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors mb-1"
             >
               <span className="material-symbols-outlined text-sm">push_pin</span>
@@ -633,10 +631,11 @@ function ChatPane({ sessionId, archetypeLabel }: ChatPaneProps) {
               type="button"
               onClick={() => void send(input)}
               disabled={!input.trim() || sending}
+              aria-label="发送消息"
               className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-on-primary hover:brightness-110 active:scale-95 transition-all mb-1 mr-1 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <span
-                className="material-symbols-outlined text-md"
+                className="material-symbols-outlined text-base"
                 style={{ fontVariationSettings: "'FILL' 1" }}
               >
                 send
