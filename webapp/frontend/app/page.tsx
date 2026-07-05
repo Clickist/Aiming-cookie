@@ -166,13 +166,13 @@ export default function HomePage() {
         </nav>
       </header>
 
-      <main className="flex-1 w-full max-w-[1120px] mx-auto px-md pt-xl pb-xl">
+      <main className="flex-1 w-full max-w-[var(--spacing-container-max)] mx-auto px-md pt-xl pb-xl">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-lg">
           {/* Left column: hero + drop zone */}
           <section className="lg:col-span-8 flex flex-col gap-lg">
             <div>
-              <h1 className="text-display-lg text-on-surface tracking-tight">
-                Analyze Your Flicking
+              <h1 className="font-display text-display-lg text-on-surface tracking-tight">
+                Analyze your flicking
               </h1>
               <p className="mt-xs text-body-lg text-on-surface-variant max-w-[36rem]">
                 上传你的 KovaaK&apos;s 录像。系统会解析减速段张力、目标获取速度与微校正模式，并给出个性化诊断。
@@ -193,8 +193,8 @@ export default function HomePage() {
               className="bg-surface-container-low border border-outline rounded-lg p-md flex flex-col gap-md"
             >
               <div className="border-b border-outline pb-md">
-                <h2 className="text-headline-sm text-on-surface">
-                  Analysis Config
+                <h2 className="font-display text-headline-sm text-on-surface">
+                  Analysis config
                 </h2>
                 <p className="mt-xs text-label-sm text-on-surface-variant">
                   校准参数以获得精确结果
@@ -271,9 +271,9 @@ export default function HomePage() {
       </main>
 
       <footer className="bg-surface-container-low border-t border-outline-variant mt-auto">
-        <div className="w-full py-xl px-md flex flex-col md:flex-row justify-between items-center gap-md max-w-[1120px] mx-auto">
+        <div className="w-full py-xl px-md flex flex-col md:flex-row justify-between items-center gap-md max-w-[var(--spacing-container-max)] mx-auto">
           <div className="flex flex-col gap-xs items-center md:items-start">
-            <span className="text-headline-sm text-on-surface font-bold">
+            <span className="font-display text-headline-sm text-on-surface font-bold">
               Aiming Cookie
             </span>
             <p className="text-label-sm text-on-surface-variant">
@@ -281,13 +281,13 @@ export default function HomePage() {
             </p>
           </div>
           <div className="flex gap-md">
-            <a className="text-label-sm text-on-surface-variant hover:text-on-surface transition-colors" href="#">
+            <a className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" aria-disabled="true" title="待接通" href="#">
               Privacy Policy
             </a>
-            <a className="text-label-sm text-on-surface-variant hover:text-on-surface transition-colors" href="#">
+            <a className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" aria-disabled="true" title="待接通" href="#">
               Terms of Service
             </a>
-            <a className="text-label-sm text-on-surface-variant hover:text-on-surface transition-colors" href="#">
+            <a className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" aria-disabled="true" title="待接通" href="#">
               Contact
             </a>
           </div>
@@ -388,12 +388,13 @@ function DropZone({
           <>
             <span
               className={[
-                "text-[64px] leading-none transition-colors",
+                "material-symbols-outlined text-[64px] leading-none transition-colors",
                 dragging ? "text-primary" : "text-on-surface-variant",
               ].join(" ")}
+              style={{ fontVariationSettings: "'FILL' 1" }}
               aria-hidden
             >
-              ↑
+              upload
             </span>
             <div>
               <p className="text-headline-sm text-on-surface">
@@ -404,7 +405,7 @@ function DropZone({
               </p>
             </div>
             <span className="border border-outline px-md py-xs text-label-md text-on-surface hover:bg-surface-container-high transition-colors">
-              Select File
+              Select file
             </span>
           </>
         )}
@@ -479,7 +480,7 @@ function FileField({
         <span className="text-label-sm text-on-surface-variant truncate">
           {hint}
         </span>
-        <span className="text-label-md text-on-surface-variant">📎</span>
+        <span className="material-symbols-outlined text-label-md text-on-surface-variant">attach_file</span>
       </label>
       <input
         id={id}
