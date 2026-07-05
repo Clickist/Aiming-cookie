@@ -41,6 +41,35 @@ ARCHETYPES = [
         "label": "流体精度型",
         "conditions": {},  # positive profile: matched when no negative signals fire
     },
+    # ============================================================
+    # Tracking archetypes (spec 2026-07-05-tracking-coach-design §4.1)
+    # signal keys use space-separated form to match advice_tracking.finding.signal
+    # ============================================================
+    {
+        "id": "tension_locked",
+        "label": "张力锁定型",
+        "conditions": {"ptc high": 1.0, "accuracy low": 0.5},
+    },
+    {
+        "id": "reactive_loser",
+        "label": "反应滞后型",
+        "conditions": {"loss count high": 1.0, "off target long": 0.7},
+    },
+    {
+        "id": "precision_borderline",
+        "label": "临界精度型",
+        "conditions": {"avg error high": 1.0},
+    },
+    {
+        "id": "speed_overmatched",
+        "label": "速度超纲型",
+        "conditions": {"speed mismatch high": 1.0, "accel mismatch high": 0.7},
+    },
+    {
+        "id": "fluid_tracker",
+        "label": "流体追踪型",
+        "conditions": {},  # positive profile: matched when no negative signals fire
+    },
 ]
 
 # signal -> (symptom, physical, training) three-layer root cause.
@@ -57,4 +86,12 @@ ROOT_CAUSES = {
     "peak_position low": ("加速过急", "加速段过猛", "平衡加减速"),
     "peak_position high": ("加速拖沓", "加速不足", "果断加速"),
     "sensitivity high": ("灵敏度偏快", "cm/360 偏小，制动放大手抖", "降 sens 5-10% 实验 + 复测"),
+    # --- tracking signals (spec §4.2) ---
+    "accuracy low":          ("命中率低",         "整体速度匹配 + 微调精度不足", "pasu + VT Multiclick 落点"),
+    "loss count high":       ("频繁脱靶",         "目标变向读取 / 速度匹配跟不上", "VT reactive tracking"),
+    "off target long":       ("脱靶后回位慢",     "视觉重新锁定延迟", "VT evasive + Clover Raw Control"),
+    "avg error high":        ("误差大",           "准星虽在 target 但偏移大", "VT precise tracking + crosshair gap 意识"),
+    "speed mismatch high":   ("高速段失手",       "speed matching 上限", "VT control tracking"),
+    "accel mismatch high":   ("变向段失手",       "reactive tracking 极限", "VT reactive tracking"),
+    "ptc high":              ("可能张力偏大",     "假设：发力密集（未 EMG 验证）", "暴露疗法 + 侧向挤压"),
 }

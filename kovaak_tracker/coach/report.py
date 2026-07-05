@@ -1,25 +1,53 @@
 """End-to-end: fair summary -> CoachReport, with history persistence +
 progress reports (scope B progress loop). Wires advice + diagnosis +
-visualization + narrator, with degradation."""
+visualization + agent (tool-use), with degradation."""
 from __future__ import annotations
 
 from ..advice import advise, compare_table
+from ..advice_tracking import advise_tracking, _flatten_metrics
 from .diagnosis import build_diagnosis, CoachReport
 from .visualization import build_figures, build_trend_figure, build_comparison_figure
-from .narrator import generate_narration, generate_progress_narration, generate_plan_narration
+from .agent import narrate_diagnosis, narrate_progress, narrate_plan
 from .planning import build_plan
 from .progress import (
     save_session, load_history, build_trend, build_comparison, ProgressReport,
 )
-from .providers import LLMBackend
+from .providers import ToolUseBackend
+
+
+def _is_tracking_summary(summary) -> bool:
+    """Heuristic: tracking metrics.json shape has tension/loss groups or
+    tracking-specific scalars."""
+    if not isinstance(summary, dict):
+        return False
+    if "tension" in summary or "loss" in summary:
+        return True
+    return any(k in summary for k in ("on_target_pct", "ptc", "loss_count"))
 
 
 def build_report(summary, reference_summary=None, meta=None,
-                 backend: LLMBackend | None = None, history_path=None) -> CoachReport:
+                 backend: ToolUseBackend | None = None, history_path=None) -> CoachReport:
     meta = meta or {}
-    findings = advise(summary, reference_summary, cm_per_360=meta.get("cm_per_360"))
-    comparison = compare_table(summary, reference_summary) if reference_summary else None
-    diagnosis = build_diagnosis(findings, summary, comparison, meta)
+    summary_type = meta.get("summary_type")
+    # Route to tracking vs flicking advice (spec §5.2 — explicit > implicit).
+    # Fallback when summary_type is unset: probe summary shape.
+    if summary_type == "tracking" or (
+        summary_type is None and _is_tracking_summary(summary)
+    ):
+        findings = advise_tracking(
+            summary,
+            cm_per_360=meta.get("cm_per_360"),
+            ball_w=meta.get("ball_w"),
+        )
+        # Normalize nested metrics.json shape so downstream (visualization /
+        # history) sees a flat scalar dict, matching flicking summary's flatness.
+        flat_summary = _flatten_metrics(summary)
+        comparison = None  # v1 self-only (spec §8.3)
+        diagnosis = build_diagnosis(findings, flat_summary, comparison, meta)
+    else:
+        findings = advise(summary, reference_summary, cm_per_360=meta.get("cm_per_360"))
+        comparison = compare_table(summary, reference_summary) if reference_summary else None
+        diagnosis = build_diagnosis(findings, summary, comparison, meta)
 
     figures = build_figures(diagnosis)
 
@@ -27,9 +55,12 @@ def build_report(summary, reference_summary=None, meta=None,
     notes: list[str] = []
     if backend is not None:
         try:
-            narration = generate_narration(diagnosis, backend)
+            narration = narrate_diagnosis(diagnosis, backend)
         except Exception as e:  # narration is best-effort; never block the report
             notes.append(f"讲解不可用: {e}")
+        if narration is None and not any("讲解不可用" in n for n in notes):
+            # agent loop exhausted turns / hit exception path without raising
+            notes.append("讲解不可用: agent 未在限定轮次内产出文本")
 
     report = CoachReport(
         diagnosis=diagnosis, figures=figures, narration=narration, notes=notes,
@@ -43,7 +74,7 @@ def build_report(summary, reference_summary=None, meta=None,
 
 
 def build_progress_report(history_path, current_summary, ref_summary=None,
-                          meta=None, backend: LLMBackend | None = None) -> ProgressReport:
+                          meta=None, backend: ToolUseBackend | None = None) -> ProgressReport:
     """Trend + comparison + plan + narrations over saved history."""
     meta = meta or {}
     history = load_history(history_path)
@@ -62,13 +93,17 @@ def build_progress_report(history_path, current_summary, ref_summary=None,
     plan_narration = None
     if backend is not None:
         try:
-            progress_narration = generate_progress_narration(trend, comparison, backend)
+            progress_narration = narrate_progress(trend, comparison, backend)
         except Exception as e:
             notes.append(f"进步讲解不可用: {e}")
+        if progress_narration is None and not any("进步讲解不可用" in n for n in notes):
+            notes.append("进步讲解不可用: agent 未在限定轮次内产出文本")
         try:
-            plan_narration = generate_plan_narration(plan, backend)
+            plan_narration = narrate_plan(plan, backend)
         except Exception as e:
             notes.append(f"计划讲解不可用: {e}")
+        if plan_narration is None and not any("计划讲解不可用" in n for n in notes):
+            notes.append("计划讲解不可用: agent 未在限定轮次内产出文本")
 
     return ProgressReport(
         trend_figure=build_trend_figure(trend),

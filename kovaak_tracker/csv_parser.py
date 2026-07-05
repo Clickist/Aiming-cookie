@@ -39,6 +39,28 @@ KILL_HEADER = (
 )
 
 
+# KovaaK's Sens Scale → game yaw(度/count)。
+# cm/360 = 914.4 / (DPI × Horiz_Sens × yaw),其中 914.4 = 360 × 2.54。
+# 信源:Gemini grounding search(2026-07-05)+ 社区共识(mouse-sensitivity.com / kovaaks.com)。
+# Valorant yaw=0.07 经用户数据反推验证(DPI 1600, Horiz 0.16 → 51cm,接近实测 48)。
+# 未列出的 game(如 R6 XFactorAiming)→ 返回 None,用户需手填 cm/360。
+GAME_YAW: dict[str, float] = {
+    "Source": 0.022,        # CS2 / CSGO / TF2
+    "CSGO": 0.022,
+    "CS2": 0.022,
+    "Quake": 0.022,         # Quake Live / III / Reflex
+    "Quake Live": 0.022,
+    "Reflex": 0.022,
+    "Apex Legends": 0.022,
+    "Valorant": 0.07,       # Valorant 内部 yaw(非 CSGO 0.022)
+    "Overwatch": 0.0066,
+    "Overwatch 2": 0.0066,
+    "Call of Duty": 0.0066,
+    "COD": 0.0066,
+    "Fortnite": 0.022,      # UE4 hipfire default;因 config 而异
+}
+
+
 @dataclass(frozen=True)
 class KovaaKStats:
     """One parsed KovaaK's stats CSV file."""
@@ -76,6 +98,38 @@ class KovaaKStats:
     @property
     def resolution(self) -> str:
         return self.config["Resolution"]
+
+    @property
+    def sens_scale(self) -> str:
+        """KovaaK's Sens Scale 字段(游戏名,决定 yaw 用于 cm/360 计算)。"""
+        return self.config.get("Sens Scale", "")
+
+    @property
+    def yaw(self) -> float | None:
+        """该 session 的 game yaw(度/count),基于 Sens Scale。未知 game → None。"""
+        return GAME_YAW.get(self.sens_scale)
+
+    @property
+    def cm_per_360(self) -> float | None:
+        """从 DPI + Horiz Sens + yaw 算 cm/360。
+
+        - Sens Scale = "cm/360" 时,Horiz Sens 直接是 cm/360 物理值(KovaaK's 特殊 scale)
+        - 已知 yaw 的 game:cm/360 = 914.4 / (DPI × Horiz_Sens × yaw)
+        - 未知 game / 缺 DPI / 缺 Horiz Sens → None(用户需手填)
+        """
+        scale = self.sens_scale
+        if scale.lower() == "cm/360":
+            try:
+                return float(self.config["Horiz Sens"])
+            except (KeyError, ValueError):
+                return None
+        yaw = GAME_YAW.get(scale)
+        if yaw is None:
+            return None
+        try:
+            return round(914.4 / (self.dpi * self.horiz_sens * yaw), 2)
+        except (KeyError, ValueError, TypeError, ZeroDivisionError):
+            return None
 
 
 def parse_stats_csv(csv_path: str | Path) -> KovaaKStats:

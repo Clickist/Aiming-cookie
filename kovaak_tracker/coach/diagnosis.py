@@ -57,7 +57,7 @@ _SEVERITY_WEIGHT = {"fix": 3, "watch": 2, "info": 1}
 
 def build_diagnosis(findings, summary, comparison, meta):
     return CoachDiagnosis(
-        profile=_match_profile(findings),
+        profile=_match_profile(findings, meta),
         issues=_build_issues(findings),
         summary=summary,
         comparison=comparison,
@@ -65,7 +65,9 @@ def build_diagnosis(findings, summary, comparison, meta):
     )
 
 
-def _match_profile(findings):
+def _match_profile(findings, meta=None):
+    meta = meta or {}
+    summary_type = meta.get("summary_type")
     signals = {f.signal for f in findings}
     best, best_score = None, 0.0
     for arch in profiles.ARCHETYPES:
@@ -82,10 +84,21 @@ def _match_profile(findings):
         if a is not best and a["conditions"]
         and any(s in signals for s in a["conditions"])
     ]
-    # fluid_precise: matched when no negative archetype hit
+    # fluid_precise / fluid_tracker: positive profile, matched when no negative
+    # signals fire. Pick by summary_type (flicking vs tracking).
     if (best is None or best_score < _MATCH_THRESHOLD) and not signals:
-        fluid = next(a for a in profiles.ARCHETYPES if a["id"] == "fluid_precise")
-        return ProfileMatch(fluid["id"], fluid["label"], 1.0, [])
+        if summary_type == "tracking":
+            fluid = next(
+                (a for a in profiles.ARCHETYPES if a["id"] == "fluid_tracker"),
+                None,
+            )
+        else:
+            fluid = next(
+                (a for a in profiles.ARCHETYPES if a["id"] == "fluid_precise"),
+                None,
+            )
+        if fluid is not None:
+            return ProfileMatch(fluid["id"], fluid["label"], 1.0, [])
     if best is None or best_score < _MATCH_THRESHOLD:
         return ProfileMatch("unclassified", "未分类", round(best_score, 2), secondary)
     return ProfileMatch(best["id"], best["label"], round(best_score, 2), secondary)
