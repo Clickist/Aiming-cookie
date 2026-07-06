@@ -25,8 +25,10 @@ _INTERLEAVE_REASON = (
 )
 
 # metric (TREND_METRICS) -> advice Finding.signal
+# decel_frac 是带状指标：high(>0.65)=fix"减速拖沓" / low(<0.40)=watch"刹车太急"，
+# 实际发哪个由 advice 依当前值决定，这里给出 fallback 元组让 planning 两个都能找到。
 _METRIC_SIGNAL = {
-    "decel_frac": "decel_frac high",
+    "decel_frac": ("decel_frac high", "decel_frac low"),
     "sparc": "sparc low",
     "reverse_ratio": "reverse_ratio high",
     "linearity": "linearity high",
@@ -86,8 +88,7 @@ def build_plan(trend, comparison, history, findings) -> TrainingPlan:
 
     # metric 按 severity 排序（fix>watch>info），focus 优先
     def severity(metric: str) -> int:
-        sig = _METRIC_SIGNAL.get(metric)
-        f = findings_by_signal.get(sig) if sig else None
+        f = _finding_for(metric, findings_by_signal)
         return _SEVERITY_WEIGHT.get(f.severity if f else "watch", 2)
 
     rows = sorted(comparison, key=lambda r: -severity(r["metric"]))
@@ -137,10 +138,26 @@ def build_plan(trend, comparison, history, findings) -> TrainingPlan:
     )
 
 
+def _signals_for(metric: str):
+    """_METRIC_SIGNAL 值归一为 tuple：str 包成单元素，tuple 原样返回。"""
+    sig = _METRIC_SIGNAL.get(metric)
+    if sig is None:
+        return ()
+    return sig if isinstance(sig, tuple) else (sig,)
+
+
+def _finding_for(metric: str, findings_by_signal: dict):
+    """按 _METRIC_SIGNAL 顺序找第一个命中的 finding（支持 fallback 元组）。"""
+    for sig in _signals_for(metric):
+        f = findings_by_signal.get(sig)
+        if f is not None:
+            return f
+    return None
+
+
 def _scenarios_for(metric: str, findings_by_signal: dict) -> list[Prescription]:
     """Pull prescriptions from the finding matching this metric's signal."""
-    sig = _METRIC_SIGNAL.get(metric)
-    f = findings_by_signal.get(sig) if sig else None
+    f = _finding_for(metric, findings_by_signal)
     return list(f.prescriptions) if f else []
 
 

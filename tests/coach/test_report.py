@@ -35,6 +35,20 @@ def test_build_report_with_reference():
     assert len(r.diagnosis.comparison) > 0
 
 
+def test_compare_table_decel_frac_pathological_not_better():
+    """decel_frac 病态值（self=0.30 刹车太急）不该被判 better。
+
+    回归保护：decel_frac 是带状指标（健康 [0.40, 0.65]），compare_table
+    标 info 让 advise() 的带状判定主导，而非把病态值误判为进步。
+    与 coach/progress._decel_frac_verdict 语义一致。
+    """
+    from kovaak_tracker.advice import compare_table
+    self_sum = {"decel_frac": {"med": 0.30}}   # < 0.40 pathological brake-slam
+    ref_sum = {"decel_frac": {"med": 0.50}}    # healthy
+    rows = {r["metric"]: r for r in compare_table(self_sum, ref_sum)}
+    assert rows["decel_frac"]["verdict"] == "info"
+
+
 # --- progress loop tests (Task 4) ---
 from kovaak_tracker.coach.report import build_progress_report
 

@@ -199,11 +199,16 @@ def advise(
 
 # metrics where lower is better (cleaner / more stopped / shorter decel);
 # the rest are higher-is-better (faster / straighter / smoother-sparc).
-_LOWER_BETTER = {"linearity", "reverse_ratio", "endpoint_peak", "decel_frac"}
+_LOWER_BETTER = {"linearity", "reverse_ratio", "endpoint_peak"}
 # non-monotone metrics: no simple better/worse (band- or context-dependent)
 _NO_VERDICT = {
     "peak_position_pct", "path_length_deg",
     "submovement_overlap", "corrective_count",  # fluid vs two-stage is style, not strictly better
+    # decel_frac is band-shaped (healthy [0.40, 0.65], per THRESHOLDS);
+    # advise() handles band diagnosis, progress._decel_frac_verdict carries
+    # the health-band monotone trend verdict. Simple lower/higher would mark
+    # a pathological brake-slam (0.30) "better" than a healthy 0.50.
+    "decel_frac",
 }
 
 
