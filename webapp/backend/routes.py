@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import datetime
 import logging
 import os
 import re
@@ -10,7 +12,7 @@ from fastapi import APIRouter, Body, Form, UploadFile, File, Header, HTTPExcepti
 from fastapi.responses import FileResponse
 
 from . import db, llm_budget, queue
-from .config import LLM_PROVIDER, MAX_VIDEO_BYTES, VIDEO_TMP_DIR
+from .config import LLM_PROVIDER, MAX_CSV_BYTES, MAX_VIDEO_BYTES, VIDEO_TMP_DIR
 from .schemas import (
     AnalyzeResponse,
     ChatMessageOut,
@@ -50,9 +52,12 @@ async def analyze(
     if await queue.has_active(x_user_id):
         raise HTTPException(429, "已有分析进行中,等完成再提交")
 
-    content = await video.read()
-    if len(content) > MAX_VIDEO_BYTES:
+    # 大小预检:用 UploadFile.size(Starlette ≥0.36,multipart 解析时已知)
+    # 而非 await read(),避免多 GB 上传先全量载入内存再 413 的 OOM。
+    if video.size is not None and video.size > MAX_VIDEO_BYTES:
         raise HTTPException(413, "视频超过 100MB 限制")
+    if csv.size is not None and csv.size > MAX_CSV_BYTES:
+        raise HTTPException(413, f"CSV 超过 {MAX_CSV_BYTES // 1024 // 1024}MB 限制")
 
     # 文件名 sanitize:uuid 防冲突 + 扩展名白名单(不信任用户 filename 后缀)
     video_ext = os.path.splitext(video.filename or "video.mp4")[1].lower()
@@ -63,13 +68,21 @@ async def analyze(
         raise HTTPException(400, f"CSV 扩展名不支持(仅 .csv): {csv_ext or '(无)'}")
     video_path = VIDEO_TMP_DIR / f"{x_user_id}_{uuid.uuid4().hex[:8]}{video_ext}"
     csv_path = VIDEO_TMP_DIR / f"{x_user_id}_{uuid.uuid4().hex[:8]}{csv_ext}"
-    video_path.write_bytes(content)
-    csv_path.write_bytes(await csv.read())
-
-    sid = await queue.enqueue(
-        x_user_id, str(video_path), str(csv_path),
-        cm_per_360=cm_per_360, fov=fov,
-    )
+    try:
+        video_path.write_bytes(await video.read())
+        csv_path.write_bytes(await csv.read())
+        sid = await queue.enqueue(
+            x_user_id, str(video_path), str(csv_path),
+            cm_per_360=cm_per_360, fov=fov,
+        )
+    except Exception:
+        # enqueue 失败 → 清理刚写的临时文件,避免孤儿堆积
+        for p in (video_path, csv_path):
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                pass
+        raise
     return AnalyzeResponse(session_id=sid)
 
 
@@ -165,13 +178,21 @@ async def chat(
     if not isinstance(result, dict) or "diagnosis" not in result:
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
 
-    # 拉历史 + append 本轮 user message(持久化先存,再调 LLM——即使 LLM 失败
-    # 用户消息也不丢)
+    # 拉历史(喂给 agent + 响应历史拼装基础)。append 本轮 user message 在
+    # budget 预检之后,避免 429 时留孤立 user message。
     history = await db.load_chat_history(session_id)
 
     user_msg = body.message.strip()
     if not user_msg:
         raise HTTPException(400, "消息不能为空")
+
+    # chat 也走 LLM——预检查日预算(chat 不经 worker.process_one,需显式检查)。
+    # 单次保守估算(DeepSeek deepseek-chat):2000 input + 500 output ≈ ¥0.003。
+    # 真实 usage 切片 3 接 DeepSeek 字段后换精确值。
+    from .worker import _estimate_llm_cost_cny
+    chat_cost = _estimate_llm_cost_cny("", min_output_tokens=500)
+    if not await llm_budget.check_and_record(s["user_id"], chat_cost):
+        raise HTTPException(429, "今日 LLM 预算已用尽,明天再聊")
 
     # 用户"锁定当前时间轴"时,前端附 pinned_frame_sec。把它拼成可读前缀
     # ([锁定 0:23] ...)给 agent——这样 agent 不用感知字段,靠文本提示就能
@@ -183,14 +204,6 @@ async def chat(
     else:
         user_msg_to_store = user_msg
     await db.save_chat_message(session_id, "user", user_msg_to_store)
-
-    # chat 也走 LLM——预检查日预算(chat 不经 worker.process_one,需显式检查)。
-    # 单次保守估算(DeepSeek deepseek-chat):2000 input + 500 output ≈ ¥0.003。
-    # 真实 usage 切片 3 接 DeepSeek 字段后换精确值。
-    from .worker import _estimate_llm_cost_cny
-    chat_cost = _estimate_llm_cost_cny("", min_output_tokens=500)
-    if not await llm_budget.check_and_record(s["user_id"], chat_cost):
-        raise HTTPException(429, "今日 LLM 预算已用尽,明天再聊")
 
     notes: list[str] = []
     reply: Optional[str] = None
@@ -208,7 +221,11 @@ async def chat(
         if backend is None:
             notes.append("LLM 后端不可用,本次未生成回复")
         else:
-            reply = chat_with_coach(diagnosis, chat_history, backend)
+            # chat_with_coach 是同步阻塞 LLM 调用(10-30s),丢线程池避免阻塞
+            # event loop(其他请求/worker 并发不被 hold)。
+            reply = await asyncio.to_thread(
+                chat_with_coach, diagnosis, chat_history, backend,
+            )
             if reply is None:
                 notes.append("agent 未在限定轮次内产出回复")
     except Exception as e:
@@ -226,14 +243,25 @@ async def chat(
             "(本次未能生成回复,见 notes)", None,
         )
 
-    # 重新拉完整 history(含本轮 user + assistant)
-    full = await db.load_chat_history(session_id)
-    return ChatResponse(
-        reply=reply,
-        history=[ChatMessageOut(role=m["role"], content=m["content"],
-                                created_at=m["created_at"]) for m in full],
-        notes=notes,
+    # 响应 history 用首次 load 的结果 + 本轮 user/assistant 本地拼装,
+    # 避免二次 DB 查询。新消息 created_at 用当前 UTC 时间近似(展示用,
+    # 与 DB 的 CURRENT_TIMESTAMP 格式一致)。
+    now_ts = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S",
     )
+    out_history = [
+        ChatMessageOut(role=m["role"], content=m["content"],
+                       created_at=m["created_at"])
+        for m in history
+    ]
+    out_history.append(ChatMessageOut(
+        role="user", content=user_msg_to_store, created_at=now_ts,
+    ))
+    assistant_content = reply if reply is not None else "(本次未能生成回复,见 notes)"
+    out_history.append(ChatMessageOut(
+        role="assistant", content=assistant_content, created_at=now_ts,
+    ))
+    return ChatResponse(reply=reply, history=out_history, notes=notes)
 
 
 @router.get("/sessions/{session_id}/chat", response_model=ChatResponse)
