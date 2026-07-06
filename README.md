@@ -28,7 +28,7 @@ from kovaak_tracker.coach import build_report
 from kovaak_tracker.coach.providers import load_backend
 
 summary = analyze_flicking_fair_summary("your.mp4", "your Stats.csv", cm_per_360=48.0)
-backend = load_backend("anthropic")   # 或 deepseek / local，见 coach/providers.json
+backend = load_backend("anthropic")   # 需设 ANTHROPIC_API_KEY；或 deepseek / local，见 coach/providers.json
 report = build_report(summary, None, {"cm_per_360": 48.0}, backend=backend)
 
 print(report.diagnosis.profile.label)   # 流派画像
