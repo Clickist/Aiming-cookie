@@ -62,6 +62,12 @@
   --color-outline: #2d2b26;
   --color-outline-variant: #5c4038;
 
+  /* ---- timeline event marker colors (named slots, not raw hex in components) ---- */
+  --color-event-kill: #22c55e;
+  --color-event-miss: #ef4444;
+  --color-event-corrective: #60a5fa;
+  --color-event-peak: #f54e00;
+
   --color-inverse-surface: #fadcd3;
   --color-inverse-on-surface: #3e2c26;
   --color-inverse-primary: #ac3400;
@@ -214,4 +220,31 @@ body::before {
 ::-webkit-scrollbar-thumb {
   background: var(--color-outline);
   border-radius: 4px;
+}
+
+/* Hide scrollbar on inline scroll regions (chat thread, chip row) —
+   the editorial aesthetic prefers no visible scrollbar on inner panels.
+   Used by CoachView chat thread + starter chips. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* Active-step pulse glow for the processing pipeline badge.
+   DESIGN.md §Elevation: the single shadow exception is a subtle orange glow
+   (rgba(245,78,0,...)) reserved for "Active" status icons in pipelines. */
+@keyframes pulse-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 78, 0, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 78, 0, 0);
+  }
+}
+.pulse-ring {
+  animation: pulse-ring 1.8s ease-out infinite;
 }
