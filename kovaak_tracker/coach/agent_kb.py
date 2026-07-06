@@ -36,9 +36,9 @@ KB: list[KnowledgeChunk] = [
             "| 指标 | min-jerk 理想 | 健康 aim | 偏离 = 问题 |\n"
             "| peak_position % | 50 | 35–50 | <30 加速过急/减速过长；>60 加速拖沓 |\n"
             "| decfrac | 0.50 | 0.50–0.65 | >0.7 减速段蹭；<0.4 减速不足/撞 |\n"
-            "| linearity（匀减速线性度）| 低 | <0.12 | >0.15 制动不匀（减速抖动看 sparc）|\n"
-            "| sparc | 高（≈0）| >−0.5 | <−0.5 减速抖动、张力释放不平滑 |\n"
-            "| reverse 占比 | 0 | <0.18 | >0.22 减速段锯齿/反复修正 |"
+            "| linearity（匀减速线性度）| 低 | <0.12 | >0.13 制动不匀（减速抖动看 sparc）|\n"
+            "| sparc | 高（≈0）| >−5.0 | <−5.0 减速抖动、张力释放不平滑 |\n"
+            "| reverse 占比 | 0 | <0.18 | >0.20 减速段锯齿/反复修正 |"
         ),
     },
     {
@@ -65,7 +65,7 @@ KB: list[KnowledgeChunk] = [
             "- 频域度量：速度幅度谱的归一化弧长。\n"
             "- 无量纲，跨速度/跨人公平——这是 decel_smoothness 与 peak_speed 强相关（corr=0.76）不公平问题的正解。\n"
             "- 对噪声鲁棒、敏感于平滑度变化，优于 dimensionless jerk (DLJ)；现代运动控制/康复的金标准。\n\n"
-            "advice 阈值：sparc < −0.5 判为「减速段平滑度差、张力释放抖」。处方方向：clean lines、pasu，把减速段当一次独立动作。"
+            "advice 阈值：sparc < −5.0 判为「减速段平滑度差、张力释放抖」。处方方向：clean lines、pasu，把减速段当一次独立动作。"
         ),
     },
     {
@@ -415,7 +415,7 @@ KB: list[KnowledgeChunk] = [
             "外部注意焦点（external focus）。\n"
             "Wulf 2013 综述 + Wulf et al. 2010（PMC3153799）+ Zachry 2005 + Vance 2004，2-1/3-0 票验证。\n\n"
             "机制：效果焦点（在运动效果上：准星/目标/命中点）相比内部焦点（在手/腕/前臂动作上）降低拮抗肌共收缩与 EMG、同时提升精度与峰值力/速度——更省力的运动，张力浪费更少。约束动作假说：外部焦点促进自动化控制，内部焦点引发有意识干预、产生多余肌肉活动。\n\n"
-            "处方含义：高 TBR / decel_frac 高 / 过度握紧的诊断应给外部焦点提示——「看准目标」「顺过那个点」，可降低多余张力同时保住峰值速度与吞吐量。\n\n"
+            "处方含义：miss 段加速度密度高 / 解读为张力偏大（假设性）/ decel_frac 高 / 过度握紧的诊断应给外部焦点提示——「看准目标」「顺过那个点」，可降低多余张力同时保住峰值速度与吞吐量。\n\n"
             "⚠ 任务依赖：外部焦点对离散/瞄准动作稳健，但对 <~200ms 纯弹道动作衰减（意识无时间调制已发射的运动程序）——提示应在准备/设定阶段施加，不能指望它挽救已发射的弹道段。"
         ),
     },
@@ -495,8 +495,8 @@ KB: list[KnowledgeChunk] = [
     {
         # Tracking-side mirror of tension_budget (spec 2026-07-05-tracking-coach-design §4.4):
         # same source chunk, exposed under tracking's ptc_high signal so narrator retrieves it
-        # when diagnosing tracking PTC. BY_SIGNAL is single-valued, so we duplicate the chunk
-        # rather than extend the index to multi-valued mapping.
+        # when diagnosing tracking PTC. Duplicated as a separate chunk (rather than multi-valued
+        # indexing) so the tracking-specific framing is self-contained.
         "topic": "tension_budget_tracking",
         "signal": "ptc high",
         "source_ref": "YouTube 瞄准训练内容综合.md §3.1-3.4",
@@ -597,16 +597,13 @@ KB: list[KnowledgeChunk] = [
 
 # 索引（导入时构建一次）
 BY_TOPIC: dict[str, list[KnowledgeChunk]] = {}
-BY_SIGNAL: dict[str, list[KnowledgeChunk]] = {}
 
 
 def _build_indexes() -> None:
     for chunk in KB:
         BY_TOPIC.setdefault(chunk["topic"], []).append(chunk)
-        if chunk["signal"]:
-            BY_SIGNAL.setdefault(chunk["signal"], []).append(chunk)
 
 
 _build_indexes()
 
-__all__ = ["KB", "BY_TOPIC", "BY_SIGNAL", "KnowledgeChunk"]
+__all__ = ["KB", "BY_TOPIC", "KnowledgeChunk"]
