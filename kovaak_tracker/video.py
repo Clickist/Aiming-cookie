@@ -28,10 +28,18 @@ def get_video_metadata(video_path: str | Path) -> VideoMetadata:
     if not cap.isOpened():
         raise FileNotFoundError(f"Cannot open video: {video_path}")
 
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if width <= 0 or height <= 0:
+        cap.release()
+        raise ValueError(
+            f"Invalid video dimensions ({width}x{height}) for {video_path}; "
+            f"file may be corrupted or codec unsupported."
+        )
     metadata = VideoMetadata(
         fps=float(cap.get(cv2.CAP_PROP_FPS) or 60),
-        width=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        width=width,
+        height=height,
         frame_count=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
     )
     cap.release()
