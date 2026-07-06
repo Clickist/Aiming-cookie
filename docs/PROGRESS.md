@@ -1,6 +1,6 @@
 # Flicking 模块进度
 
-> 最后更新：2026-06-29
+> 最后更新：2026-07-06
 
 ## 2026-06-28：方法论修正 + 分析-对比-建议流程固化
 
@@ -487,3 +487,122 @@ webapp 后端不通的真原因:**worker 切片 1 调的是 `analyze_flicking_vi
 2. budget wrapper 架构性修复
 3. IDOR 跟 Clerk
 4. Warning/Nit backlog
+
+## 2026-07-06：stitch 原型一致性修补 + 仓库整理
+
+### 背景：上个 session 中断恢复
+上个 session(2026-07-06 晚)读完 7 个 stitch HTML + DESIGN.md、产出分层审计、跟点点对齐 4 个决策后,在加载工具准备动手时连续 API 400 打挂,零文件改动。本 session 从 transcript(`claude --resume <id>` 的 jsonl)恢复审计 + 决策,直接执行——transcript 可恢复是这次没丢工作的关键。
+
+### 对齐的 4 个决策
+1. 改在哪 = (A) 原地修 stitch HTML(保持 `cdn.tailwindcss.com` 自包含原型形态),不端口进 Next.js
+2. accent 橙统一 `#f54e00`(DESIGN.md 正文钦定 Cursor Orange);代价 dialogue 整页换橙——点点批准
+3. 顶栏 5 套 IA **不在本轮**——点点要按"用户使用场景"单拎讨论
+4. login 页**暂缓**——点点喜欢布局但 3D/WebGL 要去掉,后面单独做
+
+本轮范围 = 6 页(landing / upload / processing / coach_report / coach_dialogue / history)。
+
+### 一致性修补(commit 1359d0c)
+- 未定义类全实现:`grid-bg`(landing 网格底纹)/ `glow-active`(processing,DESIGN.md 唯一允许的 `rgba(245,78,0,0.25)` 橙光晕 + 脉冲)/ `progress-bar-fill`(shimmer)/ `btn-primary`·`btn-secondary`·`severity-badge-p1`(history)
+- history:砍剩 11 色简化 config 升级到完整 token(color×60 + fontFamily×9 + fontSize×9 + borderRadius + spacing);`font-mono` → `font-meta-data`/`font-label-caps`(JBM→JBM 视觉零变化,纯 token 名对齐)
+- accent 橙统一:dialogue 整页 `primary-container` → `accent`(~27 处类用法换橙);history accent token `#ff5712` → `#f54e00`
+- © 年份统一 2026(landing/upload/report 本就 2026;processing/history 从 2024 改)
+- coach_report `primary` token 漂移 `#ff5712` → `#ffb59d`(未使用 token,零视觉影响)
+- `primary-container: #ff5712` 是 DESIGN.md 合法 token,**保留**(只是不再当 accent 误用)
+- 外链占位图(`lh3.googleusercontent.com/aida-public/...`)**保留**,端口阶段换 Plotly / 真实 `<video>`
+
+### 验证(本轮 fresh)
+- `#ff5712` 残留 6 处,全部是 `primary-container` token 定义(合规),无一处当 accent 误用
+- `© 2024` 残留 0;`accent: #f54e00` 定义 6/6 页
+- 6 个未定义类全部已定义且被引用;6 页 `</script>`/`</body>`/`</html>` 标签全平衡
+- 视觉效果**未 headless 验证**——建议浏览器过眼(dialogue 换橙 / history btn+badge / processing glow 动画)
+
+### 仓库整理(commit 756721a + 89e0a13)
+stitch 三次生成演化:7/5 早期探索(`stitch_cursor_design_system/`,8 主题)→ 7/5 晚 Obsidian Hearth 单页试做(`...(2)/`)→ 7/6 最终 Aiming Cookie dark 7 页。
+
+整理后结构:
+- `design/`(从 `stitch_document_driven_design/` 改名,褪 stitch 工具痕迹;aiming_cookie_redesign/ 为纯重命名,git 检测 100%)
+  - `aiming_cookie_redesign/`——6 页成品(commit 1359d0c)
+  - `DESIGN.md`——Aiming Cookie 设计 spec / token 锚点
+  - `login_original/`——login 源码 + screen.png(去 3D 工作的源头)
+- `data/`(散落 session 数据收拢)
+  - `1wall...Stats.csv`(6/23 KovaaK Stats,10KB)
+  - `6月23日.mp4` + `high-level-1w6ts.mp4`(配套录像,12MB)
+
+清理:回收站删 6 个被取代的原始页文件夹 + 2 个早期 cursor 探索(点点定 early 全删,可恢复)。`.gitignore` 保留全局 `*.mp4` 护栏 + 加 `!data/*.mp4` 例外(session 录像入库,别处杂散视频仍挡)。仅点点一人开发,无公开远端隐私顾虑。
+
+### memory
+新增 `stitch-redesign-consistency-pass.md`(审计 + 决策 + 结构 + 待续项 + DESIGN.md token 锚点);`MEMORY.md` 索引同步。
+
+### 待点点(下个 phase)
+1. **前端方向讨论**(点点:"接下来搞前端,但要讨论很多东西")——预计涉及:design/ 的 6 页静态原型怎么落进现有 `webapp/frontend/`(Next.js 16,Phase 3 已重写 4 屏);login 去 3D;顶栏 IA 按使用场景重设计;占位图换 Plotly/真实 video;CDN tailwind 正式化
+2. budget wrapper 架构性修复(续三遗留)
+3. IDOR / session ownership(跟 Clerk slice 3)
+4. Warning/Nit backlog
+
+## 2026-07-06 续：Aiming Cookie IA redesign brainstorm → spec
+
+### 本次工作
+接着上条"前端方向讨论"待办，用 brainstorming skill 把点点提的三问（导航 IA / login / 用户流程）一次收口。读 `design/` 全量（DESIGN.md + login_original + 6 页）+ 现有 webapp spec，一次一问推进，visual companion 出了 login 视觉三方案 mockup。
+
+### 关键决策（详见 spec）
+1. **形态 B**：登录型回访工具（完整服务有成本 → 登录必经）；否匿名一次性（A 无计费主键）、否核心免费（C 在 web 架构下 CV 成本黑洞）
+2. **架构桌面 hybrid**（演进 webapp spec §3，非推翻）：CV 分析 + agent 框架搬本地 sidecar；LLM API 代理 + 账号/订阅 + 画像/history 留云端。动机 = 省 CV 服务器成本 + 解并发；LLM 成本不变（仍云端）
+3. **载体**：landing = web 静态官网（营销+下载）；产品本体 = 桌面应用（Tauri/Electron 壳跑 webapp 前端 + Python sidecar）；login = 应用启动门
+4. **商业 D→B 分阶段**：D 邀请制内测（控成本 + 筛用户，无支付合规负担）→ B freemium（桌面让 freemium 成立：CV 本地免费不亏，墙立 coach/深度诊断）
+5. **导航方案 A**：App 顶栏 `logo·[分析/历史/教练]·[订阅状态·设置]`；三档规则（营销导航 / 交易态降级 processing / App 顶栏）；history = 登录默认页；**砍 Dashboard**（合并进 history 顶部）、**砍 Academy**（YAGNI）
+6. **login 认证 = 密码为主 + OTP 为辅**（演进 webapp spec §2 的 OTP-only）：常规 email+密码，OTP 用于注册验邮箱/找回/备用；邀请码 D 阶段并存。纯 OTP（每次收码烦）/纯密码（找回难）都不合理
+7. **login 视觉方向 C**：全屏 shader aura + 居中半透明玻璃卡片；复用 login_original 的 WebGL shader，**砍 three.js 漂浮卡片**（性能/干扰）；去 AURA.IDENTITY/bio-metric 空炫文案
+
+### 过程中的纠偏
+brainstorm 中段读 webapp spec 发现两层冲突，主动 stop 暴露：① 认证（我推荐密码 vs 现有 OTP）→ 点点定"都支持"折中；② 架构（纯 web vs 桌面 hybrid）→ 点点定"演进"。spec 显式标注与 webapp spec §2/§3 的演进关系。教训：brainstorm 开头应先读相关现有 spec。
+
+### 交付
+- `docs/superpowers/specs/2026-07-06-aiming-cookie-ia-redesign-design.md`（commit 27c8edc，main）
+- `.gitignore` 加 `.superpowers/`（brainstorm mockup 产物，不入 git）
+- brainstorm 过程开了 visual companion（login 视觉三方案 A/B/C，点点选 C），session 在 localhost:56071（已 idle，4h 后自动退）
+
+### 不在本次 scope（spec 已显式排除）
+桌面打包工程（Tauri/Electron 选型/sidecar/壳化）→ 独立 spec；订阅计费/支付/credits → 独立 spec；社交登录（未来国际化）；Dashboard/Academy 独立页；flicking/tracking 算法（既有资产不动）
+
+### 待点点（下个 session agenda）
+1. **用户实际使用管线确认**（点点强调对前端有影响）——上传→处理→报告→教练的本地+云端分工细化
+2. **服务器 + 域名需求讨论**
+3. **云端轻量化后端开发**提上日程（FastAPI 从"跑分析"瘦身为"账号/LLM代理/数据"）
+4. **代码质量 review**
+5. **文档清理**（堆积太多新旧文件）
+6. IA spec → writing-plans 出实现计划（redesign 6 页落地 + login.html + settings，不含打包/计费）
+
+## 2026-07-07：全量 code/doc review + 修复（点点睡前授权自主执行）
+
+### 触发
+agenda 第 4/5 项（代码 review + 文档清理）。dispatch 5 并行 review agent（flicking / tracking / webapp 后端 / webapp 前端 / 文档）→ **3 Critical + 19 High + 30 Medium + 21 Low** + 文档 top 5 清理项。
+
+### 修复（9 agent 分 7 组并行 + 2 决策项）
+点点拍板两设计决策：throughput **接通**（detect_targets 已 90% 做，只差接线，非新功能）+ decel_frac **健康带精细化**（[0.40, 0.65] 内单调）。
+
+| # | commit | 关键修复 |
+|---|---|---|
+| 1 | coach KB 一致性 | SPARC 阈值 -0.5→-5.0 对齐 advice（原错 10×，污染 LLM 输出）；删 BY_SIGNAL 死索引；TBR 措辞清理（agent_kb + 处方手册 + youtube 综合） |
+| 2 | provider backends | Anthropic/OpenAICompat 补 messages_create（Critical，原仅 deepseek 跑通）+ timeout/重试；load_backend 返回类型收窄 |
+| 3 | webapp 后端 | 视频 .read() OOM（Critical）→ video.size 预检；chat asyncio.to_thread 解 event loop 阻塞；budget 跨日绕过→查 updated_at；Windows tmp；db SQL assert |
+| 4 | webapp 前端 | no-scrollbar/pulse-ring 补 CSS（原 silent 失效）；videoRef 提升 + seekTo props（替代 window CustomEvent）；轮询 StrictMode 双循环→闭包 cancelled；timeline/倍速 a11y；响应式断点 |
+| 5 | tracking 工具链 | inferred_fps 偏置→传 fps 参数；start_frame 滑窗最小长度守卫；VideoCapture try/finally（5 处，calibration_cli ESC 锁文件最严重）；aligner NaN 守卫；csv_parser TTK coerce + 大小写；video 维度校验 |
+| 6 | flicking + throughput | agent.py tool_calls 单条件（原双条件吞 tool_calls）；**throughput 接通**（detect_targets return_width → target_width_deg，dead→live）；visualization SPARC 带统一 -5.0 + tracking figure 占位；segment_by_valleys 空守卫；短 flick SPARC docstring |
+| 7 | decel_frac 带状化 | progress._decel_frac_verdict 健康带单调（任一病态→info）；planning _METRIC_SIGNAL 补 low 分支；advice.compare_table decel_frac 进 _NO_VERDICT（连带一致性，避免病态值误判 better） |
+| 8 | 文档清理 | 删 AGENTS.md（过时 tracking 时代 CLAUDE.md 双胞胎）+ frontend-screen-prompts.md（被否决暖奶油方向）；webapp spec/flicking-analysis-plan/DESIGN-cursor 加演进头注；agent/tracking-coach/product-strategy/flicking-aim-coach/IA-redesign 段落修订 |
+
+### 验证
+- tests/ **127 passed**（+11 新回归测试：throughput 4 + decel_frac 6 + compare_table 1）
+- webapp/tests/ **47 passed 1 skipped**（+3 新：跨日 budget / CSV 413 / worker 降级）
+- 前端 `npm run build` 绿（5 路由，TypeScript 全过）
+- 跨 agent 文件冲突检查：pan_tracker.py（F+H）、agent_tools.py（A+F）改动共存无覆盖
+
+### 过程纠偏（教训）
+- **output 数据被覆盖**：某 agent 跑端到端测试重算覆盖了 6/23 真实数据（flicking_metrics 106→17 flicks），`git checkout HEAD -- output/` 恢复。教训：并行 agent 跑测试应隔离 output 路径或用临时夹具，不写真实 output/。
+- **throughput 误判**：初判"接通是新功能开发、单独立 spec"，点点追问"检测目标大小功能之前没有吗"后读代码发现 detect_targets 已 90% 做（内部算了 bw 只差返回）。违反 CLAUDE.md §1 don't assume——应先读代码再下工作量判断。
+- **测试 conftest 冲突**：tests/ 与 webapp/tests/ 的 conftest 在同一次 pytest 调用里路径冲突（pre-existing，A/C agent 都提过），分两批跑绕过。
+
+### 待点点
+- **决策已落地**：throughput 接通 + decel_frac 健康带。若重审 SPARC 实现本身（短 flick <16 帧 NaN 率高，原始研究 2-2.6s reach），是独立 research scope。
+- **未做（YAGNI/超出）**：analyze_flicking_reference（无 CSV 路径）throughput 仍 NaN（CSV 主线已通）；KB KnowledgeChunk signal 字段死数据留着（BY_SIGNAL 已删，不影响）；youtube doc/ 目录重命名（牵涉 agent_kb 引用同步，推迟）。
+- **下个 session agenda**（07-06 续作提的 6 项）仍有效：使用管线 / 服务器域名 / 云端后端 / IA spec→writing-plans。
