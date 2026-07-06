@@ -50,6 +50,7 @@ def detect_targets(
     ui_band=(0.15, 0.90),
     crosshair_radius: int = 30,
     max_width: int = 960,
+    return_width: bool = False,
 ):
     """Detect all target centroids in a frame, colour-agnostic.
 
@@ -63,6 +64,11 @@ def detect_targets(
     full-res ``np.linalg.norm`` was the hot spot (~106ms/frame at 1920x1080);
     at <=960px it drops ~4x. min/max area are scaled with the frame, and
     centroids are mapped back to full-res by ``scale``.
+
+    ``return_width=True`` additionally returns a ``(centroids, widths)`` tuple
+    where ``widths`` is a length-N array of per-target bounding-box widths in
+    full-res px (``bw * scale``). The bounding box is already computed for the
+    aspect-ratio filter, so this is free.
     """
     h, w = frame.shape[:2]
     scale = max(1.0, w / max_width)
@@ -85,6 +91,7 @@ def detect_targets(
     min_area = min_area_frac * sw * sh
     max_area = max_area_frac * sw * sh
     pts = []
+    widths = []
     for c in contours:
         area = cv2.contourArea(c)
         if not (min_area < area < max_area):
@@ -95,7 +102,11 @@ def detect_targets(
         m = cv2.moments(c)
         if m["m00"]:
             pts.append((m["m10"] / m["m00"] * scale, m["m01"] / m["m00"] * scale))
-    return np.array(pts) if pts else np.empty((0, 2))
+            widths.append(bw * scale)
+    centroids = np.array(pts) if pts else np.empty((0, 2))
+    if return_width:
+        return centroids, (np.array(widths) if widths else np.empty((0,)))
+    return centroids
 
 
 def compute_pan_trajectory(
@@ -106,6 +117,7 @@ def compute_pan_trajectory(
     fps=None,
     match_gate_px: float = 200.0,
     progress_callback=None,
+    return_widths: bool = False,
 ):
     """Per-frame view-pan trajectory over the inclusive ``[start_frame, end_frame]``.
 
@@ -116,6 +128,12 @@ def compute_pan_trajectory(
     pan_dy, n_targets, ball_x, ball_y`` where ``ball_x/y`` is the pan integrated
     from the screen centre -- a synthetic trajectory whose per-frame speed equals
     the pan magnitude, ready for ``flicking._ball_speed``.
+
+    ``return_widths=True`` returns ``(df, widths_px)`` where ``widths_px`` is a
+    flat array of every detected target's bounding-box width across all frames
+    (full-res px). Used by :func:`analyze_flicking_fair_summary` to derive a
+    representative target width for the Fitts throughput metric — collecting it
+    here is free since detection already runs every frame.
     """
     meta = get_video_metadata(video_path)
     fps = fps if fps is not None else meta.fps
@@ -123,6 +141,7 @@ def compute_pan_trajectory(
     cap = cv2.VideoCapture(video_path)
     rows = []
     prev = None
+    all_widths = []
     total = max(1, end_frame - start_frame + 1)
     # Seek ONCE to start_frame, then read sequentially. Per-frame cap.set is
     # O(frame_no) on H.264 (re-decodes from the last keyframe each call) and was
@@ -131,8 +150,17 @@ def compute_pan_trajectory(
     for off, f in enumerate(range(start_frame, end_frame + 1)):
         ok, frame = cap.read()
         if not ok:
+            # cap.read() 提前失败时,下面的 progress_callback 永远到不了 1.0,
+            # 等待 100% 切状态的 UI 会卡。补发一次满进度。
+            if progress_callback is not None:
+                progress_callback(1.0, None)
             break
-        cur = detect_targets(frame)
+        if return_widths:
+            cur, ws = detect_targets(frame, return_width=True)
+            if len(ws):
+                all_widths.extend(ws.tolist())
+        else:
+            cur = detect_targets(frame)
         if prev is not None and len(prev) and len(cur):
             disp = []
             for cx, cy in cur:
@@ -163,6 +191,8 @@ def compute_pan_trajectory(
         yy.append(yy[-1] + dy)
     df["ball_x"] = xx[1:]
     df["ball_y"] = yy[1:]
+    if return_widths:
+        return df, np.array(all_widths)
     return df
 
 
@@ -360,9 +390,9 @@ def analyze_flicking_fair_summary(
     deg_per_px = fov / meta.width
 
     window = lock_challenge_window(video_path, duration_s, fps=fps, ui_area_frac=ui_area_frac)
-    track_df = compute_pan_trajectory(
+    track_df, widths_px = compute_pan_trajectory(
         video_path, window.start_frame, window.end_frame,
-        fps=fps, progress_callback=progress_callback,
+        fps=fps, progress_callback=progress_callback, return_widths=True,
     )
 
     speed = _ball_speed(track_df, fps)
@@ -372,9 +402,20 @@ def analyze_flicking_fair_summary(
         win += 1
     accel = apply_smoothing(accel, win)
 
+    # Representative target width for Fitts throughput: median of all detected
+    # target widths (px), converted to degrees. KovaaK click-timing targets are
+    # uniform size, so every detection samples the same quantity — median is
+    # robust to spurious detections and despawning targets.
+    target_width_deg = None
+    if len(widths_px) > 0:
+        target_width_deg = float(np.median(widths_px)) * deg_per_px
+
     flicks = segment_by_valleys(speed, fps)
     metrics = [
-        compute_fair_metrics(f, speed, accel, track_df, deg_per_px=deg_per_px, fps=fps)
+        compute_fair_metrics(
+            f, speed, accel, track_df, deg_per_px=deg_per_px, fps=fps,
+            target_width_deg=target_width_deg,
+        )
         for f in flicks
     ]
     cm_per_deg = (cm_per_360 / 360.0) if cm_per_360 else None
@@ -426,7 +467,10 @@ def analyze_flicking_fair_summary(
         "duration_frames": duration_frames,
         "flicks": flick_records,
         "kill_frames": kill_frames,
+        # corrective_frames 的每个帧是 peak→end 中点(submovement centroid 的粗估,
+        # 非精确帧),前端展示时标注为近似定位。
         "corrective_frames": corrective_frames,
+        "corrective_frame_estimated": True,
     }
     return summary, extras
 
