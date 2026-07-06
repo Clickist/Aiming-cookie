@@ -108,6 +108,8 @@ def align(
     kills_view = stats.kills.rename(columns={"Kill #": "kill_num"})
     aligned: list[AlignedKill] = []
     for row in kills_view.itertuples(index=False):
+        if pd.isna(row.time_s) or pd.isna(row.TTK):
+            continue
         kill_frame = start_frame + row.time_s * fps
         kill_frame_i = int(round(kill_frame))
         # First shot (the miss, for Shots>=2) sits TTK before the kill.

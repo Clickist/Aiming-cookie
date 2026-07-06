@@ -67,23 +67,24 @@ def detect_start_frame(
     metadata = get_video_metadata(video_path)
     total = end_frame if end_frame is not None else metadata.frame_count
     cap = cv2.VideoCapture(video_path)
-
-    sampled: list[tuple[int, float]] = []  # (frame_idx, diff)
-    prev_gray: np.ndarray | None = None
-    cap.set(cv2.CAP_PROP_POS_FRAMES, warmup_frames)
-    f = warmup_frames
-    while f < total:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
-        ok, frame = cap.read()
-        if not ok:
-            break
-        gray = _to_downsampled_gray(frame, downsample_width)
-        if prev_gray is not None:
-            diff = float(np.mean((gray.astype(np.float32) - prev_gray.astype(np.float32)) ** 2))
-            sampled.append((f, diff))
-        prev_gray = gray
-        f += sample_step
-    cap.release()
+    try:
+        sampled: list[tuple[int, float]] = []  # (frame_idx, diff)
+        prev_gray: np.ndarray | None = None
+        cap.set(cv2.CAP_PROP_POS_FRAMES, warmup_frames)
+        f = warmup_frames
+        while f < total:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+            ok, frame = cap.read()
+            if not ok:
+                break
+            gray = _to_downsampled_gray(frame, downsample_width)
+            if prev_gray is not None:
+                diff = float(np.mean((gray.astype(np.float32) - prev_gray.astype(np.float32)) ** 2))
+                sampled.append((f, diff))
+            prev_gray = gray
+            f += sample_step
+    finally:
+        cap.release()
 
     if not sampled:
         return StartFrameSuggestion(frame=warmup_frames, confidence=0.0, curve=[])
@@ -101,6 +102,8 @@ def detect_start_frame(
         if not active[i]:
             continue
         window = active[i : i + hold_frames + 1]
+        if len(window) < hold_frames + 1:
+            continue
         if window.sum() / len(window) >= hold_ratio:
             suggested_frame = sampled[i][0]
             break
@@ -181,38 +184,43 @@ def lock_challenge_window(
     tol = max(3, int(0.03 * target_len))  # ~3% tolerance
 
     cap = cv2.VideoCapture(video_path)
-    gameplay_runs: list = []
-    ui_events: list = []
-    g_start = None  # first frame of current gameplay run
-    u_start = None  # first frame of current UI run
-    # Sample every `stride` frames (~10 Hz) + seek once + read sequentially.
-    # Per-frame cap.set is O(frame_no) on H.264 (the original hot loop). UI
-    # screens persist >1s, so 10 Hz sampling never misses one; gameplay-run
-    # boundaries land within +/- stride of truth, far inside the duration tol.
-    stride = max(1, int(round(fps / 10.0)))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    for off in range(total):
-        ok, frame = cap.read()
-        if not ok:
-            break
-        if off % stride != 0:
-            continue
-        f = off
-        if _has_ui_element(frame, ui_area_frac):
-            if g_start is not None:
-                gameplay_runs.append((g_start, f - 1)); g_start = None
-            if u_start is None:
-                u_start = f
-        else:
-            if u_start is not None:
-                ui_events.append((u_start, f - 1)); u_start = None
-            if g_start is None:
-                g_start = f
-    if g_start is not None:
-        gameplay_runs.append((g_start, total - 1))
-    if u_start is not None:
-        ui_events.append((u_start, total - 1))
-    cap.release()
+    try:
+        gameplay_runs: list = []
+        ui_events: list = []
+        g_start = None  # first frame of current gameplay run
+        u_start = None  # first frame of current UI run
+        # Sample every `stride` frames (~10 Hz) + seek once + read sequentially.
+        # Per-frame cap.set is O(frame_no) on H.264 (the original hot loop). UI
+        # screens persist >1s, so 10 Hz sampling never misses one; gameplay-run
+        # boundaries land within +/- stride of truth, far inside the duration tol.
+        # grab() skips decoding for non-stride frames (35/36 waste at stride=36).
+        stride = max(1, int(round(fps / 10.0)))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        for off in range(total):
+            if not cap.grab():
+                break
+            if off % stride != 0:
+                continue
+            ok, frame = cap.retrieve()
+            if not ok:
+                break
+            f = off
+            if _has_ui_element(frame, ui_area_frac):
+                if g_start is not None:
+                    gameplay_runs.append((g_start, f - 1)); g_start = None
+                if u_start is None:
+                    u_start = f
+            else:
+                if u_start is not None:
+                    ui_events.append((u_start, f - 1)); u_start = None
+                if g_start is None:
+                    g_start = f
+        if g_start is not None:
+            gameplay_runs.append((g_start, total - 1))
+        if u_start is not None:
+            ui_events.append((u_start, total - 1))
+    finally:
+        cap.release()
 
     if not gameplay_runs:
         return ChallengeWindow(0, total - 1, tuple(ui_events), 0, False, 0.0,

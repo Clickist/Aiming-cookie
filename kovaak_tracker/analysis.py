@@ -104,7 +104,7 @@ def extract_kinematics(df: pd.DataFrame, fps: float) -> pd.DataFrame:
     return pd.concat(processed_chunks, ignore_index=True)
 
 
-def evaluate_mechanics(kdf: pd.DataFrame) -> dict:
+def evaluate_mechanics(kdf: pd.DataFrame, fps: float) -> dict:
     miss_mask = kdf["is_miss"].values
     velocity_mismatch = kdf["v_rel"].values
     acceleration_mismatch = kdf["a_rel"].values
@@ -124,9 +124,12 @@ def evaluate_mechanics(kdf: pd.DataFrame) -> dict:
         mean_a_mismatch = 0.0
         ptc = 0.0
 
-    loss_events = int((kdf["is_miss"].diff() > 0).sum())
-    inferred_fps = 1 / kdf["time_s"].diff().mean() if total_frames > 1 else 60
-    total_off_time = total_miss_frames / inferred_fps
+    # Count loss events per chunk: a naive diff() across the concatenated kdf
+    # produces a spurious is_miss transition at every chunk boundary.
+    loss_events = 0
+    for _, group in kdf.groupby("chunk_id"):
+        loss_events += int((group["is_miss"].diff() > 0).sum())
+    total_off_time = total_miss_frames / fps
 
     return {
         "on_target_pct": round(float(accuracy), 1),
@@ -195,7 +198,7 @@ def run_analysis(csv_path: str | Path, fps: float | None = None, output_dir: Pat
 
     df = load_tracking_data(csv_path, fps)
     kdf = extract_kinematics(df, fps)
-    metrics = evaluate_mechanics(kdf)
+    metrics = evaluate_mechanics(kdf, fps)
     _print_report(metrics)
     dashboard_metrics = export_analysis(kdf, metrics, output_dir)
     return kdf, metrics, dashboard_metrics

@@ -49,97 +49,103 @@ def run_tracking_analysis(
         raise ValueError("Selected video range is empty.")
 
     cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-    results: list[dict] = []
-    preview_frames: list[np.ndarray] = []
-    cross_pos = (metadata.width // 2, metadata.height // 2)
-    tracking_active = False
-    tracker = None
-    stats = {"frames_detected": 0, "frames_tracked": 0, "frames_lost": 0}
+        results: list[dict] = []
+        preview_frames: list[np.ndarray] = []
+        cross_pos = (metadata.width // 2, metadata.height // 2)
+        tracking_active = False
+        tracker = None
+        stats = {"frames_detected": 0, "frames_tracked": 0, "frames_lost": 0}
+        cross_attempts = 0
+        cross_hits = 0
 
-    for offset in range(process_length):
-        ok, frame = cap.read()
-        if not ok:
-            break
+        for offset in range(process_length):
+            ok, frame = cap.read()
+            if not ok:
+                break
 
-        vis = frame.copy()
-        absolute_frame_idx = start_frame + offset
+            vis = frame.copy()
+            absolute_frame_idx = start_frame + offset
 
-        # Detect crosshair if HSV bounds provided, else keep screen center default
-        if crosshair_hsv_lo is not None and crosshair_hsv_hi is not None:
-            cross_result, _, _ = detect_crosshair_by_color(frame, crosshair_hsv_lo, crosshair_hsv_hi)
-            if cross_result is not None:
-                cross_pos = cross_result
+            # Detect crosshair if HSV bounds provided, else keep screen center default
+            if crosshair_hsv_lo is not None and crosshair_hsv_hi is not None:
+                cross_attempts += 1
+                cross_result, _, _ = detect_crosshair_by_color(frame, crosshair_hsv_lo, crosshair_hsv_hi)
+                if cross_result is not None:
+                    cross_pos = cross_result
+                    cross_hits += 1
 
-        cv2.drawMarker(vis, cross_pos, (0, 180, 255), cv2.MARKER_CROSS, 18, 2)
+            cv2.drawMarker(vis, cross_pos, (0, 180, 255), cv2.MARKER_CROSS, 18, 2)
 
-        ball_pos = None
-        ball_w = None
-        ball_h = None
-        box_color = (0, 0, 255)
+            ball_pos = None
+            ball_w = None
+            ball_h = None
+            box_color = (0, 0, 255)
 
-        if not tracking_active:
-            detected_pos, detected_w, detected_h = detect_ball_by_color(frame, ball_hsv_lo, ball_hsv_hi)
-            if detected_pos and detected_w and detected_h:
-                cx, cy = detected_pos
-                bbox = (int(cx - detected_w / 2), int(cy - detected_h / 2), int(detected_w), int(detected_h))
-                tracker = get_tracker(warn_callback)
-                tracker.init(frame, bbox)
-                tracking_active = True
+            if not tracking_active:
+                detected_pos, detected_w, detected_h = detect_ball_by_color(frame, ball_hsv_lo, ball_hsv_hi)
+                if detected_pos and detected_w and detected_h:
+                    cx, cy = detected_pos
+                    bbox = (int(cx - detected_w / 2), int(cy - detected_h / 2), int(detected_w), int(detected_h))
+                    tracker = get_tracker(warn_callback)
+                    tracker.init(frame, bbox)
+                    tracking_active = True
 
-                ball_pos, ball_w, ball_h = detected_pos, detected_w, detected_h
-                stats["frames_detected"] += 1
-                box_color = (0, 255, 255)
+                    ball_pos, ball_w, ball_h = detected_pos, detected_w, detected_h
+                    stats["frames_detected"] += 1
+                    box_color = (0, 255, 255)
+                else:
+                    stats["frames_lost"] += 1
             else:
-                stats["frames_lost"] += 1
-        else:
-            success, bbox = tracker.update(frame)
-            if success:
-                x, y, w, h = [int(v) for v in bbox]
-                ball_pos = (int(x + w / 2), int(y + h / 2))
-                ball_w, ball_h = w, h
-                stats["frames_tracked"] += 1
-                box_color = (0, 220, 80)
-            else:
-                tracking_active = False
-                tracker = None
-                stats["frames_lost"] += 1
+                success, bbox = tracker.update(frame)
+                if success:
+                    x, y, w, h = [int(v) for v in bbox]
+                    ball_pos = (int(x + w / 2), int(y + h / 2))
+                    ball_w, ball_h = w, h
+                    stats["frames_tracked"] += 1
+                    box_color = (0, 220, 80)
+                else:
+                    tracking_active = False
+                    tracker = None
+                    stats["frames_lost"] += 1
 
-        if ball_pos:
-            cx, cy = ball_pos
-            top_left = (int(cx - ball_w / 2), int(cy - ball_h / 2))
-            bottom_right = (int(cx + ball_w / 2), int(cy + ball_h / 2))
-            cv2.rectangle(vis, top_left, bottom_right, box_color, 2)
-            cv2.circle(vis, (cx, cy), 2, box_color, -1)
-            cv2.line(vis, ball_pos, cross_pos, (255, 200, 0), 1)
+            if ball_pos:
+                cx, cy = ball_pos
+                top_left = (int(cx - ball_w / 2), int(cy - ball_h / 2))
+                bottom_right = (int(cx + ball_w / 2), int(cy + ball_h / 2))
+                cv2.rectangle(vis, top_left, bottom_right, box_color, 2)
+                cv2.circle(vis, (cx, cy), 2, box_color, -1)
+                cv2.line(vis, ball_pos, cross_pos, (255, 200, 0), 1)
 
-        results.append(
-            {
-                "frame": absolute_frame_idx,
-                "time_s": round(absolute_frame_idx / metadata.fps, 3),
-                "ball_x": ball_pos[0] if ball_pos else None,
-                "ball_y": ball_pos[1] if ball_pos else None,
-                "ball_w": ball_w if ball_pos else None,
-                "ball_h": ball_h if ball_pos else None,
-                "cross_x": cross_pos[0],
-                "cross_y": cross_pos[1],
-            }
-        )
+            results.append(
+                {
+                    "frame": absolute_frame_idx,
+                    "time_s": round(absolute_frame_idx / metadata.fps, 3),
+                    "ball_x": ball_pos[0] if ball_pos else None,
+                    "ball_y": ball_pos[1] if ball_pos else None,
+                    "ball_w": ball_w if ball_pos else None,
+                    "ball_h": ball_h if ball_pos else None,
+                    "cross_x": cross_pos[0],
+                    "cross_y": cross_pos[1],
+                }
+            )
 
-        if offset % preview_stride == 0:
-            preview_frames.append(frame_to_rgb(vis))
+            if offset % preview_stride == 0:
+                preview_frames.append(frame_to_rgb(vis))
 
-        if progress_callback is not None:
-            progress_callback((offset + 1) / process_length, None)
-
-    cap.release()
+            if progress_callback is not None:
+                progress_callback((offset + 1) / process_length, None)
+    finally:
+        cap.release()
 
     config = {
         "ball_bgr": ball_bgr,
         "ball_hsv_lo": ball_hsv_lo.tolist(),
         "ball_hsv_hi": ball_hsv_hi.tolist(),
         "crosshair_mode": "detected" if crosshair_hsv_lo is not None else "center",
+        "crosshair_detection_rate": round(cross_hits / cross_attempts, 3) if cross_attempts > 0 else None,
         "fps": metadata.fps,
         "resolution": [metadata.width, metadata.height],
     }
