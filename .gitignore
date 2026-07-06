@@ -20,6 +20,9 @@ aiming_cookie*.db-wal
 .claude/skills/
 skills-lock.json
 
+# superpowers brainstorm mockups (design exploration, not project code)
+.superpowers/
+
 # secrets (LLM API keys etc.)
 .env
 .env.*
