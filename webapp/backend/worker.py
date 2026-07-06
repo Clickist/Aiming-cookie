@@ -120,11 +120,17 @@ def _estimate_llm_cost_cny(
 
 
 def _delete_video_safely(path) -> None:
+    """失败路径清理临时文件(视频/CSV)。
+
+    用户上传的视频/CSV 是可再生副本(源在用户本地),属 CLAUDE.md §5 例外
+    (regenerable 临时文件可 hard remove 而非走 Recycle Bin);且 worker
+    批量清理场景下 os.remove 比 SendToRecycleBin 快千倍。函数名沿用历史。
+    """
     try:
         if path and os.path.exists(path):
             os.remove(path)
     except Exception as e:
-        log.warning("删视频失败 %s: %s", path, e)
+        log.warning("删临时文件失败 %s: %s", path, e)
 
 
 # --- 编排 ---
@@ -148,7 +154,13 @@ async def process_one() -> bool:
             report_dict = run_report(summary, backend=None)
             cost = 0.0
         else:
-            backend = _load_backend()
+            # _load_backend 失败也降级为 backend=None(与 budget 超限路径对齐),
+            # 不让 LLM 配置问题丢弃已成功的 CV 结果。
+            try:
+                backend = _load_backend()
+            except Exception as e:
+                log.warning("_load_backend 失败,降级 backend=None: %s", e)
+                backend = None
             report_dict = run_report(summary, backend=backend)
             cost = _estimate_llm_cost_cny(report_dict.get("narration") or "")
         # 注入 timeline markers(独立于 coach pipeline,LLM 走降级也保留)
@@ -161,6 +173,7 @@ async def process_one() -> bool:
         log.exception("分析失败 session=%s", sid)
         await queue.mark_failed(sid, str(e))
         _delete_video_safely(job["video_path"])
+        _delete_video_safely(job.get("csv_path"))
     return True
 
 
