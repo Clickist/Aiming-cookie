@@ -114,3 +114,47 @@ def test_build_plan_focus_severity_order():
     plan = build_plan({}, comp, hist, findings)
     # sparc(fix) 在 reverse_ratio(watch) 前
     assert plan.focus_metrics.index("sparc") < plan.focus_metrics.index("reverse_ratio")
+
+
+# --- decel_frac 带状：_METRIC_SIGNAL 同时支持 high/low，病态 verdict=info 不 maintain ---
+def test_build_plan_decel_frac_pathological_no_maintain():
+    """decel_frac verdict=info（progress 判任一病态）时不触发 maintain。
+
+    advice 仍发 watch/fix finding（在 diagnosis.issues 里），但 plan 不基于
+    比较结果给它 maintain——避免"病态值被误判进步→保持"的自相矛盾。
+    """
+    hist = [_session({}, f"2026-06-0{i}") for i in range(1, 5)]
+    comp = [_row("decel_frac", "info")]
+    findings = [_finding("decel_frac low", "watch")]  # advice 仍发 watch
+    plan = build_plan({}, comp, hist, findings)
+    assert not any(a.kind == "maintain" and a.target_metric == "decel_frac"
+                   for a in plan.adjustments)
+    assert "decel_frac" not in plan.focus_metrics
+
+
+def test_build_plan_decel_frac_low_finding_resolvable():
+    """_METRIC_SIGNAL 支持 decel_frac low（不只 high）：worse + low finding → regress_focus。
+
+    回归保护：原先 _METRIC_SIGNAL 只有 "decel_frac high"，low finding 永远匹不上，
+    scenarios 会空；现在 tuple fallback 两个信号都能命中。
+    """
+    hist = [_session({}, f"2026-06-0{i}") for i in range(1, 5)]
+    comp = [_row("decel_frac", "worse")]
+    findings = [_finding("decel_frac low", "watch")]
+    plan = build_plan({}, comp, hist, findings)
+    reg = [a for a in plan.adjustments if a.kind == "regress_focus"
+           and a.target_metric == "decel_frac"]
+    assert len(reg) == 1
+    assert len(reg[0].scenarios) == 2  # _finding helper 附 2 个 prescription
+
+
+def test_build_plan_decel_frac_high_finding_still_resolvable():
+    """high 信号路径不被破坏：worse + high finding → regress_focus 带 scenarios。"""
+    hist = [_session({}, f"2026-06-0{i}") for i in range(1, 5)]
+    comp = [_row("decel_frac", "worse")]
+    findings = [_finding("decel_frac high", "fix")]
+    plan = build_plan({}, comp, hist, findings)
+    reg = [a for a in plan.adjustments if a.kind == "regress_focus"
+           and a.target_metric == "decel_frac"]
+    assert len(reg) == 1
+    assert len(reg[0].scenarios) == 2

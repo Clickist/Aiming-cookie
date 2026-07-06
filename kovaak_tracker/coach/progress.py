@@ -11,9 +11,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..advice import THRESHOLDS
 from ..settings import OUTPUT_DIR
 
 DEFAULT_HISTORY_PATH = OUTPUT_DIR / "history" / "sessions.jsonl"
+
+# decel_frac 健康带（与 advice.advise 带状判定同源，advice 是权威语义：
+# <low 发 watch"刹车太急"，>high 发 fix"减速拖沓"，中间健康）。
+# 带外为病态值：progress 不发 better/worse（返回 info），让 advice 的 watch/fix 主导。
+_DECEL_FRAC_BAND = (THRESHOLDS["decel_frac_low"], THRESHOLDS["decel_frac_high"])
 
 
 @dataclass(frozen=True)
@@ -140,6 +146,10 @@ def _med(summary, key):
 def _verdict(metric, current, baseline):
     if current is None or baseline is None:
         return "info"
+    # decel_frac 是带状指标（非单调），单独走健康带判定：
+    # 都在带内才比"朝中心收敛"，任一病态返回 info（让 advice 主导）。
+    if metric == "decel_frac":
+        return _decel_frac_verdict(current, baseline)
     # higher-is-better: sparc (closer to 0), peak_speed; lower-is-better: the rest
     higher_better = metric in ("sparc", "peak_speed_deg")
     # Use a difference normalized by |baseline| so the direction holds for
@@ -148,6 +158,29 @@ def _verdict(metric, current, baseline):
     mag = abs(baseline) if baseline != 0 else 1.0
     delta = (current - baseline) / mag
     rel = delta if higher_better else -delta
+    if rel > 0.05:
+        return "better"
+    if rel < -0.05:
+        return "worse"
+    return "same"
+
+
+def _decel_frac_verdict(current, baseline):
+    """健康带内单调：self 与 baseline 都在 [low, high] 内时，朝带中心
+    (low+high)/2 收敛 = better，远离 = worse；任一带外（病态）= info。
+
+    消除"病态值被误判进步"：self=0.30（刹车太急）/ baseline=0.50 不再判 better。
+    """
+    low, high = _DECEL_FRAC_BAND
+    if not (low <= current <= high) or not (low <= baseline <= high):
+        return "info"
+    center = (low + high) / 2
+    dist_cur = abs(current - center)
+    dist_base = abs(baseline - center)
+    # 归一化参照 baseline 到中心的距离；为 0（baseline 正中）时取带半宽，避免除零。
+    half_width = (high - low) / 2
+    mag = dist_base if dist_base > 0 else half_width
+    rel = (dist_base - dist_cur) / mag  # 正 = current 更近中心 = better
     if rel > 0.05:
         return "better"
     if rel < -0.05:
