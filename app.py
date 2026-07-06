@@ -162,6 +162,10 @@ if st.button("Run Deep Analysis", type="primary"):
         ball_bgr=ball_bgr,
         ball_hsv_lo=b_lo,
         ball_hsv_hi=b_hi,
+        # UI mode = center: crosshair_hsv_lo/hi intentionally omitted.
+        # The Streamlit UI only samples ball color, so cross_pos stays at
+        # screen center (tracking.py default). Use calibration_cli.py for
+        # detected-crosshair mode (requires interactive crosshair sampling).
         progress_callback=update_progress,
         warn_callback=st.warning,
     )

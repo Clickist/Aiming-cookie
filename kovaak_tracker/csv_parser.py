@@ -60,6 +60,11 @@ GAME_YAW: dict[str, float] = {
     "Fortnite": 0.022,      # UE4 hipfire default;因 config 而异
 }
 
+# Case-insensitive lookup index: KovaaK's Sens Scale casing is not guaranteed,
+# and cm_per_360 already lowercases for the "cm/360" literal check. This keeps
+# GAME_YAW readable (proper game names) while making yaw lookups case-insensitive.
+_GAME_YAW_LOWER: dict[str, float] = {k.lower(): v for k, v in GAME_YAW.items()}
+
 
 @dataclass(frozen=True)
 class KovaaKStats:
@@ -107,7 +112,7 @@ class KovaaKStats:
     @property
     def yaw(self) -> float | None:
         """该 session 的 game yaw(度/count),基于 Sens Scale。未知 game → None。"""
-        return GAME_YAW.get(self.sens_scale)
+        return _GAME_YAW_LOWER.get(self.sens_scale.lower())
 
     @property
     def cm_per_360(self) -> float | None:
@@ -123,7 +128,7 @@ class KovaaKStats:
                 return float(self.config["Horiz Sens"])
             except (KeyError, ValueError):
                 return None
-        yaw = GAME_YAW.get(scale)
+        yaw = _GAME_YAW_LOWER.get(scale.lower())
         if yaw is None:
             return None
         try:
@@ -173,7 +178,7 @@ def parse_stats_csv(csv_path: str | Path) -> KovaaKStats:
         kills[col] = pd.to_numeric(kills[col], errors="coerce").astype("Int64")
     for col in ("Accuracy", "Damage Done", "Damage Possible", "Efficiency"):
         kills[col] = pd.to_numeric(kills[col], errors="coerce")
-    kills["TTK"] = kills["TTK"].str.rstrip("s").astype(float)
+    kills["TTK"] = pd.to_numeric(kills["TTK"].str.rstrip("s"), errors="coerce")
     kills["Timestamp_dt"] = kills["Timestamp"].map(_parse_wallclock)
     kills["time_s"] = (kills["Timestamp_dt"] - _parse_wallclock(summary["Challenge Start"])).dt.total_seconds()
 
