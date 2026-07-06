@@ -1,0 +1,345 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Coach Dialogue Page - Aiming Cookie</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-tertiary": "#003061",
+                      "on-primary-fixed-variant": "#832600",
+                      "surface-dim": "#15140c",
+                      "on-error-container": "#ffdad6",
+                      "secondary-container": "#4b4946",
+                      "surface-container-lowest": "#0f0e07",
+                      "primary-fixed": "#ffdbd0",
+                      "text-muted": "#4a4845",
+                      "on-primary-fixed": "#390b00",
+                      "on-background": "#e7e2d5",
+                      "tertiary-fixed": "#d5e3ff",
+                      "surface-variant": "#37352c",
+                      "surface-container-highest": "#37352c",
+                      "on-accent": "#511400",
+                      "on-primary": "#5d1800",
+                      "text-primary": "#f3f0ea",
+                      "on-error": "#690005",
+                      "on-secondary-fixed": "#1d1b19",
+                      "primary-fixed-dim": "#ffb59d",
+                      "outline": "#ac897e",
+                      "on-tertiary-fixed": "#001b3c",
+                      "border": "#272520",
+                      "primary": "#ffb59d",
+                      "on-tertiary-fixed-variant": "#004689",
+                      "secondary": "#cac6c2",
+                      "primary-container": "#ff5712",
+                      "success": "#22c55e",
+                      "bg": "#0d0d0c",
+                      "on-surface-variant": "#e5beb2",
+                      "error-container": "#93000a",
+                      "text-secondary": "#807d72",
+                      "on-secondary-container": "#bcb8b4",
+                      "surface": "#131210",
+                      "secondary-fixed": "#e6e2de",
+                      "border-hi": "#3a3632",
+                      "tertiary-fixed-dim": "#a8c8ff",
+                      "surface-bright": "#3b3930",
+                      "outline-variant": "#5c4038",
+                      "info": "#3b82f6",
+                      "error": "#ef4444",
+                      "surface-hi": "#1c1b18",
+                      "background": "#15140c",
+                      "surface-container-high": "#2c2a22",
+                      "warning": "#f59e0b",
+                      "inverse-surface": "#e7e2d5",
+                      "surface-container-low": "#1d1c14",
+                      "surface-container": "#212018",
+                      "on-tertiary-container": "#002955",
+                      "secondary-fixed-dim": "#cac6c2",
+                      "on-secondary-fixed-variant": "#484644",
+                      "inverse-primary": "#ac3400",
+                      "surface-tint": "#ffb59d",
+                      "tertiary-container": "#3491ff",
+                      "accent-dim": "#2a1500",
+                      "tertiary": "#a8c8ff",
+                      "inverse-on-surface": "#323128",
+                      "on-secondary": "#32302e",
+                      "on-surface": "#e7e2d5",
+                      "accent": "#f54e00"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "base": "8px",
+                      "margin-page": "32px",
+                      "hero-gap": "96px",
+                      "gap-grid": "24px",
+                      "section-gap": "64px",
+                      "card-padding": "24px"
+              },
+              "fontFamily": {
+                      "label-caps": [
+                              "JetBrains Mono"
+                      ],
+                      "metric-sm": [
+                              "JetBrains Mono"
+                      ],
+                      "hero-heading-mobile": [
+                              "Inter"
+                      ],
+                      "metric-lg": [
+                              "JetBrains Mono"
+                      ],
+                      "section-heading": [
+                              "Inter"
+                      ],
+                      "hero-heading": [
+                              "Inter"
+                      ],
+                      "subheading": [
+                              "Inter"
+                      ],
+                      "body": [
+                              "Inter"
+                      ],
+                      "meta-data": [
+                              "JetBrains Mono"
+                      ]
+              },
+              "fontSize": {
+                      "label-caps": [
+                              "11px",
+                              {
+                                      "lineHeight": "16px",
+                                      "letterSpacing": "0.08em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "metric-sm": [
+                              "28px",
+                              {
+                                      "lineHeight": "1",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "hero-heading-mobile": [
+                              "42px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "letterSpacing": "-0.035em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "metric-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "1",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "section-heading": [
+                              "24px",
+                              {
+                                      "lineHeight": "32px",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "hero-heading": [
+                              "64px",
+                              {
+                                      "lineHeight": "1.1",
+                                      "letterSpacing": "-0.035em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "subheading": [
+                              "18px",
+                              {
+                                      "lineHeight": "24px",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body": [
+                              "16px",
+                              {
+                                      "lineHeight": "1.65",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "meta-data": [
+                              "13px",
+                              {
+                                      "lineHeight": "18px",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+</head>
+<body class="bg-bg text-text-primary font-body antialiased h-screen w-screen overflow-hidden flex flex-col">
+<!-- Top Navigation Anchor (Shared Component) -->
+<header class="h-16 w-full shrink-0 border-b border-border bg-background flex items-center justify-between px-margin-page">
+<div class="flex items-center gap-4">
+<div class="font-section-heading text-section-heading font-bold text-text-primary">Aiming Cookie</div>
+<div class="h-4 w-px bg-border mx-2"></div>
+<div class="font-body text-body text-text-secondary flex items-center gap-2">
+<span>Coach Dialogue</span>
+<span class="text-border-hi">•</span>
+<span class="font-meta-data text-meta-data text-text-primary">#42</span>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<a class="font-label-caps text-label-caps text-text-secondary hover:text-text-primary transition-colors" href="#">DOCS</a>
+<a class="font-label-caps text-label-caps text-text-secondary hover:text-text-primary transition-colors" href="#">GITHUB</a>
+<button class="bg-accent text-bg font-label-caps text-label-caps px-4 py-2 rounded flex items-center gap-2 hover:bg-surface-hi transition-all duration-200 active:scale-95 transition-transform">
+                开始分析
+            </button>
+</div>
+</header>
+<!-- Split Pane Layout -->
+<main class="flex-1 flex overflow-hidden w-full">
+<!-- LEFT PANE: Video Player (65%) -->
+<section class="w-[65%] border-r border-border bg-surface flex flex-col relative shrink-0">
+<!-- Video Area -->
+<div class="flex-1 bg-black flex items-center justify-center relative group">
+<img class="w-full h-full object-cover opacity-80" data-alt="A first-person view of a high-speed competitive tactical shooter game. The scene shows a complex, industrial-style map with sharp corners and varied elevations. A sniper rifle model is visible in the foreground. The lighting is slightly dim with tactical shadows and highlights, emphasizing precision and focus. An orange crosshair is centered, with a red outline highlighting an enemy player in the mid-distance. The aesthetic is clean, low-latency, and performance-oriented." src="https://lh3.googleusercontent.com/aida-public/AB6AXuChzyWLZABdhT-Mne7SFyULFSFoCRVHpxc8Fzpq7TGKU9RzUboABI7tROQHgSNHaaC8YPJcBykSjEdnncZoHMoD_mGxS1whJUrrKSRScZkQzut7S09Fac6IZB_INIV-7z6pdJGoSI6UqT5Fp20BwIbX39TYeXr43L44t0r5ztYYEJhXf681BM1AG5p0Wu9hw9wMEi7qIvjyFI4wM3ikLEiU6vD9ajb-caPPULf7cpkC2Md2ek8twij2MmpiHKNAN2s6Pu8EvK5eZFc">
+<div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none"></div>
+<!-- Center Play Overlay -->
+<button class="absolute w-16 h-16 bg-surface-hi/80 backdrop-blur border border-border-hi rounded-full flex items-center justify-center text-text-primary hover:border-accent hover:text-accent transition-all group-hover:scale-105">
+<span class="material-symbols-outlined text-[32px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+</div>
+<!-- Custom Timeline & Controls -->
+<div class="h-24 bg-surface border-t border-border px-6 flex flex-col justify-center gap-4 shrink-0">
+<!-- Timeline Track -->
+<div class="w-full h-2 bg-surface-bright rounded-full relative cursor-pointer group">
+<!-- Progress Fill -->
+<div class="absolute left-0 top-0 h-full bg-accent rounded-l-full w-[35%]"></div>
+<!-- Playhead -->
+<div class="absolute left-[35%] top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-accent border-2 border-surface rounded-full shadow-[0_0_10px_rgba(245,78,0,0.5)]"></div>
+<!-- Flick Markers -->
+<div class="absolute left-[15%] top-1/2 -translate-y-1/2 w-1 h-3 bg-accent rounded-sm"></div>
+<div class="absolute left-[28%] top-1/2 -translate-y-1/2 w-1 h-3 bg-info rounded-sm"></div>
+<div class="absolute left-[45%] top-1/2 -translate-y-1/2 w-1 h-3 bg-text-muted rounded-sm"></div>
+<div class="absolute left-[62%] top-1/2 -translate-y-1/2 w-1 h-3 bg-accent rounded-sm shadow-[0_0_8px_rgba(245,78,0,0.8)]"></div>
+<!-- Hover Tooltip (Simulated) -->
+<div class="absolute left-[62%] -top-8 -translate-x-1/2 bg-surface-hi border border-border px-2 py-1 rounded font-meta-data text-[10px] text-text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                        Peak [0:23]
+                    </div>
+</div>
+<!-- Controls Row -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-4">
+<button class="text-text-primary hover:text-accent transition-colors">
+<span class="material-symbols-outlined">pause</span>
+</button>
+<div class="font-meta-data text-meta-data text-text-secondary">
+<span class="text-text-primary">0:14</span> / 0:45
+                        </div>
+</div>
+<div class="flex items-center gap-2">
+<button class="px-2 py-1 font-label-caps text-label-caps text-text-secondary border border-border rounded hover:bg-surface-hi transition-colors">0.5x</button>
+<button class="px-2 py-1 font-label-caps text-label-caps text-text-primary border border-accent bg-accent/10 rounded">1.0x</button>
+<button class="px-2 py-1 font-label-caps text-label-caps text-text-secondary border border-border rounded hover:bg-surface-hi transition-colors">2.0x</button>
+<div class="w-px h-4 bg-border mx-2"></div>
+<button class="text-text-secondary hover:text-text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]">fullscreen</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- RIGHT PANE: Chat Interface (35%) -->
+<section class="flex-1 flex flex-col bg-bg min-w-[320px]">
+<!-- Chat Header -->
+<div class="h-16 border-b border-border bg-surface-dim px-6 flex items-center justify-between shrink-0">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-hi border border-border flex items-center justify-center">
+<span class="material-symbols-outlined text-accent text-[18px]">smart_toy</span>
+</div>
+<div>
+<div class="font-subheading text-sm text-text-primary">Aim Coach AI</div>
+<div class="font-meta-data text-[11px] text-success flex items-center gap-1">
+<div class="w-1.5 h-1.5 bg-success rounded-full"></div>
+                            Analyzing Session
+                        </div>
+</div>
+</div>
+<button class="text-text-secondary hover:text-text-primary">
+<span class="material-symbols-outlined text-[20px]">more_vert</span>
+</button>
+</div>
+<!-- Message Thread -->
+<div class="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+<!-- AI Message -->
+<div class="flex gap-3 max-w-[90%]">
+<div class="w-6 h-6 rounded-full bg-surface-hi border border-border flex items-center justify-center shrink-0 mt-1">
+<span class="material-symbols-outlined text-accent text-[14px]">smart_toy</span>
+</div>
+<div class="bg-surface border border-border rounded-lg p-4 flex flex-col gap-2">
+<p class="font-body text-sm text-text-primary leading-relaxed">
+                            I've reviewed your latest session. Your micro-corrections are improving, but I noticed a persistent over-flick on targets moving right. Look at <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-dim border border-accent/30 text-accent font-meta-data text-[11px] cursor-pointer hover:bg-accent/20"><span class="material-symbols-outlined text-[12px]">play_circle</span> 0:23</span>.
+                        </p>
+<div class="bg-surface-hi border border-border p-3 rounded mt-2">
+<div class="font-meta-data text-[11px] text-text-secondary mb-1">METRIC DEVIATION</div>
+<div class="flex justify-between items-end">
+<span class="font-body text-sm text-text-primary">Peak Velocity</span>
+<span class="font-metric-sm text-lg text-warning">1.4x</span>
+</div>
+</div>
+</div>
+</div>
+<!-- User Message -->
+<div class="flex gap-3 max-w-[90%] self-end flex-row-reverse">
+<div class="w-6 h-6 rounded-full bg-accent text-bg flex items-center justify-center shrink-0 mt-1">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">person</span>
+</div>
+<div class="bg-accent/10 border border-accent/30 rounded-lg p-4">
+<p class="font-body text-sm text-text-primary">
+                            Yeah, I felt that. I think my grip was a bit too tense there. How can I adjust my initial deceleration?
+                        </p>
+</div>
+</div>
+<!-- AI Message -->
+<div class="flex gap-3 max-w-[90%]">
+<div class="w-6 h-6 rounded-full bg-surface-hi border border-border flex items-center justify-center shrink-0 mt-1">
+<span class="material-symbols-outlined text-accent text-[14px]">smart_toy</span>
+</div>
+<div class="bg-surface border border-border rounded-lg p-4">
+<p class="font-body text-sm text-text-primary leading-relaxed">
+                            Focus on a smoother deceleration curve rather than an abrupt stop. Try anchoring your wrist slightly earlier. Let's analyze the next sequence at <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-dim border border-accent/30 text-accent font-meta-data text-[11px] cursor-pointer hover:bg-accent/20"><span class="material-symbols-outlined text-[12px]">play_circle</span> 0:41</span> to compare.
+                        </p>
+</div>
+</div>
+</div>
+<!-- Input Area -->
+<div class="p-4 border-t border-border bg-surface-dim shrink-0">
+<div class="relative bg-bg border border-border focus-within:border-accent rounded-lg transition-colors flex items-center p-2 gap-2">
+<button class="w-8 h-8 flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hi rounded transition-colors" title="Pin Current Frame">
+<span class="material-symbols-outlined text-[20px]">push_pin</span>
+</button>
+<input class="flex-1 bg-transparent border-none focus:ring-0 text-sm font-body text-text-primary placeholder:text-text-secondary placeholder:font-meta-data py-2 px-1" placeholder="Ask about this frame..." type="text">
+<button class="w-8 h-8 flex items-center justify-center bg-accent text-bg rounded hover:brightness-110 transition-all">
+<span class="material-symbols-outlined text-[18px]">send</span>
+</button>
+</div>
+<div class="text-center mt-2">
+<span class="font-meta-data text-[10px] text-text-muted">Pro Tip: Use Cmd+Enter to send, or type '@' to reference a timestamp.</span>
+</div>
+</div>
+</section>
+</main>
+</body></html>

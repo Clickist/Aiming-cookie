@@ -1,0 +1,267 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head><meta charset="utf-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=block" rel="stylesheet"><script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><script id="tailwind-config">try{
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "text-secondary": "#807d72",
+                        "on-surface-variant": "#e5beb2",
+                        "on-error": "#690005",
+                        "outline": "#ac897e",
+                        "primary-container": "#ff5712",
+                        "on-primary-fixed": "#390b00",
+                        "on-tertiary-fixed-variant": "#004689",
+                        "tertiary-fixed-dim": "#a8c8ff",
+                        "on-secondary-fixed": "#1d1b19",
+                        "surface-container": "#212018",
+                        "inverse-on-surface": "#323128",
+                        "surface-container-highest": "#37352c",
+                        "background": "#15140c",
+                        "inverse-surface": "#e7e2d5",
+                        "secondary-fixed": "#e6e2de",
+                        "text-muted": "#4a4845",
+                        "surface-dim": "#15140c",
+                        "on-background": "#e7e2d5",
+                        "on-primary-fixed-variant": "#832600",
+                        "surface-container-high": "#2c2a22",
+                        "error": "#ef4444",
+                        "on-tertiary": "#003061",
+                        "on-secondary": "#32302e",
+                        "surface-tint": "#ffb59d",
+                        "success": "#22c55e",
+                        "primary-fixed-dim": "#ffb59d",
+                        "tertiary-fixed": "#d5e3ff",
+                        "on-tertiary-fixed": "#001b3c",
+                        "border-hi": "#3a3632",
+                        "on-primary": "#5d1800",
+                        "surface-container-lowest": "#0f0e07",
+                        "error-container": "#93000a",
+                        "secondary-container": "#4b4946",
+                        "secondary": "#cac6c2",
+                        "surface-container-low": "#1d1c14",
+                        "surface-hi": "#1c1b18",
+                        "surface-variant": "#37352c",
+                        "on-primary-container": "#511400",
+                        "tertiary": "#a8c8ff",
+                        "text-primary": "#f3f0ea",
+                        "outline-variant": "#5c4038",
+                        "tertiary-container": "#3491ff",
+                        "on-secondary-fixed-variant": "#484644",
+                        "secondary-fixed-dim": "#cac6c2",
+                        "bg": "#0d0d0c",
+                        "surface": "#131210",
+                        "surface-bright": "#3b3930",
+                        "primary": "#ffb59d",
+                        "warning": "#f59e0b",
+                        "on-error-container": "#ffdad6",
+                        "border": "#272520",
+                        "inverse-primary": "#ac3400",
+                        "primary-fixed": "#ffdbd0",
+                        "on-tertiary-container": "#002955",
+                        "info": "#3b82f6",
+                        "accent-dim": "#2a1500",
+                        "on-surface": "#e7e2d5",
+                        "on-secondary-container": "#bcb8b4",
+                        "accent": "#f54e00"
+                    },
+                    "borderRadius": {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                    "spacing": {"base": "8px", "gap-grid": "24px", "margin-page": "32px", "card-padding": "24px", "section-gap": "64px", "hero-gap": "96px"},
+                    "fontFamily": {
+                        "body": ["Inter"], "subheading": ["Inter"], "section-heading": ["Inter"],
+                        "hero-heading": ["Inter"], "hero-heading-mobile": ["Inter"],
+                        "label-caps": ["JetBrains Mono"], "meta-data": ["JetBrains Mono"],
+                        "metric-sm": ["JetBrains Mono"], "metric-lg": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "body": ["16px", {"lineHeight": "1.65", "fontWeight": "400"}],
+                        "subheading": ["18px", {"lineHeight": "24px", "fontWeight": "600"}],
+                        "section-heading": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                        "hero-heading": ["64px", {"lineHeight": "1.1", "letterSpacing": "-0.035em", "fontWeight": "500"}],
+                        "hero-heading-mobile": ["42px", {"lineHeight": "1.2", "letterSpacing": "-0.035em", "fontWeight": "500"}],
+                        "label-caps": ["11px", {"lineHeight": "16px", "letterSpacing": "0.08em", "fontWeight": "500"}],
+                        "meta-data": ["13px", {"lineHeight": "18px", "fontWeight": "400"}],
+                        "metric-sm": ["28px", {"lineHeight": "1", "fontWeight": "600"}],
+                        "metric-lg": ["48px", {"lineHeight": "1", "fontWeight": "600"}]
+                    }
+                }
+            }
+        }
+    }catch(_e){}</script>
+    <style>
+        .btn-primary{background-color:#f54e00;color:#0d0d0c;padding:.625rem 1.25rem;border-radius:6px;font-family:Inter,sans-serif;font-size:14px;font-weight:500;display:inline-flex;align-items:center;gap:.375rem;border:none;cursor:pointer;transition:filter .15s,transform .15s}
+        .btn-primary:hover{filter:brightness(1.1)}
+        .btn-primary:active{transform:scale(.98)}
+        .btn-secondary{background-color:transparent;color:#f3f0ea;border:1px solid #272520;padding:.375rem .75rem;border-radius:6px;font-family:Inter,sans-serif;font-size:13px;font-weight:500;min-width:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background-color .15s,border-color .15s}
+        .btn-secondary:hover{background-color:#1c1b18;border-color:#3a3632}
+        .severity-badge-p1{background-color:#2a1500;color:#f54e00;border:1px solid rgba(245,78,0,.3)}
+    </style></head><body class="bg-bg text-text-primary font-body antialiased min-h-screen flex flex-col selection:bg-accent selection:text-white">
+
+    <!-- TopNavBar -->
+    <header class="fixed top-0 w-full z-50 bg-bg border-b border-border h-[64px]"><div class="flex justify-between items-center h-full px-6 max-w-[1200px] mx-auto w-full">
+            <div class="flex items-center gap-4">
+                <span class="font-body text-xl font-semibold text-text-primary">Aiming Cookie</span>
+            </div>
+            
+            <nav class="hidden md:flex items-center gap-8">
+                <a class="font-body text-[14px] text-text-secondary hover:text-text-primary transition-colors" href="#">Dashboard</a>
+                <a class="font-body text-[14px] text-text-primary font-medium" href="#">History</a>
+                <a class="font-body text-[14px] text-text-secondary hover:text-text-primary transition-colors" href="#">Coach</a>
+                <a class="font-body text-[14px] text-text-secondary hover:text-text-primary transition-colors" href="#">Academy</a>
+            </nav>
+            
+            <div class="flex items-center gap-6">
+                <div class="hidden sm:flex items-center gap-4">
+                    <span class="material-symbols-outlined text-text-secondary hover:text-text-primary cursor-pointer text-[20px]">notifications</span>
+                    <span class="material-symbols-outlined text-text-secondary hover:text-text-primary cursor-pointer text-[20px]">settings</span>
+                </div>
+                <button class="bg-accent text-bg px-4 py-2 rounded-[6px] font-body text-[14px] font-medium flex items-center gap-2 hover:opacity-90 transition-opacity">
+                    <span class="material-symbols-outlined text-[18px]">upload</span>
+                    Upload Clip
+                </button>
+            </div>
+        </div></header>
+
+    <!-- Main Content -->
+    <main class="flex-grow pt-[104px] pb-16 px-6 max-w-[1200px] mx-auto w-full">
+        
+        <!-- Page Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+            <div>
+                <h1 class="font-body text-[32px] font-semibold text-text-primary leading-tight">历史记录</h1>
+                <p class="font-meta-data text-[12px] text-text-muted mt-2 uppercase tracking-wider">共 42 次分析</p>
+            </div>
+            <button class="btn-primary">新建分析 →</button>
+        </div>
+        
+        
+
+        <!-- Session List -->
+        <div class="flex flex-col">
+            <!-- Row 1 -->
+            <div class="session-row py-8 hover:bg-surface transition-colors border-b border-border">
+                <div class="w-full md:w-40 mb-2 md:mb-0 flex-shrink-0 flex items-center gap-3 md:w-48">
+                    <span class="font-meta-data text-[13px] text-text-secondary">2026-07-04</span>
+                    <span class="font-meta-data text-[13px] text-text-muted">14:32</span>
+                </div>
+                <div class="flex-grow flex flex-col items-start justify-center">
+                    <div class="flex items-center mb-1 gap-4">
+                        <span class="font-label-caps text-[11px] bg-surface-hi border border-border text-text-secondary px-2 py-0.5 rounded tracking-wide">1W6TS</span>
+                        <span class="font-body text-[15px] font-medium text-text-primary">减速抖动型 / Decel Jitter</span>
+                    </div>
+                    <div class="font-meta-data text-[12px] text-text-muted">
+                        48 cm/360 · 60fps
+                    </div>
+                </div>
+                <div class="flex items-center gap-6 mt-3 md:mt-0 ml-auto md:w-64 justify-end">
+                    <div class="flex flex-col items-end gap-2">
+                        <span class="severity-badge-p1 font-label-caps text-[11px] px-2 py-0.5 rounded tracking-wide">P1 SEVERITY</span>
+                        <span class="font-body text-[13px] text-text-secondary">decel_frac 偏高</span>
+                    </div>
+                    <span class="material-symbols-outlined text-text-muted group-hover:text-text-primary transition-colors text-[20px]">arrow_forward</span>
+                </div>
+            </div>
+
+            <!-- Row 2 -->
+            <div class="session-row py-8 hover:bg-surface transition-colors border-b border-border">
+                <div class="w-full md:w-40 mb-2 md:mb-0 flex-shrink-0 flex items-center gap-3 md:w-48">
+                    <span class="font-meta-data text-[13px] text-text-secondary">2026-07-03</span>
+                    <span class="font-meta-data text-[13px] text-text-muted">19:15</span>
+                </div>
+                <div class="flex-grow flex flex-col items-start justify-center">
+                    <div class="flex items-center mb-1 gap-4">
+                        <span class="font-label-caps text-[11px] bg-surface-hi border border-border text-text-secondary px-2 py-0.5 rounded tracking-wide">PASU</span>
+                        <span class="font-body text-[15px] font-medium text-text-primary">过度预测 / Over-Prediction</span>
+                    </div>
+                    <div class="font-meta-data text-[12px] text-text-muted">
+                        45 cm/360 · 144fps
+                    </div>
+                </div>
+                <div class="flex items-center gap-6 mt-3 md:mt-0 ml-auto md:w-64 justify-end">
+                    <div class="flex flex-col items-end gap-2">
+                        <span class="bg-[#1f1606] text-warning border border-warning/30 font-label-caps text-[11px] px-2 py-0.5 rounded tracking-wide">P2 SEVERITY</span>
+                        <span class="font-body text-[13px] text-text-secondary">track_smoothness 低</span>
+                    </div>
+                    <span class="material-symbols-outlined text-text-muted group-hover:text-text-primary transition-colors text-[20px]">arrow_forward</span>
+                </div>
+            </div>
+
+            <!-- Row 3 -->
+            <div class="session-row py-8 hover:bg-surface transition-colors border-b border-border">
+                <div class="w-full md:w-40 mb-2 md:mb-0 flex-shrink-0 flex items-center gap-3 md:w-48">
+                    <span class="font-meta-data text-[13px] text-text-secondary">2026-07-01</span>
+                    <span class="font-meta-data text-[13px] text-text-muted">10:05</span>
+                </div>
+                <div class="flex-grow flex flex-col items-start justify-center">
+                    <div class="flex items-center mb-1 gap-4">
+                        <span class="font-label-caps text-[11px] bg-surface-hi border border-border text-text-secondary px-2 py-0.5 rounded tracking-wide">PGTI</span>
+                        <span class="font-body text-[15px] font-medium text-text-primary">垂直阻尼过大 / Vert Damping</span>
+                    </div>
+                    <div class="font-meta-data text-[12px] text-text-muted">
+                        52 cm/360 · 240fps
+                    </div>
+                </div>
+                <div class="flex items-center gap-6 mt-3 md:mt-0 ml-auto md:w-64 justify-end">
+                    <div class="flex flex-col items-end gap-2">
+                        <span class="bg-surface-hi text-text-secondary border border-border font-label-caps text-[11px] px-2 py-0.5 rounded tracking-wide">P3 SEVERITY</span>
+                        <span class="font-body text-[13px] text-text-secondary">y_axis_lag 轻微</span>
+                    </div>
+                    <span class="material-symbols-outlined text-text-muted group-hover:text-text-primary transition-colors text-[20px]">arrow_forward</span>
+                </div>
+            </div>
+
+            <!-- Row 4 -->
+            <div class="session-row py-8 hover:bg-surface transition-colors border-b border-border">
+                <div class="w-full md:w-40 mb-2 md:mb-0 flex-shrink-0 flex items-center gap-3 md:w-48">
+                    <span class="font-meta-data text-[13px] text-text-secondary">2026-06-28</span>
+                    <span class="font-meta-data text-[13px] text-text-muted">22:40</span>
+                </div>
+                <div class="flex-grow flex flex-col items-start justify-center">
+                    <div class="flex items-center mb-1 gap-4">
+                        <span class="font-label-caps text-[11px] bg-surface-hi border border-border text-text-secondary px-2 py-0.5 rounded tracking-wide">1W6TS</span>
+                        <span class="font-body text-[15px] font-medium text-text-primary">微调修正频繁 / Micro-Correction</span>
+                    </div>
+                    <div class="font-meta-data text-[12px] text-text-muted">
+                        48 cm/360 · 60fps
+                    </div>
+                </div>
+                <div class="flex items-center gap-6 mt-3 md:mt-0 ml-auto md:w-64 justify-end">
+                    <div class="flex flex-col items-end gap-2">
+                        <span class="severity-badge-p1 font-label-caps text-[11px] px-2 py-0.5 rounded tracking-wide">P1 SEVERITY</span>
+                        <span class="font-body text-[13px] text-text-secondary">flick_accuracy_drop</span>
+                    </div>
+                    <span class="material-symbols-outlined text-text-muted group-hover:text-text-primary transition-colors text-[20px]">arrow_forward</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex justify-center mt-12 gap-2">
+            <button class="btn-secondary text-text-muted cursor-not-allowed border-transparent hover:border-transparent opacity-50 flex items-center gap-1">
+                <span class="material-symbols-outlined text-[16px]">arrow_back</span> Prev
+            </button>
+            <button class="btn-secondary bg-surface-hi border-border-hi">1</button>
+            <button class="btn-secondary hover:bg-surface-hi">2</button>
+            <button class="btn-secondary hover:bg-surface-hi">3</button>
+            <span class="text-text-muted px-2 py-1 flex items-center justify-center font-meta-data text-[13px]">...</span>
+            <button class="btn-secondary hover:bg-surface-hi">8</button>
+            <button class="btn-secondary flex items-center gap-1 hover:bg-surface-hi">
+                Next <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+            </button>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="w-full bg-bg border-t border-border mt-auto">
+        <div class="flex flex-col md:flex-row justify-between items-center py-8 px-6 max-w-[1200px] mx-auto gap-4">
+            <div class="font-label-caps text-[11px] text-text-muted uppercase tracking-widest cursor-default">
+                © 2026 Aiming Cookie. Professional Performance Tools.
+            </div>
+            <nav class="flex flex-wrap items-center gap-6 justify-center">
+                <a class="font-meta-data text-[12px] text-text-muted hover:text-text-primary transition-colors duration-200" href="#">Privacy Policy</a>
+                <a class="font-meta-data text-[12px] text-text-muted hover:text-text-primary transition-colors duration-200" href="#">Terms of Service</a>
+                <a class="font-meta-data text-[12px] text-text-muted hover:text-text-primary transition-colors duration-200" href="#">API Docs</a>
+                <a class="font-meta-data text-[12px] text-text-muted hover:text-text-primary transition-colors duration-200" href="#">Support</a>
+            </nav>
+        </div>
+    </footer>
+</body></html>
