@@ -107,6 +107,32 @@ def test_comparison_empty_history_info_verdict():
     assert rows[0]["verdict"] == "info"
 
 
+# --- decel_frac 健康带单调判定（带状指标，非 lower-better）---
+# 健康带 [0.40, 0.65]，中心 0.525（与 advice.THRESHOLDS 同源）
+def test_comparison_decel_frac_pathological_not_better():
+    """回归核心：self=0.30（< low 病态）/ baseline=0.50 不再被误判 better。"""
+    baseline = [{"decel_frac": {"med": 0.50}}]   # 健康
+    current = {"decel_frac": {"med": 0.30}}       # < 0.40 病态
+    rows = {r["metric"]: r for r in build_comparison(baseline, current)}
+    assert rows["decel_frac"]["verdict"] != "better"   # info（任一病态）
+
+
+def test_comparison_decel_frac_both_healthy_converge_better():
+    """都健康、self 更近带中心 → better（baseline=0.45 离中心远，current=0.50 更近）。"""
+    baseline = [{"decel_frac": {"med": 0.45}}]   # 健康，离中心 0.525 = 0.075
+    current = {"decel_frac": {"med": 0.50}}       # 健康，离中心 0.525 = 0.025 → 更近
+    rows = {r["metric"]: r for r in build_comparison(baseline, current)}
+    assert rows["decel_frac"]["verdict"] == "better"
+
+
+def test_comparison_decel_frac_both_pathological_no_verdict():
+    """任一带外（即便方向不同）→ info，不发 better/worse。"""
+    baseline = [{"decel_frac": {"med": 0.70}}]   # > 0.65 病态（high）
+    current = {"decel_frac": {"med": 0.30}}       # < 0.40 病态（low）
+    rows = {r["metric"]: r for r in build_comparison(baseline, current)}
+    assert rows["decel_frac"]["verdict"] == "info"
+
+
 def test_progress_report_plan_fields_default_none():
     """新字段 plan/plan_narration 默认 None，向后兼容旧构造。"""
     from kovaak_tracker.coach.progress import ProgressReport
