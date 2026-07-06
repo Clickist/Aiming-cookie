@@ -18,14 +18,44 @@ _RADAR_DIMS = [
 ]
 
 
+def _is_tracking_summary(summary) -> bool:
+    """Same heuristic as report._is_tracking_summary — detect tracking vs
+    flicking summary by shape (tracking carries on_target_pct/ptc/loss_count
+    or tension/loss groups)."""
+    if not isinstance(summary, dict):
+        return False
+    if "tension" in summary or "loss" in summary:
+        return True
+    return any(k in summary for k in ("on_target_pct", "ptc", "loss_count"))
+
+
+def _tracking_placeholder(title: str) -> go.Figure:
+    """Empty figure with a title — used when a flicking-only chart has no
+    tracking analogue, so the frontend dict shape stays stable."""
+    return go.Figure().update_layout(title=title)
+
+
 def build_figures(diagnosis: CoachDiagnosis) -> dict:
-    return {
+    # radar / decel_curve are flicking-specific: _RADAR_DIMS are all flicking
+    # kinematic quantities, and _decel_curve plots a min-jerk deceleration
+    # bell that has no meaning for tracking. For tracking sessions emit
+    # neutral placeholders so downstream dict-shape stays stable.
+    is_tracking = (
+        diagnosis.meta.get("summary_type") == "tracking"
+        or _is_tracking_summary(diagnosis.summary)
+    )
+    figs = {
         "profile_card": _profile_card(diagnosis),
-        "radar": _radar(diagnosis),
-        "decel_curve": _decel_curve(diagnosis),
         "comparison": _comparison(diagnosis),
         "issue_list": _issue_list(diagnosis),
     }
+    if is_tracking:
+        figs["radar"] = _tracking_placeholder("雷达图（tracking 暂不适用）")
+        figs["decel_curve"] = _tracking_placeholder("减速曲线（tracking 暂不适用）")
+    else:
+        figs["radar"] = _radar(diagnosis)
+        figs["decel_curve"] = _decel_curve(diagnosis)
+    return figs
 
 
 def _med(summary, key):
@@ -65,7 +95,7 @@ def _normalize(v, key, inv):
         return 0.0
     bands = {
         "decel_frac": (0.50, 0.65), "linearity": (0.0, 0.12),
-        "sparc": (-4.0, 0.0), "reverse_ratio": (0.0, 0.18),
+        "sparc": (-5.0, 0.0), "reverse_ratio": (0.0, 0.18),
         "path_efficiency": (0.85, 1.0), "peak_speed_deg": (100, 140),
     }
     lo, hi = bands.get(key, (0.0, 1.0))
