@@ -1,5 +1,7 @@
 # Flicking 分析方案
 
+> 历史方案笔记，2026-06-10 调研。最终实现在 pan_tracker.py + flicking.py；权威文档见 CLAUDE.md 与 flicking-aim-coach.md。文中 dashboard 引用已失效（Phase 1B 删除）。
+
 ## 目标
 
 扩展 Tension-Aware-Aim-Analyzer 支持 flicking（甩枪）场景分析。当前仅支持 tracking（跟枪）。

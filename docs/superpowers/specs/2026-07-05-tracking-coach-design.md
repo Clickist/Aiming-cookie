@@ -507,7 +507,7 @@ agent 工具返回 `CoachDiagnosis`——其中 `meta["summary_type"]` 标明 fl
 - **假设性质**：仓库内无公式、无常模、无引用。前一份 spec 此点判断对——TBR 凭空。
 - **v1 处理**：**不实装**。`profiles.ROOT_CAUSES` / `knowledge.KNOWLEDGE` 不挂 TBR signal；不进 `advice_tracking`。
 - **未来路径**：如果要做，必须先有可计算定义（如 `ptc / mean(error_px)` 的某种比值？）+ 真实数据标定 1.8/0.6 是否对人有意义。在 v2 手部摄像头落地前不应进规则。
-- **CLAUDE.md L9 / AGENTS.md L9 措辞**：声明 "J/E Ratio / TBR 是核心理论" 与代码不符（已有 memory `tracking-tbr-not-implemented.md` 记录此债）。**本 spec read-only 不改**——这是给点点的待办（§8.4）。
+- **CLAUDE.md / AGENTS.md 措辞**：声明 "J/E Ratio / TBR 是核心理论" 与代码不符（已有 memory `tracking-tbr-not-implemented.md` 记录此债）。**本 spec read-only 不改**——这是给点点的待办（§8.4）。（**更新**：AGENTS.md 已 2026-07-07 删除，CLAUDE.md 已更新为权威源并修正 J/E Ratio / TBR 措辞，见 CLAUDE.md "理论状态"段。）
 
 ### 7.3 speed_mismatch 解读跳跃
 
@@ -553,16 +553,13 @@ flicking 有高手 reference summary（`memory/ref-trajectory-csv-convention.md`
 - **可能更有价值的对比**：基于"理想速度匹配模型"算 gap（如 v_rel 在目标速度区间上的偏离），而非跨人。
 - **问点点**：v1 要不要 reference？还是先 self-only？**推荐 self-only**。
 
-### 8.4 CLAUDE.md / AGENTS.md 文档对齐（read-only 外的待办）
+### 8.4 CLAUDE.md / AGENTS.md 文档对齐（已解决）
 
-CLAUDE.md L9 / AGENTS.md L9 的 "J/E Ratio / TBR 是核心理论" 与代码不符——是已记录的债（`memory/tracking-tbr-not-implemented.md`、README L77 自我否认）。**本 spec read-only 不动**，但建议点点在 spec review 后顺手：
+CLAUDE.md / AGENTS.md 的 "J/E Ratio / TBR 是核心理论" 与代码不符——是已记录的债（`memory/tracking-tbr-not-implemented.md`、README L77 自我否认）。**已解决**：AGENTS.md 已 2026-07-07 删除（过时双胞胎），CLAUDE.md 已更新为权威源并修正措辞（见 CLAUDE.md "理论状态"段：PTC 命名误导、J/E Ratio / TBR 已确认不成立）。
 
-- 删 L9 的 "J/E Ratio / TBR 是核心理论" 措辞
-- 改写为 "PTC 是 miss-frame 加速度-误差比；tracking coach v1 基于 accuracy + loss + mismatch；TBR / J-E 是解读层假设待 EMG 验证"
+### 8.5 dashboard.py 已删除
 
-### 8.5 dashboard.py 已 scope-out
-
-`dashboard.py` 可能换前端（`memory/current-scope-flicking-only.md`）。tracking coach v1 输出走 `coach/` Plotly figures + agent narrator，不走 Streamlit。
+dashboard.py 已在 Phase 1B 删除，scope 已扩为 flicking + tracking 双主线。tracking coach v1 输出走 webapp frontend / coach Plotly figures + agent narrator，不走 Streamlit。
 
 ---
 

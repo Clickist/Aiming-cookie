@@ -383,7 +383,7 @@ def _build_diagnosis_system_prompt() -> str:
 
 | 文件 | 处理 |
 |---|---|
-| `coach/narrator.py` | **删整个文件**。三个 `generate_*` 函数被 agent 取代；`build_system_prompt` / `build_user_prompt` 的序列化逻辑迁移到新 `agent.py`；`PROGRESS_SYSTEM_PROMPT` / `PLAN_SYSTEM_PROMPT` 文本作为 agent 的 system prompt 起点重写（加 tool 使用指引段落）。 |
+| `coach/narrator.py` | **删整个文件**。三个 `generate_*` 函数被 agent 取代；`build_system_prompt` / `build_user_prompt` 的序列化逻辑迁移到新 `agent.py`；`PROGRESS_SYSTEM_PROMPT` / `PLAN_SYSTEM_PROMPT` 文本作为 agent 的 system prompt 起点重写（加 tool 使用指引段落）。（**实现修正**：narrator.py 未删，保留作 manual fallback——运行时不被 agent 调用，见 PROGRESS.md 2026-07-05 续二。） |
 | `coach/providers.py` | **保留**。但需要**扩展**：现有 `LLMBackend.generate(system, user)` 不支持 tool use，需新增一个 tool-use capable backend 接口（建议新增 `class ToolUseBackend(Protocol)` 或直接给 `AnthropicBackend` / `OpenAICompatBackend` 加一个 `messages_create` 方法）。 |
 | `coach/diagnosis.py` | **不动**。 |
 | `coach/knowledge.py` | **保留**。`KNOWLEDGE` dict 作为 `coach_fetch_knowledge` tool 的数据源。 |

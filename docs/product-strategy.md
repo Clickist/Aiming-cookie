@@ -14,7 +14,7 @@
 - flicking 公平指标（`decel_frac` / `sparc` / `linearity` / `throughput` 等）
 - 单次诊断 + 结果历史持久化
 - **链路**：打完 → 上传 mp4+csv → 等待 → 看结果（3 步）
-- 实现状态：Phase 1A（后端 worker 已接 `analyze_flicking_fair_summary`）+ Phase 1B（dashboard 删除，前端骨架分支 `webapp-slice2-frontend`）
+- 实现状态：Phase 1A-3 完成（worker 接 analyze_flicking_fair_summary + dashboard 删除 + agent loop + tracking v1 + 4 屏 dark 前端 + coach chat）
 
 ## Phase 2-3（后续）
 
