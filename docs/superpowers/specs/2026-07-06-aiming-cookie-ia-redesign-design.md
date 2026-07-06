@@ -140,7 +140,7 @@ web 官网 → 下载安装 → 启动应用 → login(email + 邀请码 + OTP +
 
 ## 7. 开放问题(实现期定,不阻塞本 spec)
 - login shader:WebGL 真跑 vs CSS 渐变 fallback——实现期性能测后定。
-- `login_original` 的 three.js 卡片:完全弃用 vs 降为单张静态预览——实现期定。
+- `login_original` 的 three.js 卡片:完全弃用 vs 降为单张静态预览——已在原型内（`design/login_original/` 仅 `code.html` + `screen.png`，无独立 three.js 资源），实现期定。
 - settings 形态:独立子页 vs modal——实现期定(倾向子页,aim profile 字段不少)。
 - webapp 前端路由如何承接:Next.js/前端路由 → §3.1 顶栏词汇的映射,实现计划里拆。
 - 订阅状态指示的精确形态(D 阶段 "Early Access" badge vs B 阶段 credits 数字)——待计费 spec。

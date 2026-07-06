@@ -1,5 +1,7 @@
 # Flicking Coach Web App — 设计 Spec
 
+> 本 spec §2 认证 / §3 架构 / §5 设计已分别被 2026-07-06-aiming-cookie-ia-redesign-design.md 演进（密码+OTP / 桌面 hybrid / dark editorial）。其他段落（产品定位 / 数据流 / 错误处理 / 成本）仍有效。
+
 > 2026-07-05 · 状态:设计待点点 review → 通过后转 writing-plans 出实现计划
 
 ## 1. 目标与范围

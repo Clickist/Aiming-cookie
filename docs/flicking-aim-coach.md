@@ -158,7 +158,7 @@ CSRT 单目标追踪在快速甩枪段丢目标，forward-fill 在缺口恢复�
 - 真实验证：你（48 cm/360）vs 高手（80 cm/360）的 1w6ts 对比，产出 4+ findings
 
 ### 已知缺口（诚实记录）
-1. **有 CSV 模式 PROGRESS [A]——已完成**：`analyze_flicking_fair_summary`（在 `pan_tracker.py`）已统一走 `segment_by_valleys` + `compute_fair_metrics`，产出公平 summary；webapp 后端 worker（Phase 1A）已切换到这个入口。原 `analyze_flicking_video`（旧 `run_flicking_analysis` 静止间隙切分 + `decel_smoothness`）仍是历史入口，不再推荐使用。
+1. **有 CSV 模式——已完成**：`analyze_flicking_fair_summary`（在 `pan_tracker.py`）已统一走 `segment_by_valleys` + `compute_fair_metrics`，产出公平 summary；webapp 后端 worker（Phase 1A）已切换到这个入口。原 `analyze_flicking_video`（旧 `run_flicking_analysis` 静止间隙切分 + `decel_smoothness`）仍是历史入口，不再推荐使用。
 2. **throughput 接线**：reference 模式（无 CSV）拿不到目标宽度 W → NaN。完整接线需 `detect_targets` 的目标尺寸 → `compute_fair_metrics(target_width_deg=...)`。
 3. **阈值校准**：`sparc_low` / `two_stage_overlap` 是理论初始值，需真实数据校准（同 linearity / decel_frac 当初的轨迹）。
 4. **目标检测类指标未实现**：overshoot / reaction / target_selection——需要单目标落点追踪，噪声大，属后续二期。
