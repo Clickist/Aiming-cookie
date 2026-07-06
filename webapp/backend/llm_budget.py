@@ -9,14 +9,19 @@ from .config import LLM_DAILY_BUDGET_CNY
 async def _today_total(user_id: str) -> float:
     """该用户今日已 done sessions 的 llm_cost_cny 累计。
 
-    created_at 是 SQLite CURRENT_TIMESTAMP(UTC),today 也用 UTC 匹配
+    按 updated_at 而非 created_at 过滤:chat 路径的 cost 经 queue.add_llm_cost
+    累加到已 done 的 session,会刷新 updated_at 但不动 created_at。若按
+    created_at 过滤,跨日对话(session 昨天创建)的 chat cost 累加会被忽略
+    → _today_total 返回 0 → 预算绕过。updated_at 在每次 mark_done /
+    add_llm_cost 时刷新,反映"今日的 cost 写入"。
+    updated_at 是 SQLite CURRENT_TIMESTAMP(UTC),today 也用 UTC 匹配
     (避免本地 UTC+8 跨日期漏算)。
     """
     conn = await get_conn()
     today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
     cur = await conn.execute(
         "SELECT COALESCE(SUM(llm_cost_cny), 0) FROM sessions "
-        "WHERE user_id=? AND status='done' AND date(created_at)=?",
+        "WHERE user_id=? AND status='done' AND date(updated_at)=?",
         (user_id, today),
     )
     row = await cur.fetchone()

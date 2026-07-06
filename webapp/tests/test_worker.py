@@ -83,6 +83,35 @@ async def test_process_one_analysis_failure_marks_failed():
     assert "CSRT 丢失目标" in s["error"]
 
 
+@pytest.mark.asyncio
+async def test_process_one_load_backend_failure_degrades_gracefully():
+    """_load_backend 失败(无 API key 等)→ 降级 backend=None,不 fail job。
+    CV 结果保留,与 budget 超限路径行为一致。
+    """
+    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
+    fake_report = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
+
+    with patch("webapp.backend.worker.run_analysis",
+               return_value=({"a": {"med": 1}}, {"fps": 60, "flicks": [],
+                                                  "kill_frames": [],
+                                                  "corrective_frames": []})), \
+         patch("webapp.backend.worker._load_backend",
+               side_effect=RuntimeError("no api key")), \
+         patch("webapp.backend.worker.run_report",
+               return_value=fake_report) as mock_report, \
+         patch("webapp.backend.worker._delete_video_safely"):
+        handled = await worker.process_one()
+
+    assert handled is True
+    s = await queue.get_session(sid)
+    # 关键:_load_backend 失败不 fail job,仍 mark_done
+    assert s["status"] == "done"
+    # run_report 以 backend=None 调用(降级)
+    args, kwargs = mock_report.call_args
+    backend_arg = kwargs.get("backend", args[1] if len(args) > 1 else "MISSING")
+    assert backend_arg is None
+
+
 def test_build_timeline_combines_peaks_correctives_kills():
     """flick peak / corrective / kill 都进 timeline,按 frame 升序。"""
     extras = {

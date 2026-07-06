@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 # 让 `import webapp` 可被测试发现(项目根加入 sys.path)
@@ -11,7 +12,10 @@ import pytest_asyncio
 
 # 测试 DB(隔离)—— 在 import webapp 模块前设
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./aiming_cookie_test.db")
-os.environ.setdefault("VIDEO_TMP_DIR", "/tmp/aiming_cookie_test")
+os.environ.setdefault(
+    "VIDEO_TMP_DIR",
+    str(Path(tempfile.gettempdir()) / "aiming_cookie_test"),
+)
 
 
 @pytest_asyncio.fixture(autouse=True)

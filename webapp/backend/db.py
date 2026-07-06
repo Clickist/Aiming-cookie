@@ -74,7 +74,17 @@ async def _migrate_add_column_if_missing(
     conn: aiosqlite.Connection, table: str, col: str, col_type: str,
 ) -> None:
     """SQLite ALTER TABLE ADD COLUMN(仅当列不存在时)。CREATE TABLE IF NOT EXISTS
-    不会给已存在的表加新列,所以要显式 migrate。"""
+    不会给已存在的表加新列,所以要显式 migrate。
+
+    安全性:table/col/col_type 来自 caller 写死的字面量(init_schema),非用户
+    输入。SQLite 的 PRAGMA / ALTER TABLE 不接受 ? 占位符,只能 f-string 拼。
+    assert 防御性校验标识符 + 类型白名单,阻断注入路径。
+    """
+    assert table.isidentifier(), f"非法 table 名: {table}"
+    assert col.isidentifier(), f"非法 col 名: {col}"
+    assert col_type.upper() in {"REAL", "INTEGER", "TEXT", "BLOB", "NUMERIC"}, (
+        f"非法 col_type: {col_type}"
+    )
     cur = await conn.execute(f"PRAGMA table_info({table})")
     rows = await cur.fetchall()
     existing = {row[1] for row in rows}

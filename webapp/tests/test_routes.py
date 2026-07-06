@@ -56,6 +56,23 @@ async def test_analyze_rejects_oversized_video():
 
 
 @pytest.mark.asyncio
+async def test_analyze_rejects_oversized_csv():
+    """CSV > MAX_CSV_BYTES(10MB)→ 413。"""
+    from webapp.backend.config import MAX_CSV_BYTES
+    big_csv = b"x" * (MAX_CSV_BYTES + 1)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/analyze",
+            files={
+                "video": ("v.mp4", b"fakevideo", "video/mp4"),
+                "csv": ("s.csv", big_csv, "text/csv"),
+            },
+            headers={"X-User-Id": "u_csv_oversize"},
+        )
+    assert resp.status_code == 413
+
+
+@pytest.mark.asyncio
 async def test_get_session_returns_queued_status():
     sid = await queue.enqueue("u1", "/a", "/a.csv")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
