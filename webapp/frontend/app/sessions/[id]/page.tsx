@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -111,7 +111,6 @@ export default function SessionProcessingPage({
 
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [tipIndex, setTipIndex] = useState(0);
-  const abortedRef = useRef(false);
 
   // Rotate the coach tip every 6s — independent of network.
   useEffect(() => {
@@ -121,35 +120,41 @@ export default function SessionProcessingPage({
     return () => clearInterval(id);
   }, []);
 
-  const poll = useCallback(async () => {
-    if (!Number.isFinite(sessionId)) return;
+  const poll = useCallback(async (): Promise<SessionStatus | null> => {
+    if (!Number.isFinite(sessionId)) return null;
     try {
       const data = await getSession(sessionId);
       setState({ kind: "ok", data });
+      return data;
     } catch (e) {
       setState({
         kind: "err",
         message: e instanceof Error ? e.message : String(e),
       });
+      return null;
     }
   }, [sessionId]);
 
   // Polling loop — fires once on mount, then every POLL_INTERVAL_MS.
+  // Uses an effect-local `cancelled` flag (not a ref) so React StrictMode
+  // dev remount can't spawn a second concurrent loop. Stops scheduling once
+  // the backend reports a terminal status (done | failed).
   useEffect(() => {
-    abortedRef.current = false;
+    let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
 
     const loop = async () => {
-      if (abortedRef.current) return;
-      await poll();
-      if (abortedRef.current) return;
+      if (cancelled) return;
+      const data = await poll();
+      if (cancelled) return;
+      if (data && (data.status === "done" || data.status === "failed")) return;
       timer = setTimeout(loop, POLL_INTERVAL_MS);
     };
 
     loop();
 
     return () => {
-      abortedRef.current = true;
+      cancelled = true;
       clearTimeout(timer);
     };
   }, [poll]);
@@ -181,7 +186,7 @@ export default function SessionProcessingPage({
         <ErrorCard
           title="无法连接后端"
           message={state.message}
-          onRetry={poll}
+          onRetry={() => void poll()}
         />
       </Shell>
     );
@@ -199,7 +204,7 @@ export default function SessionProcessingPage({
         <ErrorCard
           title="分析失败"
           message={state.data.error ?? "后端未提供错误详情。"}
-          onRetry={poll}
+          backHref="/"
         />
       </Shell>
     );
@@ -263,7 +268,7 @@ function Header({ statusLabel }: { statusLabel: string }) {
           {statusLabel}
         </span>
       </div>
-      <h1 className="font-display font-display-lg text-display-lg text-on-surface mb-sm tracking-tight">
+      <h1 className="font-display text-display-lg text-on-surface mb-sm tracking-tight">
         正在构建你的<span className="text-primary italic">饼干</span>策略
       </h1>
       <p className="text-body-lg text-on-surface-variant max-w-[32rem] mx-auto">
@@ -409,10 +414,12 @@ function ErrorCard({
   title,
   message,
   onRetry,
+  backHref,
 }: {
   title: string;
   message: string;
   onRetry?: () => void | Promise<void>;
+  backHref?: string;
 }) {
   return (
     <div className="w-full max-w-[36rem] bg-surface border border-error/40 border-l-4 border-l-error p-md lg:p-lg">
@@ -435,6 +442,14 @@ function ErrorCard({
             >
               重试
             </button>
+          )}
+          {backHref && (
+            <Link
+              href={backHref}
+              className="mt-md inline-flex items-center px-sm py-xs bg-primary text-on-primary rounded text-label-md font-bold hover:bg-primary-fixed transition-colors"
+            >
+              返回上传
+            </Link>
           )}
         </div>
       </div>

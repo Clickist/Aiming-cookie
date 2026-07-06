@@ -130,22 +130,36 @@ function markerRule(type: string): {
 } {
   switch (type) {
     case "kill":
-      return { bg: "#22c55e", isDot: false, heightPx: 12 };
+      return { bg: "var(--color-event-kill)", isDot: false, heightPx: 12 };
     case "miss":
-      return { bg: "#ef4444", isDot: false, heightPx: 16 };
+      return { bg: "var(--color-event-miss)", isDot: false, heightPx: 16 };
     case "corrective":
-      return { bg: "#60a5fa", isDot: false, heightPx: 12 };
+      return { bg: "var(--color-event-corrective)", isDot: false, heightPx: 12 };
     case "peak":
     default:
-      return { bg: "#f54e00", isDot: true };
+      return { bg: "var(--color-event-peak)", isDot: true };
   }
 }
 
 /* ===================================================================== */
 
 export default function CoachView({ sessionId, archetypeLabel }: CoachViewProps) {
+  // Lifted to parent so ChatPane (lock button + timestamp clicks) and VideoPane
+  // (rendering) share one video element ref + seek logic — no window events,
+  // no document.querySelector. See fix items #2/#3.
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [activeSeg, setActiveSeg] = useState<{ start: number; end: number } | null>(null);
+
+  const seekTo = useCallback((start: number, end: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = start;
+    setActiveSeg({ start, end });
+    void v.play().catch(() => {});
+  }, []);
+
   return (
-    <div className="h-dvh flex flex-col overflow-hidden bg-background">
+    <div className="md:h-dvh flex flex-col md:overflow-hidden bg-background">
       {/* ---------- Top nav (stitch header) ---------- */}
       <header className="flex justify-between items-center px-md py-sm bg-background border-b border-outline z-50 shrink-0">
         <div className="flex items-center gap-sm">
@@ -166,9 +180,14 @@ export default function CoachView({ sessionId, archetypeLabel }: CoachViewProps)
         </Link>
       </header>
 
-      <main className="flex-1 flex min-h-0 overflow-hidden">
-        <VideoPane sessionId={sessionId} />
-        <ChatPane sessionId={sessionId} archetypeLabel={archetypeLabel} />
+      <main className="flex-1 flex flex-col md:flex-row min-h-0 overflow-y-auto md:overflow-hidden">
+        <VideoPane sessionId={sessionId} videoRef={videoRef} activeSeg={activeSeg} />
+        <ChatPane
+          sessionId={sessionId}
+          archetypeLabel={archetypeLabel}
+          videoRef={videoRef}
+          onSeek={seekTo}
+        />
       </main>
     </div>
   );
@@ -178,10 +197,11 @@ export default function CoachView({ sessionId, archetypeLabel }: CoachViewProps)
 
 interface VideoPaneProps {
   sessionId: number;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  activeSeg: { start: number; end: number } | null;
 }
 
-function VideoPane({ sessionId }: VideoPaneProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+function VideoPane({ sessionId, videoRef, activeSeg }: VideoPaneProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
@@ -189,8 +209,7 @@ function VideoPane({ sessionId }: VideoPaneProps) {
   const [rate, setRate] = useState(1);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
-  /** active segment(来自教练消息胶囊点击的区间)。 */
-  const [activeSeg, setActiveSeg] = useState<{ start: number; end: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -203,27 +222,12 @@ function VideoPane({ sessionId }: VideoPaneProps) {
     return () => ctrl.abort();
   }, [sessionId]);
 
-  // 暴露给 ChatPane 的 seek 函数:用 window 自定义事件解耦(props drilling 太深)
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ start: number; end: number }>).detail;
-      const v = videoRef.current;
-      if (!v) return;
-      v.currentTime = detail.start;
-      setCurrent(detail.start);
-      setActiveSeg({ start: detail.start, end: detail.end });
-      void v.play().catch(() => {});
-    };
-    window.addEventListener("coach:seek", handler as EventListener);
-    return () => window.removeEventListener("coach:seek", handler as EventListener);
-  }, []);
-
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) void v.play().catch(() => {});
     else v.pause();
-  }, []);
+  }, [videoRef]);
 
   const onLoadedMeta = () => {
     const v = videoRef.current;
@@ -256,23 +260,43 @@ function VideoPane({ sessionId }: VideoPaneProps) {
     setCurrent(v.currentTime);
   };
 
+  // Pointer-capture based drag seek — no window listeners, so no cleanup gap
+  // if the component unmounts mid-drag (fix item #5).
   const onTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return; // right/middle click should not start drag
     const track = trackRef.current;
     if (!track || !duration) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragging(true);
     const rect = track.getBoundingClientRect();
     const ratio = (e.clientX - rect.left) / rect.width;
     seekToRatio(ratio);
-    // 拖动 seek
-    const move = (ev: PointerEvent) => {
-      const r = (ev.clientX - rect.left) / rect.width;
-      seekToRatio(r);
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+  };
+
+  const onTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    seekToRatio(ratio);
+  };
+
+  const onTrackPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setDragging(false);
+  };
+
+  const onTrackKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!duration) return;
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      seekToRatio((current - 5) / duration);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      seekToRatio((current + 5) / duration);
+    }
   };
 
   const progressRatio = duration > 0 ? current / duration : 0;
@@ -284,7 +308,7 @@ function VideoPane({ sessionId }: VideoPaneProps) {
       : 0;
 
   return (
-    <section className="w-[65%] flex flex-col bg-background p-md min-h-0 overflow-hidden border-r border-outline">
+    <section className="w-full md:w-[65%] flex flex-col bg-background p-md min-h-0 md:overflow-hidden border-b md:border-b-0 md:border-r border-outline shrink-0">
       <div className="flex-1 flex flex-col justify-center min-h-0">
         <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden shadow-2xl">
           <video
@@ -324,8 +348,18 @@ function VideoPane({ sessionId }: VideoPaneProps) {
 
           <div
             ref={trackRef}
+            role="slider"
+            tabIndex={0}
+            aria-label="视频时间轴"
+            aria-valuemin={0}
+            aria-valuemax={Math.floor(duration)}
+            aria-valuenow={Math.floor(current)}
+            aria-valuetext={fmtSec(current)}
             onPointerDown={onTrackPointerDown}
-            className="flex-1 relative h-12 bg-background/50 rounded flex flex-col justify-center overflow-hidden cursor-pointer touch-none"
+            onPointerMove={onTrackPointerMove}
+            onPointerUp={onTrackPointerUp}
+            onKeyDown={onTrackKeyDown}
+            className="flex-1 relative h-12 bg-background/50 rounded flex flex-col justify-center overflow-hidden cursor-pointer touch-none focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           >
             {/* dot grid background */}
             <div
@@ -364,7 +398,7 @@ function VideoPane({ sessionId }: VideoPaneProps) {
                             height: 6,
                             borderRadius: 9999,
                             backgroundColor: rule.bg,
-                            boxShadow: "0 0 8px rgba(245,78,0,0.5)",
+                            boxShadow: "0 0 8px color-mix(in srgb, var(--color-event-peak) 50%, transparent)",
                           }
                         : {
                             left: `${pct}%`,
@@ -404,6 +438,7 @@ function VideoPane({ sessionId }: VideoPaneProps) {
                   key={r}
                   type="button"
                   onClick={() => onRateChange(r)}
+                  aria-pressed={rate === r}
                   className={`px-2 py-0.5 text-xs font-mono rounded transition-colors ${
                     rate === r
                       ? "bg-surface-container text-primary font-bold"
@@ -417,6 +452,7 @@ function VideoPane({ sessionId }: VideoPaneProps) {
             <button
               type="button"
               title="A-B 循环(占位)"
+              aria-label="A-B 循环(占位)"
               className="text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1 text-label-sm"
             >
               <span className="material-symbols-outlined text-sm">repeat</span>
@@ -434,9 +470,11 @@ function VideoPane({ sessionId }: VideoPaneProps) {
 interface ChatPaneProps {
   sessionId: number;
   archetypeLabel: string;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  onSeek: (start: number, end: number) => void;
 }
 
-function ChatPane({ sessionId, archetypeLabel }: ChatPaneProps) {
+function ChatPane({ sessionId, archetypeLabel, videoRef, onSeek }: ChatPaneProps) {
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState("");
@@ -494,12 +532,9 @@ function ChatPane({ sessionId, archetypeLabel }: ChatPaneProps) {
     }
   };
 
-  /** "锁定当前时间轴"按钮:取视频当前 currentTime。视频元素的 seek 联动走 window 事件,
-   * 这里反向——chat → video 也用 window 事件反向取 currentTime 不优雅;
-   * 改成:锁定按钮 emit 一个请求事件,VideoPane 监听并回填。
-   * 简化:直接读 <video> 元素(同文档)。 */
+  /** "锁定当前时间轴"按钮:取视频当前 currentTime(通过父级共享的 videoRef)。 */
   const lockCurrentTime = () => {
-    const v = document.querySelector<HTMLVideoElement>("video");
+    const v = videoRef.current;
     if (!v) return;
     setPinnedSec(Number.isFinite(v.currentTime) ? v.currentTime : 0);
   };
@@ -510,7 +545,7 @@ function ChatPane({ sessionId, archetypeLabel }: ChatPaneProps) {
   };
 
   return (
-    <section className="w-[35%] bg-surface-container-low flex flex-col min-h-0 relative">
+    <section className="w-full md:w-[35%] h-[60vh] md:h-auto bg-surface-container-low flex flex-col min-h-0 relative md:overflow-hidden">
       {/* chat header */}
       <div className="flex items-center justify-between px-md py-sm border-b border-outline bg-surface-container shrink-0">
         <div className="flex items-center gap-sm">
@@ -547,7 +582,7 @@ function ChatPane({ sessionId, archetypeLabel }: ChatPaneProps) {
           <EmptyHint />
         ) : (
           history.map((m, i) => (
-            <MessageBubble key={`${i}-${m.created_at}`} message={m} />
+            <MessageBubble key={`${i}-${m.created_at}`} message={m} onSeek={onSeek} />
           ))
         )}
         {sending && (
@@ -661,7 +696,13 @@ function EmptyHint() {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  onSeek,
+}: {
+  message: ChatMessage;
+  onSeek: (start: number, end: number) => void;
+}) {
   const isUser = message.role === "user";
   // 解析时间戳(只对 assistant 消息——user 消息按字面渲染)
   const segs = useMemo(
@@ -703,13 +744,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                     <button
                       key={i}
                       type="button"
-                      onClick={() =>
-                        window.dispatchEvent(
-                          new CustomEvent("coach:seek", {
-                            detail: { start: s.token.startSec, end: s.token.endSec },
-                          }),
-                        )
-                      }
+                      onClick={() => onSeek(s.token.startSec, s.token.endSec)}
                       className="inline-flex items-center gap-1 bg-primary/10 text-primary px-2 py-0.5 rounded-full font-mono text-xs border border-primary/20 cursor-pointer hover:bg-primary/20 transition-all mx-[1px]"
                     >
                       {s.token.raw}

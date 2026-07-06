@@ -281,15 +281,15 @@ export default function HomePage() {
             </p>
           </div>
           <div className="flex gap-md">
-            <a className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" aria-disabled="true" title="待接通" href="#">
+            <button type="button" disabled className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" title="待接通">
               Privacy Policy
-            </a>
-            <a className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" aria-disabled="true" title="待接通" href="#">
+            </button>
+            <button type="button" disabled className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" title="待接通">
               Terms of Service
-            </a>
-            <a className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" aria-disabled="true" title="待接通" href="#">
+            </button>
+            <button type="button" disabled className="text-label-sm text-on-surface-variant/60 cursor-not-allowed" title="待接通">
               Contact
-            </a>
+            </button>
           </div>
         </div>
       </footer>
