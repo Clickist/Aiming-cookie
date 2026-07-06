@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN" style=""><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=block" rel="stylesheet"/><script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><script id="tailwind-config">try{
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-variant": "#37352c",
+                        "accent-dim": "#2a1500",
+                        "tertiary-fixed-dim": "#a8c8ff",
+                        "on-primary": "#5d1800",
+                        "on-error": "#690005",
+                        "surface-container": "#212018",
+                        "surface-container-high": "#2c2a22",
+                        "inverse-surface": "#e7e2d5",
+                        "on-tertiary-container": "#002955",
+                        "surface-dim": "#15140c",
+                        "success": "#22c55e",
+                        "on-primary-container": "#511400",
+                        "outline": "#ac897e",
+                        "on-secondary": "#32302e",
+                        "surface-tint": "#ffb59d",
+                        "error-container": "#93000a",
+                        "text-primary": "#f3f0ea",
+                        "tertiary": "#a8c8ff",
+                        "info": "#3b82f6",
+                        "primary-fixed-dim": "#ffb59d",
+                        "primary-fixed": "#ffdbd0",
+                        "on-secondary-container": "#bcb8b4",
+                        "text-muted": "#4a4845",
+                        "secondary": "#cac6c2",
+                        "on-primary-fixed": "#390b00",
+                        "on-tertiary-fixed-variant": "#004689",
+                        "on-primary-fixed-variant": "#832600",
+                        "inverse-on-surface": "#323128",
+                        "text-secondary": "#807d72",
+                        "warning": "#f59e0b",
+                        "on-tertiary": "#003061",
+                        "border": "#272520",
+                        "on-tertiary-fixed": "#001b3c",
+                        "surface-bright": "#3b3930",
+                        "tertiary-container": "#3491ff",
+                        "tertiary-fixed": "#d5e3ff",
+                        "bg": "#0d0d0c",
+                        "primary-container": "#ff5712",
+                        "primary": "#ffb59d",
+                        "on-error-container": "#ffdad6",
+                        "on-surface-variant": "#e5beb2",
+                        "border-hi": "#3a3632",
+                        "outline-variant": "#5c4038",
+                        "on-background": "#e7e2d5",
+                        "error": "#ef4444",
+                        "secondary-fixed": "#e6e2de",
+                        "on-surface": "#e7e2d5",
+                        "inverse-primary": "#ac3400",
+                        "secondary-fixed-dim": "#cac6c2",
+                        "secondary-container": "#4b4946",
+                        "surface-container-highest": "#37352c",
+                        "surface-hi": "#1c1b18",
+                        "on-secondary-fixed": "#1d1b19",
+                        "background": "#15140c",
+                        "surface-container-lowest": "#0f0e07",
+                        "surface": "#131210",
+                        "surface-container-low": "#1d1c14",
+                        "on-secondary-fixed-variant": "#484644",
+                        "accent": "#f54e00"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "base": "8px",
+                        "gap-grid": "24px",
+                        "section-gap": "64px",
+                        "hero-gap": "96px",
+                        "margin-page": "32px",
+                        "card-padding": "24px"
+                    },
+                    "fontFamily": {
+                        "metric-lg": ["JetBrains Mono"],
+                        "body": ["Inter"],
+                        "section-heading": ["Inter"],
+                        "metric-sm": ["JetBrains Mono"],
+                        "meta-data": ["JetBrains Mono"],
+                        "hero-heading": ["Inter"],
+                        "subheading": ["Inter"],
+                        "hero-heading-mobile": ["Inter"],
+                        "label-caps": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "metric-lg": ["48px", { "lineHeight": "1", "fontWeight": "600" }],
+                        "body": ["16px", { "lineHeight": "1.65", "fontWeight": "400" }],
+                        "section-heading": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "metric-sm": ["28px", { "lineHeight": "1", "fontWeight": "600" }],
+                        "meta-data": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "hero-heading": ["64px", { "lineHeight": "1.1", "letterSpacing": "-0.035em", "fontWeight": "500" }],
+                        "subheading": ["18px", { "lineHeight": "24px", "fontWeight": "600" }],
+                        "hero-heading-mobile": ["42px", { "lineHeight": "1.2", "letterSpacing": "-0.035em", "fontWeight": "500" }],
+                        "label-caps": ["11px", { "lineHeight": "16px", "letterSpacing": "0.08em", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    }catch(_e){}</script></head><body class="bg-bg text-text-primary font-body antialiased min-h-screen overflow-hidden flex flex-col relative">
+<!-- Shader Background -->
+<div class="absolute inset-0 overflow-hidden pointer-events-none z-0 bg-bg">
+<!-- STITCH_SHADER_START:ANIMATION_36 class="w-full h-full block" -->
+<div class="w-full h-full block" style="display:block;">
+<canvas id="shader-canvas-ANIMATION_36" style="display:block;width:100%;height:100%"></canvas>
+<script>
+(function() {
+  const canvas = document.getElementById('shader-canvas-ANIMATION_36');
+
+  // Sync the WebGL drawing-buffer size with the CSS-driven layout size.
+  // This fires on initial layout and whenever the element is resized.
+  function syncSize() {
+    const w = canvas.clientWidth  || 1280;
+    const h = canvas.clientHeight || 720;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width  = w;
+      canvas.height = h;
+    }
+  }
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(syncSize).observe(canvas);
+  }
+  syncSize();
+
+  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if (!gl) return;
+  const vs = `attribute vec2 a_position;
+varying vec2 v_texCoord;
+void main() {
+  v_texCoord = a_position * 0.5 + 0.5;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}`;
+  const fs = `precision highp float;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec2 u_mouse;
+
+varying vec2 v_texCoord;
+
+// Simplex 2D noise
+vec3 permute(vec3 x) { return mod(((x*34.0)+1.0)*x, 289.0); }
+float snoise(vec2 v){
+  const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+           -0.577350269189626, 0.024390243902439);
+  vec2 i  = floor(v + dot(v, C.yy) );
+  vec2 x0 = v -   i + dot(i, C.xx);
+  vec2 i1;
+  i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec4 x12 = x0.xyxy + C.xxzz;
+  x12.xy -= i1;
+  i = mod(i, 289.0);
+  vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
+  + i.x + vec3(0.0, i1.x, 1.0 ));
+  vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy),
+    dot(x12.zw,x12.zw)), 0.0);
+  m = m*m ;
+  m = m*m ;
+  vec3 x = 2.0 * fract(p * C.www) - 1.0;
+  vec3 h = abs(x) - 0.5;
+  vec3 ox = floor(x + 0.5);
+  vec3 a0 = x - ox;
+  m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+  vec3 g;
+  g.x  = a0.x  * x0.x  + h.x  * x0.y;
+  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+  return 130.0 * dot(m, g);
+}
+
+void main() {
+    vec2 uv = v_texCoord;
+    vec2 p = uv * 2.0 - 1.0;
+    p.x *= u_resolution.x / u_resolution.y;
+
+    float t = u_time * 0.15;
+    
+    // Create multiple layers of noise for the fluid effect
+    float n = snoise(p * 0.5 + t);
+    n += 0.5 * snoise(p * 1.0 - t * 0.8);
+    n += 0.25 * snoise(p * 2.0 + t * 0.5);
+    
+    // Background color: Aiming Cookie Dark #0d0d0c
+    vec3 bgColor = vec3(0.05, 0.05, 0.047); 
+    
+    // Accent colors from design system: Orange #f54e00 and a subtle Blue #3b82f6
+    vec3 color1 = vec3(0.96, 0.306, 0.0); // Orange
+    vec3 color2 = vec3(0.23, 0.51, 0.96); // Blue
+    
+    // Create the "energy" flow effect
+    float energy = smoothstep(0.1, 0.8, n);
+    float glow = exp(-3.0 * abs(n - 0.2));
+    
+    // Combine colors based on noise and position (matching image.png aura)
+    vec3 finalColor = bgColor;
+    finalColor = mix(finalColor, color2 * 0.3, smoothstep(-0.5, 0.5, n));
+    finalColor = mix(finalColor, color1 * 0.6, glow * 0.2 * (1.0 - uv.x)); // Favor left side
+    
+    // Pulse effect
+    float pulse = 0.95 + 0.05 * sin(u_time * 0.5);
+    finalColor *= pulse;
+
+    // Vignette
+    float vignette = smoothstep(1.8, 0.6, length(p));
+    finalColor *= vignette;
+
+    gl_FragColor = vec4(finalColor, 1.0);
+}
+`;
+  function cs(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, cs(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, cs(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const pos = gl.getAttribLocation(prog, 'a_position');
+  gl.enableVertexAttribArray(pos);
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+  const uTime = gl.getUniformLocation(prog, 'u_time');
+  const uRes = gl.getUniformLocation(prog, 'u_resolution');
+  const uMouse = gl.getUniformLocation(prog, 'u_mouse');
+
+  // u_mouse is in pixel coordinates matching u_resolution (ShaderToy convention).
+  // Shaders that need normalized coords should use: u_mouse / u_resolution.
+  let mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+  window.addEventListener('mousemove', (event) => {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width && rect.height) {
+      const nx = (event.clientX - rect.left) / rect.width;
+      const ny = 1.0 - (event.clientY - rect.top) / rect.height;
+      mouse.x = nx * canvas.width;
+      mouse.y = ny * canvas.height;
+    }
+  });
+
+  function render(t) {
+    if (typeof ResizeObserver === 'undefined') syncSize();
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    if (uTime) gl.uniform1f(uTime, t * 0.001);
+    if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
+    if (uMouse) gl.uniform2f(uMouse, mouse.x, mouse.y);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  render(0);
+})();
+</script>
+</div>
+<!-- STITCH_SHADER_END:ANIMATION_36 -->
+</div>
+<!-- 3D Showcase Container -->
+<div class="absolute inset-y-0 left-0 w-1/2 z-10 pointer-events-none overflow-hidden" id="threejs-container">
+<!-- STITCH_THREEJS_START:ANIMATION_37 class="absolute inset-0 w-full h-full z-0 block" -->
+<div class="absolute inset-0 w-full h-full z-0 block" style="display:block;">
+<script src="https://ajax.googleapis.com/ajax/libs/threejs/r125/three.min.js"></script>
+<div id="threejs-container-ANIMATION_37" style="width:100%;height:100%"></div>
+<script>
+(function() {
+  const container = document.getElementById('threejs-container-ANIMATION_37');
+  const devicePixelRatio = window.devicePixelRatio || 1;
+  (function() {
+  if (!container) return;
+
+  // Robust sizing with fallbacks
+  let width = container.clientWidth || window.innerWidth;
+  let height = container.clientHeight || window.innerHeight;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+  
+  const renderer = new THREE.WebGLRenderer({ 
+    alpha: true, 
+    antialias: true,
+    powerPreference: "high-performance"
+  });
+  renderer.setSize(width, height);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  container.appendChild(renderer.domElement);
+
+  // High contrast lighting system
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  scene.add(ambientLight);
+
+  const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+  mainLight.position.set(5, 5, 5);
+  scene.add(mainLight);
+
+  const orangeLight = new THREE.PointLight(0xf54e00, 3, 20);
+  orangeLight.position.set(-5, 3, 5);
+  scene.add(orangeLight);
+
+  const blueLight = new THREE.PointLight(0x3b82f6, 1.5, 15);
+  blueLight.position.set(5, -3, 2);
+  scene.add(blueLight);
+
+  // Texture Loader
+  const textureLoader = new THREE.TextureLoader();
+  
+  // Real app screens to showcase
+  const screens = [
+    { id: '{{DATA:SCREEN:SCREEN_32}}', label: 'COACH REPORT' },
+    { id: '{{DATA:SCREEN:SCREEN_34}}', label: 'HISTORY' },
+    { id: '{{DATA:SCREEN:SCREEN_16}}', label: 'UPLOAD' }
+  ];
+
+  const cards = [];
+  const cardGeometry = new THREE.PlaneGeometry(3.6, 4.8);
+
+  screens.forEach((screen, i) => {
+    // High-visibility material with fallback color
+    const material = new THREE.MeshPhongMaterial({ 
+      color: 0x1c1b18,
+      specular: 0x555555,
+      shininess: 60,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.98
+    });
+
+    // Load actual texture from project
+    textureLoader.load(screen.id, (texture) => {
+      material.map = texture;
+      material.color.set(0xffffff); // Reset color so texture shows naturally
+      material.needsUpdate = true;
+    }, undefined, (err) => {
+      console.warn('Failed to load texture:', screen.id);
+    });
+
+    const card = new THREE.Mesh(cardGeometry, material);
+    
+    // Staggered 3D arrangement
+    // Optimized for the tech-aura layout
+    const xPos = -3.5 + (i * 0.7);
+    const yPos = 1.0 - (i * 0.9);
+    const zPos = -i * 2.2;
+    
+    card.position.set(xPos, yPos, zPos);
+    card.rotation.set(-0.25, 0.5, 0.08); // Elegant tilt towards camera
+    
+    scene.add(card);
+    cards.push({
+      mesh: card,
+      originalY: yPos,
+      originalX: xPos,
+      offset: i * 1.5
+    });
+  });
+
+  camera.position.z = 9.5;
+  camera.position.x = -1.2;
+
+  function animate(time) {
+    requestAnimationFrame(animate);
+    
+    const t = time * 0.0008;
+    cards.forEach((card, i) => {
+      // Smooth, high-fidelity floating
+      card.mesh.position.y = card.originalY + Math.sin(t + card.offset) * 0.2;
+      card.mesh.position.x = card.originalX + Math.cos(t * 0.7 + card.offset) * 0.1;
+      
+      // Subtle tilt animation
+      card.mesh.rotation.y = 0.5 + Math.sin(t * 0.4 + card.offset) * 0.05;
+      card.mesh.rotation.x = -0.25 + Math.cos(t * 0.3 + card.offset) * 0.04;
+    });
+    
+    renderer.render(scene, camera);
+  }
+
+  window.addEventListener('resize', () => {
+    const newWidth = container.clientWidth || window.innerWidth;
+    const newHeight = container.clientHeight || window.innerHeight;
+    camera.aspect = newWidth / newHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(newWidth, newHeight);
+  });
+
+  animate(0);
+})();
+
+})();
+</script>
+</div>
+<!-- STITCH_THREEJS_END:ANIMATION_37 -->
+</div>
+<!-- Header -->
+<header class="w-full h-[64px] flex items-center justify-between px-8 relative z-20 pointer-events-none">
+<div class="font-section-heading text-lg font-bold tracking-tight text-text-primary">Aiming Cookie</div>
+<nav class="hidden md:flex items-center gap-8 font-meta-data text-[13px] uppercase tracking-wider text-text-secondary">
+<a class="hover:text-text-primary transition-colors pointer-events-auto" href="#">Docs</a>
+<a class="hover:text-text-primary transition-colors pointer-events-auto" href="#">Showcase</a>
+<a class="hover:text-text-primary transition-colors pointer-events-auto" href="#">About</a>
+</nav>
+</header>
+<!-- Main Content -->
+<main class="flex-1 w-full flex items-center justify-center lg:justify-end lg:pr-[10vw] p-8 relative z-20 pointer-events-none">
+<div class="w-full max-w-[400px] pointer-events-auto">
+<!-- Login Card -->
+<div class="bg-surface border border-border p-10 rounded-[24px] shadow-2xl">
+<div class="mb-2">
+<span class="inline-block px-3 py-1 rounded-full bg-surface-container-high border border-border-hi font-meta-data text-[10px] text-text-secondary uppercase tracking-[0.1em] mb-4">AURA.IDENTITY</span>
+</div>
+<div class="mb-8">
+<h2 class="font-section-heading text-[24px] font-semibold tracking-[-0.02em] mb-2 text-text-primary">登录 / 注册</h2>
+<p class="font-body text-[14px] text-text-secondary">Secure bio-metric or credential access.</p>
+</div>
+<!-- Social Logins -->
+<div class="flex gap-4 mb-8 justify-between">
+<button class="flex-1 h-[48px] rounded-full bg-surface-hi hover:bg-surface-container-high transition-colors flex items-center justify-center text-text-primary">
+<svg aria-hidden="true" class="w-5 h-5" fill="currentColor" viewbox="0 0 24 24"><path d="M17.05 20.28c-.98.95-2.05 1.72-3.21 1.72-1.13 0-1.5-.69-2.84-.69-1.34 0-1.76.67-2.84.69-1.11.02-2.01-.65-3.04-1.65C3.01 18.24 1.5 14.5 1.5 11.1c0-3.41 2.13-5.21 4.18-5.21 1.08 0 2.1.74 2.76.74.66 0 1.81-.88 3.1-.88 1.08 0 2.4.41 3.25 1.44-2.6 1.56-2.17 5.18.46 6.25-.63 1.58-1.47 3.15-3.2 6.84zM12.03 5.07c-.02-2.13 1.75-3.94 3.7-4.07.18 2.32-2.13 4.26-3.7 4.07z"></path></svg>
+</button>
+<button class="flex-1 h-[48px] rounded-full bg-surface-hi hover:bg-surface-container-high transition-colors flex items-center justify-center text-text-primary">
+<svg aria-hidden="true" class="w-5 h-5" fill="currentColor" viewbox="0 0 24 24"><path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"></path></svg>
+</button>
+<button class="flex-1 h-[48px] rounded-full bg-surface-hi hover:bg-surface-container-high transition-colors flex items-center justify-center text-text-primary">
+<svg aria-hidden="true" class="w-5 h-5" fill="currentColor" viewbox="0 0 24 24"><path clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" fill-rule="evenodd"></path></svg>
+</button>
+</div>
+<div class="flex items-center gap-4 mb-8">
+<div class="h-[1px] bg-border flex-1"></div>
+<span class="font-meta-data text-[10px] text-text-muted uppercase tracking-wider">STANDARD PROTOCOL</span>
+<div class="h-[1px] bg-border flex-1"></div>
+</div>
+<form class="space-y-6">
+<div>
+<label class="block font-meta-data text-[11px] text-text-secondary mb-2 uppercase tracking-[0.08em]" for="email">IDENTIFIER</label>
+<input class="w-full bg-surface-container-low border border-border focus:ring-1 focus:ring-accent focus:border-accent rounded-full text-text-primary font-meta-data text-[13px] px-6 h-12 transition-colors duration-200 placeholder-text-muted" id="email" placeholder="user@domain.net" required="" type="email"/>
+</div>
+<button class="w-full bg-accent text-text-primary hover:brightness-110 transition-all duration-200 font-body text-[14px] font-semibold h-[56px] rounded-full flex items-center justify-center gap-2 mt-8" type="button">
+                        INITIALIZE UPLINK <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+</button>
+</form>
+</div>
+</div>
+</main>
+<!-- Footer -->
+<footer class="w-full h-[64px] px-8 relative z-20 pointer-events-none flex justify-between items-center text-text-secondary font-meta-data text-[11px] uppercase tracking-wider">
+<span>© 2024 AIMING COOKIE</span>
+<div class="flex gap-4">
+<a class="hover:text-text-primary transition-colors pointer-events-auto" href="#">Privacy</a>
+<a class="hover:text-text-primary transition-colors pointer-events-auto" href="#">Terms</a>
+</div>
+</footer>
+</body></html>
