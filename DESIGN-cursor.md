@@ -281,6 +281,8 @@ components:
     typography: "{typography.body-sm}"
 ---
 
+> 历史参考：Cursor 营销站设计系统，曾作 MVP 早期设计母本。本项目实际设计系统是 design/DESIGN.md（dark editorial Aiming Cookie）。橙色 #f54e00 的来源参考仍有效。
+
 ## Overview
 
 Cursor's marketing site reads as a quietly-confident developer brand that believes in editorial calm over IDE-darkness. The base canvas is **warm cream** (`{colors.canvas}` — #f7f7f4) holding warm near-black ink (`{colors.ink}` — #26251e) for body and display alike. The single brand voltage is **Cursor Orange** (`{colors.primary}` — #f54e00) reserved for primary CTAs and the wordmark — used scarcely.
