@@ -14,7 +14,7 @@ import json
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Optional
 
-from .agent_kb import BY_SIGNAL, BY_TOPIC, KB
+from .agent_kb import BY_TOPIC, KB
 from .diagnosis import CoachDiagnosis
 from .knowledge import KNOWLEDGE
 from .planning import TrainingPlan
@@ -309,7 +309,7 @@ def make_fetch_community_example() -> Callable[[str], dict[str, Any]]:
 # Progress / plan context binders -------------------------------------------
 
 
-def make_get_trend(trend: dict, comparison: list[dict]) -> Callable[[], dict[str, Any]]:
+def make_get_trend(trend: dict) -> Callable[[], dict[str, Any]]:
     def _handler() -> dict[str, Any]:
         # trend 的值是 (timestamp, value) tuple 列表——JSON 化为 list
         serializable = {
@@ -398,7 +398,7 @@ def build_diagnosis_tools(diagnosis: CoachDiagnosis) -> ToolBundle:
 def build_progress_tools(trend: dict, comparison: list[dict]) -> ToolBundle:
     """Tool set for ``narrate_progress`` (trend/comparison + knowledge)."""
     b = ToolBundle()
-    b.add(schema_get_trend(), make_get_trend(trend, comparison))
+    b.add(schema_get_trend(), make_get_trend(trend))
     b.add(schema_get_comparison(), make_get_comparison(trend, comparison))
     b.add(schema_list_knowledge_topics(), make_list_knowledge_topics())
     b.add(schema_fetch_kinematics(), make_fetch_kinematics())
