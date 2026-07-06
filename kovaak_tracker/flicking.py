@@ -436,6 +436,8 @@ def segment_by_valleys(
     :func:`extract_flicks` on fast players. Returns ``(start, peak, end,
     peak_v, duration_s)`` tuples indexing into ``speed``.
     """
+    if speed.size == 0:
+        return []
     peakmax = float(np.nanmax(speed))
     prom = peakmax * prom_frac
     dist = max(1, int(fps * min_gap_s))
@@ -467,6 +469,14 @@ def _segment_sparc(speed: np.ndarray, fps: float, amp_th: float = 0.05) -> float
     spectrum; closer to 0 = smoother. Frequency-domain so dimensionless and
     speed-fair — the gold-standard fix for the decel_smoothness-vs-peak-speed
     coupling (§6.1). NaN for segments too short to resolve a spectrum.
+
+    Note: flicks shorter than roughly 16 frames typically return NaN — the
+    ``n < 8`` guard plus the ``fc < 2`` adaptive-cutoff guard together drop
+    short segments because their spectrum can't resolve a meaningful arc
+    length. At 60fps this means ~0.15-0.25s flicks (9-15 frames) do not
+    contribute SPARC samples. This is a known sampling limitation of the
+    frequency-domain method, not a bug; a time-domain fallback is research
+    scope (not this change).
     """
     n = len(speed)
     if n < 8:

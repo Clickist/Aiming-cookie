@@ -189,7 +189,11 @@ def run_agent_loop(
                 tools=tools.schema_list(), max_tokens=max_tokens,
             )
             # If the model called tools, execute them and feed results back.
-            if resp.tool_calls and resp.stop_reason == "tool_calls":
+            # tool_calls alone is the trigger — some backends (e.g. DeepSeek on
+            # long context) return tool_calls with stop_reason="end_turn"/
+            # "max_tokens"; dropping them silently breaks the loop. stop_reason
+            # is only consulted in the terminal branch below.
+            if resp.tool_calls:
                 # Append an assistant echo carrying the tool_use blocks so the
                 # next call can resolve tool_call ids.
                 assistant_content: list[dict[str, Any]] = []
