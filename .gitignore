@@ -24,3 +24,6 @@ skills-lock.json
 .env
 .env.*
 *.secret
+
+# session recordings under data/ stay tracked (override *.mp4 above)
+!data/*.mp4
