@@ -1,0 +1,259 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head><meta charset="utf-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=block" rel="stylesheet"><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=block" rel="stylesheet"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&amp;family=JetBrains+Mono:wght@100..900&amp;display=swap" rel="stylesheet"><script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><script id="tailwind-config">try{
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "outline": "#ac897e",
+                "on-surface": "#e7e2d5",
+                "error-container": "#93000a",
+                "tertiary-fixed": "#d5e3ff",
+                "inverse-on-surface": "#323128",
+                "surface-tint": "#ffb59d",
+                "surface": "#131210",
+                "on-primary": "#5d1800",
+                "tertiary-fixed-dim": "#a8c8ff",
+                "error": "#ef4444",
+                "surface-container-low": "#1d1c14",
+                "on-tertiary-container": "#002955",
+                "surface-container-lowest": "#0f0e07",
+                "surface-hi": "#1c1b18",
+                "success": "#22c55e",
+                "surface-bright": "#3b3930",
+                "surface-container": "#212018",
+                "secondary-fixed": "#e6e2de",
+                "on-background": "#e7e2d5",
+                "text-muted": "#4a4845",
+                "surface-container-high": "#2c2a22",
+                "secondary-fixed-dim": "#cac6c2",
+                "bg": "#0d0d0c",
+                "background": "#15140c",
+                "on-primary-container": "#511400",
+                "on-tertiary-fixed-variant": "#004689",
+                "text-primary": "#f3f0ea",
+                "primary-fixed": "#ffdbd0",
+                "on-tertiary-fixed": "#001b3c",
+                "surface-container-highest": "#37352c",
+                "tertiary": "#a8c8ff",
+                "on-primary-fixed-variant": "#832600",
+                "warning": "#f59e0b",
+                "on-tertiary": "#003061",
+                "on-surface-variant": "#e5beb2",
+                "accent-dim": "#2a1500",
+                "text-secondary": "#807d72",
+                "primary-container": "#ff5712",
+                "on-primary-fixed": "#390b00",
+                "inverse-surface": "#e7e2d5",
+                "secondary": "#cac6c2",
+                "on-error": "#690005",
+                "info": "#3b82f6",
+                "secondary-container": "#4b4946",
+                "tertiary-container": "#3491ff",
+                "on-secondary-fixed": "#1d1b19",
+                "border": "#272520",
+                "on-error-container": "#ffdad6",
+                "outline-variant": "#5c4038",
+                "surface-dim": "#15140c",
+                "on-secondary-fixed-variant": "#484644",
+                "on-secondary": "#32302e",
+                "primary-fixed-dim": "#ffb59d",
+                "inverse-primary": "#ac3400",
+                "border-hi": "#3a3632",
+                "primary": "#ffb59d",
+                "surface-variant": "#37352c",
+                "on-secondary-container": "#bcb8b4",
+                "accent": "#f54e00"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "base": "8px",
+                "hero-gap": "96px",
+                "card-padding": "24px",
+                "section-gap": "64px",
+                "margin-page": "32px",
+                "gap-grid": "24px"
+        },
+        "fontFamily": {
+                "meta-data": [
+                        "JetBrains Mono"
+                ],
+                "hero-heading-mobile": [
+                        "Inter"
+                ],
+                "metric-sm": [
+                        "JetBrains Mono"
+                ],
+                "section-heading": [
+                        "Inter"
+                ],
+                "subheading": [
+                        "Inter"
+                ],
+                "label-caps": [
+                        "JetBrains Mono"
+                ],
+                "metric-lg": [
+                        "JetBrains Mono"
+                ],
+                "body": [
+                        "Inter"
+                ],
+                "hero-heading": [
+                        "Inter"
+                ]
+        },
+        "fontSize": {
+                "meta-data": [
+                        "13px",
+                        {
+                                "lineHeight": "18px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "hero-heading-mobile": [
+                        "42px",
+                        {
+                                "lineHeight": "1.2",
+                                "letterSpacing": "-0.035em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "metric-sm": [
+                        "28px",
+                        {
+                                "lineHeight": "1",
+                                "fontWeight": "600"
+                        }
+                ],
+                "section-heading": [
+                        "24px",
+                        {
+                                "lineHeight": "32px",
+                                "letterSpacing": "-0.02em",
+                                "fontWeight": "600"
+                        }
+                ],
+                "subheading": [
+                        "18px",
+                        {
+                                "lineHeight": "24px",
+                                "fontWeight": "600"
+                        }
+                ],
+                "label-caps": [
+                        "11px",
+                        {
+                                "lineHeight": "16px",
+                                "letterSpacing": "0.08em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "metric-lg": [
+                        "48px",
+                        {
+                                "lineHeight": "1",
+                                "fontWeight": "600"
+                        }
+                ],
+                "body": [
+                        "16px",
+                        {
+                                "lineHeight": "1.65",
+                                "fontWeight": "400"
+                        }
+                ],
+                "hero-heading": [
+                        "64px",
+                        {
+                                "lineHeight": "1.1",
+                                "letterSpacing": "-0.035em",
+                                "fontWeight": "500"
+                        }
+                ]
+        }
+},
+    },
+  }
+}catch(_e){}</script><style>.glow-active{box-shadow:0 0 0 4px rgba(245,78,0,.12),0 0 18px rgba(245,78,0,.32);animation:glow-pulse 2s ease-in-out infinite}@keyframes glow-pulse{0%,100%{box-shadow:0 0 0 4px rgba(245,78,0,.10),0 0 16px rgba(245,78,0,.28)}50%{box-shadow:0 0 0 5px rgba(245,78,0,.18),0 0 24px rgba(245,78,0,.45)}}.progress-bar-fill{width:38%;background-image:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.28) 50%,rgba(255,255,255,0) 100%);background-size:200% 100%;animation:progress-shimmer 1.8s linear infinite}@keyframes progress-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}</style></head><body class="bg-bg text-text-primary font-body min-h-screen flex flex-col antialiased">
+<!-- Top Navigation Shell Suppressed due to Transactional Intent (Processing Page) -->
+<header class="fixed top-0 w-full z-50 h-16 border-b border-border bg-bg/90 backdrop-blur flex justify-between items-center px-margin-page">
+<div class="font-section-heading text-section-heading font-bold text-text-primary">
+            Aiming Cookie
+        </div>
+<div class="font-label-caps text-label-caps text-text-muted">
+            PROCESSING ANALYSIS...
+        </div>
+</header>
+<main class="flex-grow flex flex-col items-center justify-center pt-24 pb-section-gap px-margin-page max-w-[1200px] mx-auto w-full">
+
+<div class="text-center mb-12 max-w-2xl">
+<h1 class="text-[52px] leading-[1.1] tracking-[-0.035em] font-medium text-text-primary mb-4">正在构建你的教练报告</h1>
+<p class="font-body text-body text-text-secondary">AI 正在解析录像与 CSV，提取 flick 减速段，并生成个性化诊断。</p>
+</div>
+<!-- Pipeline -->
+<div class="w-full max-w-3xl mb-16 relative">
+<div class="absolute top-4 left-0 w-full h-[1px] bg-border -translate-y-1/2 z-0"></div>
+<div class="relative z-10 flex justify-between">
+<!-- Step 1: Done -->
+<div class="flex flex-col items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface border border-accent flex items-center justify-center text-accent">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: &quot;FILL&quot; 1;">check</span>
+</div>
+<span class="font-meta-data text-meta-data text-text-secondary">Parsing</span>
+</div>
+<!-- Step 2: Active -->
+<div class="flex flex-col items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-hi border border-accent flex items-center justify-center text-accent glow-active">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: &quot;FILL&quot; 1;">bolt</span>
+</div>
+<span class="font-meta-data text-meta-data text-text-primary">Trajectory</span>
+</div>
+<!-- Step 3: Pending -->
+<div class="flex flex-col items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface border border-border flex items-center justify-center">
+<div class="w-1.5 h-1.5 rounded-full bg-text-muted"></div>
+</div>
+<span class="font-meta-data text-meta-data text-text-muted">Kinematics</span>
+</div>
+<!-- Step 4: Pending -->
+<div class="flex flex-col items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface border border-border flex items-center justify-center">
+<div class="w-1.5 h-1.5 rounded-full bg-text-muted"></div>
+</div>
+<span class="font-meta-data text-meta-data text-text-muted">Narration</span>
+</div>
+</div>
+</div>
+<!-- Coach Tip Card -->
+<div class="bg-surface border border-border border-l-4 border-l-accent p-card-padding max-w-xl w-full mb-16 text-center shadow-none rounded">
+<div class="font-label-caps text-label-caps text-text-muted mb-4 uppercase">BECKER 2020</div>
+<p class="font-body text-body text-text-primary">"flick 减速段是命中成败最强的预测信号——爆发靠本能，命中靠刹车。"</p>
+</div>
+<!-- Progress Bar -->
+<div class="flex flex-col items-center gap-3 mb-12">
+<div class="w-[240px] h-[2px] bg-border overflow-hidden rounded-full">
+<div class="h-full bg-accent progress-bar-fill"></div>
+</div>
+<span class="font-meta-data text-meta-data text-text-secondary">RUNNING...</span>
+</div>
+<a class="font-meta-data text-meta-data text-text-muted hover:text-text-primary transition-colors cursor-pointer" href="#">取消分析</a>
+</main>
+<!-- Standard Footer -->
+<footer class="w-full bg-bg border-t border-border mt-auto">
+  <div class="flex flex-col md:flex-row justify-between items-center py-8 px-margin-page max-w-[1200px] mx-auto gap-4">
+    <div class="font-meta-data text-label-caps text-text-muted">
+      Aiming Cookie © 2026
+    </div>
+    <div class="flex gap-6 font-meta-data text-label-caps text-text-secondary cursor-default">
+      <span class="hover:text-text-primary transition-colors duration-200 cursor-pointer">Privacy Policy</span>
+      <span class="hover:text-text-primary transition-colors duration-200 cursor-pointer">Terms of Service</span>
+      <span class="hover:text-text-primary transition-colors duration-200 cursor-pointer">API Docs</span>
+      <span class="hover:text-text-primary transition-colors duration-200 cursor-pointer">Support</span>
+    </div>
+  </div>
+</footer></body></html>
