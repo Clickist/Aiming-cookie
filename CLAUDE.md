@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 产品方向锚：PRD
+
+**`docs/PRD.md`** 是 Aiming Cookie 的**方向锚 + 原始设想记录**。所有 spec / plan 从此派生；下游文档与 PRD 冲突时以 PRD 为准；PRD 过时则更新 PRD，不在下游打补丁。
+
+**行为要求（重要）**：当点点的发言与 PRD 既有决策冲突时（形态 / 流程 / 阶段 / 功能边界 / 商业 / 技术选型等），**主动指出冲突点 + 问是否更新 PRD**——不要默默按新说法执行（会导致文档与现实脱节），也不要无视冲突。PRD 是活文档，随产品演进更新；确认改 PRD 后再同步下游。
+
 ## 项目概述
 
 基于物理 + 运动学的 KovaaK's 瞄准分析工具。**当前 scope：flicking + tracking 双主线**（2026-07-05 扩展，见 `docs/superpowers/specs/2026-07-05-tracking-coach-design.md` 的 scope 审视）。flicking 从录屏 + KovaaK's Stats CSV 提取目标运动，算减速段公平指标；tracking 从 calibration CSV 算 accuracy/loss/PTC 等。两者都接同一 AI coach（诊断 + 处方 + agent）。tracking 的 PTC / speed_mismatch 命名与实现存在理论债（见下"理论状态"，待 v2 重构处理，不阻塞 v1）。
