@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -192,9 +191,10 @@ def run_analysis(csv_path: str | Path, fps: float | None = None, output_dir: Pat
                 config = json.load(f)
             fps = config["fps"]
         else:
-            print("ERROR: FPS not specified and output/calib_config.json not found.")
-            print("Pass fps= explicitly or run app.py calibration first.")
-            sys.exit(1)
+            raise FileNotFoundError(
+                "FPS not specified and output/calib_config.json not found. "
+                "Pass fps= explicitly or run app.py calibration first."
+            )
 
     df = load_tracking_data(csv_path, fps)
     kdf = extract_kinematics(df, fps)

@@ -633,6 +633,17 @@ agenda 第 1 项（使用管线确认）。点点要求一份完整 PRD 作"方�
 ### memory
 新增 `prd-direction-anchor`；`next-session-agenda` 标第 1 / 2 / 3 项完成（PRD + 云端方案 A），剩第 6 项（IA→writing-plans）。
 
+### 全量 review（点点睡前授权自主执行）
+
+9 agent 并行（代码 5 + 理论 2 + 产品 2），报告 `docs/review/2026-07-08/`（README 总览 + 9 分报告）。
+
+- **代码 0C/11H/27M/29L**（对比 07-07 的 3C/19H：Critical 清零、High -42%、无回归）
+- **跨领域 pattern**：VideoCapture 盘点遗漏 2 处、命名型理论债（`submovement_overlap` 与 tracking PTC 同型）、历史 dead code（旧 flicking pipeline ~470 行 + narrator 双轨 ~340 行）、tracking-coach spec §1 vs CLAUDE.md 数学误解矛盾
+- **已修（4 处明确低风险）**：`analysis.py` sys.exit→raise + 删 unused import、`profiles.py` ROOT_CAUSES 补 decel_frac low、`video.py` get_video_metadata try/finally、`flicking.py` submovement_overlap docstring 命名澄清
+- **留点点决策**：IDOR（鉴权设计）、零消灭 CSV NaN 崩溃（处理策略）、pan_tracker try/finally（建议 `_open_video` context manager 统一）、narrator 删/留、旧 flicking pipeline 清理、tracking-coach spec §1 修正方向
+- tests/ 127 + webapp/ 47 passed，无回归
+
 ### 下个 session
 - IA redesign spec → writing-plans（先对齐 PRD）
 - 或深挖推后的独立 spec：计费 / 桌面打包（Tauri vs Electron 选型）
+- review 留点点决策的项（见上）
