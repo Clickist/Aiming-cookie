@@ -606,3 +606,33 @@ agenda 第 4/5 项（代码 review + 文档清理）。dispatch 5 并行 review 
 - **决策已落地**：throughput 接通 + decel_frac 健康带。若重审 SPARC 实现本身（短 flick <16 帧 NaN 率高，原始研究 2-2.6s reach），是独立 research scope。
 - **未做（YAGNI/超出）**：analyze_flicking_reference（无 CSV 路径）throughput 仍 NaN（CSV 主线已通）；KB KnowledgeChunk signal 字段死数据留着（BY_SIGNAL 已删，不影响）；youtube doc/ 目录重命名（牵涉 agent_kb 引用同步，推迟）。
 - **下个 session agenda**（07-06 续作提的 6 项）仍有效：使用管线 / 服务器域名 / 云端后端 / IA spec→writing-plans。
+
+## 2026-07-08：用户使用流程 brainstorm → PRD（方向锚）+ 文档清理
+
+### 触发
+agenda 第 1 项（使用管线确认）。点点要求一份完整 PRD 作"方向锚 + 原始设想记录"，防止 spec/plan 多轮迭代漂移。
+
+### 产出
+1. **`docs/PRD.md` 建立**——产品级方向锚，14 节：定位 / 为什么做（含 PTC→减速段理论诚实 + 个人教练凭感觉 vs 数据驱动）/ 用户 / 核心价值 / 形态阶段 / **核心体验流程（首次 onboarding + 回访）** / 功能边界 / **13 条关键 UIUX 决策** / 架构分工 / 成功标准 / 非目标 / 约束 / 关联文档 / 决策日志。所有下游 spec/plan 从此派生，冲突以 PRD 为准。
+2. **核心流程决策**（brainstorm 过程，逐一确认）：
+   - 诊断免费（规则化，`build_report backend=None` 跳过 LLM）/ 教练付费（LLM 是唯一硬成本）—— 切分点干净，代码原生支持
+   - 默认页动态：无 history → upload，有 → history（onboarding 自适应）
+   - processing 教学时刻 = 指标科普 + 软件教学；空状态给预告卡（不锁死可切走）
+   - history 本地优先 v1（删 / 导出 / 导入），云端同步推后 B
+   - 完成通知全局可见（toast + 顶栏角标，任意页）+ 教练即时访问新数据（agent 进入时加载最新 session）
+   - upload 视频 / CSV 来源文件夹**分别记忆**（当前 bug：共用，待修）
+3. **形态决策演进**：
+   - v1 去邀请码 → 开放注册（原"D 邀请制"取消）
+   - 绕过 ICP 备案（持续境外香港 + Cloudflare，不迁国内）
+4. **云端方案 A**：香港小 VPS（FastAPI 鉴权 + LLM 代理 + 计费）+ Cloudflare Pages（landing）+ GitHub Releases（分发），~¥106/月。CV 本地后云端只剩轻量级。
+
+### 文档清理 + 对齐
+- **对齐 PRD 冲突**：IA spec（§2.2 / §4.1 / §5.1 邀请码 → 开放注册）、webapp spec（备案段加 PRD 演进头注）、product-strategy（备案 → 绕过）、PRD §10 残留"邀请制"修正
+- **清理过时文档**（回收站）：`flicking-analysis-plan.md` + `plans/` 4 个（ai-aim-coach / progress-loop / plan-adjustment / webapp-backend-slice1，均已实现或 merge）；06-28 design 保留（设计决策记录有价值）
+
+### memory
+新增 `prd-direction-anchor`；`next-session-agenda` 标第 1 / 2 / 3 项完成（PRD + 云端方案 A），剩第 6 项（IA→writing-plans）。
+
+### 下个 session
+- IA redesign spec → writing-plans（先对齐 PRD）
+- 或深挖推后的独立 spec：计费 / 桌面打包（Tauri vs Electron 选型）
