@@ -25,7 +25,7 @@
 ### Phase 3：tracking 接通 + 商业化
 - tracking coach v1 重构（基于 accuracy / loss_count / off_time / avg_error，spec 已落）→ 接进 webapp
 - 商业化：订阅（点点包 LLM key）或免费 + 用户自带 key
-- 国内 ICP 备案 + 迁国内云（合规 + 体验）
+- **绕过 ICP 备案**（持续境外部署 + Cloudflare；见 PRD §5.2 / §9.1）——不迁国内
 
 ## 已知限制（Phase 1）
 
