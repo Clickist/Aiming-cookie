@@ -414,7 +414,7 @@ class FlickFairMetrics:
     decel_frac: float            # decel-phase length / flick length
     endpoint_peak: float         # valley speed / peak speed
     corrective_count: int        # corrective submovements after initial (§6.2)
-    submovement_overlap: float   # high = fluid/overlapping, low = two-stage (§6.2)
+    submovement_overlap: float   # 实为 trough depth ratio（谷深/主峰），非 Novak time-overlap 字面义；high=流体融合, low=两阶段 (§6.2, 见 _submovement_structure 命名注)
     path_efficiency: float       # straight / actual path (1 = straight)
     path_length_deg: float
     direction_deg: float         # overall pan direction
@@ -511,9 +511,12 @@ def _submovement_structure(
     (Schwartze 2024: corrective submovements have smaller magnitude than initial).
 
     ``overlap`` = lowest trough between primary peak and first corrective /
-    peak_v: high = fused/overlapping (fluid, Novak 2002), low = discrete
-    (two-stage). Returns ``(corrective_count, overlap)``; overlap is NaN when no
-    corrective is found (a single clean bell = fully fluid).
+    peak_v: high = fused/overlapping (fluid), low = discrete (two-stage).
+    **命名注**：实为 *trough depth ratio*（谷深 / 主峰速度），非 Novak 2002
+    time-overlap 的字面实现——命名沿用便于下游消费，但语义是"减速段谷有多深"
+    （高 = 两阶段界限清晰、低 = 流体融合），与 tracking PTC 同型的"实现合理
+    但名字误导"。Returns ``(corrective_count, overlap)``; overlap is NaN when
+    no corrective is found (a single clean bell = fully fluid).
     """
     if peak_v <= 0 or not (0 <= peak_idx < len(speed)):
         return 0, float("nan")
