@@ -1,6 +1,8 @@
 # Flicking Coach Web App — 设计 Spec
 
 > 本 spec §2 认证 / §3 架构 / §5 设计已分别被 2026-07-06-aiming-cookie-ia-redesign-design.md 演进（密码+OTP / 桌面 hybrid / dark editorial）。其他段落（产品定位 / 数据流 / 错误处理 / 成本）仍有效。
+>
+> 2026-07-08 再演进：§3 部署 / §10 Phase 3 备案被 `docs/PRD.md` §5.2 + §9.1 取代——**绕过 ICP 备案**（持续境外香港 + Cloudflare），云端方案 A（香港小 VPS + CF Pages）。备案 / 迁国内云相关段落作废。
 
 > 2026-07-05 · 状态:设计待点点 review → 通过后转 writing-plans 出实现计划
 
