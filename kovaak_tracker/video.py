@@ -25,25 +25,25 @@ def save_uploaded_video(uploaded_file: BinaryIO, suffix: str) -> str:
 
 def get_video_metadata(video_path: str | Path) -> VideoMetadata:
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise FileNotFoundError(f"Cannot open video: {video_path}")
+    try:
+        if not cap.isOpened():
+            raise FileNotFoundError(f"Cannot open video: {video_path}")
 
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if width <= 0 or height <= 0:
-        cap.release()
-        raise ValueError(
-            f"Invalid video dimensions ({width}x{height}) for {video_path}; "
-            f"file may be corrupted or codec unsupported."
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            raise ValueError(
+                f"Invalid video dimensions ({width}x{height}) for {video_path}; "
+                f"file may be corrupted or codec unsupported."
+            )
+        return VideoMetadata(
+            fps=float(cap.get(cv2.CAP_PROP_FPS) or 60),
+            width=width,
+            height=height,
+            frame_count=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
         )
-    metadata = VideoMetadata(
-        fps=float(cap.get(cv2.CAP_PROP_FPS) or 60),
-        width=width,
-        height=height,
-        frame_count=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-    )
-    cap.release()
-    return metadata
+    finally:
+        cap.release()
 
 
 def read_frame(

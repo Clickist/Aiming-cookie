@@ -76,6 +76,7 @@ ARCHETYPES = [
 # Covers every signal advice.advise can emit.
 ROOT_CAUSES = {
     "decel_frac high": ("减速段占比过高，在「蹭」", "制动释放不果断", "减速一次到位的意识"),
+    "decel_frac low": ("减速段占比过低，撞墙式制动", "减速不足 / 制动粗暴", "练匀减速，把减速段当独立动作"),
     "sparc low": ("减速段抖动", "张力释放不平滑（高频成分多）", "减速段控制稳定性"),
     "reverse_ratio high": ("减速段反复修正", "制动方向不稳", "单次制动 + 流体修正"),
     "submovement two-stage": ("flick→急停→独立 micro", "corrective 与 primary 分离", "转流体派（overlapping submovements）"),
