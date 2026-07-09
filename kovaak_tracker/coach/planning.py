@@ -2,7 +2,7 @@
 
 Progress loop scope ④. Deterministic rule engine (academic roots, see
 docs/coach-prescription-manual.md); the LLM only optionally translates
-(narrator), never reasons about diagnosis.
+(agent), never reasons about diagnosis.
 """
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 """CoachDiagnosis contract + builder. Consumes advice.findings, produces the
-structured diagnosis that visualization and narrator both consume."""
+structured diagnosis that visualization and agent both consume."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -1,5 +1,5 @@
-"""Coach agent loop: replaces narrator.py's single LLM translation with a
-tool-use agent that progressively retrieves knowledge via tool calls.
+"""Coach agent loop: a tool-use agent that progressively retrieves knowledge
+via tool calls.
 
 设计参考 docs/superpowers/specs/2026-07-05-aiming-coach-agent-design.md。
 
@@ -14,8 +14,7 @@ tool-use agent that progressively retrieves knowledge via tool calls.
   * 知识 tool 只返回文档原文切片（带 source_ref + source_level）。
 
 失败降级：loop 异常 / 超过 max_turns → 返回 ``None``（设计稿 §3 决策，
-不 fallback 到单次 LLM——避免维护两套实现）。narrator.py 保留作 manual
-fallback，未在运行时被本模块调用。
+不 fallback 到单次 LLM——避免维护两套实现）。
 """
 from __future__ import annotations
 
@@ -261,7 +260,7 @@ def run_agent_loop(
 
 
 # ---------------------------------------------------------------------------
-# User payload serialization (mirrors narrator.build_user_prompt shape)
+# User payload serialization
 # ---------------------------------------------------------------------------
 
 
@@ -321,7 +320,7 @@ def _serialize_plan(plan: TrainingPlan) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Public entry points (signature-compatible with narrator.generate_*)
+# Public entry points
 # ---------------------------------------------------------------------------
 
 

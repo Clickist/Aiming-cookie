@@ -1,4 +1,4 @@
-"""Coach 社区知识库：按诊断 signal 索引，narrator 按需检索注入 prompt。
+"""Coach 社区知识库：按诊断 signal 索引，agent 按需检索注入 prompt。
 
 渐进式上下文设计——只有本次诊断实际触发的 signal 对应的知识进入 LLM
 prompt，而非全量预加载进 SYSTEM_PROMPT。内容来自 YouTube 创作者方法论
@@ -7,10 +7,10 @@ prompt，而非全量预加载进 SYSTEM_PROMPT。内容来自 YouTube 创作者
 契约：每个 KEY 必须与 :func:`kovaak_tracker.advice.advise` 输出的
 ``Finding.signal`` 完全一致——这是规则驱动检索的入口（诊断是确定性规则
 引擎，LLM 只翻译；signal 是规则引擎产物，由此决定取哪些知识，不交给 LLM
-自行检索，见 narrator.py 的 anti-hallucination 铁律）。
+自行检索，见 agent.py 的防幻觉铁律）。
 
 每条含：
-- ``community``：社区归因/说法（narrator 可引用，让诊断解释更权威具体）
+- ``community``：社区归因/说法（agent 可引用，让诊断解释更权威具体）
 - ``cues``：可操作提示（落到具体动作/意识，喂给处方讲解）
 """
 from __future__ import annotations
