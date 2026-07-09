@@ -64,7 +64,7 @@ async def _seed_done_session(
 
 @pytest.mark.asyncio
 async def test_video_404_when_session_missing():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get("/api/sessions/99999/video")
     assert resp.status_code == 404
 
@@ -73,7 +73,7 @@ async def test_video_404_when_session_missing():
 async def test_video_404_when_file_absent():
     """video_path 指向不存在的文件 → 404。"""
     sid = await _seed_done_session(video_path="/definitely/not/here.mp4")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}/video")
     assert resp.status_code == 404
     assert "不存在" in resp.json()["detail"]
@@ -85,7 +85,7 @@ async def test_video_200_returns_mp4(tmp_path: Path):
     fake_video = tmp_path / "v.mp4"
     fake_video.write_bytes(b"FAKE_MP4_BYTES")
     sid = await _seed_done_session(video_path=str(fake_video))
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}/video")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "video/mp4"
@@ -99,7 +99,7 @@ async def test_video_200_returns_mp4(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_timeline_404_when_session_missing():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get("/api/sessions/99999/timeline")
     assert resp.status_code == 404
 
@@ -107,7 +107,7 @@ async def test_timeline_404_when_session_missing():
 @pytest.mark.asyncio
 async def test_timeline_409_when_not_done():
     sid = await queue.enqueue("u1", "/v", "/c")  # status='queued'
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}/timeline")
     assert resp.status_code == 409
 
@@ -118,7 +118,7 @@ async def test_timeline_empty_events_when_no_markers():
     sid = await _seed_done_session(
         report=_fake_report_dict(fps=120, duration_frames=4372),
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}/timeline")
     assert resp.status_code == 200
     body = resp.json()
@@ -137,7 +137,7 @@ async def test_timeline_returns_persisted_events():
     sid = await _seed_done_session(
         report=_fake_report_dict(fps=60, duration_frames=2000, timeline=tl),
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}/timeline")
     assert resp.status_code == 200
     body = resp.json()
@@ -149,7 +149,7 @@ async def test_timeline_returns_persisted_events():
 @pytest.mark.asyncio
 async def test_timeline_defaults_fps_60_when_meta_absent():
     sid = await _seed_done_session(report=_fake_report_dict())
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}/timeline")
     assert resp.status_code == 200
     assert resp.json()["fps"] == 60
@@ -174,7 +174,7 @@ async def test_chat_pinned_frame_sec_prepended_to_message(monkeypatch):
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
     monkeypatch.setattr(routes_mod, "_load_backend_or_none", lambda: object())
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             f"/api/sessions/{sid}/chat",
             json={"message": "我的问题", "pinned_frame_sec": 23.4},
@@ -199,7 +199,7 @@ async def test_chat_without_pinned_frame_unchanged(monkeypatch):
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
     monkeypatch.setattr(routes_mod, "_load_backend_or_none", lambda: object())
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             f"/api/sessions/{sid}/chat",
             json={"message": "普通问题"},
@@ -217,7 +217,7 @@ async def test_chat_without_pinned_frame_unchanged(monkeypatch):
 @pytest.mark.asyncio
 async def test_analyze_rejects_path_traversal_user_id():
     """X-User-Id 含 ../ → 400,不写文件不入队(防路径穿越)。"""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             "/api/analyze",
             files={
@@ -233,7 +233,7 @@ async def test_analyze_rejects_path_traversal_user_id():
 @pytest.mark.asyncio
 async def test_analyze_rejects_non_mp4_video_extension():
     """视频扩展名非白名单 → 400。"""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             "/api/analyze",
             files={
@@ -244,3 +244,28 @@ async def test_analyze_rejects_non_mp4_video_extension():
         )
     assert resp.status_code == 400
     assert "mp4" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# IDOR 防护:跨用户访问他人 session → 403
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_idor_cross_user_forbidden_403():
+    """u1 的 session,其他用户访问各端点 → 403(防 session_id 枚举读他人数据/花他人 budget)。
+
+    v1 最小 ownership 校验(X-User-Id 自报,无签名);切片 3 换 Clerk 验签后此测试仍应成立。
+    """
+    sid = await _seed_done_session()  # owner = u1
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "intruder"},
+    ) as client:
+        assert (await client.get(f"/api/sessions/{sid}")).status_code == 403
+        assert (await client.get(f"/api/sessions/{sid}/video")).status_code == 403
+        assert (await client.get(f"/api/sessions/{sid}/timeline")).status_code == 403
+        assert (await client.get(f"/api/sessions/{sid}/chat")).status_code == 403
+        assert (await client.post(
+            f"/api/sessions/{sid}/chat", json={"message": "hi"},
+        )).status_code == 403
