@@ -2,7 +2,7 @@
 
 Parallel to :mod:`kovaak_tracker.advice` (flicking). Reuses
 ``Prescription`` / ``Finding`` dataclasses from advice.py so downstream
-(diagnosis / visualization / narrator) consume a uniform Finding shape.
+(diagnosis / visualization / agent) consume a uniform Finding shape.
 
 Differences from flicking advice (see spec
 ``docs/superpowers/specs/2026-07-05-tracking-coach-design.md`` §5.1):
