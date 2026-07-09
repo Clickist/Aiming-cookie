@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 理论状态（flicking + tracking，PTC 命名误导待 v2 重构）
 
-**flicking**（主线）：公平指标体系是核心，全部有运动学/学术锚点——`decel_frac` / `linearity` / `sparc`（Balasubramanian 2012）/ `reverse_ratio` / `peak_speed` / `peak_position` / `path_efficiency` / `throughput`（Fitts）/ `corrective_count` / `submovement_overlap`。诊断规则只用学术根基，社区经验进 narrator 文案（铁律）。
+**flicking**（主线）：公平指标体系是核心，全部有运动学/学术锚点——`decel_frac` / `linearity` / `sparc`（Balasubramanian 2012）/ `reverse_ratio` / `peak_speed` / `peak_position` / `path_efficiency` / `throughput`（Fitts）/ `corrective_count` / `submovement_overlap`。诊断规则只用学术根基，社区经验进讲解文案（铁律）。
 
 **tracking**（早期，待重构）：`analysis.py` 的 PTC（Pure Tension Coeff）实际公式是 `mean(a_rel | miss) / max(mean(error_px | miss), 1.0)`——即 miss-frame 上的加速度-误差比，单位 1/s²（量纲上 Hz² 成立）。**"Pure Tension Coeff"是误导命名**：它不是直接测肌肉张力，张力需要手部摄像头/EMG 验证（详见 `docs/superpowers/specs/2026-07-05-tracking-coach-design.md` §2.1）。
 - 早期文档曾声称 **J/E (Jitter/Error) Ratio / TBR (Tension Balance Ratio)** 是核心理论——**已确认不成立**：J/E Ratio 在代码里没有独立实现（字面最贴近的就是 PTC 本身，是同一量的双名/营销名）；TBR 没有可计算定义，TBR>1.8 / TBR<0.6 阈值在仓库内无任何推导或人群标定来源（凭空）。两者已从主线移除，tracking coach v1 基于 accuracy / loss_count / off_time / avg_error 等 solid 量（见 spec §3.1）。
@@ -43,13 +43,12 @@ python calibrate.py --video your_recording.mp4
 ### 包结构 (`kovaak_tracker/`)
 
 **flicking 主线**：
-- **`coach/`**（子包）— AI coach 核心：`report.py`（`build_report` / `build_progress_report`）编排入口、`diagnosis.py`（画像 + 三层根因链）、`advice` 调用、`agent.py`（**运行时入口**：tool-use agent loop，替换 narrator.py 单次 LLM；3 个 narration 入口 + `chat_with_coach`）、`agent_tools.py`（tool schema + handlers）、`agent_kb.py`（agent 知识库，按 signal / topic 索引）、`narrator.py`（保留作 manual fallback，运行时不被 agent 调）、`visualization.py`（5 类 Plotly figures）、`profiles.py`（archetype）、`knowledge.py`（12 条社区知识 → narrator/agent）、`planning.py`（④ 训练计划）、`progress.py`（历史趋势）、`providers.py`/`providers.json`（LLM 后端，DeepSeek/Anthropic/local）
+- **`coach/`**（子包）— AI coach 核心：`report.py`（`build_report` / `build_progress_report`）编排入口、`diagnosis.py`（画像 + 三层根因链）、`advice` 调用、`agent.py`（**运行时入口**：tool-use agent loop；3 个 narration 入口 + `chat_with_coach`）、`agent_tools.py`（tool schema + handlers）、`agent_kb.py`（agent 知识库，按 signal / topic 索引）、`visualization.py`（5 类 Plotly figures）、`profiles.py`（archetype）、`knowledge.py`（12 条社区知识 → agent 检索）、`planning.py`（④ 训练计划）、`progress.py`（历史趋势）、`providers.py`/`providers.json`（LLM 后端，DeepSeek/Anthropic/local）
 - **pan_tracker.py** — 全局平移轨迹（flick 角速度 = 视角平移）；提供 `analyze_flicking_fair_summary`（CSV 模式，主线入口）/ `analyze_flicking_reference`（无 CSV 模式）
 - **flicking.py** — flick 谷切分（`segment_by_valleys`）+ 公平指标（`compute_fair_metrics`：SPARC / submovement / Fitts throughput / linearity / path_efficiency）
 - **advice.py** — flicking 规则引擎（公平 summary → `Finding` 列表：症状 → 物理 → 处方）
 - **advice_tracking.py** — tracking 规则引擎（tracking summary → `Finding`，7 signal：accuracy / loss_count / off_time / avg_error / speed / accel / ptc；后三个 None=uncalibrated emit info/watch；复用 flicking `Prescription`/`Finding` dataclass）
 - **csv_parser.py** — KovaaK's Stats CSV 解析
-- **aligner.py** — 视频 ↔ CSV 时间戳对齐
 - **start_frame.py** — 起始帧检测
 
 **tracking 早期代码（v1 已接通 coach，命名债待 v2 重构）**：

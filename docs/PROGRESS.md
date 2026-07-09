@@ -691,3 +691,24 @@ agenda 持续项（代码 review）。距 07-08 仅 1 天，代码只动 5a5bb84
 **最终验证**：tests/ 116 passed + webapp/tests/ 48 passed（+1 IDOR 测试），无回归。
 
 ⚠️ **教训**：执行中两次发现 subagent 报告事实错误（_ball_speed 误判 + queue.py user_id 阻塞点不存在）——印证「执行前必须读代码验证引用，不能盲信 review 报告」（同 narrator 的"17 个月"hallucination）。subagent review 适合发现候选问题，但动手前要自己核实。
+
+### review 剩余 6 High + commit（点点选"继续 review 剩余 High"）
+
+6 个防御性补丁：pan_tracker.compute_pan_trajectory try/finally（VideoCapture 三轮闭环最后一处）/ pan_tracker 全 miss CSV NaN guard / calibration_cli VideoWriter try/finally / analysis cross_x NaN 过滤 / vision HSV 环绕（红色目标 H≈0/179 不再漏检）/ flicking peak_v 除零 guard。**VideoCapture/VideoWriter 资源泄漏三轮 review（07-07→07-08→07-09）终于清零**。
+
+### commit + push（5 组，origin main `5a5bb84..2115245`）
+
+- `0d82fa3` docs(review): 07-09 全量 review + 07-08 narrator 时间勘误
+- `4693add` refactor(coach): 删 narrator 双轨
+- `963169b` refactor(flicking): 删旧 pipeline ~542 行 + VideoCapture/CSV NaN High
+- `6180acc` feat(webapp): IDOR ownership + 跨用户 403 测试
+- `2115245` fix: tracking/CV High + spec §1 v_c=0 + PRD §13 文件夹记忆定性
+
+### 下个 session 剩余（都不急）
+
+- **IDOR B**：Clerk session token 验签（切片 3，防伪造 user_id；A 已防枚举）
+- **budget 计费一致性 + TOCTOU**（B 阶段 freemium 立墙前）：chat 漏记 cost + 硬编码 DeepSeek 单价 + check-then-act ×2
+- **history 页**（最大功能缺口，依赖 PRD item 1/6/11）
+- **桌面打包调研**（点点提"打包成应用"，Tauri/Electron 选型；见 desktop-hybrid-architecture memory）
+- agent_kb 7 处 narrator 代称（可选清理）
+- ⚠️ **subagent model 路由**：智谱把 haiku 档（glm-5-turbo 名义）暗降到 glm-4.7，是本次 review 集体 hallucination 的根因。点点后台发现，自行 fix 路由。教训：subagent 产出必须读代码核实。
