@@ -117,8 +117,11 @@ def run_calibration(video_path: str, max_frames: int = 100, output_dir: Path = O
             writer.write(vis)
     finally:
         cap.release()
+        # writer 在 try 内创建(select_color_interactive 抛 SystemExit 时可能未创建),
+        # guard 防 None.release();移进 finally 避免循环异常时泄漏 mp4 句柄(Windows 锁文件)。
+        if "writer" in locals():
+            writer.release()
 
-    writer.release()
     pd.DataFrame(results).to_csv(output_dir / "calibration_raw.csv", index=False)
     denom = frames_read if frames_read > 0 else 1
     print(f"\nTarget detection: {ball_found}/{frames_read} ({ball_found / denom * 100:.1f}%)")

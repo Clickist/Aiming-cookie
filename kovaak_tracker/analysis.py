@@ -12,7 +12,12 @@ from .settings import OUTPUT_DIR, ensure_output_dir
 
 def load_tracking_data(csv_path: str | Path, fps: float) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
-    df["is_valid"] = df["ball_x"].notna()
+    is_valid = df["ball_x"].notna()
+    # cross_x/y 为 None(未检出十字线)时下游 NaN 传播污染所有指标,一并过滤。
+    # 列可能缺失(某些 CSV 不写 cross),用列存在 guard 防 KeyError。
+    if "cross_x" in df.columns:
+        is_valid &= df["cross_x"].notna()
+    df["is_valid"] = is_valid
     valid_df = df[df["is_valid"]].copy().sort_values("frame")
 
     if valid_df.empty:
