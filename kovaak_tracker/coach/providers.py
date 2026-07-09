@@ -20,14 +20,9 @@ _MAX_RETRIES = 2
 _RETRY_BACKOFF_SEC = 1.5
 
 
-class LLMBackend(Protocol):
-    def generate(self, system: str, user: str) -> str: ...
-
-
 # ---------------------------------------------------------------------------
 # Tool-use capable backend abstraction (added for agent loop; see
 # docs/superpowers/specs/2026-07-05-aiming-coach-agent-design.md §7).
-# Existing LLMBackend.generate stays for narrator.py fallback compatibility.
 # ---------------------------------------------------------------------------
 
 
@@ -101,13 +96,6 @@ class AnthropicBackend:
         import anthropic
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
-
-    def generate(self, system: str, user: str) -> str:
-        resp = self._client.messages.create(
-            model=self._model, max_tokens=1024,
-            system=system, messages=[{"role": "user", "content": user}],
-        )
-        return resp.content[0].text
 
     def messages_create(
         self, *,
@@ -188,14 +176,6 @@ class OpenAICompatBackend:
         import openai
         self._client = openai.OpenAI(base_url=base_url, api_key=api_key or "ollama")
         self._model = model
-
-    def generate(self, system: str, user: str) -> str:
-        resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": user}],
-        )
-        return resp.choices[0].message.content
 
     def messages_create(
         self, *,
@@ -362,14 +342,6 @@ class DeepSeekBackend:
         self._client = openai.OpenAI(base_url=base_url, api_key=api_key)
         self._model = model
 
-    def generate(self, system: str, user: str) -> str:
-        resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": user}],
-        )
-        return resp.choices[0].message.content or ""
-
     def messages_create(
         self,
         *,
@@ -386,7 +358,7 @@ class DeepSeekBackend:
 
 
 def load_backend(provider: str = "anthropic", config_path: Optional[str] = None,
-                 config: Optional[dict] = None) -> ToolUseBackend | LLMBackend:
+                 config: Optional[dict] = None) -> ToolUseBackend:
     cfg = config if config is not None else _load_config(config_path)
     if provider not in cfg:
         raise ValueError(f"unknown provider {provider!r}; have {list(cfg)}")
