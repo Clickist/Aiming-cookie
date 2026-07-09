@@ -11,9 +11,9 @@ trajectory whose speed equals the flick speed -- robust to arbitrary
 background/target colours and to individual targets being lost or despawned
 mid-flick.
 
-``analyze_flicking_video`` ties the whole pipeline together: parse CSV ->
-auto-lock the challenge window -> compute the pan trajectory -> align kills and
-score flick metrics. No manual start-frame or colour calibration required.
+``analyze_flicking_fair_summary`` is the CSV-mode main entry: parse CSV +
+video -> global-pan trajectory -> valley segmentation -> fair metrics. No
+manual start-frame or colour calibration required.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from .csv_parser import parse_stats_csv
 from .flicking import (
     _ball_speed,
     compute_fair_metrics,
-    run_flicking_analysis,
     segment_by_valleys,
 )
 from .settings import OUTPUT_DIR, ensure_output_dir
@@ -143,45 +142,48 @@ def compute_pan_trajectory(
     prev = None
     all_widths = []
     total = max(1, end_frame - start_frame + 1)
-    # Seek ONCE to start_frame, then read sequentially. Per-frame cap.set is
-    # O(frame_no) on H.264 (re-decodes from the last keyframe each call) and was
-    # dominating runtime (~10+ min on a 60s clip). Sequential read is O(1)/frame.
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    for off, f in enumerate(range(start_frame, end_frame + 1)):
-        ok, frame = cap.read()
-        if not ok:
-            # cap.read() 提前失败时,下面的 progress_callback 永远到不了 1.0,
-            # 等待 100% 切状态的 UI 会卡。补发一次满进度。
-            if progress_callback is not None:
-                progress_callback(1.0, None)
-            break
-        if return_widths:
-            cur, ws = detect_targets(frame, return_width=True)
-            if len(ws):
-                all_widths.extend(ws.tolist())
-        else:
-            cur = detect_targets(frame)
-        if prev is not None and len(prev) and len(cur):
-            disp = []
-            for cx, cy in cur:
-                d = np.hypot(prev[:, 0] - cx, prev[:, 1] - cy)
-                j = int(d.argmin())
-                if d[j] < match_gate_px:
-                    disp.append((cx - prev[j, 0], cy - prev[j, 1]))
-            disp = np.array(disp) if disp else np.empty((0, 2))
-            if len(disp) >= 2:
-                pan = np.median(disp, axis=0)
-            elif len(disp) == 1:
-                pan = disp[0]
+    try:
+        # Seek ONCE to start_frame, then read sequentially. Per-frame cap.set is
+        # O(frame_no) on H.264 (re-decodes from the last keyframe each call) and was
+        # dominating runtime (~10+ min on a 60s clip). Sequential read is O(1)/frame.
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        for off, f in enumerate(range(start_frame, end_frame + 1)):
+            ok, frame = cap.read()
+            if not ok:
+                # cap.read() 提前失败时,下面的 progress_callback 永远到不了 1.0,
+                # 等待 100% 切状态的 UI 会卡。补发一次满进度。
+                if progress_callback is not None:
+                    progress_callback(1.0, None)
+                break
+            if return_widths:
+                cur, ws = detect_targets(frame, return_width=True)
+                if len(ws):
+                    all_widths.extend(ws.tolist())
+            else:
+                cur = detect_targets(frame)
+            if prev is not None and len(prev) and len(cur):
+                disp = []
+                for cx, cy in cur:
+                    d = np.hypot(prev[:, 0] - cx, prev[:, 1] - cy)
+                    j = int(d.argmin())
+                    if d[j] < match_gate_px:
+                        disp.append((cx - prev[j, 0], cy - prev[j, 1]))
+                disp = np.array(disp) if disp else np.empty((0, 2))
+                if len(disp) >= 2:
+                    pan = np.median(disp, axis=0)
+                elif len(disp) == 1:
+                    pan = disp[0]
+                else:
+                    pan = np.array([0.0, 0.0])
             else:
                 pan = np.array([0.0, 0.0])
-        else:
-            pan = np.array([0.0, 0.0])
-        rows.append((f, off / fps, float(pan[0]), float(pan[1]), len(cur)))
-        prev = cur
-        if progress_callback is not None:
-            progress_callback((off + 1) / total, None)
-    cap.release()
+            rows.append((f, off / fps, float(pan[0]), float(pan[1]), len(cur)))
+            prev = cur
+            if progress_callback is not None:
+                progress_callback((off + 1) / total, None)
+    finally:
+        # detect_targets / progress_callback 抛异常时 VideoCapture 不释放 → Windows 锁文件。
+        cap.release()
 
     df = pd.DataFrame(rows, columns=["frame", "time_s", "pan_dx", "pan_dy", "n_targets"])
     xx = [cx0]
@@ -194,55 +196,6 @@ def compute_pan_trajectory(
     if return_widths:
         return df, np.array(all_widths)
     return df
-
-
-def analyze_flicking_video(
-    video_path,
-    csv_path,
-    *,
-    duration_s=None,
-    crosshair=None,
-    output_dir=OUTPUT_DIR,
-    progress_callback=None,
-):
-    """End-to-end: KovaaK recording + stats CSV -> flick analysis, fully automated.
-
-    Pipeline: parse CSV -> auto-lock the challenge window (detects countdowns and
-    the results screen, matches the scenario duration) -> compute the global-pan
-    trajectory over the challenge (Approach A) -> align CSV kills and score flick
-    deceleration metrics. No manual start-frame or colour calibration needed.
-
-    ``crosshair`` is passed through to the flick metrics for the overshoot
-    calculation; pass ``None`` (the default) to skip it -- the pan trajectory is
-    a synthetic integrated point, so overshoot is not meaningful for it. Returns
-    ``(FlickAnalysis, ChallengeWindow)``.
-    """
-    stats = parse_stats_csv(csv_path)
-    if duration_s is None:
-        duration_s = float(math.ceil(stats.kills["time_s"].max()))
-    meta = get_video_metadata(video_path)
-
-    window = lock_challenge_window(video_path, duration_s, fps=meta.fps)
-    track_df = compute_pan_trajectory(
-        video_path,
-        window.start_frame,
-        window.end_frame,
-        fps=meta.fps,
-        progress_callback=progress_callback,
-    )
-    output_dir = ensure_output_dir(Path(output_dir))
-    track_csv = output_dir / "pan_trajectory.csv"
-    track_df.to_csv(track_csv, index=False)
-
-    analysis = run_flicking_analysis(
-        csv_path,
-        track_csv,
-        fps=meta.fps,
-        start_frame=window.start_frame,
-        crosshair=crosshair,
-        output_dir=output_dir,
-    )
-    return analysis, window
 
 
 @dataclass
@@ -383,7 +336,13 @@ def analyze_flicking_fair_summary(
     """
     import math
     stats = parse_stats_csv(csv_path)
-    duration_s = float(math.ceil(stats.kills["time_s"].max()))
+    # 全 miss(kills 空)→ max()=NaN → math.ceil(NaN) ValueError。有效 KovaaK 场景需 guard。
+    max_t = stats.kills["time_s"].max() if len(stats.kills) > 0 else None
+    if max_t is None or pd.isna(max_t):
+        raise ValueError(
+            "CSV 无 kills 数据,无法确定场景时长。请确认 CSV 含击杀记录或显式传 duration。"
+        )
+    duration_s = float(math.ceil(max_t))
 
     meta = get_video_metadata(video_path)
     fps = meta.fps
@@ -478,7 +437,6 @@ def analyze_flicking_fair_summary(
 __all__ = [
     "detect_targets",
     "compute_pan_trajectory",
-    "analyze_flicking_video",
     "analyze_flicking_reference",
     "analyze_flicking_fair_summary",
     "ReferenceAnalysis",
