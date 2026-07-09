@@ -64,12 +64,15 @@ logo · [分析 / 历史 / 教练] · [订阅状态 · 设置]
 - **订阅状态** = credits/plan 指示(D 阶段显示"Early Access";B 阶段显示余量/升级)
 - **设置** = 齿轮 → settings 子页
 
-### 3.2 三档导航规则
+### 3.2 两档导航规则
 | 档 | 用于 | 形态 |
 |---|---|---|
 | 营销导航 | landing(web 官网) | logo + 下载 + 登录入口 |
-| 交易态降级 | processing | logo + 进度状态(刻意去导航,聚焦等待) |
-| App 顶栏 | upload / coach_report / coach_dialogue / history / settings | §3.1 词汇 |
+| App 顶栏 | upload / processing / coach_report / coach_dialogue / history / settings | §3.1 词汇 + 后台任务角标 |
+
+> **processing 不降级**：用户可随时切走去 history/settings 逛，本地 CV 分析后台继续。完成通知 = 全局 toast + 顶栏角标（任意页可见，不强制跳转），见 PRD §6.1 / §6.3。
+>
+> （2026-07-10 修正：原"交易态降级，刻意去导航，聚焦等待"与 PRD §6 冲突——PRD 才是方向锚，故删除该档，processing 并入 App 顶栏。）
 
 ### 3.3 各页导航映射(交付物)
 | 页面 | 载体 | 导航 | 改动 |
@@ -77,7 +80,7 @@ logo · [分析 / 历史 / 教练] · [订阅状态 · 设置]
 | **landing** | web | 营销导航 | CTA 改"下载 Aiming Cookie" + 系统要求;保留营销导航 |
 | **login** | 应用 | 无(门) | **新增** `login.html`,方向见 §4 |
 | **upload** | 应用 | App 顶栏("分析" active) | 去掉 DOCS/GITHUB,进 App 顶栏 |
-| **processing** | 应用 | 交易态降级 | 保持(已对) |
+| **processing** | 应用 | App 顶栏 | 改完整 App 顶栏（不再降级）；用户可切走，完成通知见 PRD §6.3（全局 toast + 顶栏角标，独立 plan 实现） |
 | **coach_report** | 应用 | App 顶栏 + `#session` 面包屑 | 替换单纯"返回"为 App 顶栏 + 面包屑 |
 | **coach_dialogue** | 应用 | App 顶栏("教练" active) | 去掉 DOCS/GITHUB 与"开始分析"按钮 |
 | **history** | 应用 | App 顶栏("历史" active) | 替换 Dashboard/History/Coach/Academy 为 §3.1 词汇;顶部加趋势概览卡(吸收 Dashboard) |
