@@ -1,3 +1,5 @@
+> ⚠️ **时间勘误（2026-07-09 核实 git 史）**：本 review 中 narrator 相关的「17 个月未调用」系 subagent hallucination（07-08 与 07-09 两轮 subagent 均如此编造）。实际：narrator.py 2026-06-28 引入、agent.py 2026-07-05 引入并替代、narrator 退役约 4 天。代码事实（report.py 只 import agent、providers.generate 仅 narrator 调、无触发入口）属实。07-09 已决策：删 narrator。
+
 # 2026-07-08 全量 Review（代码 + 理论 + 产品方向）
 
 > 9 个 agent 并行 review，三维度。点点睡前授权自主执行。各分报告在同目录。
