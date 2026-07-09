@@ -10,6 +10,8 @@
 
 ### 1.1 前一份 spec 哪里错了
 
+> ⚠️ **2026-07-09 勘误（review §08 裁决）**：本节及 §1.3 此前用「Savitzky-Golay 平滑 + 数值微分会把常量 cross_pos 变成噪声级非零」论证 `v_c ≠ 0`，并把 CLAUDE.md 的 `v_c=0` 打成「前一稿错误」。**该数学论证不成立**：Savitzky-Golay 是线性滤波（常量进=常量出），`np.gradient` 对常量严格返回 0。app.py 路径下 cross_pos 默认硬编码画面中心（常量），**`v_c = 0` 字面成立**——CLAUDE.md「理论状态」段判断正确。仅 calibration_cli 启用准星 HSV 检测时 v_c 才可能 ≠ 0。下方表格把 `v_c=0` 当「前一稿错误」的措辞以此勘误为准；§1.3 line 64 已修正。metric 仍保留作 info/watch（§3），但理由是「miss 段目标速度是有用情境信号」，非「描述玩家追踪误差」。
+
 前一稿把项目里**两层不同的东西**当成同一层、并用错误的态度审视：
 
 | 前一稿的错误判断 | 实际情况 |
@@ -61,7 +63,7 @@
 - 准星视觉锁屏中（`tracking.py` L56 默认 `(width//2, height//2)`，L70-73 可选 HSV 检测覆盖但通常仍是中心）
 - 玩家动鼠标 → KovaaK's 平移视角 → CV 看到目标在屏幕上动
 - `analysis.py` L52-53 读 `cross_x / cross_y` 列做平滑，L69-72 对其求导得 `v_cx / v_cy / a_cx / a_cy`
-- 关键：CSV 中 `cross_x/y` 是逐帧采样（不是常数标量），**所以 `v_c` 通常 ≠ 0**——前一稿"中心是常数"判断对 raw 数据成立（在 KovaaK 中它接近常数），但对经过 Savitzky-Golay 平滑 + 数值微分的导数是噪声级非零。在 tracking 场景下，玩家视角平移让目标屏幕坐标变化主导，准星屏幕坐标接近常数，但算法层面 v_rel 公式 (`analysis.py` L74) `v_rel = ‖v_c − v_t‖` 是对的——它度量的是屏幕空间中"准星离目标多快地分开/合拢"。
+- 关键：**app.py 路径下 `cross_pos` 默认硬编码画面中心（`tracking.py` L57 `(width//2, height//2)`，常量），未启用准星 HSV 检测 → `cross_x/y` 是同一常量**。Savitzky-Golay 是线性滤波（常量进=常量出），`np.gradient` 对常量严格返回 0，**所以 app.py 路径 `v_c = 0` 字面成立**（CLAUDE.md 判断正确，见 §1.1 勘误）；仅 `calibration_cli` 启用准星 HSV 检测时 cross_pos 才逐帧更新、v_c 才可能 ≠ 0。在 tracking 场景下，玩家视角平移让目标屏幕坐标变化主导，准星屏幕坐标接近常数，但算法层面 v_rel 公式 (`analysis.py` L74) `v_rel = ‖v_c − v_t‖` 是对的——它度量的是屏幕空间中"准星离目标多快地分开/合拢"。
 - 所以 tracking 场景下 `v_rel ≈ speed_t`（目标屏幕速度）是**物理上正确**的解读，而不是 bug——动鼠标的效果就是让目标在屏幕上动，玩家把目标保持在小框内 = v_rel 小。
 - 这与 flicking 一致（`flicking.py` 同样用目标屏幕速度作为 flick 速度）。
 

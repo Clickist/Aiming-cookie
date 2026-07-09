@@ -50,9 +50,17 @@ def get_hsv_range(
 
     tolerance_h = 15 if is_crosshair else 10
     tolerance_sv = 60 if is_crosshair else 50
+    lo_h = h - tolerance_h
+    hi_h = h + tolerance_h
+    # 色相环绕:跨 0 或 179 时产生 lo_h > hi_h,触发 _make_mask 环绕双区间
+    # (否则红/品红 H≈0/179 只覆盖一侧,同色目标漏检——_make_mask 环绕分支成 dead code)。
+    if lo_h < 0:
+        lo_h += 180
+    elif hi_h > 179:
+        hi_h -= 180
     return (
-        np.array([max(0, h - tolerance_h), max(0, s - tolerance_sv), max(0, v - tolerance_sv)]),
-        np.array([min(179, h + tolerance_h), min(255, s + tolerance_sv), min(255, v + tolerance_sv)]),
+        np.array([lo_h, max(0, s - tolerance_sv), max(0, v - tolerance_sv)]),
+        np.array([hi_h, min(255, s + tolerance_sv), min(255, v + tolerance_sv)]),
     )
 
 
