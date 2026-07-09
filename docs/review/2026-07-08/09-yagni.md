@@ -1,3 +1,5 @@
+> ⚠️ **时间勘误（2026-07-09 核实 git 史）**：本报告 D-4 称 narrator「17 个月内从未被使用」系 subagent hallucination。实际：narrator.py 2026-06-28 引入、agent.py 2026-07-05 引入并替代、narrator 退役约 4 天。代码事实属实。07-09 已决策：删 narrator。
+
 # YAGNI / 推后项 Review
 
 > **日期** 2026-07-08 · **reviewer** YAGNI reviewer · **scope** `kovaak_tracker/` + `webapp/`
