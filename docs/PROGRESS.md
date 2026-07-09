@@ -647,3 +647,47 @@ agenda 第 1 项（使用管线确认）。点点要求一份完整 PRD 作"方�
 - IA redesign spec → writing-plans（先对齐 PRD）
 - 或深挖推后的独立 spec：计费 / 桌面打包（Tauri vs Electron 选型）
 - review 留点点决策的项（见上）
+
+## 2026-07-09：全量 review（9 agent，验证昨天修复 + 补测试/安全维度）
+
+### 触发
+agenda 持续项（代码 review）。距 07-08 仅 1 天，代码只动 5a5bb84（4 处低风险）。本次定位≠重复昨天，而是验证昨天修复 / 复查必修未修 / 深挖遗漏 / 补「测试质量 + 安全纵深」两个昨天没有的新维度。
+
+### 核心结论：不是回归，是"昨天必修没修完 + 审查更深"
+- 昨天（07-08）标「必修 5 项」只完成 2（sys.exit + profiles ROOT_CAUSES），**IDOR / pan_tracker try/finally / CSV NaN 三项高风险必修一直没动**——本次重新确认并升级。
+- tracking 域几个 M 经深入分析升级为 H（VideoWriter 泄漏 / cross_x NaN 传播 / HSV 环绕失效）。
+- 两个新维度（测试质量、安全纵深）暴露昨天没审的盲区。
+- 合计 ~4C/14H/29M/28L（代码+测试维度）；理论 0 实现 bug / 产品 0 偏差，无阻塞。
+- 昨天修的 4 处（5a5bb84）全部验证通过、无回归；基线 tests/ 127 + webapp/ 47 passed。
+
+### 跨域 pattern
+1. **VideoCapture/VideoWriter 三轮 review 没闭环** —— 还有 pan_tracker.compute_pan_trajectory（H，未修）+ calibration_cli VideoWriter（H，新发现）+ app.py:85（L）。建议统一 `_open_video` context manager 一次性收口。
+2. **测试盲区 = 必修未修项** —— IDOR / CSV 全 miss / pan_tracker 资源泄漏全无测试；5a5bb84 4 处修复仅 profiles 1 处有间接测试。CV/vision/analysis/pan_tracker 几乎无单元测试。
+3. **budget 计费多处不一致** —— chat 漏记 cost（reply=None 但 LLM 已调）+ 硬编码 DeepSeek 单价 + TOCTOU ×2（chat/analyze）。B 阶段 freemium 前整体修。
+
+### ⚠️ agent 结论冲突（需点点拍板，这是本次新出现的决策类型）
+- **narrator 删留** → ✅ **已决策：删**。⚠️ 时间勘误：02/09 报告称"17 月未调用 / agent 2024-11 替代 / 2025-02 最后修改"系 subagent hallucination，核实 git 史：narrator 2026-06-28 引入、agent 2026-07-05 引入并替代、narrator 退役仅 ~4 天。代码事实成立（report.py 只 import agent、providers.generate 只被 narrator 调、无任何触发入口），故虽退役仅 4 天仍删——保留不接是债。**已执行（07-09）**：narrator.py + test_narrator.py 送回收站；providers 删 LLMBackend Protocol + 3×generate + load_backend 返回类型收窄为 ToolUseBackend；agent/knowledge/diagnosis/planning/__init__/advice_tracking docstring 去 narrator 引用；tests/ 116 + webapp/ 47 passed 无回归。agent_kb 的 7 处 KB 文本代称保留（LLM 读，不影响功能）。
+- **processing 完成强制跳转 → 定性：暂不改（现在改更差）**。采纳 09 轻度偏离 + 补充：toast/角标组件未建，现在删 router.push 用户完成后无反馈。等 toast/角标组件 + processing 后台化时一并改，非 Critical。
+
+### 待点点决策
+- IDOR 修复时机 → v1 前做 A（ownership 校验，防枚举），B（Clerk 验签防伪造）等切片 3（点点确认 v1 开放注册近）
+- 旧 flicking pipeline ~470 行 → 删（03+09 一致，runtime 0%）
+- spec §1 修正方向（04 + 08 都建议承认 v_c=0）→ 改 spec 对齐 CLAUDE.md（点点确认准星画面中央是事实），纯文档）
+- 文件夹记忆 → 非 bug（Chromium 同 origin 共享目录，浏览器行为）；点点补充后续打包桌面应用不用浏览器、此问题目标形态不复现；PRD §13 描述修正
+- 过时 spec 2 份加演进标注（2026-06-28 ai-aim-coach + progress-loop）
+
+### 报告
+`docs/review/2026-07-09/`（README 总览 + 9 分报告：coach-runtime / coach-report / flicking / tracking-cv / webapp-backend / webapp-frontend / tests / theory / product-yagni）
+
+### 执行（2026-07-09，6 项决策落地）
+
+点点"gogo"后执行 4 项（narrator 已先执行、processing 不执行）：
+
+1. **spec §1 改**（承认 v_c=0）—— §1.1 加勘误框 + §1.3 line 64 修正数学论证（Savitzky-Golay 线性滤波常量进=常量出、np.gradient 常量=0），对齐 CLAUDE.md。纯文档。
+2. **PRD §13 改** —— 文件夹记忆定性为非 bug（Chromium 同 origin 共享目录）+ 点点补充「后续打包桌面应用不用浏览器，此问题目标形态不复现」标注。
+3. **旧 flicking pipeline 删除 ~542 行** —— aligner.py 整文件（回收）+ flicking.py 旧函数群（删 326 行净）+ pan_tracker.analyze_flicking_video（删 57 行净）。⚠️ 执行中发现 09 报告把 `_ball_speed` 误判为旧 pipeline——实际它是现役（pan_tracker.analyze_flicking_fair_summary 用），保留。
+4. **IDOR A**（v1 前必修）—— routes.py 5 个 `/sessions/{id}/...` 端点加 `_assert_session_owner` ownership 校验 + 新增跨用户 403 测试。⚠️ 执行中发现 05 报告说"queue.py 不返回 user_id 是阻塞点"——实际 get_session 早 SELECT user_id，无阻塞点。
+
+**最终验证**：tests/ 116 passed + webapp/tests/ 48 passed（+1 IDOR 测试），无回归。
+
+⚠️ **教训**：执行中两次发现 subagent 报告事实错误（_ball_speed 误判 + queue.py user_id 阻塞点不存在）——印证「执行前必须读代码验证引用，不能盲信 review 报告」（同 narrator 的"17 个月"hallucination）。subagent review 适合发现候选问题，但动手前要自己核实。

@@ -144,7 +144,7 @@ history（现在有内容）
 | 10 | 录屏 + 鼠标采集远期；upload 留扩展位 | 远期 |
 | 11 | 分析完成：全局 toast + 顶栏角标，不强制跳转 | v1 |
 | 12 | 教练即时访问：分析完写入本地 session，coach_dialogue 进入时 agent 自动加载最新上下文 | v1 |
-| 13 | upload 修复：视频 / CSV 上传来源文件夹**分别记忆**（当前 bug：共用，导致 CSV 被导向视频目录） | v1 修复 |
+| 13 | upload 视频/CSV 来源文件夹分别记忆：**非代码 bug**（Chromium 同 origin 共享目录记忆=浏览器原生行为；当前两个独立 input 已分别记忆）。强行隔离需 File System Access API（新功能）。**后续打包桌面应用不用浏览器，此问题目标形态不复现** | 不修（web 中间态；桌面形态消失）|
 
 ## 9. 架构分工（桌面 hybrid）
 
