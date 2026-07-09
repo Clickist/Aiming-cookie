@@ -33,6 +33,14 @@ _ALLOWED_VIDEO_EXTS = {".mp4"}
 _ALLOWED_CSV_EXTS = {".csv"}
 
 
+def _assert_session_owner(s: dict, x_user_id: str) -> None:
+    """IDOR 防护:校验 session 属于调用者。v1 最小方案(X-User-Id 自报无签名,
+    防 session_id 枚举读他人数据/花他人 budget);切片 3 换 Clerk session token
+    + 服务端验签后由鉴权中间件取代。"""
+    if s["user_id"] != x_user_id:
+        raise HTTPException(403, "无权访问此 session")
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(
     video: UploadFile = File(...),
@@ -87,11 +95,15 @@ async def analyze(
 
 
 @router.get("/sessions/{session_id}", response_model=SessionStatus)
-async def get_session(session_id: int = Path(...)):
+async def get_session(
+    session_id: int = Path(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
     """查询分析状态/结果(queued / running / done / failed)。"""
     s = await queue.get_session(session_id)
     if s is None:
         raise HTTPException(404, "session 不存在")
+    _assert_session_owner(s, x_user_id)
     return SessionStatus(
         id=s["id"],
         status=s["status"],
@@ -164,6 +176,7 @@ def _load_backend_or_none():
 async def chat(
     session_id: int = Path(...),
     body: ChatRequest = Body(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
 ):
     """多轮对话:用户提问 → coach 回复。
 
@@ -172,6 +185,7 @@ async def chat(
     s = await queue.get_session(session_id)
     if s is None:
         raise HTTPException(404, "session 不存在")
+    _assert_session_owner(s, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成,暂不可对话")
     result = s.get("result") or {}
@@ -265,11 +279,15 @@ async def chat(
 
 
 @router.get("/sessions/{session_id}/chat", response_model=ChatResponse)
-async def get_chat_history(session_id: int = Path(...)):
+async def get_chat_history(
+    session_id: int = Path(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
     """页面 mount 时拉历史对话。session 不存在 → 404;未 done → 409。"""
     s = await queue.get_session(session_id)
     if s is None:
         raise HTTPException(404, "session 不存在")
+    _assert_session_owner(s, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成,暂不可对话")
     history = await db.load_chat_history(session_id)
@@ -287,7 +305,10 @@ async def get_chat_history(session_id: int = Path(...)):
 
 
 @router.get("/sessions/{session_id}/video")
-async def get_session_video(session_id: int = Path(...)):
+async def get_session_video(
+    session_id: int = Path(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
     """流式返回 session 关联的视频文件(给 coach 页 <video src>)。
 
     路径从 sessions.video_path 取。worker 分析完后**不再删视频**(见
@@ -296,6 +317,7 @@ async def get_session_video(session_id: int = Path(...)):
     s = await queue.get_session(session_id)
     if s is None:
         raise HTTPException(404, "session 不存在")
+    _assert_session_owner(s, x_user_id)
     video_path = s.get("video_path") or ""
     if not video_path or not os.path.exists(video_path):
         raise HTTPException(404, "视频文件不存在或已归档")
@@ -303,7 +325,10 @@ async def get_session_video(session_id: int = Path(...)):
 
 
 @router.get("/sessions/{session_id}/timeline", response_model=Timeline)
-async def get_session_timeline(session_id: int = Path(...)):
+async def get_session_timeline(
+    session_id: int = Path(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
     """返回视频时间轴事件 markers。
 
     数据源优先级:
@@ -315,6 +340,7 @@ async def get_session_timeline(session_id: int = Path(...)):
     s = await queue.get_session(session_id)
     if s is None:
         raise HTTPException(404, "session 不存在")
+    _assert_session_owner(s, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成")
 

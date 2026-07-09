@@ -9,7 +9,7 @@ from webapp.backend.app import app
 
 @pytest.mark.asyncio
 async def test_analyze_returns_session_id():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             "/api/analyze",
             files={
@@ -27,7 +27,7 @@ async def test_analyze_returns_session_id():
 async def test_analyze_rejects_when_active_job_exists():
     """单用户已有 queued/running job → 429。"""
     await queue.enqueue("u1", "/a", "/a.csv")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             "/api/analyze",
             files={
@@ -43,7 +43,7 @@ async def test_analyze_rejects_when_active_job_exists():
 async def test_analyze_rejects_oversized_video():
     """视频 > 100MB → 413。"""
     big = b"x" * (101 * 1024 * 1024)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             "/api/analyze",
             files={
@@ -60,7 +60,7 @@ async def test_analyze_rejects_oversized_csv():
     """CSV > MAX_CSV_BYTES(10MB)→ 413。"""
     from webapp.backend.config import MAX_CSV_BYTES
     big_csv = b"x" * (MAX_CSV_BYTES + 1)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             "/api/analyze",
             files={
@@ -75,7 +75,7 @@ async def test_analyze_rejects_oversized_csv():
 @pytest.mark.asyncio
 async def test_get_session_returns_queued_status():
     sid = await queue.enqueue("u1", "/a", "/a.csv")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}")
     assert resp.status_code == 200
     body = resp.json()
@@ -85,6 +85,6 @@ async def test_get_session_returns_queued_status():
 
 @pytest.mark.asyncio
 async def test_get_session_404_when_missing():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get("/api/sessions/99999")
     assert resp.status_code == 404

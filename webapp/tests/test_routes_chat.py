@@ -72,7 +72,7 @@ def _patch_chat_ok(monkeypatch, fake_fn):
 
 @pytest.mark.asyncio
 async def test_chat_404_when_session_missing():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             "/api/sessions/99999/chat",
             json={"message": "你好"},
@@ -83,7 +83,7 @@ async def test_chat_404_when_session_missing():
 @pytest.mark.asyncio
 async def test_chat_409_when_session_not_done():
     sid = await queue.enqueue("u1", "/v", "/c")  # status='queued'
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             f"/api/sessions/{sid}/chat",
             json={"message": "你好"},
@@ -94,7 +94,7 @@ async def test_chat_409_when_session_not_done():
 
 @pytest.mark.asyncio
 async def test_get_chat_404_when_session_missing():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get("/api/sessions/99999/chat")
     assert resp.status_code == 404
 
@@ -102,7 +102,7 @@ async def test_get_chat_404_when_session_missing():
 @pytest.mark.asyncio
 async def test_chat_400_on_empty_message():
     sid = await _seed_done_session()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             f"/api/sessions/{sid}/chat",
             json={"message": "   "},
@@ -125,7 +125,7 @@ async def test_chat_200_with_mocked_backend(monkeypatch):
 
     _patch_chat_ok(monkeypatch, fake_chat_with_coach)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             f"/api/sessions/{sid}/chat",
             json={"message": "我该怎么练?"},
@@ -159,7 +159,7 @@ async def test_chat_history_persists_across_calls(monkeypatch):
 
     _patch_chat_ok(monkeypatch, fake_chat_with_coach)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         await client.post(f"/api/sessions/{sid}/chat",
                           json={"message": "第一个问题"})
         await client.post(f"/api/sessions/{sid}/chat",
@@ -189,7 +189,7 @@ async def test_chat_history_passed_to_agent_on_second_turn(monkeypatch):
 
     _patch_chat_ok(monkeypatch, fake_chat_with_coach)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         await client.post(f"/api/sessions/{sid}/chat",
                           json={"message": "第一轮"})
         await client.post(f"/api/sessions/{sid}/chat",
@@ -210,7 +210,7 @@ async def test_chat_backend_none_degrades_gracefully(monkeypatch):
     import kovaak_tracker.coach.providers as prov_mod
     monkeypatch.setattr(prov_mod, "load_backend", fake_load_backend_fail)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
             f"/api/sessions/{sid}/chat",
             json={"message": "你好"},
