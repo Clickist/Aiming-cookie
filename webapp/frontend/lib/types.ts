@@ -224,6 +224,7 @@ export interface DeleteSessionResponse {
   deleted: boolean;
   id: number;
   files_removed: string[];
+  cleanup_failed: string[];
 }
 
 export interface StorageSessionItem {

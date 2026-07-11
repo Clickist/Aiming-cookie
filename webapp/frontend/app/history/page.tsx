@@ -19,12 +19,19 @@ function sessionHref(item: SessionListItem): string {
   return `/sessions/${item.id}`;
 }
 
+const ACTIVE_SESSION_STATUSES = new Set(["uploading", "queued", "running"]);
+
 const STATUS_LABEL: Record<SessionStatusEnum, string> = {
   queued: "排队中",
   running: "分析中",
   done: "已完成",
   failed: "失败",
 };
+
+function canDeleteSession(status: string): boolean {
+  if (ACTIVE_SESSION_STATUSES.has(status)) return false;
+  return status === "done" || status === "failed";
+}
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -69,8 +76,10 @@ export default function HistoryPage() {
     item: SessionListItem,
   ) => {
     e.stopPropagation();
+    if (!canDeleteSession(item.status)) return;
+
     const ok = window.confirm(
-      `确定删除分析 #${item.id}？此操作不可恢复。`,
+      `确定删除分析 #${item.id}？仅删除 Aiming Cookie 托管副本，原始文件保留。此操作不可恢复。`,
     );
     if (!ok) return;
     setDeletingId(item.id);
@@ -201,7 +210,10 @@ export default function HistoryPage() {
                       </button>
                       <button
                         type="button"
-                        disabled={deletingId === item.id}
+                        disabled={
+                          !canDeleteSession(item.status) ||
+                          deletingId === item.id
+                        }
                         onClick={(e) => void handleDelete(e, item)}
                         className="text-label-md text-on-surface-variant hover:text-error disabled:opacity-50"
                       >
