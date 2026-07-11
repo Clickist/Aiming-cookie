@@ -21,8 +21,8 @@ Assessment §N 要求“一份正式 takeover plan 解决全部 blocker”才许
 
 | 线 | 目标 | 是否阻塞内部预览 P0 删除语义 | 状态 |
 |---|---|---|---|
-| **A. 常驻 Coach 数据归属** | SQLite canonical 关系/消息/分析引用；删除语义；`/coach` 入口；旧 chat 迁移 | **是，P0 阻塞** | 见 active plan |
-| **B. Pi runtime 接管** | `third_party/pi/` import、删改 coding 面、sidecar、事件桥、proxy | 否（预览可先用现有 Python `chat_with_coach`） | 待独立 plan |
+| **A. 常驻 Coach 数据归属** | SQLite canonical 关系/消息/分析引用；删除语义；`/coach` 入口；旧 chat 迁移 | **是，P0 阻塞** | completed（`2026-07-11-persistent-coach-data-ownership.md`） |
+| **B. Pi runtime 接管** | `third_party/pi/` import、删改 coding 面、sidecar、事件桥、proxy | 否（预览可先用现有 Python `chat_with_coach`） | **薄切片已完工**（`2026-07-12-pi-coach-runtime-integration.md` Task 1–5：vendored Pi、`webapp/coach-runtime`、subprocess 桥、`/coach` 默认 `COACH_RUNTIME=pi` + Python fallback；daemon / 云账单 / Desktop 沙箱仍待后续 plan） |
 
 Architecture 已写明：canonical Coach 对话归属 Aiming Cookie 领域层；Pi JSONL 只是 runtime transcript。因此 **线 A 不依赖 vendor Pi**。
 
