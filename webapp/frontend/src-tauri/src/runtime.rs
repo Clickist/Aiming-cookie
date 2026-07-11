@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const TOKEN_ENV: &str = "AIMING_COOKIE_DESKTOP_TOKEN";
+const WATCH_PARENT_STDIN_ENV: &str = "AIMING_COOKIE_WATCH_PARENT_STDIN";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +40,7 @@ impl RuntimeProcess {
             .arg("webapp.backend.desktop_runtime")
             .current_dir(project_root)
             .env(TOKEN_ENV, &token)
+            .env(WATCH_PARENT_STDIN_ENV, "1")
             .env("DATA_ROOT", app_data_dir)
             .env("VIDEO_TMP_DIR", app_data_dir)
             .env("DATABASE_URL", database_url)
@@ -46,7 +48,7 @@ impl RuntimeProcess {
                 "CORS_ORIGINS",
                 "http://localhost:3000,http://tauri.localhost,tauri://localhost",
             )
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         configure_process_group(&mut command);

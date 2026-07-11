@@ -34,6 +34,7 @@ async def test_runtime_process_binds_dynamic_port_and_serves_health(tmp_path) ->
     env = os.environ.copy()
     env.update({
         "AIMING_COOKIE_DESKTOP_TOKEN": "test-runtime-token",
+        "AIMING_COOKIE_WATCH_PARENT_STDIN": "1",
         "DATA_ROOT": str(tmp_path / "data"),
         "VIDEO_TMP_DIR": str(tmp_path / "data"),
         "DATABASE_URL": f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}",
@@ -44,6 +45,7 @@ async def test_runtime_process_binds_dynamic_port_and_serves_health(tmp_path) ->
         "webapp.backend.desktop_runtime",
         cwd=str(Path(__file__).resolve().parents[2]),
         env=env,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -58,11 +60,15 @@ async def test_runtime_process_binds_dynamic_port_and_serves_health(tmp_path) ->
             response = await client.get(f"http://127.0.0.1:{ready['port']}/healthz")
         assert response.status_code == 200
         assert response.json() == {"ok": True}
+
+        assert process.stdin is not None
+        process.stdin.close()
+        await asyncio.wait_for(process.wait(), timeout=5)
+        assert process.returncode == 0
     finally:
         if process.returncode is None:
             process.terminate()
-        await asyncio.wait_for(process.wait(), timeout=5)
-        assert process.returncode == 0
+            await asyncio.wait_for(process.wait(), timeout=5)
 
 
 @pytest.mark.asyncio

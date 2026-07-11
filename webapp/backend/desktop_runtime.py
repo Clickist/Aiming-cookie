@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import signal
 import sys
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -17,6 +19,7 @@ from .app import app
 
 LOOPBACK_HOST = "127.0.0.1"
 SERVER_START_POLL_SECONDS = 0.01
+PARENT_STDIN_WATCH_ENV = "AIMING_COOKIE_WATCH_PARENT_STDIN"
 
 
 class RuntimeStartupError(RuntimeError):
@@ -75,6 +78,28 @@ async def run_worker(stop_event: asyncio.Event) -> None:
             await worker_task
 
 
+def _watch_parent_stdin(stop_event: asyncio.Event) -> None:
+    """Request shutdown when the Tauri-owned stdin pipe reaches EOF."""
+    if os.environ.get(PARENT_STDIN_WATCH_ENV) != "1":
+        return
+
+    loop = asyncio.get_running_loop()
+
+    def wait_for_eof() -> None:
+        try:
+            sys.stdin.buffer.read(1)
+            loop.call_soon_threadsafe(stop_event.set)
+        except (OSError, RuntimeError):
+            # A signal-driven shutdown may close the loop before this daemon wakes.
+            pass
+
+    threading.Thread(
+        target=wait_for_eof,
+        name="desktop-parent-stdin",
+        daemon=True,
+    ).start()
+
+
 def _install_shutdown_signal_handlers(stop_event: asyncio.Event) -> Callable[[], None]:
     loop = asyncio.get_running_loop()
     installed: list[signal.Signals] = []
@@ -98,6 +123,7 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     """Run API and worker until Tauri requests shutdown or either exits."""
     shutdown_requested = stop_event or asyncio.Event()
     remove_handlers = _install_shutdown_signal_handlers(shutdown_requested)
+    _watch_parent_stdin(shutdown_requested)
     server = create_server(0)
     worker_stop = asyncio.Event()
     server_task = asyncio.create_task(server.serve())
