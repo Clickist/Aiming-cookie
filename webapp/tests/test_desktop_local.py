@@ -44,6 +44,34 @@ def test_desktop_local_profile_is_stable():
 
 
 @pytest.mark.asyncio
+async def test_desktop_runtime_protects_all_api_routes_but_not_health(desktop_token):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        health = await client.get("/healthz")
+        preflight = await client.options(
+            "/api/sessions",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": (
+                    "X-Aiming-Cookie-Desktop-Token,X-User-Id"
+                ),
+            },
+        )
+        missing = await client.get("/api/sessions")
+        invalid = await client.get(
+            "/api/sessions",
+            headers={"X-Aiming-Cookie-Desktop-Token": "wrong-token"},
+        )
+        valid = await client.get("/api/sessions", headers=_desktop_headers())
+
+    assert health.status_code == 200
+    assert preflight.status_code == 200
+    assert missing.status_code == 401
+    assert invalid.status_code == 401
+    assert valid.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_storage_requires_valid_desktop_token(desktop_token):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         missing = await client.get("/api/storage")
@@ -247,7 +275,7 @@ async def test_desktop_path_import_cleans_incomplete_workspace_after_copy_error(
 
 
 @pytest.mark.asyncio
-async def test_multipart_analyze_remains_available_when_desktop_token_is_configured(desktop_token):
+async def test_multipart_analyze_remains_available_without_desktop_runtime_token():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/analyze",
