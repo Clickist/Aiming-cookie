@@ -13,6 +13,8 @@
 import type {
   AnalyzeResponse,
   ChatResponse,
+  DeleteSessionResponse,
+  SessionListResponse,
   SessionStatus,
   Timeline,
 } from "./types";
@@ -85,7 +87,8 @@ export async function uploadVideo(
  * Poll analysis status / fetch result. Wraps GET /api/sessions/{id}.
  *
  * Status transitions: queued → running → done | failed. When status === "done",
- * `result` is the full CoachReport (see lib/types.ts).
+ * `result` is AnalysisResult v1 (see lib/types.ts); map to CoachReport via
+ * lib/contracts.ts for report/coach UI.
  */
 export async function getSession(
   sessionId: number,
@@ -93,6 +96,56 @@ export async function getSession(
 ): Promise<SessionStatus> {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
     method: "GET",
+    headers: { "X-User-Id": DEFAULT_USER_ID },
+    signal: opts.signal,
+  });
+  if (!res.ok) {
+    throw await apiError(res);
+  }
+  return (await res.json()) as SessionStatus;
+}
+
+/** List all sessions for the current user (newest first). GET /api/sessions. */
+export async function listSessions(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<SessionListResponse> {
+  const res = await fetch(`${API_BASE}/api/sessions`, {
+    method: "GET",
+    headers: { "X-User-Id": opts.userId ?? DEFAULT_USER_ID },
+    signal: opts.signal,
+  });
+  if (!res.ok) {
+    throw await apiError(res);
+  }
+  return (await res.json()) as SessionListResponse;
+}
+
+/** Hard-delete a session (DB row, chat, on-disk inputs). DELETE /api/sessions/{id}. */
+export async function deleteSession(
+  sessionId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<DeleteSessionResponse> {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: { "X-User-Id": opts.userId ?? DEFAULT_USER_ID },
+    signal: opts.signal,
+  });
+  if (!res.ok) {
+    throw await apiError(res);
+  }
+  return (await res.json()) as DeleteSessionResponse;
+}
+
+/**
+ * Re-queue a failed session when input files still exist on the server.
+ * Wraps POST /api/sessions/{id}/retry.
+ */
+export async function retrySession(
+  sessionId: number,
+  opts: { signal?: AbortSignal } = {},
+): Promise<SessionStatus> {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/retry`, {
+    method: "POST",
     headers: { "X-User-Id": DEFAULT_USER_ID },
     signal: opts.signal,
   });

@@ -9,6 +9,12 @@ from httpx import ASGITransport, AsyncClient
 
 from webapp.backend import db, queue
 from webapp.backend.app import app
+from webapp.backend.contracts import (
+    ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    build_analysis_result_v1,
+    dump_contract_json,
+)
+
 
 import webapp.backend.routes as routes_mod
 import kovaak_tracker.coach.agent as agent_mod
@@ -144,6 +150,56 @@ async def test_timeline_returns_persisted_events():
     assert len(body["events"]) == 2
     assert body["events"][0]["type"] == "peak"
     assert body["events"][1]["label"] == "脱靶"
+
+
+@pytest.mark.asyncio
+
+
+@pytest.mark.asyncio
+async def test_timeline_accepts_v1_result_via_contract_adapter():
+    """timeline 从 v1 deterministic.timeline 读取,不依赖顶层 timeline 字段。"""
+    tl = [
+        {"frame": 100, "time_s": 1.6, "type": "peak", "label": "v1 peak"},
+    ]
+    legacy_shape = _fake_report_dict(fps=60, duration_frames=500, timeline=tl)
+    v1 = build_analysis_result_v1(
+        report={
+            "diagnosis": legacy_shape["diagnosis"],
+            "figures": legacy_shape.get("figures") or {},
+            "notes": legacy_shape.get("notes") or [],
+            "narration": legacy_shape.get("narration"),
+        },
+        timeline=tl,
+        narration_status="available",
+        cm_per_360=48.0,
+        fov=None,
+        artifact_manifest={
+            "schema_version": ARTIFACT_MANIFEST_SCHEMA_VERSION,
+            "inputs": [],
+            "outputs": [],
+        },
+        created_at="2026-07-10T12:00:00Z",
+        completed_at="2026-07-10T12:01:00Z",
+    )
+    sid = await queue.enqueue("u1", "/v", "/c")
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (dump_contract_json(v1), sid),
+    )
+    await conn.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.get(f"/api/sessions/{sid}/timeline")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["events"]) == 1
+    assert body["events"][0]["type"] == "peak"
+    assert body["events"][0]["label"] == "v1 peak"
 
 
 @pytest.mark.asyncio

@@ -171,13 +171,21 @@ export default function CoachView({ sessionId, archetypeLabel }: CoachViewProps)
             Coach Dialogue · #{sessionId}
           </span>
         </div>
-        <Link
-          href={`/sessions/${sessionId}/report`}
-          className="text-primary text-label-md flex items-center gap-1 hover:opacity-80 transition-opacity"
-        >
-          <span className="material-symbols-outlined text-sm" aria-hidden="true">arrow_back</span>
-          返回报告
-        </Link>
+        <div className="flex items-center gap-md">
+          <Link
+            href="/history"
+            className="text-label-md text-on-surface-variant hover:text-primary transition-colors"
+          >
+            历史记录
+          </Link>
+          <Link
+            href={`/sessions/${sessionId}/report`}
+            className="text-primary text-label-md flex items-center gap-1 hover:opacity-80 transition-opacity"
+          >
+            <span className="material-symbols-outlined text-sm" aria-hidden="true">arrow_back</span>
+            返回报告
+          </Link>
+        </div>
       </header>
 
       <main className="flex-1 flex flex-col md:flex-row min-h-0 overflow-y-auto md:overflow-hidden">

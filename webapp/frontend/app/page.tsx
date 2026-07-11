@@ -156,6 +156,12 @@ export default function HomePage() {
         </div>
         <nav className="flex items-center gap-md">
           <Link
+            href="/history"
+            className="text-label-md text-on-surface-variant hover:text-primary transition-colors"
+          >
+            历史记录
+          </Link>
+          <Link
             href="https://github.com"
             target="_blank"
             rel="noreferrer"

@@ -9,6 +9,8 @@ from .config import DB_PATH
 
 _conn: Optional[aiosqlite.Connection] = None
 
+TARGET_USER_VERSION = 2
+
 
 async def get_conn() -> aiosqlite.Connection:
     global _conn
@@ -37,11 +39,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     status TEXT NOT NULL DEFAULT 'queued',
     video_path TEXT,
     csv_path TEXT,
-    cm_per_360 REAL,              -- 用户填(KovaaK's 实测 cm/360,worker 用于 peak_cm_per_s)
-    fov REAL,                     -- 用户填或 CSV fallback(默认 103)
+    cm_per_360 REAL,
+    fov REAL,
     result TEXT,
     error TEXT,
     llm_cost_cny REAL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    worker_id TEXT,
+    lease_expires_at TEXT,
+    heartbeat_at TEXT,
+    started_at TEXT,
+    finished_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -50,46 +59,108 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_status ON sessions(user_id, status)
 CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL,
-    role TEXT NOT NULL,          -- 'user' | 'assistant'
+    role TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    trace_json TEXT,             -- 可选, tool 调用 trace(JSON 字符串)
+    trace_json TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session
     ON chat_messages(session_id, id);
+
+CREATE TABLE IF NOT EXISTS coach_threads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'primary',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS coach_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    trace_json TEXT,
+    legacy_session_id INTEGER,
+    FOREIGN KEY (thread_id) REFERENCES coach_threads(id)
+);
+CREATE INDEX IF NOT EXISTS idx_coach_messages_thread
+    ON coach_messages(thread_id, id);
+
+CREATE TABLE IF NOT EXISTS coach_analysis_refs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id INTEGER NOT NULL,
+    analysis_session_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'active',
+    attached_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TEXT,
+    FOREIGN KEY (thread_id) REFERENCES coach_threads(id)
+);
+CREATE INDEX IF NOT EXISTS idx_coach_refs_thread
+    ON coach_analysis_refs(thread_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_refs_thread_session_active
+    ON coach_analysis_refs(thread_id, analysis_session_id)
+    WHERE status = 'active' AND analysis_session_id IS NOT NULL;
 """
+
+_V1_MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("cm_per_360", "REAL"),
+    ("fov", "REAL"),
+    ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("max_attempts", "INTEGER NOT NULL DEFAULT 1"),
+    ("worker_id", "TEXT"),
+    ("lease_expires_at", "TEXT"),
+    ("heartbeat_at", "TEXT"),
+    ("started_at", "TEXT"),
+    ("finished_at", "TEXT"),
+)
 
 
 async def init_schema() -> None:
     conn = await get_conn()
+    cur = await conn.execute("PRAGMA user_version")
+    row = await cur.fetchone()
+    user_version = int(row[0]) if row else 0
+
+    if user_version > TARGET_USER_VERSION:
+        raise RuntimeError(
+            f"数据库 PRAGMA user_version={user_version} 高于本应用支持的 "
+            f"version {TARGET_USER_VERSION}；请升级应用，不得静默降级。"
+        )
+
     await conn.executescript(SCHEMA)
-    # Migration:已存在的旧 sessions 表补加新列(若无)。dev db 兼容旧 schema。
-    await _migrate_add_column_if_missing(conn, "sessions", "cm_per_360", "REAL")
-    await _migrate_add_column_if_missing(conn, "sessions", "fov", "REAL")
-    await conn.commit()
+
+    if user_version >= TARGET_USER_VERSION:
+        await conn.commit()
+        return
+
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        if user_version == 0:
+            for col, col_def in _V1_MIGRATION_COLUMNS:
+                await _migrate_add_column_if_missing(conn, "sessions", col, col_def)
+        # user_version 0 or 1 → 2: coach tables already created via SCHEMA
+        await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
+        await conn.commit()
+    except Exception:
+        await conn.execute("ROLLBACK")
+        raise
 
 
 async def _migrate_add_column_if_missing(
-    conn: aiosqlite.Connection, table: str, col: str, col_type: str,
+    conn: aiosqlite.Connection, table: str, col: str, col_def: str,
 ) -> None:
-    """SQLite ALTER TABLE ADD COLUMN(仅当列不存在时)。CREATE TABLE IF NOT EXISTS
-    不会给已存在的表加新列,所以要显式 migrate。
-
-    安全性:table/col/col_type 来自 caller 写死的字面量(init_schema),非用户
-    输入。SQLite 的 PRAGMA / ALTER TABLE 不接受 ? 占位符,只能 f-string 拼。
-    assert 防御性校验标识符 + 类型白名单,阻断注入路径。
-    """
+    """SQLite ALTER TABLE ADD COLUMN(仅当列不存在时)。"""
     assert table.isidentifier(), f"非法 table 名: {table}"
     assert col.isidentifier(), f"非法 col 名: {col}"
-    assert col_type.upper() in {"REAL", "INTEGER", "TEXT", "BLOB", "NUMERIC"}, (
-        f"非法 col_type: {col_type}"
-    )
     cur = await conn.execute(f"PRAGMA table_info({table})")
     rows = await cur.fetchall()
     existing = {row[1] for row in rows}
     if col not in existing:
-        await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
 
 
 async def save_chat_message(
