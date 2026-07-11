@@ -226,6 +226,18 @@ export interface DeleteSessionResponse {
   files_removed: string[];
 }
 
+export interface StorageSessionItem {
+  session_id: number;
+  status: string;
+  created_at: string;
+  workspace_bytes: number;
+}
+
+export interface StorageResponse {
+  total_bytes: number;
+  sessions: StorageSessionItem[];
+}
+
 /* ---- coach 页:chat / timeline ---- */
 
 /** 一条 chat 消息(来自 GET /chat history 或 POST /chat reply)。 */

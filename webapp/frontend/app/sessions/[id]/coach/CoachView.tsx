@@ -9,6 +9,7 @@ import {
   getVideoUrl,
   sendChatMessage,
 } from "@/lib/api";
+import { getManagedVideoUrl, isDesktopRuntime } from "@/lib/desktop";
 import type {
   ChatMessage,
   ChatResponse,
@@ -217,7 +218,30 @@ function VideoPane({ sessionId, videoRef, activeSeg }: VideoPaneProps) {
   const [rate, setRate] = useState(1);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setVideoError(null);
+    setVideoSrc(null);
+    if (!isDesktopRuntime()) {
+      setVideoSrc(getVideoUrl(sessionId));
+      return;
+    }
+    getManagedVideoUrl(sessionId)
+      .then((url) => {
+        if (!cancelled) setVideoSrc(url);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setVideoError(err instanceof Error ? err.message : "无法加载本地视频");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -321,7 +345,7 @@ function VideoPane({ sessionId, videoRef, activeSeg }: VideoPaneProps) {
         <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden shadow-2xl">
           <video
             ref={videoRef}
-            src={getVideoUrl(sessionId)}
+            src={videoSrc ?? undefined}
             className="w-full h-full object-contain"
             onLoadedMetadata={onLoadedMeta}
             onTimeUpdate={onTimeUpdate}
