@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import datetime
 import logging
 import os
@@ -11,8 +10,9 @@ from typing import Optional
 from fastapi import APIRouter, Body, Form, UploadFile, File, Header, HTTPException, Path
 from fastapi.responses import FileResponse
 
-from . import db, llm_budget, queue
-from .config import LLM_PROVIDER, MAX_CSV_BYTES, MAX_VIDEO_BYTES, VIDEO_TMP_DIR
+from . import coach_store, db, queue
+from .coach_service import run_chat_turn
+from .config import MAX_CSV_BYTES, MAX_VIDEO_BYTES, VIDEO_TMP_DIR
 from .contracts import UnsupportedContractVersion, analysis_result_to_coach_report
 from .queue import (
     RetryNotAllowed,
@@ -25,6 +25,14 @@ from .schemas import (
     ChatMessageOut,
     ChatRequest,
     ChatResponse,
+    CoachAnalysisRefOut,
+    CoachPrimaryAttachRequest,
+    CoachPrimaryAttachResponse,
+    CoachPrimaryMessageRequest,
+    CoachPrimaryMessageResponse,
+    CoachPrimaryResponse,
+    CoachThreadMessageOut,
+    CoachThreadOut,
     DeleteSessionResponse,
     SessionListItem,
     SessionListResponse,
@@ -193,9 +201,6 @@ async def retry_session(
     return _session_status_response(updated)
 
 
-# ---------------------------------------------------------------------------
-# Coach 多轮对话
-# ---------------------------------------------------------------------------
 
 
 def _reconstruct_diagnosis(result: dict):
@@ -242,14 +247,187 @@ def _reconstruct_diagnosis(result: dict):
     )
 
 
-def _load_backend_or_none():
-    """加载 LLM backend;失败返回 None(由 caller 决定降级文案)。"""
-    try:
-        from kovaak_tracker.coach.providers import load_backend
-        return load_backend(LLM_PROVIDER)
-    except Exception as e:
-        log.warning("load_backend 失败,chat 走降级: %s", e)
-        return None
+
+
+async def _diagnosis_from_done_session(s: dict):
+    result = s.get("result") or {}
+    if not isinstance(result, dict):
+        raise HTTPException(409, "诊断结果缺失,暂不可对话")
+    coach_view = analysis_result_to_coach_report(result)
+    if not coach_view.get("diagnosis"):
+        raise HTTPException(409, "诊断结果缺失,暂不可对话")
+    return _reconstruct_diagnosis(coach_view)
+
+
+def _coach_thread_message_out(m: dict) -> CoachThreadMessageOut:
+    return CoachThreadMessageOut(
+        id=int(m["id"]),
+        role=m["role"],
+        content=m["content"],
+        created_at=m["created_at"],
+        legacy_session_id=m.get("legacy_session_id"),
+    )
+
+
+def _coach_ref_out(r: dict) -> CoachAnalysisRefOut:
+    return CoachAnalysisRefOut(
+        id=int(r["id"]),
+        analysis_session_id=r.get("analysis_session_id"),
+        status=r["status"],
+        attached_at=r["attached_at"],
+        deleted_at=r.get("deleted_at"),
+    )
+
+
+async def _build_coach_primary_response(x_user_id: str) -> CoachPrimaryResponse:
+    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    tid = int(thread["id"])
+    messages = await coach_store.load_messages(tid)
+    refs = await coach_store.list_analysis_refs(tid)
+    return CoachPrimaryResponse(
+        thread=CoachThreadOut(
+            id=tid,
+            user_id=thread["user_id"],
+            kind=thread["kind"],
+            created_at=thread["created_at"],
+            updated_at=thread["updated_at"],
+        ),
+        messages=[_coach_thread_message_out(m) for m in messages],
+        refs=[_coach_ref_out(r) for r in refs],
+    )
+
+
+async def _assert_analysis_ref_active(
+    thread_id: int,
+    analysis_session_id: int,
+) -> None:
+    refs = await coach_store.list_analysis_refs(thread_id)
+    for r in refs:
+        if r.get("analysis_session_id") == analysis_session_id:
+            if r["status"] == "deleted":
+                raise HTTPException(409, "分析已删除,不可作为对话上下文")
+            return
+
+
+async def _ensure_done_analysis_attached(
+    x_user_id: str,
+    thread_id: int,
+    analysis_session_id: int,
+) -> dict:
+    s = await _get_owned_session(analysis_session_id, x_user_id)
+    if s["status"] != "done":
+        raise HTTPException(409, "分析未完成,不可附加")
+    await _assert_analysis_ref_active(thread_id, analysis_session_id)
+    await coach_store.attach_analysis_ref(thread_id, analysis_session_id)
+    return s
+
+
+async def _load_session_coach_messages(x_user_id: str, session_id: int) -> list[dict]:
+    await coach_store.ensure_legacy_session_messages_migrated(session_id)
+    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    all_msgs = await coach_store.load_messages(int(thread["id"]))
+    return [m for m in all_msgs if m.get("legacy_session_id") == session_id]
+
+
+# ---------------------------------------------------------------------------
+# Persistent Coach (primary thread)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/coach/primary", response_model=CoachPrimaryResponse)
+async def get_coach_primary(
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
+    return await _build_coach_primary_response(x_user_id)
+
+
+@router.post("/coach/primary/attach", response_model=CoachPrimaryAttachResponse)
+async def attach_coach_primary_analysis(
+    body: CoachPrimaryAttachRequest = Body(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
+    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    await _ensure_done_analysis_attached(
+        x_user_id, int(thread["id"]), body.analysis_session_id,
+    )
+    refs = await coach_store.list_analysis_refs(int(thread["id"]))
+    ref = next(
+        r for r in refs
+        if r.get("analysis_session_id") == body.analysis_session_id
+    )
+    return CoachPrimaryAttachResponse(ref=_coach_ref_out(ref))
+
+
+@router.post("/coach/primary/messages", response_model=CoachPrimaryMessageResponse)
+async def post_coach_primary_message(
+    body: CoachPrimaryMessageRequest = Body(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
+    user_msg = body.content.strip()
+    if not user_msg:
+        raise HTTPException(400, "消息不能为空")
+
+    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    thread_id = int(thread["id"])
+    prior = await coach_store.load_messages(thread_id)
+
+    diagnosis = None
+    cost_session_id: Optional[int] = None
+    legacy_session_id: Optional[int] = None
+
+    if body.analysis_session_id is not None:
+        try:
+            s = await _get_owned_session(body.analysis_session_id, x_user_id)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise HTTPException(409, "分析已删除,不可作为对话上下文") from exc
+            raise
+        await _assert_analysis_ref_active(thread_id, body.analysis_session_id)
+        if s["status"] != "done":
+            raise HTTPException(409, "分析未完成,不可作为对话上下文")
+        await coach_store.attach_analysis_ref(thread_id, body.analysis_session_id)
+        diagnosis = await _diagnosis_from_done_session(s)
+        cost_session_id = body.analysis_session_id
+        legacy_session_id = body.analysis_session_id
+
+    result = await run_chat_turn(
+        x_user_id=x_user_id,
+        thread_id=thread_id,
+        prior_messages=prior,
+        user_msg_to_store=user_msg,
+        diagnosis=diagnosis,
+        legacy_session_id=legacy_session_id,
+        cost_session_id=cost_session_id,
+    )
+
+    now_ts = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S",
+    )
+    out_msgs = [
+        _coach_thread_message_out({
+            "id": 0,
+            "role": "user",
+            "content": user_msg,
+            "created_at": now_ts,
+            "legacy_session_id": legacy_session_id,
+        }),
+        _coach_thread_message_out({
+            "id": 0,
+            "role": "assistant",
+            "content": result.assistant_content,
+            "created_at": now_ts,
+            "legacy_session_id": legacy_session_id,
+        }),
+    ]
+    return CoachPrimaryMessageResponse(
+        reply=result.reply,
+        notes=result.notes,
+        messages=out_msgs,
+    )
+
+# ---------------------------------------------------------------------------
+# Coach 多轮对话
+# ---------------------------------------------------------------------------
 
 
 @router.post("/sessions/{session_id}/chat", response_model=ChatResponse)
@@ -258,88 +436,38 @@ async def chat(
     body: ChatRequest = Body(...),
     x_user_id: str = Header(default="dev", alias="X-User-Id"),
 ):
-    """多轮对话:用户提问 → coach 回复。
-
-    前置:session 必须 status=done(有诊断结果才能聊)。否则 409。
-    """
+    """多轮对话(兼容层):写入用户 primary thread + 附加本 session 分析 ref。"""
     s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成,暂不可对话")
-    result = s.get("result") or {}
-    if not isinstance(result, dict):
-        raise HTTPException(409, "诊断结果缺失,暂不可对话")
-    coach_view = analysis_result_to_coach_report(result)
-    if not coach_view.get("diagnosis"):
-        raise HTTPException(409, "诊断结果缺失,暂不可对话")
-
-    # 拉历史(喂给 agent + 响应历史拼装基础)。append 本轮 user message 在
-    # budget 预检之后,避免 429 时留孤立 user message。
-    history = await db.load_chat_history(session_id)
 
     user_msg = body.message.strip()
     if not user_msg:
         raise HTTPException(400, "消息不能为空")
 
-    # chat 也走 LLM——预检查日预算(chat 不经 worker.process_one,需显式检查)。
-    # 单次保守估算(DeepSeek deepseek-chat):2000 input + 500 output ≈ ¥0.003。
-    # 真实 usage 切片 3 接 DeepSeek 字段后换精确值。
-    from .worker import _estimate_llm_cost_cny
-    chat_cost = _estimate_llm_cost_cny("", min_output_tokens=500)
-    if not await llm_budget.check_and_record(s["user_id"], chat_cost):
-        raise HTTPException(429, "今日 LLM 预算已用尽,明天再聊")
-
-    # 用户"锁定当前时间轴"时,前端附 pinned_frame_sec。把它拼成可读前缀
-    # ([锁定 0:23] ...)给 agent——这样 agent 不用感知字段,靠文本提示就能
-    # 知道用户当前在看视频的哪一段。
     pinned = body.pinned_frame_sec
     if pinned is not None and pinned >= 0:
         mm, ss = divmod(int(pinned), 60)
         user_msg_to_store = f"[锁定 {mm}:{ss:02d}] {user_msg}"
     else:
         user_msg_to_store = user_msg
-    await db.save_chat_message(session_id, "user", user_msg_to_store)
 
-    notes: list[str] = []
-    reply: Optional[str] = None
-    try:
-        from kovaak_tracker.coach.agent import ChatMessage, chat_with_coach
+    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    thread_id = int(thread["id"])
+    await coach_store.attach_analysis_ref(thread_id, session_id)
+    history = await _load_session_coach_messages(x_user_id, session_id)
+    diagnosis = await _diagnosis_from_done_session(s)
 
-        diagnosis = _reconstruct_diagnosis(coach_view)
-        # 历史 + 本轮 user message 喂给 agent
-        chat_history = [
-            ChatMessage(role=m["role"], content=m["content"]) for m in history
-        ]
-        chat_history.append(ChatMessage(role="user", content=user_msg_to_store))
+    result = await run_chat_turn(
+        x_user_id=x_user_id,
+        thread_id=thread_id,
+        prior_messages=history,
+        user_msg_to_store=user_msg_to_store,
+        diagnosis=diagnosis,
+        legacy_session_id=session_id,
+        cost_session_id=session_id,
+    )
 
-        backend = _load_backend_or_none()
-        if backend is None:
-            notes.append("LLM 后端不可用,本次未生成回复")
-        else:
-            # chat_with_coach 是同步阻塞 LLM 调用(10-30s),丢线程池避免阻塞
-            # event loop(其他请求/worker 并发不被 hold)。
-            reply = await asyncio.to_thread(
-                chat_with_coach, diagnosis, chat_history, backend,
-            )
-            if reply is None:
-                notes.append("agent 未在限定轮次内产出回复")
-    except Exception as e:
-        log.exception("chat_with_coach 失败 session=%s", session_id)
-        notes.append(f"对话失败: {e}")
-
-    # 持久化 assistant 回复(即使是降级空回复也存一条,前端能感知"已处理")
-    if reply is not None:
-        await db.save_chat_message(session_id, "assistant", reply)
-        # chat 成功(LLM 真调了)→ 累加 cost 到 session,下次 budget 检查反映真实累计
-        await queue.add_llm_cost(session_id, chat_cost)
-    else:
-        await db.save_chat_message(
-            session_id, "assistant",
-            "(本次未能生成回复,见 notes)", None,
-        )
-
-    # 响应 history 用首次 load 的结果 + 本轮 user/assistant 本地拼装,
-    # 避免二次 DB 查询。新消息 created_at 用当前 UTC 时间近似(展示用,
-    # 与 DB 的 CURRENT_TIMESTAMP 格式一致)。
     now_ts = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S",
     )
@@ -351,11 +479,14 @@ async def chat(
     out_history.append(ChatMessageOut(
         role="user", content=user_msg_to_store, created_at=now_ts,
     ))
-    assistant_content = reply if reply is not None else "(本次未能生成回复,见 notes)"
     out_history.append(ChatMessageOut(
-        role="assistant", content=assistant_content, created_at=now_ts,
+        role="assistant", content=result.assistant_content, created_at=now_ts,
     ))
-    return ChatResponse(reply=reply, history=out_history, notes=notes)
+    return ChatResponse(
+        reply=result.reply,
+        history=out_history,
+        notes=result.notes,
+    )
 
 
 @router.get("/sessions/{session_id}/chat", response_model=ChatResponse)
@@ -363,11 +494,11 @@ async def get_chat_history(
     session_id: int = Path(...),
     x_user_id: str = Header(default="dev", alias="X-User-Id"),
 ):
-    """页面 mount 时拉历史对话。session 不存在 → 404;未 done → 409。"""
+    """页面 mount 时拉历史对话(primary thread 中 legacy_session_id 过滤)。"""
     s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成,暂不可对话")
-    history = await db.load_chat_history(session_id)
+    history = await _load_session_coach_messages(x_user_id, session_id)
     return ChatResponse(
         reply=None,
         history=[ChatMessageOut(role=m["role"], content=m["content"],

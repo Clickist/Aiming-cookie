@@ -1,0 +1,231 @@
+"""Subprocess client for Node Pi coach-runtime (coach_runtime_turn.v0)."""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import subprocess
+import uuid
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from .config import (
+    COACH_RUNTIME_RUN_TURN,
+    COACH_RUNTIME_TIMEOUT_SECONDS,
+    COACH_RUNTIME_TSX_LOADER,
+    LLM_PROVIDER,
+    PI_SOURCE_DIR,
+)
+
+_log = logging.getLogger(__name__)
+
+COACH_RUNTIME_TURN_SCHEMA = "coach_runtime_turn.v0"
+_DEFAULT_USER_ID = "dev"
+_PROVIDERS_JSON = Path(__file__).resolve().parents[2] / "kovaak_tracker" / "coach" / "providers.json"
+
+
+class CoachRuntimeError(RuntimeError):
+    """Pi coach-runtime subprocess failed or returned ok=false."""
+
+
+def _load_provider_turn_model() -> dict[str, str]:
+    with _PROVIDERS_JSON.open(encoding="utf-8") as f:
+        cfg = json.load(f)
+    if LLM_PROVIDER not in cfg:
+        raise CoachRuntimeError(
+            f"LLM provider {LLM_PROVIDER!r} missing in providers.json"
+        )
+    p = cfg[LLM_PROVIDER]
+    return {
+        "base_url": str(p.get("base_url", "https://api.deepseek.com")),
+        "api_key_env": str(p.get("api_key_env", "DEEPSEEK_API_KEY")),
+        "model_id": str(p.get("model", "deepseek-chat")),
+    }
+
+
+def _diagnosis_as_mapping(diagnosis: Any) -> Mapping[str, Any] | None:
+    if diagnosis is None:
+        return None
+    if isinstance(diagnosis, Mapping):
+        return diagnosis
+    if is_dataclass(diagnosis):
+        return asdict(diagnosis)
+    return None
+
+
+def diagnosis_to_analysis_summary(diagnosis: Any) -> str | None:
+    """从 CoachDiagnosis 或等价 dict 抽取短文本摘要；失败返回 None。"""
+    try:
+        data = _diagnosis_as_mapping(diagnosis)
+        if not data:
+            return None
+        profile = data.get("profile") or {}
+        if not isinstance(profile, Mapping):
+            profile = {}
+        label = profile.get("label") or profile.get("archetype_id") or "未分类"
+        confidence = profile.get("confidence")
+        summary = data.get("summary")
+        if not isinstance(summary, Mapping):
+            summary = {}
+        issues_raw = data.get("issues") or []
+        if not isinstance(issues_raw, list):
+            issues_raw = []
+        lines: list[str] = []
+        conf_bit = f"（置信 {confidence}）" if confidence is not None else ""
+        lines.append(f"画像: {label}{conf_bit}")
+        if summary:
+            lines.append(
+                "指标摘要: "
+                + json.dumps(summary, ensure_ascii=False, default=str)
+            )
+        issue_lines: list[str] = []
+        sorted_issues = sorted(
+            (i for i in issues_raw if isinstance(i, Mapping)),
+            key=lambda i: int(i.get("priority", 99)),
+        )
+        for issue in sorted_issues[:5]:
+            signal = issue.get("signal", "")
+            severity = issue.get("severity", "")
+            rcs = issue.get("root_causes") or []
+            rc_text = ""
+            if isinstance(rcs, list) and rcs:
+                first = rcs[0]
+                if isinstance(first, Mapping):
+                    rc_text = str(first.get("text") or "")
+            issue_lines.append(
+                f"- [{severity}] {signal}"
+                + (f": {rc_text}" if rc_text else "")
+            )
+        if issue_lines:
+            lines.append("关键问题:")
+            lines.extend(issue_lines)
+        meta = data.get("meta")
+        if isinstance(meta, Mapping) and meta.get("summary_type"):
+            lines.append(f"类型: {meta['summary_type']}")
+        text = "\n".join(lines).strip()
+        return text or None
+    except Exception:
+        _log.debug("diagnosis_to_analysis_summary failed", exc_info=True)
+        return None
+
+
+def _build_turn_request(
+    *,
+    messages: Sequence[Mapping[str, str]],
+    analysis_summary: str | None,
+    system_prompt: str | None,
+) -> dict[str, Any]:
+    normalized_messages: list[dict[str, str]] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if role not in ("user", "assistant", "system") or not isinstance(content, str):
+            raise CoachRuntimeError("messages 项须含 role(user|assistant|system) 与 content 字符串")
+        normalized_messages.append({"role": role, "content": content})
+    if not normalized_messages:
+        raise CoachRuntimeError("messages 不能为空")
+    payload: dict[str, Any] = {
+        "schema_version": COACH_RUNTIME_TURN_SCHEMA,
+        "run_id": str(uuid.uuid4()),
+        "user_id": _DEFAULT_USER_ID,
+        "messages": normalized_messages,
+        "analysis_summary": analysis_summary,
+        "model": _load_provider_turn_model(),
+    }
+    if system_prompt is not None:
+        payload["system_prompt"] = system_prompt
+    return payload
+
+
+def _parse_turn_response(stdout: str) -> dict[str, Any]:
+    line = stdout.strip().splitlines()[-1] if stdout.strip() else ""
+    if not line:
+        raise CoachRuntimeError("coach-runtime stdout 为空")
+    try:
+        parsed = json.loads(line)
+    except json.JSONDecodeError as e:
+        raise CoachRuntimeError(f"coach-runtime stdout 非 JSON: {e}") from e
+    if not isinstance(parsed, dict):
+        raise CoachRuntimeError("coach-runtime 响应须为 JSON 对象")
+    return parsed
+
+
+def _subprocess_command() -> list[str]:
+    if not COACH_RUNTIME_RUN_TURN.is_file():
+        raise CoachRuntimeError(f"run-turn 入口不存在: {COACH_RUNTIME_RUN_TURN}")
+    if not COACH_RUNTIME_TSX_LOADER.is_file():
+        raise CoachRuntimeError(
+            f"tsx loader 不存在: {COACH_RUNTIME_TSX_LOADER} "
+            "(请在 third_party/pi 安装依赖)"
+        )
+    return [
+        "node",
+        f"--import={COACH_RUNTIME_TSX_LOADER}",
+        str(COACH_RUNTIME_RUN_TURN),
+    ]
+
+
+def run_pi_coach_turn(
+    *,
+    messages: Sequence[Mapping[str, str]],
+    analysis_summary: str | None,
+    system_prompt: str | None = None,
+    timeout_s: int | None = None,
+) -> str:
+    """组装 coach_runtime_turn.v0，subprocess 调 Node run-turn，返回 assistant 文本。"""
+    request = _build_turn_request(
+        messages=messages,
+        analysis_summary=analysis_summary,
+        system_prompt=system_prompt,
+    )
+    timeout = (
+        timeout_s if timeout_s is not None else COACH_RUNTIME_TIMEOUT_SECONDS
+    )
+    cmd = _subprocess_command()
+    env = {**os.environ, "PI_SOURCE_DIR": str(PI_SOURCE_DIR)}
+    input_line = json.dumps(request, ensure_ascii=False)
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            input=input_line,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise CoachRuntimeError(
+            f"coach-runtime 超时（>{timeout}s）"
+        ) from e
+    except OSError as e:
+        raise CoachRuntimeError(f"无法启动 coach-runtime: {e}") from e
+
+    if completed.returncode != 0 and not completed.stdout.strip():
+        stderr = (completed.stderr or "").strip()
+        raise CoachRuntimeError(
+            f"coach-runtime exit {completed.returncode}"
+            + (f": {stderr}" if stderr else "")
+        )
+
+    response = _parse_turn_response(completed.stdout)
+    if response.get("schema_version") != COACH_RUNTIME_TURN_SCHEMA:
+        raise CoachRuntimeError(
+            f"不支持的 schema_version: {response.get('schema_version')!r}"
+        )
+    if not response.get("ok"):
+        err = response.get("error") or {}
+        if isinstance(err, Mapping):
+            message = str(err.get("message") or err.get("code") or "unknown error")
+        else:
+            message = "coach-runtime 返回 ok=false"
+        if completed.returncode != 0:
+            message = f"{message} (exit {completed.returncode})"
+        raise CoachRuntimeError(message)
+
+    reply = response.get("reply")
+    if not isinstance(reply, str) or not reply.strip():
+        raise CoachRuntimeError("coach-runtime 成功但 reply 为空")
+    return reply

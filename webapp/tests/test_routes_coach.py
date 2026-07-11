@@ -16,6 +16,9 @@ from webapp.backend.contracts import (
 )
 
 
+import webapp.backend.config as config_mod
+import webapp.backend.coach_runtime as coach_runtime_mod
+import webapp.backend.coach_engine as coach_engine_mod
 import webapp.backend.routes as routes_mod
 import kovaak_tracker.coach.agent as agent_mod
 
@@ -228,7 +231,7 @@ async def test_chat_pinned_frame_sec_prepended_to_message(monkeypatch):
         return "回复"
 
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
-    monkeypatch.setattr(routes_mod, "_load_backend_or_none", lambda: object())
+    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
@@ -253,7 +256,7 @@ async def test_chat_without_pinned_frame_unchanged(monkeypatch):
         return "ok"
 
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
-    monkeypatch.setattr(routes_mod, "_load_backend_or_none", lambda: object())
+    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.post(
@@ -325,3 +328,318 @@ async def test_idor_cross_user_forbidden_403():
         assert (await client.post(
             f"/api/sessions/{sid}/chat", json={"message": "hi"},
         )).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# /api/coach/primary (persistent coach)
+# ---------------------------------------------------------------------------
+
+
+def _patch_chat_ok(monkeypatch, fake_fn):
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "python")
+    monkeypatch.setattr(agent_mod, "chat_with_coach", fake_fn)
+    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
+
+
+@pytest.mark.asyncio
+async def test_get_primary_lazy_creates_thread():
+    """GET /api/coach/primary 惰性创建 primary thread。"""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "coach-user"},
+    ) as client:
+        resp = await client.get("/api/coach/primary")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["thread"]["kind"] == "primary"
+    assert body["thread"]["user_id"] == "coach-user"
+    assert body["messages"] == []
+    assert body["refs"] == []
+
+
+@pytest.mark.asyncio
+async def test_post_primary_message_without_analysis(monkeypatch):
+    """无 analysis_session_id 也可聊；不注入指标诊断上下文。"""
+    captured: dict = {}
+
+    def fake_chat(diagnosis, messages, backend, **kwargs):
+        captured["issues_len"] = len(diagnosis.issues)
+        captured["summary"] = diagnosis.summary
+        return "通用回复"
+
+    _patch_chat_ok(monkeypatch, fake_chat)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "没分析也能问吗"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reply"] == "通用回复"
+    assert captured["issues_len"] == 0
+    assert captured["summary"] == {}
+
+    from webapp.backend import coach_store
+
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    msgs = await coach_store.load_messages(int(thread["id"]))
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "没分析也能问吗"
+    assert msgs[0]["legacy_session_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_post_primary_message_with_done_analysis(monkeypatch):
+    """POST message + done analysis(owner 匹配)注入诊断。"""
+    sid = await _seed_done_session()
+
+    captured: dict = {}
+
+    def fake_chat(diagnosis, messages, backend, **kwargs):
+        captured["profile"] = diagnosis.profile.archetype_id
+        return "带诊断回复"
+
+    _patch_chat_ok(monkeypatch, fake_chat)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "解读一下", "analysis_session_id": sid},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reply"] == "带诊断回复"
+    assert captured["profile"] == "decel_jitter"
+
+    from webapp.backend import coach_store
+
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    refs = await coach_store.list_analysis_refs(int(thread["id"]))
+    assert any(r["analysis_session_id"] == sid and r["status"] == "active" for r in refs)
+
+
+@pytest.mark.asyncio
+async def test_attach_analysis_idempotent():
+    """POST attach 幂等。"""
+    sid = await _seed_done_session()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        r1 = await client.post(
+            "/api/coach/primary/attach",
+            json={"analysis_session_id": sid},
+        )
+        r2 = await client.post(
+            "/api/coach/primary/attach",
+            json={"analysis_session_id": sid},
+        )
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert r1.json()["ref"]["analysis_session_id"] == sid
+    assert r2.json()["ref"]["analysis_session_id"] == sid
+
+    from webapp.backend import coach_store
+
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    refs = await coach_store.list_analysis_refs(int(thread["id"]))
+    active = [r for r in refs if r["analysis_session_id"] == sid and r["status"] == "active"]
+    assert len(active) == 1
+
+
+@pytest.mark.asyncio
+async def test_deleted_analysis_not_active_context(monkeypatch):
+    """已删除分析不可作为 active 上下文。"""
+    sid = await _seed_done_session()
+    _patch_chat_ok(monkeypatch, lambda *a, **k: "x")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        await client.post(
+            "/api/coach/primary/attach",
+            json={"analysis_session_id": sid},
+        )
+        del_resp = await client.delete(f"/api/sessions/{sid}")
+        assert del_resp.status_code == 200
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "还能聊这次分析吗", "analysis_session_id": sid},
+        )
+        primary = await client.get("/api/coach/primary")
+
+    assert resp.status_code == 409
+    deleted_refs = [
+        r for r in primary.json()["refs"]
+        if r["analysis_session_id"] == sid and r["status"] == "deleted"
+    ]
+    assert len(deleted_refs) == 1
+
+# ---------------------------------------------------------------------------
+# COACH_RUNTIME branching (coach_engine)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_coach_runtime_python_uses_chat_with_coach(monkeypatch):
+    """COACH_RUNTIME=python 时走 chat_with_coach，不调 run_pi_coach_turn。"""
+    pi_calls: list[dict] = []
+    chat_calls: list[int] = []
+
+    def fake_pi(**kwargs):
+        pi_calls.append(kwargs)
+        return "pi"
+
+    def fake_chat(diagnosis, messages, backend, **kwargs):
+        chat_calls.append(len(messages))
+        return "python 回复"
+
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "python")
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
+    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "python 路径"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reply"] == "python 回复"
+    assert chat_calls == [1]
+    assert pi_calls == []
+
+
+@pytest.mark.asyncio
+async def test_coach_runtime_pi_uses_run_pi_coach_turn(monkeypatch):
+    """COACH_RUNTIME=pi 时调 run_pi_coach_turn，不调 chat_with_coach。"""
+    sid = await _seed_done_session()
+    pi_calls: list[dict] = []
+    chat_calls: list[int] = []
+
+    def fake_pi(**kwargs):
+        pi_calls.append(kwargs)
+        return "pi 教练回复"
+
+    def fake_chat(diagnosis, messages, backend, **kwargs):
+        chat_calls.append(1)
+        return "不应调用"
+
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
+    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "pi 路径", "analysis_session_id": sid},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reply"] == "pi 教练回复"
+    assert chat_calls == []
+    assert len(pi_calls) == 1
+    assert pi_calls[0]["messages"][-1] == {
+        "role": "user",
+        "content": "pi 路径",
+    }
+    assert pi_calls[0]["analysis_summary"] is not None
+    assert "decel_jitter" in pi_calls[0]["analysis_summary"] or "减速抖动" in (
+        pi_calls[0]["analysis_summary"] or ""
+    )
+
+    from webapp.backend import coach_store
+
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    msgs = await coach_store.load_messages(int(thread["id"]))
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["content"] == "pi 教练回复"
+
+
+@pytest.mark.asyncio
+async def test_coach_runtime_pi_failure_fallback_python(monkeypatch):
+    """pi 失败且 COACH_RUNTIME_FALLBACK_PYTHON=1 时回退 python。"""
+    from webapp.backend.coach_runtime import CoachRuntimeError
+
+    def fake_pi(**kwargs):
+        raise CoachRuntimeError("mock pi down")
+
+    def fake_chat(diagnosis, messages, backend, **kwargs):
+        return "fallback 回复"
+
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
+    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "需要 fallback"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["reply"] == "fallback 回复"
+    assert any("Pi coach-runtime" in n or "pi" in n.lower() for n in body["notes"])
+    assert any("回退" in n for n in body["notes"])
+
+
+@pytest.mark.asyncio
+async def test_coach_runtime_pi_failure_no_fallback(monkeypatch):
+    """pi 失败且 fallback=0 时不调 python，notes 记失败。"""
+    from webapp.backend.coach_runtime import CoachRuntimeError
+
+    chat_calls: list[int] = []
+
+    def fake_pi(**kwargs):
+        raise CoachRuntimeError("mock pi down")
+
+    def fake_chat(diagnosis, messages, backend, **kwargs):
+        chat_calls.append(1)
+        return "不应调用"
+
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME_FALLBACK_PYTHON", "0")
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
+    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "无 fallback"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["reply"] is None
+    assert chat_calls == []
+    assert any("Pi coach-runtime" in n or "mock pi" in n for n in body["notes"])
+    assert not any("回退" in n for n in body["notes"])

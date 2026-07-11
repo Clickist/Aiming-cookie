@@ -246,3 +246,48 @@ export interface Timeline {
   duration_frames: number;
   events: TimelineEvent[];
 }
+
+/* ---- persistent primary coach (GET/POST /api/coach/primary*) ---- */
+
+export interface CoachThreadOut {
+  id: number;
+  user_id: string;
+  kind: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CoachThreadMessageOut {
+  id: number;
+  role: string;
+  content: string;
+  created_at: string;
+  legacy_session_id: number | null;
+}
+
+export type CoachAnalysisRefStatus = "active" | "deleted";
+
+export interface CoachAnalysisRefOut {
+  id: number;
+  analysis_session_id: number | null;
+  status: CoachAnalysisRefStatus | string;
+  attached_at: string;
+  deleted_at: string | null;
+}
+
+export interface CoachPrimaryResponse {
+  thread: CoachThreadOut;
+  messages: CoachThreadMessageOut[];
+  refs: CoachAnalysisRefOut[];
+}
+
+export interface CoachPrimaryMessageResponse {
+  reply: string | null;
+  notes: string[];
+  messages: CoachThreadMessageOut[];
+}
+
+export interface CoachPrimaryAttachResponse {
+  ref: CoachAnalysisRefOut;
+}
+

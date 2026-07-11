@@ -15,6 +15,7 @@ from .contracts import (
     dump_contract_json,
     normalize_json_value,
 )
+from . import coach_store
 from .db import get_conn
 
 log = logging.getLogger(__name__)
@@ -445,6 +446,8 @@ async def list_sessions(user_id: str) -> list[dict]:
 async def delete_session(session_id: int, user_id: str) -> dict:
     conn = await get_conn()
     await conn.execute("BEGIN IMMEDIATE")
+    video_path = ""
+    csv_path = ""
     try:
         cur = await conn.execute(
             "SELECT id, user_id, status, video_path, csv_path FROM sessions WHERE id=?",
@@ -466,6 +469,13 @@ async def delete_session(session_id: int, user_id: str) -> dict:
             )
         video_path = row["video_path"] or ""
         csv_path = row["csv_path"] or ""
+
+        await coach_store.migrate_session_legacy_messages(
+            session_id, conn=conn,
+        )
+        await coach_store.mark_analysis_refs_deleted(
+            session_id, conn=conn,
+        )
         await conn.execute(
             "DELETE FROM chat_messages WHERE session_id=?",
             (session_id,),

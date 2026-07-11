@@ -15,6 +15,8 @@ from webapp.backend.contracts import (
     dump_contract_json,
 )
 
+import webapp.backend.config as config_mod
+import webapp.backend.coach_engine as coach_engine_mod
 import webapp.backend.routes as routes_mod
 import kovaak_tracker.coach.agent as agent_mod
 
@@ -105,8 +107,9 @@ async def _seed_done_session_v1(user_id: str = "u1") -> int:
 
 def _patch_chat_ok(monkeypatch, fake_fn):
     """统一 patch:chat_with_coach 用 fake,_load_backend_or_none 返回非 None。"""
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "python")
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_fn)
-    monkeypatch.setattr(routes_mod, "_load_backend_or_none", lambda: object())
+    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
 
 
 # ---------------------------------------------------------------------------
@@ -293,3 +296,41 @@ async def test_chat_backend_none_degrades_gracefully(monkeypatch):
     assert any("LLM" in n or "不可用" in n for n in body["notes"])
     # user + 占位 assistant 都持久化了
     assert len(body["history"]) == 2
+
+@pytest.mark.asyncio
+async def test_session_chat_writes_to_primary_thread(monkeypatch):
+    """旧 session chat 写入进入 primary thread(coach_messages)。"""
+    from webapp.backend import coach_store
+
+    sid = await _seed_done_session()
+
+    def fake_chat_with_coach(diagnosis, messages, backend, **kwargs):
+        return "primary 路径"
+
+    _patch_chat_ok(monkeypatch, fake_chat_with_coach)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(
+            f"/api/sessions/{sid}/chat",
+            json={"message": "session 侧提问"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    msgs = await coach_store.load_messages(int(thread["id"]))
+    assert len(msgs) == 2
+    assert msgs[0]["content"] == "session 侧提问"
+    assert msgs[0]["legacy_session_id"] == sid
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["legacy_session_id"] == sid
+
+    conn = await db.get_conn()
+    cur = await conn.execute(
+        "SELECT COUNT(*) AS c FROM chat_messages WHERE session_id=?",
+        (sid,),
+    )
+    row = await cur.fetchone()
+    assert int(row["c"]) == 0
