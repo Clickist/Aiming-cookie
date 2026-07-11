@@ -227,50 +227,163 @@ fn configure_process_group(command: &mut Command) {
 #[cfg(not(any(unix, windows)))]
 fn configure_process_group(_command: &mut Command) {}
 
-fn terminate_process_tree(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return;
+#[cfg(not(unix))]
+fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(20));
     }
+    matches!(child.try_wait(), Ok(Some(_)))
+}
+
+#[cfg(unix)]
+fn process_group_exists(process_group: i32) -> bool {
+    unsafe { libc::kill(-process_group, 0) == 0 }
+}
+
+#[cfg(unix)]
+fn wait_for_process_group_exit(child: &mut Child, process_group: i32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let child_exited = matches!(child.try_wait(), Ok(Some(_)));
+        if child_exited && !process_group_exists(process_group) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let child_exited = matches!(child.try_wait(), Ok(Some(_)));
+    child_exited && !process_group_exists(process_group)
+}
+
+fn terminate_process_tree(child: &mut Child) {
+    // Closing the pipe is the normal shutdown protocol. The Python runtime
+    // watches for EOF and stops its API and worker before exiting.
+    child.stdin.take();
 
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGTERM);
+    {
+        let process_group = child.id() as i32;
+        if wait_for_process_group_exit(child, process_group, SHUTDOWN_GRACE) {
+            return;
+        }
+
+        unsafe {
+            libc::kill(-process_group, libc::SIGTERM);
+        }
+        if wait_for_process_group_exit(child, process_group, SHUTDOWN_GRACE) {
+            return;
+        }
+
+        unsafe {
+            libc::kill(-process_group, libc::SIGKILL);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[cfg(windows)]
     {
+        if wait_for_child_exit(child, SHUTDOWN_GRACE) {
+            return;
+        }
         let _ = Command::new("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = child.kill();
-    }
-
-    let deadline = Instant::now() + SHUTDOWN_GRACE;
-    while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
+        if wait_for_child_exit(child, SHUTDOWN_GRACE) {
             return;
         }
-        thread::sleep(Duration::from_millis(20));
+        let _ = child.kill();
+        let _ = child.wait();
     }
-
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[cfg(test)]
 mod tests {
     use super::{create_launch_token, parse_readiness_line, redact_secret};
+
+    #[cfg(unix)]
+    use super::{configure_process_group, terminate_process_tree};
+    #[cfg(unix)]
+    use std::io::{BufRead, BufReader};
+    #[cfg(unix)]
+    use std::process::{Command, Stdio};
+    #[cfg(unix)]
+    use std::thread;
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_closes_stdin_before_sending_signals() {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "trap 'exit 42' TERM; cat >/dev/null; exit 0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_process_group(&mut command);
+        let mut child = command.spawn().expect("spawn stdin-watching child");
+
+        terminate_process_tree(&mut child);
+
+        assert_eq!(child.wait().expect("read child status").code(), Some(0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_cleans_process_group_when_direct_child_already_exited() {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "trap '' HUP; sleep 30 & echo $!"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        configure_process_group(&mut command);
+        let mut child = command.spawn().expect("spawn process group leader");
+        let process_group = child.id() as i32;
+        let stdout = child.stdout.take().expect("capture descendant pid");
+        let mut line = String::new();
+        BufReader::new(stdout)
+            .read_line(&mut line)
+            .expect("read descendant pid");
+        let descendant: i32 = line.trim().parse().expect("parse descendant pid");
+        child.wait().expect("wait for direct child");
+
+        unsafe {
+            assert_eq!(libc::kill(descendant, 0), 0, "descendant should be alive");
+        }
+        terminate_process_tree(&mut child);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            let status = Command::new("ps")
+                .args(["-o", "stat=", "-p", &descendant.to_string()])
+                .output()
+                .expect("inspect descendant state");
+            let state = String::from_utf8_lossy(&status.stdout);
+            if state.trim().is_empty() || state.trim_start().starts_with('Z') {
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        unsafe {
+            libc::kill(-process_group, libc::SIGKILL);
+        }
+        panic!("descendant process survived runtime shutdown");
+    }
 
     #[test]
     fn readiness_protocol_accepts_only_exact_dynamic_port_message() {
