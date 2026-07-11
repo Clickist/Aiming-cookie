@@ -1,5 +1,7 @@
 # 瞄准社区前沿（Deep Research, 2026-06-29）
 
+> **研究截止日期：2026-06-29。状态：时间敏感参考。** 本文不能作为产品范围、架构、指标定义或诊断规则的事实源；只能用于 Coach 解释文案、profile 标签和处方理由。使用玩家排名、赛季、产品或社区规则前必须重新核实。
+>
 > 第二轮 deep research，专攻**社区前沿**（学术不研究 KovaaK's/aim trainer 消费品，瞄准实际前沿在社区）。5 angle fan-out → 12 源 fetch → 35 claim → 25 对抗验证 → **6 存活** + 19 被反驳（透明列出）。
 > 94 agents / 1.69M tokens / ~44 min。遭遇 429 限流，部分 verify 失败，但 6 存活 claim 均经投票 + 多源确认。
 > **关键性质**：社区内容**时间敏感**（Voltaic season 标签、Celestial 计数、顶级玩家名次都流动），且信源以论坛/视频为主（学术同行评审几乎缺位）。所有内容**只进 narrator 文案 + profile 标签 + 训练处方理由**，**不进诊断规则**（那是 `coach-theory-foundation.md` 学术根基的领地）。

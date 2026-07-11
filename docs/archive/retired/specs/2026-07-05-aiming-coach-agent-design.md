@@ -1,6 +1,8 @@
 # Aiming Coach Agent 设计：从单次 LLM 翻译到 Tool-Use Agent
 
-> 日期：2026-07-05 · 状态：设计稿，待点点 review · 作者：design session
+> 日期：2026-07-05 · 状态：历史设计稿，已被 2026-07-11 的 Agent-first / Pi 优先复用方向覆盖 · 作者：design session
+>
+> **执行状态（2026-07-11）**：本文件保留旧 Python tool-use loop 的背景与已有实现线索；它不再授权扩展 `agent.py`、`chat_with_coach`、Python tool registry 或按 Phase 2.1–2.9 施工。终局 Coach 的运行时选择、持久化、事件和迁移必须先完成 `2026-07-11-pi-agent-coach-runtime-design.md` 的 adoption assessment 与最小 Spike，再由替代 implementation plan 冻结。
 > 上游 spec：`2026-06-28-ai-aim-coach-design.md`（单次教练输出）、`2026-06-29-plan-adjustment-design.md`（动态处方）
 > 替换目标：`kovaak_tracker/coach/narrator.py` 的单次 `generate_narration` / `generate_progress_narration` / `generate_plan_narration` 三套并列 prompt
 > 一句话：**把"规则引擎算诊断 → LLM 一次性翻译成中文教练话"升级为"LLM 用 tool use 自己决定调哪些知识 tool，渐进式生成讲解"，但诊断仍然是规则引擎的产物，LLM 不参与诊断推理。**
@@ -25,7 +27,7 @@
 - **不让 LLM 做诊断推理**。诊断走 `advice.advise()`（规则引擎，确定性，阈值来自 `docs/aim-kinematics-research.md`）。Agent 拿到的是已经定型的 `CoachDiagnosis`。
 - **不让 LLM 编造指标数值**。所有数值（decel_frac=0.75、SPARC=-6.2 等）来自规则引擎传入的 payload。
 - **不让 LLM 自由生成"知识"**。知识 tool 只返回预备好的文档片段（切片+元数据），LLM 引用而不重写。
-- **不引入 pi 或任何 agent 框架作为运行时依赖**。`providers.py` 的设计注释提到"borrows pi's provider-skeleton design"，意思是借鉴思路；运行时仍是 anthropic / openai SDK 直连。本设计沿用同一原则：**借鉴 pi 的 agent loop + tool_use block 思路，但用原生 SDK 实现**。
+- **历史技术结论，已撤销**：原文在此排除了 Pi runtime，改用 anthropic / openai SDK 直连。现在不得从该结论继续施工；终局 Coach 优先评估最大程度复用 Pi，具体路径由后续 assessment 与 Spike 决定。
 - **不做多轮对话 / 用户回问**。本次只做"诊断→讲解"的单向生成，agent 的多步只发生在模型内部的 tool use loop，不和用户对话。
 - **不动 `advice.py` / `diagnosis.py` / `profiles.py` / `planning.py`**（这些是规则层，agent 在它们之上加 narrate 层）。
 - **不替换 `providers.py`**（继续用作 LLM 客户端工厂；agent 在它之上加 tool use loop）。
@@ -544,12 +546,8 @@ def narrate_plan(plan: TrainingPlan, backend: ToolUseBackend) -> str: ...
 
 ---
 
-## 附录 B：pi 借鉴点（不引入 pi）
+## 附录 B：Pi 方向的历史记录
 
-本机 `C:\Users\袜子\Desktop\pi\` 不存在（环境扫描时 Glob 超时未找到 packages）。但 `providers.py` 注释里写了"borrows pi's provider-skeleton design"，说明之前的项目实践里借鉴过 pi 的：
+本附录记录 2026-07-05 设计时对 Pi 的有限、未核验理解：provider 抽象、messages + tool-use loop，以及 JSON Schema 工具定义。
 
-- **provider 抽象**：按 API 协议（anthropic-messages / openai-completions）分类，配置驱动，credential 从 env 取
-- **agent loop**：messages 列表 + tool_use block + tool_result 回填
-- **tool 定义 schema**：JSON schema 入参 + 描述
-
-本设计沿用这些思路，**不引入 pi 作为运行时依赖**（只用 anthropic / openai SDK 原生 tool use API）。如果后续点点想要更深借鉴 pi 的 skill 组织方式（prompt 模板 + 工具组合的 skill 抽象），可在 Phase 3 评估——本次不做。
+它曾据此提出「不引入 Pi、只借鉴思路」；该技术结论已经被撤销。当前方向是**优先评估最大程度复用 Pi 的可行路径**，而不是继续以这个历史设计的原生 SDK loop 为默认终局。具体采用 `pi-agent-core`、完整 `pi-coding-agent` RPC，还是裁剪复用，必须以 `2026-07-11-pi-agent-coach-runtime-design.md` 的真实源码 evidence 与最小 Spike 为准。

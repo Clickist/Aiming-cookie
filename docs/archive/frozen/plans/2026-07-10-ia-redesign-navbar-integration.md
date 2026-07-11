@@ -8,10 +8,17 @@
 
 **Tech Stack:** Next.js 16.2.10 · React 19.2.7 · Tailwind v4（dark，复用 globals.css 的 design tokens）· Material Symbols Outlined（layout.tsx 已引入）· vitest + @testing-library/react（本 plan 新增）
 
+> **状态：2026-07-10 暂缓；不再是可执行 implementation plan。**
+>
+> **PRD 覆盖说明**：本计划以旧 IA spec 为前提，仍把 `/sessions/[id]/coach` 和 `/coach` 的关系、以及「登录后默认进入 History」当作可直接施工的 UI 合同。新 `docs/PRD.md` 已改定：首次无论权限均从上传开始；回访才默认 History；终局 Coach 是可引用 0～N 次分析的持久线程。故 Task 1–6、其中的 `/coach` stub、active-route 假设和「后续默认页逻辑」均**不得继续执行**。保留文件仅作历史设计/测试基建参考。
+>
+> 替代路径：先完成 Pi adoption assessment，并由其后的替代 Coach implementation plan 指定单个 Task；导航与默认路由仅按新的 persistent Coach 产品边界收敛。已经存在的 design-token 约束仍可复用，但不构成旧 IA 的继续授权。
+
 ## Global Constraints
 
 - Next.js 16.2.10 + React 19.2.7，**不升级**版本
-- 复用现有 Tailwind design tokens（`bg-background` / `text-on-surface` / `text-on-surface-variant` / `text-primary` / `border-outline-variant` / `bg-surface-container-*` / `max-w-[var(--spacing-container-max)]`），**不引入新 CSS 框架或图标库**
+- 实现前先遵循 `docs/design-system.md`；复用 `webapp/frontend/app/globals.css` 的 Tailwind design tokens（`bg-background` / `text-on-surface` / `text-on-surface-variant` / `text-primary` / `border-outline-variant` / `bg-surface-container-*` / `max-w-[var(--spacing-container-max)]`），**不引入新 CSS 框架或图标库**
+- 新增组件和页面不得写 raw hex、临时色板或任意视觉值来绕过 token；布局尺寸仅在现有 spacing/type/radius scale 无法表达且确有语义必要时例外，并在实现说明中记录
 - 顶栏词汇严格按 IA spec §3.1：`logo · [分析 / 历史 / 教练] · [订阅状态 · 设置]`
 - 三档导航规则按 IA spec §3.2：App 顶栏（upload/report/coach）/ 交易态降级（processing）
 - 中文文案（zh-CN），不混入英文标题（现有 "Analyze your flicking" 等营销 hero 文案不在本 plan 改动范围）
