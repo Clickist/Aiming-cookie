@@ -1,74 +1,69 @@
 @import "tailwindcss";
 
 /*
- * Obsidian Hearth dark theme — executable frontend design tokens.
- *
- * Governance: docs/design-system.md. Stitch HTML and DESIGN.md are visual
- * references only; this file is the single source of truth for runtime token
- * values consumed by the application.
+ * Executable implementation of DESIGN-cursor.md and docs/design-system.md.
+ * Tailwind color utilities reference semantic values so a data-theme change
+ * updates existing components without component-level theme branches.
  */
 @theme inline {
-  /* ---- colors (dark) ---- */
-  --color-background: #12110f;
-  --color-on-background: #fadcd3;
-  --color-surface: #1e100b;
-  --color-surface-dim: #1e100b;
-  --color-surface-bright: #48352f;
-  --color-surface-variant: #43302a;
-  --color-surface-container-lowest: #180b06;
-  --color-surface-container-low: #1c1b18;
-  --color-surface-container: #1c1b18;
-  --color-surface-container-high: #372620;
-  --color-surface-container-highest: #43302a;
+  /* ---- semantic colors ---- */
+  --color-background: var(--theme-color-background);
+  --color-on-background: var(--theme-color-on-background);
+  --color-surface: var(--theme-color-surface);
+  --color-surface-dim: var(--theme-color-surface-dim);
+  --color-surface-bright: var(--theme-color-surface-bright);
+  --color-surface-variant: var(--theme-color-surface-variant);
+  --color-surface-container-lowest: var(--theme-color-surface-container-lowest);
+  --color-surface-container-low: var(--theme-color-surface-container-low);
+  --color-surface-container: var(--theme-color-surface-container);
+  --color-surface-container-high: var(--theme-color-surface-container-high);
+  --color-surface-container-highest: var(--theme-color-surface-container-highest);
+  --color-on-surface: var(--theme-color-on-surface);
+  --color-on-surface-variant: var(--theme-color-on-surface-variant);
 
-  --color-on-surface: #fadcd3;
-  --color-on-surface-variant: #807d72;
+  --color-primary: var(--theme-color-primary);
+  --color-on-primary: var(--theme-color-on-primary);
+  --color-primary-container: var(--theme-color-primary-container);
+  --color-on-primary-container: var(--theme-color-on-primary-container);
+  --color-primary-fixed: var(--theme-color-primary-fixed);
+  --color-primary-fixed-dim: var(--theme-color-primary-fixed-dim);
+  --color-on-primary-fixed: var(--theme-color-on-primary-fixed);
+  --color-on-primary-fixed-variant: var(--theme-color-on-primary-fixed-variant);
+  --color-surface-tint: var(--theme-color-surface-tint);
 
-  --color-primary: #f54e00;
-  --color-on-primary: #5d1800;
-  --color-primary-container: #f54e00;
-  --color-on-primary-container: #511400;
-  --color-primary-fixed: #ffdbd0;
-  --color-primary-fixed-dim: #ffb59d;
-  --color-on-primary-fixed: #390b00;
-  --color-on-primary-fixed-variant: #832600;
-  --color-surface-tint: #ffb59d;
+  --color-secondary: var(--theme-color-secondary);
+  --color-on-secondary: var(--theme-color-on-secondary);
+  --color-secondary-container: var(--theme-color-secondary-container);
+  --color-on-secondary-container: var(--theme-color-on-secondary-container);
+  --color-secondary-fixed: var(--theme-color-secondary-fixed);
+  --color-secondary-fixed-dim: var(--theme-color-secondary-fixed-dim);
+  --color-on-secondary-fixed: var(--theme-color-on-secondary-fixed);
+  --color-on-secondary-fixed-variant: var(--theme-color-on-secondary-fixed-variant);
 
-  --color-secondary: #c7c7c2;
-  --color-on-secondary: #30312e;
-  --color-secondary-container: #494946;
-  --color-on-secondary-container: #b9b8b4;
-  --color-secondary-fixed: #e3e2dd;
-  --color-secondary-fixed-dim: #c7c7c2;
-  --color-on-secondary-fixed: #1b1c19;
-  --color-on-secondary-fixed-variant: #464744;
+  --color-tertiary: var(--theme-color-tertiary);
+  --color-on-tertiary: var(--theme-color-on-tertiary);
+  --color-tertiary-container: var(--theme-color-tertiary-container);
+  --color-on-tertiary-container: var(--theme-color-on-tertiary-container);
+  --color-tertiary-fixed: var(--theme-color-tertiary-fixed);
+  --color-tertiary-fixed-dim: var(--theme-color-tertiary-fixed-dim);
+  --color-on-tertiary-fixed: var(--theme-color-on-tertiary-fixed);
+  --color-on-tertiary-fixed-variant: var(--theme-color-on-tertiary-fixed-variant);
 
-  --color-tertiary: #a8c8ff;
-  --color-on-tertiary: #003061;
-  --color-tertiary-container: #3491ff;
-  --color-on-tertiary-container: #002955;
-  --color-tertiary-fixed: #d5e3ff;
-  --color-tertiary-fixed-dim: #a8c8ff;
-  --color-on-tertiary-fixed: #001b3c;
-  --color-on-tertiary-fixed-variant: #004689;
+  --color-error: var(--theme-color-error);
+  --color-on-error: var(--theme-color-on-error);
+  --color-error-container: var(--theme-color-error-container);
+  --color-on-error-container: var(--theme-color-on-error-container);
+  --color-outline: var(--theme-color-outline);
+  --color-outline-variant: var(--theme-color-outline-variant);
 
-  --color-error: #ffb4ab;
-  --color-on-error: #690005;
-  --color-error-container: #93000a;
-  --color-on-error-container: #ffdad6;
+  --color-event-kill: var(--theme-color-event-kill);
+  --color-event-miss: var(--theme-color-event-miss);
+  --color-event-corrective: var(--theme-color-event-corrective);
+  --color-event-peak: var(--theme-color-event-peak);
 
-  --color-outline: #2d2b26;
-  --color-outline-variant: #5c4038;
-
-  /* ---- timeline event marker colors (named slots, not raw hex in components) ---- */
-  --color-event-kill: #22c55e;
-  --color-event-miss: #ef4444;
-  --color-event-corrective: #60a5fa;
-  --color-event-peak: #f54e00;
-
-  --color-inverse-surface: #fadcd3;
-  --color-inverse-on-surface: #3e2c26;
-  --color-inverse-primary: #ac3400;
+  --color-inverse-surface: var(--theme-color-inverse-surface);
+  --color-inverse-on-surface: var(--theme-color-inverse-on-surface);
+  --color-inverse-primary: var(--theme-color-inverse-primary);
 
   /* ---- typography ---- */
   --font-sans: "Inter", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", ui-sans-serif, system-ui, sans-serif;
@@ -85,8 +80,7 @@
   --spacing-gutter: 24px;
   --spacing-container-max: 1120px;
 
-  /* ---- container scale (max-width utilities; without these Tailwind v4
-       maps max-w-* to --spacing-* and you get max-w-xl=80px) ---- */
+  /* ---- container scale ---- */
   --container-xs: 20rem;
   --container-sm: 24rem;
   --container-md: 28rem;
@@ -100,14 +94,14 @@
   --container-7xl: 80rem;
 
   /* ---- radius (machined, soft) ---- */
-  --radius-sm: 0.125rem; /* 2px - inputs/buttons */
-  --radius-DEFAULT: 0.25rem; /* 4px */
+  --radius-sm: 0.125rem;
+  --radius-DEFAULT: 0.25rem;
   --radius-md: 0.375rem;
-  --radius-lg: 0.5rem; /* 8px - cards */
-  --radius-xl: 0.75rem; /* 12px - chips */
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
   --radius-full: 9999px;
 
-  /* ---- type scale (font-size + line-height + tracking via fontSize tokens) ---- */
+  /* ---- type scale ---- */
   --text-display-lg: 56px;
   --text-display-lg--line-height: 1.1;
   --text-display-lg--letter-spacing: -0.04em;
@@ -145,8 +139,181 @@
 }
 
 :root {
-  color-scheme: dark;
+  --color-background: var(--theme-color-background);
+  --color-on-background: var(--theme-color-on-background);
+  --color-surface: var(--theme-color-surface);
+  --color-surface-dim: var(--theme-color-surface-dim);
+  --color-surface-bright: var(--theme-color-surface-bright);
+  --color-surface-variant: var(--theme-color-surface-variant);
+  --color-surface-container-lowest: var(--theme-color-surface-container-lowest);
+  --color-surface-container-low: var(--theme-color-surface-container-low);
+  --color-surface-container: var(--theme-color-surface-container);
+  --color-surface-container-high: var(--theme-color-surface-container-high);
+  --color-surface-container-highest: var(--theme-color-surface-container-highest);
+  --color-on-surface: var(--theme-color-on-surface);
+  --color-on-surface-variant: var(--theme-color-on-surface-variant);
+  --color-primary: var(--theme-color-primary);
+  --color-on-primary: var(--theme-color-on-primary);
+  --color-primary-container: var(--theme-color-primary-container);
+  --color-on-primary-container: var(--theme-color-on-primary-container);
+  --color-primary-fixed: var(--theme-color-primary-fixed);
+  --color-primary-fixed-dim: var(--theme-color-primary-fixed-dim);
+  --color-on-primary-fixed: var(--theme-color-on-primary-fixed);
+  --color-on-primary-fixed-variant: var(--theme-color-on-primary-fixed-variant);
+  --color-surface-tint: var(--theme-color-surface-tint);
+  --color-secondary: var(--theme-color-secondary);
+  --color-on-secondary: var(--theme-color-on-secondary);
+  --color-secondary-container: var(--theme-color-secondary-container);
+  --color-on-secondary-container: var(--theme-color-on-secondary-container);
+  --color-secondary-fixed: var(--theme-color-secondary-fixed);
+  --color-secondary-fixed-dim: var(--theme-color-secondary-fixed-dim);
+  --color-on-secondary-fixed: var(--theme-color-on-secondary-fixed);
+  --color-on-secondary-fixed-variant: var(--theme-color-on-secondary-fixed-variant);
+  --color-tertiary: var(--theme-color-tertiary);
+  --color-on-tertiary: var(--theme-color-on-tertiary);
+  --color-tertiary-container: var(--theme-color-tertiary-container);
+  --color-on-tertiary-container: var(--theme-color-on-tertiary-container);
+  --color-tertiary-fixed: var(--theme-color-tertiary-fixed);
+  --color-tertiary-fixed-dim: var(--theme-color-tertiary-fixed-dim);
+  --color-on-tertiary-fixed: var(--theme-color-on-tertiary-fixed);
+  --color-on-tertiary-fixed-variant: var(--theme-color-on-tertiary-fixed-variant);
+  --color-error: var(--theme-color-error);
+  --color-on-error: var(--theme-color-on-error);
+  --color-error-container: var(--theme-color-error-container);
+  --color-on-error-container: var(--theme-color-on-error-container);
+  --color-outline: var(--theme-color-outline);
+  --color-outline-variant: var(--theme-color-outline-variant);
+  --color-event-kill: var(--theme-color-event-kill);
+  --color-event-miss: var(--theme-color-event-miss);
+  --color-event-corrective: var(--theme-color-event-corrective);
+  --color-event-peak: var(--theme-color-event-peak);
+  --color-inverse-surface: var(--theme-color-inverse-surface);
+  --color-inverse-on-surface: var(--theme-color-inverse-on-surface);
+  --color-inverse-primary: var(--theme-color-inverse-primary);
 }
+
+:root,
+:root[data-theme="light"] {
+  --theme-color-background: #f7f5f0;
+  --theme-color-on-background: #24211d;
+  --theme-color-surface: #fffdf8;
+  --theme-color-surface-dim: #ebe7df;
+  --theme-color-surface-bright: #ffffff;
+  --theme-color-surface-variant: #e8e1d7;
+  --theme-color-surface-container-lowest: #ffffff;
+  --theme-color-surface-container-low: #f1ede6;
+  --theme-color-surface-container: #ebe6de;
+  --theme-color-surface-container-high: #e4ded5;
+  --theme-color-surface-container-highest: #dcd5cb;
+  --theme-color-on-surface: #24211d;
+  --theme-color-on-surface-variant: #625c54;
+
+  --theme-color-primary: #c83d00;
+  --theme-color-on-primary: #ffffff;
+  --theme-color-primary-container: #ffe1d5;
+  --theme-color-on-primary-container: #4a1300;
+  --theme-color-primary-fixed: #ffdbd0;
+  --theme-color-primary-fixed-dim: #ffb59d;
+  --theme-color-on-primary-fixed: #390b00;
+  --theme-color-on-primary-fixed-variant: #832600;
+  --theme-color-surface-tint: #c83d00;
+
+  --theme-color-secondary: #5f625c;
+  --theme-color-on-secondary: #ffffff;
+  --theme-color-secondary-container: #e3e3dd;
+  --theme-color-on-secondary-container: #2c2f2a;
+  --theme-color-secondary-fixed: #e3e2dd;
+  --theme-color-secondary-fixed-dim: #c7c7c2;
+  --theme-color-on-secondary-fixed: #1b1c19;
+  --theme-color-on-secondary-fixed-variant: #464744;
+
+  --theme-color-tertiary: #005fae;
+  --theme-color-on-tertiary: #ffffff;
+  --theme-color-tertiary-container: #d7e7ff;
+  --theme-color-on-tertiary-container: #003461;
+  --theme-color-tertiary-fixed: #d5e3ff;
+  --theme-color-tertiary-fixed-dim: #a8c8ff;
+  --theme-color-on-tertiary-fixed: #001b3c;
+  --theme-color-on-tertiary-fixed-variant: #004689;
+
+  --theme-color-error: #ba1a1a;
+  --theme-color-on-error: #ffffff;
+  --theme-color-error-container: #ffdad6;
+  --theme-color-on-error-container: #410002;
+  --theme-color-outline: #7b746b;
+  --theme-color-outline-variant: #cec6bc;
+
+  --theme-color-event-kill: #16875b;
+  --theme-color-event-miss: #c53442;
+  --theme-color-event-corrective: #1769c2;
+  --theme-color-event-peak: #c83d00;
+
+  --theme-color-inverse-surface: #312b25;
+  --theme-color-inverse-on-surface: #f9eee8;
+  --theme-color-inverse-primary: #ffb59d;
+}
+
+:root[data-theme="dark"] {
+  --theme-color-background: #12110f;
+  --theme-color-on-background: #fadcd3;
+  --theme-color-surface: #1e100b;
+  --theme-color-surface-dim: #1e100b;
+  --theme-color-surface-bright: #48352f;
+  --theme-color-surface-variant: #43302a;
+  --theme-color-surface-container-lowest: #180b06;
+  --theme-color-surface-container-low: #1c1b18;
+  --theme-color-surface-container: #1c1b18;
+  --theme-color-surface-container-high: #372620;
+  --theme-color-surface-container-highest: #43302a;
+  --theme-color-on-surface: #fadcd3;
+  --theme-color-on-surface-variant: #c9beb4;
+
+  --theme-color-primary: #ff7a45;
+  --theme-color-on-primary: #3a0d00;
+  --theme-color-primary-container: #7e2500;
+  --theme-color-on-primary-container: #ffe1d5;
+  --theme-color-primary-fixed: #ffdbd0;
+  --theme-color-primary-fixed-dim: #ffb59d;
+  --theme-color-on-primary-fixed: #390b00;
+  --theme-color-on-primary-fixed-variant: #832600;
+  --theme-color-surface-tint: #ffb59d;
+
+  --theme-color-secondary: #c7c7c2;
+  --theme-color-on-secondary: #30312e;
+  --theme-color-secondary-container: #494946;
+  --theme-color-on-secondary-container: #e3e2dd;
+  --theme-color-secondary-fixed: #e3e2dd;
+  --theme-color-secondary-fixed-dim: #c7c7c2;
+  --theme-color-on-secondary-fixed: #1b1c19;
+  --theme-color-on-secondary-fixed-variant: #464744;
+
+  --theme-color-tertiary: #a8c8ff;
+  --theme-color-on-tertiary: #003061;
+  --theme-color-tertiary-container: #155b9e;
+  --theme-color-on-tertiary-container: #d7e7ff;
+  --theme-color-tertiary-fixed: #d5e3ff;
+  --theme-color-tertiary-fixed-dim: #a8c8ff;
+  --theme-color-on-tertiary-fixed: #001b3c;
+  --theme-color-on-tertiary-fixed-variant: #004689;
+
+  --theme-color-error: #ffb4ab;
+  --theme-color-on-error: #690005;
+  --theme-color-error-container: #93000a;
+  --theme-color-on-error-container: #ffdad6;
+  --theme-color-outline: #635a52;
+  --theme-color-outline-variant: #5c4038;
+
+  --theme-color-event-kill: #39c98a;
+  --theme-color-event-miss: #ff6b78;
+  --theme-color-event-corrective: #70b7ff;
+  --theme-color-event-peak: #ff7a45;
+
+  --theme-color-inverse-surface: #fadcd3;
+  --theme-color-inverse-on-surface: #3e2c26;
+  --theme-color-inverse-primary: #ac3400;
+}
+
+
 
 html {
   scroll-behavior: smooth;
@@ -231,16 +398,15 @@ body::before {
   -ms-overflow-style: none;
 }
 
-/* Active-step pulse glow for the processing pipeline badge.
-   DESIGN.md §Elevation: the single shadow exception is a subtle orange glow
-   (rgba(245,78,0,...)) reserved for "Active" status icons in pipelines. */
+/* Active-step pulse glow for the processing pipeline badge. Its color derives
+   from the shared primary semantic role so it follows the active theme. */
 @keyframes pulse-ring {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(245, 78, 0, 0.35);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 35%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 6px rgba(245, 78, 0, 0);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-primary) 0%, transparent);
   }
 }
 .pulse-ring {
