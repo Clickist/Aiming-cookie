@@ -3,9 +3,12 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from . import config
+from .auth import require_desktop_token
 from .health import router as health_router
 from .routes import router
 from .db import init_schema
@@ -19,6 +22,22 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Aiming Cookie API", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def require_desktop_api_token(request: Request, call_next):
+    """Protect every API route when running under the desktop shell."""
+    if request.url.path.startswith("/api/") and config.DESKTOP_LAUNCH_TOKEN:
+        try:
+            require_desktop_token(request)
+        except HTTPException as error:
+            return JSONResponse(
+                status_code=error.status_code,
+                content={"detail": error.detail},
+                headers=error.headers,
+            )
+    return await call_next(request)
+
 
 # CORS：Next.js dev (3000) → FastAPI (8000) 跨端口必须开。
 # 生产用 CORS_ORIGINS env 限制具体域名（逗号分隔）。

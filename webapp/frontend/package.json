@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
+    "test": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs --test lib/*.test.ts",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -50,11 +50,10 @@ async function apiFetch(
     "X-User-Id",
     desktop ? DESKTOP_USER_ID : (opts.userId ?? DEFAULT_USER_ID),
   );
-  if (opts.desktopToken) {
-    if (!connection) {
-      throw new Error("Desktop-only API is unavailable in this browser session");
-    }
+  if (desktop && connection) {
     headers.set("X-Aiming-Cookie-Desktop-Token", connection.token);
+  } else if (opts.desktopToken) {
+    throw new Error("Desktop-only API is unavailable in this browser session");
   }
 
   return fetch(`${connection?.baseUrl ?? API_BASE}${path}`, {
@@ -106,7 +105,7 @@ export async function uploadVideo(
   return (await res.json()) as AnalyzeResponse;
 }
 
-/** Desktop path import. The launch token is limited to this desktop-only route. */
+/** Desktop path import. Browser sessions cannot call this route. */
 export async function importDesktopPaths(
   opts: DesktopPathImportOptions,
 ): Promise<AnalyzeResponse> {
@@ -128,7 +127,7 @@ export async function importDesktopPaths(
   return (await res.json()) as AnalyzeResponse;
 }
 
-/** Desktop storage listing. The launch token is allowed only on this route and path import. */
+/** Desktop storage listing. Browser sessions cannot call this route. */
 export async function getStorage(
   opts: { signal?: AbortSignal } = {},
 ): Promise<StorageResponse> {
