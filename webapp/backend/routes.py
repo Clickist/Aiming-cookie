@@ -13,11 +13,21 @@ from fastapi.responses import FileResponse
 
 from . import db, llm_budget, queue
 from .config import LLM_PROVIDER, MAX_CSV_BYTES, MAX_VIDEO_BYTES, VIDEO_TMP_DIR
+from .contracts import UnsupportedContractVersion, analysis_result_to_coach_report
+from .queue import (
+    RetryNotAllowed,
+    SessionForbidden,
+    SessionNotDeletable,
+    SessionNotFound,
+)
 from .schemas import (
     AnalyzeResponse,
     ChatMessageOut,
     ChatRequest,
     ChatResponse,
+    DeleteSessionResponse,
+    SessionListItem,
+    SessionListResponse,
     SessionStatus,
     Timeline,
     TimelineEvent,
@@ -39,6 +49,22 @@ def _assert_session_owner(s: dict, x_user_id: str) -> None:
     + 服务端验签后由鉴权中间件取代。"""
     if s["user_id"] != x_user_id:
         raise HTTPException(403, "无权访问此 session")
+
+
+async def _get_owned_session(session_id: int, x_user_id: str) -> dict:
+    try:
+        s = await queue.get_session(session_id)
+    except UnsupportedContractVersion as exc:
+        log.error(
+            "unsupported analysis contract session_id=%s version=%s",
+            session_id,
+            exc,
+        )
+        raise HTTPException(500, "分析结果版本不受支持") from exc
+    if s is None:
+        raise HTTPException(404, "session 不存在")
+    _assert_session_owner(s, x_user_id)
+    return s
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -94,23 +120,77 @@ async def analyze(
     return AnalyzeResponse(session_id=sid)
 
 
-@router.get("/sessions/{session_id}", response_model=SessionStatus)
-async def get_session(
-    session_id: int = Path(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
-):
-    """查询分析状态/结果(queued / running / done / failed)。"""
-    s = await queue.get_session(session_id)
-    if s is None:
-        raise HTTPException(404, "session 不存在")
-    _assert_session_owner(s, x_user_id)
+def _session_status_response(s: dict) -> SessionStatus:
     return SessionStatus(
         id=s["id"],
         status=s["status"],
         result=s["result"],
         error=s["error"],
         llm_cost_cny=float(s["llm_cost_cny"] or 0),
+        created_at=s["created_at"],
+        attempts=int(s["attempts"] or 0),
+        max_attempts=int(s["max_attempts"] or 1),
+        worker_id=s.get("worker_id"),
+        started_at=s.get("started_at"),
+        finished_at=s.get("finished_at"),
     )
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+async def list_sessions(
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
+    """当前用户的分析列表(新→旧)。不返回完整 result。"""
+    rows = await queue.list_sessions(x_user_id)
+    return SessionListResponse(
+        sessions=[SessionListItem(**row) for row in rows],
+    )
+
+
+@router.get("/sessions/{session_id}", response_model=SessionStatus)
+async def get_session(
+    session_id: int = Path(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
+    """查询分析状态/结果(queued / running / done / failed)。"""
+    s = await _get_owned_session(session_id, x_user_id)
+    return _session_status_response(s)
+
+
+@router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
+async def delete_session(
+    session_id: int = Path(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
+    """删除 session 行、chat 记录，并 best-effort 删除磁盘上的 video/csv。"""
+    try:
+        out = await queue.delete_session(session_id, x_user_id)
+    except SessionNotFound as exc:
+        raise HTTPException(404, "session 不存在") from exc
+    except SessionForbidden as exc:
+        raise HTTPException(403, "无权访问此 session") from exc
+    except SessionNotDeletable as exc:
+        raise HTTPException(409, exc.message) from exc
+    return DeleteSessionResponse(**out)
+
+
+@router.post("/sessions/{session_id}/retry", response_model=SessionStatus)
+async def retry_session(
+    session_id: int = Path(...),
+    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+):
+    """将 failed session 重新入队(输入文件仍在时)。"""
+    s = await _get_owned_session(session_id, x_user_id)
+    if await queue.has_active(x_user_id):
+        # Allow retry of this session itself if it's the only failed one —
+        # has_active only counts queued/running, so failed is fine.
+        pass
+    try:
+        updated = await queue.requeue_for_retry(session_id)
+    except RetryNotAllowed as exc:
+        status = 404 if exc.code == "not_found" else 409
+        raise HTTPException(status, exc.message) from exc
+    return _session_status_response(updated)
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +199,7 @@ async def get_session(
 
 
 def _reconstruct_diagnosis(result: dict):
-    """从 sessions.result 存的 CoachReport dict 重建 CoachDiagnosis。
+    """从 coach view dict 重建 CoachDiagnosis。
 
     worker.run_report 用 dataclasses.asdict 把 CoachReport 序列化,所以
     diagnosis 子树是纯 dict + list。手动反序列化(frozen dataclass 无 from_dict)。
@@ -182,14 +262,14 @@ async def chat(
 
     前置:session 必须 status=done(有诊断结果才能聊)。否则 409。
     """
-    s = await queue.get_session(session_id)
-    if s is None:
-        raise HTTPException(404, "session 不存在")
-    _assert_session_owner(s, x_user_id)
+    s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成,暂不可对话")
     result = s.get("result") or {}
-    if not isinstance(result, dict) or "diagnosis" not in result:
+    if not isinstance(result, dict):
+        raise HTTPException(409, "诊断结果缺失,暂不可对话")
+    coach_view = analysis_result_to_coach_report(result)
+    if not coach_view.get("diagnosis"):
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
 
     # 拉历史(喂给 agent + 响应历史拼装基础)。append 本轮 user message 在
@@ -224,7 +304,7 @@ async def chat(
     try:
         from kovaak_tracker.coach.agent import ChatMessage, chat_with_coach
 
-        diagnosis = _reconstruct_diagnosis(result)
+        diagnosis = _reconstruct_diagnosis(coach_view)
         # 历史 + 本轮 user message 喂给 agent
         chat_history = [
             ChatMessage(role=m["role"], content=m["content"]) for m in history
@@ -284,10 +364,7 @@ async def get_chat_history(
     x_user_id: str = Header(default="dev", alias="X-User-Id"),
 ):
     """页面 mount 时拉历史对话。session 不存在 → 404;未 done → 409。"""
-    s = await queue.get_session(session_id)
-    if s is None:
-        raise HTTPException(404, "session 不存在")
-    _assert_session_owner(s, x_user_id)
+    s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成,暂不可对话")
     history = await db.load_chat_history(session_id)
@@ -314,10 +391,7 @@ async def get_session_video(
     路径从 sessions.video_path 取。worker 分析完后**不再删视频**(见
     worker.process_one 注释),所以 coach 页能播。文件不存在 → 404。
     """
-    s = await queue.get_session(session_id)
-    if s is None:
-        raise HTTPException(404, "session 不存在")
-    _assert_session_owner(s, x_user_id)
+    s = await _get_owned_session(session_id, x_user_id)
     video_path = s.get("video_path") or ""
     if not video_path or not os.path.exists(video_path):
         raise HTTPException(404, "视频文件不存在或已归档")
@@ -331,23 +405,17 @@ async def get_session_timeline(
 ):
     """返回视频时间轴事件 markers。
 
-    数据源优先级:
-      1. result.timeline 字段(worker 持久化的 markers)——当前 worker 不写,
-         预留兼容。
-      2. result.meta.fps / result.meta.duration_s 推 fps + duration_frames。
-      3. events 默认空(spec 兜底:v1 markers 区域留空,后续再补)。
+    数据源: analysis_result_to_coach_report 后的 timeline + diagnosis.meta。
     """
-    s = await queue.get_session(session_id)
-    if s is None:
-        raise HTTPException(404, "session 不存在")
-    _assert_session_owner(s, x_user_id)
+    s = await _get_owned_session(session_id, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成")
 
     result = s.get("result") or {}
     if not isinstance(result, dict):
         result = {}
-    meta = (result.get("diagnosis") or {}).get("meta") or {}
+    coach_view = analysis_result_to_coach_report(result)
+    meta = (coach_view.get("diagnosis") or {}).get("meta") or {}
 
     fps = 60
     if isinstance(meta.get("fps"), (int, float)):
@@ -360,7 +428,7 @@ async def get_session_timeline(
     elif isinstance(meta.get("duration_s"), (int, float)):
         duration_frames = int(meta["duration_s"] * fps)
 
-    events_raw = result.get("timeline") or []
+    events_raw = coach_view.get("timeline") or []
     events = [
         TimelineEvent(
             frame=int(e.get("frame", 0)),

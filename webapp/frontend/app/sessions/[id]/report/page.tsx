@@ -1,7 +1,9 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import ReportView from "./ReportView";
 import { getSession } from "@/lib/api";
+import { analysisResultToCoachReport } from "@/lib/contracts";
 
 /**
  * Coach report route. Renders the Wave 2 dark-bento report for a finished
@@ -44,7 +46,7 @@ export default async function ReportPage({
     return (
       <ReportError
         title="分析失败"
-        detail={status.error ?? "未知的后端错误"}
+        detail={status.error?.message ?? "未知的后端错误"}
       />
     );
   }
@@ -53,7 +55,12 @@ export default async function ReportPage({
     return <ReportError title="结果缺失" detail="status=done 但 result 为空" />;
   }
 
-  return <ReportView report={status.result} sessionId={sessionId} />;
+  return (
+    <ReportView
+      report={analysisResultToCoachReport(status.result)}
+      sessionId={sessionId}
+    />
+  );
 }
 
 function ReportError({ title, detail }: { title: string; detail: string }) {
@@ -64,6 +71,12 @@ function ReportError({ title, detail }: { title: string; detail: string }) {
         <p className="text-body-md text-on-surface-variant break-words">
           {detail}
         </p>
+        <Link
+          href="/history"
+          className="inline-block mt-md text-label-md text-primary hover:brightness-110"
+        >
+          返回历史记录
+        </Link>
       </div>
     </main>
   );

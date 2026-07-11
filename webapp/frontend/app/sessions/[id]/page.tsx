@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-import { getSession } from "@/lib/api";
+import { getSession, retrySession } from "@/lib/api";
 import type { SessionStatus, SessionStatusEnum } from "@/lib/types";
 
 /**
@@ -111,6 +111,8 @@ export default function SessionProcessingPage({
 
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [tipIndex, setTipIndex] = useState(0);
+  /** Bumps to restart the poll loop after a successful retry. */
+  const [pollEpoch, setPollEpoch] = useState(0);
 
   // Rotate the coach tip every 6s — independent of network.
   useEffect(() => {
@@ -157,7 +159,7 @@ export default function SessionProcessingPage({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [poll]);
+  }, [poll, pollEpoch]);
 
   // Side-effect: redirect to report when done. Kept out of render so React
   // doesn't warn about navigation during commit.
@@ -199,11 +201,31 @@ export default function SessionProcessingPage({
     state.kind === "ok" && state.data.status === "failed";
 
   if (showFailedCard) {
+    const canRetry = state.data.error?.retryable !== false;
     return (
       <Shell>
         <ErrorCard
           title="分析失败"
-          message={state.data.error ?? "后端未提供错误详情。"}
+          message={state.data.error?.message ?? "后端未提供错误详情。"}
+          onRetry={
+            canRetry
+              ? async () => {
+                  try {
+                    const next = await retrySession(sessionId);
+                    setState({ kind: "ok", data: next });
+                    setPollEpoch((n) => n + 1);
+                  } catch (err) {
+                    setState({
+                      kind: "err",
+                      message:
+                        err instanceof Error
+                          ? err.message
+                          : "重试失败，请重新上传",
+                    });
+                  }
+                }
+              : undefined
+          }
           backHref="/"
         />
       </Shell>
@@ -251,9 +273,17 @@ function TopAppBar() {
         <span className="font-display text-headline-sm font-bold text-primary">
           Aiming Cookie
         </span>
-        <span className="hidden md:inline text-label-md text-on-surface-variant/60">
-          Processing analysis…
-        </span>
+        <div className="flex items-center gap-md">
+          <Link
+            href="/history"
+            className="text-label-md text-on-surface-variant hover:text-primary transition-colors"
+          >
+            历史记录
+          </Link>
+          <span className="hidden md:inline text-label-md text-on-surface-variant/60">
+            Processing analysis…
+          </span>
+        </div>
       </div>
     </header>
   );

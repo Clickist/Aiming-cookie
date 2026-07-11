@@ -56,12 +56,20 @@ export default function ReportView({ report, sessionId }: ReportViewProps) {
             Coach Report · #{sessionId}
           </span>
         </div>
-        <Link
-          href={`/sessions/${sessionId}`}
-          className="text-label-md text-on-surface-variant hover:text-primary transition-colors"
-        >
-          ← 返回
-        </Link>
+        <div className="flex items-center gap-md">
+          <Link
+            href="/history"
+            className="text-label-md text-on-surface-variant hover:text-primary transition-colors"
+          >
+            历史记录
+          </Link>
+          <Link
+            href={`/sessions/${sessionId}`}
+            className="text-label-md text-on-surface-variant/70 hover:text-primary transition-colors"
+          >
+            处理页
+          </Link>
+        </div>
       </header>
 
       <main className="flex-grow pt-lg pb-32">

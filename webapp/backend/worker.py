@@ -3,11 +3,37 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import socket
+import uuid
+from datetime import datetime, timezone
 
 from . import queue
-from .config import LLM_PROVIDER
+from .config import HEARTBEAT_INTERVAL_SECONDS, LLM_PROVIDER
+from .contracts import (
+    build_analysis_result_v1,
+    build_artifact_manifest_v1,
+    build_error_v1,
+)
 
 log = logging.getLogger(__name__)
+
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+
+
+async def _heartbeat_loop(session_id: int, stop: asyncio.Event) -> None:
+    """Renew lease until stop is set. First beat immediately, then every interval."""
+    while True:
+        try:
+            await queue.heartbeat(session_id, WORKER_ID)
+        except Exception:
+            log.exception(
+                "heartbeat failed session=%s worker=%s", session_id, WORKER_ID,
+            )
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_INTERVAL_SECONDS)
+            return
+        except asyncio.TimeoutError:
+            continue
 
 
 # --- 包装 kovaak_tracker(隔离 + 便于 mock)---
@@ -119,6 +145,20 @@ def _estimate_llm_cost_cny(
     return input_tokens * 1e-6 * 1 + output_tokens * 1e-6 * 2
 
 
+def _sqlite_created_at_to_iso_z(created_at: str | None) -> str:
+    """SQLite ``YYYY-MM-DD HH:MM:SS`` → ``YYYY-MM-DDTHH:MM:SSZ`` (UTC)."""
+    if not created_at or not str(created_at).strip():
+        return _utc_now_iso_z()
+    s = str(created_at).strip()
+    if "T" in s:
+        return s if s.endswith("Z") else f"{s}Z"
+    return s.replace(" ", "T") + "Z"
+
+
+def _utc_now_iso_z() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _delete_video_safely(path) -> None:
     """失败路径清理临时文件(视频/CSV)。
 
@@ -137,43 +177,87 @@ def _delete_video_safely(path) -> None:
 
 async def process_one() -> bool:
     """处理一个 job。True=处理了(无论成败),False=队列空。"""
-    job = await queue.claim_next()
+    await queue.recover_stale_jobs()
+    job = await queue.claim_next(WORKER_ID)
     if job is None:
         return False
     sid = job["id"]
+    stop_hb = asyncio.Event()
+    hb_task = asyncio.create_task(_heartbeat_loop(sid, stop_hb))
     try:
-        summary, extras = run_analysis(
-            job["video_path"], job["csv_path"],
-            cm_per_360=job.get("cm_per_360"), fov=job.get("fov"),
+        summary, extras = await asyncio.to_thread(
+            run_analysis,
+            job["video_path"],
+            job["csv_path"],
+            job.get("cm_per_360"),
+            job.get("fov"),
         )
         timeline_events = _build_timeline(extras)
         from . import llm_budget
         estimated_cost = _estimate_llm_cost_cny("")
-        if not await llm_budget.check_and_record(job["user_id"], estimated_cost):
+        budget_ok = await llm_budget.check_and_record(job["user_id"], estimated_cost)
+        backend_load_failed = False
+        if not budget_ok:
             log.warning("用户 %s 今日 LLM 超额,narration 跳过", job["user_id"])
-            report_dict = run_report(summary, backend=None)
+            report_dict = await asyncio.to_thread(run_report, summary, None)
             cost = 0.0
+            narration_status = "not_requested"
         else:
-            # _load_backend 失败也降级为 backend=None(与 budget 超限路径对齐),
-            # 不让 LLM 配置问题丢弃已成功的 CV 结果。
             try:
                 backend = _load_backend()
             except Exception as e:
                 log.warning("_load_backend 失败,降级 backend=None: %s", e)
                 backend = None
-            report_dict = run_report(summary, backend=backend)
+                backend_load_failed = True
+            report_dict = await asyncio.to_thread(run_report, summary, backend)
             cost = _estimate_llm_cost_cny(report_dict.get("narration") or "")
-        # 注入 timeline markers(独立于 coach pipeline,LLM 走降级也保留)
-        report_dict["timeline"] = timeline_events
-        await queue.mark_done(sid, report_dict, cost)
-        # 视频不再删除——coach 页 /api/sessions/{id}/video 需要播放。
-        # sessions.video_path 字段已记录路径,文件保留在 VIDEO_TMP_DIR。
-        # 归档/清理策略由部署层另行处理(磁盘累积风险,点点 TODO)。
-    except Exception as e:
-        log.exception("分析失败 session=%s", sid)
-        await queue.mark_failed(sid, str(e))
-        _delete_video_safely(job["video_path"])
-        _delete_video_safely(job.get("csv_path"))
+            narration = report_dict.get("narration")
+            if backend_load_failed or not (
+                isinstance(narration, str) and narration.strip()
+            ):
+                narration_status = "unavailable"
+            else:
+                narration_status = "available"
+
+        created_at_iso = _sqlite_created_at_to_iso_z(job.get("created_at"))
+        completed_at_iso = _utc_now_iso_z()
+        artifact_manifest = build_artifact_manifest_v1(
+            video_path=job["video_path"],
+            csv_path=job["csv_path"],
+            created_at=created_at_iso,
+        )
+        result_v1 = build_analysis_result_v1(
+            report=report_dict,
+            timeline=timeline_events,
+            narration_status=narration_status,
+            cm_per_360=job.get("cm_per_360"),
+            fov=job.get("fov"),
+            artifact_manifest=artifact_manifest,
+            created_at=created_at_iso,
+            completed_at=completed_at_iso,
+        )
+        if not await queue.mark_done(sid, result_v1, cost, worker_id=WORKER_ID):
+            log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)
+        # 视频保留——coach 回放 + 失败重试；用户删除走 History 删除语义。
+    except Exception:
+        trace_id = str(uuid.uuid4())
+        log.exception("分析失败 session=%s trace_id=%s", sid, trace_id)
+        error_v1 = build_error_v1(
+            category="internal_unknown",
+            code="analysis_failed",
+            message="分析失败，请重试；若持续失败请联系维护者。",
+            retryable=True,
+            trace_id=trace_id,
+        )
+        if not await queue.mark_failed(sid, error_v1, worker_id=WORKER_ID):
+            log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)
+        # 不删输入文件：支持用户 retry；与「用户自己删」产品决定一致。
+    finally:
+        stop_hb.set()
+        try:
+            await hb_task
+        except Exception:
+            log.exception("heartbeat task join failed session=%s", sid)
     return True
 
 
@@ -186,6 +270,10 @@ async def _run_loop_async() -> None:
             log.exception("process_one 异常")
             handled = False
         if not handled:
+            try:
+                await queue.recover_stale_jobs()
+            except Exception:
+                log.exception("idle recover_stale_jobs 失败")
             await asyncio.sleep(2)
 
 

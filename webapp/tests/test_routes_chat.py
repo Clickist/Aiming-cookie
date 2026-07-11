@@ -9,6 +9,11 @@ from httpx import ASGITransport, AsyncClient
 
 from webapp.backend import db, queue
 from webapp.backend.app import app
+from webapp.backend.contracts import (
+    ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    build_analysis_result_v1,
+    dump_contract_json,
+)
 
 import webapp.backend.routes as routes_mod
 import kovaak_tracker.coach.agent as agent_mod
@@ -47,6 +52,32 @@ def _fake_report_dict() -> dict:
     }
 
 
+def _minimal_manifest() -> dict:
+    return {
+        "schema_version": ARTIFACT_MANIFEST_SCHEMA_VERSION,
+        "inputs": [],
+        "outputs": [],
+    }
+
+
+def _v1_result_from_legacy_report(legacy: dict) -> dict:
+    return build_analysis_result_v1(
+        report={
+            "diagnosis": legacy["diagnosis"],
+            "figures": legacy.get("figures") or {},
+            "notes": legacy.get("notes") or [],
+            "narration": legacy.get("narration"),
+        },
+        timeline=list(legacy.get("timeline") or []),
+        narration_status="available" if legacy.get("narration") else "not_requested",
+        cm_per_360=48.0,
+        fov=None,
+        artifact_manifest=_minimal_manifest(),
+        created_at="2026-07-10T12:00:00Z",
+        completed_at="2026-07-10T12:01:00Z",
+    )
+
+
 async def _seed_done_session(user_id: str = "u1") -> int:
     """直接写 sessions 表造一个 status=done 的 session。"""
     sid = await queue.enqueue(user_id, "/v", "/c")
@@ -54,6 +85,19 @@ async def _seed_done_session(user_id: str = "u1") -> int:
     await conn.execute(
         "UPDATE sessions SET status='done', result=? WHERE id=?",
         (json.dumps(_fake_report_dict()), sid),
+    )
+    await conn.commit()
+    return sid
+
+
+async def _seed_done_session_v1(user_id: str = "u1") -> int:
+    legacy = _fake_report_dict()
+    v1 = _v1_result_from_legacy_report(legacy)
+    sid = await queue.enqueue(user_id, "/v", "/c")
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (dump_contract_json(v1), sid),
     )
     await conn.commit()
     return sid
@@ -145,6 +189,33 @@ async def test_chat_200_with_mocked_backend(monkeypatch):
     assert captured["diagnosis_profile"] == "decel_jitter"
     assert captured["last_msg"] == "我该怎么练?"
     assert captured["messages_count"] == 1  # 只有本轮(无历史)
+
+
+@pytest.mark.asyncio
+async def test_chat_accepts_v1_result_via_contract_adapter(monkeypatch):
+    """sessions.result 存 AnalysisResult v1 时 chat 仍能通过 adapter 拿到 diagnosis。"""
+    sid = await _seed_done_session_v1()
+
+    captured: dict[str, Any] = {}
+
+    def fake_chat_with_coach(diagnosis, messages, backend, **kwargs):
+        captured["diagnosis_profile"] = diagnosis.profile.archetype_id
+        return "v1 ok"
+
+    _patch_chat_ok(monkeypatch, fake_chat_with_coach)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(
+            f"/api/sessions/{sid}/chat",
+            json={"message": "hello"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reply"] == "v1 ok"
+    assert captured["diagnosis_profile"] == "decel_jitter"
 
 
 @pytest.mark.asyncio
