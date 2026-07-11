@@ -17,7 +17,7 @@ from .contracts import (
 )
 from . import coach_store
 from .db import get_conn
-from .workspace import remove_session_workspace
+from .workspace import remove_session_workspace, workspace_size_bytes
 
 log = logging.getLogger(__name__)
 
@@ -435,6 +435,26 @@ async def has_active(user_id: str) -> bool:
     return bool(row[0])
 
 
+async def list_storage_sessions(user_id: str) -> list[dict]:
+    """Return per-session managed storage accounting for one local profile."""
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, status, created_at FROM sessions WHERE user_id=? "
+        "ORDER BY created_at DESC, id DESC",
+        (user_id,),
+    )
+    rows = await cur.fetchall()
+    return [
+        {
+            "session_id": int(row["id"]),
+            "status": row["status"],
+            "created_at": sqlite_timestamp_to_wire_utc(row["created_at"]) or "",
+            "workspace_bytes": workspace_size_bytes(row["id"]),
+        }
+        for row in rows
+    ]
+
+
 async def list_sessions(user_id: str) -> list[dict]:
     conn = await get_conn()
     cur = await conn.execute(
@@ -467,11 +487,9 @@ async def list_sessions(user_id: str) -> list[dict]:
 async def delete_session(session_id: int, user_id: str) -> dict:
     conn = await get_conn()
     await conn.execute("BEGIN IMMEDIATE")
-    video_path = ""
-    csv_path = ""
     try:
         cur = await conn.execute(
-            "SELECT id, user_id, status, video_path, csv_path FROM sessions WHERE id=?",
+            "SELECT id, user_id, status FROM sessions WHERE id=?",
             (session_id,),
         )
         row = await cur.fetchone()
@@ -482,14 +500,21 @@ async def delete_session(session_id: int, user_id: str) -> dict:
             await conn.execute("ROLLBACK")
             raise SessionForbidden()
         status = row["status"] or ""
-        if status in ("queued", "running"):
+        if status not in ("done", "failed"):
             await conn.execute("ROLLBACK")
             raise SessionNotDeletable(
                 code="active",
                 message="分析进行中，请等完成或失败后再删除",
             )
-        video_path = row["video_path"] or ""
-        csv_path = row["csv_path"] or ""
+
+        try:
+            workspace_removed = remove_session_workspace(session_id)
+        except OSError as exc:
+            await conn.execute("ROLLBACK")
+            raise SessionNotDeletable(
+                code="cleanup_failed",
+                message="托管工作区清理失败，未删除分析记录",
+            ) from exc
 
         await coach_store.migrate_session_legacy_messages(
             session_id, conn=conn,
@@ -509,24 +534,12 @@ async def delete_session(session_id: int, user_id: str) -> dict:
         await conn.execute("ROLLBACK")
         raise
 
-    files_removed: list[str] = []
-    for kind, path in (("video", video_path), ("csv", csv_path)):
-        if not path or not os.path.isfile(path):
-            continue
-        try:
-            os.remove(path)
-            files_removed.append(kind)
-        except OSError:
-            log.warning(
-                "delete_session file remove failed session_id=%s kind=%s path=%s",
-                session_id,
-                kind,
-                path,
-            )
-    if remove_session_workspace(session_id):
-        files_removed.append("workspace")
-
-    return {"deleted": True, "id": session_id, "files_removed": files_removed}
+    return {
+        "deleted": True,
+        "id": session_id,
+        "files_removed": ["workspace"] if workspace_removed else [],
+        "cleanup_failed": [],
+    }
 
 
 async def get_session(session_id: int) -> Optional[dict]:

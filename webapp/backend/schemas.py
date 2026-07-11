@@ -28,6 +28,25 @@ class AnalyzeResponse(BaseModel):
     session_id: int
 
 
+class AnalyzePathsRequest(BaseModel):
+    video_path: str
+    csv_path: str
+    cm_per_360: Optional[float] = None
+    fov: Optional[float] = None
+
+
+class StorageSessionItem(BaseModel):
+    session_id: int
+    status: str
+    created_at: str
+    workspace_bytes: int
+
+
+class StorageResponse(BaseModel):
+    total_bytes: int
+    sessions: list[StorageSessionItem]
+
+
 class SessionStatus(BaseModel):
     """GET /sessions/{id} — result is AnalysisResult v1 dict (validated at queue layer)."""
 
@@ -63,6 +82,7 @@ class DeleteSessionResponse(BaseModel):
     deleted: bool
     id: int
     files_removed: list[str]
+    cleanup_failed: list[str]
 
 
 class ChatRequest(BaseModel):

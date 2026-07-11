@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import re
 
 from fastapi import HTTPException, Request
@@ -49,3 +50,11 @@ def get_request_user_id(request: Request) -> str:
         raise HTTPException(400, "用户标识含非法字符(只允许字母数字_-)")
 
     return user_id
+
+
+def require_desktop_token(request: Request) -> None:
+    """Validate the launch-scoped desktop token without logging or persisting it."""
+    expected = config.DESKTOP_LAUNCH_TOKEN
+    provided = request.headers.get("X-Aiming-Cookie-Desktop-Token", "")
+    if not expected or not hmac.compare_digest(provided, expected):
+        raise HTTPException(401, "桌面运行时令牌无效或缺失")

@@ -122,7 +122,7 @@ async def test_list_sessions_summary_label_from_profile():
 
 
 @pytest.mark.asyncio
-async def test_delete_session_removes_row_chat_and_files():
+async def test_delete_session_removes_row_chat_and_preserves_source_files():
     tmp = Path(tempfile.gettempdir()) / "aiming_cookie_test"
     tmp.mkdir(parents=True, exist_ok=True)
     video = tmp / "del_video.mp4"
@@ -151,7 +151,8 @@ async def test_delete_session_removes_row_chat_and_files():
     body = resp.json()
     assert body["deleted"] is True
     assert body["id"] == sid
-    assert set(body["files_removed"]) == {"video", "csv"}
+    assert body["files_removed"] == []
+    assert body["cleanup_failed"] == []
 
     assert await queue.get_session(sid) is None
     history = await db.load_chat_history(sid)
@@ -164,8 +165,8 @@ async def test_delete_session_removes_row_chat_and_files():
         ("assistant", "hi"),
     ]
 
-    assert not video.exists()
-    assert not csv.exists()
+    assert video.read_bytes() == b"vid"
+    assert csv.read_bytes() == b"csv"
 
 
 @pytest.mark.asyncio
