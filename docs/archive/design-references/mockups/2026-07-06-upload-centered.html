@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aiming Cookie — 居中版上传页</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      color: rgba(255,255,255,.9);
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      background:
+        radial-gradient(circle at 50% -10%, rgba(58,58,60,.55) 0%, transparent 45%),
+        radial-gradient(circle at 50% 120%, rgba(10,132,255,.1) 0%, transparent 40%),
+        #0d0d0e;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: radial-gradient(circle at center, rgba(255,255,255,.045) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
+      -webkit-mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
+    }
+
+    header {
+      position: fixed; inset: 0 0 auto 0; z-index: 50;
+      display: flex; align-items: center; justify-content: flex-start;
+      padding: 18px 32px;
+      background: rgba(13,13,14,.55);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255,255,255,.05);
+    }
+    .logo { font-weight: 600; font-size: 16px; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+    .logo-mark {
+      width: 22px; height: 22px; border-radius: 6px;
+      background: linear-gradient(135deg, #0a84ff, #0071e3);
+    }
+
+    main {
+      position: relative; z-index: 1;
+      flex: 1;
+      max-width: 800px; width: 100%; margin: 0 auto;
+      padding: 140px 24px 80px;
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+    }
+
+    h1 {
+      font-size: 56px; line-height: 1.05; font-weight: 600; margin: 0 0 18px; letter-spacing: -.035em;
+    }
+    .subtitle {
+      color: rgba(255,255,255,.5); font-size: 17px; line-height: 1.7; max-width: 520px; margin: 0 0 44px;
+    }
+
+    .card {
+      width: 100%;
+      background: rgba(28,28,30,.65);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 40px 100px rgba(0,0,0,.35);
+    }
+
+    .dropzone {
+      width: 100%;
+      border: 1px dashed rgba(255,255,255,.18);
+      border-radius: 14px;
+      min-height: 180px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+      background: rgba(20,20,22,.5);
+      transition: .2s; cursor: pointer; margin-bottom: 22px;
+    }
+    .dropzone:hover { border-color: rgba(255,255,255,.32); background: rgba(255,255,255,.04); }
+    .dropzone .icon { font-size: 32px; color: rgba(255,255,255,.35); }
+    .dropzone h3 { margin: 0; font-size: 16px; font-weight: 500; color: rgba(255,255,255,.85); }
+    .dropzone p { margin: 0; font-size: 13px; color: rgba(255,255,255,.4); }
+
+    .config-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; text-align: left;
+    }
+    .field label {
+      display: block; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .08em; color: rgba(255,255,255,.4); margin-bottom: 7px;
+    }
+    .field input, .file {
+      width: 100%; background: rgba(20,20,22,.55); border: 1px solid rgba(255,255,255,.08);
+      border-radius: 8px; color: rgba(255,255,255,.9); padding: 10px 12px; font-size: 14px;
+    }
+    .file { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+    .file span { color: rgba(255,255,255,.4); }
+
+    .submit {
+      width: 100%; margin-top: 20px; padding: 13px; border-radius: 10px; border: none;
+      background: rgba(255,255,255,.92); color: #0d0d0e; font-size: 15px; font-weight: 600; cursor: pointer;
+      transition: .2s;
+    }
+    .submit:hover { background: #fff; }
+
+    footer {
+      position: relative; z-index: 1;
+      max-width: 1040px; width: 100%; margin: 0 auto; padding: 20px 24px;
+      display: flex; justify-content: space-between;
+      color: rgba(255,255,255,.3); font-size: 12px;
+    }
+
+    @media (max-width: 640px) {
+      h1 { font-size: 36px; }
+      .config-grid { grid-template-columns: 1fr; }
+      .card { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo"><div class="logo-mark"></div>Aiming Cookie</div>
+  </header>
+
+  <main>
+    <h1>上传录像，读取瞄准张力。</h1>
+    <p class="subtitle">
+      解析 KovaaK's 录像与 Stats CSV，提取每次 flick 的减速段特征，生成个性化的训练建议。
+    </p>
+
+    <div class="card">
+      <div class="dropzone">
+        <div class="icon">↑</div>
+        <h3>拖入 MP4 文件或点击选择</h3>
+        <p>视频上限 100 MB · 推荐 1080p / 60fps</p>
+      </div>
+
+      <div class="config-grid">
+        <div class="field">
+          <label>KovaaK Stats CSV</label>
+          <div class="file">
+            <span>未选择文件</span>
+            <span style="color:rgba(255,255,255,.35)">+</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>cm / 360</label>
+          <input value="48" />
+        </div>
+        <div class="field">
+          <label>FOV</label>
+          <input value="103" />
+        </div>
+      </div>
+
+      <button class="submit">开始分析</button>
+    </div>
+
+  </main>
+
+  <footer>
+    <span>© 2026 Aiming Cookie</span>
+    <span>Privacy · Terms · Contact</span>
+  </footer>
+</body>
+</html>

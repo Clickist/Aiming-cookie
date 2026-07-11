@@ -1,6 +1,8 @@
 # Aiming Cookie 上线部署指南（方案 A 执行版）
 
-> 2026-07-10 · 本文是 `docs/PRD.md` §9.1「方案 A：一台香港小 VPS」的**落地 checklist**，不是新设计。方向锚以 PRD 为准；本文与 PRD 冲突时以 PRD 为准。
+> **状态**：时间敏感的部署实施参考，不是产品或架构事实源。供应商、价格、政策和平台能力必须在实际部署前重新核实。
+>
+> 2026-07-10 · 本文是 `docs/PRD.md` §9.1「方案 A：一台香港小 VPS」的**落地 checklist**，不是新设计。方向锚以 PRD 为准；本文与 PRD 或 `docs/ARCHITECTURE.md` 冲突时以上游文档为准。
 >
 > 目标：把"香港 VPS + Cloudflare + GitHub Releases + 境外域名"从决策落到能直接下单、照着配的程度。需求约束：**中国大陆顺畅访问 + 免 ICP 备案**。
 
@@ -164,12 +166,12 @@ GitHub Actions 私有仓库每月 2000 分钟免费额度，v1 足够。
 1. **VPS 选哪家**：国产轻量（腾讯/阿里，便宜省心）vs 搬瓦工/DMIT（贵但大陆质量顶级）——建议 v1 先国产轻量起步。
 2. **域名注册商**：Cloudflare Registrar（成本价+一站式）vs Porkbun（解耦）。
 3. **Cloudflare 优选 IP**：v1 就做（landing 提速）还是先用默认（YAGNI，等真慢了再优化）。
-4. **桌面打包分发**：GitHub Releases 已在 PRD 定，确认即可（详见 `docs/desktop-packaging-research.md`）。
+4. **桌面打包分发**：GitHub Releases 已在 PRD 定，确认即可（历史研究见 `docs/archive/legacy/desktop-packaging-research.md`，实际施工前重新核实）。
 
 ---
 
 ## 关联
 
 - 方向锚：`docs/PRD.md` §9.1 / §5.2 / §11（合规）
-- 架构前提：`docs/superpowers/specs/2026-07-06-aiming-cookie-ia-redesign-design.md` §2.3（桌面 hybrid）
-- 桌面打包选型：`docs/desktop-packaging-research.md`（Tauri 2.0 推荐 + Python sidecar + 签名）
+- 架构前提：`docs/ARCHITECTURE.md`（Desktop hybrid 与 Local Runtime / Cloud 边界）
+- 桌面打包历史研究：`docs/archive/legacy/desktop-packaging-research.md`（只供追溯，选型需通过新 spike）
