@@ -17,8 +17,8 @@ async def test_under_budget_allowed_when_no_done():
 async def test_over_budget_rejected_after_done_accumulates():
     """done 累计超额 → 拒绝。"""
     sid = await queue.enqueue("u1", "/a", "/a.csv")
-    await queue.claim_next()
-    await queue.mark_done(sid, {}, 0.9)  # 今日已花 0.9
+    await queue.claim_next("test-worker")
+    await queue.mark_done(sid, {}, 0.9, worker_id="test-worker")  # 今日已花 0.9
     assert await llm_budget.check_and_record("u1", 0.5) is False  # 0.9 + 0.5 > 1.0
 
 
@@ -26,8 +26,8 @@ async def test_over_budget_rejected_after_done_accumulates():
 async def test_budget_isolated_per_user():
     """不同用户额度独立。"""
     sid = await queue.enqueue("u1", "/a", "/a.csv")
-    await queue.claim_next()
-    await queue.mark_done(sid, {}, 0.9)
+    await queue.claim_next("test-worker")
+    await queue.mark_done(sid, {}, 0.9, worker_id="test-worker")
     # u2 无 done,total=0,允许
     assert await llm_budget.check_and_record("u2", 0.9) is True
 
@@ -36,8 +36,8 @@ async def test_budget_isolated_per_user():
 async def test_under_boundary_allowed():
     """刚好等于上限 → 允许(<=)。"""
     sid = await queue.enqueue("u1", "/a", "/a.csv")
-    await queue.claim_next()
-    await queue.mark_done(sid, {}, 0.5)
+    await queue.claim_next("test-worker")
+    await queue.mark_done(sid, {}, 0.5, worker_id="test-worker")
     assert await llm_budget.check_and_record("u1", 0.5) is True  # 0.5 + 0.5 = 1.0
 
 

@@ -17,6 +17,7 @@ from httpx import ASGITransport, AsyncClient
 
 from webapp.backend import queue, worker
 from webapp.backend.app import app
+from webapp.backend.contracts import ANALYSIS_RESULT_SCHEMA_VERSION
 
 VIDEO = os.environ.get("E2E_VIDEO", "")
 CSV = os.environ.get("E2E_CSV", "")
@@ -47,6 +48,7 @@ async def test_full_pipeline_real_video():
     s = await queue.get_session(sid)
     assert s["status"] == "done"
     assert isinstance(s["result"], dict)
+    assert s["result"]["schema_version"] == ANALYSIS_RESULT_SCHEMA_VERSION
     # 视频保留——coach 页 /api/sessions/{id}/video 流式播放依赖此文件。
     # worker 成功路径不删(仅失败路径删),与 worker.process_one 现行行为一致。
     assert os.path.exists(s["video_path"])

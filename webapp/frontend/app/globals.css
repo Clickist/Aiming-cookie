@@ -1,13 +1,11 @@
 @import "tailwindcss";
 
 /*
- * Obsidian Hearth dark theme — tokens mirrored from
- * stitch_cursor_design_system (2)/code.html tailwind config block so Wave 2 UI
- * can use the same class names (bg-surface-container, text-on-surface-variant,
- * border-outline, etc.) verbatim.
+ * Obsidian Hearth dark theme — executable frontend design tokens.
  *
- * Source of truth: the stitch HTML config (DESIGN.md is the spec; the stitch
- * HTML is the implementation that this app must match).
+ * Governance: docs/design-system.md. Stitch HTML and DESIGN.md are visual
+ * references only; this file is the single source of truth for runtime token
+ * values consumed by the application.
  */
 @theme inline {
   /* ---- colors (dark) ---- */

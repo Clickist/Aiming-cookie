@@ -12,6 +12,7 @@
  *   - kovaak_tracker/advice.py (Prescription, Finding — Finding is collapsed
  *     into DiagnosisIssue by the diagnosis builder)
  *   - webapp/backend/schemas.py (AnalyzeResponse, SessionStatus)
+ *   - webapp/backend/contracts.py (AnalysisResult v1, Error v1)
  *   - webapp/backend/worker.py run_report (figures plotly Figure.to_dict())
  */
 
@@ -78,12 +79,104 @@ export interface PlotlyFigure {
   [key: string]: unknown;
 }
 
-/** The full coach report returned in SessionStatus.result. */
+/** UI view model for report/coach views — not the wire envelope (see AnalysisResultV1). */
 export interface CoachReport {
   diagnosis: CoachDiagnosis;
   figures: Record<string, PlotlyFigure>;
   narration: string | null;
   notes: string[];
+}
+
+/** 时间轴上的一个事件 marker(peak/miss/kill/corrective)。 */
+export interface TimelineEvent {
+  frame: number;
+  time_s: number;
+  type: "kill" | "miss" | "peak" | "corrective" | string;
+  label: string;
+}
+
+/* ---- AnalysisResult v1 wire contract (webapp/backend/contracts.py) ---- */
+
+export type AnalysisSchemaVersion = "analysis_result.v1";
+export type AnalysisVersion =
+  | "flicking_fair_summary.v1"
+  | "legacy_unversioned";
+export type AnalysisSummaryType = "flicking";
+export type ArtifactManifestSchemaVersion = "artifact_manifest.v1";
+export type ErrorSchemaVersion = "error.v1";
+export type ErrorCategory =
+  | "input_validation"
+  | "local_cv_runtime"
+  | "llm_provider"
+  | "network_cloud"
+  | "storage_disk"
+  | "internal_unknown";
+export type NarrationStatus = "available" | "unavailable" | "not_requested";
+export type ArtifactStatus = "available" | "missing" | "deleted";
+
+export interface NarrationMetadataV1 {
+  status: NarrationStatus;
+  text: string | null;
+  provider: string | null;
+  model: string | null;
+  usage: unknown | null;
+}
+
+export interface ArtifactEntryV1 {
+  id: string;
+  kind: string;
+  media_type: string;
+  size_bytes: number | null;
+  checksum_sha256: string | null;
+  status: ArtifactStatus;
+  created_at: string | null;
+}
+
+export interface ArtifactManifestV1 {
+  schema_version: ArtifactManifestSchemaVersion;
+  inputs: ArtifactEntryV1[];
+  outputs: ArtifactEntryV1[];
+}
+
+export interface NormalizationIssueV1 {
+  path: string;
+  code: string;
+  original: "nan" | "+infinity" | "-infinity";
+}
+
+export interface AnalysisResultInputV1 {
+  cm_per_360: number | null;
+  fov: number | null;
+}
+
+export interface AnalysisResultDeterministicV1 {
+  diagnosis: CoachDiagnosis;
+  figures: Record<string, PlotlyFigure>;
+  timeline: TimelineEvent[];
+}
+
+export interface AnalysisResultV1 {
+  schema_version: AnalysisSchemaVersion;
+  analysis_version: AnalysisVersion;
+  summary_type: AnalysisSummaryType;
+  created_at: string | null;
+  completed_at: string | null;
+  input: AnalysisResultInputV1;
+  deterministic: AnalysisResultDeterministicV1;
+  narration: NarrationMetadataV1;
+  artifact_manifest: ArtifactManifestV1;
+  notes: string[];
+  normalization_issues: NormalizationIssueV1[];
+}
+
+export interface ErrorV1 {
+  schema_version: ErrorSchemaVersion;
+  category: ErrorCategory;
+  code: string;
+  message: string;
+  retryable: boolean;
+  trace_id: string | null;
+  details: unknown | null;
 }
 
 /* ---- backend HTTP-layer schemas (webapp/backend/schemas.py) ---- */
@@ -98,11 +191,39 @@ export type SessionStatusEnum = "queued" | "running" | "done" | "failed";
 export interface SessionStatus {
   id: number;
   status: SessionStatusEnum;
-  /** Present when status === "done". */
-  result: CoachReport | null;
-  /** Present when status === "failed". */
-  error: string | null;
+  /** Present when status === "done" — AnalysisResult v1 wire envelope. */
+  result: AnalysisResultV1 | null;
+  /** Present when status === "failed" — Error v1 wire envelope. */
+  error: ErrorV1 | null;
   llm_cost_cny: number | null;
+  created_at: string;
+  attempts: number;
+  max_attempts: number;
+  worker_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** One row from GET /api/sessions (no full result payload). */
+export interface SessionListItem {
+  id: number;
+  status: SessionStatusEnum;
+  created_at: string;
+  finished_at: string | null;
+  attempts: number;
+  max_attempts: number;
+  llm_cost_cny: number | null;
+  summary_label: string | null;
+}
+
+export interface SessionListResponse {
+  sessions: SessionListItem[];
+}
+
+export interface DeleteSessionResponse {
+  deleted: boolean;
+  id: number;
+  files_removed: string[];
 }
 
 /* ---- coach 页:chat / timeline ---- */
@@ -118,14 +239,6 @@ export interface ChatResponse {
   reply: string | null;
   history: ChatMessage[];
   notes: string[];
-}
-
-/** 时间轴上的一个事件 marker(peak/miss/kill/corrective)。 */
-export interface TimelineEvent {
-  frame: number;
-  time_s: number;
-  type: "kill" | "miss" | "peak" | "corrective" | string;
-  label: string;
 }
 
 export interface Timeline {

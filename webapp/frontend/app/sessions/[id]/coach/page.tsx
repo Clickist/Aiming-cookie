@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import CoachView from "./CoachView";
 import { getSession } from "@/lib/api";
+import { analysisResultToCoachReport } from "@/lib/contracts";
 
 /**
  * Coach dialogue route. Left = video + custom timeline; right = coach chat.
@@ -41,7 +42,7 @@ export default async function CoachPage({
     return (
       <CoachError
         title="分析失败"
-        detail={status.error ?? "未知的后端错误"}
+        detail={status.error?.message ?? "未知的后端错误"}
       />
     );
   }
@@ -50,8 +51,8 @@ export default async function CoachPage({
     return <CoachError title="结果缺失" detail="status=done 但 result 为空" />;
   }
 
-  // archetype label 给右侧教练身份栏显示("AI 教练 · {label} 专项")
-  const archetypeLabel = status.result.diagnosis.profile.label;
+  const report = analysisResultToCoachReport(status.result);
+  const archetypeLabel = report.diagnosis.profile.label;
 
   return <CoachView sessionId={sessionId} archetypeLabel={archetypeLabel} />;
 }
@@ -61,9 +62,15 @@ function CoachError({ title, detail }: { title: string; detail: string }) {
     <main className="min-h-dvh flex items-center justify-center px-md">
       <div className="bg-surface-container-low border border-outline rounded-lg p-lg max-w-[640px] w-full">
         <h1 className="text-headline-sm text-on-surface mb-sm">{title}</h1>
-        <p className="text-body-md text-on-surface-variant break-words">
+        <p className="text-body-md text-on-surface-variant break-words mb-md">
           {detail}
         </p>
+        <a
+          href="/history"
+          className="text-label-md text-primary hover:opacity-80 transition-opacity"
+        >
+          返回历史记录
+        </a>
       </div>
     </main>
   );
