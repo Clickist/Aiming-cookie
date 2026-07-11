@@ -4,13 +4,14 @@ import datetime
 import logging
 import os
 import shutil
+from pathlib import Path as FilePath
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, HTTPException, Path
 from fastapi.responses import FileResponse
 
 from . import coach_store, config, db, queue
-from .auth import get_request_user_id
+from .auth import get_request_user_id, require_desktop_token
 from .coach_service import run_chat_turn
 from .health import build_coach_runtime_status
 from .contracts import UnsupportedContractVersion, analysis_result_to_coach_report
@@ -21,6 +22,7 @@ from .queue import (
     SessionNotFound,
 )
 from .schemas import (
+    AnalyzePathsRequest,
     AnalyzeResponse,
     ChatMessageOut,
     ChatRequest,
@@ -38,11 +40,14 @@ from .schemas import (
     SessionListItem,
     SessionListResponse,
     SessionStatus,
+    StorageResponse,
+    StorageSessionItem,
     Timeline,
     TimelineEvent,
 )
 from .workspace import (
     UploadSizeExceeded,
+    copy_path_to_path,
     remove_session_workspace,
     session_dir,
     stream_upload_to_path,
@@ -56,15 +61,30 @@ _ALLOWED_VIDEO_EXTS = {".mp4"}
 _ALLOWED_CSV_EXTS = {".csv"}
 
 
-def _require_upload_disk_space() -> None:
-    """Reject uploads when the DATA_ROOT volume has insufficient free space."""
+def _require_upload_disk_space(required_bytes: int = 0) -> None:
+    """Reject writes when the managed data volume lacks reserve plus the incoming bytes."""
+    config.DATA_ROOT.mkdir(parents=True, exist_ok=True)
     usage = shutil.disk_usage(config.DATA_ROOT)
-    if usage.free < config.MIN_FREE_DISK_BYTES:
-        need_mb = config.MIN_FREE_DISK_BYTES // (1024 * 1024)
+    required = config.MIN_FREE_DISK_BYTES + required_bytes
+    if usage.free < required:
+        need_mb = required // (1024 * 1024)
         raise HTTPException(
             507,
             f"数据盘可用空间不足，无法接收上传（需至少 {need_mb}MB 空闲）",
         )
+
+
+def _validate_local_input_path(raw_path: str, *, allowed_exts: set[str], label: str):
+    path = os.path.abspath(raw_path)
+    if not os.path.isabs(raw_path) or not os.path.isfile(path):
+        raise HTTPException(400, f"{label} 路径必须是存在的绝对普通文件")
+    if not os.access(path, os.R_OK):
+        raise HTTPException(400, f"{label} 文件不可读")
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in allowed_exts:
+        allowed = ", ".join(sorted(allowed_exts))
+        raise HTTPException(400, f"{label} 扩展名不支持（仅 {allowed}）")
+    return os.path.realpath(path)
 
 
 def _assert_session_owner(s: dict, x_user_id: str) -> None:
@@ -106,13 +126,66 @@ async def _update_session_input_paths(
 
 
 async def _abort_uploading_session(session_id: int) -> None:
-    remove_session_workspace(session_id)
+    try:
+        remove_session_workspace(session_id)
+    except OSError:
+        log.exception("incomplete workspace cleanup failed session_id=%s", session_id)
     conn = await db.get_conn()
     await conn.execute(
         "DELETE FROM sessions WHERE id=? AND status='uploading'",
         (session_id,),
     )
     await conn.commit()
+
+
+@router.post("/desktop/analyze-paths", response_model=AnalyzeResponse)
+async def analyze_paths(
+    request: AnalyzePathsRequest,
+    _: None = Depends(require_desktop_token),
+):
+    """Import desktop-selected local files into a managed session workspace."""
+    user_id = config.DESKTOP_LOCAL_PROFILE
+    if await queue.has_active(user_id):
+        raise HTTPException(429, "已有分析进行中,等完成再提交")
+
+    video_path = _validate_local_input_path(
+        request.video_path, allowed_exts=_ALLOWED_VIDEO_EXTS, label="视频",
+    )
+    csv_path = _validate_local_input_path(
+        request.csv_path, allowed_exts=_ALLOWED_CSV_EXTS, label="CSV",
+    )
+    video_size = os.path.getsize(video_path)
+    csv_size = os.path.getsize(csv_path)
+    _require_upload_disk_space(video_size + csv_size)
+
+    sid = await queue.enqueue(
+        user_id, "", "", cm_per_360=request.cm_per_360, fov=request.fov, status="uploading",
+    )
+    workspace = session_dir(sid)
+    managed_video = workspace / "video.mp4"
+    managed_csv = workspace / "stats.csv"
+    try:
+        copy_path_to_path(FilePath(video_path), managed_video)
+        copy_path_to_path(FilePath(csv_path), managed_csv)
+        await _update_session_input_paths(sid, str(managed_video), str(managed_csv))
+        if not await queue.finish_upload(sid):
+            raise HTTPException(409, "上传状态已失效，请重新提交")
+    except HTTPException:
+        await _abort_uploading_session(sid)
+        raise
+    except Exception:
+        await _abort_uploading_session(sid)
+        raise
+    return AnalyzeResponse(session_id=sid)
+
+
+@router.get("/storage", response_model=StorageResponse)
+async def get_storage(_: None = Depends(require_desktop_token)):
+    sessions = await queue.list_storage_sessions(config.DESKTOP_LOCAL_PROFILE)
+    return StorageResponse(
+        total_bytes=sum(session["workspace_bytes"] for session in sessions),
+        sessions=[StorageSessionItem(**session) for session in sessions],
+    )
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -239,7 +312,7 @@ async def delete_session(
     session_id: int = Path(...),
     x_user_id: str = Depends(get_request_user_id),
 ):
-    """删除 session 行、chat 记录，并 best-effort 删除磁盘上的 video/csv。"""
+    """Delete a terminal analysis and only its managed workspace copy."""
     try:
         out = await queue.delete_session(session_id, x_user_id)
     except SessionNotFound as exc:

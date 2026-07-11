@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -26,11 +27,31 @@ VIDEO_TMP_DIR = Path(os.environ.get(
 ))
 VIDEO_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-# Session workspaces: {DATA_ROOT}/sessions/{session_id}/ (legacy flat files may live under VIDEO_TMP_DIR)
-DATA_ROOT = Path(
-    os.environ.get("DATA_ROOT", str(VIDEO_TMP_DIR)),
-).resolve()
+
+def resolve_data_root() -> Path:
+    """Resolve the managed desktop data directory, retaining DATA_ROOT for tests/dev."""
+    override = os.environ.get("DATA_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    if sys.platform == "win32":
+        app_data = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+        base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        xdg_data_home = os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg_data_home) if xdg_data_home else Path.home() / ".local" / "share"
+    return (base / "Aiming Cookie").expanduser().resolve()
+
+
+# Session workspaces: {DATA_ROOT}/sessions/{session_id}/. DATA_ROOT is an explicit
+# dev/test override; production desktop defaults to platform App Data.
+DATA_ROOT = resolve_data_root()
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
+
+# The desktop runtime owns this per-launch secret; it is never persisted or logged.
+DESKTOP_LAUNCH_TOKEN = os.environ.get("AIMING_COOKIE_DESKTOP_TOKEN", "")
+DESKTOP_LOCAL_PROFILE = "desktop-local"
 
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")
 LLM_DAILY_BUDGET_CNY = float(os.environ.get("LLM_DAILY_BUDGET_CNY", "1.0"))
