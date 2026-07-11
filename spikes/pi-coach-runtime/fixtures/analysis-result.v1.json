@@ -1,0 +1,17 @@
+{
+  "schema_version": "analysis_result.v1",
+  "analysis_version": "flicking_fair_summary.v1",
+  "summary_type": "flicking",
+  "created_at": "2026-07-11T00:00:00Z",
+  "completed_at": "2026-07-11T00:01:00Z",
+  "input": {"cm_per_360": 34.5, "fov": 103.0},
+  "deterministic": {
+    "diagnosis": {"summary": {"fixture_signal": "stable"}},
+    "figures": {},
+    "timeline": []
+  },
+  "narration": {"status": "not_requested", "text": null, "provider": null, "model": null, "usage": null},
+  "artifact_manifest": {"schema_version": "artifact_manifest.v1", "inputs": [], "outputs": []},
+  "notes": ["fixture-only"],
+  "normalization_issues": []
+}
