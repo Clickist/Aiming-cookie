@@ -5,9 +5,7 @@ use std::io;
 use tauri::{Manager, State};
 
 #[tauri::command]
-fn desktop_runtime_connection(
-    state: State<'_, RuntimeState>,
-) -> Result<RuntimeConnection, String> {
+fn desktop_runtime_connection(state: State<'_, RuntimeState>) -> Result<RuntimeConnection, String> {
     state.connection()
 }
 
@@ -17,8 +15,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
-            let runtime = RuntimeProcess::start(&project_root(), &app_data_dir)
-                .map_err(|message| io::Error::new(io::ErrorKind::Other, message))?;
+            let runtime =
+                RuntimeProcess::start(&project_root(), &app_data_dir).map_err(io::Error::other)?;
             app.manage(RuntimeState::new(runtime));
             Ok(())
         })
