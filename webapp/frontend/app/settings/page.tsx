@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { StorageSettings } from "../../components/StorageSettings";
 import { ThemePreferenceSelect } from "../../components/ThemeController";
 
 export default function SettingsPage() {
@@ -25,6 +26,8 @@ export default function SettingsPage() {
             <ThemePreferenceSelect />
           </div>
         </section>
+
+        <StorageSettings />
       </div>
     </main>
   );
