@@ -17,6 +17,7 @@ from .contracts import (
 )
 from . import coach_store
 from .db import get_conn
+from .workspace import remove_session_workspace
 
 log = logging.getLogger(__name__)
 
@@ -101,17 +102,37 @@ def _lease_expiry_sqlite(now: str | None = None) -> str:
 async def enqueue(
     user_id: str, video_path: str, csv_path: str,
     cm_per_360: float | None = None, fov: float | None = None,
+    *, status: str = "queued",
 ) -> int:
     conn = await get_conn()
     cur = await conn.execute(
         "INSERT INTO sessions("
-        "user_id, video_path, csv_path, cm_per_360, fov, attempts, max_attempts"
-        ") VALUES(?, ?, ?, ?, ?, 0, ?) RETURNING id",
-        (user_id, video_path, csv_path, cm_per_360, fov, DEFAULT_MAX_ATTEMPTS),
+        "user_id, status, video_path, csv_path, cm_per_360, fov, attempts, max_attempts"
+        ") VALUES(?, ?, ?, ?, ?, ?, 0, ?) RETURNING id",
+        (
+            user_id,
+            status,
+            video_path,
+            csv_path,
+            cm_per_360,
+            fov,
+            DEFAULT_MAX_ATTEMPTS,
+        ),
     )
     row = await cur.fetchone()
     await conn.commit()
     return row["id"]
+
+
+async def finish_upload(session_id: int) -> bool:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "UPDATE sessions SET status='queued', updated_at=CURRENT_TIMESTAMP "
+        "WHERE id=? AND status='uploading'",
+        (session_id,),
+    )
+    await conn.commit()
+    return cur.rowcount > 0
 
 
 async def claim_next(worker_id: str) -> Optional[dict]:
@@ -407,7 +428,7 @@ async def has_active(user_id: str) -> bool:
     conn = await get_conn()
     cur = await conn.execute(
         "SELECT EXISTS(SELECT 1 FROM sessions "
-        "WHERE user_id=? AND status IN ('queued', 'running'))",
+        "WHERE user_id=? AND status IN ('uploading', 'queued', 'running'))",
         (user_id,),
     )
     row = await cur.fetchone()
@@ -502,6 +523,9 @@ async def delete_session(session_id: int, user_id: str) -> dict:
                 kind,
                 path,
             )
+    if remove_session_workspace(session_id):
+        files_removed.append("workspace")
+
     return {"deleted": True, "id": session_id, "files_removed": files_removed}
 
 

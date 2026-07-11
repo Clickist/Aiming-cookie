@@ -113,6 +113,38 @@ Cloudflare 默认智能路由常把大陆流量绕到拥堵国际节点。优化
 - **密钥**：LLM API key 等走环境变量 / `.env`，不进代码仓库
 - **目录结构建议**：`/opt/aiming-cookie/{docker-compose.yml, .env, data/}`
 
+### 5.1 探活、就绪与预览身份（内部技术预览）
+
+| 端点 / 变量 | 用途 |
+|---|---|
+| `GET /healthz` | **存活探针**：进程能响应即 200 `{"ok":true}`，给负载均衡 / systemd 轻量检查。 |
+| `GET /readyz` | **就绪探针**：DB 可连，且配置了 `COACH_SIDECAR_URL` 时 sidecar `/healthz` 可达 → 200；任一失败 → 503。 |
+| `TRUST_PROXY_USER=1` | **预览/生产身份**：只认反代注入的 `X-Forwarded-User` 或 `Remote-User`，**忽略**客户端自填的 `X-User-Id`。前面必须有 VPN/SSO/nginx 等可信反代。 |
+| `COACH_SIDECAR_URL` | Pi coach 常驻 sidecar 基址（默认 `http://127.0.0.1:8765`）。 |
+
+**本地预览建议**：与 API 同机用 `./scripts/dev-up.sh` 一并拉起 sidecar + API（见 `webapp/README.md`）。
+
+**Coach sidecar 启动**（与 API 同机 loopback）：
+
+```bash
+./scripts/run-coach-sidecar.sh
+# 可选：COACH_SIDECAR_PORT=8765 COACH_SIDECAR_HOST=127.0.0.1
+```
+
+API 环境示例：`.env` 中 `COACH_SIDECAR_URL=http://127.0.0.1:8765`；配置该 URL 后，`/readyz` 会把 sidecar 健康作为就绪条件。不使用 sidecar 时将该变量设为空。
+
+**nginx 预览身份示例**（示意，按实际 SSO 改 `auth_request` / header）：
+
+```nginx
+proxy_set_header X-Forwarded-User $remote_user;
+# 应用侧 TRUST_PROXY_USER=1
+```
+
+本地开发默认 `TRUST_PROXY_USER=0`，仍可用 `X-User-Id: dev`。
+
+**浏览器验收骨架**（可选 CI / 发布前）：`webapp/tests/test_browser_smoke.py`；需 `pip install playwright && playwright install chromium`。
+
+
 ---
 
 ## 6. CI/CD ✅（sources: github.com / cloudflare.com / tencentcloud.com）
