@@ -26,10 +26,20 @@ VIDEO_TMP_DIR = Path(os.environ.get(
 ))
 VIDEO_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
+# Session workspaces: {DATA_ROOT}/sessions/{session_id}/ (legacy flat files may live under VIDEO_TMP_DIR)
+DATA_ROOT = Path(
+    os.environ.get("DATA_ROOT", str(VIDEO_TMP_DIR)),
+).resolve()
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
+
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")
 LLM_DAILY_BUDGET_CNY = float(os.environ.get("LLM_DAILY_BUDGET_CNY", "1.0"))
 MAX_VIDEO_BYTES = 100 * 1024 * 1024  # 100MB
 MAX_CSV_BYTES = 10 * 1024 * 1024    # 10MB(KovaaK Stats CSV 实际 <1MB,留余量)
+UPLOAD_CHUNK_SIZE = int(os.environ.get("UPLOAD_CHUNK_SIZE", str(1024 * 1024)))  # 1MB
+MIN_FREE_DISK_BYTES = int(
+    os.environ.get("MIN_FREE_DISK_BYTES", str(500 * 1024 * 1024))
+)  # refuse upload when DATA_ROOT volume free space is below this
 
 # Worker job lease / heartbeat (CV ~160s; TTL leaves headroom if heartbeat pauses)
 LEASE_TTL_SECONDS = int(os.environ.get("LEASE_TTL_SECONDS", "300"))
@@ -57,3 +67,5 @@ COACH_SIDECAR_URL = os.environ.get(
 COACH_SIDECAR_FALLBACK_SUBPROCESS = os.environ.get(
     "COACH_SIDECAR_FALLBACK_SUBPROCESS", "1"
 ).strip()
+# Preview/prod: TRUST_PROXY_USER=1 behind VPN/SSO reverse proxy; only proxy user headers count.
+TRUST_PROXY_USER = os.environ.get("TRUST_PROXY_USER", "0").strip()

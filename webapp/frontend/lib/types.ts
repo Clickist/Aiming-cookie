@@ -291,3 +291,10 @@ export interface CoachPrimaryAttachResponse {
   ref: CoachAnalysisRefOut;
 }
 
+export interface CoachRuntimeStatusResponse {
+  ok: boolean;
+  runtime: "pi" | "python";
+  sidecar: "up" | "down" | "n/a";
+  ready_for_fast_path: boolean;
+  message: string;
+}
