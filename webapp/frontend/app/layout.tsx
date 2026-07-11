@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Outfit } from "next/font/google";
 import "./globals.css";
+import { ThemeController } from "../components/ThemeController";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -19,6 +20,28 @@ const outfit = Outfit({
   variable: "--font-outfit",
   display: "swap",
 });
+
+const themeBootstrapScript = `(() => {
+  try {
+    const stored = window.localStorage.getItem("aiming-cookie-theme");
+    const preference = stored === "light" || stored === "dark" || stored === "system"
+      ? stored
+      : "system";
+    const theme = preference === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : preference;
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  } catch {
+    const theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }
+})();`;
 
 export const metadata: Metadata = {
   title: "Aiming Cookie — Flicking 张力分析与 AI 教练",
@@ -42,9 +65,11 @@ export default function RootLayout({
   return (
     <html
       lang="zh-CN"
-      className={`dark ${inter.variable} ${jetbrainsMono.variable} ${outfit.variable}`}
+      className={`${inter.variable} ${jetbrainsMono.variable} ${outfit.variable}`}
+      suppressHydrationWarning
     >
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
         {/* Material Symbols Outlined — coach 页图标(play_arrow/pause/send/
             psychology 等)依赖此字体。与 stitch 设计稿 CDN 一致。 */}
         <link
@@ -59,6 +84,7 @@ export default function RootLayout({
         >
           跳到主内容
         </a>
+        <ThemeController />
         {children}
       </body>
     </html>
