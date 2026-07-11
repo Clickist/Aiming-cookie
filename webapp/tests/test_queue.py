@@ -353,6 +353,86 @@ async def test_mark_failed_requires_running_owner_worker():
     assert s["error"]["code"] == "legacy_error"
 
 
+
+
+@pytest.mark.asyncio
+async def test_delete_done_session_keeps_coach_messages_marks_ref_deleted():
+    from webapp.backend import coach_store
+
+    sid = await queue.enqueue("u1", "/a", "/a.csv")
+    conn = await db.get_conn()
+    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
+    await conn.commit()
+
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    tid = int(thread["id"])
+    await coach_store.append_message(tid, "user", "keep me")
+    await coach_store.append_message(tid, "assistant", "still here")
+    await coach_store.attach_analysis_ref(tid, sid)
+
+    out = await queue.delete_session(sid, "u1")
+    assert out["deleted"] is True
+    assert await queue.get_session(sid) is None
+
+    msgs = await coach_store.load_messages(tid)
+    assert [m["content"] for m in msgs] == ["keep me", "still here"]
+
+    refs = await coach_store.list_analysis_refs(tid)
+    assert len(refs) == 1
+    assert refs[0]["analysis_session_id"] == sid
+    assert refs[0]["status"] == "deleted"
+    assert refs[0]["deleted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_session_rejects_queued_and_running():
+    sid_q = await queue.enqueue("u1", "/q", "/q.csv")
+    with pytest.raises(queue.SessionNotDeletable) as exc_q:
+        await queue.delete_session(sid_q, "u1")
+    assert exc_q.value.code == "active"
+
+    sid_r = await queue.enqueue("u1", "/r", "/r.csv")
+    await queue.claim_next(TEST_WORKER)
+    with pytest.raises(queue.SessionNotDeletable):
+        await queue.delete_session(sid_r, "u1")
+
+
+@pytest.mark.asyncio
+async def test_delete_session_migrates_legacy_chat_before_removing_session():
+    from webapp.backend import coach_store
+
+    sid = await queue.enqueue("u1", "/a", "/a.csv")
+    conn = await db.get_conn()
+    await conn.execute("UPDATE sessions SET status='failed' WHERE id=?", (sid,))
+    await conn.commit()
+    await db.save_chat_message(sid, "user", "legacy hello")
+    await db.save_chat_message(sid, "assistant", "legacy reply")
+
+    thread_before = await coach_store.get_or_create_primary_thread("u1")
+    assert await coach_store.load_messages(int(thread_before["id"])) == []
+
+    await queue.delete_session(sid, "u1")
+    assert await queue.get_session(sid) is None
+
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    msgs = await coach_store.load_messages(int(thread["id"]))
+    assert [(m["role"], m["content"], m["legacy_session_id"]) for m in msgs] == [
+        ("user", "legacy hello", sid),
+        ("assistant", "legacy reply", sid),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_forbidden_wrong_user():
+    sid = await queue.enqueue("owner", "/a", "/a.csv")
+    conn = await db.get_conn()
+    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
+    await conn.commit()
+
+    with pytest.raises(queue.SessionForbidden):
+        await queue.delete_session(sid, "intruder")
+    assert await queue.get_session(sid) is not None
+
 @pytest.mark.asyncio
 async def test_stale_worker_cannot_overwrite_after_reclaim():
     sid = await queue.enqueue("u1", "/a", "/a.csv")

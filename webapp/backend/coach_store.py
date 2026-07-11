@@ -12,8 +12,14 @@ import aiosqlite
 from .db import get_conn
 
 
-async def get_or_create_primary_thread(user_id: str) -> dict[str, Any]:
-    conn = await get_conn()
+async def get_or_create_primary_thread(
+    user_id: str,
+    *,
+    conn: Optional[aiosqlite.Connection] = None,
+) -> dict[str, Any]:
+    owns_commit = conn is None
+    if conn is None:
+        conn = await get_conn()
     cur = await conn.execute(
         "SELECT id, user_id, kind, created_at, updated_at "
         "FROM coach_threads WHERE user_id=? AND kind='primary'",
@@ -29,7 +35,8 @@ async def get_or_create_primary_thread(user_id: str) -> dict[str, Any]:
         (user_id,),
     )
     row = await cur.fetchone()
-    await conn.commit()
+    if owns_commit:
+        await conn.commit()
     return dict(row)
 
 
@@ -117,16 +124,23 @@ async def attach_analysis_ref(
     return dict(row)
 
 
-async def mark_analysis_refs_deleted(analysis_session_id: int) -> int:
+async def mark_analysis_refs_deleted(
+    analysis_session_id: int,
+    *,
+    conn: Optional[aiosqlite.Connection] = None,
+) -> int:
     """Mark all active refs for a session as deleted. Returns rows updated."""
-    conn = await get_conn()
+    owns_commit = conn is None
+    if conn is None:
+        conn = await get_conn()
     cur = await conn.execute(
         "UPDATE coach_analysis_refs "
         "SET status='deleted', deleted_at=CURRENT_TIMESTAMP "
         "WHERE analysis_session_id=? AND status='active'",
         (analysis_session_id,),
     )
-    await conn.commit()
+    if owns_commit:
+        await conn.commit()
     return int(cur.rowcount or 0)
 
 
@@ -140,33 +154,106 @@ async def list_analysis_refs(thread_id: int) -> list[dict[str, Any]]:
     return [dict(r) for r in await cur.fetchall()]
 
 
-async def _legacy_message_already_migrated(
+async def _legacy_chat_id_migrated(
     conn: aiosqlite.Connection,
-    thread_id: int,
-    session_id: int,
-    role: str,
-    content: str,
-    created_at: Optional[str],
+    legacy_chat_message_id: int,
 ) -> bool:
-    if created_at is None:
-        cur = await conn.execute(
-            "SELECT id FROM coach_messages "
-            "WHERE thread_id=? AND legacy_session_id=? AND role=? AND content=? "
-            "AND created_at IS NULL",
-            (thread_id, session_id, role, content),
-        )
-    else:
-        cur = await conn.execute(
-            "SELECT id FROM coach_messages "
-            "WHERE thread_id=? AND legacy_session_id=? AND role=? AND content=? "
-            "AND created_at=?",
-            (thread_id, session_id, role, content, created_at),
-        )
+    cur = await conn.execute(
+        "SELECT id FROM coach_messages WHERE legacy_chat_message_id=?",
+        (legacy_chat_message_id,),
+    )
     return await cur.fetchone() is not None
 
 
+async def migrate_session_legacy_messages(
+    session_id: int,
+    *,
+    conn: Optional[aiosqlite.Connection] = None,
+) -> dict[str, int]:
+    """Migrate chat_messages for one session into the user's primary thread.
+
+    Idempotent via ``legacy_chat_message_id`` (chat_messages.id).
+    Returns ``{messages_copied, refs_created}``.
+    """
+    owns_commit = conn is None
+    if conn is None:
+        conn = await get_conn()
+
+    cur = await conn.execute(
+        "SELECT user_id FROM sessions WHERE id=?",
+        (session_id,),
+    )
+    session_row = await cur.fetchone()
+    if session_row is None:
+        user_id = "orphan"
+        session_exists = False
+    else:
+        user_id = session_row["user_id"]
+        session_exists = True
+
+    thread = await get_or_create_primary_thread(user_id, conn=conn)
+    thread_id = int(thread["id"])
+
+    cur = await conn.execute(
+        "SELECT id, role, content, created_at, trace_json "
+        "FROM chat_messages WHERE session_id=? ORDER BY id",
+        (session_id,),
+    )
+    legacy_rows = await cur.fetchall()
+
+    messages_copied = 0
+    for lr in legacy_rows:
+        legacy_id = int(lr["id"])
+        if await _legacy_chat_id_migrated(conn, legacy_id):
+            continue
+        await conn.execute(
+            "INSERT INTO coach_messages("
+            "thread_id, role, content, created_at, trace_json, "
+            "legacy_session_id, legacy_chat_message_id"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (
+                thread_id,
+                lr["role"],
+                lr["content"],
+                lr["created_at"],
+                lr["trace_json"],
+                session_id,
+                legacy_id,
+            ),
+        )
+        messages_copied += 1
+
+    refs_created = 0
+    cur = await conn.execute(
+        "SELECT id FROM coach_analysis_refs "
+        "WHERE thread_id=? AND analysis_session_id=?",
+        (thread_id, session_id),
+    )
+    if await cur.fetchone() is None:
+        if session_exists:
+            await conn.execute(
+                "INSERT INTO coach_analysis_refs("
+                "thread_id, analysis_session_id, status"
+                ") VALUES(?, ?, 'active')",
+                (thread_id, session_id),
+            )
+        else:
+            await conn.execute(
+                "INSERT INTO coach_analysis_refs("
+                "thread_id, analysis_session_id, status, deleted_at"
+                ") VALUES(?, ?, 'deleted', CURRENT_TIMESTAMP)",
+                (thread_id, session_id),
+            )
+        refs_created = 1
+
+    if owns_commit:
+        await conn.commit()
+
+    return {"messages_copied": messages_copied, "refs_created": refs_created}
+
+
 async def migrate_legacy_chat_messages() -> dict[str, int]:
-    """Idempotent migration from session-bound chat_messages.
+    """Idempotent migration from session-bound chat_messages (all sessions).
 
     Returns counts: {sessions_seen, messages_copied, refs_created}.
     """
@@ -182,73 +269,11 @@ async def migrate_legacy_chat_messages() -> dict[str, int]:
 
     for session_id in session_ids:
         sessions_seen += 1
-        cur = await conn.execute(
-            "SELECT user_id FROM sessions WHERE id=?",
-            (session_id,),
+        result = await migrate_session_legacy_messages(
+            session_id, conn=conn,
         )
-        session_row = await cur.fetchone()
-        if session_row is None:
-            user_id = "orphan"
-            session_exists = False
-        else:
-            user_id = session_row["user_id"]
-            session_exists = True
-
-        thread = await get_or_create_primary_thread(user_id)
-        thread_id = int(thread["id"])
-
-        cur = await conn.execute(
-            "SELECT id, role, content, created_at, trace_json "
-            "FROM chat_messages WHERE session_id=? ORDER BY id",
-            (session_id,),
-        )
-        legacy_rows = await cur.fetchall()
-        for lr in legacy_rows:
-            if await _legacy_message_already_migrated(
-                conn,
-                thread_id,
-                session_id,
-                lr["role"],
-                lr["content"],
-                lr["created_at"],
-            ):
-                continue
-            await conn.execute(
-                "INSERT INTO coach_messages("
-                "thread_id, role, content, created_at, trace_json, legacy_session_id"
-                ") VALUES(?, ?, ?, ?, ?, ?)",
-                (
-                    thread_id,
-                    lr["role"],
-                    lr["content"],
-                    lr["created_at"],
-                    lr["trace_json"],
-                    session_id,
-                ),
-            )
-            messages_copied += 1
-
-        cur = await conn.execute(
-            "SELECT id FROM coach_analysis_refs "
-            "WHERE thread_id=? AND analysis_session_id=?",
-            (thread_id, session_id),
-        )
-        if await cur.fetchone() is None:
-            if session_exists:
-                await conn.execute(
-                    "INSERT INTO coach_analysis_refs("
-                    "thread_id, analysis_session_id, status"
-                    ") VALUES(?, ?, 'active')",
-                    (thread_id, session_id),
-                )
-            else:
-                await conn.execute(
-                    "INSERT INTO coach_analysis_refs("
-                    "thread_id, analysis_session_id, status, deleted_at"
-                    ") VALUES(?, ?, 'deleted', CURRENT_TIMESTAMP)",
-                    (thread_id, session_id),
-                )
-            refs_created += 1
+        messages_copied += result["messages_copied"]
+        refs_created += result["refs_created"]
 
     await conn.commit()
     return {
@@ -259,65 +284,15 @@ async def migrate_legacy_chat_messages() -> dict[str, int]:
 
 
 async def ensure_legacy_session_messages_migrated(session_id: int) -> int:
-    """Migrate chat_messages for one session into primary thread. Returns copied count.
-
-    Used by delete_session so messages are not lost when session row is removed.
-    """
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT user_id FROM sessions WHERE id=?",
-        (session_id,),
-    )
-    session_row = await cur.fetchone()
-    if session_row is None:
+    """Thin wrapper: migrate one session before session row removal."""
+    if session_id <= 0:
         return 0
-    user_id = session_row["user_id"]
-    thread = await get_or_create_primary_thread(user_id)
-    thread_id = int(thread["id"])
-
-    cur = await conn.execute(
-        "SELECT id, role, content, created_at, trace_json "
-        "FROM chat_messages WHERE session_id=? ORDER BY id",
+    cur_conn = await get_conn()
+    cur = await cur_conn.execute(
+        "SELECT id FROM sessions WHERE id=?",
         (session_id,),
-    )
-    legacy_rows = await cur.fetchall()
-    copied = 0
-    for lr in legacy_rows:
-        if await _legacy_message_already_migrated(
-            conn,
-            thread_id,
-            session_id,
-            lr["role"],
-            lr["content"],
-            lr["created_at"],
-        ):
-            continue
-        await conn.execute(
-            "INSERT INTO coach_messages("
-            "thread_id, role, content, created_at, trace_json, legacy_session_id"
-            ") VALUES(?, ?, ?, ?, ?, ?)",
-            (
-                thread_id,
-                lr["role"],
-                lr["content"],
-                lr["created_at"],
-                lr["trace_json"],
-                session_id,
-            ),
-        )
-        copied += 1
-
-    cur = await conn.execute(
-        "SELECT id FROM coach_analysis_refs "
-        "WHERE thread_id=? AND analysis_session_id=?",
-        (thread_id, session_id),
     )
     if await cur.fetchone() is None:
-        await conn.execute(
-            "INSERT INTO coach_analysis_refs("
-            "thread_id, analysis_session_id, status"
-            ") VALUES(?, ?, 'active')",
-            (thread_id, session_id),
-        )
-    await conn.commit()
-    return copied
+        return 0
+    result = await migrate_session_legacy_messages(session_id)
+    return int(result["messages_copied"])

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import db, queue
+from webapp.backend import coach_store, db, queue
 from webapp.backend.app import app
 from webapp.backend.contracts import build_analysis_result_v1, dump_contract_json
 from webapp.backend.queue import (
@@ -156,6 +156,14 @@ async def test_delete_session_removes_row_chat_and_files():
     assert await queue.get_session(sid) is None
     history = await db.load_chat_history(sid)
     assert history == []
+
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    msgs = await coach_store.load_messages(int(thread["id"]))
+    assert [(m["role"], m["content"]) for m in msgs] == [
+        ("user", "hello"),
+        ("assistant", "hi"),
+    ]
+
     assert not video.exists()
     assert not csv.exists()
 
