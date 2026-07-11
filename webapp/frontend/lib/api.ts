@@ -16,6 +16,7 @@ import type {
   CoachPrimaryAttachResponse,
   CoachPrimaryMessageResponse,
   CoachPrimaryResponse,
+  CoachRuntimeStatusResponse,
   DeleteSessionResponse,
   SessionListResponse,
   SessionStatus,
@@ -244,6 +245,18 @@ export function getVideoUrl(sessionId: number): string {
 }
 
 /* ---- primary coach thread ---- */
+
+/** GET /api/coach/runtime-status — sidecar / runtime readiness for UI. */
+export async function getCoachRuntimeStatus(
+  opts: { signal?: AbortSignal } = {},
+): Promise<CoachRuntimeStatusResponse> {
+  const res = await fetch(`${API_BASE}/api/coach/runtime-status`, {
+    method: "GET",
+    signal: opts.signal,
+  });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachRuntimeStatusResponse;
+}
 
 /** GET /api/coach/primary — lazy-create thread, messages, refs. */
 export async function getCoachPrimary(

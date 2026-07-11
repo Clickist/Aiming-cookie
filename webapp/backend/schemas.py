@@ -144,3 +144,11 @@ class CoachPrimaryMessageResponse(BaseModel):
 
 class CoachPrimaryAttachResponse(BaseModel):
     ref: CoachAnalysisRefOut
+
+
+class CoachRuntimeStatusResponse(BaseModel):
+    ok: bool = True
+    runtime: Literal["pi", "python"]
+    sidecar: Literal["up", "down", "n/a"]
+    ready_for_fast_path: bool
+    message: str

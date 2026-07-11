@@ -3,16 +3,16 @@ from __future__ import annotations
 import datetime
 import logging
 import os
-import re
-import uuid
+import shutil
 from typing import Optional
 
-from fastapi import APIRouter, Body, Form, UploadFile, File, Header, HTTPException, Path
+from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, HTTPException, Path
 from fastapi.responses import FileResponse
 
-from . import coach_store, db, queue
+from . import coach_store, config, db, queue
+from .auth import get_request_user_id
 from .coach_service import run_chat_turn
-from .config import MAX_CSV_BYTES, MAX_VIDEO_BYTES, VIDEO_TMP_DIR
+from .health import build_coach_runtime_status
 from .contracts import UnsupportedContractVersion, analysis_result_to_coach_report
 from .queue import (
     RetryNotAllowed,
@@ -31,6 +31,7 @@ from .schemas import (
     CoachPrimaryMessageRequest,
     CoachPrimaryMessageResponse,
     CoachPrimaryResponse,
+    CoachRuntimeStatusResponse,
     CoachThreadMessageOut,
     CoachThreadOut,
     DeleteSessionResponse,
@@ -40,15 +41,30 @@ from .schemas import (
     Timeline,
     TimelineEvent,
 )
+from .workspace import (
+    UploadSizeExceeded,
+    remove_session_workspace,
+    session_dir,
+    stream_upload_to_path,
+)
 
 router = APIRouter(prefix="/api")
 log = logging.getLogger(__name__)
 
-# X-User-Id 校验:防路径穿越(user_id 直接拼进 VIDEO_TMP_DIR 文件名)。
-# 只允许字母/数字/下划线/短横,1-64 字符。切片 3 加 Clerk 后换内部 session。
-_USER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# user_id 经 auth.get_request_user_id 校验(路径安全字符集)。
 _ALLOWED_VIDEO_EXTS = {".mp4"}
 _ALLOWED_CSV_EXTS = {".csv"}
+
+
+def _require_upload_disk_space() -> None:
+    """Reject uploads when the DATA_ROOT volume has insufficient free space."""
+    usage = shutil.disk_usage(config.DATA_ROOT)
+    if usage.free < config.MIN_FREE_DISK_BYTES:
+        need_mb = config.MIN_FREE_DISK_BYTES // (1024 * 1024)
+        raise HTTPException(
+            507,
+            f"数据盘可用空间不足，无法接收上传（需至少 {need_mb}MB 空闲）",
+        )
 
 
 def _assert_session_owner(s: dict, x_user_id: str) -> None:
@@ -75,56 +91,109 @@ async def _get_owned_session(session_id: int, x_user_id: str) -> dict:
     return s
 
 
+
+async def _update_session_input_paths(
+    session_id: int,
+    video_path: str,
+    csv_path: str,
+) -> None:
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET video_path=?, csv_path=? WHERE id=?",
+        (video_path, csv_path, session_id),
+    )
+    await conn.commit()
+
+
+async def _abort_uploading_session(session_id: int) -> None:
+    remove_session_workspace(session_id)
+    conn = await db.get_conn()
+    await conn.execute(
+        "DELETE FROM sessions WHERE id=? AND status='uploading'",
+        (session_id,),
+    )
+    await conn.commit()
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(
     video: UploadFile = File(...),
     csv: UploadFile = File(...),
     cm_per_360: Optional[float] = Form(default=None),
     fov: Optional[float] = Form(default=None),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """接收 flicking 视频 + Stats CSV,入队异步分析。
 
     限制:单用户同时 1 个 job(并发防滥用);视频 100MB 上限。
-    user_id 暂从 X-User-Id header(切片 1 占位,切片 3 加 Clerk 后换 session)。
+    user_id 由 get_request_user_id 解析(dev: X-User-Id; trust: 反代用户头)。
     """
-    # user_id 校验(防路径穿越:它直接拼进 VIDEO_TMP_DIR 文件名)
-    if not _USER_ID_RE.match(x_user_id):
-        raise HTTPException(400, "X-User-Id 含非法字符(只允许字母数字_-)")
     if await queue.has_active(x_user_id):
         raise HTTPException(429, "已有分析进行中,等完成再提交")
 
-    # 大小预检:用 UploadFile.size(Starlette ≥0.36,multipart 解析时已知)
-    # 而非 await read(),避免多 GB 上传先全量载入内存再 413 的 OOM。
-    if video.size is not None and video.size > MAX_VIDEO_BYTES:
+    if video.size is not None and video.size > config.MAX_VIDEO_BYTES:
         raise HTTPException(413, "视频超过 100MB 限制")
-    if csv.size is not None and csv.size > MAX_CSV_BYTES:
-        raise HTTPException(413, f"CSV 超过 {MAX_CSV_BYTES // 1024 // 1024}MB 限制")
+    if csv.size is not None and csv.size > config.MAX_CSV_BYTES:
+        raise HTTPException(
+            413,
+            f"CSV 超过 {config.MAX_CSV_BYTES // 1024 // 1024}MB 限制",
+        )
 
-    # 文件名 sanitize:uuid 防冲突 + 扩展名白名单(不信任用户 filename 后缀)
     video_ext = os.path.splitext(video.filename or "video.mp4")[1].lower()
     if video_ext not in _ALLOWED_VIDEO_EXTS:
         raise HTTPException(400, f"视频扩展名不支持(仅 .mp4): {video_ext or '(无)'}")
     csv_ext = os.path.splitext(csv.filename or "stats.csv")[1].lower()
     if csv_ext not in _ALLOWED_CSV_EXTS:
         raise HTTPException(400, f"CSV 扩展名不支持(仅 .csv): {csv_ext or '(无)'}")
-    video_path = VIDEO_TMP_DIR / f"{x_user_id}_{uuid.uuid4().hex[:8]}{video_ext}"
-    csv_path = VIDEO_TMP_DIR / f"{x_user_id}_{uuid.uuid4().hex[:8]}{csv_ext}"
+
+    _require_upload_disk_space()
+
+    sid = await queue.enqueue(
+        x_user_id,
+        "",
+        "",
+        cm_per_360=cm_per_360,
+        fov=fov,
+        status="uploading",
+    )
+    ws = session_dir(sid)
+    ws.mkdir(parents=True, exist_ok=True)
+    video_path = ws / f"video{video_ext}"
+    csv_path = ws / f"stats{csv_ext}"
+    await _update_session_input_paths(sid, str(video_path), str(csv_path))
+
     try:
-        video_path.write_bytes(await video.read())
-        csv_path.write_bytes(await csv.read())
-        sid = await queue.enqueue(
-            x_user_id, str(video_path), str(csv_path),
-            cm_per_360=cm_per_360, fov=fov,
+        await stream_upload_to_path(
+            video,
+            video_path,
+            max_bytes=config.MAX_VIDEO_BYTES,
+            field="video",
         )
-    except Exception:
-        # enqueue 失败 → 清理刚写的临时文件,避免孤儿堆积
-        for p in (video_path, csv_path):
-            try:
-                p.unlink(missing_ok=True)
-            except Exception:
-                pass
+        await stream_upload_to_path(
+            csv,
+            csv_path,
+            max_bytes=config.MAX_CSV_BYTES,
+            field="csv",
+        )
+    except UploadSizeExceeded as exc:
+        await _abort_uploading_session(sid)
+        if exc.field == "video":
+            raise HTTPException(413, "视频超过 100MB 限制") from exc
+        raise HTTPException(
+            413,
+            f"CSV 超过 {config.MAX_CSV_BYTES // 1024 // 1024}MB 限制",
+        ) from exc
+    except HTTPException:
+        await _abort_uploading_session(sid)
         raise
+    except Exception:
+        await _abort_uploading_session(sid)
+        raise
+
+    if not await queue.finish_upload(sid):
+        await _abort_uploading_session(sid)
+        raise HTTPException(409, "上传状态已失效，请重新提交")
+
     return AnalyzeResponse(session_id=sid)
 
 
@@ -146,7 +215,7 @@ def _session_status_response(s: dict) -> SessionStatus:
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """当前用户的分析列表(新→旧)。不返回完整 result。"""
     rows = await queue.list_sessions(x_user_id)
@@ -158,7 +227,7 @@ async def list_sessions(
 @router.get("/sessions/{session_id}", response_model=SessionStatus)
 async def get_session(
     session_id: int = Path(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """查询分析状态/结果(queued / running / done / failed)。"""
     s = await _get_owned_session(session_id, x_user_id)
@@ -168,7 +237,7 @@ async def get_session(
 @router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
 async def delete_session(
     session_id: int = Path(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """删除 session 行、chat 记录，并 best-effort 删除磁盘上的 video/csv。"""
     try:
@@ -185,13 +254,13 @@ async def delete_session(
 @router.post("/sessions/{session_id}/retry", response_model=SessionStatus)
 async def retry_session(
     session_id: int = Path(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """将 failed session 重新入队(输入文件仍在时)。"""
     s = await _get_owned_session(session_id, x_user_id)
     if await queue.has_active(x_user_id):
         # Allow retry of this session itself if it's the only failed one —
-        # has_active only counts queued/running, so failed is fine.
+        # has_active only counts uploading/queued/running, so failed is fine.
         pass
     try:
         updated = await queue.requeue_for_retry(session_id)
@@ -334,9 +403,14 @@ async def _load_session_coach_messages(x_user_id: str, session_id: int) -> list[
 # ---------------------------------------------------------------------------
 
 
+@router.get("/coach/runtime-status", response_model=CoachRuntimeStatusResponse)
+async def get_coach_runtime_status():
+    return await build_coach_runtime_status()
+
+
 @router.get("/coach/primary", response_model=CoachPrimaryResponse)
 async def get_coach_primary(
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     return await _build_coach_primary_response(x_user_id)
 
@@ -344,7 +418,7 @@ async def get_coach_primary(
 @router.post("/coach/primary/attach", response_model=CoachPrimaryAttachResponse)
 async def attach_coach_primary_analysis(
     body: CoachPrimaryAttachRequest = Body(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     thread = await coach_store.get_or_create_primary_thread(x_user_id)
     await _ensure_done_analysis_attached(
@@ -361,7 +435,7 @@ async def attach_coach_primary_analysis(
 @router.post("/coach/primary/messages", response_model=CoachPrimaryMessageResponse)
 async def post_coach_primary_message(
     body: CoachPrimaryMessageRequest = Body(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     user_msg = body.content.strip()
     if not user_msg:
@@ -434,7 +508,7 @@ async def post_coach_primary_message(
 async def chat(
     session_id: int = Path(...),
     body: ChatRequest = Body(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """多轮对话(兼容层):写入用户 primary thread + 附加本 session 分析 ref。"""
     s = await _get_owned_session(session_id, x_user_id)
@@ -492,7 +566,7 @@ async def chat(
 @router.get("/sessions/{session_id}/chat", response_model=ChatResponse)
 async def get_chat_history(
     session_id: int = Path(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """页面 mount 时拉历史对话(primary thread 中 legacy_session_id 过滤)。"""
     s = await _get_owned_session(session_id, x_user_id)
@@ -515,7 +589,7 @@ async def get_chat_history(
 @router.get("/sessions/{session_id}/video")
 async def get_session_video(
     session_id: int = Path(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """流式返回 session 关联的视频文件(给 coach 页 <video src>)。
 
@@ -532,7 +606,7 @@ async def get_session_video(
 @router.get("/sessions/{session_id}/timeline", response_model=Timeline)
 async def get_session_timeline(
     session_id: int = Path(...),
-    x_user_id: str = Header(default="dev", alias="X-User-Id"),
+    x_user_id: str = Depends(get_request_user_id),
 ):
     """返回视频时间轴事件 markers。
 

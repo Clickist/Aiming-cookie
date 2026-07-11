@@ -7,13 +7,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   attachCoachPrimaryAnalysis,
   getCoachPrimary,
+  getCoachRuntimeStatus,
   postCoachPrimaryMessage,
 } from "@/lib/api";
 import type {
   CoachAnalysisRefOut,
   CoachPrimaryResponse,
+  CoachRuntimeStatusResponse,
   CoachThreadMessageOut,
 } from "@/lib/types";
+
+const RUNTIME_POLL_MS = 2000;
+const RUNTIME_POLL_MAX_NOT_READY = 30;
 
 const STARTER_CHIPS = ["减速段怎么练", "握持建议", "没有分析也能聊什么？"];
 
@@ -38,6 +43,8 @@ export default function CoachClient() {
   const [contextSessionId, setContextSessionId] = useState<number | undefined>(
     undefined,
   );
+  const [runtimeStatus, setRuntimeStatus] =
+    useState<CoachRuntimeStatusResponse | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachOnceRef = useRef<number | null>(null);
@@ -59,6 +66,39 @@ export default function CoachClient() {
       .finally(() => setLoading(false));
     return () => ctrl.abort();
   }, [refresh]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    let ticks = 0;
+    let stopped = false;
+
+    const poll = async () => {
+      if (stopped) return;
+      ticks += 1;
+      try {
+        const st = await getCoachRuntimeStatus({ signal: ctrl.signal });
+        setRuntimeStatus(st);
+        if (st.ready_for_fast_path) {
+          stopped = true;
+          return;
+        }
+      } catch {
+        // Network failures still count toward the bounded startup polling window.
+      }
+      if (stopped || ticks >= RUNTIME_POLL_MAX_NOT_READY) {
+        stopped = true;
+        return;
+      }
+      window.setTimeout(() => void poll(), RUNTIME_POLL_MS);
+    };
+
+    void poll();
+    return () => {
+      stopped = true;
+      ctrl.abort();
+    };
+  }, []);
+
 
   useEffect(() => {
     if (attachFromUrl === undefined) return;
@@ -96,6 +136,12 @@ export default function CoachClient() {
 
   const activeRefs = refs.filter((r) => r.status === "active");
   const deletedRefs = refs.filter((r) => r.status === "deleted");
+  const coachEngineReady = runtimeStatus?.ready_for_fast_path ?? false;
+  const sendingLabel = sending
+    ? coachEngineReady
+      ? "教练思考中…"
+      : "引擎启动/冷启动中…"
+    : "";
 
   const send = async (text: string) => {
     const trimmed = text.trim();
@@ -153,6 +199,30 @@ export default function CoachClient() {
         id="main-content"
         className="flex-1 flex flex-col max-w-[var(--spacing-container-max)] w-full mx-auto min-h-0"
       >
+        {runtimeStatus && (
+          <div
+            className={
+              runtimeStatus.ready_for_fast_path
+                ? "px-md py-1.5 border-b border-outline bg-surface-container-low shrink-0"
+                : "px-md py-sm border-b border-primary/40 bg-primary-container/30 shrink-0"
+            }
+            role="status"
+          >
+            <p
+              className={
+                runtimeStatus.ready_for_fast_path
+                  ? "text-label-sm text-on-surface-variant"
+                  : "text-label-md text-on-surface font-medium"
+              }
+            >
+              {runtimeStatus.ready_for_fast_path
+                ? runtimeStatus.message || "教练引擎已就绪"
+                : "教练引擎准备中…首次回复可能较慢（正在连接常驻服务）"}
+            </p>
+          </div>
+        )}
+
+
         <section className="px-md py-sm border-b border-outline bg-surface-container-low shrink-0">
           <p className="text-label-sm text-on-surface-variant uppercase tracking-widest font-mono mb-xs">
             关联分析
@@ -227,7 +297,7 @@ export default function CoachClient() {
                 </span>
               </div>
               <div className="bg-background border border-outline p-md rounded-xl rounded-tl-none shadow-sm">
-                <p className="text-body-md text-on-surface-variant">教练思考中…</p>
+                <p className="text-body-md text-on-surface-variant">{sendingLabel}</p>
               </div>
             </div>
           )}
