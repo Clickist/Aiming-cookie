@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aiming Cookie — 上传页设计方向对比</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    .nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; background: rgba(18,17,15,.92); backdrop-filter: blur(8px); border-bottom: 1px solid rgba(255,255,255,.08); display: flex; gap: 24px; padding: 16px 32px; }
+    .nav a { color: #aaa; text-decoration: none; font-size: 13px; font-weight: 500; }
+    .nav a:hover { color: #fff; }
+    section { min-height: 100vh; display: flex; flex-direction: column; position: relative; }
+    .label { position: absolute; top: 80px; left: 32px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; padding: 6px 10px; border-radius: 4px; }
+
+    /* ---- Direction A: Dark Polish ---- */
+    .a { background: #12110f; color: #fadcd3; }
+    .a .label { background: #1c1b18; color: #807d72; border: 1px solid #2d2b26; }
+    .a header { display: flex; justify-content: space-between; align-items: center; padding: 20px 48px; border-bottom: 1px solid #2d2b26; }
+    .a .logo { font-family: Outfit, sans-serif; font-size: 20px; font-weight: 700; color: #f54e00; }
+    .a .main { flex: 1; max-width: 1120px; margin: 0 auto; padding: 64px 24px; width: 100%; display: grid; grid-template-columns: 1.6fr 1fr; gap: 40px; }
+    .a h1 { font-family: Outfit, sans-serif; font-size: 52px; line-height: 1.05; font-weight: 600; margin: 0 0 16px; letter-spacing: -0.03em; }
+    .a .subtitle { color: #807d72; font-size: 18px; line-height: 1.6; max-width: 460px; }
+    .a .dropzone { margin-top: 40px; border: 2px dashed #5c4038; border-radius: 16px; min-height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: rgba(28,27,24,.5); transition: .2s; }
+    .a .dropzone:hover { border-color: #f54e00; background: rgba(244,78,0,.05); }
+    .a .dropzone .icon { font-size: 56px; color: #807d72; }
+    .a .dropzone h3 { margin: 0; font-size: 20px; font-weight: 500; }
+    .a .dropzone p { margin: 0; color: #807d72; }
+    .a .card { background: #1c1b18; border: 1px solid #2d2b26; border-radius: 16px; padding: 28px; display: flex; flex-direction: column; gap: 20px; }
+    .a .card h2 { margin: 0; font-size: 20px; font-weight: 600; }
+    .a .field label { display: block; font-size: 13px; color: #807d72; margin-bottom: 8px; }
+    .a .field input { width: 100%; background: transparent; border: none; border-bottom: 1px solid #5c4038; color: #fadcd3; padding: 8px 0; font-size: 15px; }
+    .a .btn { width: 100%; background: #f54e00; color: #fff; border: none; padding: 14px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    .a footer { border-top: 1px solid #2d2b26; padding: 24px 48px; color: #807d72; font-size: 13px; display: flex; justify-content: space-between; }
+
+    /* ---- Direction B: Light Editorial ---- */
+    .b { background: #f7f7f4; color: #26251e; }
+    .b .label { background: #fff; color: #807d72; border: 1px solid #e6e5e0; }
+    .b header { display: flex; justify-content: space-between; align-items: center; padding: 20px 48px; border-bottom: 1px solid #e6e5e0; background: #f7f7f4; }
+    .b .logo { font-family: "JetBrains Mono", monospace; font-size: 18px; font-weight: 500; color: #f54e00; }
+    .b .main { flex: 1; max-width: 1120px; margin: 0 auto; padding: 80px 24px; width: 100%; display: grid; grid-template-columns: 1.5fr 1fr; gap: 80px; }
+    .b .eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: #f54e00; margin-bottom: 20px; }
+    .b h1 { font-family: "JetBrains Mono", monospace; font-size: 48px; line-height: 1.15; font-weight: 400; margin: 0 0 24px; letter-spacing: -0.04em; }
+    .b .subtitle { color: #5a5852; font-size: 18px; line-height: 1.6; max-width: 480px; }
+    .b .dropzone { margin-top: 48px; border: 1px dashed #cfcdc4; border-radius: 12px; min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: #fff; }
+    .b .dropzone:hover { border-color: #f54e00; }
+    .b .dropzone .icon { font-size: 48px; color: #a09c92; }
+    .b .dropzone h3 { margin: 0; font-size: 18px; font-weight: 400; }
+    .b .dropzone p { margin: 0; color: #807d72; font-size: 14px; }
+    .b .card { background: #fff; border: 1px solid #e6e5e0; border-radius: 12px; padding: 32px; display: flex; flex-direction: column; gap: 24px; }
+    .b .card h2 { margin: 0; font-size: 18px; font-weight: 600; }
+    .b .field label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: #807d72; margin-bottom: 8px; }
+    .b .field input { width: 100%; background: #fafaf7; border: 1px solid #e6e5e0; border-radius: 8px; color: #26251e; padding: 12px; font-size: 14px; }
+    .b .btn { width: 100%; background: #f54e00; color: #fff; border: none; padding: 14px; border-radius: 8px; font-weight: 500; cursor: pointer; }
+    .b footer { border-top: 1px solid #e6e5e0; padding: 32px 48px; color: #807d72; font-size: 13px; display: flex; justify-content: space-between; background: #f7f7f4; }
+
+    /* ---- Direction C: Hybrid Premium Dark ---- */
+    .c { background: #0d0d0c; color: #f3f0ea; }
+    .c .label { background: #171614; color: #888; border: 1px solid #2a2825; }
+    .c header { display: flex; justify-content: space-between; align-items: center; padding: 24px 64px; border-bottom: 1px solid #2a2825; }
+    .c .logo { font-family: Outfit, sans-serif; font-size: 18px; font-weight: 500; color: #f54e00; letter-spacing: -0.02em; }
+    .c .main { flex: 1; max-width: 1200px; margin: 0 auto; padding: 96px 24px; width: 100%; display: grid; grid-template-columns: 1.6fr 1fr; gap: 64px; }
+    .c .eyebrow { font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .14em; color: #f54e00; margin-bottom: 24px; }
+    .c h1 { font-family: Outfit, sans-serif; font-size: 64px; line-height: 1.0; font-weight: 500; margin: 0 0 24px; letter-spacing: -0.04em; }
+    .c .subtitle { color: #a09c92; font-size: 18px; line-height: 1.6; max-width: 460px; font-weight: 400; }
+    .c .dropzone { margin-top: 56px; border: 1px solid #2a2825; border-radius: 8px; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: #131210; transition: .2s; }
+    .c .dropzone:hover { border-color: #f54e00; background: #171614; }
+    .c .dropzone .icon { font-size: 48px; color: #666; }
+    .c .dropzone h3 { margin: 0; font-size: 18px; font-weight: 500; }
+    .c .dropzone p { margin: 0; color: #807d72; font-size: 14px; }
+    .c .card { background: #131210; border: 1px solid #2a2825; border-radius: 8px; padding: 32px; display: flex; flex-direction: column; gap: 24px; }
+    .c .card h2 { margin: 0; font-size: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+    .c .field label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: #807d72; margin-bottom: 8px; }
+    .c .field input { width: 100%; background: transparent; border: none; border-bottom: 1px solid #3a3632; color: #f3f0ea; padding: 10px 0; font-size: 15px; font-family: "JetBrains Mono", monospace; }
+    .c .btn { width: 100%; background: #f54e00; color: #fff; border: none; padding: 14px; border-radius: 6px; font-weight: 500; cursor: pointer; }
+    .c footer { border-top: 1px solid #2a2825; padding: 28px 64px; color: #807d72; font-size: 13px; display: flex; justify-content: space-between; }
+
+    @media (max-width: 900px) {
+      .a .main, .b .main, .c .main { grid-template-columns: 1fr; gap: 32px; padding: 32px 20px; }
+      .a h1, .b h1, .c h1 { font-size: 36px; }
+      .a header, .b header, .c header { padding: 16px 20px; }
+      .a footer, .b footer, .c footer { padding: 20px; flex-direction: column; gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="#a">A 暗色精修</a>
+    <a href="#b">B 浅色编辑</a>
+    <a href="#c">C 暗色高级</a>
+  </div>
+
+  <section id="a" class="a">
+    <div class="label">Direction A · 暗色精修</div>
+    <header>
+      <div class="logo">Aiming Cookie</div>
+      <div style="font-size: 13px; color: #807d72;">Flicking Tension Analyzer</div>
+    </header>
+    <div class="main">
+      <div>
+        <h1>分析你的 flicking 张力</h1>
+        <p class="subtitle">上传 KovaaK's 录像，系统解析减速段张力、目标获取速度与微校正模式，并给出个性化诊断。</p>
+        <div class="dropzone">
+          <div class="icon">↑</div>
+          <h3>拖入 MP4 录像，或点击选择文件</h3>
+          <p>上限 100MB · 推荐 1080p / 60fps</p>
+        </div>
+      </div>
+      <div class="card">
+        <h2>分析配置</h2>
+        <div class="field"><label>KovaaK Stats CSV（必填）</label><input value="未选择文件" readonly /></div>
+        <div class="field"><label>cm/360</label><input value="48" /></div>
+        <div class="field"><label>FOV</label><input value="103" /></div>
+        <button class="btn">开始分析</button>
+      </div>
+    </div>
+    <footer>
+      <span>© 2026 Aiming Cookie</span>
+      <span>Privacy · Terms · Contact</span>
+    </footer>
+  </section>
+
+  <section id="b" class="b">
+    <div class="label">Direction B · 浅色编辑风</div>
+    <header>
+      <div class="logo">Aiming Cookie</div>
+      <div style="font-size: 13px; color: #807d72;">GitHub</div>
+    </header>
+    <div class="main">
+      <div>
+        <div class="eyebrow">Flicking Tension Analyzer</div>
+        <h1>Upload your clip.<br />Read your aim.</h1>
+        <p class="subtitle">上传 KovaaK's 录像，系统解析减速段张力、目标获取速度与微校正模式，并给出个性化诊断。</p>
+        <div class="dropzone">
+          <div class="icon">↑</div>
+          <h3>拖入 MP4 录像，或点击选择文件</h3>
+          <p>上限 100MB · 推荐 1080p / 60fps</p>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Analysis config</h2>
+        <div class="field"><label>KovaaK Stats CSV</label><input value="未选择文件" readonly /></div>
+        <div class="field"><label>cm / 360</label><input value="48" /></div>
+        <div class="field"><label>FOV</label><input value="103" /></div>
+        <button class="btn">开始分析</button>
+      </div>
+    </div>
+    <footer>
+      <span>© 2026 Aiming Cookie</span>
+      <span>Privacy · Terms · Contact</span>
+    </footer>
+  </section>
+
+  <section id="c" class="c">
+    <div class="label">Direction C · 暗色高级</div>
+    <header>
+      <div class="logo">Aiming Cookie</div>
+      <div style="font-size: 13px; color: #807d72;">GitHub</div>
+    </header>
+    <div class="main">
+      <div>
+        <div class="eyebrow">Flicking Tension Analyzer</div>
+        <h1>分析你的<br />flicking 张力</h1>
+        <p class="subtitle">上传 KovaaK's 录像，系统解析减速段张力、目标获取速度与微校正模式，并给出个性化诊断。</p>
+        <div class="dropzone">
+          <div class="icon">↑</div>
+          <h3>拖入 MP4 录像，或点击选择文件</h3>
+          <p>上限 100MB · 推荐 1080p / 60fps</p>
+        </div>
+      </div>
+      <div class="card">
+        <h2>分析配置</h2>
+        <div class="field"><label>KovaaK Stats CSV（必填）</label><input value="未选择文件" readonly /></div>
+        <div class="field"><label>CM / 360</label><input value="48" /></div>
+        <div class="field"><label>FOV</label><input value="103" /></div>
+        <button class="btn">开始分析</button>
+      </div>
+    </div>
+    <footer>
+      <span>© 2026 Aiming Cookie</span>
+      <span>Privacy · Terms · Contact</span>
+    </footer>
+  </section>
+</body>
+</html>

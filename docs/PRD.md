@@ -11,6 +11,8 @@
 
 基于物理 + 运动学的 **KovaaK's 瞄准诊断 + AI 教练**。桌面应用：公平指标 → 三层根因诊断 → 对话式 AI 教练 → 长期进步追踪。
 
+**产品关系（2026-07-10 澄清）**：这是**一个产品**，不是免费版 / 付费版两套产品。付费墙只决定**解锁哪些能力**（见 §5.5），不改变产品身份。长期上，**Aiming Coach 是常驻关系层**——降低用户对界面与流程的学习成本；视频 + CSV 分析、确定性报告、持久化的瞄准表现记录，都是为教练（与免费用户的自助诊断）提供**客观上下文与病历**的工具，而不是与教练并列的第二套产品。
+
 ## 2. 为什么做（原始设想）
 
 **创始人的痛**：点点自己是 KovaaK's 玩家（DPI 1600 / 51cm per 360° / FOV 103），苦于瞄准训练缺乏**客观、可量化、个性化**的诊断。现有方案两层都是主观的：社区只有主观体感交流（"今天手感好""感觉甩过了"），没有数据化反馈；**个人教练的教学也凭经验感觉，无法量化**——两层都缺客观数据。学术运动科学有成熟指标（SPARC、Fitts throughput、submovement）但没人产品化给玩家。Aiming Cookie 凭运动学数据做诊断，比主观经验更客观、更科学。
@@ -40,64 +42,142 @@
 |---|---|---|
 | 1 | 公平指标 | decel_frac / SPARC / linearity / throughput / reverse_ratio / path_efficiency 等（学术锚点：Balasubramanian 2012 / Fitts / Novak 2002） |
 | 2 | 三层根因诊断 | 症状 → 物理 → 处方（规则引擎 `advice.py` / `advice_tracking.py`） |
-| 3 | AI 教练对话 | tool-use agent（`coach/agent.py`），动态深挖 + KB 检索 |
+| 3 | AI 教练对话 | 当前为 tool-use agent（`coach/agent.py`）；目标重构为可调用应用能力的常驻 Coach；默认以完整 Pi 源码为 runtime 基线，由 Aiming Cookie 接管并产品化改造 |
 | 4 | 长期进步追踪 | 趋势 + ④ 渐进式训练计划（`progress.py` / `planning.py`） |
-| 5 | freemium 成立 | 规则化诊断免费（本地）；LLM 教练付费（云端，按 token） |
+| 5 | freemium 成立 | 规则化诊断免费（本地）；LLM 教练付费（云端，按 token）——**同一产品上的能力墙**，不是两套产品 |
+| 6 | 常驻教练降学习成本 | 付费解锁后 coach agent 可随时进入；用户少记「该点哪个菜单」，多靠对话完成回访与计划 |
 
 ## 5. 产品形态与阶段
 
 ### 5.1 形态
-- **桌面 hybrid 应用**：Tauri 或 Electron 壳（选型另 spec）+ 本地 Python sidecar（CV + agent 框架）+ 云端（LLM 代理 + 账号 + 数据）
+- **桌面 hybrid 应用**：Tauri 或 Electron 壳（选型另 spec）+ 本地分析 sidecar（Python CV）+ Coach Agent runtime（以完整 Pi 源码为基线，由项目接管并产品化改造）+ 云端（LLM 代理 + 账号 + 数据）
 - **登录型回访工具**：完整服务有成本，登录锚定用户 + 计费；画像 / 历史是留存核心
 
 ### 5.2 分阶段（详见 IA spec §2.2）
 | 阶段 | 形态 | 付费墙 |
 |---|---|---|
+| **内部技术预览** | 受控环境，flicking-only；用于验证核心闭环，不是完整 v1 | 无墙，不开放注册 |
 | **v1 早期** | 开放注册（邮箱 + OTP + 密码） | 无墙，全功能免费 |
 | **B freemium** | 公开注册 | CV / 诊断本地免费；**墙立 coach 对话 / 深度诊断 / 长期趋势**（LLM 是收费锚） |
 | **C 商业化深化** | **绕过备案**（境外部署 + 大陆访问优化） | 订阅 / credits / 用户自带 key |
 
 > 桌面 hybrid 让 freemium 成本结构成立：最贵的 CV 不在服务器，只有 LLM 要钱。
 
+### 5.3 当前执行优先级（不等于功能取舍）
+
+下列顺序用于约束当前开发资源，**不删除、不取消、也不否定**任何已在本 PRD 中承诺的 feature；未排在最前的能力仍保留在对应阶段和路线图中。
+
+| 优先级 | 当前目标 | 作用 |
+|---|---|---|
+| **P0** | flicking Alpha 闭环 | 上传 → 分析 → 确定性诊断 → 本地历史回访；（有权限时）教练；验证核心价值是否成立 |
+| **P1** | 闭环支撑能力 | History 趋势/对比/导入导出、完成通知、状态/失败态、日志、默认路由 |
+| **P1.5** | 最小统一设计系统 | 先统一 token 与基础组件，禁止新页面继续散落视觉硬编码 |
+| **P2** | tracking v1 标定与接通 | 保留并推进 tracking 路线，以真实数据完成解释与阈值校准 |
+| **P2.5** | UIUX / 前端体验收敛 | 基于统一设计系统打磨现有闭环与新页面；不是另开一套视觉方向 |
+| **P3** | 登录、配额、付费、云同步 | 把已验证的产品能力接入可运营体系 |
+| **P4** | 桌面 hybrid 与远期扩展 | 打包、本地采集、手部摄像头、多游戏等 |
+
+P1.5 是 P2.5 的前置约束：先建立共同语言，再系统性打磨体验；P2.5 也不能阻塞 P0/P1 必需的可用性修复。
+
+### 5.4 当前发布定义（2026-07-10 裁决）
+
+长期目标仍是本文定义的完整产品 v1，不删减 Desktop hybrid、登录、History、通知、失败处理、导入/导出等承诺。
+
+**2026-07-13 至 2026-07-19 的交付窗口不作为完整产品 v1 发布**，当前名称和范围固定为：
+
+> **受控环境中的 flicking-only 内部技术预览**
+
+该预览用于验证上传 → 可恢复分析 → deterministic Report → 可选 Coach → 最小 History 回访的核心价值链。它必须置于 VPN、SSO 或可信代理等访问控制后；不开放注册，不承诺 Desktop 安装包、云同步、付费或 tracking Web 接通。
+
+本次预览中，**最小 History** 的完成定义冻结为：列表、状态/摘要、分析回看、仅删除 done/failed 分析；趋势、对比、筛选和 export/import 后移到 P1，不属于本次 P0 Gate。
+
+本次预览采用常驻 Coach 迁移方案：内部预览 Go 前，用户可见 Coach 关系与消息必须从 analysis session 的所有权中解耦；删除分析只使引用变为已删除/不可用，不能删除 Coach 消息或长期档案。迁移必须先完成 Pi 源码接管 assessment 与隔离 Spike，确认纳入范围、改造边界、许可证/依赖义务和运行链路，再由新的、经批准的 implementation plan 分 Task 实施。
+
+完整产品 v1 的发布日期在本地 History 闭环、可靠 Local Analysis Runtime 和 Desktop/Web 正式化分支完成验证后确定。具体里程碑和放行条件见 `docs/ROADMAP.md`。
+
+### 5.5 单一产品与付费墙（能力分层，不是两套产品）
+
+| 原则 | 说明 |
+|---|---|
+| **一个产品** | Aiming Cookie 只有一条产品身份；禁止用「免费产品 / 付费产品」两套叙事拆文档或拆主路径 |
+| **付费墙 = 能力开关** | 无权限时不提供教练对话等墙后能力；有权限时多解锁能力，**不改变**首次从上传起步、回访默认历史等主路由逻辑 |
+| **墙内典型能力（B+）** | coach 对话 / 深度 LLM 讲解 / 依赖 LLM 的长期计划等（精确清单以计费 spec 为准） |
+| **墙外始终可用** | 上传分析、确定性诊断报告、本地 History 列表与回看（规则化路径，无 LLM 仍完整） |
+
+**教练与分析的关系（目标模型）**：
+
+```text
+用户 ⇄ 常驻 Aiming Coach（付费解锁；体验上像连续教练关系）
+              ↑ 读取 / 引用
+    分析记录、表现档案、确定性诊断  （上下文工具与病历）
+```
+
+- 教练对话**可以**针对某一次练枪分析深挖，也**可以**不绑定单次分析（例如总结一周进步、后续训练建议）。
+- Coach 是产品的 **Agent 操作层**：分析、History、趋势、报告、训练目标和后续应用操作是它可调用的工具能力；它不是 Report 旁的只读聊天页。
+- 体验目标接近「一条长教练关系」；工程上依赖**持久化表现 / 特点档案**，以及 agent **上下文窗口顶满后的衔接**（摘要、换窗、从档案重建）——衔接策略另研究，不在本 PRD 锁死实现。
+- **迁移兼容**：当前代码中的 session-bound chat/route 可在迁移期间作为旧数据与旧入口兼容层保留，但不得新增依赖，也不得作为内部预览的最终可放行状态。内部预览 Go 前，用户可见 Coach 关系与消息必须不再只归属于可删除的 analysis session；终局为教练关系可引用 0～N 次分析，并以 agent run、工具事件和产品确认驱动交互。
+
+**删除语义（目标）**：
+
+| 操作 | 行为 |
+|---|---|
+| 删除**排队中 / 分析中**的记录 | **不允许**（须等完成或失败） |
+| 删除**已完成 / 失败**的分析 | 删除该次分析产物与关联输入文件（视频/CSV 等）；**不**级联抹掉教练对话与长期记忆（可变为「引用已删除分析」） |
+
+### 5.6 默认路由（全档位一致）
+
+| 条件 | 默认落地 |
+|---|---|
+| 无分析历史 | **上传** |
+| 有分析历史 | **历史** |
+| 首次使用（含已付费用户） | 仍从 **上传** 开始，先建立客观记录；**不**因付费而首次直达空教练页 |
+| 付费且已有记录 | 回访仍默认历史；教练为常驻可进入入口，降低「下一步点哪」的学习成本 |
+
 ## 6. 核心体验流程
 
-### 6.1 首次旅程（onboarding）
+### 6.1 首次旅程（onboarding）——全档位
+
 ```
-下载安装 → 启动 → login（email + OTP + 设密码）
-  ↓ 检测无 history
-upload（默认页）
-  ├ 引导：需准备 mp4 + KovaaK CSV（附录制提示）
-  └ 选文件（本地）→ CSV 自动算 aim profile
+下载安装 → 启动 → login（email + OTP + 设密码；内部预览可简化）
+  ↓ 检测无分析历史
+upload（默认页）          ← 付费用户首次同样从这里开始
+  ├ 引导：需准备 mp4 + KovaaK CSV
+  └ 选文件 → CSV 自动算 aim profile
   ↓ 开始分析
 processing（本地 CV ~160s，可后台 / 可切走）
-  ├ 教学时刻：指标科普 + 软件教学（滚动卡片）
-  └ 切走兜底：空状态预告卡（history 空 → "完成后出现在这"）
+  ├ 教学时刻：指标科普 + 软件教学
+  └ 切走兜底：空状态预告卡
   ↓ 完成时
-全局 toast + 顶栏角标（任意页可见，不强制跳转）
+全局 toast + 顶栏角标（不强制跳转）
   ↓
-diagnosis_report（免费 / 无 LLM）
+diagnosis_report（规则化诊断免费 / 无 LLM 仍完整）
   ├ 画像 + 三层根因 + 指标 + 规则化处方 cues + 图
-  └ 底部"跟教练深聊 →"按钮（教练入口）
-  ↓ 点入口
-coach_dialogue（LLM / agent，D 阶段全有权限）
-  └ agent 自动加载最新 session 上下文
-  ↓ 结束
-history（现在有内容）
+  └ 若用户具备教练权限：底部「跟教练深聊 →」
+  ↓（仅付费 / 有权限）
+coach_dialogue
+  └ 可加载本次分析上下文；亦可在后续进入跨次对话
+  ↓
+history（已有至少一条分析记录）
 ```
 
-### 6.2 回访旅程（有 history）
+### 6.2 回访旅程（有分析历史）——全档位
+
 ```
-启动（已登录）→ 检测有 history → history（默认页）
-  ├ 趋势卡 + 诊断列表 + 对话历史
-  └ 大"新建分析"按钮
+启动（已登录）→ 有分析历史 → history（默认页）
+  ├ 分析列表 +（规划中）趋势
+  ├ 大「新建分析」按钮
+  └ 若具备教练权限：常驻入口进入教练（可继续未完话题或开跨次问题）
   ↓ 分支
-看趋势 / 新开分析 / 继续教练对话
+看历史 / 新开分析 / 进教练
 ```
+
+无分析历史时回访仍落 **upload**（与 §5.6 一致）。
 
 ### 6.3 关键状态
-- **完成通知**：全局 toast + 顶栏角标（任意页可见，不强制跳转）；对有教练权限的用户，分析完教练即时可访问新数据
+- **完成通知**：全局 toast + 顶栏角标（任意页可见，不强制跳转）；有教练权限时，分析完成后教练可立即使用新数据
 - **空状态**：首次切走看到的空页给"预告卡"而非空白
-- **失败态**：本地 CV 失败 / 云端 LLM 失败 / 网络断，分开写明白 + 重试
+- **失败态**：本地 CV / 云端 LLM / 网络断，分开写明白 + 重试
+- **删除**：进行中不可删；完成/失败可删分析，不默认删教练记忆（§5.5）
 
 ## 7. 功能边界
 
@@ -132,26 +212,28 @@ history（现在有内容）
 
 | # | 决策 | 阶段 |
 |---|---|---|
-| 1 | 默认页动态：无 history → upload，有 → history | v1 |
+| 1 | 默认页动态：无分析历史 → upload，有 → history；**首次（含付费）一律从 upload 起步** | v1 |
 | 2 | upload 无 profile 表单，CSV 自动算，手改走 settings | v1 |
 | 3 | processing 可后台；教学时刻 = 指标科普 + 软件教学；空状态给预告卡 | v1 |
-| 4 | diagnosis_report 免费（规则化，含处方 cues），底部"教练入口"按钮 | v1 |
-| 5 | coach_dialogue = LLM；D 不立墙，B 立墙（形态待计费 spec） | D→B |
-| 6 | history 本地优先，支持删 / 导出 / 导入，云端同步推后 | v1 本地 / B 云 |
+| 4 | diagnosis_report 免费（规则化，含处方 cues）；有教练权限时底部显示教练入口 | v1 |
+| 5 | coach_dialogue = LLM；内部预览/v1 早期可不立墙，B 立墙（形态待计费 spec）；**墙 = 能力开关，非第二产品** | 预览→B |
+| 6 | history 本地优先，支持删 / 导出 / 导入，云端同步推后；列表主对象先是分析记录 | v1 本地 / B 云 |
 | 7 | v1 登录收窄为"计费 + 身份"，不背 history | v1 |
 | 8 | 失败态：本地 CV / 云端 LLM / 网络断 分开写明白 | v1 |
 | 9 | 日志 cross-cutting：本地 CV / agent / 云端 各层埋 | v1 |
 | 10 | 录屏 + 鼠标采集远期；upload 留扩展位 | 远期 |
 | 11 | 分析完成：全局 toast + 顶栏角标，不强制跳转 | v1 |
-| 12 | 教练即时访问：分析完写入本地 session，coach_dialogue 进入时 agent 自动加载最新上下文 | v1 |
+| 12 | 有教练权限时：分析完可被 coach 立即引用；coach 亦可发起不绑定单次分析的对话 | v1→B |
 | 13 | upload 视频/CSV 来源文件夹分别记忆：**非代码 bug**（Chromium 同 origin 共享目录记忆=浏览器原生行为；当前两个独立 input 已分别记忆）。强行隔离需 File System Access API（新功能）。**后续打包桌面应用不用浏览器，此问题目标形态不复现** | 不修（web 中间态；桌面形态消失）|
+| 14 | 排队中/分析中的分析记录不可删；完成/失败可删分析与输入文件，不级联删除教练对话与长期记忆 | v1 目标 |
+| 15 | 常驻 Coach（有权限时）是 Agent 操作层；分析与表现档案为上下文工具，工具活动、确认和结果跳转是产品交互的一部分 | B 完整；预览先做最小纵向切片 |
 
 ## 9. 架构分工（桌面 hybrid）
 
 | 层 | 位置 | 说明 |
 |---|---|---|
 | 视频解析 + pan_tracker + flick/track 指标计算 | **本地 sidecar** | CPU 密集，搬用户机器省成本 + 解并发 |
-| coach agent 框架（tool-use loop / tool handlers / KB 检索） | **本地 sidecar** | 编排逻辑本地跑 |
+| Coach Agent runtime（agent loop / tool registry / workspace / event stream） | **本地 sidecar** | 默认接管完整 Pi 源码并允许直接修改，不以持续兼容或跟随 Pi 上游升级为约束。源码 assessment 决定纳入哪些 package、移除/禁用哪些 coding-agent 能力，以及 workspace、权限、sandbox/container 如何产品化；Aiming Cookie 仍通过稳定领域工具与持久 Coach 状态连接业务数据 |
 | LLM 推理请求 | **云端 API 代理** | 藏 key / 按 token 计费 / freemium 计量 |
 | 账号 / 订阅 / 画像 / history | **云端**（B+ 阶段） | 跨设备聚合（v1 history 先本地） |
 
@@ -172,6 +254,16 @@ history（现在有内容）
 **成本**：香港 2核4G VPS ~¥100/月 + 域名 ~¥6/月 + Cloudflare 免费 + LLM 按 token（DeepSeek 默认）。history v1 本地，B 阶段才上云。
 
 ## 10. 成功标准
+
+**内部技术预览放行标准（2026-07-13 至 2026-07-19）**：
+- 真实 MP4 + Stats CSV 可通过 UI 完成上传、分析、Report 和最小 History 回看；
+- worker 异常退出不会留下永久 `running`，失败可识别、可恢复或可重试；
+- 无 LLM 时 deterministic diagnosis / prescription 仍完整可用；
+- session 与相关文件可按规则删除（进行中不可删；用户自删完成/失败记录）；原视频无自动清理默认，用户删除时一并处理；
+- 删除分析不级联删除 Coach 消息或长期档案，相关 analysis reference 变为已删除/不可用；
+- 受控访问、真实素材 E2E、browser E2E、build 和健康检查全部通过。
+
+完整、客观的 Go/No-Go gate 见 `docs/ROADMAP.md` §5。
 
 **产品成功**：
 - v1 阶段：开放注册获活跃测试用户（具体规模待定），留存 + 反馈质量高
@@ -195,7 +287,7 @@ history（现在有内容）
 
 ## 12. 约束与依赖
 
-- **技术栈**：Python CV（opencv-contrib）+ coach 包 + Next.js 16 / React 19 前端 + FastAPI 云端 + Tauri / Electron 壳
+- **技术栈**：Python CV（opencv-contrib）+ Coach Agent runtime（完整 Pi 源码接管方案，具体纳入范围待 assessment）+ Next.js 16 / React 19 前端 + FastAPI 云端 + Tauri / Electron 壳
 - **合规**：**绕过 ICP 备案**（持续境外部署 + Cloudflare）；不迁国内，靠节点优化大陆体验
 - **成本**：CV 本地省服务器；LLM 按 token（DeepSeek 默认，可切 Claude）；部署详见 §9.1（一台 VPS ~¥100/月）
 - **大陆访问**：持续香港 + Cloudflare（绕过备案）
@@ -205,12 +297,16 @@ history（现在有内容）
 | 文档 | 角色 |
 |---|---|
 | 本 PRD | **方向锚**（产品级） |
-| `docs/product-strategy.md` | 战略 + 商业化 + 远期愿景 |
-| `docs/superpowers/specs/2026-07-06-aiming-cookie-ia-redesign-design.md` | 导航 IA + login + 流程细节 |
-| `docs/superpowers/specs/2026-07-05-flicking-coach-webapp-design.md` | webapp 原始设计（部分被演进） |
-| `docs/superpowers/specs/2026-07-05-tracking-coach-design.md` | tracking 理论审视 + coach 设计 |
-| `docs/superpowers/specs/2026-07-05-aiming-coach-agent-design.md` | coach agent 设计 |
-| 各 `writing-plans` 产出 | 实现计划 |
+| `docs/ARCHITECTURE.md` | 当前/目标架构、领域边界、稳定合同与演进顺序 |
+| `docs/ROADMAP.md` | 发布定义、P0/P1/P2、2–4 周路线与 Go/No-Go gates |
+| `docs/PROGRESS.md` | 当前执行状态与历史研发事实 |
+| `docs/design-system.md` | 前端视觉 token、组件边界与设计资产治理 |
+| `docs/superpowers/specs/README.md` | 当前有效的局部设计入口 |
+| `docs/superpowers/specs/2026-07-06-aiming-cookie-ia-redesign-design.md` | 当前 IA、默认路由与常驻 Coach 产品关系 |
+| `docs/superpowers/specs/2026-07-10-persistent-coach-design.md` | 常驻 Coach 产品不变量 |
+| `docs/superpowers/specs/2026-07-11-pi-agent-coach-runtime-design.md` | Pi runtime assessment 与产品化边界 |
+| `docs/superpowers/plans/README.md` | 当前可执行 implementation plan 与 Task 状态 |
+| `docs/archive/README.md` | 已退役、冻结和完成资料索引，仅供历史追溯 |
 
 ## 14. 决策日志（关键选择 + 为什么）
 
@@ -220,3 +316,12 @@ history（现在有内容）
 - **默认页动态分支**：首次无 history 不该看空页 → 默认 upload；回访有 history → 默认 history
 - **v1 → B → C 分阶段**：v1 开放注册无门槛（不卡邀请码、不背支付）；桌面让 freemium 成立；C 绕过备案不迁国内
 - **flicking 先行 tracking 后接**：flicking 指标体系成熟学术锚；tracking 理论债（PTC 命名）待 v2 重构
+- **按优先级交付而非删 feature**：保留 flicking、tracking、桌面 hybrid、登录/计费、长期趋势等完整路线；当前先验证 flicking Alpha 闭环，避免多条路线并行稀释交付
+- **统一设计系统先于全面美化**：可执行 token 集中于前端；页面不得各自硬编码视觉值。现有设计稿和 Stitch 产物保留为参考，不与运行时代码争夺事实源
+- **下周发布内部技术预览，不冒充完整 v1**：2026-07-13 至 2026-07-19 只在受控环境验证 flicking 核心闭环；长期完整产品范围不变，发布日期在 Runtime / History / 正式发布形态验证后确定
+- **四层架构边界**：Domain Core 保持确定性；Local Analysis Runtime 负责 job、文件和本地 History；Coach Agent Runtime 负责常驻关系、工具编排与交互事件；Cloud Services 负责可信身份、LLM 代理、计量和可选同步
+- **单一产品 + 付费墙能力分层**：不是免费/付费两套产品；墙只开关能力。首次（含付费）从上传起步；回访有历史→历史、无→上传
+- **教练与分析**：目标上教练可跨次、可不绑单次分析；分析/表现档案是上下文与病历。过渡实现可挂在分析 session 下，终局不锁死为「对话从属于分析」
+- **删除分析不抹教练记忆**：进行中不可删；删完成分析只去该次产物与输入文件
+- **常驻 Coach 是 Agent 操作层**：有权限时 agent 可随时进入、调用稳定的应用工具，减少用户对多页面流程的记忆负担；完整 Pi 源码是 Coach runtime 的默认起点，项目可直接修改且不承诺跟随上游升级；assessment/Spike 只确定源码纳入范围、产品化删改和系统边界。已有可用的 workspace、权限或 sandbox 能力优先保留，不无证据重写
+- **持久表现档案 + 上下文衔接**：支撑长教练关系体验；窗口顶满后的 session 衔接另研究，不在本条锁实现

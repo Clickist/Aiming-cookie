@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aiming Cookie — macOS Vibrancy 上传页</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      color: rgba(255,255,255,.9);
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      background:
+        radial-gradient(ellipse at 20% 0%, rgba(58,58,60,.45) 0%, transparent 55%),
+        radial-gradient(ellipse at 80% 100%, rgba(10,132,255,.08) 0%, transparent 45%),
+        #161617;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image:
+        radial-gradient(circle at center, rgba(255,255,255,.06) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: radial-gradient(ellipse at center, black 0%, transparent 75%);
+      -webkit-mask-image: radial-gradient(ellipse at center, black 0%, transparent 75%);
+    }
+    header {
+      position: fixed; inset: 0 0 auto 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 32px;
+      background: rgba(22,22,23,.65);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    .logo { font-weight: 600; font-size: 15px; letter-spacing: -.01em; }
+    .logo span { color: #0a84ff; }
+
+    main {
+      position: relative; z-index: 1;
+      flex: 1;
+      max-width: 1040px; width: 100%; margin: 0 auto;
+      padding: 96px 24px 64px;
+      display: grid; grid-template-columns: 1.45fr 1fr; gap: 56px;
+      align-content: center;
+    }
+
+    .hero h1 {
+      font-size: 44px; line-height: 1.08; font-weight: 600; margin: 0 0 16px; letter-spacing: -.03em;
+    }
+    .hero p {
+      color: rgba(255,255,255,.5); font-size: 16px; line-height: 1.65; max-width: 420px; margin: 0 0 32px;
+    }
+
+    .panel {
+      background: rgba(38,38,40,.72);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 24px 60px rgba(0,0,0,.25);
+    }
+    .panel-title {
+      font-size: 14px; font-weight: 600; margin: 0 0 4px;
+    }
+    .panel-sub {
+      font-size: 13px; color: rgba(255,255,255,.4); margin: 0 0 22px;
+    }
+
+    .dropzone {
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 12px;
+      min-height: 220px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+      background: rgba(28,28,30,.4);
+      transition: .2s; cursor: pointer;
+    }
+    .dropzone:hover { border-color: rgba(255,255,255,.22); background: rgba(255,255,255,.04); }
+    .dropzone .icon { font-size: 32px; color: rgba(255,255,255,.3); }
+    .dropzone h3 { margin: 0; font-size: 15px; font-weight: 500; color: rgba(255,255,255,.85); }
+    .dropzone p { margin: 0; font-size: 13px; color: rgba(255,255,255,.4); }
+
+    .field { margin-bottom: 16px; }
+    .field:last-of-type { margin-bottom: 6px; }
+    .field label {
+      display: block; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .08em; color: rgba(255,255,255,.4); margin-bottom: 7px;
+    }
+    .field input, .file {
+      width: 100%; background: rgba(22,22,23,.55); border: 1px solid rgba(255,255,255,.08);
+      border-radius: 8px; color: rgba(255,255,255,.9); padding: 10px 12px; font-size: 14px;
+    }
+    .file { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+    .file span { color: rgba(255,255,255,.4); }
+    .hint { font-size: 12px; color: rgba(255,255,255,.36); margin-top: 6px; line-height: 1.5; }
+    .hint code { font-family: "JetBrains Mono", monospace; color: rgba(255,255,255,.55); }
+
+    .submit {
+      width: 100%; margin-top: 16px; padding: 11px; border-radius: 8px; border: none;
+      background: rgba(255,255,255,.92); color: #161617; font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: .2s;
+    }
+    .submit:hover { background: #fff; }
+
+    footer {
+      position: relative; z-index: 1;
+      max-width: 1040px; width: 100%; margin: 0 auto; padding: 20px 24px;
+      display: flex; justify-content: space-between;
+      color: rgba(255,255,255,.3); font-size: 12px;
+    }
+
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; gap: 32px; padding-top: 88px; align-content: start; }
+      .hero h1 { font-size: 32px; }
+      header { padding: 14px 20px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">Aiming <span>Cookie</span></div>
+    <nav class="nav">
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>上传录像，读取瞄准张力。</h1>
+      <p>
+        系统解析 KovaaK's 录像与 Stats CSV，提取每次 flick 的减速段特征，生成可执行的训练建议。
+      </p>
+
+      <div class="dropzone">
+        <div class="icon">↑</div>
+        <h3>拖入 MP4 文件或点击选择</h3>
+        <p>视频上限 100 MB · 推荐 1080p / 60fps</p>
+      </div>
+
+    </section>
+
+    <aside class="panel">
+      <div class="panel-title">分析配置</div>
+      <div class="panel-sub">用于换算真实物理指标</div>
+
+      <div class="field">
+        <label>KovaaK Stats CSV</label>
+        <div class="file">
+          <span>未选择文件</span>
+          <span style="font-size:16px;color:rgba(255,255,255,.35)">+</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>cm / 360</label>
+        <input value="48" />
+        <div class="hint">留空时后端从 <code>DPI × Horiz Sens × yaw</code> 自动估算。</div>
+      </div>
+
+      <div class="field">
+        <label>FOV</label>
+        <input value="103" />
+      </div>
+
+      <button class="submit">开始分析</button>
+    </aside>
+  </main>
+
+  <footer>
+    <span>© 2026 Aiming Cookie</span>
+    <span>Privacy · Terms · Contact</span>
+  </footer>
+</body>
+</html>
