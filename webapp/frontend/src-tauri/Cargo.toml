@@ -1,0 +1,23 @@
+[package]
+name = "aiming-cookie-desktop"
+version = "0.1.0"
+description = "Aiming Cookie local-first desktop shell"
+authors = ["Aiming Cookie"]
+edition = "2021"
+
+[lib]
+name = "aiming_cookie_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
