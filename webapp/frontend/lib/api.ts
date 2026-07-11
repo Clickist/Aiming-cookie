@@ -13,6 +13,9 @@
 import type {
   AnalyzeResponse,
   ChatResponse,
+  CoachPrimaryAttachResponse,
+  CoachPrimaryMessageResponse,
+  CoachPrimaryResponse,
   DeleteSessionResponse,
   SessionListResponse,
   SessionStatus,
@@ -239,3 +242,63 @@ export async function getTimeline(
 export function getVideoUrl(sessionId: number): string {
   return `${API_BASE}/api/sessions/${sessionId}/video`;
 }
+
+/* ---- primary coach thread ---- */
+
+/** GET /api/coach/primary — lazy-create thread, messages, refs. */
+export async function getCoachPrimary(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachPrimaryResponse> {
+  const res = await fetch(`${API_BASE}/api/coach/primary`, {
+    method: "GET",
+    headers: { "X-User-Id": opts.userId ?? DEFAULT_USER_ID },
+    signal: opts.signal,
+  });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachPrimaryResponse;
+}
+
+/** POST /api/coach/primary/attach — idempotent attach done analysis. */
+export async function attachCoachPrimaryAnalysis(
+  analysisSessionId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachPrimaryAttachResponse> {
+  const res = await fetch(`${API_BASE}/api/coach/primary/attach`, {
+    method: "POST",
+    headers: {
+      "X-User-Id": opts.userId ?? DEFAULT_USER_ID,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ analysis_session_id: analysisSessionId }),
+    signal: opts.signal,
+  });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachPrimaryAttachResponse;
+}
+
+/**
+ * POST /api/coach/primary/messages — send without analysis_session_id for
+ * context-free chat; pass analysis_session_id to inject that done analysis.
+ */
+export async function postCoachPrimaryMessage(
+  content: string,
+  analysisSessionId?: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachPrimaryMessageResponse> {
+  const body: { content: string; analysis_session_id?: number } = { content };
+  if (analysisSessionId !== undefined) {
+    body.analysis_session_id = analysisSessionId;
+  }
+  const res = await fetch(`${API_BASE}/api/coach/primary/messages`, {
+    method: "POST",
+    headers: {
+      "X-User-Id": opts.userId ?? DEFAULT_USER_ID,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: opts.signal,
+  });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachPrimaryMessageResponse;
+}
+

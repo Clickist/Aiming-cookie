@@ -218,10 +218,10 @@ export default function ReportView({ report, sessionId }: ReportViewProps) {
               复测
             </button>
             <Link
-              href={`/sessions/${sessionId}/coach`}
+              href={`/coach?analysis=${sessionId}`}
               className="flex-grow md:flex-none px-xl py-md bg-primary text-on-primary font-mono text-label-md uppercase tracking-widest font-bold hover:brightness-110 transition-all shadow-xl"
             >
-              和教练对话 →
+              跟教练深聊 →
             </Link>
           </div>
         </div>

@@ -95,3 +95,52 @@ class Timeline(BaseModel):
     fps: int
     duration_frames: int
     events: list[TimelineEvent] = []
+
+
+class CoachThreadOut(BaseModel):
+    id: int
+    user_id: str
+    kind: str
+    created_at: str
+    updated_at: str
+
+
+class CoachThreadMessageOut(BaseModel):
+    id: int
+    role: str
+    content: str
+    created_at: str
+    legacy_session_id: Optional[int] = None
+
+
+class CoachAnalysisRefOut(BaseModel):
+    id: int
+    analysis_session_id: Optional[int]
+    status: str
+    attached_at: str
+    deleted_at: Optional[str] = None
+
+
+class CoachPrimaryResponse(BaseModel):
+    thread: CoachThreadOut
+    messages: list[CoachThreadMessageOut]
+    refs: list[CoachAnalysisRefOut]
+
+
+class CoachPrimaryMessageRequest(BaseModel):
+    content: str
+    analysis_session_id: Optional[int] = None
+
+
+class CoachPrimaryAttachRequest(BaseModel):
+    analysis_session_id: int
+
+
+class CoachPrimaryMessageResponse(BaseModel):
+    reply: Optional[str] = None
+    notes: list[str] = []
+    messages: list[CoachThreadMessageOut] = []
+
+
+class CoachPrimaryAttachResponse(BaseModel):
+    ref: CoachAnalysisRefOut

@@ -9,7 +9,7 @@ from .config import DB_PATH
 
 _conn: Optional[aiosqlite.Connection] = None
 
-TARGET_USER_VERSION = 2
+TARGET_USER_VERSION = 3
 
 
 async def get_conn() -> aiosqlite.Connection:
@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS coach_messages (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     trace_json TEXT,
     legacy_session_id INTEGER,
+    legacy_chat_message_id INTEGER,
     FOREIGN KEY (thread_id) REFERENCES coach_threads(id)
 );
 CREATE INDEX IF NOT EXISTS idx_coach_messages_thread
@@ -134,6 +135,7 @@ async def init_schema() -> None:
     await conn.executescript(SCHEMA)
 
     if user_version >= TARGET_USER_VERSION:
+        await _migrate_v3_coach_messages_legacy_id(conn)
         await conn.commit()
         return
 
@@ -142,7 +144,8 @@ async def init_schema() -> None:
         if user_version == 0:
             for col, col_def in _V1_MIGRATION_COLUMNS:
                 await _migrate_add_column_if_missing(conn, "sessions", col, col_def)
-        # user_version 0 or 1 → 2: coach tables already created via SCHEMA
+        if user_version < 3:
+            await _migrate_v3_coach_messages_legacy_id(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -161,6 +164,18 @@ async def _migrate_add_column_if_missing(
     existing = {row[1] for row in rows}
     if col not in existing:
         await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+
+
+async def _migrate_v3_coach_messages_legacy_id(conn: aiosqlite.Connection) -> None:
+    """v2 → v3: legacy_chat_message_id + partial unique index (idempotent)."""
+    await _migrate_add_column_if_missing(
+        conn, "coach_messages", "legacy_chat_message_id", "INTEGER",
+    )
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_messages_legacy_chat_message_id "
+        "ON coach_messages(legacy_chat_message_id) "
+        "WHERE legacy_chat_message_id IS NOT NULL"
+    )
 
 
 async def save_chat_message(
