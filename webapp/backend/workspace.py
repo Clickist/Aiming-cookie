@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Protocol
 
 from . import config
-
-log = logging.getLogger(__name__)
 
 
 class UploadReader(Protocol):
@@ -66,18 +64,38 @@ def session_dir(session_id: int | str) -> Path:
 
 def remove_session_workspace(session_id: int | str) -> bool:
     """Remove the session workspace directory if it exists. Returns True if removed."""
-    try:
-        path = session_dir(session_id)
-    except (InvalidSessionId, WorkspacePathError):
-        log.warning(
-            "remove_session_workspace skipped unsafe session_id=%r",
-            session_id,
-        )
-        return False
+    path = session_dir(session_id)
     if not path.is_dir():
         return False
     shutil.rmtree(path)
     return True
+
+
+def workspace_size_bytes(session_id: int | str) -> int:
+    """Return managed workspace size; the resolved directory must remain under sessions/."""
+    path = session_dir(session_id)
+    if not path.is_dir():
+        return 0
+    total = 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            try:
+                total += (Path(root) / name).stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def copy_path_to_path(source: Path, destination: Path) -> int:
+    """Stream a local source into the managed workspace without loading it into memory."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with source.open("rb") as src, destination.open("wb") as dst:
+            shutil.copyfileobj(src, dst, length=config.UPLOAD_CHUNK_SIZE)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return destination.stat().st_size
 
 
 async def stream_upload_to_path(
