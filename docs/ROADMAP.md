@@ -51,13 +51,14 @@
 
 ## 2. 当前基线与差距
 
-截至 2026-07-11 当前工作区对账：
+截至 2026-07-12 当前工作区对账（线 B 薄切片 Task 5 回归后）：
 
-- 全仓单一 pytest 入口 `218 passed, 1 skipped`；分开核验为 core `116 passed`、Web backend `102 passed, 1 skipped`；frontend production build 已通过；
+- 全仓单一 pytest 入口 `245 passed, 1 skipped`；分开核验为 core `116 passed`、`webapp/tests` `129 passed, 1 skipped`；frontend `tsc --noEmit` 与 production build 已通过；
 - versioned result/error/artifact contracts 及 legacy adapters 已完成集成验收，runtime-contracts plan 已归档，不得重复实施；
 - worker lease、heartbeat、stale recovery、retry 和 lease ownership 修复已实现并有测试；
 - 最小 History 的列表、详情回看、done/failed 删除和前端页面已实现；趋势/对比按本路线图后移到 P1；
-- 当前 Coach 消息仍由 analysis session 持有，删除实现仍级联删除 `chat_messages`，不满足本次预览 P0 的常驻 Coach 删除语义；
+- `[x]` **常驻 Coach 数据归属（线 A）**：`coach_threads` / `coach_messages` / `coach_analysis_refs`、删除分析不级联抹 Coach 消息、用户级 `/coach` API 与页面、旧 `chat_messages` 迁移路径 — **当前代码已具备**（部分改动待 commit；仍以 P0 集成 Gate 为准，非预览 Go）；
+- `[x]` **线 B Pi Coach runtime 薄切片**：`third_party/pi` vendored、`webapp/coach-runtime` 单轮 turn、Python subprocess 桥、primary/session chat 默认 `COACH_RUNTIME=pi` + `COACH_RUNTIME_FALLBACK_PYTHON` — **当前代码已具备**（无长期 daemon / 云账单 / Desktop 沙箱；待 commit + 集成 Gate）；
 - 显式 session workspace、流式上传、完整文件生命周期、可信身份、可运营部署和 browser E2E 尚未完成；
 - Desktop 仍处于研究阶段，没有可执行工程。
 
@@ -76,7 +77,7 @@
 | Versioned contracts | History/Desktop 不再依赖偶然 JSON | 当前 result/job | result/job/error/artifact 有版本、NaN、迁移和 TS 校验策略 | 数据写入后无法可靠读取或迁移 |
 | Worker recovery/retry | 分析不因进程退出永久卡死 | Job contract | lease、heartbeat、attempt、stale recovery、显式 retry 有自动测试 | 用户 session 永久停在 running |
 | 最小 History 闭环 | 用户能找回分析而非一次性页面 | Result contract | done 自动写入；列表、状态/摘要、详情回看、仅删除 done/failed 可用；**不含趋势** | 分析仍是一次性页面 |
-| 常驻 Coach 数据归属迁移 | 删除分析不抹掉教练关系 | Pi assessment + Spike + 新 implementation plan | Coach 关系/消息不再由 analysis session 独占；分析引用支持已删除态；旧 chat 可回退迁移 | P0 删除 Gate 与 PRD 冲突、用户对话丢失 |
+| 常驻 Coach 数据归属迁移 | 删除分析不抹掉教练关系 | Pi assessment + Spike + 线 A plan（Task 1–5） | Coach 关系/消息不再由 analysis session 独占；分析引用支持已删除态；旧 chat 可回退迁移 — **实现已具备，待 commit + 集成验收** | P0 删除 Gate 与 PRD 冲突、用户对话丢失 |
 | 文件生命周期 | 可控磁盘和隐私 | Workspace/manifest | 流式写入、无自动 TTL、用户主动删除、orphan scan、quota/低磁盘保护 | 磁盘泄漏、隐私和服务中断 |
 | 可信预览访问边界 | 防止客户端伪造 owner | 部署入口 | VPN/SSO/可信代理注入身份；浏览器 header 不作为信任源 | 任意用户可伪造身份读写 session |
 | 可运营运行基线 | 故障可发现、可恢复 | Runtime | supervisor、health/readiness、structured logs 和基本指标 | 只能靠开发者盯进程救火 |
@@ -117,13 +118,14 @@ P2 不代表取消；它表示这些能力不能抢占 P0 的发布可靠性和 
 1. `[x]` 实现并完成最小 result/job/error/artifact contracts 集成验收；plan 已归档；
 2. `[x]` 实现 worker lease、heartbeat、retry、stale recovery 和 lease ownership；
 3. `[x]` 完成最小 History：done 写入 → 列表/状态摘要 → 详情回看 → 仅删除 done/failed；**趋势不在 P0**；
-4. 完成 Pi 源码接管 assessment 与隔离 Spike，固定基线版本/package、纳入/删改边界、许可证/依赖义务和运行边界；
-5. 编写并批准替代 Coach migration implementation plan，迁移用户级 Coach 关系/消息/分析引用和旧 session chat；
-6. 建立显式 session workspace、流式上传与文件删除规则（默认无自动 TTL）；
-7. `[x]` 修复全仓单命令 pytest collection；
-8. 增加 health/readiness、supervisor、structured logs 和基本指标；
-9. 建立真实素材 E2E 和 browser E2E release gate；
-10. 仅在可信访问层后部署预览。
+4. `[x]` 完成 Pi 源码接管 assessment 与隔离 Spike，固定基线版本/package、纳入/删改边界、许可证/依赖义务和运行边界；
+5. `[x]` 常驻 Coach **数据归属** implementation plan（`2026-07-11-persistent-coach-data-ownership.md`）Task 1–5 — 用户级 Coach 关系/消息/分析引用与旧 session chat 迁移 — **代码已具备**；
+6. `[x]` 线 B Pi Coach runtime 薄切片（`2026-07-12-pi-coach-runtime-integration.md`）Task 1–5 — vendor Pi、coach-runtime、API 默认 Pi + Python fallback — **代码已具备**（加厚项另 plan）；
+7. 建立显式 session workspace、流式上传与文件删除规则（默认无自动 TTL）；
+8. `[x]` 修复全仓单命令 pytest collection；
+9. 增加 health/readiness、supervisor、structured logs 和基本指标；
+10. 建立真实素材 E2E 和 browser E2E release gate；
+11. 仅在可信访问层后部署预览。
 
 **冻结项**：tracking 接通、支付、云同步、Desktop 正式工程、横向新页面和新的视觉方向。
 

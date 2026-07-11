@@ -1,27 +1,28 @@
 # 当前施工计划入口
 
-> **只有本页列为 active 且由点点明确指定 Task 的 implementation plan 才能交给 executor。** Roadmap、Architecture、spec 或归档 plan 都不能替代可执行 Task。
+> **只有本页列为 active 且由点点明确指定 Task 的 implementation plan 才能交给 executor。**
 
 ## Active
 
-| 顺序 | Plan | 当前可执行范围 | 状态 |
-|---|---|---|---|
-| 1 | `2026-07-11-persistent-coach-data-ownership.md` | **线 A**：SQLite 常驻 Coach 数据归属 + 删除语义 + `/coach`；Task 1–5 | **active — 优先开工** |
-| — | `2026-07-11-pi-agent-coach-runtime-assessment-spike.md` | assessment/Spike | **completed**（裁决见 assessments） |
+（无 — 等待点点指定下一独立 plan 的 Task。）
 
-## 已裁决、待写 plan（不得无 plan 施工）
+## Completed（近期）
 
-顺序由 `docs/ROADMAP.md` 与 `docs/superpowers/assessments/2026-07-11-pi-assessment-decision.md` 冻结：
+| Plan | 状态 |
+|---|---|
+| `2026-07-12-coach-structure-hardening.md` | completed（v3 migrate、delete 单事务、CoachEngine+service、routes ~572 行） |
+| `2026-07-12-pi-coach-runtime-integration.md` | completed（薄切片） |
+| `2026-07-11-persistent-coach-data-ownership.md` | completed |
+| `2026-07-11-pi-agent-coach-runtime-assessment-spike.md` | completed |
 
-1. **线 B**：Pi `third_party` 接管 + Coach sidecar（assessment CONDITIONAL GO 后）
-2. session workspace + streaming upload
-3. artifact deletion / no-auto-TTL / orphan / quota / low-disk
-4. health/readiness + structured logging + supervisor
-5. trusted preview deployment boundary
-6. 真实素材 E2E + browser E2E release gate
+## 尚待独立 plan
+
+1. vendor/runtime 依赖面收紧 + 禁止 import coding-agent  
+2. Pi 常驻 sidecar / 预编译入口（去冷启动 subprocess）  
+3. session workspace + streaming upload  
+4. artifact lifecycle / quota  
+5. health + trusted preview + browser E2E  
 
 ## Archive
 
-- 已完成：`docs/archive/completed/plans/`
-- 冻结：`docs/archive/frozen/plans/`
-- 退役且不得执行：`docs/archive/retired/plans/`（含旧 persistent-coach-migration）
+- `docs/archive/completed|frozen|retired/plans/`

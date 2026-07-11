@@ -1,6 +1,6 @@
 # Flicking 模块进度
 
-> 最后更新：2026-07-11（晚间对账）
+> 最后更新：2026-07-12（Coach 结构加固 plan Task 1–4 收口）
 
 ## 当前交付罗盘（2026-07-11）
 
@@ -14,33 +14,46 @@
 
 **已核验**：
 
-- 全仓单一入口：218 passed，1 skipped（文档值；工作区有大量未提交改动，以提交后重跑为准）；
-- 分开核验：core 116 passed；Web backend 102 passed，1 skipped；
+- 全仓单一入口：**247 passed，1 skipped**（2026-07-12 结构加固 Task 4 回归）；
+- 分开核验：core **116 passed**；`webapp/tests` **131 passed，1 skipped**（含 coach hardening 与 Pi 路由分支）；
 - 仓库真实 MP4 + Stats CSV E2E：上传 → enqueue → worker → CV → deterministic report → done 已通过；
-- frontend type-check 和 production build 已通过；
+- frontend `tsc --noEmit` 与 production build 已通过（Task 5，2026-07-12；Task 4 回归再次 `tsc --noEmit` 通过）；
 - **Pi assessment/Spike 已完成**：`spikes/pi-coach-runtime/` 21 tests；assessment **CONDITIONAL GO** 已裁决（`docs/superpowers/assessments/2026-07-11-pi-assessment-decision.md`）。
+- **线 A 常驻 Coach 数据归属**：schema v2、`coach_store`、删除不级联抹消息、`/coach` API+页面、相关 pytest — **已完工**（Task 1–5）。
+- **线 B Pi Coach runtime 薄切片（Task 1–4 代码 + Task 5 回归）**：
+  - `third_party/pi/` vendored（冻结 commit + `PROVENANCE.md`）；
+  - `webapp/coach-runtime/` 单轮 Pi turn（产品 system prompt、无 coding tools、Node 测试）；
+  - `webapp/backend/coach_runtime.py` subprocess 桥 + `coach_runtime_turn.v0`；
+  - `POST /api/coach/primary/messages`（及 session chat 兼容）默认 **`COACH_RUNTIME=pi`**；失败时 **`COACH_RUNTIME_FALLBACK_PYTHON=1`** 回退 `chat_with_coach`；
+  - **未做**：完整云代理账单、长期 Pi daemon、Desktop 沙箱、browser E2E gate。
+- **Coach 结构加固（`2026-07-12-coach-structure-hardening.md` Task 1–3 + Task 4 回归）**：
+  - schema **v3**：`legacy_chat_message_id`、单一 `migrate_session_legacy_messages`、幂等迁移；
+  - `delete_session`：**单事务**（lock → migrate → mark refs → delete rows；文件删除仍在 commit 后）；
+  - **`coach_engine.py` + `coach_service.py`**：Pi/Python 引擎与一轮编排迁出 routes；`COACH_RUNTIME` + fallback 行为与现测一致；
+  - **`routes.py` 约 572 行**（coach 大段 if pi/python 已搬出；目标 <600 已达成）。
 
-**当前阻塞**：
+**当前阻塞**（预览仍 No-Go）：
 
-1. 当前 Coach chat 仍归属 analysis session，删除 session 仍级联删除消息 — **线 A plan 已激活，正在施工**；
+1. 线 A / 线 B / 结构加固等工作区改动 **可能仍待 commit**；需落盘后重跑 pytest 固化基线；
 2. 上传仍整文件读内存，且没有显式 per-session workspace、无自动 TTL、主动删除、quota/orphan 等完整文件生命周期；
 3. `X-User-Id` 不是可信身份边界；
 4. 无 supervisor、health/readiness、structured logs 和 browser E2E release gate；
 5. Desktop 只有研究，无 shell、sidecar、IPC、installer、签名或更新工程；
-6. **工作区 ~85 项未提交改动**（已完成 P0 代码 + 文档搬家 + Spike），需分批落盘以免基线漂移。
+6. 有 LLM key 时 `/coach` 真机一轮 **未在本 Task 强制验收**（无 key 不阻塞；有 key 建议手工记一条到本文件）。
 
 ### 当前执行顺序
 
-1. **P0 线 A（优先）**：常驻 Coach **数据归属**（SQLite + 删除语义 + `/coach`；runtime 暂留 Python `chat_with_coach`）— plan：`2026-07-11-persistent-coach-data-ownership.md`；
-2. **P0 线 B（并行可写 plan，不堵线 A）**：Pi `third_party` 接管 + sidecar；
-3. workspace/streaming/file lifecycle → 可信访问与运行基线 → release gate；
-4. **P1 / P2**：见 Roadmap；P0 结束前冻结横向产品扩张。
+1. **P0 线 A**：常驻 Coach 数据归属 — **已完成**。
+2. **P0 线 B 薄切片**：`2026-07-12-pi-coach-runtime-integration.md` Task 1–5 — **已完成**。
+3. **P0 结构加固**：`2026-07-12-coach-structure-hardening.md` Task 1–4 — **已完成**（文档收口于本日）。
+4. **下一队列**（各需独立 plan）：vendor/runtime 裁剪、Pi sidecar、session workspace、artifact lifecycle、health + E2E gate — 见 `docs/superpowers/plans/README.md`。
+5. workspace/streaming/file lifecycle → 可信访问与运行基线 → release gate；
+6. **P1 / P2**：见 Roadmap。
 
-### 2026-07-11 范围裁决与后续交接
+### 2026-07-12 交接
 
-- **最小 History P0**：列表、状态/摘要、详情回看、仅删除 done/failed；趋势、对比、筛选和 export/import 后移到 P1 — **代码侧已具备（待提交）**。
-- **Coach 拆分**：产品 P0 = 数据归属（线 A，已开工）；Pi runtime 接管 = 线 B（CONDITIONAL GO，另写 plan）。旧 `docs/archive/retired/plans/2026-07-10-persistent-coach-migration.md` 仍不得执行。
-- **下一小刀**：**线 A Task 1**（schema v2 + store + 测试）。
+- **下一小刀**：结构加固已收口；按 plans README「尚待独立 plan」择一开工（优先顺序由点点定：vendor 裁剪 / Pi sidecar / workspace / lifecycle / health+E2E）；**不要**在未授权时扩 scope（daemon 加厚、云账单、Desktop 沙箱）。
+- 旧 persistent-coach-migration plan 仍不得重复执行。
 
 ### 执行模型分级
 
