@@ -67,10 +67,7 @@ impl RuntimeProcess {
             let stderr_token = token.clone();
             thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    eprintln!(
-                        "[desktop-runtime] {}",
-                        redact_secret(&line, &stderr_token),
-                    );
+                    eprintln!("[desktop-runtime] {}", redact_secret(&line, &stderr_token),);
                 }
             });
         }
@@ -297,6 +294,9 @@ mod tests {
         let second = create_launch_token();
         assert_ne!(first, second);
         assert_eq!(first.len(), 64);
-        assert_eq!(redact_secret(&format!("token={first}"), &first), "token=[REDACTED]");
+        assert_eq!(
+            redact_secret(&format!("token={first}"), &first),
+            "token=[REDACTED]"
+        );
     }
 }
