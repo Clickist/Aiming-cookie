@@ -1,6 +1,6 @@
 # Flicking 模块进度
 
-> 最后更新：2026-07-12（Coach 结构加固 plan Task 1–4 收口）
+> 最后更新：2026-07-12（`coach-startup-ux` Task 1–4 完工 + 全仓回归）
 
 ## 当前交付罗盘（2026-07-11）
 
@@ -14,10 +14,10 @@
 
 **已核验**：
 
-- 全仓单一入口：**247 passed，1 skipped**（2026-07-12 结构加固 Task 4 回归）；
-- 分开核验：core **116 passed**；`webapp/tests` **131 passed，1 skipped**（含 coach hardening 与 Pi 路由分支）；
+- 全仓单一入口：**274 passed，2 skipped**（2026-07-12 coach-startup-ux Task 4 回归，`.venv`）；
+- 分开核验：core **116 passed**；`webapp/tests` **158 passed，2 skipped**（含 `test_coach_runtime_status`、health/auth、browser 骨架 skip、E2E_VIDEO skip）；
 - 仓库真实 MP4 + Stats CSV E2E：上传 → enqueue → worker → CV → deterministic report → done 已通过；
-- frontend `tsc --noEmit` 与 production build 已通过（Task 5，2026-07-12；Task 4 回归再次 `tsc --noEmit` 通过）；
+- frontend production build 已通过（2026-07-12）；
 - **Pi assessment/Spike 已完成**：`spikes/pi-coach-runtime/` 21 tests；assessment **CONDITIONAL GO** 已裁决（`docs/superpowers/assessments/2026-07-11-pi-assessment-decision.md`）。
 - **线 A 常驻 Coach 数据归属**：schema v2、`coach_store`、删除不级联抹消息、`/coach` API+页面、相关 pytest — **已完工**（Task 1–5）。
 - **线 B Pi Coach runtime 薄切片（Task 1–4 代码 + Task 5 回归）**：
@@ -25,35 +25,49 @@
   - `webapp/coach-runtime/` 单轮 Pi turn（产品 system prompt、无 coding tools、Node 测试）；
   - `webapp/backend/coach_runtime.py` subprocess 桥 + `coach_runtime_turn.v0`；
   - `POST /api/coach/primary/messages`（及 session chat 兼容）默认 **`COACH_RUNTIME=pi`**；失败时 **`COACH_RUNTIME_FALLBACK_PYTHON=1`** 回退 `chat_with_coach`；
-  - **未做**：完整云代理账单、长期 Pi daemon、Desktop 沙箱、browser E2E gate。
+  - **Sidecar（`2026-07-12-pi-sidecar-and-runtime-hardening.md` Task 1–3）**：loopback HTTP `POST /v0/turn` + `GET /healthz`；`run_pi_coach_turn` 优先 sidecar、可选 subprocess 回退；`./scripts/run-coach-sidecar.sh`；`webapp/coach-runtime/test` **8 passed**（import 边界 + sidecar server）；
+  - **未做**：完整云代理账单、Desktop 沙箱、完整 browser E2E release gate；有 key 时 `/coach` 真机一轮仍建议手工记一条（非本 Task 强制）。
 - **Coach 结构加固（`2026-07-12-coach-structure-hardening.md` Task 1–3 + Task 4 回归）**：
   - schema **v3**：`legacy_chat_message_id`、单一 `migrate_session_legacy_messages`、幂等迁移；
   - `delete_session`：**单事务**（lock → migrate → mark refs → delete rows；文件删除仍在 commit 后）；
   - **`coach_engine.py` + `coach_service.py`**：Pi/Python 引擎与一轮编排迁出 routes；`COACH_RUNTIME` + fallback 行为与现测一致；
   - **`routes.py` 约 572 行**（coach 大段 if pi/python 已搬出；目标 <600 已达成）。
+- **Session workspace + 流式上传（`2026-07-12-session-workspace-streaming-upload.md` Task 1–3）**：
+  - `{DATA_ROOT}/sessions/{id}/` 工作区；`delete_session` commit 后 `rmtree`；
+  - `/api/analyze` 分块流式写入，超限中止并清理 session + 目录；
+  - `MIN_FREE_DISK_BYTES`（默认 500MB，`MIN_FREE_DISK_BYTES` env）不足时上传 **507** 明确文案，不入队。
+
+- **预览可运营（`2026-07-12-preview-ops-health-identity-e2e.md` Task 1–4）**：
+  - `GET /healthz`、`GET /readyz`（DB + 已配置 sidecar）；
+  - `TRUST_PROXY_USER=1` 时只信 `X-Forwarded-User` / `Remote-User`（`webapp/backend/auth.py` + pytest）；
+  - `webapp/tests/test_browser_smoke.py` Playwright 骨架（无 playwright/Chromium 时 skip；可选 `BROWSER_E2E_FRONTEND_URL`）；
+  - `docs/deployment-guide.md` §5.1 探活/身份/sidecar 说明。
 
 **当前阻塞**（预览仍 No-Go）：
 
-1. 线 A / 线 B / 结构加固等工作区改动 **可能仍待 commit**；需落盘后重跑 pytest 固化基线；
-2. 上传仍整文件读内存，且没有显式 per-session workspace、无自动 TTL、主动删除、quota/orphan 等完整文件生命周期；
-3. `X-User-Id` 不是可信身份边界；
-4. 无 supervisor、health/readiness、structured logs 和 browser E2E release gate；
-5. Desktop 只有研究，无 shell、sidecar、IPC、installer、签名或更新工程；
-6. 有 LLM key 时 `/coach` 真机一轮 **未在本 Task 强制验收**（无 key 不阻塞；有 key 建议手工记一条到本文件）。
+1. 无自动 TTL、完整 quota/orphan 治理与主动删除产品化仍缺（workspace + 流式上传 + 删目录 + 低磁盘门槛已落地）；
+2. 预览/生产需 `TRUST_PROXY_USER=1` + 可信反代才成立；本地 dev 仍可用 `X-User-Id`；
+3. 无 supervisor、structured logs；browser E2E 仅有骨架（未装 Playwright 时 skip），非完整 release gate；
+4. Desktop 只有研究，无 shell、sidecar、IPC、installer、签名或更新工程；
+5. 有 LLM key 时 `/coach` 真机一轮 **未在本 Task 强制验收**（无 key 不阻塞；有 key 建议手工记一条到本文件）。
 
 ### 当前执行顺序
 
-1. **P0 线 A**：常驻 Coach 数据归属 — **已完成**。
-2. **P0 线 B 薄切片**：`2026-07-12-pi-coach-runtime-integration.md` Task 1–5 — **已完成**。
-3. **P0 结构加固**：`2026-07-12-coach-structure-hardening.md` Task 1–4 — **已完成**（文档收口于本日）。
-4. **下一队列**（各需独立 plan）：vendor/runtime 裁剪、Pi sidecar、session workspace、artifact lifecycle、health + E2E gate — 见 `docs/superpowers/plans/README.md`。
-5. workspace/streaming/file lifecycle → 可信访问与运行基线 → release gate；
-6. **P1 / P2**：见 Roadmap。
+1. 线 A / 线 B 薄切片 / 结构加固 — **已完成**。
+2. **当前队列（点点 2026-07-12 全做）**：
+   1. `2026-07-12-pi-sidecar-and-runtime-hardening.md` — **completed**
+   2. `2026-07-12-session-workspace-streaming-upload.md` — **completed**
+   3. `2026-07-12-preview-ops-health-identity-e2e.md` — **completed**
+   4. `2026-07-12-coach-startup-ux.md` — **completed**
+3. **P1 / P2**：见 Roadmap。
 
 ### 2026-07-12 交接
 
-- **下一小刀**：结构加固已收口；按 plans README「尚待独立 plan」择一开工（优先顺序由点点定：vendor 裁剪 / Pi sidecar / workspace / lifecycle / health+E2E）；**不要**在未授权时扩 scope（daemon 加厚、云账单、Desktop 沙箱）。
-- 旧 persistent-coach-migration plan 仍不得重复执行。
+- **Sidecar 白话**：挂在主服务旁边的常驻 Node 小助手，里面已经加载好 Pi；聊天时喊它，而不是每轮重新启动 Node。
+- **Sidecar 手工验收（有 LLM key）**：`./scripts/run-coach-sidecar.sh` → 设 `COACH_SIDECAR_URL` → API `/coach` 一轮，确认无每轮冷启动 node（日志/耗时）。
+- **本地 dev 推荐**：`./scripts/dev-up.sh`（sidecar + API）；另开终端 worker + `cd webapp/frontend && npm run dev`。
+- **coach-startup-ux**：**completed**（runtime-status API + UI 横幅）。
+- **Browser 骨架（可选）**：`pip install playwright && playwright install chromium` → `pytest webapp/tests/test_browser_smoke.py -v`。
 
 ### 执行模型分级
 
