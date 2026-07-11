@@ -50,3 +50,10 @@ COACH_RUNTIME_TSX_LOADER = PI_SOURCE_DIR / "node_modules" / "tsx" / "dist" / "lo
 COACH_RUNTIME_TIMEOUT_SECONDS = int(
     os.environ.get("COACH_RUNTIME_TIMEOUT_SECONDS", "120")
 )
+COACH_SIDECAR_PORT = int(os.environ.get("COACH_SIDECAR_PORT", "8765"))
+COACH_SIDECAR_URL = os.environ.get(
+    "COACH_SIDECAR_URL", f"http://127.0.0.1:{COACH_SIDECAR_PORT}"
+).strip()
+COACH_SIDECAR_FALLBACK_SUBPROCESS = os.environ.get(
+    "COACH_SIDECAR_FALLBACK_SUBPROCESS", "1"
+).strip()
