@@ -7,10 +7,16 @@ import {
   DragEvent,
   FormEvent,
   useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
-import { uploadVideo } from "@/lib/api";
+import { importDesktopPaths, uploadVideo } from "@/lib/api";
+import {
+  isDesktopRuntime,
+  pickDesktopCsvPath,
+  pickDesktopVideoPath,
+} from "@/lib/desktop";
 import { parseKovaaKConfig, type KovaaKConfigExtract } from "@/lib/csv";
 
 /* ---- constants ---- */
@@ -27,10 +33,14 @@ const DEFAULT_FOV = 103;
 
 export default function HomePage() {
   const router = useRouter();
+  const [desktopMode, setDesktopMode] = useState(false);
 
-  // files
+  // Browser files retain the existing multipart import flow.
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  // Desktop keeps native-selected absolute paths for path import.
+  const [videoPath, setVideoPath] = useState<string | null>(null);
+  const [csvPath, setCsvPath] = useState<string | null>(null);
   // KovaaK CSV config extract (FOV / DPI / Sens) — auto-read on CSV select,
   // used to fill the FOV field + show "已从 CSV 读取" indicator.
   const [csvExtracted, setCsvExtracted] = useState<KovaaKConfigExtract | null>(null);
@@ -42,6 +52,11 @@ export default function HomePage() {
   // submission state
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submissionRef = useRef(false);
+
+  useEffect(() => {
+    setDesktopMode(isDesktopRuntime());
+  }, []);
 
   const clearError = () => setError(null);
 
@@ -113,28 +128,69 @@ export default function HomePage() {
     [validateCsv],
   );
 
+  const handleDesktopVideoPick = useCallback(async () => {
+    clearError();
+    try {
+      const selected = await pickDesktopVideoPath();
+      if (selected) setVideoPath(selected);
+    } catch (err) {
+      setError(formatError(err));
+    }
+  }, []);
+
+  const handleDesktopCsvPick = useCallback(async () => {
+    clearError();
+    try {
+      const selected = await pickDesktopCsvPath();
+      if (selected) setCsvPath(selected);
+    } catch (err) {
+      setError(formatError(err));
+    }
+  }, []);
+
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (submissionRef.current) return;
     clearError();
 
-    if (!videoFile) {
-      setError("请先选择视频文件");
-      return;
-    }
-    if (!csvFile) {
-      setError("请上传 KovaaK Stats CSV（必填）");
-      return;
+    if (desktopMode) {
+      if (!videoPath) {
+        setError("请先选择视频文件");
+        return;
+      }
+      if (!csvPath) {
+        setError("请上传 KovaaK Stats CSV（必填）");
+        return;
+      }
+    } else {
+      if (!videoFile) {
+        setError("请先选择视频文件");
+        return;
+      }
+      if (!csvFile) {
+        setError("请上传 KovaaK Stats CSV（必填）");
+        return;
+      }
     }
 
+    submissionRef.current = true;
     setSubmitting(true);
     try {
-      const res = await uploadVideo(videoFile, {
-        csv: csvFile,
-        cmPer360: parseNumber(cmPer360),
-        fov: parseNumber(fov),
-      });
+      const res = desktopMode
+        ? await importDesktopPaths({
+            videoPath: videoPath!,
+            csvPath: csvPath!,
+            cmPer360: parseNumber(cmPer360),
+            fov: parseNumber(fov),
+          })
+        : await uploadVideo(videoFile!, {
+            csv: csvFile!,
+            cmPer360: parseNumber(cmPer360),
+            fov: parseNumber(fov),
+          });
       router.push(`/sessions/${res.session_id}`);
     } catch (err) {
+      submissionRef.current = false;
       setError(formatError(err));
       setSubmitting(false);
     }
@@ -185,11 +241,18 @@ export default function HomePage() {
               </p>
             </div>
 
-            <DropZone
-              file={videoFile}
-              onFile={handleVideoSelected}
-              onError={clearError}
-            />
+            {desktopMode ? (
+              <DesktopVideoPicker
+                path={videoPath}
+                onPick={handleDesktopVideoPick}
+              />
+            ) : (
+              <DropZone
+                file={videoFile}
+                onFile={handleVideoSelected}
+                onError={clearError}
+              />
+            )}
           </section>
 
           {/* Right column: config + CTA */}
@@ -208,13 +271,21 @@ export default function HomePage() {
               </div>
 
               {/* KovaaK Stats CSV (required — backend hard-requires it) */}
-              <FileField
-                id="csv"
-                label="KovaaK Stats CSV（必填）"
-                hint={csvFile ? csvFile.name : "未选择文件"}
-                accept=".csv,text/csv"
-                onChange={handleCsvChange}
-              />
+              {desktopMode ? (
+                <DesktopFilePicker
+                  label="KovaaK Stats CSV（必填）"
+                  hint={csvPath ? fileName(csvPath) : "未选择文件"}
+                  onPick={handleDesktopCsvPick}
+                />
+              ) : (
+                <FileField
+                  id="csv"
+                  label="KovaaK Stats CSV（必填）"
+                  hint={csvFile ? csvFile.name : "未选择文件"}
+                  accept=".csv,text/csv"
+                  onChange={handleCsvChange}
+                />
+              )}
 
               {/* cm/360 — 用户填实测最准(公式对 KovaaK's Horiz Sens 单位敏感)。
                   后端 fallback:用户没填时 csv_parser 从 DPI + Horiz Sens + Sens Scale
@@ -238,7 +309,7 @@ export default function HomePage() {
                 onChange={setFov}
                 placeholder="e.g. 103"
               />
-              {csvExtracted && (
+              {!desktopMode && csvExtracted && (
                 <p className="text-label-sm text-on-surface-variant -mt-xs">
                   {csvExtracted.fov !== undefined ? (
                     <>
@@ -266,7 +337,10 @@ export default function HomePage() {
 
               <button
                 type="submit"
-                disabled={submitting || !videoFile || !csvFile}
+                disabled={
+                  submitting ||
+                  (desktopMode ? !videoPath || !csvPath : !videoFile || !csvFile)
+                }
                 className="w-full bg-primary text-on-primary font-label-md py-md mt-sm rounded-md transition-colors hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? "提交中…" : "开始分析"}
@@ -458,6 +532,81 @@ function NumberField({
   );
 }
 
+function DesktopVideoPicker({
+  path,
+  onPick,
+}: {
+  path: string | null;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      className="relative group border-2 border-dashed rounded-lg p-xl flex flex-col items-center justify-center min-h-[360px] cursor-pointer transition-colors border-outline bg-surface-container-low hover:border-primary"
+      aria-label="选择 MP4 视频文件"
+    >
+      <div className="flex flex-col items-center gap-md text-center">
+        {path ? (
+          <>
+            <span className="text-headline-sm text-on-surface font-mono break-all">
+              {fileName(path)}
+            </span>
+            <span className="text-label-md text-on-surface-variant">
+              已选择本地路径 · 点击替换
+            </span>
+          </>
+        ) : (
+          <>
+            <span
+              className="material-symbols-outlined text-[64px] leading-none text-on-surface-variant"
+              style={{ fontVariationSettings: "'FILL' 1" }}
+              aria-hidden
+            >
+              upload
+            </span>
+            <div>
+              <p className="text-headline-sm text-on-surface">
+                选择 MP4 录像
+              </p>
+              <p className="mt-xs text-body-md text-on-surface-variant">
+                原始文件只会复制到 Aiming Cookie 管理目录
+              </p>
+            </div>
+            <span className="border border-outline px-md py-xs text-label-md text-on-surface group-hover:bg-surface-container-high transition-colors">
+              Select file
+            </span>
+          </>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function DesktopFilePicker({
+  label,
+  hint,
+  onPick,
+}: {
+  label: string;
+  hint: string;
+  onPick: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-xs">
+      <span className="text-label-md text-on-surface">{label}</span>
+      <button
+        type="button"
+        onClick={onPick}
+        className="border border-outline px-sm py-xs flex items-center justify-between cursor-pointer hover:bg-surface-container-high transition-colors"
+      >
+        <span className="text-label-sm text-on-surface-variant truncate">{hint}</span>
+        <span className="material-symbols-outlined text-label-md text-on-surface-variant">attach_file</span>
+      </button>
+    </div>
+  );
+}
+
 function FileField({
   id,
   label,
@@ -500,6 +649,10 @@ function FileField({
 }
 
 /* ---- helpers ---- */
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
 
 function parseNumber(s: string): number | undefined {
   const n = Number(s);

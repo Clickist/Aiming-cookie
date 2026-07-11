@@ -1,63 +1,87 @@
+"use client";
+
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { use, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import ReportView from "./ReportView";
 import { getSession } from "@/lib/api";
 import { analysisResultToCoachReport } from "@/lib/contracts";
+import type { SessionStatus } from "@/lib/types";
+
+type ReportState =
+  | { kind: "loading" }
+  | { kind: "status"; data: SessionStatus }
+  | { kind: "error"; detail: string };
 
 /**
- * Coach report route. Renders the Wave 2 dark-bento report for a finished
- * session. Status gate:
- *   - done    → render ReportView with the CoachReport payload
- *   - queued | running → bounce to the processing page (Wave 2 sibling route)
- *   - failed  → render a minimal error shell
- *
- * `params` is a Promise in Next 15+ (Server Component async params); we await
- * it before parsing the id.
+ * This route must load in the client: a Tauri WebView obtains its dynamic
+ * loopback runtime connection via invoke, which is unavailable to Node server
+ * components.
  */
-export default async function ReportPage({
+export default function ReportPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const sessionId = Number(id);
+  const router = useRouter();
+  const { id } = use(params);
+  const sessionId = useMemo(() => Number(id), [id]);
+  const [state, setState] = useState<ReportState>({ kind: "loading" });
+
+  useEffect(() => {
+    if (!Number.isFinite(sessionId) || sessionId <= 0) {
+      router.replace("/");
+      return;
+    }
+
+    const controller = new AbortController();
+    getSession(sessionId, { signal: controller.signal })
+      .then((data) => setState({ kind: "status", data }))
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setState({
+            kind: "error",
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [router, sessionId]);
+
+  useEffect(() => {
+    if (state.kind === "status" && (state.data.status === "queued" || state.data.status === "running")) {
+      router.replace(`/sessions/${sessionId}`);
+    }
+  }, [router, sessionId, state]);
+
   if (!Number.isFinite(sessionId) || sessionId <= 0) {
-    redirect("/");
+    return null;
   }
-
-  let status;
-  try {
-    status = await getSession(sessionId);
-  } catch (err) {
-    return (
-      <ReportError
-        title="无法连接后端"
-        detail={err instanceof Error ? err.message : String(err)}
-      />
-    );
+  if (state.kind === "loading") {
+    return <ReportError title="正在加载报告" detail="正在读取分析结果…" />;
   }
-
-  if (status.status === "queued" || status.status === "running") {
-    redirect(`/sessions/${sessionId}`);
+  if (state.kind === "error") {
+    return <ReportError title="无法连接后端" detail={state.detail} />;
   }
-
-  if (status.status === "failed") {
+  if (state.data.status === "queued" || state.data.status === "running") {
+    return <ReportError title="分析仍在进行" detail="正在返回处理进度页面…" />;
+  }
+  if (state.data.status === "failed") {
     return (
       <ReportError
         title="分析失败"
-        detail={status.error?.message ?? "未知的后端错误"}
+        detail={state.data.error?.message ?? "未知的后端错误"}
       />
     );
   }
-
-  if (!status.result) {
+  if (!state.data.result) {
     return <ReportError title="结果缺失" detail="status=done 但 result 为空" />;
   }
 
   return (
     <ReportView
-      report={analysisResultToCoachReport(status.result)}
+      report={analysisResultToCoachReport(state.data.result)}
       sessionId={sessionId}
     />
   );
@@ -68,9 +92,7 @@ function ReportError({ title, detail }: { title: string; detail: string }) {
     <main className="min-h-dvh flex items-center justify-center px-md">
       <div className="bg-surface-container-low border border-outline rounded-lg p-lg max-w-[640px] w-full">
         <h1 className="text-headline-sm text-on-surface mb-sm">{title}</h1>
-        <p className="text-body-md text-on-surface-variant break-words">
-          {detail}
-        </p>
+        <p className="text-body-md text-on-surface-variant break-words">{detail}</p>
         <Link
           href="/history"
           className="inline-block mt-md text-label-md text-primary hover:brightness-110"
