@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "frontend_prototype_inventory.v1",
+  "capturedAt": "2026-07-13",
+  "status": "deleted-after-user-confirmation",
+  "productUiPrototype": [
+    "app/page.tsx",
+    "app/analyze/page.tsx",
+    "app/history/page.tsx",
+    "app/layout.tsx",
+    "app/not-found.tsx",
+    "app/globals.css",
+    "components/AppChrome.tsx",
+    "components/NewAnalysisClient.tsx",
+    "components/history/BenchmarkPanel.tsx",
+    "components/history/HistoryClient.tsx"
+  ],
+  "protectedCapabilityAdapters": [
+    "lib/api.ts",
+    "lib/types.ts",
+    "lib/contracts.ts",
+    "lib/csv.ts",
+    "lib/desktop.ts",
+    "src-tauri"
+  ],
+  "notes": [
+    "The listed product UI is a prototype and is not a formal IA or visual source.",
+    "Deletion must not remove protected adapters, backend capabilities, Tauri runtime, or user data.",
+    "The workspace was already dirty before this inventory; no reset or checkout is permitted."
+  ],
+  "confirmedAt": "2026-07-13"
+}
