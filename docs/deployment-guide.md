@@ -1,14 +1,14 @@
-# Aiming Cookie 上线部署指南（方案 A 执行版）
+# Aiming Cookie 部署候选方案调研（2026-07-10 快照）
 
-> **状态**：时间敏感的部署实施参考，不是产品或架构事实源。供应商、价格、政策和平台能力必须在实际部署前重新核实。
+> **状态**：历史候选方案与时间敏感调研，不是已批准的实施计划，也不是产品、架构、合规或当前运行状态的事实源。供应商、价格、政策、平台能力和代码入口必须在实际部署前重新核实。
 >
-> 2026-07-10 · 本文是 `docs/PRD.md` §9.1「方案 A：一台香港小 VPS」的**落地 checklist**，不是新设计。方向锚以 PRD 为准；本文与 PRD 或 `docs/ARCHITECTURE.md` 冲突时以上游文档为准。
+> 建立于 2026-07-10，记录当时的候选方案和调研证据。PRD 现在只冻结“合规境外部署 + 发布前复核”的产品约束，不再指定供应商；本文中的香港 VPS、Cloudflare、GitHub Releases、价格与线路均为候选参考。
 >
-> 目标：把"香港 VPS + Cloudflare + GitHub Releases + 境外域名"从决策落到能直接下单、照着配的程度。需求约束：**中国大陆顺畅访问 + 免 ICP 备案**。
+> 使用前先读取 `docs/PRD.md` 与 `docs/ARCHITECTURE.md`，再重新核实法规、供应商、价格、地区可用性与数据义务。未经新的 active plan 批准，不得把本文 checklist 当作当前部署指令。
 
 ## 0. 信息来源与可信度
 
-本指南的价格/政策数据通过 `gemini-grounding-search`（Antigravity OAuth 路径，gemini-2.5-flash）于 2026-07-10 获取。每条标注可信度：
+本文的价格/政策数据通过 `gemini-grounding-search`（Antigravity OAuth 路径，gemini-2.5-flash）于 2026-07-10 获取。每条标注可信度：
 
 - ✅ = 有搜索 sources 背书（grounding 触发）
 - ⚠️ = 未触发 grounding 或基于通用知识，**下单/配置前请实时核实**
@@ -17,26 +17,24 @@
 
 ---
 
-## 1. 备案规避红线（最重要，先读）
+## 1. 合规与托管边界（部署前重新核实）
 
-**核心结论** ✅（sources: huaweicloud.com / aliyun.com / alibabacloud.com 等厂商官方）：
+**2026-07-10 的调研结论**（当时参考 huaweicloud.com / aliyun.com / alibabacloud.com 等厂商资料）：香港等境外托管与中国大陆境内托管适用的备案要求不同，CDN 节点、域名解析和实际服务形态也会影响义务。该结论不是持续有效的法律意见。
 
-> ICP 备案**仅针对物理服务器位于中国大陆境内**的服务。**香港服务器无需 ICP 备案**。但若 CDN 在**大陆境内有节点**，则必须备案。
+候选 checklist；实际结论必须在上线前由最新法规和目标服务形态重新确认：
 
-由此推出 Aiming Cookie 的免备案红线 checklist：
+- [ ] 核实后端托管地区对应的备案、许可和数据义务
+- [ ] 核实域名解析、托管地区与目标用户服务方式对应的备案义务
+- [ ] 核实 CDN 节点地区、备案要求和服务条款
+- [ ] 核实对象存储、公网回源与数据跨境义务
+- [ ] DNS、证书和域名供应商按发布时合规性与可用性选择
+- [ ] landing 托管方案需按实际节点、域名和监管要求重新确认
 
-- [x] 后端服务器在香港（境外 VPS）→ 无需 ICP 备案
-- [ ] **域名绝不解析到大陆 IP**
-- [ ] **不用带大陆节点的 CDN**（阿里云 CDN / 腾讯云 CDN / 百度云加速等一律不行）
-- [ ] **不用大陆对象存储做公网回源**（阿里云 OSS / 腾讯云 COS 公网访问会触发）
-- [ ] DNS 用 Cloudflare（境外）即可
-- [ ] landing 用 Cloudflare Pages——Cloudflare 边缘节点属境外 CDN，**不触发**大陆备案要求 ✅
-
-**合规补充** ✅：免备案 ≠ 无监管。内容须遵守香港当地法 + 大陆法；若收集大陆用户个人信息，需符合《个人信息保护法》(PIPL) 与数据跨境传输规定。公安联网备案一般无需（针对已 ICP 备案站点）。
+**合规补充**：境外托管不等于无监管。内容、个人信息、数据跨境、支付和用户所在地义务必须在上线前由合适的法律/合规渠道确认。
 
 ---
 
-## 2. 域名（第一步下单）
+## 2. 域名候选调研
 
 注册商对比 ✅（sources: cloudflare.com / porkbun.com / namesilo.com）：
 
@@ -46,9 +44,9 @@
 | **Porkbun** | $10.99/年 | 免费 | 界面友好，价格低 |
 | NameSilo | $17.29/年（预存 $50 后 $11.05） | 免费 | 零售偏贵 |
 
-**推荐**：**Cloudflare Registrar**（成本最低 + 反正 DNS 也要用 Cloudflare，一站式）或 **Porkbun**（若想注册商与 DNS 解耦）。⚠️ Cloudflare Registrar 偶有转入/特定 TLD 限制，注册前确认 `.com` 可用。
+**当时的候选判断**：Cloudflare Registrar 偏向低成本和一站式管理，Porkbun 偏向注册商与 DNS 解耦。该判断不是当前推荐；注册前应重新核实价格、地区可用性、转入限制和目标 TLD 支持。
 
-操作：注册 `.com` → 把域名 NS 指向 Cloudflare → 在 Cloudflare 管理 DNS。
+**历史方案路径**：注册 `.com` → 将域名 NS 指向 Cloudflare → 在 Cloudflare 管理 DNS。只有在新的 active plan 明确选定该方案后才执行。
 
 ---
 
@@ -70,18 +68,18 @@
 
 **决策维度**：线路质量（CN2 GIA > CN2 GT > 普通 BGP/国际）→ 大陆延迟 → 带宽 → 流量 → 价格。
 
-**推荐**（待点点拍板）：
+**当时记录的候选分层**（需重新评估）：
 - **v1 流量小、求省心**：**腾讯云或阿里云轻量香港**（¥25-70/月档，控制台中文友好、CN2/BGP 优化对 API 后端够用、活动价极低）。阿里云 200Mbps 不限流量性价比突出。
 - **追求极致大陆质量**：**搬瓦工 HK CN2 GIA**（$75/月均，三网 GIA 1Gbps，业内天花板）或 **DMIT Premium**（~15ms，口碑最佳，但贵）。
 - **极度预算 / 玩票**：GigsGigs HK-K1（$8.8/月），但配置太低（512M）跑 FastAPI+SQLite 勉强。
 
-**买前必做** ✅：用各家的 **Looking Glass / 测速 IP** 在本地（点点的大陆网络）ping。香港到大陆**合理区间 20-50ms**；若长期 >80ms 或丢包严重，说明非真 CN2 GIA 直连，慎选。
+**若重新选择香港 VPS，购买前应做**：用各家的 **Looking Glass / 测速 IP** 在本地（点点的大陆网络）ping。香港到大陆**合理区间 20-50ms**；若长期 >80ms 或丢包严重，说明非真 CN2 GIA 直连，慎选。
 
 > ⚠️ v1 后端只跑「鉴权 + LLM 代理 + 数据」（CV 已搬本地 sidecar，见 PRD §9），负载很轻，2核2G 足够起步，不够再升。轻量服务器一般不支持随时降配，按当前需求买即可。
 
 ---
 
-## 4. Cloudflare 配置（大陆访问优化）
+## 4. Cloudflare 候选配置（历史方案）
 
 ### 4.1 landing → Cloudflare Pages ✅
 免费额度（sources: cloudflare.com）：500 次构建/月、1 并发、20 分钟构建超时、100 自定义域名、静态资源**请求与带宽均无限制**。Next.js 部署须 `output: 'export'` 静态导出（配合 `@cloudflare/next-on-pages`）。
@@ -97,15 +95,15 @@ Cloudflare 默认智能路由常把大陆流量绕到拥堵国际节点。优化
 
 **时效性**：优选 IP 会变，需配合 DDNS 脚本定期更新。
 
-**对 Aiming Cookie 的建议**：
+**当时对 Aiming Cookie 的候选建议**（不是当前批准方案）：
 - landing（Pages）可走 Cloudflare + 优选 IP。
 - **后端 API 直连 VPS IP，不走 Cloudflare 代理**（DNS 只解析 A 记录到 VPS，关掉橙云）——VPS 本身在香港 CN2 GIA 线路上，直连延迟最低，且避免 Cloudflare 在大陆偶发的干扰/回源绕路。LLM 流式响应走 Cloudflare 反代还可能增加延迟。
 
 ---
 
-## 5. 后端部署（香港 VPS · FastAPI）
+## 5. 后端部署候选形态（香港 VPS · FastAPI）
 
-复用 `webapp/backend/` slice 1 已 merge 的 FastAPI（角色按 PRD §9 瘦身为「账号 / LLM 代理 / 数据同步」）。
+以下内容记录 2026-07-10 时设想的部署形态。实际部署必须先以当前代码、测试和 `docs/ARCHITECTURE.md` 核验服务边界，再由新的 active plan 冻结入口、存储、身份和回滚方案。
 
 - **进程**：`docker-compose`（FastAPI + 可选 Postgres）+ systemd 开机自启
 - **反代**：nginx + Let's Encrypt (certbot) HTTPS
@@ -122,7 +120,7 @@ Cloudflare 默认智能路由常把大陆流量绕到拥堵国际节点。优化
 | `TRUST_PROXY_USER=1` | **预览/生产身份**：只认反代注入的 `X-Forwarded-User` 或 `Remote-User`，**忽略**客户端自填的 `X-User-Id`。前面必须有 VPN/SSO/nginx 等可信反代。 |
 | `COACH_SIDECAR_URL` | Pi coach 常驻 sidecar 基址（默认 `http://127.0.0.1:8765`）。 |
 
-**本地预览建议**：与 API 同机用 `./scripts/dev-up.sh` 一并拉起 sidecar + API（见 `webapp/README.md`）。
+**当时的本地预览建议**：与 API 同机用 `./scripts/dev-up.sh` 一并拉起 sidecar + API（见 `webapp/README.md`）。
 
 **Coach sidecar 启动**（与 API 同机 loopback）：
 
@@ -147,24 +145,24 @@ proxy_set_header X-Forwarded-User $remote_user;
 
 ---
 
-## 6. CI/CD ✅（sources: github.com / cloudflare.com / tencentcloud.com）
+## 6. CI/CD 候选方案（2026-07-10 调研）
 
 | 产物 | 方案 | 要点 |
 |---|---|---|
 | landing | **Cloudflare Pages 官方 Git 集成** | Dashboard 绑 GitHub 仓库 → git push 自动构建。无需维护 workflow，原生支持预览部署 |
 | 后端 API | **GitHub Actions → GHCR → SSH** | 构建镜像推 GHCR → `appleboy/ssh-action` 登 VPS → `docker-compose pull && up -d` |
-| 桌面安装包 | **GitHub Actions 构建 → GitHub Releases** | PRD §9.1 已定；跨平台矩阵构建（win/mac） |
+| 桌面安装包 | **GitHub Actions 构建 → GitHub Releases** | 历史候选；发布渠道、签名和平台矩阵须由新的 active plan 冻结 |
 
-**安全铁律** ✅：
+**若采用上述方案，仍需满足的安全基线**：
 - SSH 私钥、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` 全部存 **GitHub Secrets**
 - 所有第三方 Action **固定到具体 commit SHA**（不 pin `@main`/`@v2`），防供应链攻击
 - SSH key 用 `ssh-keygen -m PEM -t rsa -b 4096` 生成
 
-GitHub Actions 私有仓库每月 2000 分钟免费额度，v1 足够。
+当时调研认为 GitHub Actions 免费额度可能足够早期使用；实际额度、计费与仓库策略必须在启用前重新核实。
 
 ---
 
-## 7. 成本预估（月）
+## 7. 历史成本快照（月）
 
 | 项 | 方案 | 月成本 |
 |---|---|---|
@@ -176,11 +174,13 @@ GitHub Actions 私有仓库每月 2000 分钟免费额度，v1 足够。
 | CI/CD | GitHub Actions | 免费（私有仓 2000 分钟/月） |
 | LLM | DeepSeek 默认（按 token） | 按用量 |
 
-**v1 合计 ~¥30-80/月**（国产轻量路线）或 ~¥550/月（搬瓦工顶配路线）。与 PRD §9.1「~¥100/月」量级一致。
+**2026-07-10 粗估**：国产轻量路线约 ¥30-80/月，较高线路质量方案约 ¥550/月。该估算不再由 PRD 背书，不得用于当前预算或采购决策。
 
 ---
 
-## 8. 上线 checklist（执行顺序）
+## 8. 若重新批准后的复核清单
+
+> 本节保留的是历史步骤轮廓，不代表推荐顺序。只有新的 active plan 明确了负责人、环境、回滚、验证和供应商后，才能把对应条目转成可执行任务。
 
 1. [ ] **域名**：Cloudflare Registrar（或 Porkbun）注册 `.com`
 2. [ ] **VPS**：下单腾讯云/阿里云轻量香港 2核2G（起步）；用 Looking Glass 验证大陆延迟 <50ms
@@ -193,17 +193,17 @@ GitHub Actions 私有仓库每月 2000 分钟免费额度，v1 足够。
 
 ---
 
-## 9. 待点点决策
+## 9. 历史未决选项（需重新评估）
 
-1. **VPS 选哪家**：国产轻量（腾讯/阿里，便宜省心）vs 搬瓦工/DMIT（贵但大陆质量顶级）——建议 v1 先国产轻量起步。
-2. **域名注册商**：Cloudflare Registrar（成本价+一站式）vs Porkbun（解耦）。
-3. **Cloudflare 优选 IP**：v1 就做（landing 提速）还是先用默认（YAGNI，等真慢了再优化）。
-4. **桌面打包分发**：GitHub Releases 已在 PRD 定，确认即可（历史研究见 `docs/archive/legacy/desktop-packaging-research.md`，实际施工前重新核实）。
+1. **托管区域与供应商**：先依据最新合规、目标用户、延迟、可靠性和成本重新形成候选，不沿用本文结论。
+2. **域名与 DNS 供应商**：重新核实价格、地区可用性、账户安全和解耦需求。
+3. **CDN 与大陆访问策略**：基于发布时的真实网络测试和合规边界重新选择，不默认采用优选 IP。
+4. **桌面打包分发**：发布渠道、签名、公证、安装器和更新机制需通过新的 active plan 冻结；历史研究见 `docs/archive/legacy/desktop-packaging-research.md`。
 
 ---
 
 ## 关联
 
-- 方向锚：`docs/PRD.md` §9.1 / §5.2 / §11（合规）
-- 架构前提：`docs/ARCHITECTURE.md`（Desktop hybrid 与 Local Runtime / Cloud 边界）
+- 产品与合规方向锚：`docs/PRD.md`
+- 架构前提：`docs/ARCHITECTURE.md`（Desktop、Local Runtime 与 Cloud 边界）
 - 桌面打包历史研究：`docs/archive/legacy/desktop-packaging-research.md`（只供追溯，选型需通过新 spike）

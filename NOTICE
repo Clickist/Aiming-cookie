@@ -1,0 +1,18 @@
+Aiming Cookie — Third-party and upstream attribution
+
+This project is distributed under the GNU General Public License version 3 or
+later. The project-level license is recorded in LICENSE.
+
+Task 1 adapts behavior and selected implementation ideas from RefleK's, an
+open-source KovaaK's analytics application distributed under GPL-3.0:
+https://github.com/ARm8-2/refleks
+
+Relevant upstream sources reviewed for this task include:
+- internal/runs/kovaaks/stats.go
+- internal/runs/kovaaks/performances.go
+- internal/watcher/watcher.go
+
+Aiming Cookie's Task 1 implementation is a Python reimplementation within the
+existing Aiming Cookie architecture. It does not embed the RefleK's Wails/Go
+runtime. Changes made here are identified in the implementation plan and
+remain subject to the GPL-3.0 terms.
