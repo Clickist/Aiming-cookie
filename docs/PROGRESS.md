@@ -1,90 +1,114 @@
-# Flicking 模块进度
+# Aiming Cookie 当前进度
 
-> 最后更新：2026-07-12（`coach-startup-ux` Task 1–4 完工 + 全仓回归）
+> **最后整理：2026-07-13。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
 
-## 当前交付罗盘（2026-07-11）
+## 1. 当前结论
 
-### 发布裁决
+- 产品方向仍是 Desktop-first、flicking 先行、确定性诊断主路径、Coach 为可选长期关系层。
+- KovaaK Run 自动发现、Stats / Performance 解析、Windows Raw Input、AnalysisResult v2、History read model、Coach diagnostic context 与本地 Benchmark store 已形成不同成熟度的代码基础。
+- **input-native 当前只能作为 Preview / Experimental 能力。** 现有 adapter 已接入 worker 和 v2 结果，但尚未完成正式 flick segmentation、核心 fair metrics、高 polling-rate correctness 与 Windows 实机 Gate，不得描述为可发布的完整输入原生诊断。
+- multimodal 冻结为“native 结果是主事实、MP4 是可选视觉校验”；视觉校验失败时保留 native 结果并显示视觉证据不可用。
+- Benchmark 后端能力保留，但不进入 v1 正式前端、不进入默认 Coach context、不启用在线 provider 或 leaderboard。
+- Frontend reconstruction Task 1 已在点点确认精确范围后删除 History / Run / Evidence prototype、临时 App shell 与旧全局样式；当前只保留 capability adapters 与 Tauri/runtime，正式产品路由暂时不可用。
+- 当前发布状态仍为 **No-Go**。
+- 当前 active implementation plans 为 [`superpowers/plans/2026-07-13-reflek-capability-adoption.md`](superpowers/plans/2026-07-13-reflek-capability-adoption.md) 与 [`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)。Frontend Task 1 已完成，Task 2–7 尚未获得执行授权。
 
-- **长期目标**：`docs/PRD.md` 定义的完整 Desktop hybrid 产品，范围不删减。
-- **2026-07-13 至 2026-07-19**：只发布受控环境中的 **flicking-only 内部技术预览**，不称为完整产品 v1。
-- **当前状态**：完整产品 v1 `No-Go`；内部技术预览完成 `docs/ROADMAP.md` §5 全部 P0 Gate 后才 `Go`。
+## 2. 能力成熟度
 
-### 当前能力基线
+### 2.1 Implemented foundation（代码已有）
 
-**已核验**：
+- Tauri 2 Desktop shell、本地 Python API/worker 生命周期、动态 loopback 地址与 launch-scoped Desktop token；
+- native MP4/CSV path import、managed App Data workspace、storage accounting 与 terminal Analysis 删除基础；
+- FastAPI queue、worker recovery、workspace/streaming upload、health/readiness；
+- 既有视频 + Stats flicking CV、诊断、处方和报告领域逻辑；
+- Pi-based Coach runtime、sidecar、服务编排与持久化基础；
+- `.perf` protobuf-wire parser、KovaaK Stats / Performance watcher、稳定文件判断与 Run upsert；
+- SQLite `kovaak_runs`、Windows-only Raw Input、versioned snapshot 与 trace window extraction；
+- AnalysisResult v2、三种 input mode dispatch、History/Run read models、Coach allow-list projection 与 Benchmark local store。
 
-- 全仓单一入口：**274 passed，2 skipped**（2026-07-12 coach-startup-ux Task 4 回归，`.venv`）；
-- 分开核验：core **116 passed**；`webapp/tests` **158 passed，2 skipped**（含 `test_coach_runtime_status`、health/auth、browser 骨架 skip、E2E_VIDEO skip）；
-- 仓库真实 MP4 + Stats CSV E2E：上传 → enqueue → worker → CV → deterministic report → done 已通过；
-- frontend production build 已通过（2026-07-12）；
-- **Pi assessment/Spike 已完成**：`spikes/pi-coach-runtime/` 21 tests；assessment **CONDITIONAL GO** 已裁决（`docs/superpowers/assessments/2026-07-11-pi-assessment-decision.md`）。
-- **线 A 常驻 Coach 数据归属**：schema v2、`coach_store`、删除不级联抹消息、`/coach` API+页面、相关 pytest — **已完工**（Task 1–5）。
-- **线 B Pi Coach runtime 薄切片（Task 1–4 代码 + Task 5 回归）**：
-  - `third_party/pi/` vendored（冻结 commit + `PROVENANCE.md`）；
-  - `webapp/coach-runtime/` 单轮 Pi turn（产品 system prompt、无 coding tools、Node 测试）；
-  - `webapp/backend/coach_runtime.py` subprocess 桥 + `coach_runtime_turn.v0`；
-  - `POST /api/coach/primary/messages`（及 session chat 兼容）默认 **`COACH_RUNTIME=pi`**；失败时 **`COACH_RUNTIME_FALLBACK_PYTHON=1`** 回退 `chat_with_coach`；
-  - **Sidecar（`2026-07-12-pi-sidecar-and-runtime-hardening.md` Task 1–3）**：loopback HTTP `POST /v0/turn` + `GET /healthz`；`run_pi_coach_turn` 优先 sidecar、可选 subprocess 回退；`./scripts/run-coach-sidecar.sh`；`webapp/coach-runtime/test` **8 passed**（import 边界 + sidecar server）；
-  - **未做**：完整云代理账单、Desktop 沙箱、完整 browser E2E release gate；有 key 时 `/coach` 真机一轮仍建议手工记一条（非本 Task 强制）。
-- **Coach 结构加固（`2026-07-12-coach-structure-hardening.md` Task 1–3 + Task 4 回归）**：
-  - schema **v3**：`legacy_chat_message_id`、单一 `migrate_session_legacy_messages`、幂等迁移；
-  - `delete_session`：**单事务**（lock → migrate → mark refs → delete rows；文件删除仍在 commit 后）；
-  - **`coach_engine.py` + `coach_service.py`**：Pi/Python 引擎与一轮编排迁出 routes；`COACH_RUNTIME` + fallback 行为与现测一致；
-  - **`routes.py` 约 572 行**（coach 大段 if pi/python 已搬出；目标 <600 已达成）。
-- **Session workspace + 流式上传（`2026-07-12-session-workspace-streaming-upload.md` Task 1–3）**：
-  - `{DATA_ROOT}/sessions/{id}/` 工作区；`delete_session` commit 后 `rmtree`；
-  - `/api/analyze` 分块流式写入，超限中止并清理 session + 目录；
-  - `MIN_FREE_DISK_BYTES`（默认 500MB，`MIN_FREE_DISK_BYTES` env）不足时上传 **507** 明确文案，不入队。
+### 2.2 Contracted capability（产品/spec 已冻结）
 
-- **预览可运营（`2026-07-12-preview-ops-health-identity-e2e.md` Task 1–4）**：
-  - `GET /healthz`、`GET /readyz`（DB + 已配置 sidecar）；
-  - `TRUST_PROXY_USER=1` 时只信 `X-Forwarded-User` / `Remote-User`（`webapp/backend/auth.py` + pytest）；
-  - `webapp/tests/test_browser_smoke.py` Playwright 骨架（无 playwright/Chromium 时 skip；可选 `BROWSER_E2E_FRONTEND_URL`）；
-  - `docs/deployment-guide.md` §5.1 探活/身份/sidecar 说明。
+- Run 独立于 Analysis；Stats、Performance、Raw Input、MP4 是不同 evidence source；
+- input-native、multimodal、video-fallback 必须显式表达 mode、availability、alignment 和 limitations；
+- Raw Input 默认关闭、仅 Windows、仅 KovaaK process gate、本地保留、默认不进入 Coach；
+- History 采用轻列表 + lazy detail；Coach 只读取结构化、用户可见的 diagnostic context；
+- terminal Analysis、Run metadata、Run-owned trace、用户 Stats/Performance 源文件和 Analysis-managed MP4 副本具有不同 ownership 与删除影响。
 
-**当前阻塞**（预览仍 No-Go）：
+### 2.3 User-reachable / release-ready（尚未完成）
 
-1. 无自动 TTL、完整 quota/orphan 治理与主动删除产品化仍缺（workspace + 流式上传 + 删目录 + 低磁盘门槛已落地）；
-2. 预览/生产需 `TRUST_PROXY_USER=1` + 可信反代才成立；本地 dev 仍可用 `X-User-Id`；
-3. 无 supervisor、structured logs；browser E2E 仅有骨架（未装 Playwright 时 skip），非完整 release gate；
-4. Desktop 只有研究，无 shell、sidecar、IPC、installer、签名或更新工程；
-5. 有 LLM key 时 `/coach` 真机一轮 **未在本 Task 强制验收**（无 key 不阻塞；有 key 建议手工记一条到本文件）。
+- 原 prototype 已删除；当前没有正式用户路径，不能作为视觉或产品验收证据；
+- 正式 App shell、New Analysis、Tasks、History、Analysis workspace、Coach sidebar、Settings 尚待按新 frontend spec/plan 重建；
+- input-native、multimodal、video-fallback 三条真实 Browser/Desktop E2E 未形成；
+- Windows 实机、高 polling-rate 鼠标、真实 KovaaK 对齐与性能尚未通过发布 Gate；
+- installer、正式 icon、签名、公证、updater 和可信云服务仍未完成。
 
-### 当前执行顺序
+## 3. 当前高优先级实现差距
 
-1. 线 A / 线 B 薄切片 / 结构加固 — **已完成**。
-2. **当前队列（点点 2026-07-12 全做）**：
-   1. `2026-07-12-pi-sidecar-and-runtime-hardening.md` — **completed**
-   2. `2026-07-12-session-workspace-streaming-upload.md` — **completed**
-   3. `2026-07-12-preview-ops-health-identity-e2e.md` — **completed**
-   4. `2026-07-12-coach-startup-ux.md` — **completed**
-3. **P1 / P2**：见 Roadmap。
+### Analysis / evidence
 
-### 2026-07-12 交接
+1. native adapter 尚未完成 flick segmentation、核心 fair metrics 与正式 angular/physical trajectory；
+2. History trend 的 scenario identity / calibration / metric contract 与真实结果仍不闭合；
+3. v2 validator 和 queue terminal write 尚未完整落实 evidence 与 artifact ownership 语义。
 
-- **Sidecar 白话**：挂在主服务旁边的常驻 Node 小助手，里面已经加载好 Pi；聊天时喊它，而不是每轮重新启动 Node。
-- **Sidecar 手工验收（有 LLM key）**：`./scripts/run-coach-sidecar.sh` → 设 `COACH_SIDECAR_URL` → API `/coach` 一轮，确认无每轮冷启动 node（日志/耗时）。
-- **本地 dev 推荐**：`./scripts/dev-up.sh`（sidecar + API）；另开终端 worker + `cd webapp/frontend && npm run dev`。
-- **coach-startup-ux**：**completed**（runtime-status API + UI 横幅）。
-- **Browser 骨架（可选）**：`pip install playwright && playwright install chromium` → `pytest webapp/tests/test_browser_smoke.py -v`。
+### Reliability / lifecycle
 
-### 执行模型分级
+1. 同 stem 同类型 KovaaK 文件冲突、并发 trace attach、partial import 和 orphan recovery 仍需更强状态机与测试；
+2. Run / trace / source / Analysis 的删除 UI、tombstone 与长期 retention 尚未完成完整产品放行；
+3. Python runtime READY 后崩溃、launch token 子进程隔离和正式浏览器 media identity 仍未闭合。
 
-- **可交给较弱模型（已有精确 plan 时）**：pytest collection、health/readiness、小范围回归测试、已冻结规则后的默认路由或 UI 空状态。
-- **可施工但必须由强模型先冻结合同**：session workspace、streaming upload、artifact 删除、无自动 TTL/orphan/quota、structured logging、browser E2E。
-- **仅强模型裁决/规划**：Pi 源码纳入与产品化删改边界、Coach schema/migration/旧数据兼容、可信 owner 边界、quota/低磁盘阈值、Web/Desktop 路线。
+### Frontend reconstruction
 
-Fast/executor 只能执行已批准 plan 的一个明确 Task。开工前必须回显 Task、Allowed files、Tests first、Frozen decisions 和 Stop rule；代码与 plan 不一致、需要扩大范围、测试不能运行或出现新 schema/default/migration 决策时立即停止。完成后报告 changed files、验证命令、未运行检查、偏差和 `git status`，不得自动继续下一 Task。
+1. Prototype 已删除，不得恢复；正式产品路由等待后续 Task 重建；
+2. 正式路由、低保真结构、页面状态矩阵、Desktop/Web capability 表和 accessibility Gate 已由 UI/UX 与 active reconstruction spec 冻结，但尚未实现；
+3. executable token/theme/primitives 尚未建立；
+4. Benchmark 不进入 v1 正式前端；
+5. Task 1 已完成 prototype 删除与 adapter 边界保护；Task 2–7 必须继续按 active frontend plan 逐个授权。
 
-### 文档职责
+## 4. 下一步
 
-- `docs/PRD.md`：产品目标、完整范围和阶段事实源；
-- `docs/ARCHITECTURE.md`：系统边界、数据合同和演进顺序；
-- `docs/ROADMAP.md`：发布定义、P0/P1/P2、2–4 周路线和 Gate；
-- 本文件：当前状态和下方历史研发记录；
-- `docs/design-system.md`：前端视觉治理。
+1. 此前前端文档 Gate 已完成：UI/UX、视觉/设计系统、active reconstruction spec 与 active plan 已对齐；该文档治理轮没有删除或修改业务代码，后续 RefleK 工作树改动另见 §5；
+2. Frontend reconstruction Task 1 已完成；`lib/api.ts`、`lib/types.ts`、`lib/contracts.ts`、`lib/csv.ts`、`lib/desktop.ts` 与 `src-tauri/**` 已保留并由 boundary test 保护；下一步需由点点明确指定 Task 2；
+3. AnalysisResult v2 path-safety、无 Run fallback envelope 和 native 时间采样阻塞已修复；其余 Analysis/evidence correctness 继续通过 RefleK active plan 的明确 Task 处理，input-native 在 Gate 通过前保持 Preview / Experimental；
+4. Frontend Task 2–7 逐个建立 executable tokens、正式页面和 E2E，不从 prototype 继承 IA 或视觉；
+5. 以 Browser + Tauri 真实流程、宽/中/窄截图和 accessibility checklist 作为前端放行标准。
 
-## 历史记录
+## 5. 当前工作树与实施计划状态
 
-2026-06-27 至 2026-07-10 的逐日研发流水已移至 `docs/archive/history/PROGRESS-2026-06-27-to-2026-07-10.md`。该归档只用于追溯，不参与当前决策。
+2026-07-13 一致性审计确认：当前能力基线仍是一个**未集成工作树**，不能等同于当前 `HEAD` 或远端可复现状态。
+
+- `main` 比 `origin/main` 超前 21 个本地提交；Task 1 完成后仍有 80 个 tracked changes、其中 30 个删除，以及 50 个 untracked status entries；
+- `native_flicking_analysis.py`、KovaaK ingestion/run store、Raw Input、Coach context、History trends、Benchmark store、active specs/plans 等关键文件仍包含未跟踪内容；
+- 当前测试结果证明的是该工作树，不证明 clean checkout、当前 `HEAD` 或 `origin/main` 已包含这些能力；
+- `.firecrawl/`、临时脚本、理论草稿、style pack、`output/` 运行产物与产品代码必须在后续 review/commit 中分开处理；本轮未清理、覆盖或重置任何现有改动。
+
+RefleK active plan 当前成熟度：
+
+| Task | 当前状态 | 未闭合验收 |
+|---|---|---|
+| Task 1 Raw Input / ingestion | current-platform foundation 已实现 | Windows 实机、完整 Windows target 与高 polling-rate Gate 未通过 |
+| Task 2 AnalysisResult v2 contract | 本轮阻塞已修复 | 合法 path metric 可通过；无 Run 的 v2 可省略 `kovaak_run_ref`；更完整 evidence/artifact ownership 验证仍待后续 Task |
+| Task 3 input-native adapter | Preview correctness 前进 | 同毫秒记录不再从派生时间指标丢失，非均匀采样改为 duration-weighted；flick segmentation、核心 fair metrics 与正式 angular/physical trajectory 仍未完成 |
+| Task 4 worker mode dispatch | 本轮合同已闭合 | input-native、multimodal、Run-based 与无 Run video-fallback 新结果均写 v2；旧 v1 仍可读取 |
+| Task 5 Coach diagnostic context | foundation 已实现并有 allow-list 测试 | 正式前端 Coach sidebar 与真实产品 E2E 未完成 |
+| Task 6 History / evidence replay | backend/read model + prototype 已实现 | 正式 History/workspace、完整 comparability contract 与真实 replay E2E 未完成 |
+| Task 7 Benchmark local domain | local store + prototype UI 已实现 | 不进入 v1 正式前端、默认 Coach 或在线 provider；正式产品化仍 deferred |
+
+Frontend reconstruction plan 已 active。Task 1 已在点点确认 10 个文件的精确范围后完成；inventory 为 `webapp/frontend/prototype-inventory.json`，adapter boundary test 为 `webapp/frontend/lib/prototype-boundary.test.ts`。Task 2–7 尚未授权。
+
+## 6. 最近验证记录
+
+2026-07-13 全量 review 后记录：
+
+- Python：`373 passed, 3 skipped`；
+- Frontend：prototype 删除并清理旧 `.next` 后，`npm run type-check` 通过，`npm test` 为 `3 passed`；`next build --webpack` 通过且只生成自动 `/404`，当前无正式产品路由；
+- Coach runtime：设置正确 `PI_SOURCE_DIR` 后 `9 passed`；
+- Rust：`cargo fmt --check`、`cargo check --locked --all-targets`、`cargo clippy --locked --all-targets -- -D warnings` 通过；`cargo test` 为 `15 passed, 1 failed`，失败点是受限环境的 descendant process inspection `PermissionDenied`；
+- Windows target condition check 仍被缺少 `icons/icon.ico` 阻塞；Windows Raw Input 实机、真实三模式 E2E 与高 polling-rate 性能仍未验证。
+
+Desktop vertical slice 的历史回归、commit 和进程审计保存在：
+
+- [`archive/history/PROGRESS-2026-07-12-desktop-slice.md`](archive/history/PROGRESS-2026-07-12-desktop-slice.md)
+
+2026-06-27 至 2026-07-10 的历史流水保存在：
+
+- [`archive/history/PROGRESS-2026-06-27-to-2026-07-10.md`](archive/history/PROGRESS-2026-06-27-to-2026-07-10.md)

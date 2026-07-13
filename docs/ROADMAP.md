@@ -1,274 +1,141 @@
 # Aiming Cookie — 产品与工程路线图
 
-> **状态**：当前执行基线
-> **建立日期**：2026-07-10
-> **产品上游**：`docs/PRD.md`
-> **架构上游**：`docs/ARCHITECTURE.md`
->
-> 本路线图按纵向产品闭环组织，不按前端、后端、Desktop 或页面数量堆任务。日期是执行窗口，不代表在 Gate 未通过时自动发布。
+> **定位：未来顺序与放行条件。** 产品范围以 [`PRD.md`](PRD.md) 为准，系统合同以 [`ARCHITECTURE.md`](ARCHITECTURE.md) 为准，当前完成度以 [`PROGRESS.md`](PROGRESS.md) 为准。本文不维护逐日流水、commit 列表或测试数字。
 
-## 1. 发布定义
+## 1. 当前发布定义
 
-### 1.1 长期目标：完整产品 v1
-
-完整产品仍按 PRD 定义，包括：
-
-- Desktop hybrid 与本地分析；
-- flicking deterministic diagnosis、Report 和 Coach；
-- 本地 History、趋势、删除、导出和导入；
-- login / verified identity；
-- 完成通知、失败处理和日志；
-- 可安装、可恢复、可维护的发布形态。
-
-### 1.2 2026-07-13 至 2026-07-19：内部技术预览
-
-本窗口交付的是：
-
-> **受控环境中的 flicking-only 内部技术预览**
-
-它用于验证核心价值链和运行可靠性，不命名为“完整产品 v1”，也不作为公开注册 Web、正式受邀 Web 或 Desktop 正式版发布。
-
-目标闭环：
+当前目标不是宣称完整 v1，而是逐步达到 **可由用户实际完成的 Desktop input-native flicking 闭环**：
 
 ```text
-真实 MP4 + Stats CSV
-→ 创建分析
-→ 可观察、可恢复地完成
-→ deterministic Report
-→ 可选 Coach（用户级常驻关系；旧 session-bound route 仅作迁移兼容）
-→ 写入并找回最小 History（列表、回看、删除；不含趋势）
-→ 仅删除 done/failed analysis 与相关文件；Coach 引用变为已删除，消息/长期档案保留
+KovaaK Run discovery / manual fallback → recoverable local analysis
+→ deterministic report → optional managed video/data review
+→ local history → optional Coach sidebar
 ```
 
-明确不包含：
+现阶段仍为 **No-Go**。KovaaKRun ingestion、Windows Raw Input、AnalysisResult v2 与三种 mode dispatch 已形成代码基础，Tauri vertical slice 也证明桌面运行形态可行；但 input-native 仍只能作为 Preview / Experimental，正式 fair metrics、用户可达高质量前端、数据恢复合同、Windows 实机验证和发布 packaging 尚未闭合。
 
-- 公开注册和支付；
-- 云同步；
-- tracking Web 接通；
-- Tauri/Electron 安装包；
-- 签名、公证、自动更新；
-- 全面 IA/视觉扩张。
+完整 v1 仍保留 PRD 中的登录、长期 History、Coach、通知、失败处理、导入导出、商业化和后续 tracking 路线；这些不能因当前优先级而被删除。
 
-## 2. 当前基线与差距
+## 2. 当前施工优先级
 
-截至 2026-07-12 当前工作区对账（线 B 薄切片 Task 5 回归后）：
+### P0 — 恢复可用的 Desktop flicking 闭环
 
-- 全仓单一 pytest 入口 `245 passed, 1 skipped`；分开核验为 core `116 passed`、`webapp/tests` `129 passed, 1 skipped`；frontend `tsc --noEmit` 与 production build 已通过；
-- versioned result/error/artifact contracts 及 legacy adapters 已完成集成验收，runtime-contracts plan 已归档，不得重复实施；
-- worker lease、heartbeat、stale recovery、retry 和 lease ownership 修复已实现并有测试；
-- 最小 History 的列表、详情回看、done/failed 删除和前端页面已实现；趋势/对比按本路线图后移到 P1；
-- `[x]` **常驻 Coach 数据归属（线 A）**：`coach_threads` / `coach_messages` / `coach_analysis_refs`、删除分析不级联抹 Coach 消息、用户级 `/coach` API 与页面、旧 `chat_messages` 迁移路径 — **当前代码已具备**（部分改动待 commit；仍以 P0 集成 Gate 为准，非预览 Go）；
-- `[x]` **线 B Pi Coach runtime 薄切片**：`third_party/pi` vendored、`webapp/coach-runtime` 单轮 turn、Python subprocess 桥、primary/session chat 默认 `COACH_RUNTIME=pi` + `COACH_RUNTIME_FALLBACK_PYTHON` — **当前代码已具备**（无长期 daemon / 云账单 / Desktop 沙箱；待 commit + 集成 Gate）；
-- 显式 session workspace、流式上传、完整文件生命周期、可信身份、可运营部署和 browser E2E 尚未完成；
-- Desktop 仍处于研究阶段，没有可执行工程。
+1. 先修复 Analysis/evidence correctness 阻塞，并保持 input-native Preview / Experimental；
+2. 根据 [`frontend-uiux-design.md`](frontend-uiux-design.md) 与 active frontend reconstruction spec，从文档重建正式应用骨架与分析工作区；
+3. 将已发现 KovaaK Run 作为新建分析的优先训练来源，并保留 MP4 + Stats 手动 fallback；
+4. 建立 input-native / multimodal / video-fallback 的 versioned AnalysisResult 和 evidence provenance；
+5. 让 managed video、seek、诊断和数据视图成为用户可达的增强路径，而不是输入原生基础诊断的强制前置；
+6. 以 Coach 侧栏恢复分析引用与页面定位，但 Raw Input trace 不自动进入 Coach；
+7. 保持 native import、managed storage、launch token、runtime lifecycle、KovaaK watcher 和 Raw Input opt-in 的既有能力；
+8. Frontend reconstruction plan 已 active；Task 1 只做 prototype inventory/删除与 adapter 边界保护，可在点点明确指定 Task 和删除范围后单独执行；Task 2–7 仍遵守本节顺序与相关 Gate。
 
-因此当前判断是：
+### P0 — 冻结本地数据可靠性合同
 
-- **完整产品 v1：No-Go**；
-- **内部技术预览：完成以下 P0 Gate 后有条件 Go**。
+在继续扩大功能前，分别冻结并实现：
 
-## 3. 优先级
+- import 中断/崩溃后的 partial workspace 与 stale session 恢复；
+- DB transaction 与文件删除的可回滚/tombstone/reconciliation 顺序；
+- Desktop CSV/FOV 的单一事实源；
+- KovaaKRun source unavailable、重复发现、Run/trace 删除与 Analysis 引用关系；
+- Raw Input 授权、禁用、未关联 buffer 清理、trace retention 与 orphan reconciliation；
+- Raw Input / Performance / Stats / MP4 的时间对齐、证据冲突和 fallback 结果；
+- runtime crash 后的 restart、fatal-state 或重建策略；
+- launch token 对子进程的环境隔离。
 
-### P0 — 内部预览阻塞项
+这些涉及状态机、安全和数据保留，必须先写 spec/plan，不能由 executor 临场决定。
 
-| 项目 | 用户/产品价值 | 依赖 | 完成定义 | 不做的代价 |
-|---|---|---|---|---|
-| 发布范围与文档对齐 | 团队对同一目标工作 | 本文与 PRD | PRD、Architecture、Roadmap、Progress 无范围冲突 | 继续并行扩 scope，无法判断完成 |
-| Versioned contracts | History/Desktop 不再依赖偶然 JSON | 当前 result/job | result/job/error/artifact 有版本、NaN、迁移和 TS 校验策略 | 数据写入后无法可靠读取或迁移 |
-| Worker recovery/retry | 分析不因进程退出永久卡死 | Job contract | lease、heartbeat、attempt、stale recovery、显式 retry 有自动测试 | 用户 session 永久停在 running |
-| 最小 History 闭环 | 用户能找回分析而非一次性页面 | Result contract | done 自动写入；列表、状态/摘要、详情回看、仅删除 done/failed 可用；**不含趋势** | 分析仍是一次性页面 |
-| 常驻 Coach 数据归属迁移 | 删除分析不抹掉教练关系 | Pi assessment + Spike + 线 A plan（Task 1–5） | Coach 关系/消息不再由 analysis session 独占；分析引用支持已删除态；旧 chat 可回退迁移 — **实现已具备，待 commit + 集成验收** | P0 删除 Gate 与 PRD 冲突、用户对话丢失 |
-| 文件生命周期 | 可控磁盘和隐私 | Workspace/manifest | 流式写入、无自动 TTL、用户主动删除、orphan scan、quota/低磁盘保护 | 磁盘泄漏、隐私和服务中断 |
-| 可信预览访问边界 | 防止客户端伪造 owner | 部署入口 | VPN/SSO/可信代理注入身份；浏览器 header 不作为信任源 | 任意用户可伪造身份读写 session |
-| 可运营运行基线 | 故障可发现、可恢复 | Runtime | supervisor、health/readiness、structured logs 和基本指标 | 只能靠开发者盯进程救火 |
-| Release test gate | 避免“单测绿但产品断” | 以上闭环 | 统一测试入口、真实素材 E2E、browser E2E、build 可重复通过 | 发布回归只能由用户发现 |
+### P1 — 预览与发布工程
 
-### P1 — Alpha 闭环质量
+- frontend static/bundle 策略；
+- Python runtime distribution；
+- installer、正式 icon、签名、公证和 updater；
+- supervisor/structured logs/运行指标；
+- 完整 browser/Desktop E2E 与真实素材 Gate；
+- Windows 生命周期与 CI（若进入首发范围）。
 
-| 项目 | 完成定义 |
-|---|---|
-| 完成通知与任务找回 | 任意页面可看到完成/失败；重启后能回到未读结果 |
-| 错误分类与可操作文案 | CV、输入、LLM、网络、磁盘错误使用稳定 code，并展示 retry/修复动作 |
-| History 趋势/对比/筛选 | 在最小 P0 回看基础上补趋势、跨次对比和筛选；不反向扩大 P0 Gate |
-| History export/import | 导出包有 schema/version/manifest；重复导入和旧版本行为有测试 |
-| 真实 LLM usage | 记录 provider/model/input/output usage 和实际成本，不再只靠固定估算 |
-| CV 资源限制 | 单 job timeout、并发限制和取消/失败策略明确 |
-| Retention 与磁盘告警 | 可配置保留策略；达到阈值前拒绝新任务并给出清理动作 |
-| 默认路由 | 无历史默认 Upload；有历史默认 History；查询失败行为有测试 |
+### P1 — 产品闭环质量
 
-### P2 — 验证后扩展
+- Windows Raw Input 设置、采集状态、隐私说明和非 Windows 降级体验；
+- Run 列表/详情、来源完整度、source unavailable 和“添加视频并分析”；
+- 输入轨迹、事件锚点与视频视觉证据的对照视图；
+- History 趋势、对比、筛选、导入导出；
+- 完成通知、明确失败态、重试和恢复反馈；
+- Coach 长上下文衔接与表现档案；
+- 窄窗口、空状态、错误状态和无 Coach 权限状态；
+- 视觉 token 在新前端中的可执行落点。
 
-- tracking Web 接通与真实阈值标定；
-- verified public auth、credits、subscription；
-- optional cloud sync；
-- Desktop shell、sidecar、installer、签名、公证、更新；
-- ④ 动态训练计划的完整前端体验；
-- 深度 IA 与视觉收敛。
+### P2 — 验证后的扩展
 
-P2 不代表取消；它表示这些能力不能抢占 P0 的发布可靠性和 History 纵向闭环。
+- 完整 tracking：在输入原生运动学基础上，完成目标/准星/误差语义和真实阈值标定后接通；
+- verified auth、entitlement、LLM proxy、计量与付费；
+- 云端同步和跨设备冲突策略；
+- 跨平台/通用采集、手部摄像头、多游戏等远期能力。
 
-## 4. 2–4 周纵向路线
+## 3. 下一可执行切片
 
-### Week 1：2026-07-10 至 2026-07-19
+当前 active implementation plans：
 
-**结果目标**：内部 flicking 技术预览达到可放行状态。
+- [`superpowers/plans/2026-07-13-reflek-capability-adoption.md`](superpowers/plans/2026-07-13-reflek-capability-adoption.md)：Analysis/evidence correctness、Run/trace 与 Coach 结构化能力；
+- [`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)：正式前端重建；边界由 active [`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md) 冻结。Task 1 已完成 prototype 删除与 adapter 边界保护，Task 2–7 尚未授权。
 
-工作顺序（`[x]` 表示当前代码已具备，仍以集成 Gate 为准）：
+下一可执行切片必须遵守：
 
-1. `[x]` 实现并完成最小 result/job/error/artifact contracts 集成验收；plan 已归档；
-2. `[x]` 实现 worker lease、heartbeat、retry、stale recovery 和 lease ownership；
-3. `[x]` 完成最小 History：done 写入 → 列表/状态摘要 → 详情回看 → 仅删除 done/failed；**趋势不在 P0**；
-4. `[x]` 完成 Pi 源码接管 assessment 与隔离 Spike，固定基线版本/package、纳入/删改边界、许可证/依赖义务和运行边界；
-5. `[x]` 常驻 Coach **数据归属** implementation plan（`2026-07-11-persistent-coach-data-ownership.md`）Task 1–5 — 用户级 Coach 关系/消息/分析引用与旧 session chat 迁移 — **代码已具备**；
-6. `[x]` 线 B Pi Coach runtime 薄切片（`2026-07-12-pi-coach-runtime-integration.md`）Task 1–5 — vendor Pi、coach-runtime、API 默认 Pi + Python fallback — **代码已具备**（加厚项另 plan）；
-7. 建立显式 session workspace、流式上传与文件删除规则（默认无自动 TTL）；
-8. `[x]` 修复全仓单命令 pytest collection；
-9. 增加 health/readiness、supervisor、structured logs 和基本指标；
-10. 建立真实素材 E2E 和 browser E2E release gate；
-11. 仅在可信访问层后部署预览。
+1. 若下一步是清除 prototype，由点点明确指定 frontend reconstruction **Task 1** 和具体删除范围；Task 1 只允许 inventory/删除产品 UI 与保护 adapter 边界，不开始重建；
+2. Analysis/evidence correctness 继续通过 RefleK active plan 的明确 Task 处理，不混入 frontend Task；
+3. Frontend Task 2–7 只有在前序 Task、相关 capability contract 和本 Roadmap Gate 允许时逐个执行；
+4. 每次只执行一个被点点指定的 Task；
+5. 数据可靠性问题继续使用独立 plan，不与大范围前端重建混写。
 
-**冻结项**：tracking 接通、支付、云同步、Desktop 正式工程、横向新页面和新的视觉方向。
-
-
-### P0 实施计划队列与 executor 边界（2026-07-11）
-
-Roadmap 只决定顺序，不授权 executor 直接施工。剩余 P0 必须分别形成小型 implementation plan：
-
-1. Pi 源码接管 assessment + 隔离 Spike；
-2. 基于已确认 Pi 源码基线与产品化边界的常驻 Coach migration 替代 plan；
-3. session workspace + streaming upload；
-4. artifact deletion / no-auto-TTL / orphan / quota / low-disk；
-5. health/readiness + structured logging + supervisor；
-6. trusted preview deployment boundary；
-7. 真实素材 E2E + browser E2E release gate。
-
-交给 Fast 或较弱模型的每个 Task 必须冻结：单一 Task、Allowed files、精确 Tests first、schema/default/migration 决策、acceptance checklist 和 Stop conditions。出现代码与 plan 不一致、需要扩大文件范围、测试无法运行或需要新增架构决策时立即停止；不得从本 Roadmap 自选任务，也不得自动进入下一 Task。
-
-### Week 2：2026-07-20 至 2026-07-26
-
-**结果目标**：从“能跑”升级为完整的本地 History 回访闭环。
-
-```text
-分析成功
-→ History 持久化
-→ 列表/筛选
-→ session 回看
-→ 趋势/对比
-→ 删除
-→ export/import
-```
-
-同时补齐完成通知、错误文案、任务找回、真实 LLM usage、存储占用提示和 quota 告警。
-
-### Week 3：2026-07-27 至 2026-08-02
-
-**结果目标**：抽出可被 Web worker 与 Desktop sidecar 共用的 Local Analysis Runtime。
-
-完成定义：
-
-- Domain Core 不依赖 FastAPI/SQLite/全局 output；
-- workspace 和 artifact manifest 显式传入；
-- 同一输入 + 同一分析版本得到稳定 result；
-- worker crash/retry/recovery 有集成测试；
-- Web API 只做身份、输入校验和 Runtime adapter；
-- 形成 Desktop spike 所需的最小 IPC surface。
-
-### Week 4：2026-08-03 至 2026-08-09
-
-**结果目标**：基于实际反馈选择一个分支，不并行开两条正式化路线。
-
-#### 分支 A：Web 正式化
-
-适用条件：内部用户价值反馈成立，并且近期需要跨设备访问。
-
-范围：
-
-- verified auth；
-- production DB/queue 选择；
-- backup、monitoring、rate limit；
-- 受邀用户发布和数据安全核验。
-
-#### 分支 B：Desktop spike
-
-适用条件：本地分析、隐私和成本优势得到确认，完整产品坚持 Desktop hybrid。
-
-范围：
-
-- 选择一个 shell 做 time-boxed spike；
-- 启停 Python sidecar；
-- 本地文件选择 → Runtime → Report → History；
-- 验证安装体积、启动时间、杀进程恢复和开发调试体验；
-- spike 后再决定 Tauri/Electron、IPC 和打包工具。
-
-**不允许**：Week 4 同时启动正式 Web hardening 和正式 Desktop 产品化。
-
-## 5. 内部技术预览 Go/No-Go Gates
-
-只有全部满足才 Go：
+## 4. Desktop Flicking Go/No-Go Gates
 
 ### 产品闭环
 
-- 用户通过 UI 完成 MP4 + CSV 上传、处理、Report、Coach（配置 LLM 时）和 History 回看；
-- deterministic report 的指标、诊断和处方在无 LLM 时仍完整可用；
-- 删除 done/failed session 后，History 与受管理 artifact 被移除；已存在的 Coach 消息/长期档案不被级联删除，相关引用显示为已删除；
-- 完成或失败后，用户不需要工程师查数据库才能找回任务。
+- 已发现 KovaaK Run 可创建 input-native 分析；无 Raw Input 或非 Windows 时，native MP4 + Stats CSV 可创建 video-fallback 分析；
+- input-native 基础运动学不要求 MP4；选择 MP4 后进入 multimodal 增强而不是另一套产品；
+- processing 可离开页面，完成/失败状态可被重新找到；
+- deterministic report 在无 LLM 时完整；
+- 报告显示 input mode、evidence provenance 和缺失范围，不把 Raw Input 解释成目标视觉测量；
+- 有 MP4 时 managed video 可播放、seek，并与诊断/数据定位联动；
+- History 可查看 KovaaK Run、来源完整度和 terminal analysis；
+- Coach 可选且不会阻塞免费诊断主路径。
 
-### 可靠性
+### 数据可靠性
 
-- worker 在 job `running` 期间被终止后，job 可按策略自动恢复或进入可重试失败态；
-- 不存在无期限 `running`；
-- 相同输入重复执行不会污染其他 session workspace；
-- 磁盘不足、无效输入、CV 失败和 LLM 失败可区分并给出动作；
-- API/worker 重启后已完成 History 仍可读取。
+- `uploading/importing/running` 均有明确崩溃恢复；
+- watcher 重启、重复发现和 Stats/Performance 后到补全保持幂等；
+- source file moved/deleted、Raw Input 缺失和多源时间对齐失败有确定状态与 fallback；
+- 删除 terminal analysis 不删除用户源文件，也不删除 Coach 历史；
+- Run metadata、mouse trace、Analysis 引用的删除和 reconciliation 合同已冻结并实现；
+- DB 与 workspace 删除失败后可 reconciliation；
+- 低磁盘、超限、损坏文件和重复操作有确定结果；
+- owner/profile 边界在 Desktop/Web 各自成立。
 
-### 安全与数据
+### 安全与运行
 
-- 预览入口位于 VPN、SSO 或可信代理后；
-- 服务端 owner 不信任浏览器自行提供的 user id；
-- 跨 owner session、chat、video、timeline、History 访问被拒绝；
-- 原视频保留与删除规则对测试用户可见且实际生效；
-- 日志不记录 API key、token 或完整敏感输入。
+- Desktop API 仅 loopback，所有受保护接口验证 launch token；
+- Raw Input 默认关闭、显式 opt-in，只在 KovaaK process gate 内采集相对鼠标输入；
+- Raw Input trace 只保存在本地，不进入云端、Coach 请求或普通日志；
+- token 不持久化、不泄露日志、不传播给无关子进程；
+- shell 退出或 runtime crash 不留下孤儿进程；
+- Web 预览只在可信身份边界后开放；
+- secrets 与敏感路径不进入普通响应和日志。
 
-### 验证与运行
+### 构建与验证
 
-- core tests 和 Web backend tests 通过；
-- 全仓测试有单一可重复执行入口，不再发生 `tests.conftest` import mismatch；
-- 仓库真实 MP4 + CSV E2E 连续通过；
-- browser E2E 覆盖 upload → processing → report → History；
-- frontend type-check 和 production build 通过；
-- health/readiness 可被部署系统检查；
-- API 与 worker 由 supervisor 拉起，异常退出可观测。
+- 相关 core/backend/frontend/Rust 测试通过；
+- frontend production build 与 Desktop compile/test 通过；
+- Windows 实机验证 Raw Input 注册、持续采集、进程 gate、启停、快照更新和退出清理；
+- 高 polling-rate 鼠标下验证 ring buffer、snapshot I/O、内存和分析时延；
+- 至少一条真实素材端到端路径通过；
+- 至少各一条 input-native、multimodal 和 video-fallback 真实 Run 路径通过；
+- browser 与 Desktop 的关键交互有自动化或明确手工 Gate；
+- installer/签名/公证/更新达到目标平台的发布要求。
 
-任一 P0 Gate 未完成时，结论是 **No-Go**，不得通过改名为“完整产品”绕过。
+未满足任一 P0 Gate 时，不把 vertical slice 描述为可发布产品。
 
-## 6. 完整产品 v1 的排期规则
+## 5. 维护规则
 
-完整产品 v1 的发布日期在 Week 3 Runtime gate 后确定，原因是 Desktop sidecar、verified auth、安装分发和更新链当前尚不存在，无法基于文档研究给出可信日程。
-
-可进入 v1 Release Candidate 排期的前提：
-
-1. 内部技术预览证明诊断价值成立；
-2. History 本地闭环完成；
-3. Runtime contracts 经真实数据和 crash/retry 测试稳定；
-4. Web 正式化或 Desktop 路线已做单一选择；
-5. 对应分支的发布供应链和安全模型有可执行 spike 结果。
-
-## 7. 开放决策
-
-以下事项不阻塞本次文档落库，但会影响后续实施计划：
-
-1. Desktop 首发是否 Windows-first；
-2. 内部预览使用哪一种可信访问层；
-3. Week 4 优先 Web 正式化还是 Desktop spike；
-4. 完整产品是否要求无网络时支持 CV、规则诊断和 History（当前架构建议：要求）；
-5. Coach 长上下文的摘要、换窗与长期表现档案策略；该决策不得阻塞已冻结的 thread/message/reference 数据归属迁移。
-
-文件保留默认已经由 PRD 固定：原视频不按时间自动删除，用户删除 `done/failed` 分析时一并删除输入与产物。未来如需 TTL 或“分析后立即删除”，先更新 PRD，不在实施计划中临时决定。
-
-## 8. 进度维护规则
-
-- 本文只在优先级、里程碑、Gate 或日期发生变化时更新；
-- 日常完成情况写入 `docs/PROGRESS.md`；
-- 单个功能的实现步骤写入 `docs/superpowers/plans/`；
-- 产品范围变化先改 PRD，再同步本文；
-- 技术边界变化先改 Architecture，再同步实施计划。
+- Roadmap 只写未来优先级、里程碑和 Gate；完成后把结果写入 Progress，并将 plan 归档。
+- 日期只有在存在真实外部承诺时才进入 Roadmap；探索性内部目标优先写顺序和 Gate。
+- 新工作必须先核对 PRD/Architecture；发生产品冲突时先更新 PRD，而不是在 Roadmap 绕过。
+- active plan/Task 才能授权 executor；Roadmap 条目本身不是实施合同。
