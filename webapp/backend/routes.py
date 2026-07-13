@@ -10,9 +10,18 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, HTTPException, Path
 from fastapi.responses import FileResponse
 
-from . import coach_store, config, db, queue
+from . import (
+    benchmark_store,
+    coach_store,
+    config,
+    db,
+    history_trends,
+    kovaak_run_store,
+    queue,
+)
 from .auth import get_request_user_id, require_desktop_token
 from .coach_service import run_chat_turn
+from .coach_context import project_coach_diagnostic_context
 from .health import build_coach_runtime_status
 from .contracts import UnsupportedContractVersion, analysis_result_to_coach_report
 from .queue import (
@@ -24,6 +33,10 @@ from .queue import (
 from .schemas import (
     AnalyzePathsRequest,
     AnalyzeResponse,
+    BenchmarkRecordCreate,
+    BenchmarkRecordListResponse,
+    BenchmarkRecordOut,
+    KovaaKAnalysisRequest,
     ChatMessageOut,
     ChatRequest,
     ChatResponse,
@@ -37,6 +50,9 @@ from .schemas import (
     CoachThreadMessageOut,
     CoachThreadOut,
     DeleteSessionResponse,
+    KovaaKRunItem,
+    KovaaKRunListResponse,
+    HistoryTrendResponse,
     SessionListItem,
     SessionListResponse,
     SessionStatus,
@@ -283,6 +299,9 @@ def _session_status_response(s: dict) -> SessionStatus:
         worker_id=s.get("worker_id"),
         started_at=s.get("started_at"),
         finished_at=s.get("finished_at"),
+        analysis_type=s.get("analysis_type") or "flicking",
+        input_mode=s.get("input_mode") or "video_fallback",
+        kovaak_run_id=s.get("kovaak_run_id"),
     )
 
 
@@ -292,9 +311,143 @@ async def list_sessions(
 ):
     """当前用户的分析列表(新→旧)。不返回完整 result。"""
     rows = await queue.list_sessions(x_user_id)
+    metadata = await history_trends.session_history_metadata(x_user_id)
     return SessionListResponse(
-        sessions=[SessionListItem(**row) for row in rows],
+        sessions=[
+            SessionListItem(**row, **metadata.get(int(row["id"]), {}))
+            for row in rows
+        ],
     )
+
+
+@router.get("/history/trends/{metric_key}", response_model=HistoryTrendResponse)
+async def get_history_trend(
+    metric_key: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    return HistoryTrendResponse(
+        **await history_trends.recent_trend_for_user(x_user_id, metric_key)
+    )
+
+
+@router.get("/benchmarks", response_model=BenchmarkRecordListResponse)
+async def list_benchmarks(x_user_id: str = Depends(get_request_user_id)):
+    records = await benchmark_store.list_records(x_user_id)
+    return BenchmarkRecordListResponse(
+        records=[BenchmarkRecordOut(**record) for record in records]
+    )
+
+
+@router.post("/benchmarks", response_model=BenchmarkRecordOut)
+async def create_benchmark(
+    request: BenchmarkRecordCreate,
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        record = await benchmark_store.create_record(
+            x_user_id, request.model_dump(),
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    return BenchmarkRecordOut(**record)
+
+
+@router.get("/kovaak-runs", response_model=KovaaKRunListResponse)
+async def list_kovaak_runs(_: None = Depends(require_desktop_token)):
+    runs = await kovaak_run_store.list_kovaak_runs(config.DESKTOP_LOCAL_PROFILE)
+    return KovaaKRunListResponse(
+        runs=[KovaaKRunItem(**kovaak_run_store.public_kovaak_run(run)) for run in runs]
+    )
+
+
+@router.get("/kovaak-runs/{run_id}", response_model=KovaaKRunItem)
+async def get_kovaak_run(
+    run_id: int = Path(...),
+    _: None = Depends(require_desktop_token),
+):
+    run = await kovaak_run_store.get_kovaak_run(run_id, config.DESKTOP_LOCAL_PROFILE)
+    if run is None:
+        raise HTTPException(404, "KovaaK run 不存在")
+    return KovaaKRunItem(**kovaak_run_store.public_kovaak_run(run))
+
+
+@router.post("/kovaak-runs/{run_id}/analyze", response_model=AnalyzeResponse)
+async def analyze_kovaak_run(
+    request: KovaaKAnalysisRequest,
+    run_id: int = Path(...),
+    _: None = Depends(require_desktop_token),
+):
+    """Freeze one owned Run and enqueue a mode-validated Analysis request."""
+    user_id = config.DESKTOP_LOCAL_PROFILE
+    if await queue.has_active(user_id):
+        raise HTTPException(429, "已有分析进行中,等完成再提交")
+    run = await kovaak_run_store.get_kovaak_run(run_id, user_id)
+    if run is None:
+        raise HTTPException(404, "KovaaK run 不存在")
+    try:
+        snapshot = await kovaak_run_store.build_analysis_input_snapshot(run_id, user_id)
+    except (LookupError, ValueError) as error:
+        raise HTTPException(409, str(error)) from error
+
+    native_ready = bool(
+        snapshot["sources"].get("stats")
+        and snapshot["sources"].get("performance")
+        and snapshot.get("trace")
+    )
+    video_source = None
+    if request.video_path:
+        video_source = _validate_local_input_path(
+            request.video_path, allowed_exts=_ALLOWED_VIDEO_EXTS, label="视频",
+        )
+    mode = request.input_mode
+    if mode is None:
+        mode = "multimodal" if native_ready and video_source else (
+            "input_native" if native_ready else "video_fallback"
+        )
+    if mode == "input_native" and not native_ready:
+        raise HTTPException(409, "input_native 需要 Stats、Performance 和 Raw Input trace")
+    if mode == "multimodal" and (not native_ready or not video_source):
+        raise HTTPException(409, "multimodal 需要完整 native evidence 和视频")
+    if mode == "video_fallback" and not video_source:
+        raise HTTPException(409, "video_fallback 需要视频")
+
+    sid = await queue.enqueue(
+        user_id,
+        "",
+        "",
+        cm_per_360=request.cm_per_360,
+        fov=request.fov,
+        analysis_type="flicking",
+        input_mode=mode,
+        kovaak_run_id=run_id,
+        input_snapshot=snapshot,
+        status="uploading",
+    )
+    workspace = session_dir(sid)
+    try:
+        managed_video = ""
+        managed_csv = ""
+        if video_source:
+            managed_video_path = workspace / "video.mp4"
+            copy_path_to_path(FilePath(video_source), managed_video_path)
+            managed_video = str(managed_video_path)
+        if mode == "video_fallback":
+            stats_path = run.get("stats_path")
+            if not stats_path or not os.path.isfile(stats_path):
+                raise HTTPException(409, "Stats source unavailable")
+            managed_csv_path = workspace / "stats.csv"
+            copy_path_to_path(FilePath(stats_path), managed_csv_path)
+            managed_csv = str(managed_csv_path)
+        await _update_session_input_paths(sid, managed_video, managed_csv)
+        if not await queue.finish_upload(sid):
+            raise HTTPException(409, "分析输入状态已失效，请重新提交")
+    except HTTPException:
+        await _abort_uploading_session(sid)
+        raise
+    except Exception as error:
+        await _abort_uploading_session(sid)
+        raise HTTPException(500, "无法建立分析输入快照") from error
+    return AnalyzeResponse(session_id=sid)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionStatus)
@@ -345,60 +498,15 @@ async def retry_session(
 
 
 
-def _reconstruct_diagnosis(result: dict):
-    """从 coach view dict 重建 CoachDiagnosis。
-
-    worker.run_report 用 dataclasses.asdict 把 CoachReport 序列化,所以
-    diagnosis 子树是纯 dict + list。手动反序列化(frozen dataclass 无 from_dict)。
-    """
-    from kovaak_tracker.advice import Prescription
-    from kovaak_tracker.coach.diagnosis import (
-        CoachDiagnosis, DiagnosisIssue, ProfileMatch, RootCause,
-    )
-
-    d = result.get("diagnosis") or {}
-    profile_d = d.get("profile") or {}
-    profile = ProfileMatch(
-        archetype_id=profile_d.get("archetype_id", "unclassified"),
-        label=profile_d.get("label", "未分类"),
-        confidence=float(profile_d.get("confidence", 0.0)),
-        secondary_tags=list(profile_d.get("secondary_tags", [])),
-    )
-    issues = []
-    for i in d.get("issues") or []:
-        rcs = [RootCause(level=rc.get("level", "symptom"),
-                         text=rc.get("text", ""))
-               for rc in (i.get("root_causes") or [])]
-        rx = [Prescription(scenario=p.get("scenario", ""),
-                           reason=p.get("reason", ""))
-              for p in (i.get("prescriptions") or [])]
-        issues.append(DiagnosisIssue(
-            signal=i.get("signal", ""),
-            severity=i.get("severity", "info"),
-            root_causes=rcs,
-            prescriptions=rx,
-            priority=int(i.get("priority", 99)),
-            priority_reason=i.get("priority_reason", ""),
-        ))
-    return CoachDiagnosis(
-        profile=profile,
-        issues=issues,
-        summary=d.get("summary") or {},
-        comparison=d.get("comparison"),
-        meta=d.get("meta") or {},
-    )
-
-
-
-
 async def _diagnosis_from_done_session(s: dict):
     result = s.get("result") or {}
     if not isinstance(result, dict):
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
-    coach_view = analysis_result_to_coach_report(result)
-    if not coach_view.get("diagnosis"):
+    context = project_coach_diagnostic_context(result)
+    diagnosis = context.get("diagnosis") or {}
+    if not diagnosis.get("profile") and not diagnosis.get("summary") and not diagnosis.get("issues"):
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
-    return _reconstruct_diagnosis(coach_view)
+    return context
 
 
 def _coach_thread_message_out(m: dict) -> CoachThreadMessageOut:
@@ -408,6 +516,7 @@ def _coach_thread_message_out(m: dict) -> CoachThreadMessageOut:
         content=m["content"],
         created_at=m["created_at"],
         legacy_session_id=m.get("legacy_session_id"),
+        context=m.get("context"),
     )
 
 
@@ -695,26 +804,55 @@ async def get_session_timeline(
     coach_view = analysis_result_to_coach_report(result)
     meta = (coach_view.get("diagnosis") or {}).get("meta") or {}
 
-    fps = 60
-    if isinstance(meta.get("fps"), (int, float)):
+    is_v2 = result.get("schema_version") == "analysis_result.v2"
+    fps = None if is_v2 else 60
+    if isinstance(meta.get("fps"), (int, float)) and not isinstance(meta.get("fps"), bool):
         fps = int(meta["fps"])
 
     # duration:优先 meta.duration_s,fallback meta.duration_frames
-    duration_frames = 0
-    if isinstance(meta.get("duration_frames"), (int, float)):
+    duration_frames = None if is_v2 else 0
+    if isinstance(meta.get("duration_frames"), (int, float)) and not isinstance(
+        meta.get("duration_frames"), bool,
+    ):
         duration_frames = int(meta["duration_frames"])
-    elif isinstance(meta.get("duration_s"), (int, float)):
+    elif fps is not None and isinstance(meta.get("duration_s"), (int, float)) and not isinstance(
+        meta.get("duration_s"), bool,
+    ):
         duration_frames = int(meta["duration_s"] * fps)
 
     events_raw = coach_view.get("timeline") or []
-    events = [
-        TimelineEvent(
-            frame=int(e.get("frame", 0)),
-            time_s=float(e.get("time_s", 0.0)),
-            type=str(e.get("type", "")),
-            label=str(e.get("label", "")),
+    events: list[TimelineEvent] = []
+    for event in events_raw:
+        if not isinstance(event, dict):
+            continue
+        event_type = event.get("type") or event.get("payload_type")
+        if not isinstance(event_type, str) or not event_type:
+            continue
+        frame = event.get("frame")
+        time_s = event.get("time_s")
+        relative_ms = event.get("relative_ms")
+        source = event.get("source")
+        events.append(
+            TimelineEvent(
+                frame=(
+                    int(frame)
+                    if isinstance(frame, (int, float)) and not isinstance(frame, bool)
+                    else None
+                ),
+                time_s=(
+                    float(time_s)
+                    if isinstance(time_s, (int, float)) and not isinstance(time_s, bool)
+                    else None
+                ),
+                relative_ms=(
+                    float(relative_ms)
+                    if isinstance(relative_ms, (int, float))
+                    and not isinstance(relative_ms, bool)
+                    else None
+                ),
+                type=event_type,
+                label=str(event.get("label") or event_type),
+                source=source if isinstance(source, str) else None,
+            )
         )
-        for e in events_raw
-        if isinstance(e, dict) and e.get("type")
-    ]
     return Timeline(fps=fps, duration_frames=duration_frames, events=events)

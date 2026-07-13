@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from concurrent.futures import Future
 import json
+import logging
 import os
 import signal
 import sys
@@ -14,12 +16,13 @@ from typing import Any
 
 import uvicorn
 
-from . import db, worker
+from . import config, db, kovaak_ingest, kovaak_run_store, worker
 from .app import app
 
 LOOPBACK_HOST = "127.0.0.1"
 SERVER_START_POLL_SECONDS = 0.01
 PARENT_STDIN_WATCH_ENV = "AIMING_COOKIE_WATCH_PARENT_STDIN"
+log = logging.getLogger(__name__)
 
 
 class RuntimeStartupError(RuntimeError):
@@ -119,6 +122,36 @@ def _install_shutdown_signal_handlers(stop_event: asyncio.Event) -> Callable[[],
     return remove_handlers
 
 
+def create_kovaak_ingestion_service(loop: asyncio.AbstractEventLoop) -> kovaak_ingest.KovaaKIngestionService:
+    """Create the Desktop-only watcher bridge without changing Web runtime behavior."""
+
+    def on_discovery(discovery: kovaak_ingest.KovaaKFileDiscovery) -> Future[dict]:
+        future = asyncio.run_coroutine_threadsafe(
+            kovaak_run_store.ingest_discovery(
+                discovery,
+                user_id=config.DESKTOP_LOCAL_PROFILE,
+                raw_input_snapshot_path=config.DATA_ROOT / "raw-input" / "buffer.bin",
+            ),
+            loop,
+        )
+
+        def report_result(done: Future[dict]) -> None:
+            try:
+                done.result()
+            except Exception:
+                log.exception("KovaaK run ingestion failed for %s", discovery.stem)
+
+        future.add_done_callback(report_result)
+        return future
+
+    return kovaak_ingest.KovaaKIngestionService(
+        stats_dir=config.KOVAAK_STATS_DIR,
+        performance_dir=config.KOVAAK_PERFORMANCE_DIR,
+        callback=on_discovery,
+        poll_interval=config.KOVAAK_WATCH_POLL_SECONDS,
+    )
+
+
 async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     """Run API and worker until Tauri requests shutdown or either exits."""
     shutdown_requested = stop_event or asyncio.Event()
@@ -129,6 +162,7 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     server_task = asyncio.create_task(server.serve())
     worker_task: asyncio.Task[None] | None = None
     stop_task = asyncio.create_task(shutdown_requested.wait())
+    ingestion_service = create_kovaak_ingestion_service(asyncio.get_running_loop())
 
     try:
         port = await _wait_for_server_start(server, server_task)
@@ -137,6 +171,10 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         if worker_task.done():
             await worker_task
             raise RuntimeStartupError("worker exited before ready")
+        reconciliation = await kovaak_run_store.reconcile_mouse_traces(config.DATA_ROOT)
+        if any(reconciliation.values()):
+            log.info("KovaaK trace reconciliation completed: %s", reconciliation)
+        ingestion_service.start()
 
         # This is intentionally the runtime's only stdout protocol write.
         print(
@@ -161,6 +199,7 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await stop_task
         worker_stop.set()
+        ingestion_service.stop()
         server.should_exit = True
         tasks = [server_task]
         if worker_task is not None:

@@ -14,13 +14,16 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
 
   return {
     name: "get_analysis_summary",
-    label: "Get analysis summary",
-    description: "返回本轮请求中已附带的只读分析摘要（不访问磁盘或数据库）。",
+    label: "Get diagnostic context",
+    description: "返回本轮请求中已附带的 coach_diagnostic_context.v1 JSON（只读，不访问磁盘或数据库）。",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute() {
       return {
         content: [{ type: "text", text: summaryText }],
-        details: { has_analysis: analysisSummary !== null && analysisSummary.trim().length > 0 },
+        details: {
+          has_analysis: analysisSummary !== null && analysisSummary.trim().length > 0,
+          context_schema: "coach_diagnostic_context.v1",
+        },
       };
     },
   };

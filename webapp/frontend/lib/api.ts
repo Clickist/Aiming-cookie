@@ -12,12 +12,19 @@ import {
 } from "./desktop";
 import type {
   AnalyzeResponse,
+  BenchmarkRecord,
+  BenchmarkRecordCreate,
+  BenchmarkRecordListResponse,
   ChatResponse,
   CoachPrimaryAttachResponse,
   CoachPrimaryMessageResponse,
   CoachPrimaryResponse,
   CoachRuntimeStatusResponse,
   DeleteSessionResponse,
+  HistoryTrend,
+  KovaaKAnalysisRequest,
+  KovaaKRunItem,
+  KovaaKRunListResponse,
   SessionListResponse,
   SessionStatus,
   StorageResponse,
@@ -155,6 +162,91 @@ export async function listSessions(
   const res = await apiFetch("/api/sessions", { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as SessionListResponse;
+}
+
+/** Desktop-only Run index. This response is deliberately summary-only. */
+export async function listKovaakRuns(
+  opts: { signal?: AbortSignal } = {},
+): Promise<KovaaKRunListResponse> {
+  const res = await apiFetch(
+    "/api/kovaak-runs",
+    { method: "GET" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKRunListResponse;
+}
+
+/** Desktop-only Run detail. The server returns a path-free public projection. */
+export async function getKovaakRun(
+  runId: number,
+  opts: { signal?: AbortSignal } = {},
+): Promise<KovaaKRunItem> {
+  const res = await apiFetch(
+    `/api/kovaak-runs/${runId}`,
+    { method: "GET" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKRunItem;
+}
+
+
+/** Desktop-only submission from a path-free persisted Run. */
+export async function analyzeKovaakRun(
+  runId: number,
+  request: KovaaKAnalysisRequest = {},
+  opts: { signal?: AbortSignal } = {},
+): Promise<AnalyzeResponse> {
+  const res = await apiFetch(
+    `/api/kovaak-runs/${runId}/analyze`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as AnalyzeResponse;
+}
+
+export async function getHistoryTrend(
+  metricKey: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<HistoryTrend> {
+  const res = await apiFetch(
+    `/api/history/trends/${encodeURIComponent(metricKey)}`,
+    { method: "GET" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as HistoryTrend;
+}
+
+export async function listBenchmarks(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<BenchmarkRecordListResponse> {
+  const res = await apiFetch("/api/benchmarks", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as BenchmarkRecordListResponse;
+}
+
+export async function createBenchmark(
+  record: BenchmarkRecordCreate,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<BenchmarkRecord> {
+  const res = await apiFetch(
+    "/api/benchmarks",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as BenchmarkRecord;
 }
 
 export async function deleteSession(

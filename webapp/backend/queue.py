@@ -10,7 +10,7 @@ from .config import DEFAULT_MAX_ATTEMPTS, LEASE_TTL_SECONDS
 from .contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
     build_error_v1,
-    coerce_analysis_result_v1,
+    coerce_analysis_result,
     coerce_error_v1,
     dump_contract_json,
     normalize_json_value,
@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 _LEGACY_RESULT_KEYS = frozenset(
     {"diagnosis", "figures", "narration", "notes", "timeline"},
 )
+_INPUT_MODES = frozenset({"input_native", "multimodal", "video_fallback"})
 
 
 def sqlite_timestamp_to_wire_utc(value: str | None) -> str | None:
@@ -60,7 +61,7 @@ def _coerce_or_normalize_v1_read(
     updated_at: str | None,
 ) -> dict:
     try:
-        return coerce_analysis_result_v1(
+        return coerce_analysis_result(
             parsed,
             cm_per_360=cm_per_360,
             fov=fov,
@@ -102,13 +103,25 @@ def _lease_expiry_sqlite(now: str | None = None) -> str:
 async def enqueue(
     user_id: str, video_path: str, csv_path: str,
     cm_per_360: float | None = None, fov: float | None = None,
-    *, status: str = "queued",
+    *, status: str = "queued", analysis_type: str = "flicking",
+    input_mode: str = "video_fallback", kovaak_run_id: int | None = None,
+    input_snapshot: dict | None = None,
 ) -> int:
+    if input_mode not in _INPUT_MODES:
+        raise ValueError(f"unsupported input_mode: {input_mode}")
     conn = await get_conn()
+    if kovaak_run_id is not None:
+        cur = await conn.execute(
+            "SELECT id FROM kovaak_runs WHERE id=? AND user_id=?",
+            (kovaak_run_id, user_id),
+        )
+        if await cur.fetchone() is None:
+            raise PermissionError("kovaak run is not owned by this user")
     cur = await conn.execute(
         "INSERT INTO sessions("
-        "user_id, status, video_path, csv_path, cm_per_360, fov, attempts, max_attempts"
-        ") VALUES(?, ?, ?, ?, ?, ?, 0, ?) RETURNING id",
+        "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, "
+        "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts"
+        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?) RETURNING id",
         (
             user_id,
             status,
@@ -116,6 +129,11 @@ async def enqueue(
             csv_path,
             cm_per_360,
             fov,
+            analysis_type,
+            input_mode,
+            kovaak_run_id,
+            json.dumps(input_snapshot, ensure_ascii=False, separators=(",", ":"))
+            if input_snapshot is not None else None,
             DEFAULT_MAX_ATTEMPTS,
         ),
     )
@@ -164,7 +182,8 @@ async def claim_next(worker_id: str) -> Optional[dict]:
             (worker_id, now, now, lease_exp, now, sid),
         )
         cur = await conn.execute(
-            "SELECT id, user_id, video_path, csv_path, cm_per_360, fov, "
+            "SELECT id, user_id, video_path, csv_path, cm_per_360, fov, analysis_type, "
+            "input_mode, kovaak_run_id, input_snapshot_json, "
             "created_at, attempts, max_attempts, worker_id, started_at, "
             "lease_expires_at, heartbeat_at "
             "FROM sessions WHERE id=?",
@@ -172,7 +191,15 @@ async def claim_next(worker_id: str) -> Optional[dict]:
         )
         claimed = await cur.fetchone()
         await conn.execute("COMMIT")
-        return dict(claimed) if claimed else None
+        if not claimed:
+            return None
+        result = dict(claimed)
+        raw_snapshot = result.pop("input_snapshot_json", None)
+        try:
+            result["input_snapshot"] = json.loads(raw_snapshot) if raw_snapshot else None
+        except (TypeError, json.JSONDecodeError):
+            result["input_snapshot"] = None
+        return result
     except Exception:
         await conn.execute("ROLLBACK")
         raise
@@ -328,7 +355,8 @@ async def requeue_for_retry(session_id: int) -> dict:
     await conn.execute("BEGIN IMMEDIATE")
     try:
         cur = await conn.execute(
-            "SELECT id, status, video_path, csv_path FROM sessions WHERE id = ?",
+            "SELECT id, status, video_path, csv_path, input_mode, "
+            "input_snapshot_json FROM sessions WHERE id = ?",
             (session_id,),
         )
         row = await cur.fetchone()
@@ -341,20 +369,19 @@ async def requeue_for_retry(session_id: int) -> dict:
                 "invalid_status",
                 f"仅 failed 状态可重试，当前为 {row['status']}",
             )
-        video_path = row["video_path"] or ""
-        csv_path = row["csv_path"] or ""
-        if not video_path or not os.path.isfile(video_path):
+        input_mode = row["input_mode"] or "video_fallback"
+        if input_mode == "video_fallback":
+            video_path = row["video_path"] or ""
+            csv_path = row["csv_path"] or ""
+            if not video_path or not os.path.isfile(video_path):
+                await conn.execute("COMMIT")
+                raise RetryNotAllowed("missing_video", "输入视频已不存在，请重新上传分析")
+            if not csv_path or not os.path.isfile(csv_path):
+                await conn.execute("COMMIT")
+                raise RetryNotAllowed("missing_csv", "输入 CSV 已不存在，请重新上传分析")
+        elif not row["input_snapshot_json"]:
             await conn.execute("COMMIT")
-            raise RetryNotAllowed(
-                "missing_video",
-                "输入视频已不存在，请重新上传分析",
-            )
-        if not csv_path or not os.path.isfile(csv_path):
-            await conn.execute("COMMIT")
-            raise RetryNotAllowed(
-                "missing_csv",
-                "输入 CSV 已不存在，请重新上传分析",
-            )
+            raise RetryNotAllowed("missing_snapshot", "分析输入快照不存在，请重新提交分析")
         now = _utc_now_sqlite()
         await conn.execute(
             "UPDATE sessions SET status = 'queued', attempts = 0, "
@@ -459,7 +486,7 @@ async def list_sessions(user_id: str) -> list[dict]:
     conn = await get_conn()
     cur = await conn.execute(
         "SELECT id, user_id, status, created_at, finished_at, attempts, "
-        "max_attempts, llm_cost_cny, result "
+        "max_attempts, llm_cost_cny, result, analysis_type, input_mode, kovaak_run_id "
         "FROM sessions WHERE user_id=? "
         "ORDER BY created_at DESC, id DESC",
         (user_id,),
@@ -476,6 +503,9 @@ async def list_sessions(user_id: str) -> list[dict]:
             "attempts": int(d["attempts"] or 0),
             "max_attempts": int(d["max_attempts"] or 1),
             "llm_cost_cny": float(d["llm_cost_cny"] or 0),
+            "analysis_type": d.get("analysis_type") or "flicking",
+            "input_mode": d.get("input_mode") or "video_fallback",
+            "kovaak_run_id": d.get("kovaak_run_id"),
             "summary_label": _summary_label_from_stored_result(
                 d.get("status") or "",
                 d.get("result"),
@@ -545,7 +575,8 @@ async def delete_session(session_id: int, user_id: str) -> dict:
 async def get_session(session_id: int) -> Optional[dict]:
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id, user_id, status, video_path, csv_path, result, error, "
+        "SELECT id, user_id, status, video_path, csv_path, analysis_type, input_mode, "
+        "kovaak_run_id, input_snapshot_json, result, error, "
         "llm_cost_cny, cm_per_360, fov, attempts, max_attempts, worker_id, "
         "started_at, finished_at, created_at, updated_at "
         "FROM sessions WHERE id=?",
@@ -555,6 +586,15 @@ async def get_session(session_id: int) -> Optional[dict]:
     if row is None:
         return None
     d = dict(row)
+    raw_snapshot = d.get("input_snapshot_json")
+    if raw_snapshot:
+        try:
+            d["input_snapshot"] = json.loads(raw_snapshot)
+        except (TypeError, json.JSONDecodeError):
+            d["input_snapshot"] = None
+    else:
+        d["input_snapshot"] = None
+    d.pop("input_snapshot_json", None)
     d["created_at"] = sqlite_timestamp_to_wire_utc(d.get("created_at")) or ""
     d["started_at"] = sqlite_timestamp_to_wire_utc(d.get("started_at"))
     d["finished_at"] = sqlite_timestamp_to_wire_utc(d.get("finished_at"))

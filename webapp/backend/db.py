@@ -9,7 +9,7 @@ from .config import DB_PATH
 
 _conn: Optional[aiosqlite.Connection] = None
 
-TARGET_USER_VERSION = 3
+TARGET_USER_VERSION = 8
 
 
 async def get_conn() -> aiosqlite.Connection:
@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     csv_path TEXT,
     cm_per_360 REAL,
     fov REAL,
+    analysis_type TEXT NOT NULL DEFAULT 'flicking',
+    input_mode TEXT NOT NULL DEFAULT 'video_fallback',
+    kovaak_run_id INTEGER,
+    input_snapshot_json TEXT,
     result TEXT,
     error TEXT,
     llm_cost_cny REAL DEFAULT 0,
@@ -86,6 +90,7 @@ CREATE TABLE IF NOT EXISTS coach_messages (
     trace_json TEXT,
     legacy_session_id INTEGER,
     legacy_chat_message_id INTEGER,
+    context_json TEXT,
     FOREIGN KEY (thread_id) REFERENCES coach_threads(id)
 );
 CREATE INDEX IF NOT EXISTS idx_coach_messages_thread
@@ -105,6 +110,45 @@ CREATE INDEX IF NOT EXISTS idx_coach_refs_thread
 CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_refs_thread_session_active
     ON coach_analysis_refs(thread_id, analysis_session_id)
     WHERE status = 'active' AND analysis_session_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS kovaak_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL DEFAULT 'desktop-local',
+    source_key TEXT NOT NULL,
+    scenario TEXT,
+    stats_path TEXT,
+    performance_path TEXT,
+    mouse_trace_path TEXT,
+    trace_state TEXT NOT NULL DEFAULT 'none',
+    pending_trace_path TEXT,
+    trace_error TEXT,
+    stats_summary TEXT,
+    performance_summary TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, source_key)
+);
+CREATE INDEX IF NOT EXISTS idx_kovaak_runs_user_created
+    ON kovaak_runs(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS benchmark_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    provider_license_note TEXT NOT NULL,
+    catalog_version TEXT NOT NULL,
+    scenario_id TEXT NOT NULL,
+    metric_key TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    value REAL NOT NULL,
+    observed_at TEXT NOT NULL,
+    availability TEXT NOT NULL,
+    external_identity_ref TEXT,
+    identity_consent INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_benchmark_records_user_observed
+    ON benchmark_records(user_id, observed_at DESC, id DESC);
 """
 
 _V1_MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -117,6 +161,23 @@ _V1_MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
     ("heartbeat_at", "TEXT"),
     ("started_at", "TEXT"),
     ("finished_at", "TEXT"),
+)
+
+_V5_KOVAAK_RUN_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("trace_state", "TEXT NOT NULL DEFAULT 'none'"),
+    ("pending_trace_path", "TEXT"),
+    ("trace_error", "TEXT"),
+)
+
+_V6_ANALYSIS_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("analysis_type", "TEXT NOT NULL DEFAULT 'flicking'"),
+    ("input_mode", "TEXT NOT NULL DEFAULT 'video_fallback'"),
+    ("kovaak_run_id", "INTEGER"),
+    ("input_snapshot_json", "TEXT"),
+)
+
+_V8_COACH_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("context_json", "TEXT"),
 )
 
 
@@ -146,6 +207,15 @@ async def init_schema() -> None:
                 await _migrate_add_column_if_missing(conn, "sessions", col, col_def)
         if user_version < 3:
             await _migrate_v3_coach_messages_legacy_id(conn)
+        if user_version < 5:
+            for col, col_def in _V5_KOVAAK_RUN_COLUMNS:
+                await _migrate_add_column_if_missing(conn, "kovaak_runs", col, col_def)
+        if user_version < 6:
+            for col, col_def in _V6_ANALYSIS_COLUMNS:
+                await _migrate_add_column_if_missing(conn, "sessions", col, col_def)
+        if user_version < 8:
+            for col, col_def in _V8_COACH_COLUMNS:
+                await _migrate_add_column_if_missing(conn, "coach_messages", col, col_def)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:

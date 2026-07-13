@@ -47,14 +47,18 @@ async def append_message(
     *,
     trace: Optional[list] = None,
     legacy_session_id: Optional[int] = None,
+    context: Optional[dict] = None,
 ) -> int:
     conn = await get_conn()
     trace_json = json.dumps(trace, ensure_ascii=False) if trace else None
+    context_json = json.dumps(
+        context, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
+    ) if context is not None else None
     cur = await conn.execute(
         "INSERT INTO coach_messages("
-        "thread_id, role, content, trace_json, legacy_session_id"
-        ") VALUES(?, ?, ?, ?, ?) RETURNING id",
-        (thread_id, role, content, trace_json, legacy_session_id),
+        "thread_id, role, content, trace_json, legacy_session_id, context_json"
+        ") VALUES(?, ?, ?, ?, ?, ?) RETURNING id",
+        (thread_id, role, content, trace_json, legacy_session_id, context_json),
     )
     row = await cur.fetchone()
     await conn.execute(
@@ -68,7 +72,7 @@ async def append_message(
 async def load_messages(thread_id: int) -> list[dict[str, Any]]:
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id, role, content, created_at, trace_json, legacy_session_id "
+        "SELECT id, role, content, created_at, trace_json, legacy_session_id, context_json "
         "FROM coach_messages WHERE thread_id=? ORDER BY id",
         (thread_id,),
     )
@@ -81,6 +85,13 @@ async def load_messages(thread_id: int) -> list[dict[str, Any]]:
                 trace = json.loads(r["trace_json"])
             except (json.JSONDecodeError, TypeError):
                 trace = []
+        context = None
+        if r["context_json"]:
+            try:
+                value = json.loads(r["context_json"])
+                context = value if isinstance(value, dict) else None
+            except (json.JSONDecodeError, TypeError):
+                context = None
         out.append({
             "id": r["id"],
             "role": r["role"],
@@ -88,6 +99,7 @@ async def load_messages(thread_id: int) -> list[dict[str, Any]]:
             "created_at": r["created_at"],
             "trace": trace,
             "legacy_session_id": r["legacy_session_id"],
+            "context": context,
         })
     return out
 

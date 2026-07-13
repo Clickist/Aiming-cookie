@@ -8,16 +8,21 @@ import pytest
 
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
+    ANALYSIS_RESULT_V2_SCHEMA_VERSION,
     ANALYSIS_VERSION,
     ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    ARTIFACT_MANIFEST_V2_SCHEMA_VERSION,
     ERROR_SCHEMA_VERSION,
     LEGACY_ANALYSIS_VERSION,
     SUMMARY_TYPE,
     UnsupportedContractVersion,
     analysis_result_to_coach_report,
     build_analysis_result_v1,
+    build_analysis_result_v2,
     build_artifact_manifest_v1,
+    build_artifact_manifest_v2,
     build_error_v1,
+    coerce_analysis_result,
     coerce_analysis_result_v1,
     coerce_error_v1,
     dump_contract_json,
@@ -68,6 +73,7 @@ def test_build_analysis_result_v1_exact_shape():
         "model": None,
         "usage": None,
     }
+    assert coerce_analysis_result(result) == result
     assert result["artifact_manifest"] == manifest
     assert result["notes"] == ["note-a"]
     assert result["normalization_issues"] == []
@@ -270,3 +276,224 @@ def test_legacy_error_is_wrapped_as_safe_error_v1():
 
     with pytest.raises(UnsupportedContractVersion):
         coerce_error_v1(json.dumps({"schema_version": "error.v99"}))
+
+@pytest.mark.parametrize("input_mode", ["input_native", "multimodal", "video_fallback"])
+def test_build_analysis_result_v2_supports_explicit_input_modes(input_mode: str):
+    manifest = build_artifact_manifest_v2(
+        external_inputs=[{"id": "kovaak-run-42", "kind": "kovaak_run"}],
+        owned_outputs=[{"id": "analysis-42", "kind": "analysis_result"}],
+    )
+    result = build_analysis_result_v2(
+        analysis_id="analysis-42",
+        analysis_type="flicking",
+        input_mode=input_mode,
+        kovaak_run_ref="kovaak-run-42",
+        evidence={
+            "sources": [{"ref": "kovaak-run-42"}],
+            "provenance": {"collector": "kovaak"},
+            "availability": {"raw_input": "available"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+        },
+        deterministic={"metrics": {"score": float("nan")}},
+        artifact_manifest=manifest,
+        input_snapshot={"scenario": "Tile Frenzy"},
+        created_at="2026-07-13T12:00:00Z",
+        completed_at="2026-07-13T12:01:00Z",
+        warnings=[],
+        errors=[],
+    )
+
+    assert result["schema_version"] == ANALYSIS_RESULT_V2_SCHEMA_VERSION
+    assert result["analysis_id"] == "analysis-42"
+    assert result["analysis_type"] == "flicking"
+    assert result["input_mode"] == input_mode
+    assert result["kovaak_run_ref"] == "kovaak-run-42"
+    assert result["evidence"]["availability"] == {"raw_input": "available"}
+    assert result["deterministic"]["metrics"]["score"] is None
+    assert result["normalization_issues"] == [
+        {
+            "location": "$.deterministic.metrics.score",
+            "code": "non_finite_number",
+            "original": "nan",
+        }
+    ]
+    assert coerce_analysis_result(result) == result
+    assert result["artifact_manifest"] == manifest
+    assert result["artifact_manifest"]["schema_version"] == ARTIFACT_MANIFEST_V2_SCHEMA_VERSION
+    assert set(result["artifact_manifest"]) == {
+        "schema_version",
+        "external_inputs",
+        "owned_outputs",
+    }
+
+
+def test_analysis_result_v2_allows_metric_names_that_describe_paths():
+    result = build_analysis_result_v2(
+        analysis_id="analysis-42",
+        analysis_type="flicking",
+        input_mode="input_native",
+        kovaak_run_ref="kovaak-run-42",
+        evidence={
+            "sources": [],
+            "provenance": {},
+            "availability": {},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+        },
+        deterministic={
+            "metrics": {
+                "path_efficiency": {"value": 0.96},
+                "path_length_deg": {"value": 12.0},
+            }
+        },
+        artifact_manifest=build_artifact_manifest_v2(
+            external_inputs=[],
+            owned_outputs=[{"id": "analysis-42", "kind": "analysis_result"}],
+        ),
+        input_snapshot={},
+        created_at="2026-07-13T12:00:00Z",
+        completed_at="2026-07-13T12:01:00Z",
+        warnings=[],
+        errors=[],
+    )
+
+    assert set(result["deterministic"]["metrics"]) == {
+        "path_efficiency",
+        "path_length_deg",
+    }
+
+
+def test_analysis_result_v2_allows_analysis_without_kovaak_run_reference():
+    result = build_analysis_result_v2(
+        analysis_id="analysis-42",
+        analysis_type="flicking",
+        input_mode="video_fallback",
+        kovaak_run_ref=None,
+        evidence={
+            "sources": [],
+            "provenance": {},
+            "availability": {},
+            "alignment": {"status": "not_required"},
+            "warnings": [],
+        },
+        deterministic={},
+        artifact_manifest=build_artifact_manifest_v2(
+            external_inputs=[],
+            owned_outputs=[{"id": "analysis-42", "kind": "analysis_result"}],
+        ),
+        input_snapshot={},
+        created_at="2026-07-13T12:00:00Z",
+        completed_at="2026-07-13T12:01:00Z",
+        warnings=[],
+        errors=[],
+    )
+
+    assert "kovaak_run_ref" not in result
+
+
+def test_coerce_analysis_result_reads_v1_and_legacy_shapes():
+    v1 = build_analysis_result_v1(
+        report={"diagnosis": {"ok": True}, "figures": {}, "notes": [], "narration": None},
+        timeline=[],
+        narration_status="not_requested",
+        cm_per_360=None,
+        fov=None,
+        artifact_manifest=_minimal_manifest(),
+        created_at="2026-07-13T12:00:00Z",
+        completed_at="2026-07-13T12:01:00Z",
+    )
+    assert coerce_analysis_result(v1) == v1
+
+    legacy = {"diagnosis": {"ok": True}, "figures": {}, "notes": [], "timeline": []}
+    wrapped = coerce_analysis_result(
+        legacy,
+        cm_per_360=28.0,
+        fov=100.0,
+        created_at="2026-07-13T12:00:00Z",
+        updated_at="2026-07-13T12:01:00Z",
+    )
+    assert wrapped is not None
+    assert wrapped["schema_version"] == ANALYSIS_RESULT_SCHEMA_VERSION
+    assert wrapped["analysis_version"] == LEGACY_ANALYSIS_VERSION
+
+
+def test_coerce_analysis_result_rejects_unknown_version():
+    with pytest.raises(UnsupportedContractVersion):
+        coerce_analysis_result({"schema_version": "analysis_result.v99"})
+
+
+@pytest.mark.parametrize(
+    "artifact_manifest",
+    [
+        {
+            "schema_version": ARTIFACT_MANIFEST_V2_SCHEMA_VERSION,
+            "external_inputs": [{"id": "input-1", "path": "/private/input.csv"}],
+            "owned_outputs": [],
+        },
+        {
+            "schema_version": ARTIFACT_MANIFEST_V2_SCHEMA_VERSION,
+            "external_inputs": [{"id": "input-1", "source_path": "relative.csv"}],
+            "owned_outputs": [],
+        },
+        {
+            "schema_version": ARTIFACT_MANIFEST_V2_SCHEMA_VERSION,
+            "external_inputs": [{"id": "input-1", "snapshotPath": "relative.bin"}],
+            "owned_outputs": [],
+        },
+        {
+            "schema_version": ARTIFACT_MANIFEST_V2_SCHEMA_VERSION,
+            "external_inputs": [{"id": "input-1", "ref": "/private/input.csv"}],
+            "owned_outputs": [],
+        },
+    ],
+)
+def test_analysis_result_v2_rejects_path_keys_and_absolute_paths(artifact_manifest: dict):
+    with pytest.raises(ValueError):
+        build_analysis_result_v2(
+            analysis_id="analysis-42",
+            analysis_type="flicking",
+            input_mode="input_native",
+            kovaak_run_ref="kovaak-run-42",
+            evidence={
+                "sources": [],
+                "provenance": {},
+                "availability": {},
+                "alignment": {},
+                "warnings": [],
+            },
+            deterministic={},
+            artifact_manifest=artifact_manifest,
+            input_snapshot={},
+            created_at="2026-07-13T12:00:00Z",
+            completed_at="2026-07-13T12:01:00Z",
+            warnings=[],
+            errors=[],
+        )
+
+
+def test_analysis_result_v2_rejects_path_like_run_reference():
+    with pytest.raises(ValueError):
+        build_analysis_result_v2(
+            analysis_id="analysis-42",
+            analysis_type="flicking",
+            input_mode="input_native",
+            kovaak_run_ref="/private/kovaak-run-42",
+            evidence={
+                "sources": [],
+                "provenance": {},
+                "availability": {},
+                "alignment": {},
+                "warnings": [],
+            },
+            deterministic={},
+            artifact_manifest=build_artifact_manifest_v2(
+                external_inputs=[],
+                owned_outputs=[],
+            ),
+            input_snapshot={},
+            created_at="2026-07-13T12:00:00Z",
+            completed_at="2026-07-13T12:01:00Z",
+            warnings=[],
+            errors=[],
+        )
