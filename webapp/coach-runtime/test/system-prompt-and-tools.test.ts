@@ -42,3 +42,16 @@ test("registered tools are read-only whitelist without bash/read/write/edit", as
   }
   assert.deepEqual(names, ["get_analysis_summary"]);
 });
+
+test("analysis tool returns the exact canonical diagnostic context JSON", async () => {
+  const context = JSON.stringify({
+    schema_version: "coach_diagnostic_context.v1",
+    analysis_ref: { analysis_id: "analysis:1" },
+    diagnosis: { summary: { distance: { value: 12, unit: "raw_counts" } } },
+    evidence_summary: { availability: { raw_input: "available" } },
+    warnings: [],
+  });
+  const result = await createAnalysisSummaryTool(context).execute();
+  assert.equal(result.content[0]?.text, context);
+  assert.equal(result.details.context_schema, "coach_diagnostic_context.v1");
+});

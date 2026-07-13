@@ -53,6 +53,33 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 DESKTOP_LAUNCH_TOKEN = os.environ.get("AIMING_COOKIE_DESKTOP_TOKEN", "")
 DESKTOP_LOCAL_PROFILE = "desktop-local"
 
+
+def resolve_kovaak_install_dir() -> Path | None:
+    """Resolve the local KovaaK installation used by Desktop auto-ingestion."""
+    override = os.environ.get("KOVAAK_INSTALL_DIR", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    if sys.platform == "win32":
+        return Path(r"C:\Program Files (x86)\Steam\steamapps\common\FPSAimTrainer")
+    return None
+
+
+def resolve_kovaak_data_dirs() -> tuple[Path | None, Path | None]:
+    """Return Stats and Performance directories without creating user-owned paths."""
+    stats_override = os.environ.get("KOVAAK_STATS_DIR", "").strip()
+    perf_override = os.environ.get("KOVAAK_PERFORMANCE_DIR", "").strip()
+    install = resolve_kovaak_install_dir()
+    stats = Path(stats_override).expanduser().resolve() if stats_override else None
+    perf = Path(perf_override).expanduser().resolve() if perf_override else None
+    if install is not None:
+        stats = stats or install / "FPSAimTrainer" / "stats"
+        perf = perf or install / "FPSAimTrainer" / "performances"
+    return stats, perf
+
+
+KOVAAK_STATS_DIR, KOVAAK_PERFORMANCE_DIR = resolve_kovaak_data_dirs()
+KOVAAK_WATCH_POLL_SECONDS = float(os.environ.get("KOVAAK_WATCH_POLL_SECONDS", "1.0"))
+
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")
 LLM_DAILY_BUDGET_CNY = float(os.environ.get("LLM_DAILY_BUDGET_CNY", "1.0"))
 MAX_VIDEO_BYTES = 100 * 1024 * 1024  # 100MB

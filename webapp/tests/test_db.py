@@ -61,7 +61,7 @@ async def test_init_schema_creates_index():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_migrates_v0_to_v3_transactionally():
+async def test_init_schema_migrates_v0_to_v8_transactionally():
     await db.close_conn()
     db_path = "./aiming_cookie_test.db"
     if os.path.exists(db_path):
@@ -75,7 +75,7 @@ async def test_init_schema_migrates_v0_to_v3_transactionally():
     await db.init_schema()
     conn = await db.get_conn()
     cur = await conn.execute("PRAGMA user_version")
-    assert (await cur.fetchone())[0] == 3
+    assert (await cur.fetchone())[0] == 8
 
     cur = await conn.execute("PRAGMA table_info(sessions)")
     cols = {row[1] for row in await cur.fetchall()}
@@ -115,7 +115,7 @@ async def test_init_schema_migrates_v0_to_v3_transactionally():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_v1_to_v3_idempotent():
+async def test_init_schema_v1_to_v8_idempotent():
     await db.close_conn()
     db_path = "./aiming_cookie_test.db"
     if os.path.exists(db_path):
@@ -163,7 +163,7 @@ async def test_init_schema_v1_to_v3_idempotent():
     await db.init_schema()
     conn = await db.get_conn()
     cur = await conn.execute("PRAGMA user_version")
-    assert (await cur.fetchone())[0] == 3
+    assert (await cur.fetchone())[0] == 8
     for table in ("coach_threads", "coach_messages", "coach_analysis_refs"):
         cur = await conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
@@ -171,12 +171,12 @@ async def test_init_schema_v1_to_v3_idempotent():
         )
         assert await cur.fetchone() is not None
 
-    # second init stays at 3
+    # second init stays at 5
     await db.close_conn()
     await db.init_schema()
     conn = await db.get_conn()
     cur = await conn.execute("PRAGMA user_version")
-    assert (await cur.fetchone())[0] == 3
+    assert (await cur.fetchone())[0] == 8
 
 
 @pytest.mark.asyncio
@@ -187,7 +187,7 @@ async def test_init_schema_rejects_newer_user_version():
         os.remove(db_path)
     conn = await aiosqlite.connect(db_path)
     await conn.executescript(V0_SESSIONS_SCHEMA)
-    await conn.execute("PRAGMA user_version = 4")
+    await conn.execute("PRAGMA user_version = 9")
     await conn.commit()
     await conn.close()
 
@@ -196,17 +196,17 @@ async def test_init_schema_rejects_newer_user_version():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_fresh_user_version_is_v3_with_legacy_column():
+async def test_init_schema_fresh_user_version_is_v8_with_legacy_column():
     conn = await db.get_conn()
     cur = await conn.execute("PRAGMA user_version")
-    assert (await cur.fetchone())[0] == 3
+    assert (await cur.fetchone())[0] == 8
     cols = await _coach_messages_column_names(conn)
     assert "legacy_chat_message_id" in cols
     assert await _has_legacy_chat_message_id_unique_index(conn)
 
 
 @pytest.mark.asyncio
-async def test_init_schema_migrates_v2_to_v3_idempotent():
+async def test_init_schema_migrates_v2_to_v8_idempotent():
     await db.close_conn()
     db_path = "./aiming_cookie_test.db"
     if os.path.exists(db_path):
@@ -278,7 +278,7 @@ async def test_init_schema_migrates_v2_to_v3_idempotent():
     await db.init_schema()
     conn = await db.get_conn()
     cur = await conn.execute("PRAGMA user_version")
-    assert (await cur.fetchone())[0] == 3
+    assert (await cur.fetchone())[0] == 8
     cols = await _coach_messages_column_names(conn)
     assert "legacy_chat_message_id" in cols
     assert await _has_legacy_chat_message_id_unique_index(conn)
@@ -287,7 +287,7 @@ async def test_init_schema_migrates_v2_to_v3_idempotent():
     await db.init_schema()
     conn = await db.get_conn()
     cur = await conn.execute("PRAGMA user_version")
-    assert (await cur.fetchone())[0] == 3
+    assert (await cur.fetchone())[0] == 8
 
 
 @pytest.mark.asyncio
@@ -380,3 +380,52 @@ async def test_migrate_legacy_chat_messages_idempotent():
 
     third = await coach_store.migrate_session_legacy_messages(session_id)
     assert third["messages_copied"] == 0
+
+
+@pytest.mark.asyncio
+async def test_init_schema_creates_kovaak_runs_table_and_index():
+    conn = await db.get_conn()
+    cur = await conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='kovaak_runs'"
+    )
+    assert await cur.fetchone() is not None
+    cur = await conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='index' AND name='idx_kovaak_runs_user_created'"
+    )
+    assert await cur.fetchone() is not None
+
+
+@pytest.mark.asyncio
+async def test_init_schema_upgrades_v4_to_v8_with_trace_lifecycle_columns():
+    conn = await db.get_conn()
+    await conn.execute("DROP TABLE kovaak_runs")
+    await conn.execute("PRAGMA user_version = 4")
+    await conn.commit()
+    await db.close_conn()
+
+    await db.init_schema()
+    conn = await db.get_conn()
+    cur = await conn.execute("PRAGMA user_version")
+    assert (await cur.fetchone())[0] == 8
+    cur = await conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='kovaak_runs'"
+    )
+    assert await cur.fetchone() is not None
+    cur = await conn.execute("PRAGMA table_info(kovaak_runs)")
+    columns = {row[1] for row in await cur.fetchall()}
+    assert {"trace_state", "pending_trace_path", "trace_error"} <= columns
+
+@pytest.mark.asyncio
+async def test_v8_schema_contains_benchmark_and_coach_context_contracts():
+    conn = await db.get_conn()
+    cur = await conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='benchmark_records'"
+    )
+    assert await cur.fetchone() is not None
+    cur = await conn.execute("PRAGMA table_info(coach_messages)")
+    coach_columns = {row[1] for row in await cur.fetchall()}
+    assert "context_json" in coach_columns
+    cur = await conn.execute("PRAGMA table_info(sessions)")
+    session_columns = {row[1] for row in await cur.fetchall()}
+    assert {"analysis_type", "input_mode", "kovaak_run_id", "input_snapshot_json"} <= session_columns

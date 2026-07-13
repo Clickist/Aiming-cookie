@@ -26,6 +26,39 @@ async def test_enqueue_returns_id_and_queued_status():
 
 
 @pytest.mark.asyncio
+async def test_native_enqueue_freezes_snapshot_and_checks_run_owner():
+    from webapp.backend import kovaak_run_store
+
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="native", scenario="Scenario",
+    )
+    snapshot = {
+        "schema_version": "analysis_input_snapshot.v1",
+        "run_id": run["id"],
+        "sources": {},
+        "trace": None,
+    }
+    sid = await queue.enqueue(
+        "u1", "", "", input_mode="input_native", kovaak_run_id=run["id"],
+        input_snapshot=snapshot,
+    )
+    stored = await queue.get_session(sid)
+    assert stored["input_mode"] == "input_native"
+    assert stored["kovaak_run_id"] == run["id"]
+    assert stored["input_snapshot"] == snapshot
+
+    claimed = await queue.claim_next(TEST_WORKER)
+    assert claimed["input_mode"] == "input_native"
+    assert claimed["input_snapshot"] == snapshot
+
+    with pytest.raises(PermissionError):
+        await queue.enqueue(
+            "u2", "", "", input_mode="input_native", kovaak_run_id=run["id"],
+            input_snapshot=snapshot,
+        )
+
+
+@pytest.mark.asyncio
 async def test_enqueue_initializes_attempt_defaults():
     sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
     s = await queue.get_session(sid)
@@ -454,4 +487,3 @@ async def test_stale_worker_cannot_overwrite_after_reclaim():
     s = await queue.get_session(sid)
     assert s["status"] == "done"
     assert s["result"]["winner"] == "B"
-
