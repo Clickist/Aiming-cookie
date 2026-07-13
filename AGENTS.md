@@ -1,57 +1,102 @@
-# AGENTS.md
+# Aiming Cookie Repository Agent Contract
 
-本文件是 Aiming Cookie 仓库的项目级协作规则。它补充通用 agent 规则；如有冲突，优先遵循本文件和 `CLAUDE.md` 中更具体的项目约束。
+本文件是本仓库的项目级 Agent Contract。`AGENTS.md` 与 `CLAUDE.md` 必须保持**字节级一致**；它们只是不同工具的入口，不是两套规则，也不承载易变化的产品状态。
 
-## 1. 沟通与工作方式
+## 1. 协作与安全
 
 - 每次解释性回复开头称呼用户：**点点**。
-- 开工前简要说明：假设、计划、成功标准。
-- 不静默选择存在歧义的解释；先指出歧义和取舍。
-- 默认做最小、可验证、可回退的工作，不顺手重构或清理无关内容。
-- 删除文件不得使用 `rm -rf`；使用系统 `trash` 命令。
-- 尊重工作区已有未提交改动。不得 reset、checkout、覆盖或格式化用户的改动。
-- 审阅/诊断任务默认只读；除非点点明确要求，不修改业务代码或产品文档。
+- 开工前简要写明假设、计划和可验证的成功标准；存在歧义时不得静默选择。
+- 优先选择最小、简单、可验证、可回退的方案；不增加未要求的功能、抽象或配置。
+- 只修改当前任务直接需要的内容，不顺手重构、格式化或清理无关代码。
+- 尊重工作区已有未提交改动；不得 reset、checkout、覆盖或改写用户的工作。
+- 删除文件不得使用 `rm -rf`；使用系统 `trash`，或在明确的文档归档任务中使用可追踪的 `mv`。
+- 审阅和诊断默认只读。除非点点明确要求实施，不修改业务代码或产品决策。
+- 未经明确要求，不提交、不推送、不开始下一个任务。
 
-## 2. 项目事实源
+## 2. 项目事实源与职责边界
 
-按以下优先级判断产品和实现：
+先从 [`docs/README.md`](docs/README.md) 进入文档体系。不同问题由不同主责任源回答：
 
-1. `docs/PRD.md`：产品方向锚和阶段边界。
-2. `CLAUDE.md`：当前项目结构、理论状态、开发约束和文档入口。
-3. 当前代码、测试和实际运行结果：判断“现在已经具备什么能力”。
-4. specs / plans / strategy / research 文档：PRD 的下游展开，不得反向覆盖 PRD。
-5. mockup、Stitch、设计 HTML：仅为设计参考，不是产品或实现事实源。
+| 问题 | 主责任事实源 |
+|---|---|
+| 产品目标、用户语义、产品形态、阶段范围、非目标 | [`docs/PRD.md`](docs/PRD.md) |
+| 系统边界、数据归属、依赖方向、稳定合同、安全边界 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| 当前实际实现、接口和可运行能力 | 当前代码、测试和真实运行结果 |
+| 当前优先级、施工顺序、发布 Gate | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
+| 最近完成、阻塞、验证结果和交接状态 | [`docs/PROGRESS.md`](docs/PROGRESS.md) |
+| 桌面产品骨架、信息架构和交互关系 | [`docs/frontend-uiux-design.md`](docs/frontend-uiux-design.md) |
+| 视觉方向与语义设计语言 | [`DESIGN-cursor.md`](DESIGN-cursor.md) |
+| 前端 token、主题和组件的实现治理 | [`docs/design-system.md`](docs/design-system.md) 与当前前端实现 |
+| 安装、启动、测试和代码入口 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
+| 单个局部设计合同 | [`docs/superpowers/specs/README.md`](docs/superpowers/specs/README.md) 列出的 active spec |
+| executor 可执行步骤 | [`docs/superpowers/plans/README.md`](docs/superpowers/plans/README.md) 列出的 active plan 与明确 Task |
+| 历史证据 | [`docs/archive/README.md`](docs/archive/README.md)；只供追溯，不是当前依据 |
 
-若点点的新要求与 PRD 既有决策冲突，必须明确指出冲突并询问是否更新 PRD；不能默默执行，也不能用下游文档绕过冲突。
+`AGENTS.md` / `CLAUDE.md` 只定义协作和文档治理规则，不得复制产品状态、发布日期、代码地图、算法说明、测试数字或当前施工清单。
 
-前端视觉改动还必须遵循 `docs/design-system.md`；`webapp/frontend/app/globals.css` 中的 token 是可执行视觉值的事实源。
+## 3. 冲突处理
 
-## 3. 审阅范围
+- 系统、开发者和点点当前明确指令优先于仓库文档。
+- 在产品问题上，PRD 是最高项目事实源；若点点的新要求与 PRD 冲突，明确指出并询问是否更新 PRD，不能只在下游文档或代码中打补丁。
+- Architecture 只能展开 PRD，不得改写产品范围；Roadmap、Progress、spec 和 plan 不得反向覆盖 PRD 或 Architecture。
+- 上游文档定义“应该是什么”；代码、测试和运行结果定义“现在实际上是什么”。二者不一致时，记录为实现差距，不让代码静默重定义产品，也不让文档否认代码事实。
+- 同一层级冲突时，优先采用范围更具体、状态仍 active 且更新时间更近的文档；仍无法判断则停止并向点点说明。
+- 研究、assessment、mockup、Stitch、HTML、根目录草稿和归档材料只提供证据或参考，不自动成为产品或实现合同。
 
-- 普通的“看看情况”“review 一下当前代码”“检查这轮开发”等请求，默认只审查当前相关改动、关键调用链和已有测试；不自动扩展为全量项目诊断。
-- 不自动启动子代理、并行调查、长时间 E2E 或完整产品/架构审计。只有点点明确要求“完整审计”“全量 review”“并行分工”或等价范围时，才可以先说明审阅范围后执行。
-- 审阅结论应区分已核验事实、合理推断和未验证项；只报告与点点当前问题直接相关的内容。
-- 审阅中若发现需要扩大范围、运行可能耗时较长或可能污染工作区的验证，先说明原因并征得点点同意。
+## 4. 按任务读取，避免全量加载
 
-## 4. 实施任务的收尾
+- 产品范围：读 PRD；涉及交付顺序再读 Roadmap 和 Progress。
+- 架构或数据合同：读 PRD 的相关部分与 Architecture，再核对代码和测试。
+- 前端产品设计：读 PRD、`frontend-uiux-design.md`；涉及视觉再读 `DESIGN-cursor.md` 和 `design-system.md`。
+- 实施任务：先确认 active plan、指定 Task、Allowed files 和测试；不默认扫描 archive。
+- 当前状态或 review：以相关 diff、关键调用链、测试和 Progress 为范围，不自动扩展成全仓审计。
+- 理论或处方：只读取与问题相关的 research / theory 文档；它们不能决定产品优先级或实施状态。
 
-任何代码或文档修改完成后：
+## 5. 实施与验证
 
-- 展示实际变更范围和验证结果；
-- 明确未运行或无法运行的验证；
-- 再次检查 `git status`，区分自己的改动和用户原有改动；
-- 不提交、不推送，除非点点明确要求。
+开始实施前，把任务转成可验证目标，例如：
 
-## 5. Fast 模型实施协议
+```text
+1. [改动] → verify: [检查]
+2. [改动] → verify: [检查]
+```
 
-Composer Fast 或同等级执行模型是 executor，不是 architect。它只能实施已经批准的 `docs/superpowers/plans/*.md` 中一个明确 Task。
+实施时：
 
-- 不得仅凭 PRD、Architecture、Roadmap 自行拆解或实现跨层功能；Architecture 不能替代实施 plan；
-- 不得自行定义 schema、migration、retry、delete、security、数据保留或产品默认值；plan 有歧义时也不得用上游文档自行补全；
-- 用户必须明确指定一个 Task；开工前先回显 Task、Allowed files、Tests first、冻结决策和 Stop rule；
-- 每次只执行一个 Task，且只能修改该 Task 的 Allowed files；
-- 必须先写/运行 Task 指定测试，再做实现；
-- 若合同缺失、代码事实与 plan 不一致、需要扩大文件范围或验证无法运行，立即停止并上报；
-- 不得自行修订 implementation plan 来解除阻塞；需要由 Sol/架构负责人裁决；
-- 完成后必须报告 changed files、验证命令、未运行检查、偏差和 `git status`；
-- 未经明确指示，不得提交、推送或继续下一个 Task。
+- 测试优先或至少先定义失败复现和验收条件；
+- 每一处改动都应能追溯到当前请求；
+- 只清理本次改动造成的未使用代码，不处理既有无关债务；
+- 发现需要扩大文件范围、改变冻结合同或无法运行必要验证时，停止并上报；
+- 长时间、会污染工作区或需要额外权限的验证，先说明原因。
+
+完成后必须报告：
+
+- 实际 changed files 与变更范围；
+- 已运行的验证和结果；
+- 未运行或无法运行的检查；
+- 与计划的偏差和剩余风险；
+- 最终 `git status`，并区分本次改动与原有改动。
+
+## 6. Executor / Fast 模型协议
+
+只有在点点明确指定 [`docs/superpowers/plans/README.md`](docs/superpowers/plans/README.md) 中的一个 active plan Task 时，执行模型才能开工。
+
+- 每次只执行一个 Task，只修改其 Allowed files；
+- 开工前回显 Task、Allowed files、Tests first、冻结决策和 Stop rule；
+- Architecture、Roadmap 或 PRD 不能替代 implementation plan；
+- 不得自行定义 schema、migration、retry、delete、security、数据保留或产品默认值；
+- plan 有歧义、代码事实不符、验证失败或需要扩大范围时立即停止；
+- 不得自行修订 plan 解除阻塞，必须由架构负责人或点点裁决；
+- 完成后报告 changed files、验证命令、未运行检查、偏差和 `git status`；未经指示不继续下一 Task。
+
+## 7. 文档治理规则
+
+- 每类事实只设一个主责任文档；其他文档只做摘要和链接，不复制长期正文。
+- PRD 维护产品决策；Architecture 维护稳定系统合同；Roadmap 维护未来顺序；Progress 维护当前快照。不要在四份文档中重复同一状态清单。
+- 代码入口和命令写入 `docs/DEVELOPMENT.md`，不写入 Agent Contract。
+- 易变化的测试数字、当前 commit、日期化交接和详细 review 放入 Progress；过期后移入 archive history。
+- active spec 只描述尚需长期引用的局部合同；实施完成且结论已回写上游后移入 `docs/archive/retired/specs/`。
+- active plan 目录只保留当前可执行计划；完成、冻结、退役计划分别移入 archive 对应目录。
+- 归档文件尽量保留原正文；若当前结论需要恢复，先核对 PRD、Architecture 与代码，再写回活跃文档。
+- 新增、移动或退役文档时，同步更新 `docs/README.md`、相应索引和活跃文档链接。
+- 若修改本文件，必须将完全相同的内容同步到 `AGENTS.md` 和 `CLAUDE.md`，并用 `cmp -s AGENTS.md CLAUDE.md` 验证。

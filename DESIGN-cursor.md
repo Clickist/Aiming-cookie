@@ -1,18 +1,21 @@
 # Aiming Cookie Desktop — Design Source
 
-**Status:** highest design authority for Aiming Cookie Desktop
-**Scope:** the existing desktop-first flicking-analysis workflow: import, analysis, session review, AI coach, history, and settings.
-**Visual direction:** editorial precision tool — warm, measured, information-dense, and quietly technical. It is not a marketing site and must not receive a speculative redesign.
+**Status:** visual-direction authority for Aiming Cookie Desktop
+**Scope:** the desktop product surfaces defined by `docs/frontend-uiux-design.md`: import, analysis workspace, Coach sidebar, history, settings, and supporting states.
+**Visual direction:** editorial precision tool — warm, measured, information-dense, and quietly technical. It is not a marketing site. Structural page/IA changes come from the UI/UX contract; this file governs how approved structures should feel, not whether they exist.
 
 ## Governance
 
-Design decisions follow this order:
+Design responsibilities are layered rather than competing:
 
-1. `DESIGN-cursor.md` — product visual intent, semantic meaning, shared foundations, and approved palettes.
-2. `docs/design-system.md` — implementation contract for the frontend.
-3. `webapp/frontend/app/globals.css` — executable values for the contract.
+1. `docs/frontend-uiux-design.md` — product skeleton, information architecture, and interaction relationships.
+2. `DESIGN-cursor.md` — visual intent, semantic meaning, shared foundations, and approved palettes.
+3. `docs/design-system.md` — token, theme, and component implementation contract.
+4. Current frontend code — executable implementation of the approved contracts.
 
-Mockups, Stitch output, `DESIGN.md`, and `DESIGN-cursor-dark.md` are references only. `DESIGN-cursor-dark.md` is no longer a parallel authority.
+The current `webapp/frontend/app/globals.css` belongs to a disposable History / Run / Evidence prototype and is not an approved executable token entry. Until the reconstruction plan establishes a replacement token module, this document and `docs/design-system.md` define the intended contract but do not prove that the running prototype implements it.
+
+Mockups, Stitch output, root `DESIGN.md`, design HTML, and other drafts are references only. They do not override the UI/UX or visual contracts.
 
 ## Shared foundations
 
@@ -29,8 +32,8 @@ Mockups, Stitch output, `DESIGN.md`, and `DESIGN-cursor-dark.md` are references 
 - UI: Inter with Chinese system fallbacks.
 - Data and timing: JetBrains Mono.
 - Display: Outfit with the existing Chinese system fallbacks.
-- Existing editorial rhythm, container scale, and compact machined radii remain shared across themes.
-- Existing semantic utility class names remain stable. A theme changes token values, not component structure.
+- Use a consistent editorial rhythm, container scale, and compact machined radii across themes.
+- Semantic role names should remain stable once the new executable token layer is established. A theme changes token values, not component structure.
 
 ### Theme behavior
 
@@ -99,7 +102,7 @@ All themes expose the identical token names below. Values are intentionally sema
 
 ## Component rules
 
-- Use existing semantic classes/tokens such as `bg-surface-container`, `text-on-surface`, `border-outline`, and `text-primary`.
+- Use semantic classes/tokens such as `bg-surface-container`, `text-on-surface`, `border-outline`, and `text-primary` once the new frontend foundation defines them.
 - Never introduce raw hex/RGB values in components, and never branch a component on the active theme.
 - New visual needs require a semantic token defined in this document and implemented in both palettes before use.
 - The only global active-state glow is the token-derived primary pulse used by the processing pipeline.
