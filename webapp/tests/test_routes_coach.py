@@ -457,7 +457,7 @@ async def test_attach_analysis_idempotent():
 
 @pytest.mark.asyncio
 async def test_deleted_analysis_not_active_context(monkeypatch):
-    """已删除分析不可作为 active 上下文。"""
+    """已删除分析不可作为 active 上下文，但历史消息仍保留。"""
     sid = await _seed_done_session()
     _patch_chat_ok(monkeypatch, lambda *a, **k: "x")
 
@@ -465,6 +465,11 @@ async def test_deleted_analysis_not_active_context(monkeypatch):
         transport=ASGITransport(app=app), base_url="http://test",
         headers={"X-User-Id": "u1"},
     ) as client:
+        chat_resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "先保存这次分析", "analysis_session_id": sid},
+        )
+        assert chat_resp.status_code == 200, chat_resp.text
         await client.post(
             "/api/coach/primary/attach",
             json={"analysis_session_id": sid},
@@ -483,6 +488,10 @@ async def test_deleted_analysis_not_active_context(monkeypatch):
         if r["analysis_session_id"] == sid and r["status"] == "deleted"
     ]
     assert len(deleted_refs) == 1
+    assert [m["content"] for m in primary.json()["messages"]] == [
+        "先保存这次分析",
+        "x",
+    ]
 
 # ---------------------------------------------------------------------------
 # COACH_RUNTIME branching (coach_engine)

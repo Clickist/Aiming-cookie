@@ -122,6 +122,34 @@ async def test_list_sessions_summary_label_from_profile():
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_includes_path_free_scenario_from_input_snapshot():
+    sid = await queue.enqueue(
+        "u1",
+        "/private/source/video.mp4",
+        "/private/source/stats.csv",
+        input_snapshot={
+            "schema_version": "analysis_input_snapshot.v1",
+            "scenario": "1wall 6targets small",
+            "sources": {
+                "stats": {"path": "/private/source/stats.csv"},
+            },
+        },
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.get("/api/sessions")
+
+    assert resp.status_code == 200
+    item = next(row for row in resp.json()["sessions"] if row["id"] == sid)
+    assert item["scenario"] == "1wall 6targets small"
+    assert "/private" not in str(item)
+
+
+@pytest.mark.asyncio
 async def test_delete_session_removes_row_chat_and_preserves_source_files():
     tmp = Path(tempfile.gettempdir()) / "aiming_cookie_test"
     tmp.mkdir(parents=True, exist_ok=True)

@@ -6,7 +6,6 @@ import logging
 import os
 import subprocess
 import uuid
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -52,67 +51,17 @@ def _load_provider_turn_model() -> dict[str, str]:
     }
 
 
-def _diagnosis_as_mapping(diagnosis: Any) -> Mapping[str, Any] | None:
-    if diagnosis is None:
-        return None
-    if isinstance(diagnosis, Mapping):
-        return diagnosis
-    if is_dataclass(diagnosis):
-        return asdict(diagnosis)
-    return None
-
-
 def diagnosis_to_analysis_summary(diagnosis: Any) -> str | None:
-    """从 CoachDiagnosis 或等价 dict 抽取短文本摘要；失败返回 None。"""
+    """Compatibility name: serialize the canonical allow-list context exactly."""
     try:
-        data = _diagnosis_as_mapping(diagnosis)
-        if not data:
-            return None
-        profile = data.get("profile") or {}
-        if not isinstance(profile, Mapping):
-            profile = {}
-        label = profile.get("label") or profile.get("archetype_id") or "未分类"
-        confidence = profile.get("confidence")
-        summary = data.get("summary")
-        if not isinstance(summary, Mapping):
-            summary = {}
-        issues_raw = data.get("issues") or []
-        if not isinstance(issues_raw, list):
-            issues_raw = []
-        lines: list[str] = []
-        conf_bit = f"（置信 {confidence}）" if confidence is not None else ""
-        lines.append(f"画像: {label}{conf_bit}")
-        if summary:
-            lines.append(
-                "指标摘要: "
-                + json.dumps(summary, ensure_ascii=False, default=str)
-            )
-        issue_lines: list[str] = []
-        sorted_issues = sorted(
-            (i for i in issues_raw if isinstance(i, Mapping)),
-            key=lambda i: int(i.get("priority", 99)),
+        from .coach_context import (
+            coerce_coach_diagnostic_context,
+            serialize_coach_diagnostic_context,
         )
-        for issue in sorted_issues[:5]:
-            signal = issue.get("signal", "")
-            severity = issue.get("severity", "")
-            rcs = issue.get("root_causes") or []
-            rc_text = ""
-            if isinstance(rcs, list) and rcs:
-                first = rcs[0]
-                if isinstance(first, Mapping):
-                    rc_text = str(first.get("text") or "")
-            issue_lines.append(
-                f"- [{severity}] {signal}"
-                + (f": {rc_text}" if rc_text else "")
-            )
-        if issue_lines:
-            lines.append("关键问题:")
-            lines.extend(issue_lines)
-        meta = data.get("meta")
-        if isinstance(meta, Mapping) and meta.get("summary_type"):
-            lines.append(f"类型: {meta['summary_type']}")
-        text = "\n".join(lines).strip()
-        return text or None
+
+        return serialize_coach_diagnostic_context(
+            coerce_coach_diagnostic_context(diagnosis)
+        )
     except Exception:
         _log.debug("diagnosis_to_analysis_summary failed", exc_info=True)
         return None

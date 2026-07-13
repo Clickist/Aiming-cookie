@@ -35,6 +35,15 @@ class AnalyzePathsRequest(BaseModel):
     fov: Optional[float] = None
 
 
+class KovaaKAnalysisRequest(BaseModel):
+    """Create an Analysis from a persisted local Run."""
+
+    input_mode: Optional[Literal["input_native", "multimodal", "video_fallback"]] = None
+    video_path: Optional[str] = None
+    cm_per_360: Optional[float] = None
+    fov: Optional[float] = None
+
+
 class StorageSessionItem(BaseModel):
     session_id: int
     status: str
@@ -61,6 +70,9 @@ class SessionStatus(BaseModel):
     worker_id: Optional[str] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
+    analysis_type: str = "flicking"
+    input_mode: str = "video_fallback"
+    kovaak_run_id: Optional[int] = None
 
 
 class SessionListItem(BaseModel):
@@ -72,10 +84,71 @@ class SessionListItem(BaseModel):
     max_attempts: int
     llm_cost_cny: Optional[float] = None
     summary_label: Optional[str] = None
+    analysis_type: str = "flicking"
+    input_mode: str = "video_fallback"
+    kovaak_run_id: Optional[int] = None
+    scenario: Optional[str] = None
 
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionListItem]
+
+
+class KovaaKRunItem(BaseModel):
+    id: int
+    source_key: str
+    scenario: Optional[str] = None
+    stats_source_ref: Optional[str] = None
+    performance_source_ref: Optional[str] = None
+    trace_artifact_ref: Optional[str] = None
+    source_availability: dict = {}
+    trace_state: str = "none"
+    trace_error: Optional[str] = None
+    stats_summary: Optional[dict] = None
+    performance_summary: Optional[dict] = None
+    created_at: str
+    updated_at: str
+
+
+class KovaaKRunListResponse(BaseModel):
+    runs: list[KovaaKRunItem]
+
+
+class HistoryTrendResponse(BaseModel):
+    comparable: bool
+    reason: Optional[str] = None
+    metric_key: Optional[str] = None
+    unit: Optional[str] = None
+    metric_version: Optional[str] = None
+    current: Optional[float] = None
+    baseline: Optional[float] = None
+    delta: Optional[float] = None
+    percent_change: Optional[float] = None
+    current_session_id: Optional[int] = None
+    baseline_session_id: Optional[int] = None
+
+
+class BenchmarkRecordCreate(BaseModel):
+    provider: str
+    provider_license_note: str
+    catalog_version: str
+    scenario_id: str
+    metric_key: str
+    unit: str
+    value: float
+    observed_at: str
+    availability: Literal["available", "stale", "unavailable"] = "available"
+    external_identity_ref: Optional[str] = None
+    identity_consent: bool = False
+
+
+class BenchmarkRecordOut(BenchmarkRecordCreate):
+    id: int
+    created_at: str
+
+
+class BenchmarkRecordListResponse(BaseModel):
+    records: list[BenchmarkRecordOut]
 
 
 class DeleteSessionResponse(BaseModel):
@@ -105,15 +178,17 @@ class ChatResponse(BaseModel):
 
 
 class TimelineEvent(BaseModel):
-    frame: int
-    time_s: float
+    frame: Optional[int] = None
+    time_s: Optional[float] = None
+    relative_ms: Optional[float] = None
     type: str   # "kill" | "miss" | "peak" | "corrective"
     label: str
+    source: Optional[str] = None
 
 
 class Timeline(BaseModel):
-    fps: int
-    duration_frames: int
+    fps: Optional[int] = None
+    duration_frames: Optional[int] = None
     events: list[TimelineEvent] = []
 
 
@@ -131,6 +206,7 @@ class CoachThreadMessageOut(BaseModel):
     content: str
     created_at: str
     legacy_session_id: Optional[int] = None
+    context: Optional[dict] = None
 
 
 class CoachAnalysisRefOut(BaseModel):

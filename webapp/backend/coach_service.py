@@ -31,16 +31,19 @@ async def run_chat_turn(
     cost_session_id: Optional[int],
 ) -> CoachChatResult:
     from .worker import _estimate_llm_cost_cny
+    from .coach_context import coerce_coach_diagnostic_context
 
     chat_cost = _estimate_llm_cost_cny("", min_output_tokens=500)
     if not await llm_budget.check_and_record(x_user_id, chat_cost):
         raise HTTPException(429, "今日 LLM 预算已用尽,明天再聊")
 
+    context = coerce_coach_diagnostic_context(diagnosis)
     await coach_store.append_message(
         thread_id,
         "user",
         user_msg_to_store,
         legacy_session_id=legacy_session_id,
+        context=context,
     )
 
     notes: list[str] = []
@@ -49,7 +52,7 @@ async def run_chat_turn(
         turn = CoachTurn(
             prior_messages=prior_messages,
             user_message=user_msg_to_store,
-            diagnosis=diagnosis,
+            diagnostic_context=context,
         )
         engine_result = await complete_turn_async(turn)
         reply = engine_result.reply
@@ -64,6 +67,7 @@ async def run_chat_turn(
         "assistant",
         assistant_content,
         legacy_session_id=legacy_session_id,
+        context=context,
     )
     if reply is not None and cost_session_id is not None:
         await queue.add_llm_cost(cost_session_id, chat_cost)

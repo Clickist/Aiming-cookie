@@ -19,6 +19,7 @@ class CoachTurn:
     prior_messages: Sequence[dict]
     user_message: str
     diagnosis: Any | None = None
+    diagnostic_context: dict | None = None
 
 
 def _empty_coach_diagnosis():
@@ -65,10 +66,17 @@ class CoachEngine(Protocol):
 
 class PiCoachEngine:
     def complete(self, turn: CoachTurn) -> str:
-        from .coach_runtime import diagnosis_to_analysis_summary, run_pi_coach_turn
+        from .coach_context import (
+            coerce_coach_diagnostic_context,
+            serialize_coach_diagnostic_context,
+        )
+        from .coach_runtime import run_pi_coach_turn
 
         pi_messages = _pi_turn_messages(turn.prior_messages, turn.user_message)
-        analysis_summary = diagnosis_to_analysis_summary(turn.diagnosis)
+        context = coerce_coach_diagnostic_context(
+            turn.diagnostic_context if turn.diagnostic_context is not None else turn.diagnosis
+        )
+        analysis_summary = serialize_coach_diagnostic_context(context)
         return run_pi_coach_turn(
             messages=pi_messages,
             analysis_summary=analysis_summary,
@@ -80,8 +88,17 @@ class PythonCoachEngine:
         from kovaak_tracker.coach.agent import ChatMessage, chat_with_coach
 
         notes: list[str] = []
+        from .coach_context import (
+            coerce_coach_diagnostic_context,
+            diagnostic_context_to_coach_diagnosis,
+        )
+
+        context = coerce_coach_diagnostic_context(
+            turn.diagnostic_context if turn.diagnostic_context is not None else turn.diagnosis
+        )
         diagnosis = (
-            turn.diagnosis if turn.diagnosis is not None else _empty_coach_diagnosis()
+            diagnostic_context_to_coach_diagnosis(context)
+            if context is not None else _empty_coach_diagnosis()
         )
         chat_history = [
             ChatMessage(role=m["role"], content=m["content"])

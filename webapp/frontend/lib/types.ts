@@ -89,15 +89,18 @@ export interface CoachReport {
 
 /** 时间轴上的一个事件 marker(peak/miss/kill/corrective)。 */
 export interface TimelineEvent {
-  frame: number;
-  time_s: number;
+  frame: number | null;
+  time_s: number | null;
+  relative_ms: number | null;
   type: "kill" | "miss" | "peak" | "corrective" | string;
   label: string;
+  source: string | null;
 }
 
 /* ---- AnalysisResult v1 wire contract (webapp/backend/contracts.py) ---- */
 
 export type AnalysisSchemaVersion = "analysis_result.v1";
+export type AnalysisSchemaVersionV2 = "analysis_result.v2";
 export type AnalysisVersion =
   | "flicking_fair_summary.v1"
   | "legacy_unversioned";
@@ -169,6 +172,73 @@ export interface AnalysisResultV1 {
   normalization_issues: NormalizationIssueV1[];
 }
 
+/** Path-free evidence view from AnalysisResult v2. Values are stable refs/statuses only. */
+export interface AnalysisEvidenceSourceV2 {
+  source?: string;
+  role?: string;
+  availability?: string;
+  alignment?: string;
+  warnings?: string[];
+}
+
+export interface AnalysisEvidenceV2 {
+  sources: Record<string, AnalysisEvidenceSourceV2> | AnalysisEvidenceSourceV2[];
+  provenance: Record<string, unknown>;
+  availability: Record<string, string>;
+  alignment: { status?: string; [key: string]: unknown };
+  warnings: string[];
+}
+
+export interface ArtifactManifestV2 {
+  schema_version: "artifact_manifest.v2";
+  external_inputs: ArtifactEntryV1[];
+  owned_outputs: ArtifactEntryV1[];
+}
+
+export interface AnalysisMetricV2 {
+  key?: string;
+  value?: number;
+  unit?: string;
+  metric_version?: string;
+  availability?: string;
+  coverage?: number;
+  classification?: string;
+  calibration_ref?: string | null;
+  limitations?: string[];
+  provenance?: { kind?: string; sources?: string[] };
+}
+
+export interface AnalysisResultV2 {
+  schema_version: AnalysisSchemaVersionV2;
+  analysis_id: string;
+  analysis_type: string;
+  input_mode: InputMode;
+  kovaak_run_ref: string;
+  evidence: AnalysisEvidenceV2;
+  deterministic: {
+    status?: string;
+    metrics?: Record<string, AnalysisMetricV2 | number>;
+    timeline?: TimelineEvent[];
+    limitations?: string[];
+    [key: string]: unknown;
+  };
+  artifact_manifest: ArtifactManifestV2;
+  input_snapshot: {
+    scenario?: string | null;
+    scenario_identity_version?: string;
+    sources?: Record<string, { artifact_ref?: string; availability?: string }>;
+    trace?: { artifact_ref?: string; availability?: string; format_version?: number } | null;
+  };
+  created_at: string | null;
+  completed_at: string | null;
+  warnings: string[];
+  errors: unknown[];
+  normalization_issues: NormalizationIssueV1[];
+}
+
+export type AnalysisResult = AnalysisResultV1 | AnalysisResultV2;
+export type InputMode = "input_native" | "multimodal" | "video_fallback";
+
 export interface ErrorV1 {
   schema_version: ErrorSchemaVersion;
   category: ErrorCategory;
@@ -191,8 +261,8 @@ export type SessionStatusEnum = "queued" | "running" | "done" | "failed";
 export interface SessionStatus {
   id: number;
   status: SessionStatusEnum;
-  /** Present when status === "done" — AnalysisResult v1 wire envelope. */
-  result: AnalysisResultV1 | null;
+  /** Present when status === "done" — versioned, path-free result envelope. */
+  result: AnalysisResult | null;
   /** Present when status === "failed" — Error v1 wire envelope. */
   error: ErrorV1 | null;
   llm_cost_cny: number | null;
@@ -202,6 +272,9 @@ export interface SessionStatus {
   worker_id: string | null;
   started_at: string | null;
   finished_at: string | null;
+  analysis_type: string;
+  input_mode: InputMode;
+  kovaak_run_id: number | null;
 }
 
 /** One row from GET /api/sessions (no full result payload). */
@@ -214,10 +287,85 @@ export interface SessionListItem {
   max_attempts: number;
   llm_cost_cny: number | null;
   summary_label: string | null;
+  analysis_type: string;
+  input_mode: InputMode;
+  kovaak_run_id: number | null;
+  scenario: string | null;
 }
 
 export interface SessionListResponse {
   sessions: SessionListItem[];
+}
+
+/** Safe public Run projection. Local source paths and trace bytes are never present. */
+export interface KovaaKRunItem {
+  id: number;
+  source_key: string;
+  scenario: string | null;
+  stats_source_ref: string | null;
+  performance_source_ref: string | null;
+  trace_artifact_ref: string | null;
+  source_availability: Record<string, "available" | "missing" | "not_present" | string>;
+  trace_state: string;
+  /** Kept for diagnostics only; the UI intentionally does not render it. */
+  trace_error: string | null;
+  stats_summary: Record<string, unknown> | null;
+  performance_summary: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KovaaKRunListResponse {
+  runs: KovaaKRunItem[];
+}
+
+export interface KovaaKAnalysisRequest {
+  input_mode?: InputMode;
+  video_path?: string;
+  cm_per_360?: number;
+  fov?: number;
+}
+
+export interface HistoryTrend {
+  comparable: boolean;
+  reason: string | null;
+  metric_key: string | null;
+  unit: string | null;
+  metric_version: string | null;
+  current: number | null;
+  baseline: number | null;
+  delta: number | null;
+  percent_change: number | null;
+  current_session_id: number | null;
+  baseline_session_id: number | null;
+}
+
+export type BenchmarkAvailability = "available" | "stale" | "unavailable";
+
+export interface BenchmarkRecordCreate {
+  provider: string;
+  provider_license_note: string;
+  catalog_version: string;
+  scenario_id: string;
+  metric_key: string;
+  unit: string;
+  value: number;
+  observed_at: string;
+  availability?: BenchmarkAvailability;
+  external_identity_ref?: string | null;
+  identity_consent?: boolean;
+}
+
+export interface BenchmarkRecord extends BenchmarkRecordCreate {
+  id: number;
+  created_at: string;
+  availability: BenchmarkAvailability;
+  external_identity_ref: string | null;
+  identity_consent: boolean;
+}
+
+export interface BenchmarkRecordListResponse {
+  records: BenchmarkRecord[];
 }
 
 export interface DeleteSessionResponse {
@@ -255,8 +403,8 @@ export interface ChatResponse {
 }
 
 export interface Timeline {
-  fps: number;
-  duration_frames: number;
+  fps: number | null;
+  duration_frames: number | null;
   events: TimelineEvent[];
 }
 

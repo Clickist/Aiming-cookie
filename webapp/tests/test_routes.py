@@ -14,6 +14,7 @@ from webapp.backend.contracts import (
     ERROR_SCHEMA_VERSION,
     LEGACY_ANALYSIS_VERSION,
     build_analysis_result_v1,
+    build_analysis_result_v2,
     build_error_v1,
     dump_contract_json,
 )
@@ -45,6 +46,42 @@ def _minimal_v1_result() -> dict:
         artifact_manifest=_minimal_manifest(),
         created_at="2026-07-10T12:00:00Z",
         completed_at="2026-07-10T12:01:00Z",
+    )
+
+
+def _minimal_native_v2_result() -> dict:
+    return build_analysis_result_v2(
+        analysis_id="analysis:1",
+        analysis_type="flicking",
+        input_mode="input_native",
+        kovaak_run_ref="run:1",
+        evidence={
+            "sources": {},
+            "provenance": {},
+            "availability": {"raw_input": "available", "mp4": "not_present"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+        },
+        deterministic={
+            "metrics": {},
+            "timeline": [
+                {
+                    "relative_ms": 125.0,
+                    "source": "performance",
+                    "payload_type": "Kill",
+                },
+            ],
+        },
+        artifact_manifest={
+            "schema_version": "artifact_manifest.v2",
+            "external_inputs": [],
+            "owned_outputs": [],
+        },
+        input_snapshot={"scenario": "Scenario"},
+        created_at="2026-07-13T00:00:00Z",
+        completed_at="2026-07-13T00:00:01Z",
+        warnings=[],
+        errors=[],
     )
 
 
@@ -443,3 +480,56 @@ async def test_retry_rejects_missing_files(tmp_path):
         resp = await client.post(f"/api/sessions/{sid}/retry")
     assert resp.status_code == 409
     assert "视频" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_input_native_timeline_preserves_relative_time_without_fake_video_fields():
+    sid = await queue.enqueue(
+        "u1", "", "", input_mode="input_native",
+    )
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (dump_contract_json(_minimal_native_v2_result()), sid),
+    )
+    await conn.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.get(f"/api/sessions/{sid}/timeline")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["fps"] is None
+    assert body["duration_frames"] is None
+    assert body["events"] == [
+        {
+            "frame": None,
+            "time_s": None,
+            "relative_ms": 125.0,
+            "type": "Kill",
+            "label": "Kill",
+            "source": "performance",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_video_supports_range_requests_for_seek(tmp_path):
+    video = tmp_path / "seek.mp4"
+    video.write_bytes(b"0123456789")
+    sid = await queue.enqueue("u1", str(video), str(tmp_path / "stats.csv"))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "u1", "Range": "bytes=2-5"},
+    ) as client:
+        resp = await client.get(f"/api/sessions/{sid}/video")
+
+    assert resp.status_code == 206
+    assert resp.headers["content-range"] == "bytes 2-5/10"
+    assert resp.content == b"2345"
