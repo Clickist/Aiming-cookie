@@ -1,5 +1,7 @@
 # YouTube 瞄准训练内容综合
 
+> **状态与边界**：创作者内容与外部研究的整合参考，不是产品范围、架构合同、指标定义、诊断规则、处方默认值或当前实现的事实源。可追溯结论须先经过复核，并回写到 `docs/` 中对应的活跃主责任文档或代码测试后才生效。
+
 > **定位**：本文整合自 YouTube 瞄准训练创作者的公开内容（以 MattyOW 为主，兼及 bardOZ、Cartoon、Viscose、Bulldog 等顶级选手/教练的方法论，以及 Donk、m0NESY、EliGE、ScreaM 等职业选手案例）。它是 `docs/coach-theory-foundation.md`（理论底座）与 `docs/coach-community-frontier.md`（社区前沿）的**补充素材**——前者偏学术 deep research，本文偏创作者的一手经验与可操作建议。
 >
 > **信源说明**：社区方法与设置参数（灵敏度矩阵、Zowie 评分、KovaaK 配置等）归属明确创作者。学术引用已于 2026-06-29 用 gemini-grounding-search 逐条核实，剔除编造与失实内容（如编造的「Mariano 2024」、被颠倒的 Semmler 结论、张冠李戴的具体数字），保留经核实的真实文献——见文末「参考来源」。神经科学概念仅保留经核实为真的部分，不挂未经确认的具体图号。

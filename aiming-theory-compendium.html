@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FPS 瞄准学说演进史 · 从神经科学到社区前沿</title>
+<style>
+  :root{
+    --bg:#0d1117; --surface:#161b22; --surface2:#1c2330; --border:#2d333b;
+    --text:#e6edf3; --muted:#9da7b3; --heading:#f0f6fc;
+    --cyan:#2dd4bf; --cyan-dim:rgba(45,212,191,.14);
+    --orange:#f78166; --orange-dim:rgba(247,129,102,.14);
+    --blue:#58a6ff; --blue-dim:rgba(88,166,255,.14);
+    --gray:#8b949e; --gray-dim:rgba(139,148,158,.14);
+    --purple:#bc8cff;
+    --maxw:880px;
+    --shadow:0 8px 30px rgba(0,0,0,.4);
+  }
+  html[data-theme="light"]{
+    --bg:#ffffff; --surface:#f6f8fa; --surface2:#eef1f4; --border:#d8dee4;
+    --text:#1f2328; --muted:#59636e; --heading:#0a0c10;
+    --cyan-dim:rgba(45,212,191,.12); --orange-dim:rgba(247,129,102,.12);
+    --blue-dim:rgba(88,166,255,.12); --gray-dim:rgba(139,148,158,.12);
+    --shadow:0 8px 30px rgba(0,0,0,.1);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;
+    line-height:1.8; font-size:16.5px; -webkit-font-smoothing:antialiased;
+  }
+  /* 阅读进度条 */
+  #progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:100;
+    background:linear-gradient(90deg,var(--cyan),var(--blue));transition:width .1s}
+
+  /* 顶部 */
+  header.masthead{
+    border-bottom:1px solid var(--border); background:linear-gradient(180deg,var(--surface),var(--bg));
+    padding:64px 24px 40px; position:relative; overflow:hidden;
+  }
+  header.masthead::before{content:"";position:absolute;inset:0;opacity:.5;
+    background:radial-gradient(600px 200px at 20% 0,var(--cyan-dim),transparent),
+               radial-gradient(500px 200px at 90% 10%,var(--orange-dim),transparent)}
+  .masthead-inner{max-width:var(--maxw);margin:0 auto;position:relative}
+  .kicker{color:var(--cyan);font-size:13px;letter-spacing:.18em;text-transform:uppercase;font-weight:600}
+  h1.title{font-size:clamp(28px,5vw,46px);line-height:1.2;color:var(--heading);margin:14px 0 10px;font-weight:800}
+  .subtitle{color:var(--muted);font-size:17px;max-width:640px}
+  .meta-row{display:flex;flex-wrap:wrap;gap:14px;margin-top:22px;font-size:13.5px;color:var(--muted)}
+  .meta-row span{display:inline-flex;align-items:center;gap:6px}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+  .theme-btn{position:absolute;top:0;right:0;background:var(--surface2);border:1px solid var(--border);
+    color:var(--text);padding:7px 14px;border-radius:20px;cursor:pointer;font-size:13px}
+  .theme-btn:hover{border-color:var(--cyan)}
+
+  /* 布局 */
+  .layout{display:flex;max-width:1180px;margin:0 auto;gap:0;padding:0 24px}
+  nav.toc{width:230px;flex-shrink:0;position:sticky;top:0;align-self:flex-start;
+    max-height:100vh;overflow-y:auto;padding:32px 18px 32px 0;font-size:13.5px}
+  nav.toc .toc-label{color:var(--muted);font-size:11px;letter-spacing:.15em;text-transform:uppercase;margin-bottom:10px}
+  nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:4px 0 4px 12px;border-left:2px solid transparent;
+    transition:.15s}
+  nav.toc a:hover{color:var(--text)}
+  nav.toc a.active{color:var(--cyan);border-left-color:var(--cyan)}
+  nav.toc a.sub{padding-left:24px;font-size:12.5px}
+  main{max-width:var(--maxw);margin:0 auto;padding:40px 0 120px;flex:1;min-width:0}
+
+  /* 排版 */
+  h2.part{font-size:30px;color:var(--heading);margin:72px 0 6px;font-weight:800;
+    padding-top:30px;border-top:1px solid var(--border)}
+  h2.part:first-of-type{border-top:none;margin-top:40px}
+  .part-num{color:var(--cyan);font-size:13px;letter-spacing:.2em;font-weight:700;display:block;margin-bottom:4px}
+  h3{font-size:21px;color:var(--heading);margin:40px 0 10px;font-weight:700;scroll-margin-top:20px}
+  h4{font-size:17px;color:var(--heading);margin:26px 0 8px;font-weight:600}
+  p{margin:14px 0}
+  strong{color:var(--heading);font-weight:650}
+  em{color:var(--orange);font-style:normal;font-weight:550}
+  a.ref{color:var(--blue);text-decoration:none;border-bottom:1px dotted}
+  a.ref:hover{opacity:.8}
+  ul,ol{padding-left:1.4em}
+  li{margin:7px 0}
+
+  /* 信源 badge */
+  .badge{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:10px;font-weight:600;
+    vertical-align:middle;margin-left:4px;letter-spacing:.02em;white-space:nowrap}
+  .b-acad{background:var(--blue-dim);color:var(--blue);border:1px solid rgba(88,166,255,.3)}
+  .b-comm{background:var(--orange-dim);color:var(--orange);border:1px solid rgba(247,129,102,.3)}
+  .b-pers{background:var(--gray-dim);color:var(--gray);border:1px solid rgba(139,148,158,.3)}
+  .b-mix{background:var(--cyan-dim);color:var(--cyan);border:1px solid rgba(45,212,191,.3)}
+
+  /* 引用块 */
+  blockquote{margin:18px 0;padding:14px 18px;background:var(--surface);border-left:3px solid var(--cyan);
+    border-radius:0 8px 8px 0;color:var(--muted);font-size:15px}
+  blockquote.dissent{border-left-color:var(--orange)}
+  blockquote b{color:var(--text)}
+
+  /* 表格 */
+  .tbl-wrap{overflow-x:auto;margin:20px 0}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;background:var(--surface);border-radius:10px;overflow:hidden}
+  th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+  th{background:var(--surface2);color:var(--heading);font-weight:650;font-size:13.5px}
+  tr:last-child td{border-bottom:none}
+  td strong{color:var(--cyan)}
+
+  /* 卡片网格 */
+  .grid{display:grid;gap:14px;margin:20px 0}
+  .grid.cols-3{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px}
+  .card h4{margin-top:0}
+  .card .pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:8px;background:var(--cyan-dim);color:var(--cyan);margin-bottom:8px;font-weight:600}
+
+  /* 时间线 */
+  .timeline{position:relative;margin:28px 0;padding-left:28px;border-left:2px solid var(--border)}
+  .tl-item{position:relative;margin-bottom:26px}
+  .tl-item::before{content:"";position:absolute;left:-35px;top:6px;width:13px;height:13px;border-radius:50%;
+    background:var(--bg);border:2px solid var(--cyan)}
+  .tl-era{font-size:12px;color:var(--cyan);font-weight:700;letter-spacing:.05em}
+  .tl-title{font-size:16px;color:var(--heading);font-weight:650;margin:2px 0 4px}
+  .tl-desc{font-size:14px;color:var(--muted);margin:0}
+
+  /* 折叠 */
+  details{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px 18px;margin:16px 0}
+  details summary{cursor:pointer;padding:10px 0;font-weight:600;color:var(--heading);list-style:none}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸ ";color:var(--cyan)}
+  details[open] summary::before{content:"▾ "}
+  details[open]{padding-bottom:10px}
+
+  /* 图表容器 */
+  figure{margin:24px 0;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{text-align:center;color:var(--muted);font-size:13px;margin-top:10px}
+  .axis-line{stroke:var(--border);stroke-width:1}
+  .axis-label{fill:var(--muted);font-size:11px}
+
+  /* callout */
+  .callout{background:var(--cyan-dim);border:1px solid rgba(45,212,191,.3);border-radius:10px;padding:14px 18px;margin:20px 0;font-size:14.5px}
+  .callout.warn{background:var(--orange-dim);border-color:rgba(247,129,102,.3)}
+  .callout b{color:var(--heading)}
+
+  /* 移动端 */
+  @media(max-width:900px){
+    nav.toc{display:none}
+    .layout{padding:0 16px}
+    main{padding:30px 0 80px}
+  }
+  ::selection{background:var(--cyan);color:#000}
+  /* 返回顶部 */
+  #totop{position:fixed;bottom:28px;right:28px;width:42px;height:42px;border-radius:50%;
+    background:var(--surface2);border:1px solid var(--border);color:var(--cyan);cursor:pointer;
+    display:none;align-items:center;justify-content:center;font-size:20px;z-index:90;box-shadow:var(--shadow)}
+  #totop.show{display:flex}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <button class="theme-btn" onclick="toggleTheme()">🌙 暗色</button>
+    <div class="kicker">A Compendium · 2026</div>
+    <h1 class="title">FPS 瞄准学说演进史</h1>
+    <p class="subtitle">从神经科学、运动生物力学，到社区流派变迁与训练范式——一份把"为什么人能瞄准"讲到底的跨学科图谱。</p>
+    <div class="meta-row">
+      <span>📅 编订于 2026-06-29</span>
+      <span>🔬 融合 5 份底座文档 + 4 项最新检索</span>
+      <span>📚 学术 / 社区 / 经验 三级信源分级</span>
+    </div>
+    <div class="legend">
+      <span class="badge b-acad">学术·同行评审</span>
+      <span class="badge b-comm">权威社区共识</span>
+      <span class="badge b-pers">个人经验·未验证</span>
+      <span class="badge b-mix">跨域/混合</span>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" id="toc">
+  <div class="toc-label">目录</div>
+  <a href="#intro">导论</a>
+  <a href="#part1" class="sublabel">第一部 · 底层科学</a>
+  <a href="#p1-1" class="sub">感觉运动环路</a>
+  <a href="#p1-2" class="sub">三重控制路径</a>
+  <a href="#p1-3" class="sub">静眼效应</a>
+  <a href="#p1-4" class="sub">零固定-单扫视</a>
+  <a href="#p1-5" class="sub">运动学黄金标准</a>
+  <a href="#p1-6" class="sub">动力学链</a>
+  <a href="#p1-7" class="sub">握法生物力学</a>
+  <a href="#part2" class="sublabel">第二部 · 学习与反馈</a>
+  <a href="#part3" class="sublabel">第三部 · 技术演进史</a>
+  <a href="#part4" class="sublabel">第四部 · 训练范式史</a>
+  <a href="#part5" class="sublabel">第五部 · 前沿与未决</a>
+  <a href="#appendix" class="sublabel">附录</a>
+</nav>
+
+<main>
+
+<!-- ===================== 导论 ===================== -->
+<section id="intro">
+  <h2 class="part"><span class="part-num">PROLOGUE</span>导论：瞄准何以成为一门"学问"</h2>
+  <p>在很长一段时间里，"枪法好"被当成一种难以言传的天赋——手感、状态、天赋型选手。这种直觉在 2010 年代后期开始崩塌。推动它崩塌的，是两股力量在同一个领域的相遇：一头是 <strong>KovaaK's / Aim Lab</strong> 这类瞄准训练器与 <strong>Voltaic</strong> 社区带来的<strong>可量化、可比较、可系统训练</strong>的实践文化；另一头是运动科学、神经科学、人因工程对"到达运动（reaching）"数十年积累的<strong>学术理论</strong>。</p>
+  <p>当世界顶尖选手把 <em>1wall6targets small</em>（1w6ts）的成绩从约 1200 分一路刷到 1600 分以上<span class="badge b-comm">社区共识</span>，人们意识到：这背后不只是手速，而是<strong>视觉搜索策略的范式转变、运动控制理论的更新，以及基于小脑适应与神经再巩固的现代训练工具</strong>的全面应用。瞄准，第一次有了自己的"学说史"。</p>
+  <p>本文要做的事，是把散落在学术论文、Reddit 帖子、YouTube 教学视频和社区 benchmark 文档里的知识<strong>编织成一条完整的逻辑链</strong>——从"人为什么能瞄准"的底层科学，到"流派怎么一代代演变"的技术史，再到"现在最前沿在练什么"。它不替你下"哪种握法/灵敏度最好"的结论，而是把每个主张背后的<strong>证据等级、经久度、争议</strong>都摊开。</p>
+
+  <div class="callout">
+    <b>怎么读这份文档。</b> 每个关键主张后面会跟一个信源徽章：<span class="badge b-acad">学术</span>＝有同行评审论文支撑，可作根基；<span class="badge b-comm">社区</span>＝Voltaic/r/FPSAimTrainer 等社群共识，随版本更迭可能过时；<span class="badge b-pers">个人经验</span>＝顶级玩家自述或教学视频，未经验证。遇到有重大分歧的理论，我用<span style="color:var(--orange)">橙色异议块</span>单独列出——因为瞄准领域最大的坑，就是把"某个职业选手的说法"当成"已被证实的科学"。
+  </div>
+</section>
+
+<!-- ===================== 第一部 ===================== -->
+<section id="part1">
+  <h2 class="part"><span class="part-num">PART I · FOUNDATIONS</span>底层科学：人为什么能瞄准</h2>
+  <p>一切瞄准动作的物理本质，是<strong>人类上肢动力学链在视觉信号引导下、通过鼠标在二维平面执行的到达运动</strong>。这一过程受限于精细的神经控制环路和不可消除的生理延迟。要理解"高手为什么快而准"，必须先理解这套环路的底层结构。</p>
+
+  <h3 id="p1-1">1.1 视觉-感觉运动环路与小脑内部模型</h3>
+  <p>运动科学实验室里的传统到达任务，要求受试者在<strong>静态背景</strong>上移动光标（Pointing 模式）。而真实 FPS 游戏里，鼠标移动并不改变准星的屏幕绝对位置，而是驱动整个虚拟环境旋转倾斜（Mouselook 模式）。这两种模式的视觉反馈截然不同——<span class="badge b-acad">学术</span></p>
+  <blockquote>但三维运动学分析表明，玩家在这两种情境下的<strong>关节运动轨迹、速度曲线和加速度特征展现出极高的一致性</strong>。这证明大脑执行虚拟瞄准时，依赖的是一套共享的、基于<b>预测与实测位移矢量（displacement vectors）比对</b>的内部模型，而非单纯依赖初级位置视觉反馈做闭环修正。</blockquote>
+  <p>换句话说，小脑里装载着一个"前馈预测模型"：它先预测鼠标应该怎么动，再用感官反馈去比对误差、校准下一刻的预测。这是后面所有"无意识快速瞄准"得以成立的生理基础。</p>
+
+  <h3 id="p1-2">1.2 视觉-运动延迟与三重控制路径</h3>
+  <p>人类的视觉-运动系统有天然生理延迟：从光信号入视网膜到皮层输出运动指令，神经传导就要 <strong>100–200 ms</strong>。在高速甩枪（flick shot）中，如果完全依赖视觉确认准星与目标的相对位置再纠错，会给"甩枪-开火"全过程额外加上 150–200 ms 延迟——这在竞技对抗里不可接受。<span class="badge b-acad">学术</span></p>
+  <p><strong>多过程到达模型（Multiple Process Model）</strong>把运动控制拆成三条相互拮抗的路径，这是理解"训练为什么能提速"的关键：</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>控制路径</th><th>激活延迟</th><th>性质</th><th>典型动作</th></tr>
+    <tr><td><strong>开环控制</strong> Open-loop</td><td>启动即执行，&lt;150 ms</td><td>纯前馈预编程，全程不依赖任何反馈，像篮球出手后的释放段</td><td>职业选手的超高速甩枪落点</td></tr>
+    <tr><td><strong>冲动控制</strong> Impulse</td><td>启动后 70–100 ms</td><td>小脑把预期肌力（传出拷贝）与肌腱反馈高速、无意识地比对微调</td><td>减速阶段的平滑过渡</td></tr>
+    <tr><td><strong>肢体-目标控制</strong> Limb-target</td><td>&gt;300 ms</td><td>慢速、有意识，视觉皮层直接比对准星与目标偏差做离散微调</td><td>极小目标末端的准星微调</td></tr>
+  </table></div>
+  <p>Paulignan 等人的经典抓握实验给出了一条关键证据：当目标在动作启动瞬间突发位移，受试者能在仅 100 ms 延迟内、于减速阶段就开始调节轨迹。<span class="badge b-acad">学术</span></p>
+  <div class="callout"><b>这条理论解释了"训练的本质"。</b>高水平瞄准的生理奥秘，是<strong>通过大量练习，把大部分纠错过程从极慢、有意识的"肢体-目标控制"压缩并迁移到无意识的"冲动控制"环路</strong>——从而逼近生理极限的反应速度。后面所有技术流派（Bardoz 的两段式、Shimmy 的软着陆）的终极目标，都是优化这条迁移路径。</div>
+
+  <h3 id="p1-3">1.3 神经效率与静眼效应（Quiet Eye）</h3>
+  <p>从脑电生理（EEG）看，高水平瞄准与皮层活动的<strong>精准抑制</strong>密切相关。专家级选手在动作准备的最后阶段展现出显著的<strong>静眼效应（Quiet Eye, QE）</strong>：视线在决定性开火前，对目标产生一段持续不少于 100 ms（通常限于 1°–3° 视觉夹角内）的稳定固定。<span class="badge b-acad">学术</span></p>
+  <blockquote>静眼在皮层层面伴随特定区域<b>阿尔法（Alpha）振荡的区域性门控</b>。Alpha 频段激活代表相关皮层区域的抑制——这种门控让大脑选择性地过滤掉与当前精细运动无关的心理/运动噪声，并在动作准备末期部分抑制视觉感知输入。这种短暂的<b>心理生理静息（psychomotor quiescence）</b>，确保运动皮层在不受干扰的情况下输出纯净、平滑、无抖动的下行指令。</blockquote>
+  <p>这解释了一个反直觉现象：<strong>顶级表现对应的不是更多的大脑活动，而是更精准的"关掉无关区域"</strong>。神经效率（neural efficiency）——专家用更少的皮层资源完成更精准的动作。</p>
+
+  <h3 id="p1-4">1.4 专家级眼动：零固定-单扫视假说</h3>
+  <p>传统瞄准理论认为：击中目标后，视线必须在准星处稍作停顿以"确认击中"，再寻找下一个目标。然而 2025 年针对 FPS 精英玩家眼动图谱的系统性分析表明，顶尖选手表现出显著缩短的平均固定时间（标准平均差 SMD = −0.66），并积极践行 <strong>"零固定-单扫视"（Zero-Fixation-Single-Saccade）</strong>模式。<span class="badge b-mix">学术+社区</span></p>
+  <p>专家的眼动策略是：<strong>外周视觉识别目标并规划路径 → 眼球启动高速扫视 → 手部几乎同步启动甩枪</strong>。由于扫视时眼球速度极快（&gt;200°/s），大脑会启动"扫视抑制"主动关闭视觉通路（检测敏感度骤降 75% 以上），所以高阶选手在击中瞬间<b>不做任何有意识的固定确认</b>，而是直接用外周视觉并发规划下一个目标乃至整个目标群组的几何路径。</p>
+  <blockquote class="dissent"><b>数据时效性提示。</b>"零固定-单扫视"来自对少数精英玩家的眼动分析，样本有限；其作为"最优策略"的普适性仍在讨论中。但它确实解释了 1w6ts 等多目标科目成绩飙升的一个机制——<b>在物理层面消除了"击中确认"带来的决策延迟</b>。</blockquote>
+
+  <h3 id="p1-5">1.5 运动学黄金标准：理想曲线长什么样</h3>
+  <p>如果要把"好的甩枪"量化，运动学给出了几把跨人、跨速度都公平的尺子。<span class="badge b-acad">学术</span></p>
+  <h4>最小加加速度轨迹（min-jerk）</h4>
+  <p>Flash &amp; Hogan 1985 证明，无精度压力下的点对点运动速度是一条<strong>对称钟形曲线，峰在中点（50%）</strong>，数学上对应"加加速度（jerk，加速度的变化率）最小"。这是运动平滑度的黄金标准，也是人脑规划到达运动的默认倾向。</p>
+  <h4>真实甩枪的不对称性（Becker 2020）</h4>
+  <p>但瞄准实测数据（Becker et al. 2020）显示，真实 aim 的速度曲线是<strong>不对称钟形——减速段长于加速段</strong>，因为末端有精准命中的精度需求。调和二者：min-jerk 是"无精度压力"的理想态，aim 因命中需求延长了减速段。<strong>而减速段运动学，正是预测一次甩枪成败的最强信号。</strong></p>
+  <figure>
+    <svg viewBox="0 0 420 240" role="img" aria-label="min-jerk 对称钟形与 Becker aim 不对称曲线对比">
+      <!-- 坐标轴 -->
+      <line class="axis-line" x1="40" y1="200" x2="400" y2="200"/>
+      <line class="axis-line" x1="40" y1="40" x2="40" y2="200"/>
+      <text class="axis-label" x="395" y="216">时间 →</text>
+      <text class="axis-label" x="14" y="44">速度</text>
+      <text class="axis-label" x="210" y="216">↑ 加速</text>
+      <!-- min-jerk 对称钟 峰在中点 x=220 -->
+      <path d="M40,200 C150,200 170,55 220,55 C270,55 290,200 400,200" fill="none" stroke="#58a6ff" stroke-width="2.5"/>
+      <!-- Becker aim 峰偏前 x=155 长减速 -->
+      <path d="M40,200 C90,200 125,50 155,50 C185,50 270,200 400,200" fill="none" stroke="#f78166" stroke-width="2.5" stroke-dasharray="0"/>
+      <!-- 峰位标记 -->
+      <line x1="220" y1="55" x2="220" y2="200" stroke="#58a6ff" stroke-width="1" stroke-dasharray="3 3" opacity=".5"/>
+      <line x1="155" y1="50" x2="155" y2="200" stroke="#f78166" stroke-width="1" stroke-dasharray="3 3" opacity=".5"/>
+    </svg>
+    <figcaption><span style="color:#58a6ff">━━ min-jerk</span> 对称钟形，峰在 50%　|　<span style="color:#f78166">━━ Becker aim</span> 峰偏前（~37%），减速段显著拉长</figcaption>
+  </figure>
+  <h4>三把"公平"的尺子</h4>
+  <div class="grid cols-3">
+    <div class="card"><span class="pill">平滑度</span><h4>SPARC</h4><p style="margin:0;font-size:14px;color:var(--muted)">频域弧长（Balasubramanian 2012）。无量纲、跨速度/跨人公平，是现代运动控制的平滑度金标准——用来判断"减速段抖不抖、张力释放顺不顺"。</p></div>
+    <div class="card"><span class="pill">子运动</span><h4>Submovement 谱系</h4><p style="margin:0;font-size:14px;color:var(--muted)">Woodworth 1899 → Meyer 1988 → Novak 2002 → Schwartze 2024。把"一次甩枪"拆成 initial（前馈弹道）+ corrective（视觉修正）子运动，是"两段式 vs 流体"分野的学术根基（见第三部）。</p></div>
+    <div class="card"><span class="pill">速度-精度</span><h4>Fitts's Law / Throughput</h4><p style="margin:0;font-size:14px;color:var(--muted)">MT = a + b·log₂(D/W+1)。Throughput = ID/MT（bits/s）把速度与精度综合、跨距离归一化——回答"远距离 flick 天然更快"的不公平问题。</p></div>
+  </div>
+
+  <h3 id="p1-6">1.6 动力学链与抓握生物力学</h3>
+  <p>人手、腕、前臂、肩构成一条多关节闭合动力学链。不同灵敏度下，做功的主力肌肉群完全不同：<span class="badge b-acad">学术</span></p>
+  <ul>
+    <li><strong>低灵敏度</strong>（大范围调整，如 30–50 cm/360°）：运动主要由近端<strong>肩、肘</strong>驱动，调动冈上肌、大圆肌、三角肌等大肌肉群——力矩大、稳定，但高频响应慢。</li>
+    <li><strong>高灵敏度</strong>（精细微调，如 15–25 cm/360°）：远端<strong>桡腕关节与指间关节（MCP/PIP）</strong>主导，由前臂指浅/深屈肌驱动手指完成高频、敏捷的微观平移。</li>
+  </ul>
+  <p>肌电图（sEMG）显示，高强度瞄准时前臂的<strong>指总伸肌（EDC）和尺侧腕伸肌（ECU）</strong>承受最重负荷，几乎处于持续等长收缩以维持腕关节稳定。缺乏合理代偿与间歇放松，会导致腱鞘滑膜液润滑失衡，引发累积性工作相关肌肉骨骼疾患（WMSDs）。这也是为什么 2026 年社区开始把<strong>手腕健康、睡眠、人体工学</strong>当成"瞄准技术"的一部分（见第五部）。</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>运动学参数</th><th>FPS</th><th>MOBA</th><th>冒险类</th></tr>
+    <tr><td>手部平均加速度</td><td><strong>0.96 m/s² ± 0.07</strong></td><td>显著较低</td><td>极低</td></tr>
+    <tr><td>10 分钟累计移动距离</td><td><strong>38.96 m ± 2.47</strong></td><td>显著较低</td><td>极低</td></tr>
+    <tr><td>手部物理位移覆盖面积</td><td><strong>119.13 cm² ± 16.05</strong></td><td>显著较窄</td><td>极窄</td></tr>
+  </table></div>
+  <figcaption style="text-align:center;color:var(--muted);font-size:13px;margin-top:-8px">三维运动学研究：FPS 对手部的动力学要求远高于 MOBA/冒险类</figcaption>
+
+  <h3 id="p1-7">1.7 握法生物力学：palm / claw / fingertip</h3>
+  <p>握法决定了你对鼠标的<strong>生物力学杠杆</strong>，进而影响速度、精度、稳定性。没有"唯一最佳握法"——最优选择取决于手长、鼠标形状和游戏类型。<span class="badge b-comm">社区共识</span></p>
+  <div class="tbl-wrap"><table>
+    <tr><th>握法</th><th>特征</th><th>速度/敏捷</th><th>精度/稳定</th><th>主导肌肉</th><th>典型场景</th></tr>
+    <tr><td><strong>Palm 掌握</strong></td><td>全掌 + 指贴合鼠标</td><td>较低，靠大臂</td><td><strong>最高</strong>，极稳</td><td>前臂/肩</td><td>低灵敏度、长时稳定</td></tr>
+    <tr><td><strong>Claw 爪握</strong></td><td>掌根锚定，指弓起</td><td>平衡</td><td><strong>高</strong>，兼顾</td><td>腕 + 指</td><td>战术射击（VALORANT/CS2）主流</td></tr>
+    <tr><td><strong>Fingertip 指握</strong></td><td>仅指尖触，掌抬起</td><td><strong>最高</strong>，极快</td><td>较低，易疲劳</td><td>指</td><td>高灵敏度、Apex/Fortnite</td></tr>
+  </table></div>
+  <div class="callout warn"><b>社区经验法则（未经验证）。</b>"60% 法则"——若想用 fingertip 握法，鼠标长度建议 ≤ 手长的 60%。核心建议是<b>不要强求某种握法</b>：先用最自然的握法，再让鼠标形状（人体工学 vs 对称）去配合它，以减少劳损。职业选手三种握法都有人用，不存在"职业握法"。</div>
+</section>
+
+<!-- ===================== 第二部 ===================== -->
+<section id="part2">
+  <h2 class="part"><span class="part-num">PART II · LEARNING &amp; FEEDBACK</span>学习与反馈科学：人怎么变强</h2>
+  <p>第一部回答了"动作本身的科学"。这一部回答两个更实际的问题：<strong>系统该怎么理解你的进步</strong>，以及<strong>反馈该怎么给才不帮倒忙</strong>。这些理论几乎全部有同行评审支撑，是整个瞄准训练领域最稳固的根基。</p>
+
+  <h3>2.1 技能习得：三阶段模型 vs 双过程并行</h3>
+  <h4>经典：Fitts &amp; Posner 三阶段 <span class="badge b-acad">学术·经久根基</span></h4>
+  <ul>
+    <li><strong>认知阶段</strong>：有意识理解任务、构建策略，错误多、动作不稳。</li>
+    <li><strong>联系阶段</strong>：策略固化、错误减少、动作渐流畅，仍需有意识调整。</li>
+    <li><strong>自主阶段</strong>：动作自动化，注意力可释放给策略与情境判断。</li>
+  </ul>
+  <h4>修正：Taylor &amp; Ivry 2012 双过程并行 <span class="badge b-acad">学术</span></h4>
+  <p>三阶段的"串行观"（策略阶段让位于自动阶段）被挑战。双过程模型认为运动学习由<strong>两个功能独立的并行过程</strong>驱动，二者始终运行、只随熟练度改变权重，并不"交接"：</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>过程</th><th>误差信号</th><th>性质</th></tr>
+    <tr><td><strong>显式策略</strong> explicit</td><td>目标/结果误差（goal error）</td><td>快、灵活、可认知调控、有意识</td></tr>
+    <tr><td><strong>隐式适应</strong> implicit</td><td>预测/瞄准误差 → 内部模型重校准</td><td>慢、自动、小脑依赖、无意识</td></tr>
+  </table></div>
+  <blockquote class="dissent"><b>对训练的含义（重要）。</b>你看到的"指标改善"是<b>两个过程的合成</b>：显式策略改善（你改了瞄准意识/姿势）可能快但脆弱，隐式适应改善慢但稳健。<strong>趋势线斜率不能简单归因为"练对了"</strong>——一次成绩飙升可能只是你换了策略，未必内化成了能力。</blockquote>
+
+  <h3>2.2 刻意练习与训练量上限</h3>
+  <p>Ericsson, Krampe &amp; Tesch-Römer 1993（*Psychological Review*，万次引用）<span class="badge b-acad">学术·经久根基</span>给出两条可作根基的结论：</p>
+  <ul>
+    <li><strong>有效刻意练习的日量有经验上限</strong>：每日超过 4 小时无明显收益，超过 2 小时收益递减；精英小提琴手训练 session 平均仅 80 分钟。</li>
+    <li><strong>过度练习有负面风险</strong>：staleness（状态钝化）、overtraining（过度训练）、burnout（倦怠）。最优长期进步需平衡 effort 与 recovery（睡眠、小憩）。</li>
+  </ul>
+  <blockquote class="dissent"><b>异见。</b>Macnamara &amp; Hambrick 2014 批评：刻意练习只能解释 14–26% 的方差，强调基因/工作记忆等因素。但这一批评针对"练习 vs 天赋的<b>重要性</b>"，不针对"训练量上限"这个描述性发现——4hr/2hr 的具体数字仍站得住。同时"生物学硬上限"是过度表述，Ericsson 本人 2019 年也警告不要用单一指标外推硬界。<b>结论：刻意练习有用，但"越多越好"是错的。</b></blockquote>
+  <div class="callout"><b>对训练的含义。</b>进步闭环不该鼓励"练得越多越好"。当某指标停滞，"练习量已超收益递减区"应作为诊断假设之一，而非默认"练不够"。休息也是训练的一部分。</div>
+
+  <h3>2.3 情境干扰（Contextual Interference）：交错 &gt; 块状</h3>
+  <p><span class="badge b-acad">学术·经久根基</span>核心发现：高情境干扰（interleaved/交错）练习在<strong>习得阶段表现更差，但长期保留更好</strong>。经典实验（Schorn &amp; Knowlton，n=83）：Day 1 交错组准确率显著更低，Day 2 交错组遗忘显著更少（F(1,75)=39.5, p&lt;.001）。</p>
+  <p>理论解释（"desirable difficulty"）：交错迫使每次<strong>从记忆重构运动计划</strong>，强化提取通路；块状练习允许死记式重复，无需深度处理。</p>
+  <blockquote class="dissent"><b>边界。</b>2024 元分析发现 CI 效应在<b>应用/运动场域微弱且高度异质</b>（SMD=0.23, p=0.24），但在<b>实验室精细运动任务中稳健</b>（SMD=0.92）。瞄准训练器里的精细任务更接近后者——所以"交错多场景"建议成立，但别夸大成"已证实的实战效应"。</blockquote>
+
+  <h3>2.4 反馈设计：KR vs KP <span class="badge b-acad">学术·50年经典</span></h3>
+  <p>Gentile 1972 把增强反馈（augmented feedback）分成两类，是所有教练反馈设计的根基：</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>类型</th><th>内容</th><th>瞄准里的对应</th></tr>
+    <tr><td><strong>KR</strong> Knowledge of Results</td><td>结果成功/失败</td><td>命中率、accuracy、flick 是否命中</td></tr>
+    <tr><td><strong>KP</strong> Knowledge of Performance</td><td>动作质量特征</td><td>linearity、SPARC、减速段形态、reverse 比例</td></tr>
+  </table></div>
+  <div class="callout"><b>好教练两者都给。</b>游戏自带的命中率是纯 KR；而"你的减速段占 75% 在蹭"是 KR，"张力释放不平滑"是 KP。先 KR（你能感知的结果）再 KP（你感知不到的动作质量），是运动学习理论支持的反馈结构。</div>
+
+  <h3>2.5 引导假说：反馈太多反而害 <span class="badge b-acad">学术·经久根基</span></h3>
+  <p>Salmoni, Schmidt &amp; Walter 1984 的引导假说：增强反馈在习得期提升表现，但<strong>太频繁会损害长期学习/保留</strong>——学习者产生依赖，停止处理任务内在反馈（本体感觉、视觉），当反馈移除时表现崩溃。</p>
+  <blockquote class="dissent"><b>异见。</b>Marschall 2007 元分析警告引导假说可能被"基于单个结果过度解释"，但其元分析本身确认核心效应存在（习得期受益、延迟保留测试受损）——批评的是幅度，不是存在性。</blockquote>
+  <div class="callout warn"><b>对训练的含义。</b>实时反馈（如游戏内 HUD 实时显示 SPARC）最容易触发依赖。如果你每次复测都看详尽数据，可能依赖系统诊断而非发展自我觉察。<strong>指导间隔练习（如每周 2-3 次而非每天）</strong>，给隐式适应和自我觉察留空间。长期看，好的反馈设计会逐渐"褪除"（fading）：从直接给答案，转向"你自己觉察到了什么"。</div>
+
+  <h3>2.6 神经再巩固：为什么换灵敏度反而练得更好</h3>
+  <p>传统观念认为换灵敏度会破坏"肌肉记忆"。但约翰斯·霍普金斯大学 Wymbs、Bastian、Celnik 2016（*Current Biology*）<span class="badge b-acad">学术</span>发现：一项运动技能被首次巩固后，若在后续训练中<strong>动态引入轻微的、局限于特定阈值内的感觉运动变异度（variability）</strong>，其技能强化速率和最终极限表现，远优于单纯重复相同增益训练的对照组。这个过程叫<strong>神经再巩固（neural reconsolidation）</strong>。</p>
+  <p>这正是第四部"灵敏度随机化器"的科学根基——但它有两面性，社区至今有争论（见第五部 §5.2）。</p>
+</section>
+
+<!-- ===================== 第三部 ===================== -->
+<section id="part3">
+  <h2 class="part"><span class="part-num">PART III · TECHNIQUE HISTORY</span>技术演进史：瞄准术的流派变迁</h2>
+  <p>这是本文的"学史主体"。静态瞄准（static clicking）技术的发展，是虚拟瞄准科学在过去数年演进轨迹的最清晰缩影——从感性直觉，到多阶段离散控制，再到现代连续流体控制。三个阶段，每一代都对应一种对"减速段"的不同处理。</p>
+
+  <h3>3.1 时间线总览</h3>
+  <div class="timeline">
+    <div class="tl-item"><div class="tl-era">~2019 之前</div><div class="tl-title">早期：平滑直线法</div><p class="tl-desc">"慢即是稳，稳即是快"。推崇匀速、笔直轨迹，导致 1w6ts 成绩长期停在 650–900 平台期。</p></div>
+    <div class="tl-item"><div class="tl-era">2021 前后</div><div class="tl-title">Bardoz Method（两阶段离散）</div><p class="tl-desc">职业选手 bardOZ 总结：高速硬直甩枪 + 绝对松弛指尖微调；欠甩（underflicking）原则。打破平台期。</p></div>
+    <div class="tl-item"><div class="tl-era">2023–2024</div><div class="tl-title">Shimmy / Zeonlo 减速法（软着陆）</div><p class="tl-desc">把"硬性死刹"改成连续抛物线减速，在 90–95% 处平滑软着陆，消除落点抖动。由 Zeonlo 发展。</p></div>
+    <div class="tl-item"><div class="tl-era">2025–2026</div><div class="tl-title">现代融合：连续流体 + 零固定单扫视</div><p class="tl-desc">消除甩枪与微调的物理分界，Constellation 星链式一笔画；配合零固定-单扫视眼动，逼近生理极限。</p></div>
+  </div>
+
+  <h3>3.2 早期：平滑直线法与"慢即是稳"的局限 <span class="badge b-comm">社区共识</span></h3>
+  <p>2019 年前后，社区主导观念是"慢即是稳，稳即是快"，极力推崇在两个静态目标间画出绝对笔直、平滑、匀速的轨迹，认为任何速度波动和弹道偏离都是肌肉失控。结果：单次点击耗时过长，无法有效调动小脑的瞬时前馈预测能力，1w6ts 整体分数长期卡在 650–900 平台期。</p>
+
+  <h3>3.3 Bardoz Method：欠甩与两阶段离散控制 <span class="badge b-comm">社区共识</span></h3>
+  <p>由职业选手 bardOZ 总结推广（社区又称"Bardpill 药丸理论"），首次打破平滑直线法局限。两条核心处方：</p>
+  <ul>
+    <li><strong>主动分离两阶段运动</strong>：把一次射击严密拆成"第一阶段高速、高张力硬直甩枪"+"第二阶段绝对松弛、极速指尖微调"。初始甩枪不求绝对精准，只求最快切入目标边缘；随后腕与前臂的爆发张力瞬间卸去，由指尖小肌肉群完成高精度二次微调。</li>
+    <li><strong>欠甩（underflicking）原则</strong>：初始高速甩枪应有意识控制幅度，让落点停在目标前段约 90–95%。因为过甩（overflicking）时，肌肉必须先强力制动再反向二次加速——成倍增加运动时间且引发抖动；欠甩则保持原有惯性方向，只需顺向补足微弱力道，动能与神经修正负荷都更优。</li>
+  </ul>
+
+  <h3>3.4 Shimmy / Zeonlo 减速法：软着陆 <span class="badge b-comm">社区共识</span></h3>
+  <p>Bardoz Method 在中等难度静态科目表现优异，但面对 1w6ts 这类极高精度科目时，初始高速甩枪的巨大物理惯性使落点处突发制动极易引发<strong>关节抖动（landing jitter）</strong>，二次微调的时间窗口不降反升。为此 Zeonlo 发展出 Shimmy Static Method。</p>
+  <p>核心是变"硬性死刹"为<strong>物理软着陆（soft landing）</strong>：把加速度曲线由两段阶跃调整为一条连续非线性减速抛物线，在轨迹 90–95% 处平滑主动减速（类似车近红灯缓刹）。它极度强调对鼠标脚贴与滑垫摩擦力的<strong>本体感受</strong>，要求全程"感觉"并利用滑垫微观阻尼，使落点速度平滑降至零，消除机械抖动。</p>
+
+  <h3>3.5 现代融合：连续流体与星链画线</h3>
+  <p>当今 1w6ts 纪录保持者已把上述理论完美融合，建立高阶<strong>连续流体运动模型</strong>：在短距离及群组化目标清除中，近乎完美地消除了甩枪与微调之间的动作物理分界，把每一次点击转化为一段<strong>高初速、无抖动、一笔画式的 Constellation（星链状）连续画线</strong>，并配合第一部 §1.4 的"零固定-单扫视"眼动。</p>
+
+  <h3>3.6 流派本质：两段式 vs 流体，用学术语言重述</h3>
+  <p>社区用 Bardpill / Zeonlo 这样的标签称呼两派，但这两个标签会随 KOL 更迭消失。真正经久的是它们背后的<strong>运动学现象</strong>——而 submovement 理论给了精确的学术映射：<span class="badge b-acad">学术</span></p>
+  <div class="tbl-wrap"><table>
+    <tr><th>社区流派</th><th>学术映射</th><th>运动学特征</th></tr>
+    <tr><td><strong>Bardpill（两段式）</strong></td><td>discrete corrective submovements</td><td>primary 与 corrective 速度峰之间有明显谷，可分离</td></tr>
+    <tr><td><strong>Zeonlo（流体）</strong></td><td>overlapping submovements（Novak 2002）</td><td>corrective 与 primary 融合，减速段即微调，单峰连续</td></tr>
+  </table></div>
+  <p>理论谱系：Woodworth 1899（initial + corrective 两阶段）→ Meyer 1988（优化 primary+secondary 相对时长，最小化总时间保精度，直接关联 Fitts's Law）→ Novak 2002（快速运动中 submovements 重叠融合=流体）→ Schwartze/Rouse 2024（corrective 与 initial 在 M1 用不同神经子空间编码，corrective gain 更高 1.14–1.36×）。</p>
+  <blockquote class="dissent"><b>异见。</b>社区两派各有拥趸，无定论孰优。学术上 Novak 2002 显示 overlapping（流体）在快速运动中更常见，但<b>未证伪两段式</b>——两种都是合法运动控制策略，取决于精度需求与速度的权衡。没有"唯一正确流派"。</blockquote>
+
+  <h3>3.7 四流派速度曲线对比</h3>
+  <p>把三代技术画在同一张速度-时间图上，"减速段"的演变一目了然：</p>
+  <figure>
+    <svg viewBox="0 0 460 260" role="img" aria-label="四流派速度曲线对比">
+      <line class="axis-line" x1="45" y1="215" x2="440" y2="215"/>
+      <line class="axis-line" x1="45" y1="35" x2="45" y2="215"/>
+      <text class="axis-label" x="430" y="232">时间</text>
+      <text class="axis-label" x="18" y="40">速度</text>
+      <!-- 1 早期平滑: 匀速梯形(慢) -->
+      <path d="M45,215 L90,150 L380,150 L420,215" fill="none" stroke="#8b949e" stroke-width="2"/>
+      <!-- 2 Bardoz 两段式: 大峰+谷+小修正峰 -->
+      <path d="M45,215 C75,210 95,55 130,55 C150,55 165,130 180,130 C200,130 215,90 240,90 C270,90 330,215 420,215" fill="none" stroke="#f78166" stroke-width="2"/>
+      <!-- 3 Shimmy 流体: 单峰平滑减速 -->
+      <path d="M45,215 C85,212 120,50 165,50 C185,50 270,215 420,215" fill="none" stroke="#2dd4bf" stroke-width="2.5"/>
+      <!-- 4 现代 Constellation: 高初速极平滑 -->
+      <path d="M45,215 C70,213 100,40 140,40 C165,40 250,210 420,215" fill="none" stroke="#bc8cff" stroke-width="2.5"/>
+    </svg>
+    <figcaption>
+      <span style="color:#8b949e">━ 早期平滑</span>（匀速梯形）
+      <span style="color:#f78166">━ Bardoz 两段式</span>（大峰+修正谷）
+      <span style="color:#2dd4bf">━ Shimmy 流体</span>（单峰软着陆）
+      <span style="color:#bc8cff">━ 现代融合</span>（高初速+极平滑减速）
+    </figcaption>
+  </figure>
+  <p>从灰色到紫色，你能看到一条清晰的演进方向：<strong>加速越来越果断（峰越来越靠前、越来越高），减速越来越平滑（从梯形死刹，到两段式修正谷，到单峰软着陆，再到无抖动连续减速）</strong>。这正呼应了 Becker 2020 的核心发现——减速段质量决定成败。</p>
+
+  <h3>3.8 原生瞄准 vs 应用瞄准 <span class="badge b-comm">社区共识</span></h3>
+  <p>社区研究者 RiddBTW 提出的分层：<strong>原生瞄准（raw aim）</strong>指在高度简化、高可视度瞄准器里展现的纯粹鼠标控制力；<strong>应用瞄准（applied aim）</strong>则融入游戏内各种噪声——烟雾阻挡、受击抖动、画面模糊、移动惯性等。这一区分解释了为什么物理瞄准成绩转化到《无畏契约》这类战术竞技时，选手还要解决急停时机、预瞄线控制、角度防守等综合维度。<strong>训练器练的是 raw aim，实战需要的是 applied aim，二者之间有翻译成本。</strong></p>
+</section>
+<!-- ===================== 第四部 ===================== -->
+<section id="part4">
+  <h2 class="part"><span class="part-num">PART IV · TRAINING PARADIGM</span>训练范式史：怎么练的科学</h2>
+  <p>第三部讲的是"动作怎么演变"，这一部讲的是"<strong>一群人怎么把练习本身变成一门系统工程</strong>"。学术研究几乎不碰 KovaaK's 这类消费品，所以瞄准训练的真正前沿在社区——但好的社区方法论，背后总能找到学术呼应。</p>
+
+  <h3>4.1 Voltaic 与瞄准社区的诞生 <span class="badge b-comm">社区共识</span></h3>
+  <p>瞄准训练之所以能成为"学"，前提是出现了 <strong>KovaaK's / Aim Lab</strong> 这类可量化训练器，以及 <strong>Voltaic</strong> 这类有成规模社群、维护 benchmark 与排名体系的组织。它们让"枪法"第一次可以被标准化测量、横向比较、系统突破。Voltaic 当前维护三条平行 benchmark：KovaaK's S5（旗舰）、Aimlabs S3（免费次级）、Valorant S1（游戏专用）。</p>
+
+  <h3>4.2 分类法演进：从两大类到 Season 5 九类</h3>
+  <p>瞄准技能的分类本身就在演进。早期是 2 大类（约 6 子类），Season 5（2024–2025）扩成 <strong>3 支柱 × 3 子类 = 9 类</strong>，并新增桥接传统子类的第三类 hybrid。三支柱沿用红/蓝/紫颜色编码：红=clicking、蓝=tracking、紫=switching。</p>
+  <div class="grid cols-3">
+    <div class="card" style="border-top:3px solid #f78166"><h4 style="color:#f78166">CLICKING 点击</h4>
+      <p style="font-size:14px;margin:6px 0"><b>dynamic</b> · 目标弹出后甩+点（如 pasu）</p>
+      <p style="font-size:14px;margin:6px 0"><b>static</b> · 静态多目标（如 1w6ts）</p>
+      <p style="font-size:14px;margin:6px 0"><b>linear</b> <span class="badge b-mix">hybrid</span> · 线性点击</p></div>
+    <div class="card" style="border-top:3px solid #58a6ff"><h4 style="color:#58a6ff">TRACKING 追踪</h4>
+      <p style="font-size:14px;margin:6px 0"><b>precise</b> · 精确追踪慢速可预测目标</p>
+      <p style="font-size:14px;margin:6px 0"><b>control</b> <span class="badge b-mix">hybrid</span> · 中速控制</p>
+      <p style="font-size:14px;margin:6px 0"><b>reactive</b> · 乱向变速目标</p></div>
+    <div class="card" style="border-top:3px solid #bc8cff"><h4 style="color:#bc8cff">SWITCHING 切换</h4>
+      <p style="font-size:14px;margin:6px 0"><b>stability</b> <span class="badge b-mix">hybrid</span> · 稳定切换</p>
+      <p style="font-size:14px;margin:6px 0"><b>evasive</b> · 闪避型目标切换</p>
+      <p style="font-size:14px;margin:6px 0"><b>speed</b> · 纯速度切换</p></div>
+  </div>
+
+  <h3>4.3 三支柱的技术内核</h3>
+  <h4>Clicking · 经典 static 三步 <span class="badge b-comm">社区共识</span></h4>
+  <p>经典 Voltaic static clicking 把每次交战拆成三步：<strong>大 flick（arm 驱动）→ micro-correction（腕/指尖）→ hit-confirm（修正落地后才点）</strong>。micro-correction 是区分 clean 与 sloppy 的精度关键。少数"one-flick purity"流派（HnA 场景）主张一次到位不修，但主流共识是：micro-correction 是预期内的，只有<strong>过度反复修正</strong>才是缺陷。它与学术的 corrective submovement 直接呼应——社区"micro-correction"= 学术"corrective submovement"。</p>
+  <h4>Tracking · 反应而非预测 <span class="badge b-comm">社区共识</span></h4>
+  <p>Tracking 三类：<strong>smooth/precise</strong>（稳、无抖、速度匹配）、<strong>control</strong>（中速平衡）、<strong>reactive</strong>（乱向变速，压力测试）。顶级 tracker 的秘诀不是"预测"目标去哪，而是<strong>反应</strong>——专注把准星速度匹配到目标速度，目标变向时平滑加减速追赶而非 flick。关键习惯：眼睛盯<strong>目标</strong>而非准星（让手本能跟随）、握力"firm but relaxed"（如持鸡蛋）、arm 大范围到位 + wrist 微调的混合。</p>
+  <h4>Switching · flick + reactive tracking 的合体 <span class="badge b-comm">社区共识</span></h4>
+  <p>Target switching = <strong>flick accuracy（初始捕获）+ reactive tracking（跟上移动目标）</strong>。Voltaic 分 speed（大目标纯速度链杀）/ evasive（乱向目标，测 flick→track 瞬时切换）。改进层级：先保 landing quality（初始 flick 越准，修正越少）→ 即时 flick-to-track 转换 → 目标优先级（规划 kill chain 减少无效移动）→ 效率优先于抖动。Pro 技巧：按住 fire 键孤立切换技术，排除点击时机干扰。</p>
+
+  <h3>4.4 VDIM：每日改进法 <span class="badge b-comm">社区共识</span></h4>
+  <p>Lowgravity56（VT 成员）创建的 VDIM（Voltaic Daily Improvement Method）是结构化训练的代表：<strong>每日隔离一种技术</strong>（clicking/tracking/switching 按天轮转），不混合；playlist 按子技能渐进（fingertip micro → precision flick → reactive → cluster-speed bursting → benchmark）；分 Initiate→Intermediate→Advanced→Advanced+ 层级。理念是 <strong>proactive</strong>（主动补弱项，在它显现前练）vs weakness-specific（reactive 补已显现弱项）。这与第二部 §2.3 的情境干扰理论形成张力但可调和——VDIM 跨天交错，本质也是一种高 CI。</p>
+
+  <h3>4.5 灵敏度科学：cm/360 与"放大器"铁律</h3>
+  <p>鼠标灵敏度（cm/360）在学术上叫<strong>感觉运动增益（sensorimotor gain）</strong>。社区通用推荐 28–43 cm/360，但按科目细分：<span class="badge b-comm">社区共识</span></p>
+  <figure>
+    <svg viewBox="0 0 460 120" role="img" aria-label="灵敏度 cm/360 数轴">
+      <line x1="30" y1="70" x2="430" y2="70" stroke="var(--border)" stroke-width="2"/>
+      <!-- 区段 -->
+      <rect x="30" y="55" width="90" height="30" fill="rgba(247,129,102,.18)"/>
+      <rect x="120" y="55" width="200" height="30" fill="rgba(45,212,191,.16)"/>
+      <rect x="320" y="55" width="110" height="30" fill="rgba(88,166,255,.16)"/>
+      <text class="axis-label" x="40" y="48">&lt;25 wrist/偏快</text>
+      <text class="axis-label" x="150" y="48">25–45 主流健康</text>
+      <text class="axis-label" x="330" y="48">40+ static / &gt;50 arm</text>
+      <text class="axis-label" x="35" y="100">tracking 偏快 30–</text>
+      <text class="axis-label" x="300" y="100">static 推荐 40+</text>
+      <!-- 刻度 -->
+      <text class="axis-label" x="28" y="88">15</text><text class="axis-label" x="116" y="88">25</text>
+      <text class="axis-label" x="316" y="88">45</text><text class="axis-label" x="412" y="88">60</text>
+    </svg>
+    <figcaption>cm/360 越大越慢越稳（arm 主导），越小越快越敏捷（wrist 主导）</figcaption>
+  </figure>
+  <div class="callout warn"><b>铁律（与学术一致）。</b>灵敏度是<b>放大器/缩小器，不是根因</b>。制动失控的根因是发力-释放不对称的技术问题；调灵敏度是辅助实验，<b>必须复测验证</b>（降 sens 后 linearity/reverse 应下降，否则调回）。"降 sens 5–10%"不是万能处方。</div>
+
+  <h3>4.6 场景设计哲学：pattern learning <span class="badge b-comm">社区共识</span></h3>
+  <p>社区核心理念：<strong>KovaaK's 的本质是 pattern learning</strong>——每个场景有独特的目标 pattern，需要特定方法才高分。不是"点得快"，是"学会这个场景的 pattern"。训练器里的速度故意设得比实战快（progressive overload），让你回到游戏时觉得"变慢了、更可控了"。</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>场景</th><th>类别</th><th>练什么</th></tr>
+    <tr><td>1w4ts / 1w6ts</td><td>static</td><td>多目标 static + 路线规划（cluster farming）</td></tr>
+    <tr><td>Pasu</td><td>dynamic</td><td>加速→减速完整循环、干净</td></tr>
+    <tr><td>Pokeball</td><td>static(按住fire)</td><td><strong>减速/张力释放</strong>（呼应 Becker 减速段焦点）</td></tr>
+    <tr><td>Multiclick</td><td>static</td><td>落点精度 + micro correction</td></tr>
+    <tr><td>Tile Frenzy</td><td>static(speed)</td><td>基本功 + 速度/发力</td></tr>
+    <tr><td>linetrace</td><td>path</td><td>直线 flick、path efficiency</td></tr>
+  </table></div>
+
+  <h3>4.7 高手方法 <span class="badge b-pers">个人经验</span></h3>
+  <p>Corporate Serf（Celestial 级，Voltaic precise tracking 世界 #1）等顶级玩家的方法被社区广泛引用：</p>
+  <ul>
+    <li><strong>structured progression</strong>：按 rank 分层（Novice→Expert→Master），严格按顺序练到 Masters 再扩其他。</li>
+    <li><strong>click vs hold 分离</strong>：clicking（flick+click）与 smoothness/dynamic（持续）分开练。</li>
+    <li><strong>5–10 runs/scenario/session</strong>：常态每场景 5–10 次。（Corporate Serf 自述极端个案单场景 3305 runs/55h 刷到顶峰，但那是异常值。）</li>
+    <li><strong>PB Method</strong>：单场景持续刷到突破 plateau。</li>
+    <li><strong>underflick 练习法</strong>：故意欠冲再修，练 corrective submovement 速度。</li>
+  </ul>
+  <p>另有 christmasiscancelled 联合 Krascsi、Viscose 的<strong>阶梯渐进范式</strong>：先用低 sens 大摩擦长距离光滑画线（Pokeball 1w4t shrink，按住左键维持滑行压力）→ 引入超小目标（1w6ts extra small，bot 缩小 30%）推到极限 → 回到标准 1w6ts 时，目标在视觉与本体感受上膨胀成"巨型气球"，降低落点微调的焦虑与共收缩，促成高分。</p>
+
+  <h3>4.8 张力过载训练：把"力量"引进瞄准 <span class="badge b-mix">社区+生物力学</span></h3>
+  <p>现代瞄准物理学对张力控制有全新阐释：高水平选手的精细顺滑，<strong>不是因为他们不发力，而是因为他们有卓越的"主动制动力"（stopping power）</strong>。制动力本质是拮抗肌瞬间产生强大反向力矩，抵消协同肌的高速动能：</p>
+  <p style="text-align:center;font-family:monospace;background:var(--surface);padding:12px;border-radius:8px">Δp = ∫( F_ant(t) − F_ago(t) ) dt</p>
+  <p>普通选手拮抗肌制动力薄弱，大脑因担心"停不住"而自动下调初始驱动力。为打破这一神经瓶颈，社区引入<strong>张力过载训练（tension overload training）</strong>：在特定训练课对手臂/腕/指施加极高甚至夸张的共收缩张力（无伤痛前提下）做极限加速与瞬时制动，迫使中枢神经提升运动单位募集率。当极限力上限提升 50% 后，常规竞技只需用最大力量的 60–80% 就能超越原先 100% 张力下的弹道速度——<strong>留有裕度，于是能"高速度、强急停，同时神态自若、毫无抖动"</strong>。</p>
+</section>
+
+<!-- ===================== 第五部 ===================== -->
+<section id="part5">
+  <h2 class="part"><span class="part-num">PART V · FRONTIER</span>前沿与未决</h2>
+
+  <h3>5.1 子技能分化：smoothness 型 vs speed 型很少双顶峰 <span class="badge b-pers">个人经验</span></h3>
+  <p>顶级玩家存在明显的子技能分化：<strong>smoothness/stability 型</strong>与<strong>explosive-speed/reactive 型</strong>很少同时达到顶峰。例如 Voltaic precise-tracking 世界 #1（VT Matty / 'Corporate Serf'）自述是 smoothness/stability 型，并明确 static clicking 是自己的弱项。这对普通训练者的启示是：<strong>某类强某类弱是正常的，不必强求全能</strong>，profile 可分子型。</p>
+
+  <h3>5.2 灵敏度随机化器：神经再巩固的两面性</h3>
+  <p>基于第二部 §2.6 的 Wymbs/Bastian/Celnik 2016 研究，Aim Lab 等开发了<strong>灵敏度随机化器</strong>：训练时按高斯分布在主基准 ±10–25% 范围实时平滑微调灵敏度。它的两个目标：<span class="badge b-mix">学术+社区</span></p>
+  <ul>
+    <li><strong>强行中断"自动驾驶"</strong>：长期单一灵敏度下大脑易陷入惯性疲劳与注意力惰性；实时变动迫使皮层保持警觉，实时做精细误差计算。</li>
+    <li><strong>剥离设备依赖，重塑通用控制力</strong>：强迫小脑不断重构预测-反馈映射，让你不再依赖特定设备的"死肌肉记忆"，而是掌握能瞬时适应任何灵敏度的通用鼠标控制力。</li>
+  </ul>
+  <blockquote class="dissent"><b>争议。</b>社区对随机化器至今有争论（部分人质疑其效果）。且有一条明确的使用纪律：<b>正式排位或 1w6ts 跑分测试时必须关闭</b>，将增益锁定回常用状态。训练时开，测试时关。</blockquote>
+
+  <h3>5.3 2026 新动向 <span class="badge b-comm">社区前沿</span></h3>
+  <p>2026 年瞄准的 meta 正向"与实战整合"的方向走，几个值得注意的新理论：</p>
+  <ul>
+    <li><strong>"Hard Bot" 陷阱</strong>：警告不要过度依赖乱跑、超速的 bot 场景——它可能让你养成"panic-flicking"（慌乱甩枪）的习惯，而非冷静、从容、精准的瞄准。</li>
+    <li><strong>Target Confirmation（see-confirm-click）</strong>：成为新的核心焦点。顶级玩家主张即使快速移动也要坚持"看到-确认-点击"的过程，以保证高压实战下的一致性——这与第三部 §3.4-3.5 的"消除确认延迟"形成有趣的张力（极限刷分 vs 实战一致性的权衡）。</li>
+    <li><strong>与游戏机制整合</strong>：更强调 crosshair placement（预瞄）与 movement synchronization（移动同步）。最好的 aimer 是那些通过声音和游戏意识预测敌人、<strong>最小化准星需要移动距离</strong>的人。</li>
+    <li><strong>整体健康作为基础</strong>：睡眠、运动、人体工学现在被普遍当成"瞄准技术"的根基而非附属。1HP 等专门资源把手腕/手健康管理纳入训练计划。</li>
+  </ul>
+
+  <h3>5.4 数据时效性：纪录是流动的</h3>
+  <blockquote class="dissent"><b>关于 1w6ts 世界纪录。</b>本文引用的不同来源给出了不同数字：2025 年的综述报告极限约 <strong>1640 分</strong>（约 2.73 次/秒），而 2026 年的社区报道提到世界级分数已推入 <strong>1800+ 区间</strong>。这些数字本身是<strong>流动的、竞争极其激烈的</strong>，不应被当成固定里程碑。本论文不硬编码任何具体纪录——记住：<b>纪录会被刷新，但刷新纪录背后的机制（减速段质量、零固定眼动、张力裕度）是经久的</b>。</blockquote>
+
+  <h3>5.5 开放问题（理论锚定但未解决）</h3>
+  <ol>
+    <li>Voltaic 官方排名算法（harmonic vs arithmetic vs 几何平均 + 每子类最低分门槛）的精确机制。</li>
+    <li>顶级玩家 cm/360 / DPI / sens 按子类分的趋势——无可验证的 benchmark 存活。</li>
+    <li>S5 hybrid 子类（linear/control/stability）到底练什么相邻子类不练的。</li>
+    <li>VDIM 结构与 plateau 突破法（two-day-per-category、accuracy ceiling/floor）的有效性验证。</li>
+    <li>"Hard Bot Trap" 与 "Target Confirmation" 作为 2026 新理论，仍需更多数据和同行检验。</li>
+  </ol>
+</section>
+
+<!-- ===================== 附录 ===================== -->
+<section id="appendix">
+  <h2 class="part"><span class="part-num">APPENDIX</span>附录</h2>
+
+  <h3>A · 术语表（中英对照）</h3>
+  <details><summary>展开术语表</summary>
+  <div class="tbl-wrap"><table>
+    <tr><th>术语</th><th>含义</th></tr>
+    <tr><td>min-jerk</td><td>最小加加速度轨迹，对称钟形速度曲线，平滑度黄金标准（Flash &amp; Hogan 1985）</td></tr>
+    <tr><td>SPARC</td><td>频域弧长，无量纲运动平滑度度量（Balasubramanian 2012）</td></tr>
+    <tr><td>submovement</td><td>子运动；一次到达 = initial（前馈）+ corrective（视觉修正）子运动</td></tr>
+    <tr><td>Fitts's Law / Throughput</td><td>速度-精度权衡；TP=ID/MT 跨距离归一化的发力能力</td></tr>
+    <tr><td>Quiet Eye (QE)</td><td>静眼效应，动作前对目标的稳定注视（≥100ms）</td></tr>
+    <tr><td>cm/360</td><td>转 360° 需要的鼠标移动厘米数，= 感觉运动增益</td></tr>
+    <tr><td>decfrac</td><td>减速段占整段比例，&gt;0.7 提示"蹭"</td></tr>
+    <tr><td>under/overflick</td><td>欠甩/过甩；欠甩=落点在目标前 90-95%</td></tr>
+    <tr><td>Constellation</td><td>星链式连续画线，现代多目标清除的一笔画技术</td></tr>
+    <tr><td>VDIM</td><td>Voltaic Daily Improvement Method，每日隔离一种技术的结构化训练</td></tr>
+    <tr><td>raw / applied aim</td><td>原生瞄准（训练器纯粹控制力）/ 应用瞄准（融入游戏噪声）</td></tr>
+    <tr><td>KR / KP</td><td>结果反馈 / 动作质量反馈</td></tr>
+    <tr><td>1w6ts</td><td>1wall6targets small，静态小目标定位基准科目</td></tr>
+  </table></div></details>
+
+  <h3>B · 信源分级总表</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>理论/主张</th><th>等级</th><th>经久度</th></tr>
+    <tr><td>min-jerk / SPARC / submovement / Fitts</td><td><span class="badge b-acad">学术</span></td><td>经久根基</td></tr>
+    <tr><td>三重控制路径 / 静眼 / 零固定单扫视</td><td><span class="badge b-acad">学术</span></td><td>经久（眼动样本有限）</td></tr>
+    <tr><td>双过程并行 / 刻意练习上限 / CI / KR-KP / 引导假说</td><td><span class="badge b-acad">学术</span></td><td>经久根基</td></tr>
+    <tr><td>神经再巩固（Wymbs 2016）</td><td><span class="badge b-acad">学术</span></td><td>经久（应用层有争议）</td></tr>
+    <tr><td>动力学链 / 肌电 / 共收缩</td><td><span class="badge b-acad">学术</span></td><td>经久</td></tr>
+    <tr><td>Voltaic S5 分类 / 三步 / VDIM / 场景哲学</td><td><span class="badge b-comm">社区</span></td><td>随版本更迭</td></tr>
+    <tr><td>Bardoz / Shimmy 流派、张力过载、灵敏度数值</td><td><span class="badge b-comm">社区</span></td><td>标签易过时，现象经久</td></tr>
+    <tr><td>握法对比 / 高手方法 / 子技能分化</td><td><span class="badge b-pers">个人经验</span></td><td>未经验证</td></tr>
+    <tr><td>Hard Bot Trap / Target Confirmation（2026）</td><td><span class="badge b-comm">社区前沿</span></td><td>新理论，待检验</td></tr>
+  </table></div>
+
+  <h3>C · 理论谱系图</h3>
+  <details open><summary>三大理论支柱如何支撑瞄准训练</summary>
+  <pre style="background:var(--surface);padding:16px;border-radius:8px;overflow-x:auto;font-size:13px;line-height:1.7;color:var(--muted)">
+底层科学（第一部）
+├─ 神经控制：小脑内部模型 → 三重控制路径（开环/冲动/肢体-目标）
+├─ 眼动：静眼效应 → 零固定-单扫视
+├─ 运动学：min-jerk → Becker(减速段) → SPARC → submovement → Fitts
+└─ 生物力学：动力学链 → 共收缩 → 制动力
+
+学习与反馈（第二部）
+├─ 习得：三阶段 ⇄ 双过程并行
+├─ 训练量：刻意练习上限（4hr/2hr）
+├─ 编排：情境干扰（交错 > 块状）
+├─ 反馈：KR/KP → 引导假说（褪除）
+└─ 适应：神经再巩固 → 灵敏度随机化
+
+技术演进（第三部）
+└─ 平滑直线 → Bardoz(两段式) → Shimmy(软着陆) → 现代融合
+   （学术映射：discrete corrective ⇄ overlapping submovements）
+
+训练范式（第四部）
+├─ Voltaic 分类 → S5 九类（clicking/tracking/switching）
+├─ VDIM / 场景 pattern learning / 灵敏度铁律
+└─ 高手方法 + 张力过载训练
+  </pre></details>
+
+  <h3>D · 被反驳的 claim（透明记录）</h3>
+  <p>理论底座研究用对抗投票淘汰了一批"听起来对但站不住"的主张。摘录几条最值得警惕的——<strong>瞄准领域最大的坑，多源于这些过度断言</strong>：</p>
+  <details><summary>展开被反驳 claim</summary>
+  <div class="tbl-wrap"><table>
+    <tr><th>claim</th><th>投票</th><th>为何淘汰</th></tr>
+    <tr><td><strong>多模态反馈 &gt; 单模态反馈</strong></td><td>0–3 全票反驳</td><td>过强断言，证据否定</td></tr>
+    <tr><td><strong>实时反馈减少认知过载 → 增强学习</strong></td><td>0–3 全票反驳</td><td>与引导假说冲突（实时最易致依赖）</td></tr>
+    <tr><td>练习时长与表现单调正相关</td><td>1–0</td><td>过强；Macnamara 2014 批判（方差仅 14-26%）</td></tr>
+    <tr><td>"10 年规则"+ 小提琴手 7410h 分层</td><td>0–1</td><td>过强 + 旧数据；Ericsson 自己警告外推</td></tr>
+  </table></div>
+  <p style="color:var(--muted);font-size:14px"><b>教训：</b>"更多 / 实时 / 多模态反馈总是更好"是过强断言；刻意练习的"越多越好/10年/精确方差"也是。<b>系统设计只基于存活的学术根基。</b></p></details>
+
+  <h3>E · 主要参考文献 <span style="font-size:13px;color:var(--muted);font-weight:400">（点击即跳转原文 ↗）</span></h3>
+  <details open><summary>学术（同行评审）</summary>
+  <ul style="font-size:14px;color:var(--muted)">
+    <li><a class="ref" target="_blank" rel="noopener" href="https://www.jneurosci.org/content/jneuro/5/7/1688.full.pdf">Flash &amp; Hogan 1985 — min-jerk 轨迹</a>（<em>J Neuroscience</em>）</li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://www.biorxiv.org/content/10.1101/2020.04.24.060533v1">Becker et al. 2020 — 减速段=成败最强信号</a>（biorxiv）</li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://pubmed.ncbi.nlm.nih.gov/22180502/">Balasubramanian et al. 2012 — SPARC 平滑度金标准</a>（IEEE TBME）</li>
+    <li>Submovement 谱系：<a class="ref" target="_blank" rel="noopener" href="https://doi.org/10.1037/0033-2909.127.3.342">Woodworth 1899</a> / <a class="ref" target="_blank" rel="noopener" href="https://doi.org/10.1037//0033-295x.95.3.340">Meyer 1988</a> / <a class="ref" target="_blank" rel="noopener" href="https://doi.org/10.1007/s00221-002-1060-6">Novak 2002</a> / <a class="ref" target="_blank" rel="noopener" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC11427045/">Schwartze &amp; Rouse 2024</a></li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://doi.org/10.1037/h0055392">Fitts 1954 — Fitts's Law</a>；<a class="ref" target="_blank" rel="noopener" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC4330992/">Taylor &amp; Ivry 2012 — 双过程并行</a></li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://graphics8.nytimes.com/images/blogs/freakonomics/pdf/DeliberatePractice(PsychologicalReview).pdf">Ericsson, Krampe &amp; Tesch-Römer 1993 — 刻意练习</a>（<em>Psych Review</em>）</li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://pubmed.ncbi.nlm.nih.gov/6399752/">Salmoni, Schmidt &amp; Walter 1984 — 引导假说</a>；<a class="ref" target="_blank" rel="noopener" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC8681883/">Gentile 1972 — KR/KP（综述）</a></li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://pubmed.ncbi.nlm.nih.gov/26832444/">Wymbs, Bastian &amp; Celnik 2016 — 神经再巩固</a>（<em>Current Biology</em>，DOI 10.1016/j.cub.2015.11.066）</li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://cognitivesciencesociety.org/cogsci20/papers/0469/0469.pdf">Schorn &amp; Knowlton 2021 — Contextual Interference</a>；<a class="ref" target="_blank" rel="noopener" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC11237090/">Czyż et al. 2024 — CI 元分析</a></li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC10411933/">Kinematic markers of skill in FPS</a>；<a class="ref" target="_blank" rel="noopener" href="https://www.tandfonline.com/doi/full/10.1080/14763141.2024.2354440">esports biomechanics 综述 2024</a></li>
+  </ul></details>
+  <details><summary>权威社区共识（Voltaic / r/FPSAimTrainer，易过时）</summary>
+  <ul style="font-size:14px;color:var(--muted)">
+    <li>Voltaic 官方：<a class="ref" target="_blank" rel="noopener" href="https://app.voltaic.gg/benchmarks">S5 benchmarks</a>、<a class="ref" target="_blank" rel="noopener" href="https://www.reddit.com/r/Voltaic/comments/1hlqgeq/voltaic_season_5_kovaaks_benchmarks/">Season 5 公告</a>、<a class="ref" target="_blank" rel="noopener" href="https://www.reddit.com/r/Voltaic/comments/mmb22c/issuespecific_routines_20/">Weakness-Specific Routines 2.0</a>、<a class="ref" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=pOSQt1UEybM">VDIM guide</a></li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://www.reddit.com/r/FPSAimTrainer/comments/lh3gpc/im_bardoz_valorant_pro_player_and_kovaaks_static/">bardOZ — Static Aiming Guide</a>；<a class="ref" target="_blank" rel="noopener" href="https://www.reddit.com/r/FPSAimTrainer/comments/1jilm5e/">Zeonlo — Shimmy Static Method</a></li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=VzNA36hmN1Y">Corporate Serf — How to Rank Up in Voltaic</a>、<a class="ref" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=8Qjrl4hsnSQ">tracking top list</a></li>
+    <li>r/FPSAimTrainer：<a class="ref" target="_blank" rel="noopener" href="https://www.reddit.com/r/FPSAimTrainer/comments/ycpcsg/proper_static_clicking_form/">Proper Static Clicking Form</a>、<a class="ref" target="_blank" rel="noopener" href="https://www.reddit.com/r/Voltaic/comments/1ilde7g/">sens randomizer 讨论</a></li>
+    <li><a class="ref" target="_blank" rel="noopener" href="https://aiming.pro/best-sensitivity-for-aiming">Aiming.Pro — Best Sensitivity</a>（28–43 cm/360）；<a class="ref" target="_blank" rel="noopener" href="https://x.com/VoltaicAim/status/1561917098745630720">Voltaic sensitivity chart</a></li>
+  </ul></details>
+  <details><summary>个人经验/视频（最弱信源）</summary>
+  <ul style="font-size:14px;color:var(--muted)">
+    <li><a class="ref" target="_blank" rel="noopener" href="https://attackshark.com/blogs/knowledges/wrist-arm-aiming-grip-motion-guide">握法 biomechanics — Attack Shark: Wrist vs Arm Aiming</a></li>
+    <li>YouTube 教学：<a class="ref" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=mOsBjfOGMuU">Fluidity Ep.6</a>、<a class="ref" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=t_FrS6qpKpw">Give me 12 Minutes</a>、<a class="ref" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=ZzoEu_MCHIA">Aim Basics #13</a></li>
+  </ul></details>
+
+  <hr style="border:none;border-top:1px solid var(--border);margin:48px 0 24px">
+  <p style="color:var(--muted);font-size:14px;text-align:center">本论文融合自 5 份项目底座文档（FPS Aiming Theory Evolution、coach-theory-foundation、coach-community-frontier、aim-kinematics-research、flicking-aim-coach）+ 4 项 2026 最新检索，继承三级信源分级。<br>仅供信息参考，如需医疗/康复建议请咨询专业人士。纪录与社区理论随时间流动，以官方源为准。</p>
+</section>
+
+</main>
+</div>
+
+<button id="totop" onclick="scrollTo({top:0,behavior:'smooth'})" aria-label="返回顶部">↑</button>
+
+<script>
+  // 主题切换
+  function toggleTheme(){
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur==='light'?'':'light';
+    document.documentElement.setAttribute('data-theme',next);
+    localStorage.setItem('aim-theme',next);
+    document.querySelector('.theme-btn').textContent = next==='light'?'☀️ 亮色':'🌙 暗色';
+  }
+  (function(){const s=localStorage.getItem('aim-theme');if(s==='light'){document.documentElement.setAttribute('data-theme','light');document.querySelector('.theme-btn').textContent='☀️ 亮色';}})();
+
+  // 阅读进度
+  const prog=document.getElementById('progress');
+  const totop=document.getElementById('totop');
+  window.addEventListener('scroll',()=>{
+    const h=document.documentElement;
+    const sc=h.scrollTop/(h.scrollHeight-h.clientHeight);
+    prog.style.width=(sc*100)+'%';
+    totop.classList.toggle('show',h.scrollTop>600);
+  });
+
+  // 目录高亮
+  const links=[...document.querySelectorAll('nav.toc a')];
+  const secs=links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  const obs=new IntersectionObserver(entries=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        links.forEach(l=>l.classList.remove('active'));
+        const a=document.querySelector('nav.toc a[href="#'+e.target.id+'"]');
+        if(a)a.classList.add('active');
+      }
+    });
+  },{rootMargin:'-20% 0px -70% 0px'});
+  secs.forEach(s=>obs.observe(s));
+</script>
+</body>
+</html>
