@@ -94,11 +94,12 @@ def test_accuracy_low_fires_below_threshold():
     sigs = [f.signal for f in findings]
     assert "accuracy low" in sigs
     acc = next(f for f in findings if f.signal == "accuracy low")
-    assert acc.severity == "fix"
+    assert acc.severity == "info"
+    assert acc.claim_level == "experimental"
 
 
 def test_accuracy_at_threshold_does_not_fire():
-    """Strict < threshold: at-boundary should NOT fire (>= is healthy)."""
+    """Strict < threshold: at-boundary should not fire."""
     m = _healthy_tracking_summary()
     m["loss"]["on_target_pct"] = THRESHOLDS["tracking_accuracy_low"]
     findings = advise_tracking(m)
@@ -226,8 +227,8 @@ def test_ptc_high_fires_at_info_severity_when_threshold_set():
         findings = advise_tracking(m)
         ptc_f = next(f for f in findings if f.signal == "ptc high")
         assert ptc_f.severity == "info"
-        # wording must hedge as hypothesis
-        assert "假设" in ptc_f.diagnosis or "可能" in ptc_f.diagnosis
+        assert ptc_f.claim_level == "experimental"
+        assert "不直接测量肌肉张力" in ptc_f.diagnosis
     finally:
         THRESHOLDS["tracking_ptc_high"] = orig
 
@@ -318,3 +319,89 @@ def test_each_tracking_finding_has_prescriptions():
     for f in findings:
         assert isinstance(f, Finding)
         assert f.prescriptions, f"signal {f.signal!r} has no prescriptions"
+
+
+def _assert_explanation_contract(finding: Finding) -> None:
+    assert finding.diagnosis
+    assert finding.severity == "info"
+    assert finding.claim_level == "experimental"
+    assert finding.metric_refs
+    assert finding.event_refs == []
+    assert "threshold_requires_product_calibration" in finding.limitations
+    assert finding.plain_language_meaning
+    assert finding.expected_result
+    assert finding.verification["comparable_requirements"]
+    assert finding.verification["success_signals"]
+    assert finding.verification["insufficient_evidence_behavior"]
+    for prescription in finding.prescriptions:
+        assert prescription.cue
+        assert prescription.purpose
+        assert prescription.target_metrics
+        assert prescription.expected_direction
+        assert prescription.retest_after
+        assert prescription.stop_or_adjust_rule
+        assert prescription.source_level
+
+
+def test_real_tracking_findings_satisfy_explanation_contract():
+    findings = advise_tracking(_pathological_tracking_summary())
+    assert {finding.signal for finding in findings} == {
+        "accuracy low",
+        "loss count high",
+        "off target long",
+        "avg error high",
+    }
+    for finding in findings:
+        _assert_explanation_contract(finding)
+
+
+def test_uncalibrated_tracking_thresholds_never_emit_health_or_formal_severity():
+    findings = advise_tracking(_pathological_tracking_summary())
+    assert findings
+    assert all(finding.severity == "info" for finding in findings)
+    assert all(finding.claim_level == "experimental" for finding in findings)
+    assert all("健康" not in finding.diagnosis for finding in findings)
+    assert all("异常" not in finding.diagnosis for finding in findings)
+
+
+def test_tracking_findings_do_not_claim_unmeasured_body_or_visual_causes():
+    findings = {
+        finding.signal: finding
+        for finding in advise_tracking(_pathological_tracking_summary())
+    }
+    assert "不能单独确定" in findings["loss count high"].diagnosis
+    assert "不能单独证明" in findings["off target long"].diagnosis
+
+
+def test_enabled_experimental_tracking_signals_satisfy_safe_contract():
+    m = _healthy_tracking_summary()
+    m["tension"].update({
+        "speed_mismatch": 1000.0,
+        "accel_mismatch": 2000.0,
+        "ptc": 2000.0,
+    })
+    keys = (
+        "tracking_speed_mismatch_high",
+        "tracking_accel_mismatch_high",
+        "tracking_ptc_high",
+    )
+    originals = {key: THRESHOLDS[key] for key in keys}
+    try:
+        THRESHOLDS.update({
+            "tracking_speed_mismatch_high": 500.0,
+            "tracking_accel_mismatch_high": 1000.0,
+            "tracking_ptc_high": 1000.0,
+        })
+        findings = {finding.signal: finding for finding in advise_tracking(m)}
+        assert set(findings) == {
+            "speed mismatch high",
+            "accel mismatch high",
+            "ptc high",
+        }
+        for finding in findings.values():
+            _assert_explanation_contract(finding)
+        assert "不能单独确定身体或视觉原因" in findings["speed mismatch high"].diagnosis
+        assert "不能单独确定身体或视觉原因" in findings["accel mismatch high"].diagnosis
+        assert "不直接测量肌肉张力" in findings["ptc high"].diagnosis
+    finally:
+        THRESHOLDS.update(originals)

@@ -13,10 +13,9 @@ Differences from flicking advice (see spec
   nested groups (``tension`` / ``loss``). ``_flatten_metrics`` normalizes
   the nested shape into a flat dict before rule evaluation.
 - tracking rule thresholds are **initial empirical values marked
-  "needs calibration"** — the spec explicitly flags
-  speed/accel/ptc thresholds as uncalibrated. Those three signals emit at
-  ``info`` / ``watch`` severity (interpretive hypothesis, not hard
-  diagnosis) per spec §7.
+  "needs calibration"**. Enabled thresholds produce experimental
+  observations rather than calibrated health judgments; thresholds set to
+  ``None`` remain disabled.
 """
 from __future__ import annotations
 
@@ -25,10 +24,10 @@ from typing import Optional
 from .advice import Prescription, Finding  # reuse dataclass contract
 
 
-# Initial empirical thresholds (spec §3.1).
-# speed/accel/ptc are None = uncalibrated; advise_tracking skips them when None.
+# Initial empirical thresholds (spec §3.1); none are calibrated product bands.
+# speed/accel/ptc are None = disabled until a threshold is chosen; skipped when None.
 THRESHOLDS = {
-    "tracking_accuracy_low": 70.0,        # % on_target_pct
+    "tracking_accuracy_low": 70.0,        # % on_target_pct (needs calibration)
     "tracking_loss_count_high": 60,       # losses per 60s recording (needs calibration)
     "tracking_off_target_long_s": 0.05,   # s per loss (needs calibration)
     "tracking_avg_error_ratio": 0.5,      # avg_error_px / ball_w (needs calibration)
@@ -37,6 +36,71 @@ THRESHOLDS = {
     "tracking_accel_mismatch_high": None, # uncalibrated
     "tracking_ptc_high": None,            # uncalibrated (biomechanics hypothesis)
 }
+
+
+_PLAIN_MEANINGS = {
+    "accuracy low": "本次记录中准星位于目标范围内的时间比例较低",
+    "loss count high": "本次记录中追踪中断次数较多",
+    "off target long": "每次追踪中断后回到目标范围所需时间较长",
+    "avg error high": "本次记录中准星相对目标中心的平均偏移较大",
+    "speed mismatch high": "失手片段中的目标与准星平均速度差较大",
+    "accel mismatch high": "失手片段中的目标与准星平均加速度差较大",
+    "ptc high": "失手片段中的加速度误差相对空间误差较高",
+}
+
+
+_EXPECTED_DIRECTIONS = {
+    "accuracy low": ["on_target_pct ↑"],
+    "loss count high": ["loss_count ↓"],
+    "off target long": ["total_off_time/loss_count ↓"],
+    "avg error high": ["avg_error_px ↓"],
+    "speed mismatch high": ["speed_mismatch ↓ under comparable target motion"],
+    "accel mismatch high": ["accel_mismatch ↓ under comparable target motion"],
+    "ptc high": ["ptc ↓ as an exploratory signal", "on_target_pct not worse"],
+}
+
+
+def _finalize_tracking_findings(findings: list[Finding]) -> list[Finding]:
+    """Complete the Coach contract without overstating uncalibrated rules."""
+    for finding in findings:
+        directions = list(_EXPECTED_DIRECTIONS[finding.signal])
+        finding.severity = "info"
+        finding.claim_level = "experimental"
+        finding.limitations = ["threshold_requires_product_calibration"]
+        finding.plain_language_meaning = _PLAIN_MEANINGS[finding.signal]
+        finding.expected_result = "；".join(directions)
+        finding.verification = {
+            "comparable_requirements": [
+                "相同场景",
+                "相同设置",
+                "相同记录时长",
+                "相同证据质量",
+            ],
+            "success_signals": directions,
+            "insufficient_evidence_behavior": (
+                "样本或可比条件不足时只记录观察，不判定改善或退步"
+            ),
+        }
+        for prescription in finding.prescriptions:
+            if not prescription.cue:
+                prescription.cue = prescription.reason
+            if not prescription.purpose:
+                prescription.purpose = finding.plain_language_meaning
+            if not prescription.target_metrics:
+                prescription.target_metrics = list(finding.metric_refs)
+            if not prescription.expected_direction:
+                prescription.expected_direction = list(directions)
+            if not prescription.retest_after:
+                prescription.retest_after = (
+                    "在相同场景、设置、记录时长和证据质量下复测"
+                )
+            if not prescription.stop_or_adjust_rule:
+                prescription.stop_or_adjust_rule = (
+                    "若目标指标未改善或 on_target_pct 明显恶化，停止调整并恢复原练法"
+                )
+            if not prescription.source_level:
+                prescription.source_level = "experimental"
+    return findings
 
 
 def _flatten_metrics(metrics_json: dict) -> dict:
@@ -91,26 +155,33 @@ def advise_tracking(
     accel_mismatch = _scalar(flat, "accel_mismatch")
     ptc = _scalar(flat, "ptc")
 
-    # --- A. accuracy_low (community_consensus, severity fix) ---
+    # --- A. accuracy_low (enabled empirical threshold; needs calibration) ---
     if on_target_pct is not None and on_target_pct < THRESHOLDS["tracking_accuracy_low"]:
         findings.append(Finding(
-            "accuracy low", "fix",
-            f"命中率 {on_target_pct:.1f}%（健康 >{THRESHOLDS['tracking_accuracy_low']:.0f}%）——"
-            "整体追踪控制不足。",
-            [Prescription("pasu", "连续追踪基础，速度匹配"),
-             Prescription("VT Multiclick 30% larger", "落点精度 + 微调")],
+            "accuracy low", "info",
+            f"命中率 {on_target_pct:.1f}% 低于当前经验参考线 "
+            f"{THRESHOLDS['tracking_accuracy_low']:.0f}%——"
+            "这只说明本次记录的在靶时间比例较低；参考线仍需产品数据校准。",
+            [Prescription("pasu", "持续跟随目标速度，避免在目标后方连续追赶"),
+             Prescription("VT Multiclick 30% larger", "优先保持落点稳定，再观察在靶比例")],
+            metric_refs=["on_target_pct"],
         ))
 
-    # --- B. loss_count_high (severity fix; rule-of-thumb community_consensus) ---
+    # --- B. loss_count_high (enabled empirical threshold; needs calibration) ---
     if loss_count is not None and loss_count > THRESHOLDS["tracking_loss_count_high"]:
         per_loss = (total_off_time / max(loss_count, 1)) if total_off_time is not None else None
         per_loss_str = f"，每次回位 {per_loss:.2f}s" if per_loss is not None else ""
         findings.append(Finding(
-            "loss count high", "fix",
-            f"脱靶 {int(loss_count)} 次（频繁断追踪）{per_loss_str}——"
-            "追踪不连续，可能是速度匹配跟不上目标变向。",
-            [Prescription("VT reactive tracking", "应对瞬时加速度"),
-             Prescription("Clover Raw Control", "速度匹配 + 侧向挤压稳准星")],
+            "loss count high", "info",
+            f"本次记录脱靶 {int(loss_count)} 次{per_loss_str}——"
+            "追踪中断次数较多；该指标不能单独确定是速度匹配、视觉读取或身体控制造成。",
+            [Prescription("VT reactive tracking", "目标变向时保持连续跟随，不提前猜下一次方向"),
+             Prescription("Clover Raw Control", "脱靶后用一次连续修正回到目标，避免来回补偿")],
+            metric_refs=(
+                ["loss_count", "total_off_time"]
+                if total_off_time is not None
+                else ["loss_count"]
+            ),
         ))
 
     # --- C. off_target_long (single-loss re-acquire slow) ---
@@ -118,11 +189,12 @@ def advise_tracking(
         off_per = total_off_time / loss_count
         if off_per > THRESHOLDS["tracking_off_target_long_s"]:
             findings.append(Finding(
-                "off target long", "watch",
-                f"每次脱靶平均 {off_per:.2f}s 才回位——"
-                "读回目标慢（可能视觉锁定 / 反应延迟）。",
-                [Prescription("VT evasive tracking", "目标逃逸型，练视觉读取"),
-                 Prescription("Clover Raw Control", "锁定目标，减少丢失")],
+                "off target long", "info",
+                f"每次脱靶平均 {off_per:.2f}s 才回到目标范围——"
+                "本次记录的离靶持续时间较长；该指标不能单独证明视觉锁定或反应延迟。",
+                [Prescription("VT evasive tracking", "脱靶后保持一次连续回位，不连续急停重启"),
+                 Prescription("Clover Raw Control", "回到目标后先恢复连续贴合，再提高速度")],
+                metric_refs=["total_off_time", "loss_count"],
             ))
 
     # --- D. avg_error_high (ratio if ball_w else absolute fallback) ---
@@ -136,34 +208,40 @@ def advise_tracking(
         if breached:
             if ratio is not None:
                 ctx = f"（{ratio:.0%} 目标宽）"
+                metric_refs = ["avg_error_px", "ball_w"]
             else:
-                ctx = "（无 ball_w，用绝对阈值判）"
+                ctx = "（无 ball_w，使用当前未校准绝对参考线）"
+                metric_refs = ["avg_error_px"]
             findings.append(Finding(
-                "avg error high", "fix",
+                "avg error high", "info",
                 f"平均误差 {avg_error_px:.1f}px{ctx}——"
-                "准星虽在 target 上但偏移大，临界命中多。",
-                [Prescription("VT precise tracking", "精度追踪专项"),
-                 Prescription("focus on crosshair gap", "带 gap 准星，注意力锁中心")],
+                "本次记录中准星相对目标中心的平均偏移较大；该指标不能单独确定身体或视觉原因。",
+                [Prescription("VT precise tracking", "以目标中心为参照，优先缩小持续偏移"),
+                 Prescription("focus on crosshair gap", "观察准星与目标中心的间距变化，减少长期偏在一侧")],
+                metric_refs=metric_refs,
             ))
 
     # --- E. speed_mismatch_high (uncalibrated -> info/watch per spec §7.3) ---
     sm_thresh = THRESHOLDS["tracking_speed_mismatch_high"]
     if speed_mismatch is not None and sm_thresh is not None and speed_mismatch > sm_thresh:
         findings.append(Finding(
-            "speed mismatch high", "watch",
-            f"miss 段目标屏幕速度 {speed_mismatch:.0f} px/s——"
-            "提示高速段可能失手多（合理推断：v_rel 含准星噪声，主导项是目标速度）。",
-            [Prescription("VT control tracking", "持续中速追踪"),
-             Prescription("Clover Raw Control", "侧向挤压稳准星")],
+            "speed mismatch high", "info",
+            f"miss 段平均速度差 {speed_mismatch:.0f} px/s——"
+            "失手片段中的目标与准星速度差较大；该指标不能单独确定身体或视觉原因。",
+            [Prescription("VT control tracking", "跟随目标速度变化，避免突然追赶"),
+             Prescription("Clover Raw Control", "用连续移动贴合目标，减少急停后重新加速")],
+            metric_refs=["speed_mismatch"],
         ))
 
     # --- F. accel_mismatch_high (uncalibrated) ---
     am_thresh = THRESHOLDS["tracking_accel_mismatch_high"]
     if accel_mismatch is not None and am_thresh is not None and accel_mismatch > am_thresh:
         findings.append(Finding(
-            "accel mismatch high", "watch",
-            f"miss 段目标加速度 {accel_mismatch:.0f} px/s²——应对变向吃力。",
-            [Prescription("VT reactive tracking", "应对瞬时加速度")],
+            "accel mismatch high", "info",
+            f"miss 段平均加速度差 {accel_mismatch:.0f} px/s²——"
+            "失手片段中的目标与准星加速度差较大；该指标不能单独确定身体或视觉原因。",
+            [Prescription("VT reactive tracking", "目标变向时保持连续跟随，不提前猜下一次方向")],
+            metric_refs=["accel_mismatch"],
         ))
 
     # --- G. ptc_high (biomechanics hypothesis, severity info per spec §7.1) ---
@@ -171,12 +249,14 @@ def advise_tracking(
     if ptc is not None and ptc_thresh is not None and ptc > ptc_thresh:
         findings.append(Finding(
             "ptc high", "info",
-            f"miss 段加速度密度 PTC={ptc:.0f} Hz²——"
-            "可能张力偏大（生物力学假设，未 EMG 验证；结合 SPARC / 反向修正一起读更稳）。",
-            [Prescription("暴露疗法：高 sens + 低 FOV 精准追踪", "放大微颤，逼大脑修正张力分配")],
+            f"miss 段 PTC={ptc:.0f} Hz²——"
+            "它描述加速度误差相对空间误差的比值，不直接测量肌肉张力，"
+            "也不能单独确定身体原因。",
+            [Prescription("暴露疗法：高 sens + 低 FOV 精准追踪", "减少连续来回补偿，只把 PTC 变化当探索信号")],
+            metric_refs=["ptc"],
         ))
 
-    return findings
+    return _finalize_tracking_findings(findings)
 
 
 def _scalar(d: dict, key: str) -> Optional[float]:

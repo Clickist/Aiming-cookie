@@ -1,0 +1,700 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v1",
+  "registry_version": "2026-07-14.v1",
+  "sources": [
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "kinematics_thresholds",
+      "source_ref": "aim-kinematics-research.md §2",
+      "action": "rewrite",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "limitation.uncalibrated-thresholds"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "min_jerk_vs_uniform_decel",
+      "source_ref": "aim-kinematics-research.md §6.1",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "kinematics.braking-linearity.mechanism"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "sparc",
+      "source_ref": "aim-kinematics-research.md §6.1",
+      "action": "rewrite",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "metric.sparc.definition",
+        "limitation.sparc.external-validity"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "submovement",
+      "source_ref": "aim-kinematics-research.md §6.2",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "kinematics.submovements.mechanism"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "fitts",
+      "source_ref": "aim-kinematics-research.md §6.3",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "research.speed-precision.fitts"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "sensitivity",
+      "source_ref": "aim-kinematics-research.md §4",
+      "action": "rewrite",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "settings.sensitivity.single-variable"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "scenarios",
+      "source_ref": "aim-kinematics-research.md §5",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.flicking.scenario-selection"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "fitts_posner",
+      "source_ref": "coach-theory-foundation.md §1.1",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.skill-learning-stages"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "deliberate_practice",
+      "source_ref": "coach-theory-foundation.md §1.2",
+      "action": "rewrite",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.load-and-recovery"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "contextual_interference",
+      "source_ref": "coach-theory-foundation.md §1.3",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.contextual-interference"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "kr_kp",
+      "source_ref": "coach-theory-foundation.md §2.1",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.feedback.fading"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "guidance_hypothesis",
+      "source_ref": "coach-theory-foundation.md §2.2",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.feedback.fading"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "socratic",
+      "source_ref": "coach-theory-foundation.md §2.3",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.metacognition"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "voltaic_community_layer",
+      "source_ref": "coach-theory-foundation.md §3",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "scope.knowledge-not-diagnosis"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "voltaic_s5",
+      "source_ref": "coach-community-frontier.md §1.1",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.tracking.control-modes"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "three_pillars",
+      "source_ref": "coach-community-frontier.md §1.2",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.aiming.skill-domains"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "top_player_split",
+      "source_ref": "coach-community-frontier.md §1.3",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.aiming.skill-domains"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "static_clicking_three_step",
+      "source_ref": "coach-community-frontier.md §1.6",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.flicking.one-commit"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "community_practice",
+      "source_ref": "coach-community-frontier.md §实践手册",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.community-session-structure"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "vdim_orchestration",
+      "source_ref": "coach-community-frontier.md §实践手册",
+      "action": "merge",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.contextual-interference",
+        "practice.community-session-structure"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "corporate_serf_method",
+      "source_ref": "coach-community-frontier.md §高手方法",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.flicking.transition-flow"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "decel_termination_cost",
+      "source_ref": "coach-prescription-manual.md §1.1",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "kinematics.movement-timing.mechanism"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "submovement_types",
+      "source_ref": "coach-prescription-manual.md §1.2",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "kinematics.submovements.mechanism"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "sparc_low_prescription",
+      "source_ref": "coach-prescription-manual.md §1.3 + §1.6",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.flicking.continuous-braking"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "reverse_ratio_trap",
+      "source_ref": "coach-prescription-manual.md §1.4",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "limitation.reverse-duration-bias"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "external_focus",
+      "source_ref": "coach-prescription-manual.md §2.1",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.external-focus"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "meta_cognition",
+      "source_ref": "coach-prescription-manual.md §2.2",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.metacognition"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "ci_interleave",
+      "source_ref": "coach-prescription-manual.md §4.1 + §4.2",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.contextual-interference"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "feedback_fading",
+      "source_ref": "coach-prescription-manual.md §5.1",
+      "action": "migrate",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.feedback.fading"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "bardoz_method",
+      "source_ref": "YouTube 瞄准训练内容综合.md §2.1-2.2",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.flicking.one-commit"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "tension_budget",
+      "source_ref": "YouTube 瞄准训练内容综合.md §3.1-3.4",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "hypothesis.tension.release"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "tension_budget_tracking",
+      "source_ref": "YouTube 瞄准训练内容综合.md §3.1-3.4",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "hypothesis.tension.tracking"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "tracking_three_kinds",
+      "source_ref": "YouTube 瞄准训练内容综合.md §4.1-4.3",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.tracking.control-modes"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "fluidity",
+      "source_ref": "YouTube 瞄准训练内容综合.md §5.3 + §2.3",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "cue.flicking.transition-flow"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "vod_review",
+      "source_ref": "YouTube 瞄准训练内容综合.md §6",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.vod-review"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "setup_hardware",
+      "source_ref": "YouTube 瞄准训练内容综合.md §7 + §8",
+      "action": "experimental_only",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "settings.sensitivity.single-variable",
+        "settings.hardware.fov-experiment"
+      ]
+    },
+    {
+      "source_kind": "python_agent_kb",
+      "source_key": "neuroscience_foundations",
+      "source_ref": "YouTube 瞄准训练内容综合.md §1.2 + §9",
+      "action": "rewrite",
+      "reason": "旧切片进入统一 source/claim/limitation 合同；过强或混合语义已重写。",
+      "target_entry_ids": [
+        "practice.skill-learning-stages"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "sparc low",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.sparc.definition",
+        "cue.flicking.continuous-braking",
+        "hypothesis.tension.release"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "reverse_ratio high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.stopping-corrections.definition",
+        "cue.flicking.continuous-braking",
+        "hypothesis.tension.release"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "submovement two-stage",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "kinematics.submovements.mechanism",
+        "cue.flicking.one-commit"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "decel_frac high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.movement-timing.definition",
+        "cue.flicking.continuous-braking"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "decel_frac low",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.movement-timing.definition",
+        "cue.flicking.continuous-braking"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "linearity high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.braking-linearity.definition",
+        "cue.flicking.continuous-braking"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "peak_position low",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.movement-timing.definition"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "peak_position high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.movement-timing.definition"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "path_efficiency low",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.path-geometry.definition",
+        "cue.flicking.path-directness"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "peak_speed below reference",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "research.speed-precision.fitts",
+        "cue.flicking.scenario-selection"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "throughput below reference",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "research.speed-precision.fitts",
+        "cue.flicking.scenario-selection"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "sensitivity high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "experimental_only",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "settings.sensitivity.single-variable",
+        "verification.single-variable-experiment"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "accuracy low",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.tracking-accuracy.definition",
+        "cue.tracking.continuous-speed"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "loss count high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.tracking-loss-reacquisition.definition",
+        "cue.tracking.reactive-response"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "off target long",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.tracking-loss-reacquisition.definition",
+        "cue.tracking.reacquisition"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "avg error high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.tracking-error.definition",
+        "cue.tracking.reacquisition"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "speed mismatch high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.tracking-speed-mismatch.definition",
+        "cue.tracking.continuous-speed"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "accel mismatch high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "merge",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.tracking-acceleration-mismatch.definition",
+        "cue.tracking.reactive-response"
+      ]
+    },
+    {
+      "source_kind": "python_signal_knowledge",
+      "source_key": "ptc high",
+      "source_ref": "kovaak_tracker/coach/knowledge.py",
+      "action": "experimental_only",
+      "reason": "社区解释与 cue 合并到 canonical signal entries，不保留独立正文。",
+      "target_entry_ids": [
+        "metric.ptc.scope",
+        "hypothesis.tension.tracking"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "movement_timing",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "metric.movement-timing.definition"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "braking_linearity",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "metric.braking-linearity.definition"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "smoothness_sparc",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "metric.sparc.definition"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "stopping_corrections",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "metric.stopping-corrections.definition"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "submovements",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "kinematics.submovements.mechanism"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "path_geometry",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "metric.path-geometry.definition"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "speed_precision",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "research.speed-precision.fitts"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "tracking_control",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "metric.tracking-accuracy.definition",
+        "metric.tracking-loss-reacquisition.definition"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "practice_structure",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "practice.contextual-interference",
+        "practice.feedback.fading"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "issue_training_cues",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "cue.flicking.continuous-braking"
+      ]
+    },
+    {
+      "source_kind": "typescript_seed",
+      "source_key": "settings_experiment",
+      "source_ref": "webapp/coach-runtime/src/knowledge-tools.ts",
+      "action": "merge",
+      "reason": "TS seed 由 canonical Registry 取代。",
+      "target_entry_ids": [
+        "settings.sensitivity.single-variable"
+      ]
+    }
+  ]
+}

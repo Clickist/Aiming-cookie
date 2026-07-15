@@ -321,6 +321,7 @@ def analyze_flicking_fair_summary(
     output_dir=OUTPUT_DIR,
     progress_callback=None,
     return_extras: bool = False,
+    stats=None,
 ):
     """CSV-mode fair-summary entry (PROGRESS A).
 
@@ -333,9 +334,13 @@ def analyze_flicking_fair_summary(
     kill frames, corrective markers) for callers that want to build video
     timeline markers. Defaults to False so existing callers keep getting a
     bare summary dict.
+
+    ``stats`` may carry a caller-verified in-memory Stats object. When present,
+    the visual pass must not reopen ``csv_path`` and silently switch revisions.
     """
     import math
-    stats = parse_stats_csv(csv_path)
+    if stats is None:
+        stats = parse_stats_csv(csv_path)
     # 全 miss(kills 空)→ max()=NaN → math.ceil(NaN) ValueError。有效 KovaaK 场景需 guard。
     max_t = stats.kills["time_s"].max() if len(stats.kills) > 0 else None
     if max_t is None or pd.isna(max_t):

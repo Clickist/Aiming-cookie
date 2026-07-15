@@ -20,6 +20,13 @@ class Prescription:
     """A training scenario + why it helps this finding."""
     scenario: str
     reason: str
+    cue: str = ""
+    purpose: str = ""
+    target_metrics: list[str] = field(default_factory=list)
+    expected_direction: list[str] = field(default_factory=list)
+    retest_after: str = ""
+    stop_or_adjust_rule: str = ""
+    source_level: str = "community_consensus"
 
 
 @dataclass
@@ -29,14 +36,28 @@ class Finding:
     severity: str          # "info" | "watch" | "fix"
     diagnosis: str         # plain-language statement
     prescriptions: list[Prescription] = field(default_factory=list)
+    claim_level: str = "deterministic_rule"
+    metric_refs: list[str] = field(default_factory=list)
+    event_refs: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    plain_language_meaning: str = ""
+    expected_result: str = ""
+    verification: dict[str, object] = field(default_factory=dict)
 
 
-# Health bands from docs/aim-kinematics-research.md §2
+# Initial heuristic thresholds from the research draft. They are not calibrated
+# product health bands; advise() therefore emits them as experimental info only.
+_UNCALIBRATED_SPARC_V2 = frozenset({
+    "native_flicking.sparc.v2",
+    "flicking_fair_summary.sparc.v2",
+})
+
+
 THRESHOLDS = {
     "decel_frac_high": 0.65,
     "decel_frac_low": 0.40,
     "linearity_high": 0.13,
-    "sparc_low": -5.0,        # SPARC < this (more negative) = decel not smooth (§6.1, calibrate on real data)
+    "sparc_low_legacy_unversioned": -5.0,  # old experimental scale only; v2 is uncalibrated
     "reverse_high": 0.20,
     "two_stage_overlap": 0.30,  # corrective/primary overlap < this = discrete two-stage (§6.2)
     "peak_pos_low": 30.0,
@@ -44,8 +65,98 @@ THRESHOLDS = {
     "path_eff_low": 0.85,
     "peak_below_ref": 0.70,   # self peak / ref peak
     "throughput_below_ref": 0.70,  # self TP / ref TP (§6.3)
-    "sens_high_cm360": 25.0,  # < this = sensitivity too high (too fast)
+    "sens_high_cm360": 25.0,  # uncalibrated trigger for a reversible experiment note
 }
+
+
+_SIGNAL_METRICS = {
+    "decel_frac high": ["decel_frac"],
+    "decel_frac low": ["decel_frac"],
+    "linearity high": ["linearity"],
+    "sparc low": ["sparc"],
+    "reverse_ratio high": ["reverse_ratio"],
+    "submovement two-stage": ["submovement_overlap"],
+    "peak_position low": ["peak_position_pct"],
+    "peak_position high": ["peak_position_pct"],
+    "path_efficiency low": ["path_efficiency"],
+    "peak_speed below reference": ["peak_speed_deg"],
+    "throughput below reference": ["throughput"],
+    "sensitivity high": ["cm_per_360"],
+}
+
+_PLAIN_MEANINGS = {
+    "decel_frac high": "速度峰值后用了较长时间完成减速",
+    "decel_frac low": "速度峰值后留给连续减速的时间较短",
+    "linearity high": "减速阶段的速度下降节奏不够均匀",
+    "sparc low": "减速阶段的速度轮廓含较多快速波动",
+    "reverse_ratio high": "接近落点后出现了较多反向修正",
+    "submovement two-stage": "主要移动与后续修正更像两个分离动作",
+    "peak_position low": "速度峰值出现得较早",
+    "peak_position high": "速度峰值出现得较晚",
+    "path_efficiency low": "实际移动路径比起终点直线距离更绕",
+    "peak_speed below reference": "峰值速度低于当前比较参考",
+    "throughput below reference": "速度与精度综合效率低于当前比较参考",
+    "sensitivity high": "当前 cm/360 较小，是否影响控制仍需实验验证",
+}
+
+_EXPECTED_DIRECTIONS = {
+    "decel_frac high": ["decel_frac toward individually calibrated target"],
+    "decel_frac low": ["decel_frac toward individually calibrated target"],
+    "linearity high": ["linearity ↓"],
+    "sparc low": ["sparc ↑"],
+    "reverse_ratio high": ["reverse_ratio ↓"],
+    "submovement two-stage": ["submovement_overlap toward chosen technique"],
+    "peak_position low": ["peak_position_pct toward individual baseline"],
+    "peak_position high": ["peak_position_pct toward individual baseline"],
+    "path_efficiency low": ["path_efficiency ↑"],
+    "peak_speed below reference": ["peak_speed_deg ↑ against comparable baseline"],
+    "throughput below reference": ["throughput ↑ against comparable baseline"],
+    "sensitivity high": ["linearity/reverse_ratio improve after controlled setting experiment"],
+}
+
+
+def _finalize_uncalibrated_findings(findings: list[Finding]) -> list[Finding]:
+    """Attach an actionable explanation while keeping initial thresholds honest."""
+    for finding in findings:
+        metrics = list(_SIGNAL_METRICS.get(finding.signal, []))
+        directions = list(_EXPECTED_DIRECTIONS.get(finding.signal, []))
+        finding.severity = "info"
+        finding.claim_level = "experimental"
+        finding.metric_refs = metrics
+        finding.limitations = ["threshold_requires_product_calibration"]
+        finding.plain_language_meaning = _PLAIN_MEANINGS.get(
+            finding.signal, finding.diagnosis
+        )
+        finding.expected_result = "；".join(directions)
+        finding.verification = {
+            "comparable_requirements": ["相同场景", "相同设置", "相同证据质量"],
+            "success_signals": directions,
+            "insufficient_evidence_behavior": "样本或可比条件不足时只记录观察，不判定改善或退步",
+        }
+        for prescription in finding.prescriptions:
+            if not prescription.cue:
+                prescription.cue = prescription.reason
+            if not prescription.purpose:
+                prescription.purpose = finding.plain_language_meaning
+            if not prescription.target_metrics:
+                prescription.target_metrics = list(metrics)
+            if not prescription.expected_direction:
+                prescription.expected_direction = list(directions)
+            if not prescription.retest_after:
+                prescription.retest_after = "在相同场景、设置和证据质量下复测"
+            if not prescription.stop_or_adjust_rule:
+                prescription.stop_or_adjust_rule = (
+                    "若目标指标未改善或准确率明显恶化，停止调整并恢复原练法"
+                )
+    return findings
+
+
+def _metric_version(summary: dict, metric: str) -> str | None:
+    value = summary.get(metric)
+    if not isinstance(value, dict):
+        return None
+    version = value.get("metric_version")
+    return version if isinstance(version, str) and version else None
 
 
 def _med(summary: dict, metric: str) -> Optional[float]:
@@ -71,8 +182,8 @@ def advise(
     ``self_summary`` is your fair-metric summary (from
     :func:`analyze_flicking_reference` or equivalent). ``reference_summary`` is
     an optional high-level player's summary for relative comparison.
-    ``cm_per_360`` enables a sensitivity note when it is outside the mainstream
-    28-43 cm/360 band.
+    ``cm_per_360`` enables an experimental sensitivity note. The trigger is not
+    a calibrated health band and cannot establish sensitivity as a root cause.
     """
     f: list[Finding] = []
 
@@ -81,15 +192,16 @@ def advise(
         if decfrac > THRESHOLDS["decel_frac_high"]:
             f.append(Finding(
                 "decel_frac high", "fix",
-                f"减速段占整个 flick 的 {decfrac*100:.0f}%（健康 50-65%）——"
-                "急加速 + 长减速型，冲得快但减速在'蹭'，效率低。",
+                f"减速段占整个 flick 的 {decfrac*100:.0f}%——"
+                "速度峰值后用了较长时间完成减速；该阈值仍需真实产品数据校准。",
                 [Prescription("pasu", "练完整的加速→减速，减速果断一次到位"),
                  Prescription("1w4ts Voltaic", "acc 90%+，逼你把单次 flick 加减速打完整")],
             ))
         elif decfrac < THRESHOLDS["decel_frac_low"]:
             f.append(Finding(
                 "decel_frac low", "watch",
-                f"减速段只占 {decfrac*100:.0f}%，减速不足 / 撞墙式制动。",
+                f"减速段只占 {decfrac*100:.0f}%，连续减速时间较短；"
+                "是否属于制动问题仍需结合 settle/reverse 和个体历史验证。",
                 [Prescription("pasu", "练匀减速，把减速段当一次独立动作")],
             ))
 
@@ -97,20 +209,25 @@ def advise(
     if linearity is not None and linearity > THRESHOLDS["linearity_high"]:
         f.append(Finding(
             "linearity high", "fix",
-            f"减速段速度曲线偏离匀减速直线 {linearity:.2f}（健康 <0.12）——"
-            "制动不匀（恒定制动线性度差）。注：这度量的是制动节奏，不是抖动；"
+            f"减速段速度曲线偏离匀减速直线 {linearity:.2f}——"
+            "速度下降节奏不够均匀。注：这度量的是制动节奏，不是抖动；"
             "抖动看 SPARC。",
             [Prescription("pasu", "clean lines，减速段匀速制动一次到位"),
              Prescription("1w4ts 30% larger", "减速段精度专项")],
         ))
 
     sparc = _med(self_summary, "sparc")
-    if sparc is not None and sparc < THRESHOLDS["sparc_low"]:
+    sparc_version = _metric_version(self_summary, "sparc")
+    if (
+        sparc is not None
+        and sparc_version not in _UNCALIBRATED_SPARC_V2
+        and sparc < THRESHOLDS["sparc_low_legacy_unversioned"]
+    ):
         f.append(Finding(
             "sparc low", "fix",
-            f"减速段平滑度 SPARC={sparc:.1f}（健康 >-5）——张力释放抖动、频域高频"
-            "成分多。这才是'减速抖动'的理论正解（SPARC 频域、无量纲、跨速度公平）。",
-            [Prescription("pasu", "clean lines，减速段走平滑钟形，张力匀速释放"),
+            f"减速段平滑度 SPARC={sparc:.1f}——速度轮廓中的快速波动较多。"
+            "SPARC 描述运动轮廓，不直接测量握持张力；绝对阈值仍需产品校准。",
+            [Prescription("pasu", "clean lines，让减速速度连续下降，避免突然硬停"),
              Prescription("1w4ts 30% larger", "减速段精度专项")],
         ))
 
@@ -129,7 +246,7 @@ def advise(
         f.append(Finding(
             "submovement two-stage", "watch",
             f"corrective 与 primary submovement 重叠度 {overlap:.2f}（低=离散两段式）——"
-            "flick→急停→独立 micro 修正，有延迟（Bardpill 模式，§6.2）。",
+            "主要移动与独立 micro 修正形成两个更分离的阶段；是否影响成绩需结合可比复测。",
             [Prescription("pasu", "转流体派：corrective 与 primary 重叠（overlapping submovements），减速段即微调"),
              Prescription("Multiclick", "落点精度，减少二次修正")],
         ))
@@ -139,13 +256,15 @@ def advise(
         if peak_pos < THRESHOLDS["peak_pos_low"]:
             f.append(Finding(
                 "peak_position low", "watch",
-                f"峰位 {peak_pos:.0f}%（偏前），加速过急、减速段拖沓。",
+                f"峰位 {peak_pos:.0f}%（偏前），速度峰值较早出现；"
+                "具体动作原因未被输入数据直接测量。",
                 [Prescription("pasu", "平衡加减速，把峰往中段靠")],
             ))
         elif peak_pos > THRESHOLDS["peak_pos_high"]:
             f.append(Finding(
                 "peak_position high", "watch",
-                f"峰位 {peak_pos:.0f}%（偏后），加速拖沓、来不及减速。",
+                f"峰位 {peak_pos:.0f}%（偏后），速度峰值较晚出现；"
+                "具体动作原因未被输入数据直接测量。",
                 [Prescription("Tile Frenzy", "练果断加速、提速")],
             ))
 
@@ -153,7 +272,8 @@ def advise(
     if path_eff is not None and path_eff < THRESHOLDS["path_eff_low"]:
         f.append(Finding(
             "path_efficiency low", "fix",
-            f"flick 路径直线效率 {path_eff:.2f}（健康 >0.85），路径绕。",
+            f"flick 路径直线效率 {path_eff:.2f}，实际路径相对终点直线距离更绕；"
+            "绝对阈值仍需产品校准。",
             [Prescription("linetrace", "练直线 flick，走最短路径"),
              Prescription("clean lines", "意识：flick 走直线，不画弧")],
         ))
@@ -167,8 +287,8 @@ def advise(
                 f.append(Finding(
                     "peak_speed below reference", "fix",
                     f"甩枪角速度 {self_peak:.0f}°/s 只有参考的 {ratio*100:.0f}%"
-                    f"（{ref_peak:.0f}°/s），甩得偏慢、发力不足。",
-                    [Prescription("Tile Frenzy", "练 arm 发力与动态速度"),
+                    f"（{ref_peak:.0f}°/s）；峰值速度低于当前参考，身体原因未被输入数据直接测量。",
+                    [Prescription("Tile Frenzy", "在可控精度下逐步提高动态速度"),
                      Prescription("speed 类场景", "大胆加速，先求速度再收精度")],
                 ))
 
@@ -180,21 +300,21 @@ def advise(
                 f.append(Finding(
                     "throughput below reference", "fix",
                     f"Fitts throughput {self_tp:.1f} bits/s 只有参考的 {tp_ratio*100:.0f}%"
-                    f"（{ref_tp:.1f}）——跨距离发力能力不足（已按目标距离/宽度归一化，"
-                    "比峰值速度更公平，§6.3）。",
-                    [Prescription("Tile Frenzy", "练 arm 发力与动态速度"),
+                    f"（{ref_tp:.1f}）；速度-精度综合效率低于当前参考，身体原因未被输入数据"
+                    "直接测量（throughput 已按目标距离/宽度归一化，§6.3）。",
+                    [Prescription("Tile Frenzy", "在可控精度下逐步提高动态速度"),
                      Prescription("speed 类场景", "先求速度再收精度")],
                 ))
 
     if cm_per_360 is not None and cm_per_360 < THRESHOLDS["sens_high_cm360"]:
         f.append(Finding(
             "sensitivity high", "watch",
-            f"灵敏度 {cm_per_360:.1f} cm/360 偏快（主流 28-43），flicking 制动难、"
-            "手抖被放大。",
+            f"当前灵敏度为 {cm_per_360:.1f} cm/360。较小 cm/360 可能放大控制输入，"
+            "但不能单凭设置值判定动作问题，只能作为受控实验假设。",
             [Prescription("降 sens 5-10%（cm/360 ↑）", "制动辅助实验；复测 linearity/reverse 是否下降，没降就调回")],
         ))
 
-    return f
+    return _finalize_uncalibrated_findings(f)
 
 
 # metrics where lower is better (cleaner / more stopped / shorter decel);
@@ -204,7 +324,7 @@ _LOWER_BETTER = {"linearity", "reverse_ratio", "endpoint_peak"}
 _NO_VERDICT = {
     "peak_position_pct", "path_length_deg",
     "submovement_overlap", "corrective_count",  # fluid vs two-stage is style, not strictly better
-    # decel_frac is band-shaped (healthy [0.40, 0.65], per THRESHOLDS);
+    # decel_frac is band-shaped (initial heuristic [0.40, 0.65], per THRESHOLDS);
     # advise() handles band diagnosis, progress._decel_frac_verdict carries
     # the health-band monotone trend verdict. Simple lower/higher would mark
     # a pathological brake-slam (0.30) "better" than a healthy 0.50.
