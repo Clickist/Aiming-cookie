@@ -7,9 +7,11 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
-from kovaak_tracker.csv_parser import KovaaKStats
+from kovaak_tracker.csv_parser import KovaaKStats, parse_stats_bytes, parse_stats_csv
 
 
 def _make_stats(config: dict[str, str]) -> KovaaKStats:
@@ -20,6 +22,19 @@ def _make_stats(config: dict[str, str]) -> KovaaKStats:
         config=config,
         file_name="test",
     )
+
+
+def test_parse_stats_bytes_matches_file_parser():
+    source = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    )
+    from_file = parse_stats_csv(source)
+    from_bytes = parse_stats_bytes(source.read_bytes(), file_name=source.name)
+
+    assert from_bytes.summary == from_file.summary
+    assert from_bytes.config == from_file.config
+    assert from_bytes.file_name == from_file.file_name
+    assert from_bytes.kills.equals(from_file.kills)
 
 
 # ---------------------------------------------------------------------------

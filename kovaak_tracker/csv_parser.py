@@ -144,8 +144,15 @@ def parse_stats_csv(csv_path: str | Path) -> KovaaKStats:
     schema (guards against unrelated CSVs being handed in).
     """
     csv_path = Path(csv_path)
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-        lines = f.read().splitlines()
+    return parse_stats_bytes(csv_path.read_bytes(), file_name=csv_path.name)
+
+
+def parse_stats_bytes(data: bytes, *, file_name: str = "<memory>") -> KovaaKStats:
+    """Parse the exact Stats bytes already accepted by a source fingerprint."""
+    try:
+        lines = data.decode("utf-8-sig").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ValueError("KovaaK Stats CSV is not valid UTF-8") from exc
 
     if not lines or lines[0].strip() != ",".join(KILL_HEADER):
         found = lines[0] if lines else "<empty>"
@@ -186,7 +193,7 @@ def parse_stats_csv(csv_path: str | Path) -> KovaaKStats:
         kills=kills,
         summary=summary,
         config=config,
-        file_name=csv_path.name,
+        file_name=file_name,
     )
 
 
@@ -233,4 +240,4 @@ def _parse_wallclock(ts: str) -> datetime:
     return datetime.strptime(ts, "%H:%M:%S.%f")
 
 
-__all__ = ["KovaaKStats", "parse_stats_csv", "KILL_HEADER"]
+__all__ = ["KovaaKStats", "parse_stats_bytes", "parse_stats_csv", "KILL_HEADER"]

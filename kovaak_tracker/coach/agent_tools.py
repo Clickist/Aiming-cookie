@@ -10,12 +10,14 @@ tool 层。
 """
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, is_dataclass
+import math
+import os
+import re
 from typing import Any, Callable, Optional
 
 from .agent_kb import BY_TOPIC, KB
 from .diagnosis import CoachDiagnosis
+from .knowledge_registry import entry_ref, load_registry, query_registry
 from .knowledge import KNOWLEDGE
 from .planning import TrainingPlan
 
@@ -174,39 +176,181 @@ def schema_get_plan() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _to_jsonable(obj: Any) -> Any:
-    """Best-effort recursive dataclass -> dict so json.dumps works."""
-    if is_dataclass(obj) and not isinstance(obj, type):
-        return asdict(obj)
-    if isinstance(obj, (list, tuple)):
-        return [_to_jsonable(x) for x in obj]
-    if isinstance(obj, dict):
-        return {k: _to_jsonable(v) for k, v in obj.items()}
-    return obj
+_COMPARISON_FIELDS = (
+    "metric", "current", "baseline", "last", "self", "ref", "delta",
+    "verdict", "status", "reason", "comparable", "unit", "classification",
+)
+_META_FIELDS = (
+    "summary_type", "cm_per_360", "fps", "ball_w", "reference_label",
+    "recorded_at", "timestamp", "analysis_context", "metric_version",
+    "scenario_identity_version", "calibration_compatibility",
+    "minimum_evidence_quality", "classification",
+)
 
 
-def _diag_payload(diagnosis: CoachDiagnosis) -> dict[str, Any]:
+_MISSING = object()
+_CLAIM_LEVELS = frozenset(
+    {"measured", "deterministic_rule", "research_supported", "community_consensus", "experimental"}
+)
+_SOURCE_LEVELS = frozenset(
+    {"product_contract", "academic_peer_reviewed", "community_consensus", "personal_experience_unverified", "experimental"}
+)
+
+
+def _is_path_like(value: str) -> bool:
+    return (
+        os.path.isabs(value)
+        or value.startswith(("file://", "~/", "../", "..\\", "\\"))
+        or (
+            len(value) >= 3
+            and value[0].isalpha()
+            and value[1] == ":"
+            and value[2] in {"/", "\\"}
+        )
+    )
+
+
+def _contains_sensitive_text(value: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|"
+            r"client[_-]?secret|password|secret)\s*[:=]|\bbearer\s+\S{8,}|"
+            r"\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{8,}",
+            value,
+        )
+    )
+
+
+def _safe_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else _MISSING
+    if not isinstance(value, str):
+        return _MISSING
+    if _is_path_like(value) or _contains_sensitive_text(value):
+        return _MISSING
+    return value
+
+
+def _safe_text(value: Any) -> str:
+    safe = _safe_scalar(value)
+    return safe if isinstance(safe, str) else ""
+
+
+def _safe_string_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [
+        safe
+        for item in value
+        if (safe := _safe_scalar(item)) is not _MISSING
+        and isinstance(safe, str)
+    ]
+
+
+def _allowed_fields(data: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    result = {}
+    for key in fields:
+        if key not in data:
+            continue
+        value = _safe_scalar(data[key])
+        if value is not _MISSING:
+            result[key] = value
+    return result
+
+
+def _verification_payload(verification: Any) -> dict[str, Any]:
+    if not isinstance(verification, dict):
+        return {}
+    result = {}
+    for key in ("comparable_requirements", "success_signals"):
+        values = _safe_string_list(verification.get(key))
+        if values:
+            result[key] = values
+    insufficient = _safe_scalar(
+        verification.get("insufficient_evidence_behavior")
+    )
+    if insufficient is not _MISSING:
+        result["insufficient_evidence_behavior"] = insufficient
+    return result
+
+
+def diagnosis_payload(diagnosis: CoachDiagnosis) -> dict[str, Any]:
+    """Serialize the safe Coach explanation contract for every Python sink."""
     return {
-        "profile": _to_jsonable(diagnosis.profile),
+        "profile": {
+            "archetype_id": _safe_text(diagnosis.profile.archetype_id),
+            "label": _safe_text(diagnosis.profile.label),
+            "confidence": diagnosis.profile.confidence,
+            "secondary_tags": _safe_string_list(diagnosis.profile.secondary_tags),
+        },
         "issues": [
             {
-                "priority": i.priority, "signal": i.signal, "severity": i.severity,
-                "priority_reason": i.priority_reason,
-                "root_causes": [{"level": rc.level, "text": rc.text}
-                                for rc in i.root_causes],
-                "prescriptions": [{"scenario": p.scenario, "reason": p.reason}
-                                  for p in i.prescriptions],
+                "priority": issue.priority,
+                "signal": _safe_text(issue.signal),
+                "severity": _safe_text(issue.severity),
+                "priority_reason": _safe_text(issue.priority_reason),
+                "plain_language_meaning": _safe_text(issue.plain_language_meaning),
+                "claim_level": (
+                    issue.claim_level
+                    if issue.claim_level in _CLAIM_LEVELS
+                    else "experimental"
+                ),
+                "metric_refs": _safe_string_list(issue.metric_refs),
+                "event_refs": _safe_string_list(issue.event_refs),
+                "limitations": _safe_string_list(issue.limitations),
+                "expected_result": _safe_text(issue.expected_result),
+                "verification": _verification_payload(issue.verification),
+                "root_causes": [
+                    {
+                        "level": _safe_text(cause.level) or "symptom",
+                        "text": _safe_text(cause.text),
+                    }
+                    for cause in issue.root_causes
+                    if _safe_text(cause.text)
+                ],
+                "prescriptions": [
+                    {
+                        "scenario": _safe_text(prescription.scenario),
+                        "reason": _safe_text(prescription.reason),
+                        "cue": _safe_text(prescription.cue),
+                        "purpose": _safe_text(prescription.purpose),
+                        "target_metrics": _safe_string_list(
+                            prescription.target_metrics
+                        ),
+                        "expected_direction": _safe_string_list(
+                            prescription.expected_direction
+                        ),
+                        "retest_after": _safe_text(prescription.retest_after),
+                        "stop_or_adjust_rule": (
+                            _safe_text(prescription.stop_or_adjust_rule)
+                        ),
+                        "source_level": (
+                            prescription.source_level
+                            if prescription.source_level in _SOURCE_LEVELS
+                            else "experimental"
+                        ),
+                    }
+                    for prescription in issue.prescriptions
+                ],
             }
-            for i in diagnosis.issues
+            for issue in diagnosis.issues
         ],
-        "comparison": diagnosis.comparison or [],
-        "meta": diagnosis.meta or {},
+        "comparison": [
+            _allowed_fields(row, _COMPARISON_FIELDS)
+            for row in diagnosis.comparison or []
+            if isinstance(row, dict)
+        ],
+        "meta": _allowed_fields(diagnosis.meta, _META_FIELDS),
     }
 
 
 def make_get_diagnosis(diagnosis: CoachDiagnosis) -> Callable[[], dict[str, Any]]:
     def _handler() -> dict[str, Any]:
-        return _diag_payload(diagnosis)
+        return diagnosis_payload(diagnosis)
     return _handler
 
 
@@ -233,24 +377,11 @@ def make_list_signals(diagnosis: CoachDiagnosis) -> Callable[[], dict[str, Any]]
 
 def make_list_knowledge_topics() -> Callable[[], dict[str, Any]]:
     def _handler() -> dict[str, Any]:
-        # 按 fetch_* 分桶给出 topic key（避免 LLM 瞎猜导致反复失败）
-        kinematics = sorted({
-            c["topic"] for c in KB
-            if c["source_ref"].startswith("aim-kinematics-research.md")
-        })
-        prescription = sorted({
-            c["topic"] for c in KB
-            if c["source_ref"].startswith("coach-prescription-manual.md")
-        })
-        theory = sorted({
-            c["topic"] for c in KB
-            if c["source_ref"].startswith("coach-theory-foundation.md")
-        })
-        community = sorted({
-            c["topic"] for c in KB
-            if c["source_ref"].startswith(("coach-community-frontier.md",
-                                           "YouTube"))
-        })
+        # Keep legacy buckets while deriving every topic from the Registry.
+        kinematics = _topics_for_kind("kinematics")
+        prescription = _topics_for_kind("prescription")
+        theory = _topics_for_kind("theory")
+        community = _topics_for_kind("community")
         return {
             "kinematics_topics": kinematics,
             "prescription_topics": prescription,
@@ -262,48 +393,95 @@ def make_list_knowledge_topics() -> Callable[[], dict[str, Any]]:
 
 def make_fetch_knowledge() -> Callable[[str], dict[str, Any]]:
     def _handler(signal: str) -> dict[str, Any]:
-        k = KNOWLEDGE.get(signal)
-        if not k:
+        data = load_registry()
+        canonical = data["signal_aliases"].get(signal, signal)
+        selected = query_registry(data, issue_signal=canonical)
+        if not selected:
             return {
                 "error": "unknown signal",
                 "valid_signals": sorted(KNOWLEDGE.keys()),
             }
-        return {"signal": signal, "community": k.get("community", ""),
-                "cues": k.get("cues", [])}
+        legacy = KNOWLEDGE.get(canonical, {})
+        return {
+            "signal": canonical,
+            "community": legacy.get("community", ""),
+            "cues": legacy.get("cues", []),
+            "registry_version": data["registry_version"],
+            "entries": [_entry_payload(entry) for entry in selected],
+        }
     return _handler
 
 
-def _make_fetch_by_source(prefixes: tuple[str, ...], tool_name: str) -> Callable[[str], dict[str, Any]]:
+def _matches_kind(chunk: dict[str, Any], kind: str) -> bool:
+    if kind == "kinematics":
+        return chunk["category"] in {
+            "metric_definition", "kinematic_mechanism", "diagnostic_scope",
+            "limitation_counterevidence", "research",
+        }
+    if kind == "prescription":
+        return chunk["category"] in {"training_cue", "prescription_verification"}
+    if kind == "theory":
+        return chunk["category"] in {"practice_structure", "research", "kinematic_mechanism"}
+    return chunk["source_level"] in {
+        "community_consensus", "personal_experience_unverified", "experimental",
+    }
+
+
+def _topics_for_kind(kind: str) -> list[str]:
+    return sorted({topic for topic, chunks in BY_TOPIC.items() if any(
+        _matches_kind(chunk, kind) for chunk in chunks
+    )})
+
+
+def _entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "entry_ref": entry_ref(entry),
+        "entry_version": entry["entry_version"],
+        "content": entry["text"],
+        "sources": list(entry["sources"]),
+        "max_claim_level": entry["max_claim_level"],
+        "limitations": list(entry["limitations"]),
+        "counterevidence": list(entry["counterevidence"]),
+        "supported_uses": list(entry["supported_uses"]),
+    }
+
+
+def _make_fetch_by_source(kind: str, tool_name: str) -> Callable[[str], dict[str, Any]]:
     def _handler(topic: str) -> dict[str, Any]:
-        chunks = [c for c in BY_TOPIC.get(topic, []) if c["source_ref"].startswith(prefixes)]
+        chunks = [c for c in BY_TOPIC.get(topic, []) if _matches_kind(c, kind)]
         if not chunks:
-            valid = sorted({c["topic"] for c in KB if c["source_ref"].startswith(prefixes)})
+            valid = _topics_for_kind(kind)
             return {"error": "unknown topic", "tool": tool_name, "valid_topics": valid}
         c = chunks[0]
         return {
-            "topic": c["topic"],
+            "topic": topic,
             "content": c["text"],
             "source_ref": c["source_ref"],
             "source_level": c["source_level"],
+            "entry_ref": c["entry_ref"],
+            "entry_version": c["entry_version"],
+            "registry_version": c["registry_version"],
+            "max_claim_level": c["max_claim_level"],
+            "limitations": c["limitations"],
+            "counterevidence": c["counterevidence"],
         }
     return _handler
 
 
 def make_fetch_kinematics() -> Callable[[str], dict[str, Any]]:
-    return _make_fetch_by_source(("aim-kinematics-research.md",), "coach_fetch_kinematics")
+    return _make_fetch_by_source("kinematics", "coach_fetch_kinematics")
 
 
 def make_fetch_prescription() -> Callable[[str], dict[str, Any]]:
-    return _make_fetch_by_source(("coach-prescription-manual.md",), "coach_fetch_prescription")
+    return _make_fetch_by_source("prescription", "coach_fetch_prescription")
 
 
 def make_fetch_coaching_theory() -> Callable[[str], dict[str, Any]]:
-    return _make_fetch_by_source(("coach-theory-foundation.md",), "coach_fetch_coaching_theory")
+    return _make_fetch_by_source("theory", "coach_fetch_coaching_theory")
 
 
 def make_fetch_community_example() -> Callable[[str], dict[str, Any]]:
-    return _make_fetch_by_source(
-        ("coach-community-frontier.md", "YouTube"), "coach_fetch_community_example")
+    return _make_fetch_by_source("community", "coach_fetch_community_example")
 
 
 # Progress / plan context binders -------------------------------------------
@@ -422,6 +600,7 @@ def build_plan_tools(plan: TrainingPlan) -> ToolBundle:
 
 __all__ = [
     "ToolBundle",
+    "diagnosis_payload",
     "build_diagnosis_tools",
     "build_progress_tools",
     "build_plan_tools",

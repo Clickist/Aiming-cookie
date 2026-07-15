@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Literal, Optional
 
 from .agent_tools import (
@@ -28,6 +28,7 @@ from .agent_tools import (
     build_diagnosis_tools,
     build_plan_tools,
     build_progress_tools,
+    diagnosis_payload,
 )
 from .diagnosis import CoachDiagnosis
 from .planning import TrainingPlan
@@ -264,34 +265,8 @@ def run_agent_loop(
 # ---------------------------------------------------------------------------
 
 
-def _to_jsonable(obj: Any) -> Any:
-    if is_dataclass(obj) and not isinstance(obj, type):
-        return asdict(obj)
-    if isinstance(obj, (list, tuple)):
-        return [_to_jsonable(x) for x in obj]
-    if isinstance(obj, dict):
-        return {k: _to_jsonable(v) for k, v in obj.items()}
-    return obj
-
-
 def _serialize_diagnosis(diagnosis: CoachDiagnosis) -> str:
-    payload = {
-        "profile": _to_jsonable(diagnosis.profile),
-        "issues": [
-            {
-                "priority": i.priority, "signal": i.signal, "severity": i.severity,
-                "priority_reason": i.priority_reason,
-                "root_causes": [{"level": rc.level, "text": rc.text}
-                                for rc in i.root_causes],
-                "prescriptions": [{"scenario": p.scenario, "reason": p.reason}
-                                  for p in i.prescriptions],
-            }
-            for i in diagnosis.issues
-        ],
-        "comparison": diagnosis.comparison or [],
-        "meta": diagnosis.meta or {},
-    }
-    return json.dumps(payload, ensure_ascii=False)
+    return json.dumps(diagnosis_payload(diagnosis), ensure_ascii=False)
 
 
 def _serialize_progress(trend: dict, comparison: list[dict]) -> str:

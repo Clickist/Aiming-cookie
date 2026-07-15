@@ -27,12 +27,67 @@ def test_build_report_llm_failure_degrades():
     assert any("讲解不可用" in n for n in r.notes)
 
 
+def test_sparc_v2_does_not_use_the_legacy_absolute_threshold():
+    from kovaak_tracker.advice import advise
+
+    findings = advise({
+        "sparc": {
+            "med": -7.0,
+            "metric_version": "native_flicking.sparc.v2",
+        },
+    })
+
+    assert all(finding.signal != "sparc low" for finding in findings)
+
+
 def test_build_report_with_reference():
     ref = _summary()
     ref["decel_frac"] = {"med": 0.45}
     r = build_report(_summary(), ref, {}, backend=None)
     assert r.diagnosis.comparison is not None
     assert len(r.diagnosis.comparison) > 0
+
+
+def test_uncalibrated_threshold_finding_is_not_formal_severity():
+    """Initial absolute thresholds remain hypotheses until product calibration."""
+    from kovaak_tracker.advice import advise
+
+    findings = advise({"sparc": {"med": -7.0}})
+    assert len(findings) == 1
+    assert findings[0].severity == "info"
+    assert findings[0].claim_level == "experimental"
+    assert "threshold_requires_product_calibration" in findings[0].limitations
+    assert "张力释放抖动" not in findings[0].diagnosis
+    assert "不直接测量握持张力" in findings[0].diagnosis
+    assert findings[0].verification["comparable_requirements"] == [
+        "相同场景",
+        "相同设置",
+        "相同证据质量",
+    ]
+
+
+def test_reference_comparison_does_not_claim_measured_physical_cause():
+    """Relative performance gaps must not be narrated as measured body causes."""
+    from kovaak_tracker.advice import advise
+
+    findings = advise(
+        {
+            "peak_speed_deg": {"med": 500.0},
+            "throughput": {"med": 2.0},
+        },
+        {
+            "peak_speed_deg": {"med": 1000.0},
+            "throughput": {"med": 4.0},
+        },
+    )
+
+    assert {finding.signal for finding in findings} == {
+        "peak_speed below reference",
+        "throughput below reference",
+    }
+    assert all(finding.claim_level == "experimental" for finding in findings)
+    assert all("发力不足" not in finding.diagnosis for finding in findings)
+    assert all("身体原因" in finding.diagnosis for finding in findings)
 
 
 def test_compare_table_decel_frac_pathological_not_better():
@@ -135,4 +190,3 @@ def test_build_progress_report_plan_narration_best_effort(tmp_path):
     rep = build_progress_report(p, {"linearity": {"med": 0.18}}, backend=_Boom())
     assert rep.plan is not None
     assert any("不可用" in n for n in rep.notes)
-

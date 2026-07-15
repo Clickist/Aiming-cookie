@@ -67,3 +67,61 @@ def test_unknown_signal_falls_back_to_symptom_only():
     d = build_diagnosis(findings, {}, None, {})
     assert len(d.issues[0].root_causes) == 1
     assert d.issues[0].root_causes[0].level == "symptom"
+
+
+def test_issue_exposes_explanation_and_training_verification_contract():
+    finding = Finding(
+        signal="sparc low",
+        severity="info",
+        diagnosis="减速速度轮廓含较多高频变化",
+        prescriptions=[
+            Prescription(
+                scenario="pasu",
+                reason="练习连续减速",
+                cue="接近目标时让速度连续下降，不要硬停",
+                purpose="减少减速末段的速度波动",
+                target_metrics=["sparc", "reverse_ratio"],
+                expected_direction=["sparc ↑", "reverse_ratio ↓"],
+                retest_after="同场景完成一组后复测",
+                stop_or_adjust_rule="若准确率明显下降，降低速度或放大目标",
+                source_level="community_consensus",
+            )
+        ],
+        claim_level="experimental",
+        metric_refs=["sparc", "reverse_ratio"],
+        limitations=["threshold_requires_product_calibration"],
+        plain_language_meaning="你的减速过程不够连续",
+        expected_result="减速更连续，反向修正减少",
+        verification={
+            "success_signals": ["sparc ↑", "reverse_ratio ↓"],
+            "insufficient_evidence_behavior": "没有足够样本时只记录，不判停滞",
+        },
+    )
+    diagnosis = build_diagnosis([finding], {}, None, {})
+    issue = diagnosis.issues[0]
+
+    assert issue.claim_level == "experimental"
+    assert issue.priority_reason == "[experimental] 观察项排序第 1"
+    assert issue.metric_refs == ["sparc", "reverse_ratio"]
+    assert issue.plain_language_meaning == "你的减速过程不够连续"
+    assert issue.expected_result == "减速更连续，反向修正减少"
+    assert issue.verification["success_signals"] == ["sparc ↑", "reverse_ratio ↓"]
+    prescription = issue.prescriptions[0]
+    assert prescription.target_metrics == ["sparc", "reverse_ratio"]
+    assert prescription.expected_direction == ["sparc ↑", "reverse_ratio ↓"]
+    assert prescription.source_level == "community_consensus"
+
+
+def test_profile_and_root_cause_labels_stay_observational():
+    finding = Finding(
+        signal="peak_speed below reference",
+        severity="info",
+        diagnosis="峰值速度低于可比参考，身体原因未被输入数据直接测量",
+        claim_level="experimental",
+    )
+
+    diagnosis = build_diagnosis([finding], {}, None, {})
+
+    assert diagnosis.profile.label == "参考速度效率偏低型"
+    assert "发力不足" not in str(diagnosis.issues[0].root_causes)
+    assert "未被输入数据直接测量" in diagnosis.issues[0].root_causes[1].text

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 from kovaak_tracker.coach.agent import (
@@ -12,7 +13,8 @@ from kovaak_tracker.coach.agent import (
     DIAGNOSIS_SYSTEM_PROMPT,
     DEFAULT_MAX_TURNS,
 )
-from kovaak_tracker.coach.agent_tools import build_diagnosis_tools
+from kovaak_tracker.advice import Prescription
+from kovaak_tracker.coach.agent_tools import build_diagnosis_tools, diagnosis_payload
 from kovaak_tracker.coach.diagnosis import (
     CoachDiagnosis, DiagnosisIssue, ProfileMatch, RootCause,
 )
@@ -70,6 +72,98 @@ def _diag() -> CoachDiagnosis:
     )
 
 
+def _contract_diag() -> CoachDiagnosis:
+    return CoachDiagnosis(
+        profile=ProfileMatch("decel_jitter", "减速抖动观察型", 0.8, []),
+        issues=[DiagnosisIssue(
+            signal="sparc low",
+            severity="info",
+            priority=1,
+            priority_reason="[experimental] 观察项排序第 1",
+            root_causes=[RootCause("symptom", "减速轮廓存在较多快速波动")],
+            prescriptions=[Prescription(
+                scenario="pasu",
+                reason="练习连续减速",
+                cue="接近目标时让速度连续下降，不要硬停",
+                purpose="减少减速末段的速度波动",
+                target_metrics=["sparc", "reverse_ratio"],
+                expected_direction=["sparc ↑", "reverse_ratio ↓"],
+                retest_after="同场景完成一组后复测",
+                stop_or_adjust_rule="若准确率明显下降，降低速度或放大目标",
+                source_level="community_consensus",
+            )],
+            plain_language_meaning="减速过程不够连续",
+            claim_level="experimental",
+            metric_refs=["sparc", "reverse_ratio"],
+            event_refs=["flick:37"],
+            limitations=["threshold_requires_product_calibration"],
+            expected_result="减速更连续，反向修正减少",
+            verification={
+                "comparable_requirements": ["相同场景", "相同设置"],
+                "success_signals": ["sparc ↑", "reverse_ratio ↓"],
+                "insufficient_evidence_behavior": "样本不足时只记录",
+                "raw_payload": {"dx": [123456]},
+                "api_key": "sk-secret-sentinel",
+                "source_path": "/Users/clickist/private.trace",
+            },
+        )],
+        summary={"raw_dx": [123456]},
+        comparison=[{
+            "metric": "sparc",
+            "status": "below_reference",
+            "reason": "sk-secret-in-allowed-field",
+            "api_key": "sk-secret-sentinel",
+            "source_path": "/Users/clickist/private.trace",
+        }],
+        meta={
+            "cm_per_360": 48.0,
+            "fps": 240.0,
+            "reference_label": "self baseline",
+            "analysis_context": {"raw_dx": [123456]},
+            "classification": "/Users/clickist/private.trace",
+            "raw_payload": {"dx": [123456]},
+            "api_key": "sk-secret-sentinel",
+            "source_path": "/Users/clickist/private.trace",
+        },
+    )
+
+
+def _assert_explanation_contract(payload: dict[str, Any]) -> None:
+    issue = payload["issues"][0]
+    assert issue["plain_language_meaning"] == "减速过程不够连续"
+    assert issue["claim_level"] == "experimental"
+    assert issue["metric_refs"] == ["sparc", "reverse_ratio"]
+    assert issue["event_refs"] == ["flick:37"]
+    assert issue["limitations"] == ["threshold_requires_product_calibration"]
+    assert issue["expected_result"] == "减速更连续，反向修正减少"
+    assert issue["verification"] == {
+        "comparable_requirements": ["相同场景", "相同设置"],
+        "success_signals": ["sparc ↑", "reverse_ratio ↓"],
+        "insufficient_evidence_behavior": "样本不足时只记录",
+    }
+
+    prescription = issue["prescriptions"][0]
+    assert prescription == {
+        "scenario": "pasu",
+        "reason": "练习连续减速",
+        "cue": "接近目标时让速度连续下降，不要硬停",
+        "purpose": "减少减速末段的速度波动",
+        "target_metrics": ["sparc", "reverse_ratio"],
+        "expected_direction": ["sparc ↑", "reverse_ratio ↓"],
+        "retest_after": "同场景完成一组后复测",
+        "stop_or_adjust_rule": "若准确率明显下降，降低速度或放大目标",
+        "source_level": "community_consensus",
+    }
+
+    serialized = json.dumps(payload, ensure_ascii=False)
+    for forbidden in (
+        "raw_payload", "raw_dx", "123456", "api_key",
+        "sk-secret-sentinel", "sk-secret-in-allowed-field",
+        "source_path", "/Users/clickist/private.trace",
+    ):
+        assert forbidden not in serialized
+
+
 # ---------------------------------------------------------------------------
 # Test 1: 1 tool call → result fed back → end_turn with narration
 # ---------------------------------------------------------------------------
@@ -104,6 +198,76 @@ def test_one_tool_call_then_end():
     asst_tool_uses = [b for b in asst["content"] if b.get("type") == "tool_use"]
     assert len(asst_tool_uses) == 1
     assert asst_tool_uses[0]["id"] == "t1"
+
+
+def test_narrate_diagnosis_payload_preserves_safe_explanation_contract():
+    backend = _ScriptedBackend([_end_resp("讲解完成。")])
+
+    out = narrate_diagnosis(_contract_diag(), backend, max_turns=1)
+
+    assert out == "讲解完成。"
+    payload = json.loads(backend.calls[0]["messages"][0]["content"])
+    _assert_explanation_contract(payload)
+
+
+def test_get_diagnosis_tool_preserves_safe_explanation_contract():
+    tools = build_diagnosis_tools(_contract_diag())
+
+    payload = tools.dispatch("coach_get_diagnosis", {})
+
+    _assert_explanation_contract(payload)
+
+
+def test_python_sink_filters_sensitive_explanation_fields_and_fails_closed():
+    base = _contract_diag()
+    issue = replace(
+        base.issues[0],
+        plain_language_meaning="access_token=access-token-secret-sentinel",
+        claim_level="unknown_weak_level",
+        expected_result="../private-result.json",
+        root_causes=[RootCause("physical", "Bearer sk-live-secret-sentinel")],
+        prescriptions=[Prescription(
+            scenario="~/private-scenario.json",
+            reason="api_key=api-key-secret-sentinel",
+            cue="file:///private/cue.txt",
+            purpose="refresh_token=refresh-token-secret-sentinel",
+            target_metrics=["sparc", "../private-metric.json"],
+            expected_direction=["sparc ↑", "Bearer sk-direction-secret"],
+            retest_after="/private/retest.txt",
+            stop_or_adjust_rule="secret=stop-secret-sentinel",
+            source_level="unknown_weak_level",
+        )],
+    )
+    diagnosis = replace(
+        base,
+        profile=ProfileMatch(
+            "decel_jitter",
+            "api_key=profile-secret-sentinel",
+            0.8,
+            ["safe-tag", "../private-tag.json"],
+        ),
+        issues=[issue],
+    )
+
+    payload = diagnosis_payload(diagnosis)
+    serialized = json.dumps(payload, ensure_ascii=False)
+
+    assert payload["issues"][0]["claim_level"] == "experimental"
+    assert payload["issues"][0]["prescriptions"][0]["source_level"] == "experimental"
+    assert payload["profile"]["secondary_tags"] == ["safe-tag"]
+    for forbidden in (
+        "access-token-secret-sentinel",
+        "sk-live-secret-sentinel",
+        "api-key-secret-sentinel",
+        "refresh-token-secret-sentinel",
+        "stop-secret-sentinel",
+        "profile-secret-sentinel",
+        "private-result.json",
+        "private-scenario.json",
+        "private-metric.json",
+        "private-tag.json",
+    ):
+        assert forbidden not in serialized
 
 
 def test_narrate_diagnosis_end_to_end_mock():

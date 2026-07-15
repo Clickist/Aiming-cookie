@@ -2,7 +2,20 @@
 analyze_flicking_reference. End-to-end needs a real video; here we assert the
 function exists and reuses valley segmentation via a monkeypatched trajectory."""
 import inspect
+
+import pytest
 import kovaak_tracker.pan_tracker as P
+
+
+def test_video_sparc_is_invariant_to_uniform_time_scaling():
+    import numpy as np
+    from kovaak_tracker.flicking import _segment_sparc
+
+    profile = np.asarray([2.0, 1.0, 0.0, 1.0, 2.0, 1.0, 0.0, 1.0])
+
+    assert _segment_sparc(profile, 1_000.0) == pytest.approx(
+        _segment_sparc(profile, 100.0)
+    )
 
 
 def test_function_exists_and_signature():
@@ -41,6 +54,44 @@ def test_summary_shape_matches_reference(monkeypatch):
     # same shape as reference: metric -> {med, p75, p90} OR None
     assert "flick_count" in summary
     assert isinstance(summary.get("linearity", None), (dict, type(None)))
+
+
+def test_summary_uses_supplied_stats_without_reopening_csv(monkeypatch):
+    import numpy as np, pandas as pd
+
+    df = pd.DataFrame({
+        "frame": np.arange(2),
+        "time_s": np.array([0.0, 1 / 60]),
+        "ball_x": np.array([0.0, 1.0]),
+        "ball_y": np.array([0.0, 0.0]),
+    })
+    monkeypatch.setattr(
+        P, "parse_stats_csv",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("CSV path reopened")),
+    )
+    monkeypatch.setattr(
+        P, "compute_pan_trajectory",
+        lambda *a, **k: (df, np.array([])) if k.get("return_widths") else df,
+    )
+    monkeypatch.setattr(
+        P, "lock_challenge_window",
+        lambda *a, **k: type("W", (), {"start_frame": 0, "end_frame": 1})(),
+    )
+    monkeypatch.setattr(
+        P, "get_video_metadata",
+        lambda *a, **k: type("M", (), {"fps": 60.0, "width": 1920})(),
+    )
+
+    class FrozenStats:
+        kills = pd.DataFrame({"time_s": [1.0]})
+
+    summary = P.analyze_flicking_fair_summary(
+        "v.mp4",
+        "/source/changed.csv",
+        stats=FrozenStats(),
+    )
+
+    assert "flick_count" in summary
 
 
 # ---------------------------------------------------------------------------

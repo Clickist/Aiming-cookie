@@ -160,7 +160,7 @@ def _segment_sparc(speed: np.ndarray, fps: float, amp_th: float = 0.05) -> float
     segment (the bell-shaped speed curve), matching the metric's design — a
     decel-only half-bell has a ragged spectrum that inflates the arc length.
     Returns the negative arc length of the DC-normalized speed-magnitude
-    spectrum; closer to 0 = smoother. Frequency-domain so dimensionless and
+    spectrum on a cutoff-normalized frequency axis; closer to 0 = smoother. Frequency-domain so dimensionless and
     speed-fair — the gold-standard fix for the decel_smoothness-vs-peak-speed
     coupling (§6.1). NaN for segments too short to resolve a spectrum.
 
@@ -188,7 +188,13 @@ def _segment_sparc(speed: np.ndarray, fps: float, amp_th: float = 0.05) -> float
     fc = int(above.max())
     f_v = freqs[1:fc + 1]
     V_v = spectrum[1:fc + 1]
-    return float(-np.sum(np.sqrt(np.diff(f_v) ** 2 + np.diff(V_v) ** 2)))
+    frequency_span = float(f_v[-1] - f_v[0])
+    if frequency_span <= 0:
+        return float("nan")
+    normalized_f = (f_v - f_v[0]) / frequency_span
+    return float(-np.sum(np.sqrt(
+        np.diff(normalized_f) ** 2 + np.diff(V_v) ** 2
+    )))
 
 
 def _submovement_structure(
@@ -208,8 +214,8 @@ def _submovement_structure(
     peak_v: high = fused/overlapping (fluid), low = discrete (two-stage).
     **命名注**：实为 *trough depth ratio*（谷深 / 主峰速度），非 Novak 2002
     time-overlap 的字面实现——命名沿用便于下游消费，但语义是"减速段谷有多深"
-    （高 = 两阶段界限清晰、低 = 流体融合），与 tracking PTC 同型的"实现合理
-    但名字误导"。Returns ``(corrective_count, overlap)``; overlap is NaN when
+    （高 = 谷浅、流体融合；低 = 谷深、两阶段界限清晰）。Returns
+    ``(corrective_count, overlap)``; overlap is NaN when
     no corrective is found (a single clean bell = fully fluid).
     """
     if peak_v <= 0 or not (0 <= peak_idx < len(speed)):
