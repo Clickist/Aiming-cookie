@@ -18,6 +18,20 @@ export async function loadPiAi(): Promise<Record<string, unknown>> {
   return (await import(sourceModule("packages", "ai", "src", "index.ts"))) as Record<string, unknown>;
 }
 
+export async function loadPiProvidersAll(): Promise<Record<string, unknown>> {
+  return (await import(sourceModule("packages", "ai", "src", "providers", "all.ts"))) as Record<
+    string,
+    unknown
+  >;
+}
+
+export async function loadPiOpenAiCompletions(): Promise<Record<string, unknown>> {
+  return (await import(sourceModule("packages", "ai", "src", "api", "openai-completions.ts"))) as Record<
+    string,
+    unknown
+  >;
+}
+
 export async function loadPiAgent(): Promise<Record<string, unknown>> {
   return (await import(sourceModule("packages", "agent", "src", "index.ts"))) as Record<string, unknown>;
 }

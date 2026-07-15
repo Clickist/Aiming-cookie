@@ -1,3 +1,4 @@
+"""Legacy fixed-CNY budget helper; active selected-provider flows do not call it."""
 from __future__ import annotations
 
 import datetime

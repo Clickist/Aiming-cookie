@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Optional
 
 import aiosqlite
@@ -9,7 +10,7 @@ from .config import DB_PATH
 
 _conn: Optional[aiosqlite.Connection] = None
 
-TARGET_USER_VERSION = 8
+TARGET_USER_VERSION = 12
 
 
 async def get_conn() -> aiosqlite.Connection:
@@ -17,6 +18,7 @@ async def get_conn() -> aiosqlite.Connection:
     if _conn is None:
         _conn = await aiosqlite.connect(DB_PATH)
         _conn.row_factory = aiosqlite.Row
+        await _conn.execute("PRAGMA foreign_keys=ON")
         await _conn.execute("PRAGMA journal_mode=WAL")
         await _conn.commit()
     return _conn
@@ -149,6 +151,99 @@ CREATE TABLE IF NOT EXISTS benchmark_records (
 );
 CREATE INDEX IF NOT EXISTS idx_benchmark_records_user_observed
     ON benchmark_records(user_id, observed_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS training_plans (
+    plan_id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('draft', 'saved', 'active', 'paused')),
+    current_version INTEGER NOT NULL CHECK(current_version >= 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_training_plans_owner_updated
+    ON training_plans(owner_id, updated_at DESC, plan_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_training_plans_one_active_per_owner
+    ON training_plans(owner_id) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS training_plan_versions (
+    plan_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    plan_payload_json TEXT NOT NULL,
+    adjustment_reason TEXT,
+    evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+    verification_targets_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(plan_id, version),
+    FOREIGN KEY (plan_id) REFERENCES training_plans(plan_id)
+);
+CREATE INDEX IF NOT EXISTS idx_training_plan_versions_plan_version
+    ON training_plan_versions(plan_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS training_plan_transitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    event TEXT NOT NULL CHECK(event IN ('generated', 'saved', 'activated', 'paused', 'adjusted')),
+    from_status TEXT,
+    to_status TEXT NOT NULL CHECK(to_status IN ('draft', 'saved', 'active', 'paused')),
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (plan_id, version) REFERENCES training_plan_versions(plan_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_training_plan_transitions_owner_plan
+    ON training_plan_transitions(owner_id, plan_id, id);
+
+CREATE TABLE IF NOT EXISTS coach_product_commands (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_ref TEXT NOT NULL UNIQUE,
+    command_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    thread_id INTEGER,
+    user_message_ref TEXT,
+    command_name TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    authorization_source TEXT NOT NULL,
+    idempotency_key TEXT,
+    parameters_digest TEXT,
+    safe_parameters_summary_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL,
+    result_ref TEXT,
+    ui_event_json TEXT,
+    warning_code TEXT,
+    result_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_coach_product_commands_owner_created
+    ON coach_product_commands(owner_id, audit_id DESC);
+
+CREATE TABLE IF NOT EXISTS coach_command_idempotency (
+    owner_id TEXT NOT NULL,
+    command_name TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    parameters_digest TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    latest_audit_ref TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(owner_id, command_name, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS coach_command_confirmations (
+    confirmation_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    command_name TEXT NOT NULL,
+    parameters_digest TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    safe_summary_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'consumed', 'cancelled')),
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_coach_command_confirmations_owner_status
+    ON coach_command_confirmations(owner_id, status, created_at DESC);
 """
 
 _V1_MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -180,6 +275,143 @@ _V8_COACH_COLUMNS: tuple[tuple[str, str], ...] = (
     ("context_json", "TEXT"),
 )
 
+_V9_PROVIDER_PROFILE_TABLE = """
+CREATE TABLE IF NOT EXISTS provider_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('builtin', 'custom_openai_compatible')),
+    base_url TEXT,
+    model_id TEXT NOT NULL,
+    api_key TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+_V9_PROVIDER_DEFAULT_INDEX = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_profiles_owner_default
+    ON provider_profiles(owner_id) WHERE is_default = 1
+"""
+
+_V10_PROVIDER_CREDENTIALS_TABLE = """
+CREATE TABLE IF NOT EXISTS provider_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id TEXT NOT NULL,
+    profile_id INTEGER NOT NULL UNIQUE,
+    credential_type TEXT NOT NULL,
+    credential_json TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    needs_reauth INTEGER NOT NULL DEFAULT 0 CHECK(needs_reauth IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (profile_id) REFERENCES provider_profiles(id) ON DELETE CASCADE
+)
+"""
+
+_V10_PROVIDER_CREDENTIALS_OWNER_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_owner_profile
+    ON provider_credentials(owner_id, profile_id)
+"""
+
+
+_V11_TRAINING_PLAN_TABLES = """
+CREATE TABLE IF NOT EXISTS training_plans (
+    plan_id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('draft', 'saved', 'active', 'paused')),
+    current_version INTEGER NOT NULL CHECK(current_version >= 1),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS training_plan_versions (
+    plan_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    plan_payload_json TEXT NOT NULL,
+    adjustment_reason TEXT,
+    evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+    verification_targets_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(plan_id, version),
+    FOREIGN KEY (plan_id) REFERENCES training_plans(plan_id)
+);
+CREATE TABLE IF NOT EXISTS training_plan_transitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    event TEXT NOT NULL CHECK(event IN ('generated', 'saved', 'activated', 'paused', 'adjusted')),
+    from_status TEXT,
+    to_status TEXT NOT NULL CHECK(to_status IN ('draft', 'saved', 'active', 'paused')),
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (plan_id, version) REFERENCES training_plan_versions(plan_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_training_plans_owner_updated
+    ON training_plans(owner_id, updated_at DESC, plan_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_training_plans_one_active_per_owner
+    ON training_plans(owner_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_training_plan_versions_plan_version
+    ON training_plan_versions(plan_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_training_plan_transitions_owner_plan
+    ON training_plan_transitions(owner_id, plan_id, id);
+"""
+
+
+_V12_COACH_COMMAND_TABLES = """
+CREATE TABLE IF NOT EXISTS coach_product_commands (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_ref TEXT NOT NULL UNIQUE,
+    command_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    thread_id INTEGER,
+    user_message_ref TEXT,
+    command_name TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    authorization_source TEXT NOT NULL,
+    idempotency_key TEXT,
+    parameters_digest TEXT,
+    safe_parameters_summary_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL,
+    result_ref TEXT,
+    ui_event_json TEXT,
+    warning_code TEXT,
+    result_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS coach_command_confirmations (
+    confirmation_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    command_name TEXT NOT NULL,
+    parameters_digest TEXT NOT NULL,
+    risk TEXT NOT NULL,
+    safe_summary_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'consumed', 'cancelled')),
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_coach_product_commands_owner_created
+    ON coach_product_commands(owner_id, audit_id DESC);
+DROP INDEX IF EXISTS idx_coach_product_commands_idempotency;
+CREATE TABLE IF NOT EXISTS coach_command_idempotency (
+    owner_id TEXT NOT NULL,
+    command_name TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    parameters_digest TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    latest_audit_ref TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(owner_id, command_name, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_coach_command_confirmations_owner_status
+    ON coach_command_confirmations(owner_id, status, created_at DESC);
+"""
+
 
 async def init_schema() -> None:
     conn = await get_conn()
@@ -197,6 +429,10 @@ async def init_schema() -> None:
 
     if user_version >= TARGET_USER_VERSION:
         await _migrate_v3_coach_messages_legacy_id(conn)
+        await _migrate_v9_provider_profiles(conn)
+        await _migrate_v10_provider_credentials(conn)
+        await _migrate_v11_training_plans(conn)
+        await _migrate_v12_coach_commands(conn)
         await conn.commit()
         return
 
@@ -216,11 +452,79 @@ async def init_schema() -> None:
         if user_version < 8:
             for col, col_def in _V8_COACH_COLUMNS:
                 await _migrate_add_column_if_missing(conn, "coach_messages", col, col_def)
+        if user_version < 9:
+            await _migrate_v9_provider_profiles(conn)
+        if user_version < 10:
+            await _migrate_v10_provider_credentials(conn)
+        if user_version < 11:
+            await _migrate_v11_training_plans(conn)
+        if user_version < 12:
+            await _migrate_v12_coach_commands(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
         await conn.execute("ROLLBACK")
         raise
+
+
+async def _migrate_v9_provider_profiles(conn: aiosqlite.Connection) -> None:
+    """v8 → v9: owner-scoped local Provider profiles and one default per owner."""
+    await conn.execute(_V9_PROVIDER_PROFILE_TABLE)
+    await conn.execute(_V9_PROVIDER_DEFAULT_INDEX)
+
+
+async def _migrate_v10_provider_credentials(conn: aiosqlite.Connection) -> None:
+    """v9 → v10: completed generic credentials become the only truth source."""
+    await conn.execute(_V10_PROVIDER_CREDENTIALS_TABLE)
+    await conn.execute(_V10_PROVIDER_CREDENTIALS_OWNER_INDEX)
+
+    cur = await conn.execute(
+        "SELECT id, owner_id, api_key FROM provider_profiles "
+        "WHERE api_key IS NOT NULL AND TRIM(api_key) <> '' ORDER BY id"
+    )
+    for row in await cur.fetchall():
+        credential = json.dumps(
+            {"type": "api_key", "key": row["api_key"]},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        await conn.execute(
+            "INSERT INTO provider_credentials(owner_id, profile_id, credential_type, "
+            "credential_json, revision, needs_reauth) VALUES(?, ?, 'api_key', ?, 1, 0) "
+            "ON CONFLICT(profile_id) DO NOTHING",
+            (row["owner_id"], row["id"], credential),
+        )
+
+    # Compatibility column remains in place for older code/readers, but must
+    # never remain a second credential source after backfill.
+    await conn.execute("UPDATE provider_profiles SET api_key=NULL WHERE api_key IS NOT NULL")
+
+
+async def _migrate_v11_training_plans(conn: aiosqlite.Connection) -> None:
+    """v10 → v11: immutable owner-scoped Training Plan persistence."""
+    await _execute_transactional_script(conn, _V11_TRAINING_PLAN_TABLES)
+
+
+async def _migrate_v12_coach_commands(conn: aiosqlite.Connection) -> None:
+    """v11 → v12: persistent Coach command audit, idempotency and confirmations."""
+    await _execute_transactional_script(conn, _V12_COACH_COMMAND_TABLES)
+
+
+async def _execute_transactional_script(
+    conn: aiosqlite.Connection,
+    script: str,
+) -> None:
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if not sqlite3.complete_statement(statement):
+            continue
+        sql = statement.strip()
+        statement = ""
+        if sql:
+            await conn.execute(sql)
+    if statement.strip():
+        raise ValueError("incomplete migration SQL statement")
 
 
 async def _migrate_add_column_if_missing(

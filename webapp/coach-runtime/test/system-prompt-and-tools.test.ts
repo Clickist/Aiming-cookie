@@ -55,3 +55,16 @@ test("analysis tool returns the exact canonical diagnostic context JSON", async 
   assert.equal(result.content[0]?.text, context);
   assert.equal(result.details.context_schema, "coach_diagnostic_context.v1");
 });
+
+test("analysis tool rejects invalid, wrong-schema and oversized input without echoing it", async () => {
+  for (const input of [
+    "not-json-secret",
+    JSON.stringify({ schema_version: "other.v1", secret: "wrong-schema-secret" }),
+    JSON.stringify({ schema_version: "coach_diagnostic_context.v1", value: "x".repeat(70 * 1024) }),
+  ]) {
+    const result = await createAnalysisSummaryTool(input).execute();
+    assert.equal(result.details.has_analysis, false);
+    assert.equal(result.content[0]?.text, "当前没有可用的分析摘要。");
+    assert.ok(!result.content[0]?.text.includes("secret"));
+  }
+});

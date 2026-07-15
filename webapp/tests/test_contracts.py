@@ -284,9 +284,12 @@ def test_build_analysis_result_v2_supports_explicit_input_modes(input_mode: str)
         owned_outputs=[{"id": "analysis-42", "kind": "analysis_result"}],
     )
     result = build_analysis_result_v2(
+        analysis_version="native_flicking.v1",
         analysis_id="analysis-42",
         analysis_type="flicking",
         input_mode=input_mode,
+        owner_id="desktop-local",
+        local_profile="desktop-local",
         kovaak_run_ref="kovaak-run-42",
         evidence={
             "sources": [{"ref": "kovaak-run-42"}],
@@ -306,8 +309,12 @@ def test_build_analysis_result_v2_supports_explicit_input_modes(input_mode: str)
 
     assert result["schema_version"] == ANALYSIS_RESULT_V2_SCHEMA_VERSION
     assert result["analysis_id"] == "analysis-42"
+    assert result["analysis_version"] == "native_flicking.v1"
     assert result["analysis_type"] == "flicking"
     assert result["input_mode"] == input_mode
+    assert result["owner_id"] == "desktop-local"
+    assert result["local_profile"] == "desktop-local"
+    assert result["status"] == "done"
     assert result["kovaak_run_ref"] == "kovaak-run-42"
     assert result["evidence"]["availability"] == {"raw_input": "available"}
     assert result["deterministic"]["metrics"]["score"] is None
@@ -319,10 +326,11 @@ def test_build_analysis_result_v2_supports_explicit_input_modes(input_mode: str)
         }
     ]
     assert coerce_analysis_result(result) == result
-    assert result["artifact_manifest"] == manifest
+    assert result["artifact_manifest"] == {**manifest, "analysis_id": "analysis-42"}
     assert result["artifact_manifest"]["schema_version"] == ARTIFACT_MANIFEST_V2_SCHEMA_VERSION
     assert set(result["artifact_manifest"]) == {
         "schema_version",
+        "analysis_id",
         "external_inputs",
         "owned_outputs",
     }
@@ -343,8 +351,10 @@ def test_analysis_result_v2_allows_metric_names_that_describe_paths():
         },
         deterministic={
             "metrics": {
+                "path_length": {"value": 10.0, "unit": "raw_counts"},
+                "calibrated_path_length": {"value": 2.0, "unit": "cm"},
                 "path_efficiency": {"value": 0.96},
-                "path_length_deg": {"value": 12.0},
+                "straightness": {"value": 0.96},
             }
         },
         artifact_manifest=build_artifact_manifest_v2(
@@ -359,9 +369,122 @@ def test_analysis_result_v2_allows_metric_names_that_describe_paths():
     )
 
     assert set(result["deterministic"]["metrics"]) == {
+        "path_length",
+        "calibrated_path_length",
         "path_efficiency",
-        "path_length_deg",
+        "straightness",
     }
+    assert coerce_analysis_result(result) == result
+
+
+def test_analysis_result_v2_round_trips_native_distributions_and_flick_events():
+    timeline = [
+        {
+            "id": "flick:1",
+            "event_type": "flick",
+            "source": "raw_input",
+            "start_ms": 10.0,
+            "peak_ms": 20.0,
+            "end_ms": 40.0,
+            "settle_end_ms": 50.0,
+            "quality": "available",
+            "coverage": 1.0,
+            "metrics": {
+                "peak_speed": {"value": 2000.0, "unit": "raw_counts_per_second"},
+                "sparc": {"value": -3.2, "unit": "dimensionless"},
+            },
+            "limitations": [],
+        }
+    ]
+    deterministic = {
+        "status": "available",
+        "metrics": {
+            "path_length": {
+                "key": "path_length",
+                "value": 10.0,
+                "unit": "raw_counts",
+                "distribution": {
+                    "median": 10.0,
+                    "p75": 12.0,
+                    "outlier_refs": ["flick:9"],
+                },
+            },
+            "path_efficiency": {"key": "path_efficiency", "value": 0.9},
+            "straightness": {"key": "straightness", "value": 0.9},
+        },
+        "timeline": timeline,
+        "limitations": [],
+    }
+    result = build_analysis_result_v2(
+        analysis_id="analysis-42",
+        analysis_type="flicking",
+        input_mode="input_native",
+        kovaak_run_ref="run:42",
+        evidence={
+            "sources": [],
+            "provenance": {},
+            "availability": {"raw_input": "available"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+        },
+        deterministic=deterministic,
+        artifact_manifest=build_artifact_manifest_v2(
+            external_inputs=[],
+            owned_outputs=[{"id": "analysis-42", "kind": "analysis_result"}],
+        ),
+        input_snapshot={},
+        created_at="2026-07-13T12:00:00Z",
+        completed_at="2026-07-13T12:01:00Z",
+        warnings=[],
+        errors=[],
+    )
+
+    assert result["deterministic"] == deterministic
+    assert coerce_analysis_result(result) == result
+
+
+def test_analysis_result_v2_normalizes_nested_flick_event_non_finite_values():
+    result = build_analysis_result_v2(
+        analysis_id="analysis-42",
+        analysis_type="flicking",
+        input_mode="input_native",
+        kovaak_run_ref="run:42",
+        evidence={
+            "sources": [],
+            "provenance": {},
+            "availability": {"raw_input": "available"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+        },
+        deterministic={
+            "timeline": [
+                {
+                    "id": "flick:1",
+                    "event_type": "flick",
+                    "metrics": {"sparc": {"value": float("nan")}},
+                }
+            ]
+        },
+        artifact_manifest=build_artifact_manifest_v2(
+            external_inputs=[],
+            owned_outputs=[{"id": "analysis-42", "kind": "analysis_result"}],
+        ),
+        input_snapshot={},
+        created_at="2026-07-13T12:00:00Z",
+        completed_at="2026-07-13T12:01:00Z",
+        warnings=[],
+        errors=[],
+    )
+
+    assert result["deterministic"]["timeline"][0]["metrics"]["sparc"]["value"] is None
+    assert result["normalization_issues"] == [
+        {
+            "location": "$.deterministic.timeline[0].metrics.sparc.value",
+            "code": "non_finite_number",
+            "original": "nan",
+        }
+    ]
+    assert coerce_analysis_result(result) == result
 
 
 def test_analysis_result_v2_allows_analysis_without_kovaak_run_reference():
@@ -390,6 +513,83 @@ def test_analysis_result_v2_allows_analysis_without_kovaak_run_reference():
     )
 
     assert "kovaak_run_ref" not in result
+
+
+def test_coerce_analysis_result_v2_keeps_old_unversioned_drafts_readable():
+    result = build_analysis_result_v2(
+        analysis_id="analysis:legacy-v2",
+        analysis_type="flicking",
+        input_mode="input_native",
+        kovaak_run_ref=None,
+        evidence={
+            "sources": {},
+            "provenance": {},
+            "availability": {},
+            "alignment": {"status": "unavailable"},
+            "warnings": [],
+        },
+        deterministic={"metrics": {}},
+        artifact_manifest=build_artifact_manifest_v2(
+            external_inputs=[],
+            owned_outputs=[
+                {"id": "analysis:legacy-v2", "kind": "analysis_result"},
+            ],
+        ),
+        input_snapshot={},
+        created_at="2026-07-13T12:00:00Z",
+        completed_at="2026-07-13T12:01:00Z",
+        warnings=[],
+        errors=[],
+    )
+    del result["analysis_version"]
+
+    coerced = coerce_analysis_result(result)
+
+    assert coerced is not None
+    assert coerced["analysis_version"] == LEGACY_ANALYSIS_VERSION
+
+
+def test_artifact_manifest_v2_rejects_duplicate_or_misowned_artifacts():
+    with pytest.raises(ValueError, match="raw_input"):
+        build_artifact_manifest_v2(
+            external_inputs=[],
+            owned_outputs=[{"id": "run:1:trace", "kind": "raw_input"}],
+        )
+
+    with pytest.raises(ValueError, match="duplicate"):
+        build_artifact_manifest_v2(
+            external_inputs=[{"id": "artifact:1", "kind": "stats"}],
+            owned_outputs=[{"id": "artifact:1", "kind": "analysis_result"}],
+        )
+
+
+def test_analysis_result_v2_requires_owned_result_artifact_to_match_analysis_id():
+    with pytest.raises(ValueError, match="analysis_id"):
+        build_analysis_result_v2(
+            analysis_id="analysis:42",
+            analysis_type="flicking",
+            input_mode="input_native",
+            kovaak_run_ref="run:42",
+            evidence={
+                "sources": [],
+                "provenance": {},
+                "availability": {"raw_input": "available"},
+                "alignment": {"status": "aligned"},
+                "warnings": [],
+            },
+            deterministic={},
+            artifact_manifest=build_artifact_manifest_v2(
+                external_inputs=[],
+                owned_outputs=[
+                    {"id": "analysis:other", "kind": "analysis_result"},
+                ],
+            ),
+            input_snapshot={},
+            created_at="2026-07-13T12:00:00Z",
+            completed_at="2026-07-13T12:01:00Z",
+            warnings=[],
+            errors=[],
+        )
 
 
 def test_coerce_analysis_result_reads_v1_and_legacy_shapes():

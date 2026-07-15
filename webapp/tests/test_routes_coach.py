@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import db, queue
+from webapp.backend import db, provider_store, queue
 from webapp.backend.app import app
 from webapp.backend.contracts import (
     ARTIFACT_MANIFEST_SCHEMA_VERSION,
@@ -49,6 +49,18 @@ def _fake_report_dict(*, fps=None, duration_frames=None, timeline=None) -> dict:
     if timeline is not None:
         report["timeline"] = timeline
     return report
+
+
+async def _seed_default_provider(user_id: str = "u1") -> dict:
+    return await provider_store.create_profile(user_id, {
+        "name": "Selected Provider",
+        "provider_id": "selected-provider",
+        "kind": "custom_openai_compatible",
+        "base_url": "https://selected.test/v1",
+        "model_id": "selected-model",
+        "api_key": "selected-secret-key",
+        "is_default": True,
+    })
 
 
 async def _seed_done_session(
@@ -221,6 +233,7 @@ async def test_timeline_defaults_fps_60_when_meta_absent():
 
 @pytest.mark.asyncio
 async def test_chat_pinned_frame_sec_prepended_to_message(monkeypatch):
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "python")
     """pinned_frame_sec=23.4 → user message 存储为 "[锁定 0:23] 我的问题"。"""
     sid = await _seed_done_session()
 
@@ -249,6 +262,7 @@ async def test_chat_pinned_frame_sec_prepended_to_message(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_without_pinned_frame_unchanged(monkeypatch):
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "python")
     """不传 pinned_frame_sec → message 原样存储。"""
     sid = await _seed_done_session()
 
@@ -534,8 +548,9 @@ async def test_coach_runtime_python_uses_chat_with_coach(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_coach_runtime_pi_uses_run_pi_coach_turn(monkeypatch):
-    """COACH_RUNTIME=pi 时调 run_pi_coach_turn，不调 chat_with_coach。"""
+    """COACH_RUNTIME=pi 时使用当前用户默认 profile。"""
     sid = await _seed_done_session()
+    await _seed_default_provider()
     pi_calls: list[dict] = []
     chat_calls: list[int] = []
 
@@ -565,6 +580,16 @@ async def test_coach_runtime_pi_uses_run_pi_coach_turn(monkeypatch):
     assert resp.json()["reply"] == "pi 教练回复"
     assert chat_calls == []
     assert len(pi_calls) == 1
+    assert pi_calls[0]["user_id"] == "u1"
+    assert pi_calls[0]["profile"] == {
+        "profile_id": 1,
+        "provider_id": "selected-provider",
+        "provider_name": "Selected Provider",
+        "kind": "custom_openai_compatible",
+        "base_url": "https://selected.test/v1",
+        "model_id": "selected-model",
+        "credential": {"type": "api_key", "key": "selected-secret-key"},
+    }
     assert pi_calls[0]["messages"][-1] == {
         "role": "user",
         "content": "pi 路径",
@@ -586,8 +611,10 @@ async def test_coach_runtime_pi_uses_run_pi_coach_turn(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_coach_runtime_pi_failure_fallback_python(monkeypatch):
-    """pi 失败且 COACH_RUNTIME_FALLBACK_PYTHON=1 时回退 python。"""
+    """pi 失败且 COACH_RUNTIME_FALLBACK_PYTHON=1 时回退同一 selected profile。"""
     from webapp.backend.coach_runtime import CoachRuntimeError
+
+    await _seed_default_provider()
 
     def fake_pi(**kwargs):
         raise CoachRuntimeError("mock pi down")
@@ -599,7 +626,7 @@ async def test_coach_runtime_pi_failure_fallback_python(monkeypatch):
     monkeypatch.setattr(config_mod, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
     monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
-    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
+    monkeypatch.setattr(coach_engine_mod, "load_backend_for_profile", lambda profile: object())
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
@@ -621,6 +648,8 @@ async def test_coach_runtime_pi_failure_fallback_python(monkeypatch):
 async def test_coach_runtime_pi_failure_no_fallback(monkeypatch):
     """pi 失败且 fallback=0 时不调 python，notes 记失败。"""
     from webapp.backend.coach_runtime import CoachRuntimeError
+
+    await _seed_default_provider()
 
     chat_calls: list[int] = []
 
@@ -652,3 +681,63 @@ async def test_coach_runtime_pi_failure_no_fallback(monkeypatch):
     assert chat_calls == []
     assert any("Pi coach-runtime" in n or "mock pi" in n for n in body["notes"])
     assert not any("回退" in n for n in body["notes"])
+
+
+@pytest.mark.asyncio
+async def test_coach_runtime_pi_without_default_profile_is_recoverably_unconfigured(monkeypatch):
+    pi_calls: list[dict] = []
+
+    def fake_pi(**kwargs):
+        pi_calls.append(kwargs)
+        return "must not run"
+
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "unconfigured-user"},
+    ) as client:
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "我还没配置 provider"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["reply"] is None
+    assert any("未配置" in note for note in body["notes"])
+    assert pi_calls == []
+
+
+@pytest.mark.asyncio
+async def test_selected_profile_secret_does_not_enter_coach_messages_or_context(monkeypatch):
+    await _seed_default_provider("secret-user")
+
+    def fake_pi(**kwargs):
+        assert kwargs["profile"]["api_key"] == "selected-secret-key"
+        return "安全回复"
+
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "secret-user"},
+    ) as client:
+        resp = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "请给建议"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert "selected-secret-key" not in resp.text
+    conn = await db.get_conn()
+    cur = await conn.execute(
+        "SELECT content, context_json, trace_json FROM coach_messages "
+        "WHERE thread_id=(SELECT id FROM coach_threads WHERE user_id=?)",
+        ("secret-user",),
+    )
+    persisted = [dict(row) for row in await cur.fetchall()]
+    assert persisted
+    assert "selected-secret-key" not in json.dumps(persisted, ensure_ascii=False)

@@ -8,7 +8,7 @@ from webapp.backend import history_trends
 from webapp.backend.db import get_conn
 
 
-def result(*, scenario="Scenario", scenario_version="kovaak_scenario.v1", mode="input_native", value=10.0, unit="raw_counts", coverage=1.0, alignment="aligned", version="native.v1", classification="deterministic", calibration="mouse-calibration:v1"):
+def result(*, scenario="Scenario", scenario_version="kovaak_scenario.v1", mode="input_native", value=10.0, unit="raw_counts", coverage=1.0, alignment="aligned", version="native.v1", classification="deterministic", calibration="mouse-calibration:v1", metric_key="distance"):
     return {
         "schema_version": "analysis_result.v2",
         "analysis_type": "flicking",
@@ -18,8 +18,8 @@ def result(*, scenario="Scenario", scenario_version="kovaak_scenario.v1", mode="
             "scenario_identity_version": scenario_version,
         },
         "evidence": {"alignment": {"status": alignment}},
-        "deterministic": {"metrics": {"distance": {
-            "key": "distance",
+        "deterministic": {"metrics": {metric_key: {
+            "key": metric_key,
             "value": value,
             "unit": unit,
             "metric_version": version,
@@ -48,6 +48,11 @@ def test_compare_requires_full_deterministic_compatibility():
     assert history_trends.compare_analysis_results(
         result(unit="degrees"), result(), "distance",
     )["reason"] == "metric_unit_mismatch"
+    assert history_trends.compare_analysis_results(
+        result(version="native_flicking.sparc.v2", metric_key="sparc"),
+        result(version="native_flicking.v1", metric_key="sparc"),
+        "sparc",
+    )["reason"] == "metric_metric_version_mismatch"
     assert history_trends.compare_analysis_results(
         result(calibration="mouse-calibration:v2"), result(), "distance",
     )["reason"] == "calibration_mismatch"

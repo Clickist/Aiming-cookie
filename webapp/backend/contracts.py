@@ -7,6 +7,7 @@ import os
 ANALYSIS_RESULT_SCHEMA_VERSION = "analysis_result.v1"
 ANALYSIS_RESULT_V2_SCHEMA_VERSION = "analysis_result.v2"
 ANALYSIS_VERSION = "flicking_fair_summary.v1"
+NATIVE_ANALYSIS_VERSION = "native_flicking.v1"
 LEGACY_ANALYSIS_VERSION = "legacy_unversioned"
 SUMMARY_TYPE = "flicking"
 ARTIFACT_MANIFEST_SCHEMA_VERSION = "artifact_manifest.v1"
@@ -17,6 +18,11 @@ _LEGACY_SAFE_ERROR_MESSAGE = "分析失败，请重试；若持续失败请联�
 
 _NARRATION_STATUSES = frozenset({"available", "unavailable", "not_requested"})
 _INPUT_MODES_V2 = frozenset({"input_native", "multimodal", "video_fallback"})
+_ARTIFACT_AVAILABILITIES_V2 = frozenset(
+    {"available", "missing", "unsupported", "unavailable", "invalid"}
+)
+_ARTIFACT_OWNERS_V2 = frozenset({"analysis", "kovaak_run", "user_source"})
+_METRIC_PROVENANCE_KINDS_V2 = frozenset({"measured", "derived", "fused", "inferred"})
 _EVIDENCE_V2_FIELDS = frozenset(
     {"sources", "provenance", "availability", "alignment", "warnings"}
 )
@@ -393,12 +399,45 @@ def build_artifact_manifest_v2(
     )
 
 
+def _validate_artifact_entry_v2(field: str, index: int, value: object) -> str:
+    path = f"artifact_manifest.{field}[{index}]"
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be a dict")
+    artifact_id = _validate_stable_ref(f"{path}.id", value.get("id"))
+    kind = _require_nonempty_string(f"{path}.kind", value.get("kind"))
+    if field == "owned_outputs" and kind == "raw_input":
+        raise ValueError("raw_input artifacts are kovaak_run-owned external inputs")
+    if field == "external_inputs" and kind == "analysis_result":
+        raise ValueError("analysis_result artifacts must be analysis-owned outputs")
+
+    availability = value.get("availability")
+    if availability is not None and availability not in _ARTIFACT_AVAILABILITIES_V2:
+        raise ValueError(f"invalid {path}.availability: {availability}")
+    ownership = value.get("ownership")
+    if ownership is not None:
+        if ownership not in _ARTIFACT_OWNERS_V2:
+            raise ValueError(f"invalid {path}.ownership: {ownership}")
+        if field == "owned_outputs" and ownership != "analysis":
+            raise ValueError("owned_outputs ownership must be analysis")
+    for boolean_field in ("managed", "local_only"):
+        if boolean_field in value and not isinstance(value[boolean_field], bool):
+            raise ValueError(f"{path}.{boolean_field} must be a bool")
+    return artifact_id
+
+
 def _validate_artifact_manifest_v2(manifest: dict) -> dict:
     if manifest.get("schema_version") != ARTIFACT_MANIFEST_V2_SCHEMA_VERSION:
         raise UnsupportedContractVersion(manifest.get("schema_version"))
+    artifact_ids: set[str] = set()
     for field in ("external_inputs", "owned_outputs"):
-        if not isinstance(manifest.get(field), list):
+        entries = manifest.get(field)
+        if not isinstance(entries, list):
             raise ValueError(f"artifact_manifest.{field} must be a list")
+        for index, entry in enumerate(entries):
+            artifact_id = _validate_artifact_entry_v2(field, index, entry)
+            if artifact_id in artifact_ids:
+                raise ValueError(f"duplicate artifact id: {artifact_id}")
+            artifact_ids.add(artifact_id)
     _assert_v2_path_safe(manifest, path="$.artifact_manifest")
     return dict(manifest)
 
@@ -409,6 +448,13 @@ def _validate_evidence_v2(evidence: object) -> dict:
     missing = _EVIDENCE_V2_FIELDS.difference(evidence)
     if missing:
         raise ValueError(f"evidence missing required fields: {', '.join(sorted(missing))}")
+    if not isinstance(evidence.get("sources"), (dict, list)):
+        raise ValueError("evidence.sources must be a dict or list")
+    for field in ("provenance", "availability", "alignment"):
+        if not isinstance(evidence.get(field), dict):
+            raise ValueError(f"evidence.{field} must be a dict")
+    if not isinstance(evidence.get("warnings"), list):
+        raise ValueError("evidence.warnings must be a list")
     return evidence
 
 
@@ -416,14 +462,26 @@ def _validate_analysis_result_v2(result: dict) -> dict:
     if result.get("schema_version") != ANALYSIS_RESULT_V2_SCHEMA_VERSION:
         raise UnsupportedContractVersion(result.get("schema_version"))
 
-    _require_nonempty_string("analysis_id", result.get("analysis_id"))
+    result = dict(result)
+    if "analysis_version" not in result:
+        result["analysis_version"] = LEGACY_ANALYSIS_VERSION
+    analysis_id = _validate_stable_ref("analysis_id", result.get("analysis_id"))
     _require_nonempty_string("analysis_type", result.get("analysis_type"))
+    _require_nonempty_string("analysis_version", result.get("analysis_version"))
     input_mode = result.get("input_mode")
     if input_mode not in _INPUT_MODES_V2:
         raise ValueError(f"invalid input_mode: {input_mode}")
     kovaak_run_ref = result.get("kovaak_run_ref")
     if kovaak_run_ref is not None:
         _validate_stable_ref("kovaak_run_ref", kovaak_run_ref)
+    owner_id = result.get("owner_id")
+    if owner_id is not None:
+        _validate_stable_ref("owner_id", owner_id)
+    local_profile = result.get("local_profile")
+    if local_profile is not None:
+        _validate_stable_ref("local_profile", local_profile)
+        if owner_id is None:
+            raise ValueError("local_profile requires owner_id")
     _validate_evidence_v2(result.get("evidence"))
 
     if not isinstance(result.get("deterministic"), dict):
@@ -440,7 +498,37 @@ def _validate_analysis_result_v2(result: dict) -> dict:
     artifact_manifest = result.get("artifact_manifest")
     if not isinstance(artifact_manifest, dict):
         raise ValueError("artifact_manifest must be a dict")
-    _validate_artifact_manifest_v2(artifact_manifest)
+    validated_manifest = _validate_artifact_manifest_v2(artifact_manifest)
+    manifest_analysis_id = validated_manifest.get("analysis_id")
+    if manifest_analysis_id is not None:
+        manifest_analysis_id = _validate_stable_ref(
+            "artifact_manifest.analysis_id", manifest_analysis_id,
+        )
+        if manifest_analysis_id != analysis_id:
+            raise ValueError("artifact_manifest.analysis_id must match analysis_id")
+    result_artifacts = [
+        entry
+        for entry in validated_manifest["owned_outputs"]
+        if entry.get("kind") == "analysis_result"
+    ]
+    if result_artifacts and (
+        len(result_artifacts) != 1 or result_artifacts[0].get("id") != analysis_id
+    ):
+        raise ValueError(
+            "artifact_manifest must contain one analysis_result matching analysis_id"
+        )
+    status = result.get("status", "done")
+    if status != "done":
+        raise ValueError(f"invalid analysis result status: {status}")
+    _require_nonempty_string("created_at", result.get("created_at"))
+    _require_nonempty_string("completed_at", result.get("completed_at"))
+
+    result = dict(result)
+    result["status"] = status
+    result["artifact_manifest"] = {
+        **validated_manifest,
+        "analysis_id": analysis_id,
+    }
     _assert_v2_path_safe(result)
 
     normalized, issues = normalize_json_value(result)
@@ -461,9 +549,12 @@ def _validate_analysis_result_v2(result: dict) -> dict:
 
 def build_analysis_result_v2(
     *,
+    analysis_version: str | None = None,
     analysis_id: str,
     analysis_type: str,
     input_mode: str,
+    owner_id: str | None = None,
+    local_profile: str | None = None,
     kovaak_run_ref: str | None,
     evidence: dict,
     deterministic: dict,
@@ -474,8 +565,15 @@ def build_analysis_result_v2(
     warnings: list,
     errors: list,
 ) -> dict:
+    if analysis_version is None:
+        analysis_version = (
+            NATIVE_ANALYSIS_VERSION
+            if input_mode in {"input_native", "multimodal"}
+            else ANALYSIS_VERSION
+        )
     result = {
         "schema_version": ANALYSIS_RESULT_V2_SCHEMA_VERSION,
+        "analysis_version": analysis_version,
         "analysis_id": analysis_id,
         "analysis_type": analysis_type,
         "input_mode": input_mode,
@@ -491,7 +589,189 @@ def build_analysis_result_v2(
     }
     if kovaak_run_ref is not None:
         result["kovaak_run_ref"] = kovaak_run_ref
+    if owner_id is not None:
+        result["owner_id"] = owner_id
+    if local_profile is not None:
+        result["local_profile"] = local_profile
     return _validate_analysis_result_v2(result)
+
+
+def _validate_coverage_v2(field: str, value: object) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a number or null")
+    if not math.isfinite(float(value)) or not 0 <= float(value) <= 1:
+        raise ValueError(f"{field} must be between 0 and 1")
+
+
+def _validate_producer_evidence_v2(evidence: dict) -> None:
+    if "coverage" not in evidence:
+        raise ValueError("evidence.coverage is required for persisted v2 results")
+    _validate_coverage_v2("evidence.coverage", evidence.get("coverage"))
+    sources = evidence["sources"]
+    items = sources.items() if isinstance(sources, dict) else enumerate(sources)
+    for source_key, source in items:
+        field = f"evidence.sources[{source_key!r}]"
+        if not isinstance(source, dict):
+            raise ValueError(f"{field} must be a dict")
+        source_name = _require_nonempty_string(f"{field}.source", source.get("source"))
+        if isinstance(sources, dict) and source_name != source_key:
+            raise ValueError(f"{field}.source must match its source key")
+        _require_nonempty_string(f"{field}.role", source.get("role"))
+        availability = source.get("availability")
+        if availability not in _ARTIFACT_AVAILABILITIES_V2:
+            raise ValueError(f"invalid {field}.availability: {availability}")
+        _validate_stable_ref(f"{field}.artifact_ref", source.get("artifact_ref"))
+        version = source.get("parser_or_format_version")
+        if version is None or isinstance(version, bool) or (
+            isinstance(version, str) and not version.strip()
+        ):
+            raise ValueError(f"{field}.parser_or_format_version is required")
+        _require_nonempty_string(f"{field}.alignment", source.get("alignment"))
+        warnings = source.get("warnings")
+        if not isinstance(warnings, list):
+            raise ValueError(f"{field}.warnings must be a list")
+
+
+def _validate_producer_metrics_v2(deterministic: dict) -> None:
+    metrics = deterministic.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValueError("deterministic.metrics must be a dict for persisted v2 results")
+    required = {
+        "key", "value", "unit", "availability", "provenance",
+        "metric_version", "coverage", "limitations",
+    }
+    for metric_key, metric in metrics.items():
+        field = f"deterministic.metrics[{metric_key!r}]"
+        if not isinstance(metric, dict):
+            raise ValueError(f"{field} must be a dict")
+        missing = required.difference(metric)
+        if missing:
+            raise ValueError(f"{field} missing required fields: {', '.join(sorted(missing))}")
+        if metric.get("key") != metric_key:
+            raise ValueError(f"{field}.key must match its metric key")
+        value = metric.get("value")
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            raise ValueError(f"{field}.value must be a number or null")
+        _require_nonempty_string(f"{field}.unit", metric.get("unit"))
+        availability = metric.get("availability")
+        if availability not in _ARTIFACT_AVAILABILITIES_V2:
+            raise ValueError(f"invalid {field}.availability: {availability}")
+        if availability == "available" and value is None:
+            raise ValueError(f"{field}.value is required when availability is available")
+        provenance = metric.get("provenance")
+        if not isinstance(provenance, dict):
+            raise ValueError(f"{field}.provenance must be a dict")
+        kind = provenance.get("kind")
+        if kind not in _METRIC_PROVENANCE_KINDS_V2:
+            raise ValueError(f"invalid {field}.provenance.kind: {kind}")
+        provenance_sources = provenance.get("sources")
+        if not isinstance(provenance_sources, list) or not provenance_sources:
+            raise ValueError(f"{field}.provenance.sources must be a non-empty list")
+        for source_index, source in enumerate(provenance_sources):
+            _require_nonempty_string(
+                f"{field}.provenance.sources[{source_index}]", source,
+            )
+        _require_nonempty_string(f"{field}.metric_version", metric.get("metric_version"))
+        _validate_coverage_v2(f"{field}.coverage", metric.get("coverage"))
+        limitations = metric.get("limitations")
+        if not isinstance(limitations, list) or not all(
+            isinstance(item, str) and item for item in limitations
+        ):
+            raise ValueError(f"{field}.limitations must be a list of strings")
+
+
+def _validate_producer_artifacts_v2(manifest: dict, analysis_id: str) -> None:
+    all_ids = {
+        entry["id"]
+        for field in ("external_inputs", "owned_outputs")
+        for entry in manifest[field]
+    }
+    required = {
+        "id", "kind", "source", "availability", "ownership", "managed",
+        "local_only", "status", "derived_from",
+    }
+    for field in ("external_inputs", "owned_outputs"):
+        for index, entry in enumerate(manifest[field]):
+            path = f"artifact_manifest.{field}[{index}]"
+            missing = required.difference(entry)
+            if missing:
+                raise ValueError(f"{path} missing required fields: {', '.join(sorted(missing))}")
+            _require_nonempty_string(f"{path}.source", entry.get("source"))
+            if entry.get("availability") not in _ARTIFACT_AVAILABILITIES_V2:
+                raise ValueError(f"invalid {path}.availability: {entry.get('availability')}")
+            if entry.get("ownership") not in _ARTIFACT_OWNERS_V2:
+                raise ValueError(f"invalid {path}.ownership: {entry.get('ownership')}")
+            for boolean_field in ("managed", "local_only"):
+                if not isinstance(entry.get(boolean_field), bool):
+                    raise ValueError(f"{path}.{boolean_field} must be a bool")
+            _require_nonempty_string(f"{path}.status", entry.get("status"))
+            version = entry.get("parser_version", entry.get("format_version"))
+            if version is None or isinstance(version, bool) or (
+                isinstance(version, str) and not version.strip()
+            ):
+                raise ValueError(f"{path} requires parser_version or format_version")
+            derived_from = entry.get("derived_from")
+            if not isinstance(derived_from, list):
+                raise ValueError(f"{path}.derived_from must be a list")
+            for ref_index, ref in enumerate(derived_from):
+                stable_ref = _validate_stable_ref(f"{path}.derived_from[{ref_index}]", ref)
+                if stable_ref not in all_ids:
+                    raise ValueError(f"{path}.derived_from references unknown artifact: {stable_ref}")
+            if entry.get("kind") == "raw_input" and (
+                entry.get("ownership") != "kovaak_run" or not entry.get("local_only")
+            ):
+                raise ValueError("raw_input artifacts must be kovaak_run-owned and local-only")
+            if field == "owned_outputs" and entry.get("ownership") != "analysis":
+                raise ValueError("owned_outputs ownership must be analysis")
+
+    result_artifacts = [
+        entry
+        for entry in manifest["owned_outputs"]
+        if entry.get("kind") == "analysis_result" and entry.get("id") == analysis_id
+    ]
+    if len(result_artifacts) != 1:
+        raise ValueError(
+            "artifact_manifest must contain one persisted analysis_result artifact"
+        )
+    result_artifact = result_artifacts[0]
+    if result_artifact.get("format_version") != ANALYSIS_RESULT_V2_SCHEMA_VERSION:
+        raise ValueError("analysis_result artifact format_version must match analysis_result.v2")
+
+
+def validate_analysis_result_v2_for_persistence(
+    result: dict,
+    *,
+    owner_id: str,
+    analysis_id: str,
+    analysis_type: str,
+    input_mode: str,
+    kovaak_run_ref: str | None,
+    require_local_profile: bool = False,
+) -> dict:
+    """Validate the complete producer envelope before a v2 result becomes terminal."""
+    validated = _validate_analysis_result_v2(result)
+    if validated.get("analysis_version") == LEGACY_ANALYSIS_VERSION:
+        raise ValueError("persisted analysis_result.v2 requires explicit analysis_version")
+    if validated.get("owner_id") != owner_id:
+        raise ValueError("analysis_result.v2 owner_id must match the session owner")
+    if require_local_profile and validated.get("local_profile") != owner_id:
+        raise ValueError("desktop analysis_result.v2 requires matching local_profile")
+    if validated.get("analysis_id") != analysis_id:
+        raise ValueError("analysis_result.v2 analysis_id must match the session")
+    if validated.get("analysis_type") != analysis_type:
+        raise ValueError("analysis_result.v2 analysis_type must match the session request")
+    if validated.get("input_mode") != input_mode:
+        raise ValueError("analysis_result.v2 input_mode must match the session request")
+    if validated.get("kovaak_run_ref") != kovaak_run_ref:
+        raise ValueError("analysis_result.v2 kovaak_run_ref must match the session request")
+    _validate_producer_evidence_v2(validated["evidence"])
+    _validate_producer_metrics_v2(validated["deterministic"])
+    _validate_producer_artifacts_v2(validated["artifact_manifest"], validated["analysis_id"])
+    return validated
 
 
 def coerce_analysis_result_v2(stored_result: dict | None) -> dict | None:

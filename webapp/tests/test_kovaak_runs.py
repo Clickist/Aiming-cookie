@@ -1,5 +1,7 @@
 import struct
 import shutil
+import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -220,11 +222,42 @@ async def test_desktop_runs_api_does_not_expose_private_paths(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_run_analysis_endpoint_freezes_owned_snapshot_without_returning_paths(
+async def test_run_analysis_endpoint_requires_idempotency_key(
     monkeypatch, tmp_path: Path,
 ):
     from httpx import ASGITransport, AsyncClient
     from webapp.backend import config, queue
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="endpoint-key-required", stats_path=stats),
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+            json={"input_mode": "video_fallback", "video_path": str(video)},
+        )
+
+    assert response.status_code == 400
+    assert "idempotency_key" in response.json()["detail"]
+    assert await queue.get_active_session(config.DESKTOP_LOCAL_PROFILE) is None
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_endpoint_freezes_owned_snapshot_once_for_same_idempotency_key(
+    monkeypatch, tmp_path: Path,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import coach_commands, config, db, queue
     from webapp.backend.app import app
 
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
@@ -238,18 +271,392 @@ async def test_run_analysis_endpoint_freezes_owned_snapshot_without_returning_pa
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"video")
 
+    calls = 0
+    original_create = coach_commands.create_analysis_from_run
+
+    async def counted_create(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await original_create(*args, **kwargs)
+
+    monkeypatch.setattr(coach_commands, "create_analysis_from_run", counted_create)
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        headers = {
+            "X-Aiming-Cookie-Desktop-Token": "run-token",
+            "Idempotency-Key": "analyze-endpoint-run",
+        }
         response = await client.post(
             f"/api/kovaak-runs/{run['id']}/analyze",
-            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+            headers=headers,
+            json={"input_mode": "video_fallback", "video_path": str(video)},
+        )
+        replay = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers=headers,
             json={"input_mode": "video_fallback", "video_path": str(video)},
         )
     assert response.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json() == response.json()
+    assert calls == 1
     session = await queue.get_session(response.json()["session_id"])
     assert session["input_mode"] == "video_fallback"
     assert session["kovaak_run_id"] == run["id"]
     assert session["input_snapshot"]["scenario_identity_version"] == "kovaak_scenario.v1"
     assert session["input_snapshot"]["sources"]["stats"]["artifact_ref"].startswith("run:")
+    assert session["input_snapshot"]["sources"]["video"]["fingerprint"] == {
+        "sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
+        "size": video.stat().st_size,
+        "mtime_ns": video.stat().st_mtime_ns,
+    }
+    conn = await db.get_conn()
+    cur = await conn.execute(
+        "SELECT safe_parameters_summary_json, result_json "
+        "FROM coach_product_commands WHERE command_name='analysis.create_from_run'",
+    )
+    audit_rows = await cur.fetchall()
+    assert len(audit_rows) == 2
+    assert all(str(video) not in row["safe_parameters_summary_json"] for row in audit_rows)
+    assert all(str(video) not in row["result_json"] for row in audit_rows)
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_endpoint_rejects_reused_key_for_different_video(
+    monkeypatch, tmp_path: Path,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="endpoint-conflict", stats_path=stats),
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+    )
+    first_video = tmp_path / "first.mp4"
+    second_video = tmp_path / "second.mp4"
+    first_video.write_bytes(b"first")
+    second_video.write_bytes(b"second")
+    headers = {
+        "X-Aiming-Cookie-Desktop-Token": "run-token",
+        "Idempotency-Key": "analyze-conflict",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers=headers,
+            json={"input_mode": "video_fallback", "video_path": str(first_video)},
+        )
+        conflict = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers=headers,
+            json={"input_mode": "video_fallback", "video_path": str(second_video)},
+        )
+
+    assert first.status_code == 200
+    assert conflict.status_code == 409
+    assert "idempotency" in conflict.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_endpoint_rejects_reused_key_after_same_video_path_changes(
+    monkeypatch, tmp_path: Path,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="endpoint-same-path-conflict", stats_path=stats),
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"first-video-revision")
+    headers = {
+        "X-Aiming-Cookie-Desktop-Token": "run-token",
+        "Idempotency-Key": "analyze-same-path-conflict",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers=headers,
+            json={"input_mode": "video_fallback", "video_path": str(video)},
+        )
+        video.write_bytes(b"second-video-revision")
+        conflict = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers=headers,
+            json={"input_mode": "video_fallback", "video_path": str(video)},
+        )
+
+    assert first.status_code == 200
+    assert conflict.status_code == 409
+    assert "idempotency" in conflict.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_video_fallback_rejects_stats_replaced_after_snapshot_before_copy(
+    monkeypatch, tmp_path: Path,
+):
+    from webapp.backend import coach_commands, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    source_fixture = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    stats = tmp_path / "source Stats.csv"
+    shutil.copyfile(source_fixture, stats)
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="copy-race-run", stats_path=stats),
+        user_id="owner-copy-race",
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    original_copy = coach_commands.copy_path_to_path
+
+    def replace_stats_then_copy(source: Path, destination: Path):
+        if source.resolve() == stats.resolve():
+            source.write_bytes(source.read_bytes() + b"\nsource replaced after snapshot")
+        return original_copy(source, destination)
+
+    monkeypatch.setattr(coach_commands, "copy_path_to_path", replace_stats_then_copy)
+
+    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
+        await coach_commands.create_analysis_from_run(
+            "owner-copy-race",
+            run["id"],
+            input_mode="video_fallback",
+            managed_video_source=video,
+        )
+
+    assert exc_info.value.code == "source_unavailable"
+    assert await queue.get_active_session("owner-copy-race") is None
+
+
+@pytest.mark.asyncio
+async def test_video_fallback_rejects_stats_mtime_changed_after_snapshot_before_copy(
+    monkeypatch, tmp_path: Path,
+):
+    from webapp.backend import coach_commands, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    source_fixture = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    stats = tmp_path / "source Stats.csv"
+    shutil.copyfile(source_fixture, stats)
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="copy-mtime-race-run", stats_path=stats),
+        user_id="owner-copy-mtime-race",
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    original_copy = coach_commands.copy_path_to_path
+
+    def touch_stats_then_copy(source: Path, destination: Path):
+        if source.resolve() == stats.resolve():
+            stat = source.stat()
+            os.utime(
+                source,
+                ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000),
+            )
+        return original_copy(source, destination)
+
+    monkeypatch.setattr(coach_commands, "copy_path_to_path", touch_stats_then_copy)
+
+    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
+        await coach_commands.create_analysis_from_run(
+            "owner-copy-mtime-race",
+            run["id"],
+            input_mode="video_fallback",
+            managed_video_source=video,
+        )
+
+    assert exc_info.value.code == "source_unavailable"
+    assert await queue.get_active_session("owner-copy-mtime-race") is None
+
+
+@pytest.mark.asyncio
+async def test_video_fallback_rejects_video_replaced_after_freeze_before_copy(
+    monkeypatch, tmp_path: Path,
+):
+    from webapp.backend import coach_commands, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    source_fixture = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    stats = tmp_path / "source Stats.csv"
+    shutil.copyfile(source_fixture, stats)
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="video-copy-race-run", stats_path=stats),
+        user_id="owner-video-copy-race",
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"frozen-video-revision")
+    original_copy = coach_commands.copy_path_to_path
+
+    def replace_video_then_copy(source: Path, destination: Path):
+        if source.resolve() == video.resolve():
+            source.write_bytes(b"different-video-revision")
+        return original_copy(source, destination)
+
+    monkeypatch.setattr(coach_commands, "copy_path_to_path", replace_video_then_copy)
+
+    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
+        await coach_commands.create_analysis_from_run(
+            "owner-video-copy-race",
+            run["id"],
+            input_mode="video_fallback",
+            managed_video_source=video,
+        )
+
+    assert exc_info.value.code == "source_unavailable"
+    assert str(video) not in exc_info.value.message
+    assert await queue.get_active_session("owner-video-copy-race") is None
+
+
+@pytest.mark.asyncio
+async def test_video_fallback_rejects_video_mtime_changed_after_freeze_before_copy(
+    monkeypatch, tmp_path: Path,
+):
+    from webapp.backend import coach_commands, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    source_fixture = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    stats = tmp_path / "source Stats.csv"
+    shutil.copyfile(source_fixture, stats)
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="video-copy-mtime-race-run", stats_path=stats),
+        user_id="owner-video-copy-mtime-race",
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"stable-video-bytes")
+    original_copy = coach_commands.copy_path_to_path
+
+    def touch_video_then_copy(source: Path, destination: Path):
+        if source.resolve() == video.resolve():
+            stat = source.stat()
+            os.utime(
+                source,
+                ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000),
+            )
+        return original_copy(source, destination)
+
+    monkeypatch.setattr(coach_commands, "copy_path_to_path", touch_video_then_copy)
+
+    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
+        await coach_commands.create_analysis_from_run(
+            "owner-video-copy-mtime-race",
+            run["id"],
+            input_mode="video_fallback",
+            managed_video_source=video,
+        )
+
+    assert exc_info.value.code == "source_unavailable"
+    assert str(video) not in exc_info.value.message
+    assert await queue.get_active_session("owner-video-copy-mtime-race") is None
+
+
+@pytest.mark.asyncio
+async def test_video_fallback_reports_video_disappearance_during_managed_copy(
+    monkeypatch, tmp_path: Path,
+):
+    from webapp.backend import coach_commands, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    source_fixture = Path(
+        "data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv"
+    ).resolve()
+    stats = tmp_path / "source Stats.csv"
+    shutil.copyfile(source_fixture, stats)
+    run = await kovaak_run_store.ingest_discovery(
+        KovaaKFileDiscovery(stem="video-copy-disappears-run", stats_path=stats),
+        user_id="owner-video-copy-disappears",
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video-before-copy")
+    original_copy = coach_commands.copy_path_to_path
+
+    def delete_video_then_copy(source: Path, destination: Path):
+        if source.resolve() == video.resolve():
+            source.unlink()
+        return original_copy(source, destination)
+
+    monkeypatch.setattr(coach_commands, "copy_path_to_path", delete_video_then_copy)
+
+    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
+        await coach_commands.create_analysis_from_run(
+            "owner-video-copy-disappears",
+            run["id"],
+            input_mode="video_fallback",
+            managed_video_source=video,
+        )
+
+    assert exc_info.value.code == "source_unavailable"
+    assert str(video) not in exc_info.value.message
+    assert await queue.get_active_session("owner-video-copy-disappears") is None
+
+
+@pytest.mark.asyncio
+async def test_analysis_input_snapshot_freezes_raw_trace_fingerprint(tmp_path: Path):
+    def source_summary(path: Path, parser_version: str) -> dict:
+        stat = path.stat()
+        return {
+            "source": {
+                "path": str(path.resolve()),
+                "basename": path.name,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "parser_version": parser_version,
+                "availability": "available",
+            },
+        }
+
+    stats = tmp_path / "Stats.csv"
+    performance_file = tmp_path / "Performance.perf"
+    trace = tmp_path / "trace.bin"
+    stats.write_bytes(b"stats")
+    performance_file.write_bytes(b"performance")
+    kovaak_run_store.write_mouse_snapshot(trace, [
+        {"timestamp_ms": 1000, "dx": 1, "dy": 2, "buttons": 0},
+    ])
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1",
+        source_key="fingerprinted-run",
+        scenario="Scenario",
+        stats_path=str(stats),
+        performance_path=str(performance_file),
+        stats_summary=source_summary(stats, "kovaak_stats.v1"),
+        performance_summary=source_summary(
+            performance_file, "kovaak_performance.v1",
+        ),
+        mouse_trace_path=str(trace),
+    )
+
+    snapshot = await kovaak_run_store.build_analysis_input_snapshot(run["id"], "u1")
+
+    assert snapshot["trace"]["fingerprint"] == {
+        "sha256": hashlib.sha256(trace.read_bytes()).hexdigest(),
+        "size": trace.stat().st_size,
+        "mtime_ns": trace.stat().st_mtime_ns,
+    }
+    public = kovaak_run_store.public_analysis_input_snapshot(snapshot)
+    assert public["trace"]["fingerprint"] == snapshot["trace"]["fingerprint"]
+    assert "path" not in public["trace"]
 
 
 def test_raw_input_snapshot_codec_and_window_extraction(tmp_path: Path):
@@ -262,6 +669,7 @@ def test_raw_input_snapshot_codec_and_window_extraction(tmp_path: Path):
     ]
     kovaak_run_store.write_mouse_snapshot(snapshot, points)
     assert kovaak_run_store.read_mouse_snapshot(snapshot) == points
+    assert kovaak_run_store.decode_mouse_snapshot_bytes(snapshot.read_bytes()) == points
     assert kovaak_run_store.extract_mouse_snapshot_window(snapshot, 150, 300, destination) == 1
     assert kovaak_run_store.read_mouse_snapshot(destination) == [points[1]]
 
@@ -432,6 +840,62 @@ async def test_begin_trace_attach_clears_stale_attachment_and_records_pending(tm
 
 
 @pytest.mark.asyncio
+async def test_stale_trace_writer_cannot_overwrite_newer_pending_or_attached_trace(
+    tmp_path: Path,
+):
+    first_trace = tmp_path / "runs" / "1" / "trace-first.bin"
+    second_trace = tmp_path / "runs" / "1" / "trace-second.bin"
+    for path, dx in ((first_trace, 1), (second_trace, 2)):
+        kovaak_run_store.write_mouse_snapshot(path, [
+            {"timestamp_ms": 100, "dx": dx, "dy": 0, "buttons": 1},
+        ])
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="concurrent-trace",
+    )
+
+    await kovaak_run_store.begin_mouse_trace_attach(run["id"], "u1", first_trace)
+    await kovaak_run_store.begin_mouse_trace_attach(run["id"], "u1", second_trace)
+
+    stale_waiting = await kovaak_run_store.mark_mouse_trace_waiting(
+        run["id"],
+        "u1",
+        expected_pending_trace_path=first_trace,
+    )
+    assert stale_waiting["trace_state"] == "pending"
+    assert stale_waiting["pending_trace_path"] == str(second_trace)
+    assert stale_waiting["trace_error"] is None
+
+    stale_attach = await kovaak_run_store.attach_mouse_trace(
+        run["id"],
+        "u1",
+        str(first_trace),
+        expected_pending_trace_path=first_trace,
+    )
+    assert stale_attach["trace_state"] == "pending"
+    assert stale_attach["pending_trace_path"] == str(second_trace)
+    assert stale_attach["mouse_trace_path"] is None
+
+    attached = await kovaak_run_store.attach_mouse_trace(
+        run["id"],
+        "u1",
+        str(second_trace),
+        expected_pending_trace_path=second_trace,
+    )
+    assert attached["trace_state"] == "attached"
+    assert attached["mouse_trace_path"] == str(second_trace)
+
+    stale_failure = await kovaak_run_store.mark_mouse_trace_unavailable(
+        run["id"],
+        "u1",
+        "trace_snapshot_failed",
+        expected_pending_trace_path=first_trace,
+    )
+    assert stale_failure["trace_state"] == "attached"
+    assert stale_failure["mouse_trace_path"] == str(second_trace)
+    assert stale_failure["trace_error"] is None
+
+
+@pytest.mark.asyncio
 async def test_reconcile_pending_trace_attaches_only_valid_completed_artifact(tmp_path: Path):
     data_root = tmp_path / "data"
     pending_trace = data_root / "runs" / "1" / "trace-recover.bin"
@@ -555,3 +1019,18 @@ async def test_ingest_snapshot_failure_clears_stale_trace_attachment(
     assert run["trace_error"] == "trace_snapshot_failed"
     assert run["mouse_trace_path"] is None
     assert old_trace.exists()
+
+
+def test_public_analysis_input_snapshot_preserves_scenario_identity_version():
+    public = kovaak_run_store.public_analysis_input_snapshot({
+        "schema_version": "analysis_input_snapshot.v1",
+        "run_id": 4,
+        "scenario": "1wall",
+        "scenario_identity_version": "kovaak_scenario.v1",
+        "sources": {"stats": {"artifact_ref": "run:4:stats", "path": "/private/stats.csv"}},
+        "trace": {"artifact_ref": "run:4:trace", "path": "/private/trace.acri"},
+    })
+
+    assert public["scenario_identity_version"] == "kovaak_scenario.v1"
+    assert "path" not in public["sources"]["stats"]
+    assert "path" not in public["trace"]
