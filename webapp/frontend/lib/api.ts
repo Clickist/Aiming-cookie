@@ -196,13 +196,16 @@ export async function getKovaakRun(
 export async function analyzeKovaakRun(
   runId: number,
   request: KovaaKAnalysisRequest = {},
-  opts: { signal?: AbortSignal } = {},
+  opts: { idempotencyKey: string; signal?: AbortSignal },
 ): Promise<AnalyzeResponse> {
   const res = await apiFetch(
     `/api/kovaak-runs/${runId}/analyze`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": opts.idempotencyKey,
+      },
       body: JSON.stringify(request),
     },
     { ...opts, desktopToken: true },
@@ -260,11 +263,14 @@ export async function deleteSession(
 
 export async function retrySession(
   sessionId: number,
-  opts: { signal?: AbortSignal } = {},
+  opts: { idempotencyKey: string; signal?: AbortSignal },
 ): Promise<SessionStatus> {
   const res = await apiFetch(
     `/api/sessions/${sessionId}/retry`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": opts.idempotencyKey },
+    },
     opts,
   );
   if (!res.ok) throw await apiError(res);

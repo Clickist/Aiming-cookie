@@ -24,6 +24,9 @@ _FORBIDDEN_MARKERS = (
     "sensitivity-sentinel",
     "benchmark-sentinel",
     "external-progress-sentinel",
+    "sk-live-secret-sentinel",
+    "access-token-secret-sentinel",
+    "raw-input-dx-sentinel",
     "/private/aiming-cookie/secret.csv",
 )
 
@@ -51,11 +54,34 @@ def _diagnosis() -> dict:
         "issues": [
             {
                 "signal": "sparc",
-                "severity": "fix",
+                "severity": "info",
                 "priority": 1,
-                "priority_reason": "严重",
+                "priority_reason": "未校准观察",
+                "plain_language_meaning": "减速过程不够连续",
+                "claim_level": "experimental",
+                "metric_refs": ["sparc", "reverse_ratio"],
+                "event_refs": ["flick:37"],
+                "limitations": ["threshold_requires_product_calibration"],
+                "expected_result": "减速更连续，反向修正减少",
+                "verification": {
+                    "comparable_requirements": ["相同场景", "相同设置", "相同证据质量"],
+                    "success_signals": ["sparc ↑", "reverse_ratio ↓"],
+                    "insufficient_evidence_behavior": "样本不足时只记录",
+                },
                 "root_causes": [{"level": "symptom", "text": "减速不平滑"}],
-                "prescriptions": [{"scenario": "Smoothbot", "reason": "练习减速"}],
+                "prescriptions": [
+                    {
+                        "scenario": "Smoothbot",
+                        "reason": "练习减速",
+                        "cue": "让速度连续下降",
+                        "purpose": "减少减速末段波动",
+                        "target_metrics": ["sparc", "reverse_ratio"],
+                        "expected_direction": ["sparc ↑", "reverse_ratio ↓"],
+                        "retest_after": "完成一组后复测",
+                        "stop_or_adjust_rule": "准确率明显下降时降低速度",
+                        "source_level": "community_consensus",
+                    }
+                ],
                 "targetInference": "target-inference-sentinel",
                 "sensitivity_heuristic": "sensitivity-sentinel",
             }
@@ -115,6 +141,10 @@ def _diagnosis() -> dict:
                     "metrics": {
                         "sparc": {
                             "med": -7.0,
+                            "p90": -5.0,
+                            "std": 0.4,
+                            "outlier_method": "tukey_1_5_iqr_descriptive",
+                            "outlier_refs": ["flick:9"],
                             "unit": "a.u.",
                             "classification": "deterministic",
                             "sample_count": 42,
@@ -191,6 +221,10 @@ def test_projector_supports_analysis_result_v1_and_v2_without_forbidden_data(
         metric = context["diagnosis"]["summary"]["sparc"]
         assert metric["sample_count"] == 42
         assert metric["coverage"] == 0.9
+        assert metric["p90"] == -5.0
+        assert metric["std"] == 0.4
+        assert metric["outlier_method"] == "tukey_1_5_iqr_descriptive"
+        assert metric["outlier_refs"] == ["flick:9"]
         assert metric["provenance"] == {"kind": "derived", "sources": ["raw_input"]}
         assert context["diagnosis"]["summary"]["path_length"] == {
             "value": 128.5,
@@ -206,6 +240,18 @@ def test_projector_supports_analysis_result_v1_and_v2_without_forbidden_data(
         assert "snapshotPath" not in context["diagnosis"]["summary"]
         assert "value" not in context["diagnosis"]["summary"]["unsafe_metric"]
     assert context["diagnosis"]["issues"][0]["signal"] == "sparc"
+    issue = context["diagnosis"]["issues"][0]
+    assert issue["plain_language_meaning"] == "减速过程不够连续"
+    assert issue["claim_level"] == "experimental"
+    assert issue["metric_refs"] == ["sparc", "reverse_ratio"]
+    assert issue["event_refs"] == ["flick:37"]
+    assert issue["verification"]["comparable_requirements"] == [
+        "相同场景",
+        "相同设置",
+        "相同证据质量",
+    ]
+    assert issue["verification"]["success_signals"] == ["sparc ↑", "reverse_ratio ↓"]
+    assert issue["prescriptions"][0]["target_metrics"] == ["sparc", "reverse_ratio"]
     assert context["evidence_summary"]["availability"] == {"raw_input": "available"}
     expected_warnings = (
         [{"code": "video_cv_unavailable"}, {"code": "trace_partial"}]
@@ -235,8 +281,144 @@ def test_python_adapter_consumes_projected_context_only():
 
     assert data["profile"]["label"] == "减速抖动型"
     assert data["issues"][0]["signal"] == "sparc"
+    assert data["issues"][0]["claim_level"] == "experimental"
+    assert data["issues"][0]["metric_refs"] == ["sparc", "reverse_ratio"]
+    assert data["issues"][0]["verification"]["success_signals"] == [
+        "sparc ↑",
+        "reverse_ratio ↓",
+    ]
+    assert data["issues"][0]["verification"]["comparable_requirements"] == [
+        "相同场景",
+        "相同设置",
+        "相同证据质量",
+    ]
+    assert data["issues"][0]["prescriptions"][0]["cue"] == "让速度连续下降"
     assert "targetInference" not in str(data)
     assert "sensitivity-sentinel" not in str(data)
+
+
+def test_experimental_claim_and_source_levels_are_not_upgraded():
+    diagnosis = _diagnosis()
+    diagnosis["issues"][0]["claim_level"] = "experimental"
+    diagnosis["issues"][0]["prescriptions"][0]["source_level"] = "experimental"
+
+    context = project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v1",
+            "summary_type": "flicking",
+            "deterministic": {"diagnosis": diagnosis},
+        }
+    )
+    projected_issue = context["diagnosis"]["issues"][0]
+
+    assert projected_issue["claim_level"] == "experimental"
+    assert projected_issue["prescriptions"][0]["source_level"] == "experimental"
+
+    adapted = asdict(diagnostic_context_to_coach_diagnosis(context))
+    assert adapted["issues"][0]["claim_level"] == "experimental"
+    assert adapted["issues"][0]["prescriptions"][0]["source_level"] == "experimental"
+
+
+def test_real_advice_to_canonical_context_preserves_explanation_contract():
+    from kovaak_tracker.advice import advise
+    from kovaak_tracker.coach.diagnosis import build_diagnosis
+
+    findings = advise({"sparc": {"med": -7.0}})
+    diagnosis = build_diagnosis(
+        findings,
+        {"sparc": {"med": -7.0}},
+        comparison=None,
+        meta={"summary_type": "flicking"},
+    )
+
+    context = coerce_coach_diagnostic_context(diagnosis)
+    issue = context["diagnosis"]["issues"][0]
+    prescription = issue["prescriptions"][0]
+
+    assert issue["claim_level"] == "experimental"
+    assert issue["severity"] == "info"
+    assert issue["metric_refs"] == ["sparc"]
+    assert issue.get("event_refs", []) == []
+    assert issue["limitations"] == ["threshold_requires_product_calibration"]
+    assert issue["verification"]["comparable_requirements"] == [
+        "相同场景",
+        "相同设置",
+        "相同证据质量",
+    ]
+    assert prescription["target_metrics"] == ["sparc"]
+    assert prescription["expected_direction"] == ["sparc ↑"]
+    assert prescription["source_level"] == "community_consensus"
+
+
+@pytest.mark.parametrize("raw_level", [None, "unknown_weak_level"])
+def test_missing_or_unknown_claim_and_source_levels_fail_closed(raw_level: str | None):
+    diagnosis = _diagnosis()
+    issue = diagnosis["issues"][0]
+    prescription = issue["prescriptions"][0]
+    if raw_level is None:
+        issue.pop("claim_level")
+        prescription.pop("source_level")
+    else:
+        issue["claim_level"] = raw_level
+        prescription["source_level"] = raw_level
+
+    context = project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v1",
+            "summary_type": "flicking",
+            "deterministic": {"diagnosis": diagnosis},
+        }
+    )
+    projected_issue = context["diagnosis"]["issues"][0]
+
+    assert projected_issue["claim_level"] == "experimental"
+    assert projected_issue["prescriptions"][0]["source_level"] == "experimental"
+
+    adapted = asdict(diagnostic_context_to_coach_diagnosis(context))
+    assert adapted["issues"][0]["claim_level"] == "experimental"
+    assert adapted["issues"][0]["prescriptions"][0]["source_level"] == "experimental"
+
+
+def test_canonical_projection_rejects_secret_raw_and_path_like_values_in_allowed_shapes():
+    diagnosis = _diagnosis()
+    issue = diagnosis["issues"][0]
+    issue["plain_language_meaning"] = "access_token=access-token-secret-sentinel"
+    issue["expected_result"] = "../relative/private-result.json"
+    issue["prescriptions"][0]["purpose"] = "Bearer sk-live-secret-sentinel"
+
+    context = project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v2",
+            "analysis_id": "analysis-42",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+            "deterministic": {
+                "diagnosis": diagnosis,
+                "metrics": {
+                    "api_key": {
+                        "value": "sk-live-secret-sentinel",
+                        "classification": "deterministic",
+                    },
+                    "raw_input_dx": {
+                        "value": "raw-input-dx-sentinel",
+                        "classification": "deterministic",
+                    },
+                    "safe_metric": {
+                        "value": "~/private-result.json",
+                        "classification": "deterministic",
+                    },
+                },
+            },
+            "evidence": {"availability": {"raw_input": "available"}},
+        }
+    )
+
+    flattened = list(_walk(context))
+    for marker in _FORBIDDEN_MARKERS:
+        assert marker not in flattened
+    assert "api_key" not in context["diagnosis"]["summary"]
+    assert "raw_input_dx" not in context["diagnosis"]["summary"]
+    assert context["evidence_summary"]["availability"] == {"raw_input": "available"}
 
 
 def test_canonical_looking_context_is_reprojected_before_reaching_sinks():
@@ -343,14 +525,10 @@ async def test_chat_storage_persists_same_sanitized_context_for_both_messages(mo
         "input_snapshot": {"source_path": "/private/secret"},
     }
 
-    async def allow_budget(*_args, **_kwargs):
-        return True
-
     async def complete(turn):
         assert turn.diagnostic_context["schema_version"] == "coach_diagnostic_context.v1"
         return SimpleNamespace(reply="ok", notes=[])
 
-    monkeypatch.setattr(coach_service.llm_budget, "check_and_record", allow_budget)
     monkeypatch.setattr(coach_service, "complete_turn_async", complete)
     await coach_service.run_chat_turn(
         x_user_id="u1",

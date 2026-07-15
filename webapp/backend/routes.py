@@ -7,13 +7,18 @@ import shutil
 from pathlib import Path as FilePath
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, HTTPException, Path
+from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, Header, HTTPException, Path, Request
 from fastapi.responses import FileResponse
 
 from . import (
     benchmark_store,
+    coach_commands,
+    coach_runtime,
     coach_store,
     config,
+    provider_auth,
+    provider_commands,
+    provider_store,
     db,
     history_trends,
     kovaak_run_store,
@@ -46,7 +51,19 @@ from .schemas import (
     CoachPrimaryMessageRequest,
     CoachPrimaryMessageResponse,
     CoachPrimaryResponse,
+    CoachProductCommandResult,
     CoachRuntimeStatusResponse,
+    ProviderProfileCreate,
+    ProviderApiKeyRequest,
+    ProviderAuthorizeRequest,
+    ProviderAuthInputRequest,
+    ProviderAuthOperationOut,
+    ProviderProfileDeleteResponse,
+    ProviderProfileListResponse,
+    ProviderProfileOut,
+    ProviderProfilePatch,
+    ProviderProfileStatusResponse,
+    ProviderRevokeResponse,
     CoachThreadMessageOut,
     CoachThreadOut,
     DeleteSessionResponse,
@@ -75,6 +92,13 @@ log = logging.getLogger(__name__)
 # user_id 经 auth.get_request_user_id 校验(路径安全字符集)。
 _ALLOWED_VIDEO_EXTS = {".mp4"}
 _ALLOWED_CSV_EXTS = {".csv"}
+
+
+def _coach_tool_bridge_endpoint(request: Request) -> str | None:
+    """Return the local product route only when this request has a loopback origin."""
+    if request.url.hostname not in {"127.0.0.1", "localhost"} or request.url.port is None:
+        return None
+    return str(request.base_url).rstrip("/") + "/api/coach/tools/execute"
 
 
 def _require_upload_disk_space(required_bytes: int = 0) -> None:
@@ -305,19 +329,36 @@ def _session_status_response(s: dict) -> SessionStatus:
     )
 
 
+def _raise_product_command_error(
+    result: dict,
+    *,
+    status_overrides: Optional[dict[str, int]] = None,
+) -> None:
+    if result.get("status") == "succeeded":
+        return
+    error = result.get("warning_or_error") or {}
+    code = error.get("code")
+    message = error.get("message") or "Product command failed"
+    default_statuses = {
+        "idempotency_key_required": 400,
+        "invalid_idempotency_key": 400,
+        "invalid_parameters": 400,
+        "forbidden": 403,
+        "not_found": 404,
+        "deleted": 404,
+        "internal_error": 500,
+    }
+    status = (status_overrides or {}).get(code, default_statuses.get(code, 409))
+    raise HTTPException(status, message)
+
+
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
     x_user_id: str = Depends(get_request_user_id),
 ):
     """当前用户的分析列表(新→旧)。不返回完整 result。"""
-    rows = await queue.list_sessions(x_user_id)
-    metadata = await history_trends.session_history_metadata(x_user_id)
-    return SessionListResponse(
-        sessions=[
-            SessionListItem(**row, **metadata.get(int(row["id"]), {}))
-            for row in rows
-        ],
-    )
+    rows = await coach_commands.list_history(x_user_id)
+    return SessionListResponse(sessions=[SessionListItem(**row) for row in rows])
 
 
 @router.get("/history/trends/{metric_key}", response_model=HistoryTrendResponse)
@@ -325,9 +366,11 @@ async def get_history_trend(
     metric_key: str = Path(...),
     x_user_id: str = Depends(get_request_user_id),
 ):
-    return HistoryTrendResponse(
-        **await history_trends.recent_trend_for_user(x_user_id, metric_key)
-    )
+    try:
+        trend = await coach_commands.history_trend(x_user_id, metric_key)
+    except coach_commands.ProductCommandError as exc:
+        raise HTTPException(400, exc.message) from exc
+    return HistoryTrendResponse(**trend)
 
 
 @router.get("/benchmarks", response_model=BenchmarkRecordListResponse)
@@ -354,10 +397,8 @@ async def create_benchmark(
 
 @router.get("/kovaak-runs", response_model=KovaaKRunListResponse)
 async def list_kovaak_runs(_: None = Depends(require_desktop_token)):
-    runs = await kovaak_run_store.list_kovaak_runs(config.DESKTOP_LOCAL_PROFILE)
-    return KovaaKRunListResponse(
-        runs=[KovaaKRunItem(**kovaak_run_store.public_kovaak_run(run)) for run in runs]
-    )
+    runs = await coach_commands.list_runs(config.DESKTOP_LOCAL_PROFILE)
+    return KovaaKRunListResponse(runs=[KovaaKRunItem(**run) for run in runs])
 
 
 @router.get("/kovaak-runs/{run_id}", response_model=KovaaKRunItem)
@@ -365,10 +406,12 @@ async def get_kovaak_run(
     run_id: int = Path(...),
     _: None = Depends(require_desktop_token),
 ):
-    run = await kovaak_run_store.get_kovaak_run(run_id, config.DESKTOP_LOCAL_PROFILE)
-    if run is None:
-        raise HTTPException(404, "KovaaK run 不存在")
-    return KovaaKRunItem(**kovaak_run_store.public_kovaak_run(run))
+    try:
+        run = await coach_commands.get_run(config.DESKTOP_LOCAL_PROFILE, run_id)
+    except coach_commands.ProductCommandError as exc:
+        status = 403 if exc.code == "forbidden" else 404
+        raise HTTPException(status, exc.message) from exc
+    return KovaaKRunItem(**run)
 
 
 @router.post("/kovaak-runs/{run_id}/analyze", response_model=AnalyzeResponse)
@@ -376,78 +419,36 @@ async def analyze_kovaak_run(
     request: KovaaKAnalysisRequest,
     run_id: int = Path(...),
     _: None = Depends(require_desktop_token),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
-    """Freeze one owned Run and enqueue a mode-validated Analysis request."""
-    user_id = config.DESKTOP_LOCAL_PROFILE
-    if await queue.has_active(user_id):
-        raise HTTPException(429, "已有分析进行中,等完成再提交")
-    run = await kovaak_run_store.get_kovaak_run(run_id, user_id)
-    if run is None:
-        raise HTTPException(404, "KovaaK run 不存在")
-    try:
-        snapshot = await kovaak_run_store.build_analysis_input_snapshot(run_id, user_id)
-    except (LookupError, ValueError) as error:
-        raise HTTPException(409, str(error)) from error
-
-    native_ready = bool(
-        snapshot["sources"].get("stats")
-        and snapshot["sources"].get("performance")
-        and snapshot.get("trace")
-    )
+    """Freeze one owned Run through the shared product-command application handler."""
     video_source = None
     if request.video_path:
-        video_source = _validate_local_input_path(
+        video_source = FilePath(_validate_local_input_path(
             request.video_path, allowed_exts=_ALLOWED_VIDEO_EXTS, label="视频",
-        )
-    mode = request.input_mode
-    if mode is None:
-        mode = "multimodal" if native_ready and video_source else (
-            "input_native" if native_ready else "video_fallback"
-        )
-    if mode == "input_native" and not native_ready:
-        raise HTTPException(409, "input_native 需要 Stats、Performance 和 Raw Input trace")
-    if mode == "multimodal" and (not native_ready or not video_source):
-        raise HTTPException(409, "multimodal 需要完整 native evidence 和视频")
-    if mode == "video_fallback" and not video_source:
-        raise HTTPException(409, "video_fallback 需要视频")
-
-    sid = await queue.enqueue(
-        user_id,
-        "",
-        "",
+        ))
+    result = await coach_commands.execute_trusted_analysis_create(
+        config.DESKTOP_LOCAL_PROFILE,
+        run_id,
+        input_mode=request.input_mode,
         cm_per_360=request.cm_per_360,
         fov=request.fov,
-        analysis_type="flicking",
-        input_mode=mode,
-        kovaak_run_id=run_id,
-        input_snapshot=snapshot,
-        status="uploading",
+        managed_video_source=video_source,
+        idempotency_key=idempotency_key,
     )
-    workspace = session_dir(sid)
-    try:
-        managed_video = ""
-        managed_csv = ""
-        if video_source:
-            managed_video_path = workspace / "video.mp4"
-            copy_path_to_path(FilePath(video_source), managed_video_path)
-            managed_video = str(managed_video_path)
-        if mode == "video_fallback":
-            stats_path = run.get("stats_path")
-            if not stats_path or not os.path.isfile(stats_path):
-                raise HTTPException(409, "Stats source unavailable")
-            managed_csv_path = workspace / "stats.csv"
-            copy_path_to_path(FilePath(stats_path), managed_csv_path)
-            managed_csv = str(managed_csv_path)
-        await _update_session_input_paths(sid, managed_video, managed_csv)
-        if not await queue.finish_upload(sid):
-            raise HTTPException(409, "分析输入状态已失效，请重新提交")
-    except HTTPException:
-        await _abort_uploading_session(sid)
-        raise
-    except Exception as error:
-        await _abort_uploading_session(sid)
-        raise HTTPException(500, "无法建立分析输入快照") from error
-    return AnalyzeResponse(session_id=sid)
+    _raise_product_command_error(
+        result,
+        status_overrides={
+            "active_analysis": 429,
+            "input_setup_failed": 500,
+            "not_found": 409,
+        },
+    )
+    created = result.get("result") or {}
+    session_id = created.get("session_id")
+    if not isinstance(session_id, int):
+        raise HTTPException(500, "Analysis creation returned an invalid result")
+    return AnalyzeResponse(session_id=session_id)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionStatus)
@@ -456,7 +457,14 @@ async def get_session(
     x_user_id: str = Depends(get_request_user_id),
 ):
     """查询分析状态/结果(queued / running / done / failed)。"""
-    s = await _get_owned_session(session_id, x_user_id)
+    try:
+        await coach_commands.get_analysis(x_user_id, session_id)
+    except coach_commands.ProductCommandError as exc:
+        status = 403 if exc.code == "forbidden" else 404
+        raise HTTPException(status, exc.message) from exc
+    s = await queue.get_session(session_id)
+    if s is None:  # Defensive: the shared owner-aware handler just found it.
+        raise HTTPException(404, "session 不存在")
     return _session_status_response(s)
 
 
@@ -481,19 +489,23 @@ async def delete_session(
 async def retry_session(
     session_id: int = Path(...),
     x_user_id: str = Depends(get_request_user_id),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
-    """将 failed session 重新入队(输入文件仍在时)。"""
-    s = await _get_owned_session(session_id, x_user_id)
-    if await queue.has_active(x_user_id):
-        # Allow retry of this session itself if it's the only failed one —
-        # has_active only counts uploading/queued/running, so failed is fine.
-        pass
-    try:
-        updated = await queue.requeue_for_retry(session_id)
-    except RetryNotAllowed as exc:
-        status = 404 if exc.code == "not_found" else 409
-        raise HTTPException(status, exc.message) from exc
-    return _session_status_response(updated)
+    """将 failed session 通过共享产品命令处理器重新入队。"""
+    result = await coach_commands.execute_product_command(
+        x_user_id,
+        {
+            "command_name": "analysis.retry",
+            "parameters": {"analysis_ref": f"analysis:{session_id}"},
+            "idempotency_key": idempotency_key,
+        },
+        authorization_source="explicit_user_request",
+    )
+    _raise_product_command_error(result)
+    session = await queue.get_session(session_id)
+    if session is None:  # Defensive: retry handler succeeded only for an existing session.
+        raise HTTPException(404, "session 不存在")
+    return _session_status_response(session)
 
 
 
@@ -590,6 +602,331 @@ async def get_coach_runtime_status():
     return await build_coach_runtime_status()
 
 
+def _redact_catalog_secrets(value):
+    if isinstance(value, list):
+        return [_redact_catalog_secrets(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _redact_catalog_secrets(item)
+            for key, item in value.items()
+            if key not in {
+                "credential", "api_key", "key", "access", "refresh",
+                "access_token", "refresh_token", "token", "secret",
+            }
+        }
+    return value
+
+
+@router.get("/providers/catalog")
+@router.get("/coach/providers/catalog")
+async def get_provider_catalog():
+    """Proxy the full provider/model catalog from the local Pi sidecar."""
+    try:
+        return _redact_catalog_secrets(await coach_runtime.fetch_provider_catalog())
+    except coach_runtime.CoachRuntimeError as error:
+        log.warning("provider catalog unavailable: %s", error)
+        raise HTTPException(503, "Pi Provider catalog 暂不可用，请稍后重试") from error
+
+
+def _provider_status_response(
+    profile_id: int | None,
+    runtime_profile: dict | None,
+    result: dict | None = None,
+) -> ProviderProfileStatusResponse:
+    if runtime_profile is None:
+        return ProviderProfileStatusResponse(
+            profile_id=profile_id,
+            configured=False,
+            status="unconfigured",
+            message="Coach Provider 尚未配置",
+        )
+    raw = result or {}
+    status = raw.get("status")
+    if status not in {
+        "unconfigured", "auth_expired", "needs_reauth", "ready", "model_unavailable",
+        "connection_failed",
+    }:
+        status = (
+            "ready"
+            if provider_store.runtime_profile_configured(runtime_profile)
+            else "unconfigured"
+        )
+    message = str(raw.get("message") or status)
+    message = coach_runtime.redact_provider_secrets(message, runtime_profile)
+    return ProviderProfileStatusResponse(
+        profile_id=profile_id,
+        configured=bool(raw.get("configured", provider_store.runtime_profile_configured(runtime_profile))),
+        status=status,
+        message=message,
+    )
+
+
+@router.get("/provider-profiles", response_model=ProviderProfileListResponse)
+async def list_provider_profiles(
+    x_user_id: str = Depends(get_request_user_id),
+):
+    return ProviderProfileListResponse(
+        profiles=await provider_store.list_profiles(x_user_id),
+    )
+
+
+@router.post("/provider-profiles", response_model=ProviderProfileOut)
+async def create_provider_profile(
+    body: ProviderProfileCreate = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        profile = await provider_commands.create_profile(
+            x_user_id, body.model_dump(),
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    return profile
+
+
+@router.get("/provider-profiles/status", response_model=ProviderProfileStatusResponse)
+async def get_default_provider_status(
+    x_user_id: str = Depends(get_request_user_id),
+):
+    profile = await provider_store.get_default_profile(x_user_id)
+    runtime_profile = await provider_store.get_default_runtime_profile(x_user_id)
+    if profile is None:
+        return _provider_status_response(None, None)
+    result = await coach_runtime.get_provider_profile_status(runtime_profile or {})
+    return _provider_status_response(profile["id"], runtime_profile, result)
+
+
+@router.get("/provider-profiles/{profile_id}/status", response_model=ProviderProfileStatusResponse)
+async def get_provider_profile_status(
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    runtime_profile = await provider_store.get_runtime_profile(profile_id, x_user_id)
+    if runtime_profile is None:
+        raise HTTPException(404, "Provider profile 不存在")
+    result = await coach_runtime.get_provider_profile_status(runtime_profile)
+    return _provider_status_response(profile_id, runtime_profile, result)
+
+
+@router.get("/provider-profiles/{profile_id}", response_model=ProviderProfileOut)
+async def get_provider_profile(
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    profile = await provider_store.get_profile(profile_id, x_user_id)
+    if profile is None:
+        raise HTTPException(404, "Provider profile 不存在")
+    return profile
+
+
+@router.put("/provider-profiles/{profile_id}", response_model=ProviderProfileOut)
+async def update_provider_profile(
+    body: ProviderProfilePatch = Body(...),
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    changes = body.model_dump(exclude_unset=True)
+    try:
+        profile = (
+            await provider_commands.update_profile(x_user_id, profile_id, changes)
+            if changes
+            else await provider_store.get_profile(profile_id, x_user_id)
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    if profile is None:
+        raise HTTPException(404, "Provider profile 不存在")
+    return profile
+
+
+@router.delete("/provider-profiles/{profile_id}", response_model=ProviderProfileDeleteResponse)
+async def delete_provider_profile(
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    if not await provider_commands.delete_profile(x_user_id, profile_id):
+        raise HTTPException(404, "Provider profile 不存在")
+    return ProviderProfileDeleteResponse(deleted=True, id=profile_id)
+
+
+@router.post("/provider-profiles/{profile_id}/default", response_model=ProviderProfileOut)
+async def set_default_provider_profile(
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    profile = await provider_store.set_default_profile(profile_id, x_user_id)
+    if profile is None:
+        raise HTTPException(404, "Provider profile 不存在")
+    return profile
+
+
+@router.post("/provider-profiles/{profile_id}/test", response_model=ProviderProfileStatusResponse)
+async def test_provider_profile_route(
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    runtime_profile = await provider_store.get_runtime_profile(profile_id, x_user_id)
+    if runtime_profile is None:
+        raise HTTPException(404, "Provider profile 不存在")
+    result = await coach_runtime.test_provider_profile(runtime_profile)
+    return _provider_status_response(profile_id, runtime_profile, result)
+
+
+def _raise_provider_auth_error(error: provider_auth.ProviderAuthError) -> None:
+    raise HTTPException(error.status_code, str(error)) from error
+
+
+@router.get("/provider-auth/capabilities")
+async def get_provider_auth_capabilities():
+    try:
+        return await provider_auth.fetch_capabilities()
+    except provider_auth.ProviderAuthError as error:
+        _raise_provider_auth_error(error)
+
+
+@router.put(
+    "/provider-profiles/{profile_id}/auth/api-key",
+    response_model=ProviderProfileOut,
+)
+async def set_provider_api_key(
+    body: ProviderApiKeyRequest = Body(...),
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    profile = await provider_commands.set_api_key(
+        x_user_id, profile_id, body.api_key,
+    )
+    if profile is None:
+        raise HTTPException(404, "Provider profile 不存在")
+    return profile
+
+
+@router.delete(
+    "/provider-profiles/{profile_id}/auth/credential",
+    response_model=ProviderProfileOut,
+)
+async def delete_provider_credential(
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    profile = await provider_commands.delete_credential(x_user_id, profile_id)
+    if profile is None:
+        raise HTTPException(404, "Provider profile 不存在")
+    return profile
+
+
+@router.post(
+    "/provider-profiles/{profile_id}/auth/authorize",
+    response_model=ProviderAuthOperationOut,
+)
+async def authorize_provider_profile(
+    body: ProviderAuthorizeRequest = Body(...),
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        return await provider_commands.authorize(
+            x_user_id, profile_id, mode=body.mode,
+        )
+    except provider_auth.ProviderAuthError as error:
+        _raise_provider_auth_error(error)
+
+
+@router.post(
+    "/provider-profiles/{profile_id}/auth/refresh",
+    response_model=ProviderAuthOperationOut,
+)
+async def refresh_provider_profile(
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        return await provider_commands.refresh(x_user_id, profile_id)
+    except provider_auth.ProviderAuthError as error:
+        _raise_provider_auth_error(error)
+
+
+@router.post(
+    "/provider-profiles/{profile_id}/auth/revoke",
+    response_model=ProviderRevokeResponse,
+)
+async def revoke_provider_profile(
+    profile_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    result = await provider_commands.revoke(x_user_id, profile_id)
+    if result is None:
+        raise HTTPException(404, "Provider profile 不存在")
+    return result
+
+
+@router.get(
+    "/provider-auth-operations/{operation_id}",
+    response_model=ProviderAuthOperationOut,
+)
+async def get_provider_auth_operation(
+    operation_id: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        result = await provider_commands.get_auth_operation(x_user_id, operation_id)
+    except provider_auth.ProviderAuthError as error:
+        _raise_provider_auth_error(error)
+    if result is None:
+        raise HTTPException(404, "Provider auth operation 已中断或不存在，请重试")
+    return result
+
+
+@router.post(
+    "/provider-auth-operations/{operation_id}/input",
+    response_model=ProviderAuthOperationOut,
+)
+async def submit_provider_auth_input(
+    body: ProviderAuthInputRequest = Body(...),
+    operation_id: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        result = await provider_commands.submit_auth_input(
+            x_user_id, operation_id, body.prompt_id, body.value,
+        )
+    except provider_auth.ProviderAuthError as error:
+        _raise_provider_auth_error(error)
+    if result is None:
+        raise HTTPException(404, "Provider auth operation 已中断或不存在，请重试")
+    return result
+
+
+@router.post(
+    "/provider-auth-operations/{operation_id}/cancel",
+    response_model=ProviderAuthOperationOut,
+)
+async def cancel_provider_auth_operation(
+    operation_id: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        result = await provider_commands.cancel_auth_operation(x_user_id, operation_id)
+    except provider_auth.ProviderAuthError as error:
+        _raise_provider_auth_error(error)
+    if result is None:
+        raise HTTPException(404, "Provider auth operation 已中断或不存在，请重试")
+    return result
+
+
+@router.post("/coach/tools/execute", response_model=CoachProductCommandResult)
+async def execute_coach_tool_bridge(
+    payload: dict = Body(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Execute one turn-scoped Coach tool call using only its bearer principal."""
+    prefix = "Bearer "
+    if not authorization or not authorization.startswith(prefix):
+        raise HTTPException(401, "Coach tool bridge bearer token is required")
+    result = await coach_commands.execute_tool_bridge(authorization[len(prefix):], payload)
+    return CoachProductCommandResult(**result)
+
+
 @router.get("/coach/primary", response_model=CoachPrimaryResponse)
 async def get_coach_primary(
     x_user_id: str = Depends(get_request_user_id),
@@ -616,6 +953,7 @@ async def attach_coach_primary_analysis(
 
 @router.post("/coach/primary/messages", response_model=CoachPrimaryMessageResponse)
 async def post_coach_primary_message(
+    request: Request,
     body: CoachPrimaryMessageRequest = Body(...),
     x_user_id: str = Depends(get_request_user_id),
 ):
@@ -654,6 +992,8 @@ async def post_coach_primary_message(
         diagnosis=diagnosis,
         legacy_session_id=legacy_session_id,
         cost_session_id=cost_session_id,
+        tool_bridge_endpoint=_coach_tool_bridge_endpoint(request),
+        desktop_token=config.DESKTOP_LAUNCH_TOKEN or None,
     )
 
     now_ts = datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -688,6 +1028,7 @@ async def post_coach_primary_message(
 
 @router.post("/sessions/{session_id}/chat", response_model=ChatResponse)
 async def chat(
+    request: Request,
     session_id: int = Path(...),
     body: ChatRequest = Body(...),
     x_user_id: str = Depends(get_request_user_id),
@@ -722,6 +1063,8 @@ async def chat(
         diagnosis=diagnosis,
         legacy_session_id=session_id,
         cost_session_id=session_id,
+        tool_bridge_endpoint=_coach_tool_bridge_endpoint(request),
+        desktop_token=config.DESKTOP_LAUNCH_TOKEN or None,
     )
 
     now_ts = datetime.datetime.now(datetime.timezone.utc).strftime(

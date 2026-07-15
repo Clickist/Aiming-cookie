@@ -17,13 +17,29 @@ from webapp.backend import config
 from webapp.backend.coach_runtime import (
     CoachRuntimeError,
     diagnosis_to_analysis_summary,
-    run_pi_coach_turn,
+    ProviderUnconfiguredError,
+    run_pi_coach_turn as _run_pi_coach_turn,
 )
+
+_RUNTIME_PROFILE = {
+    "provider_id": "test-provider",
+    "provider_name": "Test Provider",
+    "kind": "custom_openai_compatible",
+    "base_url": "https://provider.test/v1",
+    "model_id": "test-model",
+    "api_key": "runtime-secret-key",
+}
+
+
+def run_pi_coach_turn(**kwargs):
+    kwargs.setdefault("user_id", "runtime-user")
+    kwargs.setdefault("profile", _RUNTIME_PROFILE)
+    return _run_pi_coach_turn(**kwargs)
 
 
 def _ok_response(reply: str = "教练回复") -> dict:
     return {
-        "schema_version": "coach_runtime_turn.v0",
+        "schema_version": "coach_runtime_turn.v1",
         "ok": True,
         "reply": reply,
         "error": None,
@@ -70,13 +86,19 @@ def test_run_pi_coach_turn_http_success_payload():
 
         mock_client_cls.assert_called_once_with(timeout=45)
         call_kw = mock_client.post.call_args
-        assert call_kw[0][0] == f"{config.COACH_SIDECAR_URL.rstrip('/')}/v0/turn"
+        assert call_kw[0][0] == f"{config.COACH_SIDECAR_URL.rstrip('/')}/v1/turn"
         stdin_payload = call_kw[1]["json"]
-        assert stdin_payload["schema_version"] == "coach_runtime_turn.v0"
+        assert stdin_payload["schema_version"] == "coach_runtime_turn.v1"
         assert stdin_payload["messages"] == messages
         assert stdin_payload["analysis_summary"] is None
         assert "run_id" in stdin_payload
-        assert stdin_payload["model"]["api_key_env"]
+        assert stdin_payload["user_id"] == "runtime-user"
+        assert stdin_payload["model"] == {
+            **{key: value for key, value in _RUNTIME_PROFILE.items() if key != "api_key"},
+            "credential": {"type": "api_key", "key": "runtime-secret-key"},
+        }
+        assert "runtime-secret-key" not in json.dumps(stdin_payload["messages"])
+        assert "runtime-secret-key" not in str(stdin_payload["analysis_summary"])
 
 
 def test_run_pi_coach_turn_http_fails_fallback_subprocess():
@@ -97,6 +119,51 @@ def test_run_pi_coach_turn_http_fails_fallback_subprocess():
     mock_run.assert_called_once()
 
 
+def test_tool_capable_turn_read_timeout_does_not_rerun_in_subprocess():
+    tool_bridge = {
+        "schema_version": "coach_tool_bridge.v1",
+        "turn_id": "turn:timeout",
+        "endpoint": "http://127.0.0.1:43127/api/coach/tools/execute",
+        "bearer_token": "bridge-timeout-secret",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "user_message_ref": "coach_message:1",
+    }
+    with patch("webapp.backend.coach_runtime.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.post.side_effect = httpx.ReadTimeout("response lost")
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        with patch("webapp.backend.coach_runtime.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=_ok_stdout("unsafe duplicate turn"),
+                stderr="",
+            )
+            with pytest.raises(CoachRuntimeError, match="sidecar 不可达"):
+                run_pi_coach_turn(
+                    messages=[{"role": "user", "content": "执行并解释"}],
+                    analysis_summary=None,
+                    tool_bridge=tool_bridge,
+                )
+    mock_run.assert_not_called()
+
+
+def test_v1_turn_read_timeout_without_bridge_does_not_rerun_in_subprocess():
+    with patch("webapp.backend.coach_runtime.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.post.side_effect = httpx.ReadTimeout("response lost")
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        with patch("webapp.backend.coach_runtime.subprocess.run") as mock_run:
+            with pytest.raises(CoachRuntimeError) as exc_info:
+                run_pi_coach_turn(
+                    messages=[{"role": "user", "content": "解释知识"}],
+                    analysis_summary=None,
+                )
+
+    assert exc_info.value.side_effects_possible is True
+    mock_run.assert_not_called()
+
+
 def test_run_pi_coach_turn_http_fails_no_fallback_raises():
     messages = [{"role": "user", "content": "x"}]
     with patch(
@@ -111,24 +178,21 @@ def test_run_pi_coach_turn_http_fails_no_fallback_raises():
                 run_pi_coach_turn(messages=messages, analysis_summary=None)
 
 
-def test_run_pi_coach_turn_http_non_200_fallback_subprocess():
+def test_run_pi_coach_turn_http_non_200_invalid_body_does_not_rerun_subprocess():
     messages = [{"role": "user", "content": "x"}]
     with patch("webapp.backend.coach_runtime.httpx.Client") as mock_client_cls:
         mock_response = MagicMock()
         mock_response.status_code = 503
         mock_response.text = "unavailable"
+        mock_response.json.side_effect = json.JSONDecodeError("invalid", "unavailable", 0)
         mock_client = MagicMock()
         mock_client.post.return_value = mock_response
         mock_client_cls.return_value.__enter__.return_value = mock_client
         with patch("webapp.backend.coach_runtime.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
-                returncode=0,
-                stdout=_ok_stdout("fallback"),
-                stderr="",
-            )
-            reply = run_pi_coach_turn(messages=messages, analysis_summary=None)
-    assert reply == "fallback"
+            with pytest.raises(CoachRuntimeError, match="sidecar HTTP 503") as exc_info:
+                run_pi_coach_turn(messages=messages, analysis_summary=None)
+    assert exc_info.value.side_effects_possible is True
+    mock_run.assert_not_called()
 
 
 def test_run_pi_coach_turn_ok_false_raises():
@@ -155,6 +219,79 @@ def test_run_pi_coach_turn_ok_false_raises():
             )
 
 
+def test_runtime_engine_preserves_tool_events_and_skips_python_fallback(monkeypatch):
+    from webapp.backend import coach_engine
+
+    event = {
+        "type": "product_command",
+        "command_id": "command:late-failure",
+        "command_name": "analysis.create_from_run",
+        "status": "succeeded",
+        "result_ref": "analysis:62",
+        "audit_ref": "audit:late-failure",
+        "ui_event": None,
+        "warning_or_error": None,
+    }
+    error = CoachRuntimeError("turn failed after tool")
+    error.tool_events = [event]
+    python_calls = 0
+
+    class Pi:
+        def complete(self, turn):
+            raise error
+
+    class Python:
+        def complete_with_notes(self, turn):
+            nonlocal python_calls
+            python_calls += 1
+            return "unsafe fallback", []
+
+    monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(config, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
+    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi(), python=Python())
+    result = engine.complete_with_notes(coach_engine.CoachTurn(
+        prior_messages=[],
+        user_message="执行并解释",
+        tool_bridge={"schema_version": "coach_tool_bridge.v1"},
+    ))
+
+    assert result.reply is None
+    assert result.tool_events == [event]
+    assert python_calls == 0
+
+
+def test_runtime_engine_uncertain_turn_without_events_skips_python_fallback(monkeypatch):
+    from webapp.backend import coach_engine
+
+    error = CoachRuntimeError(
+        "subprocess timed out after dispatch",
+        side_effects_possible=True,
+    )
+    python_calls = 0
+
+    class Pi:
+        def complete(self, turn):
+            raise error
+
+    class Python:
+        def complete_with_notes(self, turn):
+            nonlocal python_calls
+            python_calls += 1
+            return "unsafe fallback", []
+
+    monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(config, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
+    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi(), python=Python())
+    result = engine.complete_with_notes(coach_engine.CoachTurn(
+        prior_messages=[],
+        user_message="解释知识",
+    ))
+
+    assert result.reply is None
+    assert result.tool_events == []
+    assert python_calls == 0
+
+
 def test_run_pi_coach_turn_http_success_skips_subprocess():
     with _mock_httpx_post_success("仅 HTTP"):
         with patch("webapp.backend.coach_runtime.subprocess.run") as mock_run:
@@ -178,11 +315,29 @@ def test_run_pi_coach_turn_nonzero_exit_without_ok_json_raises():
                 stdout="",
                 stderr="node: module not found",
             )
-            with pytest.raises(CoachRuntimeError, match="exit 2"):
+            with pytest.raises(CoachRuntimeError, match="exit 2") as exc_info:
                 run_pi_coach_turn(
                     messages=[{"role": "user", "content": "x"}],
                     analysis_summary=None,
                 )
+    assert exc_info.value.side_effects_possible is True
+
+
+def test_subprocess_timeout_after_connect_failure_is_marked_uncertain():
+    with patch("webapp.backend.coach_runtime.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.post.side_effect = httpx.ConnectError("down")
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        with patch(
+            "webapp.backend.coach_runtime.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["node"], timeout=120),
+        ):
+            with pytest.raises(CoachRuntimeError, match="超时") as exc_info:
+                run_pi_coach_turn(
+                    messages=[{"role": "user", "content": "x"}],
+                    analysis_summary=None,
+                )
+    assert exc_info.value.side_effects_possible is True
 
 
 def test_coach_runtime_timeout_config_default():
@@ -239,3 +394,42 @@ def test_config_paths_exist():
     assert config.PI_SOURCE_DIR.is_dir()
     assert config.COACH_RUNTIME_RUN_TURN.is_file()
     assert "run-turn" in config.COACH_RUNTIME_RUN_TURN.name
+
+def test_run_pi_coach_turn_without_profile_or_legacy_config_is_recoverably_unconfigured():
+    with patch(
+        "webapp.backend.coach_runtime._load_legacy_provider_turn_profile",
+        return_value=None,
+    ):
+        with pytest.raises(ProviderUnconfiguredError, match="未配置"):
+            _run_pi_coach_turn(
+                user_id="owner-a",
+                profile=None,
+                messages=[{"role": "user", "content": "hello"}],
+                analysis_summary=None,
+            )
+
+
+def test_run_pi_coach_turn_redacts_api_key_from_sidecar_error():
+    err_body = _ok_response()
+    err_body["ok"] = False
+    err_body["reply"] = None
+    err_body["error"] = {
+        "category": "provider",
+        "code": "connection_failed",
+        "message": "bad credential runtime-secret-key",
+        "retryable": True,
+    }
+    with patch("webapp.backend.coach_runtime.httpx.Client") as mock_client_cls:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = err_body
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+        with pytest.raises(CoachRuntimeError) as exc_info:
+            run_pi_coach_turn(
+                messages=[{"role": "user", "content": "x"}],
+                analysis_summary=None,
+            )
+    assert "runtime-secret-key" not in str(exc_info.value)
+    assert "[REDACTED]" in str(exc_info.value)

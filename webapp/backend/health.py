@@ -84,10 +84,6 @@ async def readyz():
     if not await check_db_ready():
         return JSONResponse(status_code=503, content={"ok": False, "db": False})
 
-    if config.COACH_SIDECAR_URL.strip():
-        if not await check_sidecar_ready():
-            return JSONResponse(
-                status_code=503, content={"ok": False, "sidecar": False}
-            )
-
+    # Pi is an optional Coach capability. Its failure must not block local
+    # Analysis/History readiness. The separate runtime-status endpoint reports it.
     return {"ok": True}

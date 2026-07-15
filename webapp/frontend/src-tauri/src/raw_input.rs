@@ -256,6 +256,8 @@ fn replace_snapshot_file(source: &Path, destination: &Path) -> io::Result<()> {
 pub struct RawInputStatus {
     pub supported: bool,
     pub enabled: bool,
+    pub kovaak_process_present: bool,
+    pub capture_healthy: bool,
     pub buffered_points: usize,
     pub dropped_points: u64,
     pub expired_points: u64,
@@ -269,6 +271,8 @@ pub struct RawInputStatus {
 
 #[derive(Clone)]
 struct CaptureStatus {
+    kovaak_process_present: bool,
+    capture_healthy: bool,
     buffered_points: usize,
     dropped_points: u64,
     expired_points: u64,
@@ -291,6 +295,8 @@ struct SnapshotStatus {
 }
 
 struct CaptureDiagnostics {
+    capture_running: std::sync::atomic::AtomicBool,
+    kovaak_process_present: std::sync::atomic::AtomicBool,
     buffered_points: std::sync::atomic::AtomicUsize,
     dropped_points: std::sync::atomic::AtomicU64,
     expired_points: std::sync::atomic::AtomicU64,
@@ -300,11 +306,30 @@ struct CaptureDiagnostics {
 impl CaptureDiagnostics {
     fn new() -> Self {
         Self {
+            capture_running: std::sync::atomic::AtomicBool::new(false),
+            kovaak_process_present: std::sync::atomic::AtomicBool::new(false),
             buffered_points: std::sync::atomic::AtomicUsize::new(0),
             dropped_points: std::sync::atomic::AtomicU64::new(0),
             expired_points: std::sync::atomic::AtomicU64::new(0),
             snapshot: Mutex::new(SnapshotStatus::default()),
         }
+    }
+
+    fn record_capture_started(&self) {
+        self.capture_running
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    fn record_capture_stopped(&self) {
+        self.capture_running
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.kovaak_process_present
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    fn record_kovaak_process_present(&self, present: bool) {
+        self.kovaak_process_present
+            .store(present, std::sync::atomic::Ordering::Release);
     }
 
     fn record_buffered_points(&self, points: usize) {
@@ -345,6 +370,15 @@ impl CaptureDiagnostics {
     fn status(&self) -> CaptureStatus {
         let snapshot = self.snapshot.lock().ok();
         CaptureStatus {
+            kovaak_process_present: self
+                .kovaak_process_present
+                .load(std::sync::atomic::Ordering::Acquire),
+            capture_healthy: self
+                .capture_running
+                .load(std::sync::atomic::Ordering::Acquire)
+                && snapshot
+                    .as_ref()
+                    .is_some_and(|value| value.snapshot_error_code.is_none()),
             buffered_points: self
                 .buffered_points
                 .load(std::sync::atomic::Ordering::Acquire),
@@ -406,6 +440,8 @@ impl RawInputState {
         RawInputStatus {
             supported: cfg!(windows),
             enabled: inner.enabled,
+            kovaak_process_present: capture.kovaak_process_present,
+            capture_healthy: capture.capture_healthy,
             buffered_points: capture.buffered_points,
             dropped_points: capture.dropped_points,
             expired_points: capture.expired_points,
@@ -835,6 +871,7 @@ unsafe fn raw_input_thread(
         (&mut *thread_state) as *mut ThreadState as usize,
         Ordering::Release,
     );
+    thread_state.diagnostics.record_capture_started();
     let _ = ready.send(Ok(()));
     let mut message: MSG = zeroed();
     let mut last_process_check = Instant::now();
@@ -849,6 +886,9 @@ unsafe fn raw_input_thread(
         if last_process_check.elapsed() >= Duration::from_millis(500) {
             let was_running = thread_state.process_running;
             thread_state.process_running = is_kovaak_process_running();
+            thread_state
+                .diagnostics
+                .record_kovaak_process_present(thread_state.process_running);
             last_process_check = Instant::now();
             if !thread_state.process_running {
                 thread_state.buttons = 0;
@@ -868,6 +908,7 @@ unsafe fn raw_input_thread(
     };
     RegisterRawInputDevices(&remove_device, 1, size_of::<RAWINPUTDEVICE>() as UINT);
     STATE.store(0, Ordering::Release);
+    thread_state.diagnostics.record_capture_stopped();
     drop(thread_state);
     DestroyWindow(hwnd);
     UnregisterClassW(class_name.as_ptr(), instance);
@@ -996,6 +1037,55 @@ fn is_kovaak_process_running() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_input_status_defaults_to_disabled_without_process_or_healthy_runtime() {
+        let state = RawInputState::new(PathBuf::from("raw-input-status-defaults.bin"));
+
+        let status = state.status();
+
+        assert_eq!(status.supported, cfg!(windows));
+        assert!(!status.enabled);
+        assert!(!status.kovaak_process_present);
+        assert!(!status.capture_healthy);
+        assert_eq!(status.buffered_points, 0);
+        assert_eq!(status.snapshot_failures, 0);
+        assert_eq!(status.snapshot_error_code, None);
+    }
+
+    #[test]
+    fn capture_diagnostics_distinguish_process_presence_and_runtime_health() {
+        let diagnostics = CaptureDiagnostics::new();
+
+        diagnostics.record_capture_started();
+        diagnostics.record_kovaak_process_present(true);
+        let running = diagnostics.status();
+        assert!(running.kovaak_process_present);
+        assert!(running.capture_healthy);
+
+        diagnostics.record_snapshot_failure("trace_snapshot_failed", "disk full".to_string());
+        let failed = diagnostics.status();
+        assert!(failed.kovaak_process_present);
+        assert!(!failed.capture_healthy);
+        assert_eq!(failed.snapshot_failures, 1);
+        assert_eq!(
+            failed.snapshot_error_code.as_deref(),
+            Some("trace_snapshot_failed")
+        );
+
+        diagnostics.record_snapshot_success(123, 7);
+        let recovered = diagnostics.status();
+        assert!(recovered.kovaak_process_present);
+        assert!(recovered.capture_healthy);
+        assert_eq!(recovered.last_snapshot_at_ms, Some(123));
+        assert_eq!(recovered.last_snapshot_points, 7);
+        assert_eq!(recovered.snapshot_error_code, None);
+
+        diagnostics.record_capture_stopped();
+        let stopped = diagnostics.status();
+        assert!(!stopped.kovaak_process_present);
+        assert!(!stopped.capture_healthy);
+    }
 
     #[test]
     fn ring_buffer_prunes_old_points_and_can_clear() {

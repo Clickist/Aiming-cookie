@@ -7,10 +7,19 @@ const { Type } = (await loadPiAi()) as {
 };
 
 export function createAnalysisSummaryTool(analysisSummary: string | null) {
-  const summaryText =
-    analysisSummary && analysisSummary.trim().length > 0
-      ? analysisSummary.trim()
-      : "当前没有可用的分析摘要。";
+  let summaryText = "当前没有可用的分析摘要。";
+  let hasAnalysis = false;
+  if (analysisSummary && analysisSummary.trim().length > 0 && Buffer.byteLength(analysisSummary, "utf8") <= 64 * 1024) {
+    try {
+      const parsed = JSON.parse(analysisSummary);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.schema_version === "coach_diagnostic_context.v1") {
+        summaryText = JSON.stringify(parsed);
+        hasAnalysis = true;
+      }
+    } catch {
+      // Fail closed; invalid input never becomes model-visible content.
+    }
+  }
 
   return {
     name: "get_analysis_summary",
@@ -21,7 +30,7 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
       return {
         content: [{ type: "text", text: summaryText }],
         details: {
-          has_analysis: analysisSummary !== null && analysisSummary.trim().length > 0,
+          has_analysis: hasAnalysis,
           context_schema: "coach_diagnostic_context.v1",
         },
       };

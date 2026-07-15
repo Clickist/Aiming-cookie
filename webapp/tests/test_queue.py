@@ -8,12 +8,96 @@ from webapp.backend import db, queue
 from webapp.backend.config import DEFAULT_MAX_ATTEMPTS, LEASE_TTL_SECONDS
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
+    ANALYSIS_RESULT_V2_SCHEMA_VERSION,
     ERROR_SCHEMA_VERSION,
     build_error_v1,
     dump_contract_json,
 )
 
 TEST_WORKER = "test-worker:1"
+
+
+def _persistent_v2_result(owner_id: str) -> dict:
+    return {
+        "schema_version": ANALYSIS_RESULT_V2_SCHEMA_VERSION,
+        "analysis_version": "native_flicking.v1",
+        "analysis_id": "analysis:1",
+        "analysis_type": "flicking",
+        "input_mode": "input_native",
+        "owner_id": owner_id,
+        "kovaak_run_ref": "run:1",
+        "created_at": "2026-07-14T00:00:00Z",
+        "completed_at": "2026-07-14T00:00:01Z",
+        "status": "done",
+        "input_snapshot": {"scenario": "Scenario"},
+        "evidence": {
+            "sources": {
+                "raw_input": {
+                    "source": "raw_input",
+                    "role": "kinematics",
+                    "availability": "available",
+                    "artifact_ref": "run:1:trace",
+                    "parser_or_format_version": 1,
+                    "alignment": "aligned",
+                    "warnings": [],
+                },
+            },
+            "provenance": {"adapter": "native_flicking_analysis"},
+            "availability": {"raw_input": "available"},
+            "alignment": {"status": "aligned"},
+            "coverage": 1.0,
+            "warnings": [],
+        },
+        "deterministic": {
+            "metrics": {
+                "path_length": {
+                    "key": "path_length",
+                    "value": 10.0,
+                    "unit": "raw_counts",
+                    "availability": "available",
+                    "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                    "metric_version": "native_flicking.v1",
+                    "coverage": 1.0,
+                    "limitations": [],
+                },
+            },
+        },
+        "artifact_manifest": {
+            "schema_version": "artifact_manifest.v2",
+            "analysis_id": "analysis:1",
+            "external_inputs": [
+                {
+                    "id": "run:1:trace",
+                    "kind": "raw_input",
+                    "source": "raw_input",
+                    "availability": "available",
+                    "ownership": "kovaak_run",
+                    "managed": True,
+                    "local_only": True,
+                    "status": "available",
+                    "format_version": 1,
+                    "derived_from": [],
+                },
+            ],
+            "owned_outputs": [
+                {
+                    "id": "analysis:1",
+                    "kind": "analysis_result",
+                    "source": "analysis",
+                    "availability": "available",
+                    "ownership": "analysis",
+                    "managed": True,
+                    "local_only": True,
+                    "status": "available",
+                    "format_version": ANALYSIS_RESULT_V2_SCHEMA_VERSION,
+                    "derived_from": ["run:1:trace"],
+                },
+            ],
+        },
+        "warnings": [],
+        "errors": [],
+        "normalization_issues": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -169,6 +253,141 @@ async def test_mark_done_uses_strict_json_serialization():
     assert "NaN" not in row2["result"]
     parsed = await queue.get_session(sid2)
     assert parsed["result"]["bad"] is None
+
+
+@pytest.mark.asyncio
+async def test_mark_done_rejects_invalid_analysis_result_v2_before_terminal_write():
+    sid = await queue.enqueue("u1", "/a", "/a.csv")
+    await queue.claim_next(TEST_WORKER)
+
+    with pytest.raises(ValueError, match="analysis_type"):
+        await queue.mark_done(
+            sid,
+            {
+                "schema_version": ANALYSIS_RESULT_V2_SCHEMA_VERSION,
+                "analysis_id": "analysis:invalid",
+            },
+            0.0,
+            worker_id=TEST_WORKER,
+        )
+
+    session = await queue.get_session(sid)
+    assert session["status"] == "running"
+    assert session["result"] is None
+
+
+@pytest.mark.asyncio
+async def test_mark_done_v2_requires_matching_owner_and_complete_producer_metadata():
+    from webapp.backend import kovaak_run_store
+
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="producer-metadata", scenario="Scenario",
+    )
+    sid = await queue.enqueue(
+        "u1", "", "",
+        input_mode="input_native",
+        kovaak_run_id=run["id"],
+        input_snapshot={
+            "schema_version": "analysis_input_snapshot.v1",
+            "run_id": run["id"],
+            "sources": {},
+            "trace": None,
+        },
+    )
+    await queue.claim_next(TEST_WORKER)
+
+    def bound_result(owner_id: str) -> dict:
+        result = _persistent_v2_result(owner_id)
+        analysis_id = f"analysis:{sid}"
+        result["analysis_id"] = analysis_id
+        result["artifact_manifest"]["analysis_id"] = analysis_id
+        result["artifact_manifest"]["owned_outputs"][0]["id"] = analysis_id
+        result["kovaak_run_ref"] = f"run:{run['id']}"
+        return result
+
+    with pytest.raises(ValueError, match="owner_id"):
+        await queue.mark_done(
+            sid,
+            bound_result("other-owner"),
+            0.0,
+            worker_id=TEST_WORKER,
+        )
+
+    unversioned = bound_result("u1")
+    del unversioned["analysis_version"]
+    with pytest.raises(ValueError, match="analysis_version"):
+        await queue.mark_done(sid, unversioned, 0.0, worker_id=TEST_WORKER)
+
+    incomplete = bound_result("u1")
+    del incomplete["deterministic"]["metrics"]["path_length"]["coverage"]
+    with pytest.raises(ValueError, match="coverage"):
+        await queue.mark_done(sid, incomplete, 0.0, worker_id=TEST_WORKER)
+
+    assert await queue.mark_done(
+        sid,
+        bound_result("u1"),
+        0.0,
+        worker_id=TEST_WORKER,
+    ) is True
+    session = await queue.get_session(sid)
+    assert session["status"] == "done"
+    assert session["result"]["owner_id"] == "u1"
+
+
+@pytest.mark.parametrize(
+    ("field", "wrong_value"),
+    [
+        ("analysis_id", "analysis:999"),
+        ("analysis_type", "tracking"),
+        ("input_mode", "multimodal"),
+        ("kovaak_run_ref", "run:999"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_mark_done_v2_binds_result_identity_to_claimed_session(
+    field: str, wrong_value: str,
+):
+    from webapp.backend import kovaak_run_store
+
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key=f"binding-{field}", scenario="Scenario",
+    )
+    snapshot = {
+        "schema_version": "analysis_input_snapshot.v1",
+        "run_id": run["id"],
+        "sources": {},
+        "trace": None,
+    }
+    sid = await queue.enqueue(
+        "u1", "", "",
+        analysis_type="flicking",
+        input_mode="input_native",
+        kovaak_run_id=run["id"],
+        input_snapshot=snapshot,
+    )
+    await queue.claim_next(TEST_WORKER)
+
+    result = _persistent_v2_result("u1")
+    analysis_id = f"analysis:{sid}"
+    run_ref = f"run:{run['id']}"
+    result["analysis_id"] = analysis_id
+    result["artifact_manifest"]["analysis_id"] = analysis_id
+    result["artifact_manifest"]["owned_outputs"][0]["id"] = analysis_id
+    result["kovaak_run_ref"] = run_ref
+
+    if field == "analysis_id":
+        result["analysis_id"] = wrong_value
+        result["artifact_manifest"]["analysis_id"] = wrong_value
+        result["artifact_manifest"]["owned_outputs"][0]["id"] = wrong_value
+    else:
+        result[field] = wrong_value
+
+    with pytest.raises(ValueError, match=field):
+        await queue.mark_done(sid, result, 0.0, worker_id=TEST_WORKER)
+
+    session = await queue.get_session(sid)
+    assert session["status"] == "running"
+    assert session["result"] is None
 
 
 @pytest.mark.asyncio

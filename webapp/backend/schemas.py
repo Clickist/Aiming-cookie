@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from typing import Literal, Optional
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class ErrorV1(BaseModel):
@@ -248,3 +249,216 @@ class CoachRuntimeStatusResponse(BaseModel):
     sidecar: Literal["up", "down", "n/a"]
     ready_for_fast_path: bool
     message: str
+
+
+class CoachProductCommandResult(BaseModel):
+    """Safe, canonical product-command response; excludes paths, URLs and secrets."""
+
+    schema_version: Literal["coach_product_command_result.v1"]
+    command_id: str
+    status: Literal["succeeded", "failed", "cancelled", "needs_confirmation", "unavailable"]
+    result_ref: Optional[str] = None
+    result: Optional[dict | list[dict]] = None
+    ui_event: Optional[dict] = None
+    confirmation: Optional[dict] = None
+    warning_or_error: Optional[dict] = None
+    audit_ref: str
+
+PROVIDER_KINDS = Literal["builtin", "custom_openai_compatible"]
+PROVIDER_STATUSES = Literal[
+    "unconfigured",
+    "auth_expired",
+    "needs_reauth",
+    "ready",
+    "model_unavailable",
+    "connection_failed",
+]
+
+
+class ProviderProfileCreate(BaseModel):
+    name: str
+    kind: PROVIDER_KINDS
+    provider_id: Optional[str] = Field(default=None, validate_default=True)
+    base_url: Optional[str] = Field(default=None, validate_default=True)
+    model_id: str
+    api_key: Optional[str] = Field(default=None, repr=False, validate_default=True)
+    is_default: bool = False
+
+    @field_validator("name", "model_id")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("provider_id")
+    @classmethod
+    def _optional_provider_id(
+        cls, value: Optional[str], info: ValidationInfo,
+    ) -> Optional[str]:
+        if value is not None:
+            value = value.strip() or None
+        if info.data.get("kind") == "builtin" and not value:
+            raise ValueError("provider_id is required for builtin providers")
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def _http_url(
+        cls, value: Optional[str], info: ValidationInfo,
+    ) -> Optional[str]:
+        if value is not None:
+            value = value.strip() or None
+        if info.data.get("kind") == "custom_openai_compatible" and not value:
+            raise ValueError("base_url is required for custom providers")
+        if value:
+            parsed = urlsplit(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("base_url must be a valid HTTP(S) URL")
+            return value.rstrip("/")
+        return None
+
+    @field_validator("api_key")
+    @classmethod
+    def _api_key_text(
+        cls, value: Optional[str], info: ValidationInfo,
+    ) -> Optional[str]:
+        if value is not None:
+            value = value.strip() or None
+        if info.data.get("kind") == "custom_openai_compatible" and not value:
+            raise ValueError("api_key is required for custom providers")
+        return value
+
+
+class ProviderProfilePatch(BaseModel):
+    name: Optional[str] = None
+    provider_id: Optional[str] = None
+    kind: Optional[PROVIDER_KINDS] = None
+    base_url: Optional[str] = None
+    model_id: Optional[str] = None
+    api_key: Optional[str] = Field(default=None, repr=False)
+    is_default: Optional[bool] = None
+
+    @field_validator("name", "provider_id", "model_id")
+    @classmethod
+    def _optional_required_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def _optional_http_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("base_url must use http:// or https://")
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("base_url must be a valid HTTP(S) URL")
+        return value.rstrip("/")
+
+    @field_validator("api_key")
+    @classmethod
+    def _optional_api_key_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+
+class ProviderProfileOut(BaseModel):
+    id: int
+    name: str
+    provider_id: str
+    kind: PROVIDER_KINDS
+    base_url: Optional[str] = None
+    model_id: str
+    is_default: bool
+    configured: bool
+    credential_configured: bool
+    has_api_key: bool
+    status: PROVIDER_STATUSES
+    created_at: str
+    updated_at: str
+
+
+class ProviderProfileListResponse(BaseModel):
+    profiles: list[ProviderProfileOut]
+
+
+class ProviderProfileDeleteResponse(BaseModel):
+    deleted: bool
+    id: int
+
+
+class ProviderProfileStatusResponse(BaseModel):
+    profile_id: Optional[int] = None
+    configured: bool
+    status: PROVIDER_STATUSES
+    message: str
+
+
+class ProviderApiKeyRequest(BaseModel):
+    api_key: str = Field(repr=False)
+
+    @field_validator("api_key")
+    @classmethod
+    def _required_api_key(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("api_key must not be blank")
+        return value
+
+
+class ProviderAuthorizeRequest(BaseModel):
+    # device_code is a dynamic Pi event emitted during an OAuth login, not a mode.
+    mode: Literal["api_key", "oauth"]
+
+
+class ProviderAuthInputRequest(BaseModel):
+    prompt_id: str
+    value: str = Field(repr=False)
+
+    @field_validator("prompt_id")
+    @classmethod
+    def _required_prompt_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("prompt_id must not be blank")
+        return value
+
+
+PROVIDER_AUTH_OPERATION_STATUSES = Literal[
+    "running",
+    "awaiting_input",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "timed_out",
+    "interrupted",
+]
+
+
+class ProviderAuthOperationOut(BaseModel):
+    operation_id: str
+    profile_id: int
+    action: Literal["login", "refresh"]
+    mode: Optional[Literal["api_key", "oauth"]] = None
+    status: PROVIDER_AUTH_OPERATION_STATUSES
+    prompts: list[dict] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
+    error: Optional[dict] = None
+    created_at: str
+    expires_at: str
+
+
+class ProviderRevokeResponse(BaseModel):
+    profile_id: int
+    revoked: bool
+    remote_revoked: Literal[False] = False

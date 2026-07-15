@@ -6,14 +6,16 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from .config import DEFAULT_MAX_ATTEMPTS, LEASE_TTL_SECONDS
+from .config import DEFAULT_MAX_ATTEMPTS, DESKTOP_LOCAL_PROFILE, LEASE_TTL_SECONDS
 from .contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
+    ANALYSIS_RESULT_V2_SCHEMA_VERSION,
     build_error_v1,
     coerce_analysis_result,
     coerce_error_v1,
     dump_contract_json,
     normalize_json_value,
+    validate_analysis_result_v2_for_persistence,
 )
 from . import coach_store
 from .db import get_conn
@@ -407,6 +409,25 @@ async def mark_done(
     session_id: int, result: dict, llm_cost: float, *, worker_id: str,
 ) -> bool:
     conn = await get_conn()
+    if result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
+        cur = await conn.execute(
+            "SELECT user_id, analysis_type, input_mode, kovaak_run_id FROM sessions "
+            "WHERE id=? AND status='running' AND worker_id=?",
+            (session_id, worker_id),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return False
+        run_id = row["kovaak_run_id"]
+        result = validate_analysis_result_v2_for_persistence(
+            result,
+            owner_id=row["user_id"],
+            analysis_id=f"analysis:{session_id}",
+            analysis_type=row["analysis_type"] or "flicking",
+            input_mode=row["input_mode"] or "video_fallback",
+            kovaak_run_ref=f"run:{run_id}" if run_id is not None else None,
+            require_local_profile=row["user_id"] == DESKTOP_LOCAL_PROFILE,
+        )
     cur = await conn.execute(
         "UPDATE sessions SET status='done', result=?, llm_cost_cny=?, "
         "lease_expires_at=NULL, heartbeat_at=NULL, worker_id=NULL, "
@@ -436,11 +457,10 @@ async def mark_failed(session_id: int, error: str | dict, *, worker_id: str) -> 
 
 
 async def add_llm_cost(session_id: int, delta: float) -> None:
-    """累加 LLM cost 到已 done 的 session(用于 chat 等非 worker 路径记账)。
+    """Legacy compatibility accumulator for historical CNY cost records.
 
-    worker 路径用 mark_done 一次性设 cost;chat 在 session 已 done 后追加,
-    用 UPDATE 累加,这样下次 llm_budget.check_and_record 反映真实累计
-    (避免反复调 chat 绕过日预算限制)。
+    Active selected-provider turns do not call this without a provider-specific
+    usage and currency contract; existing rows remain readable.
     """
     conn = await get_conn()
     await conn.execute(
@@ -451,15 +471,45 @@ async def add_llm_cost(session_id: int, delta: float) -> None:
     await conn.commit()
 
 
-async def has_active(user_id: str) -> bool:
+async def get_active_session(user_id: str) -> Optional[dict]:
+    """Return one active owner-scoped Analysis for command conflict reporting."""
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT EXISTS(SELECT 1 FROM sessions "
-        "WHERE user_id=? AND status IN ('uploading', 'queued', 'running'))",
+        "SELECT * FROM sessions WHERE user_id=? AND status IN ('uploading', 'queued', 'running') "
+        "ORDER BY id DESC LIMIT 1",
         (user_id,),
     )
     row = await cur.fetchone()
-    return bool(row[0])
+    return dict(row) if row else None
+
+
+async def has_active(user_id: str) -> bool:
+    return await get_active_session(user_id) is not None
+
+
+async def set_session_input_paths(
+    session_id: int, user_id: str, video_path: str, csv_path: str,
+) -> bool:
+    """Set only managed workspace paths for an uploading owner-scoped session."""
+    conn = await get_conn()
+    cur = await conn.execute(
+        "UPDATE sessions SET video_path=?, csv_path=? "
+        "WHERE id=? AND user_id=? AND status='uploading'",
+        (video_path, csv_path, session_id, user_id),
+    )
+    await conn.commit()
+    return cur.rowcount == 1
+
+
+async def abort_uploading_session(session_id: int, user_id: str) -> bool:
+    """Discard an incomplete owner-scoped upload after managed-workspace cleanup."""
+    conn = await get_conn()
+    cur = await conn.execute(
+        "DELETE FROM sessions WHERE id=? AND user_id=? AND status='uploading'",
+        (session_id, user_id),
+    )
+    await conn.commit()
+    return cur.rowcount == 1
 
 
 async def list_storage_sessions(user_id: str) -> list[dict]:
