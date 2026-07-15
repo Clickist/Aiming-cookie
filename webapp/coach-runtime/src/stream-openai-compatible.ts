@@ -1,4 +1,4 @@
-import { loadPiAi } from "./pi-source.ts";
+import { loadPiOpenAiCompletions } from "./pi-source.ts";
 import type { CoachRuntimeModelConfig } from "./contracts.ts";
 
 export type StreamFn = (
@@ -7,6 +7,7 @@ export type StreamFn = (
   options?: Record<string, unknown>,
 ) => Promise<unknown> | unknown;
 
+/** Compatibility-only model builder for the legacy v0 caller. Production turns resolve a Pi model. */
 export function buildCoachModel(config: CoachRuntimeModelConfig) {
   return {
     id: config.model_id,
@@ -22,13 +23,13 @@ export function buildCoachModel(config: CoachRuntimeModelConfig) {
   };
 }
 
-/** Production StreamFn: Pi openai-completions streaming via env API key. */
+/** Compatibility-only direct Pi API stream. Production uses Models.streamSimple. */
 export async function createOpenAiCompatibleStreamFn(): Promise<StreamFn> {
-  const ai = await loadPiAi();
-  const streamSimple = ai.streamSimple as StreamFn;
-  return streamSimple;
+  const ai = (await loadPiOpenAiCompletions()) as { streamSimple: StreamFn };
+  return ai.streamSimple;
 }
 
+/** Compatibility-only environment resolver for callers still using the old v0 shape. */
 export function createApiKeyResolver(apiKeyEnv: string) {
   return (_provider: string) => {
     const value = process.env[apiKeyEnv];

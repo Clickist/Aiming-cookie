@@ -26,6 +26,7 @@ _METRIC_FIELDS = frozenset(
         "p25",
         "p50",
         "p75",
+        "p90",
         "std",
         "iqr",
         "count",
@@ -37,6 +38,10 @@ _METRIC_FIELDS = frozenset(
         "sample_count",
         "coverage",
         "limitations",
+        "outlier_method",
+        "outlier_refs",
+        "sample_refs",
+        "definition",
     }
 )
 _COMPARISON_FIELDS = frozenset(
@@ -62,6 +67,12 @@ _META_FIELDS = frozenset(
     }
 )
 _WARNING_FIELDS = frozenset({"code", "domain", "retryable", "user_message_key", "evidence_ref"})
+_CLAIM_LEVELS = frozenset(
+    {"measured", "deterministic_rule", "research_supported", "community_consensus", "experimental"}
+)
+_SOURCE_LEVELS = frozenset(
+    {"product_contract", "academic_peer_reviewed", "community_consensus", "personal_experience_unverified", "experimental"}
+)
 _EVIDENCE_REF_FIELDS = (
     "id",
     "source",
@@ -75,6 +86,7 @@ _EVIDENCE_REF_FIELDS = (
 def _is_absolute_path(value: str) -> bool:
     return (
         os.path.isabs(value)
+        or value.startswith(("file://", "~/", "../", "..\\"))
         or value.startswith("\\")
         or (
             len(value) >= 3
@@ -85,9 +97,36 @@ def _is_absolute_path(value: str) -> bool:
     )
 
 
+def _contains_sensitive_text(value: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|"
+            r"client[_-]?secret|password)\s*[:=]|\bbearer\s+\S{8,}|"
+            r"\bsk-[a-z0-9][a-z0-9_-]{7,}",
+            value,
+        )
+    )
+
+
 def _is_forbidden_key(key: object) -> bool:
     compact = re.sub(r"[^a-z0-9]", "", str(key).casefold())
     if compact == "path" or compact.endswith("path") or compact.endswith("paths"):
+        return True
+    if any(
+        marker in compact
+        for marker in (
+            "apikey",
+            "accesstoken",
+            "refreshtoken",
+            "clientsecret",
+            "credential",
+            "authorization",
+            "password",
+            "secret",
+        )
+    ):
+        return True
+    if compact.startswith("rawinput") and compact != "rawinput":
         return True
     if any(
         marker in compact
@@ -113,14 +152,22 @@ def _safe_scalar(value: object) -> object:
     if isinstance(value, float):
         return value if math.isfinite(value) else _MISSING
     if isinstance(value, str):
-        return value if not _is_absolute_path(value) else _MISSING
+        return (
+            value
+            if not _is_absolute_path(value) and not _contains_sensitive_text(value)
+            else _MISSING
+        )
     return _MISSING
 
 
 def _safe_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [item for item in value if isinstance(item, str) and not _is_absolute_path(item)]
+    return [
+        item
+        for item in value
+        if isinstance(item, str) and _safe_scalar(item) is not _MISSING
+    ]
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -136,10 +183,10 @@ def _project_metric(metric: object) -> dict[str, object] | None:
         for key in _METRIC_FIELDS:
             if key not in metric or _is_forbidden_key(key):
                 continue
-            if key == "limitations":
-                limitations = _safe_string_list(metric[key])
-                if limitations:
-                    out[key] = limitations
+            if key in {"limitations", "outlier_refs", "sample_refs"}:
+                values = _safe_string_list(metric[key])
+                if values:
+                    out[key] = values
                 continue
             if key == "provenance" and isinstance(metric[key], Mapping):
                 provenance: dict[str, object] = {}
@@ -186,6 +233,40 @@ def _project_issue(issue: object) -> dict[str, object] | None:
         if value is not _MISSING:
             out[key] = value
 
+    for key in ("plain_language_meaning", "expected_result"):
+        value = _safe_scalar(issue.get(key))
+        if value is not _MISSING:
+            out[key] = value
+
+    claim_level = issue.get("claim_level")
+    out["claim_level"] = (
+        claim_level
+        if isinstance(claim_level, str) and claim_level in _CLAIM_LEVELS
+        else "experimental"
+    )
+
+    for key in ("metric_refs", "event_refs", "limitations"):
+        values = _safe_string_list(issue.get(key))
+        if values:
+            out[key] = values
+
+    verification = issue.get("verification")
+    if isinstance(verification, Mapping):
+        projected_verification: dict[str, object] = {}
+        comparable_requirements = _safe_string_list(
+            verification.get("comparable_requirements")
+        )
+        if comparable_requirements:
+            projected_verification["comparable_requirements"] = comparable_requirements
+        success_signals = _safe_string_list(verification.get("success_signals"))
+        if success_signals:
+            projected_verification["success_signals"] = success_signals
+        insufficient = _safe_scalar(verification.get("insufficient_evidence_behavior"))
+        if insufficient is not _MISSING:
+            projected_verification["insufficient_evidence_behavior"] = insufficient
+        if projected_verification:
+            out["verification"] = projected_verification
+
     root_causes: list[dict[str, object]] = []
     for root_cause in issue.get("root_causes") or []:
         if not isinstance(root_cause, Mapping):
@@ -204,11 +285,28 @@ def _project_issue(issue: object) -> dict[str, object] | None:
     for prescription in issue.get("prescriptions") or []:
         if not isinstance(prescription, Mapping):
             continue
-        projected = {}
-        for key in ("scenario", "reason"):
+        projected: dict[str, object] = {}
+        for key in (
+            "scenario",
+            "reason",
+            "cue",
+            "purpose",
+            "retest_after",
+            "stop_or_adjust_rule",
+        ):
             value = _safe_scalar(prescription.get(key))
-            if value is not _MISSING:
+            if value is not _MISSING and value != "":
                 projected[key] = value
+        for key in ("target_metrics", "expected_direction"):
+            values = _safe_string_list(prescription.get(key))
+            if values:
+                projected[key] = values
+        source_level = prescription.get("source_level")
+        projected["source_level"] = (
+            source_level
+            if isinstance(source_level, str) and source_level in _SOURCE_LEVELS
+            else "experimental"
+        )
         if projected:
             prescriptions.append(projected)
     if prescriptions:
@@ -514,7 +612,17 @@ def diagnostic_context_to_coach_diagnosis(context: Mapping[str, Any] | None):
             if isinstance(item, Mapping)
         ]
         prescriptions = [
-            Prescription(scenario=str(item.get("scenario") or ""), reason=str(item.get("reason") or ""))
+            Prescription(
+                scenario=str(item.get("scenario") or ""),
+                reason=str(item.get("reason") or ""),
+                cue=str(item.get("cue") or ""),
+                purpose=str(item.get("purpose") or ""),
+                target_metrics=_safe_string_list(item.get("target_metrics")),
+                expected_direction=_safe_string_list(item.get("expected_direction")),
+                retest_after=str(item.get("retest_after") or ""),
+                stop_or_adjust_rule=str(item.get("stop_or_adjust_rule") or ""),
+                source_level=str(item.get("source_level") or "experimental"),
+            )
             for item in issue_data.get("prescriptions") or []
             if isinstance(item, Mapping)
         ]
@@ -526,6 +634,13 @@ def diagnostic_context_to_coach_diagnosis(context: Mapping[str, Any] | None):
                 prescriptions=prescriptions,
                 priority=int(issue_data.get("priority") or 99),
                 priority_reason=str(issue_data.get("priority_reason") or ""),
+                plain_language_meaning=str(issue_data.get("plain_language_meaning") or ""),
+                claim_level=str(issue_data.get("claim_level") or "experimental"),
+                metric_refs=_safe_string_list(issue_data.get("metric_refs")),
+                event_refs=_safe_string_list(issue_data.get("event_refs")),
+                limitations=_safe_string_list(issue_data.get("limitations")),
+                expected_result=str(issue_data.get("expected_result") or ""),
+                verification=dict(_mapping(issue_data.get("verification"))),
             )
         )
     return CoachDiagnosis(

@@ -6,7 +6,7 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import config, db, queue
+from webapp.backend import coach_commands, config, db, queue
 from webapp.backend.app import app
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
@@ -75,7 +75,9 @@ def _minimal_native_v2_result() -> dict:
         artifact_manifest={
             "schema_version": "artifact_manifest.v2",
             "external_inputs": [],
-            "owned_outputs": [],
+            "owned_outputs": [
+                {"id": "analysis:1", "kind": "analysis_result"},
+            ],
         },
         input_snapshot={"scenario": "Scenario"},
         created_at="2026-07-13T00:00:00Z",
@@ -414,7 +416,27 @@ async def test_session_status_exposes_job_state_foundation_fields():
 
 
 @pytest.mark.asyncio
-async def test_retry_failed_session_requeues(tmp_path):
+async def test_retry_requires_idempotency_key(tmp_path):
+    video = tmp_path / "v.mp4"
+    csv = tmp_path / "s.csv"
+    video.write_bytes(b"x")
+    csv.write_text("a\n")
+    sid = await queue.enqueue("u1", str(video), str(csv))
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_failed(sid, "x", worker_id=TEST_WORKER)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.post(f"/api/sessions/{sid}/retry")
+
+    assert resp.status_code == 400
+    assert "idempotency_key" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_session_requeues_once_for_same_idempotency_key(tmp_path, monkeypatch):
     video = tmp_path / "v.mp4"
     csv = tmp_path / "s.csv"
     video.write_bytes(b"x")
@@ -432,16 +454,83 @@ async def test_retry_failed_session_requeues(tmp_path):
         ),
         worker_id=TEST_WORKER,
     )
+
+    calls = 0
+    original_retry = coach_commands.retry_analysis
+
+    async def counted_retry(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await original_retry(*args, **kwargs)
+
+    monkeypatch.setattr(coach_commands, "retry_analysis", counted_retry)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
-        headers={"X-User-Id": "u1"},
+        headers={
+            "X-User-Id": "u1",
+            "Idempotency-Key": "retry-failed-session",
+        },
     ) as client:
-        resp = await client.post(f"/api/sessions/{sid}/retry")
-    assert resp.status_code == 200
-    body = resp.json()
+        first = await client.post(f"/api/sessions/{sid}/retry")
+        replay = await client.post(f"/api/sessions/{sid}/retry")
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    body = first.json()
     assert body["status"] == "queued"
     assert body["attempts"] == 0
     assert body["error"] is None
+    assert replay.json() == body
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_rejects_reused_idempotency_key_for_different_session(tmp_path):
+    session_ids = []
+    for index in range(2):
+        video = tmp_path / f"v-{index}.mp4"
+        csv = tmp_path / f"s-{index}.csv"
+        video.write_bytes(b"x")
+        csv.write_text("a\n")
+        sid = await queue.enqueue("u1", str(video), str(csv))
+        await queue.claim_next(TEST_WORKER)
+        await queue.mark_failed(sid, "x", worker_id=TEST_WORKER)
+        session_ids.append(sid)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={
+            "X-User-Id": "u1",
+            "Idempotency-Key": "retry-conflict",
+        },
+    ) as client:
+        first = await client.post(f"/api/sessions/{session_ids[0]}/retry")
+        conflict = await client.post(f"/api/sessions/{session_ids[1]}/retry")
+
+    assert first.status_code == 200
+    assert conflict.status_code == 409
+    assert "idempotency" in conflict.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_retry_preserves_owner_isolation(tmp_path):
+    video = tmp_path / "v.mp4"
+    csv = tmp_path / "s.csv"
+    video.write_bytes(b"x")
+    csv.write_text("a\n")
+    sid = await queue.enqueue("u1", str(video), str(csv))
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_failed(sid, "x", worker_id=TEST_WORKER)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={
+            "X-User-Id": "u2",
+            "Idempotency-Key": "retry-other-owner",
+        },
+    ) as client:
+        resp = await client.post(f"/api/sessions/{sid}/retry")
+
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -449,7 +538,10 @@ async def test_retry_rejects_done_or_running():
     sid = await queue.enqueue("u1", "/a", "/a.csv")
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
-        headers={"X-User-Id": "u1"},
+        headers={
+            "X-User-Id": "u1",
+            "Idempotency-Key": "retry-queued-session",
+        },
     ) as client:
         resp = await client.post(f"/api/sessions/{sid}/retry")
     assert resp.status_code == 409
@@ -457,7 +549,10 @@ async def test_retry_rejects_done_or_running():
     await queue.claim_next(TEST_WORKER)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
-        headers={"X-User-Id": "u1"},
+        headers={
+            "X-User-Id": "u1",
+            "Idempotency-Key": "retry-running-session",
+        },
     ) as client:
         resp = await client.post(f"/api/sessions/{sid}/retry")
     assert resp.status_code == 409
@@ -475,7 +570,10 @@ async def test_retry_rejects_missing_files(tmp_path):
     video.unlink()
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
-        headers={"X-User-Id": "u1"},
+        headers={
+            "X-User-Id": "u1",
+            "Idempotency-Key": "retry-missing-files",
+        },
     ) as client:
         resp = await client.post(f"/api/sessions/{sid}/retry")
     assert resp.status_code == 409

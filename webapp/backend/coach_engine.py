@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import Any, Optional, Protocol, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Optional, Protocol, Sequence
 
 from . import config
 from .config import LLM_PROVIDER
@@ -20,6 +20,9 @@ class CoachTurn:
     user_message: str
     diagnosis: Any | None = None
     diagnostic_context: dict | None = None
+    user_id: str = "dev"
+    provider_profile: Mapping[str, Any] | None = field(default=None, repr=False)
+    tool_bridge: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 def _empty_coach_diagnosis():
@@ -36,13 +39,40 @@ def _empty_coach_diagnosis():
 
 
 def load_backend_or_none():
-    """加载 LLM backend;失败返回 None(由 caller 决定降级文案)。"""
+    """加载 legacy LLM backend;失败返回 None(兼容路径)。"""
     try:
         from kovaak_tracker.coach.providers import load_backend
 
         return load_backend(LLM_PROVIDER)
     except Exception as e:
-        _log.warning("load_backend 失败,chat 走降级: %s", e)
+        _log.warning("load_backend 失败,chat 走降级: %s", type(e).__name__)
+        return None
+
+
+def load_backend_for_profile(profile: Mapping[str, Any] | None):
+    """Build the Python fallback from the selected profile, never from another provider."""
+    if not profile:
+        return None
+    base_url = profile.get("base_url")
+    credential = profile.get("credential")
+    api_key = profile.get("api_key")
+    if isinstance(credential, Mapping):
+        candidate = credential.get("key", credential.get("access"))
+        if isinstance(candidate, str):
+            api_key = candidate
+    model_id = profile.get("model_id")
+    if not all(isinstance(value, str) and value.strip() for value in (base_url, api_key, model_id)):
+        return None
+    try:
+        from kovaak_tracker.coach.providers import OpenAICompatBackend
+
+        return OpenAICompatBackend(
+            base_url=base_url,
+            api_key=api_key,
+            model=model_id,
+        )
+    except Exception as error:
+        _log.warning("selected profile Python fallback unavailable: %s", type(error).__name__)
         return None
 
 
@@ -65,7 +95,7 @@ class CoachEngine(Protocol):
 
 
 class PiCoachEngine:
-    def complete(self, turn: CoachTurn) -> str:
+    def complete(self, turn: CoachTurn):
         from .coach_context import (
             coerce_coach_diagnostic_context,
             serialize_coach_diagnostic_context,
@@ -78,8 +108,12 @@ class PiCoachEngine:
         )
         analysis_summary = serialize_coach_diagnostic_context(context)
         return run_pi_coach_turn(
+            user_id=turn.user_id,
+            profile=turn.provider_profile,
             messages=pi_messages,
             analysis_summary=analysis_summary,
+            tool_bridge=turn.tool_bridge,
+            return_result=True,
         )
 
 
@@ -108,7 +142,11 @@ class PythonCoachEngine:
         ]
         chat_history.append(ChatMessage(role="user", content=turn.user_message))
 
-        backend = load_backend_or_none()
+        backend = (
+            load_backend_for_profile(turn.provider_profile)
+            if turn.provider_profile is not None
+            else load_backend_or_none()
+        )
         if backend is None:
             notes.append("LLM 后端不可用,本次未生成回复")
             return None, notes
@@ -131,6 +169,7 @@ def _coach_runtime_fallback_python_enabled() -> bool:
 class EngineCompleteResult:
     reply: Optional[str]
     notes: list[str]
+    tool_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class RuntimeRoutingCoachEngine:
@@ -153,16 +192,33 @@ class RuntimeRoutingCoachEngine:
             from .coach_runtime import CoachRuntimeError
 
             try:
-                reply = self._pi.complete(turn)
-                return EngineCompleteResult(reply=reply, notes=notes)
+                pi_result = self._pi.complete(turn)
+                if isinstance(pi_result, str):
+                    return EngineCompleteResult(reply=pi_result, notes=notes)
+                return EngineCompleteResult(
+                    reply=pi_result.reply,
+                    notes=list(pi_result.notes),
+                    tool_events=list(pi_result.tool_events),
+                )
             except CoachRuntimeError as e:
-                _log.warning("run_pi_coach_turn 失败: %s", e)
-                notes.append(f"Pi coach-runtime 失败: {e}")
-                if _coach_runtime_fallback_python_enabled():
+                from .coach_runtime import redact_provider_secrets
+
+                message = redact_provider_secrets(str(e), turn.provider_profile)
+                _log.warning("run_pi_coach_turn 失败: %s", message)
+                notes.append(f"Pi coach-runtime 失败: {message}")
+                tool_events = list(e.tool_events)
+                unsafe_to_rerun = bool(tool_events) or e.side_effects_possible
+                if _coach_runtime_fallback_python_enabled() and not unsafe_to_rerun:
                     notes.append("已回退 Python coach")
                     reply, py_notes = self._python.complete_with_notes(turn)
                     notes.extend(py_notes)
-                return EngineCompleteResult(reply=reply, notes=notes)
+                elif unsafe_to_rerun:
+                    notes.append("本轮可能已执行产品工具，未整轮回退；请先检查当前状态")
+                return EngineCompleteResult(
+                    reply=reply,
+                    notes=notes,
+                    tool_events=tool_events,
+                )
 
         reply, py_notes = self._python.complete_with_notes(turn)
         notes.extend(py_notes)

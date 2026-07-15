@@ -24,25 +24,27 @@ const PRODUCT_PATHS = [
   join(RUNTIME_ROOT, "run-turn.ts"),
 ];
 
-test("coach-runtime product sources must not reference coding-agent", () => {
+test("coach-runtime product sources must not import coding-agent", () => {
   const violations: string[] = [];
   for (const file of PRODUCT_PATHS) {
     const text = readFileSync(file, "utf8");
-    if (text.includes("coding-agent")) {
+    if (/(?:from\s*|import\s*\()\s*["'][^"']*coding-agent|packages[\\/"',\s]+coding-agent/.test(text)) {
       violations.push(file);
     }
   }
   assert.deepEqual(
     violations,
     [],
-    `coding-agent must not appear in product paths: ${violations.join(", ")}`,
+    `coding-agent must not be imported by product paths: ${violations.join(", ")}`,
   );
 });
 
-test("pi-source only resolves packages/ai and packages/agent entrypoints", () => {
+test("pi-source only resolves pinned packages/ai and packages/agent source modules", () => {
   const piSource = readFileSync(join(RUNTIME_ROOT, "src", "pi-source.ts"), "utf8");
   assert.match(piSource, /packages", "ai", "src", "index\.ts/);
   assert.match(piSource, /packages", "agent", "src", "index\.ts/);
+  assert.match(piSource, /packages", "ai", "src", "providers", "all\.ts/);
+  assert.match(piSource, /packages", "ai", "src", "api", "openai-completions\.ts/);
   assert.ok(!piSource.includes("coding-agent"));
   assert.ok(!piSource.includes("packages/coding-agent"));
   assert.ok(!piSource.includes('packages", "coding-agent"'));

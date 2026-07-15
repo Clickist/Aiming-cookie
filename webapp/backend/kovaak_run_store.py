@@ -152,12 +152,10 @@ def _validate_snapshot_points(points: list[dict[str, int]]) -> list[dict[str, in
     return normalized
 
 
-def read_mouse_snapshot(path: str | Path) -> list[dict[str, int]]:
-    """Read and validate the versioned Rust Raw Input snapshot format."""
-    source = Path(path)
-    if source.stat().st_size > MAX_SNAPSHOT_BYTES:
+def decode_mouse_snapshot_bytes(data: bytes) -> list[dict[str, int]]:
+    """Decode exact Raw Input bytes after their source fingerprint is accepted."""
+    if len(data) > MAX_SNAPSHOT_BYTES:
         raise ValueError("raw input snapshot exceeds byte limit")
-    data = source.read_bytes()
     if len(data) < SNAPSHOT_HEADER_SIZE or data[:4] != SNAPSHOT_MAGIC:
         raise ValueError("invalid raw input snapshot")
     if data[4] != SNAPSHOT_VERSION:
@@ -177,6 +175,14 @@ def read_mouse_snapshot(path: str | Path) -> list[dict[str, int]]:
         points.append({"timestamp_ms": timestamp_ms, "dx": dx, "dy": dy, "buttons": buttons})
         offset += SNAPSHOT_RECORD_SIZE
     return _validate_snapshot_points(points)
+
+
+def read_mouse_snapshot(path: str | Path) -> list[dict[str, int]]:
+    """Read and validate the versioned Rust Raw Input snapshot format."""
+    source = Path(path)
+    with source.open("rb") as stream:
+        data = stream.read(MAX_SNAPSHOT_BYTES + 1)
+    return decode_mouse_snapshot_bytes(data)
 
 
 def write_mouse_snapshot(path: str | Path, points: list[dict[str, int]]) -> None:
@@ -332,11 +338,19 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
     trace_path = run.get("mouse_trace_path")
     if run.get("trace_state") == "attached" and trace_path and Path(trace_path).is_file():
         read_mouse_snapshot(trace_path)
+        trace_revision = _source_metadata(
+            trace_path, f"raw_input_snapshot.v{SNAPSHOT_VERSION}",
+        )
         trace = {
             "artifact_ref": f"run:{run_id}:trace",
             "path": str(Path(trace_path).resolve()),
             "availability": "available",
             "format_version": SNAPSHOT_VERSION,
+            "fingerprint": {
+                "sha256": trace_revision["sha256"],
+                "size": trace_revision["size"],
+                "mtime_ns": trace_revision["mtime_ns"],
+            },
         }
     return {
         "schema_version": "analysis_input_snapshot.v1",
@@ -369,6 +383,7 @@ def public_analysis_input_snapshot(snapshot: dict) -> dict:
         "schema_version": snapshot.get("schema_version", "analysis_input_snapshot.v1"),
         "run_id": snapshot.get("run_id"),
         "scenario": snapshot.get("scenario"),
+        "scenario_identity_version": snapshot.get("scenario_identity_version"),
         "sources": sources,
         "trace": public_trace,
     }
@@ -565,25 +580,47 @@ async def ingest_discovery(
             )
         except (OSError, ValueError) as error:
             if _trace_pairing_within_retention(performance):
-                await mark_mouse_trace_waiting(run["id"], user_id)
+                await mark_mouse_trace_waiting(
+                    run["id"],
+                    user_id,
+                    expected_pending_trace_path=target,
+                )
                 raise TracePendingError(
                     "trace_pending: Raw Input snapshot is not ready",
                 ) from error
             return await mark_mouse_trace_unavailable(
-                run["id"], user_id, "trace_snapshot_failed",
+                run["id"],
+                user_id,
+                "trace_snapshot_failed",
+                expected_pending_trace_path=target,
             ) or run
         if not count:
             if _trace_pairing_within_retention(performance):
-                await mark_mouse_trace_waiting(run["id"], user_id)
+                await mark_mouse_trace_waiting(
+                    run["id"],
+                    user_id,
+                    expected_pending_trace_path=target,
+                )
                 raise TracePendingError("trace_pending: trace window is not flushed yet")
             return await mark_mouse_trace_unavailable(
-                run["id"], user_id, "trace_quality_insufficient",
+                run["id"],
+                user_id,
+                "trace_quality_insufficient",
+                expected_pending_trace_path=target,
             ) or run
         try:
-            run = await attach_mouse_trace(run["id"], user_id, str(target)) or run
+            run = await attach_mouse_trace(
+                run["id"],
+                user_id,
+                str(target),
+                expected_pending_trace_path=target,
+            ) or run
         except (OSError, ValueError):
             return await mark_mouse_trace_unavailable(
-                run["id"], user_id, "trace_attach_failed",
+                run["id"],
+                user_id,
+                "trace_attach_failed",
+                expected_pending_trace_path=target,
             ) or run
     return run
 
@@ -626,6 +663,20 @@ async def get_kovaak_run(run_id: int, user_id: str) -> Optional[dict]:
     return _row(row) if row else None
 
 
+async def get_kovaak_run_any_owner(run_id: int) -> Optional[dict]:
+    """Internal owner check for product commands; never expose this row directly."""
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, user_id, source_key, scenario, stats_path, performance_path, "
+        "mouse_trace_path, trace_state, pending_trace_path, trace_error, "
+        "stats_summary, performance_summary, created_at, updated_at "
+        "FROM kovaak_runs WHERE id=?",
+        (run_id,),
+    )
+    row = await cur.fetchone()
+    return _row(row) if row else None
+
+
 async def begin_mouse_trace_attach(
     run_id: int, user_id: str, pending_trace_path: str | Path,
 ) -> Optional[dict]:
@@ -641,40 +692,70 @@ async def begin_mouse_trace_attach(
     return await get_kovaak_run(run_id, user_id)
 
 
-async def mark_mouse_trace_waiting(run_id: int, user_id: str) -> Optional[dict]:
+async def mark_mouse_trace_waiting(
+    run_id: int,
+    user_id: str,
+    *,
+    expected_pending_trace_path: str | Path | None = None,
+) -> Optional[dict]:
     conn = await get_conn()
+    where = "WHERE id=? AND user_id=?"
+    params: list[object] = [run_id, user_id]
+    if expected_pending_trace_path is not None:
+        where += " AND trace_state='pending' AND pending_trace_path=?"
+        params.append(str(expected_pending_trace_path))
     await conn.execute(
         "UPDATE kovaak_runs SET mouse_trace_path=NULL, trace_state='pending', "
         "pending_trace_path=NULL, trace_error='trace_waiting_snapshot', "
-        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?",
-        (run_id, user_id),
+        f"updated_at=CURRENT_TIMESTAMP {where}",
+        tuple(params),
     )
     await conn.commit()
     return await get_kovaak_run(run_id, user_id)
 
 
 async def mark_mouse_trace_unavailable(
-    run_id: int, user_id: str, error: str,
+    run_id: int,
+    user_id: str,
+    error: str,
+    *,
+    expected_pending_trace_path: str | Path | None = None,
 ) -> Optional[dict]:
     conn = await get_conn()
+    where = "WHERE id=? AND user_id=?"
+    params: list[object] = [error, run_id, user_id]
+    if expected_pending_trace_path is not None:
+        where += " AND trace_state='pending' AND pending_trace_path=?"
+        params.append(str(expected_pending_trace_path))
     await conn.execute(
         "UPDATE kovaak_runs SET mouse_trace_path=NULL, trace_state='unavailable', "
         "pending_trace_path=NULL, trace_error=?, updated_at=CURRENT_TIMESTAMP "
-        "WHERE id=? AND user_id=?",
-        (error, run_id, user_id),
+        f"{where}",
+        tuple(params),
     )
     await conn.commit()
     return await get_kovaak_run(run_id, user_id)
 
 
-async def attach_mouse_trace(run_id: int, user_id: str, trace_path: str) -> Optional[dict]:
+async def attach_mouse_trace(
+    run_id: int,
+    user_id: str,
+    trace_path: str,
+    *,
+    expected_pending_trace_path: str | Path | None = None,
+) -> Optional[dict]:
     read_mouse_snapshot(trace_path)
     conn = await get_conn()
+    where = "WHERE id=? AND user_id=?"
+    params: list[object] = [trace_path, run_id, user_id]
+    if expected_pending_trace_path is not None:
+        where += " AND trace_state='pending' AND pending_trace_path=?"
+        params.append(str(expected_pending_trace_path))
     await conn.execute(
         "UPDATE kovaak_runs SET mouse_trace_path=?, trace_state='attached', "
         "pending_trace_path=NULL, trace_error=NULL, updated_at=CURRENT_TIMESTAMP "
-        "WHERE id=? AND user_id=?",
-        (trace_path, run_id, user_id),
+        f"{where}",
+        tuple(params),
     )
     await conn.commit()
     return await get_kovaak_run(run_id, user_id)
@@ -702,18 +783,36 @@ async def reconcile_mouse_traces(data_root: str | Path) -> dict[str, int]:
         expected_root = (runs_root / str(row["id"])).resolve()
         candidate = Path(trace_path).resolve()
         if not candidate.is_relative_to(expected_root):
-            await mark_mouse_trace_unavailable(row["id"], row["user_id"], "trace_attach_failed")
+            await mark_mouse_trace_unavailable(
+                row["id"],
+                row["user_id"],
+                "trace_attach_failed",
+                expected_pending_trace_path=trace_path,
+            )
             outcome["unavailable"] += 1
             continue
         if not candidate.is_file():
-            await mark_mouse_trace_unavailable(row["id"], row["user_id"], "trace_attach_failed")
+            await mark_mouse_trace_unavailable(
+                row["id"],
+                row["user_id"],
+                "trace_attach_failed",
+                expected_pending_trace_path=trace_path,
+            )
             outcome["unavailable"] += 1
             continue
         try:
-            await attach_mouse_trace(row["id"], row["user_id"], str(candidate))
+            await attach_mouse_trace(
+                row["id"],
+                row["user_id"],
+                str(candidate),
+                expected_pending_trace_path=trace_path,
+            )
         except (OSError, ValueError):
             await mark_mouse_trace_unavailable(
-                row["id"], row["user_id"], "trace_quality_insufficient",
+                row["id"],
+                row["user_id"],
+                "trace_quality_insufficient",
+                expected_pending_trace_path=trace_path,
             )
             outcome["unavailable"] += 1
         else:

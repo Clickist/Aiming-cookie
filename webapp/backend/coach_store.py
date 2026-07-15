@@ -5,11 +5,320 @@ Not the Pi runtime transcript. Analysis sessions are optional refs only.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import aiosqlite
 
 from .db import get_conn
+
+
+class CommandIdempotencyConflictError(RuntimeError):
+    """A journal key already belongs to a different parameter digest."""
+
+
+def _json_wire(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+async def _store_command_idempotency_row(
+    conn: aiosqlite.Connection,
+    owner_id: str,
+    command_name: str,
+    idempotency_key: str,
+    parameters_digest: str,
+    result: Mapping[str, Any],
+) -> None:
+    cur = await conn.execute(
+        "INSERT INTO coach_command_idempotency("
+        "owner_id, command_name, idempotency_key, parameters_digest, result_json, latest_audit_ref"
+        ") VALUES(?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(owner_id, command_name, idempotency_key) DO UPDATE SET "
+        "result_json=excluded.result_json, latest_audit_ref=excluded.latest_audit_ref, "
+        "updated_at=CURRENT_TIMESTAMP "
+        "WHERE coach_command_idempotency.parameters_digest=excluded.parameters_digest",
+        (
+            owner_id,
+            command_name,
+            idempotency_key,
+            parameters_digest,
+            _json_wire(result),
+            result["audit_ref"],
+        ),
+    )
+    if cur.rowcount != 1:
+        raise CommandIdempotencyConflictError(
+            "idempotency key was already used with different parameters"
+        )
+
+
+def _command_idempotency_record(row: aiosqlite.Row) -> dict[str, Any]:
+    try:
+        result = json.loads(row["result_json"])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("stored Coach command result is invalid") from exc
+    if not isinstance(result, dict):
+        raise RuntimeError("stored Coach command result is invalid")
+    return {"digest": row["parameters_digest"], "result": result}
+
+
+async def lookup_command_idempotency(
+    owner_id: str,
+    command_name: str,
+    idempotency_key: str,
+) -> dict[str, Any] | None:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT parameters_digest, result_json FROM coach_command_idempotency "
+        "WHERE owner_id=? AND command_name=? AND idempotency_key=?",
+        (owner_id, command_name, idempotency_key),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return None
+    return _command_idempotency_record(row)
+
+
+async def claim_command_idempotency(
+    owner_id: str,
+    command_name: str,
+    idempotency_key: str,
+    parameters_digest: str,
+    reservation: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Insert one pre-side-effect reservation or return the existing record."""
+    conn = await get_conn()
+    try:
+        cur = await conn.execute(
+            "INSERT INTO coach_command_idempotency("
+            "owner_id, command_name, idempotency_key, parameters_digest, result_json, latest_audit_ref"
+            ") VALUES(?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(owner_id, command_name, idempotency_key) DO NOTHING",
+            (
+                owner_id,
+                command_name,
+                idempotency_key,
+                parameters_digest,
+                _json_wire(reservation),
+                reservation["audit_ref"],
+            ),
+        )
+        if cur.rowcount == 1:
+            await conn.commit()
+            return None
+        row = await (
+            await conn.execute(
+                "SELECT parameters_digest, result_json FROM coach_command_idempotency "
+                "WHERE owner_id=? AND command_name=? AND idempotency_key=?",
+                (owner_id, command_name, idempotency_key),
+            )
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("stored Coach command reservation is missing")
+        prior = _command_idempotency_record(row)
+        if prior["digest"] != parameters_digest:
+            raise CommandIdempotencyConflictError(
+                "idempotency key was already used with different parameters"
+            )
+        await conn.commit()
+        return prior
+    except Exception:
+        await conn.rollback()
+        raise
+
+
+async def store_command_idempotency(
+    owner_id: str,
+    command_name: str,
+    idempotency_key: str,
+    parameters_digest: str,
+    result: Mapping[str, Any],
+) -> None:
+    conn = await get_conn()
+    try:
+        await _store_command_idempotency_row(
+            conn,
+            owner_id,
+            command_name,
+            idempotency_key,
+            parameters_digest,
+            result,
+        )
+        await conn.commit()
+    except Exception:
+        await conn.rollback()
+        raise
+
+
+async def append_command_audit(
+    owner_id: str,
+    result: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> None:
+    """Append one safe audit row; never overwrite a prior invocation."""
+    conn = await get_conn()
+    warning = result.get("warning_or_error")
+    await conn.execute(
+        "INSERT INTO coach_product_commands("
+        "audit_ref, command_id, owner_id, thread_id, user_message_ref, command_name, "
+        "risk, authorization_source, idempotency_key, parameters_digest, "
+        "safe_parameters_summary_json, status, result_ref, ui_event_json, "
+        "warning_code, result_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            result["audit_ref"],
+            result["command_id"],
+            owner_id,
+            context.get("thread_id"),
+            context.get("user_message_ref"),
+            context.get("command_name", "unknown"),
+            context.get("risk", "query"),
+            context.get("authorization_source", "system_safe"),
+            context.get("idempotency_key"),
+            context.get("parameters_digest"),
+            _json_wire(context.get("safe_parameters_summary", {})),
+            result["status"],
+            result.get("result_ref"),
+            _json_wire(result.get("ui_event")) if result.get("ui_event") is not None else None,
+            warning.get("code") if isinstance(warning, Mapping) else None,
+            _json_wire(result),
+        ),
+    )
+    idempotency_key = context.get("idempotency_key")
+    if isinstance(idempotency_key, str):
+        await conn.execute(
+            "UPDATE coach_command_idempotency SET latest_audit_ref=?, updated_at=CURRENT_TIMESTAMP "
+            "WHERE owner_id=? AND command_name=? AND idempotency_key=?",
+            (result["audit_ref"], owner_id, context.get("command_name"), idempotency_key),
+        )
+    await conn.commit()
+
+
+async def create_command_confirmation(
+    owner_id: str,
+    command_name: str,
+    parameters_digest: str,
+    risk: str,
+    safe_summary: Mapping[str, Any],
+    confirmation_ref: str,
+    *,
+    ttl_seconds: int = 15 * 60,
+) -> dict[str, str]:
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+    expires_wire = expires_at.isoformat().replace("+00:00", "Z")
+    conn = await get_conn()
+    await conn.execute(
+        "INSERT INTO coach_command_confirmations("
+        "confirmation_ref, owner_id, command_name, parameters_digest, risk, "
+        "safe_summary_json, status, expires_at) VALUES(?, ?, ?, ?, ?, ?, 'pending', ?)",
+        (
+            confirmation_ref,
+            owner_id,
+            command_name,
+            parameters_digest,
+            risk,
+            _json_wire(safe_summary),
+            expires_wire,
+        ),
+    )
+    await conn.commit()
+    return {"confirmation_ref": confirmation_ref, "expires_at": expires_wire}
+
+
+async def consume_command_confirmation(
+    owner_id: str,
+    command_name: str,
+    parameters_digest: str,
+    confirmation_ref: str,
+) -> bool:
+    conn = await get_conn()
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        cur = await conn.execute(
+            "SELECT status, expires_at, parameters_digest FROM coach_command_confirmations "
+            "WHERE confirmation_ref=? AND owner_id=? AND command_name=?",
+            (confirmation_ref, owner_id, command_name),
+        )
+        row = await cur.fetchone()
+        if row is None or row["status"] != "pending" or row["parameters_digest"] != parameters_digest:
+            await conn.execute("ROLLBACK")
+            return False
+        expires_at = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
+        if expires_at <= datetime.now(timezone.utc):
+            await conn.execute(
+                "UPDATE coach_command_confirmations SET status='cancelled' WHERE confirmation_ref=?",
+                (confirmation_ref,),
+            )
+            await conn.commit()
+            return False
+        cur = await conn.execute(
+            "UPDATE coach_command_confirmations SET status='consumed', consumed_at=CURRENT_TIMESTAMP "
+            "WHERE confirmation_ref=? AND status='pending'",
+            (confirmation_ref,),
+        )
+        await conn.commit()
+        return cur.rowcount == 1
+    except Exception:
+        await conn.execute("ROLLBACK")
+        raise
+
+
+async def consume_command_confirmation_and_store_reservation(
+    owner_id: str,
+    command_name: str,
+    parameters_digest: str,
+    confirmation_ref: str,
+    idempotency_key: str,
+    reservation: Mapping[str, Any],
+) -> bool:
+    """Atomically consume one confirmation and persist its unknown-outcome guard."""
+    conn = await get_conn()
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        cur = await conn.execute(
+            "SELECT status, expires_at, parameters_digest FROM coach_command_confirmations "
+            "WHERE confirmation_ref=? AND owner_id=? AND command_name=?",
+            (confirmation_ref, owner_id, command_name),
+        )
+        row = await cur.fetchone()
+        if row is None or row["status"] != "pending" or row["parameters_digest"] != parameters_digest:
+            await conn.execute("ROLLBACK")
+            return False
+        expires_at = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
+        if expires_at <= datetime.now(timezone.utc):
+            await conn.execute(
+                "UPDATE coach_command_confirmations SET status='cancelled' WHERE confirmation_ref=?",
+                (confirmation_ref,),
+            )
+            await conn.commit()
+            return False
+        cur = await conn.execute(
+            "UPDATE coach_command_confirmations SET status='consumed', consumed_at=CURRENT_TIMESTAMP "
+            "WHERE confirmation_ref=? AND status='pending'",
+            (confirmation_ref,),
+        )
+        if cur.rowcount != 1:
+            await conn.execute("ROLLBACK")
+            return False
+        await _store_command_idempotency_row(
+            conn,
+            owner_id,
+            command_name,
+            idempotency_key,
+            parameters_digest,
+            reservation,
+        )
+        await conn.commit()
+        return True
+    except Exception:
+        await conn.execute("ROLLBACK")
+        raise
 
 
 async def get_or_create_primary_thread(
