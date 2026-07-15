@@ -44,14 +44,17 @@
 正式前端统一使用：
 
 ```text
-Run → Evidence → Analysis → Coach
+              Aiming Coach
+     observe ↕ explain ↕ act ↕ verify
+Run → Evidence → Analysis → Training → Retest
 ```
 
+- **Coach**：产品核心和本地长期关系层，在用户可见的确定性诊断与稳定证据上解释、行动和复测；
 - **Run**：一次可识别的真实训练记录；
 - **Evidence**：该 Run 实际拥有、可访问、可对齐且能支持结论的证据；
 - **Analysis**：基于当时证据生成并保留来源、模式、局限和状态的诊断；
-- **History**：查找 Run、Analysis 与可比较变化的组织层；
-- **Coach**：在用户可见的确定性诊断摘要与稳定证据引用上继续解释和行动。
+- **Training / Retest**：由 Coach 给出可执行训练、预期变化并在后续 Run 验证；
+- **History**：查找 Run、Analysis 与可比较变化的组织层。
 
 界面始终优先回答：这是哪次训练、有什么可靠证据、现在能做什么、结论来自哪里、下一步是什么。用户不应被要求理解内部目录、文件路径、数据表、队列或 schema。
 
@@ -59,14 +62,13 @@ Run → Evidence → Analysis → Coach
 
 | 路由 | 页面职责 | 进入与退出规则 |
 |---|---|---|
-| `/` | 条件启动解析，不承载独立内容 | 未完成身份入口时进入登录；已进入产品且没有 Run/Analysis 时进入 New Analysis；已有 Run 或 Analysis 时进入 History。加载失败不得被误判为空数据 |
-| `/login` | 登录入口 | 不显示产品 App shell 或 Coach；成功后回到条件启动流程 |
-| `/register` | 注册入口 | 不显示产品 App shell 或 Coach；成功后回到条件启动流程 |
+| `/` | 条件启动解析，不承载独立内容 | 首次 onboarding 未完成时进入 `/onboarding`；完成后无 Run/Analysis 进入 New Analysis；已有 Run 或 Analysis 进入 History。加载失败不得被误判为空数据 |
+| `/onboarding` | 首次 Coach / Provider 激活 | 说明 Coach 价值、第三方费用和数据边界；连接并测试 Provider 是主路径，可明确跳过进入本地分析；不要求产品账号或登录 |
 | `/analyze` | New Analysis | 选择训练来源、检查证据、确认分析模式并创建后台任务 |
 | `/tasks` | 全局任务中心 | 展示分析任务的生命周期、局部失败、重试和结果入口 |
 | `/history` | Run 与 Analysis 历史 | 分开组织训练记录和分析记录；只提供轻量摘要与延迟详情，不承载完整 Analysis workspace |
 | `/analysis/:analysisId` | Analysis workspace | 承载诊断、视频、数据三视图及其与 Coach 的稳定联动 |
-| `/settings` | 设置 | 承载 Profile、Theme、Raw Input 与本地数据/存储说明；不显示 Coach |
+| `/settings` | 设置 | 承载完整 LLM Provider/model/auth、Profile、Theme、Raw Input 与本地数据/存储说明；不显示 Coach 对话 |
 
 约束：
 
@@ -74,17 +76,17 @@ Run → Evidence → Analysis → Coach
 - Coach 是 App shell 中的持续侧栏，不建立独立 `/coach` 产品路线；
 - Tasks 是独立任务中心，不复用 History 代替；
 - Analysis 详情必须有独立 workspace 路由，不嵌入 History 的万能 inspector；
-- 支付、套餐和结账仍按上游“以后讨论”，不在本合同中冻结正式路由；
+- 产品不提供 `/login`、`/register`、账号、支付、套餐或结账路由；Provider 可以无需认证；如需认证，只使用对应 Provider 支持的方式，且不创建 Aiming Cookie 身份；
 - 不新增 Dashboard、训练、社区、知识库或 Benchmark 一级页面。
 
 ## 3. App Shell
 
 ### 3.1 结构
 
-身份入口之外的产品页面共享同一桌面应用骨架：
+onboarding 之外的产品页面共享同一桌面应用骨架：
 
 ```text
-静态 Logo｜History｜＋ New Analysis        Tasks｜Coach｜Account
+静态 Logo｜History｜＋ New Analysis        Tasks｜Coach｜Settings
 ──────────────────────────────────────────────────────────────
 主工作区                                   Coach sidebar
 ```
@@ -93,7 +95,7 @@ Run → Evidence → Analysis → Coach
 - “New Analysis”是主要应用级操作；
 - Tasks 持续表达后台任务是否有运行、完成或失败；
 - Coach 控件只开关同一条持续 Coach 关系，不跳转页面；
-- Settings 收进 Account 菜单；
+- 产品没有 Account 菜单；Settings 使用工具栏中的明确入口；
 - 当前页面标题、返回关系、Analysis 状态与 input mode 放在主工作区标题区，不挤入全局工具栏；
 - 页面切换不得清空任务状态、Coach 会话或用户未提交草稿。
 
@@ -172,7 +174,7 @@ Tasks 是全局、持久、可恢复的后台任务中心。它不只是 Analysi
 - retrying 或新的 retry attempt；
 - 局部能力完成、局部能力不可用的 partial outcome。
 
-用户可理解阶段至少区分：训练来源准备、证据检查/对齐、本地运动学、视频分析、诊断完成。Coach/cloud 的失败不得伪装成本地确定性分析失败。
+用户可理解阶段至少区分：训练来源准备、证据检查/对齐、本地运动学、视频分析、诊断完成。Coach/Provider 的失败不得伪装成本地确定性分析失败。
 
 ### 5.2 交互规则
 
@@ -286,8 +288,8 @@ Data 不暴露 raw trace samples、用户本地绝对路径、完整原始 CSV/P
 ### 7.5 三种模式的工作区差异
 
 - **input-native Preview**：Diagnosis/Data 只展示已验证的 native 结论；Video 明确不可用；Preview 身份在工作区持续可见。
-- **multimodal**：native 是主事实，Video 提供视觉校验；视觉不可用时工作区保留 native 结果并显示 partial outcome。
-- **video-fallback**：展示视频与 Stats 支持的诊断，明确没有 Raw Input measurement，不显示暗示 native 证据存在的组件或文案。
+- **multimodal**：native 是主事实，Video 主要提供直观回放、问题定位和可验证视觉证据；视觉不可用时工作区保留 native 结果并显示 partial outcome。
+- **video-fallback**：作为 compatibility fallback 展示视频与 Stats 支持的诊断，明确没有 Raw Input measurement，不显示暗示 native 证据存在的组件或文案，也不把它包装成长期主分析方向。
 
 ## 8. Coach Sidebar
 
@@ -295,12 +297,14 @@ Data 不暴露 raw trace samples、用户本地绝对路径、完整原始 CSV/P
 
 Coach 是应用级、跨页面持续的右侧侧栏，不是 Analysis 详情底部的小面板，也不是独立聊天页面。
 
-- 在支持 Coach 的页面默认收起；
+- 普通回访记住用户上次展开状态；没有偏好时默认收起；
+- 第一次 Analysis 完成且 Provider ready 时自动展开一次；
+- onboarding 和 Settings 使用结构化 Provider UI，不显示空 Coach 对话；
 - 宽窗口中与主工作区并排并可调宽；
 - 页面切换保留会话、草稿、展开状态、宽度和当前上下文；
 - 进入不支持 Coach 的页面时临时隐藏，不销毁会话；
 - 视频全屏等专注状态可临时隐藏，退出后恢复；
-- 没有 Coach 权限或 runtime 不可用时，确定性分析、History 和视频回看仍完整可用。
+- 未配置可用 provider、认证需要恢复或 runtime 不可用时，确定性分析、History 和视频回看仍完整可用；Coach 显示可恢复的配置/重试状态，不显示付费墙。
 
 ### 8.2 上下文与证据
 
@@ -333,34 +337,45 @@ Coach 使用“建议 → 用户点击 → 页面定位 → 明确反馈”的�
 - 定位完成后提供非侵入式反馈；
 - Coach 不得无缘无故切页、滚动主区、播放视频或抢夺焦点。
 
+Coach 的产品命令与当前本地 profile 能力对齐，不限制为只读：查询、导航和用户本轮明确要求的普通可恢复动作可直接执行；删除、覆盖、credential 变更、上传/分享、打开外部购买链接或 Coach 自主推断的副作用操作需要确认。每次回答必须把指标转成动作现象、证据、诊断、训练 cue、预期变化和复测方法，并让因果措辞匹配证据等级。
+
 输入区支持多行文本、发送、停止、上下文查看/移除和少量与当前页面有关的建议问题。第一版不提供任意文件附件、图片生成、通用联网搜索、模型选择器、Prompt 商城或复杂斜杠命令。
 
 ### 8.4 页面可用性
 
 | 页面 | Coach 行为 |
 |---|---|
-| Login / Register | 不显示 |
-| New Analysis | 可打开，默认收起 |
-| Tasks | 可打开，默认收起，不阻塞任务 |
-| History | 可打开，默认收起 |
-| Analysis workspace | 可打开并与三视图联动，默认收起 |
-| Settings | 不显示 |
+| Onboarding | 不显示空 Coach 对话；使用结构化 Provider 激活和本地 fallback |
+| New Analysis | 可打开；普通状态遵循已保存展开偏好 |
+| Tasks | 可打开，不阻塞任务 |
+| History | 可打开，遵循已保存展开偏好 |
+| Analysis workspace | 可打开并与三视图联动；第一次分析完成且 Provider ready 时自动展开一次 |
+| Settings | 不显示 Coach 对话 |
 | 错误/空状态 | 只有 Coach 确实能提供有效帮助时才显示 |
 
-## 9. Settings 与 Raw Input
+## 9. Onboarding、Settings、Provider 与 Raw Input
 
-### 9.1 Settings 范围
+### 9.1 Onboarding 与 Settings 分工
+
+首次 onboarding 只提供价值/成本/数据边界说明、已验证连接方式、按需认证、默认 model、连接测试、跳过和恢复；完整 Settings 负责多 Provider 管理、替换/删除 credential、重新认证、停用和高级配置。两者复用同一 capability API、状态机和安全组件，不复制 secret 处理逻辑。
 
 v1 Settings 至少包含：
 
 - **Profile**：当前 `cm/360`、FOV 和分析所需校准摘要；
+- **LLM Provider**：provider、model、连接方式、按需认证状态、连接测试、默认选择与恢复操作；
 - **Raw Input**：平台支持、授权、capture、KovaaK process、runtime、buffer 和 trace attachment 状态；
 - **Theme**：System、Light、Dark；
 - **Storage / ownership**：说明 managed data、用户源文件、Run-owned trace、Analysis-owned artifact 和删除影响。
 
-Theme 默认 System，跟随系统变化；显式 Light/Dark 固定；主题偏好仅属于本地 UI，不进入账号、分析或认证数据。
+Theme 默认 System，跟随系统变化；显式 Light/Dark 固定；主题偏好仅属于本地 UI，不进入 Analysis、Provider 认证数据或 Coach payload。
 
-### 9.2 Raw Input 状态必须分离
+### 9.2 Provider 状态与 secret 边界
+
+Provider UI 至少区分 `unconfigured / ready / testing / connection_failed / disabled`；仅对需要认证的 Provider 增加 `auth_required / auth_expired / needs_reauth`。API key 保存后不得回显，只允许替换或删除；OAuth/device-code 必须呈现等待、取消、超时、成功与重新认证；自定义 OpenAI-compatible provider 才允许编辑 base URL。
+
+前端只能读取非 secret profile 和状态，例如 Provider/model、auth mode、credential source、configured、needs re-auth、最近测试结果。credential 不得进入 localStorage、AnalysisResult、Coach context、消息、普通日志或导出数据。未配置 Provider 时 Coach 可恢复 onboarding 或进入 Settings，但本地分析、报告和 History 不受影响。
+
+### 9.3 Raw Input 状态必须分离
 
 Raw Input 不得被压缩成一个模糊开关。界面分别表达：
 
@@ -394,8 +409,9 @@ Desktop 和 Web 使用同一产品结构、信息架构、语义组件和视觉�
 | MP4 | 可选择本地视频并进入 managed/local playback 流程 | 由用户显式选择/上传 |
 | 本地后台分析 | 使用 Desktop runtime，页面可切走 | 只显示当前 Web 部署真实提供的能力，不伪装成本地 runtime |
 | Managed video playback | 使用 Desktop 受控本地能力 | 使用 Web 可访问的受控媒体能力 |
-| 身份与权限 | 本地 profile 与需要云能力时的账号共同存在 | 使用可信服务端身份边界 |
-| Coach | 同一产品 Coach shell；按权限/runtime 状态开放 | 同一产品 Coach shell；按权限/服务状态开放 |
+| 产品身份 | 不提供产品账号；当前 OS 用户 / 本地 profile 是数据归属边界 | 不提供产品账号；仅用于受控开发/预览，不成为正式用户数据 owner |
+| Provider / credential | 由 app-owned credential store 与 native/sidecar 命令管理；正式形态不得明文落盘 | 浏览器不保存长期 secret；没有经过审查的本地或受控 credential bridge 时不提供持久 Provider credential |
+| Coach | 同一产品 Coach shell；按 provider/auth/runtime 状态开放 | 同一产品 Coach shell；按 provider/auth/服务状态开放 |
 | 视觉与 IA | 与 Web 相同 | 与 Desktop 相同 |
 
 任何 Desktop/Web 分叉必须以 capability availability 表达。不得让同一路由在两端变成不同产品，也不得用 Web preview 的成功替代 Desktop 验收。
@@ -414,7 +430,7 @@ Desktop 和 Web 使用同一产品结构、信息架构、语义组件和视觉�
 | Unsupported | 当前平台/形态不提供能力 | 中性说明并提供替代路径 |
 | Permission required | 能力可用但尚未明确授权 | 解释范围与用途后请求授权 |
 | Permission denied | 用户拒绝或系统拒绝权限 | 尊重选择，说明恢复方式和 fallback |
-| Offline | 当前网络不可用 | 保留本地可用内容，隔离云端/Coach 失败 |
+| Offline | 当前网络不可用 | 保留本地可用内容，隔离 Provider/Coach 失败 |
 | Service unavailable | 某个 runtime 或服务暂不可用 | 指明受影响能力，保留无关内容并允许重试 |
 | Source unavailable | 历史来源曾存在但当前不可访问 | 保留稳定引用和历史记录，提供重新定位/重新添加路径 |
 | Invalid / quality insufficient | 来源存在但不能支持当前用途 | 说明具体影响和可修复方式 |
@@ -432,12 +448,12 @@ Desktop 和 Web 使用同一产品结构、信息架构、语义组件和视觉�
 
 | 页面/区域 | 必须覆盖的状态 |
 |---|---|
-| 条件启动 | Initial loading、身份未完成、Empty（无 Run/Analysis）、Ready（已有记录）、本地/runtime 不可用；失败时不得错误跳到 Empty |
+| 条件启动 / Onboarding | Initial loading、onboarding 未完成、Provider unconfigured/configuring/ready/recoverable failure、明确跳过、Empty（无 Run/Analysis）、Ready（已有记录）、本地/runtime 不可用；失败时不得错误跳到 Empty |
 | New Analysis | Loading、Empty Run、Ready、Partial Evidence、Unsupported、Permission required/denied、Source unavailable、Invalid、Alignment failed、创建任务失败 |
 | Tasks | Empty、Queued、Running、Retrying、Done、Failed、Partial outcome、Service unavailable、重启恢复 |
 | History | Loading、Refreshing、Empty、Ready、Partial records、Source unavailable、Deleted reference、Offline/Service unavailable |
 | Analysis workspace | Loading、Ready、Partial、native-only、visual unavailable、Source unavailable、Alignment failed、Failed、Deleted reference |
-| Coach | Empty conversation、Ready、generating、stopped、Offline、Service unavailable、permission/entitlement unavailable、Deleted reference |
+| Coach | Unconfigured、Ready、generating、stopped、Offline、Provider auth required/expired/needs reauth（仅需要认证时）、connection failed/model unavailable、runtime unavailable、Deleted reference |
 | Settings / Raw Input | Unsupported、Permission required/denied、capture disabled/enabled、process absent/present、runtime healthy/error、buffer empty/present、trace unattached/attached/unavailable |
 
 ### 11.3 状态呈现规则
@@ -556,7 +572,7 @@ History v1 只负责用户自己的 Run、Analysis 和满足正式 comparability
 
 正式前端只有同时满足以下条件，才可替代 prototype：
 
-1. 正式路由表、条件启动、App shell 和页面间关系与本文一致；
+1. 正式路由表、无账号条件启动、Provider-first onboarding、App shell 和页面间关系与本文一致；
 2. Prototype 的视觉、组件和 IA 未被当作默认事实源复刻；
 3. New Analysis 覆盖 Run 选择、手动 fallback、Evidence 检查和三种 input mode；
 4. input-native 在所有相关表面持续标记 Preview / Experimental；
@@ -564,8 +580,8 @@ History v1 只负责用户自己的 Run、Analysis 和满足正式 comparability
 6. Tasks 支持后台持续、重启找回、具体失败域、重试和全局完成/失败提醒；
 7. History 分开组织 Run 和 Analysis，失败不伪装为空，可比较性 fail closed；
 8. Analysis workspace 完整提供 Diagnosis、Video、Data 三视图及稳定定位联动；
-9. Coach 以应用级持续侧栏存在，发送前上下文可见/可移除，raw trace 和敏感本地数据不进入默认上下文；
-10. Settings 清楚分离 Profile、Theme、Raw Input、Storage/ownership，Raw Input 的平台、授权、capture、runtime、buffer 和 attachment 状态不被压缩成单开关；
+9. Coach 以应用级持续侧栏存在，发送前上下文可见/可移除，raw trace 和敏感本地数据不进入默认上下文；第一次 Analysis 完成且 Provider ready 时自动展开一次；
+10. Onboarding 与 Settings 共用 Provider capability/status/secret 边界；Settings 清楚分离 Provider、Profile、Theme、Raw Input、Storage/ownership，Raw Input 的平台、授权、capture、runtime、buffer 和 attachment 状态不被压缩成单开关；
 11. Desktop/Web 使用同一 IA 与视觉语言，并分别通过真实 capability 路径验证；
 12. 完整状态矩阵在主要页面有可见、可操作且不混淆 Empty/Error/Partial 的实现；
 13. System、Light、Dark 使用同一语义 token 集和组件结构，符合视觉合同与设计系统 review gate；
@@ -584,11 +600,11 @@ History v1 只负责用户自己的 Run、Analysis 和满足正式 comparability
 - Benchmark、leaderboard、在线 provider、Steam 身份和 external ranking；
 - 将 input-native Preview 提升为稳定正式能力；
 - 新的 flick segmentation、fair metric、CV、alignment 或 Coach 推理算法；
-- AnalysisResult、Evidence、artifact、数据库、migration、queue、retry 或认证 schema；
+- AnalysisResult、Evidence、artifact、数据库、migration、queue、retry 或 Provider credential/auth schema；
 - 后端接口、前端框架、代码目录、组件实现、具体 CSS、动画参数或 token 数值；
 - 恢复当前 prototype 或已删除旧 UI 的视觉与组件结构；
 - 营销网站、移动原生应用、社区、知识库或未经 PRD 确认的一级产品页面；
 - 通用 AI 助手、任意文件附件、图片生成、模型选择器、Prompt 商城或无边界联网/系统权限；
-- Run/trace 的新 retention、自动清理、云同步或超出 active lifecycle spec 的删除策略；
-- 支付、套餐、结账页面的具体 IA 与商业规则；
+- Run/trace 的新 retention、自动清理、远端备份或超出 active lifecycle spec 的删除策略；
+- Aiming Cookie 产品账号、登录、注册、鉴权服务器、支付、套餐或结账页面；
 - 施工任务、Allowed files、执行顺序、工期或发布排期。

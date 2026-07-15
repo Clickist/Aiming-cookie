@@ -39,7 +39,7 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 
 - 默认 `system`，跟随 `prefers-color-scheme` 并在系统变化时实时更新；
 - 显式 light/dark 不跟随系统；
-- preference 只保存在本地 UI 存储，不进入账号、分析数据或 auth；
+- preference 只保存在本地 UI 存储，不进入 Analysis、Provider auth 或 Coach payload；
 - 首屏在 hydration 前解析主题，避免闪烁；
 - 根级 controller 负责系统同步，设置页只修改 preference；
 - 新实现选择 storage key 和模块路径时，应通过测试冻结，不能从已删除代码默认为长期合同。

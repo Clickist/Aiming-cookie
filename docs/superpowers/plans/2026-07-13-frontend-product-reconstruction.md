@@ -1,8 +1,8 @@
 # Frontend Product Reconstruction — Implementation Plan
 
-> **状态：active。** 本计划已完成文档审阅并列入 `docs/superpowers/plans/README.md` 的 Active 区。
+> **状态：active，但执行后置。** 本计划已完成文档审阅并列入 `docs/superpowers/plans/README.md` 的 Active 区；点点于 2026-07-14 裁决正式前端最后处理。除已完成的 Task 1 外，Task 2–7 等待 Roadmap 中的 Knowledge Registry、Coach/Analysis/data 后端真实 E2E 与 Desktop/runtime Gate 闭合后重新指定。
 >
-> Task 1 已于 2026-07-13 获得点点明确授权和精确删除范围确认，并已完成 prototype inventory/删除与 adapter 边界验证。Task 2–7 仍须由点点逐个明确指定后，executor 才能按对应 Allowed files、Tests first、冻结决策与 Stop rule 开工。
+> Task 1 已于 2026-07-13 获得点点明确授权和精确删除范围确认，并已完成 prototype inventory/删除与 adapter 边界验证。Task 2–7 当前不仅未授权，而且整体后置；后端 Gate 闭合后仍须由点点逐个明确指定，executor 才能按对应 Allowed files、Tests first、冻结决策与 Stop rule 开工。
 >
 > **本计划只覆盖正式产品前端重建。** 原 `/history`、`/analyze`、临时 App shell 和 prototype components 已在 Task 1 删除；当前只保留 capability adapters 与 Tauri/runtime。正式重建必须从上游产品与设计合同开始，不得恢复 prototype。
 >
@@ -25,13 +25,14 @@
 从产品文档和视觉合同重新建立高质量、可验证的桌面前端：
 
 ```text
-Run → Evidence → Analysis → Coach
+              Aiming Coach
+Run → Evidence → Analysis → Training → Retest
 ```
 
 正式前端必须提供：
 
 - Desktop-first App shell，而非网站式导航；
-- 条件启动、新建分析、任务中心、History、Analysis workspace、Settings；
+- 无账号条件启动、Provider-first onboarding、新建分析、任务中心、History、Analysis workspace、Settings；
 - input-native、multimodal、video-fallback 三种模式的诚实可见表达；
 - Evidence availability、coverage、alignment、limitations 和 stable reference 的用户可理解呈现；
 - 左侧主工作区 + 右侧可收起、可调宽度的 Coach 关系层；
@@ -46,7 +47,7 @@ Run → Evidence → Analysis → Coach
 - 修改 PRD 的产品范围、付费关系或产品定位；
 - 重定义 Architecture 的数据归属、安全边界、API 合同或后端生命周期；
 - 实现或修复 input-native 的科学算法、Raw Input codec、Run ingestion、worker queue 或 AnalysisResult schema；
-- 接入新的在线 Benchmark provider、leaderboard、cloud trace sync 或 provider credential；
+- 定义新的在线 Benchmark provider、leaderboard、远端 trace sync 或 Provider credential/auth 后端语义；
 - 恢复旧 Report、旧固定 Coach 页面、旧 StorageSettings、旧 ThemeController 或旧 Plotly 页面结构；
 - 复制、移植或重绘 RefleK 的 UI、组件、CSS、资源或大段实现；
 - 因为后端能力已经存在，就默认把它们全部暴露到第一版前端；
@@ -74,7 +75,8 @@ Run → Evidence → Analysis → Coach
 9. **Run、Analysis、trace、用户源文件的删除语义分离。** 删除 Analysis 不删除 Run、Raw Input trace、Stats/Performance 用户源文件；Analysis-owned managed artifacts 按其合同处理；Coach 消息保留但引用变为 unavailable/deleted。任何未在 lifecycle spec 冻结的删除按钮都不得实现。
 10. **Browser 与 Desktop 共享产品 IA 和视觉语言。** 能力可用性、文件选择和 managed video 形态可以不同，但不得维护两套产品界面。
 11. **所有页面失败必须可解释。** 请求失败不得转换成空列表；未知状态不得默认成 available；颜色不得作为唯一状态表达。
-12. **执行不得反向改写合同。** Frontend reconstruction spec、UI/UX、视觉合同、design-system 与本计划已经完成本轮冲突检查；executor 不得在 Task 内通过修改这些文档来迁就实现。
+12. **无产品账号。** 正式前端不得创建 `/login`、`/register`、Account 菜单、session/JWT、entitlement 或鉴权服务器依赖；Provider 可以无需认证；如需认证，只属于对应 Provider。
+13. **执行不得反向改写合同。** Frontend reconstruction spec、UI/UX、视觉合同、design-system 与本计划已经完成本轮冲突检查；executor 不得在 Task 内通过修改这些文档来迁就实现。
 
 ## 3. 正式前端边界与路由目标
 
@@ -82,27 +84,26 @@ Active frontend reconstruction spec 已冻结以下目标路由；本计划只�
 
 ```text
 /                            条件启动路由
-/login                       登录入口
-/register                    注册入口
+/onboarding                  首次 Coach / Provider 激活
 /analyze                     新建分析
 /tasks                       全局任务中心
 /history                     Run 与 Analysis 历史
 /analysis/:analysisId        Analysis workspace
-/settings                    Theme、Raw Input、Profile、Storage
+/settings                    Provider、Theme、Raw Input、Profile、Storage
 ```
 
 `/` 的条件行为：
 
-- 身份入口未完成 → `/login`；
-- 已进入产品、无 Run 且无 Analysis → `/analyze`；
+- onboarding 未完成 → `/onboarding`；
+- onboarding 已完成、无 Run 且无 Analysis → `/analyze`；
 - 已有 Run 或 Analysis → `/history`；
-- 无法读取身份或产品状态 → 显示可恢复的 service unavailable，而不是静默跳转或伪造空态。
+- 无法读取本地 onboarding 或产品状态 → 显示可恢复的 service unavailable，而不是静默跳转或伪造空态。
 
 正式 App shell 目标：
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ 静态 Logo  │ 历史 │ ＋新建分析 │              任务 │ Coach │ 账户 │
+│ 静态 Logo  │ 历史 │ ＋新建分析 │              任务 │ Coach │ 设置 │
 ├───────────────────────────────────┬──────────────────────────┤
 │                                   │                          │
 │ 当前主工作区                      │ 可收起、可调宽 Coach     │
@@ -219,7 +220,7 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 - light/dark token key 集完全一致；组件中无 raw hex/RGB/HSL；
 - `system` 首次启动跟随系统、系统变化实时更新；显式 `light` / `dark` 不随系统变化；
-- theme preference 只在本地 UI storage，不进入 API、账号、Analysis 或 Coach payload；
+- theme preference 只在本地 UI storage，不进入 Analysis、Provider auth 或 Coach payload；
 - hydration 前无主题闪烁；无障碍 focus、disabled、outline、status 对比在两种主题下均可读；
 - primitives 覆盖 Button、IconButton、Badge/Status、Field、Panel/Surface、Tabs、Drawer/Sheet、Toast/Notice、Loading/Empty/Error、Dialog 等实际页面所需基础能力；
 - reduced motion 下不依赖动画表达状态；
@@ -241,21 +242,20 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 - 需要恢复旧 `globals.css`、ThemeController 或旧组件 API；
 - token key 集、主题持久化边界或无障碍验收无法测试。
 
-## Task 3 — Identity entry / App shell / New Analysis / Tasks
+## Task 3 — Provider onboarding / App shell / New Analysis / Tasks
 
 ### 目的
 
-实现身份入口、正式应用壳、新建分析和全局任务中心，首先建立用户可达的三种 input mode 选择流程。
+实现无账号首次启动、最小 Provider onboarding、正式应用壳、新建分析和全局任务中心，首先建立 Coach 激活与三种 input mode 的用户可达流程。
 
 ### Allowed files
 
 - `webapp/frontend/app/page.tsx`
-- `webapp/frontend/app/login/**`
-- `webapp/frontend/app/register/**`
+- `webapp/frontend/app/onboarding/**`
 - `webapp/frontend/app/analyze/**`
 - `webapp/frontend/app/tasks/**`
 - `webapp/frontend/app/layout.tsx`
-- `webapp/frontend/components/**` 中仅属于 App shell、New Analysis、Tasks 的新组件
+- `webapp/frontend/components/**` 中仅属于 Provider onboarding、App shell、New Analysis、Tasks 的新组件
 - `webapp/frontend/ui/**` 中 Task 2 已冻结并允许复用的 primitives
 - `webapp/frontend/lib/api.ts`
 - `webapp/frontend/lib/types.ts`
@@ -266,9 +266,11 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### Tests first
 
-- `/login` 与 `/register` 不显示产品 App shell/Coach；成功后回到 `/` 重新解析，失败与服务不可用不得伪装成未登录；
-- `/` 条件启动：身份未完成进入 `/login`；已进入产品且无 Run/Analysis 进入 `/analyze`；已有 Run/Analysis 进入 `/history`；状态读取失败显示 service unavailable；
-- App shell 语义 landmarks、静态 Logo、键盘顺序、skip link、focus 和响应式三档；
+- `/` 条件启动：onboarding 未完成进入 `/onboarding`；完成后无 Run/Analysis 进入 `/analyze`；已有 Run/Analysis 进入 `/history`；状态读取失败显示 service unavailable；
+- `/onboarding` 说明 Aiming Cookie 开源免费、第三方 Provider 可能收费、连接后的 Coach 能力、无 Provider 可用的本地能力和默认数据边界；
+- onboarding 覆盖已批准的无认证直连/API key/OAuth-device-code/local/custom Provider、model 选择、connection test、ready、取消、失败恢复、稍后继续和明确跳过；secret 永不进入聊天或前端持久化；
+- 跳过 Provider 后本地 Analysis/History 可达，Coach 显示可恢复的激活入口；
+- App shell 无 Account 菜单，提供 Settings 明确入口；语义 landmarks、静态 Logo、键盘顺序、skip link、focus 和响应式三档；
 - Browser/Desktop 能力差异：Run discovery、file picker、managed video、Raw Input 和 launch-token 状态不被伪造；
 - input-native：Stats + Performance + attached Raw Input + 对齐条件满足时可选；缺失时解释原因，并显示 Preview/Experimental；
 - multimodal：native evidence 完整且 MP4 可用时可选；视觉分析失败不抹掉 native 结果；
@@ -280,7 +282,8 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### 冻结决策
 
-- `/login` 与 `/register` 是身份入口，不承载产品 App shell 或 Coach；
+- 不创建 `/login`、`/register`、Account 菜单或产品鉴权；Provider 可无需认证；其可选认证也不等于产品登录；
+- onboarding 使用结构化 Provider UI，不通过 Coach 对话收集 credential；
 - `/tasks` 是独立全局入口，不链接到 `/history` 代替任务中心；
 - 新建分析只消费后端合同，不复制业务判断到组件；
 - native 视觉提示必须诚实标为 Preview/Experimental；
@@ -290,8 +293,8 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### Stop rule
 
-- route table、mode matrix、evidence state matrix 与身份入口行为未在 active spec 冻结；
-- 可信身份/session 合同不足以实现 `/login`、`/register` 或 `/` 条件启动，且需要修改 backend/cloud auth 边界；
+- route table、Provider onboarding、mode matrix 与 evidence state matrix 未在 active spec 冻结；
+- Coach productization Provider Task 3/4 的 capability API、secure credential store 或 auth flow 未完成，导致 onboarding 只能伪造成功或保存 secret；
 - 任一模式需要前端猜测 source、owner、alignment、availability 或 provenance；
 - backend/lib contract 与 UI 需要的状态不一致；
 - `/tasks` 需要新增未批准的 queue/retry/delete 语义；
@@ -392,12 +395,12 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### 目的
 
-实现应用级 Coach 侧栏和 Settings，使 Coach 作为长期关系层工作，同时提供主题、Raw Input、Profile、Storage 的诚实状态管理。
+实现应用级 Coach 侧栏和完整 Settings，使 Coach 作为长期关系与产品操作层工作，同时接续 Task 3 的最小 onboarding，提供多 Provider/model/auth、主题、Raw Input、Profile、Storage 的诚实状态管理。
 
 ### Allowed files
 
 - `webapp/frontend/app/settings/**`
-- `webapp/frontend/components/**` 中仅属于 Coach sidebar、Settings、Raw Input、Profile、Storage 的新组件
+- `webapp/frontend/components/**` 中仅属于 Coach sidebar、Settings、Provider、Raw Input、Profile、Storage 的新组件
 - `webapp/frontend/ui/**` 中已冻结 primitives
 - `webapp/frontend/lib/api.ts`
 - `webapp/frontend/lib/types.ts`
@@ -407,27 +410,28 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### Tests first
 
-- Coach 在支持页面可收起、可调宽度；宽窗口并排、中窗口覆盖 drawer、极窄窗口全内容视图；
+- Coach 在支持页面可收起、可调宽度；宽窗口并排、中窗口覆盖 drawer、极窄窗口全内容视图；第一次 Analysis 完成且 Provider ready 时自动展开一次，后续遵循已保存状态；
 - Coach 跨页面保留会话、草稿、展开状态和当前 Analysis context；切换/移除 context 有明确反馈；
 - 发送前可移除 context；默认不发送 raw trace、绝对路径、原始 payload、secret、token 或未验证 heuristic sentinel；
 - Analysis 删除后消息保留，引用显示 unavailable/deleted；停止生成、错误、重试、offline 状态可操作；
-- `/settings` 覆盖 system/light/dark、Profile calibration、Raw Input 多状态、Storage ownership/retention 说明；
+- `/settings` 覆盖完整 Provider/model/auth 管理、system/light/dark、Profile calibration、Raw Input 多状态、Storage ownership/retention 说明，并与 onboarding 共用 capability/status/secret 组件；
+- Provider UI 覆盖 API key set/replace/delete、已批准 OAuth/device-code 状态、local/custom OpenAI-compatible、model 选择、测试连接和默认 provider；secret 永不回显；
 - Raw Input 分开表达 platform support、permission、capture enabled、KovaaK process、runtime health、trace attached 和 quality；
 - 删除/保留 UI 不越过 lifecycle spec；用户源 Stats/Performance 不被应用删除；
 - Coach 和 Settings 在 Web/Desktop 共享产品结构，能力差异诚实表达。
 
 ### 冻结决策
 
-- Coach 不是旧 `/coach` 页面，也不是 Analysis 底部小面板；它是 App shell 右侧关系层；
+- Coach 不是旧 `/coach` 页面，也不是 Analysis 底部小面板；它是 App shell 右侧关系层。onboarding 只负责结构化激活，不建立另一条 Coach 会话；
 - 不恢复 `CoachClient.tsx`、session-bound Coach route 或旧 `StorageSettings` / `ThemeController`；
 - Raw trace 默认不进入 Coach context；只有现有 contract 允许且用户明确确认时才可讨论可见摘要；
-- Settings 不新增未批准的账号、provider、删除或 retention 语义；
+- Provider/model/auth 只实现 active [`../specs/2026-07-13-coach-product-commands-explanations-provider-design.md`](../specs/2026-07-13-coach-product-commands-explanations-provider-design.md) 与后端 capability API 已明确支持的状态，不根据 Pi 存在的接口自动宣称产品已支持；
 - Benchmark 不进入默认 Coach context。
 
 ### Stop rule
 
 - Coach context contract、删除后引用语义或 raw trace boundary 尚未 active；
-- 需要为 UI 新增默认 provider、credential、cloud sync 或身份边界；
+- Provider capability API、credential store 或 auth state 尚未由对应 active Task 实现，导致 UI 只能伪造成功或保存 secret；
 - Settings 需要改变后端 ownership/retention 或未冻结的删除行为；
 - 无法测试 drawer focus trap、Escape、keyboard navigation、reduced motion 和错误恢复；
 - 需要恢复旧 Coach/Storage/Theme UI 才能完成。

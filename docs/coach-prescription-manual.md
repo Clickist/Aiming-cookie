@@ -1,5 +1,7 @@
 # Flicking 处方手册（诊断 → 训练处方映射）
 
+> **状态与边界**：处方证据与内容参考，不是产品范围、架构合同、当前实现状态或 active implementation plan。实际诊断、阈值和处方输出以当前代码与测试为准；社区和时间敏感内容在启用前必须重新核实。
+
 > 日期 2026-06-29 · 处方层 deep research 产出。把"诊断信号 → 具体训练场景 + 编排 + 执行要点"落到可执行处方，并标注每条信源级别。
 > 上游：`docs/coach-theory-foundation.md`（机制层：CI/Ericsson/guidance/KR-KP/Socratic）、`docs/coach-community-frontier.md`（地图层：Voltaic S5/顶级玩家/static clicking 三步）。本文是**处方层**，引用前两者、不重盖。
 > research workflow：`wf_7793cb5f-265`（105 agents，97 claims → 25 验证 → 22 确认 / 3 否决 → 14 综合）。
@@ -45,7 +47,7 @@
 - 终止型（Type 1 主导）→ Multiclick / Tile Frenzy 制动控制
 - 修正型（Type 2/3 主导）→ 1w6ts 小目标精度子动作
 
-> ⚠️ **落地前提**：Type 1/2/3 分类在 <300ms flick 信号上的可靠实现未解决（见 §9 开放问题 Q1）。当前 advice.py 的 `submovement_overlap` 只能给"两段式 vs 流体"的粗分类，分支化处方需等分类算法落地。
+> ⚠️ **落地前提**：Type 1/2/3 分类在 <300ms flick 信号上的可靠实现未解决（见 §9 开放问题 Q1）。当前 advice.py 的 `submovement_overlap` 是 trough-depth ratio proxy，不是 literal temporal overlap，只能给"两段式 vs 流体"的 experimental/info 粗分类；分支化处方需等分类算法落地。
 
 ### 1.3 SPARC 低 / 减速抖动 = 低速下的发力控制问题
 
@@ -79,7 +81,7 @@
 
 **结论**：对不受控时长的 reaching，SPARC 优于时域指标（LDLJ、nSUB、NARJ）——ICC>0.9 可靠性最好、CoV<10% 测量误差最小、受运动时长污染远小于 TDSM。**advice.py 已首选 SPARC，正确。**
 
-> ⚠️ **范围警告**：原始研究为卒中康复人群（~2-2.6s 自定速 reach），KovaaK flick 是 <300ms 健康人弹道动作，频域估计在极短信号上可能退化——**可靠性数值不能直接迁移，SPARC 阈值（当前 -5.0）只能作方向性支撑，需真实数据校准**。
+> ⚠️ **范围警告**：原始研究为卒中康复人群（~2-2.6s 自定速 reach），KovaaK flick 是 <300ms 健康人弹道动作，频域估计在极短信号上可能退化——**可靠性数值不能直接迁移；旧 unversioned `-5.0` 只保留 legacy experimental/info 兼容，`native_flicking.sparc.v2` 与 `flicking_fair_summary.sparc.v2` 在真实产品数据校准前不触发绝对阈值 issue，旧版与 v2 数值不可直接比较**。
 
 ### 1.7 linearity 高 / 路径低效 —— 独立构造
 

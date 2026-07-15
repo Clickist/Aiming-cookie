@@ -69,6 +69,12 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 
 ## Task 2 — Run / Analysis / evidence contract
 
+> 2026-07-14 点点裁决：为闭合真实 producer 与已冻结 v2 contract 的一致性，
+> 本 Task 允许在不改变 Task 3 科学语义或 Task 4 mode dispatch 的前提下，
+> 仅修改 `worker.py` / `test_worker.py` 补齐结果归属、版本、metric provenance
+> 与 artifact metadata。
+> 实施状态：completed（2026-07-14）；后续 Task 3 亦已完成，当前接力点为 Task 4。
+
 ### Allowed files
 
 - `webapp/backend/contracts.py`
@@ -77,10 +83,12 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 - `webapp/backend/queue.py`
 - `webapp/backend/routes.py`
 - `webapp/backend/kovaak_run_store.py`
+- `webapp/backend/worker.py` only for v2 producer/contract alignment
 - `webapp/tests/test_db.py`
 - `webapp/tests/test_contracts.py`
 - `webapp/tests/test_routes.py`
 - `webapp/tests/test_queue.py`
+- `webapp/tests/test_worker.py` only for v2 producer/contract alignment
 - no spec/index changes by executor
 
 ### Tests first
@@ -102,15 +110,36 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 
 ## Task 3 — Input-native analysis adapter
 
+> 2026-07-14 点点裁决：为保证排队与重试期间 Raw trace 不会静默换版，
+> 本 Task 额外允许 `kovaak_run_store.py` 冻结 trace fingerprint，并允许
+> `test_kovaak_runs.py` 验证该 snapshot contract；不改变 Run/trace ownership、
+> retention、删除或 Task 1 lifecycle 语义。
+> 实施状态：completed（2026-07-14）；Task 4 尚未开始。
+> 2026-07-15 correctness correction：worker 不再“先校验路径、后由 parser 重开路径”，
+> 而是对 Stats、Performance、Raw trace 各做一次有界读取，校验该组 bytes 后直接交给
+> bytes parser；仅为此增加 `csv_parser.py` 的 bytes 入口与 Raw snapshot bytes decoder，
+> multimodal visual validation 复用 native 阶段解析出的同一 Stats 对象，不再在 native
+> 校验结束后按路径重读。2026-07-15 进一步修正 SPARC：选中频段的频率轴按 cutoff
+> span 归一化，避免同一轮廓随采样间隔漂移；native/video-fallback 分别写入独立 v2
+> SPARC metric version，旧版值不得混入趋势，且 v2 在真实数据校准前不触发 legacy
+> `-5.0` 绝对阈值；native 同时输出诚实命名
+> `trough_depth_ratio` 与下游兼容键 `submovement_overlap`，二者明确是同一谷深 proxy，
+> 不冒充 literal temporal overlap。以上修正不复制 Stats/Performance 原文件，也不改变
+> ownership、retention 或删除合同。已冻结 source 缺失、不可读或 revision 改变时，worker
+> 统一写入不可重试的 `input_validation / source_unavailable`，不再误报可重试内部错误，也不
+> 将绝对路径、底层异常或 traceback 写入错误对象与普通日志；恢复方式是重新提交并冻结新 snapshot。
+
 ### Allowed files
 
 - `kovaak_tracker/native_flicking_analysis.py` (new)
 - `kovaak_tracker/performance_parser.py` only for required event semantics
 - `webapp/backend/worker.py`
 - `webapp/backend/contracts.py`
+- `webapp/backend/kovaak_run_store.py` only for trace snapshot fingerprint
 - `tests/test_native_flicking_analysis.py` (new)
 - `tests/test_performance_parser.py`
 - `tests/coach/test_report.py`
+- `webapp/tests/test_kovaak_runs.py` only for trace snapshot fingerprint
 
 ### Tests first
 
@@ -131,6 +160,13 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 
 ## Task 4 — Worker mode dispatch
 
+> 实施状态：not started（截至 2026-07-14）。
+> 新 session 只有在点点明确指定“继续 Task 4”后才开工；不得自动开始 Task 5 或前端任务。
+> 2026-07-15 pre-Task correctness correction：现有 run-based path import 已在进入 queued
+> 前冻结 MP4 SHA-256 / size / mtime，验证 Analysis managed copy 与 frozen revision 一致，
+> 将 fingerprint/checksum 写入 snapshot/result manifest，并让同一路径换版参与幂等冲突；
+> 该局部修正不代表 Task 4 的三模式正式验收已开始或完成。
+
 ### Allowed files
 
 - `webapp/backend/worker.py`
@@ -142,6 +178,8 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 - `input_native` 不读取或要求 MP4；
 - `multimodal` 先保留 native deterministic result，视觉失败只追加 warning；
 - `video_fallback` 继续通过既有 MP4 + CSV 路径；
+- path-based `multimodal` / `video_fallback` 的 MP4 revision 与 managed copy 必须一致，
+  source 变化、消失或 partial copy 时 fail-closed，且 result/audit 不泄露绝对路径；
 - fallback 不生成 Raw Input provenance；
 - 三种模式均写 `analysis_result.v2`，旧 v1 结果仍可读。
 

@@ -125,6 +125,8 @@ spacing:
   hero-gap: 96px
 ---
 
+> **状态**：设计参考资产，不是视觉方向、设计 token 或前端实现的事实源。视觉语义见 [`../DESIGN-cursor.md`](../DESIGN-cursor.md)，实现治理见 [`../docs/design-system.md`](../docs/design-system.md)，当前可执行状态以现有前端代码为准。
+
 ## Brand & Style
 
 The design system is engineered for the elite competitive performance space, moving away from "gamer" tropes of neon glows and complex textures toward a **Professional Performance Tool** aesthetic. It is deeply rooted in **Minimalism** with a heavy influence from **Modern Developer Tools** (like Linear and Vercel). 
