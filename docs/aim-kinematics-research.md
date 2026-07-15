@@ -1,7 +1,8 @@
 # 瞄准运动学 & 社区共识研究（advice.py 知识底座）
 
-> 用途：`advice.py` 规则引擎的知识底座。诊断信号 → 处方的映射全部来自这里的运动学黄金标准 + Voltaic/KovaaK 社区共识。
-> 上游：`flicking-analysis-plan.md` 已有 Becker 2020 神经科学、社区流派、病理模式表。本文补：方法论修正（这次真实数据验证得出）+ 训练处方缺口。
+> **状态与边界**：运动学证据和现有规则来源说明，不是产品范围、架构合同、当前实现状态或 active implementation plan。`advice.py` 的实际行为以当前代码和测试为准；本文中的社区结论、阈值和旧实验结果在用于新实现前必须重新验证。
+> 用途：记录 `advice.py` 规则引擎所依据的运动学研究、真实数据观察和社区证据，并为诊断信号 → 处方映射提供可追溯理由。
+> 历史背景：早期 `flicking-analysis-plan.md`（当前不属于活跃文档体系）曾收录 Becker 2020 神经科学、社区流派和病理模式表；本文补充了当时真实数据验证得到的方法论修正与训练处方缺口。
 
 ## 1. 方法论修正（2026-06-28 真实数据验证）
 
@@ -29,7 +30,7 @@
 | peak_position % | 50 | 35–50 | <30 加速过急/减速过长；>60 加速拖沓 |
 | decfrac | 0.50 | 0.50–0.65 | >0.7 减速段蹭；<0.4 减速不足/撞 |
 | linearity（匀减速线性度）| 低 | <0.12 | >0.15 制动不匀（减速抖动看 sparc）|
-| sparc（减速段平滑度，§6.1）| 高（≈0）| >−0.5 | <−0.5 减速抖动、张力释放不平滑 |
+| sparc（减速段平滑度，§6.1）| 高（≈0）| v2 暂无通用健康区间 | 只在相同 input mode + metric version 下看个体趋势；绝对阈值待真实数据校准 |
 | reverse 占比 | 0 | <0.18 | >0.22 减速段锯齿/反复修正 |
 
 ## 3. 诊断信号 → 处方（advice.py 核心规则）
@@ -40,7 +41,7 @@
 |---|---|---|---|
 | decfrac 高 | >0.65 | 急加速 + 长减速，减速段在"蹭" | 果断减速一次到位；pasu / 1w4ts 练完整加减速；意识：flick→confirm |
 | linearity 高 | >0.13 | 制动不匀（接近匀减速的线性度差；抖动另看 sparc）| clean lines；pasu；降速练制动；减速段当一次动作 |
-| sparc 低 | <−0.5（待校准）| 减速段平滑度差、张力释放抖（频域弧长短，§6.1）| clean lines；pasu；减速段当一次独立动作 |
+| sparc 低 | v2 未启用绝对阈值 | 只展示同版本描述值/趋势，不从旧 `-5.0` 或草稿 `-0.5` 推导当前用户异常 | 待校准后再启用；当前只提供定义、限制和受控复测 |
 | reverse 高 | >0.20 | 减速段锯齿/反复修正 | 转流体派（减速段即修正）；pasu；别 readjust |
 | two_stage（overlap 低）| overlap<0.3 | discrete corrective submovements（两段式），primary→停→corrective 有延迟（§6.2）| 流体派：corrective 与 primary 重叠（overlapping submovements），减速段即微调 |
 | peak °/s 远低于参考 | <参考×0.7 | 甩得偏慢，发力不足/手腕主导 | 练 arm 发力与动态速度；Tile Frenzy / speed 类 |
@@ -99,7 +100,7 @@ $$v(\tau) \propto 30\tau^2(1-\tau)^2,\quad \tau=t/D$$
 - "减速段抖动/平滑度"应改用运动平滑度金标准度量。
 
 **平滑度金标准：SPARC（Spectral Arc Length, Balasubramanian 2012）**
-- 频域度量：速度幅度谱的归一化弧长
+- 频域度量：速度幅度谱的归一化弧长；幅度归一化之外，选中频段的频率轴也必须按 cutoff span 归一化到无量纲尺度，直接对 Hz 求弧长会让同一速度轮廓随采样间隔成比例漂移；
 - **无量纲**（跨速度/跨人公平——正是 `decel_smoothness` corr=0.76 不公平问题的正解；linearity 解决的是"线性度公平"，SPARC 解决的是"平滑度公平"）
 - 对噪声鲁棒、敏感于平滑度变化，优于 dimensionless jerk (DLJ)；现代运动控制/康复的金标准
 
@@ -128,7 +129,7 @@ $$v(\tau) \propto 30\tau^2(1-\tau)^2,\quad \tau=t/D$$
 - Bardpill（两段式）= **discrete corrective submovements**：primary 与 corrective 速度峰之间有明显谷，可分离
 - Zeonlo（流体）= **overlapping submovements**（Novak 2002）：corrective 与 primary 融合，单峰/连续减速
 
-**指标改动**：用学术标准重建 submovement 切分；`FlickFairMetrics` 新增 `corrective_count`、`submovement_overlap`（corrective 与 initial 时间重叠比，高=流体，低=两段式）；advice 补 two_stage 规则用学术措辞。
+**指标改动**：用学术标准重建 submovement 切分；`corrective_count` 记录后续峰，当前产品 `submovement_overlap` 仍是主峰与首个 corrective 之间的 trough-depth ratio proxy（高=谷浅/流体，低=谷深/两段式），不是 Novak 时间重叠的字面分解。native 结果同时保留诚实命名 `trough_depth_ratio` 与下游兼容键 `submovement_overlap`，二者必须携带 `trough_depth_ratio_not_temporal_overlap` limitation；真正 temporal overlap 留待验证后的新 metric version。
 
 ### 6.3 Fitts's Law：peak_speed 的距离归一化（throughput）
 

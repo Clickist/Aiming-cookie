@@ -4,7 +4,7 @@
 
 ## 1. 架构结论
 
-Aiming Cookie 的目标形态是 **Desktop-first hybrid product**：分析与主要本地数据留在用户机器，可信身份、LLM 代理、计量和可选同步由云端承担。
+Aiming Cookie 的目标形态是 **Desktop-first local product**：分析、History、Coach 关系、长期 profile 和主要数据留在用户机器。产品不建立账号、登录、session/JWT、entitlement、用户鉴权服务器、云端 LLM 代理或账号型同步。
 
 ```text
 Desktop Client (Next.js UI in Tauri)
@@ -12,28 +12,29 @@ Desktop Client (Next.js UI in Tauri)
   ├─ Native Input Capture (Windows Raw Input, opt-in)
   ├─ Local Analysis Runtime (Python API + worker)
   ├─ Coach Agent Runtime (Pi-based runtime + product tools)
+  ├─ App-owned local Provider profile / credential store
   └─ Local canonical data and managed artifacts
              │
-             └── Cloud Services
-                 ├─ verified identity
-                 ├─ LLM proxy and metering
-                 ├─ subscription / entitlement
-                 └─ optional sync
+             ├── User-selected LLM Provider or local model
+             └── Online Surfaces without user identity
+                 ├─ landing / documentation
+                 ├─ release distribution
+                 └─ optional versioned equipment catalog
 ```
 
-当前仓库也可以用 Web 方式开发和验证共享 UI/API，但 Web 验证形态不能反向改变 Desktop-first 的产品边界。
+当前仓库也可以用 Web 方式开发和验证共享 UI/API，但 Web 验证形态不能反向引入产品账号或云端数据所有权，也不能替代 Desktop 发布验收。
 
 ### 1.1 五个职责域
 
 | 职责域 | 负责 | 不负责 |
 |---|---|---|
-| **Domain Core** | 确定性的输入原生 / 多源 / 视频 fallback 分析、指标、诊断、处方、报告模型 | HTTP、UI、身份、队列、文件生命周期 |
-| **Local Analysis Runtime** | job、worker、KovaaK Run ingestion、输入时间对齐、managed workspace、本地 History、分析合同 | 产品收费、云端身份、通用 Agent 行为 |
-| **Coach Agent Runtime** | 长期 Coach 关系、Agent run/event、工具编排、上下文衔接 | 重新定义确定性诊断、直接拥有 `KovaaKRun` 或分析文件 |
-| **Client Surfaces** | Desktop/Web UI、交互状态、native bridge | 数据真相、业务规则、密钥保存 |
-| **Cloud Services** | 可信身份、LLM 代理、计量、订阅、可选同步 | 默认执行本地 CV、成为本地 History 的隐式唯一副本 |
+| **Domain Core** | 确定性的输入原生分析、可选视觉证据、视频 compatibility fallback、指标、诊断、处方、报告模型 | HTTP、UI、产品账号、队列、文件生命周期 |
+| **Local Analysis Runtime** | job、worker、KovaaK Run ingestion、输入时间对齐、managed workspace、本地 History、分析合同 | 产品账号、Provider 推理、通用 Agent 行为 |
+| **Coach Agent Runtime** | 本地长期 Coach 关系、Agent run/event、与本地 profile 能力对齐的产品命令编排、上下文衔接 | 重新定义确定性诊断、绕过本地 ownership/capability、直接拥有 `KovaaKRun` 或分析文件 |
+| **Client Surfaces** | Desktop/Web UI、onboarding、交互状态、Provider 认证状态呈现、native bridge | 数据真相、业务规则、密钥持久化 |
+| **Online Distribution Surfaces** | 无用户身份的 landing、文档、release 分发和可选外设目录 | 用户账号、credential、Coach、History、训练档案或 LLM 请求代理 |
 
-依赖方向应面向领域合同：UI、runtime 和 cloud 适配 Domain Core，而不是让领域逻辑依赖 FastAPI、Tauri 或具体 LLM provider。
+依赖方向应面向领域合同：UI 和 runtime 适配 Domain Core；Provider 与在线分发表面通过明确边界接入，不让领域逻辑依赖 FastAPI、Tauri、具体 LLM provider 或远端身份。
 
 ## 2. 运行形态
 
@@ -56,15 +57,15 @@ Desktop Client (Next.js UI in Tauri)
 
 ### 2.2 Web 验证形态
 
-Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享功能开发、受控预览和回归。其身份边界必须由可信反向代理或真实 session/JWT 建立；浏览器自行发送的 owner header 不能成为正式信任根。
+Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享功能开发、受控预览和回归，但不是需要产品账号的正式交付形态。公开预览必须置于 VPN、SSO 或可信反向代理等环境访问控制后；这类访问控制不建立 Aiming Cookie 用户身份。浏览器自行发送的 owner header 不能成为本地 ownership 的信任根；浏览器/localStorage 不得持久保存长期 Provider secret，受控本地 backend 仍遵循 Desktop 相同的 profile、credential 与 redaction 合同。
 
 ### 2.3 当前产品合同边界
 
 共享分析合同必须能表达三种输入模式：
 
 - **input-native**：KovaaK Run + Raw Input，直接计算输入运动学；
-- **multimodal**：input-native + MP4，用视觉证据校验和增强；
-- **video-fallback**：MP4 + Stats，沿用 CV pan trajectory。
+- **multimodal**：input-native + MP4；native 仍是输入运动学主事实，MP4 用于直观回放、问题定位和可验证的视觉证据；
+- **video-fallback**：MP4 + Stats，作为非 Windows、未开启 Raw Input 和旧工作流的 compatibility fallback，沿用 CV pan trajectory。
 
 Raw Input 接通不等于完整 tracking 接通。它解决的是输入运动学事实源；目标/准星相对误差、视觉反应时刻和场景证据仍需 Performance/Stats 或 MP4。tracking 产品化仍需要完成指标命名、目标/准星语义和真实阈值标定。
 
@@ -99,6 +100,8 @@ AnalysisResult
 - deterministic summary、diagnosis 和 prescription 是 Coach 的事实输入，不由 LLM 改写；
 - `analysis_type` 必须显式，不能靠字段猜测 flicking/tracking；
 - `input_mode` 必须显式区分 input-native / multimodal / video-fallback；报告和 UI 不能靠是否有 MP4 或 trace 猜测；
+- `analysis_id` 必须绑定所属 Analysis Session 的稳定引用（当前 wire format 为 `analysis:{session_id}`）；terminal write 必须同时校验 owner/local profile、`analysis_type`、`input_mode` 与可选 `kovaak_run_id/ref` 均匹配已 claim 的 request，结构合法但属于另一 request 的结果必须 fail-closed；
+- multimodal 不得让视频重新定义已经成立的输入运动学；视觉失败只降低回放/视觉证据 availability，不抹掉 native 结果；
 - 每个关键指标必须能追溯到 Raw Input、Performance、Stats、MP4 或融合计算；证据缺失时使用 warning/availability 表达；
 - artifact 通过 manifest/稳定引用暴露，不泄露任意文件系统路径；
 - 新字段优先向后兼容；破坏性变化升级 contract version。
@@ -126,8 +129,12 @@ created → uploading/importing → queued → running → done | failed
 - KovaaK Run ingestion / source alignment / Raw Input；
 - storage / disk；
 - Coach runtime / tool；
-- cloud network / LLM / entitlement；
-- auth / ownership。
+- Provider network / LLM / credential；
+- local ownership / capability。
+
+已冻结的 Analysis source snapshot 若在消费前缺失、不可读或 revision 不一致，属于
+`input_validation / source_unavailable`，同一 snapshot 原样重试不可恢复；用户必须重新提交
+以冻结新的输入 revision。该错误不得携带源文件绝对路径、底层异常文本或 traceback。
 
 用户文案、可重试性和内部诊断信息分层，密钥、token 和本地敏感路径不得出现在用户响应或普通日志中。
 
@@ -160,9 +167,17 @@ KovaaKRun
 ### 4.1 Canonical store
 
 - 本地 SQLite 是 Desktop v1 的 canonical structured store；
+- app-owned SQLite connection 必须开启 foreign-key enforcement；Provider profile/credential、
+  Training Plan/version/transition 等声明的关系约束不能只停留在 DDL 文本中，也不能接受
+  新的 orphan child row；
+- Coach command journal 的 `(owner, command_name, idempotency_key)` 记录一旦建立，
+  `parameters_digest` 不得被后到写入替换；应用层先查后写即使发生竞态也必须在 SQLite
+  写入点返回稳定 conflict；同 digest 的后到 reservation claimant 必须 replay 已有记录，
+  不能再次执行副作用；confirmed write 的 reservation conflict 必须回滚 confirmation 消费；
 - JSON/JSONL 只作为交换、调试或兼容格式，不与 SQLite 形成双写事实源；
-- 云同步是显式后续能力，不能让未完成的云模型污染本地所有权；
-- migration 必须可测试、幂等，并由批准的 plan 冻结。
+- 不建立账号型云同步；跨设备迁移使用显式导出 / 导入，任何未来远端备份都必须先由新的产品决策重新冻结；
+- migration 必须可测试、幂等，并由批准的 plan 冻结；事务型 migration helper 不得使用会
+  隐式提交外层事务的执行方式，失败时必须保留原异常并允许真实 rollback，不能留下半迁移状态。
 
 ### 4.2 Managed workspace
 
@@ -188,29 +203,60 @@ Coach 是用户关系层，不属于某个 analysis session：
 - analysis session scoped chat 只能作为迁移兼容层，不可成为新功能依赖；
 - schema、summary/换窗、长期档案和 Pi session 投影若需变化，必须由 active spec/plan 单独冻结。
 
+### 4.4 Coach Knowledge Registry
+
+- Coach 知识是随产品版本发布、受 Git review 的只读产品资产，不属于任何 owner、Analysis、对话或 Provider；
+- 一份 versioned Registry 是 Python 与 Pi TypeScript runtime 的 canonical knowledge source，禁止在两种语言中各自维护正文副本；
+- Markdown 研究、理论、社区和处方材料只作为来源证据与编辑审查输入，不在运行时由模型直接读取或整份注入上下文；
+- SQLite 只持久化历史对话实际使用的 registry/entry/version/source refs，不复制 Registry 正文，也不与静态 asset 双写；
+- metric 定义、运动学机制、诊断适用范围、学术研究、社区 cue、处方/verification、Tracking 和身体/张力候选假设均可进入 Registry，但必须保留 source level、最高 claim、limitations 与 counterevidence；
+- 身体、张力、握持、灵敏度和硬件内容在没有直接传感器或可比实验时只能作为 `experimental` 候选假设，不得生成 measured/deterministic root cause；
+- 第一版只允许基于显式 topic/signal alias/metric/use 的 bounded deterministic retrieval；embedding、在线搜索或 LLM 相似度不得触发正式 diagnosis。
+
 ## 5. Coach Agent Runtime
 
 Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接维护并产品化，不以持续兼容上游为约束。
 
 边界：
 
-- 只通过稳定产品工具读取分析、History、趋势、报告和用户确认后的操作；
+- 通过与 UI 共用的稳定产品命令查询、创建、修改和执行当前本地 profile 可用能力；Coach 不是只读投影，也不得绕过本地 ownership、capability 或确认策略；
 - 工具调用、失败、确认和结果定位必须形成可见事件；
+- knowledge tool 在所有 v1 turn 中作为只读产品工具可用，不依赖写命令 bridge；实际使用的 registry/entry/version/source refs 进入安全 trace；
 - 不允许通用 coding-agent 权限无边界暴露给产品用户；
 - workspace、filesystem、shell、network 和 secret 权限遵循最小授权；
 - 无 LLM 或 Coach 不可用时，确定性诊断闭环仍完整。
 
-## 6. 身份与安全
+### 5.1 Provider、model 与认证
 
-- Desktop 本地数据默认属于当前 OS 用户/本地 profile；
+Coach 是否可用取决于当前本地 profile 是否选择并连接了可工作的 LLM Provider/model。Provider 可以无需认证，也可以要求 API key、OAuth、device-code 或其它 Pi 支持的认证方式；认证只发生在用户与模型服务之间，不创建 Aiming Cookie 账号或产品 session。
+
+稳定边界：
+
+- pinned Pi 的 built-in provider/model catalog 是产品 catalog；Aiming Cookie 不维护第二份 provider/model allow-list，所有 Pi 支持的 built-in 必须被动态暴露并接通为可选项；
+- 自定义 OpenAI-compatible profile 至少保存 provider name、base URL、API key 配置状态和 model ID；当前 owner/profile 的 selected provider/model 是本地 canonical selection；
+- API key 可以作为 local-first 权衡明文持久化在 app-owned 本地 SQLite/config；OS secure store 可以作为后续增强，但不是实现或发布前置条件；
+- UI/API 只允许 set/replace/delete credential，并返回 `configured`、`auth_mode`、`credential_source`、`needs_reauth`、`last_test` 等状态，不得读回 secret；
+- auth/refresh operation 对 credential 状态的完成写入必须绑定其启动时 revision；旧 operation 的成功 credential 或失败 `needs_reauth` 标记都不得覆盖、污染用户随后替换的新 credential；
+- `LLM_PROVIDER` 与 `kovaak_tracker/coach/providers.json` 只保留为旧环境/配置兼容入口，不得继续充当 provider/model 事实源；迁移必须保留显式选择，不能把 obsolete `deepseek-chat` 静默改写为其它 model；
+- active Coach turn 与 Analysis narration 只能使用 owner 当前 selected local profile；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；Provider 不可用时 deterministic Analysis 仍完成，narration 标为 not requested / unavailable；
+- provider/model 目录、API key/ambient auth、OAuth/device-code 和 OpenAI-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
+- Provider/model/credential/sidecar 失败只影响 Coach readiness，不得阻塞 Analysis、History 或 deterministic report/prescription；
+- Pi coding-agent、shell、filesystem 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；
+- 首次启动以 Provider onboarding 为主路径，但允许用户明确跳过并进入本地分析；未配置 Provider 时，确定性分析、History 和报告继续可用，Coach 显示可恢复的配置入口。
+
+## 6. 本地归属与安全
+
+- Aiming Cookie 不提供产品账号、注册、登录、session/JWT、entitlement 或用户鉴权服务器；
+- Desktop 本地数据默认属于当前 OS 用户/本地 profile；内部 `owner/profile` 字段表达本地数据隔离和稳定引用，不代表云端用户身份；
 - Windows Raw Input 默认关闭，首次启用必须有明确 opt-in 和采集范围说明；
 - Raw Input 只允许 KovaaK process gate 内的相对鼠标输入；不得采集键盘、桌面绝对坐标或其它应用的后台输入；
-- Raw Input trace 不进入云端、Coach 请求或普通日志；如果未来 Coach 要引用 trace，必须增加单独的用户确认和 evidence contract；
-- Desktop loopback API 使用高熵、launch-scoped token，并限制 host/origin/接口暴露；
-- Web 预览使用可信代理身份；正式服务使用服务端验证的 session/JWT；
-- 所有 session、artifact、Coach 和 History 读写统一做 owner 校验；
-- API key、refresh token、桌面 launch token 和长期 LLM 密钥不得进入分析结果、前端持久化或普通日志；
-- 改变数据、付费、权限或删除状态的 Agent 操作需要明确用户确认和可审计结果。
+- Raw Input trace 不进入 Provider 请求或普通日志；如果未来 Coach 要引用 trace，必须增加单独的用户确认和 evidence contract；
+- Desktop loopback API 继续使用高熵、launch-scoped token，并限制 host/origin/接口暴露；这是本地进程安全，不是用户登录；
+- Web 预览只允许在受控环境访问，不把外部 VPN/SSO/代理访问控制包装成产品账号；
+- 所有 artifact、Coach 和 History 读写统一校验本地 profile、稳定引用和 capability；
+- Provider API key、OAuth access/refresh token、Desktop launch token 和其它 secret 即使允许保存在 app-owned 本地 SQLite/config，也不得进入 AnalysisResult、Coach context/message、普通日志、diagnostics、crash report 或 export；
+- 查询、导航和用户在当前指令中明确要求的普通可恢复产品动作可以直接执行；
+- 删除、覆盖、credential 变更、Provider OAuth 授权/撤销、上传/分享、打开外部购买链接，或 Coach 自主推断而非用户明确要求的副作用动作，必须先说明影响并获得确认；所有 Agent 操作都要保留可审计结果。
 
 ## 7. 运行与可观测性
 
@@ -221,7 +267,7 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 - 带 correlation id 的 structured logs；
 - queue depth、running age、failure、duration、disk usage；
 - stale job、partial import、orphan workspace 和 runtime crash 的恢复；
-- CV、storage、Coach、LLM、auth 错误分开统计；
+- CV、storage、Coach、LLM、Provider auth 和本地 capability 错误分开统计；
 - core/backend/frontend/Desktop/真实素材/E2E 的分层 Gate。
 
 具体当前缺口与最近验证结果只写 `PROGRESS.md`。
@@ -230,14 +276,14 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 
 顺序原则：
 
-1. 先保证 KovaaK Run / Raw Input 可选的输入原生 flicking、MP4 + Stats fallback、确定性报告、History 和删除语义可靠；
-2. 再恢复用户可达的分析工作区、训练记录选择、视频/数据联动和 Coach 侧栏；
+1. 先保证 KovaaK Run / Raw Input 的输入原生 flicking、确定性解释/处方、History 和删除语义可靠；MP4 提供可选回放/视觉证据并保留 compatibility fallback；
+2. 完成完整 Pi catalog、selected provider/model、本地 credential persistence、必要的 Pi auth/OAuth/device-code 与首次 onboarding，再恢复用户可达的分析工作区、训练记录选择、视频/数据联动、完整 Provider Settings 和 Coach 侧栏；
 3. 冻结并实现 source unavailable、Run/trace 删除、import/delete/runtime crash 等恢复合同；
-4. 完成 Desktop packaging、Windows 实机验证、可信云服务和发布链；
+4. 完成 Desktop packaging、Windows 实机验证、静态 Landing/release 分发和发布链；
 5. 用视频与更多 tracking 数据增强输入原生指标，在目标/准星语义和真实阈值标定后接通完整 tracking；
-6. 计费、同步、跨平台采集和远期硬件扩展在核心闭环验证后展开。
+6. 显式导出/导入、跨平台采集、外设推荐和远期硬件扩展在核心闭环验证后展开。
 
-不得用 UI 重做、Desktop 壳或云同步掩盖本地数据生命周期问题；也不得让 tracking、计费或远期平台扩展阻塞当前 flicking 闭环。
+不得用 UI 重做、Desktop 壳或远端服务掩盖本地数据生命周期问题；也不得让 tracking、推荐生态或远期平台扩展阻塞当前 flicking 闭环。
 
 ## 9. 文档关系
 

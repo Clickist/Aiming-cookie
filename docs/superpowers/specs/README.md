@@ -6,7 +6,9 @@
 
 - [`2026-07-13-kovaak-run-trace-lifecycle-design.md`](2026-07-13-kovaak-run-trace-lifecycle-design.md)：KovaaK source pairing、Raw Input buffer、trace attach、reconciliation 与稳定引用合同。
 - [`2026-07-13-analysis-evidence-coach-context-design.md`](2026-07-13-analysis-evidence-coach-context-design.md)：三种 input mode、AnalysisResult v2、evidence provenance 与 Coach allow-list context。
+- [`2026-07-13-coach-product-commands-explanations-provider-design.md`](2026-07-13-coach-product-commands-explanations-provider-design.md)：Coach 用户级产品命令、指标到训练解释链、Provider/model/auth Settings 与 secret 边界。
 - [`2026-07-13-frontend-product-reconstruction-design.md`](2026-07-13-frontend-product-reconstruction-design.md)：正式前端路由、页面职责、状态矩阵、Desktop/Web 差异、Coach shell、Preview/Benchmark/ownership 边界与 prototype 重建合同。
+- [`2026-07-14-versioned-coach-knowledge-registry-design.md`](2026-07-14-versioned-coach-knowledge-registry-design.md)：Coach canonical Knowledge Registry、版本/source/claim/limitation、Flicking/Tracking/身体候选知识、确定性检索与历史引用合同。
 
 此前关于 IA、常驻 Coach 与 Pi Coach runtime 的耐久结论，已经分别吸收到 PRD、Architecture 和 frontend UI/UX 合同。旧文件位于 [`../../archive/retired/specs/`](../../archive/retired/specs/)，仅用于历史追溯，不得作为当前实施授权。
 

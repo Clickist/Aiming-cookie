@@ -1,17 +1,18 @@
 # Aiming Cookie 当前进度
 
-> **最后整理：2026-07-13。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
+> **最后整理：2026-07-15。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
 
 ## 1. 当前结论
 
-- 产品方向仍是 Desktop-first、flicking 先行、确定性诊断主路径、Coach 为可选长期关系层。
+- 产品方向仍是 Desktop-first local-first、flicking 先行、确定性诊断主路径；Aiming Cookie 开源免费，不提供产品账号、登录或用户鉴权服务器；Coach 是 Provider 可用时的长期关系与产品操作层。pinned Pi built-in provider/model catalog 已确认为完整产品 catalog，不另设 Aiming Cookie allow-list。
 - KovaaK Run 自动发现、Stats / Performance 解析、Windows Raw Input、AnalysisResult v2、History read model、Coach diagnostic context 与本地 Benchmark store 已形成不同成熟度的代码基础。
-- **input-native 当前只能作为 Preview / Experimental 能力。** 现有 adapter 已接入 worker 和 v2 结果，但尚未完成正式 flick segmentation、核心 fair metrics、高 polling-rate correctness 与 Windows 实机 Gate，不得描述为可发布的完整输入原生诊断。
-- multimodal 冻结为“native 结果是主事实、MP4 是可选视觉校验”；视觉校验失败时保留 native 结果并显示视觉证据不可用。
+- RefleK active plan 的 Task 2 与 Task 3 已完成当前平台收口：真实 v2 producer 现在显式写入 owner、analysis version、metric provenance/coverage/limitations 与完整 artifact metadata，queue 在 terminal write 前同时校验 producer 完整性与 session/request identity，fail-closed；Analysis request 会冻结 Stats、Performance 与 Raw trace fingerprint，worker 对每个 source 做一次读取并让 fingerprint 校验与 parser 消费同一组 bytes，拒绝排队、重试或 check/use 间隙静默换版；已冻结 source 缺失、不可读或 revision 改变时稳定返回不可重试的 `input_validation / source_unavailable`，要求重新提交新 snapshot，且不泄露本地路径或底层异常。现有 run-based path import 也已冻结 MP4 SHA-256 / size / mtime，并在进入 queued 前验证 managed copy、幂等 identity、result snapshot 与 artifact checksum；这只是 Task 4 前的 correctness correction，Task 4 正式验收仍未开始。
+- **input-native 当前仍只能作为 Preview / Experimental 能力。** Raw Input 左键锚定 Flick、真实毫秒 timing、raw-count path/efficiency、修正/反向离散事实、trough-depth submovement proxy、SPARC 均匀重采样与 cutoff-normalized frequency axis、分布/outlier refs 与 deterministic diagnosis 已接入 worker 和 v2；native 已补齐 `submovement_overlap` 兼容键但明确携带非 temporal-overlap limitation；SPARC 已使用独立 v2 metric version，旧版值不参与同一趋势，v2 在真实数据校准前不套用 legacy 绝对阈值；但 Windows 实机、高 polling-rate 实物、噪声地板、SPARC 跨 polling 可比性和 target-relative facts 仍未闭合，不得描述为发布完成。
+- multimodal 冻结为“native 结果是主事实、MP4 主要提供直观回放、问题定位和可验证视觉证据”；视觉阶段复用 native 阶段已冻结并解析的 Stats，不再按用户源路径重读另一 revision；视觉失败时保留 native 结果并显示视觉证据不可用。video-fallback 继续作为 compatibility path，不是长期主分析方向。
 - Benchmark 后端能力保留，但不进入 v1 正式前端、不进入默认 Coach context、不启用在线 provider 或 leaderboard。
 - Frontend reconstruction Task 1 已在点点确认精确范围后删除 History / Run / Evidence prototype、临时 App shell 与旧全局样式；当前只保留 capability adapters 与 Tauri/runtime，正式产品路由暂时不可用。
 - 当前发布状态仍为 **No-Go**。
-- 当前 active implementation plans 为 [`superpowers/plans/2026-07-13-reflek-capability-adoption.md`](superpowers/plans/2026-07-13-reflek-capability-adoption.md) 与 [`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)。Frontend Task 1 已完成，Task 2–7 尚未获得执行授权。
+- Versioned Coach Knowledge Registry 已完成：Flicking、Tracking、身体/张力候选解释、settings 单变量实验、practice、verification 与 limitations 已迁入单一 canonical asset；Python/TypeScript 共用确定性检索，Draft 2020-12 `schema.v1.json` 已补齐完整 entry/source/claim structural contract 并对 canonical asset 做标准验证，Pi knowledge tool 与 product-command bridge 已解耦，历史 trace 只保存版本化引用。当前 active implementation plans 为 RefleK capability adoption、Coach productization 与 frontend reconstruction；正式前端仍按点点裁决最后处理。
 
 ## 2. 能力成熟度
 
@@ -22,6 +23,7 @@
 - FastAPI queue、worker recovery、workspace/streaming upload、health/readiness；
 - 既有视频 + Stats flicking CV、诊断、处方和报告领域逻辑；
 - Pi-based Coach runtime、sidecar、服务编排与持久化基础；
+- Versioned Coach Knowledge Registry、Python compatibility adapters、Pi `get_coach_knowledge`、source/claim/limitation discipline 与版本化安全 trace；
 - `.perf` protobuf-wire parser、KovaaK Stats / Performance watcher、稳定文件判断与 Run upsert；
 - SQLite `kovaak_runs`、Windows-only Raw Input、versioned snapshot 与 trace window extraction；
 - AnalysisResult v2、三种 input mode dispatch、History/Run read models、Coach allow-list projection 与 Benchmark local store。
@@ -31,13 +33,16 @@
 - Run 独立于 Analysis；Stats、Performance、Raw Input、MP4 是不同 evidence source；
 - input-native、multimodal、video-fallback 必须显式表达 mode、availability、alignment 和 limitations；
 - Raw Input 默认关闭、仅 Windows、仅 KovaaK process gate、本地保留、默认不进入 Coach；
-- History 采用轻列表 + lazy detail；Coach 只读取结构化、用户可见的 diagnostic context；
+- History 采用轻列表 + lazy detail；Coach 使用结构化、用户可见的 diagnostic context，并通过与 UI 共用的产品命令调用当前用户能力，不限制为只读；
+- Coach explanation 必须形成观察、白话解释、证据、claim level、训练 cue、预期变化和复测链；
+- 当前不设付费墙；首次启动以 Provider onboarding 为主路径但允许明确跳过。Settings 使用完整 pinned Pi catalog，并支持 custom OpenAI-compatible profile；API key 可明文保存在本地 SQLite/config，secure store 不是 blocker，但所有外发/日志/诊断/导出边界继续 redaction；
 - terminal Analysis、Run metadata、Run-owned trace、用户 Stats/Performance 源文件和 Analysis-managed MP4 副本具有不同 ownership 与删除影响。
 
 ### 2.3 User-reachable / release-ready（尚未完成）
 
 - 原 prototype 已删除；当前没有正式用户路径，不能作为视觉或产品验收证据；
-- 正式 App shell、New Analysis、Tasks、History、Analysis workspace、Coach sidebar、Settings 尚待按新 frontend spec/plan 重建；
+- 正式 Provider onboarding、App shell、New Analysis、Tasks、History、Analysis workspace、Coach sidebar、Settings 尚待按新 frontend spec/plan 重建；
+- Coach productization Task 3–5 backend/runtime capability 已完成；首次 Provider onboarding、命令结果消费和完整 Coach sidebar 仍不可交付，因为正式 frontend Task 2/3/6 尚未授权和实现；
 - input-native、multimodal、video-fallback 三条真实 Browser/Desktop E2E 未形成；
 - Windows 实机、高 polling-rate 鼠标、真实 KovaaK 对齐与性能尚未通过发布 Gate；
 - installer、正式 icon、签名、公证、updater 和可信云服务仍未完成。
@@ -46,9 +51,9 @@
 
 ### Analysis / evidence
 
-1. native adapter 尚未完成 flick segmentation、核心 fair metrics 与正式 angular/physical trajectory；
-2. History trend 的 scenario identity / calibration / metric contract 与真实结果仍不闭合；
-3. v2 validator 和 queue terminal write 尚未完整落实 evidence 与 artifact ownership 语义。
+1. Task 2/3 的当前平台合同与 snapshot revision correctness 已闭合；正式 angular/target-relative trajectory、噪声地板、SPARC 跨 polling 可比性和 Windows 实机阈值仍待校准；
+2. Task 4 尚未按 active plan 正式收口三种 mode dispatch；当前已有代码基础，但仍需按 Tests first 验证 input-native 无视频依赖、multimodal 视觉失败降级、video-fallback provenance 与旧 v1 读取；
+3. History trend 的 scenario identity / calibration / metric contract 与真实结果仍不闭合。
 
 ### Reliability / lifecycle
 
@@ -64,44 +69,98 @@
 4. Benchmark 不进入 v1 正式前端；
 5. Task 1 已完成 prototype 删除与 adapter 边界保护；Task 2–7 必须继续按 active frontend plan 逐个授权。
 
+### Coach / explanation / provider
+
+1. 当前所有 v1 Pi turn 均注册 `get_analysis_summary` 与 `get_coach_knowledge`，仅有固定 loopback product bridge 时才增加 `run_product_command`；knowledge 按 signal/metric/topic/use 确定性检索最多三条完整 entry，不向 Coach 暴露 shell、任意文件、数据库或 coding-agent 工具；
+2. Coach Provider Task 3–4 已接通完整 pinned Pi catalog、owner/profile selection、custom OpenAI-compatible profile、SQLite v10 type-tagged credential persistence、selected `coach_runtime_turn.v1`、动态 Pi auth capability、API-key/ambient、OAuth/device-code callbacks、refresh、local-only revoke、sidecar status/test 与 readiness isolation；`LLM_PROVIDER + providers.json` 只保留 legacy compatibility，不再是 provider/model 事实源；Coach 与 Analysis narration 也已移除固定 DeepSeek backend/CNY budget gate，未建立 provider-specific usage/currency contract 时不写伪精确 `llm_cost_cny`；
+3. Coach productization Task 1 已完成：Flicking/Tracking explanation、claim、limitations、训练目标与复测合同已进入真实 producer，canonical context 与 Python fallback 均保留安全字段；未校准规则统一 fail-closed 为 `experimental/info`；
+4. Coach 已能通过与 UI route 共用的 owner-scoped handler 查询 Run / History / Analysis、比较分析、生成 typed navigation/evidence/video-time event、创建或重试 Analysis，并生成、保存、激活、暂停、调整和 review 带版本理由与 verification targets 的 Training Plan；普通明确写操作直接执行，Coach 推断写操作和替换 active plan 走持久确认，命令具有 append-only audit 与独立 idempotency replay；正式前端尚未消费这些事件和确认；
+5. API key/OAuth credential 明文本地 persistence 已按 local-first 决策完成；进行中的 auth operation 不持久化 provider-specific 中间状态，backend/sidecar 重启后明确 interrupted 并允许重试；正式前端 credential UX 仍待 frontend Task 3/6。
+6. Versioned Knowledge Registry 已完成并作为唯一运行时知识正文：当前含 43 条 active canonical entries、19 个 canonical signals 与 67 条逐项 migration audit；覆盖 Flicking、Tracking、身体/张力候选假设、settings、practice、处方验证和反证限制。Python/TS parity、真实 Analysis signal/metric → Pi retrieval → SQLite trace E2E 已通过；trace 仅保存 registry/entry/version/source/claim refs，不保存知识正文、路径、secret 或 raw payload。
+7. 点点提出后续 Coach 讲解需要更直观：先说人话，再按需展开指标，并探索图标、轨迹/阶段动画、问题区段标记和前后对比；这只是待讨论的产品/视觉方向，尚未冻结进 frontend contract，也未实施。
+
 ## 4. 下一步
 
-1. 此前前端文档 Gate 已完成：UI/UX、视觉/设计系统、active reconstruction spec 与 active plan 已对齐；该文档治理轮没有删除或修改业务代码，后续 RefleK 工作树改动另见 §5；
-2. Frontend reconstruction Task 1 已完成；`lib/api.ts`、`lib/types.ts`、`lib/contracts.ts`、`lib/csv.ts`、`lib/desktop.ts` 与 `src-tauri/**` 已保留并由 boundary test 保护；下一步需由点点明确指定 Task 2；
-3. AnalysisResult v2 path-safety、无 Run fallback envelope 和 native 时间采样阻塞已修复；其余 Analysis/evidence correctness 继续通过 RefleK active plan 的明确 Task 处理，input-native 在 Gate 通过前保持 Preview / Experimental；
-4. Frontend Task 2–7 逐个建立 executable tokens、正式页面和 E2E，不从 prototype 继承 IA 或视觉；
-5. 以 Browser + Tauri 真实流程、宽/中/窄截图和 accessibility checklist 作为前端放行标准。
+> **新 session 接力点：** RefleK Task 2/3 已完成，Task 4 尚未开始。新 session 先读取 active Task 4 的 Allowed files、Tests first 与 Stop rule；只有点点明确说“继续 Task 4”后才开工。本次交接不授权提交、推送、清理工作区或自动进入后续 Task。
+
+1. 下一项执行 RefleK Task 4，正式收口 input-native / multimodal / video-fallback worker dispatch，并保持旧 v1 可读；
+2. 随后继续 Analysis/History/evidence correctness、本地数据可靠性，以及 Knowledge 之外的 Python↔Pi / SQLite restart-replay、真实 History/Training Plan/product-command E2E；
+3. 完成 Desktop/runtime 与 Windows Raw Input/high-polling/真实 KovaaK 三模式 Gate；这些结论必须在正式 UI 前稳定；
+4. Coach productization Task 6 与 frontend reconstruction Task 2–7 全部后置；最后的正式前端只消费已稳定 capability，不复制命令逻辑，也不反向定义后端语义。
 
 ## 5. 当前工作树与实施计划状态
 
-2026-07-13 一致性审计确认：当前能力基线仍是一个**未集成工作树**，不能等同于当前 `HEAD` 或远端可复现状态。
+2026-07-13 三批代码/文档提交已推送，`main` 与 `origin/main` 同步到 `7de83cb`；Analysis/Run/Raw Input/Coach context/History foundation 与 prototype 删除已进入远端可复现基线。
 
-- `main` 比 `origin/main` 超前 21 个本地提交；Task 1 完成后仍有 80 个 tracked changes、其中 30 个删除，以及 50 个 untracked status entries；
-- `native_flicking_analysis.py`、KovaaK ingestion/run store、Raw Input、Coach context、History trends、Benchmark store、active specs/plans 等关键文件仍包含未跟踪内容；
-- 当前测试结果证明的是该工作树，不证明 clean checkout、当前 `HEAD` 或 `origin/main` 已包含这些能力；
-- `.firecrawl/`、临时脚本、理论草稿、style pack、`output/` 运行产物与产品代码必须在后续 review/commit 中分开处理；本轮未清理、覆盖或重置任何现有改动。
+- 本轮新增的 Coach/Provider/MP4 合同、Coach Task 1–5、已完成 Knowledge Registry，以及 RefleK Task 2/3 代码仍是未提交改动；
+- 工作区仍保留此前明确排除的研究文档改动、`.firecrawl/`、临时脚本、理论草稿、style pack 和 `output/` 运行产物；
+- 本轮没有修改这些既有内容，也没有 reset、checkout、覆盖或清理用户工作。
+- 当前 `main` / `origin/main` 仍为 `7de83cb`；工作区为 69 个 modified/staged、40 个 untracked，共 109 项。
 
 RefleK active plan 当前成熟度：
 
 | Task | 当前状态 | 未闭合验收 |
 |---|---|---|
 | Task 1 Raw Input / ingestion | current-platform foundation 已实现 | Windows 实机、完整 Windows target 与高 polling-rate Gate 未通过 |
-| Task 2 AnalysisResult v2 contract | 本轮阻塞已修复 | 合法 path metric 可通过；无 Run 的 v2 可省略 `kovaak_run_ref`；更完整 evidence/artifact ownership 验证仍待后续 Task |
-| Task 3 input-native adapter | Preview correctness 前进 | 同毫秒记录不再从派生时间指标丢失，非均匀采样改为 duration-weighted；flick segmentation、核心 fair metrics 与正式 angular/physical trajectory 仍未完成 |
-| Task 4 worker mode dispatch | 本轮合同已闭合 | input-native、multimodal、Run-based 与无 Run video-fallback 新结果均写 v2；旧 v1 仍可读取 |
+| Task 2 AnalysisResult v2 contract | **completed（当前平台）** | producer/persistence Gate 已强制 owner、analysis version、metric provenance/coverage/limitations、artifact ownership/managed/local-only/version，并将 analysis/run/type/mode identity 绑定到已 claim session；旧未版本化 v2 可读但不可作为新 terminal result 写入 |
+| Task 3 input-native adapter | **completed（当前平台）** | Stats、Performance、Raw trace revision 在提交时冻结；worker 读取一次并以同一组 bytes 完成 fingerprint 校验和 parse/decode，不再通过路径二次打开；source 缺失、不可读或 revision 不一致稳定归类为不可重试的 `input_validation / source_unavailable`，需重新提交新 snapshot，且不泄露本地路径或底层异常。click-anchored Flick、timing、raw geometry、修正/反向、trough-depth `submovement_overlap` proxy、SPARC cutoff-normalized frequency axis、分布/outlier 与 diagnosis 已接入；SPARC 公式修正使用独立 v2 metric version，旧版不混入趋势，v2 绝对阈值暂不启用。Windows 实机、高 polling 实物、噪声地板、跨设备可比性和 angular/target-relative facts 仍属发布 Gate |
+| Task 4 worker mode dispatch | **next / 尚未开始正式收口** | 已有三模式代码基础；run-based path import 的 MP4 revision → managed copy 绑定、fingerprint/checksum 与同路径换版幂等冲突已有 focused regression，但仍须按 active Task 4 全部 Tests first 与 Stop rule 正式验收，不以这一局部 correction 或当前代码存在替代 Task 完成状态 |
 | Task 5 Coach diagnostic context | foundation 已实现并有 allow-list 测试 | 正式前端 Coach sidebar 与真实产品 E2E 未完成 |
 | Task 6 History / evidence replay | backend/read model + prototype 已实现 | 正式 History/workspace、完整 comparability contract 与真实 replay E2E 未完成 |
 | Task 7 Benchmark local domain | local store + prototype UI 已实现 | 不进入 v1 正式前端、默认 Coach 或在线 provider；正式产品化仍 deferred |
 
-Frontend reconstruction plan 已 active。Task 1 已在点点确认 10 个文件的精确范围后完成；inventory 为 `webapp/frontend/prototype-inventory.json`，adapter boundary test 为 `webapp/frontend/lib/prototype-boundary.test.ts`。Task 2–7 尚未授权。
+Frontend reconstruction plan 已 active，但点点于 2026-07-14 明确裁决“前端最后处理”。Task 1 已在点点确认 10 个文件的精确范围后完成；inventory 为 `webapp/frontend/prototype-inventory.json`，adapter boundary test 为 `webapp/frontend/lib/prototype-boundary.test.ts`。Task 2–7 后置到 Coach/Analysis/data/runtime 后端 Gate 闭合后重新指定。
+
+Coach productization plan 已 active。Task 1 explanation contract、Task 2 input-native core metrics、Task 3 dynamic full Pi catalog / custom profile / selected turn routing、Task 4 Pi auth/OAuth/device-code / local credential commands 与 Task 5 Pi knowledge / user-level product commands 已完成；Task 6 尚未开始，且受 frontend reconstruction Task 2–5 前置约束。
+
+Versioned Coach Knowledge Registry plan 的 Task 1–6 已全部完成并归档；active spec 继续作为 Registry 版本、检索、claim 与 trace 的稳定局部合同。
 
 ## 6. 最近验证记录
 
-2026-07-13 全量 review 后记录：
+2026-07-15 correctness review 增量闭环：
 
-- Python：`373 passed, 3 skipped`；
+- frozen Analysis source 消失、不可读或 revision 变化不再落入 `internal_unknown / analysis_failed`；worker 现在写入不可重试的 `input_validation / source_unavailable`，错误对象和普通日志均不包含底层异常中的本地绝对路径；
+- run-based path import 现在先冻结 MP4 SHA-256 / size / mtime，再验证 Analysis managed copy；源内容/mtime 变化、复制前消失与同一路径换版复用 idempotency key 均 fail-closed，result snapshot 和 artifact manifest 保留 fingerprint/checksum，audit/result 不包含原始绝对路径；
+- app-owned SQLite connection 现在显式启用 `PRAGMA foreign_keys=ON`；此前 v10–v12 DDL 中 Provider profile/credential、Training Plan/version/transition 的外键只是声明但未执行，现已增加 orphan child 写入失败回归；v11/v12 multi-statement migration helper 也不再通过 `executescript()` 隐式提交调用方事务，rollback 回归确认失败不会留下半创建 schema；
+- Training Plan `diagnostic_context` 的各 ref list 现在强制匹配 analysis/metric/diagnosis/prescription/knowledge/evidence kind，版本级 `evidence_refs` 只接受冻结的 Analysis/metric/knowledge 依据，不再允许语义错位 ref 入库；
+- Coach command journal 不再允许 stale lookup 后的 upsert 用同 key 不同 digest 覆盖既有 reservation/result；同 digest 的后到 reservation claimant 现在 replay 已有 unknown/final 结果而不重复执行副作用；普通 digest 冲突返回稳定 `idempotency_conflict`，confirmed reservation 冲突在同一 SQLite 事务内回滚 confirmation 消费；
+- Pi product-command tool 与 Python product-command boundary 的路径/URL 防线不再只检查字符串开头；嵌在普通文本中的 `https://...`、POSIX/Windows/UNC 路径现在在 backend dispatch 前和 tool result 入模前同时 fail-closed；
+- Provider profile status 现在把 pinned Pi `ModelsError("auth"|"oauth")` 映射为 `needs_reauth`，保留安全的 profile/model 投影并继续 redaction credential，不再误报不可重试的 `unconfigured/profile_status_failed`；
+- custom OpenAI-compatible profile 的 canonical store 现在拒绝带 URL userinfo 的 `base_url`；`https://user:secret@host/...` 不再被接受、持久化或通过公开 profile API 回显；
+- OAuth refresh 失败写入 `needs_reauth` 现在绑定 operation 启动时的 credential revision，并在 Provider store write transaction 内条件更新；旧 refresh 失败不能再把用户随后替换的新 API key 错误标成需要重新认证；
+- source-error 定向回归：`webapp/tests/test_worker.py`、`tests/test_native_flicking_analysis.py`、`webapp/tests/test_queue.py`、`webapp/tests/test_routes.py` 共 `109 passed`；MP4 correction 相关 `webapp/tests/test_kovaak_runs.py`、`webapp/tests/test_coach_commands.py`、`webapp/tests/test_worker.py`、`webapp/tests/test_queue.py`、`webapp/tests/test_routes.py` 共 `134 passed`。
+- SQLite relation / migration correction 相关 `webapp/tests/test_db.py`、Provider store/auth/routes、Training Plan store、Coach command 与 queue 回归共 `118 passed`。
+- Training Plan typed-ref correction 相关 store、Coach command/tool runtime 与 Coach routes 回归共 `72 passed`。
+- Coach command journal、Python embedded path/URL、confirmation rollback、DB migration 与 Coach route/runtime 定向回归共 `90 passed`。
+- Pi product-command 嵌入式 path/URL 边界定向回归 `5 passed`。
+- Pi Provider catalog/model/profile/auth status 定向回归 `14 passed`。
+- Provider store/auth/routes 与相邻 Coach route 定向回归 `66 passed`。
+- 当前完整 Python 仓库 `589 passed, 3 skipped`，`compileall` 通过；frontend `npm run type-check`、`npm test`（`4 passed`）和 `npm run build` 通过，正式路由仍按已批准重建顺序只生成 `/404`；
+- Coach runtime 全量 `59 passed`，strict TypeScript 通过；其中 sidecar HTTP tests 在受限沙箱内监听 `127.0.0.1` 会得到 `EPERM`，沙箱外复跑全部通过；
+- Rust `cargo fmt --check`、`cargo check --locked --all-targets`、`cargo clippy --locked --all-targets -- -D warnings` 与 `cargo test` 通过（`18 passed`）；descendant process inspection 同样需在沙箱外复跑；
+- 全仓 `git diff --check`、项目文档本地链接、active plan/spec 索引一致性、`AGENTS.md` / `CLAUDE.md` byte parity 均通过。
+
+2026-07-14 RefleK Task 2–3 当前平台收口：
+
+- Task 2：真实 `analysis_result.v2` producer 补齐 owner/local profile、analysis version、evidence source/version/coverage、metric provenance/version/limitations，以及 artifact ownership/managed/local-only/status/format；queue 在写入 terminal result 前验证 session owner、完整 producer metadata，以及 `analysis_id` / `analysis_type` / `input_mode` / `kovaak_run_ref` 与已 claim request 一致；旧未版本化 v2 继续按 legacy draft 读取，但不能新写为 terminal result；
+- Task 3：Analysis input snapshot 现在冻结 Stats、Performance 与 Raw trace 的 SHA-256 / size / mtime revision；worker 在解析前重新计算并逐一比较，文件被修改、替换、删除、不可读或旧 trace 缺少 fingerprint 时 fail-closed，不静默使用另一份数据；SPARC 对选中频段做 frequency-span normalization，native/video-fallback 写独立 v2 metric version，避免采样间隔污染与跨公式趋势混用；
+- focused：Task 3 相关 `71 passed`；相邻 contracts/queue/routes/worker 回归 `97 passed`；
+- Python 完整仓库：`522 passed, 3 skipped`；Python compileall 与 `git diff --check` 通过；
+- 未运行正式 frontend/Rust 重验，因为本轮未修改对应实现；Windows Raw Input 实机、高 polling-rate、真实 KovaaK 三模式和 release license review 仍未验证。
+
+2026-07-14 Versioned Coach Knowledge Registry 最终验收：
+
+- Registry：43 条 canonical entries、19 个 canonical signals、10 个 category；37 Python chunks + 19 legacy signals + 11 TS seeds 共 67 条 migration audit 完整；
+- Python：完整仓库 `509 passed, 3 skipped`；包括 Registry validator/retrieval、legacy adapters、trace fail-closed 与真实 Analysis → Pi Knowledge → SQLite refs-only E2E；
+- Coach runtime：`56 passed`；Python/TypeScript query parity、v1 bridge 解耦、最多三条、无全库 fallback、safe event refs 与 sidecar loopback 全部通过；
+- strict TypeScript、`git diff --check` 与 `AGENTS.md` / `CLAUDE.md` byte parity 通过；正式前端、Windows 实机与真实素材三模式 Gate 不在本计划范围，仍未验证。
+- 2026-07-15 correctness correction：原 `schema.v1.json` 的 entry `additionalProperties: false` 未声明任何 entry properties，标准 validator 会拒绝所有合法 Registry entry；现已补齐 Draft 2020-12 properties/enum/length/uniqueness/source-claim condition，并新增 canonical Registry + fixture 标准验证与非法 shape 回归。
+
+2026-07-14 Task 5 主线程验收后记录：
+
+- Python：完整仓库 `466 passed, 3 skipped`；新增覆盖 SQLite Training Plan lifecycle/version、共享产品命令、owner、确认、并发幂等、append-only audit、bridge 生命周期与 tool trace secret sentinel；
 - Frontend：prototype 删除并清理旧 `.next` 后，`npm run type-check` 通过，`npm test` 为 `3 passed`；`next build --webpack` 通过且只生成自动 `/404`，当前无正式产品路由；
-- Coach runtime：设置正确 `PI_SOURCE_DIR` 后 `9 passed`；
+- Coach runtime：`48 passed`；严格 TypeScript 检查通过；knowledge progressive retrieval、精确三工具 registry、非法 analysis context fail-closed、固定 loopback bridge、禁止 authority/path/URL/credential/raw payload 与 bridge secret redaction 已覆盖；真实 TS product tool → loopback HTTP → Python shared command → SQLite audit 联调通过；
 - Rust：`cargo fmt --check`、`cargo check --locked --all-targets`、`cargo clippy --locked --all-targets -- -D warnings` 通过；`cargo test` 为 `15 passed, 1 failed`，失败点是受限环境的 descendant process inspection `PermissionDenied`；
 - Windows target condition check 仍被缺少 `icons/icon.ico` 阻塞；Windows Raw Input 实机、真实三模式 E2E 与高 polling-rate 性能仍未验证。
 
