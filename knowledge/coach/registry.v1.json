@@ -1,0 +1,1594 @@
+{
+  "schema_version": "coach_knowledge_registry.v1",
+  "registry_version": "2026-07-14.v1",
+  "signal_aliases": {
+    "reverse high": "reverse_ratio high",
+    "two_stage": "submovement two-stage",
+    "throughput low": "throughput below reference",
+    "acceleration mismatch high": "accel mismatch high",
+    "decel jitter": "sparc low",
+    "decel_jitter": "sparc low",
+    "path efficiency low": "path_efficiency low"
+  },
+  "entries": [
+    {
+      "entry_id": "metric.movement-timing.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "movement_timing",
+        "kinematics_thresholds"
+      ],
+      "signals": [
+        "decel_frac high",
+        "decel_frac low",
+        "peak_position low",
+        "peak_position high"
+      ],
+      "metric_refs": [
+        "metric:movement_time_ms",
+        "metric:time_to_peak_ms",
+        "metric:acceleration_duration_ms",
+        "metric:deceleration_duration_ms",
+        "metric:decel_frac",
+        "metric:peak_position_pct"
+      ],
+      "text": "movement timing 描述一次 flick 从开始、加速、到达峰值、减速到稳定的时间结构。decel_frac 是减速时长占主运动时长的比例；peak position 和 time-to-peak 描述峰值出现位置。它们应结合具体事件、任务需求和可比历史理解。",
+      "sources": [
+        {
+          "source_ref": "product:analysis-contract:movement-timing",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "未校准时不得把单次数值标为健康或异常。",
+        "时间结构不能单独证明动作策略或身体原因。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "kinematics.movement-timing.mechanism",
+      "entry_version": 1,
+      "status": "active",
+      "category": "kinematic_mechanism",
+      "topics": [
+        "movement_timing"
+      ],
+      "signals": [
+        "decel_frac high",
+        "decel_frac low",
+        "peak_position low",
+        "peak_position high"
+      ],
+      "metric_refs": [
+        "metric:time_to_peak_ms",
+        "metric:decel_frac",
+        "metric:peak_position_pct"
+      ],
+      "text": "点对点运动通常包含前馈主运动与受任务精度约束的末端调整。更早或更晚的峰值只说明本次时间分配不同；是否更有效必须同时看准确性、停止成本和同任务历史。",
+      "sources": [
+        {
+          "source_ref": "research:woodworth-1899:two-component-movement",
+          "source_level": "academic_peer_reviewed"
+        },
+        {
+          "source_ref": "research:becker-2020:aiming-kinematics",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "手臂 reaching 的机制不能直接提供短时鼠标 flick 的绝对阈值。"
+      ],
+      "counterevidence": [
+        "不同任务、目标宽度和输入设置会改变速度曲线。"
+      ],
+      "supported_uses": [
+        "mechanism",
+        "research_context"
+      ]
+    },
+    {
+      "entry_id": "metric.braking-linearity.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "braking_linearity",
+        "min_jerk_vs_uniform_decel"
+      ],
+      "signals": [
+        "linearity high"
+      ],
+      "metric_refs": [
+        "metric:linearity"
+      ],
+      "text": "减速线性度描述速度下降过程相对连续制动模型的偏离程度。它和 SPARC 是不同构造：linearity 关注制动形态，SPARC 关注速度谱平滑度。",
+      "sources": [
+        {
+          "source_ref": "product:metric:braking-linearity",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "不能把 linearity 单独解释为手抖、张力或肌肉状态。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "kinematics.braking-linearity.mechanism",
+      "entry_version": 1,
+      "status": "active",
+      "category": "kinematic_mechanism",
+      "topics": [
+        "braking_linearity",
+        "min_jerk_vs_uniform_decel"
+      ],
+      "signals": [
+        "linearity high"
+      ],
+      "metric_refs": [
+        "metric:linearity"
+      ],
+      "text": "minimum-jerk 轨迹和平稳的恒定减速不是同一个理想模型。linearity 只能回答速度下降是否接近当前定义的制动形态，不能代替 jerk 或频域平滑度。",
+      "sources": [
+        {
+          "source_ref": "research:flash-hogan-1985:minimum-jerk",
+          "source_level": "academic_peer_reviewed"
+        },
+        {
+          "source_ref": "doc:aim-kinematics-research:6.1",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "当前产品 linearity 定义与外部研究模型的对应关系必须随 metric version 解释。"
+      ],
+      "counterevidence": [
+        "一条轨迹可以较平滑但不接近恒定减速，也可以接近线性却含局部波动。"
+      ],
+      "supported_uses": [
+        "mechanism",
+        "research_context"
+      ]
+    },
+    {
+      "entry_id": "metric.sparc.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "smoothness_sparc",
+        "sparc"
+      ],
+      "signals": [
+        "sparc low"
+      ],
+      "metric_refs": [
+        "metric:sparc"
+      ],
+      "text": "SPARC（Spectral Arc Length）是基于速度幅度谱形状的平滑度指标。产品中只应在相同 metric version、相近任务与质量条件下解释本次分布或个体历史变化；数值本身不提供身体原因。",
+      "sources": [
+        {
+          "source_ref": "product:metric:sparc",
+          "source_level": "product_contract"
+        },
+        {
+          "source_ref": "research:balasubramanian-2012:sparc",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "未校准时不得使用绝对健康阈值。",
+        "不能从 SPARC 直接推断握持、肌肉张力或疼痛。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "limitation.sparc.external-validity",
+      "entry_version": 1,
+      "status": "active",
+      "category": "limitation_counterevidence",
+      "topics": [
+        "smoothness_sparc",
+        "sparc"
+      ],
+      "signals": [
+        "sparc low"
+      ],
+      "metric_refs": [
+        "metric:sparc"
+      ],
+      "text": "SPARC 的部分可靠性证据来自时长更长的 reaching 或康复任务。健康玩家短时鼠标 flick、不同 polling rate 和重采样条件下的绝对可比性仍需产品数据验证。",
+      "sources": [
+        {
+          "source_ref": "research:cornec-2024:sparc-duration-bias",
+          "source_level": "academic_peer_reviewed"
+        },
+        {
+          "source_ref": "doc:coach-prescription-manual:1.6",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "不能把外部研究中的 ICC、CoV 或阈值直接迁移为本产品健康线。"
+      ],
+      "counterevidence": [
+        "极短信号可能降低频域估计稳定性；任务时长和预处理会影响解释。"
+      ],
+      "supported_uses": [
+        "diagnostic_scope",
+        "research_context"
+      ]
+    },
+    {
+      "entry_id": "metric.stopping-corrections.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "stopping_corrections",
+        "reverse_ratio_trap"
+      ],
+      "signals": [
+        "reverse_ratio high"
+      ],
+      "metric_refs": [
+        "metric:settle_time_ms",
+        "metric:corrective_count",
+        "metric:reverse_ratio"
+      ],
+      "text": "settle time、corrective count 与 reverse ratio 分别描述主运动后稳定所需时间、后续修正次数和反向运动比例。它们可以定位停止阶段成本，但不能单独确定导致修正的策略、设置或身体原因。",
+      "sources": [
+        {
+          "source_ref": "product:analysis-contract:stopping-corrections",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "必须结合事件质量、运动时长和任务精度。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "limitation.reverse-duration-bias",
+      "entry_version": 1,
+      "status": "active",
+      "category": "limitation_counterevidence",
+      "topics": [
+        "stopping_corrections",
+        "reverse_ratio_trap"
+      ],
+      "signals": [
+        "reverse_ratio high"
+      ],
+      "metric_refs": [
+        "metric:reverse_ratio",
+        "metric:corrective_count",
+        "metric:settle_time_ms"
+      ],
+      "text": "修正次数和反向运动会受运动时长、采样质量与分段规则影响。解释 reverse ratio 时应同时查看 settle time、corrective events 和相同 metric version，避免把较长动作自动判为控制更差。",
+      "sources": [
+        {
+          "source_ref": "doc:coach-prescription-manual:1.4",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "离散事件计数必须保留 segmentation version。"
+      ],
+      "counterevidence": [
+        "较长任务天然提供更多出现修正的机会。"
+      ],
+      "supported_uses": [
+        "diagnostic_scope",
+        "research_context"
+      ]
+    },
+    {
+      "entry_id": "kinematics.submovements.mechanism",
+      "entry_version": 1,
+      "status": "active",
+      "category": "kinematic_mechanism",
+      "topics": [
+        "submovements",
+        "submovement",
+        "submovement_types"
+      ],
+      "signals": [
+        "submovement two-stage"
+      ],
+      "metric_refs": [
+        "metric:submovement_count",
+        "metric:submovement_overlap",
+        "metric:corrective_count"
+      ],
+      "text": "submovement 将 initial movement 与后续 corrective movement 描述为可重叠或可分离的运动成分。较低 overlap 可以描述更分离的两段式结构，但不能脱离准确性和任务需求自动判定好坏。",
+      "sources": [
+        {
+          "source_ref": "research:woodworth-1899:submovement",
+          "source_level": "academic_peer_reviewed"
+        },
+        {
+          "source_ref": "research:meyer-1988:optimized-submovements",
+          "source_level": "academic_peer_reviewed"
+        },
+        {
+          "source_ref": "research:novak-2002:overlapping-submovements",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "当前短时 flick 的 Type 1/2/3 可靠分类尚未完成。"
+      ],
+      "counterevidence": [
+        "终止型 submovement 与误差修正型 submovement 可能具有不同意义。"
+      ],
+      "supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "metric.path-geometry.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "path_geometry"
+      ],
+      "signals": [
+        "path_efficiency low"
+      ],
+      "metric_refs": [
+        "metric:path_length",
+        "metric:path_efficiency",
+        "metric:straightness"
+      ],
+      "text": "path length、path efficiency 与 straightness 描述实际输入路径相对直接路径的几何代价。它们是 raw-count 几何事实，不等于目标相对误差，也不直接说明身体原因。",
+      "sources": [
+        {
+          "source_ref": "product:analysis-contract:path-geometry",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "没有目标轨迹时不能把路径几何解释为完整视觉命中质量。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "research.speed-precision.fitts",
+      "entry_version": 1,
+      "status": "active",
+      "category": "research",
+      "topics": [
+        "speed_precision",
+        "fitts"
+      ],
+      "signals": [
+        "peak_speed below reference",
+        "throughput below reference"
+      ],
+      "metric_refs": [
+        "metric:peak_speed",
+        "metric:throughput"
+      ],
+      "text": "Fitts 定律描述运动时间与距离/目标宽度所代表的任务难度之间的关系，支持速度与精度需要按任务共同理解。只有场景、目标、输入模式、metric version、校准和质量条件可比时，峰值速度或 throughput 的历史差异才可解释。",
+      "sources": [
+        {
+          "source_ref": "research:fitts-1954:speed-accuracy",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "Raw Input 缺少目标宽度时不能自动计算或解释有效 throughput。"
+      ],
+      "counterevidence": [
+        "同一速度在不同距离与目标宽度下代表不同任务要求。"
+      ],
+      "supported_uses": [
+        "mechanism",
+        "research_context",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "metric.tracking-accuracy.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "tracking_control",
+        "tracking_three_kinds"
+      ],
+      "signals": [
+        "accuracy low"
+      ],
+      "metric_refs": [
+        "metric:on_target_pct"
+      ],
+      "text": "on-target percentage 描述有效观测期间处于目标范围内的时间比例。它是任务结果事实，不单独说明速度匹配、变向响应、视觉读取或身体控制中的哪一项造成脱靶。",
+      "sources": [
+        {
+          "source_ref": "product:tracking-contract:on-target",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "不同目标宽度、速度模式和 coverage 不可直接比较。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "metric.tracking-loss-reacquisition.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "tracking_control"
+      ],
+      "signals": [
+        "loss count high",
+        "off target long"
+      ],
+      "metric_refs": [
+        "metric:loss_count",
+        "metric:total_off_time",
+        "metric:reacquisition_time"
+      ],
+      "text": "loss count 描述离开目标范围的离散次数；total off-target time 与平均 reacquisition time 描述离靶总成本和回位速度。次数多与单次回位慢是不同问题，应分开解释。",
+      "sources": [
+        {
+          "source_ref": "product:tracking-contract:loss-reacquisition",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "事件定义依赖目标可见性、coverage 和 tracking metric version。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "metric.tracking-error.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "tracking_control"
+      ],
+      "signals": [
+        "avg error high"
+      ],
+      "metric_refs": [
+        "metric:avg_error_px"
+      ],
+      "text": "average tracking error 描述准星与目标之间的平均距离误差。像素误差只有结合分辨率、FOV、目标大小和相同处理版本才适合比较。",
+      "sources": [
+        {
+          "source_ref": "product:tracking-contract:average-error",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "绝对像素值不是跨设置健康阈值。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "metric.tracking-speed-mismatch.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "tracking_control",
+        "tracking_three_kinds"
+      ],
+      "signals": [
+        "speed mismatch high"
+      ],
+      "metric_refs": [
+        "metric:speed_mismatch"
+      ],
+      "text": "speed mismatch 描述持续跟随阶段输入速度与目标速度之间的差异。它更接近连续速度匹配问题，但仍需结合目标运动类型、误差和 coverage。",
+      "sources": [
+        {
+          "source_ref": "product:tracking-contract:speed-mismatch",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "不能从单一 mismatch 指标推断视觉能力或肌肉状态。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "metric.tracking-acceleration-mismatch.definition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "metric_definition",
+      "topics": [
+        "tracking_control",
+        "tracking_three_kinds"
+      ],
+      "signals": [
+        "accel mismatch high"
+      ],
+      "metric_refs": [
+        "metric:accel_mismatch"
+      ],
+      "text": "acceleration mismatch 描述目标改变速度或方向时输入响应与目标变化之间的差异。它可帮助区分变向响应成本与持续速度匹配，但不能单独证明反应时间或身体原因。",
+      "sources": [
+        {
+          "source_ref": "product:tracking-contract:acceleration-mismatch",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "必须结合变向事件、loss 和目标轨迹质量。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "metric.ptc.scope",
+      "entry_version": 1,
+      "status": "active",
+      "category": "diagnostic_scope",
+      "topics": [
+        "tracking_control",
+        "tension_budget_tracking"
+      ],
+      "signals": [
+        "ptc high"
+      ],
+      "metric_refs": [
+        "metric:ptc"
+      ],
+      "text": "PTC 是产品中由 miss 段运动学组合得到的实验性指标。它不测量纯张力、握力或肌电；正式解释只能描述输入运动中的加速度密度与误差关系，并保留 experimental classification。",
+      "sources": [
+        {
+          "source_ref": "product:tracking-contract:ptc-experimental",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "名称中的 tension 是历史修辞，不是身体传感器测量。",
+        "未校准时不得驱动正式 severity。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "scope.knowledge-not-diagnosis",
+      "entry_version": 1,
+      "status": "active",
+      "category": "diagnostic_scope",
+      "topics": [
+        "diagnostic_scope",
+        "voltaic_community_layer"
+      ],
+      "signals": [
+        "sparc low",
+        "reverse_ratio high",
+        "submovement two-stage",
+        "decel_frac high",
+        "decel_frac low",
+        "linearity high",
+        "peak_position low",
+        "peak_position high",
+        "path_efficiency low",
+        "peak_speed below reference",
+        "throughput below reference",
+        "sensitivity high",
+        "accuracy low",
+        "loss count high",
+        "off target long",
+        "avg error high",
+        "speed mismatch high",
+        "accel mismatch high",
+        "ptc high"
+      ],
+      "metric_refs": [],
+      "text": "Knowledge Registry 负责定义、机制、训练 cue、候选实验和限制；正式 issue、severity 与 deterministic prescription 只能来自版本化 Analysis/diagnosis contract。社区或研究条目不能单独把观察升级为本用户的因果结论。",
+      "sources": [
+        {
+          "source_ref": "product:coach-contract:claim-discipline",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "知识命中不代表用户具有该条目描述的根因。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "limitation.uncalibrated-thresholds",
+      "entry_version": 1,
+      "status": "active",
+      "category": "limitation_counterevidence",
+      "topics": [
+        "kinematics_thresholds",
+        "diagnostic_scope"
+      ],
+      "signals": [
+        "sparc low",
+        "reverse_ratio high",
+        "submovement two-stage",
+        "decel_frac high",
+        "decel_frac low",
+        "linearity high",
+        "peak_position low",
+        "peak_position high",
+        "path_efficiency low",
+        "accuracy low",
+        "loss count high",
+        "off target long",
+        "avg error high",
+        "speed mismatch high",
+        "accel mismatch high",
+        "ptc high"
+      ],
+      "metric_refs": [],
+      "text": "当前启发式阈值可以触发 experimental/info 观察，但在产品真实数据、任务和设备校准完成前，不得称为健康区间、异常线或身体诊断。优先比较同一用户、同场景、同设置、同输入模式和同 metric version 的变化。",
+      "sources": [
+        {
+          "source_ref": "product:coach-contract:uncalibrated-thresholds",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "不提供通用达标数值。"
+      ],
+      "counterevidence": [
+        "外部研究或社区 benchmark 的绝对值可能不适用于当前用户和处理链。"
+      ],
+      "supported_uses": [
+        "diagnostic_scope",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "cue.flicking.continuous-braking",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "issue_training_cues",
+        "braking_linearity",
+        "smoothness_sparc",
+        "sparc_low_prescription"
+      ],
+      "signals": [
+        "decel_frac high",
+        "decel_frac low",
+        "linearity high",
+        "sparc low",
+        "reverse_ratio high"
+      ],
+      "metric_refs": [
+        "metric:linearity",
+        "metric:sparc",
+        "metric:reverse_ratio",
+        "metric:settle_time_ms"
+      ],
+      "text": "候选 cue：一次进入、连续减速、稳定后再确认。先用较大目标或较低任务压力练完整速度下降，再逐步恢复原任务；观察末段波动、反向修正和稳定时间是否改善。",
+      "sources": [
+        {
+          "source_ref": "community:aim-training:continuous-braking",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "这是可尝试训练 cue，不是已测因果或唯一技术流派。"
+      ],
+      "counterevidence": [
+        "部分任务需要主动 corrective movement，减少所有修正并非目标。"
+      ],
+      "supported_uses": [
+        "training_cue",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "cue.flicking.one-commit",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "issue_training_cues",
+        "static_clicking_three_step",
+        "bardoz_method"
+      ],
+      "signals": [
+        "reverse_ratio high",
+        "submovement two-stage"
+      ],
+      "metric_refs": [
+        "metric:corrective_count",
+        "metric:reverse_ratio",
+        "metric:submovement_overlap"
+      ],
+      "text": "候选 cue：把 initial movement 与必要 micro-correction 组织成连续动作，避免接近落点后反复启停追点。练习时先保证任务准确性，再观察 corrective count、reverse ratio 和 settle time。",
+      "sources": [
+        {
+          "source_ref": "community:bardoz:static-clicking-method",
+          "source_level": "personal_experience_unverified"
+        }
+      ],
+      "max_claim_level": "experimental",
+      "limitations": [
+        "社区方法没有证明适合所有玩家或所有目标布局。"
+      ],
+      "counterevidence": [
+        "分离式修正在某些高精度任务中可能是合理策略。"
+      ],
+      "supported_uses": [
+        "training_cue",
+        "candidate_hypothesis"
+      ]
+    },
+    {
+      "entry_id": "cue.flicking.path-directness",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "issue_training_cues",
+        "path_geometry",
+        "scenarios"
+      ],
+      "signals": [
+        "path_efficiency low"
+      ],
+      "metric_refs": [
+        "metric:path_efficiency",
+        "metric:straightness"
+      ],
+      "text": "候选 cue：从当前位置直接进入目标方向与制动阶段，不在末段绕行追点。可选择强调直线路径的场景复测，但必须同时保持准确性。",
+      "sources": [
+        {
+          "source_ref": "community:voltaic:pathing-practice",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "路径更直不自动等于命中更好。"
+      ],
+      "counterevidence": [
+        "目标序列和视觉选择会改变合理路径。"
+      ],
+      "supported_uses": [
+        "training_cue",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "cue.flicking.scenario-selection",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "scenarios",
+        "issue_training_cues"
+      ],
+      "signals": [
+        "decel_frac high",
+        "decel_frac low",
+        "linearity high",
+        "sparc low",
+        "path_efficiency low",
+        "peak_speed below reference",
+        "throughput below reference"
+      ],
+      "metric_refs": [],
+      "text": "训练场景应按要检验的动作目标选择：较大目标可降低命中压力并观察连续制动，直线路径场景可观察 path efficiency，完整点击场景可联合观察速度、停止和准确性。场景名称只作为候选，不能替代目标指标和复测条件。",
+      "sources": [
+        {
+          "source_ref": "community:voltaic:scenario-practice",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "社区场景版本和命名可能变化；不得承诺固定剂量或分数线。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "training_cue",
+        "practice_structure"
+      ]
+    },
+    {
+      "entry_id": "cue.tracking.continuous-speed",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "tracking_control",
+        "tracking_three_kinds"
+      ],
+      "signals": [
+        "speed mismatch high",
+        "accuracy low"
+      ],
+      "metric_refs": [
+        "metric:speed_mismatch",
+        "metric:on_target_pct",
+        "metric:avg_error_px"
+      ],
+      "text": "持续速度匹配问题可先用运动较连续的 tracking 任务，cue 是保持一次平稳位移贴合目标速度，避免在目标前后反复急停。复测 speed mismatch、average error 与 on-target，而不是只看总分。",
+      "sources": [
+        {
+          "source_ref": "community:voltaic:smooth-tracking-practice",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "目标轨迹和场景难度必须可比。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "training_cue",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "cue.tracking.reactive-response",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "tracking_control",
+        "tracking_three_kinds",
+        "voltaic_s5"
+      ],
+      "signals": [
+        "accel mismatch high",
+        "loss count high"
+      ],
+      "metric_refs": [
+        "metric:accel_mismatch",
+        "metric:loss_count",
+        "metric:reacquisition_time"
+      ],
+      "text": "变向响应问题可使用 reactive tracking 候选训练：目标改变方向后做一次连续响应，不预猜下一次方向，也不连续急停重启。复测 acceleration mismatch、loss count 与回位时间。",
+      "sources": [
+        {
+          "source_ref": "community:voltaic:reactive-tracking-practice",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "社区分类不能单独证明用户的视觉或神经原因。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "training_cue",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "cue.tracking.reacquisition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "tracking_control"
+      ],
+      "signals": [
+        "off target long",
+        "loss count high",
+        "avg error high"
+      ],
+      "metric_refs": [
+        "metric:reacquisition_time",
+        "metric:total_off_time",
+        "metric:loss_count",
+        "metric:avg_error_px"
+      ],
+      "text": "脱靶回位问题可练一次连续回到目标范围，并在回位后先恢复稳定贴合再提速。分别观察离靶次数与单次回位时间，避免把两者混成一个问题。",
+      "sources": [
+        {
+          "source_ref": "community:aim-training:reacquisition-cue",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "回位 cue 是否有效必须由同目标轨迹复测。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "training_cue",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "cue.tracking.control-modes",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "tracking_three_kinds",
+        "voltaic_s5",
+        "three_pillars"
+      ],
+      "signals": [
+        "accuracy low",
+        "speed mismatch high",
+        "accel mismatch high",
+        "loss count high"
+      ],
+      "metric_refs": [],
+      "text": "社区常把 tracking 练习分为持续平滑、变向响应和精细控制三类。该分类可帮助选择训练任务，但正式问题定位仍应分别看 speed mismatch、acceleration mismatch、loss/reacquisition 与 error。",
+      "sources": [
+        {
+          "source_ref": "community:voltaic:tracking-categories",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "社区分类会随 benchmark 版本演进，不是医学或确定性分类。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "practice_structure",
+        "training_cue"
+      ]
+    },
+    {
+      "entry_id": "hypothesis.tension.release",
+      "entry_version": 1,
+      "status": "active",
+      "category": "body_tension_hypothesis",
+      "topics": [
+        "body_tension",
+        "tension_budget"
+      ],
+      "signals": [
+        "sparc low",
+        "reverse_ratio high",
+        "decel_frac high"
+      ],
+      "metric_refs": [
+        "metric:sparc",
+        "metric:reverse_ratio",
+        "metric:settle_time_ms"
+      ],
+      "text": "社区常用“张力预算”描述动作末段的力量释放方式；这只能作为候选假设。若用户希望测试，只改变一个放松、握持或释放 cue，保持场景与设置不变，再看 SPARC、reverse ratio、corrective count 和 settle time 是否同步改善；不改善就撤销。",
+      "sources": [
+        {
+          "source_ref": "community:viscose:tension-budget",
+          "source_level": "personal_experience_unverified"
+        }
+      ],
+      "max_claim_level": "experimental",
+      "limitations": [
+        "没有 EMG、握力、肌腱负荷或其它身体传感器测量。",
+        "不能说系统检测到手腕、前臂或握持太紧。"
+      ],
+      "counterevidence": [
+        "相同轨迹波动可能来自任务压力、视觉确认、输入设置、噪声或其它动作策略。"
+      ],
+      "supported_uses": [
+        "candidate_hypothesis",
+        "training_cue",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "hypothesis.tension.tracking",
+      "entry_version": 1,
+      "status": "active",
+      "category": "body_tension_hypothesis",
+      "topics": [
+        "body_tension",
+        "tension_budget_tracking",
+        "tracking_control"
+      ],
+      "signals": [
+        "ptc high",
+        "accel mismatch high",
+        "speed mismatch high"
+      ],
+      "metric_refs": [
+        "metric:ptc",
+        "metric:accel_mismatch",
+        "metric:speed_mismatch"
+      ],
+      "text": "社区会用“张力预算”描述 tracking 中爆发与释放的节奏。它只能作为单变量动作 cue 实验：保持其它条件不变，测试更连续的发力/释放是否改善 PTC、mismatch、loss 和 error。",
+      "sources": [
+        {
+          "source_ref": "community:viscose:tension-budget-tracking",
+          "source_level": "personal_experience_unverified"
+        }
+      ],
+      "max_claim_level": "experimental",
+      "limitations": [
+        "PTC 和输入加速度不测量肌肉张力。",
+        "没有身体传感器时不能确认肌肉群切换或张力锁定。"
+      ],
+      "counterevidence": [
+        "目标轨迹、反应策略和输入噪声也可能产生相似指标。"
+      ],
+      "supported_uses": [
+        "candidate_hypothesis",
+        "training_cue",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "settings.sensitivity.single-variable",
+      "entry_version": 1,
+      "status": "active",
+      "category": "settings_experiment",
+      "topics": [
+        "settings_experiment",
+        "sensitivity",
+        "setup_hardware"
+      ],
+      "signals": [
+        "sensitivity high",
+        "sparc low",
+        "reverse_ratio high",
+        "speed mismatch high"
+      ],
+      "metric_refs": [
+        "metric:cm_per_360",
+        "metric:linearity",
+        "metric:reverse_ratio",
+        "metric:sparc",
+        "metric:speed_mismatch"
+      ],
+      "text": "灵敏度只能作为可撤销的单变量实验：先记录基线，保持场景、FOV、设备和其它设置不变，做一次明确但不过度的用户选择调整，再按相同指标与准确性复测；没有同步改善就恢复原设置。",
+      "sources": [
+        {
+          "source_ref": "product:coach-contract:settings-experiment",
+          "source_level": "product_contract"
+        },
+        {
+          "source_ref": "community:aim-training:sensitivity-experiment",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "experimental",
+      "limitations": [
+        "不存在由单次 Analysis 证明的通用最佳 cm/360。",
+        "Coach 不生成强制调整幅度或把 sensitivity 写成根因。"
+      ],
+      "counterevidence": [
+        "动作学习可能适应多种灵敏度；短期分数变化不等于长期改善。"
+      ],
+      "supported_uses": [
+        "candidate_hypothesis",
+        "training_cue",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "settings.hardware.fov-experiment",
+      "entry_version": 1,
+      "status": "active",
+      "category": "settings_experiment",
+      "topics": [
+        "settings_experiment",
+        "setup_hardware"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "FOV、鼠标、鼠标垫或握法只能在证据和用户问题支持时作为单变量设置实验。一次只改一个变量，记录恢复值，并用同任务、同指标与足够样本复测；产品不得把购买或特定硬件写成训练前提。",
+      "sources": [
+        {
+          "source_ref": "product:coach-contract:hardware-neutrality",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "experimental",
+      "limitations": [
+        "当前 Analysis 通常不能证明硬件是限制因素。",
+        "不提供购买结论或医疗建议。"
+      ],
+      "counterevidence": [
+        "表现变化也可能来自熟悉度、疲劳、任务随机性或设置交互。"
+      ],
+      "supported_uses": [
+        "candidate_hypothesis",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "practice.contextual-interference",
+      "entry_version": 1,
+      "status": "active",
+      "category": "practice_structure",
+      "topics": [
+        "practice_structure",
+        "contextual_interference",
+        "ci_interleave",
+        "vdim_orchestration"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "交错练习会提高练习中的任务切换难度，但部分运动学习研究支持它有助于长期保留与迁移。产品中可用渐进 hybrid：先短暂隔离动作形式，再在相关任务间交错，并用延迟复测而不是当场分数判断。",
+      "sources": [
+        {
+          "source_ref": "research:shea-morgan-1979:contextual-interference",
+          "source_level": "academic_peer_reviewed"
+        },
+        {
+          "source_ref": "research:schorn-knowlton-2021:interleaving",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "实验室任务效果不能直接决定每个玩家的场景组合和剂量。"
+      ],
+      "counterevidence": [
+        "应用场域的效应大小和最佳编排存在争议。"
+      ],
+      "supported_uses": [
+        "practice_structure",
+        "research_context",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "practice.feedback.fading",
+      "entry_version": 1,
+      "status": "active",
+      "category": "practice_structure",
+      "topics": [
+        "practice_structure",
+        "guidance_hypothesis",
+        "feedback_fading",
+        "kr_kp"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "结果反馈（KR）说明结果，动作反馈（KP）说明过程。为避免依赖详尽反馈，可从较频繁的解释逐步改为摘要或间隔反馈，并要求用户先自评再查看分析；保留足够反馈用于纠错和安全。",
+      "sources": [
+        {
+          "source_ref": "research:gentile-1972:kr-kp",
+          "source_level": "academic_peer_reviewed"
+        },
+        {
+          "source_ref": "research:salmoni-1984:guidance-hypothesis",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "最佳反馈频率依任务阶段和用户经验而变。"
+      ],
+      "counterevidence": [
+        "减少反馈并不表示越少越好。"
+      ],
+      "supported_uses": [
+        "practice_structure",
+        "mechanism",
+        "verification"
+      ]
+    },
+    {
+      "entry_id": "practice.external-focus",
+      "entry_version": 1,
+      "status": "active",
+      "category": "practice_structure",
+      "topics": [
+        "practice_structure",
+        "external_focus"
+      ],
+      "signals": [
+        "decel_frac high",
+        "decel_frac low",
+        "linearity high",
+        "sparc low",
+        "reverse_ratio high",
+        "accuracy low",
+        "speed mismatch high",
+        "accel mismatch high"
+      ],
+      "metric_refs": [],
+      "text": "训练 cue 优先描述动作对准星或目标产生的外部效果，例如“连续进入制动”或“贴合目标速度”，而不是要求用户精细控制具体肌肉。外部焦点可减少过度内控，但必须与目标指标和任务安全一致。",
+      "sources": [
+        {
+          "source_ref": "research:wulf-2013:external-focus",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "外部焦点不是所有任务和学习阶段的唯一正确反馈。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "practice_structure",
+        "training_cue",
+        "mechanism"
+      ]
+    },
+    {
+      "entry_id": "practice.load-and-recovery",
+      "entry_version": 1,
+      "status": "active",
+      "category": "practice_structure",
+      "topics": [
+        "practice_structure",
+        "deliberate_practice"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "刻意练习强调明确目标、可用反馈和针对弱点的重复，而不是无限增加训练量。训练量应根据状态、技术质量和恢复调整；当表现持续下降、疼痛或动作形式明显恶化时停止并恢复。",
+      "sources": [
+        {
+          "source_ref": "research:ericsson-1993:deliberate-practice",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "研究中的训练时长不能直接变成本产品统一剂量。",
+        "疼痛或伤病需要专业医疗意见，Coach 不诊断。"
+      ],
+      "counterevidence": [
+        "训练量只解释表现差异的一部分。"
+      ],
+      "supported_uses": [
+        "practice_structure",
+        "research_context"
+      ]
+    },
+    {
+      "entry_id": "practice.metacognition",
+      "entry_version": 1,
+      "status": "active",
+      "category": "practice_structure",
+      "topics": [
+        "practice_structure",
+        "meta_cognition",
+        "socratic"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "Coach 可以在给建议前要求用户预测问题、描述动作感受并在复测后比较预测与数据，以降低过度自信并发展自我觉察。提问服务于证据核对，不取代明确建议。",
+      "sources": [
+        {
+          "source_ref": "research:coach:metacognitive-feedback",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "自我报告不是运动学测量。"
+      ],
+      "counterevidence": [
+        "部分用户在认知阶段需要更直接的说明。"
+      ],
+      "supported_uses": [
+        "practice_structure",
+        "mechanism"
+      ]
+    },
+    {
+      "entry_id": "practice.vod-review",
+      "entry_version": 1,
+      "status": "active",
+      "category": "practice_structure",
+      "topics": [
+        "practice_structure",
+        "vod_review"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "可选 MP4/VOD 回放用于直观查看已由 Analysis 定位的事件、动作节奏和情境，不从视频重新发明输入运动学。复盘应围绕可操作事件与下一次实验，而不是只看胜负或总分。",
+      "sources": [
+        {
+          "source_ref": "community:aim-training:vod-review",
+          "source_level": "personal_experience_unverified"
+        },
+        {
+          "source_ref": "product:coach-contract:mp4-evidence-locator",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "experimental",
+      "limitations": [
+        "没有可靠视觉检测时，回放只能辅助观察。"
+      ],
+      "counterevidence": [
+        "视频印象可能受选择偏差影响。"
+      ],
+      "supported_uses": [
+        "practice_structure",
+        "training_cue"
+      ]
+    },
+    {
+      "entry_id": "practice.skill-learning-stages",
+      "entry_version": 1,
+      "status": "active",
+      "category": "research",
+      "topics": [
+        "fitts_posner",
+        "neuroscience_foundations"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "技能学习可粗略经历理解任务、稳定动作与更自动化的阶段，同时显式策略和隐式适应可能并行发生。Coach 应根据用户需要调整解释深度，不把阶段标签当作固定人格或线性晋级。",
+      "sources": [
+        {
+          "source_ref": "research:fitts-posner-1967:skill-stages",
+          "source_level": "academic_peer_reviewed"
+        },
+        {
+          "source_ref": "research:taylor-ivry-2012:parallel-learning",
+          "source_level": "academic_peer_reviewed"
+        }
+      ],
+      "max_claim_level": "research_supported",
+      "limitations": [
+        "阶段模型是粗粒度教学框架，不是个人诊断。"
+      ],
+      "counterevidence": [
+        "学习过程可能并行、反复并依任务变化。"
+      ],
+      "supported_uses": [
+        "research_context",
+        "mechanism"
+      ]
+    },
+    {
+      "entry_id": "practice.community-session-structure",
+      "entry_version": 1,
+      "status": "active",
+      "category": "practice_structure",
+      "topics": [
+        "community_practice",
+        "vdim_orchestration"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "社区训练模板可用来组织热身、技术重点、任务变化和复测，但场景清单、时长和顺序只是候选结构。应围绕当前目标指标调整，并在动作质量或状态恶化时缩短或停止。",
+      "sources": [
+        {
+          "source_ref": "community:voltaic:practice-structure",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "不提供统一每日剂量或保证进步的播放列表。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "practice_structure",
+        "training_cue"
+      ]
+    },
+    {
+      "entry_id": "cue.aiming.skill-domains",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "three_pillars",
+        "voltaic_s5",
+        "top_player_split"
+      ],
+      "signals": [],
+      "metric_refs": [],
+      "text": "社区常把瞄准能力按 clicking、tracking、switching 及其速度、平滑、反应和控制子域组织。该分类可用于选择练习和描述表现向量，但不能从某一子域推断固定玩家类型或身体天赋。",
+      "sources": [
+        {
+          "source_ref": "community:voltaic:skill-domains",
+          "source_level": "community_consensus"
+        }
+      ],
+      "max_claim_level": "community_consensus",
+      "limitations": [
+        "社区 taxonomy 会随赛季和 benchmark 更新。"
+      ],
+      "counterevidence": [
+        "高水平玩家可能在多个子域同时表现良好。"
+      ],
+      "supported_uses": [
+        "practice_structure",
+        "training_cue"
+      ]
+    },
+    {
+      "entry_id": "cue.flicking.transition-flow",
+      "entry_version": 1,
+      "status": "active",
+      "category": "training_cue",
+      "topics": [
+        "fluidity",
+        "corporate_serf_method"
+      ],
+      "signals": [
+        "submovement two-stage",
+        "path_efficiency low"
+      ],
+      "metric_refs": [
+        "metric:submovement_overlap",
+        "metric:path_efficiency"
+      ],
+      "text": "社区所说的 fluidity 可转化为候选观察：前一目标动作结束时，下一目标选择和移动是否出现不必要 dead time。只在有目标序列或事件证据时讨论，并同时保持准确性与直接路径。",
+      "sources": [
+        {
+          "source_ref": "community:aim-training:fluidity",
+          "source_level": "personal_experience_unverified"
+        }
+      ],
+      "max_claim_level": "experimental",
+      "limitations": [
+        "Raw Input 单独不能测量视觉扫描或提前规划。"
+      ],
+      "counterevidence": [
+        "更快转换可能牺牲确认和准确性。"
+      ],
+      "supported_uses": [
+        "candidate_hypothesis",
+        "training_cue"
+      ]
+    },
+    {
+      "entry_id": "verification.comparable-retest",
+      "entry_version": 1,
+      "status": "active",
+      "category": "prescription_verification",
+      "topics": [
+        "prescription_verification",
+        "issue_training_cues"
+      ],
+      "signals": [
+        "decel_frac high",
+        "decel_frac low",
+        "linearity high",
+        "sparc low",
+        "reverse_ratio high",
+        "submovement two-stage",
+        "peak_position low",
+        "peak_position high",
+        "path_efficiency low",
+        "peak_speed below reference",
+        "throughput below reference",
+        "sensitivity high",
+        "accuracy low",
+        "loss count high",
+        "off target long",
+        "avg error high",
+        "speed mismatch high",
+        "accel mismatch high",
+        "ptc high"
+      ],
+      "metric_refs": [],
+      "text": "每条训练或设置实验都要指定目标指标、预期方向与复测：保持相同场景、相同设置、相同输入模式、相同 metric version 和相近证据质量；同时观察准确性或任务结果，避免只优化一个动作指标。证据不足或条件不可比时只记录观察，不判定改善、退步或根因。",
+      "sources": [
+        {
+          "source_ref": "product:coach-contract:verification",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "未校准指标不生成绝对成功线。"
+      ],
+      "counterevidence": [
+        "短期单次波动不能证明训练因果。"
+      ],
+      "supported_uses": [
+        "verification",
+        "diagnostic_scope"
+      ]
+    },
+    {
+      "entry_id": "verification.single-variable-experiment",
+      "entry_version": 1,
+      "status": "active",
+      "category": "prescription_verification",
+      "topics": [
+        "prescription_verification",
+        "settings_experiment",
+        "body_tension"
+      ],
+      "signals": [
+        "sensitivity high",
+        "sparc low",
+        "reverse_ratio high",
+        "ptc high",
+        "speed mismatch high",
+        "accel mismatch high"
+      ],
+      "metric_refs": [],
+      "text": "候选根因实验一次只改变一个 cue 或设置，先保存基线和恢复值，再在可比条件下复测。目标指标改善且任务结果未明显变差时可暂时保留；没有改善、恶化或证据不足时撤销，不把实验假设升级成事实。",
+      "sources": [
+        {
+          "source_ref": "product:coach-contract:single-variable-experiment",
+          "source_level": "product_contract"
+        }
+      ],
+      "max_claim_level": "deterministic_rule",
+      "limitations": [
+        "实验结果仍是个体、任务和时间范围内的证据。"
+      ],
+      "counterevidence": [],
+      "supported_uses": [
+        "verification",
+        "candidate_hypothesis"
+      ]
+    }
+  ]
+}

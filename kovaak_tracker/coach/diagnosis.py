@@ -30,6 +30,13 @@ class DiagnosisIssue:
     prescriptions: list[Prescription]
     priority: int
     priority_reason: str
+    plain_language_meaning: str = ""
+    claim_level: str = "deterministic_rule"
+    metric_refs: list[str] = field(default_factory=list)
+    event_refs: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    expected_result: str = ""
+    verification: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -110,13 +117,24 @@ def _build_issues(findings):
     enriched.sort(key=lambda x: (-_SEVERITY_WEIGHT.get(x[0].severity, 1),))
     issues = []
     for rank, (f, rcs) in enumerate(enriched, 1):
+        if f.claim_level == "experimental" or f.severity == "info":
+            priority_reason = f"[{f.claim_level}] 观察项排序第 {rank}"
+        else:
+            priority_reason = f"[{f.severity}] 严重度排序第 {rank}"
         issues.append(DiagnosisIssue(
             signal=f.signal,
             severity=f.severity,
             root_causes=rcs,
             prescriptions=list(f.prescriptions),
             priority=rank,
-            priority_reason=f"[{f.severity}] 严重度排序第 {rank}",
+            priority_reason=priority_reason,
+            plain_language_meaning=f.plain_language_meaning or f.diagnosis,
+            claim_level=f.claim_level,
+            metric_refs=list(f.metric_refs),
+            event_refs=list(f.event_refs),
+            limitations=list(f.limitations),
+            expected_result=f.expected_result,
+            verification=dict(f.verification),
         ))
     return issues
 

@@ -1,0 +1,301 @@
+{
+  "$id": "coach_knowledge_registry.schema.v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Aiming Cookie Coach Knowledge Registry v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "registry_version",
+    "signal_aliases",
+    "entries"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "coach_knowledge_registry.v1"
+    },
+    "registry_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "signal_aliases": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/ -]{0,159}$"
+    },
+    "boundedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "source_ref",
+        "source_level"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "source_level": {
+          "enum": [
+            "product_contract",
+            "academic_peer_reviewed",
+            "community_consensus",
+            "personal_experience_unverified",
+            "experimental"
+          ]
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "entry_id",
+        "entry_version",
+        "status",
+        "category",
+        "topics",
+        "signals",
+        "metric_refs",
+        "text",
+        "sources",
+        "max_claim_level",
+        "limitations",
+        "counterevidence",
+        "supported_uses"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entry_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+        },
+        "entry_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "active",
+            "retired"
+          ]
+        },
+        "category": {
+          "enum": [
+            "metric_definition",
+            "kinematic_mechanism",
+            "diagnostic_scope",
+            "research",
+            "training_cue",
+            "prescription_verification",
+            "practice_structure",
+            "body_tension_hypothesis",
+            "settings_experiment",
+            "limitation_counterevidence"
+          ]
+        },
+        "topics": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/token"
+          }
+        },
+        "signals": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/token"
+          }
+        },
+        "metric_refs": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/token"
+          }
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "max_claim_level": {
+          "enum": [
+            "deterministic_rule",
+            "research_supported",
+            "community_consensus",
+            "experimental"
+          ]
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/boundedText"
+          }
+        },
+        "counterevidence": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/boundedText"
+          }
+        },
+        "supported_uses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "definition",
+              "mechanism",
+              "diagnostic_scope",
+              "research_context",
+              "training_cue",
+              "practice_structure",
+              "candidate_hypothesis",
+              "verification"
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "enum": [
+                  "body_tension_hypothesis",
+                  "settings_experiment"
+                ]
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "max_claim_level": {
+                "const": "experimental"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sources": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "source_level": {
+                      "const": "community_consensus"
+                    }
+                  },
+                  "required": [
+                    "source_level"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "sources"
+            ]
+          },
+          "then": {
+            "properties": {
+              "max_claim_level": {
+                "enum": [
+                  "community_consensus",
+                  "experimental"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sources": {
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "source_level": {
+                      "enum": [
+                        "personal_experience_unverified",
+                        "experimental"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "source_level"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "sources"
+            ]
+          },
+          "then": {
+            "properties": {
+              "max_claim_level": {
+                "const": "experimental"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

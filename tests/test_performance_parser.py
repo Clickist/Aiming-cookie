@@ -107,3 +107,54 @@ def test_oversized_varint_is_rejected():
 def test_truncated_payload_is_rejected():
     with pytest.raises(PerformanceParseError):
         parse_performance_bytes(field(1, 2, b"unterminated")[:-2])
+
+
+@pytest.mark.parametrize(
+    ("field_number", "payload_type"),
+    [
+        (2, "shotsFired"),
+        (3, "shotsHit"),
+        (4, "shotsMissed"),
+        (8, "kills"),
+        (10, "overshots"),
+    ],
+)
+def test_count_events_remain_timestamped_source_facts(field_number, payload_type):
+    event = b"".join(
+        [
+            field(1, 5, f32(0.125)),
+            field(field_number, 2, field(1, 0, 7)),
+        ]
+    )
+
+    parsed = parse_performance_bytes(field(2, 2, event))
+
+    assert len(parsed.events) == 1
+    parsed_event = parsed.events[0]
+    assert parsed_event.timestamp == pytest.approx(0.125)
+    assert parsed_event.payload_type == payload_type
+    assert parsed_event.count == 7
+    assert parsed_event.delta is None
+    assert parsed_event.value is None
+    assert not hasattr(parsed_event, "target_center")
+    assert not hasattr(parsed_event, "overshoot_distance")
+
+
+def test_target_size_remains_a_value_fact_not_target_position():
+    event = b"".join(
+        [
+            field(1, 5, f32(0.25)),
+            field(16, 2, field(1, 5, f32(2.5))),
+        ]
+    )
+
+    parsed = parse_performance_bytes(field(2, 2, event))
+
+    parsed_event = parsed.events[0]
+    assert parsed_event.timestamp == pytest.approx(0.25)
+    assert parsed_event.payload_type == "targetSize"
+    assert parsed_event.value == pytest.approx(2.5)
+    assert parsed_event.count is None
+    assert parsed_event.delta is None
+    assert not hasattr(parsed_event, "target_center")
+    assert not hasattr(parsed_event, "target_error")
