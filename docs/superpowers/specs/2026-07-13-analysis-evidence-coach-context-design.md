@@ -9,8 +9,8 @@
 | input_mode | Stats | Performance | Raw trace | MP4 | 结果边界 |
 |---|---|---|---|---|---|
 | `input_native` | required for scenario/events | required for v1 trace pairing | required | absent/optional | 输入运动学、事件对齐、非视觉诊断；缺任一 required source 则 native unavailable |
-| `multimodal` | required | required for native pairing | required | required | native result + visual validation/enhancement；视觉失败保留 native |
-| `video_fallback` | required | optional | not used | required | 现有 CV 运动学和视频证据；不得生成 Raw Input provenance |
+| `multimodal` | required | required for native pairing | required | required | native result 是运动学主事实；MP4 提供直观回放、问题定位和可验证视觉证据；视觉失败保留 native |
+| `video_fallback` | required | optional | not used | required | compatibility fallback：沿用现有 CV 运动学和视频证据；不得生成 Raw Input provenance，不作为长期主分析方向 |
 
 `Stats` 提供 scenario/config/kill facts；`Performance` 在 v1 提供 Raw Input pairing anchor 和 performance event facts；Raw trace 没有有效 Performance anchor 时不能被标为 paired。
 
@@ -18,6 +18,7 @@
 
 - multimodal 不得让 MP4 静默覆盖 Raw Input measurement；
 - visual alignment 失败时保留有效 native result，并标 warning；
+- MP4 的存在不得成为 input-native 诊断成功的前置条件；视频处理失败只影响回放/视觉证据 availability；
 - input-native 不得生成 target-relative visual measurement；
 - video-fallback 不得伪造 Raw Input provenance。
 
@@ -41,6 +42,16 @@ requested_at
 ```
 
 提交时冻结 source snapshot；重试不能因为用户源文件随后修改而静默改变分析含义。
+若已冻结 source 在 worker 消费前缺失、不可读或 fingerprint 不一致，Analysis 必须以稳定的
+`input_validation / source_unavailable` 失败，标记为不可对同一 snapshot 重试，并提示用户重新
+提交以建立新 snapshot；错误对象和普通日志不得包含源文件绝对路径或底层异常文本。
+
+当 path-based Analysis request 携带 `video` 时，创建命令必须先冻结用户源 MP4 的
+SHA-256 / size / mtime revision，再复制到 Analysis managed workspace，并在进入 queued
+状态前验证 managed 副本与该 revision 完全一致。复制期间源文件缺失、不可读、被替换、
+内容或 mtime 改变、partial copy 或目标 checksum 不一致时均 fail-closed；后续视觉处理只
+消费这份已验证的 managed 副本。`source_snapshot.video` 与 artifact manifest 保留
+fingerprint/checksum，但任何公开投影、幂等审计和错误文案都不得包含用户源绝对路径。
 
 ### Calibration provenance
 
@@ -98,6 +109,13 @@ errors[]
 normalization_issues[]
 ```
 
+Terminal persistence 不能只校验 envelope 自洽；还必须把结果绑定到当前已 claim 的 Analysis request：
+
+- `analysis_id = analysis:{session_id}`，且 `artifact_manifest.analysis_id` 与唯一 `analysis_result` owned output 使用同一引用；
+- owner/local profile、`analysis_type`、`input_mode` 必须与 session request 一致；
+- session 引用 Run 时，`kovaak_run_ref = run:{kovaak_run_id}`；未引用 Run 时结果不得附带其他 Run；
+- 任一绑定不一致都必须在写入 `done` / result 前 fail-closed，不能把另一 request 的结构合法结果挂到当前 Analysis。
+
 ### Metric provenance
 
 每个关键 metric 至少包含：
@@ -115,7 +133,7 @@ coverage?
 limitations[]
 ```
 
-`inferred` 默认不能驱动正式 severity、Coach 处方或 History 比较。
+`inferred` 默认不能驱动正式 severity、Coach 处方或 History 比较。SPARC 必须同时归一化幅度谱和选中频段的频率轴；直接使用 Hz 间隔会把采样时间尺度写入结果。公式修正分别使用 `native_flicking.sparc.v2` 与 `flicking_fair_summary.sparc.v2`，旧版与修正版不得进入同一 History trend/baseline；v2 在真实产品数据校准前不得套用 legacy `-5.0` 或草稿 `-0.5` 绝对阈值。
 
 ## 4. Evidence source
 
@@ -181,7 +199,7 @@ Coach 和 UI 只能引用这种稳定 reference，不引用绝对路径或 raw s
 - event timeline、有效 inter-kill gaps；
 - trace point count、duration、coverage、button transitions；
 - 经版本化验证的 cumulative trajectory、path length、straightness、velocity、acceleration、movement timing；
-- PRD 已定义且验证通过的 SPARC、linearity、reverse/submovement、deceleration metrics；
+- PRD 已定义且验证通过的 SPARC、linearity、reverse/submovement、deceleration metrics；当前 `submovement_overlap` 仅是版本化 trough-depth ratio proxy，必须携带非 temporal-overlap limitation，不能表述为已完成时间重叠分解；
 - 目标尺寸来源可靠时的 throughput。
 
 ### 不可作为事实进入正式结果
@@ -318,6 +336,7 @@ classification = deterministic
 - unknown version fail closed；
 - v1 读取不能虚构 input mode/provenance，只能标 legacy/unknown；
 - video-fallback 现有路径必须保留回归测试。
+- 保留 video-fallback 是兼容性要求，不代表新功能继续以 MP4 作为主要运动学事实源。
 
 ## 11. 必要测试
 
