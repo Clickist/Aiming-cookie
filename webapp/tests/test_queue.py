@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import aiosqlite
 import pytest
 
-from webapp.backend import db, queue
+from webapp.backend import coach_store, config, db, queue
 from webapp.backend.config import DEFAULT_MAX_ATTEMPTS, LEASE_TTL_SECONDS
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
@@ -13,8 +15,74 @@ from webapp.backend.contracts import (
     build_error_v1,
     dump_contract_json,
 )
+from webapp.backend.workspace import remove_session_workspace, session_dir
 
 TEST_WORKER = "test-worker:1"
+
+
+class _InjectedProcessCrash(BaseException):
+    pass
+
+
+async def _tombstone(session_id: int) -> dict | None:
+    conn = await db.get_conn()
+    row = await (
+        await conn.execute(
+            "SELECT analysis_session_id, owner_id, cleanup_state, "
+            "cleanup_attempts, last_error_code "
+            "FROM analysis_deletion_tombstones WHERE analysis_session_id=?",
+            (session_id,),
+        )
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+async def _seed_terminal_delete(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    owner_id: str,
+    create_workspace: bool = True,
+) -> dict:
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    sid = await queue.enqueue(owner_id, "", "")
+    conn = await db.get_conn()
+    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
+    await conn.commit()
+    await db.save_chat_message(sid, "user", "legacy question")
+    await db.save_chat_message(sid, "assistant", "legacy answer")
+    thread = await coach_store.get_or_create_primary_thread(owner_id)
+    ref = await coach_store.attach_analysis_ref(int(thread["id"]), sid)
+    workspace = session_dir(sid)
+    if create_workspace:
+        workspace.mkdir(parents=True)
+        (workspace / "analysis-owned.json").write_bytes(b"analysis-owned")
+    return {
+        "id": sid,
+        "owner_id": owner_id,
+        "thread_id": int(thread["id"]),
+        "ref_id": int(ref["id"]),
+        "workspace": workspace,
+    }
+
+
+async def _assert_phase_a_rollback(seed: dict) -> None:
+    sid = seed["id"]
+    session = await queue.get_session(sid)
+    assert session is not None
+    assert session["status"] == "done"
+    assert (seed["workspace"] / "analysis-owned.json").read_bytes() == b"analysis-owned"
+    assert [item["content"] for item in await db.load_chat_history(sid)] == [
+        "legacy question",
+        "legacy answer",
+    ]
+    assert await coach_store.load_messages(seed["thread_id"]) == []
+    refs = await coach_store.list_analysis_refs(seed["thread_id"])
+    assert len(refs) == 1
+    assert refs[0]["id"] == seed["ref_id"]
+    assert refs[0]["status"] == "active"
+    assert refs[0]["deleted_at"] is None
+    assert await _tombstone(sid) is None
 
 
 def _persistent_v2_result(owner_id: str) -> dict:
@@ -58,6 +126,7 @@ def _persistent_v2_result(owner_id: str) -> dict:
                     "provenance": {"kind": "derived", "sources": ["raw_input"]},
                     "metric_version": "native_flicking.v1",
                     "coverage": 1.0,
+                    "classification": "deterministic",
                     "limitations": [],
                 },
             },
@@ -335,6 +404,56 @@ async def test_mark_done_v2_requires_matching_owner_and_complete_producer_metada
 
 
 @pytest.mark.parametrize(
+    "classification",
+    [None, "experimental"],
+    ids=["missing", "non-deterministic"],
+)
+@pytest.mark.asyncio
+async def test_mark_done_v2_rejects_missing_or_non_deterministic_metric_classification(
+    classification: str | None,
+):
+    from webapp.backend import kovaak_run_store
+
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1",
+        source_key=f"classification-{classification}",
+        scenario="Scenario",
+    )
+    sid = await queue.enqueue(
+        "u1",
+        "",
+        "",
+        input_mode="input_native",
+        kovaak_run_id=run["id"],
+        input_snapshot={
+            "schema_version": "analysis_input_snapshot.v1",
+            "run_id": run["id"],
+            "sources": {},
+            "trace": None,
+        },
+    )
+    await queue.claim_next(TEST_WORKER)
+    result = _persistent_v2_result("u1")
+    analysis_id = f"analysis:{sid}"
+    result["analysis_id"] = analysis_id
+    result["artifact_manifest"]["analysis_id"] = analysis_id
+    result["artifact_manifest"]["owned_outputs"][0]["id"] = analysis_id
+    result["kovaak_run_ref"] = f"run:{run['id']}"
+    metric = result["deterministic"]["metrics"]["path_length"]
+    if classification is None:
+        del metric["classification"]
+    else:
+        metric["classification"] = classification
+
+    with pytest.raises(ValueError, match="classification"):
+        await queue.mark_done(sid, result, 0.0, worker_id=TEST_WORKER)
+
+    session = await queue.get_session(sid)
+    assert session["status"] == "running"
+    assert session["result"] is None
+
+
+@pytest.mark.parametrize(
     ("field", "wrong_value"),
     [
         ("analysis_id", "analysis:999"),
@@ -605,6 +724,548 @@ async def test_mark_failed_requires_running_owner_worker():
     assert s["error"]["code"] == "legacy_error"
 
 
+@pytest.mark.asyncio
+async def test_delete_phase_a_ref_failure_rolls_back_db_coach_and_workspace(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="phase-a-ref-failure",
+    )
+
+    async def fail_ref_update(*_args, **_kwargs):
+        raise RuntimeError("injected ref update failure")
+
+    monkeypatch.setattr(coach_store, "mark_analysis_refs_deleted", fail_ref_update)
+
+    with pytest.raises(RuntimeError, match="injected ref update failure"):
+        await queue.delete_session(seed["id"], seed["owner_id"])
+
+    await _assert_phase_a_rollback(seed)
+
+
+@pytest.mark.asyncio
+async def test_delete_phase_a_begin_crash_rolls_back_connection_and_state(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="phase-a-begin-crash",
+    )
+    conn = await db.get_conn()
+    original_execute = conn.execute
+
+    async def crash_after_begin(sql, *args):
+        cursor = await original_execute(sql, *args)
+        if sql == "BEGIN IMMEDIATE":
+            raise _InjectedProcessCrash("injected crash after begin")
+        return cursor
+
+    monkeypatch.setattr(conn, "execute", crash_after_begin)
+
+    with pytest.raises(_InjectedProcessCrash, match="crash after begin"):
+        await queue.delete_session(seed["id"], seed["owner_id"])
+
+    assert conn.in_transaction is False
+    await _assert_phase_a_rollback(seed)
+
+
+@pytest.mark.asyncio
+async def test_delete_phase_a_commit_failure_rolls_back_all_sqlite_and_workspace(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="phase-a-commit-failure",
+    )
+    conn = await db.get_conn()
+    await conn.executescript(
+        """
+        CREATE TABLE deletion_commit_parent(id INTEGER PRIMARY KEY);
+        CREATE TABLE deletion_commit_child(
+            parent_id INTEGER,
+            FOREIGN KEY(parent_id) REFERENCES deletion_commit_parent(id)
+                DEFERRABLE INITIALLY DEFERRED
+        );
+        CREATE TRIGGER inject_deletion_commit_failure
+        AFTER INSERT ON analysis_deletion_tombstones
+        BEGIN
+            INSERT INTO deletion_commit_child(parent_id) VALUES(999999);
+        END;
+        """
+    )
+    await conn.commit()
+
+    with pytest.raises(aiosqlite.IntegrityError, match="FOREIGN KEY"):
+        await queue.delete_session(seed["id"], seed["owner_id"])
+
+    await _assert_phase_a_rollback(seed)
+    child_count = await (
+        await conn.execute("SELECT COUNT(*) FROM deletion_commit_child")
+    ).fetchone()
+    assert child_count[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_crash_after_phase_a_commit_leaves_pending_tombstone(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="post-commit-crash",
+    )
+
+    def crash_before_cleanup(_session_id):
+        raise _InjectedProcessCrash("simulated process exit before cleanup")
+
+    monkeypatch.setattr(queue, "remove_session_workspace", crash_before_cleanup)
+
+    with pytest.raises(_InjectedProcessCrash):
+        await queue.delete_session(seed["id"], seed["owner_id"])
+
+    assert await queue.get_session(seed["id"]) is None
+    assert seed["workspace"].is_dir()
+    assert await db.load_chat_history(seed["id"]) == []
+    messages = await coach_store.load_messages(seed["thread_id"])
+    assert [item["content"] for item in messages] == [
+        "legacy question",
+        "legacy answer",
+    ]
+    refs = await coach_store.list_analysis_refs(seed["thread_id"])
+    assert len(refs) == 1
+    assert refs[0]["id"] == seed["ref_id"]
+    assert refs[0]["status"] == "deleted"
+    assert refs[0]["deleted_at"] is not None
+    assert await _tombstone(seed["id"]) == {
+        "analysis_session_id": seed["id"],
+        "owner_id": seed["owner_id"],
+        "cleanup_state": "pending",
+        "cleanup_attempts": 0,
+        "last_error_code": None,
+    }
+
+    monkeypatch.setattr(queue, "remove_session_workspace", remove_session_workspace)
+    await queue.reconcile_analysis_deletions()
+    await queue.reconcile_analysis_deletions()
+
+    assert not seed["workspace"].exists()
+    assert await _tombstone(seed["id"]) is None
+    messages_after = await coach_store.load_messages(seed["thread_id"])
+    refs_after = await coach_store.list_analysis_refs(seed["thread_id"])
+    assert [item["id"] for item in messages_after] == [item["id"] for item in messages]
+    assert [item["id"] for item in refs_after] == [item["id"] for item in refs]
+    assert refs_after[0]["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_delete_partial_cleanup_failure_is_logically_deleted_and_path_free(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="partial-cleanup",
+    )
+    remaining = seed["workspace"] / "windows-locked.bin"
+    remaining.write_bytes(b"locked")
+    private_error = f"busy private path {seed['workspace']}"
+
+    def partial_cleanup(_session_id):
+        (seed["workspace"] / "analysis-owned.json").unlink()
+        raise OSError(private_error)
+
+    monkeypatch.setattr(queue, "remove_session_workspace", partial_cleanup)
+
+    result = await queue.delete_session(seed["id"], seed["owner_id"])
+
+    assert result["deleted"] is True
+    assert result["id"] == seed["id"]
+    assert result["cleanup_failed"] == ["workspace"]
+    assert await queue.get_session(seed["id"]) is None
+    assert remaining.read_bytes() == b"locked"
+    tombstone = await _tombstone(seed["id"])
+    assert tombstone == {
+        "analysis_session_id": seed["id"],
+        "owner_id": seed["owner_id"],
+        "cleanup_state": "failed",
+        "cleanup_attempts": 1,
+        "last_error_code": "workspace_cleanup_failed",
+    }
+    refs = await coach_store.list_analysis_refs(seed["thread_id"])
+    assert len(refs) == 1
+    assert refs[0]["status"] == "deleted"
+    public_state = json.dumps(
+        {"response": result, "tombstone": tombstone},
+        ensure_ascii=False,
+    )
+    assert str(seed["workspace"]) not in public_state
+    assert private_error not in public_state
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_record_commit_error_keeps_pending_tombstone(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="cleanup-record-commit-failure",
+    )
+    conn = await db.get_conn()
+    original_commit = conn.commit
+
+    def fail_cleanup(_session_id):
+        raise OSError("injected workspace cleanup failure")
+
+    async def fail_record_commit():
+        raise RuntimeError("injected cleanup record commit failure")
+
+    monkeypatch.setattr(queue, "remove_session_workspace", fail_cleanup)
+    monkeypatch.setattr(conn, "commit", fail_record_commit)
+
+    result = await queue.delete_session(seed["id"], seed["owner_id"])
+
+    assert result["deleted"] is True
+    assert result["cleanup_failed"] == ["workspace"]
+    assert conn.in_transaction is False
+    assert (await _tombstone(seed["id"]))["cleanup_state"] == "pending"
+
+    monkeypatch.setattr(conn, "commit", original_commit)
+    monkeypatch.setattr(queue, "remove_session_workspace", remove_session_workspace)
+    await queue.reconcile_analysis_deletions()
+    assert await _tombstone(seed["id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_record_crash_rolls_back_before_propagating(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="cleanup-record-crash",
+    )
+    conn = await db.get_conn()
+
+    def fail_cleanup(_session_id):
+        raise OSError("injected workspace cleanup failure")
+
+    async def crash_record_commit():
+        raise _InjectedProcessCrash("injected cleanup record crash")
+
+    monkeypatch.setattr(queue, "remove_session_workspace", fail_cleanup)
+    monkeypatch.setattr(conn, "commit", crash_record_commit)
+
+    with pytest.raises(_InjectedProcessCrash, match="cleanup record crash"):
+        await queue.delete_session(seed["id"], seed["owner_id"])
+
+    assert conn.in_transaction is False
+    assert (await _tombstone(seed["id"]))["cleanup_state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_delete_absent_workspace_succeeds_and_removes_tombstone(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="absent-workspace",
+        create_workspace=False,
+    )
+
+    result = await queue.delete_session(seed["id"], seed["owner_id"])
+
+    assert result == {
+        "deleted": True,
+        "id": seed["id"],
+        "files_removed": [],
+        "cleanup_failed": [],
+    }
+    assert await queue.get_session(seed["id"]) is None
+    assert await _tombstone(seed["id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_success_then_crash_before_tombstone_delete_reconciles(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="cleanup-finalize-crash",
+    )
+
+    def cleanup_then_crash(session_id):
+        assert remove_session_workspace(session_id) is True
+        raise _InjectedProcessCrash("simulated exit before tombstone finalize")
+
+    monkeypatch.setattr(queue, "remove_session_workspace", cleanup_then_crash)
+
+    with pytest.raises(_InjectedProcessCrash):
+        await queue.delete_session(seed["id"], seed["owner_id"])
+
+    assert await queue.get_session(seed["id"]) is None
+    assert not seed["workspace"].exists()
+    assert (await _tombstone(seed["id"]))["cleanup_state"] == "pending"
+
+    monkeypatch.setattr(queue, "remove_session_workspace", remove_session_workspace)
+    await queue.reconcile_analysis_deletions()
+
+    assert await _tombstone(seed["id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_finalize_commit_failure_rolls_back_and_reconciles(
+    monkeypatch,
+    tmp_path: Path,
+):
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="cleanup-finalize-commit-failure",
+    )
+    conn = await db.get_conn()
+    original_commit = conn.commit
+
+    async def fail_finalize_commit():
+        raise RuntimeError("injected tombstone finalize commit failure")
+
+    monkeypatch.setattr(conn, "commit", fail_finalize_commit)
+
+    result = await queue.delete_session(seed["id"], seed["owner_id"])
+
+    assert result == {
+        "deleted": True,
+        "id": seed["id"],
+        "files_removed": ["workspace"],
+        "cleanup_failed": [],
+    }
+    assert await queue.get_session(seed["id"]) is None
+    assert not seed["workspace"].exists()
+    assert conn.in_transaction is False
+    assert (await _tombstone(seed["id"]))["cleanup_state"] == "pending"
+
+    monkeypatch.setattr(conn, "commit", original_commit)
+    await queue.reconcile_analysis_deletions()
+
+    assert await _tombstone(seed["id"]) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletions_isolates_failures_and_is_idempotent(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    failing_id = 90_001
+    successful_id = 90_002
+    unknown_id = 90_003
+    failing_workspace = session_dir(failing_id)
+    successful_workspace = session_dir(successful_id)
+    unknown_workspace = session_dir(unknown_id)
+    for workspace in (failing_workspace, successful_workspace, unknown_workspace):
+        workspace.mkdir(parents=True)
+        (workspace / "artifact.bin").write_bytes(b"artifact")
+
+    conn = await db.get_conn()
+    await conn.execute(
+        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
+        "VALUES(?, 'owner-pending')",
+        (failing_id,),
+    )
+    await conn.execute(
+        "INSERT INTO analysis_deletion_tombstones("
+        "analysis_session_id, owner_id, cleanup_state, cleanup_attempts, last_error_code"
+        ") VALUES(?, 'owner-failed', 'failed', 1, 'workspace_cleanup_failed')",
+        (successful_id,),
+    )
+    await conn.commit()
+    private_error = f"locked {failing_workspace}"
+
+    def fail_one(session_id):
+        if int(session_id) == failing_id:
+            raise OSError(private_error)
+        return remove_session_workspace(session_id)
+
+    monkeypatch.setattr(queue, "remove_session_workspace", fail_one)
+
+    first = await queue.reconcile_analysis_deletions()
+
+    failed = await _tombstone(failing_id)
+    assert failed["cleanup_state"] == "failed"
+    assert failed["cleanup_attempts"] == 1
+    assert failed["last_error_code"] == "workspace_cleanup_failed"
+    assert await _tombstone(successful_id) is None
+    assert failing_workspace.is_dir()
+    assert not successful_workspace.exists()
+    assert unknown_workspace.is_dir()
+    assert str(failing_workspace) not in str(first)
+    assert private_error not in str(first)
+
+    await queue.reconcile_analysis_deletions()
+    failed_again = await _tombstone(failing_id)
+    assert failed_again["cleanup_attempts"] == 2
+
+    monkeypatch.setattr(queue, "remove_session_workspace", remove_session_workspace)
+    await queue.reconcile_analysis_deletions()
+    await queue.reconcile_analysis_deletions()
+
+    assert await _tombstone(failing_id) is None
+    assert not failing_workspace.exists()
+    assert unknown_workspace.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_finalize_db_failure_propagates_with_clean_connection(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    session_id = 90_004
+    conn = await db.get_conn()
+    await conn.execute(
+        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
+        "VALUES(?, 'finalize-db-failure')",
+        (session_id,),
+    )
+    await conn.commit()
+    original_commit = conn.commit
+
+    async def fail_finalize_commit():
+        raise RuntimeError("injected reconciliation finalize db failure")
+
+    monkeypatch.setattr(conn, "commit", fail_finalize_commit)
+
+    with pytest.raises(RuntimeError, match="reconciliation finalize db failure"):
+        await queue.reconcile_analysis_deletions()
+
+    assert conn.in_transaction is False
+    assert (await _tombstone(session_id))["cleanup_state"] == "pending"
+
+    monkeypatch.setattr(conn, "commit", original_commit)
+    await queue.reconcile_analysis_deletions()
+    assert await _tombstone(session_id) is None
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "uploading"])
+@pytest.mark.asyncio
+async def test_delete_nonterminal_never_touches_workspace_or_tombstone(
+    status: str,
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    sid = await queue.enqueue("active-owner", "", "", status=status)
+    workspace = session_dir(sid)
+    workspace.mkdir(parents=True)
+    (workspace / "keep.bin").write_bytes(b"keep")
+
+    with pytest.raises(queue.SessionNotDeletable) as exc_info:
+        await queue.delete_session(sid, "active-owner")
+
+    assert exc_info.value.code == "active"
+    assert (workspace / "keep.bin").read_bytes() == b"keep"
+    assert await _tombstone(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_wrong_owner_never_touches_workspace_or_tombstone(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    sid = await queue.enqueue("real-owner", "", "")
+    conn = await db.get_conn()
+    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
+    await conn.commit()
+    workspace = session_dir(sid)
+    workspace.mkdir(parents=True)
+    (workspace / "keep.bin").write_bytes(b"keep")
+
+    with pytest.raises(queue.SessionForbidden):
+        await queue.delete_session(sid, "other-owner")
+
+    assert (workspace / "keep.bin").read_bytes() == b"keep"
+    assert await _tombstone(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_preserves_run_trace_and_all_user_sources(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    sources = tmp_path / "user-sources"
+    sources.mkdir()
+    stats = sources / "stats.csv"
+    performance = sources / "performance.json"
+    source_mp4 = sources / "recording.mp4"
+    run_trace = config.DATA_ROOT / "runs" / "fixture-run" / "run-trace.bin"
+    run_trace.parent.mkdir(parents=True)
+    expected_bytes = {
+        stats: b"stats-user-owned",
+        performance: b"performance-user-owned",
+        source_mp4: b"mp4-user-owned",
+        run_trace: b"trace-run-owned",
+    }
+    for path, payload in expected_bytes.items():
+        path.write_bytes(payload)
+
+    conn = await db.get_conn()
+    run_id = int((await (
+        await conn.execute(
+            "INSERT INTO kovaak_runs("
+            "user_id, source_key, scenario, stats_path, performance_path, "
+            "mouse_trace_path, trace_state"
+            ") VALUES(?, ?, ?, ?, ?, ?, 'attached') RETURNING id",
+            (
+                "artifact-owner",
+                "delete-boundary-run",
+                "Scenario",
+                str(stats),
+                str(performance),
+                str(run_trace),
+            ),
+        )
+    ).fetchone())[0])
+    sid = await queue.enqueue("artifact-owner", str(source_mp4), str(stats))
+    await conn.execute(
+        "UPDATE sessions SET status='done', kovaak_run_id=? WHERE id=?",
+        (run_id, sid),
+    )
+    await conn.commit()
+    workspace = session_dir(sid)
+    workspace.mkdir(parents=True)
+    (workspace / "analysis-output.json").write_bytes(b"analysis-owned")
+    run_before = dict((await (
+        await conn.execute("SELECT * FROM kovaak_runs WHERE id=?", (run_id,))
+    ).fetchone()))
+
+    await queue.delete_session(sid, "artifact-owner")
+
+    run_after = dict((await (
+        await conn.execute("SELECT * FROM kovaak_runs WHERE id=?", (run_id,))
+    ).fetchone()))
+    assert run_after == run_before
+    for path, payload in expected_bytes.items():
+        assert path.read_bytes() == payload
+    assert not workspace.exists()
+
+
 
 
 @pytest.mark.asyncio
@@ -672,6 +1333,47 @@ async def test_delete_session_migrates_legacy_chat_before_removing_session():
         ("user", "legacy hello", sid),
         ("assistant", "legacy reply", sid),
     ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_chat_migration_does_not_copy_unsafe_trace_payloads():
+    from webapp.backend import coach_store
+
+    sid = await queue.enqueue("u1", "/a", "/a.csv")
+    await db.save_chat_message(
+        sid,
+        "assistant",
+        "legacy unsafe trace",
+        trace=[
+            {
+                "raw_trace": "legacy-raw-trace-sentinel",
+                "path": r"C:\Users\point\private\trace.csv",
+                "payload": "legacy-payload-sentinel",
+                "timestamps": [1_000, 1_001],
+            },
+        ],
+    )
+
+    migrated = await coach_store.migrate_session_legacy_messages(sid)
+    assert migrated["messages_copied"] == 1
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    messages = await coach_store.load_messages(int(thread["id"]))
+    assert [message["content"] for message in messages] == ["legacy unsafe trace"]
+
+    conn = await db.get_conn()
+    cur = await conn.execute(
+        "SELECT trace_json FROM coach_messages WHERE legacy_session_id=?",
+        (sid,),
+    )
+    row = await cur.fetchone()
+    serialized = f"{row['trace_json']} {json.dumps(messages[0]['trace'], ensure_ascii=False)}"
+    for sentinel in (
+        "legacy-raw-trace-sentinel",
+        r"C:\Users\point\private\trace.csv",
+        "legacy-payload-sentinel",
+        "timestamps",
+    ):
+        assert sentinel not in serialized
 
 
 @pytest.mark.asyncio

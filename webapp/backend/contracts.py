@@ -336,14 +336,16 @@ def coerce_analysis_result_v1(
 
 
 def _is_absolute_path(value: str) -> bool:
+    stripped = value.lstrip()
     return (
-        os.path.isabs(value)
-        or value.startswith("\\")
+        stripped.casefold().startswith("file:")
+        or os.path.isabs(stripped)
+        or stripped.startswith("\\")
         or (
-            len(value) >= 3
-            and value[0].isalpha()
-            and value[1] == ":"
-            and value[2] in {"/", "\\"}
+            len(stripped) >= 3
+            and stripped[0].isalpha()
+            and stripped[1] == ":"
+            and stripped[2] in {"/", "\\"}
         )
     )
 
@@ -640,7 +642,7 @@ def _validate_producer_metrics_v2(deterministic: dict) -> None:
         raise ValueError("deterministic.metrics must be a dict for persisted v2 results")
     required = {
         "key", "value", "unit", "availability", "provenance",
-        "metric_version", "coverage", "limitations",
+        "metric_version", "coverage", "classification", "limitations",
     }
     for metric_key, metric in metrics.items():
         field = f"deterministic.metrics[{metric_key!r}]"
@@ -676,6 +678,8 @@ def _validate_producer_metrics_v2(deterministic: dict) -> None:
                 f"{field}.provenance.sources[{source_index}]", source,
             )
         _require_nonempty_string(f"{field}.metric_version", metric.get("metric_version"))
+        if metric.get("classification") != "deterministic":
+            raise ValueError(f"{field}.classification must be deterministic")
         _validate_coverage_v2(f"{field}.coverage", metric.get("coverage"))
         limitations = metric.get("limitations")
         if not isinstance(limitations, list) or not all(

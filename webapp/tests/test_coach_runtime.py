@@ -13,7 +13,7 @@ from kovaak_tracker.coach.diagnosis import (
     ProfileMatch,
     RootCause,
 )
-from webapp.backend import config
+from webapp.backend import coach_runtime, config
 from webapp.backend.coach_runtime import (
     CoachRuntimeError,
     diagnosis_to_analysis_summary,
@@ -101,6 +101,111 @@ def test_run_pi_coach_turn_http_success_payload():
         assert "runtime-secret-key" not in str(stdin_payload["analysis_summary"])
 
 
+def test_build_turn_request_keeps_exact_canonical_analysis_summary():
+    from webapp.backend.coach_context import serialize_coach_diagnostic_context
+
+    context = {
+        "schema_version": "coach_diagnostic_context.v1",
+        "analysis_ref": {
+            "analysis_id": "analysis:42",
+            "analysis_result_version": "analysis_result.v2",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+        },
+        "diagnosis": {
+            "profile": {},
+            "issues": [],
+            "summary": {
+                "distance": {
+                    "value": 12.0,
+                    "unit": "raw_counts",
+                    "classification": "deterministic",
+                },
+            },
+            "comparison": None,
+            "meta": {},
+        },
+        "evidence_summary": {
+            "availability": {"raw_input": "available"},
+            "alignment": {"status": "aligned"},
+        },
+        "warnings": [],
+    }
+    canonical_wire = serialize_coach_diagnostic_context(context)
+    assert canonical_wire is not None
+
+    request, _ = coach_runtime._build_turn_request(
+        schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V1,
+        user_id="runtime-user",
+        profile=_RUNTIME_PROFILE,
+        messages=[{"role": "user", "content": "hello"}],
+        analysis_summary=canonical_wire,
+        system_prompt=None,
+    )
+
+    assert request["analysis_summary"] == canonical_wire
+
+
+def test_build_turn_request_reprojects_canonical_looking_analysis_summary():
+    from webapp.backend.coach_context import (
+        coerce_coach_diagnostic_context,
+        serialize_coach_diagnostic_context,
+    )
+
+    poisoned = {
+        "schema_version": "coach_diagnostic_context.v1",
+        "analysis_ref": {
+            "analysis_id": "analysis:42",
+            "analysis_result_version": "analysis_result.v2",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+        },
+        "diagnosis": {
+            "profile": {
+                "label": r"C:\Users\point\private\trace.csv",
+            },
+            "issues": [],
+            "summary": {},
+            "comparison": None,
+            "meta": {},
+            "raw_trace": "runtime-raw-trace-sentinel",
+            "payload": "runtime-payload-sentinel",
+        },
+        "evidence_summary": {
+            "availability": {"raw_input": "available"},
+            "alignment": {"status": "aligned"},
+            "benchmark": "runtime-benchmark-sentinel",
+        },
+        "warnings": [],
+        "api_key": "sk-runtime-analysis-summary-secret",
+    }
+    poisoned_wire = json.dumps(poisoned, ensure_ascii=False)
+    expected = serialize_coach_diagnostic_context(
+        coerce_coach_diagnostic_context(poisoned)
+    )
+    assert expected is not None
+
+    request, _ = coach_runtime._build_turn_request(
+        schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V1,
+        user_id="runtime-user",
+        profile=_RUNTIME_PROFILE,
+        messages=[{"role": "user", "content": "hello"}],
+        analysis_summary=poisoned_wire,
+        system_prompt=None,
+    )
+
+    assert request["analysis_summary"] == expected
+    assert request["analysis_summary"] != poisoned_wire
+    for sentinel in (
+        r"C:\Users\point\private\trace.csv",
+        "runtime-raw-trace-sentinel",
+        "runtime-payload-sentinel",
+        "runtime-benchmark-sentinel",
+        "sk-runtime-analysis-summary-secret",
+    ):
+        assert sentinel not in request["analysis_summary"]
+
+
 def test_run_pi_coach_turn_http_fails_fallback_subprocess():
     messages = [{"role": "user", "content": "x"}]
     with patch("webapp.backend.coach_runtime.httpx.Client") as mock_client_cls:
@@ -117,6 +222,60 @@ def test_run_pi_coach_turn_http_fails_fallback_subprocess():
             reply = run_pi_coach_turn(messages=messages, analysis_summary=None)
     assert reply == "subprocess 回复"
     mock_run.assert_called_once()
+
+
+def test_subprocess_command_uses_loader_file_url_and_native_entry_path(
+    tmp_path, monkeypatch
+):
+    loader = tmp_path / "tsx" / "loader.mjs"
+    loader.parent.mkdir()
+    loader.write_text("", encoding="utf-8")
+    entry = tmp_path / "coach runtime" / "run-turn.ts"
+    entry.parent.mkdir()
+    entry.write_text("", encoding="utf-8")
+    monkeypatch.setattr(coach_runtime, "COACH_RUNTIME_TSX_LOADER", loader)
+    monkeypatch.setattr(coach_runtime, "COACH_RUNTIME_RUN_TURN", entry)
+
+    assert coach_runtime._subprocess_command() == [
+        "node",
+        f"--import={loader.resolve().as_uri()}",
+        str(entry),
+    ]
+
+
+def test_subprocess_env_pins_absolute_pi_paths_and_preserves_caller_env(
+    tmp_path, monkeypatch
+):
+    pi_source = tmp_path / "pi source"
+    pi_source.mkdir()
+    monkeypatch.setattr(coach_runtime, "PI_SOURCE_DIR", pi_source)
+    monkeypatch.setenv("COACH_CALLER_SENTINEL", "preserved")
+    monkeypatch.setenv("AIMING_COOKIE_DESKTOP_TOKEN", "launch-secret")
+    monkeypatch.setenv("PI_SOURCE_DIR", "caller-pi")
+    monkeypatch.setenv("TSX_TSCONFIG_PATH", "caller-tsconfig")
+
+    completed = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=_ok_stdout(),
+        stderr="",
+    )
+    with patch(
+        "webapp.backend.coach_runtime._subprocess_command",
+        return_value=["node", "run-turn.ts"],
+    ), patch(
+        "webapp.backend.coach_runtime.subprocess.run",
+        return_value=completed,
+    ) as mock_run:
+        coach_runtime._run_turn_via_subprocess({"messages": []}, 5)
+
+    env = mock_run.call_args.kwargs["env"]
+    assert env["PI_SOURCE_DIR"] == str(pi_source.resolve())
+    assert env["TSX_TSCONFIG_PATH"] == str(
+        (pi_source / "tsconfig.json").resolve()
+    )
+    assert env["COACH_CALLER_SENTINEL"] == "preserved"
+    assert "AIMING_COOKIE_DESKTOP_TOKEN" not in env
 
 
 def test_tool_capable_turn_read_timeout_does_not_rerun_in_subprocess():

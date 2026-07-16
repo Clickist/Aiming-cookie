@@ -17,7 +17,7 @@ from .contracts import (
     normalize_json_value,
     validate_analysis_result_v2_for_persistence,
 )
-from . import coach_store
+from . import coach_store, history_trends
 from .db import get_conn
 from .workspace import remove_session_workspace, workspace_size_bytes
 
@@ -327,27 +327,6 @@ class SessionNotDeletable(Exception):
         self.message = message
 
 
-def _summary_label_from_stored_result(status: str, result_raw: str | None) -> str | None:
-    if status != "done" or not result_raw:
-        return None
-    try:
-        result_dict = json.loads(result_raw)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(result_dict, dict):
-        return None
-    try:
-        label = result_dict["deterministic"]["diagnosis"]["profile"]["label"]
-        return label if isinstance(label, str) else None
-    except (KeyError, TypeError):
-        pass
-    try:
-        label = result_dict["diagnosis"]["profile"]["label"]
-        return label if isinstance(label, str) else None
-    except (KeyError, TypeError):
-        return None
-
-
 async def requeue_for_retry(session_id: int) -> dict:
     """User-initiated retry: failed session with input files still present → queued.
 
@@ -535,66 +514,137 @@ async def list_storage_sessions(user_id: str) -> list[dict]:
 async def list_sessions(user_id: str) -> list[dict]:
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id, user_id, status, created_at, finished_at, attempts, "
-        "max_attempts, llm_cost_cny, result, analysis_type, input_mode, kovaak_run_id "
-        "FROM sessions WHERE user_id=? "
-        "ORDER BY created_at DESC, id DESC",
+        "SELECT s.id, s.status, s.created_at, s.finished_at, s.attempts, "
+        "s.max_attempts, s.llm_cost_cny, s.analysis_type, s.input_mode, "
+        "s.kovaak_run_id, "
+        "CASE WHEN json_valid(s.result) THEN COALESCE("
+        "json_extract(s.result, '$.deterministic.diagnosis.profile.label'), "
+        "json_extract(s.result, '$.diagnosis.profile.label')) END AS summary_label, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.scenario') END AS scenario, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.stats.path') END AS snapshot_stats_path, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.stats.fingerprint.sha256') END "
+        "AS snapshot_stats_sha256, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.stats.fingerprint.size') END "
+        "AS snapshot_stats_size, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.stats.fingerprint.mtime_ns') END "
+        "AS snapshot_stats_mtime_ns, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.performance.path') END "
+        "AS snapshot_performance_path, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.performance.fingerprint.sha256') END "
+        "AS snapshot_performance_sha256, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.performance.fingerprint.size') END "
+        "AS snapshot_performance_size, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.performance.fingerprint.mtime_ns') END "
+        "AS snapshot_performance_mtime_ns, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.video.path') END AS snapshot_video_path, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.video.fingerprint.sha256') END "
+        "AS snapshot_video_sha256, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.video.fingerprint.size') END "
+        "AS snapshot_video_size, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.sources.video.fingerprint.mtime_ns') END "
+        "AS snapshot_video_mtime_ns, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.trace.path') END AS snapshot_trace_path, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.trace.fingerprint.sha256') END "
+        "AS snapshot_trace_sha256, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.trace.fingerprint.size') END "
+        "AS snapshot_trace_size, "
+        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.trace.fingerprint.mtime_ns') END "
+        "AS snapshot_trace_mtime_ns, "
+        "CASE WHEN json_valid(s.result) THEN "
+        "json_extract(s.result, '$.evidence.alignment.status') END AS alignment_status, "
+        "CASE WHEN json_valid(s.result) THEN "
+        "json_extract(s.result, '$.evidence.coverage') END AS evidence_coverage, "
+        "kr.trace_state AS run_trace_state "
+        "FROM sessions AS s LEFT JOIN kovaak_runs AS kr "
+        "ON kr.id=s.kovaak_run_id AND kr.user_id=s.user_id "
+        "WHERE s.user_id=? ORDER BY s.created_at DESC, s.id DESC",
         (user_id,),
     )
     rows = await cur.fetchall()
     out: list[dict] = []
     for row in rows:
-        d = dict(row)
-        out.append({
-            "id": d["id"],
-            "status": d["status"],
-            "created_at": sqlite_timestamp_to_wire_utc(d.get("created_at")) or "",
-            "finished_at": sqlite_timestamp_to_wire_utc(d.get("finished_at")),
-            "attempts": int(d["attempts"] or 0),
-            "max_attempts": int(d["max_attempts"] or 1),
-            "llm_cost_cny": float(d["llm_cost_cny"] or 0),
-            "analysis_type": d.get("analysis_type") or "flicking",
-            "input_mode": d.get("input_mode") or "video_fallback",
-            "kovaak_run_id": d.get("kovaak_run_id"),
-            "summary_label": _summary_label_from_stored_result(
-                d.get("status") or "",
-                d.get("result"),
-            ),
-        })
+        item = dict(row)
+        item["created_at"] = sqlite_timestamp_to_wire_utc(item.get("created_at")) or ""
+        item["finished_at"] = sqlite_timestamp_to_wire_utc(item.get("finished_at"))
+        out.append(history_trends.analysis_list_item(item))
     return out
+
+
+async def _rollback_without_masking(conn) -> None:
+    if not conn.in_transaction:
+        return
+    try:
+        await conn.execute("ROLLBACK")
+    except Exception:
+        pass
+
+
+async def _finalize_analysis_cleanup(session_id: int) -> None:
+    conn = await get_conn()
+    try:
+        await conn.execute(
+            "DELETE FROM analysis_deletion_tombstones WHERE analysis_session_id=?",
+            (session_id,),
+        )
+        await conn.commit()
+    except BaseException:
+        await _rollback_without_masking(conn)
+        raise
+
+
+async def _record_analysis_cleanup_failure(session_id: int) -> None:
+    conn = await get_conn()
+    try:
+        await conn.execute(
+            "UPDATE analysis_deletion_tombstones "
+            "SET cleanup_state='failed', cleanup_attempts=cleanup_attempts + 1, "
+            "last_error_code='workspace_cleanup_failed', "
+            "updated_at=CURRENT_TIMESTAMP WHERE analysis_session_id=?",
+            (session_id,),
+        )
+        await conn.commit()
+    except BaseException as exc:
+        await _rollback_without_masking(conn)
+        if not isinstance(exc, Exception):
+            raise
 
 
 async def delete_session(session_id: int, user_id: str) -> dict:
     conn = await get_conn()
-    await conn.execute("BEGIN IMMEDIATE")
     try:
+        await conn.execute("BEGIN IMMEDIATE")
         cur = await conn.execute(
             "SELECT id, user_id, status FROM sessions WHERE id=?",
             (session_id,),
         )
         row = await cur.fetchone()
         if row is None:
-            await conn.execute("ROLLBACK")
             raise SessionNotFound()
         if row["user_id"] != user_id:
-            await conn.execute("ROLLBACK")
             raise SessionForbidden()
         status = row["status"] or ""
         if status not in ("done", "failed"):
-            await conn.execute("ROLLBACK")
             raise SessionNotDeletable(
                 code="active",
                 message="分析进行中，请等完成或失败后再删除",
             )
-
-        try:
-            workspace_removed = remove_session_workspace(session_id)
-        except OSError as exc:
-            await conn.execute("ROLLBACK")
-            raise SessionNotDeletable(
-                code="cleanup_failed",
-                message="托管工作区清理失败，未删除分析记录",
-            ) from exc
 
         await coach_store.migrate_session_legacy_messages(
             session_id, conn=conn,
@@ -603,22 +653,68 @@ async def delete_session(session_id: int, user_id: str) -> dict:
             session_id, conn=conn,
         )
         await conn.execute(
+            "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
+            "VALUES(?, ?)",
+            (session_id, user_id),
+        )
+        await conn.execute(
             "DELETE FROM chat_messages WHERE session_id=?",
             (session_id,),
         )
         await conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
         await conn.execute("COMMIT")
-    except (SessionNotFound, SessionForbidden, SessionNotDeletable):
-        raise
-    except Exception:
-        await conn.execute("ROLLBACK")
+    except BaseException:
+        await _rollback_without_masking(conn)
         raise
 
+    try:
+        workspace_removed = remove_session_workspace(session_id)
+    except OSError:
+        await _record_analysis_cleanup_failure(session_id)
+        return {
+            "deleted": True,
+            "id": session_id,
+            "files_removed": [],
+            "cleanup_failed": ["workspace"],
+        }
+
+    try:
+        await _finalize_analysis_cleanup(session_id)
+    except Exception:
+        pass
     return {
         "deleted": True,
         "id": session_id,
         "files_removed": ["workspace"] if workspace_removed else [],
         "cleanup_failed": [],
+    }
+
+
+async def reconcile_analysis_deletions() -> dict[str, int]:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT analysis_session_id FROM analysis_deletion_tombstones "
+        "ORDER BY analysis_session_id",
+    )
+    session_ids = [int(row["analysis_session_id"]) for row in await cur.fetchall()]
+    cleaned = 0
+    failed = 0
+
+    for session_id in session_ids:
+        try:
+            remove_session_workspace(session_id)
+        except OSError:
+            await _record_analysis_cleanup_failure(session_id)
+            failed += 1
+            continue
+
+        await _finalize_analysis_cleanup(session_id)
+        cleaned += 1
+
+    return {
+        "processed": len(session_ids),
+        "cleaned": cleaned,
+        "failed": failed,
     }
 
 

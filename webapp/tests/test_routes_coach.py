@@ -14,6 +14,7 @@ from webapp.backend.contracts import (
     build_analysis_result_v1,
     dump_contract_json,
 )
+from webapp.backend.workspace import session_dir
 
 
 import webapp.backend.config as config_mod
@@ -101,16 +102,43 @@ async def test_video_404_when_file_absent():
 
 
 @pytest.mark.asyncio
-async def test_video_200_returns_mp4(tmp_path: Path):
-    """video_path 指向真实文件 → FileResponse video/mp4。"""
-    fake_video = tmp_path / "v.mp4"
+async def test_video_200_returns_mp4():
+    """Unversioned legacy video remains readable only from its managed workspace."""
+    sid = await _seed_done_session(video_path="")
+    managed_dir = session_dir(sid)
+    managed_dir.mkdir(parents=True, exist_ok=True)
+    fake_video = managed_dir / "video.mp4"
     fake_video.write_bytes(b"FAKE_MP4_BYTES")
-    sid = await _seed_done_session(video_path=str(fake_video))
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET video_path=? WHERE id=?",
+        (str(fake_video), sid),
+    )
+    await conn.commit()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}/video")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "video/mp4"
     assert resp.content == b"FAKE_MP4_BYTES"
+
+
+@pytest.mark.asyncio
+async def test_video_404_when_unversioned_legacy_path_is_outside_managed_workspace(
+    tmp_path: Path,
+):
+    external_video = tmp_path / "external.mp4"
+    external_video.write_bytes(b"EXTERNAL_VIDEO_MUST_NOT_BE_READ")
+    sid = await _seed_done_session(video_path=str(external_video))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.get(f"/api/sessions/{sid}/video")
+
+    assert response.status_code == 404
+    assert b"EXTERNAL_VIDEO_MUST_NOT_BE_READ" not in response.content
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +458,8 @@ async def test_post_primary_message_with_done_analysis(monkeypatch):
         )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reply"] == "带诊断回复"
+    response_body = resp.json()
+    assert response_body["reply"] == "带诊断回复"
     assert captured["profile"] == "decel_jitter"
 
     from webapp.backend import coach_store
@@ -438,6 +467,13 @@ async def test_post_primary_message_with_done_analysis(monkeypatch):
     thread = await coach_store.get_or_create_primary_thread("u1")
     refs = await coach_store.list_analysis_refs(int(thread["id"]))
     assert any(r["analysis_session_id"] == sid and r["status"] == "active" for r in refs)
+    stored_messages = await coach_store.load_messages(int(thread["id"]))
+    response_contexts = [message["context"] for message in response_body["messages"]]
+    stored_contexts = [message["context"] for message in stored_messages[-2:]]
+    assert response_contexts == stored_contexts
+    assert response_contexts[0] == response_contexts[1]
+    assert response_contexts[0]["schema_version"] == "coach_diagnostic_context.v1"
+    assert response_contexts[0]["analysis_ref"]["analysis_id"] == f"analysis:{sid}"
 
 
 @pytest.mark.asyncio
@@ -488,24 +524,41 @@ async def test_deleted_analysis_not_active_context(monkeypatch):
             "/api/coach/primary/attach",
             json={"analysis_session_id": sid},
         )
+        before_delete = await client.get("/api/coach/primary")
         del_resp = await client.delete(f"/api/sessions/{sid}")
         assert del_resp.status_code == 200
         resp = await client.post(
             "/api/coach/primary/messages",
             json={"content": "还能聊这次分析吗", "analysis_session_id": sid},
         )
+        reattach = await client.post(
+            "/api/coach/primary/attach",
+            json={"analysis_session_id": sid},
+        )
+        detail = await client.get(f"/api/sessions/{sid}")
+        video = await client.get(f"/api/sessions/{sid}/video")
+        timeline = await client.get(f"/api/sessions/{sid}/timeline")
         primary = await client.get("/api/coach/primary")
 
     assert resp.status_code == 409
-    deleted_refs = [
+    assert reattach.status_code in {404, 409}
+    assert detail.status_code == 404
+    assert video.status_code == 404
+    assert timeline.status_code == 404
+    unavailable_refs = [
         r for r in primary.json()["refs"]
-        if r["analysis_session_id"] == sid and r["status"] == "deleted"
+        if r["analysis_session_id"] == sid and r["status"] == "unavailable"
     ]
-    assert len(deleted_refs) == 1
+    assert len(unavailable_refs) == 1
     assert [m["content"] for m in primary.json()["messages"]] == [
         "先保存这次分析",
         "x",
     ]
+    assert primary.json()["messages"] == before_delete.json()["messages"]
+    contexts = [message["context"] for message in primary.json()["messages"]]
+    assert contexts[0] == contexts[1]
+    assert contexts[0]["schema_version"] == "coach_diagnostic_context.v1"
+    assert contexts[0]["analysis_ref"]["analysis_id"] == f"analysis:{sid}"
 
 # ---------------------------------------------------------------------------
 # COACH_RUNTIME branching (coach_engine)

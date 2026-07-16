@@ -57,6 +57,50 @@ class StorageResponse(BaseModel):
     sessions: list[StorageSessionItem]
 
 
+class TraceQualityOut(BaseModel):
+    state: str
+    availability: str
+    alignment_status: Optional[str] = None
+    coverage: Optional[float] = None
+
+
+class VisualReplayOut(BaseModel):
+    kind: Literal["seekable_mp4", "native_only", "unavailable"]
+    available: bool
+    seekable: bool
+    endpoint: Optional[str] = None
+    artifact_ref: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class DiagnosisLocatorOut(BaseModel):
+    analysis_ref: str
+    section: Literal["diagnosis"]
+
+
+class EvidenceReferenceOut(BaseModel):
+    id: str
+    source: str
+    artifact_id: Optional[str] = None
+    challenge_time_range_ms: Optional[list[float]] = None
+    alignment_status: str
+    availability: str
+    local_only: bool
+    metric_keys: list[str] = Field(default_factory=list)
+
+
+class AnalysisHistoryDetailOut(BaseModel):
+    analysis_ref: str
+    run_ref: Optional[str] = None
+    scenario: Optional[str] = None
+    input_mode: str
+    source_availability: dict[str, str] = Field(default_factory=dict)
+    trace_quality: TraceQualityOut
+    visual_replay: VisualReplayOut
+    diagnosis_locator: DiagnosisLocatorOut
+    evidence_refs: list[EvidenceReferenceOut] = Field(default_factory=list)
+
+
 class SessionStatus(BaseModel):
     """GET /sessions/{id} — result is AnalysisResult v1 dict (validated at queue layer)."""
 
@@ -74,10 +118,13 @@ class SessionStatus(BaseModel):
     analysis_type: str = "flicking"
     input_mode: str = "video_fallback"
     kovaak_run_id: Optional[int] = None
+    history: Optional[AnalysisHistoryDetailOut] = None
 
 
 class SessionListItem(BaseModel):
     id: int
+    analysis_ref: str
+    run_ref: Optional[str] = None
     status: str
     created_at: str
     finished_at: Optional[str] = None
@@ -89,35 +136,43 @@ class SessionListItem(BaseModel):
     input_mode: str = "video_fallback"
     kovaak_run_id: Optional[int] = None
     scenario: Optional[str] = None
+    source_availability: dict[str, str] = Field(default_factory=dict)
+    trace_quality: TraceQualityOut
 
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionListItem]
 
 
-class KovaaKRunItem(BaseModel):
+class KovaaKRunListItem(BaseModel):
     id: int
-    source_key: str
+    run_ref: str
+    source_key: Optional[str] = None
     scenario: Optional[str] = None
-    stats_source_ref: Optional[str] = None
-    performance_source_ref: Optional[str] = None
-    trace_artifact_ref: Optional[str] = None
-    source_availability: dict = {}
+    source_availability: dict[str, str] = Field(default_factory=dict)
+    trace_quality: TraceQualityOut
     trace_state: str = "none"
     trace_error: Optional[str] = None
-    stats_summary: Optional[dict] = None
-    performance_summary: Optional[dict] = None
     created_at: str
     updated_at: str
 
 
+class KovaaKRunItem(KovaaKRunListItem):
+    stats_source_ref: Optional[str] = None
+    performance_source_ref: Optional[str] = None
+    trace_artifact_ref: Optional[str] = None
+    stats_summary: Optional[dict] = None
+    performance_summary: Optional[dict] = None
+
+
 class KovaaKRunListResponse(BaseModel):
-    runs: list[KovaaKRunItem]
+    runs: list[KovaaKRunListItem]
 
 
 class HistoryTrendResponse(BaseModel):
     comparable: bool
     reason: Optional[str] = None
+    classification: Optional[Literal["deterministic"]] = None
     metric_key: Optional[str] = None
     unit: Optional[str] = None
     metric_version: Optional[str] = None

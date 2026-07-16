@@ -224,6 +224,30 @@ def diagnosis_to_analysis_summary(diagnosis: Any) -> str | None:
         return None
 
 
+def _canonical_analysis_summary(analysis_summary: str | None) -> str | None:
+    if not isinstance(analysis_summary, str) or not analysis_summary.strip():
+        return None
+    try:
+        parsed = json.loads(analysis_summary)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, Mapping):
+        return None
+
+    from .coach_context import (
+        COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+        coerce_coach_diagnostic_context,
+        serialize_coach_diagnostic_context,
+    )
+
+    if parsed.get("schema_version") != COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION:
+        return None
+    canonical = coerce_coach_diagnostic_context(parsed)
+    if canonical is None:
+        return None
+    return serialize_coach_diagnostic_context(canonical)
+
+
 def _build_turn_request(
     *,
     schema_version: str,
@@ -253,7 +277,7 @@ def _build_turn_request(
         "run_id": str(uuid.uuid4()),
         "user_id": effective_user_id,
         "messages": normalized_messages,
-        "analysis_summary": analysis_summary,
+        "analysis_summary": _canonical_analysis_summary(analysis_summary),
         "model": runtime_profile,
     }
     if system_prompt is not None:
@@ -528,7 +552,7 @@ def _subprocess_command() -> list[str]:
         )
     return [
         "node",
-        f"--import={COACH_RUNTIME_TSX_LOADER}",
+        f"--import={COACH_RUNTIME_TSX_LOADER.resolve().as_uri()}",
         str(COACH_RUNTIME_RUN_TURN),
     ]
 
@@ -578,7 +602,14 @@ def _run_turn_via_subprocess(
     timeout_s: int,
 ) -> dict[str, Any]:
     cmd = _subprocess_command()
-    env = {**os.environ, "PI_SOURCE_DIR": str(PI_SOURCE_DIR)}
+    env = os.environ.copy()
+    env.pop("AIMING_COOKIE_DESKTOP_TOKEN", None)
+    env.update(
+        {
+            "PI_SOURCE_DIR": str(PI_SOURCE_DIR.resolve()),
+            "TSX_TSCONFIG_PATH": str((PI_SOURCE_DIR / "tsconfig.json").resolve()),
+        }
+    )
     input_line = json.dumps(request, ensure_ascii=False)
 
     try:

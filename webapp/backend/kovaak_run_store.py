@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import struct
 import time
 from dataclasses import asdict
@@ -40,6 +41,7 @@ SUPPORTED_BUTTON_MASK = 0b111
 STATS_PARSER_VERSION = "kovaak_stats.v1"
 PERFORMANCE_PARSER_VERSION = "kovaak_performance.v1"
 SCENARIO_IDENTITY_VERSION = "kovaak_scenario.v1"
+_SHA256_DIGEST = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 class PairingConflictError(NonRetryableIngestionError):
@@ -185,6 +187,25 @@ def read_mouse_snapshot(path: str | Path) -> list[dict[str, int]]:
     return decode_mouse_snapshot_bytes(data)
 
 
+def _has_valid_mouse_snapshot_header(path: str | Path) -> bool:
+    """Check a snapshot's bounded structural header without decoding its points."""
+    source = Path(path)
+    size = source.stat().st_size
+    if size < SNAPSHOT_HEADER_SIZE or size > MAX_SNAPSHOT_BYTES:
+        return False
+    with source.open("rb") as stream:
+        header = stream.read(SNAPSHOT_HEADER_SIZE)
+    if len(header) != SNAPSHOT_HEADER_SIZE or header[:4] != SNAPSHOT_MAGIC:
+        return False
+    if header[4] != SNAPSHOT_VERSION or header[5:8] != b"\0\0\0":
+        return False
+    count = struct.unpack_from("<I", header, 8)[0]
+    return (
+        count <= MAX_SNAPSHOT_POINTS
+        and size == SNAPSHOT_HEADER_SIZE + count * SNAPSHOT_RECORD_SIZE
+    )
+
+
 def write_mouse_snapshot(path: str | Path, points: list[dict[str, int]]) -> None:
     """Write a validated trace snapshot atomically in the Rust-compatible format."""
     normalized = _validate_snapshot_points(points)
@@ -250,19 +271,169 @@ def _source_ref(run_id: int, kind: str, summary: object | None) -> str | None:
     source = summary.get("source")
     if not isinstance(source, dict):
         return None
-    digest = str(source.get("sha256") or "")
-    if not digest:
+    digest = source.get("sha256")
+    if not isinstance(digest, str) or not _SHA256_DIGEST.fullmatch(digest):
         return None
-    return f"run:{run_id}:{kind}:{digest[:16]}"
+    return f"run:{run_id}:{kind}:{digest[:16].lower()}"
 
 
 def _public_summary(summary: object | None) -> dict | None:
     if not isinstance(summary, dict):
         return None
-    return {
+    public = {
         key: value
         for key, value in summary.items()
         if key != "source"
+    }
+    sanitized = _sanitize_public_value(public)
+    return sanitized if isinstance(sanitized, dict) else None
+
+
+_DROP_PUBLIC_VALUE = object()
+
+
+def _path_like_key(key: object) -> bool:
+    compact = "".join(character for character in str(key).lower() if character.isalnum())
+    return compact == "path" or compact.endswith("path") or compact.endswith("paths")
+
+
+def _is_absolute_path_or_file_uri(value: str) -> bool:
+    candidate = value.strip()
+    return bool(
+        candidate
+        and (
+            candidate.lower().startswith("file:")
+            or os.path.isabs(candidate)
+            or candidate.startswith(("\\", "/"))
+            or re.match(r"^[A-Za-z]:[\\/]", candidate)
+        )
+    )
+
+
+def _sanitize_public_value(value: object) -> object:
+    if isinstance(value, dict):
+        sanitized: dict[object, object] = {}
+        for key, child in value.items():
+            if _path_like_key(key) or (
+                isinstance(key, str) and _is_absolute_path_or_file_uri(key)
+            ):
+                continue
+            public_child = _sanitize_public_value(child)
+            if public_child is not _DROP_PUBLIC_VALUE:
+                sanitized[key] = public_child
+        return sanitized
+    if isinstance(value, (list, tuple)):
+        sanitized_items = [_sanitize_public_value(child) for child in value]
+        return [child for child in sanitized_items if child is not _DROP_PUBLIC_VALUE]
+    if isinstance(value, str) and _is_absolute_path_or_file_uri(value):
+        return _DROP_PUBLIC_VALUE
+    return value
+
+
+def _public_string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return None if _is_absolute_path_or_file_uri(value) else value
+
+
+def _source_revision_availability(
+    path: object,
+    *,
+    sha256: object = None,
+    size: object = None,
+    mtime_ns: object = None,
+    parser_version: object = None,
+) -> str:
+    if not isinstance(path, str) or not path:
+        return "not_present"
+    candidate = Path(path)
+    if not candidate.is_file():
+        return "missing"
+    if (
+        not isinstance(sha256, str)
+        or not _SHA256_DIGEST.fullmatch(sha256)
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or isinstance(mtime_ns, bool)
+        or not isinstance(mtime_ns, int)
+    ):
+        return "invalid"
+    try:
+        observed = _source_metadata(
+            candidate,
+            str(parser_version or "source.v1"),
+        )
+    except (OSError, SourceUnstableError):
+        return "unavailable"
+    return "available" if (
+        observed.get("sha256") == sha256.lower()
+        and observed.get("size") == size
+        and observed.get("mtime_ns") == mtime_ns
+    ) else "invalid"
+
+
+def _source_stat_availability(
+    path: object,
+    *,
+    size: object = None,
+    mtime_ns: object = None,
+) -> str:
+    if not isinstance(path, str) or not path:
+        return "not_present"
+    candidate = Path(path)
+    try:
+        stat = candidate.stat()
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "unavailable"
+    if not candidate.is_file():
+        return "missing"
+    if size is None and mtime_ns is None:
+        return "available"
+    if (
+        isinstance(size, bool)
+        or not isinstance(size, int)
+        or isinstance(mtime_ns, bool)
+        or not isinstance(mtime_ns, int)
+    ):
+        return "invalid"
+    return "available" if (
+        stat.st_size == size and stat.st_mtime_ns == mtime_ns
+    ) else "invalid"
+
+
+def _summary_source(summary: object | None) -> dict:
+    if not isinstance(summary, dict):
+        return {}
+    source = summary.get("source")
+    return source if isinstance(source, dict) else {}
+
+
+def _trace_quality(
+    trace_state: object, trace_path: object, *, shallow: bool = False,
+) -> dict[str, object]:
+    state = trace_state if isinstance(trace_state, str) and trace_state else "none"
+    if state == "none" and not trace_path:
+        availability = "not_present"
+    elif state == "attached" and isinstance(trace_path, str):
+        try:
+            if shallow:
+                valid = _has_valid_mouse_snapshot_header(trace_path)
+            else:
+                read_mouse_snapshot(trace_path)
+                valid = True
+        except (OSError, ValueError):
+            availability = "unavailable"
+        else:
+            availability = "available" if valid else "unavailable"
+    else:
+        availability = "unavailable"
+    return {
+        "state": state,
+        "availability": availability,
+        "alignment_status": None,
+        "coverage": None,
     }
 
 
@@ -271,29 +442,90 @@ def public_kovaak_run(run: dict) -> dict:
     stats_path = run.get("stats_path")
     performance_path = run.get("performance_path")
     trace_path = run.get("mouse_trace_path")
+    stats_source = _summary_source(run.get("stats_summary"))
+    performance_source = _summary_source(run.get("performance_summary"))
     return {
         "id": run["id"],
-        "source_key": run["source_key"],
-        "scenario": run.get("scenario"),
+        "run_ref": f"run:{run['id']}",
+        "source_key": _public_string(run.get("source_key")),
+        "scenario": _public_string(run.get("scenario")),
         "stats_source_ref": _source_ref(run["id"], "stats", run.get("stats_summary")),
         "performance_source_ref": _source_ref(
             run["id"], "performance", run.get("performance_summary"),
         ),
         "trace_artifact_ref": f"run:{run['id']}:trace" if trace_path else None,
         "source_availability": {
-            "stats": "available" if stats_path and Path(stats_path).is_file() else (
-                "missing" if stats_path else "not_present"
+            "stats": _source_revision_availability(
+                stats_path,
+                sha256=stats_source.get("sha256"),
+                size=stats_source.get("size"),
+                mtime_ns=stats_source.get("mtime_ns"),
+                parser_version=stats_source.get("parser_version"),
             ),
-            "performance": "available" if performance_path and Path(performance_path).is_file()
-            else ("missing" if performance_path else "not_present"),
+            "performance": _source_revision_availability(
+                performance_path,
+                sha256=performance_source.get("sha256"),
+                size=performance_source.get("size"),
+                mtime_ns=performance_source.get("mtime_ns"),
+                parser_version=performance_source.get("parser_version"),
+            ),
         },
+        "trace_quality": _trace_quality(run.get("trace_state"), trace_path),
         "trace_state": run.get("trace_state", "none"),
-        "trace_error": run.get("trace_error"),
+        "trace_error": _public_string(run.get("trace_error")),
         "stats_summary": _public_summary(run.get("stats_summary")),
         "performance_summary": _public_summary(run.get("performance_summary")),
         "created_at": run["created_at"],
         "updated_at": run["updated_at"],
     }
+
+
+async def list_kovaak_run_summaries(user_id: str, limit: int = 100) -> list[dict]:
+    """Return public scalar Run summaries without loading parser summary blobs."""
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, source_key, scenario, stats_path, performance_path, "
+        "mouse_trace_path, trace_state, trace_error, created_at, updated_at, "
+        "CASE WHEN json_valid(stats_summary) THEN "
+        "json_extract(stats_summary, '$.source.size') END AS stats_size, "
+        "CASE WHEN json_valid(stats_summary) THEN "
+        "json_extract(stats_summary, '$.source.mtime_ns') END AS stats_mtime_ns, "
+        "CASE WHEN json_valid(performance_summary) THEN "
+        "json_extract(performance_summary, '$.source.size') END AS performance_size, "
+        "CASE WHEN json_valid(performance_summary) THEN "
+        "json_extract(performance_summary, '$.source.mtime_ns') END AS performance_mtime_ns "
+        "FROM kovaak_runs WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?",
+        (user_id, max(1, min(limit, 500))),
+    )
+    out: list[dict] = []
+    for row in await cur.fetchall():
+        item = dict(row)
+        out.append({
+            "id": int(item["id"]),
+            "run_ref": f"run:{item['id']}",
+            "source_key": _public_string(item.get("source_key")),
+            "scenario": _public_string(item.get("scenario")),
+            "source_availability": {
+                "stats": _source_stat_availability(
+                    item.get("stats_path"),
+                    size=item.get("stats_size"),
+                    mtime_ns=item.get("stats_mtime_ns"),
+                ),
+                "performance": _source_stat_availability(
+                    item.get("performance_path"),
+                    size=item.get("performance_size"),
+                    mtime_ns=item.get("performance_mtime_ns"),
+                ),
+            },
+            "trace_quality": _trace_quality(
+                item.get("trace_state"), item.get("mouse_trace_path"), shallow=True,
+            ),
+            "trace_state": item.get("trace_state") or "none",
+            "trace_error": _public_string(item.get("trace_error")),
+            "created_at": item["created_at"],
+            "updated_at": item["updated_at"],
+        })
+    return out
 
 
 async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
@@ -364,25 +596,18 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
 
 def public_analysis_input_snapshot(snapshot: dict) -> dict:
     """Remove DB-private paths before an input snapshot crosses a result boundary."""
-    sources = {
-        kind: {
-            key: value
-            for key, value in source.items()
-            if key != "path"
-        }
-        for kind, source in (snapshot.get("sources") or {}).items()
-        if isinstance(source, dict)
-    }
+    sources: dict[object, dict] = {}
+    for kind, source in (snapshot.get("sources") or {}).items():
+        sanitized = _sanitize_public_value(source)
+        if isinstance(sanitized, dict):
+            sources[kind] = sanitized
     trace = snapshot.get("trace")
-    public_trace = {
-        key: value
-        for key, value in trace.items()
-        if key != "path"
-    } if isinstance(trace, dict) else None
+    sanitized_trace = _sanitize_public_value(trace)
+    public_trace = sanitized_trace if isinstance(sanitized_trace, dict) else None
     return {
         "schema_version": snapshot.get("schema_version", "analysis_input_snapshot.v1"),
         "run_id": snapshot.get("run_id"),
-        "scenario": snapshot.get("scenario"),
+        "scenario": _public_string(snapshot.get("scenario")),
         "scenario_identity_version": snapshot.get("scenario_identity_version"),
         "sources": sources,
         "trace": public_trace,
