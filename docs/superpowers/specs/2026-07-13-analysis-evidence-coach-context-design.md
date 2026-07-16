@@ -251,6 +251,10 @@ derived_from[]
 - user source 由用户拥有，Aiming Cookie 不删除；
 - Raw Input trace 必须 `local_only = true`，不提供 public URL 和绝对 path。
 
+terminal Analysis 的 SQLite/workspace 原子性与恢复顺序由 active
+[`2026-07-16-analysis-deletion-reconciliation-design.md`](2026-07-16-analysis-deletion-reconciliation-design.md)
+冻结；本 spec 不重复定义 tombstone 或 reconciliation 状态机。
+
 ## 8. Coach Diagnostic Context v1
 
 Coach 只通过 allow-list projection 获取：

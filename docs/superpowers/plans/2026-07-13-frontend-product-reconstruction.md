@@ -1,8 +1,8 @@
 # Frontend Product Reconstruction — Implementation Plan
 
-> **状态：active，但执行后置。** 本计划已完成文档审阅并列入 `docs/superpowers/plans/README.md` 的 Active 区；点点于 2026-07-14 裁决正式前端最后处理。除已完成的 Task 1 外，Task 2–7 等待 Roadmap 中的 Knowledge Registry、Coach/Analysis/data 后端真实 E2E 与 Desktop/runtime Gate 闭合后重新指定。
+> **状态：active，但当前无已授权 Task。** 本计划已完成文档审阅并列入 `docs/superpowers/plans/README.md` 的 Active 区；点点已设定后端前置硬终点，但尚未明确指定下一个 frontend Task。
 >
-> Task 1 已于 2026-07-13 获得点点明确授权和精确删除范围确认，并已完成 prototype inventory/删除与 adapter 边界验证。Task 2–7 当前不仅未授权，而且整体后置；后端 Gate 闭合后仍须由点点逐个明确指定，executor 才能按对应 Allowed files、Tests first、冻结决策与 Stop rule 开工。
+> Task 1 已于 2026-07-13 获得点点明确授权和精确删除范围确认，并已完成 prototype inventory/删除与 adapter 边界验证。Task 2–7 均须等待点点明确指定，executor 才能按对应 Allowed files、Tests first、冻结决策与 Stop rule 开工。
 >
 > **本计划只覆盖正式产品前端重建。** 原 `/history`、`/analyze`、临时 App shell 和 prototype components 已在 Task 1 删除；当前只保留 capability adapters 与 Tauri/runtime。正式重建必须从上游产品与设计合同开始，不得恢复 prototype。
 >
@@ -16,7 +16,7 @@
 > - 已列为 active 的 [`../specs/2026-07-13-frontend-product-reconstruction-design.md`](../specs/2026-07-13-frontend-product-reconstruction-design.md)
 > - 已有能力合同：[`../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md`](../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md)、[`../specs/2026-07-13-analysis-evidence-coach-context-design.md`](../specs/2026-07-13-analysis-evidence-coach-context-design.md)
 >
-> Frontend reconstruction spec 与本计划均已 active；Task 1 已完成，Task 2–7 当前尚未获得执行授权。
+> Frontend reconstruction spec 与本计划均已 active；Task 1 已完成，Task 2–7 当前未授权。
 
 ## 1. 目标与非目标
 
@@ -201,6 +201,8 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 - 任何人要求在本 Task 内顺手修复无关前端、后端或视觉债务。
 
 ## Task 2 — Executable tokens / theme / primitives
+
+**状态：未授权。**
 
 ### 目的
 

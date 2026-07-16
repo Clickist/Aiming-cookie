@@ -1,6 +1,8 @@
 # RefleK Capability Adoption — Implementation Plan
 
-> 状态：active（点点已在 2026-07-13 当前会话明确授权按顺序执行 Task 1–7，并允许不冲突的 Terra subagents 并行开发）。
+> 状态：active，但当前无可执行 Task。Task 1–6A 已完成；Task 6B 的前端消费继续 deferred，
+> 任何新的前端工作仍须由点点按 frontend reconstruction plan 明确指定。已实现的本地 Benchmark
+> 后端能力保留，但不构成 v1 前端授权。
 > 上游 assessment：[`../assessments/2026-07-13-reflek-capability-adoption.md`](../assessments/2026-07-13-reflek-capability-adoption.md)
 > 依赖 specs：[`../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md`](../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md)、[`../specs/2026-07-13-analysis-evidence-coach-context-design.md`](../specs/2026-07-13-analysis-evidence-coach-context-design.md)
 > 本计划不授权复制 RefleK GPL-3.0 源码；实现必须独立编写，许可证边界另行审查。
@@ -73,7 +75,7 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 > 本 Task 允许在不改变 Task 3 科学语义或 Task 4 mode dispatch 的前提下，
 > 仅修改 `worker.py` / `test_worker.py` 补齐结果归属、版本、metric provenance
 > 与 artifact metadata。
-> 实施状态：completed（2026-07-14）；后续 Task 3 亦已完成，当前接力点为 Task 4。
+> 实施状态：completed（2026-07-14）；后续 Task 3–6A 亦已完成，当前无可执行 Task。
 
 ### Allowed files
 
@@ -114,7 +116,7 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 > 本 Task 额外允许 `kovaak_run_store.py` 冻结 trace fingerprint，并允许
 > `test_kovaak_runs.py` 验证该 snapshot contract；不改变 Run/trace ownership、
 > retention、删除或 Task 1 lifecycle 语义。
-> 实施状态：completed（2026-07-14）；Task 4 尚未开始。
+> 实施状态：completed（2026-07-14）；后续 Task 4–6A 已完成，当前无可执行 Task。
 > 2026-07-15 correctness correction：worker 不再“先校验路径、后由 parser 重开路径”，
 > 而是对 Stats、Performance、Raw trace 各做一次有界读取，校验该组 bytes 后直接交给
 > bytes parser；仅为此增加 `csv_parser.py` 的 bytes 入口与 Raw snapshot bytes decoder，
@@ -160,12 +162,15 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 
 ## Task 4 — Worker mode dispatch
 
-> 实施状态：not started（截至 2026-07-14）。
-> 新 session 只有在点点明确指定“继续 Task 4”后才开工；不得自动开始 Task 5 或前端任务。
-> 2026-07-15 pre-Task correctness correction：现有 run-based path import 已在进入 queued
+> 实施状态：completed（2026-07-15）。三种 mode dispatch 已按 Tests first 正式验收；
+> run-based multimodal / video-fallback 在 CV 前、CV 后且 provider/report 前、terminal write 前
+> 流式校验 managed MP4 的 SHA-256 + size，完整性失败稳定归类为不可重试的
+> `input_validation / source_unavailable`，不泄露路径，也不把已变更视频的 summary 发送给 provider。
+> input-native 完全忽略视频；multimodal 普通视觉失败保留 native result；legacy upload fallback
+> 与 v1/unversioned legacy read 保持可用。2026-07-15 pre-Task correctness correction：现有 run-based path import 已在进入 queued
 > 前冻结 MP4 SHA-256 / size / mtime，验证 Analysis managed copy 与 frozen revision 一致，
 > 将 fingerprint/checksum 写入 snapshot/result manifest，并让同一路径换版参与幂等冲突；
-> 该局部修正不代表 Task 4 的三模式正式验收已开始或完成。
+> Task 4 在此基础上补齐 worker 消费阶段与外部副作用前的完整性 Gate。
 
 ### Allowed files
 
@@ -190,6 +195,14 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 - 无法保留 legacy video fallback。
 
 ## Task 5 — Unified Coach diagnostic context/tools
+
+> **实施状态：completed（2026-07-15）。** `coach_diagnostic_context.v1` 现由单一 Python
+> allow-list projector 生成，并在 Python runtime、Pi request、TypeScript tool、SQLite
+> 写入/读取与 Coach API 边界重复校验；v2 只接收 deterministic metric/comparison，v1
+> 保留 legacy metric read 且 mode 固定为 `unknown`。Raw trace、sample/timestamp、路径、
+> file/network URL、credential、payload、heuristic 与 Benchmark sentinel 均 fail-closed；
+> stable Analysis ref 可审计，内部 `deleted` 在 Coach wire 投影为 `unavailable`，消息与
+> canonical context 保留。最终验证见 [`../../PROGRESS.md`](../../PROGRESS.md)。
 
 ### Allowed files
 
@@ -219,31 +232,103 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 
 ## Task 6 — History / Run inspector / evidence replay / comparable trends
 
-### Allowed files
+> **执行顺序裁决（2026-07-15）：** 点点要求正式前端最后处理，因此本 Task 拆为
+> backend-only 的 Task 6A 与后置的 Task 6B。6A 完成不等于整个 Task 6 或正式 History UI
+> 完成；6B 仍受 frontend reconstruction plan 的前置与重新指定约束。
+
+### Task 6A — Backend read models and comparability
+
+**状态：completed（2026-07-16）。**
+
+> Analysis/Run 已使用轻列表与 lazy detail；列表不返回 result/summary blob 且不做内容
+> hash，detail 保留完整 source revision 校验。Analysis trace 状态来自 session frozen
+> snapshot，v2/v1/unversioned legacy replay 与视频 endpoint 共用 managed-file Gate；趋势仅在
+> 完整 deterministic identity、calibration、coverage 与 alignment 均严格匹配时输出数值。
+> 最终安全复核同时收紧了公开 source digest ref、malformed comparability identity 与缺失
+> fingerprint 的 detail availability。最终验证见 [`../../PROGRESS.md`](../../PROGRESS.md)。
+
+> **Sol 执行裁决（2026-07-15）：** 只在 response model 删除 `result` 不构成轻列表；
+> Analysis/Run list 必须使用不会读取完整 result/summary blob 的共享 read path。为避免 route
+> 与 Coach product command 形成两套实现，本 Task 允许修改下列共享只读入口。现有 native v2
+> metric 同时缺少 Task 5/本 Task 已要求的显式 deterministic classification，因此本 Task 仅做
+> producer/terminal validator 对齐；不改变算法值、AnalysisResult 版本或科学阈值。
+
+#### Allowed files
 
 - `webapp/backend/history_trends.py` (new)
 - `webapp/backend/routes.py` / `schemas.py` / `kovaak_run_store.py` only for read models
+- `webapp/backend/queue.py` / `coach_commands.py` only for the shared lightweight list/read path
+- `webapp/backend/contracts.py` / `worker.py` only to require and emit explicit
+  `classification = deterministic` on persisted v2 deterministic metrics
 - `webapp/tests/test_history.py` / `test_history_trends.py` (new)
-- `webapp/frontend/app/**`
-- `webapp/frontend/components/**`
-- `webapp/frontend/lib/api.ts` / `types.ts` / `contracts.ts` and focused tests
+- focused existing `test_routes.py` / `test_kovaak_runs.py` / `test_coach_commands.py` /
+  `test_routes_coach.py` / `test_contracts.py` / `test_worker.py` / `test_queue.py` read-model and
+  producer-contract tests
 
-### Tests first
+#### Tests first
 
 - Run 与 Analysis 轻列表，detail lazy load；
 - source unavailable / trace quality / input mode 可见；
-- MP4 可 seek；native-only 明确无视觉回放，不伪造；
+- read model 区分可 seek MP4 与 native-only 无视觉回放，不伪造媒体能力或返回本地路径；
 - diagnosis/evidence stable ref 定位；
 - 只有同 scenario/mode/metric version/unit/calibration/quality 才可比；
 - 不足两条或不可比时不制造趋势。
 
-### Stop rule
+#### Frozen read-model decisions
+
+- list DTO 只返回标量、稳定 `analysis:*` / `run:*` ref、scenario/input mode、session frozen
+  source availability 与 frozen trace state；完整 result、timeline/events、Stats/Performance summary 和
+  evidence locator 只由 detail lazy load；
+- Analysis detail 以 `analysis_ref + section` 定位 diagnosis，并按 active spec 的
+  `evidence_reference` allow-list 返回 evidence locator；不得返回 path、raw sample 或伪造的
+  trace drop/button/quality 数据；
+- replay capability 只有在非 `input_native`、v2 evidence/manifest 明确声明 managed MP4 且文件
+  当前存在时为 `seekable_mp4`；已冻结的 legacy video-fallback read 优先校验 path-free
+  `artifact_manifest.v1` 中 available `input_video` 与当前 managed 文件；unversioned legacy 若无
+  manifest，仅在 `video_fallback` 且文件位于该 session managed workspace 时保留兼容 read；
+  `input_native` 为 `native_only`，其余为 `unavailable`；视频读取 endpoint 使用同一 Gate；
+- comparability 不采用未冻结的 `coverage >= 0.8`。metric 必须显式 deterministic、available、
+  finite full coverage，result evidence coverage 同样必须显式且完整，alignment 必须为
+  `aligned | not_required`，metric version/unit、非空 calibration ref、analysis type、scenario
+  identity/version 与 input mode 必须相同；任一缺失均 fail closed；
+- 当前 video-fallback metric coverage 为 `null`，因此不进入正式趋势；本 Task 不为其猜测
+  coverage，也不修改算法输出；
+- schema 只做向后兼容 additive read-model 字段，不新增数据库列，不修改 deletion/retention。
+
+#### Stop rule
 
 - 需要改变删除/retention 语义；
 - 需要下载或 API 返回 raw trace；
+- 需要修改 frontend 文件；
+- 需要新增独立 Dashboard 或 leaderboard。
+
+### Task 6B — Frontend History / replay consumption
+
+**状态：deferred。** 在 frontend reconstruction 前置完成并由点点重新指定前不执行。
+
+#### Allowed files
+
+- `webapp/frontend/app/**`
+- `webapp/frontend/components/**`
+- `webapp/frontend/lib/api.ts` / `types.ts` / `contracts.ts` and focused tests
+
+#### Tests first
+
+- 消费 6A 的轻列表、lazy detail、evidence locator 与 comparability reason；
+- MP4 可 seek；native-only 明确无视觉回放，不伪造；
+- source unavailable / trace quality / input mode 与不可比原因可见；
+- 不复制 backend comparability、availability 或 ref 语义。
+
+#### Stop rule
+
+- frontend reconstruction Task 2–5 前置未完成或未重新指定；
+- 需要改变 6A read-model contract、删除/retention 语义或返回 raw trace；
 - 需要新增独立 Dashboard 或 leaderboard。
 
 ## Task 7 — Benchmark / external progress product domain
+
+**状态：backend capability retained；v1 前端不执行。** 本地记录、存储和 API 已存在；Benchmark
+不进入 v1 正式前端、默认 History 主流程或默认 Coach context。任何前端暴露均须另立 spec/Task 并由点点明确授权。
 
 ### 冻结决策
 
@@ -252,7 +337,8 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 - 每条记录必须显式包含 provider、provider license note、catalog version、canonical scenario id、metric/unit、observed_at 与 availability；
 - 外部身份默认不连接；只有显式 consent 才保存 opaque external identity ref；
 - cache 状态为 `available | stale | unavailable`；不同 provider/catalog/scenario/metric/unit 不可比较；
-- History 内作为独立分区，不进入默认 Coach context，不建立全局 leaderboard。
+- 保留为独立的本地后端记录能力；不进入 v1 正式前端、默认 History 主流程或默认 Coach context，
+  不建立全局 leaderboard。
 
 ### Allowed files
 
@@ -260,7 +346,6 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 - `webapp/backend/db.py` / `schemas.py` / `routes.py`
 - `webapp/backend/history_trends.py` only for explicit external comparison
 - `webapp/tests/test_benchmark_store.py` (new) and focused route/db tests
-- `webapp/frontend/components/history/BenchmarkPanel.tsx` and related frontend types/API/tests
 
 ### Tests first
 
@@ -269,7 +354,7 @@ Benchmark、外部 rank、独立 Dashboard、updater、cloud trace sync 不属�
 - stale/unavailable/offline behavior；
 - comparability predicate；
 - no Benchmark fields leak into AnalysisResult or default Coach context；
-- API/UI 无 provider secret、绝对路径或 raw trace。
+- API 不暴露 provider secret、绝对路径或 raw trace。
 
 ### Stop rule
 

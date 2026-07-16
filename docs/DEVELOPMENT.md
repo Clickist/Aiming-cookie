@@ -6,15 +6,30 @@
 
 当前仓库包含 Python、Node.js/Next.js、Pi runtime 和 Rust/Tauri 组件。具体版本约束以各自依赖文件和 lockfile 为准，不在本文重复固定易过期的版本号。
 
+macOS / Linux：
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install -r webapp/requirements.txt
 
-cd webapp/frontend
-npm install
+npm --prefix third_party/pi install
+npm --prefix webapp/frontend install
 ```
+
+Windows PowerShell：
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r webapp\requirements.txt
+
+npm.cmd --prefix third_party\pi install
+npm.cmd --prefix webapp\frontend install
+```
+
+PowerShell 可能因 execution policy 拒绝 Node 安装器提供的 `npm.ps1`；仓库命令统一使用 `npm.cmd`，不需要修改系统 execution policy。Pi 的 Node 版本要求以 `third_party/pi/package.json` 的 `engines` 为准。
 
 桌面壳开发还需要本机 Rust toolchain 和 Tauri 2 的平台依赖。
 
@@ -22,22 +37,44 @@ npm install
 
 推荐分三个终端启动：
 
+macOS / Linux 的终端 1：
+
 ```bash
-# 终端 1：Coach sidecar + FastAPI API
 source .venv/bin/activate
 ./scripts/dev-up.sh
 ```
 
+Windows 的终端 1 使用 Git Bash；组合脚本会启动 Coach sidecar，并以前台进程运行 FastAPI：
+
 ```bash
-# 终端 2：分析 worker
+source .venv/Scripts/activate
+./scripts/dev-up.sh
+```
+
+终端 2 启动分析 worker。macOS / Linux：
+
+```bash
 source .venv/bin/activate
 python -m webapp.backend.worker
 ```
 
+Windows PowerShell：
+
+```powershell
+.\.venv\Scripts\python.exe -m webapp.backend.worker
+```
+
+终端 3 启动 Next.js 前端。macOS / Linux：
+
 ```bash
-# 终端 3：Next.js 前端
 cd webapp/frontend
 npm run dev
+```
+
+Windows PowerShell：
+
+```powershell
+npm.cmd --prefix webapp\frontend run dev
 ```
 
 `./scripts/dev-up.sh --help` 列出可配置端口和 Coach sidecar 环境变量。
@@ -49,6 +86,12 @@ Tauri 壳位于 `webapp/frontend/src-tauri/`。它负责启动本地 Python runt
 ```bash
 cd webapp/frontend
 npm run tauri dev
+```
+
+Windows PowerShell：
+
+```powershell
+npm.cmd --prefix webapp\frontend run tauri dev
 ```
 
 Desktop 的打包、签名、公证和更新链路尚未构成稳定发布流程；当前状态与阻塞以 `PROGRESS.md` 为准。
@@ -87,6 +130,45 @@ cargo clippy --locked --all-targets -- -D warnings
 # Windows-only Raw Input module condition check (host can be non-Windows;
 # full Tauri packaging additionally requires Windows resource tooling/icons)
 cargo check --tests --target x86_64-pc-windows-gnu
+```
+
+Windows PowerShell 的产品自动化 Gate：
+
+```powershell
+# Python
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m compileall -q kovaak_tracker webapp\backend webapp\tests tests
+
+# Pi packages/ai（只验证产品使用的 provider/model/auth 边界）
+Push-Location third_party\pi
+npm.cmd test --workspace @earendil-works/pi-ai
+Pop-Location
+
+# Frontend adapters；正式 route 状态以 PROGRESS.md 为准
+npm.cmd --prefix webapp\frontend run type-check
+npm.cmd --prefix webapp\frontend test
+npm.cmd --prefix webapp\frontend run build
+
+# Tauri / Rust MSVC
+$env:PATH = "$HOME\.cargo\bin;$env:PATH"
+Push-Location webapp\frontend\src-tauri
+cargo +stable-x86_64-pc-windows-msvc fmt --check
+cargo +stable-x86_64-pc-windows-msvc check --locked --all-targets
+cargo +stable-x86_64-pc-windows-msvc test --locked --all-targets
+cargo +stable-x86_64-pc-windows-msvc clippy --locked --all-targets -- -D warnings
+Pop-Location
+```
+
+Coach runtime 必须直接加载 pinned Pi source，并显式传入 Windows Python 与 tsconfig：
+
+```powershell
+$env:PI_SOURCE_DIR = (Resolve-Path third_party\pi).Path
+$env:TSX_TSCONFIG_PATH = (Resolve-Path third_party\pi\tsconfig.json).Path
+$env:PYTHON_BIN = (Resolve-Path .venv\Scripts\python.exe).Path
+$loader = (Resolve-Path third_party\pi\node_modules\tsx\dist\loader.mjs).Path
+$loaderUrl = & node -e "const { pathToFileURL } = require('node:url'); process.stdout.write(pathToFileURL(process.argv[1]).href)" $loader
+$tests = (Get-ChildItem webapp\coach-runtime\test -Filter *.test.ts | Sort-Object Name).FullName
+node "--import=$loaderUrl" --test @tests
 ```
 
 文档改动至少运行：

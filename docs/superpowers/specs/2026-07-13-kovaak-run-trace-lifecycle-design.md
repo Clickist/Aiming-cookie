@@ -97,7 +97,11 @@ discovered
 3. Stats 与 Performance 可以先后到达，但每次补全都必须重新验证 source identity；
 4. 只凭 stem 不能把两份已冲突文件静默拼接；冲突进入 `pairing_conflict`；
 5. source 文件移动、删除或修改后，Run 保留，但 availability 更新；
-6. 启动扫描必须有范围/retention，不无限制导入全部历史。
+6. Desktop 自动 watcher 对每个 Stats / Performance source 目录只考虑按
+   `(mtime_ns DESC, filename casefold ASC)` 排序的最新 50 个受支持文件；这是一项
+   technical-preview discovery bound，不是用户源文件 retention，也不删除或改写窗口外文件；
+7. 新建或修改的文件因新 revision 进入窗口；已入库 Run 保留，窗口外历史的批量 backfill、
+   导入/导出与用户可调 retention 不在当前合同中，不得通过启动时全量扫描静默实现。
 
 ## 4. Raw Input 生命周期
 
