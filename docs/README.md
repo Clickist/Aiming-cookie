@@ -26,6 +26,8 @@
 - 开发与验证：`DEVELOPMENT.md`，再进入相关代码目录。
 - 当前施工：只使用 [`superpowers/plans/README.md`](superpowers/plans/README.md) 列为 active 的 plan/Task。
 - 局部设计：只使用 [`superpowers/specs/README.md`](superpowers/specs/README.md) 列为 active 的 spec。
+- Analysis 删除/恢复：长期合同使用 active [`superpowers/specs/2026-07-16-analysis-deletion-reconciliation-design.md`](superpowers/specs/2026-07-16-analysis-deletion-reconciliation-design.md)；实施证据见 completed [`archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md`](archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md)。
+- Windows Desktop 前端前置 Gate：Steam 多库 KovaaK bounded discovery 与 launch-token descendant isolation 的实施证据见 completed [`archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md`](archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md)。
 
 ## 专题资料
 
