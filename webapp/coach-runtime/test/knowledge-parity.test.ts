@@ -11,6 +11,10 @@ const QUERIES = [
   { topic: "settings_experiment", issue_signal: "sensitivity high", metric_refs: ["metric:cm_per_360"], supported_use: "verification" },
 ];
 
+const DEFAULT_PYTHON_BIN = process.platform === "win32"
+  ? ".venv/Scripts/python.exe"
+  : ".venv/bin/python";
+
 test("TypeScript and Python return identical entry refs and order", () => {
   const registry = loadKnowledgeRegistry();
   for (const query of QUERIES) {
@@ -22,7 +26,7 @@ test("TypeScript and Python return identical entry refs and order", () => {
       "print(json.dumps([entry_ref(e) for e in query_registry(topic=q.get('topic'), issue_signal=q.get('issue_signal'), metric_refs=q.get('metric_refs',()), supported_use=q.get('supported_use'))]))",
     ].join(";");
     const pyRefs = JSON.parse(execFileSync(
-      process.env.PYTHON_BIN ?? ".venv/bin/python",
+      process.env.PYTHON_BIN ?? DEFAULT_PYTHON_BIN,
       ["-c", script, JSON.stringify(query)],
       { encoding: "utf8", cwd: process.cwd() },
     ));

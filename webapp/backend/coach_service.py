@@ -17,6 +17,7 @@ class CoachChatResult:
     notes: list[str]
     assistant_content: str
     tool_events: list[dict]
+    context: Optional[dict] = None
 
 
 async def run_chat_turn(
@@ -68,6 +69,7 @@ async def run_chat_turn(
             notes=notes,
             assistant_content=assistant_content,
             tool_events=[],
+            context=context,
         )
 
     if config.COACH_RUNTIME == "pi" and provider_profile is not None:
@@ -103,7 +105,7 @@ async def run_chat_turn(
                     legacy_session_id=legacy_session_id,
                     context=context,
                 )
-                return CoachChatResult(None, notes, assistant_content, [])
+                return CoachChatResult(None, notes, assistant_content, [], context)
             if refreshed.get("status") != "succeeded":
                 notes = ["Provider credential 刷新未完成，请重新认证"]
                 assistant_content = "(Coach Provider credential 刷新未完成，暂未生成回复)"
@@ -121,7 +123,7 @@ async def run_chat_turn(
                     legacy_session_id=legacy_session_id,
                     context=context,
                 )
-                return CoachChatResult(None, notes, assistant_content, [])
+                return CoachChatResult(None, notes, assistant_content, [], context)
             provider_profile = await provider_store.get_default_runtime_profile(x_user_id)
             if not provider_store.runtime_profile_configured(provider_profile):
                 notes = ["Provider credential 刷新后仍不可用，请重新认证"]
@@ -140,7 +142,7 @@ async def run_chat_turn(
                     legacy_session_id=legacy_session_id,
                     context=context,
                 )
-                return CoachChatResult(None, notes, assistant_content, [])
+                return CoachChatResult(None, notes, assistant_content, [], context)
 
     user_message_id = await coach_store.append_message(
         thread_id,
@@ -205,4 +207,5 @@ async def run_chat_turn(
         notes=notes,
         assistant_content=assistant_content,
         tool_events=tool_events,
+        context=context,
     )

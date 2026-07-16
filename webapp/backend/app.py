@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -7,17 +8,33 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import config
+from . import config, queue
 from .auth import require_desktop_token
 from .health import router as health_router
 from .routes import router
 from .db import init_schema
 
 
+log = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """生产启动时 init schema。测试用 fixture init,不依赖 lifespan。"""
     await init_schema()
+    reconciliation = await queue.reconcile_analysis_deletions()
+    error_code = (
+        "workspace_cleanup_failed"
+        if reconciliation["failed"]
+        else "none"
+    )
+    log.info(
+        "analysis deletion reconciliation processed=%s cleaned=%s failed=%s code=%s",
+        reconciliation["processed"],
+        reconciliation["cleaned"],
+        reconciliation["failed"],
+        error_code,
+    )
     yield
 
 

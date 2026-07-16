@@ -258,11 +258,57 @@ export interface AnalyzeResponse {
 
 export type SessionStatusEnum = "queued" | "running" | "done" | "failed";
 
+/** Path-free trace state shared by Run and Analysis read models. */
+export interface TraceQuality {
+  state: string;
+  availability: string;
+  alignment_status: string | null;
+  coverage: number | null;
+}
+
+export interface VisualReplay {
+  kind: "seekable_mp4" | "native_only" | "unavailable";
+  available: boolean;
+  seekable: boolean;
+  endpoint: string | null;
+  artifact_ref: string | null;
+  reason: string | null;
+}
+
+export interface DiagnosisLocator {
+  analysis_ref: string;
+  section: "diagnosis";
+}
+
+export interface EvidenceReference {
+  id: string;
+  source: string;
+  artifact_id: string | null;
+  challenge_time_range_ms: number[] | null;
+  alignment_status: string;
+  availability: string;
+  local_only: boolean;
+  metric_keys: string[];
+}
+
+/** Lazy history detail returned only by GET /api/sessions/:id. */
+export interface AnalysisHistoryDetail {
+  analysis_ref: string;
+  run_ref: string | null;
+  scenario: string | null;
+  input_mode: string;
+  source_availability: Record<string, string>;
+  trace_quality: TraceQuality;
+  visual_replay: VisualReplay;
+  diagnosis_locator: DiagnosisLocator;
+  evidence_refs: EvidenceReference[];
+}
+
 export interface SessionStatus {
   id: number;
-  status: SessionStatusEnum;
+  status: string;
   /** Present when status === "done" — versioned, path-free result envelope. */
-  result: AnalysisResult | null;
+  result: Record<string, unknown> | null;
   /** Present when status === "failed" — Error v1 wire envelope. */
   error: ErrorV1 | null;
   llm_cost_cny: number | null;
@@ -273,14 +319,17 @@ export interface SessionStatus {
   started_at: string | null;
   finished_at: string | null;
   analysis_type: string;
-  input_mode: InputMode;
+  input_mode: string;
   kovaak_run_id: number | null;
+  history: AnalysisHistoryDetail | null;
 }
 
 /** One row from GET /api/sessions (no full result payload). */
 export interface SessionListItem {
   id: number;
-  status: SessionStatusEnum;
+  analysis_ref: string;
+  run_ref: string | null;
+  status: string;
   created_at: string;
   finished_at: string | null;
   attempts: number;
@@ -288,35 +337,43 @@ export interface SessionListItem {
   llm_cost_cny: number | null;
   summary_label: string | null;
   analysis_type: string;
-  input_mode: InputMode;
+  input_mode: string;
   kovaak_run_id: number | null;
   scenario: string | null;
+  source_availability: Record<string, string>;
+  trace_quality: TraceQuality;
 }
 
 export interface SessionListResponse {
   sessions: SessionListItem[];
 }
 
-/** Safe public Run projection. Local source paths and trace bytes are never present. */
-export interface KovaaKRunItem {
+/** Safe public Run list projection. Local source paths, trace bytes, and parser summaries are absent. */
+export interface KovaaKRunListItem {
   id: number;
-  source_key: string;
+  run_ref: string;
+  source_key: string | null;
   scenario: string | null;
-  stats_source_ref: string | null;
-  performance_source_ref: string | null;
-  trace_artifact_ref: string | null;
-  source_availability: Record<string, "available" | "missing" | "not_present" | string>;
+  source_availability: Record<string, string>;
+  trace_quality: TraceQuality;
   trace_state: string;
   /** Kept for diagnostics only; the UI intentionally does not render it. */
   trace_error: string | null;
-  stats_summary: Record<string, unknown> | null;
-  performance_summary: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
 
+/** Safe public Run detail. Local source paths and trace bytes are never present. */
+export interface KovaaKRunItem extends KovaaKRunListItem {
+  stats_source_ref: string | null;
+  performance_source_ref: string | null;
+  trace_artifact_ref: string | null;
+  stats_summary: Record<string, unknown> | null;
+  performance_summary: Record<string, unknown> | null;
+}
+
 export interface KovaaKRunListResponse {
-  runs: KovaaKRunItem[];
+  runs: KovaaKRunListItem[];
 }
 
 export interface KovaaKAnalysisRequest {
@@ -328,16 +385,17 @@ export interface KovaaKAnalysisRequest {
 
 export interface HistoryTrend {
   comparable: boolean;
-  reason: string | null;
-  metric_key: string | null;
-  unit: string | null;
-  metric_version: string | null;
-  current: number | null;
-  baseline: number | null;
-  delta: number | null;
-  percent_change: number | null;
-  current_session_id: number | null;
-  baseline_session_id: number | null;
+  reason?: string;
+  classification?: "deterministic";
+  metric_key?: string;
+  unit?: string;
+  metric_version?: string;
+  current?: number;
+  baseline?: number;
+  delta?: number;
+  percent_change?: number;
+  current_session_id?: number;
+  baseline_session_id?: number;
 }
 
 export type BenchmarkAvailability = "available" | "stale" | "unavailable";

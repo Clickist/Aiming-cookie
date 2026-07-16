@@ -358,11 +358,26 @@ async def append_message(
     legacy_session_id: Optional[int] = None,
     context: Optional[dict] = None,
 ) -> int:
+    from .coach_context import (
+        COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+        coerce_coach_diagnostic_context,
+    )
+
     conn = await get_conn()
     trace_json = json.dumps(trace, ensure_ascii=False) if trace else None
+    canonical_context = None
+    if (
+        isinstance(context, dict)
+        and context.get("schema_version") == COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION
+    ):
+        canonical_context = coerce_coach_diagnostic_context(context)
     context_json = json.dumps(
-        context, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
-    ) if context is not None else None
+        canonical_context,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ) if canonical_context is not None else None
     cur = await conn.execute(
         "INSERT INTO coach_messages("
         "thread_id, role, content, trace_json, legacy_session_id, context_json"
@@ -379,6 +394,11 @@ async def append_message(
 
 
 async def load_messages(thread_id: int) -> list[dict[str, Any]]:
+    from .coach_context import (
+        COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+        coerce_coach_diagnostic_context,
+    )
+
     conn = await get_conn()
     cur = await conn.execute(
         "SELECT id, role, content, created_at, trace_json, legacy_session_id, context_json "
@@ -398,7 +418,12 @@ async def load_messages(thread_id: int) -> list[dict[str, Any]]:
         if r["context_json"]:
             try:
                 value = json.loads(r["context_json"])
-                context = value if isinstance(value, dict) else None
+                if (
+                    isinstance(value, dict)
+                    and value.get("schema_version")
+                    == COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION
+                ):
+                    context = coerce_coach_diagnostic_context(value)
             except (json.JSONDecodeError, TypeError):
                 context = None
         out.append({
@@ -537,7 +562,7 @@ async def migrate_session_legacy_messages(
                 lr["role"],
                 lr["content"],
                 lr["created_at"],
-                lr["trace_json"],
+                None,
                 session_id,
                 legacy_id,
             ),

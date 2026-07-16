@@ -15,6 +15,7 @@ from webapp.backend.contracts import (
     LEGACY_ANALYSIS_VERSION,
     build_analysis_result_v1,
     build_analysis_result_v2,
+    build_artifact_manifest_v1,
     build_error_v1,
     dump_contract_json,
 )
@@ -617,9 +618,36 @@ async def test_input_native_timeline_preserves_relative_time_without_fake_video_
 
 @pytest.mark.asyncio
 async def test_session_video_supports_range_requests_for_seek(tmp_path):
-    video = tmp_path / "seek.mp4"
+    sid = await queue.enqueue("u1", "", str(tmp_path / "stats.csv"))
+    managed_dir = session_dir(sid)
+    managed_dir.mkdir(parents=True, exist_ok=True)
+    video = managed_dir / "video.mp4"
     video.write_bytes(b"0123456789")
-    sid = await queue.enqueue("u1", str(video), str(tmp_path / "stats.csv"))
+    result = build_analysis_result_v1(
+        report={
+            "diagnosis": {},
+            "figures": {},
+            "notes": [],
+            "narration": None,
+        },
+        timeline=[],
+        narration_status="not_requested",
+        cm_per_360=None,
+        fov=None,
+        artifact_manifest=build_artifact_manifest_v1(
+            video_path=str(video),
+            csv_path=None,
+            created_at="2026-07-15T00:00:00Z",
+        ),
+        created_at="2026-07-15T00:00:00Z",
+        completed_at="2026-07-15T00:00:01Z",
+    )
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', video_path=?, result=? WHERE id=?",
+        (str(video), dump_contract_json(result), sid),
+    )
+    await conn.commit()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -627,7 +655,16 @@ async def test_session_video_supports_range_requests_for_seek(tmp_path):
         headers={"X-User-Id": "u1", "Range": "bytes=2-5"},
     ) as client:
         resp = await client.get(f"/api/sessions/{sid}/video")
+        detail = await client.get(f"/api/sessions/{sid}")
 
     assert resp.status_code == 206
     assert resp.headers["content-range"] == "bytes 2-5/10"
     assert resp.content == b"2345"
+    assert detail.json()["history"]["visual_replay"] == {
+        "kind": "seekable_mp4",
+        "available": True,
+        "seekable": True,
+        "endpoint": f"/api/sessions/{sid}/video",
+        "artifact_ref": "input-video",
+        "reason": None,
+    }

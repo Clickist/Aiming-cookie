@@ -68,6 +68,7 @@ from .schemas import (
     CoachThreadOut,
     DeleteSessionResponse,
     KovaaKRunItem,
+    KovaaKRunListItem,
     KovaaKRunListResponse,
     HistoryTrendResponse,
     SessionListItem,
@@ -310,7 +311,7 @@ async def analyze(
     return AnalyzeResponse(session_id=sid)
 
 
-def _session_status_response(s: dict) -> SessionStatus:
+def _session_status_response(s: dict, *, history: dict | None = None) -> SessionStatus:
     return SessionStatus(
         id=s["id"],
         status=s["status"],
@@ -326,6 +327,7 @@ def _session_status_response(s: dict) -> SessionStatus:
         analysis_type=s.get("analysis_type") or "flicking",
         input_mode=s.get("input_mode") or "video_fallback",
         kovaak_run_id=s.get("kovaak_run_id"),
+        history=history,
     )
 
 
@@ -361,7 +363,11 @@ async def list_sessions(
     return SessionListResponse(sessions=[SessionListItem(**row) for row in rows])
 
 
-@router.get("/history/trends/{metric_key}", response_model=HistoryTrendResponse)
+@router.get(
+    "/history/trends/{metric_key}",
+    response_model=HistoryTrendResponse,
+    response_model_exclude_none=True,
+)
 async def get_history_trend(
     metric_key: str = Path(...),
     x_user_id: str = Depends(get_request_user_id),
@@ -398,7 +404,7 @@ async def create_benchmark(
 @router.get("/kovaak-runs", response_model=KovaaKRunListResponse)
 async def list_kovaak_runs(_: None = Depends(require_desktop_token)):
     runs = await coach_commands.list_runs(config.DESKTOP_LOCAL_PROFILE)
-    return KovaaKRunListResponse(runs=[KovaaKRunItem(**run) for run in runs])
+    return KovaaKRunListResponse(runs=[KovaaKRunListItem(**run) for run in runs])
 
 
 @router.get("/kovaak-runs/{run_id}", response_model=KovaaKRunItem)
@@ -457,15 +463,9 @@ async def get_session(
     x_user_id: str = Depends(get_request_user_id),
 ):
     """查询分析状态/结果(queued / running / done / failed)。"""
-    try:
-        await coach_commands.get_analysis(x_user_id, session_id)
-    except coach_commands.ProductCommandError as exc:
-        status = 403 if exc.code == "forbidden" else 404
-        raise HTTPException(status, exc.message) from exc
-    s = await queue.get_session(session_id)
-    if s is None:  # Defensive: the shared owner-aware handler just found it.
-        raise HTTPException(404, "session 不存在")
-    return _session_status_response(s)
+    s = await _get_owned_session(session_id, x_user_id)
+    history = await history_trends.analysis_history_detail(s)
+    return _session_status_response(s, history=history)
 
 
 @router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
@@ -515,6 +515,9 @@ async def _diagnosis_from_done_session(s: dict):
     if not isinstance(result, dict):
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
     context = project_coach_diagnostic_context(result)
+    analysis_ref = context.get("analysis_ref")
+    if isinstance(analysis_ref, dict) and analysis_ref.get("analysis_id") is None:
+        analysis_ref["analysis_id"] = f"analysis:{s['id']}"
     diagnosis = context.get("diagnosis") or {}
     if not diagnosis.get("profile") and not diagnosis.get("summary") and not diagnosis.get("issues"):
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
@@ -533,10 +536,11 @@ def _coach_thread_message_out(m: dict) -> CoachThreadMessageOut:
 
 
 def _coach_ref_out(r: dict) -> CoachAnalysisRefOut:
+    status = "unavailable" if r["status"] == "deleted" else r["status"]
     return CoachAnalysisRefOut(
         id=int(r["id"]),
         analysis_session_id=r.get("analysis_session_id"),
-        status=r["status"],
+        status=status,
         attached_at=r["attached_at"],
         deleted_at=r.get("deleted_at"),
     )
@@ -577,10 +581,10 @@ async def _ensure_done_analysis_attached(
     thread_id: int,
     analysis_session_id: int,
 ) -> dict:
+    await _assert_analysis_ref_active(thread_id, analysis_session_id)
     s = await _get_owned_session(analysis_session_id, x_user_id)
     if s["status"] != "done":
         raise HTTPException(409, "分析未完成,不可附加")
-    await _assert_analysis_ref_active(thread_id, analysis_session_id)
     await coach_store.attach_analysis_ref(thread_id, analysis_session_id)
     return s
 
@@ -1006,6 +1010,7 @@ async def post_coach_primary_message(
             "content": user_msg,
             "created_at": now_ts,
             "legacy_session_id": legacy_session_id,
+            "context": result.context,
         }),
         _coach_thread_message_out({
             "id": 0,
@@ -1013,6 +1018,7 @@ async def post_coach_primary_message(
             "content": result.assistant_content,
             "created_at": now_ts,
             "legacy_session_id": legacy_session_id,
+            "context": result.context,
         }),
     ]
     return CoachPrimaryMessageResponse(
@@ -1122,9 +1128,10 @@ async def get_session_video(
     worker.process_one 注释),所以 coach 页能播。文件不存在 → 404。
     """
     s = await _get_owned_session(session_id, x_user_id)
-    video_path = s.get("video_path") or ""
-    if not video_path or not os.path.exists(video_path):
+    replay = history_trends.visual_replay_capability(s)
+    if replay.get("kind") != "seekable_mp4":
         raise HTTPException(404, "视频文件不存在或已归档")
+    video_path = s.get("video_path") or ""
     return FileResponse(video_path, media_type="video/mp4")
 
 
