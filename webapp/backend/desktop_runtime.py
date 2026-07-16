@@ -149,6 +149,7 @@ def create_kovaak_ingestion_service(loop: asyncio.AbstractEventLoop) -> kovaak_i
         performance_dir=config.KOVAAK_PERFORMANCE_DIR,
         callback=on_discovery,
         poll_interval=config.KOVAAK_WATCH_POLL_SECONDS,
+        candidate_limit=50,
     )
 
 
