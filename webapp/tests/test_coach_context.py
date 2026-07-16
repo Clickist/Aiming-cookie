@@ -10,6 +10,7 @@ from webapp.backend.coach_context import (
     coerce_coach_diagnostic_context,
     diagnostic_context_to_coach_diagnosis,
     project_coach_diagnostic_context,
+    serialize_coach_diagnostic_context,
 )
 
 
@@ -104,6 +105,52 @@ def _diagnosis() -> dict:
     }
 
 
+def _canonical_context() -> dict:
+    return project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v2",
+            "analysis_id": "analysis:42",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+            "deterministic": {
+                "diagnosis": {
+                    "profile": {
+                        "archetype_id": "decel_jitter",
+                        "label": "减速抖动型",
+                        "confidence": 0.9,
+                        "secondary_tags": ["flicking"],
+                    },
+                    "issues": [],
+                    "summary": {},
+                    "comparison": None,
+                    "meta": {
+                        "summary_type": "flicking",
+                        "classification": "deterministic",
+                    },
+                },
+                "metrics": {
+                    "distance": {
+                        "value": 12.0,
+                        "unit": "raw_counts",
+                        "metric_version": "native.v1",
+                        "classification": "deterministic",
+                        "provenance": {
+                            "kind": "derived",
+                            "sources": ["raw_input"],
+                        },
+                    },
+                },
+            },
+            "evidence": {
+                "availability": {"raw_input": "available"},
+                "alignment": {"status": "aligned", "coverage_ratio": 1.0},
+                "warnings": [],
+            },
+            "warnings": [],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("source_version", "result"),
     [
@@ -133,7 +180,7 @@ def _diagnosis() -> dict:
             "analysis_result.v2",
             {
                 "schema_version": "analysis_result.v2",
-                "analysis_id": "analysis-42",
+                    "analysis_id": "analysis:42",
                 "analysis_type": "flicking",
                 "input_mode": "input_native",
                 "deterministic": {
@@ -379,6 +426,15 @@ def test_missing_or_unknown_claim_and_source_levels_fail_closed(raw_level: str |
     assert adapted["issues"][0]["prescriptions"][0]["source_level"] == "experimental"
 
 
+def test_unknown_schema_is_not_coerced_as_legacy_diagnosis():
+    assert coerce_coach_diagnostic_context(
+        {
+            "schema_version": "coach_diagnostic_context.v999",
+            "diagnosis": _diagnosis(),
+        }
+    ) is None
+
+
 def test_canonical_projection_rejects_secret_raw_and_path_like_values_in_allowed_shapes():
     diagnosis = _diagnosis()
     issue = diagnosis["issues"][0]
@@ -389,7 +445,7 @@ def test_canonical_projection_rejects_secret_raw_and_path_like_values_in_allowed
     context = project_coach_diagnostic_context(
         {
             "schema_version": "analysis_result.v2",
-            "analysis_id": "analysis-42",
+            "analysis_id": "analysis:42",
             "analysis_type": "flicking",
             "input_mode": "input_native",
             "deterministic": {
@@ -426,7 +482,7 @@ def test_canonical_looking_context_is_reprojected_before_reaching_sinks():
         {
             "schema_version": COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
             "analysis_ref": {
-                "analysis_id": "analysis-42",
+                "analysis_id": "analysis:42",
                 "analysis_result_version": "analysis_result.v2",
                 "analysis_type": "flicking",
                 "input_mode": "input_native",
@@ -469,7 +525,7 @@ def test_canonical_looking_context_is_reprojected_before_reaching_sinks():
         "warnings",
     }
     assert context["analysis_ref"] == {
-        "analysis_id": "analysis-42",
+        "analysis_id": "analysis:42",
         "analysis_result_version": "analysis_result.v2",
         "analysis_type": "flicking",
         "input_mode": "input_native",
@@ -492,6 +548,361 @@ def test_canonical_looking_context_is_reprojected_before_reaching_sinks():
     flattened = list(_walk(context))
     for marker in _FORBIDDEN_MARKERS:
         assert marker not in flattened
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("analysis_id", 42),
+        ("analysis_id", "analysis-42"),
+        ("analysis_result_version", "analysis_result.v99"),
+        ("input_mode", "unknown"),
+        ("analysis_type", 7),
+        ("analysis_type", r"C:\Users\point\private\trace.csv"),
+        ("analysis_type", "file:C:/private/trace.csv"),
+        ("analysis_type", "https://example.invalid/private"),
+        ("analysis_type", "api_key=sk-analysis-type-secret"),
+    ],
+)
+def test_canonical_context_rejects_invalid_analysis_ref(field: str, value: object):
+    context = _canonical_context()
+    context["analysis_ref"][field] = value
+
+    assert coerce_coach_diagnostic_context(context) is None
+
+
+@pytest.mark.parametrize("analysis_id", [None, "analysis:7"])
+def test_v1_context_preserves_stable_or_null_ref_with_unknown_mode(analysis_id: str | None):
+    result = {
+        "schema_version": "analysis_result.v1",
+        "analysis_id": analysis_id,
+        "summary_type": "flicking",
+        "deterministic": {
+            "diagnosis": {
+                "summary": {"legacy_metric": {"value": 1.0, "unit": "ratio"}},
+            },
+        },
+        "artifact_manifest": {"inputs": []},
+    }
+
+    context = project_coach_diagnostic_context(result)
+
+    assert context["analysis_ref"] == {
+        "analysis_id": analysis_id,
+        "analysis_result_version": "analysis_result.v1",
+        "analysis_type": "flicking",
+        "input_mode": "unknown",
+    }
+    assert context["diagnosis"]["summary"]["legacy_metric"]["value"] == 1.0
+    assert coerce_coach_diagnostic_context(context) == context
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/private",
+        "http://",
+        "https://example.invalid/private",
+        "custom+scheme://private/resource",
+        "custom+scheme://",
+        "https://[C:/Users/point/private/trace.csv",
+    ],
+)
+def test_python_projector_rejects_network_url_values(url: str):
+    context = project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v2",
+            "analysis_id": "analysis:42",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+            "deterministic": {
+                "diagnosis": {
+                    "profile": {"label": url},
+                    "issues": [],
+                    "summary": {},
+                    "comparison": None,
+                    "meta": {},
+                },
+            },
+            "evidence": {"availability": {}, "alignment": {}},
+            "warnings": [],
+        }
+    )
+
+    assert "label" not in context["diagnosis"]["profile"]
+    assert url not in list(_walk(context))
+
+
+def test_v2_requires_deterministic_classification_but_v1_metric_remains_readable():
+    v2_context = project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v2",
+            "analysis_id": "analysis:42",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+            "deterministic": {
+                "diagnosis": {
+                    "comparison": {"status": "comparable", "delta": 1.0},
+                },
+                "metrics": {
+                    "classified": {
+                        "value": 1.0,
+                        "classification": "deterministic",
+                        "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                    },
+                    "missing_classification": {
+                        "value": 2.0,
+                        "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                    },
+                    "null_classification": {
+                        "value": 3.0,
+                        "classification": None,
+                        "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                    },
+                },
+            },
+            "evidence": {"availability": {}, "alignment": {}},
+            "warnings": [],
+        }
+    )
+    summary = v2_context["diagnosis"]["summary"]
+    assert set(summary) == {"classified"}
+    assert v2_context["diagnosis"]["comparison"] is None
+
+    v1_context = project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v1",
+            "summary_type": "flicking",
+            "deterministic": {
+                "diagnosis": {
+                    "summary": {"legacy_metric": {"value": 4.0, "unit": "ratio"}},
+                },
+            },
+            "artifact_manifest": {"inputs": []},
+        }
+    )
+    assert v1_context["diagnosis"]["summary"]["legacy_metric"] == {
+        "value": 4.0,
+        "unit": "ratio",
+    }
+
+
+def test_inferred_metrics_provenance_and_timestamp_samples_are_not_coach_context():
+    context = project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v2",
+            "analysis_id": "analysis:42",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+            "deterministic": {
+                "metrics": {
+                    "safe_metric": {
+                        "value": 12.0,
+                        "unit": "raw_counts",
+                        "classification": "deterministic",
+                        "provenance": {
+                            "kind": "derived",
+                            "sources": ["raw_input"],
+                        },
+                    },
+                    "implicit_inferred_metric": {
+                        "value": 99.0,
+                        "unit": "ratio",
+                        "provenance": {
+                            "kind": "inferred",
+                            "sources": ["raw_input"],
+                        },
+                    },
+                    "explicit_inferred_metric": {
+                        "value": 98.0,
+                        "unit": "ratio",
+                        "classification": "deterministic",
+                        "provenance": {
+                            "kind": "inferred",
+                            "sources": ["raw_input"],
+                        },
+                    },
+                    "string_inferred_metric": {
+                        "value": 97.0,
+                        "unit": "ratio",
+                        "classification": "deterministic",
+                        "provenance": "inferred",
+                    },
+                    "timestamps": {
+                        "value": "timestamp-sample-sentinel",
+                        "classification": "deterministic",
+                    },
+                },
+            },
+            "evidence": {
+                "availability": {"raw_input": "available"},
+                "alignment": {"status": "aligned"},
+                "warnings": [],
+            },
+            "warnings": [],
+        }
+    )
+
+    summary = context["diagnosis"]["summary"]
+    assert summary["safe_metric"]["value"] == 12.0
+    assert "implicit_inferred_metric" not in summary
+    assert "explicit_inferred_metric" not in summary
+    assert "string_inferred_metric" not in summary
+    assert "timestamps" not in summary
+    assert "timestamp-sample-sentinel" not in list(_walk(context))
+
+
+@pytest.mark.asyncio
+async def test_store_reprojects_context_on_append_and_load():
+    import json
+
+    from webapp.backend import coach_store, db
+
+    canonical = _canonical_context()
+    poisoned = {
+        **canonical,
+        "raw_trace": "raw-store-sentinel",
+        "benchmark": "benchmark-store-sentinel",
+        "diagnosis": {
+            **canonical["diagnosis"],
+            "payload": "payload-store-sentinel",
+            "profile": {
+                **canonical["diagnosis"]["profile"],
+                "label": r"C:\Users\point\private\trace.csv",
+            },
+        },
+    }
+    expected = coerce_coach_diagnostic_context(poisoned)
+    assert expected is not None
+
+    thread = await coach_store.get_or_create_primary_thread("context-store-owner")
+    message_id = await coach_store.append_message(
+        int(thread["id"]),
+        "user",
+        "persist canonical context",
+        context=poisoned,
+    )
+
+    conn = await db.get_conn()
+    cur = await conn.execute(
+        "SELECT context_json FROM coach_messages WHERE id=?",
+        (message_id,),
+    )
+    persisted = await cur.fetchone()
+    assert json.loads(persisted["context_json"]) == expected
+
+    await conn.execute(
+        "UPDATE coach_messages SET context_json=? WHERE id=?",
+        (json.dumps(poisoned, ensure_ascii=False), message_id),
+    )
+    await conn.commit()
+    loaded = await coach_store.load_messages(int(thread["id"]))
+    assert loaded[0]["context"] == expected
+    serialized = json.dumps(loaded[0]["context"], ensure_ascii=False)
+    for sentinel in (
+        "raw-store-sentinel",
+        "benchmark-store-sentinel",
+        "payload-store-sentinel",
+        r"C:\Users\point\private\trace.csv",
+    ):
+        assert sentinel not in serialized
+
+
+@pytest.mark.asyncio
+async def test_same_canonical_context_crosses_python_pi_tool_sqlite_and_api_exactly(monkeypatch):
+    import json
+    import os
+    from pathlib import Path
+    import subprocess
+
+    from httpx import ASGITransport, AsyncClient
+
+    from webapp.backend import coach_runtime, coach_store, config
+    from webapp.backend.app import app
+    from webapp.backend.coach_engine import CoachTurn
+
+    canonical = _canonical_context()
+    wire = serialize_coach_diagnostic_context(canonical)
+    assert wire is not None
+    python_turn = CoachTurn(
+        prior_messages=[],
+        user_message="explain",
+        diagnostic_context=canonical,
+    )
+    assert python_turn.diagnostic_context == canonical
+    pi_request, _ = coach_runtime._build_turn_request(
+        schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V1,
+        user_id="context-equality-owner",
+        profile={
+            "provider_id": "anthropic",
+            "provider_name": "Anthropic",
+            "kind": "builtin",
+            "model_id": "claude-haiku-4-5",
+        },
+        messages=[{"role": "user", "content": "explain"}],
+        analysis_summary=wire,
+        system_prompt=None,
+    )
+    assert pi_request["analysis_summary"] == wire
+
+    script = (
+        'import { createAnalysisSummaryTool } from '
+        '"./webapp/coach-runtime/src/analysis-summary-tool.ts";'
+        'if ("AIMING_COOKIE_DESKTOP_TOKEN" in process.env) {'
+        'throw new Error("desktop launch token reached Node");}'
+        'const input = await new Promise((resolve) => {'
+        'let data=""; process.stdin.setEncoding("utf8");'
+        'process.stdin.on("data", chunk => data += chunk);'
+        'process.stdin.on("end", () => resolve(data));});'
+        'const result = await createAnalysisSummaryTool(String(input)).execute();'
+        'process.stdout.write(result.content[0]?.text ?? "");'
+    )
+    monkeypatch.setenv("AIMING_COOKIE_DESKTOP_TOKEN", "desktop-token-sentinel")
+    child_env = os.environ.copy()
+    child_env.pop("AIMING_COOKIE_DESKTOP_TOKEN", None)
+    completed = subprocess.run(
+        [
+            "node",
+            f"--import={config.COACH_RUNTIME_TSX_LOADER.resolve().as_uri()}",
+            "--input-type=module",
+            "--eval",
+            script,
+        ],
+        input=wire,
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+        cwd=Path(__file__).resolve().parents[2],
+        env={
+            **child_env,
+            "PI_SOURCE_DIR": str(config.PI_SOURCE_DIR.resolve()),
+            "TSX_TSCONFIG_PATH": str(
+                (config.PI_SOURCE_DIR / "tsconfig.json").resolve()
+            ),
+        },
+    )
+    assert completed.stdout == wire
+
+    thread = await coach_store.get_or_create_primary_thread("context-equality-owner")
+    await coach_store.append_message(
+        int(thread["id"]),
+        "user",
+        "stored exact context",
+        context=canonical,
+    )
+    stored = await coach_store.load_messages(int(thread["id"]))
+    assert stored[0]["context"] == canonical
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "context-equality-owner"},
+    ) as client:
+        response = await client.get("/api/coach/primary")
+    assert response.status_code == 200, response.text
+    assert response.json()["messages"][0]["context"] == canonical
+    assert json.loads(pi_request["analysis_summary"]) == stored[0]["context"]
+
 
 @pytest.mark.asyncio
 async def test_chat_storage_persists_same_sanitized_context_for_both_messages(monkeypatch):

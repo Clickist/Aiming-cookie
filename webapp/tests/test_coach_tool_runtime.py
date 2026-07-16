@@ -477,18 +477,23 @@ async def test_real_analysis_registry_pi_event_is_persisted_as_refs_only(monkeyp
         completed = subprocess.run(
             [
                 "node",
-                "--import",
-                str(config.COACH_RUNTIME_TSX_LOADER),
+                f"--import={config.COACH_RUNTIME_TSX_LOADER.resolve().as_uri()}",
                 "--input-type=module",
                 "--eval",
                 script,
             ],
             input=analysis_summary,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             check=True,
             cwd=Path(__file__).resolve().parents[2],
-            env={**__import__("os").environ, "PI_SOURCE_DIR": str(config.PI_SOURCE_DIR)},
+            env={
+                **__import__("os").environ,
+                "PI_SOURCE_DIR": str(config.PI_SOURCE_DIR.resolve()),
+                "TSX_TSCONFIG_PATH": str(
+                    (config.PI_SOURCE_DIR / "tsconfig.json").resolve()
+                ),
+            },
         )
         runtime_response = json.loads(completed.stdout)
         runtime_result = _validate_turn_response(

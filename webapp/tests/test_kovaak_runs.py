@@ -12,6 +12,7 @@ from kovaak_tracker.performance_parser import (
     PerformanceHeader,
 )
 from webapp.backend import kovaak_run_store
+from webapp.backend.contracts import build_analysis_result_v2, build_artifact_manifest_v2
 from webapp.backend.kovaak_ingest import KovaaKFileDiscovery
 
 
@@ -192,7 +193,7 @@ async def test_desktop_runs_api_does_not_expose_private_paths(monkeypatch, tmp_p
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
     stats = tmp_path / "secret Stats.csv"
     stats.write_text("private", encoding="utf-8")
-    await kovaak_run_store.upsert_kovaak_run(
+    run = await kovaak_run_store.upsert_kovaak_run(
         user_id=config.DESKTOP_LOCAL_PROFILE,
         source_key="private-run",
         scenario="Scenario",
@@ -210,15 +211,397 @@ async def test_desktop_runs_api_does_not_expose_private_paths(monkeypatch, tmp_p
         },
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
+        list_response = await client.get(
             "/api/kovaak-runs",
             headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
         )
-    assert response.status_code == 200
-    payload = response.json()["runs"][0]
-    assert "stats_path" not in payload
-    assert str(stats) not in response.text
-    assert payload["stats_source_ref"].startswith("run:")
+        detail_response = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+
+    assert list_response.status_code == 200
+    listed = list_response.json()["runs"][0]
+    assert "stats_path" not in listed
+    assert "stats_source_ref" not in listed
+    assert "performance_source_ref" not in listed
+    assert "stats_summary" not in listed
+    assert "performance_summary" not in listed
+    assert str(stats) not in list_response.text
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["stats_source_ref"].startswith(f"run:{run['id']}:stats:")
+    assert str(stats) not in detail_response.text
+
+
+@pytest.mark.parametrize(
+    "unsafe_digest",
+    [
+        "not-a-sha256-sentinel",
+        r"C:\private\digest.sha256",
+        "file:///C:/private/digest.sha256",
+        "g" * 64,
+        "a" * 63,
+    ],
+)
+@pytest.mark.asyncio
+async def test_run_read_models_reject_unsafe_source_digest_refs(
+    monkeypatch,
+    tmp_path: Path,
+    unsafe_digest: str,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = tmp_path / "unsafe-digest Stats.csv"
+    performance = tmp_path / "unsafe-digest Performance.perf"
+    stats.write_text("stats", encoding="utf-8")
+    performance.write_bytes(b"performance")
+
+    def source(path: Path, parser_version: str) -> dict[str, object]:
+        return {
+            "path": str(path),
+            "sha256": unsafe_digest,
+            "size": path.stat().st_size,
+            "mtime_ns": path.stat().st_mtime_ns,
+            "parser_version": parser_version,
+        }
+
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key="unsafe-digest-run",
+        scenario="Scenario",
+        stats_path=str(stats),
+        performance_path=str(performance),
+        stats_summary={
+            "source": source(stats, kovaak_run_store.STATS_PARSER_VERSION),
+        },
+        performance_summary={
+            "source": source(
+                performance, kovaak_run_store.PERFORMANCE_PARSER_VERSION,
+            ),
+        },
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        list_response = await client.get(
+            "/api/kovaak-runs",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+        detail_response = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+
+    assert list_response.status_code == 200, list_response.text
+    assert detail_response.status_code == 200, detail_response.text
+    listed = list_response.json()["runs"][0]
+    assert "stats_source_ref" not in listed
+    assert "performance_source_ref" not in listed
+    detail = detail_response.json()
+    assert detail["stats_source_ref"] is None
+    assert detail["performance_source_ref"] is None
+    assert detail["source_availability"] == {
+        "stats": "invalid",
+        "performance": "invalid",
+    }
+    assert unsafe_digest not in list_response.text + detail_response.text
+
+
+@pytest.mark.asyncio
+async def test_run_detail_requires_complete_fingerprint_while_list_remains_stat_only(
+    monkeypatch,
+    tmp_path: Path,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = tmp_path / "missing-digest Stats.csv"
+    stats.write_text("stats", encoding="utf-8")
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key="missing-digest-run",
+        scenario="Scenario",
+        stats_path=str(stats),
+        stats_summary={
+            "source": {
+                "path": str(stats),
+                "size": stats.stat().st_size,
+                "mtime_ns": stats.stat().st_mtime_ns,
+                "parser_version": kovaak_run_store.STATS_PARSER_VERSION,
+            },
+        },
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        list_response = await client.get(
+            "/api/kovaak-runs",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+        detail_response = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+
+    assert list_response.status_code == 200, list_response.text
+    assert detail_response.status_code == 200, detail_response.text
+    assert (
+        list_response.json()["runs"][0]["source_availability"]["stats"]
+        == "available"
+    )
+    detail = detail_response.json()
+    assert detail["stats_source_ref"] is None
+    assert detail["source_availability"]["stats"] == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_run_list_uses_light_query_and_detail_lazy_loads_summaries(
+    monkeypatch,
+    tmp_path: Path,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = tmp_path / "private Stats.csv"
+    stats.write_text("stats", encoding="utf-8")
+    trace = tmp_path / "private-trace.bin"
+    kovaak_run_store.write_mouse_snapshot(trace, [
+        {"timestamp_ms": 1_000, "dx": 1, "dy": 2, "buttons": 0},
+    ])
+    summary = {
+        "score": 123,
+        "private_summary_sentinel": "RUN_SUMMARY_MUST_BE_LAZY",
+        "source": kovaak_run_store._source_metadata(
+            stats, kovaak_run_store.STATS_PARSER_VERSION,
+        ),
+    }
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key="lazy-run",
+        scenario="Scenario",
+        stats_path=str(stats),
+        stats_summary=summary,
+        mouse_trace_path=str(trace),
+    )
+    conn = await kovaak_run_store.get_conn()
+
+    class GuardedConnection:
+        async def execute(self, sql: str, params=()):
+            normalized = " ".join(sql.lower().split())
+            if normalized.startswith("select ") and " from kovaak_runs" in normalized:
+                selected = normalized.split(" from kovaak_runs", 1)[0].replace(",", " ").split()
+                assert "stats_summary" not in selected, sql
+                assert "performance_summary" not in selected, sql
+            return await conn.execute(sql, params)
+
+    async def guarded_get_conn():
+        return GuardedConnection()
+
+    def reject_content_hashing(*_args, **_kwargs):
+        raise AssertionError("Run list must not hash source contents")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with monkeypatch.context() as guarded:
+            guarded.setattr(kovaak_run_store, "get_conn", guarded_get_conn)
+            guarded.setattr(
+                kovaak_run_store,
+                "_source_metadata",
+                reject_content_hashing,
+            )
+            listed_response = await client.get(
+                "/api/kovaak-runs",
+                headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+            )
+        detail_response = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+
+    assert listed_response.status_code == 200, listed_response.text
+    listed = listed_response.json()["runs"][0]
+    assert listed["run_ref"] == f"run:{run['id']}"
+    assert listed["source_availability"]["stats"] == "available"
+    assert listed["trace_quality"] == {
+        "state": "attached",
+        "availability": "available",
+        "alignment_status": None,
+        "coverage": None,
+    }
+    assert set(listed["trace_quality"]) == {
+        "state", "availability", "alignment_status", "coverage",
+    }
+    assert "stats_source_ref" not in listed
+    assert "performance_source_ref" not in listed
+    assert "trace_artifact_ref" not in listed
+    assert "stats_summary" not in listed
+    assert "performance_summary" not in listed
+    assert "RUN_SUMMARY_MUST_BE_LAZY" not in listed_response.text
+
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()
+    assert detail["run_ref"] == f"run:{run['id']}"
+    assert detail["stats_source_ref"].startswith(f"run:{run['id']}:stats:")
+    assert detail["trace_artifact_ref"] == f"run:{run['id']}:trace"
+    assert detail["stats_summary"]["private_summary_sentinel"] == (
+        "RUN_SUMMARY_MUST_BE_LAZY"
+    )
+    assert str(stats) not in detail_response.text
+    assert str(trace) not in detail_response.text
+
+
+@pytest.mark.asyncio
+async def test_run_read_model_marks_changed_source_invalid_and_preserves_ref(
+    monkeypatch,
+    tmp_path: Path,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = tmp_path / "revision Stats.csv"
+    stats.write_text("first revision", encoding="utf-8")
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key="revision-run",
+        scenario="Scenario",
+        stats_path=str(stats),
+        stats_summary={
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+        },
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        before = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+        stats.write_text("changed revision with different size", encoding="utf-8")
+        after = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+
+    assert before.status_code == after.status_code == 200
+    assert before.json()["source_availability"]["stats"] == "available"
+    assert after.json()["source_availability"]["stats"] == "invalid"
+    assert after.json()["stats_source_ref"] == before.json()["stats_source_ref"]
+    assert str(stats) not in after.text
+
+
+@pytest.mark.parametrize(
+    "unsafe_source_key",
+    [
+        r"C:\Users\dot\private\run",
+        "file:///C:/Users/dot/private/run",
+    ],
+)
+@pytest.mark.asyncio
+async def test_run_read_models_recursively_filter_path_like_public_fields(
+    monkeypatch,
+    tmp_path: Path,
+    unsafe_source_key: str,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = tmp_path / "unsafe Stats.csv"
+    performance = tmp_path / "unsafe Performance.perf"
+    stats.write_text("stats", encoding="utf-8")
+    performance.write_text("performance", encoding="utf-8")
+    unsafe_path = r"C:\Users\dot\private\payload.csv"
+    unsafe_uri = "file:///C:/Users/dot/private/payload.csv"
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key=unsafe_source_key,
+        scenario="Safe Scenario",
+        stats_path=str(stats),
+        performance_path=str(performance),
+        stats_summary={
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+            "safe_score": 123,
+            "path": unsafe_path,
+            "nested": {
+                "safe_label": "kept",
+                "source_path": str(stats),
+                "uri_value": unsafe_uri,
+                "deep": {"safe_count": 2, "tracePath": unsafe_path},
+            },
+        },
+        performance_summary={
+            "source": kovaak_run_store._source_metadata(
+                performance, kovaak_run_store.PERFORMANCE_PARSER_VERSION,
+            ),
+            "safe_event_count": 5,
+            "payload": {
+                "safe_label": "kept",
+                "artifactPath": str(performance),
+                "uri": unsafe_uri,
+            },
+        },
+    )
+    await kovaak_run_store.mark_mouse_trace_unavailable(
+        run["id"],
+        config.DESKTOP_LOCAL_PROFILE,
+        unsafe_uri,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed_response = await client.get(
+            "/api/kovaak-runs",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+        detail_response = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+
+    assert listed_response.status_code == 200, listed_response.text
+    assert detail_response.status_code == 200, detail_response.text
+    listed = listed_response.json()["runs"][0]
+    assert listed["run_ref"] == f"run:{run['id']}"
+    assert listed["source_key"] is None
+    assert listed["trace_error"] is None
+
+    detail = detail_response.json()
+    assert detail["run_ref"] == f"run:{run['id']}"
+    assert detail["source_key"] is None
+    assert detail["trace_error"] is None
+    assert detail["stats_source_ref"].startswith(f"run:{run['id']}:stats:")
+    assert detail["performance_source_ref"].startswith(
+        f"run:{run['id']}:performance:"
+    )
+    assert detail["stats_summary"]["safe_score"] == 123
+    assert detail["stats_summary"]["nested"] == {
+        "safe_label": "kept",
+        "deep": {"safe_count": 2},
+    }
+    assert detail["performance_summary"] == {
+        "safe_event_count": 5,
+        "payload": {"safe_label": "kept"},
+    }
+    serialized = listed_response.text + detail_response.text
+    for sentinel in (
+        unsafe_source_key,
+        unsafe_path,
+        unsafe_uri,
+        str(stats),
+        str(performance),
+    ):
+        assert sentinel not in serialized
 
 
 @pytest.mark.asyncio
@@ -657,6 +1040,127 @@ async def test_analysis_input_snapshot_freezes_raw_trace_fingerprint(tmp_path: P
     public = kovaak_run_store.public_analysis_input_snapshot(snapshot)
     assert public["trace"]["fingerprint"] == snapshot["trace"]["fingerprint"]
     assert "path" not in public["trace"]
+
+
+def test_public_analysis_input_snapshot_strips_file_uris():
+    public = kovaak_run_store.public_analysis_input_snapshot({
+        "schema_version": "analysis_input_snapshot.v1",
+        "run_id": 4,
+        "scenario": " file:///C:/Users/dot/private/Scenario",
+        "sources": {
+            "stats": {
+                "artifact_ref": "run:4:stats",
+                "path": "C:/Users/dot/private/Stats.csv",
+                "source_uri": "file:///C:/Users/dot/private/Stats.csv",
+            },
+        },
+        "trace": {
+            "artifact_ref": "run:4:trace",
+            "path": "C:/Users/dot/private/trace.acri",
+            "source_uri": "file:///C:/Users/dot/private/trace.acri",
+        },
+    })
+
+    assert public["scenario"] is None
+    assert public["sources"] == {"stats": {"artifact_ref": "run:4:stats"}}
+    assert public["trace"] == {"artifact_ref": "run:4:trace"}
+
+
+def test_analysis_result_v2_rejects_file_uri_in_public_input_snapshot():
+    with pytest.raises(ValueError, match="absolute paths"):
+        build_analysis_result_v2(
+            analysis_id="analysis:4",
+            analysis_type="flicking",
+            input_mode="input_native",
+            kovaak_run_ref="run:4",
+            evidence={
+                "sources": {},
+                "provenance": {},
+                "availability": {},
+                "alignment": {},
+                "warnings": [],
+            },
+            deterministic={},
+            artifact_manifest=build_artifact_manifest_v2(
+                external_inputs=[], owned_outputs=[],
+            ),
+            input_snapshot={
+                "sources": {
+                    "stats": {
+                        "artifact_ref": "run:4:stats",
+                        "source_uri": "file:///C:/Users/dot/private/Stats.csv",
+                    },
+                },
+            },
+            created_at="2026-07-16T12:00:00Z",
+            completed_at="2026-07-16T12:01:00Z",
+            warnings=[],
+            errors=[],
+        )
+
+
+@pytest.mark.asyncio
+async def test_public_run_read_models_mark_corrupt_attached_trace_unavailable(
+    monkeypatch, tmp_path: Path,
+):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    trace = tmp_path / "attached-trace.bin"
+    kovaak_run_store.write_mouse_snapshot(trace, [
+        {"timestamp_ms": 1_000, "dx": 1, "dy": 2, "buttons": 0},
+    ])
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key="corrupt-trace-run",
+        scenario="Scenario",
+        mouse_trace_path=str(trace),
+    )
+    trace.write_bytes(b"corrupt trace")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed_response = await client.get(
+            "/api/kovaak-runs",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+        detail_response = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+
+    assert listed_response.status_code == detail_response.status_code == 200
+    listed = listed_response.json()["runs"][0]
+    detail = detail_response.json()
+    assert listed["trace_state"] == detail["trace_state"] == "attached"
+    assert listed["trace_quality"]["availability"] == "unavailable"
+    assert detail["trace_quality"]["availability"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_run_summary_validates_attached_trace_without_decoding_points(
+    monkeypatch, tmp_path: Path,
+):
+    trace = tmp_path / "attached-trace.bin"
+    kovaak_run_store.write_mouse_snapshot(trace, [
+        {"timestamp_ms": 1_000, "dx": 1, "dy": 2, "buttons": 0},
+    ])
+    await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1",
+        source_key="lightweight-trace-run",
+        scenario="Scenario",
+        mouse_trace_path=str(trace),
+    )
+
+    def fail_if_decoded(*_args, **_kwargs):
+        raise AssertionError("Run summary must not decode trace points")
+
+    monkeypatch.setattr(kovaak_run_store, "read_mouse_snapshot", fail_if_decoded)
+
+    summaries = await kovaak_run_store.list_kovaak_run_summaries("u1")
+
+    assert summaries[0]["trace_quality"]["availability"] == "available"
 
 
 def test_raw_input_snapshot_codec_and_window_extraction(tmp_path: Path):

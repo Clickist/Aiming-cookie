@@ -25,6 +25,40 @@ CREATE INDEX idx_sessions_user_status ON sessions(user_id, status);
 """
 
 
+EXPECTED_V13_ANALYSIS_DELETION_TOMBSTONES = """
+CREATE TABLE IF NOT EXISTS analysis_deletion_tombstones (
+    analysis_session_id INTEGER PRIMARY KEY CHECK(analysis_session_id > 0),
+    owner_id TEXT NOT NULL CHECK(TRIM(owner_id) <> ''),
+    cleanup_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(cleanup_state IN ('pending', 'failed')),
+    cleanup_attempts INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_attempts >= 0),
+    last_error_code TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(
+        (cleanup_state = 'pending' AND cleanup_attempts = 0
+            AND last_error_code IS NULL)
+        OR
+        (cleanup_state = 'failed' AND cleanup_attempts >= 1
+            AND last_error_code IS NOT NULL
+            AND last_error_code = 'workspace_cleanup_failed')
+    )
+);
+"""
+
+
+def _normalized_ddl(value: str) -> str:
+    return " ".join(value.strip().rstrip(";").split())
+
+
+async def _table_exists(conn, table: str) -> bool:
+    cur = await conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    )
+    return await cur.fetchone() is not None
+
+
 async def _coach_messages_column_names(conn) -> set[str]:
     cur = await conn.execute("PRAGMA table_info(coach_messages)")
     return {row[1] for row in await cur.fetchall()}
@@ -61,7 +95,7 @@ async def test_init_schema_creates_index():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_migrates_v0_to_v12_transactionally():
+async def test_init_schema_migrates_v0_to_v13_transactionally():
     await db.close_conn()
     db_path = "./aiming_cookie_test.db"
     if os.path.exists(db_path):
@@ -115,7 +149,7 @@ async def test_init_schema_migrates_v0_to_v12_transactionally():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_v1_to_v12_idempotent():
+async def test_init_schema_v1_to_v13_idempotent():
     await db.close_conn()
     db_path = "./aiming_cookie_test.db"
     if os.path.exists(db_path):
@@ -171,7 +205,7 @@ async def test_init_schema_v1_to_v12_idempotent():
         )
         assert await cur.fetchone() is not None
 
-    # second init stays at 11
+    # Second init stays at the current target schema.
     await db.close_conn()
     await db.init_schema()
     conn = await db.get_conn()
@@ -187,7 +221,7 @@ async def test_init_schema_rejects_newer_user_version():
         os.remove(db_path)
     conn = await aiosqlite.connect(db_path)
     await conn.executescript(V0_SESSIONS_SCHEMA)
-    await conn.execute("PRAGMA user_version = 13")
+    await conn.execute(f"PRAGMA user_version = {db.TARGET_USER_VERSION + 1}")
     await conn.commit()
     await conn.close()
 
@@ -196,7 +230,7 @@ async def test_init_schema_rejects_newer_user_version():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_fresh_user_version_is_v12_with_legacy_column():
+async def test_init_schema_fresh_user_version_is_v13_with_legacy_column():
     conn = await db.get_conn()
     cur = await conn.execute("PRAGMA user_version")
     assert (await cur.fetchone())[0] == db.TARGET_USER_VERSION
@@ -206,7 +240,7 @@ async def test_init_schema_fresh_user_version_is_v12_with_legacy_column():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_migrates_v2_to_v12_idempotent():
+async def test_init_schema_migrates_v2_to_v13_idempotent():
     await db.close_conn()
     db_path = "./aiming_cookie_test.db"
     if os.path.exists(db_path):
@@ -397,7 +431,7 @@ async def test_init_schema_creates_kovaak_runs_table_and_index():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_upgrades_v4_to_v12_with_trace_lifecycle_columns():
+async def test_init_schema_upgrades_v4_to_v13_with_trace_lifecycle_columns():
     conn = await db.get_conn()
     await conn.execute("DROP TABLE kovaak_runs")
     await conn.execute("PRAGMA user_version = 4")
@@ -501,7 +535,7 @@ async def test_v11_v12_migration_helpers_respect_caller_transaction():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_migrates_v10_to_v12_training_plan_contract_idempotently():
+async def test_init_schema_migrates_v10_to_v13_training_plan_contract_idempotently():
     await db.close_conn()
     db_path = "./aiming_cookie_test.db"
     if os.path.exists(db_path):
@@ -520,7 +554,7 @@ async def test_init_schema_migrates_v10_to_v12_training_plan_contract_idempotent
 
 
 @pytest.mark.asyncio
-async def test_v11_to_v12_adds_persistent_coach_command_contract_idempotently():
+async def test_v11_to_v13_adds_persistent_coach_command_contract_idempotently():
     await db.close_conn()
     db_path = "./aiming_cookie_test.db"
     if os.path.exists(db_path):
@@ -571,3 +605,214 @@ async def test_v11_to_v12_adds_persistent_coach_command_contract_idempotently():
     conn = await db.get_conn()
     cur = await conn.execute("PRAGMA user_version")
     assert (await cur.fetchone())[0] == db.TARGET_USER_VERSION
+
+
+@pytest.mark.asyncio
+async def test_fresh_v13_schema_uses_migration_helper_and_exact_tombstone_ddl(
+    monkeypatch,
+):
+    await db.close_conn()
+    db_path = "./aiming_cookie_test.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+
+    original_migration = db._migrate_v13_analysis_deletion_tombstones
+    calls = 0
+
+    async def tracked_migration(conn):
+        nonlocal calls
+        calls += 1
+        await original_migration(conn)
+
+    monkeypatch.setattr(
+        db,
+        "_migrate_v13_analysis_deletion_tombstones",
+        tracked_migration,
+    )
+
+    await db.init_schema()
+    conn = await db.get_conn()
+
+    assert db.TARGET_USER_VERSION == 13
+    assert calls == 1
+    assert "analysis_deletion_tombstones" not in db.SCHEMA
+    assert _normalized_ddl(db._V13_ANALYSIS_DELETION_TOMBSTONES) == _normalized_ddl(
+        EXPECTED_V13_ANALYSIS_DELETION_TOMBSTONES
+    )
+
+    row = await (
+        await conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='analysis_deletion_tombstones'"
+        )
+    ).fetchone()
+    assert row is not None
+    stored_ddl = _normalized_ddl(row[0])
+    expected_stored_ddl = _normalized_ddl(
+        EXPECTED_V13_ANALYSIS_DELETION_TOMBSTONES
+    ).replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE", 1)
+    assert stored_ddl == expected_stored_ddl
+
+    columns = await (await conn.execute(
+        "PRAGMA table_info(analysis_deletion_tombstones)"
+    )).fetchall()
+    assert [
+        (row[1], row[2], row[3], row[4], row[5])
+        for row in columns
+    ] == [
+        ("analysis_session_id", "INTEGER", 0, None, 1),
+        ("owner_id", "TEXT", 1, None, 0),
+        ("cleanup_state", "TEXT", 1, "'pending'", 0),
+        ("cleanup_attempts", "INTEGER", 1, "0", 0),
+        ("last_error_code", "TEXT", 0, None, 0),
+        ("created_at", "TEXT", 1, "CURRENT_TIMESTAMP", 0),
+        ("updated_at", "TEXT", 1, "CURRENT_TIMESTAMP", 0),
+    ]
+    assert not any("path" in row[1].casefold() for row in columns)
+    assert await (await conn.execute(
+        "PRAGMA foreign_key_list(analysis_deletion_tombstones)"
+    )).fetchall() == []
+    assert await (await conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='index' AND tbl_name='analysis_deletion_tombstones'"
+    )).fetchall() == []
+
+    await conn.execute(
+        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
+        "VALUES(1, 'owner-a')"
+    )
+    pending = await (
+        await conn.execute(
+            "SELECT cleanup_state, cleanup_attempts, last_error_code, "
+            "created_at, updated_at FROM analysis_deletion_tombstones "
+            "WHERE analysis_session_id=1"
+        )
+    ).fetchone()
+    assert tuple(pending[:3]) == ("pending", 0, None)
+    assert pending[3]
+    assert pending[4]
+
+    await conn.execute(
+        "INSERT INTO analysis_deletion_tombstones("
+        "analysis_session_id, owner_id, cleanup_state, cleanup_attempts, last_error_code"
+        ") VALUES(2, 'owner-a', 'failed', 1, 'workspace_cleanup_failed')"
+    )
+
+
+@pytest.mark.asyncio
+async def test_init_schema_upgrades_v12_to_v13_tombstone_contract():
+    conn = await db.get_conn()
+    await conn.execute("DROP TABLE IF EXISTS analysis_deletion_tombstones")
+    await conn.execute("PRAGMA user_version = 12")
+    await conn.commit()
+    await db.close_conn()
+
+    await db.init_schema()
+    conn = await db.get_conn()
+
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 13
+    assert await _table_exists(conn, "analysis_deletion_tombstones")
+
+
+@pytest.mark.asyncio
+async def test_init_schema_v13_second_call_is_idempotent_and_preserves_tombstone():
+    conn = await db.get_conn()
+    await conn.execute(
+        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
+        "VALUES(101, 'owner-idempotent')"
+    )
+    await conn.commit()
+    await db.close_conn()
+
+    await db.init_schema()
+    conn = await db.get_conn()
+
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 13
+    row = await (
+        await conn.execute(
+            "SELECT owner_id, cleanup_state, cleanup_attempts, last_error_code "
+            "FROM analysis_deletion_tombstones WHERE analysis_session_id=101"
+        )
+    ).fetchone()
+    assert tuple(row) == ("owner-idempotent", "pending", 0, None)
+
+
+@pytest.mark.asyncio
+async def test_v13_migration_helper_respects_caller_transaction_rollback():
+    conn = await aiosqlite.connect(":memory:")
+    try:
+        await conn.execute("BEGIN IMMEDIATE")
+        await db._migrate_v13_analysis_deletion_tombstones(conn)
+        assert await _table_exists(conn, "analysis_deletion_tombstones")
+
+        await conn.execute("ROLLBACK")
+
+        assert not await _table_exists(conn, "analysis_deletion_tombstones")
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_v12_to_v13_init_schema_rolls_back_table_and_version_on_failure(
+    monkeypatch,
+):
+    conn = await db.get_conn()
+    await conn.execute("DROP TABLE IF EXISTS analysis_deletion_tombstones")
+    await conn.execute("PRAGMA user_version = 12")
+    await conn.commit()
+    original_migration = db._migrate_v13_analysis_deletion_tombstones
+
+    async def fail_after_table_creation(migration_conn):
+        await original_migration(migration_conn)
+        assert await _table_exists(
+            migration_conn,
+            "analysis_deletion_tombstones",
+        )
+        raise RuntimeError("injected failure after v13 table creation")
+
+    monkeypatch.setattr(
+        db,
+        "_migrate_v13_analysis_deletion_tombstones",
+        fail_after_table_creation,
+    )
+
+    with pytest.raises(RuntimeError, match="injected failure"):
+        await db.init_schema()
+
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 12
+    assert not await _table_exists(conn, "analysis_deletion_tombstones")
+
+
+@pytest.mark.parametrize(
+    ("analysis_session_id", "owner_id", "state", "attempts", "error_code"),
+    [
+        (0, "owner-a", "pending", 0, None),
+        (-1, "owner-a", "pending", 0, None),
+        (1, "", "pending", 0, None),
+        (1, "   ", "pending", 0, None),
+        (1, "owner-a", "complete", 0, None),
+        (1, "owner-a", "pending", -1, None),
+        (1, "owner-a", "pending", 1, None),
+        (1, "owner-a", "pending", 0, "workspace_cleanup_failed"),
+        (1, "owner-a", "failed", 0, "workspace_cleanup_failed"),
+        (1, "owner-a", "failed", 1, None),
+        (1, "owner-a", "failed", 1, "raw OSError or path"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_v13_tombstone_rejects_invalid_identity_and_cleanup_state_combinations(
+    analysis_session_id: int,
+    owner_id: str,
+    state: str,
+    attempts: int,
+    error_code: str | None,
+):
+    conn = await db.get_conn()
+
+    with pytest.raises(aiosqlite.IntegrityError):
+        await conn.execute(
+            "INSERT INTO analysis_deletion_tombstones("
+            "analysis_session_id, owner_id, cleanup_state, cleanup_attempts, "
+            "last_error_code) VALUES(?, ?, ?, ?, ?)",
+            (analysis_session_id, owner_id, state, attempts, error_code),
+        )

@@ -593,8 +593,7 @@ def _safe_plan(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 async def list_runs(owner_id: str) -> list[dict[str, Any]]:
-    runs = await kovaak_run_store.list_kovaak_runs(owner_id)
-    return [_safe_run(run) for run in runs]
+    return await kovaak_run_store.list_kovaak_run_summaries(owner_id)
 
 
 async def get_run(owner_id: str, run_id: int) -> dict[str, Any]:
@@ -608,16 +607,7 @@ async def get_run(owner_id: str, run_id: int) -> dict[str, Any]:
 
 
 async def list_history(owner_id: str) -> list[dict[str, Any]]:
-    rows = await queue.list_sessions(owner_id)
-    metadata = await history_trends.session_history_metadata(owner_id)
-    return [
-        {
-            key: value
-            for key, value in {**row, **metadata.get(int(row["id"]), {})}.items()
-            if key not in {"video_path", "csv_path", "input_snapshot", "result", "error"}
-        }
-        for row in rows
-    ]
+    return await queue.list_sessions(owner_id)
 
 
 async def history_trend(owner_id: str, metric_key: str) -> dict[str, Any]:

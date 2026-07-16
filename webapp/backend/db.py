@@ -10,7 +10,7 @@ from .config import DB_PATH
 
 _conn: Optional[aiosqlite.Connection] = None
 
-TARGET_USER_VERSION = 12
+TARGET_USER_VERSION = 13
 
 
 async def get_conn() -> aiosqlite.Connection:
@@ -413,6 +413,28 @@ CREATE INDEX IF NOT EXISTS idx_coach_command_confirmations_owner_status
 """
 
 
+_V13_ANALYSIS_DELETION_TOMBSTONES = """
+CREATE TABLE IF NOT EXISTS analysis_deletion_tombstones (
+    analysis_session_id INTEGER PRIMARY KEY CHECK(analysis_session_id > 0),
+    owner_id TEXT NOT NULL CHECK(TRIM(owner_id) <> ''),
+    cleanup_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(cleanup_state IN ('pending', 'failed')),
+    cleanup_attempts INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_attempts >= 0),
+    last_error_code TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(
+        (cleanup_state = 'pending' AND cleanup_attempts = 0
+            AND last_error_code IS NULL)
+        OR
+        (cleanup_state = 'failed' AND cleanup_attempts >= 1
+            AND last_error_code IS NOT NULL
+            AND last_error_code = 'workspace_cleanup_failed')
+    )
+);
+"""
+
+
 async def init_schema() -> None:
     conn = await get_conn()
     cur = await conn.execute("PRAGMA user_version")
@@ -433,6 +455,7 @@ async def init_schema() -> None:
         await _migrate_v10_provider_credentials(conn)
         await _migrate_v11_training_plans(conn)
         await _migrate_v12_coach_commands(conn)
+        await _migrate_v13_analysis_deletion_tombstones(conn)
         await conn.commit()
         return
 
@@ -460,6 +483,8 @@ async def init_schema() -> None:
             await _migrate_v11_training_plans(conn)
         if user_version < 12:
             await _migrate_v12_coach_commands(conn)
+        if user_version < 13:
+            await _migrate_v13_analysis_deletion_tombstones(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -508,6 +533,13 @@ async def _migrate_v11_training_plans(conn: aiosqlite.Connection) -> None:
 async def _migrate_v12_coach_commands(conn: aiosqlite.Connection) -> None:
     """v11 → v12: persistent Coach command audit, idempotency and confirmations."""
     await _execute_transactional_script(conn, _V12_COACH_COMMAND_TABLES)
+
+
+async def _migrate_v13_analysis_deletion_tombstones(
+    conn: aiosqlite.Connection,
+) -> None:
+    """v12 → v13: transient Analysis workspace cleanup tombstones."""
+    await _execute_transactional_script(conn, _V13_ANALYSIS_DELETION_TOMBSTONES)
 
 
 async def _execute_transactional_script(

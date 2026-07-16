@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
+import threading
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from webapp.backend import worker, queue
-from webapp.backend.contracts import ANALYSIS_RESULT_V2_SCHEMA_VERSION
+from webapp.backend import db, queue, worker
+from webapp.backend.contracts import (
+    ANALYSIS_RESULT_SCHEMA_VERSION,
+    ANALYSIS_RESULT_V2_SCHEMA_VERSION,
+    LEGACY_ANALYSIS_VERSION,
+    build_analysis_result_v1,
+)
 
 
 @pytest.mark.asyncio
@@ -289,14 +297,17 @@ async def test_native_source_disappearance_uses_stable_non_retryable_error(caplo
 
 
 @pytest.mark.asyncio
-async def test_run_based_video_fallback_writes_v2_without_raw_provenance():
+async def test_run_based_video_fallback_writes_v2_without_raw_provenance(
+    tmp_path: Path,
+):
     from webapp.backend import kovaak_run_store
 
-    video_fingerprint = {
-        "sha256": "a" * 64,
-        "size": 123,
-        "mtime_ns": 456,
-    }
+    source_video = tmp_path / "clip.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"frozen-video-revision")
+    managed_video.write_bytes(source_video.read_bytes())
+    video_source = _video_source(source_video)
+    video_fingerprint = video_source["fingerprint"]
     run = await kovaak_run_store.upsert_kovaak_run(
         user_id="u1", source_key="fallback-run", scenario="Scenario",
     )
@@ -311,13 +322,7 @@ async def test_run_based_video_fallback_writes_v2_without_raw_provenance():
                 "availability": "available",
                 "path": "/private/stats.csv",
             },
-            "video": {
-                "basename": "clip.mp4",
-                "fingerprint": video_fingerprint,
-                "availability": "available",
-                "format_version": "mp4",
-                "path": "/private/video.mp4",
-            },
+            "video": video_source,
         },
         "trace": {
             "artifact_ref": f"run:{run['id']}:trace",
@@ -326,7 +331,7 @@ async def test_run_based_video_fallback_writes_v2_without_raw_provenance():
         },
     }
     sid = await queue.enqueue(
-        "u1", "/tmp/v.mp4", "/tmp/s.csv",
+        "u1", str(managed_video), "/tmp/s.csv",
         input_mode="video_fallback",
         kovaak_run_id=run["id"],
         input_snapshot=snapshot,
@@ -359,6 +364,7 @@ async def test_run_based_video_fallback_writes_v2_without_raw_provenance():
     )
     assert video_artifact["checksum"] == video_fingerprint["sha256"]
     assert "/private" not in json.dumps(stored["result"])
+    assert str(source_video) not in json.dumps(stored["result"])
 
 
 @pytest.mark.asyncio
@@ -547,6 +553,21 @@ def _native_snapshot() -> dict:
     }
 
 
+def _video_source(path: Path) -> dict:
+    stat = path.stat()
+    return {
+        "basename": path.name,
+        "fingerprint": {
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        },
+        "path": str(path),
+        "availability": "available",
+        "format_version": "mp4",
+    }
+
+
 def _native_adapter_result() -> dict:
     return {
         "analysis_type": "flicking",
@@ -592,6 +613,7 @@ def _native_adapter_result() -> dict:
                     "metric_version": "native_flicking_segment.v1",
                     "sample_count": 2,
                     "coverage": 1.0,
+                    "classification": "deterministic",
                     "limitations": [],
                 },
                 "calibrated_path_length": {
@@ -603,6 +625,7 @@ def _native_adapter_result() -> dict:
                     "metric_version": "native_flicking_segment.v1",
                     "sample_count": 2,
                     "coverage": 1.0,
+                    "classification": "deterministic",
                     "limitations": [],
                 },
                 "path_efficiency": {
@@ -614,6 +637,7 @@ def _native_adapter_result() -> dict:
                     "metric_version": "native_flicking_segment.v1",
                     "sample_count": 2,
                     "coverage": 1.0,
+                    "classification": "deterministic",
                     "limitations": [],
                 },
                 "straightness": {
@@ -625,6 +649,7 @@ def _native_adapter_result() -> dict:
                     "metric_version": "native_flicking_segment.v1",
                     "sample_count": 2,
                     "coverage": 1.0,
+                    "classification": "deterministic",
                     "limitations": [],
                 },
                 "decel_frac": {
@@ -638,6 +663,7 @@ def _native_adapter_result() -> dict:
                     "metric_version": "native_flicking_segment.v1",
                     "sample_count": 1,
                     "coverage": 1.0,
+                    "classification": "deterministic",
                     "limitations": ["descriptive_distribution_not_health_threshold"],
                     "sample_refs": ["flick:1"],
                 },
@@ -652,6 +678,7 @@ def _native_adapter_result() -> dict:
                     "metric_version": "native_flicking.sparc.v2",
                     "sample_count": 1,
                     "coverage": 1.0,
+                    "classification": "deterministic",
                     "limitations": [
                         "descriptive_distribution_not_health_threshold",
                         "sparc_cross_polling_comparability_unverified",
@@ -754,16 +781,55 @@ async def _capture_mode_result(
     return completed[0], calls, native_mock, cv_mock
 
 
+async def _capture_mode_failure(
+    job: dict,
+    *,
+    native_result: dict,
+    cv_side_effect=None,
+):
+    failed: list[dict] = []
+
+    async def mark_failed(_sid, error, *, worker_id):
+        failed.append(error)
+        return True
+
+    def native(*_args, **kwargs):
+        if kwargs.get("return_parsed_stats"):
+            return native_result, object()
+        return native_result
+
+    mark_done = AsyncMock(return_value=True)
+    with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), \
+         patch("webapp.backend.queue.claim_next", new=AsyncMock(return_value=job)), \
+         patch("webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True)), \
+         patch("webapp.backend.queue.mark_done", new=mark_done), \
+         patch("webapp.backend.queue.mark_failed", new=AsyncMock(side_effect=mark_failed)), \
+         patch("webapp.backend.worker.run_native_analysis", side_effect=native) as native_mock, \
+         patch("webapp.backend.worker.run_analysis", side_effect=cv_side_effect) as cv_mock:
+        assert await worker.process_one() is True
+
+    assert len(failed) == 1
+    mark_done.assert_not_awaited()
+    return failed[0], native_mock, cv_mock
+
+
 @pytest.mark.asyncio
 async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_private_paths():
     snapshot = _native_snapshot()
+    snapshot["sources"]["video"] = {
+        "basename": "ignored.mp4",
+        "fingerprint": {"sha256": "ignored", "size": 1, "mtime_ns": 1},
+        "path": "/db-private/source/ignored.mp4",
+        "availability": "available",
+        "format_version": "mp4",
+    }
     job = {
         "id": 101,
         "user_id": "u1",
         "input_mode": "input_native",
         "kovaak_run_id": 42,
         "input_snapshot": snapshot,
-        "video_path": "",
+        "video_path": "/managed/session/ignored.mp4",
         "csv_path": "",
         "cm_per_360": 30.0,
         "fov": 90.0,
@@ -793,6 +859,8 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
     assert result["evidence"]["sources"]["raw_input"]["parser_or_format_version"] == 1
     assert result["evidence"]["sources"]["stats"]["parser_or_format_version"] == "kovaak_stats.v1"
     assert result["evidence"]["sources"]["performance"]["parser_or_format_version"] == "kovaak_performance.v1"
+    assert "mp4" not in result["evidence"]["sources"]
+    assert "video" not in result["input_snapshot"]["sources"]
     assert result["input_snapshot"]["trace"] == {
         "artifact_ref": "run:42:trace",
         "availability": "available",
@@ -817,11 +885,12 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
     assert "/db-private/" not in str(result)
     required_metric_fields = {
         "key", "value", "unit", "availability", "provenance",
-        "metric_version", "coverage", "limitations",
+        "metric_version", "coverage", "classification", "limitations",
     }
     for key, metric in public_deterministic["metrics"].items():
         assert required_metric_fields <= set(metric), key
         assert metric["key"] == key
+        assert metric["classification"] == "deterministic"
 
     manifest = result["artifact_manifest"]
     assert manifest["analysis_id"] == "analysis:101"
@@ -848,6 +917,7 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
     assert set(entries["analysis:101"]["derived_from"]) == {
         "run:42:stats", "run:42:performance", "run:42:trace",
     }
+    assert all(entry["kind"] != "mp4" for entry in entries.values())
     issue = public_deterministic["diagnosis"]["issues"][0]
     assert issue["signal"] == "decel_frac high"
     assert issue["severity"] == "info"
@@ -858,27 +928,21 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
 
 
 @pytest.mark.asyncio
-async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails():
+async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails(tmp_path: Path):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"stable-video")
+    managed_video.write_bytes(source_video.read_bytes())
     snapshot = _native_snapshot()
-    video_fingerprint = {
-        "sha256": "video-sha",
-        "size": 3,
-        "mtime_ns": 3,
-    }
-    snapshot["sources"]["video"] = {
-        "basename": "video.mp4",
-        "fingerprint": video_fingerprint,
-        "path": "/db-private/source/video.mp4",
-        "availability": "available",
-        "format_version": "mp4",
-    }
+    snapshot["sources"]["video"] = _video_source(source_video)
+    video_fingerprint = snapshot["sources"]["video"]["fingerprint"]
     job = {
         "id": 102,
         "user_id": "u1",
         "input_mode": "multimodal",
         "kovaak_run_id": 42,
         "input_snapshot": snapshot,
-        "video_path": "/managed/session/video.mp4",
+        "video_path": str(managed_video),
         "csv_path": "",
         "cm_per_360": None,
         "fov": None,
@@ -896,7 +960,7 @@ async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails():
 
     assert calls == ["native", "cv"]
     cv_mock.assert_called_once_with(
-        "/managed/session/video.mp4",
+        str(managed_video),
         "/db-private/runs/42/stats.csv",
         None,
         None,
@@ -922,27 +986,334 @@ async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails():
     assert video_artifact["checksum"] == video_fingerprint["sha256"]
     assert result["input_snapshot"]["sources"]["video"] == {
         "artifact_ref": "analysis:102:video",
-        "basename": "video.mp4",
+        "basename": source_video.name,
         "fingerprint": video_fingerprint,
         "availability": "available",
         "format_version": "mp4",
     }
     assert result["warnings"] == [{"code": "video_cv_unavailable"}]
+    assert result["deterministic"]["diagnosis"]["meta"]["input_mode"] == "multimodal"
     assert "target_relative_error" not in result["deterministic"]["metrics"]
     assert "overshoot_distance" not in result["deterministic"]["metrics"]
 
 
 @pytest.mark.asyncio
-async def test_process_one_multimodal_reuses_stats_frozen_by_native_analysis():
+@pytest.mark.parametrize("input_mode", ["multimodal", "video_fallback"])
+@pytest.mark.parametrize("damage", ["missing", "truncated", "replaced"])
+async def test_process_one_run_based_mode_rejects_invalid_managed_video_before_cv(
+    tmp_path: Path,
+    caplog,
+    input_mode: str,
+    damage: str,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"frozen-video-revision")
+    if damage == "truncated":
+        managed_video.write_bytes(b"frozen")
+    elif damage == "replaced":
+        managed_video.write_bytes(b"x" * source_video.stat().st_size)
+
+    snapshot = _native_snapshot()
+    snapshot["sources"]["video"] = _video_source(source_video)
+    job = {
+        "id": 201,
+        "user_id": "u1",
+        "input_mode": input_mode,
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": str(tmp_path / "managed-stats.csv"),
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    error, native_mock, cv_mock = await _capture_mode_failure(
+        job,
+        native_result=_native_adapter_result(),
+    )
+
+    assert error == {
+        "schema_version": "error.v1",
+        "category": "input_validation",
+        "code": "source_unavailable",
+        "message": "分析输入源已不可用或已变更，请重新提交分析。",
+        "retryable": False,
+        "trace_id": None,
+        "details": None,
+    }
+    native_mock.assert_not_called()
+    cv_mock.assert_not_called()
+    assert str(source_video) not in json.dumps(error, ensure_ascii=False)
+    assert str(managed_video) not in json.dumps(error, ensure_ascii=False)
+    assert str(source_video) not in caplog.text
+    assert str(managed_video) not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("input_mode", ["multimodal", "video_fallback"])
+@pytest.mark.parametrize("missing", ["snapshot", "video", "fingerprint"])
+async def test_process_one_run_based_mode_requires_frozen_video_identity(
+    tmp_path: Path,
+    input_mode: str,
+    missing: str,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"frozen-video-revision")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_snapshot()
+    snapshot["sources"]["video"] = _video_source(source_video)
+    if missing == "snapshot":
+        input_snapshot = None
+    else:
+        input_snapshot = snapshot
+        if missing == "video":
+            snapshot["sources"].pop("video")
+        elif missing == "fingerprint":
+            snapshot["sources"]["video"].pop("fingerprint")
+    job = {
+        "id": 204,
+        "user_id": "u1",
+        "input_mode": input_mode,
+        "kovaak_run_id": 42,
+        "input_snapshot": input_snapshot,
+        "video_path": str(managed_video),
+        "csv_path": str(tmp_path / "managed-stats.csv"),
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    error, native_mock, cv_mock = await _capture_mode_failure(
+        job,
+        native_result=_native_adapter_result(),
+    )
+
+    native_mock.assert_not_called()
+    cv_mock.assert_not_called()
+    assert error["category"] == "input_validation"
+    assert error["code"] == "source_unavailable"
+    assert error["retryable"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("input_mode", ["multimodal", "video_fallback"])
+async def test_process_one_rejects_managed_video_changed_during_cv(
+    tmp_path: Path,
+    input_mode: str,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"frozen-video-revision")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_snapshot()
+    snapshot["sources"]["video"] = _video_source(source_video)
+    job = {
+        "id": 202,
+        "user_id": "u1",
+        "input_mode": input_mode,
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": str(tmp_path / "managed-stats.csv"),
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    def mutate_video(*_args, **_kwargs):
+        managed_video.write_bytes(b"changed-during-cv")
+        return {}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}
+
+    provider_lookup = AsyncMock(return_value=None)
+    with patch(
+        "webapp.backend.provider_store.get_default_runtime_profile",
+        new=provider_lookup,
+    ), patch("webapp.backend.worker._load_backend", return_value=None), patch(
+        "webapp.backend.worker.run_report",
+        return_value={"diagnosis": {}, "narration": None, "notes": []},
+    ) as report_mock:
+        error, _native_mock, cv_mock = await _capture_mode_failure(
+            job,
+            native_result=_native_adapter_result(),
+            cv_side_effect=mutate_video,
+        )
+
+    cv_mock.assert_called_once()
+    assert error["category"] == "input_validation"
+    assert error["code"] == "source_unavailable"
+    assert error["retryable"] is False
+    if input_mode == "video_fallback":
+        provider_lookup.assert_not_awaited()
+        report_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_video_fallback_cv_failure_does_not_log_input_paths(
+    tmp_path: Path,
+    caplog,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    managed_stats = tmp_path / "managed-stats.csv"
+    source_video.write_bytes(b"frozen-video-revision")
+    managed_video.write_bytes(source_video.read_bytes())
+    managed_stats.write_text("stats")
+    snapshot = _native_snapshot()
+    snapshot["sources"]["video"] = _video_source(source_video)
+    job = {
+        "id": 206,
+        "user_id": "u1",
+        "input_mode": "video_fallback",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": str(managed_stats),
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+    private_message = f"decoder failed video={managed_video} csv={managed_stats}"
+
+    error, native_mock, cv_mock = await _capture_mode_failure(
+        job,
+        native_result=_native_adapter_result(),
+        cv_side_effect=RuntimeError(private_message),
+    )
+
+    native_mock.assert_not_called()
+    cv_mock.assert_called_once()
+    assert error["category"] == "internal_unknown"
+    assert error["code"] == "analysis_failed"
+    assert error["retryable"] is True
+    assert str(managed_video) not in json.dumps(error, ensure_ascii=False)
+    assert str(managed_stats) not in json.dumps(error, ensure_ascii=False)
+    assert str(managed_video) not in caplog.text
+    assert str(managed_stats) not in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_process_one_accepts_managed_video_with_different_mtime(
+    tmp_path: Path,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"frozen-video-revision")
+    managed_video.write_bytes(source_video.read_bytes())
+    source = _video_source(source_video)
+    managed_stat = managed_video.stat()
+    os.utime(
+        managed_video,
+        ns=(managed_stat.st_atime_ns, source["fingerprint"]["mtime_ns"] + 2_000_000_000),
+    )
+    snapshot = _native_snapshot()
+    snapshot["sources"]["video"] = source
+    job = {
+        "id": 203,
+        "user_id": "u1",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result, calls, _native_mock, _cv_mock = await _capture_mode_result(
+        job,
+        native_result=_native_adapter_result(),
+        parsed_stats=object(),
+        cv_result=({}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}),
+    )
+
+    assert calls == ["native", "cv"]
+    assert result["input_mode"] == "multimodal"
+    assert result["evidence"]["availability"]["mp4"] == "available"
+
+
+@pytest.mark.asyncio
+async def test_managed_video_verification_does_not_block_heartbeat():
+    verification_started = threading.Event()
+    verification_finished = threading.Event()
+    release_verification = threading.Event()
+    heartbeat_seen = asyncio.Event()
+    verification_calls = 0
+
+    def blocking_verifier(_job, _input_mode):
+        nonlocal verification_calls
+        verification_calls += 1
+        if verification_calls == 1:
+            verification_started.set()
+            try:
+                release_verification.wait(timeout=1)
+            finally:
+                verification_finished.set()
+
+    async def heartbeat(_sid, _worker_id):
+        heartbeat_seen.set()
+        return True
+
+    job = {
+        "id": 205,
+        "user_id": "u1",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": _native_snapshot(),
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+    process_task = None
+    try:
+        with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), \
+             patch("webapp.backend.queue.claim_next", new=AsyncMock(return_value=job)), \
+             patch("webapp.backend.queue.heartbeat", new=AsyncMock(side_effect=heartbeat)), \
+             patch("webapp.backend.queue.mark_done", new=AsyncMock(return_value=True)), \
+             patch("webapp.backend.worker.run_native_analysis", return_value=_native_adapter_result()), \
+             patch(
+                 "webapp.backend.worker._assert_managed_video_matches_snapshot",
+                 side_effect=blocking_verifier,
+             ):
+            process_task = asyncio.create_task(worker.process_one())
+            assert await asyncio.to_thread(verification_started.wait, 2)
+            assert not verification_finished.is_set()
+            await asyncio.wait_for(heartbeat_seen.wait(), timeout=1)
+            assert not release_verification.is_set()
+            release_verification.set()
+            assert await process_task is True
+    finally:
+        release_verification.set()
+        if process_task is not None and not process_task.done():
+            await process_task
+
+    assert verification_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_process_one_multimodal_reuses_stats_frozen_by_native_analysis(
+    tmp_path: Path,
+):
     parsed_stats = object()
     snapshot = _native_snapshot()
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"frozen-video-revision")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot["sources"]["video"] = _video_source(source_video)
     job = {
         "id": 104,
         "user_id": "u1",
         "input_mode": "multimodal",
         "kovaak_run_id": 42,
         "input_snapshot": snapshot,
-        "video_path": "/managed/session/video.mp4",
+        "video_path": str(managed_video),
         "csv_path": "",
         "cm_per_360": None,
         "fov": None,
@@ -953,7 +1324,7 @@ async def test_process_one_multimodal_reuses_stats_frozen_by_native_analysis():
         {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []},
     )
 
-    _result, calls, native_mock, cv_mock = await _capture_mode_result(
+    result, calls, native_mock, cv_mock = await _capture_mode_result(
         job,
         native_result=_native_adapter_result(),
         parsed_stats=parsed_stats,
@@ -963,6 +1334,16 @@ async def test_process_one_multimodal_reuses_stats_frozen_by_native_analysis():
     assert calls == ["native", "cv"]
     assert native_mock.call_args.kwargs["return_parsed_stats"] is True
     assert cv_mock.call_args.kwargs["stats"] is parsed_stats
+    assert result["input_mode"] == "multimodal"
+    assert result["deterministic"]["metrics"] == _native_adapter_result()["deterministic"]["metrics"]
+    assert result["deterministic"]["timeline"] == _native_adapter_result()["deterministic"]["timeline"]
+    assert result["deterministic"]["visual_validation"] == {
+        "status": "available",
+        "timeline": [],
+    }
+    assert result["evidence"]["availability"]["mp4"] == "available"
+    assert result["warnings"] == []
+    assert result["deterministic"]["diagnosis"]["meta"]["input_mode"] == "multimodal"
 
 
 @pytest.mark.asyncio
@@ -1038,6 +1419,51 @@ async def test_process_one_video_fallback_writes_v2_without_raw_provenance():
         ]
     )
     assert "/managed" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_kind", ["v1", "legacy"])
+async def test_get_session_still_reads_v1_and_unversioned_legacy_results(
+    result_kind: str,
+):
+    sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
+    if result_kind == "v1":
+        stored_result = build_analysis_result_v1(
+            report={"diagnosis": {"ok": True}, "figures": {}, "notes": [], "narration": None},
+            timeline=[],
+            narration_status="not_requested",
+            cm_per_360=None,
+            fov=None,
+            artifact_manifest={
+                "schema_version": "artifact_manifest.v1",
+                "inputs": [],
+                "outputs": [],
+            },
+            created_at="2026-07-13T12:00:00Z",
+            completed_at="2026-07-13T12:01:00Z",
+        )
+    else:
+        stored_result = {
+            "diagnosis": {"ok": True},
+            "figures": {},
+            "notes": [],
+            "timeline": [],
+        }
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (json.dumps(stored_result), sid),
+    )
+    await conn.commit()
+
+    session = await queue.get_session(sid)
+
+    assert session is not None
+    assert session["result"]["schema_version"] == ANALYSIS_RESULT_SCHEMA_VERSION
+    if result_kind == "v1":
+        assert session["result"] == stored_result
+    else:
+        assert session["result"]["analysis_version"] == LEGACY_ANALYSIS_VERSION
 
 
 def test_native_result_marks_desktop_owner_as_local_profile():

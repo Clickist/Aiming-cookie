@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import asdict, is_dataclass
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION = "coach_diagnostic_context.v1"
 
@@ -81,18 +82,26 @@ _EVIDENCE_REF_FIELDS = (
     "availability",
     "local_only",
 )
+_ANALYSIS_REF_FIELDS = frozenset(
+    {"analysis_id", "analysis_result_version", "analysis_type", "input_mode"}
+)
+_ANALYSIS_ID_PATTERN = re.compile(r"^analysis:[A-Za-z0-9][A-Za-z0-9._-]*$")
+_NETWORK_URL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+_V2_INPUT_MODES = frozenset({"input_native", "multimodal", "video_fallback"})
 
 
 def _is_absolute_path(value: str) -> bool:
+    candidate = value.strip()
     return (
-        os.path.isabs(value)
-        or value.startswith(("file://", "~/", "../", "..\\"))
-        or value.startswith("\\")
+        os.path.isabs(candidate)
+        or candidate.casefold().startswith("file:")
+        or candidate.startswith(("~/", "../", "..\\"))
+        or candidate.startswith("\\")
         or (
-            len(value) >= 3
-            and value[0].isalpha()
-            and value[1] == ":"
-            and value[2] in {"/", "\\"}
+            len(candidate) >= 3
+            and candidate[0].isalpha()
+            and candidate[1] == ":"
+            and candidate[2] in {"/", "\\"}
         )
     )
 
@@ -101,11 +110,25 @@ def _contains_sensitive_text(value: str) -> bool:
     return bool(
         re.search(
             r"(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|"
-            r"client[_-]?secret|password)\s*[:=]|\bbearer\s+\S{8,}|"
-            r"\bsk-[a-z0-9][a-z0-9_-]{7,}",
+            r"client[_-]?secret|password|secret)\s*[:=]|\bbearer\s+\S{8,}|"
+            r"\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{8,}|"
+            r"(?:raw[\s_-]*trace|target[\s_-]*inference|"
+            r"sensitivity[\s_-]*heuristic|external[\s_-]*progress|"
+            r"benchmark|payload)",
             value,
         )
     )
+
+
+def _is_network_url(value: str) -> bool:
+    candidate = value.strip()
+    if _NETWORK_URL_PREFIX.match(candidate):
+        return True
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return True
+    return bool(parsed.scheme and parsed.netloc)
 
 
 def _is_forbidden_key(key: object) -> bool:
@@ -143,7 +166,23 @@ def _is_forbidden_key(key: object) -> bool:
         )
     ):
         return True
-    return compact in {"dx", "dy", "button", "buttons", "points"}
+    return compact in {
+        "dx",
+        "dy",
+        "button",
+        "buttons",
+        "points",
+        "trace",
+        "trajectory",
+        "timestamp",
+        "timestamps",
+        "timestampsample",
+        "timestampsamples",
+        "sample",
+        "samples",
+        "rawsample",
+        "rawsamples",
+    }
 
 
 def _safe_scalar(value: object) -> object:
@@ -154,7 +193,9 @@ def _safe_scalar(value: object) -> object:
     if isinstance(value, str):
         return (
             value
-            if not _is_absolute_path(value) and not _contains_sensitive_text(value)
+            if not _is_absolute_path(value)
+            and not _is_network_url(value)
+            and not _contains_sensitive_text(value)
             else _MISSING
         )
     return _MISSING
@@ -174,11 +215,28 @@ def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def _project_metric(metric: object) -> dict[str, object] | None:
+def _project_metric(
+    metric: object,
+    *,
+    require_deterministic: bool,
+) -> dict[str, object] | None:
     if isinstance(metric, Mapping):
         classification = metric.get("classification")
-        if classification not in (None, "deterministic"):
+        if require_deterministic:
+            if classification != "deterministic":
+                return None
+        elif classification not in (None, "deterministic"):
             return None
+        provenance_value = metric.get("provenance")
+        if "provenance" in metric:
+            if not isinstance(provenance_value, Mapping):
+                return None
+            if provenance_value.get("kind") not in {
+                "measured",
+                "derived",
+                "fused",
+            }:
+                return None
         out: dict[str, object] = {}
         for key in _METRIC_FIELDS:
             if key not in metric or _is_forbidden_key(key):
@@ -200,15 +258,23 @@ def _project_metric(metric: object) -> dict[str, object] | None:
                     out[key] = provenance
                 continue
             value = _safe_scalar(metric[key])
+            if key == "classification" and value is None:
+                continue
             if value is not _MISSING:
                 out[key] = value
         return out or None
 
+    if require_deterministic:
+        return None
     value = _safe_scalar(metric)
     return {"value": value} if value is not _MISSING else None
 
 
-def _project_summary(summary: object) -> dict[str, dict[str, object]]:
+def _project_summary(
+    summary: object,
+    *,
+    require_deterministic: bool,
+) -> dict[str, dict[str, object]]:
     out: dict[str, dict[str, object]] = {}
     if not isinstance(summary, Mapping):
         return out
@@ -216,7 +282,10 @@ def _project_summary(summary: object) -> dict[str, dict[str, object]]:
         key = str(metric_key)
         if _is_forbidden_key(key):
             continue
-        projected = _project_metric(metric)
+        projected = _project_metric(
+            metric,
+            require_deterministic=require_deterministic,
+        )
         if projected is not None:
             out[key] = projected
     return out
@@ -234,6 +303,8 @@ def _project_issue(issue: object) -> dict[str, object] | None:
             out[key] = value
 
     for key in ("plain_language_meaning", "expected_result"):
+        if key not in issue:
+            continue
         value = _safe_scalar(issue.get(key))
         if value is not _MISSING:
             out[key] = value
@@ -261,9 +332,10 @@ def _project_issue(issue: object) -> dict[str, object] | None:
         success_signals = _safe_string_list(verification.get("success_signals"))
         if success_signals:
             projected_verification["success_signals"] = success_signals
-        insufficient = _safe_scalar(verification.get("insufficient_evidence_behavior"))
-        if insufficient is not _MISSING:
-            projected_verification["insufficient_evidence_behavior"] = insufficient
+        if "insufficient_evidence_behavior" in verification:
+            insufficient = _safe_scalar(verification.get("insufficient_evidence_behavior"))
+            if insufficient is not _MISSING:
+                projected_verification["insufficient_evidence_behavior"] = insufficient
         if projected_verification:
             out["verification"] = projected_verification
 
@@ -273,6 +345,8 @@ def _project_issue(issue: object) -> dict[str, object] | None:
             continue
         projected: dict[str, object] = {}
         for key in ("level", "text"):
+            if key not in root_cause:
+                continue
             value = _safe_scalar(root_cause.get(key))
             if value is not _MISSING:
                 projected[key] = value
@@ -294,6 +368,8 @@ def _project_issue(issue: object) -> dict[str, object] | None:
             "retest_after",
             "stop_or_adjust_rule",
         ):
+            if key not in prescription:
+                continue
             value = _safe_scalar(prescription.get(key))
             if value is not _MISSING and value != "":
                 projected[key] = value
@@ -318,11 +394,15 @@ def _project_issue(issue: object) -> dict[str, object] | None:
 def _project_comparison(comparison: object) -> dict[str, object] | None:
     if not isinstance(comparison, Mapping):
         return None
-    if comparison.get("classification") not in (None, "deterministic"):
+    if comparison.get("classification") != "deterministic":
         return None
     out: dict[str, object] = {}
     for key in _COMPARISON_FIELDS:
+        if key not in comparison:
+            continue
         value = _safe_scalar(comparison.get(key))
+        if key == "classification" and value is None:
+            continue
         if value is not _MISSING:
             out[key] = value
     return out or None
@@ -333,17 +413,28 @@ def _project_meta(meta: object) -> dict[str, object]:
         return {}
     out: dict[str, object] = {}
     for key in _META_FIELDS:
+        if key not in meta:
+            continue
         value = _safe_scalar(meta.get(key))
+        if key == "classification" and value is None:
+            continue
         if value is not _MISSING:
             out[key] = value
     return out
 
 
-def _project_diagnosis(diagnosis: object, *, fallback_summary: object = None) -> dict[str, object]:
+def _project_diagnosis(
+    diagnosis: object,
+    *,
+    fallback_summary: object = None,
+    require_deterministic_metrics: bool,
+) -> dict[str, object]:
     data = _mapping(diagnosis)
     profile = _mapping(data.get("profile"))
     projected_profile: dict[str, object] = {}
     for key in ("archetype_id", "label", "confidence"):
+        if key not in profile:
+            continue
         value = _safe_scalar(profile.get(key))
         if value is not _MISSING:
             projected_profile[key] = value
@@ -356,8 +447,14 @@ def _project_diagnosis(diagnosis: object, *, fallback_summary: object = None) ->
         for issue in data.get("issues") or []
         if (projected := _project_issue(issue)) is not None
     ]
-    summary = _project_summary(data.get("summary"))
-    fallback = _project_summary(fallback_summary)
+    summary = _project_summary(
+        data.get("summary"),
+        require_deterministic=require_deterministic_metrics,
+    )
+    fallback = _project_summary(
+        fallback_summary,
+        require_deterministic=require_deterministic_metrics,
+    )
     for key, metric in fallback.items():
         summary[key] = {**metric, **summary.get(key, {})}
 
@@ -437,16 +534,19 @@ def _project_evidence_summary(result: Mapping[str, Any], schema_version: str) ->
         alignment = _mapping(evidence.get("alignment"))
         projected_alignment: dict[str, object] = {}
         for key in ("status", "coverage_ratio"):
+            if key not in alignment:
+                continue
             value = _safe_scalar(alignment.get(key))
             if value is not _MISSING:
                 projected_alignment[key] = value
-        coverage = _safe_scalar(evidence.get("coverage"))
         out: dict[str, object] = {
             "availability": availability,
             "alignment": projected_alignment,
         }
-        if coverage is not _MISSING:
-            out["coverage"] = coverage
+        if "coverage" in evidence:
+            coverage = _safe_scalar(evidence.get("coverage"))
+            if coverage is not _MISSING:
+                out["coverage"] = coverage
         return out
 
     availability: dict[str, object] = {}
@@ -456,29 +556,100 @@ def _project_evidence_summary(result: Mapping[str, Any], schema_version: str) ->
             continue
         kind = artifact.get("kind")
         status = _safe_scalar(artifact.get("status"))
-        if isinstance(kind, str) and not _is_forbidden_key(kind) and status is not _MISSING:
+        if (
+            isinstance(kind, str)
+            and not _is_forbidden_key(kind)
+            and status is not _MISSING
+        ):
             availability[kind] = status
     return {"availability": availability, "alignment": {}}
 
 
-def _project_analysis_ref(result: Mapping[str, Any], schema_version: str) -> dict[str, object]:
-    if schema_version == "analysis_result.v2":
-        analysis_id = _safe_scalar(result.get("analysis_id"))
-        analysis_type = _safe_scalar(result.get("analysis_type"))
-        input_mode = _safe_scalar(result.get("input_mode"))
+def _validated_analysis_ref(
+    value: object,
+    *,
+    allow_extra: bool = False,
+) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    keys = set(value)
+    if not _ANALYSIS_REF_FIELDS.issubset(keys):
+        return None
+    if not allow_extra and keys != _ANALYSIS_REF_FIELDS:
+        return None
+
+    version = value.get("analysis_result_version")
+    analysis_id = value.get("analysis_id")
+    analysis_type = value.get("analysis_type")
+    input_mode = value.get("input_mode")
+    stable_id = isinstance(analysis_id, str) and bool(
+        _ANALYSIS_ID_PATTERN.fullmatch(analysis_id)
+    )
+    safe_analysis_type = (
+        isinstance(analysis_type, str)
+        and bool(analysis_type.strip())
+        and _safe_scalar(analysis_type) is not _MISSING
+    )
+
+    if version == "analysis_result.v2":
+        if not stable_id:
+            return None
+        if not safe_analysis_type:
+            return None
+        if input_mode not in _V2_INPUT_MODES:
+            return None
+    elif version == "analysis_result.v1":
+        if analysis_id is not None and not stable_id:
+            return None
+        if analysis_type is not None and not safe_analysis_type:
+            return None
+        if input_mode != "unknown":
+            return None
+    elif version == "unavailable":
+        if (
+            analysis_id is not None
+            or analysis_type is not None
+            or input_mode is not None
+        ):
+            return None
     else:
-        analysis_id = _safe_scalar(result.get("analysis_id"))
-        analysis_type = _safe_scalar(result.get("summary_type"))
-        input_mode = "video_fallback"
+        return None
+
     return {
-        "analysis_id": analysis_id if analysis_id is not _MISSING else None,
-        "analysis_result_version": schema_version,
-        "analysis_type": analysis_type if analysis_type is not _MISSING else None,
-        "input_mode": input_mode if input_mode is not _MISSING else None,
+        "analysis_id": analysis_id,
+        "analysis_result_version": version,
+        "analysis_type": analysis_type,
+        "input_mode": input_mode,
     }
 
 
-def project_coach_diagnostic_context(analysis_result: Mapping[str, Any]) -> dict[str, object]:
+def _project_analysis_ref(
+    result: Mapping[str, Any],
+    schema_version: str,
+) -> dict[str, object]:
+    if schema_version == "analysis_result.v2":
+        candidate = {
+            "analysis_id": result.get("analysis_id"),
+            "analysis_result_version": schema_version,
+            "analysis_type": result.get("analysis_type"),
+            "input_mode": result.get("input_mode"),
+        }
+    else:
+        candidate = {
+            "analysis_id": result.get("analysis_id"),
+            "analysis_result_version": schema_version,
+            "analysis_type": result.get("summary_type"),
+            "input_mode": "unknown",
+        }
+    validated = _validated_analysis_ref(candidate)
+    if validated is None:
+        raise ValueError("analysis result contains an invalid Coach analysis_ref")
+    return validated
+
+
+def project_coach_diagnostic_context(
+    analysis_result: Mapping[str, Any],
+) -> dict[str, object]:
     """Project an analysis_result.v1/v2 through the Coach's strict allow-list."""
     if not isinstance(analysis_result, Mapping):
         raise TypeError("analysis_result must be a mapping")
@@ -494,6 +665,7 @@ def project_coach_diagnostic_context(analysis_result: Mapping[str, Any]) -> dict
         "diagnosis": _project_diagnosis(
             deterministic.get("diagnosis"),
             fallback_summary=deterministic.get("metrics"),
+            require_deterministic_metrics=schema_version == "analysis_result.v2",
         ),
         "evidence_summary": _project_evidence_summary(analysis_result, schema_version),
         "warnings": _project_warnings(
@@ -503,18 +675,15 @@ def project_coach_diagnostic_context(analysis_result: Mapping[str, Any]) -> dict
     }
 
 
-def _project_existing_context(context: Mapping[str, Any]) -> dict[str, object]:
-    analysis_ref = _mapping(context.get("analysis_ref"))
-    projected_ref: dict[str, object] = {}
-    for key in (
-        "analysis_id",
-        "analysis_result_version",
-        "analysis_type",
-        "input_mode",
-    ):
-        value = _safe_scalar(analysis_ref.get(key))
-        if value is not _MISSING:
-            projected_ref[key] = value
+def _project_existing_context(
+    context: Mapping[str, Any],
+) -> dict[str, object] | None:
+    projected_ref = _validated_analysis_ref(
+        context.get("analysis_ref"),
+        allow_extra=True,
+    )
+    if projected_ref is None:
+        return None
 
     evidence = _mapping(context.get("evidence_summary"))
     availability: dict[str, object] = {}
@@ -524,23 +693,32 @@ def _project_existing_context(context: Mapping[str, Any]) -> dict[str, object]:
         value = _safe_scalar(raw_value)
         if value is not _MISSING:
             availability[str(key)] = value
+    raw_alignment = _mapping(evidence.get("alignment"))
     alignment: dict[str, object] = {}
     for key in ("status", "coverage_ratio"):
-        value = _safe_scalar(_mapping(evidence.get("alignment")).get(key))
+        if key not in raw_alignment:
+            continue
+        value = _safe_scalar(raw_alignment.get(key))
         if value is not _MISSING:
             alignment[key] = value
     projected_evidence: dict[str, object] = {
         "availability": availability,
         "alignment": alignment,
     }
-    coverage = _safe_scalar(evidence.get("coverage"))
-    if coverage is not _MISSING:
-        projected_evidence["coverage"] = coverage
+    if "coverage" in evidence:
+        coverage = _safe_scalar(evidence.get("coverage"))
+        if coverage is not _MISSING:
+            projected_evidence["coverage"] = coverage
 
     return {
         "schema_version": COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
         "analysis_ref": projected_ref,
-        "diagnosis": _project_diagnosis(context.get("diagnosis")),
+        "diagnosis": _project_diagnosis(
+            context.get("diagnosis"),
+            require_deterministic_metrics=(
+                projected_ref["analysis_result_version"] == "analysis_result.v2"
+            ),
+        ),
         "evidence_summary": projected_evidence,
         "warnings": _project_warnings(context.get("warnings")),
     }
@@ -549,13 +727,16 @@ def _project_existing_context(context: Mapping[str, Any]) -> dict[str, object]:
 def context_from_legacy_diagnosis(diagnosis: object) -> dict[str, object]:
     """Compatibility bridge for callers that have only the pre-Task-5 diagnosis object."""
     data = asdict(diagnosis) if is_dataclass(diagnosis) else diagnosis
-    projected = _project_diagnosis(data)
+    projected = _project_diagnosis(
+        data,
+        require_deterministic_metrics=False,
+    )
     return {
         "schema_version": COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
         "analysis_ref": {
             "analysis_id": None,
             "analysis_result_version": "unavailable",
-            "analysis_type": projected["meta"].get("summary_type"),
+            "analysis_type": None,
             "input_mode": None,
         },
         "diagnosis": projected,
@@ -568,11 +749,16 @@ def coerce_coach_diagnostic_context(value: object) -> dict[str, object] | None:
     """Return canonical context for existing context, result, or legacy diagnosis input."""
     if value is None:
         return None
-    if isinstance(value, Mapping) and value.get("schema_version") == COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION:
-        return _project_existing_context(value)
-    if isinstance(value, Mapping) and value.get("schema_version") in {"analysis_result.v1", "analysis_result.v2"}:
-        return project_coach_diagnostic_context(value)
-    if isinstance(value, Mapping) or is_dataclass(value):
+    if isinstance(value, Mapping):
+        schema_version = value.get("schema_version")
+        if schema_version == COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION:
+            return _project_existing_context(value)
+        if schema_version in {"analysis_result.v1", "analysis_result.v2"}:
+            return project_coach_diagnostic_context(value)
+        if schema_version is not None:
+            return None
+        return context_from_legacy_diagnosis(value)
+    if is_dataclass(value):
         return context_from_legacy_diagnosis(value)
     return None
 

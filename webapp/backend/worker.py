@@ -78,6 +78,78 @@ def _read_frozen_source_bytes(kind: str, source: object) -> bytes:
     return data
 
 
+def _managed_video_contract(job: dict, input_mode: str) -> tuple[str, str, int] | None:
+    if input_mode not in {"multimodal", "video_fallback"}:
+        return None
+    if job.get("kovaak_run_id") is None:
+        return None
+    snapshot = job.get("input_snapshot")
+    if not isinstance(snapshot, dict):
+        raise SourceSnapshotChangedError("source_unavailable: video snapshot missing")
+    sources = snapshot.get("sources")
+    if not isinstance(sources, dict):
+        raise SourceSnapshotChangedError("source_unavailable: video snapshot missing")
+    video = sources.get("video")
+    if not isinstance(video, dict):
+        raise SourceSnapshotChangedError("source_unavailable: video identity missing")
+    if "fingerprint" not in video:
+        raise SourceSnapshotChangedError("source_unavailable: video identity missing")
+    fingerprint = video.get("fingerprint")
+    if not isinstance(fingerprint, dict):
+        raise SourceSnapshotChangedError("source_unavailable: video identity missing")
+    expected_sha = fingerprint.get("sha256")
+    expected_size = fingerprint.get("size")
+    expected_mtime_ns = fingerprint.get("mtime_ns")
+    if (
+        not isinstance(expected_sha, str)
+        or not expected_sha
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size < 0
+        or isinstance(expected_mtime_ns, bool)
+        or not isinstance(expected_mtime_ns, int)
+    ):
+        raise SourceSnapshotChangedError("source_unavailable: video identity missing")
+    path = job.get("video_path")
+    if not isinstance(path, str) or not path:
+        raise SourceSnapshotChangedError("source_unavailable: managed video missing")
+    return path, expected_sha, expected_size
+
+
+def _assert_managed_video_matches_snapshot(job: dict, input_mode: str) -> None:
+    contract = _managed_video_contract(job, input_mode)
+    if contract is None:
+        return
+    path, expected_sha, expected_size = contract
+    digest = hashlib.sha256()
+    observed_size = 0
+    try:
+        with Path(path).open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            if before.st_size != expected_size:
+                raise SourceSnapshotChangedError(
+                    "source_unavailable: managed video revision changed"
+                )
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                observed_size += len(chunk)
+                digest.update(chunk)
+            after = os.fstat(stream.fileno())
+    except SourceSnapshotChangedError:
+        raise
+    except OSError as exc:
+        raise SourceSnapshotChangedError(
+            "source_unavailable: managed video missing or unreadable"
+        ) from exc
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise SourceSnapshotChangedError(
+            "source_unavailable: managed video changed while reading"
+        )
+    if observed_size != expected_size or digest.hexdigest() != expected_sha:
+        raise SourceSnapshotChangedError(
+            "source_unavailable: managed video revision changed"
+        )
+
+
 async def _heartbeat_loop(session_id: int, stop: asyncio.Event) -> None:
     """Renew lease until stop is set. First beat immediately, then every interval."""
     while True:
@@ -272,18 +344,32 @@ def run_native_analysis(
     return (result, parsed_stats) if return_parsed_stats else result
 
 
-def _native_deterministic_v2(native_result: dict) -> dict:
+def _native_deterministic_v2(
+    native_result: dict,
+    *,
+    input_mode: str | None = None,
+) -> dict:
     """Adapt the native payload to v2's path-safe public contract."""
     deterministic = native_result.get("deterministic") or {}
     # Preserve native metric keys and envelopes; v2 path safety rejects path
     # fields, not metric names such as path_length or path_efficiency.
-    metrics = dict(deterministic.get("metrics") or {})
+    metrics: dict[str, object] = {}
+    for key, value in (deterministic.get("metrics") or {}).items():
+        if not isinstance(value, dict):
+            metrics[key] = value
+            continue
+        metric = dict(value)
+        metric.setdefault("classification", "deterministic")
+        metrics[key] = metric
     trajectory = deterministic.get("trajectory") or {}
     public_trajectory = {
         "unit": trajectory.get("unit", "raw_counts"),
         "point_count": int(trajectory.get("point_count") or 0),
     }
-    diagnosis = _native_diagnosis(metrics)
+    diagnosis = _native_diagnosis(
+        metrics,
+        input_mode=input_mode or native_result.get("input_mode") or "input_native",
+    )
     return {
         "status": native_result.get("status", "unavailable"),
         "summary": dict(diagnosis.get("summary") or {}),
@@ -296,7 +382,7 @@ def _native_deterministic_v2(native_result: dict) -> dict:
     }
 
 
-def _native_diagnosis(metrics: dict) -> dict:
+def _native_diagnosis(metrics: dict, *, input_mode: str = "input_native") -> dict:
     """Build deterministic Coach issues from available native distributions."""
     from dataclasses import asdict
     from kovaak_tracker.advice import advise
@@ -348,7 +434,7 @@ def _native_diagnosis(metrics: dict) -> dict:
         findings,
         summary,
         comparison=None,
-        meta={"summary_type": "flicking", "input_mode": "input_native"},
+        meta={"summary_type": "flicking", "input_mode": input_mode},
     )
     return asdict(diagnosis)
 
@@ -560,11 +646,14 @@ def _build_native_result_v2(
     analysis_id = f"analysis:{job['id']}"
     owner_id, local_profile = _result_owner(job)
     run_ref = f"run:{run_id}"
-    deterministic = _native_deterministic_v2(native_result)
+    input_mode = job.get("input_mode") or "input_native"
+    deterministic = _native_deterministic_v2(native_result, input_mode=input_mode)
     if visual_validation is not None:
         deterministic["visual_validation"] = visual_validation
     public_snapshot = public_analysis_input_snapshot(snapshot)
-    if video_availability is not None:
+    if input_mode == "input_native":
+        public_snapshot.get("sources", {}).pop("video", None)
+    elif video_availability is not None:
         video_source = dict(public_snapshot.get("sources", {}).get("video") or {})
         video_source.update({
             "artifact_ref": f"{analysis_id}:video",
@@ -575,7 +664,7 @@ def _build_native_result_v2(
         analysis_version=NATIVE_ANALYSIS_VERSION,
         analysis_id=analysis_id,
         analysis_type=native_result.get("analysis_type", "flicking"),
-        input_mode=job.get("input_mode") or "input_native",
+        input_mode=input_mode,
         owner_id=owner_id,
         local_profile=local_profile,
         kovaak_run_ref=run_ref,
@@ -857,6 +946,11 @@ async def process_one() -> bool:
         input_mode = job.get("input_mode") or "video_fallback"
         created_at_iso = _sqlite_created_at_to_iso_z(job.get("created_at"))
         completed_at_iso = _utc_now_iso_z()
+        await asyncio.to_thread(
+            _assert_managed_video_matches_snapshot,
+            job,
+            input_mode,
+        )
 
         if input_mode in {"input_native", "multimodal"}:
             if input_mode == "multimodal":
@@ -898,7 +992,14 @@ async def process_one() -> bool:
                         "status": "available",
                         "timeline": _build_timeline(visual_extras),
                     }
+                except SourceSnapshotChangedError:
+                    raise
                 except Exception:
+                    await asyncio.to_thread(
+                        _assert_managed_video_matches_snapshot,
+                        job,
+                        input_mode,
+                    )
                     log.warning("multimodal video validation unavailable session=%s", sid)
                     video_availability = "unavailable"
                     warnings.append({"code": "video_cv_unavailable"})
@@ -913,12 +1014,30 @@ async def process_one() -> bool:
             )
             cost = 0.0
         else:
-            summary, extras = await asyncio.to_thread(
-                run_analysis,
-                job["video_path"],
-                job["csv_path"],
-                job.get("cm_per_360"),
-                job.get("fov"),
+            try:
+                summary, extras = await asyncio.to_thread(
+                    run_analysis,
+                    job["video_path"],
+                    job["csv_path"],
+                    job.get("cm_per_360"),
+                    job.get("fov"),
+                )
+            except Exception as error:
+                await asyncio.to_thread(
+                    _assert_managed_video_matches_snapshot,
+                    job,
+                    input_mode,
+                )
+                log.warning(
+                    "video fallback analysis unavailable session=%s error=%s",
+                    sid,
+                    type(error).__name__,
+                )
+                raise RuntimeError("video fallback analysis failed") from None
+            await asyncio.to_thread(
+                _assert_managed_video_matches_snapshot,
+                job,
+                input_mode,
             )
             summary = dict(summary)
             sparc_distribution = summary.get("sparc")
@@ -975,6 +1094,11 @@ async def process_one() -> bool:
                 completed_at=completed_at_iso,
                 narration_status=narration_status,
             )
+        await asyncio.to_thread(
+            _assert_managed_video_matches_snapshot,
+            job,
+            input_mode,
+        )
         if not await queue.mark_done(sid, result, cost, worker_id=WORKER_ID):
             log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)
         # 视频保留——coach 回放 + 失败重试；用户删除走 History 删除语义。

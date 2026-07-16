@@ -322,7 +322,7 @@ async def test_storage_lists_managed_workspace_bytes_for_desktop_profile(
 
 
 @pytest.mark.asyncio
-async def test_delete_rejects_uploading_and_removes_managed_workspace_before_db_delete(
+async def test_delete_rejects_uploading_and_cleans_workspace_after_logical_delete(
     monkeypatch, tmp_path,
 ):
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
@@ -363,7 +363,7 @@ async def test_delete_rejects_uploading_and_removes_managed_workspace_before_db_
 
 
 @pytest.mark.asyncio
-async def test_delete_cleanup_failure_preserves_database_and_coach_references(
+async def test_delete_cleanup_failure_keeps_logical_delete_and_tombstone(
     monkeypatch, tmp_path,
 ):
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
@@ -374,19 +374,51 @@ async def test_delete_cleanup_failure_preserves_database_and_coach_references(
     workspace = session_dir(sid)
     workspace.mkdir(parents=True)
     (workspace / "video.mp4").write_bytes(b"managed-copy")
+    remaining = workspace / "windows-locked.bin"
+    remaining.write_bytes(b"locked")
 
     thread = await coach_store.get_or_create_primary_thread("u-cleanup")
     ref = await coach_store.attach_analysis_ref(int(thread["id"]), sid)
+
     def fail_cleanup(session_id):
-        raise OSError("busy")
+        assert session_id == sid
+        (workspace / "video.mp4").unlink()
+        raise OSError(f"busy private path {workspace}")
 
     monkeypatch.setattr(queue, "remove_session_workspace", fail_cleanup)
 
-    with pytest.raises(queue.SessionNotDeletable) as exc_info:
-        await queue.delete_session(sid, "u-cleanup")
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "u-cleanup"},
+    ) as client:
+        deleted = await client.delete(f"/api/sessions/{sid}")
 
-    assert exc_info.value.code == "cleanup_failed"
-    assert await queue.get_session(sid) is not None
+    assert deleted.status_code == 200
+    body = deleted.json()
+    assert body["deleted"] is True
+    assert body["id"] == sid
+    assert body["cleanup_failed"] == ["workspace"]
+    assert str(workspace) not in deleted.text
+    assert "busy private path" not in deleted.text
+    assert await queue.get_session(sid) is None
     refs = await coach_store.list_analysis_refs(int(thread["id"]))
-    assert any(item["id"] == ref["id"] and item["deleted_at"] is None for item in refs)
+    assert len(refs) == 1
+    assert refs[0]["id"] == ref["id"]
+    assert refs[0]["status"] == "deleted"
+    assert refs[0]["deleted_at"] is not None
+    tombstone = await (
+        await conn.execute(
+            "SELECT owner_id, cleanup_state, cleanup_attempts, last_error_code "
+            "FROM analysis_deletion_tombstones WHERE analysis_session_id=?",
+            (sid,),
+        )
+    ).fetchone()
+    assert tuple(tombstone) == (
+        "u-cleanup",
+        "failed",
+        1,
+        "workspace_cleanup_failed",
+    )
     assert workspace.exists()
+    assert remaining.read_bytes() == b"locked"

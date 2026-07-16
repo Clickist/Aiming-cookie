@@ -58,6 +58,13 @@ def test_remove_session_workspace_only_rmtree_session_subdir(monkeypatch):
     assert other.exists()
 
 
+def test_remove_session_workspace_absent_is_idempotent(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+
+    assert remove_session_workspace(404) is False
+    assert remove_session_workspace(404) is False
+
+
 @pytest.mark.asyncio
 async def test_delete_session_removes_workspace_directory(monkeypatch):
     root = Path(tempfile.mkdtemp(prefix="ac_ws_del_"))
@@ -75,6 +82,14 @@ async def test_delete_session_removes_workspace_directory(monkeypatch):
 
     assert not ws.exists()
     assert await queue.get_session(sid) is None
+    tombstone = await (
+        await conn.execute(
+            "SELECT analysis_session_id FROM analysis_deletion_tombstones "
+            "WHERE analysis_session_id=?",
+            (sid,),
+        )
+    ).fetchone()
+    assert tombstone is None
 
 
 class _ChunkedFakeUpload:
