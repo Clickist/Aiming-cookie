@@ -82,15 +82,23 @@ class KovaaKDirectoryWatcher:
         *,
         poll_interval: float = 1.0,
         stable_scans: int = 2,
+        candidate_limit: int = 50,
     ) -> None:
         if stable_scans < 1:
             raise ValueError("stable_scans must be at least 1")
         if poll_interval <= 0:
             raise ValueError("poll_interval must be positive")
+        if (
+            isinstance(candidate_limit, bool)
+            or not isinstance(candidate_limit, int)
+            or candidate_limit < 1
+        ):
+            raise ValueError("candidate_limit must be a positive integer")
         self.directory = Path(directory).expanduser()
         self.callback = callback
         self.poll_interval = poll_interval
         self.stable_scans = stable_scans
+        self.candidate_limit = candidate_limit
         self._states: dict[Path, _FileState] = {}
         self._emitted: set[tuple[tuple[Path, int, int], ...]] = set()
         self._pending: set[tuple[tuple[Path, int, int], ...]] = set()
@@ -105,15 +113,21 @@ class KovaaKDirectoryWatcher:
         except (FileNotFoundError, NotADirectoryError, PermissionError):
             return []
 
-        supported = [path for path in paths if is_stats_path(path) or is_performance_path(path)]
-        current = set(supported)
-        self._states = {path: state for path, state in self._states.items() if path in current}
-        stable_paths: list[Path] = []
-        for path in supported:
+        candidates = []
+        for path in paths:
+            if not (is_stats_path(path) or is_performance_path(path)):
+                continue
             try:
                 stat = path.stat()
             except OSError:
                 continue
+            candidates.append((path, stat))
+        candidates.sort(key=lambda item: (-item[1].st_mtime_ns, item[0].name.casefold()))
+        supported = candidates[: self.candidate_limit]
+        current = {path for path, _stat in supported}
+        self._states = {path: state for path, state in self._states.items() if path in current}
+        stable_paths: list[Path] = []
+        for path, stat in supported:
             previous = self._states.get(path)
             if previous and previous.size == stat.st_size and previous.mtime_ns == stat.st_mtime_ns:
                 previous.stable_scans += 1
@@ -252,6 +266,7 @@ class KovaaKIngestionService:
         performance_dir: str | Path | None,
         callback: Callable[[KovaaKFileDiscovery], object],
         poll_interval: float = 1.0,
+        candidate_limit: int = 50,
     ) -> None:
         directories = [directory for directory in (stats_dir, performance_dir) if directory]
         self._watchers = [
@@ -260,6 +275,7 @@ class KovaaKIngestionService:
                 callback,
                 poll_interval=poll_interval,
                 stable_scans=2,
+                candidate_limit=candidate_limit,
             )
             for directory in dict.fromkeys(Path(directory) for directory in directories)
         ]

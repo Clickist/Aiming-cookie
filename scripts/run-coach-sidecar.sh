@@ -4,7 +4,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PI_SOURCE_DIR="${PI_SOURCE_DIR:-$REPO_ROOT/third_party/pi}"
-TSX_LOADER="$PI_SOURCE_DIR/node_modules/tsx/dist/loader.mjs"
 SIDECAR_ENTRY="$REPO_ROOT/webapp/coach-runtime/start-sidecar.ts"
 
 usage() {
@@ -33,6 +32,10 @@ if [[ ! -d "$PI_SOURCE_DIR" ]]; then
   exit 1
 fi
 
+PI_SOURCE_DIR="$(cd "$PI_SOURCE_DIR" && pwd)"
+TSX_TSCONFIG_PATH="$PI_SOURCE_DIR/tsconfig.json"
+TSX_LOADER="$PI_SOURCE_DIR/node_modules/tsx/dist/loader.mjs"
+
 if [[ ! -f "$TSX_LOADER" ]]; then
   echo "error: tsx loader not found at $TSX_LOADER" >&2
   echo "hint: cd \"$PI_SOURCE_DIR\" && npm install" >&2
@@ -44,5 +47,10 @@ if [[ ! -f "$SIDECAR_ENTRY" ]]; then
   exit 1
 fi
 
-export PI_SOURCE_DIR
-exec node --import "$TSX_LOADER" "$SIDECAR_ENTRY"
+# The desktop launch token authenticates the native-to-Python connection only.
+# Never expose it to Node, including this helper process.
+unset AIMING_COOKIE_DESKTOP_TOKEN
+TSX_LOADER_URL="$(node -e 'const { pathToFileURL } = require(process.argv[1]); process.stdout.write(pathToFileURL(process.argv[2]).href)' node:url "$TSX_LOADER")"
+
+export PI_SOURCE_DIR TSX_TSCONFIG_PATH
+exec node "--import=$TSX_LOADER_URL" "$SIDECAR_ENTRY"

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "sqlite+aiosqlite:///./aiming_cookie_dev.db"
@@ -54,13 +55,239 @@ DESKTOP_LAUNCH_TOKEN = os.environ.get("AIMING_COOKIE_DESKTOP_TOKEN", "")
 DESKTOP_LOCAL_PROFILE = "desktop-local"
 
 
+_STEAM_APP_ID = "824270"
+_STEAM_REGISTRY_VALUES = (
+    ("HKEY_CURRENT_USER", r"Software\Valve\Steam", "SteamPath"),
+    (
+        "HKEY_LOCAL_MACHINE",
+        r"SOFTWARE\WOW6432Node\Valve\Steam",
+        "InstallPath",
+    ),
+)
+_VDF_TOKEN_RE = re.compile(r'\s*(?:"((?:\\.|[^"\\])*)"|([{}]))', re.DOTALL)
+
+
+def _decode_vdf_string(value: str) -> str | None:
+    decoded: list[str] = []
+    index = 0
+    escapes = {"\\": "\\", '"': '"', "n": "\n", "r": "\r", "t": "\t"}
+    while index < len(value):
+        character = value[index]
+        if character != "\\":
+            decoded.append(character)
+            index += 1
+            continue
+        index += 1
+        if index >= len(value) or value[index] not in escapes:
+            return None
+        decoded.append(escapes[value[index]])
+        index += 1
+    return "".join(decoded)
+
+
+def _tokenize_vdf(text: str) -> list[tuple[str, str]] | None:
+    tokens: list[tuple[str, str]] = []
+    position = 0
+    while position < len(text):
+        if not text[position:].strip():
+            break
+        match = _VDF_TOKEN_RE.match(text, position)
+        if match is None:
+            return None
+        quoted, brace = match.groups()
+        if brace is not None:
+            tokens.append(("brace", brace))
+        else:
+            decoded = _decode_vdf_string(quoted)
+            if decoded is None:
+                return None
+            tokens.append(("string", decoded))
+        position = match.end()
+    return tokens
+
+
+def _parse_vdf_object(
+    tokens: list[tuple[str, str]],
+    position: int,
+    *,
+    expects_closing_brace: bool,
+) -> tuple[dict[str, object], int] | None:
+    parsed: dict[str, object] = {}
+    while position < len(tokens):
+        kind, key = tokens[position]
+        if kind == "brace":
+            if key == "}" and expects_closing_brace:
+                return parsed, position + 1
+            return None
+        if key in parsed:
+            return None
+        position += 1
+        if position >= len(tokens):
+            return None
+        value_kind, value = tokens[position]
+        if value_kind == "string":
+            parsed[key] = value
+            position += 1
+            continue
+        if value != "{":
+            return None
+        child = _parse_vdf_object(
+            tokens,
+            position + 1,
+            expects_closing_brace=True,
+        )
+        if child is None:
+            return None
+        parsed[key], position = child
+    if expects_closing_brace:
+        return None
+    return parsed, position
+
+
+def _read_vdf_root(path: Path, root_name: str) -> dict[str, object] | None:
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return None
+    tokens = _tokenize_vdf(text)
+    if tokens is None:
+        return None
+    result = _parse_vdf_object(tokens, 0, expects_closing_brace=False)
+    if result is None:
+        return None
+    parsed, position = result
+    root = parsed.get(root_name)
+    if position != len(tokens) or len(parsed) != 1 or not isinstance(root, dict):
+        return None
+    return root
+
+
+def _path_key(path: Path) -> str:
+    return os.path.normcase(str(path.resolve()))
+
+
+def _windows_steam_roots() -> list[Path]:
+    try:
+        import winreg
+    except ImportError:
+        return []
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def add_root(value: object, *, require_existing: bool = False) -> None:
+        if not isinstance(value, str) or not value.strip():
+            return
+        try:
+            root = Path(value).expanduser().resolve()
+            if require_existing and not root.is_dir():
+                return
+            key = _path_key(root)
+        except (OSError, RuntimeError):
+            return
+        if key not in seen:
+            seen.add(key)
+            roots.append(root)
+
+    for hive_name, subkey, value_name in _STEAM_REGISTRY_VALUES:
+        try:
+            hive = getattr(winreg, hive_name)
+            with winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ) as key:
+                value, value_type = winreg.QueryValueEx(key, value_name)
+            valid_types = {
+                getattr(winreg, "REG_SZ", None),
+                getattr(winreg, "REG_EXPAND_SZ", None),
+            }
+            if value_type in valid_types:
+                add_root(value)
+        except (AttributeError, OSError):
+            continue
+
+    for environment_name in ("ProgramFiles(x86)", "ProgramFiles"):
+        program_files = os.environ.get(environment_name)
+        if program_files:
+            add_root(str(Path(program_files) / "Steam"), require_existing=True)
+    return roots
+
+
+def _steam_libraries(root: Path) -> list[Path] | None:
+    parsed = _read_vdf_root(root / "steamapps" / "libraryfolders.vdf", "libraryfolders")
+    if parsed is None:
+        return None
+    libraries = [root]
+    for index, entry in parsed.items():
+        if not index.isdigit() or not isinstance(entry, dict):
+            continue
+        path = entry.get("path")
+        if isinstance(path, str) and path.strip():
+            libraries.append(Path(path).expanduser())
+    return libraries
+
+
+def _safe_install_directory_name(value: object) -> str | None:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        return None
+    candidate = PureWindowsPath(value)
+    if (
+        candidate.drive
+        or candidate.root
+        or len(candidate.parts) != 1
+        or candidate.name in {".", ".."}
+    ):
+        return None
+    return value
+
+
+def _discover_kovaak_install_dir() -> Path | None:
+    libraries: list[Path] = []
+    seen_libraries: set[str] = set()
+    for root in _windows_steam_roots():
+        root_libraries = _steam_libraries(root)
+        if root_libraries is None:
+            continue
+        for library in root_libraries:
+            try:
+                resolved = library.resolve()
+                key = _path_key(resolved)
+            except (OSError, RuntimeError):
+                continue
+            if key not in seen_libraries:
+                seen_libraries.add(key)
+                libraries.append(resolved)
+
+    installs: list[Path] = []
+    seen_installs: set[str] = set()
+    for library in libraries:
+        manifest = _read_vdf_root(
+            library / "steamapps" / f"appmanifest_{_STEAM_APP_ID}.acf",
+            "AppState",
+        )
+        if manifest is None or manifest.get("appid") != _STEAM_APP_ID:
+            continue
+        install_name = _safe_install_directory_name(manifest.get("installdir"))
+        if install_name is None:
+            continue
+        install = library / "steamapps" / "common" / install_name
+        try:
+            resolved = install.resolve()
+            if not resolved.is_dir():
+                continue
+            key = _path_key(resolved)
+        except (OSError, RuntimeError):
+            continue
+        if key not in seen_installs:
+            seen_installs.add(key)
+            installs.append(resolved)
+    return installs[0] if len(installs) == 1 else None
+
+
 def resolve_kovaak_install_dir() -> Path | None:
     """Resolve the local KovaaK installation used by Desktop auto-ingestion."""
     override = os.environ.get("KOVAAK_INSTALL_DIR", "").strip()
     if override:
         return Path(override).expanduser().resolve()
     if sys.platform == "win32":
-        return Path(r"C:\Program Files (x86)\Steam\steamapps\common\FPSAimTrainer")
+        return _discover_kovaak_install_dir()
     return None
 
 

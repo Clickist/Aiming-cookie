@@ -1016,7 +1016,7 @@ fn is_kovaak_process_running() -> bool {
                     .szExeFile
                     .iter()
                     .position(|value| *value == 0)
-                    .unwrap_or(MAX_PATH as usize);
+                    .unwrap_or(MAX_PATH);
                 let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
                 if name.eq_ignore_ascii_case("FPSAimTrainer-Win64-Shipping.exe")
                     || name.eq_ignore_ascii_case("FPSAimTrainer.exe")

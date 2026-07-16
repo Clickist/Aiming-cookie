@@ -1,3 +1,5 @@
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -69,6 +71,77 @@ def test_watcher_reemits_same_path_when_observed_revision_changes(tmp_path: Path
     assert len(changed) == 1
     assert changed[0].stats_path == stats
     assert len(events) == 2
+
+
+def test_watcher_only_emits_latest_fifty_supported_files_in_frozen_order(tmp_path: Path):
+    events = []
+    watcher = KovaaKDirectoryWatcher(
+        tmp_path,
+        events.append,
+        stable_scans=1,
+        candidate_limit=50,
+    )
+    newest_mtime = time.time_ns()
+    expected_names = set()
+    for index in range(49):
+        path = tmp_path / f"new-{index:02d}.stats"
+        path.write_text(str(index), encoding="utf-8")
+        os.utime(path, ns=(newest_mtime - index, newest_mtime - index))
+        expected_names.add(path.name)
+
+    boundary_paths = [
+        tmp_path / "Alpha.stats",
+        tmp_path / "beta.stats",
+        tmp_path / "Zulu.stats",
+    ]
+    for path in boundary_paths:
+        path.write_text(path.name, encoding="utf-8")
+        os.utime(path, ns=(newest_mtime - 1_000, newest_mtime - 1_000))
+    expected_names.add("Alpha.stats")
+    unsupported = tmp_path / "newest-but-unsupported.txt"
+    unsupported.write_text("ignored", encoding="utf-8")
+    os.utime(unsupported, ns=(newest_mtime + 1_000, newest_mtime + 1_000))
+
+    discoveries = watcher.scan_once()
+    emitted_names = {item.stats_path.name for item in discoveries if item.stats_path}
+
+    assert len(discoveries) == 50
+    assert emitted_names == expected_names
+    assert {item.stats_path.name for item in events if item.stats_path} == expected_names
+    assert boundary_paths[1].exists()
+    assert boundary_paths[2].exists()
+
+
+def test_watcher_emits_outside_window_file_after_new_revision_enters_window(tmp_path: Path):
+    events = []
+    watcher = KovaaKDirectoryWatcher(
+        tmp_path,
+        events.append,
+        stable_scans=1,
+        candidate_limit=50,
+    )
+    newest_mtime = time.time_ns()
+    paths = []
+    for index in range(51):
+        path = tmp_path / f"scenario-{index:02d}.stats"
+        path.write_text(str(index), encoding="utf-8")
+        os.utime(path, ns=(newest_mtime - index, newest_mtime - index))
+        paths.append(path)
+
+    first = watcher.scan_once()
+    outside = paths[-1]
+    assert len(first) == 50
+    assert all(item.stats_path != outside for item in first)
+    assert outside.exists()
+
+    outside.write_text("new revision", encoding="utf-8")
+    os.utime(outside, ns=(newest_mtime + 1_000, newest_mtime + 1_000))
+    changed = watcher.scan_once()
+
+    assert len(changed) == 1
+    assert changed[0].stats_path == outside
+    assert watcher.scan_once() == []
+    assert outside.exists()
 
 
 def test_watcher_retries_when_callback_raises_after_file_is_stable(tmp_path: Path):
@@ -157,6 +230,38 @@ def test_desktop_ingestion_bridge_returns_future_to_watcher(tmp_path: Path, monk
         assert len(watcher.scan_once()) == 1
     finally:
         loop.close()
+
+
+def test_desktop_ingestion_service_wires_frozen_candidate_limit(tmp_path: Path, monkeypatch):
+    import asyncio
+
+    from webapp.backend import desktop_runtime
+
+    captured = {}
+
+    class FakeIngestionService:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIR", tmp_path / "stats")
+    monkeypatch.setattr(
+        desktop_runtime.config,
+        "KOVAAK_PERFORMANCE_DIR",
+        tmp_path / "performances",
+    )
+    monkeypatch.setattr(
+        desktop_runtime.kovaak_ingest,
+        "KovaaKIngestionService",
+        FakeIngestionService,
+    )
+
+    loop = asyncio.new_event_loop()
+    try:
+        desktop_runtime.create_kovaak_ingestion_service(loop)
+    finally:
+        loop.close()
+
+    assert captured["candidate_limit"] == 50
 
 
 def test_watcher_does_not_retry_non_retryable_identity_conflict(tmp_path: Path):
