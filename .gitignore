@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.venv/
 
 # videos (large: user recordings + reference downloads)
 *.mp4

@@ -24,11 +24,11 @@ KovaaK Run discovery / compatibility fallback → recoverable input-native analy
 2. 将已发现 KovaaK Run + Raw Input 作为新建分析的主训练来源；MP4 主要用于回放/视觉 evidence，同时保留 MP4 + Stats compatibility fallback；
 3. 建立 input-native / multimodal / video-fallback 的 versioned AnalysisResult 和 evidence provenance；
 4. 完成 flick segmentation、核心 fair metrics、claim level、白话解释、训练 cue、预期变化与复测合同；
-5. 闭合 Provider/model/auth、Training Plan、History/Analysis command、confirmation、audit/idempotency 与 Python↔Pi sidecar 的剩余真实数据/E2E，不用前端补齐语义；
+5. 已冻结的 Provider/model/auth、Training Plan、History/Analysis command、confirmation、audit/idempotency 与 Python↔Pi 边界由现有合同和回归保护；非硬阻断的额外真实数据/E2E 不再作为正式前端启动前置；
 6. 让 managed video/seek 成为可选直观回放与视觉 evidence，而不是输入原生基础诊断的强制前置；
-7. 保持 native import、managed storage、launch token、runtime lifecycle、KovaaK watcher 和 Raw Input opt-in 的既有能力，并通过 Desktop/runtime 与 Windows 实机 Gate；
-8. 上述后端合同和真实 E2E 稳定后，才根据 [`frontend-uiux-design.md`](frontend-uiux-design.md) 与 active frontend reconstruction spec 重建正式应用骨架、首次 Provider onboarding、分析工作区和 Coach sidebar；连接 Provider 可明确跳过，不建立产品账号或鉴权服务器；
-9. Frontend reconstruction plan 虽已 active，但除已完成的 Task 1 外，Task 2–7 暂后置到后端前置 Gate 闭合并由点点重新指定，不以 UI 反向定义后端合同。
+7. 保持 native import、managed storage、launch token、runtime lifecycle、KovaaK watcher 和 Raw Input opt-in 的既有能力；Windows Steam 多库发现、50-file bound 与 launch-token descendant isolation 已完成自动化和本机 Gate；
+8. 正式前端后续根据 [`frontend-uiux-design.md`](frontend-uiux-design.md) 与 active frontend reconstruction spec 重建应用骨架、首次 Provider onboarding、分析工作区和 Coach sidebar；连接 Provider 可明确跳过，不建立产品账号或鉴权服务器；
+9. Frontend reconstruction Task 1 已完成；Task 2–7 仍须由点点明确指定具体 Task 后才能执行，UI 只消费稳定 capability，不反向定义后端合同。
 
 ### P0 — 冻结本地数据可靠性合同
 
@@ -45,15 +45,11 @@ KovaaK Run discovery / compatibility fallback → recoverable input-native analy
 
 这些涉及状态机、安全和数据保留，必须先写 spec/plan，不能由 executor 临场决定。
 
-### P0 — 正式前端前的 Coach 后端 Gate
+### P0 — 后端前置硬终点（已到达）
 
-Versioned Knowledge Registry、source/claim/limitation 验收和无 bridge knowledge tool 已完成。正式 frontend reconstruction Task 2–7 开始前，剩余至少完成：
+Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows developer/runtime compatibility、Steam 多库 KovaaK bounded discovery 与 launch-token descendant isolation 已完成。自 2026-07-16 起，只有以下四类问题可中断正式前端施工：启动或构建阻断、核心路径不可用、数据损坏、安全泄漏。
 
-- 现有 Analysis/History/Run/Training Plan/Provider 命令的 owner、confirmation、audit/idempotency 和 unavailable/deleted 语义稳定；
-- Python↔Pi sidecar、SQLite restart/replay、真实 Analysis/History/Training Plan 数据与 secret/path/raw-payload sentinel E2E 通过；
-- Windows Raw Input、高 polling-rate、KovaaK 文件发现与 Desktop runtime 关键 Gate 已有明确结论。
-
-这些 Gate 未完成时，Frontend Task 2–7 保持后置；允许只维护 capability adapter 和测试，不实现依赖未冻结语义的正式页面。
+其他已知缺口统一记录为 deferred，不再通过新增后端审计扩大正式前端前置范围。runtime restart/fatal-state、真实设备高 polling-rate、Raw Input 前台约束和更完整的跨进程真实数据 E2E 仍是发布或对应用户路径启用前 Gate，但不阻止 Frontend Task 2 建立 token、theme 与 primitives。
 
 ### P1 — 预览与发布工程
 
@@ -90,14 +86,16 @@ Versioned Knowledge Registry、source/claim/limitation 验收和无 bridge knowl
 
 - [`superpowers/plans/2026-07-13-reflek-capability-adoption.md`](superpowers/plans/2026-07-13-reflek-capability-adoption.md)：Analysis/evidence correctness、Run/trace 与 Coach 结构化能力；
 - [`superpowers/plans/2026-07-13-coach-productization-provider-management.md`](superpowers/plans/2026-07-13-coach-productization-provider-management.md)：解释/处方合同、input-native 核心指标、Pi provider/model/auth、用户级 Coach 命令与 Provider Settings；
-- [`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)：正式前端重建；边界由 active [`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md) 冻结。Task 1 已完成 prototype 删除与 adapter 边界保护，Task 2–7 尚未授权。
+- [`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)：正式前端重建；边界由 active [`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md) 冻结。Task 1 已完成，Task 2–7 尚未获得具体 Task 授权。
 
 下一可执行切片必须遵守：
 
-1. Coach productization Task 1–5 与 Versioned Knowledge Registry Task 1–6 已完成；继续按 active plan 处理 input-native 核心指标、Analysis/evidence correctness 和本地数据可靠性，不用 MP4、LLM 或 UI 掩盖算法与状态机缺口；
-2. 补齐 Knowledge E2E 之外的 Python↔Pi、SQLite restart/replay、真实 History/Training Plan 数据和 Desktop/runtime/Windows Gate，形成不依赖正式前端的验收证据；
-3. Coach productization Task 6 与 Frontend Task 2–7 整体最后处理，只有在后端合同稳定、相关 Gate 通过并由点点重新指定后才逐个执行；
-4. 每次只执行一个被点点指定的 active plan Task；新增数据可靠性工作在 spec/plan 获批前不得直接施工。
+1. RefleK Task 6A backend History/evidence read model 与 comparability 已完成；Task 6B 与正式 frontend 继续 deferred；
+2. Pi coding-agent、AgentHarness/skills/prompt/filesystem harness 的上游 Windows 全仓失败不属于当前产品 Gate；若未来采纳对应 capability，必须另立 active Task；
+3. Frontend Task 2–7 尚未授权；获得具体 Task 授权后继续遵守 active plan 的顺序、Allowed files、Tests first 与 Stop rule；
+4. Analysis deletion/reconciliation Task 1–3 已完成并归档；terminal Analysis 的 SQLite logical delete、managed workspace cleanup 与 startup/API Gate 已闭合；
+5. Windows Desktop pre-frontend Task 1–2 已完成并归档；当前没有新的已授权切片，等待点点明确指定；
+6. 每次只执行一个被点点指定的 active plan Task；新增数据可靠性工作在 spec/plan 获批前不得直接施工。
 
 ## 4. Desktop Flicking Go/No-Go Gates
 
