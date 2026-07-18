@@ -3,6 +3,7 @@
 > 状态：active
 > 目的：冻结 KovaaK Stats/Performance discovery、Raw Input buffer、Run persistence、trace attach 与恢复语义。
 > 上游：[`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)、[`../assessments/2026-07-13-reflek-capability-adoption.md`](../assessments/2026-07-13-reflek-capability-adoption.md)
+> 自动录屏、事后 Run 切分、分析前选择与用户手动存储管理见 [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md)。本文继续负责 Raw Input 的低层 buffer/trace 合同。
 
 ## 1. 范围
 
@@ -194,7 +195,7 @@ discovered
 | process exit | 不变 | 保留至 attach/retention | 不变 | 不能清空 |
 | disable capture | 不变 | 未关联数据保留至 retention | 不变 | 显式清理才丢弃 |
 
-Run/trace 的用户删除 UI、tombstone 和长期 retention 变更不在本 Task 实现；若未来修改默认策略，必须新增/更新 lifecycle spec。
+Run metadata 的整体删除、tombstone 和长期 retention 变更不在本 Task 实现。Run-owned Raw trace 的用户手动存储管理产品边界已由 [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md) 冻结；精确删除事务与恢复仍须由后续 active implementation plan 授权。
 
 ### TimeAlignment v1
 

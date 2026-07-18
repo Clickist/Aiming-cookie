@@ -5,6 +5,7 @@
 ## Active
 
 - [`2026-07-13-kovaak-run-trace-lifecycle-design.md`](2026-07-13-kovaak-run-trace-lifecycle-design.md)：KovaaK source pairing、Raw Input buffer、trace attach、reconciliation 与稳定引用合同。
+- [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md)：Raw + KovaaK 窗口自动采集、Stats/Performance 事后切 Run、单局/多局选择、待分析 History、手动 fallback 与分类存储管理合同。
 - [`2026-07-13-analysis-evidence-coach-context-design.md`](2026-07-13-analysis-evidence-coach-context-design.md)：三种 input mode、AnalysisResult v2、evidence provenance 与 Coach allow-list context。
 - [`2026-07-13-coach-product-commands-explanations-provider-design.md`](2026-07-13-coach-product-commands-explanations-provider-design.md)：Coach 用户级产品命令、指标到训练解释链、Provider/model/auth Settings 与 secret 边界。
 - [`2026-07-13-frontend-product-reconstruction-design.md`](2026-07-13-frontend-product-reconstruction-design.md)：正式前端路由、页面职责、状态矩阵、Desktop/Web 差异、Coach shell、Preview/Benchmark/ownership 边界与 prototype 重建合同。
