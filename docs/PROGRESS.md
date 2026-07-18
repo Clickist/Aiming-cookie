@@ -1,6 +1,6 @@
 # Aiming Cookie 当前进度
 
-> **最后整理：2026-07-16。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
+> **最后整理：2026-07-17。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
 
 ## 1. 当前结论
 
@@ -15,6 +15,7 @@
 - Versioned Coach Knowledge Registry 已完成：Flicking、Tracking、身体/张力候选解释、settings 单变量实验、practice、verification 与 limitations 已迁入单一 canonical asset；Python/TypeScript 共用确定性检索，Draft 2020-12 `schema.v1.json` 已补齐完整 entry/source/claim structural contract 并对 canonical asset 做标准验证，Pi knowledge tool 与 product-command bridge 已解耦，历史 trace 只保存版本化引用。Windows developer/runtime compatibility 的 Task 1–2 自动化 Gate 已完成；正式前端仍按点点裁决最后处理。
 - 2026-07-15 Windows 实机已闭合四个可重复开发阻断：Node loader 改用 file URL，Python subprocess 固定 pinned Pi source/tsconfig，knowledge parity 按平台选择 venv Python，Tauri 补齐由 tracked PNG 机械生成的 compile-time ICO。Python、Coach/Pi source、Pi AI、frontend adapters 与 Tauri MSVC 自动化 Gate 均通过；正式 frontend route、GUI、真实 KovaaK、Raw Input 与高 polling-rate 仍未闭合，因此发布状态保持 **No-Go**。
 - 2026-07-16 Windows Desktop pre-frontend Task 1–2 已完成：无 override 时从 registry + `libraryfolders.vdf` + exact app manifest fail-closed 发现 E 盘 KovaaK，多安装要求显式消歧；每个 Stats/Performance 目录只发射最新 50 个 supported files；Coach fallback Node child 不再继承 Desktop launch token。点点已设后端前置硬终点，非启动/构建、核心路径、数据损坏或安全泄漏问题统一 deferred；正式前端具体 Task 尚未获得授权。
+- 2026-07-17 产品合同已更新为统一自动采集主路径：KovaaK 进程 gate 内采集 Raw + 仅 KovaaK 窗口录像，Stats/Performance 到达后事后切成独立 Run；单局确认、多局选一条，其余进入 History 待分析；手动 `MP4 + Stats` 是独立 fallback。该能力尚未实现，也没有 implementation plan，不得误写为当前可用。
 
 ## 2. 能力成熟度
 
@@ -34,16 +35,19 @@
 
 - Run 独立于 Analysis；Stats、Performance、Raw Input、MP4 是不同 evidence source；
 - input-native、multimodal、video-fallback 必须显式表达 mode、availability、alignment 和 limitations；
+- Analysis readiness 统一为 `Stats AND (MP4 OR (Raw + Performance))`；multimodal 只用 Raw 计算输入运动学，MP4 只负责回放、视觉定位和 Coach 直观讲解；
 - Raw Input 默认关闭、仅 Windows、仅 KovaaK process gate、本地保留、默认不进入 Coach；
+- 自动采集使用 process gate 连续分段采集和 Performance 事后切窗，不声称存在实时 Challenge start/end hook；连续多局生成独立 Run，未选择 Run 保持 pending_analysis；
 - History 采用轻列表 + lazy detail；Coach 使用结构化、用户可见的 diagnostic context，并通过与 UI 共用的产品命令调用当前用户能力，不限制为只读；
 - Coach explanation 必须形成观察、白话解释、证据、claim level、训练 cue、预期变化和复测链；
-- 当前不设付费墙；首次启动以 Provider onboarding 为主路径但允许明确跳过。Settings 使用完整 pinned Pi catalog，并支持 custom OpenAI-compatible profile；API key 可明文保存在本地 SQLite/config，secure store 不是 blocker，但所有外发/日志/诊断/导出边界继续 redaction；
-- terminal Analysis、Run metadata、Run-owned trace、用户 Stats/Performance 源文件和 Analysis-managed MP4 副本具有不同 ownership 与删除影响。
+- 当前不设付费墙；首次启动以 Provider onboarding 为主路径但允许通过底部次级文字跳过。跳过后没有 Coach 对话、解释、长期档案、训练计划或产品命令，只有本地指标、确定性诊断、规则化提示和 History。Settings 使用完整 pinned Pi catalog，并支持 custom OpenAI-compatible profile；API key 可明文保存在本地 SQLite/config，secure store 不是 blocker，但所有外发/日志/诊断/导出边界继续 redaction；
+- terminal Analysis、Run metadata、Run-owned trace、Run-owned 自动 MP4、用户 Stats/Performance 源文件和手动 fallback 的 Analysis-managed MP4 副本具有不同 ownership 与删除影响；Storage 先显示分类占用并由用户手动管理，不静默自动清理。
 
 ### 2.3 User-reachable / release-ready（尚未完成）
 
 - 原 prototype 已删除；当前没有正式用户路径，不能作为视觉或产品验收证据；
 - 正式 Provider onboarding、App shell、New Analysis、Tasks、History、Analysis workspace、Coach sidebar、Settings 尚待按新 frontend spec/plan 重建；
+- Capture Coordinator、KovaaK window recorder、Run Finalizer、pending Run readiness、Run-owned MP4 和 Storage 手动删除 capability 尚未实现；
 - Coach productization Task 3–5 backend/runtime capability 已完成；首次 Provider onboarding、命令结果消费和完整 Coach sidebar 仍不可交付，因为正式 frontend Task 2/3/6 尚未授权和实现；
 - input-native、multimodal、video-fallback 三条真实 Browser/Desktop E2E 未形成；
 - Windows 实机、高 polling-rate 鼠标、真实 KovaaK 对齐与性能尚未通过发布 Gate；
@@ -60,8 +64,9 @@
 ### Reliability / lifecycle
 
 1. 同 stem 同类型 KovaaK 文件冲突、并发 trace attach、partial import 和 orphan recovery 仍需更强状态机与测试；
-2. terminal Analysis 的 commit-first logical delete、transient tombstone、managed workspace cleanup 与 startup ready 前 reconciliation 已完成；Run / trace / source 删除 UI 与长期 retention 仍不在本轮范围；
+2. terminal Analysis 的 commit-first logical delete、transient tombstone、managed workspace cleanup 与 startup ready 前 reconciliation 已完成；Run-owned MP4 / trace 的用户手动管理已形成产品合同，但删除事务、恢复和 UI 尚未实现；Run metadata 整体删除与长期 retention 仍未冻结实施；
 3. launch token 子进程隔离已闭合；Python runtime READY 后崩溃与正式浏览器 media identity 保持 deferred，Windows Python↔Pi subprocess 的 file URL、pinned tsconfig 与 venv path 自动化 Gate 已闭合。
+4. 新自动采集合同需要独立 implementation plan 冻结 process-gated Raw/录像、延迟 Stats/Performance、事后切窗、幂等 Run finalization、未完成采集恢复、storage accounting 和 Run-owned evidence 手动删除事务；当前代码不能证明这些能力可用。
 
 ### Frontend reconstruction
 
@@ -70,6 +75,7 @@
 3. executable token/theme/primitives 尚未建立；Task 2 尚未获得具体 Task 授权；
 4. Benchmark 不进入 v1 正式前端；
 5. Task 1 已完成 prototype 删除与 adapter 边界保护；Task 2–7 尚未获得具体 Task 授权。
+6. Frontend Task 3/4/6 已同步新的自动采集、待分析 History 和 Storage 合同；在对应稳定 capability 实现前必须按 Stop rule 停止，不能由前端伪造。
 
 ### Coach / explanation / provider
 
@@ -83,14 +89,15 @@
 
 ## 4. 下一步
 
-> **新 session 接力点：** Windows Desktop pre-frontend Task 1–2 已完成并归档。正式前端具体 Task 尚未获得授权；未经指示不提交、不推送，也不把 GUI 或真实 KovaaK/Raw Input 发布 Gate 写成已通过。
+> **新 session 接力点：** 2026-07-17 自动 Run 采集产品/spec 已冻结，但尚无 implementation plan。正式前端具体 Task 尚未获得授权；未经指示不提交、不推送，也不把自动录屏、Run finalization、GUI 或真实 KovaaK/Raw Input 发布 Gate 写成已通过。
 
-1. Windows Desktop pre-frontend Task 1–2 已正式验收；当前没有新的已授权切片，等待点点明确指定；
-2. 后端非硬阻断缺口统一 deferred；未来正式前端只消费已稳定 capability，不复制命令逻辑，也不反向定义后端语义。
+1. 若要实施自动采集，先基于 active [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md) 新建并审阅 tests-first implementation plan；当前文档不授权编码；
+2. Frontend Task 2 仍可独立建立 token/theme/primitives；Task 3/4/6 需要真实 Capture Coordinator、pending Run readiness、storage accounting/删除 capability 后再执行对应路径；
+3. 后端其它非硬阻断缺口统一 deferred；正式前端只消费已稳定 capability，不复制命令逻辑，也不反向定义后端语义。
 
 ## 5. 当前工作树与实施计划状态
 
-2026-07-15 Windows 验证开始前，tracked worktree 为 clean；依赖安装在仓库生成未跟踪 `.venv/`。Task 1 修改 Coach/Pi 启动兼容、对应回归、sidecar 脚本与一行 Rust lint，并新增 placeholder ICO；Task 2 只更新开发指南与本进度快照；完成后的文档 closeout 将 plan 移入 completed archive，并同步文档入口、Roadmap 与 plan index。未 reset、checkout、覆盖、清理、提交或推送。
+2026-07-17 本轮只更新产品/架构/UIUX/spec/plan/Roadmap/Progress/索引文档，新增自动 Run 采集局部 spec；没有修改业务代码、创建 implementation plan、提交或推送。工作树中此前已有的 frontend Provider catalog / 外部购买链接文档改动与 README 状态均保留，未 reset、checkout、覆盖或清理。
 
 RefleK active plan 当前成熟度：
 
@@ -111,6 +118,13 @@ Coach productization plan 已 active。Task 1 explanation contract、Task 2 inpu
 Versioned Coach Knowledge Registry plan 的 Task 1–6 已全部完成并归档；active spec 继续作为 Registry 版本、检索、claim 与 trace 的稳定局部合同。
 
 ## 6. 最近验证记录
+
+2026-07-17 自动 Run 采集合同同步（文档-only）：
+
+- 新增 active `2026-07-17-automatic-run-capture-design.md`，并同步 PRD、Architecture、UI/UX、Roadmap、active frontend spec/plan、evidence/deletion lifecycle spec 与索引；
+- 跨文档检索确认 readiness、单局/多局选择、待分析 History、Provider skip、Run-owned MP4 和 Storage 手动管理语义均有主责任落点；
+- `git diff --check` 通过；14 个 changed Markdown 文件的相对文件链接检查全部通过；
+- 未运行代码测试、build 或真实 Desktop/KovaaK 验证，因为本轮没有修改或实现业务代码；自动采集能力继续标记为未实现。
 
 2026-07-16 Windows Desktop pre-frontend Task 1–2 与正式前端转场：
 
