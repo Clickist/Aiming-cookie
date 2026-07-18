@@ -16,6 +16,8 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./aiming_cookie_test.
 TEST_DATA_ROOT = Path(tempfile.gettempdir()).resolve() / "aiming_cookie_test"
 os.environ["VIDEO_TMP_DIR"] = str(TEST_DATA_ROOT)
 os.environ["DATA_ROOT"] = str(TEST_DATA_ROOT)
+# Unit tests must never auto-discover or read a developer's live KovaaK install.
+os.environ["KOVAAK_INSTALL_DIR"] = str(TEST_DATA_ROOT / "missing-kovaak")
 
 
 def _clean_test_data_root() -> None:
