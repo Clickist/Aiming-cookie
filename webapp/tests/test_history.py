@@ -515,6 +515,36 @@ async def test_analysis_list_exposes_light_source_trace_and_mode_read_model(
     assert detail["trace_quality"] == item["trace_quality"]
 
 
+@pytest.mark.asyncio
+async def test_analysis_detail_treats_non_object_snapshot_as_unavailable():
+    user_id = "u_non_object_snapshot"
+    sid = await queue.enqueue(user_id, "", "")
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET input_snapshot_json=? WHERE id=?",
+        ("[1]", sid),
+    )
+    await conn.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": user_id},
+    ) as client:
+        response = await client.get(f"/api/sessions/{sid}")
+
+    assert response.status_code == 200, response.text
+    history = response.json()["history"]
+    assert history["scenario"] is None
+    assert history["source_availability"] == {}
+    assert history["trace_quality"] == {
+        "state": "none",
+        "availability": "not_present",
+        "alignment_status": None,
+        "coverage": None,
+    }
+
+
 @pytest.mark.parametrize(
     "scenario",
     [
