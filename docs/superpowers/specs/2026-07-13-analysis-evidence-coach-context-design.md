@@ -3,6 +3,7 @@
 > 状态：active
 > 目的：冻结 KovaaK Run、Raw Input、Performance、Stats 与 MP4 如何进入 AnalysisResult 和 Coach。
 > 上游：[`../../PRD.md`](../../PRD.md)、[`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)、[`../assessments/2026-07-13-reflek-capability-adoption.md`](../assessments/2026-07-13-reflek-capability-adoption.md)
+> 自动 Run-owned MP4 的采集、切窗与存储归属见 [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md)。
 
 ## 1. 分析模式
 
@@ -46,12 +47,16 @@ requested_at
 `input_validation / source_unavailable` 失败，标记为不可对同一 snapshot 重试，并提示用户重新
 提交以建立新 snapshot；错误对象和普通日志不得包含源文件绝对路径或底层异常文本。
 
-当 path-based Analysis request 携带 `video` 时，创建命令必须先冻结用户源 MP4 的
+当手动 fallback 的 path-based Analysis request 携带 `video` 时，创建命令必须先冻结用户源 MP4 的
 SHA-256 / size / mtime revision，再复制到 Analysis managed workspace，并在进入 queued
 状态前验证 managed 副本与该 revision 完全一致。复制期间源文件缺失、不可读、被替换、
 内容或 mtime 改变、partial copy 或目标 checksum 不一致时均 fail-closed；后续视觉处理只
 消费这份已验证的 managed 副本。`source_snapshot.video` 与 artifact manifest 保留
 fingerprint/checksum，但任何公开投影、幂等审计和错误文案都不得包含用户源绝对路径。
+
+当 run-based Analysis request 引用自动录制 MP4 时，`source_snapshot.video` 必须冻结
+Run-owned artifact 的稳定 id、revision/fingerprint 与 ownership，不得把它复制或改写成
+Analysis-owned 用户源副本；消费前仍须按相同 fail-closed 原则验证该 revision。
 
 ### Calibration provenance
 
@@ -246,7 +251,8 @@ derived_from[]
 规则：
 
 - Raw Input trace 只能出现在 `external_inputs[]`，`ownership = kovaak_run`；
-- Analysis 不能删除 Run-owned trace；
+- 自动录制 MP4 只能出现在 `external_inputs[]`，`ownership = kovaak_run`；
+- Analysis 不能删除 Run-owned trace 或自动 MP4；
 - Analysis-owned outputs 进入 `owned_outputs[]`，terminal Analysis 删除时按 Analysis lifecycle 处理；
 - user source 由用户拥有，Aiming Cookie 不删除；
 - Raw Input trace 必须 `local_only = true`，不提供 public URL 和绝对 path。

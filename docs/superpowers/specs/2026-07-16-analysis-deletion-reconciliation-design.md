@@ -17,7 +17,7 @@
 
 不定义：
 
-- Run/source 删除、Run tombstone、Run-owned Raw Input trace retention；
+- Run/source 删除、Run tombstone、Run-owned Raw Input trace / 自动 MP4 retention；
 - 用户 Stats/Performance/原始 MP4 的删除；
 - Raw Input rolling buffer、quarantine 或 orphan trace 策略；
 - uploading/importing partial workspace 恢复；
@@ -28,7 +28,7 @@
 1. 只有 `done | failed` Analysis 可删除；queued/running 等非 terminal 状态拒绝。
 2. 删除只影响 Analysis row、legacy session chat row 与该 Analysis 的 managed workspace。
 3. Coach 消息、context 和长期关系保留；active Analysis ref 永久转为 `deleted`，wire 投影为 `unavailable`。
-4. KovaaK Run、Run-owned Raw Input trace、用户 Stats/Performance 和用户源 MP4 永不级联删除。
+4. KovaaK Run、Run-owned Raw Input trace、Run-owned 自动 MP4、用户 Stats/Performance 和用户源 MP4 永不级联删除。
 5. Phase A commit 前的 SQLite 失败或事务 rollback 时，session、Coach refs/messages 和 workspace 必须保持删除前状态。
 6. 一旦 SQLite 删除事务 commit，Analysis 在产品语义上已经删除；workspace cleanup 失败不能复活 Analysis。
 7. workspace 不存在视为 cleanup 成功；部分删除和重复 reconciliation 必须收敛。
@@ -163,7 +163,7 @@ cleanup_failed[]
 - Windows locked-file/partial rmtree 后记录 failed，解锁后 reconciliation 收敛；
 - workspace already absent 时删除和 reconciliation 均成功；
 - legacy Coach message exactly-once，Analysis ref exactly-once 转为 deleted；
-- Run、Run-owned trace 和用户 source fixture 在删除前后字节不变；
+- Run、Run-owned trace、Run-owned 自动 MP4 和用户 source fixture 在删除前后字节不变；
 - startup reconciliation 在 Desktop `ready` 前执行；
 - API、日志与 tombstone 无绝对路径或底层异常泄露。
 
@@ -171,7 +171,7 @@ cleanup_failed[]
 
 立即停止并由 Sol/点点裁决，如果实现需要：
 
-- 删除或修改用户 source、Run metadata、Run-owned trace 或 Raw Input buffer；
+- 删除或修改用户 source、Run metadata、Run-owned trace、Run-owned 自动 MP4 或 Raw Input buffer；
 - 定义 TTL、quota、未知 orphan workspace 自动删除或 tombstone retention；
 - 改变 PRD 的 terminal-only 删除或 Coach message retention；
 - 接收来自 DB/API/frontend 的任意 workspace path；
