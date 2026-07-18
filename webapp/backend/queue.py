@@ -735,9 +735,13 @@ async def get_session(session_id: int) -> Optional[dict]:
     raw_snapshot = d.get("input_snapshot_json")
     if raw_snapshot:
         try:
-            d["input_snapshot"] = json.loads(raw_snapshot)
+            parsed_snapshot = json.loads(raw_snapshot)
         except (TypeError, json.JSONDecodeError):
             d["input_snapshot"] = None
+        else:
+            d["input_snapshot"] = (
+                parsed_snapshot if isinstance(parsed_snapshot, dict) else None
+            )
     else:
         d["input_snapshot"] = None
     d.pop("input_snapshot_json", None)
