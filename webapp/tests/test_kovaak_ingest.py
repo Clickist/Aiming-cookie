@@ -199,18 +199,14 @@ def test_desktop_ingestion_bridge_returns_future_to_watcher(tmp_path: Path, monk
     monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIR", tmp_path)
     monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIR", None)
 
-    async def fake_ingest_discovery(*_args, **_kwargs):
-        return None
+    class FakeFinalizer:
+        async def finalize(self, _discovery):
+            return {}
 
     def fake_run_coroutine_threadsafe(coroutine, _loop):
         coroutine.close()
         return future
 
-    monkeypatch.setattr(
-        desktop_runtime.kovaak_run_store,
-        "ingest_discovery",
-        fake_ingest_discovery,
-    )
     monkeypatch.setattr(
         asyncio,
         "run_coroutine_threadsafe",
@@ -219,7 +215,7 @@ def test_desktop_ingestion_bridge_returns_future_to_watcher(tmp_path: Path, monk
 
     loop = asyncio.new_event_loop()
     try:
-        service = desktop_runtime.create_kovaak_ingestion_service(loop)
+        service = desktop_runtime.create_kovaak_ingestion_service(loop, FakeFinalizer())
         watcher = service._watchers[0]
         stats = tmp_path / "1wall Stats.csv"
         stats.write_text("stats", encoding="utf-8")
@@ -257,7 +253,7 @@ def test_desktop_ingestion_service_wires_frozen_candidate_limit(tmp_path: Path, 
 
     loop = asyncio.new_event_loop()
     try:
-        desktop_runtime.create_kovaak_ingestion_service(loop)
+        desktop_runtime.create_kovaak_ingestion_service(loop, object())
     finally:
         loop.close()
 
@@ -319,7 +315,7 @@ async def test_runtime_reconciles_traces_before_starting_ingestion(monkeypatch):
     monkeypatch.setattr(desktop_runtime, "run_worker", fake_worker)
     monkeypatch.setattr(
         desktop_runtime, "create_kovaak_ingestion_service",
-        lambda _loop: FakeIngestionService(),
+        lambda _loop, _finalizer, _finalizer_futures: FakeIngestionService(),
     )
     monkeypatch.setattr(
         desktop_runtime.kovaak_run_store,
