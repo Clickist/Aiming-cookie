@@ -13,6 +13,7 @@
 - 当前可以使用 Web 前端技术快速开发和验证。
 - 最终交付给用户的是**桌面本地应用**，不是网站。
 - 因此界面按桌面应用设计：使用应用工具栏、主工作区、本地文件选择、后台分析状态和桌面窗口适配等心智模型。
+- Desktop 主路径不是上传表单：用户明确启用后，应用在 KovaaK 进程 gate 内自动采集 Raw Input 与仅 KovaaK 窗口的有界回放缓冲，并在 Stats / Performance 到达后事后生成独立 Run；用户切回应用后再选择 Run 并开始 Analysis。
 - 营销落地页与应用相互独立，不能把网站导航习惯直接套进应用。
 - **Logo 只用于品牌展示，不可点击，也不承担返回首页或落地页的导航功能。**
 - 本地应用不等于全离线应用；Coach 可直接使用用户选择的 Provider 或本地模型，Landing/release 等在线表面与本地产品分离。产品不提供 Aiming Cookie 账号、登录或鉴权服务器。
@@ -72,20 +73,20 @@ Logo（不可点击）｜历史｜＋新建分析        任务状态｜Coach｜
 ```text
 启动应用（无需产品账号或登录）
 ├─ 首次 onboarding 未完成 → 激活 Coach / Provider onboarding
-├─ onboarding 已完成，且没有已发现 Run / Analysis → 新建分析 / 训练来源选择
-└─ 有已发现 Run 或 Analysis → History
+├─ onboarding 已完成，且没有 Run / Analysis → 新建分析 / 自动采集待命
+└─ 有待分析 Run、其它 Run 或 Analysis → History
 
 Provider onboarding
 ├─ 说明 Coach 价值、第三方费用和数据边界
 ├─ 主路径：选择 Provider → 无认证直连 / API key / OAuth 或 device-code / 本地模型 / 已验证自定义 Provider
 ├─ 测试连接并建立 Coach-ready 状态
-└─ 次级路径：暂时只使用本地分析，之后可恢复
+└─ 底部次级文字：暂时只使用本地分析（没有 Coach，之后可恢复）
 
 新建分析（独立页面）
-├─ 选择已发现 KovaaK Run
-├─ 可选启用 Windows Raw Input
-├─ 可选添加 MP4 视觉证据
-└─ 无 Run 时使用 MP4 + Stats fallback
+├─ 自动采集状态：待命 / 采集中 / 整理中 / 完成 / 失败
+├─ 单局：默认选中，等待用户确认
+├─ 多局：选择一条 Run；其它保留为待分析
+└─ 独立 fallback：用户手动选择 MP4 + 对应 Stats CSV
       ↓
 后台分析任务 → 任务中心 / 分析工作区
 
@@ -94,7 +95,8 @@ Provider onboarding
 └─ 查看结果 / 重试 / 返回历史
 
 History
-├─ 训练记录（KovaaKRun）→ 添加视频 / 开始分析 / 查看来源状态
+├─ 待分析训练 → 选择一条开始分析
+├─ 训练记录（KovaaKRun）→ 查看来源与存储状态
 └─ 分析记录 → 分析工作区
 
 分析工作区
@@ -115,7 +117,7 @@ History
 
 ```text
 理解 Coach 价值与边界 → 选择 Provider 连接方式 → 认证 / 测试 → Coach Ready
-                                           └→ 明确跳过 → 本地分析模式
+                                           └→ 底部次级文字跳过 → 纯本地分析模式
 ```
 
 onboarding 必须：
@@ -123,9 +125,10 @@ onboarding 必须：
 - 在连接前说明 Aiming Cookie 开源免费、第三方 Provider 可能收费、无 Provider 时仍可使用的本地能力；
 - 具体说明连接后可获得白话解释、针对性训练、长期档案、产品操作和复测，而不是只写“解锁 AI”；
 - 说明发送给 Provider 的是用户可见的结构化诊断上下文，Raw Input 原始 trace、绝对路径和 secret 默认不发送；
-- 用面向普通用户的选项表达 Provider 选择、无需认证的直接连接、API key、可选 OAuth/device-code、本地模型和高级自定义 Provider，只展示已经通过产品接线验证的方式；
+- 动态展示完整 pinned Pi built-in provider/model catalog，不另设前端 allow-list；用面向普通用户的选项表达无需认证的直接连接、API key、可选 OAuth/device-code、本地模型和高级自定义 Provider，每个 Provider 只展示 capability API 实际支持并已完成产品接线的方式；
 - API key、OAuth/device-code 和连接测试使用结构化控件；不得让用户把 credential 粘贴到 Coach 对话；
-- 保存进度，允许取消、失败恢复、稍后继续和“暂时只使用本地分析”；
+- 保存进度，允许取消、失败恢复和稍后继续；“暂时只使用本地分析”只作为 onboarding 底部一行次级文字，不与连接 Provider 的主操作竞争；
+- 桌面端指针 hover 或键盘 focus 该次级文字时，显示限制说明：跳过后没有 Coach 对话、AI 解释、长期档案维护、训练计划或 Coach 产品命令，只保留本地代码生成的指标、确定性诊断、规则化提示和 History；
 - 连接成功后不打开无上下文的空聊天框，而是引导检测 KovaaK 数据并完成第一次分析；
 - 第一次分析完成且 Provider 可用时自动展开 Coach，展示解释、训练方法、预期变化和复测；后续启动记住用户的展开状态。
 
@@ -141,19 +144,21 @@ onboarding 必须：
 “新建分析”使用独立页面，不使用模态框。固定主流程是：
 
 ```text
-选择训练来源 → 检查证据 → 选择分析模式 → 开始分析
+等待/完成自动采集 → 单局确认或多局选一条 → 检查 Evidence → 开始分析
+                                                └→ 独立手动 fallback
 ```
 
 页面必须提供以下组件和信息；低保真结构按 active frontend reconstruction spec 冻结，像素级 Layout 留给后续实现 Task：
 
-- 已发现 Run 选择：显示场景、时间、Stats / Performance / Raw Input 可用性和是否已有分析；
-- 手动 fallback：没有可用 Run 时允许选择或拖入 Stats CSV；
-- 训练录像文件选择：MP4 是可选视觉增强；video-fallback 模式下才是必需输入；
-- Raw Input 状态：Windows 显示未开启 / 正在监听 / 已捕获 / 不可用 / 错误；首次开启使用明确 opt-in，而不是普通模糊开关；
+- 自动采集状态：显示未启用 / 待命 / 采集中 / 整理中 / 完成 / 失败，并说明应用不是实时监听 Challenge start/end，而是在 Stats / Performance 到达后事后切 Run；
+- Run 选择：显示场景、时间、Stats / Performance / Raw / MP4 可用性和是否已有分析；本次只有一条可分析 Run 时默认选中，有两条及以上时要求用户明确选择一条；
+- 手动 fallback：作为单独入口或单独界面，同时选择 Challenge MP4 与对应 Stats CSV；不得与自动 Run 选择混成同一长表单，也不得仅凭 MP4 自动猜测 CSV；
+- 自动录像：主路径由应用维护仅 KovaaK 窗口的有界回放缓冲，并在 Stats / Performance 到达后按 Run 生成 MP4；用户无需手动录屏。手动选择 MP4 只属于 fallback 或明确补充来源；
+- Raw Input 状态：Windows 显示未开启 / 待命 / 正在采集 / 已关联 / 不可用 / 错误；首次开启使用明确 opt-in，而不是普通模糊开关；
 - 本次分析设置摘要：显示当前 `cm/360` 与 FOV；上传页不放复杂 Profile 表单，修改入口进入设置；
 - 分析模式摘要：明确显示 input-native、multimodal 或 video-fallback，以及每种模式能生成和不能生成的证据；
 - 文件/证据检查结果：分别说明 Run、Raw Input、Performance、Stats、MP4 和时间对齐状态；
-- “开始分析”主操作：只在当前模式的必要输入和一致性校验通过后可用。
+- “开始分析”主操作：只在已选择一条 Run 且满足 `Stats AND (MP4 OR (Raw + Performance))`、对应 mode 的一致性校验通过后可用。未选择的 Run 不进入 Tasks。
 
 文件有问题时，错误紧邻对应文件显示，不把错误拖到任务开始以后才暴露。Coach 可以在该页面打开，但默认收起。
 
@@ -163,11 +168,11 @@ onboarding 必须：
 
 | 模式 | 必需证据 | 可选证据 | 用户可获得 | 明确限制与失败行为 |
 |---|---|---|---|---|
-| **input-native Preview / Experimental** | Stats、Performance、已关联且可用的 Raw Input | 无；添加 MP4 后按 multimodal 处理 | 输入运动学、事件对齐和当前已通过验证的 native 结论 | 首发必须显示 Preview / Experimental；在 flick segmentation、fair metrics 和 Windows 实机 Gate 全部通过前，不得包装成稳定正式能力；没有 MP4 时不生成视觉结论 |
+| **input-native Preview / Experimental** | Stats、Performance、已关联且可用的 Raw Input | 无；同一 Run 的已对齐 MP4 可用后按 multimodal 处理 | 输入运动学、事件对齐和当前已通过验证的 native 结论 | 首发必须显示 Preview / Experimental；在 flick segmentation、fair metrics 和 Windows 实机 Gate 全部通过前，不得包装成稳定正式能力；没有 MP4 时不生成视觉结论 |
 | **multimodal** | 可完成 native 分析的全部证据、MP4 | 无 | native 事实与视频视觉校验 | native 是主结果，视频是校验与增强；视觉校验失败、不可用或未对齐时保留 native 结果，只把视觉部分标为不可用，并提供重新选择视频或重试视觉校验的入口 |
 | **video-fallback** | Stats、MP4 | 可用的 Run / Performance 信息 | 视频与 Stats 能支持的 fallback 诊断 | 不伪造 Raw Input provenance，不把视频推断写成输入原生测量；缺少完整 native evidence 时仍是正常可用路径，不描述成降级故障 |
 
-模式选择区必须同时说明：为什么当前模式可用或不可用、它能生成什么、不能生成什么、改变输入后会切换到什么模式。前端不得只根据文件名或局部字段自行猜测 input mode，也不得允许用户通过视觉选择覆盖真实证据条件。 input-native 的 Preview / Experimental 标记必须在新建分析、任务中心、历史和分析工作区中持续可见，不能只在首次选择时短暂提示。
+模式选择区必须同时说明：为什么当前模式可用或不可用、它能生成什么、不能生成什么、改变输入后会切换到什么模式。前端不得只根据文件名或局部字段自行猜测 input mode，也不得允许用户通过视觉选择覆盖真实证据条件。multimodal 只使用 Raw 计算输入运动学，MP4 只提供回放、视觉定位和 Coach 的直观时间点讲解。input-native 的 Preview / Experimental 标记必须在新建分析、任务中心、历史和分析工作区中持续可见，不能只在首次选择时短暂提示。
 
 #### 3.2.2 Evidence 状态与可用性
 
@@ -204,17 +209,26 @@ Evidence 不使用单一红绿状态概括。状态表达必须同时包含文�
 
 - 失败信息必须区分 Run 发现、Raw Input、源文件、输入对齐、本地运动学、视频分析、Provider LLM 和 Coach runtime，不能只显示统一的“分析失败”；
 - 任务失败时提供重试入口；运行中和排队中的任务不可删除。
+- `pending_analysis` Run 不是任务状态；只有用户点击“开始分析”后才进入 Tasks。
 
 ### 3.3 历史
 
-历史使用同一页面承载训练记录与分析记录，必须包含“新建分析”主操作、长期趋势和两类记录；低保真结构按 active frontend reconstruction spec 冻结，像素级 Layout 留给后续实现 Task。
+历史使用同一页面承载待分析训练、其它训练记录与分析记录，必须包含“新建分析”主操作和长期趋势；低保真结构按 active frontend reconstruction spec 冻结，像素级 Layout 留给后续实现 Task。
+
+History 固定按以下顺序组织：
+
+1. **待分析训练**：满足最低分析条件、尚未创建 Analysis 的 Run；单条可直接确认，多条先选择一条；
+2. **训练记录**：已分析、evidence 不完整、source unavailable 等其它 Run；
+3. **分析记录**：queued、running、done、failed 和 retry attempt。
+
+未被用户选择的 Run 只停留在“待分析训练”，不进入任务中心、不自动合并、不自动删除。
 
 训练记录区必须显示：
 
 - 日期、场景和稳定 source key 对应的用户可读身份；
-- Stats、Performance、Raw Input trace、MP4 和源文件可用性；
-- 未分析 / 分析中 / 已分析 / source unavailable；
-- “开始分析”“添加视频”“查看分析”等主操作；
+- Stats、Performance、Raw Input trace、自动 MP4 和源文件可用性；
+- 待分析 / evidence 不完整 / 分析中 / 已分析 / source unavailable；
+- “开始分析”“查看来源”“查看存储占用”“查看分析”等主操作；
 - Raw Input 未开启或平台不支持时使用中性说明，不把 fallback 描述成故障。
 
 长期趋势规则：
@@ -231,7 +245,7 @@ Evidence 不使用单一红绿状态概括。状态表达必须同时包含文�
 - 运行中记录的当前阶段；
 - 失败记录的明确失败原因和重试入口。
 
-点击分析记录主体进入对应分析工作区；点击训练 Run 进入 Run 详情或分析入口。删除等低频操作收进次级菜单。进行中和排队中的分析不可删除；Run metadata、trace 和用户源文件必须使用不同文案与确认，具体删除合同由独立 spec 冻结。第一版不预先堆叠复杂筛选和排序；等记录数量证明有需要后再增加。
+点击分析记录主体进入对应分析工作区；点击训练 Run 进入 Run 详情或分析入口。删除等低频操作收进次级菜单。进行中和排队中的分析不可删除；Run metadata、Run-owned Raw/MP4、用户源文件必须使用不同文案与确认，手动 evidence 管理遵守 automatic capture spec，Run metadata 整体删除仍需独立合同。第一版不预先堆叠复杂筛选和排序；等记录数量证明有需要后再增加。
 
 实现前需要确保历史列表数据合同能够提供场景名称、最重要结论和当前任务阶段；当前接口若缺失，应在实施计划中明确补齐，不能由前端猜测。
 
@@ -243,7 +257,7 @@ Run 详情是训练记录与来源状态的检查器，不是缩小版分析报�
 2. **Evidence 来源**：Stats、Performance、Raw Input、MP4 分别显示存在性、可用性、质量、覆盖范围和对齐结果；
 3. **分析能力**：当前可选择的 input mode、不可选择的原因，以及每种模式能生成和不能生成的结论；
 4. **关联 Analysis**：已有、进行中、失败和可重试的 Analysis，不能把重新分析误写成覆盖旧结果；
-5. **主要操作**：开始分析、添加或替换 MP4、处理来源不可用、查看已有分析；删除与清理只作为低频次级操作。
+5. **主要操作**：开始分析、处理来源不可用、查看已有分析、进入 Storage 管理 Run-owned evidence；手动补充/替换 MP4 只在合同允许的 fallback 或修复路径出现。
 
 Run inspector 不显示绝对路径、原始 trace 或内部标识。用户只看到必要的文件名、稳定引用、可理解状态和影响；需要重新定位本地来源时，使用明确的文件选择动作，不把本地目录结构暴露为产品信息。
 
@@ -306,17 +320,19 @@ Benchmark **不进入 v1 正式 UI**。第一版 History 不提供 Benchmark 面
 2. 当前分析内部的内容切换控件；
 3. 主内容与右侧 Coach。
 
-### 3.5 Raw Input 授权与设置
+### 3.5 自动采集、Raw Input 与状态
 
-Raw Input 是产品能力，但必须以明确授权和可见状态呈现：
+自动采集是 Desktop 主路径；Raw Input 与窗口回放缓冲必须以明确授权、可见状态和局部失败呈现：
 
-- 设置页显示平台支持状态、当前开关、采集范围、仅在 KovaaK 进程运行时采集、只保存在本地的说明；
+- 设置页显示平台支持状态、自动采集开关、Raw Input 授权、窗口录制范围、仅在 KovaaK 进程运行时维护 300 秒瞬态缓冲、只保存在本地的说明；
 - Windows 首次启用必须使用解释性确认，而不是无上下文的开关；用户可以跳过，跳过后继续使用 MP4 + Stats compatibility fallback；
 - 非 Windows 显示“当前平台不可用”，同时提供视频 fallback，不显示为故障；
-- 运行中显示监听 / 已捕获 / 暂停 / 错误状态，但不持续打扰用户；
+- 自动回放缓冲只捕获 KovaaK 窗口，不捕获完整桌面、其它应用窗口或系统通知；
+- 运行中显示待命 / 采集中 / 整理中 / 完成 / 失败状态，但不持续打扰用户；可选托盘/悬浮状态不得抢焦点，并可在 Settings 关闭；
 - Raw Input trace 是否存在、是否已与 Run 对齐、是否可用于本次分析必须在 Run 详情和分析工作区可见；
+- 自动 MP4 是否存在、是否完成切窗、是否与 Raw/Stats/Performance 对齐必须分别可见；Raw 或录像单独失败时保留仍满足最低条件的 mode；
 - Raw Input 数据不自动作为 Coach 上下文发送；如果未来需要引用，必须由用户在发送前看见并确认具体证据；
-- Run metadata、trace 和原始 Stats / Performance 文件必须分别说明归属和删除影响，不能用一个“删除训练记录”按钮掩盖不同生命周期。
+- Run metadata、Raw trace、自动 MP4 和原始 Stats / Performance 文件必须分别说明归属和删除影响，不能用一个“删除训练记录”按钮掩盖不同生命周期。
 
 ### 3.6 LLM Provider 与认证设置
 
@@ -332,7 +348,7 @@ Provider 列表至少显示：
 
 用户操作包括：
 
-- 添加内置 provider 或自定义 OpenAI-compatible provider；
+- 从完整 pinned Pi built-in catalog 添加 provider/model，或创建自定义 OpenAI-compatible provider；
 - 填写或替换 API key；
 - 仅在 provider 要求、支持且产品已接线时使用浏览器 OAuth 或 device-code 认证；
 - 选择 model、刷新动态 model 列表、测试连接；
@@ -344,7 +360,7 @@ Provider 列表至少显示：
 - API key 输入默认隐藏，保存后不可再次读回，只能替换或删除；
 - OAuth/device-code 认证显示等待浏览器或 device code、取消、超时、成功和需要重新认证状态；
 - Provider profile 与 credential 分开删除；移除 profile 前说明是否同时移除 credential；
-- 未配置 Provider 时，Coach 入口仍可见并恢复首次 onboarding 或进入 Provider Settings；不显示升级、订阅、额度墙或产品登录；
+- 未配置 Provider 时，Coach 入口只作为激活入口，可恢复首次 onboarding 或进入 Provider Settings；此时不提供 Coach 对话、解释、长期档案、训练计划或产品命令，也不显示升级、订阅、额度墙或产品登录；
 - 确定性诊断、History 和本地分析不依赖 LLM provider；provider 故障不能让这些页面失败；
 - 第一版不在聊天输入区放模型选择器；切换 provider/model 只在 Settings 中完成，避免每轮对话状态不透明。
 
@@ -370,7 +386,7 @@ Provider 列表至少显示：
 
 ### 3.8 归属、删除与保留的 UX 边界
 
-Analysis、Run、Raw Input trace、用户 Stats / Performance 和 MP4 managed copy 使用彼此独立的生命周期。界面必须先说明“将删除什么、保留什么、哪些引用会失效”，再允许确认：
+Analysis、Run、Raw Input trace、自动 Run-owned MP4、用户 Stats / Performance 和手动 fallback managed copy 使用彼此独立的生命周期。界面必须先说明“将删除什么、保留什么、哪些引用会失效”，再允许确认：
 
 | 对象 | 用户可见归属 | 删除或移除时的 UX 边界 |
 |---|---|---|
@@ -378,9 +394,10 @@ Analysis、Run、Raw Input trace、用户 Stats / Performance 和 MP4 managed co
 | Run metadata | 一次训练记录的组织入口 | 与 Analysis 和来源文件分开处理；删除前列出仍关联的 Analysis 与 evidence，不能用“删除训练”暗示会清理所有数据 |
 | Raw Input trace | 本地捕获并关联到 Run 的 evidence | 与开关、Run metadata 和 Analysis 分开管理；是否清理必须使用独立动作和明确确认。关闭捕获不应被界面描述为已经删除历史 trace |
 | 用户 Stats / Performance | 用户拥有的原始来源 | Aiming Cookie 不自动删除用户源文件；从应用中移除引用或删除 Run 时，必须明确说明原文件仍保留 |
-| MP4 managed copy | 为分析管理的本地副本 | 与用户原始录像分开说明；删除 managed copy 不等于删除用户原文件，删除后依赖它的视觉证据和回放会变为不可用 |
+| 自动 MP4 | Run-owned 的本地 managed evidence | 不随 Analysis 删除；用户可在 Storage 中独立移除，删除后回放和视觉引用变为不可用 |
+| 手动 MP4 managed copy | 为 fallback Analysis 管理的本地副本 | 与用户原始录像分开说明；删除 managed copy 不等于删除用户原文件，删除后依赖它的视觉证据和回放会变为不可用 |
 
-第一版不提供模糊的“一键清空所有数据”。自动保留期限、批量清理、orphan trace 处理和恢复策略仍需独立生命周期合同冻结；在此之前，界面不得自行承诺自动删除或永久保留。
+第一版不提供模糊的“一键清空所有数据”，也不自动删除最旧 Run。Storage 显示总占用以及 Run 录像、Raw trace、Analysis artifacts、未完成采集数据的分类占用；用户可按 Run 分别移除自动 MP4、Raw trace 或未完成采集数据，确认前必须说明对未来 Analysis mode、回放和既有引用的影响。Run metadata、Analysis 记录和用户 Stats / Performance 原文件保留。精确事务与恢复由后续 implementation plan 冻结。
 
 ## 4. Coach 侧栏
 
@@ -513,7 +530,7 @@ Coach 必须让用户看懂“它现在在看什么”。当前可见上下文�
 - 覆盖或不可撤销地修改设置、长期偏好或训练计划；
 - 写入或修改长期用户资料；
 - 添加、替换或删除 provider credential，以及 OAuth 授权/撤销；
-- 未来使用收费能力；
+- 打开外部购买链接；
 - 导出、上传或发送数据。
 - Coach 根据推断主动提出、但用户没有明确要求的副作用操作。
 
@@ -629,10 +646,10 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 
 | 能力 | Desktop | Web |
 |---|---|---|
-| KovaaK Run 发现 | 可自动发现并进入 Run 流程 | 不依赖本地自动发现，使用浏览器可访问的文件输入 |
+| KovaaK Run 发现 | 可自动采集并在 Stats / Performance 到达后事后切成独立 Run | 不依赖本地自动发现，使用浏览器可访问的文件输入 |
 | Stats / Performance | 可使用已发现来源或本地选择 | 由用户选择或上传浏览器可访问的文件 |
 | Raw Input | 仅在受支持的 Windows Desktop 环境中 opt-in；用于首发 Preview / Experimental 的 input-native 能力 | 不提供，使用中性“不支持”状态而不是错误 |
-| MP4 | 可选择本地录像并使用受管理副本 | 由用户选择或上传浏览器可访问的录像 |
+| MP4 | 自动维护仅 KovaaK 窗口回放缓冲并事后生成 Run-owned MP4；手动 fallback 可选择本地录像 | 由用户选择或上传浏览器可访问的录像 |
 | 后台本地能力 | 可以在应用内持续运行并由任务中心恢复状态 | 只表达实际可持续的服务状态，不伪装成本地常驻能力 |
 | 视频回放 | 使用应用管理的可播放来源 | 使用浏览器可访问的受管来源 |
 | Coach 与 Analysis 工作区 | 与 Web 保持相同产品关系 | 与 Desktop 保持相同产品关系 |
@@ -645,6 +662,7 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 
 - 没有 Run 或分析记录时，不显示空趋势图，直接解释价值并引导开始第一次分析；
 - 有 Run 但没有分析时，优先引导“从这条训练记录开始分析”，不要要求用户重复导出同一份 Stats；
+- 有多条待分析 Run 时要求用户选择一条；其余继续保留在 History，不制造任务或合并记录；
 - 没有 Raw Input、没有 MP4 或 Performance 不完整时，明确说明当前可生成的证据范围，不把部分证据伪装成完整诊断；
 - 只有一次分析时，不伪造长期趋势，提示完成更多可比较分析后再生成趋势；
 - 当前视图没有可展示内容时，说明缺少什么、为什么缺少以及用户下一步可以做什么；
@@ -658,7 +676,7 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 - 已成功生成或加载的部分保留，失败区域提供说明、重试或替代入口；
 - 部分数据缺失时明确标注影响范围，不伪造图表、指标或结论；
 - 文件、本地分析、网络、Provider LLM、Coach runtime、系统授权和单次工具执行错误必须分别说明。
-- Raw Input 授权拒绝、平台不支持、进程未检测到、snapshot 失败和时间对齐失败必须分别说明，并提供视频 fallback 或稍后重试。
+- Raw Input 授权拒绝、平台不支持、进程未检测到、窗口录制失败、Stats/Performance 延迟、切窗失败、snapshot 失败和时间对齐失败必须分别说明，并提供当前仍成立的 mode、手动 fallback 或稍后重试。
 
 ### 7.3 离线与服务不可用
 
@@ -675,7 +693,7 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 - 未配置时显示“连接 Provider 以激活 Coach”，并可恢复 onboarding；
 - Provider 或网络不可用时明确说明受影响能力和恢复动作，不显示升级、登录 Aiming Cookie、额度或付费提示；
 - Provider 故障不能影响 Run、Analysis、History、确定性报告和视频回看；
-- 本地模式用户可以长期使用产品，并随时从 Coach 入口或 Settings 激活 Coach。
+- 本地模式用户可以长期使用指标、确定性诊断、规则化提示和 History，并随时从 Coach 激活入口或 Settings 连接 Provider；连接前没有 Coach 功能。
 
 ### 7.5 页面状态矩阵
 
@@ -692,6 +710,7 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 | 授权拒绝 | 说明被拒绝的能力和替代路径 | Raw Input 系统授权与 Provider OAuth/API key 失败分别处理，不统一成通用错误 |
 | 来源不可用 | 保留来源曾存在的事实与稳定引用 | 提供重新定位、重新添加或改用其他模式的入口 |
 | 对齐失败 | 说明哪些来源不能共同使用 | 禁止跨来源结论；multimodal 保留独立成立的 native 结果 |
+| 待分析 Run | 已完成采集但用户尚未创建 Analysis | 留在 History 顶部，不进入 Tasks；单条确认、多条选一条 |
 | 排队中 | 显示排队与可理解的等待状态 | 可离开页面，任务中心持续可见，不允许删除 |
 | 运行中 | 显示真实阶段 | 可离开页面，不允许删除，不伪造百分比 |
 | 完成 | 显示结果入口和 evidence 摘要 | 不强制跳转，使用低干扰通知 |
@@ -707,6 +726,8 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 
 - 各页面最终像素级 Layout、精确尺寸、断点数值、动画参数和视觉微调；
 - Landing 与 onboarding 的最终像素布局、演示 MP4 时长和具体 Provider 教程内容；
+- 自动采集悬浮/托盘状态的最终像素布局、位置、动画和录屏编码参数；
+- 外设推荐、联盟披露、免费替代方案与外部购买跳转的具体 UI；进入 C 阶段前须由独立 active spec 冻结，当前 Task 不得自行实现；
 - 多 thread、归档、文件夹和 thread 删除 UI；
 - 具体前端组件库、Agent UI 框架和 wire protocol；
 - 安装包、签名、更新和最终发布形态。
@@ -718,6 +739,7 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 页面职责、信息优先级、联动、input mode、evidence、生命周期、状态规则和低保真重建边界已经冻结：
 
 - 正式局部设计合同：[`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)；
+- 自动采集、Run 选择与存储合同：[`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md)；
 - tests-first 施工合同：[`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)。
 
 原 prototype 只提供过能力接线证据，不作为正式设计起点；它已在 frontend reconstruction Task 1 经点点确认范围后删除。当前只保留 capability adapters 与 Tauri/runtime，正式产品路由暂时不可用。Task 2–7 仍必须由点点逐个明确指定，不得为维持外壳恢复 prototype。
