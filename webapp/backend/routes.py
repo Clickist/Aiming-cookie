@@ -5,7 +5,7 @@ import logging
 import os
 import shutil
 from pathlib import Path as FilePath
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, Header, HTTPException, Path, Request
 from fastapi.responses import FileResponse
@@ -64,6 +64,7 @@ from .schemas import (
     ProviderProfilePatch,
     ProviderProfileStatusResponse,
     ProviderRevokeResponse,
+    RunEvidenceRemovalResponse,
     CoachThreadMessageOut,
     CoachThreadOut,
     DeleteSessionResponse,
@@ -75,6 +76,7 @@ from .schemas import (
     SessionListResponse,
     SessionStatus,
     StorageResponse,
+    StorageCategoryTotals,
     StorageSessionItem,
     Timeline,
     TimelineEvent,
@@ -223,8 +225,18 @@ async def analyze_paths(
 @router.get("/storage", response_model=StorageResponse)
 async def get_storage(_: None = Depends(require_desktop_token)):
     sessions = await queue.list_storage_sessions(config.DESKTOP_LOCAL_PROFILE)
+    run_usage = await kovaak_run_store.run_storage_usage(
+        config.DESKTOP_LOCAL_PROFILE, config.DATA_ROOT,
+    )
+    categories = StorageCategoryTotals(
+        analysis_artifacts_bytes=sum(
+            session["workspace_bytes"] for session in sessions
+        ),
+        **run_usage,
+    )
     return StorageResponse(
-        total_bytes=sum(session["workspace_bytes"] for session in sessions),
+        total_bytes=sum(categories.model_dump().values()),
+        categories=categories,
         sessions=[StorageSessionItem(**session) for session in sessions],
     )
 
@@ -418,6 +430,31 @@ async def get_kovaak_run(
         status = 403 if exc.code == "forbidden" else 404
         raise HTTPException(status, exc.message) from exc
     return KovaaKRunItem(**run)
+
+
+@router.delete(
+    "/kovaak-runs/{run_id}/evidence/{evidence_kind}",
+    response_model=RunEvidenceRemovalResponse,
+)
+async def remove_kovaak_run_evidence(
+    run_id: int = Path(...),
+    evidence_kind: Literal["video", "raw"] = Path(...),
+    _: None = Depends(require_desktop_token),
+):
+    try:
+        result = await kovaak_run_store.remove_run_evidence(
+            run_id,
+            config.DESKTOP_LOCAL_PROFILE,
+            evidence_kind,
+            config.DATA_ROOT,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, "KovaaK run 不存在") from exc
+    except PermissionError as exc:
+        raise HTTPException(403, "无权访问此 Run") from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(409, "Run evidence 无法安全移除") from exc
+    return RunEvidenceRemovalResponse(**result)
 
 
 @router.post("/kovaak-runs/{run_id}/analyze", response_model=AnalyzeResponse)

@@ -18,6 +18,8 @@ import uvicorn
 
 from . import config, db, kovaak_ingest, kovaak_run_store, worker
 from .app import app
+from .kovaak_capture_finalizer import KovaaKCaptureFinalizer
+from .native_capture_client import NativeCaptureClient
 
 LOOPBACK_HOST = "127.0.0.1"
 SERVER_START_POLL_SECONDS = 0.01
@@ -27,6 +29,39 @@ log = logging.getLogger(__name__)
 
 class RuntimeStartupError(RuntimeError):
     """The desktop runtime could not become ready for the shell."""
+
+
+class FinalizerFutureTracker:
+    """Drain watcher-submitted finalizers before closing the shared database."""
+
+    def __init__(self) -> None:
+        self._futures: set[Future[dict]] = set()
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def track(self, future: Future[dict]) -> None:
+        with self._lock:
+            if self._closed:
+                future.cancel()
+                return
+            self._futures.add(future)
+        future.add_done_callback(self._discard)
+
+    def _discard(self, future: Future[dict]) -> None:
+        with self._lock:
+            self._futures.discard(future)
+
+    async def drain(self) -> None:
+        with self._lock:
+            self._closed = True
+            futures = tuple(self._futures)
+        for future in futures:
+            future.cancel()
+        if futures:
+            await asyncio.gather(
+                *(asyncio.wrap_future(future) for future in futures),
+                return_exceptions=True,
+            )
 
 
 def create_server(port: int) -> uvicorn.Server:
@@ -122,18 +157,34 @@ def _install_shutdown_signal_handlers(stop_event: asyncio.Event) -> Callable[[],
     return remove_handlers
 
 
-def create_kovaak_ingestion_service(loop: asyncio.AbstractEventLoop) -> kovaak_ingest.KovaaKIngestionService:
+def create_kovaak_capture_finalizer() -> KovaaKCaptureFinalizer:
+    address = config.NATIVE_CAPTURE_CONTROL_ADDR
+    secret = config.NATIVE_CAPTURE_CONTROL_SECRET
+    if bool(address) != bool(secret):
+        raise RuntimeStartupError("native capture control configuration is incomplete")
+    client = NativeCaptureClient(address, secret) if address and secret else None
+    return KovaaKCaptureFinalizer(
+        native_client=client,
+        data_root=config.DATA_ROOT,
+        raw_input_snapshot_path=config.DATA_ROOT / "raw-input" / "buffer.bin",
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+    )
+
+
+def create_kovaak_ingestion_service(
+    loop: asyncio.AbstractEventLoop,
+    finalizer: KovaaKCaptureFinalizer,
+    finalizer_futures: FinalizerFutureTracker | None = None,
+) -> kovaak_ingest.KovaaKIngestionService:
     """Create the Desktop-only watcher bridge without changing Web runtime behavior."""
 
     def on_discovery(discovery: kovaak_ingest.KovaaKFileDiscovery) -> Future[dict]:
         future = asyncio.run_coroutine_threadsafe(
-            kovaak_run_store.ingest_discovery(
-                discovery,
-                user_id=config.DESKTOP_LOCAL_PROFILE,
-                raw_input_snapshot_path=config.DATA_ROOT / "raw-input" / "buffer.bin",
-            ),
+            finalizer.finalize(discovery),
             loop,
         )
+        if finalizer_futures is not None:
+            finalizer_futures.track(future)
 
         def report_result(done: Future[dict]) -> None:
             try:
@@ -163,7 +214,11 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     server_task = asyncio.create_task(server.serve())
     worker_task: asyncio.Task[None] | None = None
     stop_task = asyncio.create_task(shutdown_requested.wait())
-    ingestion_service = create_kovaak_ingestion_service(asyncio.get_running_loop())
+    finalizer = create_kovaak_capture_finalizer()
+    finalizer_futures = FinalizerFutureTracker()
+    ingestion_service = create_kovaak_ingestion_service(
+        asyncio.get_running_loop(), finalizer, finalizer_futures,
+    )
 
     try:
         port = await _wait_for_server_start(server, server_task)
@@ -175,6 +230,14 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         reconciliation = await kovaak_run_store.reconcile_mouse_traces(config.DATA_ROOT)
         if any(reconciliation.values()):
             log.info("KovaaK trace reconciliation completed: %s", reconciliation)
+        video_reconciliation = await kovaak_run_store.reconcile_run_videos(
+            config.DATA_ROOT
+        )
+        if any(video_reconciliation.values()):
+            log.info(
+                "KovaaK video reconciliation completed: %s",
+                video_reconciliation,
+            )
         ingestion_service.start()
 
         # This is intentionally the runtime's only stdout protocol write.
@@ -201,6 +264,8 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
             await stop_task
         worker_stop.set()
         ingestion_service.stop()
+        await finalizer_futures.drain()
+        await finalizer.shutdown()
         server.should_exit = True
         tasks = [server_task]
         if worker_task is not None:

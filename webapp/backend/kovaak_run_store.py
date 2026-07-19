@@ -11,8 +11,10 @@ import json
 import hashlib
 import os
 import re
+import stat
 import struct
 import time
+from datetime import datetime
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
@@ -20,6 +22,7 @@ from uuid import uuid4
 
 from kovaak_tracker.csv_parser import parse_stats_csv
 from kovaak_tracker.performance_parser import parse_performance_file
+from kovaak_tracker.time_alignment import TimeAlignmentError, resolve_time_window
 
 from .db import get_conn
 from .kovaak_ingest import (
@@ -42,6 +45,9 @@ STATS_PARSER_VERSION = "kovaak_stats.v1"
 PERFORMANCE_PARSER_VERSION = "kovaak_performance.v1"
 SCENARIO_IDENTITY_VERSION = "kovaak_scenario.v1"
 _SHA256_DIGEST = re.compile(r"^[0-9a-fA-F]{64}$")
+_STRICT_IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]+$")
+_ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+MAX_CAPTURE_WINDOW_MS = 300_000
 
 
 class PairingConflictError(NonRetryableIngestionError):
@@ -108,16 +114,16 @@ def _assert_source_identity(
         return
     if existing_source.get("path") != observed_source.get("path"):
         raise PairingConflictError(f"pairing_conflict: second {kind} source")
+    revision_fields = ("sha256", "size", "mtime_ns", "parser_version")
+    if any(
+        existing_source.get(field) != observed_source.get(field)
+        for field in revision_fields
+    ):
+        raise PairingConflictError(f"pairing_conflict: changed {kind} source revision")
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
-
-
-def _trace_pairing_within_retention(performance: object) -> bool:
-    header = performance.header
-    end_ms = header.challenge_start_utc + int(header.challenge_profile.time_limit * 1000)
-    return _now_ms() <= end_ms + MAX_SNAPSHOT_SPAN_MS
 
 
 def _validate_snapshot_points(points: list[dict[str, int]]) -> list[dict[str, int]]:
@@ -236,7 +242,7 @@ def extract_mouse_snapshot_window(
         raise ValueError("raw input window end precedes start")
     points = [
         point for point in read_mouse_snapshot(path)
-        if start_ms <= point["timestamp_ms"] <= end_ms
+        if start_ms <= point["timestamp_ms"] < end_ms
     ]
     if points:
         write_mouse_snapshot(destination, points)
@@ -262,7 +268,177 @@ def _row(row: Any) -> dict:
     result = dict(row)
     result["stats_summary"] = _decode(result.get("stats_summary"))
     result["performance_summary"] = _decode(result.get("performance_summary"))
+    result["alignment_summary"] = _decode(result.get("alignment_summary"))
+    result["video_receipt"] = _decode(result.pop("video_receipt_json", None))
+    result["video_summary"] = _decode(result.pop("video_summary_json", None))
     return result
+
+
+def _current_video_evidence(
+    run: dict, *, shallow: bool = False,
+) -> tuple[str, dict[str, object] | None]:
+    """Validate the attached MP4 against the immutable DB fingerprint."""
+    if run.get("video_state") != "attached" or not run.get("video_path"):
+        return ("not_present", None)
+    path = Path(str(run["video_path"]))
+    if not path.is_file():
+        return ("missing", None)
+    summary = run.get("video_summary")
+    fingerprint = summary.get("fingerprint") if isinstance(summary, dict) else None
+    if (
+        not isinstance(fingerprint, dict)
+        or not isinstance(fingerprint.get("sha256"), str)
+        or _SHA256_DIGEST.fullmatch(fingerprint["sha256"]) is None
+        or isinstance(fingerprint.get("size"), bool)
+        or not isinstance(fingerprint.get("size"), int)
+        or fingerprint["size"] < 0
+    ):
+        return ("invalid", None)
+    if shallow:
+        try:
+            observed_size = path.stat().st_size
+        except OSError:
+            return ("unavailable", None)
+        if observed_size != fingerprint["size"]:
+            return ("invalid", None)
+        observed = {"sha256": fingerprint["sha256"].lower(), "size": observed_size}
+    else:
+        try:
+            observed = _file_fingerprint(path)
+        except OSError:
+            return ("unavailable", None)
+    expected = {
+        "sha256": fingerprint["sha256"].lower(),
+        "size": fingerprint["size"],
+    }
+    if observed != expected:
+        return ("invalid", None)
+    return (
+        "available",
+        {
+            "artifact_ref": (
+                f"run:{run['id']}:video:{expected['sha256'][:16]}"
+            ),
+            "basename": path.name,
+            "fingerprint": expected,
+            "path": str(path.resolve()),
+            "availability": "available",
+            "format_version": "mp4",
+            "ownership": "run",
+        },
+    )
+
+
+def _public_alignment(run: dict) -> dict[str, object]:
+    summary = run.get("alignment_summary")
+    allowed = {
+        "duration_ms",
+        "start_source",
+        "end_source",
+        "timebase_version",
+        "warnings",
+        "method",
+        "anchor",
+        "coverage",
+    }
+    public_summary = {
+        key: value
+        for key, value in summary.items()
+        if key in allowed
+    } if isinstance(summary, dict) else {}
+    return {
+        "state": run.get("alignment_state") or "unresolved",
+        **public_summary,
+    }
+
+
+def _video_quality(run: dict, availability: str) -> dict[str, object]:
+    summary = run.get("video_summary")
+    if availability != "available" or not isinstance(summary, dict):
+        return {"availability": availability, "coverage": None}
+    packet_count = summary.get("packetCount")
+    visible_duration = summary.get("visibleDuration100ns")
+    coverage = None
+    if (
+        isinstance(packet_count, int)
+        and not isinstance(packet_count, bool)
+        and packet_count >= 0
+        and isinstance(visible_duration, int)
+        and not isinstance(visible_duration, bool)
+        and visible_duration >= 0
+    ):
+        coverage = {
+            "packet_count": packet_count,
+            "visible_duration_ms": visible_duration / 10_000,
+        }
+    return {"availability": "available", "coverage": coverage}
+
+
+def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]:
+    stats_source = _summary_source(run.get("stats_summary"))
+    performance_source = _summary_source(run.get("performance_summary"))
+    def source_availability(path: object, source: dict) -> str:
+        if shallow:
+            return _source_stat_availability(
+                path, size=source.get("size"), mtime_ns=source.get("mtime_ns"),
+            )
+        if not source and isinstance(path, str) and Path(path).is_file():
+            return "available"
+        return _source_revision_availability(
+            path,
+            sha256=source.get("sha256"),
+            size=source.get("size"),
+            mtime_ns=source.get("mtime_ns"),
+            parser_version=source.get("parser_version"),
+        )
+
+    stats_availability = source_availability(run.get("stats_path"), stats_source)
+    performance_availability = source_availability(
+        run.get("performance_path"), performance_source,
+    )
+    trace_quality = _trace_quality(
+        run.get("trace_state"), run.get("mouse_trace_path"), shallow=shallow,
+    )
+    video_availability, video = _current_video_evidence(run, shallow=shallow)
+    native = (
+        stats_availability == "available"
+        and performance_availability == "available"
+        and trace_quality["availability"] == "available"
+    )
+    supported = ["input_native"] if native else []
+    if native and video_availability == "available":
+        supported.append("multimodal")
+    if stats_availability == "available" and video_availability == "available":
+        supported.append("video_fallback")
+    ready = bool(supported)
+    analysis_count = int(run.get("analysis_count") or 0)
+    limitations: list[str] = []
+    if stats_availability != "available":
+        limitations.append(f"stats_{stats_availability}")
+    if performance_availability != "available" and native is False:
+        limitations.append(f"performance_{performance_availability}")
+    if trace_quality["availability"] != "available" and "input_native" not in supported:
+        limitations.append(f"raw_{trace_quality['availability']}")
+    if video_availability != "available":
+        limitations.append(f"video_{video_availability}")
+    return {
+        "readiness_state": (
+            "analyzed" if ready and analysis_count > 0
+            else "pending_analysis" if ready
+            else "incomplete_evidence"
+        ),
+        "ready": ready,
+        "supported_input_modes": supported,
+        "evidence_availability": {
+            "stats": stats_availability,
+            "performance": performance_availability,
+            "raw": trace_quality["availability"],
+            "video": video_availability,
+        },
+        "video": video,
+        "video_quality": _video_quality(run, video_availability),
+        "limitations": limitations,
+    }
 
 
 def _source_ref(run_id: int, kind: str, summary: object | None) -> str | None:
@@ -437,24 +613,30 @@ def _trace_quality(
     }
 
 
-def public_kovaak_run(run: dict) -> dict:
+def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
     """Project a DB-private run row into a path-free public DTO."""
     stats_path = run.get("stats_path")
     performance_path = run.get("performance_path")
     trace_path = run.get("mouse_trace_path")
     stats_source = _summary_source(run.get("stats_summary"))
     performance_source = _summary_source(run.get("performance_summary"))
-    return {
-        "id": run["id"],
-        "run_ref": f"run:{run['id']}",
-        "source_key": _public_string(run.get("source_key")),
-        "scenario": _public_string(run.get("scenario")),
-        "stats_source_ref": _source_ref(run["id"], "stats", run.get("stats_summary")),
-        "performance_source_ref": _source_ref(
-            run["id"], "performance", run.get("performance_summary"),
-        ),
-        "trace_artifact_ref": f"run:{run['id']}:trace" if trace_path else None,
-        "source_availability": {
+    evidence = _run_evidence_view(run, shallow=shallow)
+    video = evidence["video"]
+    if shallow:
+        source_availability = {
+            "stats": _source_stat_availability(
+                stats_path,
+                size=stats_source.get("size"),
+                mtime_ns=stats_source.get("mtime_ns"),
+            ),
+            "performance": _source_stat_availability(
+                performance_path,
+                size=performance_source.get("size"),
+                mtime_ns=performance_source.get("mtime_ns"),
+            ),
+        }
+    else:
+        source_availability = {
             "stats": _source_revision_availability(
                 stats_path,
                 sha256=stats_source.get("sha256"),
@@ -469,10 +651,35 @@ def public_kovaak_run(run: dict) -> dict:
                 mtime_ns=performance_source.get("mtime_ns"),
                 parser_version=performance_source.get("parser_version"),
             ),
-        },
-        "trace_quality": _trace_quality(run.get("trace_state"), trace_path),
+        }
+    return {
+        "id": run["id"],
+        "run_ref": f"run:{run['id']}",
+        "source_key": _public_string(run.get("source_key")),
+        "scenario": _public_string(run.get("scenario")),
+        "stats_source_ref": _source_ref(run["id"], "stats", run.get("stats_summary")),
+        "performance_source_ref": _source_ref(
+            run["id"], "performance", run.get("performance_summary"),
+        ),
+        "trace_artifact_ref": f"run:{run['id']}:trace" if trace_path else None,
+        "video_artifact_ref": (
+            video.get("artifact_ref") if isinstance(video, dict) else None
+        ),
+        "source_availability": source_availability,
+        "trace_quality": _trace_quality(
+            run.get("trace_state"), trace_path, shallow=shallow,
+        ),
         "trace_state": run.get("trace_state", "none"),
         "trace_error": _public_string(run.get("trace_error")),
+        "finalization_state": run.get("finalization_state") or "discovered",
+        "finalization_error": _public_string(run.get("finalization_error")),
+        "readiness_state": evidence["readiness_state"],
+        "analysis_count": int(run.get("analysis_count") or 0),
+        "supported_input_modes": evidence["supported_input_modes"],
+        "evidence_availability": evidence["evidence_availability"],
+        "alignment": _public_alignment(run),
+        "video_quality": evidence["video_quality"],
+        "limitations": evidence["limitations"],
         "stats_summary": _public_summary(run.get("stats_summary")),
         "performance_summary": _public_summary(run.get("performance_summary")),
         "created_at": run["created_at"],
@@ -481,51 +688,27 @@ def public_kovaak_run(run: dict) -> dict:
 
 
 async def list_kovaak_run_summaries(user_id: str, limit: int = 100) -> list[dict]:
-    """Return public scalar Run summaries without loading parser summary blobs."""
+    """Return path-free Run summaries with current evidence readiness."""
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id, source_key, scenario, stats_path, performance_path, "
-        "mouse_trace_path, trace_state, trace_error, created_at, updated_at, "
-        "CASE WHEN json_valid(stats_summary) THEN "
-        "json_extract(stats_summary, '$.source.size') END AS stats_size, "
-        "CASE WHEN json_valid(stats_summary) THEN "
-        "json_extract(stats_summary, '$.source.mtime_ns') END AS stats_mtime_ns, "
-        "CASE WHEN json_valid(performance_summary) THEN "
-        "json_extract(performance_summary, '$.source.size') END AS performance_size, "
-        "CASE WHEN json_valid(performance_summary) THEN "
-        "json_extract(performance_summary, '$.source.mtime_ns') END AS performance_mtime_ns "
-        "FROM kovaak_runs WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?",
+        "SELECT kr.id, kr.source_key, kr.scenario, kr.stats_path, kr.performance_path, "
+        "kr.mouse_trace_path, kr.trace_state, kr.trace_error, "
+        "kr.alignment_state, kr.alignment_summary, kr.finalization_state, "
+        "kr.finalization_error, kr.video_path, kr.video_state, kr.video_error, "
+        "kr.video_receipt_json, kr.video_summary_json, kr.created_at, kr.updated_at, "
+        "(SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id=kr.id "
+        "AND s.user_id=kr.user_id) AS analysis_count "
+        "FROM kovaak_runs AS kr WHERE kr.user_id=? "
+        "ORDER BY kr.created_at DESC, kr.id DESC LIMIT ?",
         (user_id, max(1, min(limit, 500))),
     )
-    out: list[dict] = []
+    summaries = []
     for row in await cur.fetchall():
-        item = dict(row)
-        out.append({
-            "id": int(item["id"]),
-            "run_ref": f"run:{item['id']}",
-            "source_key": _public_string(item.get("source_key")),
-            "scenario": _public_string(item.get("scenario")),
-            "source_availability": {
-                "stats": _source_stat_availability(
-                    item.get("stats_path"),
-                    size=item.get("stats_size"),
-                    mtime_ns=item.get("stats_mtime_ns"),
-                ),
-                "performance": _source_stat_availability(
-                    item.get("performance_path"),
-                    size=item.get("performance_size"),
-                    mtime_ns=item.get("performance_mtime_ns"),
-                ),
-            },
-            "trace_quality": _trace_quality(
-                item.get("trace_state"), item.get("mouse_trace_path"), shallow=True,
-            ),
-            "trace_state": item.get("trace_state") or "none",
-            "trace_error": _public_string(item.get("trace_error")),
-            "created_at": item["created_at"],
-            "updated_at": item["updated_at"],
-        })
-    return out
+        public = public_kovaak_run(_row(row), shallow=True)
+        public.pop("stats_summary", None)
+        public.pop("performance_summary", None)
+        summaries.append(public)
+    return summaries
 
 
 async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
@@ -584,6 +767,9 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
                 "mtime_ns": trace_revision["mtime_ns"],
             },
         }
+    video_availability, video = _current_video_evidence(run)
+    if video_availability == "available" and video is not None:
+        sources["video"] = video
     return {
         "schema_version": "analysis_input_snapshot.v1",
         "run_id": run_id,
@@ -673,7 +859,14 @@ async def upsert_kovaak_run(
     cur = await conn.execute(
         "SELECT id, user_id, source_key, scenario, stats_path, performance_path, "
         "mouse_trace_path, trace_state, pending_trace_path, trace_error, "
-        "stats_summary, performance_summary, created_at, updated_at "
+        "capture_session_id, window_start_epoch_ms, window_end_epoch_ms, "
+        "alignment_state, alignment_summary, finalization_state, finalization_error, "
+        "video_path, video_state, pending_video_path, video_request_digest, "
+        "video_receipt_json, video_summary_json, video_error, "
+        "stats_summary, performance_summary, "
+        "(SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id=kovaak_runs.id "
+        "AND s.user_id=kovaak_runs.user_id) AS analysis_count, "
+        "created_at, updated_at "
         "FROM kovaak_runs WHERE user_id=? AND source_key=?",
         (user_id, source_key),
     )
@@ -683,12 +876,116 @@ async def upsert_kovaak_run(
     return _row(row)
 
 
+async def attach_mouse_trace_snapshot_window(
+    run: dict,
+    *,
+    user_id: str,
+    raw_input_snapshot_path: str | Path | None,
+    covered_through_epoch_ms: int | None = None,
+    require_coverage: bool = False,
+) -> dict:
+    """Attach one canonical Raw window after an optional native coverage barrier."""
+    start_ms = run.get("window_start_epoch_ms")
+    end_ms = run.get("window_end_epoch_ms")
+    if (
+        isinstance(start_ms, bool)
+        or isinstance(end_ms, bool)
+        or not isinstance(start_ms, int)
+        or not isinstance(end_ms, int)
+        or end_ms <= start_ms
+    ):
+        return run
+    within_retention = _now_ms() <= end_ms + MAX_SNAPSHOT_SPAN_MS
+    if require_coverage and (
+        isinstance(covered_through_epoch_ms, bool)
+        or not isinstance(covered_through_epoch_ms, int)
+        or covered_through_epoch_ms < end_ms
+    ):
+        if within_retention:
+            await mark_mouse_trace_waiting(run["id"], user_id)
+            raise TracePendingError(
+                "trace_pending: Raw Input snapshot coverage is not ready"
+            )
+        return await mark_mouse_trace_unavailable(
+            run["id"], user_id, "trace_snapshot_stale",
+        ) or run
+    if not raw_input_snapshot_path or not Path(raw_input_snapshot_path).is_file():
+        if within_retention:
+            await mark_mouse_trace_waiting(run["id"], user_id)
+            raise TracePendingError("trace_pending: waiting for Raw Input snapshot")
+        return await mark_mouse_trace_unavailable(
+            run["id"], user_id, "trace_capture_unavailable",
+        ) or run
+
+    from . import config
+
+    target = (
+        config.DATA_ROOT / "runs" / str(run["id"])
+        / f"trace-{uuid4().hex}.bin"
+    )
+    run = await begin_mouse_trace_attach(run["id"], user_id, target) or run
+    try:
+        count = extract_mouse_snapshot_window(
+            raw_input_snapshot_path,
+            start_ms,
+            end_ms,
+            target,
+        )
+    except (OSError, ValueError) as error:
+        if within_retention:
+            await mark_mouse_trace_waiting(
+                run["id"],
+                user_id,
+                expected_pending_trace_path=target,
+            )
+            raise TracePendingError(
+                "trace_pending: Raw Input snapshot is not ready",
+            ) from error
+        return await mark_mouse_trace_unavailable(
+            run["id"],
+            user_id,
+            "trace_snapshot_failed",
+            expected_pending_trace_path=target,
+        ) or run
+    if not count:
+        if within_retention:
+            await mark_mouse_trace_waiting(
+                run["id"],
+                user_id,
+                expected_pending_trace_path=target,
+            )
+            raise TracePendingError("trace_pending: trace window is not flushed yet")
+        return await mark_mouse_trace_unavailable(
+            run["id"],
+            user_id,
+            "trace_quality_insufficient",
+            expected_pending_trace_path=target,
+        ) or run
+    try:
+        return await attach_mouse_trace(
+            run["id"],
+            user_id,
+            str(target),
+            expected_pending_trace_path=target,
+        ) or run
+    except (OSError, ValueError):
+        return await mark_mouse_trace_unavailable(
+            run["id"],
+            user_id,
+            "trace_attach_failed",
+            expected_pending_trace_path=target,
+        ) or run
+
+
 async def ingest_discovery(
     discovery: KovaaKFileDiscovery,
     *,
     user_id: str = "desktop-local",
     trace_path: Optional[str] = None,
     raw_input_snapshot_path: str | Path | None = None,
+    raw_snapshot_covered_through_epoch_ms: int | None = None,
+    require_stats_for_trace: bool = False,
+    defer_trace_attachment: bool = False,
 ) -> dict:
     """Parse available source files and idempotently persist one run."""
     stats_summary: object | None = None
@@ -696,6 +993,9 @@ async def ingest_discovery(
     stats_source: dict[str, object] | None = None
     performance_source: dict[str, object] | None = None
     performance = None
+    stats = None
+    stats_event_times_seconds: list[float] = []
+    stats_pause_count: str | None = None
     stats_scenario: Optional[str] = None
     performance_scenario: Optional[str] = None
     if discovery.stats_path is not None:
@@ -712,6 +1012,7 @@ async def ingest_discovery(
             "kill_count": int(len(stats.kills.index)),
             "source": stats_source,
         }
+        stats_pause_count = stats.summary.get("Pause Count")
     if discovery.performance_path is not None:
         performance_revision = _stat_revision(discovery.performance_path)
         performance = parse_performance_file(discovery.performance_path)
@@ -728,6 +1029,18 @@ async def ingest_discovery(
             "event_count": len(performance.events),
             "source": performance_source,
         }
+        profile = performance.header.challenge_profile
+        event_terminated = bool(
+            any(value > 0 for value in profile.bot_max_lives)
+            or profile.end_challenge_after_kills > 0
+            or profile.end_challenge_after_damage > 0
+        )
+        if event_terminated and stats is not None and "time_s" in stats.kills:
+            stats_event_times_seconds = [
+                float(value)
+                for value in stats.kills["time_s"].tolist()
+                if value == value and float(value) >= 0
+            ]
     source_key = discovery.stem or normalize_kovaak_stem(discovery.paths[0])
     existing = await _get_kovaak_run_by_source_key(user_id, source_key)
     _assert_same_scenario_identity(
@@ -745,6 +1058,27 @@ async def ingest_discovery(
         performance_source,
         "Performance",
     )
+    if (
+        existing
+        and existing.get("finalization_state") == "finalized"
+        and existing.get("finalization_error") == "video_coverage_gap"
+    ):
+        return existing
+    if existing and len(discovery.paths) == 1:
+        if (
+            stats_source is not None
+            and not existing.get("performance_path")
+            and existing.get("trace_state") == "none"
+            and _summary_source(existing.get("stats_summary")) == stats_source
+        ):
+            return existing
+        if (
+            performance_source is not None
+            and not existing.get("stats_path")
+            and existing.get("trace_state") == "none"
+            and _summary_source(existing.get("performance_summary")) == performance_source
+        ):
+            return existing
     performance_revision_unchanged = bool(
         existing
         and isinstance(existing.get("performance_summary"), dict)
@@ -767,11 +1101,62 @@ async def ingest_discovery(
             return await mark_mouse_trace_unavailable(
                 run["id"], user_id, "trace_attach_failed",
             ) or run
-    has_trace_window = bool(
+    has_alignment_window = bool(
         performance is not None
         and performance.header.challenge_start_utc > 0
         and performance.header.challenge_profile.time_limit > 0
     )
+    has_trace_window = bool(
+        has_alignment_window and (stats is not None or not require_stats_for_trace)
+    )
+    alignment_window = None
+    alignment_error: str | None = None
+    if performance is not None and has_alignment_window:
+        stats_start = None
+        if isinstance(stats_summary, dict):
+            summary = stats_summary.get("summary")
+            if isinstance(summary, dict):
+                stats_start = summary.get("Challenge Start")
+        try:
+            alignment_window = resolve_time_window(
+                performance,
+                stats_challenge_start=stats_start,
+                stats_event_times_seconds=stats_event_times_seconds,
+                pause_count=stats_pause_count,
+                local_timezone=datetime.now().astimezone().tzinfo,
+            )
+        except TimeAlignmentError as error:
+            alignment_error = str(error)
+            alignment_window = None
+    if alignment_window is not None:
+        run = await set_run_alignment(
+            run["id"],
+            user_id,
+            state="resolved",
+            summary=asdict(alignment_window),
+            start_epoch_ms=alignment_window.start_ms,
+            end_epoch_ms=alignment_window.end_ms,
+        ) or run
+    elif alignment_error is not None:
+        error_prefix = alignment_error.split(":", 1)[0]
+        error_code = (
+            error_prefix
+            if error_prefix in {
+                "pause_unsupported",
+                "anchor_conflict",
+                "duration_missing",
+            }
+            else "time_alignment_unavailable"
+        )
+        run = await set_run_alignment(
+            run["id"],
+            user_id,
+            state="unavailable",
+            summary={
+                "timebase_version": "time_alignment.v2",
+                "error_code": error_code,
+            },
+        ) or run
     if (
         trace_path is None
         and has_trace_window
@@ -780,73 +1165,22 @@ async def ingest_discovery(
         and performance_revision_unchanged
     ):
         return run
-    if trace_path is None and has_trace_window:
-        from . import config
-
-        target = (
-            config.DATA_ROOT / "runs" / str(run["id"])
-            / f"trace-{uuid4().hex}.bin"
+    if (
+        trace_path is None
+        and has_trace_window
+        and alignment_window is not None
+        and not defer_trace_attachment
+    ):
+        run = await attach_mouse_trace_snapshot_window(
+            run,
+            user_id=user_id,
+            raw_input_snapshot_path=raw_input_snapshot_path,
+            covered_through_epoch_ms=raw_snapshot_covered_through_epoch_ms,
+            require_coverage=(
+                require_stats_for_trace
+                or raw_snapshot_covered_through_epoch_ms is not None
+            ),
         )
-        if not raw_input_snapshot_path or not Path(raw_input_snapshot_path).is_file():
-            if _trace_pairing_within_retention(performance):
-                await mark_mouse_trace_waiting(run["id"], user_id)
-                raise TracePendingError("trace_pending: waiting for Raw Input snapshot")
-            return await mark_mouse_trace_unavailable(
-                run["id"], user_id, "trace_capture_unavailable",
-            ) or run
-        run = await begin_mouse_trace_attach(run["id"], user_id, target) or run
-        try:
-            count = extract_mouse_snapshot_window(
-                raw_input_snapshot_path,
-                performance.header.challenge_start_utc,
-                performance.header.challenge_start_utc
-                + int(performance.header.challenge_profile.time_limit * 1000),
-                target,
-            )
-        except (OSError, ValueError) as error:
-            if _trace_pairing_within_retention(performance):
-                await mark_mouse_trace_waiting(
-                    run["id"],
-                    user_id,
-                    expected_pending_trace_path=target,
-                )
-                raise TracePendingError(
-                    "trace_pending: Raw Input snapshot is not ready",
-                ) from error
-            return await mark_mouse_trace_unavailable(
-                run["id"],
-                user_id,
-                "trace_snapshot_failed",
-                expected_pending_trace_path=target,
-            ) or run
-        if not count:
-            if _trace_pairing_within_retention(performance):
-                await mark_mouse_trace_waiting(
-                    run["id"],
-                    user_id,
-                    expected_pending_trace_path=target,
-                )
-                raise TracePendingError("trace_pending: trace window is not flushed yet")
-            return await mark_mouse_trace_unavailable(
-                run["id"],
-                user_id,
-                "trace_quality_insufficient",
-                expected_pending_trace_path=target,
-            ) or run
-        try:
-            run = await attach_mouse_trace(
-                run["id"],
-                user_id,
-                str(target),
-                expected_pending_trace_path=target,
-            ) or run
-        except (OSError, ValueError):
-            return await mark_mouse_trace_unavailable(
-                run["id"],
-                user_id,
-                "trace_attach_failed",
-                expected_pending_trace_path=target,
-            ) or run
     return run
 
 
@@ -855,7 +1189,14 @@ async def _get_kovaak_run_by_source_key(user_id: str, source_key: str) -> Option
     cur = await conn.execute(
         "SELECT id, user_id, source_key, scenario, stats_path, performance_path, "
         "mouse_trace_path, trace_state, pending_trace_path, trace_error, "
-        "stats_summary, performance_summary, created_at, updated_at "
+        "capture_session_id, window_start_epoch_ms, window_end_epoch_ms, "
+        "alignment_state, alignment_summary, finalization_state, finalization_error, "
+        "video_path, video_state, pending_video_path, video_request_digest, "
+        "video_receipt_json, video_summary_json, video_error, "
+        "stats_summary, performance_summary, "
+        "(SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id=kovaak_runs.id "
+        "AND s.user_id=kovaak_runs.user_id) AS analysis_count, "
+        "created_at, updated_at "
         "FROM kovaak_runs WHERE user_id=? AND source_key=?",
         (user_id, source_key),
     )
@@ -868,7 +1209,14 @@ async def list_kovaak_runs(user_id: str, limit: int = 100) -> list[dict]:
     cur = await conn.execute(
         "SELECT id, user_id, source_key, scenario, stats_path, performance_path, "
         "mouse_trace_path, trace_state, pending_trace_path, trace_error, "
-        "stats_summary, performance_summary, created_at, updated_at "
+        "capture_session_id, window_start_epoch_ms, window_end_epoch_ms, "
+        "alignment_state, alignment_summary, finalization_state, finalization_error, "
+        "video_path, video_state, pending_video_path, video_request_digest, "
+        "video_receipt_json, video_summary_json, video_error, "
+        "stats_summary, performance_summary, "
+        "(SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id=kovaak_runs.id "
+        "AND s.user_id=kovaak_runs.user_id) AS analysis_count, "
+        "created_at, updated_at "
         "FROM kovaak_runs WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?",
         (user_id, max(1, min(limit, 500))),
     )
@@ -880,7 +1228,14 @@ async def get_kovaak_run(run_id: int, user_id: str) -> Optional[dict]:
     cur = await conn.execute(
         "SELECT id, user_id, source_key, scenario, stats_path, performance_path, "
         "mouse_trace_path, trace_state, pending_trace_path, trace_error, "
-        "stats_summary, performance_summary, created_at, updated_at "
+        "capture_session_id, window_start_epoch_ms, window_end_epoch_ms, "
+        "alignment_state, alignment_summary, finalization_state, finalization_error, "
+        "video_path, video_state, pending_video_path, video_request_digest, "
+        "video_receipt_json, video_summary_json, video_error, "
+        "stats_summary, performance_summary, "
+        "(SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id=kovaak_runs.id "
+        "AND s.user_id=kovaak_runs.user_id) AS analysis_count, "
+        "created_at, updated_at "
         "FROM kovaak_runs WHERE id=? AND user_id=?",
         (run_id, user_id),
     )
@@ -894,12 +1249,1010 @@ async def get_kovaak_run_any_owner(run_id: int) -> Optional[dict]:
     cur = await conn.execute(
         "SELECT id, user_id, source_key, scenario, stats_path, performance_path, "
         "mouse_trace_path, trace_state, pending_trace_path, trace_error, "
-        "stats_summary, performance_summary, created_at, updated_at "
+        "capture_session_id, window_start_epoch_ms, window_end_epoch_ms, "
+        "alignment_state, alignment_summary, finalization_state, finalization_error, "
+        "video_path, video_state, pending_video_path, video_request_digest, "
+        "video_receipt_json, video_summary_json, video_error, "
+        "stats_summary, performance_summary, "
+        "(SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id=kovaak_runs.id "
+        "AND s.user_id=kovaak_runs.user_id) AS analysis_count, "
+        "created_at, updated_at "
         "FROM kovaak_runs WHERE id=?",
         (run_id,),
     )
     row = await cur.fetchone()
     return _row(row) if row else None
+
+
+async def set_run_alignment(
+    run_id: int,
+    user_id: str,
+    *,
+    state: str,
+    summary: object | None,
+    start_epoch_ms: int | None = None,
+    end_epoch_ms: int | None = None,
+) -> Optional[dict]:
+    if state not in {"unresolved", "resolved", "unavailable"}:
+        raise ValueError("alignment state is invalid")
+    if state == "resolved":
+        if (
+            isinstance(start_epoch_ms, bool)
+            or isinstance(end_epoch_ms, bool)
+            or not isinstance(start_epoch_ms, int)
+            or not isinstance(end_epoch_ms, int)
+            or end_epoch_ms <= start_epoch_ms
+        ):
+            raise ValueError("resolved alignment window is invalid")
+    else:
+        start_epoch_ms = None
+        end_epoch_ms = None
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET alignment_state=?, alignment_summary=?, "
+        "window_start_epoch_ms=?, window_end_epoch_ms=?, "
+        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?",
+        (
+            state,
+            _json(summary),
+            start_epoch_ms,
+            end_epoch_ms,
+            run_id,
+            user_id,
+        ),
+    )
+    await conn.commit()
+    return await get_kovaak_run(run_id, user_id)
+
+
+async def set_run_finalization_state(
+    run_id: int,
+    user_id: str,
+    state: str,
+    error: str | None = None,
+) -> Optional[dict]:
+    if state not in {"discovered", "pending", "retryable", "finalized"}:
+        raise ValueError("finalization state is invalid")
+    if error is not None and _ERROR_CODE.fullmatch(error) is None:
+        raise ValueError("finalization error code is invalid")
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET finalization_state=?, finalization_error=?, "
+        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?",
+        (state, error, run_id, user_id),
+    )
+    await conn.commit()
+    return await get_kovaak_run(run_id, user_id)
+
+
+async def get_kovaak_run_by_source_key(
+    user_id: str,
+    source_key: str,
+) -> Optional[dict]:
+    return await _get_kovaak_run_by_source_key(user_id, source_key)
+
+
+def _managed_run_video_path(
+    data_root: str | Path,
+    run_id: int,
+    video_path: str | Path,
+) -> tuple[Path, str]:
+    run_root = (Path(data_root) / "runs" / str(run_id)).resolve()
+    candidate = Path(video_path).resolve()
+    try:
+        candidate.relative_to(run_root)
+    except ValueError as error:
+        raise ValueError("video path must stay inside the managed Run root") from error
+    match = re.fullmatch(r"video-([A-Za-z0-9_-]{1,64})\.mp4", candidate.name)
+    if match is None:
+        raise ValueError("managed Run video path has an invalid file name")
+    return candidate, match.group(1)
+
+
+def _video_receipt_path(video_path: Path) -> Path:
+    return video_path.with_name(f"{video_path.stem}.receipt.json")
+
+
+def _file_fingerprint(path: Path) -> dict[str, object]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(chunk)
+            digest.update(chunk)
+    return {"sha256": digest.hexdigest(), "size": size}
+
+
+def _strict_receipt_integer(
+    value: object,
+    field: str,
+    *,
+    minimum: int = 0,
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"capture receipt {field} is invalid")
+    return value
+
+
+def _assert_exact_receipt_keys(
+    value: object,
+    expected: set[str],
+    field: str,
+) -> dict:
+    if not isinstance(value, dict) or set(value) != expected:
+        raise ValueError(f"capture receipt {field} is invalid")
+    return value
+
+
+def _validate_video_receipt(
+    video_path: Path,
+    *,
+    run_id: int,
+    request_id: str,
+    request_digest: str,
+    capture_session_id: str,
+    start_epoch_ms: int,
+    end_epoch_ms: int,
+) -> tuple[dict, dict[str, object]]:
+    receipt_path = _video_receipt_path(video_path)
+    if not video_path.is_file() or not receipt_path.is_file():
+        raise ValueError("capture receipt or MP4 is missing")
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("capture receipt is malformed") from error
+    receipt = _assert_exact_receipt_keys(
+        receipt,
+        {
+            "version",
+            "requestDigest",
+            "requestId",
+            "runId",
+            "captureSessionId",
+            "startEpochMs",
+            "endEpochMs",
+            "replay",
+            "file",
+        },
+        "root",
+    )
+    if receipt.get("version") != "capture_receipt.v1":
+        raise ValueError("capture receipt version is invalid")
+    if receipt.get("requestDigest") != request_digest:
+        raise ValueError("capture receipt request digest does not match")
+    if receipt.get("requestId") != request_id:
+        raise ValueError("capture receipt request id does not match")
+    if receipt.get("runId") != run_id:
+        raise ValueError("capture receipt Run id does not match")
+    if receipt.get("captureSessionId") != capture_session_id:
+        raise ValueError("capture receipt capture session does not match")
+    if (
+        receipt.get("startEpochMs") != start_epoch_ms
+        or receipt.get("endEpochMs") != end_epoch_ms
+    ):
+        raise ValueError("capture receipt canonical window does not match")
+
+    replay = _assert_exact_receipt_keys(
+        receipt.get("replay"),
+        {
+            "requestedStart100ns",
+            "requestedEnd100ns",
+            "decodeStart100ns",
+            "visibleDuration100ns",
+            "decodePreroll100ns",
+            "packetCount",
+            "encodedBytes",
+            "reencodedFrames",
+            "captureClock",
+        },
+        "replay",
+    )
+    requested_start = _strict_receipt_integer(
+        replay.get("requestedStart100ns"), "requestedStart100ns",
+    )
+    requested_end = _strict_receipt_integer(
+        replay.get("requestedEnd100ns"), "requestedEnd100ns", minimum=1,
+    )
+    if requested_end <= requested_start:
+        raise ValueError("capture receipt replay window is invalid")
+    _strict_receipt_integer(replay.get("decodeStart100ns"), "decodeStart100ns")
+    visible_duration = _strict_receipt_integer(
+        replay.get("visibleDuration100ns"), "visibleDuration100ns", minimum=1,
+    )
+    _strict_receipt_integer(replay.get("decodePreroll100ns"), "decodePreroll100ns")
+    packet_count = _strict_receipt_integer(
+        replay.get("packetCount"), "packetCount", minimum=1,
+    )
+    _strict_receipt_integer(replay.get("encodedBytes"), "encodedBytes")
+    _strict_receipt_integer(replay.get("reencodedFrames"), "reencodedFrames")
+    clock = _assert_exact_receipt_keys(
+        replay.get("captureClock"),
+        {"utcEpochMs", "qpcNs", "clockSource", "timebaseVersion"},
+        "captureClock",
+    )
+    _strict_receipt_integer(clock.get("utcEpochMs"), "utcEpochMs")
+    _strict_receipt_integer(clock.get("qpcNs"), "qpcNs")
+    if clock.get("clockSource") != "utc_epoch_ms+qpc+wgc_system_relative_time":
+        raise ValueError("capture receipt clock source is invalid")
+    if clock.get("timebaseVersion") != "time_alignment.v2":
+        raise ValueError("capture receipt timebase is invalid")
+
+    stored_file = _assert_exact_receipt_keys(
+        receipt.get("file"), {"size", "digest"}, "file",
+    )
+    stored_size = _strict_receipt_integer(stored_file.get("size"), "file size")
+    stored_digest = stored_file.get("digest")
+    if not isinstance(stored_digest, str) or not _SHA256_DIGEST.fullmatch(stored_digest):
+        raise ValueError("capture receipt file fingerprint is invalid")
+    observed = _file_fingerprint(video_path)
+    if observed != {"sha256": stored_digest.lower(), "size": stored_size}:
+        raise ValueError("capture receipt file fingerprint does not match")
+
+    summary = {
+        "availability": "available",
+        "fingerprint": observed,
+        "packetCount": packet_count,
+        "visibleDuration100ns": visible_duration,
+        "timebaseVersion": clock["timebaseVersion"],
+    }
+    return receipt, summary
+
+
+async def begin_run_video_attach(
+    run_id: int,
+    user_id: str,
+    *,
+    pending_video_path: str | Path,
+    request_digest: str,
+    capture_session_id: str,
+    start_epoch_ms: int,
+    end_epoch_ms: int,
+    data_root: str | Path,
+    alignment_summary: object | None = None,
+) -> Optional[dict]:
+    candidate, _request_id = _managed_run_video_path(
+        data_root, run_id, pending_video_path,
+    )
+    if not isinstance(request_digest, str) or not _SHA256_DIGEST.fullmatch(
+        request_digest
+    ):
+        raise ValueError("video request digest is invalid")
+    request_digest = request_digest.lower()
+    if (
+        not isinstance(capture_session_id, str)
+        or not 8 <= len(capture_session_id) <= 128
+        or _STRICT_IDENTIFIER.fullmatch(capture_session_id) is None
+    ):
+        raise ValueError("capture session id is invalid")
+    if (
+        isinstance(start_epoch_ms, bool)
+        or isinstance(end_epoch_ms, bool)
+        or not isinstance(start_epoch_ms, int)
+        or not isinstance(end_epoch_ms, int)
+        or end_epoch_ms <= start_epoch_ms
+        or end_epoch_ms - start_epoch_ms > MAX_CAPTURE_WINDOW_MS
+    ):
+        raise ValueError("canonical capture window is invalid")
+
+    current = await get_kovaak_run(run_id, user_id)
+    if current is None or current.get("video_state") == "attached":
+        return current
+    if current.get("video_state") == "pending":
+        if (
+            current.get("pending_video_path") == str(candidate)
+            and current.get("video_request_digest") == request_digest
+            and current.get("capture_session_id") == capture_session_id
+            and current.get("window_start_epoch_ms") == start_epoch_ms
+            and current.get("window_end_epoch_ms") == end_epoch_ms
+        ):
+            return current
+        return current
+
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET capture_session_id=?, window_start_epoch_ms=?, "
+        "window_end_epoch_ms=?, alignment_state='resolved', alignment_summary=?, "
+        "finalization_state='pending', finalization_error=NULL, video_path=NULL, "
+        "video_state='pending', pending_video_path=?, video_request_digest=?, "
+        "video_receipt_json=NULL, video_summary_json=NULL, video_error=NULL, "
+        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? "
+        "AND video_state IN ('none', 'unavailable')",
+        (
+            capture_session_id,
+            start_epoch_ms,
+            end_epoch_ms,
+            _json(alignment_summary),
+            str(candidate),
+            request_digest,
+            run_id,
+            user_id,
+        ),
+    )
+    await conn.commit()
+    return await get_kovaak_run(run_id, user_id)
+
+
+async def mark_run_video_unavailable(
+    run_id: int,
+    user_id: str,
+    error: str,
+    *,
+    expected_pending_video_path: str | Path | None = None,
+    expected_request_digest: str | None = None,
+) -> Optional[dict]:
+    if not isinstance(error, str) or _ERROR_CODE.fullmatch(error) is None:
+        raise ValueError("video error code is invalid")
+    where = "WHERE id=? AND user_id=?"
+    params: list[object] = [error, run_id, user_id]
+    if expected_pending_video_path is not None:
+        where += " AND video_state='pending' AND pending_video_path=?"
+        params.append(str(Path(expected_pending_video_path).resolve()))
+    else:
+        where += " AND video_state!='attached'"
+    if expected_request_digest is not None:
+        if _SHA256_DIGEST.fullmatch(expected_request_digest) is None:
+            raise ValueError("video request digest is invalid")
+        where += " AND video_request_digest=?"
+        params.append(expected_request_digest.lower())
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET video_path=NULL, video_state='unavailable', "
+        "pending_video_path=NULL, video_receipt_json=NULL, video_summary_json=NULL, "
+        "video_error=?, updated_at=CURRENT_TIMESTAMP " + where,
+        tuple(params),
+    )
+    await conn.commit()
+    return await get_kovaak_run(run_id, user_id)
+
+
+async def invalidate_run_for_video_coverage_gap(
+    run_id: int,
+    user_id: str,
+    *,
+    expected_pending_video_path: str | Path,
+    expected_request_digest: str,
+    data_root: str | Path,
+) -> Optional[dict]:
+    candidate, _request_id = _managed_run_video_path(
+        data_root, run_id, expected_pending_video_path,
+    )
+    if _SHA256_DIGEST.fullmatch(expected_request_digest) is None:
+        raise ValueError("video request digest is invalid")
+    expected_request_digest = expected_request_digest.lower()
+    tombstone: dict[str, object] | None = None
+
+    conn = await get_conn()
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = await (
+            await conn.execute(
+                "SELECT user_id, video_state, pending_video_path, "
+                "video_request_digest, mouse_trace_path, trace_state, "
+                "finalization_state, finalization_error "
+                "FROM kovaak_runs WHERE id=?",
+                (run_id,),
+            )
+        ).fetchone()
+        if row is None:
+            await conn.execute("COMMIT")
+            return None
+        if row["user_id"] != user_id:
+            raise PermissionError("kovaak run is not owned by this user")
+        if (
+            row["finalization_state"] == "finalized"
+            and row["finalization_error"] == "video_coverage_gap"
+            and row["video_state"] == "unavailable"
+            and row["trace_state"] == "unavailable"
+        ):
+            await conn.execute("COMMIT")
+            return await get_kovaak_run(run_id, user_id)
+        if (
+            row["video_state"] != "pending"
+            or row["pending_video_path"] != str(candidate)
+            or row["video_request_digest"] != expected_request_digest
+        ):
+            raise ValueError("video pending state changed before coverage invalidation")
+
+        trace_path = row["mouse_trace_path"]
+        if row["trace_state"] == "attached" and trace_path:
+            try:
+                artifact, relative_path = _managed_evidence_artifact(
+                    data_root, run_id, "raw", trace_path,
+                )
+                fingerprint = _file_fingerprint(artifact)
+            except (OSError, ValueError):
+                pass
+            else:
+                await conn.execute(
+                    "INSERT INTO run_evidence_deletion_tombstones("
+                    "run_id, evidence_kind, owner_id, artifact_relpath, "
+                    "expected_sha256, expected_size) VALUES(?, 'raw', ?, ?, ?, ?)",
+                    (
+                        run_id,
+                        user_id,
+                        relative_path,
+                        fingerprint["sha256"],
+                        fingerprint["size"],
+                    ),
+                )
+                tombstone = {
+                    "run_id": run_id,
+                    "evidence_kind": "raw",
+                    "artifact_relpath": relative_path,
+                    "expected_sha256": fingerprint["sha256"],
+                    "expected_size": fingerprint["size"],
+                }
+
+        cursor = await conn.execute(
+            "UPDATE kovaak_runs SET video_path=NULL, video_state='unavailable', "
+            "pending_video_path=NULL, video_receipt_json=NULL, "
+            "video_summary_json=NULL, video_error='video_coverage_gap', "
+            "mouse_trace_path=NULL, trace_state='unavailable', "
+            "pending_trace_path=NULL, trace_error='trace_video_coverage_gap', "
+            "finalization_state='finalized', "
+            "finalization_error='video_coverage_gap', updated_at=CURRENT_TIMESTAMP "
+            "WHERE id=? AND user_id=? AND video_state='pending' "
+            "AND pending_video_path=? AND video_request_digest=?",
+            (
+                run_id,
+                user_id,
+                str(candidate),
+                expected_request_digest,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("coverage invalidation lost its pending video owner")
+        await conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            await conn.execute("ROLLBACK")
+        raise
+
+    if tombstone is not None:
+        await _cleanup_evidence_tombstone(tombstone, data_root)
+    return await get_kovaak_run(run_id, user_id)
+
+
+async def attach_run_video(
+    run_id: int,
+    user_id: str,
+    video_path: str | Path,
+    *,
+    expected_pending_video_path: str | Path,
+    expected_request_digest: str,
+    data_root: str | Path,
+) -> Optional[dict]:
+    candidate, request_id = _managed_run_video_path(data_root, run_id, video_path)
+    expected_path = Path(expected_pending_video_path).resolve()
+    if candidate != expected_path:
+        raise ValueError("video attachment path does not match pending path")
+    if _SHA256_DIGEST.fullmatch(expected_request_digest) is None:
+        raise ValueError("video request digest is invalid")
+    expected_request_digest = expected_request_digest.lower()
+
+    current = await get_kovaak_run(run_id, user_id)
+    if current is None:
+        return None
+    if current.get("video_state") == "pending" and (
+        current.get("pending_video_path") != str(expected_path)
+        or current.get("video_request_digest") != expected_request_digest
+    ):
+        return current
+    if current.get("video_state") not in {"pending", "attached"}:
+        return current
+
+    receipt, summary = _validate_video_receipt(
+        candidate,
+        run_id=run_id,
+        request_id=request_id,
+        request_digest=expected_request_digest,
+        capture_session_id=current.get("capture_session_id"),
+        start_epoch_ms=current.get("window_start_epoch_ms"),
+        end_epoch_ms=current.get("window_end_epoch_ms"),
+    )
+    if current.get("video_state") == "attached":
+        if (
+            current.get("video_path") == str(candidate)
+            and current.get("video_request_digest") == expected_request_digest
+            and current.get("video_receipt") == receipt
+            and current.get("video_summary") == summary
+        ):
+            return current
+        raise ValueError("attached video artifact conflicts with existing evidence")
+
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET video_path=?, video_state='attached', "
+        "pending_video_path=NULL, video_receipt_json=?, video_summary_json=?, "
+        "video_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? "
+        "AND video_state='pending' AND pending_video_path=? "
+        "AND video_request_digest=?",
+        (
+            str(candidate),
+            _json(receipt),
+            _json(summary),
+            run_id,
+            user_id,
+            str(expected_path),
+            expected_request_digest,
+        ),
+    )
+    await conn.commit()
+    return await get_kovaak_run(run_id, user_id)
+
+
+async def _mark_run_video_waiting(
+    run_id: int,
+    user_id: str,
+    pending_video_path: str | Path,
+    request_digest: str,
+) -> None:
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET video_error='video_waiting_artifact', "
+        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? "
+        "AND video_state='pending' AND pending_video_path=? "
+        "AND video_request_digest=?",
+        (
+            run_id,
+            user_id,
+            str(Path(pending_video_path).resolve()),
+            request_digest,
+        ),
+    )
+    await conn.commit()
+
+
+def _quarantine_run_video_file(candidate: Path, quarantine_root: Path) -> bool:
+    if not candidate.is_file():
+        return False
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    destination = quarantine_root / candidate.name
+    if destination.exists():
+        destination = quarantine_root / (
+            f"{candidate.stem}-{uuid4().hex}{candidate.suffix}"
+        )
+    candidate.replace(destination)
+    return True
+
+
+def _is_app_video_artifact(path: Path) -> bool:
+    name = path.name
+    return bool(
+        re.fullmatch(r"video-[A-Za-z0-9_-]{1,64}\.mp4", name)
+        or re.fullmatch(r"video-[A-Za-z0-9_-]{1,64}\.receipt\.json", name)
+        or (name.startswith(".video-") and ".partial-" in name)
+    )
+
+
+def _managed_evidence_artifact(
+    data_root: str | Path,
+    run_id: int,
+    evidence_kind: str,
+    path: str | Path,
+) -> tuple[Path, str]:
+    root = Path(data_root).resolve()
+    run_root = (root / "runs" / str(run_id)).resolve()
+    candidate = Path(path).resolve()
+    try:
+        relative_to_run = candidate.relative_to(run_root)
+    except ValueError as error:
+        raise ValueError("Run evidence path escapes the managed Run root") from error
+    if len(relative_to_run.parts) != 1:
+        raise ValueError("Run evidence must be a direct managed Run artifact")
+    if evidence_kind == "video":
+        _managed_run_video_path(data_root, run_id, candidate)
+    elif evidence_kind == "raw":
+        if re.fullmatch(r"trace-[A-Za-z0-9_-]{1,128}\.bin", candidate.name) is None:
+            raise ValueError("managed Raw artifact has an invalid file name")
+    else:
+        raise ValueError("evidence kind must be video or raw")
+    return candidate, candidate.relative_to(root).as_posix()
+
+
+def _resolve_evidence_relpath(
+    data_root: str | Path,
+    run_id: int,
+    evidence_kind: str,
+    relative_path: str,
+) -> Path:
+    if (
+        not isinstance(relative_path, str)
+        or not relative_path
+        or "\\" in relative_path
+        or any(part in {"", ".", ".."} for part in relative_path.split("/"))
+    ):
+        raise ValueError("stored Run evidence path is invalid")
+    root = Path(data_root).resolve()
+    candidate = (root / Path(*relative_path.split("/"))).resolve()
+    managed, expected_relative = _managed_evidence_artifact(
+        data_root, run_id, evidence_kind, candidate,
+    )
+    if expected_relative != relative_path:
+        raise ValueError("stored Run evidence path is not canonical")
+    return managed
+
+
+def _unlink_run_evidence_artifact(path: Path) -> int:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return 0
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise OSError("Run evidence artifact is not a regular file")
+    size = metadata.st_size
+    path.unlink()
+    return size
+
+
+async def _mark_evidence_cleanup_failed(run_id: int, evidence_kind: str) -> None:
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE run_evidence_deletion_tombstones "
+        "SET cleanup_state='failed', cleanup_attempts=cleanup_attempts + 1, "
+        "last_error_code='artifact_cleanup_failed', updated_at=CURRENT_TIMESTAMP "
+        "WHERE run_id=? AND evidence_kind=?",
+        (run_id, evidence_kind),
+    )
+    await conn.commit()
+
+
+async def _cleanup_evidence_tombstone(
+    row: dict[str, object], data_root: str | Path,
+) -> tuple[bool, int]:
+    run_id = int(row["run_id"])
+    evidence_kind = str(row["evidence_kind"])
+    try:
+        artifact = _resolve_evidence_relpath(
+            data_root, run_id, evidence_kind, str(row["artifact_relpath"]),
+        )
+        if artifact.is_file():
+            observed = _file_fingerprint(artifact)
+            expected = {
+                "sha256": str(row["expected_sha256"]),
+                "size": int(row["expected_size"]),
+            }
+            if observed != expected:
+                raise OSError("Run evidence fingerprint changed before cleanup")
+        reclaimed = _unlink_run_evidence_artifact(artifact)
+        if evidence_kind == "video":
+            reclaimed += _unlink_run_evidence_artifact(_video_receipt_path(artifact))
+    except (OSError, ValueError):
+        await _mark_evidence_cleanup_failed(run_id, evidence_kind)
+        return False, 0
+
+    conn = await get_conn()
+    await conn.execute(
+        "DELETE FROM run_evidence_deletion_tombstones "
+        "WHERE run_id=? AND evidence_kind=?",
+        (run_id, evidence_kind),
+    )
+    await conn.commit()
+    return True, reclaimed
+
+
+def _removal_result(
+    run_id: int,
+    evidence_kind: str,
+    removal_state: str,
+    reclaimed_bytes: int,
+    artifact_ref: str | None,
+) -> dict[str, object]:
+    return {
+        "run_ref": f"run:{run_id}",
+        "evidence_kind": evidence_kind,
+        "artifact_ref": artifact_ref,
+        "availability": "unavailable",
+        "removal_state": removal_state,
+        "reclaimed_bytes": reclaimed_bytes,
+        "affected_modes": (
+            ["multimodal", "video_fallback"]
+            if evidence_kind == "video"
+            else ["input_native", "multimodal"]
+        ),
+    }
+
+
+async def remove_run_evidence(
+    run_id: int,
+    user_id: str,
+    evidence_kind: str,
+    data_root: str | Path,
+) -> dict[str, object]:
+    if evidence_kind not in {"video", "raw"}:
+        raise ValueError("evidence kind must be video or raw")
+    conn = await get_conn()
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = await (
+            await conn.execute(
+                "SELECT id, user_id, video_path, video_state, video_summary_json, "
+                "mouse_trace_path, trace_state FROM kovaak_runs WHERE id=?",
+                (run_id,),
+            )
+        ).fetchone()
+        if row is None:
+            raise LookupError("kovaak run not found")
+        if row["user_id"] != user_id:
+            raise PermissionError("kovaak run is not owned by this user")
+        existing = await (
+            await conn.execute(
+                "SELECT run_id, evidence_kind, owner_id, artifact_relpath, "
+                "expected_sha256, expected_size, cleanup_state, cleanup_attempts, "
+                "last_error_code FROM run_evidence_deletion_tombstones "
+                "WHERE run_id=? AND evidence_kind=?",
+                (run_id, evidence_kind),
+            )
+        ).fetchone()
+        if existing is not None:
+            await conn.execute("COMMIT")
+            completed, reclaimed = await _cleanup_evidence_tombstone(dict(existing), data_root)
+            return _removal_result(
+                run_id,
+                evidence_kind,
+                "completed" if completed else "pending_cleanup",
+                reclaimed if completed else 0,
+                None,
+            )
+
+        state = row["video_state"] if evidence_kind == "video" else row["trace_state"]
+        path_value = row["video_path"] if evidence_kind == "video" else row["mouse_trace_path"]
+        if state != "attached" or not path_value:
+            await conn.execute("COMMIT")
+            return _removal_result(
+                run_id, evidence_kind, "already_unavailable", 0, None,
+            )
+        artifact, relative_path = _managed_evidence_artifact(
+            data_root, run_id, evidence_kind, path_value,
+        )
+        fingerprint = _file_fingerprint(artifact)
+        artifact_ref = (
+            f"run:{run_id}:video:{str(fingerprint['sha256'])[:16]}"
+            if evidence_kind == "video"
+            else f"run:{run_id}:trace"
+        )
+        await conn.execute(
+            "INSERT INTO run_evidence_deletion_tombstones("
+            "run_id, evidence_kind, owner_id, artifact_relpath, expected_sha256, "
+            "expected_size) VALUES(?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                evidence_kind,
+                user_id,
+                relative_path,
+                fingerprint["sha256"],
+                fingerprint["size"],
+            ),
+        )
+        if evidence_kind == "video":
+            await conn.execute(
+                "UPDATE kovaak_runs SET video_path=NULL, video_state='unavailable', "
+                "pending_video_path=NULL, video_error='removed_by_user', "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?",
+                (run_id, user_id),
+            )
+        else:
+            await conn.execute(
+                "UPDATE kovaak_runs SET mouse_trace_path=NULL, trace_state='unavailable', "
+                "pending_trace_path=NULL, trace_error='removed_by_user', "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?",
+                (run_id, user_id),
+            )
+        await conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            await conn.execute("ROLLBACK")
+        raise
+
+    tombstone = {
+        "run_id": run_id,
+        "evidence_kind": evidence_kind,
+        "artifact_relpath": relative_path,
+        "expected_sha256": fingerprint["sha256"],
+        "expected_size": fingerprint["size"],
+    }
+    completed, reclaimed = await _cleanup_evidence_tombstone(tombstone, data_root)
+    return _removal_result(
+        run_id,
+        evidence_kind,
+        "completed" if completed else "pending_cleanup",
+        reclaimed if completed else 0,
+        artifact_ref,
+    )
+
+
+async def reconcile_run_evidence_deletions(
+    data_root: str | Path,
+) -> dict[str, int]:
+    conn = await get_conn()
+    rows = await (
+        await conn.execute(
+            "SELECT run_id, evidence_kind, owner_id, artifact_relpath, "
+            "expected_sha256, expected_size, cleanup_state, cleanup_attempts, "
+            "last_error_code FROM run_evidence_deletion_tombstones "
+            "ORDER BY run_id, evidence_kind"
+        )
+    ).fetchall()
+    outcome = {"completed": 0, "failed": 0}
+    for row in rows:
+        completed, _reclaimed = await _cleanup_evidence_tombstone(dict(row), data_root)
+        outcome["completed" if completed else "failed"] += 1
+    return outcome
+
+
+async def run_storage_usage(
+    user_id: str, data_root: str | Path,
+) -> dict[str, int]:
+    conn = await get_conn()
+    rows = await (
+        await conn.execute(
+            "SELECT id, video_path, video_state, mouse_trace_path, trace_state "
+            "FROM kovaak_runs WHERE user_id=?",
+            (user_id,),
+        )
+    ).fetchall()
+    totals = {
+        "run_video_bytes": 0,
+        "run_raw_bytes": 0,
+        "incomplete_recovery_bytes": 0,
+    }
+    root = Path(data_root).resolve()
+    for row in rows:
+        run_id = int(row["id"])
+        run_root = (root / "runs" / str(run_id)).resolve()
+        if not run_root.is_dir():
+            continue
+        video_files: set[Path] = set()
+        raw_files: set[Path] = set()
+        try:
+            if row["video_state"] == "attached" and row["video_path"]:
+                video, _ = _managed_evidence_artifact(
+                    data_root, run_id, "video", row["video_path"],
+                )
+                video_files.update({video, _video_receipt_path(video)})
+            if row["trace_state"] == "attached" and row["mouse_trace_path"]:
+                trace, _ = _managed_evidence_artifact(
+                    data_root, run_id, "raw", row["mouse_trace_path"],
+                )
+                raw_files.add(trace)
+        except ValueError:
+            pass
+        for directory, _, names in os.walk(run_root, followlinks=False):
+            for name in names:
+                candidate = Path(directory) / name
+                try:
+                    metadata = candidate.lstat()
+                except OSError:
+                    continue
+                if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+                    continue
+                resolved = candidate.resolve()
+                if resolved in video_files:
+                    totals["run_video_bytes"] += metadata.st_size
+                elif resolved in raw_files:
+                    totals["run_raw_bytes"] += metadata.st_size
+                else:
+                    totals["incomplete_recovery_bytes"] += metadata.st_size
+    return totals
+
+
+async def reconcile_run_videos(data_root: str | Path) -> dict[str, int]:
+    await reconcile_run_evidence_deletions(data_root)
+    runs_root = (Path(data_root) / "runs").resolve()
+    quarantine_root = runs_root / "orphans"
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, user_id, pending_video_path, video_request_digest "
+        "FROM kovaak_runs WHERE video_state='pending'"
+    )
+    pending = [dict(row) for row in await cur.fetchall()]
+    outcome = {"attached": 0, "retryable": 0, "unavailable": 0, "quarantined": 0}
+
+    for row in pending:
+        pending_path = row.get("pending_video_path")
+        request_digest = row.get("video_request_digest")
+        if not pending_path or not isinstance(request_digest, str):
+            await mark_run_video_unavailable(
+                row["id"], row["user_id"], "video_pending_state_invalid",
+            )
+            outcome["unavailable"] += 1
+            continue
+        try:
+            candidate, _request_id = _managed_run_video_path(
+                data_root, row["id"], pending_path,
+            )
+        except ValueError:
+            await mark_run_video_unavailable(
+                row["id"], row["user_id"], "video_managed_path_invalid",
+                expected_pending_video_path=pending_path,
+                expected_request_digest=request_digest,
+            )
+            outcome["unavailable"] += 1
+            continue
+        receipt_path = _video_receipt_path(candidate)
+        if not candidate.is_file() or not receipt_path.is_file():
+            await _mark_run_video_waiting(
+                row["id"], row["user_id"], pending_path, request_digest,
+            )
+            outcome["retryable"] += 1
+            continue
+        try:
+            await attach_run_video(
+                row["id"],
+                row["user_id"],
+                candidate,
+                expected_pending_video_path=pending_path,
+                expected_request_digest=request_digest,
+                data_root=data_root,
+            )
+        except (OSError, ValueError):
+            for artifact in (candidate, receipt_path):
+                if _quarantine_run_video_file(artifact, quarantine_root):
+                    outcome["quarantined"] += 1
+            await mark_run_video_unavailable(
+                row["id"], row["user_id"], "video_receipt_invalid",
+                expected_pending_video_path=pending_path,
+                expected_request_digest=request_digest,
+            )
+            outcome["unavailable"] += 1
+        else:
+            outcome["attached"] += 1
+
+    if not runs_root.is_dir():
+        return outcome
+    cur = await conn.execute(
+        "SELECT video_path, pending_video_path FROM kovaak_runs "
+        "WHERE video_path IS NOT NULL OR pending_video_path IS NOT NULL"
+    )
+    referenced: set[Path] = set()
+    for row in await cur.fetchall():
+        for value in (row["video_path"], row["pending_video_path"]):
+            if not value:
+                continue
+            video = Path(value).resolve()
+            referenced.add(video)
+            referenced.add(_video_receipt_path(video))
+    tombstones = await (
+        await conn.execute(
+            "SELECT run_id, artifact_relpath FROM run_evidence_deletion_tombstones "
+            "WHERE evidence_kind='video'"
+        )
+    ).fetchall()
+    for row in tombstones:
+        try:
+            video = _resolve_evidence_relpath(
+                data_root, int(row["run_id"]), "video", row["artifact_relpath"],
+            )
+        except ValueError:
+            continue
+        referenced.update({video, _video_receipt_path(video)})
+    for candidate in runs_root.rglob("*"):
+        if not candidate.is_file() or not _is_app_video_artifact(candidate):
+            continue
+        try:
+            candidate.relative_to(quarantine_root)
+            continue
+        except ValueError:
+            pass
+        if candidate.resolve() in referenced:
+            continue
+        if _quarantine_run_video_file(candidate, quarantine_root):
+            outcome["quarantined"] += 1
+    return outcome
+
+
+def derive_run_readiness(run: dict) -> dict[str, object]:
+    evidence = _run_evidence_view(run)
+    supported = evidence["supported_input_modes"]
+    input_native = "input_native" in supported
+    video_fallback = "video_fallback" in supported
+    ready = bool(evidence["ready"])
+    return {
+        "ready": ready,
+        "state": evidence["readiness_state"],
+        "input_native": input_native,
+        "video_fallback": video_fallback,
+    }
 
 
 async def begin_mouse_trace_attach(
@@ -992,6 +2345,7 @@ def _normalized_path(path: str | Path) -> Path:
 
 async def reconcile_mouse_traces(data_root: str | Path) -> dict[str, int]:
     """Recover pending managed artifacts and quarantine unreferenced trace files."""
+    await reconcile_run_evidence_deletions(data_root)
     runs_root = Path(data_root) / "runs"
     conn = await get_conn()
     cur = await conn.execute(
@@ -1056,6 +2410,20 @@ async def reconcile_mouse_traces(data_root: str | Path) -> dict[str, int]:
         for value in (row["mouse_trace_path"], row["pending_trace_path"])
         if value
     }
+    tombstones = await (
+        await conn.execute(
+            "SELECT run_id, artifact_relpath FROM run_evidence_deletion_tombstones "
+            "WHERE evidence_kind='raw'"
+        )
+    ).fetchall()
+    for row in tombstones:
+        try:
+            trace = _resolve_evidence_relpath(
+                data_root, int(row["run_id"]), "raw", row["artifact_relpath"],
+            )
+        except ValueError:
+            continue
+        referenced.add(_normalized_path(trace))
     quarantine_root = runs_root / "orphans"
     for candidate in runs_root.rglob("*.bin"):
         try:
