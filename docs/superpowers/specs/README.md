@@ -5,18 +5,19 @@
 ## Active
 
 - [`2026-07-13-kovaak-run-trace-lifecycle-design.md`](2026-07-13-kovaak-run-trace-lifecycle-design.md)：KovaaK source pairing、Raw Input buffer、trace attach、reconciliation 与稳定引用合同。
-- [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md)：Raw + KovaaK 窗口自动采集、Stats/Performance 事后切 Run、单局/多局选择、待分析 History、手动 fallback 与分类存储管理合同。
+- [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md)：Raw + 300 秒 KovaaK 窗口硬件编码回放缓冲、Stats/Performance 事后切 Run、normal/timescale 永久 MP4、暂停局 fail-closed、单局/多局选择、手动 fallback 与分类存储管理合同。
 - [`2026-07-13-analysis-evidence-coach-context-design.md`](2026-07-13-analysis-evidence-coach-context-design.md)：三种 input mode、AnalysisResult v2、evidence provenance 与 Coach allow-list context。
 - [`2026-07-13-coach-product-commands-explanations-provider-design.md`](2026-07-13-coach-product-commands-explanations-provider-design.md)：Coach 用户级产品命令、指标到训练解释链、Provider/model/auth Settings 与 secret 边界。
 - [`2026-07-13-frontend-product-reconstruction-design.md`](2026-07-13-frontend-product-reconstruction-design.md)：正式前端路由、页面职责、状态矩阵、Desktop/Web 差异、Coach shell、Preview/Benchmark/ownership 边界与 prototype 重建合同。
 - [`2026-07-14-versioned-coach-knowledge-registry-design.md`](2026-07-14-versioned-coach-knowledge-registry-design.md)：Coach canonical Knowledge Registry、版本/source/claim/limitation、Flicking/Tracking/身体候选知识、确定性检索与历史引用合同。
 - [`2026-07-16-analysis-deletion-reconciliation-design.md`](2026-07-16-analysis-deletion-reconciliation-design.md)：terminal Analysis 的 SQLite logical delete、Coach 保留、transient cleanup tombstone 与 managed workspace reconciliation。
+- [`2026-07-20-complete-coach-analysis-context-design.md`](2026-07-20-complete-coach-analysis-context-design.md)：完整 Coach 的规范化 Run facts、分页 timeline/events、有界 evidence tools、知识、画像、计划与复测合同。
 
 此前关于 IA、常驻 Coach 与 Pi Coach runtime 的耐久结论，已经分别吸收到 PRD、Architecture 和 frontend UI/UX 合同。旧文件位于 [`../../archive/retired/specs/`](../../archive/retired/specs/)，仅用于历史追溯，不得作为当前实施授权。
 
 ## Proposed
 
-- [`2026-07-20-complete-coach-analysis-context-design.md`](2026-07-20-complete-coach-analysis-context-design.md)：数据采集后的统一时间/场景、Stats/Performance source field Registry、完整规范化 Run facts、私有高频信号与事件、static/dynamic clicking、tracking、switching 专项分析、EvidenceSegment、Coach 有界证据查询、画像/计划/复测和未来可选视觉模型边界；上游范围同步前不构成实施授权。
+当前没有 proposed spec。
 
 ## 新 spec 的边界
 

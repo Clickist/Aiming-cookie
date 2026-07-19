@@ -697,15 +697,29 @@ async def create_analysis_from_run(
         and snapshot["sources"].get("performance")
         and snapshot.get("trace")
     )
+    run_video = snapshot["sources"].get("video")
+    run_video_source = None
+    if managed_video_source is None and isinstance(run_video, Mapping):
+        run_video_path = run_video.get("path")
+        run_video_fingerprint = run_video.get("fingerprint")
+        if (
+            isinstance(run_video_path, str)
+            and Path(run_video_path).is_file()
+            and isinstance(run_video_fingerprint, Mapping)
+        ):
+            run_video_source = Path(run_video_path)
+    video_ready = managed_video_source is not None or run_video_source is not None
     if input_mode is None:
-        input_mode = "multimodal" if native_ready and managed_video_source is not None else (
+        input_mode = "multimodal" if native_ready and video_ready else (
             "input_native" if native_ready else "video_fallback"
         )
     if input_mode == "input_native" and not native_ready:
         raise ProductCommandError("native_input_unavailable", "input_native 需要 Stats、Performance 和 Raw Input trace", kind="unavailable")
-    if input_mode == "multimodal" and (not native_ready or managed_video_source is None):
+    if input_mode == "multimodal" and (not native_ready or not video_ready):
         raise ProductCommandError("input_unavailable", "multimodal 需要完整 native evidence 和视频", kind="unavailable")
-    if input_mode == "video_fallback" and managed_video_source is None:
+    if input_mode == "video_fallback" and (
+        not snapshot["sources"].get("stats") or not video_ready
+    ):
         raise ProductCommandError("input_unavailable", "video_fallback 需要视频", kind="unavailable")
 
     video_fingerprint = None
@@ -722,6 +736,18 @@ async def create_analysis_from_run(
             "availability": "available",
             "format_version": "mp4",
         }
+    elif run_video_source is not None and isinstance(run_video, Mapping):
+        video_fingerprint = dict(run_video["fingerprint"])
+
+    if input_mode == "input_native":
+        snapshot["sources"].pop("video", None)
+    elif input_mode == "video_fallback":
+        snapshot["sources"] = {
+            kind: source
+            for kind, source in snapshot["sources"].items()
+            if kind in {"stats", "video"}
+        }
+        snapshot["trace"] = None
 
     session_id = await queue.enqueue(
         owner_id,
@@ -739,7 +765,9 @@ async def create_analysis_from_run(
         managed_video = ""
         managed_csv = ""
         workspace = session_dir(session_id)
-        if managed_video_source is not None:
+        if managed_video_source is not None and input_mode in {
+            "multimodal", "video_fallback",
+        }:
             video_destination = workspace / "video.mp4"
             try:
                 copy_path_to_path(managed_video_source, video_destination)
@@ -766,6 +794,10 @@ async def create_analysis_from_run(
                     kind="unavailable",
                 )
             managed_video = str(video_destination)
+        elif run_video_source is not None and input_mode in {
+            "multimodal", "video_fallback",
+        }:
+            managed_video = str(run_video_source.resolve())
         if input_mode == "video_fallback":
             stats_source = snapshot["sources"].get("stats")
             if not isinstance(stats_source, Mapping):

@@ -1,8 +1,8 @@
 # Complete Coach Analysis and Evidence Context - Design Contract
 
-> 状态：proposed，尚不构成实施授权。
+> 状态：active。本文冻结完整 Coach 的局部设计合同；实施仍只由 active plan 中被点点明确授权的单个 Task 推进。
 > 目的：冻结数据采集完成后，static/dynamic clicking、tracking 与 target switching 如何被预处理、分析、解释、查询、持久化并进入训练闭环。
-> 上游：[`../../PRD.md`](../../PRD.md)、[`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)。当前上游仍把 v1 定义为 flicking-first、tracking 后续接通；点点在 2026-07-20 明确要求把完整 Coach 作为上线目标。因此本文在上游范围和 Roadmap 同步前只能保持 proposed。
+> 上游：[`../../PRD.md`](../../PRD.md)、[`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)。2026-07-20 已将点点确认的完整 Coach 上线目标、L0-L3 边界和当前/未来视频能力边界同步到上游事实源。
 > 相关合同：[`2026-07-13-analysis-evidence-coach-context-design.md`](2026-07-13-analysis-evidence-coach-context-design.md)、[`2026-07-14-versioned-coach-knowledge-registry-design.md`](2026-07-14-versioned-coach-knowledge-registry-design.md)、[`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md)。
 
 ## 1. 目标、假设与非目标

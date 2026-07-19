@@ -214,6 +214,7 @@ coach_issue_explanation.v1
 - 社区层只提供 narrator vocabulary、cue 和候选训练方法，不单独产生 deterministic diagnosis；
 - 每条处方必须能回答“练什么、注意什么、改善哪个指标、怎样复测”；
 - 知识版本应可审计，历史 Coach message 保留当时实际使用的 source references。
+- dynamic clicking、tracking 与 switching 的知识条目只能解释已由对应 analyzer/evidence 合同支持的 observation；目标身份、运动条件或关联不可观测时退化为 outcome-only / unavailable，知识不得补造机制、selection 或 target-relative claim。
 
 ## 5. Provider Settings 与认证
 
@@ -274,6 +275,7 @@ Pinned Pi 当前提供 provider factories、完整 model catalog、`Models` / `M
 - `LLM_PROVIDER` 与 `kovaak_tracker/coach/providers.json` 只作为 compatibility input；迁移后不再是事实源，也不得把 obsolete `deepseek-chat` 静默迁移成其它 model；
 - `LLM_DAILY_BUDGET_CNY`、固定 DeepSeek 单价估算与 `llm_cost_cny` 只保留 legacy 数据/配置兼容；selected-provider Coach turn 和 Analysis narration 不得被它们 gate 或写入伪精确 CNY cost。没有 provider-specific usage/currency contract 时 cost 保持 unknown/0；
 - Pi provider/runtime capability 与 Pi coding-agent、shell、filesystem tools 分离；后者只有经过独立产品命令、权限和确认合同才能接入。
+- 用户选定且 ready 的 Provider 可接收普通 Coach context，包括类型化 allow-listed Run facts、分页 timeline/events 和 bounded derived evidence；这不要求逐 Run consent，且不放宽 Raw、原始 CSV/protobuf、私有 parser、MP4 或路径的禁入边界。
 
 ### 5.4 Secret 与存储
 

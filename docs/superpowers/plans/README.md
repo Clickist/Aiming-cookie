@@ -4,6 +4,7 @@
 
 ## Active
 
+- [`2026-07-20-complete-coach-analysis-context-v1.md`](2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的规范化 Run facts、数据后处理、专项 analyzer、有界 evidence tools、知识、画像、计划与复测实施顺序；pre-activation 治理已完成，点点已授权从 Task 1 起继续推进，每次只执行一个 Task。
 - [`2026-07-13-reflek-capability-adoption.md`](2026-07-13-reflek-capability-adoption.md)：RefleK 能力采纳、input-native 分析、Run/trace correctness、History/evidence replay 与 Coach 结构化接入；Task 1–6A 已完成，Task 6B 与任何 v1 Benchmark UI 均未获授权，必须等待点点明确指定。
 - [`2026-07-13-coach-productization-provider-management.md`](2026-07-13-coach-productization-provider-management.md)：指标到训练解释链、input-native 核心指标、Pi provider/model/auth、Coach 用户级产品命令与 Provider Settings；点点已授权按建议顺序推进，每次只执行一个 Task。
 - [`2026-07-13-frontend-product-reconstruction.md`](2026-07-13-frontend-product-reconstruction.md)：从产品、UI/UX 与视觉合同重建正式前端；Task 1 已完成 prototype 删除与 adapter 边界保护。Task 2–7 尚未获得具体 Task 授权，必须等待点点明确指定。
@@ -12,7 +13,7 @@
 
 ## Proposed
 
-- [`2026-07-20-complete-coach-analysis-context-v1.md`](2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的规范化 Run facts、数据后处理、专项 analyzer、有界 evidence tools、知识、画像、计划与复测实施顺序；必须先在 plan 外完成上游范围同步与激活审阅，当前禁止执行。
+当前没有 proposed plan。
 
 ## Frozen
 
@@ -20,8 +21,16 @@
 
 Frozen plan 不得执行，也不得仅通过口头指令跳过其冻结条件。
 
+## Retired
+
+- [`../../archive/retired/plans/2026-07-18-windows-window-capture-v1.md`](../../archive/retired/plans/2026-07-18-windows-window-capture-v1.md)：CPU-backed Media Foundation window-capture 原型；性能 Gate 未通过，已由 hardware replay buffer 与 automatic Run finalization 取代，只保留为历史基线。
+
 ## Completed
 
+- [`../../archive/completed/plans/2026-07-20-windows-capture-compatibility-repair-v1.md`](../../archive/completed/plans/2026-07-20-windows-capture-compatibility-repair-v1.md)：lifecycle 与 Win32/runtime failure repair 已通过；高 polling batching 与更细硬件错误暴露按 Stop rule 收口为 assessment-only，AMD/Intel 仍是 Roadmap 外部 Gate。
+- [`../../archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](../../archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)：Capture Coordinator、Run Finalizer、Run-owned evidence、pending readiness、recovery、Storage 与 NVIDIA product-path field matrix 已完成；AMD/Intel 仍是 Roadmap 外部 Gate。
+- [`../../archive/completed/plans/2026-07-18-hardware-replay-buffer-v1.md`](../../archive/completed/plans/2026-07-18-hardware-replay-buffer-v1.md)：GPU-resident hardware encode、300 秒 replay ring、normal/timescale/Restart 与 pause fail-closed 路径已完成；跨 vendor 物理验证不由本计划伪装闭合。
+- [`../../archive/completed/plans/2026-07-18-time-alignment-v2.md`](../../archive/completed/plans/2026-07-18-time-alignment-v2.md)：TimeAlignment v2、Stats/Performance 组合锚点、半开切窗与实机前置合同已完成；新的 source correctness delta 由 Complete Coach Task 1 承接。
 - [`../../archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md`](../../archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md)：Windows Steam 多库 KovaaK bounded 自动发现与 Desktop launch-token 子进程隔离；Task 1–2 已完成。
 - [`../../archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md`](../../archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md)：terminal Analysis 的 SQLite v13 transient tombstone、commit-first workspace cleanup、startup reconciliation 与 API/Coach deletion invariants；Task 1–3 已完成。
 - [`../../archive/completed/plans/2026-07-15-windows-developer-runtime-compatibility.md`](../../archive/completed/plans/2026-07-15-windows-developer-runtime-compatibility.md)：Windows Python↔Pi source 启动、Tauri compile-time ICO 与 Python/Coach/Pi AI/frontend adapter/Tauri MSVC 自动化 Gate；Task 1–2 已完成，正式 frontend 与真实设备 Gate 保持未闭合。

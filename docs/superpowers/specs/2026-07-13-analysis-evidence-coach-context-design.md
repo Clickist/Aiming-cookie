@@ -159,7 +159,7 @@ warnings[]
 ## 5. TimeAlignment and Timeline
 
 ```text
-timebase_version = time_alignment.v1
+timebase_version = time_alignment.v2
 raw_clock_source = system_wall_clock_epoch_ms
 anchor_source = performance.challenge_start_utc
 offset_ms
@@ -290,6 +290,9 @@ warnings[]
 - evidence availability、coverage、limitations；
 - 同类可比 History trend；
 - stable evidence/time-range references。
+- 完整但字段 allow-listed 的 `CanonicalRunFacts`；
+- 通过受当前 owner/Analysis/query 约束 cursor 分页的规范化 outcome timeline 与 events；
+- 只由 allow-listed derived channels 构成、受明确 record/byte 预算限制的 L2 evidence。
 
 禁止：
 
@@ -301,6 +304,10 @@ warnings[]
 - 任意 filesystem/shell/network access。
 
 实现必须是字段 allow-list，不是先传完整结果再删除敏感字段。
+
+上述 richer projection 的精确 schema、预算和 cursor 合同由 active
+[`2026-07-20-complete-coach-analysis-context-design.md`](2026-07-20-complete-coach-analysis-context-design.md)
+集中定义；本条只消除 v1 对这些类型化投影的禁止性解读，不构成实施授权。
 
 ### Coach error / limitation shape
 
@@ -337,7 +344,7 @@ classification = deterministic
 - Coach 不能改写 deterministic result；
 - 没有 MP4 时，Coach 必须知道视觉证据不可用；
 - alignment partial/failed 时，Coach 必须降低结论范围；
-- Raw trace 若未来需要进入上下文，必须新建用户确认和 evidence contract；本 spec 不授权。
+- Provider/model/auth/runtime 已由用户选定并处于 ready 后，上述安全投影是普通 Coach context，不要求逐 Run 同意；原始 Raw trace 若未来需要进入上下文，仍必须新建用户确认和 evidence contract，本 spec 不授权。
 
 ## 10. 兼容性
 

@@ -9,10 +9,14 @@ use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::capture_coordinator::CaptureControlConnection;
+
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const TOKEN_ENV: &str = "AIMING_COOKIE_DESKTOP_TOKEN";
 const WATCH_PARENT_STDIN_ENV: &str = "AIMING_COOKIE_WATCH_PARENT_STDIN";
+const CAPTURE_CONTROL_ADDRESS_ENV: &str = "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_ADDR";
+const CAPTURE_CONTROL_SECRET_ENV: &str = "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_SECRET";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +31,11 @@ pub struct RuntimeProcess {
 }
 
 impl RuntimeProcess {
-    pub fn start(project_root: &Path, app_data_dir: &Path) -> Result<Self, String> {
+    pub fn start(
+        project_root: &Path,
+        app_data_dir: &Path,
+        capture_control: &CaptureControlConnection,
+    ) -> Result<Self, String> {
         std::fs::create_dir_all(app_data_dir)
             .map_err(|error| format!("failed to create app data directory: {error}"))?;
 
@@ -40,6 +48,11 @@ impl RuntimeProcess {
             .arg("webapp.backend.desktop_runtime")
             .current_dir(project_root)
             .env(TOKEN_ENV, &token)
+            .env(
+                CAPTURE_CONTROL_ADDRESS_ENV,
+                capture_control.address.to_string(),
+            )
+            .env(CAPTURE_CONTROL_SECRET_ENV, &capture_control.secret)
             .env(WATCH_PARENT_STDIN_ENV, "1")
             .env("DATA_ROOT", app_data_dir)
             .env("VIDEO_TMP_DIR", app_data_dir)
@@ -66,10 +79,13 @@ impl RuntimeProcess {
         let stderr = child.stderr.take();
 
         if let Some(stderr) = stderr {
-            let stderr_token = token.clone();
+            let stderr_secrets = vec![token.clone(), capture_control.secret.clone()];
             thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    eprintln!("[desktop-runtime] {}", redact_secret(&line, &stderr_token),);
+                    eprintln!(
+                        "[desktop-runtime] {}",
+                        redact_secrets(&line, &stderr_secrets),
+                    );
                 }
             });
         }
@@ -106,9 +122,7 @@ impl RuntimeProcess {
             }
         };
 
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            return Err("local runtime exited immediately after readiness".to_string());
-        }
+        ensure_runtime_alive_after_ready(&mut child)?;
 
         Ok(Self {
             child: Some(child),
@@ -185,12 +199,13 @@ fn create_launch_token() -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn redact_secret(text: &str, token: &str) -> String {
-    if token.is_empty() {
-        text.to_string()
-    } else {
-        text.replace(token, "[REDACTED]")
-    }
+fn redact_secrets(text: &str, secrets: &[String]) -> String {
+    secrets
+        .iter()
+        .filter(|secret| !secret.is_empty())
+        .fold(text.to_string(), |redacted, secret| {
+            redacted.replace(secret, "[REDACTED]")
+        })
 }
 
 fn parse_readiness_line(line: &str) -> Result<u16, String> {
@@ -258,6 +273,14 @@ fn wait_for_process_group_exit(child: &mut Child, process_group: i32, timeout: D
     child_exited && !process_group_exists(process_group)
 }
 
+fn ensure_runtime_alive_after_ready(child: &mut Child) -> Result<(), String> {
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        terminate_process_tree(child);
+        return Err("local runtime exited immediately after readiness".to_string());
+    }
+    Ok(())
+}
+
 fn terminate_process_tree(child: &mut Child) {
     // Closing the pipe is the normal shutdown protocol. The Python runtime
     // watches for EOF and stops its API and worker before exiting.
@@ -311,7 +334,7 @@ fn terminate_process_tree(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_launch_token, parse_readiness_line, redact_secret};
+    use super::{create_launch_token, parse_readiness_line, redact_secrets};
 
     #[cfg(unix)]
     use super::{configure_process_group, terminate_process_tree};
@@ -410,8 +433,32 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(first.len(), 64);
         assert_eq!(
-            redact_secret(&format!("token={first}"), &first),
-            "token=[REDACTED]"
+            redact_secrets(
+                &format!("token={first};capture=other"),
+                &[first.clone(), "other".to_string()]
+            ),
+            "token=[REDACTED];capture=[REDACTED]"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn runtime_ready_then_exit_cleans_the_already_exited_child() {
+        use super::ensure_runtime_alive_after_ready;
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new("cmd")
+            .args(["/C", "exit 0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn exiting child");
+        child.wait().expect("wait for child exit");
+
+        assert_eq!(
+            ensure_runtime_alive_after_ready(&mut child).unwrap_err(),
+            "local runtime exited immediately after readiness"
         );
     }
 }
