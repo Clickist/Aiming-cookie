@@ -12,7 +12,7 @@
 
 ## Proposed
 
-当前没有其他 proposed plan。
+- [`2026-07-20-complete-coach-analysis-context-v1.md`](2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的规范化 Run facts、数据后处理、专项 analyzer、有界 evidence tools、知识、画像、计划与复测实施顺序；必须先在 plan 外完成上游范围同步与激活审阅，当前禁止执行。
 
 ## Frozen
 
