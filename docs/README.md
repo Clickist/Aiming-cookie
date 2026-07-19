@@ -27,6 +27,9 @@
 - 当前施工：只使用 [`superpowers/plans/README.md`](superpowers/plans/README.md) 列为 active 的 plan/Task。
 - 局部设计：只使用 [`superpowers/specs/README.md`](superpowers/specs/README.md) 列为 active 的 spec。
 - 自动 Run 采集与分析前选择：使用 active [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md)；它只冻结产品/系统合同，不构成实施授权。
+- 自动 Run finalization 的内部实施已完成；范围与验证证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 物理硬件仍由 Roadmap 维护为外部发布 Gate。
+- 完整 Coach 的 aim-family 范围、L0-L3 context/tool results、EvidenceSegment 与 outcome-only 降级：使用 active [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)；它是设计合同，不构成实施授权。
+- 完整 Coach 的当前施工顺序与 Gate：使用 active [`superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md`](superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md)，按指定 Task 的 Allowed files、Tests first 与 Stop rule 执行。
 - Analysis 删除/恢复：长期合同使用 active [`superpowers/specs/2026-07-16-analysis-deletion-reconciliation-design.md`](superpowers/specs/2026-07-16-analysis-deletion-reconciliation-design.md)；实施证据见 completed [`archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md`](archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md)。
 - Windows Desktop 前端前置 Gate：Steam 多库 KovaaK bounded discovery 与 launch-token descendant isolation 的实施证据见 completed [`archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md`](archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md)。
 

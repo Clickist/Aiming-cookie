@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
-from webapp.backend import coach_commands
+from webapp.backend import coach_commands, db, kovaak_run_store, queue
+from webapp.backend.workspace import session_dir
 
 
 @pytest.mark.asyncio
@@ -1066,3 +1070,135 @@ async def test_bridge_cannot_self_authorize_or_consume_confirmation(monkeypatch)
     assert bridge["bearer_token"] not in repr(
         [pending, claimed_explicit, claimed_confirmed]
     )
+
+
+async def _seed_run_owned_video(
+    tmp_path: Path,
+    owner_id: str,
+    *,
+    include_trace: bool,
+) -> tuple[dict, Path]:
+    stats = tmp_path / f"{owner_id} Stats.csv"
+    performance = tmp_path / f"{owner_id} Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    trace = tmp_path / f"{owner_id}-trace.bin"
+    if include_trace:
+        kovaak_run_store.write_mouse_snapshot(trace, [
+            {"timestamp_ms": 1_000, "dx": 1, "dy": 2, "buttons": 0},
+        ])
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=owner_id,
+        source_key=f"run-{owner_id}",
+        scenario="Scenario",
+        stats_path=str(stats),
+        performance_path=str(performance),
+        mouse_trace_path=str(trace) if include_trace else None,
+        stats_summary={
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+        },
+        performance_summary={
+            "source": kovaak_run_store._source_metadata(
+                performance, kovaak_run_store.PERFORMANCE_PARSER_VERSION,
+            ),
+        },
+    )
+    video = tmp_path / "data" / "runs" / str(run["id"]) / "video-auto.mp4"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"automatic-run-video")
+    fingerprint = {
+        "sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
+        "size": video.stat().st_size,
+    }
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET video_path=?, video_state='attached', "
+        "video_receipt_json=?, video_summary_json=?, "
+        "finalization_state='finalized' WHERE id=?",
+        (
+            str(video.resolve()),
+            json.dumps({"version": "capture_receipt.v1"}),
+            json.dumps({
+                "availability": "available",
+                "fingerprint": fingerprint,
+                "packetCount": 60,
+                "visibleDuration100ns": 10_000_000,
+                "timebaseVersion": "time_alignment.v2",
+            }),
+            run["id"],
+        ),
+    )
+    await conn.commit()
+    return await kovaak_run_store.get_kovaak_run(run["id"], owner_id), video
+
+
+@pytest.mark.parametrize(
+    ("input_mode", "include_trace", "uses_video"),
+    [
+        ("input_native", True, False),
+        ("multimodal", True, True),
+        ("video_fallback", False, True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_analysis_modes_consume_run_owned_video_without_analysis_copy(
+    tmp_path: Path,
+    input_mode: str,
+    include_trace: bool,
+    uses_video: bool,
+) -> None:
+    owner_id = f"owner-{input_mode}"
+    run, video = await _seed_run_owned_video(
+        tmp_path, owner_id, include_trace=include_trace,
+    )
+
+    created = await coach_commands.create_analysis_from_run(
+        owner_id,
+        run["id"],
+        input_mode=input_mode,
+    )
+    session = await queue.get_session(created["session_id"])
+
+    assert session["input_mode"] == input_mode
+    if uses_video:
+        assert session["video_path"] == str(video.resolve())
+        assert session["input_snapshot"]["sources"]["video"]["ownership"] == "run"
+        assert not (session_dir(session["id"]) / "video.mp4").exists()
+    else:
+        assert session["video_path"] == ""
+        assert "video" not in session["input_snapshot"]["sources"]
+    if input_mode == "video_fallback":
+        assert session["input_snapshot"]["trace"] is None
+        assert set(session["input_snapshot"]["sources"]) == {"stats", "video"}
+    if input_mode == "multimodal":
+        assert session["input_snapshot"]["trace"] is not None
+
+
+@pytest.mark.asyncio
+async def test_incomplete_run_rejects_unsupported_mode_with_stable_reason(
+    tmp_path: Path,
+) -> None:
+    stats = tmp_path / "Stats.csv"
+    stats.write_bytes(b"stats")
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="owner-incomplete",
+        source_key="incomplete",
+        stats_path=str(stats),
+        stats_summary={
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+        },
+    )
+
+    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
+        await coach_commands.create_analysis_from_run(
+            "owner-incomplete",
+            run["id"],
+            input_mode="video_fallback",
+        )
+
+    assert exc_info.value.code == "input_unavailable"
+    assert "video_fallback" in exc_info.value.message

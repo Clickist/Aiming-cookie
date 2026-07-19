@@ -786,6 +786,70 @@ async def test_delete_session_removes_row_chat_and_preserves_source_files():
 
 
 @pytest.mark.asyncio
+async def test_delete_terminal_analysis_preserves_run_owned_video(tmp_path: Path):
+    user_id = "u_run_video_delete"
+    stats = tmp_path / "Stats.csv"
+    stats.write_bytes(b"stats")
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=user_id,
+        source_key="run-video-delete",
+        stats_path=str(stats),
+        stats_summary={
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+        },
+    )
+    run_video = tmp_path / "runs" / str(run["id"]) / "video-owned.mp4"
+    run_video.parent.mkdir(parents=True)
+    run_video.write_bytes(b"run-owned-video")
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET video_path=?, video_state='attached' WHERE id=?",
+        (str(run_video.resolve()), run["id"]),
+    )
+    await conn.commit()
+
+    sid = await queue.enqueue(
+        user_id,
+        str(run_video.resolve()),
+        str(stats.resolve()),
+        input_mode="video_fallback",
+        kovaak_run_id=run["id"],
+        input_snapshot={
+            "schema_version": "analysis_input_snapshot.v1",
+            "run_id": run["id"],
+            "sources": {
+                "video": {
+                    "path": str(run_video.resolve()),
+                    "ownership": "run",
+                },
+            },
+        },
+    )
+    analysis_workspace = session_dir(sid)
+    analysis_workspace.mkdir(parents=True)
+    (analysis_workspace / "result.json").write_bytes(b"analysis-owned")
+    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
+    await conn.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": user_id},
+    ) as client:
+        response = await client.delete(f"/api/sessions/{sid}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["files_removed"] == ["workspace"]
+    assert run_video.read_bytes() == b"run-owned-video"
+    assert not analysis_workspace.exists()
+    persisted_run = await kovaak_run_store.get_kovaak_run(run["id"], user_id)
+    assert persisted_run is not None
+    assert persisted_run["video_path"] == str(run_video.resolve())
+
+
+@pytest.mark.asyncio
 async def test_delete_session_404():
     async with AsyncClient(
         transport=ASGITransport(app=app),

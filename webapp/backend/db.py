@@ -10,7 +10,7 @@ from .config import DB_PATH
 
 _conn: Optional[aiosqlite.Connection] = None
 
-TARGET_USER_VERSION = 13
+TARGET_USER_VERSION = 15
 
 
 async def get_conn() -> aiosqlite.Connection:
@@ -124,6 +124,20 @@ CREATE TABLE IF NOT EXISTS kovaak_runs (
     trace_state TEXT NOT NULL DEFAULT 'none',
     pending_trace_path TEXT,
     trace_error TEXT,
+    capture_session_id TEXT,
+    window_start_epoch_ms INTEGER,
+    window_end_epoch_ms INTEGER,
+    alignment_state TEXT NOT NULL DEFAULT 'unresolved',
+    alignment_summary TEXT,
+    finalization_state TEXT NOT NULL DEFAULT 'discovered',
+    finalization_error TEXT,
+    video_path TEXT,
+    video_state TEXT NOT NULL DEFAULT 'none',
+    pending_video_path TEXT,
+    video_request_digest TEXT,
+    video_receipt_json TEXT,
+    video_summary_json TEXT,
+    video_error TEXT,
     stats_summary TEXT,
     performance_summary TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -262,6 +276,23 @@ _V5_KOVAAK_RUN_COLUMNS: tuple[tuple[str, str], ...] = (
     ("trace_state", "TEXT NOT NULL DEFAULT 'none'"),
     ("pending_trace_path", "TEXT"),
     ("trace_error", "TEXT"),
+)
+
+_V14_KOVAAK_RUN_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("capture_session_id", "TEXT"),
+    ("window_start_epoch_ms", "INTEGER"),
+    ("window_end_epoch_ms", "INTEGER"),
+    ("alignment_state", "TEXT NOT NULL DEFAULT 'unresolved'"),
+    ("alignment_summary", "TEXT"),
+    ("finalization_state", "TEXT NOT NULL DEFAULT 'discovered'"),
+    ("finalization_error", "TEXT"),
+    ("video_path", "TEXT"),
+    ("video_state", "TEXT NOT NULL DEFAULT 'none'"),
+    ("pending_video_path", "TEXT"),
+    ("video_request_digest", "TEXT"),
+    ("video_receipt_json", "TEXT"),
+    ("video_summary_json", "TEXT"),
+    ("video_error", "TEXT"),
 )
 
 _V6_ANALYSIS_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -435,6 +466,33 @@ CREATE TABLE IF NOT EXISTS analysis_deletion_tombstones (
 """
 
 
+_V15_RUN_EVIDENCE_DELETION_TOMBSTONES = """
+CREATE TABLE IF NOT EXISTS run_evidence_deletion_tombstones (
+    run_id INTEGER NOT NULL CHECK(run_id > 0),
+    evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('video', 'raw')),
+    owner_id TEXT NOT NULL CHECK(TRIM(owner_id) <> ''),
+    artifact_relpath TEXT NOT NULL CHECK(TRIM(artifact_relpath) <> ''),
+    expected_sha256 TEXT NOT NULL CHECK(LENGTH(expected_sha256) = 64),
+    expected_size INTEGER NOT NULL CHECK(expected_size >= 0),
+    cleanup_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(cleanup_state IN ('pending', 'failed')),
+    cleanup_attempts INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_attempts >= 0),
+    last_error_code TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(run_id, evidence_kind),
+    FOREIGN KEY (run_id) REFERENCES kovaak_runs(id),
+    CHECK(
+        (cleanup_state = 'pending' AND cleanup_attempts = 0
+            AND last_error_code IS NULL)
+        OR
+        (cleanup_state = 'failed' AND cleanup_attempts >= 1
+            AND last_error_code = 'artifact_cleanup_failed')
+    )
+);
+"""
+
+
 async def init_schema() -> None:
     conn = await get_conn()
     cur = await conn.execute("PRAGMA user_version")
@@ -456,6 +514,8 @@ async def init_schema() -> None:
         await _migrate_v11_training_plans(conn)
         await _migrate_v12_coach_commands(conn)
         await _migrate_v13_analysis_deletion_tombstones(conn)
+        await _migrate_v14_kovaak_run_evidence(conn)
+        await _migrate_v15_run_evidence_deletion_tombstones(conn)
         await conn.commit()
         return
 
@@ -485,6 +545,10 @@ async def init_schema() -> None:
             await _migrate_v12_coach_commands(conn)
         if user_version < 13:
             await _migrate_v13_analysis_deletion_tombstones(conn)
+        if user_version < 14:
+            await _migrate_v14_kovaak_run_evidence(conn)
+        if user_version < 15:
+            await _migrate_v15_run_evidence_deletion_tombstones(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -540,6 +604,26 @@ async def _migrate_v13_analysis_deletion_tombstones(
 ) -> None:
     """v12 → v13: transient Analysis workspace cleanup tombstones."""
     await _execute_transactional_script(conn, _V13_ANALYSIS_DELETION_TOMBSTONES)
+
+
+async def _migrate_v14_kovaak_run_evidence(conn: aiosqlite.Connection) -> None:
+    """v13 -> v14: Run-owned capture, finalization, and video evidence state."""
+    for column, definition in _V14_KOVAAK_RUN_COLUMNS:
+        await _migrate_add_column_if_missing(
+            conn,
+            "kovaak_runs",
+            column,
+            definition,
+        )
+
+
+async def _migrate_v15_run_evidence_deletion_tombstones(
+    conn: aiosqlite.Connection,
+) -> None:
+    """v14 -> v15: recoverable removal of one Run-owned evidence artifact."""
+    await _execute_transactional_script(
+        conn, _V15_RUN_EVIDENCE_DELETION_TOMBSTONES,
+    )
 
 
 async def _execute_transactional_script(

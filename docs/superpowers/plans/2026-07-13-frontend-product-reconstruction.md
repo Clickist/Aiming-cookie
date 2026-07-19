@@ -79,6 +79,7 @@ Run → Evidence → Analysis → Training → Retest
 11. **所有页面失败必须可解释。** 请求失败不得转换成空列表；未知状态不得默认成 available；颜色不得作为唯一状态表达。
 12. **无产品账号。** 正式前端不得创建 `/login`、`/register`、Account 菜单、session/JWT、entitlement 或鉴权服务器依赖；Provider 可以无需认证；如需认证，只属于对应 Provider。
 13. **执行不得反向改写合同。** Frontend reconstruction spec、UI/UX、视觉合同、design-system 与本计划已经完成本轮冲突检查；executor 不得在 Task 内通过修改这些文档来迁就实现。
+14. **完整 Coach 当前只能消费有界 L1-L3。** L1 allow-listed canonical Stats/Performance facts、L2 derived evidence 和 L3 diagnosis/plan 可按预算进入 context/tool results；当前合同不把 L0 Raw/MP4/原始 CSV/protobuf/路径/私有 parser/unknown fields 放入 context/tool results。用户可本地播放 EvidenceSegment 对应视频，Coach 当前不读取视频内容；未来视觉模型读取受限片段必须另立版本化合同和实施授权。static/dynamic/tracking/switching 仅在相应 family Gate 通过后显示正式能力；未知与 movement aiming 只表达 outcome-only。
 
 ## 3. 正式前端边界与路由目标
 
@@ -377,10 +378,11 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 - `/analysis/:analysisId` 根据真实 session 状态覆盖 loading、queued、running、done、failed、retryable、deleted/unavailable；
 - Diagnosis 只展示 contract 允许的结论、warnings、limitations、evidence summary 和 stable references；
+- workspace 显示 aim family 与 `supported / descriptive / unavailable / outcome-only`，不依据场景名或 Coach 推断升级；
 - input-native：展示输入运动学/事件对齐，不展示视觉结论；Preview/Experimental 明确可见；
 - multimodal：native facts 与 visual validation 分层；视觉失败保留 native；alignment failed 不跨来源合并结论；
 - video-fallback：展示视频/CV 结论，明确没有 Raw Input provenance；
-- Video 支持 Browser/Tauri managed URL、播放/暂停/seek、timeline 定位、事件标记和 source unavailable；native-only 明确无视频；
+- Video 支持 Browser/Tauri managed URL、播放/暂停/seek、timeline 定位、事件标记、EvidenceSegment 本地片段回放和 source unavailable；native-only 明确无视频；
 - Data 展示指标、unit、coverage、provenance、quality、comparability 和 limitations；不泄漏 raw trace/path/URI；
 - Diagnosis ↔ Video ↔ Data ↔ Coach 的定位关系可键盘操作并可恢复；
 - Analysis 删除后页面和 Coach 引用显示 unavailable/deleted，不把消息快照继续当作可用 evidence。
@@ -422,11 +424,12 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 - Coach 在支持页面可收起、可调宽度；宽窗口并排、中窗口覆盖 drawer、极窄窗口全内容视图；第一次 Analysis 完成且 Provider ready 时自动展开一次，后续遵循已保存状态；
 - Coach 跨页面保留会话、草稿、展开状态和当前 Analysis context；切换/移除 context 有明确反馈；
-- 发送前可移除 context；默认不发送 raw trace、绝对路径、原始 payload、secret、token 或未验证 heuristic sentinel；
+- 发送前可移除 context；默认 context/tool results 只允许有界 L1-L3：allow-listed canonical source facts、derived evidence 和 diagnosis/plan；不发送 Raw trace、绝对路径、MP4/video/frame、原始 CSV/protobuf、私有 parser/unknown fields、secret、token 或未验证 heuristic sentinel；
+- EvidenceSegment 在 Coach 中可定位用户到对应本地视频段；Coach 当前不读取、上传或播放视频内容，未来视觉模型必须另有合同和实现授权；
 - Analysis 删除后消息保留，引用显示 unavailable/deleted；停止生成、错误、重试、offline 状态可操作；
 - `/settings` 覆盖完整 Provider/model/auth 管理、system/light/dark、Profile calibration、自动采集/Raw Input 多状态、分类 Storage 占用与手动管理，并与 onboarding 共用 capability/status/secret 组件；
 - Provider UI 覆盖 API key set/replace/delete、已批准 OAuth/device-code 状态、local/custom OpenAI-compatible、model 选择、测试连接和默认 provider；secret 永不回显；
-- 自动采集分开表达 platform support、permission、capture enabled、KovaaK process、window recording、runtime health、Run finalization、trace/video attached 和 quality；
+- 自动采集分开表达 platform support、permission、capture enabled、KovaaK process、hardware replay buffer、runtime health、Run finalization、trace/video attached 和 quality；
 - Storage 显示总占用和 Run 录像、Raw trace、Analysis artifacts、未完成采集数据；只允许按 active capture spec 分别移除 Run-owned evidence 或未完成数据，不自动清理或一键清空；
 - 删除/保留 UI 不越过 lifecycle spec；用户源 Stats/Performance 不被应用删除；
 - Coach 和 Settings 在 Web/Desktop 共享产品结构，能力差异诚实表达。
@@ -435,13 +438,13 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 - Coach 不是旧 `/coach` 页面，也不是 Analysis 底部小面板；它是 App shell 右侧关系层。onboarding 只负责结构化激活，不建立另一条 Coach 会话；
 - 不恢复 `CoachClient.tsx`、session-bound Coach route 或旧 `StorageSettings` / `ThemeController`；
-- Raw trace 默认不进入 Coach context；只有现有 contract 允许且用户明确确认时才可讨论可见摘要；
+- L0 原始载体不进入 Coach context/tool results；用户已选择 Provider 时，有界 L1-L3 可作为普通 Coach turn 数据发送，不设置逐 Run 同意 Gate；
 - Provider/model/auth 只实现 active [`../specs/2026-07-13-coach-product-commands-explanations-provider-design.md`](../specs/2026-07-13-coach-product-commands-explanations-provider-design.md) 与后端 capability API 已明确支持的状态，不根据 Pi 存在的接口自动宣称产品已支持；
 - Benchmark 不进入默认 Coach context。
 
 ### Stop rule
 
-- Coach context contract、删除后引用语义或 raw trace boundary 尚未 active；
+- 完整 Coach context contract、EvidenceSegment 本地播放、删除后引用语义或 L0/L1-L3 boundary 尚未由对应 Task 稳定实现；
 - Provider capability API、credential store 或 auth state 尚未由对应 active Task 实现，导致 UI 只能伪造成功或保存 secret；
 - Settings 需要改变后端 ownership/retention 或未冻结的删除行为；
 - Storage accounting 或 Run-owned evidence 手动删除缺少稳定 capability/恢复合同，导致 UI 只能猜测占用或删除影响；
@@ -468,7 +471,7 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 - Browser smoke：首次使用、Run 列表、单局/多局选择、独立手动 fallback、三种 input mode、任务中心、History、Analysis workspace、Coach、Settings；
 - Browser failure matrix：offline、service unavailable、partial/source unavailable、permission denied、alignment failed、queued/running/failed/retryable；
-- Tauri/Desktop smoke：进程 gate 自动采集状态、连续多局事后切 Run、文件选择、Raw Input/窗口录像状态、Run-owned managed video URL、窗口尺寸、存储占用和任务恢复；
+- Tauri/Desktop smoke：进程 gate 自动采集状态、连续多局事后切 Run、文件选择、Raw Input/窗口回放缓冲状态、Run-owned managed video URL、窗口尺寸、存储占用和任务恢复；
 - 关键页面宽/中/窄三档截图；system/light/dark 截图；核心空态、失败态、partial 态截图；
 - accessibility：landmarks、focus order、visible focus、skip link、drawer/dialog focus trap、Escape、ARIA live、44px targets、200% zoom、reduced motion、视频键盘控制、图表文本替代；
 - screenshot review 不只看像素差异，还检查信息层级、状态可解释性、密度、主题对比和不泄漏路径/trace；

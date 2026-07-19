@@ -4,26 +4,26 @@
 
 ## 1. 当前发布定义
 
-当前目标不是宣称完整 v1，而是逐步达到 **可由用户实际完成的 Desktop input-native flicking 闭环**：
+当前目标是逐步达到 **可由用户实际完成的 Desktop 完整 Coach 闭环**：
 
 ```text
 process-gated Raw + KovaaK window capture → post-hoc Run finalization / selection
-→ recoverable input-native or video-fallback analysis → evidence-backed explanation / prescription
-→ local history → provider-configured Coach actions
+→ static/dynamic clicking, continuous tracking, or target-switching analysis
+→ bounded evidence-backed Coach → local history, plan, and retest
 ```
 
-现阶段仍为 **No-Go**。KovaaKRun ingestion、Windows Raw Input、AnalysisResult v2 与三种 mode dispatch 已形成代码基础，Tauri vertical slice 也证明桌面运行形态可行；但统一 Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择和 Run-owned 存储管理尚未实现，input-native 也仍只能作为 Preview / Experimental。
+现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成合入后的实现和自动化/字段验证基础；它们仍受真实 Tauri product-path、AMD/Intel 物理硬件等发布 Gate 约束，NVIDIA 结果不能替代。完整 Coach 的统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端尚未完成，input-native 仍只能作为 Preview / Experimental。
 
-完整 v1 保留 PRD 中的 Provider-first onboarding、本地长期 History、Coach、通知、失败处理、导入导出、透明联盟商业化和后续 tracking 路线；产品不再包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
+完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留 Provider-first onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化，不包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
 
 ## 2. 当前施工优先级
 
-### P0 — 恢复可用的 Desktop flicking 闭环
+### P0 — 完整 Coach launch 闭环
 
-1. 先修复 Analysis/evidence correctness 阻塞，并保持 input-native Preview / Experimental；
-2. 将自动采集的 Raw + 仅 KovaaK 窗口录像与 Stats/Performance 事后 Run finalization 作为 Desktop 主训练来源；单局确认、多局选一条，其余保留待分析；手动 MP4 + Stats 作为独立 fallback；
-3. 建立 input-native / multimodal / video-fallback 的 versioned AnalysisResult 和 evidence provenance；
-4. 完成 flick segmentation、核心 fair metrics、claim level、白话解释、训练 cue、预期变化与复测合同；
+1. 保持已合入的自动采集、Run finalization、pending Run 与 Run-owned evidence 生命周期；以 AMD/Intel 物理硬件和真实 product-path 验证决定其发布放行，不重做已闭合实现；
+2. 冻结并实现 canonical time、ScenarioProfile、私有 signal/evidence artifact 与 bounded Coach evidence broker；
+3. 建立 input-native / multimodal / video-fallback 的 versioned AnalysisResult 和 evidence provenance，并让 MP4 只在本地确定性预处理为数值证据；
+4. 分别完成 static clicking、dynamic clicking、continuous tracking 与 target switching 的专项 analyzer、质量 Gate、知识/处方、画像、计划和复测；movement aiming 无移动遥测时只保留 outcome-only；
 5. 已冻结的 Provider/model/auth、Training Plan、History/Analysis command、confirmation、audit/idempotency 与 Python↔Pi 边界由现有合同和回归保护；非硬阻断的额外真实数据/E2E 不再作为正式前端启动前置；
 6. 让自动 MP4 成为 Run-owned 直观回放与视觉 evidence；multimodal 仍只用 Raw 计算运动学，录像失败时保留满足条件的 native 结果；
 7. 在 Settings 显示分类存储占用，并允许用户分别手动管理 Run-owned 自动 MP4、Raw trace 和未完成采集数据；不启用静默自动清理；
@@ -41,7 +41,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 - KovaaKRun source unavailable、重复发现、Run/trace 删除与 Analysis 引用关系；
 - Raw Input 授权、禁用、未关联 buffer 清理、trace retention 与 orphan reconciliation；
 - Raw Input / Performance / Stats / MP4 的时间对齐、证据冲突和 fallback 结果；
-- Capture Coordinator 的 process gate、窗口录制、分段数据、延迟文件、事后 Run finalization 与幂等补全；
+- Capture Coordinator 的 process gate、GPU-resident 硬件编码、300 秒有界回放缓冲、延迟文件、暂停局 fail-closed、事后 Run finalization 与幂等补全；
 - Run-owned 自动 MP4 / Raw trace 的 storage accounting、用户手动删除、引用失效和崩溃恢复；
 - runtime crash 后的 restart、fatal-state 或重建策略；
 - launch token 对子进程的环境隔离。
@@ -79,10 +79,9 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 
 ### P2 — 验证后的扩展
 
-- 完整 tracking：在输入原生运动学基础上，完成目标/准星/误差语义和真实阈值标定后接通；
 - 本地档案的显式导出 / 导入、迁移与恢复，不建立账号型云同步；
 - 经验证的外设目录、推荐解释、商业披露和联盟链接治理；
-- 跨平台/通用采集、手部摄像头、多游戏等远期能力。
+- 未来视觉模型、跨平台/通用采集、手部摄像头、多游戏等远期能力。
 
 ## 3. 下一可执行切片
 
@@ -100,13 +99,14 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 4. Analysis deletion/reconciliation Task 1–3 已完成并归档；terminal Analysis 的 SQLite logical delete、managed workspace cleanup 与 startup/API Gate 已闭合；
 5. Windows Desktop pre-frontend Task 1–2 已完成并归档；当前没有新的已授权切片，等待点点明确指定；
 6. 每次只执行一个被点点指定的 active plan Task；新增数据可靠性工作在 spec/plan 获批前不得直接施工。
-7. 自动采集局部合同已由 [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md) 冻结，但没有 implementation plan；Frontend Task 2 可独立建立 tokens/primitives，Task 3/4/6 不得伪造 Capture Coordinator、pending Run readiness 或 Storage 删除 capability。
+7. 自动采集局部合同已由 [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md) 冻结；Capture Coordinator、Run Finalizer、Run-owned evidence、pending Run readiness 与 Storage/recovery 的实施证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 仍是本 Roadmap 的外部发布 Gate，不是继续扩大旧 plan 的内部 Task。Frontend Task 2 可独立建立 tokens/primitives，Task 3/4/6 在对应 capability 通过前不得伪造完成状态。
+8. 完整 Coach spec/plan 已在采集集成、上游文档和状态索引协调后由点点批准为 active；后续按 canonical time → scenario → evidence broker → family analyzer → profile/plan/retest 顺序执行，每次只执行一个被授权 Task。
 
-## 4. Desktop Flicking Go/No-Go Gates
+## 4. Desktop Complete Coach Go/No-Go Gates
 
 ### 产品闭环
 
-- 自动采集在 KovaaK 进程 gate 内获得 Raw 与仅 KovaaK 窗口录像，并在 Stats/Performance 到达后把连续 Challenge 事后切成独立 Run；
+- 自动采集在 KovaaK 进程 gate 内获得 Raw 与仅 KovaaK 窗口的 300 秒硬件编码回放缓冲，并在 Stats/Performance 到达后把连续 Challenge 事后切成独立 Run；normal/timescale-only 生成永久 MP4，`Pause Count > 0` 的暂停局 fail closed；
 - 单局默认选中并等待确认，多局要求选择一条；其余 Run 保留在 History 顶部待分析，不进入 Tasks、不合并、不自动删除；
 - 满足 `Stats AND (MP4 OR (Raw + Performance))` 的 Run 可创建对应模式 Analysis；自动来源不足或非 Windows 时，手动 MP4 + Stats CSV 可创建 video-fallback；
 - input-native 基础运动学不要求 MP4；选择 MP4 后进入 multimodal 增强而不是另一套产品；
@@ -118,6 +118,8 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 - 首次启动无需产品账号，先说明 Provider 的价值、第三方费用和数据边界；用户可选择、连接并测试 Provider，在 Provider 要求时完成认证，也可明确跳过进入本地分析；
 - Provider 可选择、配置、连接、测试和恢复；只有要求认证的 Provider 才显示认证步骤，未配置或失败不阻塞确定性诊断；
 - 第一次分析完成且 Provider 可用时自动展开 Coach；Coach 能把指标转成证据、白话解释、训练 cue、预期变化与复测，并可调用本地 profile 拥有的产品命令。
+- static clicking、dynamic clicking、continuous tracking 与 target switching 各自至少有通过 ScenarioProfile、analyzer、knowledge、fixture、必要视觉质量和真实 Run Gate 的 launch scenario；movement aiming 无移动遥测时只显示 outcome-only。
+- Coach 可读取 bounded L1-L3 规范化 facts/evidence/diagnosis，不可读取 Raw、MP4、原始 CSV/protobuf、私有 parser payload 或未知字段；当前 MP4 只由本地确定性预处理器消费。
 
 ### 数据可靠性
 
@@ -126,7 +128,7 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 - source file moved/deleted、Raw Input 缺失和多源时间对齐失败有确定状态与 fallback；
 - delayed Stats/Performance、窗口录制失败、切窗失败、partial finalization 和重复 watcher observation 有确定状态与幂等恢复；
 - 删除 terminal analysis 不删除用户源文件，也不删除 Coach 历史；
-- terminal Analysis 的 logical delete、Analysis-owned managed workspace cleanup 与 startup reconciliation 已实现；Run metadata、Run-owned Raw / MP4 删除、引用失效与精确 reconciliation 尚未实现；
+- Run metadata、mouse trace、Analysis 引用的删除和 reconciliation 合同已冻结并实现；
 - DB 与 workspace 删除失败后可 reconciliation；
 - 低磁盘、超限、损坏文件和重复操作有确定结果；
 - Storage 可显示总量与分类占用，用户手动移除 Run-owned evidence 时保留 Run/Analysis metadata 并正确更新 unavailable 引用；
@@ -136,7 +138,7 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 
 - Desktop API 仅 loopback，所有受保护接口验证 launch token；
 - Raw Input 默认关闭、显式 opt-in，只在 KovaaK process gate 内采集相对鼠标输入；
-- Raw Input trace 只保存在本地，不进入云端、Coach 请求或普通日志；
+- Raw Input trace、MP4、原始 CSV/protobuf 和私有 parser payload 只留在本地，不进入 Coach 请求或普通日志；L1-L3 bounded normalized context 在用户启用 Coach 并选择 Provider 后可作为普通 Coach turn 数据；
 - 自动录像只捕获 KovaaK 窗口，不捕获完整桌面、其它应用或系统通知；
 - token 不持久化、不泄露日志、不传播给无关子进程；
 - shell 退出或 runtime crash 不留下孤儿进程；
@@ -150,8 +152,10 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 - frontend production build 与 Desktop compile/test 通过；
 - Windows 实机验证 Raw Input 注册、持续采集、进程 gate、启停、快照更新和退出清理；
 - 高 polling-rate 鼠标下验证 ring buffer、snapshot I/O、内存和分析时延；
+- NVIDIA、AMD、Intel 可用硬件上分别验证同适配器 GPU capture/encode、1080p60、CPU/GPU 占用、回放缓冲上限和硬件不可用降级；
+- AMD/Intel 物理验证未通过前保持 **No-Go**；NVIDIA 行不能替代其它 adapter 的发布证据；
 - 至少一条真实素材端到端路径通过；
-- 至少验证单局、连续多局、延迟 Performance、Raw-only、video-only、multimodal 和手动 fallback 真实路径；
+- 至少验证单局、连续多局、暂停局 fail-closed（不生成永久 MP4）、超过 300 秒拒绝、延迟 Performance、Raw-only、video-only、multimodal 和手动 fallback 真实路径；
 - browser 与 Desktop 的关键交互有自动化或明确手工 Gate；
 - installer/签名/公证/更新达到目标平台的发布要求。
 

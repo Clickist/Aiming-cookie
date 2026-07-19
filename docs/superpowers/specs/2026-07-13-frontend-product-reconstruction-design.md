@@ -8,6 +8,8 @@
 >
 > **自动采集局部合同：** [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md) 冻结自动 Run 采集、选择、待分析 History 与手动存储管理；本文只展开其前端形态。
 >
+> **完整 Coach 局部合同：** [`2026-07-20-complete-coach-analysis-context-design.md`](2026-07-20-complete-coach-analysis-context-design.md) 冻结完整 Coach 的 aim-family 范围、L0-L3 数据边界、EvidenceSegment 与后续 Gate；本文只展开其前端可见性，不把尚未实现或未通过 Gate 的能力写成当前可用。
+>
 > **合同边界：** 本文展开上游已经确认的产品范围、页面关系、视觉语义和组件治理，不新增产品线，不改写 input mode、证据、所有权、Coach 或数据生命周期的上游定义。本文不包含施工任务、代码结构、框架选择、具体 React/CSS、接口路径、数据库字段、算法实现或发布排期。
 
 ## 1. 事实源与重建原则
@@ -20,8 +22,9 @@
 2. `frontend-uiux-design.md` 决定应用骨架、页面职责、信息架构和交互关系；
 3. `DESIGN-cursor.md` 决定视觉方向、语义角色和两套主题的共同语言；
 4. `design-system.md` 决定 token、主题、基础组件和视觉评审治理；
-5. 本文冻结本轮重建需要长期引用的局部前端合同；
-6. 当前代码只说明“现在实际上存在什么”，不得反向覆盖上述合同。
+5. 完整 Coach 的 family、证据与工具权限由其 active 设计合同冻结；
+6. 本文冻结本轮重建需要长期引用的局部前端合同；
+7. 当前代码只说明“现在实际上存在什么”，不得反向覆盖上述合同。
 
 若本文与上游事实源冲突，以上游为准，并停止在下游补丁式改写。
 
@@ -244,6 +247,7 @@ History 固定按“待分析训练 → 训练记录 → 分析记录”组织�
 - 返回 History 的关系；
 - 场景、训练时间与 Analysis 状态；
 - input mode 和 Preview/partial 标识；
+- aim family 与 `supported / descriptive / unavailable / outcome-only` 状态；
 - Evidence 总览与主要限制；
 - 与当前 Analysis 关联的 Coach 上下文状态。
 
@@ -275,12 +279,15 @@ Video 负责回答“问题发生在哪里”，至少包含：
 
 - 视频播放、暂停、seek 和当前时间；
 - 与稳定事件/时间范围对齐的时间轴；
+- 从诊断、数据或 Coach reference 打开的 EvidenceSegment 本地回放；片段显示 coverage、confidence、rank reason 与来源不可用状态；
 - 可定位的 kill、miss、corrective、peak 等已授权事件语义；
 - 从诊断或 Coach 引用跳转到对应位置；
 - 视频缺失、不可用、未对齐或视觉分析失败的明确状态；
 - native-only Analysis 中清楚说明视觉证据不可用，而不是显示空播放器或伪造帧定位。
 
 multimodal 中视觉部分失败时，本视图显示局部失败和重试入口；Diagnosis/Data 中成立的 native 结果继续可用。
+
+Coach 当前不接收、上传或播放视频内容；它只可引用 EvidenceSegment 和由本地确定性预处理产生的有界结构化证据。该限制不排除未来版本在显式启用、只读 segment、预算和 provenance 合同均冻结后加入视觉模型。
 
 ### 7.4 Data
 
@@ -318,7 +325,7 @@ Coach 是应用级、跨页面持续的右侧侧栏，不是 Analysis 详情底�
 
 ### 8.2 上下文与证据
 
-Coach 只能接收用户可见的结构化诊断摘要、可比较 History 摘要和稳定 Evidence reference。
+Coach 默认接收有界、版本化、类型化的 L1-L3 context/tool results，而不只是用户可见摘要：L1 是 allow-listed 的 CanonicalSourceFacts/Stats/Performance outcome facts，L2 是 MetricRecord、分布、EvidenceSegment、SignalWindow 与 comparison，L3 是 diagnosis、机制边界、knowledge、prescription、profile、plan 与 retest。L1 可在预算内完整投影当前已知安全字段；L2/L3 默认摘要并仅通过受限工具查询下钻。所有输出必须带 provenance、completeness、quality、coverage、alignment 与 limitation。
 
 发送前，用户必须能看到并移除本次附带的上下文，例如：
 
@@ -328,7 +335,9 @@ Coach 只能接收用户可见的结构化诊断摘要、可比较 History 摘�
 - 当前指标；
 - 当前选择的对比记录。
 
-Coach 默认不得接收 raw trace、dx/dy/timestamp samples、绝对路径、完整原始文件 payload、未验证 heuristic 或隐藏调试数据。
+当前合同下，L0 OriginalCarrier 不进入 context/tool results：raw trace、`dx/dy/timestamp` samples、MP4/video/frame/thumbnail、原始 CSV、`.perf` protobuf bytes/text、绝对路径、私有 parser object、unknown future fields、secret、token、未验证 heuristic 或隐藏调试数据。不得通过“用户可见”或前端字符串过滤绕过这一边界；未来视觉模型读取受限片段必须由新的版本化合同和实施授权定义。
+
+用户可在发送前查看并移除 Analysis、问题、时间点/范围、指标、EvidenceSegment 与对比记录引用；用户已选择 Provider 时，合同允许的 L1-L3 数据可作为正常 Coach turn 数据发送，不增加逐 Run 同意状态机。无 Provider 时，确定性 Analysis/History 与本地结构化 evidence 仍可用。
 
 Analysis 被删除或 Evidence 失效后：
 
@@ -344,6 +353,7 @@ Coach 使用“建议 → 用户点击 → 页面定位 → 明确反馈”的�
 - 时间引用定位到 Video；
 - 指标引用定位到 Data；
 - 诊断引用定位到 Diagnosis；
+- EvidenceSegment 引用定位到同一段本地视频；Coach 当前不读取、上传或播放视频内容；
 - 定位完成后提供非侵入式反馈；
 - Coach 不得无缘无故切页、滚动主区、播放视频或抢夺焦点。
 
@@ -373,7 +383,7 @@ v1 Settings 至少包含：
 
 - **Profile**：当前 `cm/360`、FOV 和分析所需校准摘要；
 - **LLM Provider**：provider、model、连接方式、按需认证状态、连接测试、默认选择与恢复操作；
-- **Automatic capture / Raw Input**：平台支持、授权、capture、KovaaK process、窗口录像、runtime、buffer、Run finalization 和 trace/video attachment 状态；
+- **Automatic capture / Raw Input**：平台支持、授权、capture、KovaaK process、窗口回放缓冲、runtime、Run finalization 和 trace/video attachment 状态；
 - **Theme**：System、Light、Dark；
 - **Storage / ownership**：显示总占用和 Run 录像、Raw trace、Analysis artifacts、未完成采集数据的分类占用；说明用户源文件、Run-owned evidence、Analysis-owned artifact 和删除影响。
 
@@ -397,14 +407,14 @@ Provider UI 至少区分 `unconfigured / ready / testing / connection_failed / d
 6. 是否捕获到近期数据；
 7. trace 是否已与 Run 关联；
 8. 未关联 buffer 是否存在及其保留边界。
-9. KovaaK 窗口录像是否可用、是否正在分段采集；
+9. KovaaK 窗口硬件编码是否可用、300 秒回放缓冲是否正在维护；
 10. Stats / Performance 是否已触发 Run finalization；
 11. 自动 MP4 是否已切窗并与 Run 对齐。
 
 规则：
 
 - Windows 首次开启必须明确说明只采集 KovaaK process gate 内的相对鼠标输入、用途、保存位置类别和关闭方式；
-- 自动录像只捕获 KovaaK 窗口，不捕获完整桌面、其它应用窗口或系统通知；
+- 自动回放缓冲只捕获 KovaaK 窗口，不捕获完整桌面、其它应用窗口或系统通知；
 - 可选托盘/悬浮状态只表达待命、采集中、整理中、完成和失败，不抢焦点，并可关闭；
 - 非 Windows 显示不支持，并提供 video-fallback，不把平台限制描述为用户错误；
 - disable 只停止新采集，不等同于删除 Run-owned trace 或清空未关联 buffer；
@@ -422,7 +432,7 @@ Desktop 和 Web 使用同一产品结构、信息架构、语义组件和视觉�
 | KovaaK Run 自动发现 | 支持进程 gate 内自动采集，并在 Stats / Performance 到达后事后切成独立 Run | 不支持本地自动发现；使用浏览器可提供的手动来源 |
 | Stats / Performance 来源 | 可引用本地来源并表达 source unavailable | 由用户显式选择/上传；受浏览器文件权限限制 |
 | Raw Input | 仅 Windows、默认关闭、明确 opt-in | 不支持，显示平台/形态限制并提供 fallback |
-| MP4 | 自动捕获仅 KovaaK 窗口并生成 Run-owned MP4；手动 fallback 可选择本地视频 | 由用户显式选择/上传 |
+| MP4 | 自动维护仅 KovaaK 窗口回放缓冲并事后生成 Run-owned MP4；手动 fallback 可选择本地视频 | 由用户显式选择/上传 |
 | 本地后台分析 | 使用 Desktop runtime，页面可切走 | 只显示当前 Web 部署真实提供的能力，不伪装成本地 runtime |
 | Managed video playback | 使用 Desktop 受控本地能力 | 使用 Web 可访问的受控媒体能力 |
 | 产品身份 | 不提供产品账号；当前 OS 用户 / 本地 profile 是数据归属边界 | 不提供产品账号；仅用于受控开发/预览，不成为正式用户数据 owner |
@@ -599,8 +609,8 @@ History v1 只负责用户自己的 Run、Analysis 和满足正式 comparability
 5. multimodal 视觉失败能够保留 native 结果，并在 Tasks 与 workspace 中表现为局部不可用而非整体失败；
 6. Tasks 支持后台持续、重启找回、具体失败域、重试和全局完成/失败提醒；
 7. History 顶部组织待分析 Run，下面分开组织其它 Run 和 Analysis；未选择 Run 不进入 Tasks、不合并、不自动删除，失败不伪装为空，可比较性 fail closed；
-8. Analysis workspace 完整提供 Diagnosis、Video、Data 三视图及稳定定位联动；
-9. Coach 以应用级持续侧栏存在，发送前上下文可见/可移除，raw trace 和敏感本地数据不进入默认上下文；第一次 Analysis 完成且 Provider ready 时自动展开一次；
+8. Analysis workspace 完整提供 Diagnosis、Video、Data 三视图及稳定定位联动，用户可播放 EvidenceSegment 对应的本地视频段；family 支持状态明确区分正式可用、descriptive、unavailable 与 outcome-only；
+9. Coach 以应用级持续侧栏存在，发送前上下文可见/可移除；默认 context/tool results 只使用有界 L1-L3，L0 raw/video/path/原始 CSV/protobuf/private parser/unknown fields 和敏感本地数据不进入；第一次 Analysis 完成且 Provider ready 时自动展开一次；
 10. Onboarding 与 Settings 共用 Provider capability/status/secret 边界；跳过 Provider 的次级文字明确没有 Coach；Settings 清楚分离 Provider、Profile、Theme、自动采集、Raw Input、Storage/ownership，并显示分类占用与用户手动管理；
 11. Desktop/Web 使用同一 IA 与视觉语言，并分别通过真实 capability 路径验证；
 12. 完整状态矩阵在主要页面有可见、可操作且不混淆 Empty/Error/Partial 的实现；

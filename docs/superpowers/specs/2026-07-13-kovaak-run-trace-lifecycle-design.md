@@ -137,9 +137,9 @@ discovered
 - canonical event 保存 Unix epoch milliseconds；
 - 同毫秒多事件按 trace record order 保留顺序；
 - `Performance.challenge_start_utc` 是 v1 trace pairing 的 required anchor；
-- canonical window 为 `[challenge_start_utc, challenge_start_utc + time_limit_ms]`；v1 不添加隐式 guard；
+- canonical window 为半开区间 `[start_ms, end_ms)`；`end_ms` 由 TimeAlignment v2 按 timescale、pause 和终止事件解析；
 - 缺少有效 Performance anchor 时不得 attach native trace；
-- raw epoch → challenge-relative 的转换由 `TimeAlignment v1` 完成；
+- raw epoch → challenge-relative 的转换由 `TimeAlignment v2` 完成；ACRI v1 record bytes 保持兼容；
 - wall-clock 回拨、非单调 timestamp、超大 gap 产生 quality warning；
 - alignment 必须记录 `clock_source`、`anchor_source`、`offset_ms`、`coverage_ratio` 和 `status`；不能把闭区间截取本身当成精确证明。
 
@@ -197,22 +197,24 @@ discovered
 
 Run metadata 的整体删除、tombstone 和长期 retention 变更不在本 Task 实现。Run-owned Raw trace 的用户手动存储管理产品边界已由 [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md) 冻结；精确删除事务与恢复仍须由后续 active implementation plan 授权。
 
-### TimeAlignment v1
+### TimeAlignment v2
 
 ```text
-timebase_version = time_alignment.v1
-raw_clock_source = system_wall_clock_epoch_ms
-anchor_source = performance.challenge_start_utc
+timebase_version = time_alignment.v2
+raw_clock_source = utc_epoch_ms+qpc | utc_epoch_ms+monotonic_fallback
+capture_clock = {utc_epoch_ms, monotonic_elapsed_ns, clock_source, timebase_version}
+capture_clock_scope = raw_session_start_sidecar
+anchor_source = stats_challenge_start | performance.challenge_start_utc
 offset_ms = raw_event_ts - anchor_ts
-guard_before_ms = 0
-guard_after_ms = 0
+window_semantics = [start_ms, end_ms)
+end_source = stats_event | performance_event | timer_profile
 ordered_sequence_key = record_order
 coverage_ratio = covered_duration_ms / expected_duration_ms
 status = aligned | partial | failed | unavailable
 warnings[]
 ```
 
-所有 Analysis/Coach evidence range 使用 challenge-relative milliseconds；raw epoch 仅保留在本地 trace artifact。
+Raw Input status 以新增的 `captureClock` 字段暴露 session-start sidecar anchor；每次启用 capture 都重新建立 anchor。它只描述 Raw capture clock provenance，不改变 ACRI v1 record bytes，也不替代 Stats/Performance 提供的 challenge-relative anchor。所有 Analysis/Coach evidence range 使用 challenge-relative milliseconds；raw epoch/QPC 仅保留在本地 trace 或 validation bundle。
 
 ## 8. API 边界
 
