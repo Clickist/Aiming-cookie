@@ -17,6 +17,7 @@ use std::io::Write;
 #[cfg(windows)]
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -29,9 +30,14 @@ const MAX_SNAPSHOT_SPAN_MS: i64 = (DEFAULT_BUFFER_MINUTES * 60 * 1_000) as i64;
 const SUPPORTED_BUTTON_MASK: u32 = 0b111;
 const SNAPSHOT_MAX_DIRTY_INTERVAL: Duration = Duration::from_secs(30);
 const SNAPSHOT_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const SNAPSHOT_BARRIER_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(windows)]
 const CAPTURE_QUEUE_CAPACITY: usize = 16_384;
+#[cfg(windows)]
+const CONTROL_QUEUE_CAPACITY: usize = 1;
 const SNAPSHOT_IDLE_INTERVAL: Duration = Duration::from_secs(1);
+#[cfg(windows)]
+const RAW_INPUT_WM_QUIT: u32 = 0x0012;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MousePoint {
@@ -39,6 +45,99 @@ pub struct MousePoint {
     pub dx: i32,
     pub dy: i32,
     pub buttons: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotBarrierReceipt {
+    #[serde(rename = "coveredThroughEpochMs")]
+    pub covered_through_ms: i64,
+    #[serde(rename = "snapshotAtEpochMs")]
+    pub snapshot_at_ms: i64,
+    pub point_count: usize,
+    pub clock_source: &'static str,
+    pub timebase_version: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureClockAnchor {
+    pub utc_epoch_ms: i64,
+    pub monotonic_elapsed_ns: u128,
+    pub clock_source: &'static str,
+    pub timebase_version: &'static str,
+}
+
+fn clock_sample_to_utc_ms(anchor: &CaptureClockAnchor, sample_monotonic_ns: u128) -> i64 {
+    let delta_ns = if sample_monotonic_ns >= anchor.monotonic_elapsed_ns {
+        (sample_monotonic_ns - anchor.monotonic_elapsed_ns) as i128
+    } else {
+        -((anchor.monotonic_elapsed_ns - sample_monotonic_ns) as i128)
+    };
+    let delta_ms = delta_ns / 1_000_000;
+    (anchor.utc_epoch_ms as i128 + delta_ms).clamp(i64::MIN as i128, i64::MAX as i128) as i64
+}
+
+#[cfg(windows)]
+static QPC_FREQUENCY: OnceLock<i64> = OnceLock::new();
+
+#[cfg(windows)]
+fn qpc_ticks() -> Option<i64> {
+    use winapi::um::profileapi::QueryPerformanceCounter;
+    use winapi::um::winnt::LARGE_INTEGER;
+    let mut value: LARGE_INTEGER = unsafe { std::mem::zeroed() };
+    if unsafe { QueryPerformanceCounter(&mut value) } == 0 {
+        None
+    } else {
+        Some(unsafe { *value.QuadPart() })
+    }
+}
+
+#[cfg(windows)]
+fn qpc_frequency() -> Option<i64> {
+    use winapi::um::profileapi::QueryPerformanceFrequency;
+    use winapi::um::winnt::LARGE_INTEGER;
+    let value = QPC_FREQUENCY.get_or_init(|| {
+        let mut frequency: LARGE_INTEGER = unsafe { std::mem::zeroed() };
+        if unsafe { QueryPerformanceFrequency(&mut frequency) } == 0 {
+            0
+        } else {
+            unsafe { *frequency.QuadPart() }
+        }
+    });
+    (*value > 0).then_some(*value)
+}
+
+pub fn capture_clock_anchor() -> CaptureClockAnchor {
+    #[cfg(windows)]
+    if let (Some(ticks), Some(frequency)) = (qpc_ticks(), qpc_frequency()) {
+        return CaptureClockAnchor {
+            utc_epoch_ms: now_ms(),
+            monotonic_elapsed_ns: (ticks as u128).saturating_mul(1_000_000_000) / frequency as u128,
+            clock_source: "utc_epoch_ms+qpc",
+            timebase_version: "time_alignment.v2",
+        };
+    }
+
+    static MONOTONIC_ORIGIN: OnceLock<Instant> = OnceLock::new();
+    let origin = MONOTONIC_ORIGIN.get_or_init(Instant::now);
+    CaptureClockAnchor {
+        utc_epoch_ms: now_ms(),
+        monotonic_elapsed_ns: origin.elapsed().as_nanos(),
+        clock_source: "utc_epoch_ms+monotonic_fallback",
+        timebase_version: "time_alignment.v2",
+    }
+}
+
+fn capture_clock_now_ms(anchor: &CaptureClockAnchor) -> i64 {
+    #[cfg(windows)]
+    if anchor.clock_source == "utc_epoch_ms+qpc" {
+        if let (Some(ticks), Some(frequency)) = (qpc_ticks(), qpc_frequency()) {
+            let sample_ns = (ticks as u128).saturating_mul(1_000_000_000) / frequency as u128;
+            return clock_sample_to_utc_ms(anchor, sample_ns);
+        }
+    }
+    now_ms()
 }
 
 #[derive(Debug)]
@@ -267,6 +366,11 @@ pub struct RawInputStatus {
     pub snapshot_error_code: Option<String>,
     pub snapshot_error_at_ms: Option<i64>,
     pub snapshot_error: Option<String>,
+    pub timebase_version: &'static str,
+    pub clock_source: &'static str,
+    pub clock_anchor_utc_ms: i64,
+    pub clock_anchor_monotonic_ns: u128,
+    pub capture_clock: CaptureClockAnchor,
 }
 
 #[derive(Clone)]
@@ -301,6 +405,7 @@ struct CaptureDiagnostics {
     dropped_points: std::sync::atomic::AtomicU64,
     expired_points: std::sync::atomic::AtomicU64,
     snapshot: Mutex<SnapshotStatus>,
+    clock_anchor: CaptureClockAnchor,
 }
 
 impl CaptureDiagnostics {
@@ -312,12 +417,17 @@ impl CaptureDiagnostics {
             dropped_points: std::sync::atomic::AtomicU64::new(0),
             expired_points: std::sync::atomic::AtomicU64::new(0),
             snapshot: Mutex::new(SnapshotStatus::default()),
+            clock_anchor: capture_clock_anchor(),
         }
     }
 
     fn record_capture_started(&self) {
         self.capture_running
             .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    fn capture_timestamp_ms(&self) -> i64 {
+        capture_clock_now_ms(&self.clock_anchor)
     }
 
     fn record_capture_stopped(&self) {
@@ -364,6 +474,27 @@ impl CaptureDiagnostics {
             snapshot.snapshot_error_code = Some(code.to_string());
             snapshot.snapshot_error_at_ms = Some(now_ms());
             snapshot.snapshot_error = Some(error);
+        }
+    }
+
+    #[cfg(windows)]
+    fn record_runtime_failure(&self, failure: RawInputFailure) {
+        self.record_snapshot_failure(failure.code(), failure.code().to_string());
+    }
+
+    #[cfg(windows)]
+    fn clear_runtime_failure(&self) {
+        if let Ok(mut snapshot) = self.snapshot.lock() {
+            if matches!(
+                snapshot.snapshot_error_code.as_deref(),
+                Some("kovaak_process_probe_failed")
+                    | Some("raw_input_data_failed")
+                    | Some("raw_input_registration_failed")
+            ) {
+                snapshot.snapshot_error_code = None;
+                snapshot.snapshot_error_at_ms = None;
+                snapshot.snapshot_error = None;
+            }
         }
     }
 
@@ -451,12 +582,39 @@ impl RawInputState {
             snapshot_error_code: capture.snapshot_error_code,
             snapshot_error_at_ms: capture.snapshot_error_at_ms,
             snapshot_error: capture.snapshot_error,
+            timebase_version: inner.diagnostics.clock_anchor.timebase_version,
+            clock_source: inner.diagnostics.clock_anchor.clock_source,
+            clock_anchor_utc_ms: inner.diagnostics.clock_anchor.utc_epoch_ms,
+            clock_anchor_monotonic_ns: inner.diagnostics.clock_anchor.monotonic_elapsed_ns,
+            capture_clock: inner.diagnostics.clock_anchor,
         }
     }
 
     pub fn status(&self) -> RawInputStatus {
         let inner = self.inner.lock().expect("raw input state poisoned");
         Self::status_for(&inner)
+    }
+
+    pub fn flush_snapshot_barrier(&self) -> Result<SnapshotBarrierReceipt, String> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| "raw_snapshot_unavailable".to_string())?;
+        if !inner.enabled {
+            return Err("raw_snapshot_unavailable".to_string());
+        }
+        #[cfg(windows)]
+        {
+            inner
+                .backend
+                .as_ref()
+                .ok_or_else(|| "raw_snapshot_unavailable".to_string())?
+                .flush_snapshot_barrier()
+        }
+        #[cfg(not(windows))]
+        {
+            Err("raw_snapshot_unavailable".to_string())
+        }
     }
 
     pub fn set_enabled(&self, enabled: bool) -> Result<RawInputStatus, String> {
@@ -472,6 +630,8 @@ impl RawInputState {
         }
         #[cfg(windows)]
         if enabled {
+            // Establish the sidecar anchor at the beginning of each capture session.
+            inner.diagnostics = Arc::new(CaptureDiagnostics::new());
             inner.backend = Some(WindowsBackend::start(
                 inner.snapshot_path.clone(),
                 inner.diagnostics.clone(),
@@ -509,6 +669,80 @@ mod platform {
 enum CaptureMessage {
     Point(MousePoint),
     Flush,
+    Barrier {
+        covered_through_ms: i64,
+        ack: std::sync::mpsc::SyncSender<Result<SnapshotBarrierReceipt, String>>,
+    },
+}
+
+#[cfg(windows)]
+enum RawControlRequest {
+    FlushSnapshot {
+        ack: std::sync::mpsc::SyncSender<Result<SnapshotBarrierReceipt, String>>,
+    },
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RawInputFailure {
+    ProcessProbe,
+    DataRead,
+    Registration,
+}
+
+#[cfg(windows)]
+impl RawInputFailure {
+    fn code(self) -> &'static str {
+        match self {
+            Self::ProcessProbe => "kovaak_process_probe_failed",
+            Self::DataRead => "raw_input_data_failed",
+            Self::Registration => "raw_input_registration_failed",
+        }
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SnapshotBarrierError {
+    Busy,
+    Disconnected,
+}
+
+#[cfg(windows)]
+fn try_send_snapshot_barrier(
+    sender: &std::sync::mpsc::SyncSender<CaptureMessage>,
+    covered_through_ms: i64,
+    ack: std::sync::mpsc::SyncSender<Result<SnapshotBarrierReceipt, String>>,
+) -> Result<(), SnapshotBarrierError> {
+    let message = CaptureMessage::Barrier {
+        covered_through_ms,
+        ack,
+    };
+    match sender.try_send(message) {
+        Ok(()) => Ok(()),
+        Err(std::sync::mpsc::TrySendError::Full(CaptureMessage::Barrier { ack, .. })) => {
+            let _ = ack.send(Err("raw_snapshot_busy".to_string()));
+            Err(SnapshotBarrierError::Busy)
+        }
+        Err(std::sync::mpsc::TrySendError::Disconnected(CaptureMessage::Barrier {
+            ack, ..
+        })) => {
+            let _ = ack.send(Err("raw_snapshot_unavailable".to_string()));
+            Err(SnapshotBarrierError::Disconnected)
+        }
+        Err(_) => unreachable!("try_send returns the original barrier message"),
+    }
+}
+
+#[cfg(windows)]
+fn enqueue_snapshot_barrier(
+    sender: &std::sync::mpsc::SyncSender<CaptureMessage>,
+    covered_through_ms: i64,
+) -> Result<std::sync::mpsc::Receiver<Result<SnapshotBarrierReceipt, String>>, SnapshotBarrierError>
+{
+    let (ack, receiver) = std::sync::mpsc::sync_channel(1);
+    try_send_snapshot_barrier(sender, covered_through_ms, ack)?;
+    Ok(receiver)
 }
 
 struct SnapshotCadence {
@@ -555,6 +789,7 @@ impl SnapshotCadence {
 #[cfg(windows)]
 struct WindowsBackend {
     stop: Arc<std::sync::atomic::AtomicBool>,
+    control: std::sync::mpsc::SyncSender<RawControlRequest>,
     capture_join: Option<std::thread::JoinHandle<()>>,
     snapshot_join: Option<std::thread::JoinHandle<()>>,
 }
@@ -568,6 +803,7 @@ impl WindowsBackend {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
         let (points_tx, points_rx) = sync_channel(CAPTURE_QUEUE_CAPACITY);
+        let (control_tx, control_rx) = sync_channel(CONTROL_QUEUE_CAPACITY);
         let snapshot_diagnostics = diagnostics.clone();
         let snapshot_join = std::thread::Builder::new()
             .name("aiming-cookie-raw-input-snapshot".to_string())
@@ -577,7 +813,7 @@ impl WindowsBackend {
         let capture_join = match std::thread::Builder::new()
             .name("aiming-cookie-raw-input".to_string())
             .spawn(move || unsafe {
-                raw_input_thread(thread_stop, points_tx, diagnostics, ready_tx)
+                raw_input_thread(thread_stop, points_tx, control_rx, diagnostics, ready_tx)
             }) {
             Ok(join) => join,
             Err(error) => {
@@ -588,6 +824,7 @@ impl WindowsBackend {
         match ready_rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(())) => Ok(Self {
                 stop,
+                control: control_tx,
                 capture_join: Some(capture_join),
                 snapshot_join: Some(snapshot_join),
             }),
@@ -601,6 +838,31 @@ impl WindowsBackend {
                 let _ = capture_join.join();
                 let _ = snapshot_join.join();
                 Err("Raw Input startup timed out".to_string())
+            }
+        }
+    }
+
+    fn flush_snapshot_barrier(&self) -> Result<SnapshotBarrierReceipt, String> {
+        let (ack, receiver) = std::sync::mpsc::sync_channel(1);
+        match self
+            .control
+            .try_send(RawControlRequest::FlushSnapshot { ack })
+        {
+            Ok(()) => {}
+            Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                return Err("raw_snapshot_busy".to_string());
+            }
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                return Err("raw_snapshot_unavailable".to_string());
+            }
+        }
+        match receiver.recv_timeout(SNAPSHOT_BARRIER_TIMEOUT) {
+            Ok(result) => result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                Err("raw_snapshot_timed_out".to_string())
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err("raw_snapshot_unavailable".to_string())
             }
         }
     }
@@ -681,9 +943,29 @@ fn snapshot_worker(
                     diagnostics.record_buffered_points(ring.len());
                 }
                 if expired > 0 || cadence.should_flush(now, true) {
-                    let succeeded = write_worker_snapshot(&snapshot_path, &ring, &diagnostics);
+                    let succeeded =
+                        write_worker_snapshot(&snapshot_path, &ring, &diagnostics).is_ok();
                     cadence.record_attempt(now, succeeded);
                 }
+            }
+            Ok(CaptureMessage::Barrier {
+                covered_through_ms,
+                ack,
+            }) => {
+                let now = Instant::now();
+                let result =
+                    write_worker_snapshot(&snapshot_path, &ring, &diagnostics).map(|snapshot| {
+                        SnapshotBarrierReceipt {
+                            covered_through_ms,
+                            snapshot_at_ms: snapshot.snapshot_at_ms,
+                            point_count: snapshot.point_count,
+                            clock_source: diagnostics.clock_anchor.clock_source,
+                            timebase_version: diagnostics.clock_anchor.timebase_version,
+                        }
+                    });
+                let succeeded = result.is_ok();
+                let _ = ack.send(result);
+                cadence.record_attempt(now, succeeded);
             }
             Err(RecvTimeoutError::Timeout) => {
                 let now = Instant::now();
@@ -693,7 +975,8 @@ fn snapshot_worker(
                     diagnostics.record_buffered_points(ring.len());
                 }
                 if expired > 0 || cadence.should_flush(now, false) {
-                    let succeeded = write_worker_snapshot(&snapshot_path, &ring, &diagnostics);
+                    let succeeded =
+                        write_worker_snapshot(&snapshot_path, &ring, &diagnostics).is_ok();
                     cadence.record_attempt(now, succeeded);
                 }
             }
@@ -705,7 +988,8 @@ fn snapshot_worker(
                     diagnostics.record_buffered_points(ring.len());
                 }
                 if expired > 0 || cadence.should_flush(now, true) {
-                    let succeeded = write_worker_snapshot(&snapshot_path, &ring, &diagnostics);
+                    let succeeded =
+                        write_worker_snapshot(&snapshot_path, &ring, &diagnostics).is_ok();
                     cadence.record_attempt(now, succeeded);
                 }
                 break;
@@ -713,10 +997,15 @@ fn snapshot_worker(
         }
         let now = Instant::now();
         if cadence.should_flush(now, false) {
-            let succeeded = write_worker_snapshot(&snapshot_path, &ring, &diagnostics);
+            let succeeded = write_worker_snapshot(&snapshot_path, &ring, &diagnostics).is_ok();
             cadence.record_attempt(now, succeeded);
         }
     }
+}
+
+struct SnapshotWriteReceipt {
+    snapshot_at_ms: i64,
+    point_count: usize,
 }
 
 #[cfg(windows)]
@@ -724,19 +1013,23 @@ fn write_worker_snapshot(
     snapshot_path: &Path,
     ring: &RingBuffer,
     diagnostics: &CaptureDiagnostics,
-) -> bool {
+) -> Result<SnapshotWriteReceipt, String> {
     let points = ring.snapshot();
     match write_snapshot_atomic(snapshot_path, &points) {
         Ok(()) => {
-            diagnostics.record_snapshot_success(now_ms(), points.len());
-            true
+            let snapshot_at_ms = diagnostics.capture_timestamp_ms();
+            diagnostics.record_snapshot_success(snapshot_at_ms, points.len());
+            Ok(SnapshotWriteReceipt {
+                snapshot_at_ms,
+                point_count: points.len(),
+            })
         }
         Err(error) => {
             diagnostics.record_snapshot_failure(
                 "trace_snapshot_failed",
                 format!("failed to write raw input snapshot: {error}"),
             );
-            false
+            Err("raw_snapshot_failed".to_string())
         }
     }
 }
@@ -762,6 +1055,7 @@ fn now_ms() -> i64 {
 unsafe fn raw_input_thread(
     stop: Arc<std::sync::atomic::AtomicBool>,
     points: std::sync::mpsc::SyncSender<CaptureMessage>,
+    control: std::sync::mpsc::Receiver<RawControlRequest>,
     diagnostics: Arc<CaptureDiagnostics>,
     ready: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) {
@@ -779,6 +1073,7 @@ unsafe fn raw_input_thread(
         points: std::sync::mpsc::SyncSender<CaptureMessage>,
         diagnostics: Arc<CaptureDiagnostics>,
         process_running: bool,
+        process_probe_failed: bool,
         buttons: u32,
     }
 
@@ -794,12 +1089,14 @@ unsafe fn raw_input_thread(
             let state = STATE.load(Ordering::Acquire) as *mut ThreadState;
             if !state.is_null() && (*state).process_running {
                 let state = &mut *state;
-                capture_raw_mouse(
+                if let Err(error) = capture_raw_mouse(
                     lparam,
                     &state.points,
                     &state.diagnostics,
                     &mut state.buttons,
-                );
+                ) {
+                    state.diagnostics.record_runtime_failure(error);
+                }
             }
         }
         DefWindowProcW(hwnd, message, wparam, lparam)
@@ -857,7 +1154,8 @@ unsafe fn raw_input_thread(
     if RegisterRawInputDevices(&device, 1, size_of::<RAWINPUTDEVICE>() as UINT) == 0 {
         DestroyWindow(hwnd);
         UnregisterClassW(class_name.as_ptr(), instance);
-        let _ = ready.send(Err("RegisterRawInputDevices failed".to_string()));
+        diagnostics.record_runtime_failure(RawInputFailure::Registration);
+        let _ = ready.send(Err(RawInputFailure::Registration.code().to_string()));
         return;
     }
 
@@ -865,6 +1163,7 @@ unsafe fn raw_input_thread(
         points,
         diagnostics,
         process_running: false,
+        process_probe_failed: false,
         buttons: 0,
     });
     STATE.store(
@@ -876,25 +1175,53 @@ unsafe fn raw_input_thread(
     let mut message: MSG = zeroed();
     let mut last_process_check = Instant::now();
     while !stop.load(Ordering::Acquire) {
+        let pending_barrier = match control.try_recv() {
+            Ok(RawControlRequest::FlushSnapshot { ack }) => {
+                Some((thread_state.diagnostics.capture_timestamp_ms(), ack))
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty)
+            | Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+        };
         while PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) != 0 {
-            if message.message == WM_QUIT {
+            if should_stop_for_message(message.message) {
+                stop.store(true, Ordering::Release);
                 break;
             }
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+        if let Some((covered_through_ms, ack)) = pending_barrier {
+            let _ = try_send_snapshot_barrier(&thread_state.points, covered_through_ms, ack);
+        }
         if last_process_check.elapsed() >= Duration::from_millis(500) {
             let was_running = thread_state.process_running;
-            thread_state.process_running = is_kovaak_process_running();
-            thread_state
-                .diagnostics
-                .record_kovaak_process_present(thread_state.process_running);
+            let process_probe = is_kovaak_process_running();
             last_process_check = Instant::now();
-            if !thread_state.process_running {
-                thread_state.buttons = 0;
-            }
-            if was_running && !thread_state.process_running {
-                let _ = thread_state.points.send(CaptureMessage::Flush);
+            match process_probe {
+                Ok(process_running) => {
+                    thread_state.process_running = process_running;
+                    thread_state.process_probe_failed = false;
+                    thread_state.diagnostics.clear_runtime_failure();
+                    thread_state
+                        .diagnostics
+                        .record_kovaak_process_present(process_running);
+                    if !process_running {
+                        thread_state.buttons = 0;
+                    }
+                    if was_running && !process_running {
+                        let _ = thread_state.points.send(CaptureMessage::Flush);
+                    }
+                }
+                Err(error) => {
+                    thread_state.process_running = false;
+                    thread_state
+                        .diagnostics
+                        .record_kovaak_process_present(false);
+                    if !thread_state.process_probe_failed {
+                        thread_state.diagnostics.record_runtime_failure(error);
+                        thread_state.process_probe_failed = true;
+                    }
+                }
             }
         }
         thread::sleep(std::time::Duration::from_millis(5));
@@ -920,7 +1247,7 @@ unsafe fn capture_raw_mouse(
     points: &std::sync::mpsc::SyncSender<CaptureMessage>,
     diagnostics: &CaptureDiagnostics,
     buttons: &mut u32,
-) {
+) -> Result<(), RawInputFailure> {
     use std::mem::size_of;
     use std::ptr::null_mut;
     use winapi::shared::minwindef::UINT;
@@ -939,9 +1266,11 @@ unsafe fn capture_raw_mouse(
         &mut size,
         size_of::<RAWINPUTHEADER>() as UINT,
     ) == u32::MAX
-        || size == 0
     {
-        return;
+        return Err(RawInputFailure::DataRead);
+    }
+    if size == 0 {
+        return Ok(());
     }
     let mut bytes = vec![0u8; size as usize];
     if GetRawInputData(
@@ -952,11 +1281,12 @@ unsafe fn capture_raw_mouse(
         size_of::<RAWINPUTHEADER>() as UINT,
     ) == u32::MAX
     {
-        return;
+        return Err(RawInputFailure::DataRead);
     }
+    diagnostics.clear_runtime_failure();
     let header = &*(bytes.as_ptr() as *const RAWINPUTHEADER);
     if header.dwType != RIM_TYPEMOUSE {
-        return;
+        return Ok(());
     }
     let mouse = bytes.as_ptr().add(size_of::<RAWINPUTHEADER>());
     let flags = std::ptr::read_unaligned(mouse.add(4) as *const u16);
@@ -981,7 +1311,7 @@ unsafe fn capture_raw_mouse(
     let dx = std::ptr::read_unaligned(mouse.add(12) as *const i32);
     let dy = std::ptr::read_unaligned(mouse.add(16) as *const i32);
     match points.try_send(CaptureMessage::Point(MousePoint {
-        timestamp_ms: now_ms(),
+        timestamp_ms: diagnostics.capture_timestamp_ms(),
         dx,
         dy,
         buttons: *buttons,
@@ -990,10 +1320,16 @@ unsafe fn capture_raw_mouse(
         Err(std::sync::mpsc::TrySendError::Full(_))
         | Err(std::sync::mpsc::TrySendError::Disconnected(_)) => diagnostics.record_drop(),
     }
+    Ok(())
 }
 
 #[cfg(windows)]
-fn is_kovaak_process_running() -> bool {
+fn should_stop_for_message(message: u32) -> bool {
+    message == RAW_INPUT_WM_QUIT
+}
+
+#[cfg(windows)]
+fn is_kovaak_process_running() -> Result<bool, RawInputFailure> {
     use std::mem::{size_of, zeroed};
     use winapi::shared::minwindef::MAX_PATH;
     use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
@@ -1005,7 +1341,7 @@ fn is_kovaak_process_running() -> bool {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
-            return false;
+            return Err(RawInputFailure::ProcessProbe);
         }
         let mut entry: PROCESSENTRY32W = zeroed();
         entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
@@ -1030,7 +1366,7 @@ fn is_kovaak_process_running() -> bool {
             }
         }
         CloseHandle(snapshot);
-        found
+        Ok(found)
     }
 }
 
@@ -1085,6 +1421,97 @@ mod tests {
         let stopped = diagnostics.status();
         assert!(!stopped.kovaak_process_present);
         assert!(!stopped.capture_healthy);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn win32_failures_are_typed_without_becoming_kovaak_absence() {
+        assert_eq!(
+            RawInputFailure::ProcessProbe.code(),
+            "kovaak_process_probe_failed"
+        );
+        assert_eq!(RawInputFailure::DataRead.code(), "raw_input_data_failed");
+        assert_eq!(
+            RawInputFailure::Registration.code(),
+            "raw_input_registration_failed"
+        );
+
+        let diagnostics = CaptureDiagnostics::new();
+        diagnostics.record_capture_started();
+        diagnostics.record_kovaak_process_present(true);
+        diagnostics.record_runtime_failure(RawInputFailure::ProcessProbe);
+        let failed = diagnostics.status();
+        assert!(failed.kovaak_process_present);
+        assert!(!failed.capture_healthy);
+        assert_eq!(
+            failed.snapshot_error_code.as_deref(),
+            Some("kovaak_process_probe_failed")
+        );
+
+        diagnostics.clear_runtime_failure();
+        assert!(diagnostics.status().capture_healthy);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wm_quit_stops_raw_thread_and_allows_registration_cleanup() {
+        assert!(should_stop_for_message(RAW_INPUT_WM_QUIT));
+        assert!(!should_stop_for_message(0));
+    }
+
+    #[test]
+    fn capture_clock_mapping_preserves_epoch_delta_without_changing_acri_shape() {
+        let anchor = CaptureClockAnchor {
+            utc_epoch_ms: 10_000,
+            monotonic_elapsed_ns: 5_000_000_000,
+            clock_source: "test",
+            timebase_version: "time_alignment.v2",
+        };
+        assert_eq!(clock_sample_to_utc_ms(&anchor, 5_125_000_000), 10_125);
+        assert_eq!(clock_sample_to_utc_ms(&anchor, 4_875_000_000), 9_875);
+    }
+
+    #[test]
+    fn capture_clock_mapping_clamps_epoch_overflow() {
+        let anchor = CaptureClockAnchor {
+            utc_epoch_ms: i64::MAX,
+            monotonic_elapsed_ns: 0,
+            clock_source: "test",
+            timebase_version: "time_alignment.v2",
+        };
+        assert_eq!(clock_sample_to_utc_ms(&anchor, u128::MAX), i64::MAX);
+    }
+
+    #[test]
+    fn raw_status_exposes_versioned_capture_clock_provenance() {
+        let state = RawInputState::new(PathBuf::from("raw-input-clock-status.bin"));
+        let status = state.status();
+        assert_eq!(status.timebase_version, "time_alignment.v2");
+        assert!(status.clock_source.starts_with("utc_epoch_ms+"));
+        assert!(status.clock_anchor_utc_ms > 0);
+        assert_eq!(
+            status.capture_clock.utc_epoch_ms,
+            status.clock_anchor_utc_ms
+        );
+        assert_eq!(
+            status.capture_clock.monotonic_elapsed_ns,
+            status.clock_anchor_monotonic_ns
+        );
+    }
+
+    #[test]
+    fn capture_clock_serializes_as_explicit_sidecar_metadata() {
+        let anchor = CaptureClockAnchor {
+            utc_epoch_ms: 10_000,
+            monotonic_elapsed_ns: 5_000_000_000,
+            clock_source: "utc_epoch_ms+qpc",
+            timebase_version: "time_alignment.v2",
+        };
+        let serialized = serde_json::to_value(anchor).unwrap();
+        assert_eq!(serialized["utcEpochMs"], 10_000);
+        assert_eq!(serialized["monotonicElapsedNs"], 5_000_000_000u64);
+        assert_eq!(serialized["clockSource"], "utc_epoch_ms+qpc");
+        assert_eq!(serialized["timebaseVersion"], "time_alignment.v2");
     }
 
     #[test]
@@ -1301,6 +1728,159 @@ mod tests {
 
         cadence.record_attempt(start + Duration::from_secs(1), true);
         assert!(!cadence.should_flush(start + Duration::from_secs(60), true));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_worker_barrier_publishes_a_clean_ring_before_acknowledging_coverage() {
+        use std::sync::mpsc::sync_channel;
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!(
+            "aiming-cookie-raw-barrier-clean-{}-{}.bin",
+            std::process::id(),
+            now_ms()
+        ));
+        let diagnostics = Arc::new(CaptureDiagnostics::new());
+        let (sender, receiver) = sync_channel(2);
+        let worker_diagnostics = Arc::clone(&diagnostics);
+        let worker_path = path.clone();
+        let worker = thread::spawn(move || {
+            snapshot_worker(worker_path, receiver, worker_diagnostics);
+        });
+        let (ack_sender, ack_receiver) = sync_channel(1);
+        let covered_through_ms = now_ms() - 1;
+
+        sender
+            .send(CaptureMessage::Barrier {
+                covered_through_ms,
+                ack: ack_sender,
+            })
+            .expect("queue barrier");
+        let receipt = ack_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("barrier ack after atomic snapshot publish")
+            .expect("barrier snapshot succeeds");
+
+        assert_eq!(receipt.covered_through_ms, covered_through_ms);
+        assert!(receipt.snapshot_at_ms >= covered_through_ms);
+        assert_eq!(receipt.point_count, 0);
+        assert!(path.is_file());
+        assert!(decode_snapshot(&fs::read(&path).unwrap())
+            .unwrap()
+            .is_empty());
+
+        drop(sender);
+        worker.join().expect("snapshot worker exits");
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_worker_barrier_observes_preceding_points_in_channel_fifo_order() {
+        use std::sync::mpsc::sync_channel;
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!(
+            "aiming-cookie-raw-barrier-fifo-{}-{}.bin",
+            std::process::id(),
+            now_ms()
+        ));
+        let diagnostics = Arc::new(CaptureDiagnostics::new());
+        let (sender, receiver) = sync_channel(3);
+        let worker_diagnostics = Arc::clone(&diagnostics);
+        let worker_path = path.clone();
+        let worker = thread::spawn(move || {
+            snapshot_worker(worker_path, receiver, worker_diagnostics);
+        });
+        let covered_through_ms = now_ms() - 1;
+        let point = MousePoint {
+            timestamp_ms: covered_through_ms - 1,
+            dx: 7,
+            dy: -3,
+            buttons: 1,
+        };
+        let (ack_sender, ack_receiver) = sync_channel(1);
+
+        sender
+            .send(CaptureMessage::Point(point))
+            .expect("queue point");
+        sender
+            .send(CaptureMessage::Barrier {
+                covered_through_ms,
+                ack: ack_sender,
+            })
+            .expect("queue barrier after point");
+        let receipt = ack_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("barrier ack")
+            .expect("barrier snapshot succeeds");
+
+        assert_eq!(receipt.point_count, 1);
+        assert_eq!(decode_snapshot(&fs::read(&path).unwrap()).unwrap(), [point]);
+
+        drop(sender);
+        worker.join().expect("snapshot worker exits");
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn enqueue_snapshot_barrier_is_nonblocking_when_busy_or_disconnected() {
+        use std::sync::mpsc::sync_channel;
+
+        let (busy_sender, busy_receiver) = sync_channel(1);
+        busy_sender.send(CaptureMessage::Flush).expect("fill queue");
+        assert!(matches!(
+            enqueue_snapshot_barrier(&busy_sender, 1_000),
+            Err(SnapshotBarrierError::Busy)
+        ));
+        drop(busy_receiver);
+        assert!(matches!(
+            enqueue_snapshot_barrier(&busy_sender, 1_000),
+            Err(SnapshotBarrierError::Disconnected)
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires a live KovaaK process"]
+    fn live_kovaak_raw_snapshot_barrier_smoke() {
+        let path = std::env::temp_dir().join(format!(
+            "aiming-cookie-live-raw-barrier-{}-{}.bin",
+            std::process::id(),
+            now_ms()
+        ));
+        let state = RawInputState::new(path.clone());
+        state.set_enabled(true).expect("start live Raw Input");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = state.status();
+            if status.kovaak_process_present && status.capture_healthy {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "live KovaaK process was not observed"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let receipt = state
+            .flush_snapshot_barrier()
+            .expect("publish live Raw snapshot barrier");
+        let points = decode_snapshot(&fs::read(&path).expect("read published snapshot"))
+            .expect("decode published ACRI v1 snapshot");
+
+        assert!(receipt.covered_through_ms > 0);
+        assert!(receipt.snapshot_at_ms >= receipt.covered_through_ms);
+        assert_eq!(receipt.point_count, points.len());
+        assert_eq!(receipt.clock_source, "utc_epoch_ms+qpc");
+        assert_eq!(receipt.timebase_version, "time_alignment.v2");
+
+        state.shutdown();
+        let _ = fs::remove_file(path);
     }
 
     #[cfg(windows)]
