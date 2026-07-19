@@ -14,7 +14,7 @@
 > - [`../../../DESIGN-cursor.md`](../../../DESIGN-cursor.md)
 > - [`../../design-system.md`](../../design-system.md)
 > - 已列为 active 的 [`../specs/2026-07-13-frontend-product-reconstruction-design.md`](../specs/2026-07-13-frontend-product-reconstruction-design.md)
-> - 已有能力合同：[`../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md`](../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md)、[`../specs/2026-07-13-analysis-evidence-coach-context-design.md`](../specs/2026-07-13-analysis-evidence-coach-context-design.md)
+> - 已有能力合同：[`../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md`](../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md)、[`../specs/2026-07-13-analysis-evidence-coach-context-design.md`](../specs/2026-07-13-analysis-evidence-coach-context-design.md)、[`../specs/2026-07-17-automatic-run-capture-design.md`](../specs/2026-07-17-automatic-run-capture-design.md)
 >
 > Frontend reconstruction spec 与本计划均已 active；Task 1 已完成，Task 2–7 当前未授权。
 
@@ -34,6 +34,7 @@ Run → Evidence → Analysis → Training → Retest
 - Desktop-first App shell，而非网站式导航；
 - 无账号条件启动、Provider-first onboarding、新建分析、任务中心、History、Analysis workspace、Settings；
 - input-native、multimodal、video-fallback 三种模式的诚实可见表达；
+- 自动采集状态、单局确认、多局选一条、待分析 Run、独立手动 fallback 与分类存储占用；
 - Evidence availability、coverage、alignment、limitations 和 stable reference 的用户可理解呈现；
 - 左侧主工作区 + 右侧可收起、可调宽度的 Coach 关系层；
 - Browser 与 Desktop 的能力差异表达，而不是两套视觉产品；
@@ -47,6 +48,7 @@ Run → Evidence → Analysis → Training → Retest
 - 修改 PRD 的产品范围、付费关系或产品定位；
 - 重定义 Architecture 的数据归属、安全边界、API 合同或后端生命周期；
 - 实现或修复 input-native 的科学算法、Raw Input codec、Run ingestion、worker queue 或 AnalysisResult schema；
+- 实现 Capture Coordinator、窗口录制、Run Finalizer、存储删除事务或其它尚无 active implementation Task 的后端能力；
 - 定义新的在线 Benchmark provider、leaderboard、远端 trace sync 或 Provider credential/auth 后端语义；
 - 恢复旧 Report、旧固定 Coach 页面、旧 StorageSettings、旧 ThemeController 或旧 Plotly 页面结构；
 - 复制、移植或重绘 RefleK 的 UI、组件、CSS、资源或大段实现；
@@ -72,7 +74,7 @@ Run → Evidence → Analysis → Training → Retest
 6. **Input-native 在正式 UI 中标为 Preview / Experimental。** 在 flick segmentation、核心 fair metrics、high polling-rate 和 Windows 实机 Gate 未通过前，不得把它表达成已取代视频诊断的完整正式能力。
 7. **Multimodal 视觉失败保留 native 结果。** native deterministic result 单独成立；视觉校验失败显示为 visual validation unavailable / alignment failed，并提供重试或重新选择 MP4，不把整个 Analysis 伪装成失败。
 8. **Benchmark 不进入 v1 核心 UI。** 后端记录、存储和 API 可保留；第一版正式前端不放默认 History 主流程、不进入默认 Coach context、不做 leaderboard 或在线 provider。
-9. **Run、Analysis、trace、用户源文件的删除语义分离。** 删除 Analysis 不删除 Run、Raw Input trace、Stats/Performance 用户源文件；Analysis-owned managed artifacts 按其合同处理；Coach 消息保留但引用变为 unavailable/deleted。任何未在 lifecycle spec 冻结的删除按钮都不得实现。
+9. **Run、Analysis、Run-owned evidence、用户源文件的删除语义分离。** 删除 Analysis 不删除 Run、Raw Input trace、自动 MP4 或 Stats/Performance 用户源文件；Storage 只可按 automatic capture spec 分别管理 Run-owned evidence 和未完成采集数据；Analysis-owned managed artifacts 按其合同处理；Coach 消息保留但引用变为 unavailable/deleted。精确删除事务未由 implementation Task 冻结前不得实现。
 10. **Browser 与 Desktop 共享产品 IA 和视觉语言。** 能力可用性、文件选择和 managed video 形态可以不同，但不得维护两套产品界面。
 11. **所有页面失败必须可解释。** 请求失败不得转换成空列表；未知状态不得默认成 available；颜色不得作为唯一状态表达。
 12. **无产品账号。** 正式前端不得创建 `/login`、`/register`、Account 菜单、session/JWT、entitlement 或鉴权服务器依赖；Provider 可以无需认证；如需认证，只属于对应 Provider。
@@ -248,7 +250,7 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### 目的
 
-实现无账号首次启动、最小 Provider onboarding、正式应用壳、新建分析和全局任务中心，首先建立 Coach 激活与三种 input mode 的用户可达流程。
+实现无账号首次启动、最小 Provider onboarding、正式应用壳、新建分析和全局任务中心，首先建立 Coach 激活、自动采集后的 Run 选择与三种 input mode 的用户可达流程。
 
 ### Allowed files
 
@@ -269,15 +271,17 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 ### Tests first
 
 - `/` 条件启动：onboarding 未完成进入 `/onboarding`；完成后无 Run/Analysis 进入 `/analyze`；已有 Run/Analysis 进入 `/history`；状态读取失败显示 service unavailable；
-- `/onboarding` 说明 Aiming Cookie 开源免费、第三方 Provider 可能收费、连接后的 Coach 能力、无 Provider 可用的本地能力和默认数据边界；
+- `/onboarding` 说明 Aiming Cookie 开源免费、第三方 Provider 可能收费、连接后的 Coach 能力、无 Provider 可用的本地能力和默认数据边界；跳过只作为底部次级文字，hover/focus 明确跳过后没有任何 Coach 功能；
 - onboarding 覆盖已批准的无认证直连/API key/OAuth-device-code/local/custom Provider、model 选择、connection test、ready、取消、失败恢复、稍后继续和明确跳过；secret 永不进入聊天或前端持久化；
-- 跳过 Provider 后本地 Analysis/History 可达，Coach 显示可恢复的激活入口；
+- 跳过 Provider 后本地指标、确定性诊断、规则化提示与 History 可达；Coach 只显示可恢复的激活入口，不提供对话、解释、长期档案、训练计划或产品命令；
 - App shell 无 Account 菜单，提供 Settings 明确入口；语义 landmarks、静态 Logo、键盘顺序、skip link、focus 和响应式三档；
 - Browser/Desktop 能力差异：Run discovery、file picker、managed video、Raw Input 和 launch-token 状态不被伪造；
+- Desktop New Analysis 覆盖自动采集未启用/待命/采集中/整理中/完成/失败；只有一条可分析 Run 时默认选中并等待确认，两条及以上时必须选择一条；
+- 未选择 Run 保持 pending_analysis，不进入 Tasks、不合并、不自动删除；
 - input-native：Stats + Performance + attached Raw Input + 对齐条件满足时可选；缺失时解释原因，并显示 Preview/Experimental；
 - multimodal：native evidence 完整且 MP4 可用时可选；视觉分析失败不抹掉 native 结果；
-- video-fallback：MP4 + Stats CSV 可达，不要求 Raw Input，不伪造 native provenance；
-- Start 按钮只按 contract/返回状态启用，不由前端猜测 evidence；
+- video-fallback：在独立手动 fallback 界面同时选择 MP4 + 对应 Stats CSV，不要求 Raw Input，不凭 MP4 猜测 CSV，不伪造 native provenance；
+- Start 按钮只在已选中一条 Run 且满足 `Stats AND (MP4 OR (Raw + Performance))` 时按 contract/返回状态启用，不由前端猜测 evidence；
 - `/tasks` 覆盖 importing、queued、running、done、failed、retryable、restarting、offline；失败不能变成空列表；
 - 可离开页面后在任务中心找回，并能进入结果或重试；运行中不可删除；
 - Browser/Desktop 共享 IA 与视觉结构，差异仅在能力状态和输入方式。
@@ -291,14 +295,16 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 - native 视觉提示必须诚实标为 Preview/Experimental；
 - multimodal 视觉失败保留 native 分析；
 - video fallback 是正式可达的基础路径；
+- multimodal 只用 Raw 计算输入运动学，MP4 只用于回放、视觉定位与 Coach 直观讲解；
 - 不恢复旧上传页或旧 Processing/Report 页面，以新工作区合同重新表达相同产品能力。
 
 ### Stop rule
 
 - route table、Provider onboarding、mode matrix 与 evidence state matrix 未在 active spec 冻结；
-- Coach productization Provider Task 3/4 的 capability API、secure credential store 或 auth flow 未完成，导致 onboarding 只能伪造成功或保存 secret；
+- Coach productization Provider Task 3/4 的 capability API、app-owned credential persistence、redaction 或 auth flow 未完成，导致 onboarding 只能伪造成功或由前端保存 secret；
 - 任一模式需要前端猜测 source、owner、alignment、availability 或 provenance；
 - backend/lib contract 与 UI 需要的状态不一致；
+- Capture Coordinator / Run Finalizer / pending Run readiness capability 尚未实现或没有稳定接口，导致自动采集状态、单局/多局选择或 Run-owned MP4 只能由前端伪造；
 - `/tasks` 需要新增未批准的 queue/retry/delete 语义；
 - Desktop 与 Browser 只能通过两套不一致的视觉结构实现；
 - 无法保留 MP4 + Stats fallback。
@@ -307,7 +313,7 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### 目的
 
-实现轻列表 + lazy details 的 History，清晰区分 Run、Evidence、Analysis 和长期趋势；不把所有详情和 Coach 堆回单页。
+实现“待分析训练 → 其它 Run → Analysis”的轻列表 + lazy details History，清晰区分 Run、Evidence、Analysis 和长期趋势；不把所有详情和 Coach 堆回单页。
 
 ### Allowed files
 
@@ -324,10 +330,11 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 ### Tests first
 
 - Run 与 Analysis 轻列表首屏不加载完整 events/trace，details lazy load；
+- History 顶部显示满足 readiness 且尚未创建 Analysis 的 pending Run；单条确认、多条选一条，未选择项不进入 Tasks；
 - History 显示 scenario identity、时间、input mode、evidence summary、quality 和状态；
 - source unavailable、partial、unsupported、offline、permission denied、deleted reference 可区分；
 - API refresh 失败不变成“没有记录”；原有数据可以保留并显示 refreshing/unavailable；
-- Run 操作覆盖添加 MP4、开始分析、查看来源、查看已有 Analysis；按钮状态由 evidence contract 驱动；
+- Run 操作覆盖开始分析、查看来源、进入 Storage 管理 Run-owned evidence、查看已有 Analysis；手动补充 MP4 只在已冻结的 fallback/修复路径出现，按钮状态由 evidence contract 驱动；
 - Analysis 记录进入 `/analysis/:analysisId`，而不是在 History 内混合完整视频、图表、Coach；
 - History 趋势只比较满足 scenario、mode、metric、unit、calibration、quality 的记录；不足或不可比时不制造趋势；
 - 不展示绝对路径、raw trace、secret、token 或未授权 provider 信息。
@@ -339,6 +346,7 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 - Benchmark 第一版不进入核心 History UI；
 - native-only 明确没有视觉回放，不显示伪造的视频结论；
 - History 保持轻列表 + lazy details。
+- pending Run 与 queued Analysis 不得混用同一状态或列表语义。
 
 ### Stop rule
 
@@ -397,7 +405,7 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### 目的
 
-实现应用级 Coach 侧栏和完整 Settings，使 Coach 作为长期关系与产品操作层工作，同时接续 Task 3 的最小 onboarding，提供多 Provider/model/auth、主题、Raw Input、Profile、Storage 的诚实状态管理。
+实现应用级 Coach 侧栏和完整 Settings，使 Coach 作为长期关系与产品操作层工作，同时接续 Task 3 的最小 onboarding，提供多 Provider/model/auth、主题、自动采集、Raw Input、Profile、Storage 的诚实状态管理。
 
 ### Allowed files
 
@@ -416,9 +424,10 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 - Coach 跨页面保留会话、草稿、展开状态和当前 Analysis context；切换/移除 context 有明确反馈；
 - 发送前可移除 context；默认不发送 raw trace、绝对路径、原始 payload、secret、token 或未验证 heuristic sentinel；
 - Analysis 删除后消息保留，引用显示 unavailable/deleted；停止生成、错误、重试、offline 状态可操作；
-- `/settings` 覆盖完整 Provider/model/auth 管理、system/light/dark、Profile calibration、Raw Input 多状态、Storage ownership/retention 说明，并与 onboarding 共用 capability/status/secret 组件；
+- `/settings` 覆盖完整 Provider/model/auth 管理、system/light/dark、Profile calibration、自动采集/Raw Input 多状态、分类 Storage 占用与手动管理，并与 onboarding 共用 capability/status/secret 组件；
 - Provider UI 覆盖 API key set/replace/delete、已批准 OAuth/device-code 状态、local/custom OpenAI-compatible、model 选择、测试连接和默认 provider；secret 永不回显；
-- Raw Input 分开表达 platform support、permission、capture enabled、KovaaK process、runtime health、trace attached 和 quality；
+- 自动采集分开表达 platform support、permission、capture enabled、KovaaK process、hardware replay buffer、runtime health、Run finalization、trace/video attached 和 quality；
+- Storage 显示总占用和 Run 录像、Raw trace、Analysis artifacts、未完成采集数据；只允许按 active capture spec 分别移除 Run-owned evidence 或未完成数据，不自动清理或一键清空；
 - 删除/保留 UI 不越过 lifecycle spec；用户源 Stats/Performance 不被应用删除；
 - Coach 和 Settings 在 Web/Desktop 共享产品结构，能力差异诚实表达。
 
@@ -435,6 +444,7 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 - Coach context contract、删除后引用语义或 raw trace boundary 尚未 active；
 - Provider capability API、credential store 或 auth state 尚未由对应 active Task 实现，导致 UI 只能伪造成功或保存 secret；
 - Settings 需要改变后端 ownership/retention 或未冻结的删除行为；
+- Storage accounting 或 Run-owned evidence 手动删除缺少稳定 capability/恢复合同，导致 UI 只能猜测占用或删除影响；
 - 无法测试 drawer focus trap、Escape、keyboard navigation、reduced motion 和错误恢复；
 - 需要恢复旧 Coach/Storage/Theme UI 才能完成。
 
@@ -456,9 +466,9 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 
 ### Tests first
 
-- Browser smoke：首次使用、Run 列表、三种 input mode、任务中心、History、Analysis workspace、Coach、Settings；
+- Browser smoke：首次使用、Run 列表、单局/多局选择、独立手动 fallback、三种 input mode、任务中心、History、Analysis workspace、Coach、Settings；
 - Browser failure matrix：offline、service unavailable、partial/source unavailable、permission denied、alignment failed、queued/running/failed/retryable；
-- Tauri/Desktop smoke：Run discovery、文件选择、Raw Input 状态、managed video URL、窗口尺寸和任务恢复；
+- Tauri/Desktop smoke：进程 gate 自动采集状态、连续多局事后切 Run、文件选择、Raw Input/窗口回放缓冲状态、Run-owned managed video URL、窗口尺寸、存储占用和任务恢复；
 - 关键页面宽/中/窄三档截图；system/light/dark 截图；核心空态、失败态、partial 态截图；
 - accessibility：landmarks、focus order、visible focus、skip link、drawer/dialog focus trap、Escape、ARIA live、44px targets、200% zoom、reduced motion、视频键盘控制、图表文本替代；
 - screenshot review 不只看像素差异，还检查信息层级、状态可解释性、密度、主题对比和不泄漏路径/trace；

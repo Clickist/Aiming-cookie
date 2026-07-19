@@ -1,6 +1,6 @@
 # Aiming Cookie 当前进度
 
-> **最后整理：2026-07-16。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
+> **最后整理：2026-07-20。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
 
 ## 1. 当前结论
 
@@ -15,6 +15,27 @@
 - Versioned Coach Knowledge Registry 已完成：Flicking、Tracking、身体/张力候选解释、settings 单变量实验、practice、verification 与 limitations 已迁入单一 canonical asset；Python/TypeScript 共用确定性检索，Draft 2020-12 `schema.v1.json` 已补齐完整 entry/source/claim structural contract 并对 canonical asset 做标准验证，Pi knowledge tool 与 product-command bridge 已解耦，历史 trace 只保存版本化引用。Windows developer/runtime compatibility 的 Task 1–2 自动化 Gate 已完成；正式前端仍按点点裁决最后处理。
 - 2026-07-15 Windows 实机已闭合四个可重复开发阻断：Node loader 改用 file URL，Python subprocess 固定 pinned Pi source/tsconfig，knowledge parity 按平台选择 venv Python，Tauri 补齐由 tracked PNG 机械生成的 compile-time ICO。Python、Coach/Pi source、Pi AI、frontend adapters 与 Tauri MSVC 自动化 Gate 均通过；正式 frontend route、GUI、真实 KovaaK、Raw Input 与高 polling-rate 仍未闭合，因此发布状态保持 **No-Go**。
 - 2026-07-16 Windows Desktop pre-frontend Task 1–2 已完成：无 override 时从 registry + `libraryfolders.vdf` + exact app manifest fail-closed 发现 E 盘 KovaaK，多安装要求显式消歧；每个 Stats/Performance 目录只发射最新 50 个 supported files；Coach fallback Node child 不再继承 Desktop launch token。点点已设后端前置硬终点，非启动/构建、核心路径、数据损坏或安全泄漏问题统一 deferred；正式前端具体 Task 尚未获得授权。
+- 2026-07-17 产品合同已更新为统一自动采集主路径：KovaaK 进程 gate 内采集 Raw + 仅 KovaaK 窗口录像，Stats/Performance 到达后事后切成独立 Run；单局确认、多局选一条，其余进入 History 待分析；手动 `MP4 + Stats` 是独立 fallback。该能力尚未实现，也没有 implementation plan，不得误写为当前可用。
+- 2026-07-18 WGC Task 2 已通过 Windows MSVC 离线编译门槛与真实 KovaaK 窗口 smoke：同一 `HWND=0xC2081A`、`PID=23148`、`UnrealWindow` 在三种显示模式均持续出帧且 `SystemRelativeTime` 回退为 `0`；`Full screen windowed` 为 5 秒 `824` 帧、`1920x1080`，`Full screen` 为 `825` 帧、`1920x1080`，`Windowed` 为 `825` 帧、`1922x1112`（包含窗口非客户区）。Raw Input/ACRI v1 与产品时间轴未改变。窗口枚举在独占全屏/桌面隔离下使用只读提升权限完成，不代表产品运行时需要提升权限。
+- 2026-07-18 WGC Task 3 已形成可运行的 CPU-backed Media Foundation H.264 recorder：重路径在 GPU readback 前固定限到 `60 FPS`，writer 使用容量 `4` 的 `try_send` 队列和硬件 transform preference；真实 `Full screen windowed` 5 秒 smoke 收到 `825` 个 WGC 元数据帧、向 writer 提交 `276` 帧、writer 丢帧 `0`、encoder error `0`。FFprobe 验证输出为 H.264/yuv420p、`1920x1080`、恒定 `60 FPS`、`301` 帧、`5.01665s`，抽帧确认画面清晰且只包含 KovaaK。当前 CPU readback 约占 `1.44` 个 CPU 核，尚未通过性能 Gate；自动降到 `30 FPS` 尚未实现，产品默认按点点裁决保持 `60 FPS`。
+- 2026-07-18 点点冻结自动视频路线为 GPU-resident hardware encode + encoded-packet replay buffer：KovaaK 进程存在时持续维护最近 `300 秒`墙上时间的有界缓冲，Stats / Performance 到达后才为 pause-free normal/timescale-only Challenge 生成永久 Run MP4；`Pause Count > 0` 的暂停局按 2026-07-19 裁决 fail closed。CPU-backed writer 只保留为功能/性能基线，不再作为发布主路径。
+- 2026-07-19 Hardware Replay Buffer Task 4 在用户开始 Challenge 前触发 Stop rule：真实 KovaaK 空闲窗口的目标提交节拍为 `60.000 FPS`，但硬件 MFT 仅接受约 `46.347 FPS`，`148.683s` 内出现 `2030` 次 backpressure drop；最近 5 秒 replay snapshot 明确返回 `coverageGap`。Raw ACRI v1 为 `1360` points、`0` drop、`0` snapshot failure。普通局、timescale、暂停、Restart、超 300 秒、finalization 后继续运行和 adapter failure 矩阵均未继续执行；发布状态保持 **No-Go**。
+- 2026-07-19 经点点授权的 hardware replay backpressure repair Gate 已通过：worker 只在 MFT `NeedInput` permit 存在时取一帧，编码 PTS 使用稳定 60 Hz derived timeline，WGC source timestamp 保持不变。真实 KovaaK 空闲窗口约 `142.849s` 产出 `8572` packets（约 `60.007 FPS`）、`0` packet drop、`0` encoder error；最近 10 秒 replay export 成功且 capture 在导出后继续运行，Raw ACRI v1 为 `143` points、`0` drop、`0` snapshot failure。该结果只解除 backpressure blocker；Task 4 的 Challenge、暂停、Restart、超 300 秒和失败路径矩阵仍未执行，发布状态保持 **No-Go**。
+- 2026-07-19 Hardware Replay Buffer Task 4 normal Challenge 行已通过：Stats `Challenge Start 13:03:36.667` 与 Performance `challenge_start_utc` 同秒一致，Performance 最末事件解析出 `59.905s` canonical window；对应 replay MP4 为 H.264 Constrained Baseline `1920x1080`、约 `60 FPS`、visible duration `59.905s`、`0` reencoded frame。完整 capture 为 `20219` packets、`0` packet drop、`0` encoder error，Raw canonical window 为 `40644` points、`0` drop；首帧是 Challenge `0.00` 转场，末帧仍在场内约剩 `0.11s`。timescale、暂停、Restart、adapter failure 与 AMD/Intel Gate 仍未完成，发布状态保持 **No-Go**。
+- 2026-07-19 Task 4 timescale-extended Challenge 行已通过：`1wall5targets_pasu` Performance 为 `time_limit=60`、`timescale≈0.7`，末事件解析出 `85.694s` canonical window；对应 MP4 为 `1920x1080`、约 `60 FPS`、visible duration `85.694s`、`0` reencoded frame。完整 capture 为 `19414` packets、`0` packet drop、`0` encoder error，Raw canonical window 为 `78733` points、`0` drop；CPU 约 `0.0589` core、peak working set `224.83 MiB`、GPU Video Encode 平均 `15.6743%`。暂停、Restart、真实 adapter failure 与 AMD/Intel Gate 仍未完成，发布状态保持 **No-Go**。
+- 2026-07-19 Task 4 short-pause 行触发 Stop rule：Stats 为 `Pause Count=1`、`Pause Duration=6`，但 Performance 最末事件仍为 `59.944s`，证明 event timestamp 不包含暂停 wall time，与当前 `time_alignment.v2` “event 已含 pause”假设冲突。按当前 v2 切出的末帧仍余 `6.57s`；简单加整数 `6s` 后仍余 `0.56s`，说明 Stats pause duration 的整数粒度不足以恢复毫秒级 canonical end。本场 capture/Raw 均 `0` drop，但没有可接受的 canonical MP4；Restart 与后续矩阵未继续，发布状态保持 **No-Go**。
+- 2026-07-19 pause-aware time alignment assessment 已完成且未实施 repair：Performance wire 只有 active timestamp + `pauseCount=1`，没有 resume/duration/未知精确字段；Stats 原始 `Pause Duration` 确为整数 `6`。Stats/Performance kill count 可完整累计配对并证明 pause 前后 wall-active 偏移跳变约 `6.566s`，但 Performance 是约一秒聚合，不能给出精确毫秒值；Stats 文件 mtime 在 normal/timescale 只晚 active end `31ms/9ms`、pause 样本晚 `6442ms`，只提供诊断支持而非稳定游戏语义。没有合格的毫秒级来源，`time_alignment.py` 与 tests 保持不变，Task 4 继续停止。
+- 2026-07-19 pause fail-closed repair 已完成：`time_alignment.v2` 在生成任何窗口前拒绝 Performance `pauseCount > 0`、Stats `Pause Count > 0`、非零/非有限暂停时长和畸形暂停证据；legacy `time_limit_ms` native snapshot 也经过同一 guard，Run ingestion 只转发 Stats pause count，不重建暂停墙上时长。normal/timescale 无暂停证据保持原窗口。focused time-alignment/native tests `43 passed`，Stats pause-count ingestion 定向测试 `1 passed`，compileall 与 `git diff --check` 通过；仓库外真实 `source-performance.perf` 离线解析出 `361` 个事件和 `pauseCount=1 @ 11.484201s`，resolver 返回 `pause_unsupported: pauseCount > 0` 且未生成窗口。Task 4 仍停在 Restart 前。
+- 2026-07-19 Task 4 Restart-before-completed-attempt 行已通过：点点按实机协议在普通局开局约 10–15 秒后 Restart，并完整打完重启后的局；最终 Stats `Challenge Start 15:00:09.056`、`Pause Count 0` 与 Performance 同秒一致，末事件解析出 `59.894s` canonical window。MP4 首帧为重启后 Challenge `0.00`、末帧约余 `0.04s`，没有混入 Restart 前画面；Raw canonical window 为 `41940` points、视频为 `3654` packets，均完整覆盖且 capture/Raw `0` drop。请求 start 在导出时距 live head `296.818s` 仍成功，导出后 producer 又增长 `1271` packets，证明近 300 秒 retention edge 的 immutable export 未停止后续 capture。真实 adapter failure 与 AMD/Intel Gate 仍未完成，发布状态保持 **No-Go**。
+
+- 2026-07-19 Automatic Run Finalization v1 Tasks 1-6 automated Gate passed. The private capture coordinator, canonical Run finalizer, Run-owned Raw/MP4 readiness, automatic Analysis inputs, v15 classified storage, and single-evidence tombstone removal are implemented. Task 4 focused suites: `128 passed`; Task 5 focused suites: `122 passed`; Task 6 vertical/focused Gate: `25 passed, 1 skipped` (the skip requires explicit loopback subprocess integration). MSVC `fmt/check/clippy` passed and Rust tests were `60 passed, 6 ignored`; ignored tests require explicit hardware/live KovaaK smoke. Two consecutive normal/timescale sources produced two idempotent `pending_analysis` Runs in automation, and response-loss startup reconciliation recovered one published artifact before isolated video removal. This is automated evidence only: Task 7 Windows product-path field validation, AMD/Intel hardware Gates, and release readiness remain open; status stays **No-Go**.
+- 2026-07-19 Automatic Run Finalization v1 Task 7 product-path field Gate partially passed and then triggered its Stop rule. The real Tauri/native/Python path produced one ordinary Run, two independent consecutive Runs, and only completed post-Restart attempts under one live NVIDIA hardware capture session with zero Raw/video drops or encoder errors. The operator-attested pause row nevertheless had Stats `Pause Count=0` / `Pause Duration=0` and no Performance pause event; native export detected `video_coverage_gap`, but the product retained permanent Raw and exposed `pending_analysis/input_native` instead of the required `incomplete_evidence`. Field evidence also exposed timer-profile misclassification from `bot_max_lives=[0,...]` and continuous missing-source retry writes (`sqlite_sequence +91` in 5 seconds with no new Run). Capture is disabled; interrupted-finalization reconciliation, Storage removal, and AMD/Intel field rows remain open. Status stays **No-Go**.
+- 2026-07-20 Automatic Run Finalization v1 Task 8 automated repair Gate passed. Generic encoded-video `capture_coverage_gap` now atomically finalizes the Run as `incomplete_evidence`, clears canonical Raw/MP4 claims, and commit-first cleans managed Raw through the existing recoverable tombstone lifecycle without labeling the gap as pause; unrelated video failures still retain valid Raw. Timer-only profiles with all-zero `bot_max_lives` now use the normal/timescale timer window, while positive life/kill/damage limits still permit terminal Stats events. Stable Stats-only/Performance-only revisions are consumed once as `waiting_for_sources` without watcher retry/upsert/SQLite sequence churn, and counterpart arrival finalizes once. Focused Task 8 suites are `85 passed`; adjacent runtime/readiness suites are `85 passed, 1 skipped`; v15 DB regression is `36 passed`; Python compileall and scoped `git diff --check` pass. No new KovaaK field run was performed, so Task 7 resumption, interrupted-finalization/Storage rows, AMD/Intel Gates, and release readiness remain open; status stays **No-Go**.
+- 2026-07-20 Task 8 repair field confirmation closed the three original blockers but exposed a new Task 7 Stop-rule defect. A real paused Run `52058` now correctly remains `incomplete_evidence` with `video_pause_unsupported`, no permanent Raw/MP4, no supported mode, no Analysis, unchanged sources, and no retry/sequence growth; a normal all-zero-`bot_max_lives` Run `52060` correctly used the full `60000ms timer_profile` window and produced a verified 60-second hardware H.264 MP4. However, its Run-owned Raw ended `6722ms` before the canonical end while the current live ACRI snapshot reached end minus `5ms`; the product therefore attached an incompletely refreshed Raw snapshot and publicly exposed Raw/multimodal readiness. Capture was disabled cleanly with zero Raw/video drops or encoder errors, and Task 7 stopped before interrupted-finalization/Storage rows. Status stays **No-Go**.
+- 2026-07-20 Automatic Run Finalization v1 Task 9 automated repair Gate passed. Raw Input now establishes a capture-clock ordered barrier, drains queued Windows input, and places the barrier on the existing single-producer snapshot channel; the worker force-publishes ACRI v1 atomically before acknowledging `coveredThroughEpochMs`. The session-bound private protocol preserves typed Raw retry codes, and automatic attachment requires coverage through canonical end without using the last real mouse event or NTFS mtime. Retry cannot mix Raw from a new capture session with a pending MP4 from an old session, and a retention-expired trace cannot be flushed or resurrected by duplicate discovery. Python focused suites are `83 passed`, adjacent ingest/readiness suites are `89 passed`, compileall passes, and MSVC `fmt/check/clippy` plus native tests (`64 passed, 7 ignored`) pass. An explicitly invoked live-KovaaK idle Raw barrier smoke also passed without a Challenge or source/Run mutation. The ordinary Challenge field confirmation and remaining Task 7 matrix are still open; status stays **No-Go**.
+- 2026-07-20 Task 9 normal-Challenge field confirmation passed. Real Run `52096` finalized once under capture session `f028aa35...a1ba1b0` with Stats/Performance/Raw/MP4 all available, `pending_analysis`, no Analysis auto-start, and no finalization error. Its 60-second canonical ACRI contains `41,363` points from start `+6ms` through end `-14ms`, closing the prior `6722ms` tail gap; the 60-second H.264 receipt is bound to the same session/window, contains `3619` packets and `0` reencoded frames, and its file digest matches. Start/middle/end frames show only the intended Challenge from `0.00` through about `0.11s` remaining. One-source/one-Run identity and SQLite sequence stayed unchanged over a five-second duplicate observation, and user source fingerprints still match. Capture/app/helpers shut down cleanly while KovaaK remains open. Interrupted-finalization reconciliation, Storage removal, and AMD/Intel rows remain open; status stays **No-Go**.
+- 2026-07-20 Automatic Run Finalization v1 Task 7 interrupted-finalization and Storage rows passed. For real Run `52136`, the backend was deliberately suspended after the original capture session had atomically published its MP4 and receipt while SQLite still held `video_state=pending`; closing and reopening the same Tauri product binary reconciled that same source into the same Run exactly once. The recovered Run is `finalized` / `pending_analysis`, exposes Stats/Performance/Raw/MP4 with three supported modes, keeps `analysis_count=0`, and has no duplicate export. MP4, receipt, Raw, Stats, and Performance hashes are unchanged across restart. An isolated real desktop-runtime Storage fixture reported exact categorized usage, removed only its selected video bundle, reclaimed the expected bytes, and returned idempotent `already_unavailable/0` on repeat while Raw, linked Analysis, and source hashes remained unchanged. App/helpers shut down cleanly; Run `52096` was not touched. AMD/Intel field hardware remains unavailable, so release status stays **No-Go**.
+- 2026-07-20 Windows Capture Compatibility and Lifecycle Repair v1 was closed at its evidence boundary. Task 1 lifecycle repair passed: orderly desktop shutdown drains finalizer futures before native capture release and database close, while a live session is not released per Run. Task 2 high-polling batching stopped as assessment-only because `GetRawInputBuffer` would require a larger message-loop rewrite to prove byte/order equivalence; canonical Raw remains unchanged and 1000 Hz is only an effective derived analysis bucket. Task 3 hardware compatibility stopped as assessment-only because exposing fine-grained MFT/D3D11/format reasons would expand the frozen status contract; hardware H.264 negotiation, adapter matching, bounded queues, Raw independence, and CPU-fallback rejection remain intact. Task 4 typed Win32/runtime failures passed after separating process-probe/data-read/registration failures from KovaaK absence, fixing monitor-start rollback, `WM_QUIT` termination, ready-then-exit cleanup, and release-path error propagation. MSVC `fmt/check/clippy` passed; native tests are `68 passed, 7 ignored`; focused Python finalizer/runtime/ingest/client tests are `51 passed, 1 skipped`; time-alignment tests are `12 passed`; compileall and `git diff --check` pass. Full webapp collection still has unrelated environment gaps (missing PI/Node modules and absent historical fixture); AMD/Intel physical validation remains external and release status stays **No-Go**.
 
 ## 2. 能力成熟度
 
@@ -34,16 +55,19 @@
 
 - Run 独立于 Analysis；Stats、Performance、Raw Input、MP4 是不同 evidence source；
 - input-native、multimodal、video-fallback 必须显式表达 mode、availability、alignment 和 limitations；
+- Analysis readiness 统一为 `Stats AND (MP4 OR (Raw + Performance))`；multimodal 只用 Raw 计算输入运动学，MP4 只负责回放、视觉定位和 Coach 直观讲解；
 - Raw Input 默认关闭、仅 Windows、仅 KovaaK process gate、本地保留、默认不进入 Coach；
+- 自动采集使用 process gate 连续 Raw + 300 秒 encoded-video replay buffer 和 Stats / Performance 事后切窗，不声称存在实时 Challenge start/end hook；连续多局生成独立 Run，未选择 Run 保持 pending_analysis；
 - History 采用轻列表 + lazy detail；Coach 使用结构化、用户可见的 diagnostic context，并通过与 UI 共用的产品命令调用当前用户能力，不限制为只读；
 - Coach explanation 必须形成观察、白话解释、证据、claim level、训练 cue、预期变化和复测链；
-- 当前不设付费墙；首次启动以 Provider onboarding 为主路径但允许明确跳过。Settings 使用完整 pinned Pi catalog，并支持 custom OpenAI-compatible profile；API key 可明文保存在本地 SQLite/config，secure store 不是 blocker，但所有外发/日志/诊断/导出边界继续 redaction；
-- terminal Analysis、Run metadata、Run-owned trace、用户 Stats/Performance 源文件和 Analysis-managed MP4 副本具有不同 ownership 与删除影响。
+- 当前不设付费墙；首次启动以 Provider onboarding 为主路径但允许通过底部次级文字跳过。跳过后没有 Coach 对话、解释、长期档案、训练计划或产品命令，只有本地指标、确定性诊断、规则化提示和 History。Settings 使用完整 pinned Pi catalog，并支持 custom OpenAI-compatible profile；API key 可明文保存在本地 SQLite/config，secure store 不是 blocker，但所有外发/日志/诊断/导出边界继续 redaction；
+- terminal Analysis、Run metadata、Run-owned trace、Run-owned 自动 MP4、用户 Stats/Performance 源文件和手动 fallback 的 Analysis-managed MP4 副本具有不同 ownership 与删除影响；Storage 先显示分类占用并由用户手动管理，不静默自动清理。
 
 ### 2.3 User-reachable / release-ready（尚未完成）
 
 - 原 prototype 已删除；当前没有正式用户路径，不能作为视觉或产品验收证据；
 - 正式 Provider onboarding、App shell、New Analysis、Tasks、History、Analysis workspace、Coach sidebar、Settings 尚待按新 frontend spec/plan 重建；
+- Capture Coordinator、Run Finalizer、pending Run readiness、Run-owned MP4 和单证据 Storage 手动删除 capability 已通过自动化 Gate；正式用户入口、真实 Tauri product-path field Gate 与 AMD/Intel 硬件 Gate 尚未完成，因此不能作为用户可达或 release-ready 能力。GPU-resident Media Foundation H.264、300 秒 encoded replay ring 与无整窗重编码 MP4 mux 已通过合成硬件 smoke、真实 KovaaK 空闲窗口 repair Gate、normal Challenge、timescale-extended 与 Restart canonical export；short-pause assessment 未找到 frozen contract 可接受的毫秒级 pause wall duration source，当前 resolver/legacy/native ingestion 已改为 fail closed，不重建暂停墙上时长。
 - Coach productization Task 3–5 backend/runtime capability 已完成；首次 Provider onboarding、命令结果消费和完整 Coach sidebar 仍不可交付，因为正式 frontend Task 2/3/6 尚未授权和实现；
 - input-native、multimodal、video-fallback 三条真实 Browser/Desktop E2E 未形成；
 - Windows 实机、高 polling-rate 鼠标、真实 KovaaK 对齐与性能尚未通过发布 Gate；
@@ -60,8 +84,9 @@
 ### Reliability / lifecycle
 
 1. 同 stem 同类型 KovaaK 文件冲突、并发 trace attach、partial import 和 orphan recovery 仍需更强状态机与测试；
-2. terminal Analysis 的 commit-first logical delete、transient tombstone、managed workspace cleanup 与 startup ready 前 reconciliation 已完成；Run / trace / source 删除 UI 与长期 retention 仍不在本轮范围；
+2. terminal Analysis 的 commit-first logical delete、transient tombstone、managed workspace cleanup 与 startup ready 前 reconciliation 已完成；Run-owned MP4 / trace 的单证据删除事务与恢复已通过自动化验证，但 UI、真实 product-path field Gate、Run metadata 整体删除与长期 retention 仍未完成；
 3. launch token 子进程隔离已闭合；Python runtime READY 后崩溃与正式浏览器 media identity 保持 deferred，Windows Python↔Pi subprocess 的 file URL、pinned tsconfig 与 venv path 自动化 Gate 已闭合。
+4. 新自动采集合同已有 active implementation plan，process-gated Raw/录像、延迟 Stats/Performance、事后切窗、幂等 Run finalization、未完成采集恢复、storage accounting 和 Run-owned evidence 单证据删除已通过自动化 Gate；当前代码仍不能替代真实 Tauri product-path field 证据。
 
 ### Frontend reconstruction
 
@@ -70,6 +95,7 @@
 3. executable token/theme/primitives 尚未建立；Task 2 尚未获得具体 Task 授权；
 4. Benchmark 不进入 v1 正式前端；
 5. Task 1 已完成 prototype 删除与 adapter 边界保护；Task 2–7 尚未获得具体 Task 授权。
+6. Frontend Task 3/4/6 已同步新的自动采集、待分析 History 和 Storage 合同；在对应稳定 capability 实现前必须按 Stop rule 停止，不能由前端伪造。
 
 ### Coach / explanation / provider
 
@@ -83,14 +109,25 @@
 
 ## 4. 下一步
 
-> **新 session 接力点：** Windows Desktop pre-frontend Task 1–2 已完成并归档。正式前端具体 Task 尚未获得授权；未经指示不提交、不推送，也不把 GUI 或真实 KovaaK/Raw Input 发布 Gate 写成已通过。
+> **新 session 接力点：** Automatic Run Finalization v1 Task 9 ordered-barrier repair、普通 Challenge field confirmation，以及 Task 7 interrupted-finalization reconciliation 与 isolated Storage accounting/removal 已通过。Run `52096` 保持完整；新 Run `52136` 在 MP4/receipt 已发布而 DB 仍 pending 的精确中断点关闭应用，重启后原地恢复为唯一 finalized Run，所有证据哈希不变且未自动启动 Analysis。Aiming Cookie/coordinator/helper 已关闭，KovaaK 保持开启；AMD/Intel 仍需真实对应硬件，不能由 NVIDIA 结果替代。未经指示不提交、不推送。
 
-1. Windows Desktop pre-frontend Task 1–2 已正式验收；当前没有新的已授权切片，等待点点明确指定；
-2. 后端非硬阻断缺口统一 deferred；未来正式前端只消费已稳定 capability，不复制命令逻辑，也不反向定义后端语义。
+> **当前执行授权：** active [`superpowers/plans/2026-07-19-automatic-run-finalization-v1.md`](superpowers/plans/2026-07-19-automatic-run-finalization-v1.md) 的 Task 9 repair 与普通 Challenge field confirmation 已完成；下一步仍属于 Task 7 的仓库外 field evidence，只允许 `docs/PROGRESS.md` 与仓库外输出。任何新的用户操作必须重新执行 capture-ready → 明确“开始” → capture-started 握手。
+
+1. AMD/Intel 仍是外部硬件 Gate，NVIDIA normal/recovery rows 通过不能替代其他 adapter 的发布证据；
+2. Task 7 当前可执行 field matrix 已闭合；若不具备 AMD/Intel 硬件，下一步应由点点明确授权新的 active plan Task，而不是继续扩大本 Task；
+3. Frontend Task 2 仍可独立建立 token/theme/primitives；正式前端只消费已稳定 capability，不复制命令逻辑，也不反向定义后端语义。
 
 ## 5. 当前工作树与实施计划状态
 
-2026-07-15 Windows 验证开始前，tracked worktree 为 clean；依赖安装在仓库生成未跟踪 `.venv/`。Task 1 修改 Coach/Pi 启动兼容、对应回归、sidecar 脚本与一行 Rust lint，并新增 placeholder ICO；Task 2 只更新开发指南与本进度快照；完成后的文档 closeout 将 plan 移入 completed archive，并同步文档入口、Roadmap 与 plan index。未 reset、checkout、覆盖、清理、提交或推送。
+2026-07-20 本轮继续在既有 dirty worktree 上完成 Automatic Run Finalization v1 Task 7 的 interrupted-finalization reconciliation 与 Storage accounting/removal field rows。仓库内仅在证据存在后更新本 Progress；实机 Run `52136`、独立 Storage fixture 和辅助日志均位于仓库外，没有修改业务代码、测试、PRD、Architecture 或用户 Stats/Performance，没有提交、推送、reset、checkout、覆盖或清理既有改动。Run `52096` 保持不变。
+
+2026-07-20 本轮继续在既有 dirty worktree 上完成点点授权的 Automatic Run Finalization v1 Task 9：修改 `raw_input.rs`、`capture_coordinator.rs`、native client/finalizer/Run store 与对应 focused tests，并在产生自动化、真实 idle barrier 和普通 Challenge field 证据后更新本 Progress；没有修改 ACRI/schema/DB/routes/PRD/Architecture，没有提交、推送、reset、checkout、覆盖或清理既有改动。Run `52096` 与用户 Stats/Performance 保留，未执行 Storage removal。
+
+2026-07-20 本轮此前在同一 dirty worktree 上先完成点点授权的 Automatic Run Finalization v1 Task 8，再回到 Task 7 运行真实 Tauri/KovaaK repair field Gate。Task 7 只新增仓库外证据并更新本 Progress；没有修改业务代码、schema/native/routes/DTO，没有提交、推送、reset、checkout、覆盖或清理既有改动。Task 8 三个原始 blocker 已实盘闭合，但正常 Run Raw 尾部缺口触发新的 Stop rule。
+
+2026-07-19 本轮在既有 dirty worktree 上执行点点授权的 hardware replay backpressure repair Task，修改 `window_capture.rs` inline tests/调度实现、active plan Task 合同，并在产生仓库外真实证据后更新 Progress；没有提交、推送、reset、checkout、覆盖或清理既有改动。
+
+2026-07-19 Task 4 Restart 实机行只产生仓库外运行时证据并更新本 Progress；未修改业务代码、测试、PRD 或 Architecture，没有提交、推送、reset、checkout、覆盖或清理既有改动。
 
 RefleK active plan 当前成熟度：
 
@@ -111,6 +148,135 @@ Coach productization plan 已 active。Task 1 explanation contract、Task 2 inpu
 Versioned Coach Knowledge Registry plan 的 Task 1–6 已全部完成并归档；active spec 继续作为 Registry 版本、检索、claim 与 trace 的稳定局部合同。
 
 ## 6. 最近验证记录
+
+2026-07-20 Automatic Run Finalization v1 Task 7 interrupted-finalization + Storage field rows（passed）：
+
+- 实机精确中断：普通 Challenge 生成唯一新 Run `52136`，source 为 `1wall 6targets small - challenge - 2026.07.20-02.52.07`，canonical window 为 `[1784487067873,1784487127873)`。在原 capture session `32575f90...48afba0` 已发布 MP4/receipt、Run 仍为 `video_state=pending` 时 suspend backend PID `22580`，监控结果为 `interrupted_pending_with_published_artifacts`；随后通过主窗口关闭应用，Tauri 及两个 Python child 均退出。
+- 使用同一 product binary 与 worktree/Python runtime 重新启动后，startup reconciliation 将同一 source 原地恢复为同一 Run `52136`；公开 DTO 为 `finalized`、`pending_analysis`、Stats/Performance/Raw/MP4 全 available、`input_native/multimodal/video_fallback` 可用、`analysis_count=0`、无 limitation/finalization error。同 Run id 与同 source 均只有一行，Run 目录只有一个 Raw、一个 MP4 和一个 receipt，没有 partial 或重复导出。
+- 重启前后 MP4 SHA-256 均为 `3104717da7dfaec01d9c6990b927ca72402d5cca461373b4bb6bf4182c8945ef`，receipt 均为 `8703b988241be4c5c571e2f12650312ac3677ab6615cb3eafd673b07a4b17173`；Raw 为 `691837d116df479ca5607122ae4c5f7c21f00cfef163395f11f04fd04bb03a45`。Stats 为 `d1a6c8d1a805edbd637857a7cf2771a28175ee8f24f1493af52194fff084fb68`，Performance 为 `7ecfe29333372811dc3b4f6f8ca0511c376bd3fd39e8d247e41a53206809277e`，均未改变。receipt 仍绑定原 session/request/window，含 `3650` packets、`60000ms` visible duration 和 `0` reencoded frames；重启没有改写 MP4/receipt mtime。
+- 独立 `DATA_ROOT`/AppData 的真实 desktop-runtime HTTP API Storage fixture 在删除前精确为 Analysis `32` bytes、Run MP4+receipt `742`、Run Raw `52`、incomplete recovery `38`，总计 `864`。首次只删除 video 返回 `completed` / `742` bytes，重复调用返回 `already_unavailable` / `0`；删除后分类为 `32/0/52/38`，总计 `122`。视频与 receipt 消失，Raw、linked Analysis、Stats/Performance fixture 仍存在且哈希不变，公开响应不包含本地路径。
+- 实机证据包为 `E:\DevCache\temp\aiming-cookie-task7-interrupt-20260720-024345`；isolated Storage 证据包为 `C:\Users\袜子\.codex\runtime-validation\task7-storage-field-20260720`。重启恢复后 Coordinator 重新进入 60 FPS hardware capture，最终应用、backend、status receiver 与静态 web helper 均正常关闭；KovaaK 保持开启。该 Gate 不替代 AMD/Intel 硬件验证。
+
+2026-07-20 Automatic Run Finalization v1 Task 9 normal Challenge field confirmation（passed）：
+
+- 按显式 ready/start/capture-started 协议启动真实 Tauri/native/Python product path；Coordinator 进入 `capturing`，session `f028aa350a4682a648ecd7d8ac8f93d3e3aa34b5f76e4fc7c7b666963a1ba1b0`，Raw/video 均为 capturing，NVIDIA `vendor:10de;device:2560` 使用 Media Foundation hardware H.264。点点随后完整完成一局 pause-free、无 Restart 的普通 Challenge。
+- 唯一新 Run `52096` 使用 source `1wall 6targets small - challenge - 2026.07.20-02.25.06`，canonical `[1784485446797,1784485506797)`、`60000ms`、start=`stats_challenge_start`、end=`timer_profile`。公开 DTO 为 Stats/Performance/Raw/MP4 全 available、`pending_analysis`、三种 mode 可用、`analysis_count=0`、无 limitation/finalization error。
+- 永久 ACRI v1 为 `41,363` points、`827,272` bytes、SHA-256 `271efd6cdfbf156a05f2cec1a73020f793f1dec65a9970aad97e60619ca06fe4`；首点为 start `+6ms`，末点为 end `-14ms`。这直接闭合 Task 8 field 的 `6722ms` tail gap，且 attachment 只能在 ordered barrier coverage 越过 canonical end 后发生。
+- MP4/receipt 的 capture session 与 Run 一致，window 精确为同一 canonical 60 秒；receipt 为 `3619` packets、`32,485,217` encoded bytes、`0` reencoded frame，容器为 H.264 Constrained Baseline `1920x1080`、约 `60 FPS`、`60.000s`、`3619` 帧、`32,500,652` bytes，文件 SHA-256 `5b01bed3453adfea29fe74d1285dd57c65a5823b958fb61ec2d78d2195eb1163` 且与 receipt digest 一致。
+- 抽取首帧、30 秒和 `59.8s`：分别为 Challenge `0.00`、局内约余 `29s`、局内约余 `0.11s`；没有等待/结算、桌面泄漏或黑帧。Stats SHA-256 `d15a403c23ba4229b1938fa258ab64ed5590495ff143c4657fa26680c2de3242` 与 Performance SHA-256 `bd787ee31d1220298bddac1e1f7474303caeec55d13d7168552e1516a9b59931` 均与 persisted source fingerprint 匹配。
+- 同 source 在五秒观察中始终只有 Run `52096`，finalized/attached 状态、`updated_at` 与 `sqlite_sequence` 不变；没有重复 Run/export 或 watcher churn。验证结束后主窗口收到正常 close，Desktop runtime child 与 helper 全部退出，KovaaK 保持开启。
+- 仓库外证据包为 `E:\DevCache\temp\aiming-cookie-task9-field-20260720-021334\validation-summary.json`，SHA-256 `b570958c3c191b73d80987ed3847f52eaa14225f93174cafaa31951682da9d42`。该行证明 NVIDIA normal Challenge ordered-barrier finalization，不替代 interrupted-finalization/Storage 或 AMD/Intel field rows。
+
+2026-07-20 Automatic Run Finalization v1 Task 9 ordered-barrier repair（automated + non-interactive live idle pass；Challenge field pending）：
+
+- Raw capture thread 使用容量 `1` 的非阻塞 control channel；收到请求时先记录 `coveredThroughEpochMs`，再 drain 当前 Windows message queue，并在同一 point/snapshot channel 中排入 barrier。snapshot worker 即使 ring clean 也调用 atomic ACRI v1 publication，只有 `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` 成功后才返回 receipt；busy、timeout、write failure 和 unavailable 保留 typed retry code。
+- Python automatic path 只有在 barrier coverage `>= canonical end` 时 attach Raw；局末静止不会被末 Raw point 误伤，低 coverage 在 300 秒 snapshot retention 内保持 `trace_waiting_snapshot`，超过后固定为 `trace_snapshot_stale`。response-loss 后若 pending MP4 属于旧 capture session，新 session 不会 flush/attach Raw；已 stale 的 trace 在 duplicate/app restart 后不会复活。
+- `KOVAAK_INSTALL_DIR` 强制到不存在路径后的 focused client/finalizer/Run suites 为 `83 passed`，相邻 ingest/routes/history/Coach readiness suites 为 `89 passed`；Python compileall、scoped `git diff --check` 通过。MSVC `cargo fmt --check`、`cargo check --locked --all-targets`、`cargo clippy --locked --all-targets -- -D warnings` 通过；完整 native tests 为 `64 passed, 7 ignored`。
+- 显式运行 `live_kovaak_raw_snapshot_barrier_smoke` 在当前真实 KovaaK 进程上通过：Raw producer 被观察为 healthy，一次 ordered barrier 成功发布并解码 ACRI v1，receipt 的 coverage/snapshot clock 为 `utc_epoch_ms+qpc` / `time_alignment.v2`，随后 capture 与临时文件均关闭/清理。该 smoke 不要求鼠标操作，不创建或修改 Stats/Performance/Run，也不证明 Challenge canonical attachment。
+- MSVC field binary 已生成在仓库外 `E:\DevCache\temp\aiming-cookie-task9-automated\target-msvc\debug\aiming-cookie-desktop.exe`，SHA-256 `F87B20B9F0879BC40525562E59DCCA9EDC3CE1BFF56B4C6FCE62384D37E56E96`；path-free、token-memory-only field harness 已准备在 `E:\DevCache\temp\aiming-cookie-task9-field-20260720-021334`，尚未启动。下一步必须等待点点明确开始普通 Challenge field confirmation。
+
+2026-07-20 Automatic Run Finalization v1 Task 8 repair field confirmation（partial pass；new Task 7 Stop rule triggered）：
+
+- missing-source 启动基线观察 5 秒，`kovaak_runs` 行数与 `sqlite_sequence` 均为 `delta=0`，证明 stable missing-source watcher 不再产生 retry/upsert churn。真实暂停 Run `52058` 的 Stats 为 `Pause Count=1`、`Pause Duration=6`；最终状态为 `video_pause_unsupported` / `incomplete_evidence`，无 managed Run root、Raw、MP4、supported mode 或 Analysis。重复观察后 Run/sequence 仍无增长，Stats/Performance SHA-256、size 与 mtime 均未改变。
+- 普通 Run `52060` 的 Performance profile 为 `bot_max_lives=[0,0,0,0,0,0]`；`time_alignment.v2` 正确解析 canonical `[1784479608984,1784479668984)`、`duration=60000ms`、`end_source=timer_profile`。Run-owned MP4 为 H.264 Constrained Baseline `1920x1080`、`60.000s`、`3652` 帧、`33,735,906` bytes，receipt 的 window/fingerprint 与 DB/文件一致；公开 API 为 `pending_analysis`、三种输入 mode 可用、`analysis_count=0`，无 private path。
+- 同一普通 Run 的永久 ACRI v1 只有 `37833` points，末点距 canonical end `6722ms`、末 button event 距 end `6923ms`；稍后 current live ACRI 对同一窗口有 `42629` points，末点距 end 仅 `5ms`、末 button event 距 end `415ms`。这证明底层 Raw producer 覆盖了局末，但 finalization 过早接受了尚未刷新到 canonical tail 的 snapshot；公开 Raw/multimodal claim 因此不成立，满足 Task 7 “eligible normal row unexpected missing coverage” Stop rule。
+- Stop rule 后通过产品命令关闭 Coordinator，最终 `phase=disabled`、Raw/video `enabled=false`。最终 capture 为 NVIDIA `vendor:10de;device:2560`、Media Foundation hardware H.264、`91383` submitted packets、`0` packet drop、`0` encoder error；Raw 为 `0` dropped point、`0` snapshot failure。Aiming Cookie、DevTools、cargo 与临时 web/receiver 已停止，KovaaK 保持开启；未继续 deliberately interrupted finalization、Storage 或 AMD/Intel 行。
+- 仓库外证据包为 `E:\DevCache\temp\aiming-cookie-task7-repair-field-20260720-003317\validation-summary.json`，SHA-256 `492695b6a1bd2056d263c6dfbdbf60ead97adff2ce15110ec457ea28ff7b453f`；summary JSON 可解析，引用的 10 份证据 SHA-256 全部匹配。
+
+2026-07-19 Automatic Run Finalization v1 Task 7 product-path field Gate（partial pass；Stop rule triggered）：
+
+- 真实产品路径使用 MSVC 编译的 `aiming-cookie-desktop.exe` 启动同一 Tauri setup、Python Desktop runtime、Stats/Performance watcher 与 private native control plane；由于正式 frontend `app/pages` 尚不存在，本次只在仓库外提供空白 WebView validation page，并通过已注册 Tauri IPC 显式启用 Coordinator，没有修改业务代码。Coordinator 进入 `capturing`，session `5f9e415b...c9121`、KovaaK `PID=30056` / `HWND=15599888`、NVIDIA `vendor:10de;device:2560`、Media Foundation hardware H.264，Raw 与 video 同时健康。
+- 普通局生成唯一 Run `14046`，公开状态为 `pending_analysis`、`analysis_count=0`，Stats/Performance/Raw/MP4 均 available；MP4 为 H.264 Constrained Baseline `1920x1080`、`59.893s`、`3642` 帧、约 `60 FPS`，SHA-256 `1719ddeb460b12194ac316e7e87188cf72ede2b1957920312eb9fa90c129d7cd`。连续两局生成独立 Run `24850` / `26128`，窗口不重叠且 capture session 不变；Restart protocol 之后只为两条实际完成局生成 Run `30692` / `32408`，废弃尝试没有 Stats/Performance、Run 或永久 evidence。
+- 暂停行按 operator protocol 在普通局约 10 秒后暂停约 5 秒再完成，但落盘 Stats 明确为 `Pause Count=0` / `Pause Duration=0`，Performance 也没有 pause event。Run `38987` 的 native replay export 返回 `video_coverage_gap` 且没有永久 MP4；Task 7 当时的独立降级逻辑仍写入 `836752` bytes canonical Raw，并通过公开 API 暴露 `pending_analysis`、`input_native`、Raw available。这违反 Task 7 的暂停行预期 `incomplete_evidence` 且无 canonical Raw/MP4，满足 Stop rule。
+- native capture status 在停止前仍为 Raw `0` dropped point / `0` snapshot failure、video `0` dropped packet / `0` encoder error / `0` metadata drop、hardware encoder 不变。该 `coverage_gap` 与本地 drop counter 不冲突：WGC 未交付 frame 的墙上间隙不会由编码器伪造补帧；但当前 receipt/Run 没有保留 gap 位置，generic gap 本身不能证明原因必然是 pause。
+- 同场发现两个独立 correctness/resource blocker：`bot_max_lives=[0,0,0,0,0,0]` 被 `bool(list)` 误判为 event-terminated，timer-only 普通局错误采用最后 Stats kill 截尾（Run `38987` 为 `59.330s` 而非 `60s timer_profile`）；两个目录 watcher 对长期缺少配对源的历史文件持续 retry/upsert，5 秒内 `kovaak_runs` 行数不变但 SQLite sequence 增加 `91`，`updated_at` 继续前进。
+- 发现 Stop rule 后已调用产品命令关闭 Coordinator，并确认最终 `phase=disabled`、Raw/video 均 `disabled`；没有继续 deliberately interrupted finalization、app restart reconciliation、Storage accounting/removal 或 AMD/Intel 行。仓库外证据包为 `E:\DevCache\temp\aiming-cookie-task7-product-path-20260719-204113\validation-summary.json`，SHA-256 `33eb843698fc270549e8fc4a5c3d8343375b64067f52177627b7bf102e8cd419`。
+
+2026-07-19 Hardware Replay Buffer Task 4 Restart before completed attempt（passed；remaining hardware matrix pending）：
+
+- 点点在明确收到 capture-started 指令后进入普通 60 秒 Challenge，开局约 10–15 秒后 Restart，并完整打完重启后的局且未暂停。KovaaK 只为最终完成局落盘同 stem Stats / Performance；Stats `Challenge Start 15:00:09.056`、`Pause Count 0`、`Pause Duration 0`，Performance `challenge_start_utc=1784444409000`、`time_limit=60`、`timescale=1`，370 个事件的末事件为 `59.893909s`。TimeAlignment v2 解析 canonical `[1784444409056,1784444468950)`，start source 为 `stats_challenge_start`，end source 为 `performance_event`。
+- capture 最终 WGC metadata `107999` 帧、H.264 packet `34801`、`0` packet drop、`0` encoder error、`0` metadata drop；总 encoded timeline 约 `579.998s`。请求 canonical start 在 snapshot 时距 live head `296.818106s`，仍在 300 秒墙上时间边界内成功导出；visible duration `59.894s`、decode preroll `0.9973694s`、`3654` packet、`31,751,093` encoded bytes、`0` reencoded frame。
+- FFprobe 为 H.264 Constrained Baseline、`1920x1080`、约 `60 FPS`、start `0`、duration `59.894s`。首帧明确显示重启后 Challenge `0.00`，一秒后为在局内 `0:58`，末帧仍在局内且约余 `0.04s`；可见窗口未混入 Restart 前尝试、等待、结算、黑帧、桌面泄漏或错误裁切。Restart 点击本身属于点点按指令完成的 operator-attested field protocol；KovaaK 不为中止尝试另写 Stats / Performance。
+- ACRI v1 source `59861` points 覆盖 `[1784444147084,1784444726334]`；canonical window 提取 `41940` points，首点为 start 后 `3ms`，末点为 end 前 `2ms`，`0` dropped point、`0` snapshot failure。导出 snapshot 完成后 live producer 从 `33530` 增长到 `34801` packets 且仍为 `0` drop，证明 immutable export/finalization 未阻断 KovaaK 保持开启时的后续 capture。
+- 仓库外证据为 `E:\DevCache\temp\aiming-cookie-task4-restart-20260719-145546\validation-summary.json`（SHA-256 `80C46F2285EF416BBCD8E24D004EADA9297FD3DF0B23F988D49B812C34831A0F`）。该结果只关闭 NVIDIA Restart 与 export 后 producer continuation 行；真实 adapter mismatch/unavailable、AMD/Intel、Capture Coordinator、Run Finalizer、Run storage 和用户可达自动 MP4 仍未验证。
+
+2026-07-19 Pause-aware time alignment assessment（completed；repair not applied）：
+
+- Performance protobuf wire 在 normal、timescale、pause 三份样本中均只含已解析 top/header/profile/event 字段；pause 样本唯一新增 payload 为 hex `0d4abf37416a020801`，语义是 active timestamp `11.484201s` + `pauseCount=1`，没有 resume timestamp、duration 或可用未知字段。Stats 原始 CSV 行为精确文本 `Pause Duration:,6`，不存在隐藏小数。
+- Stats kill 总数与 Performance `kills` count 累计值在 paused sample 均为 `102`，可按约一秒 Performance bucket 完整配对；pause 前 wall-active offset 中位数 `-363.532ms`，pause 后 `6202.264ms`，跳变 `6565.796ms`。这证明 pause 约为 6.5 秒，但 bucket 内单次击杀没有 active timestamp，不能恢复精确毫秒 duration。
+- 文件 mtime 对比：normal Stats mtime 晚 active end `31ms`，timescale 晚 `9ms`，pause 晚 `6442ms`；该结果与 WGC diagnostic 末帧一致，并证明 Stats 整数 `6s` 丢失亚秒信息。但 mtime 是 OS write-completion time，不是稳定游戏语义字段，按 frozen contract 不能成为 correctness source。
+- production 调用链另有范围阻塞：当前 `parse_stats_csv` 对三份真实 field Stats 均未取到 `Challenge Start`；`ingest_discovery` 仅为 event-terminated profile 传 `stats_event_times_seconds`，timer-limited path 也未传 `pause_duration_seconds`。修复至少需要 `kovaak_tracker/csv_parser.py` 与 `webapp/backend/kovaak_run_store.py`，超出本 Task Allowed files；即使扩大范围，现有数据仍没有被证明的精确 pause duration source。
+- 按授权 Stop rule，未修改 `kovaak_tracker/time_alignment.py` 或 `tests/test_time_alignment.py`；现有 focused baseline `8 passed`。assessment 证据已补入 `E:\DevCache\temp\aiming-cookie-task4-pause-20260719-133540\validation-summary.json`；该 assessment 当时不恢复 Restart，后续以 pause fail-closed repair 和新的实机授权解除此停点。
+
+2026-07-19 Hardware Replay Buffer Task 4 short-pause semantics（Stop rule triggered）：
+
+- 点点在 capture-started 指令后完成 `1wall 6targets small`，约在开局 10 秒后暂停再继续。Stats / Performance 同 stem 于 `13:37:56` 落盘；Stats `Challenge Start 13:36:49.777`、`Pause Count 1`、`Pause Duration 6`。Performance `challenge_start_utc=1784439409000`、`time_limit=60`、`timescale=1`，pauseCount event 位于 `11.484201s`，361 个事件的末事件仍为 `59.944450s`。
+- 当前 TimeAlignment v2 按 Performance 末事件解析 duration `59.944s`，与 filename coarse end hint `66.223s` 相差约 `6.279s`；该事实直接反驳“Performance event timestamps already include pause wall time”的当前实现假设。将 Stats 整数 `Pause Duration=6` 相加得到 `65.944s`，仍无法证明毫秒级 wall end。
+- 两个 diagnostic-only replay export 均成功且 capture 继续运行：未加 pause 的 `59.944s` MP4 末帧仍余 `6.57s`；加整数 6 秒的 `65.944s` MP4 末帧仍余 `0.56s`。因此两者都不是可接受的 canonical MP4，不得保存为 Run-owned final evidence。
+- capture 最终 WGC metadata `62651` 帧、H.264 packet `19198`、`0` packet drop、`0` encoder error、`0` metadata drop；Raw ACRI v1 `44821` points、`0` dropped point、`0` snapshot failure。约 `286.735s` 性能样本为 `0.0658` CPU core、`248.0 MiB` peak working set；GPU Video Encode 三次采样平均 `15.7060%`。失败只属于 pause alignment semantics，不属于 capture performance/coverage。
+- 仓库外证据为 `E:\DevCache\temp\aiming-cookie-task4-pause-20260719-133540\validation-summary.json`。Task 4 按 pause-source conflict Stop rule 停止，Restart、真实 adapter failure 和 AMD/Intel 行未继续；未经新 repair Task 授权不得修改 `time_alignment.py` 或恢复 field matrix。
+
+2026-07-19 Hardware Replay Buffer Task 4 timescale-extended Challenge（passed；pause/Restart pending）：
+
+- 点点在 capture-started 指令后完成 `1wall5targets_pasu`，Stats / Performance 同 stem 于 `13:21:41` 落盘。Stats `Challenge Start 13:20:16.265`、`Pause Count 0`、`Pause Duration 0`；Performance `challenge_start_utc=1784438416000`、`time_limit=60`、`timescale=0.699999988`，496 个事件的末事件为 `85.694008s`。TimeAlignment v2 解析 canonical `[1784438416265,1784438501959)`，start source 为 `stats_challenge_start`，end source 为 `performance_event`。
+- capture 最终 WGC metadata `66933` 帧、H.264 packet `19414`、`0` packet drop、`0` encoder error、`0` metadata drop；canonical export visible duration `85.694s`、decode preroll `0.9811117s`、`5201` packet、`49,184,903` encoded bytes、`0` reencoded frame，且导出后 producer 继续运行。
+- FFprobe 为 H.264 Constrained Baseline、`1920x1080`、约 `60 FPS`、start `0`、duration `85.694s`。首帧为 `1wall5targets_pasu` Challenge `0.00`，末帧仍在游戏内且约余 `0.14s`，未混入前置等待、结算界面、黑帧、桌面泄漏或错误裁切。
+- ACRI v1 source `82800` points 完整覆盖 canonical window；窗口内 `78733` points，首点为 start 后 `5ms`，末点为 end 前 `5ms`，`0` dropped point、`0` snapshot failure。约 `284.874s` 性能样本为 `0.0589` CPU core、`224.83 MiB` peak working set；GPU Video Encode 三次采样平均 `15.6743%`，低于 `384 MiB` frozen byte ceiling 对应的整体资源风险边界。
+- 仓库外证据为 `E:\DevCache\temp\aiming-cookie-task4-timescale-20260719-131856\validation-summary.json`。该结果只关闭 timescale-extended 行；短暂停、Restart、真实 adapter failure、AMD/Intel、Capture Coordinator 和 Run storage 仍未验证。
+
+2026-07-19 Hardware Replay Buffer Task 4 normal Challenge（passed；remaining matrix pending）：
+
+- 点点在明确收到 capture-started 指令后完成 `1wall 6targets small` 普通 60 秒 Challenge；Stats / Performance 同 stem 于 `13:04:36` 落盘。Stats `Challenge Start 13:03:36.667`、`Pause Count 0`、`Pause Duration 0`；Performance `challenge_start_utc=1784437416000`、`time_limit=60`、`timescale=1`，363 个事件的末事件为 `59.904930s`。TimeAlignment v2 解析 canonical `[1784437416667,1784437476572)`，start source 为 `stats_challenge_start`，end source 为 `performance_event`。
+- capture 持续约 `336.965s`，最终 WGC metadata `65197` 帧、H.264 packet `20219`、`0` packet drop、`0` encoder error、`0` metadata drop；对 canonical window 的 immutable export 成功，visible duration `59.905s`、decode preroll `0.8731559s`、`3647` packet、`31,192,963` encoded bytes、`0` reencoded frame，且导出后 producer 继续运行。
+- FFprobe 为 H.264 Constrained Baseline、`1920x1080`、约 `60 FPS`、start `0`、duration `59.905s`。首帧显示 Challenge `0.00` 开始转场；末帧仍在游戏内且倒计时约余 `0.11s`，未混入前置等待、结算界面、黑帧、桌面泄漏或错误裁切。
+- ACRI v1 source 为 `52583` points，覆盖 `[1784437335748,1784437672022]`；canonical window 提取 `40644` points，首点为 start 后 `58ms`，末点为 end 前 `3ms`，`0` dropped point、`0` snapshot failure。请求 `301s` replay window 明确返回 `WindowTooLong`；硬件 failure kind 区分与 automatic CPU fallback denied 测试通过。
+- 仓库外证据为 `E:\DevCache\temp\aiming-cookie-task4-normal-20260719-130214\validation-summary.json`。该结果只关闭 normal Challenge、`>300s` fail-closed 与既有诊断 policy 行；timescale、短暂停、Restart、真实 adapter failure、AMD/Intel、Capture Coordinator 和 Run storage 仍未验证。
+
+2026-07-19 Hardware replay backpressure repair Gate（passed；Task 4 Challenge matrix pending）：
+
+- 先以 inline tests 固定两条合同：165 Hz WGC 输入每秒只保留 60 个 frame 且 derived encoded PTS 等间隔；MFT 没有 `NeedInput` permit 时 worker 不从有界 channel 取走 frame。实现保持 `FrameSample.system_relative_time_100ns` 为真实 WGC source timestamp，只把 derived PTS 交给编码器；hardware loop 使用 1 ms 非忙等轮询，每个 permit 最多提交一帧，只有 producer channel 满才计 backpressure。
+- focused MSVC Rust tests 为 `28 passed, 6 ignored`；`cargo check --locked --lib` 和 focused clippy `-D warnings` 通过。显式 synthetic hardware smoke 收齐 `120 / 120` packets、`0` dropped packet、`0` coverage gap；synthetic replay MP4 smoke 同样为 `120` packets、`0` gap，FFprobe/边界色检查通过。
+- 真实 KovaaK `PID=30056`、`HWND=15599888`、NVIDIA `vendor:10de;device:2560` 空闲窗口 capture 的 encoded timeline 为 `142.849s`：WGC 元数据 `23554` 帧，H.264 packet `8572`（约 `60.007 FPS`），`0` dropped packet、`0` encoder error、`0` metadata drop；末 packet derived PTS 比对应末 WGC source PTS 早 `15.5854ms`，未超前或改写 source clock。
+- 对 ring 请求最近 10 秒 immutable snapshot 成功：visible duration `10.000s`、decode preroll `0.4666248s`、`628` packet、`9,604,831` encoded bytes、`0` reencoded frame。FFprobe 为 H.264 Constrained Baseline、`1920x1080`、约 `60 FPS`、容器时长 `10.000s`；首尾抽帧均为同一 KovaaK Sandbox Browser，未见黑帧、桌面泄漏或错误裁切。导出后 live producer 从 `6313` 增长到 `8572` packets，证明 export 未停止 capture。
+- Raw Input 同期为 ACRI v1 `143` points、`2872` bytes、`0` dropped point、`0` snapshot failure，SHA-256 `906D4ECDF93C5C59073284F7D02E9D4CCD3EBD4F4CC22F0FCA434F821CA10914`。约 `106.221s` 性能样本为 `0.0559` CPU core、`155.93 MiB` peak working set；GPU Video Encode 三次采样平均 `15.9429%`。
+- 仓库外证据为 `E:\DevCache\temp\aiming-cookie-hardware-repair-20260719\idle-live\validation-summary.json`；临时 harness 已停止，KovaaK 保持开启。该 Gate 只证明 backpressure 修复和空闲窗口 replay 完整性，不证明 Challenge 对齐、暂停语义、Restart、Run storage 或 AMD/Intel release Gate。
+
+2026-07-19 Hardware Replay Buffer Task 4 Windows field Gate（Stop rule triggered）：
+
+- 点点已打开 KovaaK，但尚未开始任何 Challenge；临时验证 harness 位于仓库外，通过 native coordinator boundary 启动同一 `HWND=15599888` 的 Raw + WGC hardware capture，不修改业务代码。
+- NVIDIA adapter `vendor:10de;device:2560`、Media Foundation hardware H.264 Baseline 路径持续运行 `148.683s`：WGC 元数据 `23558` 帧，60 FPS limiter 产生约 `60.000` 次/秒提交尝试，但只产出 `6892` 个 packet（约 `46.347 FPS`），另有 `2030` 次 backpressure drop（`22.75%`）；encoder error 为 `0`，最后失败分类为 `backpressure`。
+- 对 ring 最近约 5 秒请求 immutable replay snapshot，返回 `coverageGap: replay snapshot failed: CoverageGap`，未创建 MP4。该结果已满足 Task 4 “任一来源缺少完整 `[start,end)` coverage 即停止”的条件，因此没有让点点开始普通局，也没有继续 timescale、短暂停、Restart、超 300 秒、finalization 后 KovaaK 保持开启或 adapter failure 矩阵。
+- Raw Input 同期保持健康：ACRI v1 snapshot `27212` bytes、`1360` points、跨度 `147699ms`、`0` dropped points、`0` snapshot failures；SHA-256 为 `4B1844CAAB116354DE4EB104C9921D18EFA98658E36CD20BEFE208264FC7491B`。
+- 性能采样仍证明 GPU 路径本身轻量：约 `0.0604` CPU core、`152.59 MiB` peak working set、GPU Video Encode 平均 `12.584%` / 最大 `12.72%`、GPU 3D 平均 `0.361%`。问题是 producer/MFT input-permit 节奏造成的完整性失败，不是 CPU-backed 性能回退；不得将低 CPU 误写成 Task 4 通过。
+- 证据包保存在仓库外 `E:\DevCache\temp\aiming-cookie-task4-1784430920662\bundle\validation-summary.json`；未经指示未提交、未推送。
+
+2026-07-18 GPU Replay Buffer 决策与暂停证据：
+
+- 点点选择保留“全自动 + 不漏正常开局”，不再把倒计时、HUD 或其它视觉启发式作为正确性来源；自动视频采用持续硬件编码与有界压缩码流回放缓冲。
+- 当时冻结的 v1 完整自动采集支持窗口为 `300 秒`墙上时间，包含短暂停；该历史决策已被 2026-07-19 的暂停局 fail-closed 裁决 supersede：`Pause Count > 0` 不生成永久 MP4。超过该窗口、长时间中断或 coverage gap 明确降级，不支持拼接猜测。
+- 实盘 Stats `1wall 6targets small - Challenge - 2026.07.18-20.57.21 Stats.csv` 含 `Challenge Start: 20:56:21.971`、`Pause Count: 0`、`Pause Duration: 0`。暂停字段存在已确认，但尚无真实暂停后继续样本验证 Stats / Performance event timestamp 与 WGC/Raw wall timeline；该 Gate 保持未闭合。
+- 本机历史 Performance 样本均为 `time_limit=60`；六条 timescale `1.0` 的最后事件约 `59.896–59.988s`，一条 timescale `0.7` 的最后事件为 `85.700s`。当前样本支持 300 秒预算，但不能替代超限 fail-closed 测试。
+
+2026-07-18 WGC Task 3 Media Foundation writer 与真实 MP4 smoke：
+
+- 新增 CPU-backed BGRA readback、Media Foundation H.264 writer、固定 `60 FPS` pre-readback gate、容量 `4` 的独立 writer channel、hardware-transform preference，以及 `capturedFrames` / `writerSubmittedFrames` / `writerDroppedFrames` / `encoderErrors` 分离诊断；writer 在自己的线程内创建和销毁，不跨线程移动 COM 对象。
+- focused MSVC capture tests 为 `8 passed, 2 ignored`；合成 MP4 ignored smoke 显式运行通过，Windows Shell 识别为 H.264、`320x240`、`60 FPS`。
+- 真实 `Full screen windowed` MP4 smoke：5 秒 `825` 个 WGC 元数据帧、`276` 个 writer submission、writer drop `0`、encoder error `0`；FFprobe 为 H.264/yuv420p、`1920x1080`、`60 FPS`、`301` 帧、`5.01665s`、`3,662,453` bytes。第 2 秒抽帧显示清晰 KovaaK 设置界面，无黑帧、错误裁剪或桌面泄漏。
+- recorder process 在同机 smoke 中约使用 `7.688 CPU-seconds / 5.326s = 144.3%`，约 `1.44` 个 CPU 核；手动 `30 FPS` A/B 为 `69.3%`，但默认已按点点裁决恢复 `60 FPS`，且没有自动降帧机制。该结果保留为 DXGI/staging 优化基线，不得写成性能 Gate 已通过。
+- 本机通过 winget 安装 FFmpeg `8.1.2` 仅用于开发验证，不是仓库/runtime 依赖。尚未验证 Raw/MP4 correlation、Challenge 切窗、真实 Run storage，亦未验证三种显示模式的完整 MP4 输出。
+
+2026-07-18 WGC Task 2 与真实 KovaaK 窗口 smoke：
+
+- `windows 0.61.3` 直接依赖、WGC HWND producer、D3D11 bridge、`CreateFreeThreaded` frame pool、`FrameArrived` 和 `SystemRelativeTime` 已接入；视频队列有界，满载时丢帧并计数，不阻塞 Raw Input。
+- MSVC `cargo check --target x86_64-pc-windows-msvc --lib` 通过；`cargo test --target x86_64-pc-windows-msvc --lib window_capture` 为 `5 passed`；新增文件 rustfmt 通过；`cargo metadata --locked` 与 `git diff --check` 通过。
+- 真实窗口 smoke：KovaaK `UnrealWindow` HWND `0xC2081A` 在 `Full screen windowed`、`Full screen`、`Windowed` 三种模式均通过 5 秒探针；帧数分别为 `824`、`825`、`825`，尺寸分别为 `1920x1080`、`1920x1080`、`1922x1112`，首末 `SystemRelativeTime` 均单调且回退为 `0`。`Windowed` 的尺寸包含窗口非客户区，后续 writer/crop 合同必须明确是否只编码客户区。尚未验证 MP4、Raw/MP4 PTS correlation 或 Challenge 切窗。
+
+2026-07-17 自动 Run 采集合同同步（文档-only）：
+
+- 新增 active `2026-07-17-automatic-run-capture-design.md`，并同步 PRD、Architecture、UI/UX、Roadmap、active frontend spec/plan、evidence/deletion lifecycle spec 与索引；
+- 跨文档检索确认 readiness、单局/多局选择、待分析 History、Provider skip、Run-owned MP4 和 Storage 手动管理语义均有主责任落点；
+- `git diff --check` 通过；14 个 changed Markdown 文件的相对文件链接检查全部通过；
+- 未运行代码测试、build 或真实 Desktop/KovaaK 验证，因为本轮没有修改或实现业务代码；自动采集能力继续标记为未实现。
 
 2026-07-16 Windows Desktop pre-frontend Task 1–2 与正式前端转场：
 
