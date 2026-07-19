@@ -108,7 +108,9 @@ registry:<registry_version>
 首版同时覆盖：
 
 - Flicking：movement timing、peak/time-to-peak、decel fraction、linearity、SPARC、stopping/settle、reverse、corrective/submovement、path geometry、speed–precision、distribution/history comparability；
+- Dynamic clicking：只覆盖已有 analyzer/evidence 合同可观察的 relative motion、acquisition、click timing 与 outcome 条件；缺少经验证 target association 或视觉质量时只允许 outcome-only 表述；
 - Tracking：on-target、loss/off-target/reacquisition、average error、speed mismatch、acceleration mismatch、PTC scope、smooth/reactive/control tracking cue；
+- Switching：只覆盖已观察的 leave/transition/acquire/settle 与 outcome 链；目标身份或 selection 不可观测时不得生成 selection 解释或处方；
 - 身体/张力：只作为 candidate hypothesis 与单变量 cue experiment，不能产生 measured/deterministic root cause；
 - Settings/hardware：只作为可撤销单变量实验，不生成通用最佳 sensitivity/FOV/hardware 结论；
 - Practice/prescription：external focus、contextual interference、feedback fading、剂量限制、training target、comparability、retest 与 insufficient-evidence behavior；
@@ -172,7 +174,7 @@ supported_use?
 - Draft 2020-12 schema 必须能接受 canonical Registry/合法 fixture，并拒绝 unknown fields、非法 enum、空 limitation 与 source/claim 冲突；大小、重复 ID/version、signal alias chain 与 unsafe sentinel 继续由 runtime validator fail closed；
 - Python/TS 对同一 query 返回相同 entry refs、versions 和顺序；
 - 37 + 19 + 11 migration audit coverage 完整；
-- Flicking 19 个 canonical signals 均至少有一个 entry；Tracking、身体/张力、settings 与 verification 均有覆盖；
+- Flicking 19 个 canonical signals 均至少有一个 entry；Dynamic clicking、Tracking、Switching、身体/张力、settings 与 verification 均有覆盖；
 - body/tension/settings 只能 experimental；community 不得 deterministic；Knowledge 不得 measured；
 - 所有 v1 turn 无 bridge 仍有 knowledge tool；v0 无 knowledge/product tools；
 - 每次最多 3 条，未知条件不全库 fallback；

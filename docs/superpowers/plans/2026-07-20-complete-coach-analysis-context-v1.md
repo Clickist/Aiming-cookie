@@ -1,6 +1,6 @@
 # Complete Coach Analysis and Evidence Context v1 - Implementation Plan
 
-> **状态：proposed，禁止执行。** 采集 worktree 的上游文档与代码尚未合入；必须先在 executor plan 之外完成下述 pre-activation 文档治理审阅，再由点点批准转为 active。只有 active 后，点点明确指定的一个 Task 才能执行。
+> **状态：active。** 2026-07-20 已完成采集集成与 pre-activation 文档治理，点点已批准激活并授权从 Task 1 起继续推进。每次仍只执行一个 Task，并遵守 Allowed files、Tests first、冻结决策和 Stop rule。
 > **For executor:** implement only the explicitly authorized Task; obey Allowed files, Tests first, frozen decisions and Stop rule.
 > 依赖 spec：[`../specs/2026-07-20-complete-coach-analysis-context-design.md`](../specs/2026-07-20-complete-coach-analysis-context-design.md)
 > 相关 spec：[`../specs/2026-07-13-analysis-evidence-coach-context-design.md`](../specs/2026-07-13-analysis-evidence-coach-context-design.md)、[`../specs/2026-07-14-versioned-coach-knowledge-registry-design.md`](../specs/2026-07-14-versioned-coach-knowledge-registry-design.md)、[`../specs/2026-07-17-automatic-run-capture-design.md`](../specs/2026-07-17-automatic-run-capture-design.md)
@@ -19,9 +19,9 @@
 - `kovaak_tracker/tracking.py`、`analysis.py`、`advice_tracking.py` 是候选/旧实现，不能直接当成 v2 producer。
 - Coach 已有 allow-list context、Knowledge Registry 和 owner-scoped `run_product_command` bridge；新 evidence query 应复用这条通道。
 - 生产 Training Plan 是安全持久化命令；旧 `coach/planning.py` 的确定性计划逻辑没有接到当前产品主链。
-- capture closeout branch `codex/windows-capture-closeout` 已在 clean/pushed `b8c8502` 实现 `time_alignment.v2`、Run window persistence、Capture Coordinator/Finalizer 与 lifecycle repair，但尚未合入当前 checkout；两条分支从 `0aca0ac` 分叉，不能把 capture branch 的代码或上游文档当成当前已合入事实。
-- capture branch 的 worker snapshot 仍未冻结并传递 CanonicalTimeWindow；native analyzer 会重新 resolve source，legacy duration 路径仍含 end-inclusive compatibility。Stats/Performance parser 的 presence/order、跨午夜、per-weapon、multi-payload 和 timestamp validity 也仍是 Task 1 delta；必须先修 correctness，再扩 analyzer。
-- 本计划不得覆盖、清理或并行修改 capture worktree。激活前必须通过正常 Git 集成保留双方提交，并逐项解决上游文档冲突；不得在当前 checkout 手工复制 capture 实现冒充已合入。
+- capture closeout commit `b8c8502` 已通过正常 Git merge 集成，保留 `time_alignment.v2`、Run window persistence、Capture Coordinator/Finalizer 与 lifecycle repair 的实现和证据。
+- 合入后的 worker snapshot 仍未冻结并传递 CanonicalTimeWindow；native analyzer 会重新 resolve source，legacy duration 路径仍含 end-inclusive compatibility。Stats/Performance parser 的 presence/order、跨午夜、per-weapon、multi-payload 和 timestamp validity 也仍是 Task 1 delta；必须先修 correctness，再扩 analyzer。
+- capture 实现与验证是 Task 1 的基线；本计划只修列明的 correctness delta，不重做或回退已经闭合的采集能力。
 
 ## 2. 全局冻结决策
 
@@ -58,11 +58,11 @@ Pre-activation upstream reconciliation/activation (not an executable Task)
 
 Task 10 是 Task 7、8、9 的前置条件；它先补 definition/scope/limitation 和 prescription/verification 的最小知识覆盖。Task 7、8、9 随后可以分别开发，但共享 contract 或 worker dispatch 的改动必须串行合入并分别回归，不能让多个 executor 同时编辑同一文件。
 
-## Pre-activation governance checklist - not an executable Task
+## Pre-activation governance record - completed 2026-07-20
 
 ### 目的
 
-等待采集分支合入主线后，由架构/文档治理会话把点点确认的完整 Coach 上线目标写回主责任事实源，解决当前 PRD “v1 flicking-first / tracking later” 与新目标的冲突，再决定本 spec/plan 是否可以转为 active。本节不是 plan Task，不能用于绕过“只有 active Task 才能执行”的规则。
+采集分支已通过正常 Git merge 集成；架构/文档治理会话已把点点确认的完整 Coach 上线目标写回主责任事实源，解决原 PRD “v1 flicking-first / tracking later” 与新目标的冲突，并完成 spec/plan 激活。本节仅保留激活审计记录，不是可重复执行的 plan Task。
 
 ### Reconciliation scope
 
@@ -98,13 +98,13 @@ Task 10 是 Task 7、8、9 的前置条件；它先补 definition/scope/limitati
 - Provider onboarding 只需清楚列出当前版本会发送的 L1-L3 字段类别与 L0 禁止项；按点点已拍板的普通 Coach context 规则，不新增逐 Run consent 或新的敏感数据状态机。
 - 合入后的 `time_alignment.py`、worker/snapshot 逐项对照 Task 1；已经完成的步骤从计划中标记/拆除，不能重复实现或回退采集验证。
 
-### Review steps
+### Completed review steps
 
-1. 验证采集 worktree 已通过正常 Git 合入或被明确保留，主 checkout 不再需要碰另一个 worktree 的 dirty state。
-2. 对比合入后的 PRD/Architecture/Roadmap 与本 proposed spec，只把产品/稳定合同回写到对应主责任文档。
-3. 审阅本 spec 的硬预算、scope 和未来 vision extension；需要修改时只改本 spec。
-4. 点点批准后，把 spec/plan 状态和两个索引从 proposed 改为 active；未批准时保持 proposed。
-5. 运行链接、状态和 diff 检查。
+1. [x] 采集 worktree 通过正常 Git merge 集成，双方提交均保留。
+2. [x] PRD/Architecture/Roadmap 与本 spec 完成分层协调，产品/稳定合同只写入对应主责任文档。
+3. [x] 本 spec 的硬预算、scope 和未来 vision extension 已审阅。
+4. [x] 点点批准 spec/plan 从 proposed 转为 active，并授权从 Task 1 起继续推进。
+5. [x] 链接、状态、冲突标记、diff 与回归检查纳入本次集成验证。
 
 ### Verify
 
@@ -114,12 +114,9 @@ git diff --check
 git status --short
 ```
 
-### Activation stop rule
+### Activation stop rule - closed
 
-- 采集 worktree 尚未合入、上游 dirty 变更归属不清或需要覆盖另一个 session 的文件；
-- 点点已确认的 launch scope 尚未写回 PRD/Architecture/Roadmap；
-- 需要用下游 spec 静默覆盖 PRD/Architecture；
-- 点点尚未批准把 proposed plan 转为 active；在此之前不能把本节当作 Task 执行。
+- 采集提交、上游 scope、文档归属与激活授权均已闭合；若未来再次出现这些条件，必须重新停止而不是沿用本记录绕过治理。
 
 ## Task 1 - Canonical Challenge time window
 

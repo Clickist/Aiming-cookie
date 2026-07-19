@@ -9,7 +9,7 @@ Aiming Cookie 的目标形态是 **Desktop-first local product**：分析、Hist
 ```text
 Desktop Client (Next.js UI in Tauri)
   ├─ Native shell / file picker / media access
-  ├─ Capture Coordinator (Windows Raw Input + KovaaK window recording, opt-in)
+  ├─ Capture Coordinator (Windows Raw Input + bounded KovaaK replay buffer, opt-in)
   ├─ Local Analysis Runtime (Python API + worker)
   ├─ Coach Agent Runtime (Pi-based runtime + product tools)
   ├─ App-owned local Provider profile / credential store
@@ -47,8 +47,8 @@ Desktop Client (Next.js UI in Tauri)
 - 本地路径导入由 native picker 发起；源文件不被修改，运行时复制到 managed workspace；
 - Desktop 可自动发现 KovaaK Stats / Performance，并将解析后的 `KovaaKRun` metadata 保存在本地 SQLite；源文件仍由用户拥有；
 - Windows Raw Input 由 Tauri native layer opt-in 启用，只在检测到 KovaaK 进程时采集相对 `dx/dy`、时间戳和鼠标按钮；非 Windows 明确返回 unsupported；
-- 自动采集启用后，Capture Coordinator 在 KovaaK 进程 gate 内同时分段录制仅 KovaaK 窗口；系统不假装拥有实时 Challenge start/end 事件，而是在稳定 Stats / Performance 到达后按 canonical Challenge window 事后切出 Run-owned MP4 与 Raw trace；
-- Raw Input trace、run metadata 和本地解析摘要不上传云端，也不自动进入 Coach 请求；
+- 自动采集启用后，Capture Coordinator 在 KovaaK 进程 gate 内持续采集 Raw，并将 WGC 的 KovaaK 窗口 GPU surface 交给同适配器的硬件编码器；压缩码流只保留最近 300 秒的有界瞬态回放缓冲。系统不假装拥有实时 Challenge start/end 事件，而是在稳定 Stats / Performance 到达后按 canonical Challenge wall window 事后生成 Run-owned evidence；仅 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4，`Pause Count > 0` 的暂停局 fail closed，只保留 partial/unavailable evidence，不把 Raw/Performance 声明为 canonical aligned；
+- L0 Raw Input trace 与私有 parser payload 不上传云端或进入 Coach 请求；run metadata 与本地解析结果只能通过版本化、字段白名单化且有预算上限的 L1-L3 投影进入用户已选择的 Provider；
 - Desktop 模式的本地 API 只监听 loopback，并要求本次启动 token；
 - token 不持久化、不写普通日志，也不应传播给无关子进程；
 - Tauri 退出时必须终止其管理的 runtime 进程树；
@@ -70,7 +70,9 @@ Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享
 
 所有 Analysis 创建统一遵守 `Stats AND (MP4 OR (Raw + Performance))`。自动 MP4 必须已由 Run Finalizer 对齐到当前 Challenge；手动 fallback 必须由用户同时选择明确对应的 MP4 与 Stats，系统不能仅凭 MP4 猜测 Stats / Performance。
 
-Raw Input 接通不等于完整 tracking 接通。它解决的是输入运动学事实源；目标/准星相对误差、视觉反应时刻和场景证据仍需 Performance/Stats 或 MP4。tracking 产品化仍需要完成指标命名、目标/准星语义和真实阈值标定。
+暂停局是 v1 的明确 fail-closed 分支：当 Stats 表示 `Pause Count > 0` 时，不生成永久 MP4，不把暂停期间的 Raw/Performance 强行标为 canonical aligned，也不把该 Run 宣称为 ready；证据可以保留为 partial/unavailable 供诊断。normal 与 timescale-only（`Pause Count = 0`）继续使用当前永久 MP4 路径。
+
+Raw Input 解决的是输入运动学事实源；目标/准星相对误差、视觉反应时刻和场景证据仍需经过本地 MP4 预处理、统一时间窗口和质量 Gate。首发目标覆盖 static/dynamic clicking、continuous tracking 与 target switching；各 family 只能消费其已验证的事实与指标。没有玩家移动遥测的 movement aiming 保持 outcome-only，不能由输入或结果反推移动机制。
 
 ## 3. 稳定数据合同
 
@@ -106,6 +108,7 @@ AnalysisResult
 - `analysis_id` 必须绑定所属 Analysis Session 的稳定引用（当前 wire format 为 `analysis:{session_id}`）；terminal write 必须同时校验 owner/local profile、`analysis_type`、`input_mode` 与可选 `kovaak_run_id/ref` 均匹配已 claim 的 request，结构合法但属于另一 request 的结果必须 fail-closed；
 - multimodal 不得让视频重新定义已经成立的输入运动学；视觉失败只降低回放/视觉证据 availability，不抹掉 native 结果；
 - 每个关键指标必须能追溯到 Raw Input、Performance、Stats、MP4 或融合计算；证据缺失时使用 warning/availability 表达；
+- Coach 可获得版本化、类型化、字段白名单化的 L1-L3 facts/evidence/diagnosis；不得获得 L0 原始载体或私有 parser payload；
 - artifact 通过 manifest/稳定引用暴露，不泄露任意文件系统路径；
 - 新字段优先向后兼容；破坏性变化升级 contract version。
 
@@ -202,7 +205,7 @@ KovaaKRun
 - Raw Input trace 与 Run metadata 的保留、删除和孤儿清理不能从当前实现默认值推导，必须有明确合同；
 - Storage 必须能统计总占用，并至少区分 Run 录像、Raw trace、Analysis artifacts 与未完成采集数据；
 - v1 由用户分别手动移除 Run-owned MP4、Run-owned Raw trace 或未完成采集数据，删除影响必须先说明；Run metadata、既有 Analysis 和用户源文件保留，相关 evidence 引用改为 unavailable；
-- 不启用静默自动 quota、TTL、按最旧优先清理或“一键清空所有数据”；低层有界瞬态 capture buffer 不是已 finalization 的 Run evidence，继续由其专门 lifecycle contract 管理；
+- 不启用针对 Run-owned evidence 的静默自动 quota、TTL、按最旧优先清理或“一键清空所有数据”；低层 Raw / encoded-video capture buffer 不是已 finalization 的 Run evidence。encoded-video 按最近 300 秒墙上时间有界覆盖；Raw 的物理 retention 可以更长，但完整自动 Run 的共同保证只到 300 秒；
 - 精确删除事务、tombstone、失败恢复和并发语义必须由 active implementation plan tests-first 冻结。
 
 ### 4.3 Coach 数据归属
@@ -215,7 +218,14 @@ Coach 是用户关系层，不属于某个 analysis session：
 - analysis session scoped chat 只能作为迁移兼容层，不可成为新功能依赖；
 - schema、summary/换窗、长期档案和 Pi session 投影若需变化，必须由 active spec/plan 单独冻结。
 
-### 4.4 Coach Knowledge Registry
+### 4.4 Coach evidence boundary
+
+- L0 原始载体与私有实现对象（Raw trace、MP4/frame、原始 Stats CSV、Performance protobuf、绝对路径、私有 parser payload 与未知字段）只留在本地 Runtime/受管 artifact，不能进入 Provider request、Coach tool result、message、trace、普通 API 或日志；
+- L1 CanonicalSourceFacts、L2 DerivedEvidence 与 L3 diagnosis/profile/plan 必须版本化、类型化、字段白名单化并带 provenance、completeness 与 limitation；完整规范化 facts 不等于原始载体或 future unknown field；
+- 用户启用 Coach 并选择 Provider 后，L1-L3 的 bounded context/tool results 是普通 Coach turn 数据，不增加逐 Run consent。owner、capability、预算和审计边界仍在本地 bridge 强制；
+- MP4 在当前合同中只由本地确定性预处理器生成数值 signals/events/confidence，Coach 引用 EvidenceSegment，用户在 UI 播放本地片段。未来视觉模型必须另立版本化合同，明确用户授权、限定片段、Provider、预算、retention 与 `model_inferred` 边界。
+
+### 4.5 Coach Knowledge Registry
 
 - Coach 知识是随产品版本发布、受 Git review 的只读产品资产，不属于任何 owner、Analysis、对话或 Provider；
 - 一份 versioned Registry 是 Python 与 Pi TypeScript runtime 的 canonical knowledge source，禁止在两种语言中各自维护正文副本；
@@ -263,7 +273,8 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - Windows Raw Input 默认关闭，首次启用必须有明确 opt-in 和采集范围说明；
 - Raw Input 只允许 KovaaK process gate 内的相对鼠标输入；不得采集键盘、桌面绝对坐标或其它应用的后台输入；
 - 自动录屏只允许捕获 KovaaK 应用窗口，不得捕获完整桌面、其它应用窗口或系统通知；
-- Raw Input trace 不进入 Provider 请求或普通日志；如果未来 Coach 要引用 trace，必须增加单独的用户确认和 evidence contract；
+- 自动视频主路径必须保持 WGC surface、颜色转换和硬件编码在 GPU 路径内；硬件编码不可用、适配器不匹配或视频队列背压时独立降级，不得静默回退到会影响 Raw Input 或游戏的持续 CPU 编码；
+- Raw Input trace、MP4、原始 CSV/protobuf 和私有 parser payload 不进入 Provider 请求或普通日志；Coach 只可在 L1-L3 合同内消费本地 broker 返回的 bounded 规范化结果；
 - Desktop loopback API 继续使用高熵、launch-scoped token，并限制 host/origin/接口暴露；这是本地进程安全，不是用户登录；
 - Web 预览只允许在受控环境访问，不把外部 VPN/SSO/代理访问控制包装成产品账号；
 - 所有 artifact、Coach 和 History 读写统一校验本地 profile、稳定引用和 capability；
@@ -290,14 +301,14 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 
 顺序原则：
 
-1. 先保证 Capture Coordinator、Stats/Performance 事后 Run finalization、Raw/MP4 Run-owned evidence、用户选择与手动存储管理可靠；再保证输入原生 flicking、确定性解释/处方、History 和 Analysis 删除语义；
+1. 先保证 Capture Coordinator、Stats/Performance 事后 Run finalization、Raw/MP4 Run-owned evidence、用户选择与手动存储管理可靠；再冻结统一时间、场景、规范化 evidence 和 bounded Coach broker，接通 static/dynamic clicking、continuous tracking 与 target switching 的专项 analyzer；
 2. 完成完整 Pi catalog、selected provider/model、本地 credential persistence、必要的 Pi auth/OAuth/device-code 与首次 onboarding，再恢复用户可达的分析工作区、训练记录选择、视频/数据联动、完整 Provider Settings 和 Coach 侧栏；
 3. 冻结并实现 source unavailable、Run/trace 删除、import/delete/runtime crash 等恢复合同；
 4. 完成 Desktop packaging、Windows 实机验证、静态 Landing/release 分发和发布链；
-5. 用视频与更多 tracking 数据增强输入原生指标，在目标/准星语义和真实阈值标定后接通完整 tracking；
-6. 显式导出/导入、跨平台采集、外设推荐和远期硬件扩展在核心闭环验证后展开。
+5. 完成跨 family 的质量、fixture、真实 Run 与 Coach usefulness Gate；没有移动遥测的 movement aiming 继续只保留 outcome-only；
+6. 显式导出/导入、跨平台采集、外设推荐、未来视觉模型和远期硬件扩展在核心闭环验证后展开。
 
-不得用 UI 重做、Desktop 壳或远端服务掩盖本地数据生命周期问题；也不得让 tracking、推荐生态或远期平台扩展阻塞当前 flicking 闭环。
+不得用 UI 重做、Desktop 壳或远端服务掩盖本地数据生命周期问题；也不得让推荐生态、未来视觉模型或远期平台扩展阻塞首发完整 Coach 闭环。
 
 ## 9. 文档关系
 

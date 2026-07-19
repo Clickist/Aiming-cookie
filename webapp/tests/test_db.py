@@ -608,7 +608,7 @@ async def test_v11_to_v13_adds_persistent_coach_command_contract_idempotently():
 
 
 @pytest.mark.asyncio
-async def test_fresh_v13_schema_uses_migration_helper_and_exact_tombstone_ddl(
+async def test_fresh_v14_schema_uses_v13_helper_and_exact_tombstone_ddl(
     monkeypatch,
 ):
     await db.close_conn()
@@ -633,7 +633,7 @@ async def test_fresh_v13_schema_uses_migration_helper_and_exact_tombstone_ddl(
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 13
+    assert db.TARGET_USER_VERSION == 15
     assert calls == 1
     assert "analysis_deletion_tombstones" not in db.SCHEMA
     assert _normalized_ddl(db._V13_ANALYSIS_DELETION_TOMBSTONES) == _normalized_ddl(
@@ -700,7 +700,7 @@ async def test_fresh_v13_schema_uses_migration_helper_and_exact_tombstone_ddl(
 
 
 @pytest.mark.asyncio
-async def test_init_schema_upgrades_v12_to_v13_tombstone_contract():
+async def test_init_schema_upgrades_v12_to_v15_with_tombstone_contract():
     conn = await db.get_conn()
     await conn.execute("DROP TABLE IF EXISTS analysis_deletion_tombstones")
     await conn.execute("PRAGMA user_version = 12")
@@ -710,12 +710,12 @@ async def test_init_schema_upgrades_v12_to_v13_tombstone_contract():
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 13
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 15
     assert await _table_exists(conn, "analysis_deletion_tombstones")
 
 
 @pytest.mark.asyncio
-async def test_init_schema_v13_second_call_is_idempotent_and_preserves_tombstone():
+async def test_init_schema_v15_second_call_is_idempotent_and_preserves_tombstone():
     conn = await db.get_conn()
     await conn.execute(
         "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
@@ -727,7 +727,7 @@ async def test_init_schema_v13_second_call_is_idempotent_and_preserves_tombstone
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 13
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 15
     row = await (
         await conn.execute(
             "SELECT owner_id, cleanup_state, cleanup_attempts, last_error_code "
@@ -816,3 +816,147 @@ async def test_v13_tombstone_rejects_invalid_identity_and_cleanup_state_combinat
             "last_error_code) VALUES(?, ?, ?, ?, ?)",
             (analysis_session_id, owner_id, state, attempts, error_code),
         )
+
+
+@pytest.mark.asyncio
+async def test_v14_to_v15_adds_run_evidence_tombstones_without_changing_runs():
+    conn = await db.get_conn()
+    cur = await conn.execute(
+        "INSERT INTO kovaak_runs(user_id, source_key, video_state, video_path) "
+        "VALUES('u1', 'migration-run', 'attached', '/private/video.mp4') RETURNING id"
+    )
+    run_id = (await cur.fetchone())[0]
+    await conn.execute("PRAGMA user_version = 14")
+    await conn.commit()
+    await db.close_conn()
+
+    await db.init_schema()
+    conn = await db.get_conn()
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 15
+    row = await (
+        await conn.execute(
+            "SELECT user_id, source_key, video_state, video_path FROM kovaak_runs "
+            "WHERE id=?", (run_id,),
+        )
+    ).fetchone()
+    assert tuple(row) == ("u1", "migration-run", "attached", "/private/video.mp4")
+    assert await _table_exists(conn, "run_evidence_deletion_tombstones")
+    columns = await (
+        await conn.execute("PRAGMA table_info(run_evidence_deletion_tombstones)")
+    ).fetchall()
+    assert [row[1] for row in columns] == [
+        "run_id", "evidence_kind", "owner_id", "artifact_relpath",
+        "expected_sha256", "expected_size", "cleanup_state", "cleanup_attempts",
+        "last_error_code", "created_at", "updated_at",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_init_schema_migrates_v13_to_v15_preserving_run_and_session_rows():
+    await db.close_conn()
+    db_path = "./aiming_cookie_test.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    conn = await aiosqlite.connect(db_path)
+    await conn.executescript(
+        """
+        CREATE TABLE sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT 'dev',
+            status TEXT NOT NULL DEFAULT 'queued',
+            video_path TEXT,
+            csv_path TEXT,
+            result TEXT,
+            error TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE kovaak_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT 'desktop-local',
+            source_key TEXT NOT NULL,
+            scenario TEXT,
+            stats_path TEXT,
+            performance_path TEXT,
+            mouse_trace_path TEXT,
+            trace_state TEXT NOT NULL DEFAULT 'none',
+            pending_trace_path TEXT,
+            trace_error TEXT,
+            stats_summary TEXT,
+            performance_summary TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, source_key)
+        );
+        INSERT INTO sessions(id, user_id, status, video_path, csv_path)
+        VALUES(7, 'owner-v13', 'succeeded', '/user/video.mp4', '/user/stats.csv');
+        INSERT INTO kovaak_runs(
+            id, user_id, source_key, scenario, stats_path, performance_path,
+            mouse_trace_path, trace_state, stats_summary, performance_summary
+        ) VALUES(
+            9, 'owner-v13', 'source-v13', 'Scenario', '/user/Stats.csv',
+            '/user/Performance.perf', '/managed/trace.bin', 'attached',
+            '{"score":123}', '{"event_count":4}'
+        );
+        PRAGMA user_version = 13;
+        """
+    )
+    await conn.commit()
+    await conn.close()
+
+    await db.init_schema()
+    conn = await db.get_conn()
+
+    assert db.TARGET_USER_VERSION == 15
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 15
+    session = await (
+        await conn.execute(
+            "SELECT id, user_id, status, video_path, csv_path FROM sessions WHERE id=7"
+        )
+    ).fetchone()
+    assert tuple(session) == (
+        7,
+        "owner-v13",
+        "succeeded",
+        "/user/video.mp4",
+        "/user/stats.csv",
+    )
+    run = await (
+        await conn.execute(
+            "SELECT id, user_id, source_key, scenario, stats_path, performance_path, "
+            "mouse_trace_path, trace_state, stats_summary, performance_summary "
+            "FROM kovaak_runs WHERE id=9"
+        )
+    ).fetchone()
+    assert tuple(run) == (
+        9,
+        "owner-v13",
+        "source-v13",
+        "Scenario",
+        "/user/Stats.csv",
+        "/user/Performance.perf",
+        "/managed/trace.bin",
+        "attached",
+        '{"score":123}',
+        '{"event_count":4}',
+    )
+    columns = {
+        row[1]
+        for row in await (await conn.execute("PRAGMA table_info(kovaak_runs)")).fetchall()
+    }
+    assert {
+        "capture_session_id",
+        "window_start_epoch_ms",
+        "window_end_epoch_ms",
+        "alignment_state",
+        "alignment_summary",
+        "finalization_state",
+        "finalization_error",
+        "video_path",
+        "video_state",
+        "pending_video_path",
+        "video_request_digest",
+        "video_receipt_json",
+        "video_summary_json",
+        "video_error",
+    } <= columns
