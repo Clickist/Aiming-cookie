@@ -110,6 +110,33 @@ def test_alignment_reports_aligned_partial_failed_and_unavailable_with_coverage(
     assert unavailable["coverage_ratio"] is None
 
 
+def test_legacy_performance_snapshot_with_pause_is_unavailable():
+    paused = performance(
+        events=[{"timestamp": 11.484201, "payload_type": "pauseCount", "count": 1}],
+    )
+
+    result = align_points_to_challenge(
+        [point(1_000, 0, 0), point(1_100, 0, 0)],
+        paused,
+    )
+
+    assert result["status"] == "unavailable"
+    assert "performance_anchor_missing" in result["warnings"]
+
+
+def test_legacy_performance_snapshot_with_stats_pause_count_is_unavailable():
+    paused = performance()
+    paused["pause_count"] = 1
+
+    result = align_points_to_challenge(
+        [point(1_000, 0, 0), point(1_100, 0, 0)],
+        paused,
+    )
+
+    assert result["status"] == "unavailable"
+    assert "performance_anchor_missing" in result["warnings"]
+
+
 def test_metrics_stay_in_raw_counts_without_calibration_and_keep_provenance():
     result = analyze_native_flicking(
         [point(1_000, 3, 4), point(1_100, 0, 10), point(1_200, 0, 20)],

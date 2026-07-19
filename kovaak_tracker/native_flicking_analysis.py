@@ -24,12 +24,14 @@ from collections.abc import Iterable, Mapping
 from math import ceil, gcd, hypot, isfinite
 from typing import Any
 
+from .time_alignment import TimeAlignmentError, reject_pause_evidence, resolve_time_window
+
 import numpy as np
 
 
 METRIC_VERSION = "native_flicking.v1"
 SPARC_METRIC_VERSION = "native_flicking.sparc.v2"
-ALIGNMENT_VERSION = "time_alignment.v1"
+ALIGNMENT_VERSION = "time_alignment.v2"
 
 
 class NativeFlickingAnalysisError(ValueError):
@@ -80,9 +82,11 @@ def align_points_to_challenge(
     if context is None:
         return _alignment_result("unavailable", None, (), "performance_anchor_missing")
 
-    start_ms, duration_ms = context
+    start_ms, duration_ms, alignment_provenance, half_open = context
     end_ms = start_ms + duration_ms
-    inside = tuple(item for item in trajectory if start_ms <= item["timestamp_ms"] <= end_ms)
+    inside = tuple(item for item in trajectory if start_ms <= item["timestamp_ms"] < end_ms)
+    if not half_open:
+        inside = tuple(item for item in trajectory if start_ms <= item["timestamp_ms"] <= end_ms)
     if not inside:
         return _alignment_result("failed", 0.0, (), "trace_outside_challenge_window")
 
@@ -97,7 +101,7 @@ def align_points_to_challenge(
     return {
         "timebase_version": ALIGNMENT_VERSION,
         "raw_clock_source": "system_wall_clock_epoch_ms",
-        "anchor_source": "performance.challenge_start_utc",
+        "anchor_source": alignment_provenance,
         "offset_ms": inside[0]["timestamp_ms"] - start_ms,
         "challenge_time_range_ms": [0, duration_ms],
         "status": status,
@@ -169,7 +173,7 @@ def analyze_native_flicking(
     performance_context = _performance_context(performance)
     if performance_context is None:
         return _unavailable_result(sources, alignment, "performance_anchor_missing", trajectory)
-    challenge_start_ms, challenge_duration_ms = performance_context
+    challenge_start_ms, challenge_duration_ms, _, _ = performance_context
     challenge_end_ms = challenge_start_ms + challenge_duration_ms
     click_anchors = _left_click_anchors(
         trajectory,
@@ -720,7 +724,7 @@ def _require_integer(record: Mapping[str, Any] | Any, key: str, index: int) -> i
     return value
 
 
-def _performance_context(performance: Mapping[str, Any] | Any | None) -> tuple[int, int] | None:
+def _performance_context(performance: Mapping[str, Any] | Any | None) -> tuple[int, int, str, bool] | None:
     if performance is None:
         return None
     header = _value(performance, "header") or performance
@@ -728,19 +732,35 @@ def _performance_context(performance: Mapping[str, Any] | Any | None) -> tuple[i
     if isinstance(anchor, bool) or not isinstance(anchor, int):
         return None
 
-    duration_ms = _value(performance, "time_limit_ms")
-    if duration_ms is None:
-        duration_ms = _value(header, "time_limit_ms")
-    if duration_ms is None:
-        profile = _value(header, "challenge_profile")
-        time_limit_seconds = _value(profile, "time_limit")
-        if isinstance(time_limit_seconds, (int, float)) and not isinstance(time_limit_seconds, bool):
-            duration_ms = time_limit_seconds * 1_000
-    if isinstance(duration_ms, bool) or not isinstance(duration_ms, (int, float)):
+    # Existing analysis snapshots carry an explicitly supplied duration. Keep
+    # this legacy path readable; new PerformanceData inputs use v2 below.
+    direct_duration = _value(performance, "time_limit_ms")
+    if direct_duration is None:
+        direct_duration = _value(header, "time_limit_ms")
+    if isinstance(direct_duration, (int, float)) and not isinstance(direct_duration, bool):
+        if direct_duration > 0 and int(direct_duration) == direct_duration:
+            try:
+                reject_pause_evidence(
+                    performance,
+                    float(_value(performance, "pause_duration_seconds") or 0.0),
+                    pause_count=_value(performance, "pause_count"),
+                )
+            except (TimeAlignmentError, TypeError, ValueError):
+                return None
+            return anchor, int(direct_duration), "legacy.performance.challenge_start_utc+time_limit_ms", False
+
+    try:
+        window = resolve_time_window(
+            performance if _value(performance, "header") is not None else header,
+            stats_challenge_start_epoch_ms=_value(performance, "stats_challenge_start_epoch_ms"),
+            stats_event_times_seconds=_value(performance, "stats_event_times_seconds") or (),
+            performance_event_times_seconds=_value(performance, "performance_event_times_seconds") or (),
+            pause_count=_value(performance, "pause_count"),
+            pause_duration_seconds=float(_value(performance, "pause_duration_seconds") or 0.0),
+        )
+    except (TimeAlignmentError, TypeError, ValueError):
         return None
-    if duration_ms <= 0 or int(duration_ms) != duration_ms:
-        return None
-    return anchor, int(duration_ms)
+    return window.start_ms, window.duration_ms, window.start_source + "+" + window.end_source, True
 
 
 def _alignment_result(
