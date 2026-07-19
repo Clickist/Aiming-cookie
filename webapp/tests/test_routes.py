@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import coach_commands, config, db, queue
+from webapp.backend import coach_commands, config, db, kovaak_run_store, queue
 from webapp.backend.app import app
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
@@ -668,3 +669,141 @@ async def test_session_video_supports_range_requests_for_seek(tmp_path):
         "artifact_ref": "input-video",
         "reason": None,
     }
+
+
+async def _seed_route_video_run(tmp_path: Path, source_key: str) -> tuple[dict, Path]:
+    stats = tmp_path / f"{source_key} Stats.csv"
+    stats.write_bytes(f"stats-{source_key}".encode())
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key=source_key,
+        scenario="Scenario",
+        stats_path=str(stats),
+        stats_summary={
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+        },
+    )
+    video = tmp_path / "data" / "runs" / str(run["id"]) / "video-auto.mp4"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(f"video-{source_key}".encode())
+    fingerprint = {
+        "sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
+        "size": video.stat().st_size,
+    }
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE kovaak_runs SET video_path=?, video_state='attached', "
+        "video_receipt_json=?, video_summary_json=?, "
+        "finalization_state='finalized' WHERE id=?",
+        (
+            str(video.resolve()),
+            json.dumps({"version": "capture_receipt.v1"}),
+            json.dumps({
+                "availability": "available",
+                "fingerprint": fingerprint,
+                "packetCount": 60,
+                "visibleDuration100ns": 10_000_000,
+                "timebaseVersion": "time_alignment.v2",
+            }),
+            run["id"],
+        ),
+    )
+    await conn.commit()
+    return await kovaak_run_store.get_kovaak_run(
+        run["id"], config.DESKTOP_LOCAL_PROFILE,
+    ), video
+
+
+@pytest.mark.asyncio
+async def test_run_owned_video_route_analyzes_one_run_and_leaves_other_pending(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    selected, selected_video = await _seed_route_video_run(tmp_path, "selected")
+    waiting, _waiting_video = await _seed_route_video_run(tmp_path, "waiting")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+    ) as client:
+        created = await client.post(
+            f"/api/kovaak-runs/{selected['id']}/analyze",
+            headers={"Idempotency-Key": "auto-run-owned-video"},
+            json={"input_mode": "video_fallback"},
+        )
+        listed = await client.get("/api/kovaak-runs")
+        detail = await client.get(f"/api/kovaak-runs/{selected['id']}")
+
+    assert created.status_code == 200, created.text
+    assert listed.status_code == detail.status_code == 200
+    by_id = {item["id"]: item for item in listed.json()["runs"]}
+    assert by_id[selected["id"]]["readiness_state"] == "analyzed"
+    assert by_id[waiting["id"]]["readiness_state"] == "pending_analysis"
+    assert detail.json()["video_artifact_ref"].startswith(
+        f"run:{selected['id']}:video:"
+    )
+    assert detail.json()["analysis_count"] == 1
+    assert str(tmp_path) not in listed.text
+    assert str(tmp_path) not in detail.text
+    session = await queue.get_session(created.json()["session_id"])
+    assert session["video_path"] == str(selected_video.resolve())
+    conn = await db.get_conn()
+    assert (await (await conn.execute("SELECT COUNT(*) FROM sessions")).fetchone())[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_storage_and_run_evidence_removal_are_desktop_only_and_path_free(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "data"
+    monkeypatch.setattr(config, "DATA_ROOT", data_root)
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "storage-token")
+    run, video = await _seed_route_video_run(tmp_path, "storage-removal")
+    video_bytes = video.stat().st_size
+    sid = await queue.enqueue(
+        config.DESKTOP_LOCAL_PROFILE, "", "", status="failed",
+    )
+    analysis_file = session_dir(sid) / "analysis.bin"
+    analysis_file.parent.mkdir(parents=True)
+    analysis_file.write_bytes(b"analysis-bytes")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        denied_storage = await client.get("/api/storage")
+        denied_remove = await client.delete(
+            f"/api/kovaak-runs/{run['id']}/evidence/video"
+        )
+        headers = {"X-Aiming-Cookie-Desktop-Token": "storage-token"}
+        storage = await client.get("/api/storage", headers=headers)
+        removed = await client.delete(
+            f"/api/kovaak-runs/{run['id']}/evidence/video", headers=headers,
+        )
+
+    assert denied_storage.status_code in {401, 403}
+    assert denied_remove.status_code in {401, 403}
+    assert storage.status_code == 200, storage.text
+    assert storage.json()["categories"] == {
+        "analysis_artifacts_bytes": len(b"analysis-bytes"),
+        "run_video_bytes": video_bytes,
+        "run_raw_bytes": 0,
+        "incomplete_recovery_bytes": 0,
+    }
+    assert storage.json()["total_bytes"] == len(b"analysis-bytes") + video_bytes
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["run_ref"] == f"run:{run['id']}"
+    assert removed.json()["evidence_kind"] == "video"
+    assert removed.json()["affected_modes"] == ["multimodal", "video_fallback"]
+    assert str(tmp_path) not in removed.text
+    assert await queue.get_session(sid) is not None
+    assert analysis_file.is_file()
+    route_paths = {
+        route.path for route in app.routes if hasattr(route, "path")
+    }
+    assert "/api/kovaak-runs/{run_id}/evidence" not in route_paths
+    assert "/api/kovaak-runs/evidence/clear" not in route_paths

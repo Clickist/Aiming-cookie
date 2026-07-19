@@ -53,6 +53,12 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 # The desktop runtime owns this per-launch secret; it is never persisted or logged.
 DESKTOP_LAUNCH_TOKEN = os.environ.get("AIMING_COOKIE_DESKTOP_TOKEN", "")
 DESKTOP_LOCAL_PROFILE = "desktop-local"
+NATIVE_CAPTURE_CONTROL_ADDR = os.environ.get(
+    "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_ADDR", ""
+).strip()
+NATIVE_CAPTURE_CONTROL_SECRET = os.environ.get(
+    "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_SECRET", ""
+).strip()
 
 
 _STEAM_APP_ID = "824270"

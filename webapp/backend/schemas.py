@@ -52,9 +52,31 @@ class StorageSessionItem(BaseModel):
     workspace_bytes: int
 
 
+class StorageCategoryTotals(BaseModel):
+    analysis_artifacts_bytes: int = 0
+    run_video_bytes: int = 0
+    run_raw_bytes: int = 0
+    incomplete_recovery_bytes: int = 0
+
+
 class StorageResponse(BaseModel):
     total_bytes: int
+    categories: StorageCategoryTotals
     sessions: list[StorageSessionItem]
+
+
+class RunEvidenceRemovalResponse(BaseModel):
+    run_ref: str
+    evidence_kind: Literal["video", "raw"]
+    artifact_ref: Optional[str] = None
+    availability: Literal["unavailable"]
+    removal_state: Literal[
+        "completed", "pending_cleanup", "already_unavailable"
+    ]
+    reclaimed_bytes: int
+    affected_modes: list[
+        Literal["input_native", "multimodal", "video_fallback"]
+    ]
 
 
 class TraceQualityOut(BaseModel):
@@ -153,6 +175,20 @@ class KovaaKRunListItem(BaseModel):
     trace_quality: TraceQualityOut
     trace_state: str = "none"
     trace_error: Optional[str] = None
+    video_artifact_ref: Optional[str] = None
+    finalization_state: str = "discovered"
+    finalization_error: Optional[str] = None
+    readiness_state: Literal[
+        "pending_analysis", "analyzed", "incomplete_evidence"
+    ] = "incomplete_evidence"
+    analysis_count: int = 0
+    supported_input_modes: list[
+        Literal["input_native", "multimodal", "video_fallback"]
+    ] = Field(default_factory=list)
+    evidence_availability: dict[str, str] = Field(default_factory=dict)
+    alignment: dict = Field(default_factory=dict)
+    video_quality: dict = Field(default_factory=dict)
+    limitations: list[str] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
