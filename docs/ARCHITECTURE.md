@@ -9,7 +9,7 @@ Aiming Cookie 的目标形态是 **Desktop-first local product**：分析、Hist
 ```text
 Desktop Client (Next.js UI in Tauri)
   ├─ Native shell / file picker / media access
-  ├─ Native Input Capture (Windows Raw Input, opt-in)
+  ├─ Capture Coordinator (Windows Raw Input + bounded KovaaK replay buffer, opt-in)
   ├─ Local Analysis Runtime (Python API + worker)
   ├─ Coach Agent Runtime (Pi-based runtime + product tools)
   ├─ App-owned local Provider profile / credential store
@@ -29,7 +29,7 @@ Desktop Client (Next.js UI in Tauri)
 | 职责域 | 负责 | 不负责 |
 |---|---|---|
 | **Domain Core** | 确定性的输入原生分析、可选视觉证据、视频 compatibility fallback、指标、诊断、处方、报告模型 | HTTP、UI、产品账号、队列、文件生命周期 |
-| **Local Analysis Runtime** | job、worker、KovaaK Run ingestion、输入时间对齐、managed workspace、本地 History、分析合同 | 产品账号、Provider 推理、通用 Agent 行为 |
+| **Local Analysis Runtime** | Capture Coordinator、job、worker、KovaaK Run finalization、输入时间对齐、managed workspace、本地 History、分析合同 | 产品账号、Provider 推理、通用 Agent 行为 |
 | **Coach Agent Runtime** | 本地长期 Coach 关系、Agent run/event、与本地 profile 能力对齐的产品命令编排、上下文衔接 | 重新定义确定性诊断、绕过本地 ownership/capability、直接拥有 `KovaaKRun` 或分析文件 |
 | **Client Surfaces** | Desktop/Web UI、onboarding、交互状态、Provider 认证状态呈现、native bridge | 数据真相、业务规则、密钥持久化 |
 | **Online Distribution Surfaces** | 无用户身份的 landing、文档、release 分发和可选外设目录 | 用户账号、credential、Coach、History、训练档案或 LLM 请求代理 |
@@ -47,6 +47,7 @@ Desktop Client (Next.js UI in Tauri)
 - 本地路径导入由 native picker 发起；源文件不被修改，运行时复制到 managed workspace；
 - Desktop 可自动发现 KovaaK Stats / Performance，并将解析后的 `KovaaKRun` metadata 保存在本地 SQLite；源文件仍由用户拥有；
 - Windows Raw Input 由 Tauri native layer opt-in 启用，只在检测到 KovaaK 进程时采集相对 `dx/dy`、时间戳和鼠标按钮；非 Windows 明确返回 unsupported；
+- 自动采集启用后，Capture Coordinator 在 KovaaK 进程 gate 内持续采集 Raw，并将 WGC 的 KovaaK 窗口 GPU surface 交给同适配器的硬件编码器；压缩码流只保留最近 300 秒的有界瞬态回放缓冲。系统不假装拥有实时 Challenge start/end 事件，而是在稳定 Stats / Performance 到达后按 canonical Challenge wall window 事后生成 Run-owned evidence；仅 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4，`Pause Count > 0` 的暂停局 fail closed，只保留 partial/unavailable evidence，不把 Raw/Performance 声明为 canonical aligned；
 - Raw Input trace、run metadata 和本地解析摘要不上传云端，也不自动进入 Coach 请求；
 - Desktop 模式的本地 API 只监听 loopback，并要求本次启动 token；
 - token 不持久化、不写普通日志，也不应传播给无关子进程；
@@ -66,6 +67,10 @@ Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享
 - **input-native**：KovaaK Run + Raw Input，直接计算输入运动学；
 - **multimodal**：input-native + MP4；native 仍是输入运动学主事实，MP4 用于直观回放、问题定位和可验证的视觉证据；
 - **video-fallback**：MP4 + Stats，作为非 Windows、未开启 Raw Input 和旧工作流的 compatibility fallback，沿用 CV pan trajectory。
+
+所有 Analysis 创建统一遵守 `Stats AND (MP4 OR (Raw + Performance))`。自动 MP4 必须已由 Run Finalizer 对齐到当前 Challenge；手动 fallback 必须由用户同时选择明确对应的 MP4 与 Stats，系统不能仅凭 MP4 猜测 Stats / Performance。
+
+暂停局是 v1 的明确 fail-closed 分支：当 Stats 表示 `Pause Count > 0` 时，不生成永久 MP4，不把暂停期间的 Raw/Performance 强行标为 canonical aligned，也不把该 Run 宣称为 ready；证据可以保留为 partial/unavailable 供诊断。normal 与 timescale-only（`Pause Count = 0`）继续使用当前永久 MP4 路径。
 
 Raw Input 接通不等于完整 tracking 接通。它解决的是输入运动学事实源；目标/准星相对误差、视觉反应时刻和场景证据仍需 Performance/Stats 或 MP4。tracking 产品化仍需要完成指标命名、目标/准星语义和真实阈值标定。
 
@@ -150,17 +155,22 @@ created → uploading/importing → queued → running → done | failed
 KovaaKRun
   ├─ Stats / Performance source references
   ├─ parsed scenario / challenge / event summaries
-  ├─ optional local mouse trace
+  ├─ optional Run-owned local mouse trace
+  ├─ optional Run-owned automatic MP4
+  ├─ capture / finalization / analysis-readiness state
   └─ zero or more Analysis Session references
 ```
 
 约束：
 
-- Run 没有视频也可以存在；Analysis Session 可以引用 Run，但 Run 不反向拥有 Analysis Session；
+- Run 没有视频、没有 Raw 或 evidence 尚不完整时也可以存在；Analysis Session 可以引用 Run，但 Run 不反向拥有 Analysis Session；
 - Stats / Performance 原始文件保持用户所有，本地数据库只保存绝对路径、解析摘要和稳定 source key；Aiming Cookie 不自动复制、搬迁或删除这些源文件；
 - Raw Input trace 是 Run 的本地 managed artifact，不是云端 artifact；没有有效 Performance 时间锚时不得伪造配对；
+- 自动录制并按 Challenge window 切出的 MP4 是 Run-owned managed artifact；它不随 terminal Analysis 删除。手动导入 MP4 仍按用户源文件与 Analysis-owned managed copy 的既有边界处理；
+- 一条 canonical Performance Challenge window 只生成一条 Run；连续多局必须分别 finalization，重复 watcher observation 必须幂等；
+- finalization 后满足最低条件但尚未创建 Analysis 的 Run 进入 `pending_analysis` 或等价稳定状态；未选择 Run 不进入 Analysis job queue；
 - Domain Core 必须在结果中保留 evidence provenance 和缺失范围，不能把单一来源的推断序列化成另一来源的测量；
-- Run metadata、trace 的删除、源文件失效、Run 与 Analysis 的解绑和 reconciliation 必须在独立 spec 中冻结后才能作为完整用户功能放行。
+- Run-owned Raw / MP4 的手动存储管理遵守 active automatic capture spec；Run metadata 整体删除、源文件失效、Run 与 Analysis 的解绑、精确 tombstone 和 reconciliation 仍必须由独立 spec/implementation plan 冻结后才能放行。
 
 ## 4. 持久化与文件生命周期
 
@@ -181,17 +191,21 @@ KovaaKRun
 
 ### 4.2 Managed workspace
 
-每次分析拥有受控 workspace。导入必须流式/有界，检查磁盘余量，并保证路径解析后仍位于受管根目录内。
+受管根目录同时包含 Run-owned evidence、Analysis-owned workspace 和可恢复的未完成采集数据。导入与 capture write 必须流式/有界，检查磁盘余量，并保证路径解析后仍位于受管根目录内。
 
 删除合同：
 
 - 删除 terminal analysis 时删除其 managed inputs/artifacts；
 - 不删除用户原始源文件；
+- 删除 terminal Analysis 不删除 Run-owned Raw trace 或自动 MP4；
 - DB 状态与文件删除必须具备可恢复顺序（例如 commit 后清理、tombstone 或 reconciliation）；
 - 崩溃后可识别和回收 orphan/partial workspace；
 - KovaaKRun 的源文件可能由用户在应用外移动或删除；UI 必须表达 source unavailable，不能把路径失效当作分析成功；
 - Raw Input trace 与 Run metadata 的保留、删除和孤儿清理不能从当前实现默认值推导，必须有明确合同；
-- quota、TTL 和主动清理策略必须显式，不从实现默认值推导产品承诺。
+- Storage 必须能统计总占用，并至少区分 Run 录像、Raw trace、Analysis artifacts 与未完成采集数据；
+- v1 由用户分别手动移除 Run-owned MP4、Run-owned Raw trace 或未完成采集数据，删除影响必须先说明；Run metadata、既有 Analysis 和用户源文件保留，相关 evidence 引用改为 unavailable；
+- 不启用针对 Run-owned evidence 的静默自动 quota、TTL、按最旧优先清理或“一键清空所有数据”；低层 Raw / encoded-video capture buffer 不是已 finalization 的 Run evidence。encoded-video 按最近 300 秒墙上时间有界覆盖；Raw 的物理 retention 可以更长，但完整自动 Run 的共同保证只到 300 秒；
+- 精确删除事务、tombstone、失败恢复和并发语义必须由 active implementation plan tests-first 冻结。
 
 ### 4.3 Coach 数据归属
 
@@ -242,7 +256,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - provider/model 目录、API key/ambient auth、OAuth/device-code 和 OpenAI-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
 - Provider/model/credential/sidecar 失败只影响 Coach readiness，不得阻塞 Analysis、History 或 deterministic report/prescription；
 - Pi coding-agent、shell、filesystem 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；
-- 首次启动以 Provider onboarding 为主路径，但允许用户明确跳过并进入本地分析；未配置 Provider 时，确定性分析、History 和报告继续可用，Coach 显示可恢复的配置入口。
+- 首次启动以 Provider onboarding 为主路径，但允许用户明确跳过并进入本地分析；未配置 Provider 时没有 Coach 对话、AI 解释、长期档案维护、训练计划或 Coach 产品命令，只有本地指标、确定性诊断、规则化提示、History 和可恢复的 Provider 配置入口。
 
 ## 6. 本地归属与安全
 
@@ -250,6 +264,8 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - Desktop 本地数据默认属于当前 OS 用户/本地 profile；内部 `owner/profile` 字段表达本地数据隔离和稳定引用，不代表云端用户身份；
 - Windows Raw Input 默认关闭，首次启用必须有明确 opt-in 和采集范围说明；
 - Raw Input 只允许 KovaaK process gate 内的相对鼠标输入；不得采集键盘、桌面绝对坐标或其它应用的后台输入；
+- 自动录屏只允许捕获 KovaaK 应用窗口，不得捕获完整桌面、其它应用窗口或系统通知；
+- 自动视频主路径必须保持 WGC surface、颜色转换和硬件编码在 GPU 路径内；硬件编码不可用、适配器不匹配或视频队列背压时独立降级，不得静默回退到会影响 Raw Input 或游戏的持续 CPU 编码；
 - Raw Input trace 不进入 Provider 请求或普通日志；如果未来 Coach 要引用 trace，必须增加单独的用户确认和 evidence contract；
 - Desktop loopback API 继续使用高熵、launch-scoped token，并限制 host/origin/接口暴露；这是本地进程安全，不是用户登录；
 - Web 预览只允许在受控环境访问，不把外部 VPN/SSO/代理访问控制包装成产品账号；
@@ -267,7 +283,8 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - 带 correlation id 的 structured logs；
 - queue depth、running age、failure、duration、disk usage；
 - stale job、partial import、orphan workspace 和 runtime crash 的恢复；
-- CV、storage、Coach、LLM、Provider auth 和本地 capability 错误分开统计；
+- Capture Coordinator / Run Finalizer 状态、未完成采集数据、分类型 disk usage；
+- process detection、window capture、Raw Input、Stats/Performance、finalization/alignment、CV、storage、Coach、LLM、Provider auth 和本地 capability 错误分开统计；
 - core/backend/frontend/Desktop/真实素材/E2E 的分层 Gate。
 
 具体当前缺口与最近验证结果只写 `PROGRESS.md`。
@@ -276,7 +293,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 
 顺序原则：
 
-1. 先保证 KovaaK Run / Raw Input 的输入原生 flicking、确定性解释/处方、History 和删除语义可靠；MP4 提供可选回放/视觉证据并保留 compatibility fallback；
+1. 先保证 Capture Coordinator、Stats/Performance 事后 Run finalization、Raw/MP4 Run-owned evidence、用户选择与手动存储管理可靠；再保证输入原生 flicking、确定性解释/处方、History 和 Analysis 删除语义；
 2. 完成完整 Pi catalog、selected provider/model、本地 credential persistence、必要的 Pi auth/OAuth/device-code 与首次 onboarding，再恢复用户可达的分析工作区、训练记录选择、视频/数据联动、完整 Provider Settings 和 Coach 侧栏；
 3. 冻结并实现 source unavailable、Run/trace 删除、import/delete/runtime crash 等恢复合同；
 4. 完成 Desktop packaging、Windows 实机验证、静态 Landing/release 分发和发布链；
