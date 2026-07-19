@@ -16,7 +16,7 @@
 
 ## Proposed
 
-当前没有其他 proposed spec。
+- [`2026-07-20-complete-coach-analysis-context-design.md`](2026-07-20-complete-coach-analysis-context-design.md)：数据采集后的统一时间/场景、Stats/Performance source field Registry、完整规范化 Run facts、私有高频信号与事件、static/dynamic clicking、tracking、switching 专项分析、EvidenceSegment、Coach 有界证据查询、画像/计划/复测和未来可选视觉模型边界；上游范围同步前不构成实施授权。
 
 ## 新 spec 的边界
 
