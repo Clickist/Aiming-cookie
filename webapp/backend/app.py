@@ -35,6 +35,13 @@ async def lifespan(app: FastAPI):
         reconciliation["failed"],
         error_code,
     )
+    stale_uploads = await queue.reconcile_stale_uploads()
+    log.info(
+        "stale upload reconciliation processed=%s cleaned=%s failed=%s",
+        stale_uploads["processed"],
+        stale_uploads["cleaned"],
+        stale_uploads["failed"],
+    )
     yield
 
 

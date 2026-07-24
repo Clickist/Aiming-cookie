@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import aiosqlite
 import pytest
 
-from webapp.backend import coach_store, config, db, queue
+from webapp.backend import aiming_profile_store, coach_store, config, db, queue
 from webapp.backend.config import DEFAULT_MAX_ATTEMPTS, LEASE_TTL_SECONDS
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
@@ -689,6 +690,24 @@ async def test_requeue_failed_session_for_retry(tmp_path):
         await queue.requeue_for_retry(sid)
     assert ei2.value.code == "missing_video"
 
+
+@pytest.mark.asyncio
+async def test_non_object_input_snapshot_is_hidden_from_reads_and_rejected_by_retry():
+    session_id = await queue.enqueue(
+        "snapshot-owner", "", "", input_mode="input_native", input_snapshot=[],
+    )
+
+    assert (await queue.get_session(session_id))["input_snapshot"] is None
+    claimed = await queue.claim_next(TEST_WORKER)
+    assert claimed is not None
+    assert claimed["input_snapshot"] is None
+    await queue.mark_failed(session_id, "failed", worker_id=TEST_WORKER)
+
+    with pytest.raises(queue.RetryNotAllowed) as exc_info:
+        await queue.requeue_for_retry(session_id)
+
+    assert exc_info.value.code == "missing_snapshot"
+
 WORKER_A = "worker-a:1"
 WORKER_B = "worker-b:1"
 
@@ -772,6 +791,76 @@ async def test_delete_phase_a_begin_crash_rolls_back_connection_and_state(
 
     assert conn.in_transaction is False
     await _assert_phase_a_rollback(seed)
+
+
+@pytest.mark.asyncio
+async def test_delete_transaction_blocks_concurrent_heartbeat_commit(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """A shared connection must not let heartbeat commit delete phase A early."""
+    seed = await _seed_terminal_delete(
+        monkeypatch,
+        tmp_path,
+        owner_id="transaction-delete-owner",
+    )
+    heartbeat_id = await queue.enqueue("heartbeat-owner", "", "")
+    await queue.claim_next("heartbeat-worker")
+    conn = await db.get_conn()
+    original_execute = conn.execute
+    original_commit = conn.commit
+    tombstone_inserted = asyncio.Event()
+    resume_delete = asyncio.Event()
+    heartbeat_commit_started = asyncio.Event()
+    resume_heartbeat_commit = asyncio.Event()
+
+    async def pause_after_tombstone(sql, *args):
+        cursor = await original_execute(sql, *args)
+        if "INSERT INTO analysis_deletion_tombstones" in sql:
+            tombstone_inserted.set()
+            await resume_delete.wait()
+        return cursor
+
+    async def pause_heartbeat_commit():
+        heartbeat_commit_started.set()
+        await resume_heartbeat_commit.wait()
+        await original_commit()
+
+    monkeypatch.setattr(conn, "execute", pause_after_tombstone)
+    monkeypatch.setattr(conn, "commit", pause_heartbeat_commit)
+    delete_task = asyncio.create_task(
+        queue.delete_session(seed["id"], seed["owner_id"]),
+    )
+    await asyncio.wait_for(tombstone_inserted.wait(), timeout=1)
+
+    heartbeat_task = asyncio.create_task(
+        queue.heartbeat(heartbeat_id, "heartbeat-worker"),
+    )
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(heartbeat_commit_started.wait(), timeout=0.1)
+
+        delete_task.cancel()
+        resume_delete.set()
+        with pytest.raises(asyncio.CancelledError):
+            await delete_task
+
+        await asyncio.wait_for(heartbeat_commit_started.wait(), timeout=1)
+        resume_heartbeat_commit.set()
+        assert await asyncio.wait_for(heartbeat_task, timeout=1) is True
+    finally:
+        if not delete_task.done():
+            delete_task.cancel()
+        resume_delete.set()
+        resume_heartbeat_commit.set()
+        await asyncio.gather(delete_task, heartbeat_task, return_exceptions=True)
+
+    assert await _tombstone(seed["id"]) is None
+    assert (await queue.get_session(seed["id"]))["status"] == "done"
+    heartbeat_row = await (
+        await conn.execute("SELECT heartbeat_at FROM sessions WHERE id=?", (heartbeat_id,))
+    ).fetchone()
+    assert heartbeat_row["heartbeat_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -863,6 +952,81 @@ async def test_delete_crash_after_phase_a_commit_leaves_pending_tombstone(
     assert [item["id"] for item in messages_after] == [item["id"] for item in messages]
     assert [item["id"] for item in refs_after] == [item["id"] for item in refs]
     assert refs_after[0]["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_invalidates_profile_using_tombstone_owner_before_cleanup(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    session_id = 90_101
+    workspace = session_dir(session_id)
+    workspace.mkdir(parents=True)
+    payload = {
+        "schema_version": "profile_contribution.v1",
+        "source_kind": "deterministic",
+        "dimensions": [{
+            "dimension_key": "static_clicking.terminal_control",
+            "scope": "exact_scenario",
+            "scenario_profile_ref": "scenario:sixshot@1",
+            "metric_ref": "metric:terminal_control",
+            "metric_value": 0.4,
+            "unit": "normalized_error",
+            "expected_direction": "lower_better",
+            "confidence": "high",
+            "comparability": "comparable",
+            "supporting_metric_refs": ["metric:terminal_control"],
+            "counterexample_refs": [],
+            "candidate_hypothesis_refs": [],
+        }],
+    }
+    await aiming_profile_store.record_deterministic_contribution(
+        "tombstone-owner", f"analysis:{session_id}", payload,
+    )
+    conn = await db.get_conn()
+    await conn.execute(
+        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) VALUES(?, ?)",
+        (session_id, "tombstone-owner"),
+    )
+    await conn.commit()
+
+    summary = await queue.reconcile_analysis_deletions()
+
+    assert summary["cleaned"] == 1
+    assert not workspace.exists()
+    assert await _tombstone(session_id) is None
+    assert (await aiming_profile_store.list_contributions("tombstone-owner"))[0]["status"] == "invalidated"
+    assert (await aiming_profile_store.get_profile_snapshot("tombstone-owner"))["dimensions"] == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_tombstone_when_profile_invalidation_fails(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    session_id = 90_102
+    workspace = session_dir(session_id)
+    workspace.mkdir(parents=True)
+
+    conn = await db.get_conn()
+    await conn.execute(
+        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) VALUES(?, ?)",
+        (session_id, "profile-failure-owner"),
+    )
+    await conn.commit()
+
+    async def fail_invalidation(_session_id: int, _owner_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(queue, "_invalidate_profile_for_deleted_analysis", fail_invalidation)
+
+    summary = await queue.reconcile_analysis_deletions()
+
+    assert summary["failed"] == 1
+    assert workspace.exists()
+    assert (await _tombstone(session_id))["cleanup_state"] == "pending"
 
 
 @pytest.mark.asyncio
@@ -1180,6 +1344,60 @@ async def test_delete_nonterminal_never_touches_workspace_or_tombstone(
     assert exc_info.value.code == "active"
     assert (workspace / "keep.bin").read_bytes() == b"keep"
     assert await _tombstone(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_uploads_removes_only_uploading_workspace_and_unblocks_owner(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    stale_id = await queue.enqueue("stale-owner", "", "", status="uploading")
+    stale_workspace = session_dir(stale_id)
+    stale_workspace.mkdir(parents=True)
+    (stale_workspace / "video.mp4.tmp").write_bytes(b"partial")
+
+    terminal_id = await queue.enqueue("terminal-owner", "", "")
+    conn = await db.get_conn()
+    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (terminal_id,))
+    await conn.commit()
+    terminal_workspace = session_dir(terminal_id)
+    terminal_workspace.mkdir(parents=True)
+    (terminal_workspace / "keep.bin").write_bytes(b"terminal")
+
+    summary = await queue.reconcile_stale_uploads()
+
+    assert summary == {"processed": 1, "cleaned": 1, "failed": 0}
+    assert await queue.get_session(stale_id) is None
+    assert await queue.has_active("stale-owner") is False
+    assert not stale_workspace.exists()
+    assert (await queue.get_session(terminal_id))["status"] == "done"
+    assert (terminal_workspace / "keep.bin").read_bytes() == b"terminal"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_uploads_keeps_recoverable_workspace_when_cleanup_fails(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    session_id = await queue.enqueue("locked-owner", "", "", status="uploading")
+    workspace = session_dir(session_id)
+    workspace.mkdir(parents=True)
+    (workspace / "video.mp4.tmp").write_bytes(b"partial")
+
+    def fail_cleanup(actual_session_id: int) -> bool:
+        assert actual_session_id == session_id
+        raise OSError("workspace locked")
+
+    monkeypatch.setattr(queue, "remove_session_workspace", fail_cleanup)
+
+    summary = await queue.reconcile_stale_uploads()
+
+    assert summary == {"processed": 1, "cleaned": 0, "failed": 1}
+    assert (await queue.get_session(session_id))["status"] == "uploading"
+    assert await queue.has_active("locked-owner") is True
+    assert (workspace / "video.mp4.tmp").read_bytes() == b"partial"
 
 
 @pytest.mark.asyncio

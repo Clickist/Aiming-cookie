@@ -45,8 +45,15 @@ class FakeNativeCaptureClient:
         self.release_calls: list[str] = []
         self.capture_session_id = "session-1"
         self.raw_snapshot_covered_through_epoch_ms = 2**62
+        self.raw_snapshot_capture_session_start_epoch_ms = 0
+        self.raw_snapshot_queue_dropped_points = 0
+        self.raw_snapshot_queue_drop_first_epoch_ms: int | None = None
+        self.raw_snapshot_queue_drop_last_epoch_ms: int | None = None
+        self.raw_snapshot_ring_expired_points = 0
+        self.raw_snapshot_ring_expired_through_epoch_ms: int | None = None
         self.publication_count = 0
         self.phase = "capturing"
+        self.kovaak_process_present = True
         self.release_error: Exception | None = None
 
     def status(self) -> dict:
@@ -54,7 +61,7 @@ class FakeNativeCaptureClient:
             "enabled": True,
             "phase": self.phase,
             "captureSessionId": self.capture_session_id,
-            "kovaakProcessPresent": True,
+            "kovaakProcessPresent": self.kovaak_process_present,
             "windowHandle": 123,
             "reason": None,
             "raw": {
@@ -143,9 +150,16 @@ class FakeNativeCaptureClient:
     def flush_raw_snapshot(self, capture_session_id: str) -> dict:
         self.flush_calls.append(capture_session_id)
         return {
+            "receiptVersion": "raw_snapshot_receipt.v2",
+            "captureSessionStartEpochMs": self.raw_snapshot_capture_session_start_epoch_ms,
             "coveredThroughEpochMs": self.raw_snapshot_covered_through_epoch_ms,
             "snapshotAtEpochMs": self.raw_snapshot_covered_through_epoch_ms + 1,
             "pointCount": 1,
+            "queueDroppedPoints": self.raw_snapshot_queue_dropped_points,
+            "queueDropFirstEpochMs": self.raw_snapshot_queue_drop_first_epoch_ms,
+            "queueDropLastEpochMs": self.raw_snapshot_queue_drop_last_epoch_ms,
+            "ringExpiredPoints": self.raw_snapshot_ring_expired_points,
+            "ringExpiredThroughEpochMs": self.raw_snapshot_ring_expired_through_epoch_ms,
             "clockSource": "utc_epoch_ms+qpc",
             "timebaseVersion": "time_alignment.v2",
         }
@@ -207,6 +221,34 @@ def _finalizer(
         raw_input_snapshot_path=raw_snapshot or tmp_path / "missing-raw.bin",
         user_id="u1",
     )
+
+
+@pytest.mark.asyncio
+async def test_exit_release_requires_the_same_finalizing_session_after_process_exit(
+    tmp_path: Path,
+) -> None:
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    client.phase = "finalizing"
+    client.kovaak_process_present = False
+    finalizer = _finalizer(tmp_path, client)
+
+    assert await finalizer.finalizing_capture_session() == "session-1"
+    assert await finalizer.release_capture_session("other-session") is False
+    assert client.release_calls == []
+    assert await finalizer.release_capture_session("session-1") is True
+    assert client.release_calls == ["session-1"]
+    assert await finalizer.release_capture_session("session-1") is False
+
+
+@pytest.mark.asyncio
+async def test_exit_release_does_not_release_a_live_kovaak_session(tmp_path: Path) -> None:
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    client.phase = "finalizing"
+    finalizer = _finalizer(tmp_path, client)
+
+    assert await finalizer.finalizing_capture_session() is None
+    assert await finalizer.release_capture_session("session-1") is False
+    assert client.release_calls == []
 
 
 @pytest.mark.asyncio
@@ -504,6 +546,82 @@ async def test_complete_pair_waits_for_native_raw_snapshot_barrier_without_reexp
     assert len(client.export_calls) == 1
     assert len(await kovaak_run_store.list_kovaak_runs("u1")) == 1
     assert client.flush_calls == ["session-1", "session-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("quality", "expected_trace_state", "expected_error"),
+    [
+        (
+            {
+                "raw_snapshot_queue_dropped_points": 1,
+                "raw_snapshot_queue_drop_first_epoch_ms": 1_100,
+                "raw_snapshot_queue_drop_last_epoch_ms": 1_100,
+            },
+            "unavailable",
+            "trace_raw_queue_dropped",
+        ),
+        (
+            {
+                "raw_snapshot_ring_expired_points": 1,
+                "raw_snapshot_ring_expired_through_epoch_ms": 1_000,
+            },
+            "unavailable",
+            "trace_raw_ring_expired",
+        ),
+        (
+            {"raw_snapshot_capture_session_start_epoch_ms": 1_001},
+            "unavailable",
+            "trace_raw_window_coverage_gap",
+        ),
+        (
+            {
+                "raw_snapshot_queue_dropped_points": 1,
+                "raw_snapshot_queue_drop_first_epoch_ms": 900,
+                "raw_snapshot_queue_drop_last_epoch_ms": 900,
+                "raw_snapshot_ring_expired_points": 1,
+                "raw_snapshot_ring_expired_through_epoch_ms": 999,
+            },
+            "attached",
+            None,
+        ),
+    ],
+)
+async def test_raw_completeness_receipt_never_attaches_incomplete_native_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    quality: dict[str, int],
+    expected_trace_state: str,
+    expected_error: str | None,
+) -> None:
+    _configure_parsers(monkeypatch, time_limit=1.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": 1_100, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    client.raw_snapshot_covered_through_epoch_ms = 2_000
+    for field, value in quality.items():
+        setattr(client, field, value)
+
+    run = await _finalizer(tmp_path, client, raw_snapshot=raw).finalize(
+        KovaaKFileDiscovery(
+                stem=f"raw-quality-{expected_trace_state}",
+            stats_path=stats,
+            performance_path=performance,
+        )
+    )
+
+    assert run["trace_state"] == expected_trace_state
+    assert run["trace_error"] == expected_error
+    readiness = kovaak_run_store.derive_run_readiness(run)
+    assert readiness["input_native"] is (expected_trace_state == "attached")
+    assert readiness["video_fallback"] is True
+    assert readiness["state"] == "pending_analysis"
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -106,8 +107,53 @@ async def test_analyze_returns_session_id():
 
 
 @pytest.mark.asyncio
+async def test_session_response_projects_error_details():
+    session_id = await queue.enqueue("public-owner", "", "")
+    result = _minimal_native_v2_result()
+    error = build_error_v1(
+        category="internal_unknown",
+        code="analysis_failed",
+        message="analysis failed",
+        retryable=False,
+        trace_id=None,
+        details={"secret": "do-not-return"},
+    )
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=?, error=? WHERE id=?",
+        (dump_contract_json(result), dump_contract_json(error), session_id),
+    )
+    await conn.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "public-owner"},
+    ) as client:
+        response = await client.get(f"/api/sessions/{session_id}")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["error"]["code"] == "analysis_failed"
+    assert "details" not in payload["error"]
+
+
+@pytest.mark.asyncio
 async def test_analyze_writes_files_under_session_workspace(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path)
+    from webapp.backend import routes
+
+    destinations = []
+    original_stream = routes.stream_upload_to_path
+
+    async def record_temp_destination(*args, **kwargs):
+        destination = args[1]
+        destinations.append(destination)
+        assert destination.name.endswith(".tmp")
+        assert not Path(str(destination)[:-4]).exists()
+        return await original_stream(*args, **kwargs)
+
+    monkeypatch.setattr(routes, "stream_upload_to_path", record_temp_destination)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -133,6 +179,8 @@ async def test_analyze_writes_files_under_session_workspace(monkeypatch, tmp_pat
     assert row is not None
     assert row["video_path"] == str(video_path)
     assert row["csv_path"] == str(csv_path)
+    assert destinations == [ws / "video.mp4.tmp", ws / "stats.csv.tmp"]
+    assert list(ws.glob("*.tmp")) == []
 
 
 @pytest.mark.asyncio

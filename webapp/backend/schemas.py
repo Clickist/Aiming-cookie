@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
@@ -22,7 +22,6 @@ class ErrorV1(BaseModel):
     message: str
     retryable: bool
     trace_id: Optional[str] = None
-    details: Optional[object] = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -349,11 +348,80 @@ class CoachProductCommandResult(BaseModel):
     command_id: str
     status: Literal["succeeded", "failed", "cancelled", "needs_confirmation", "unavailable"]
     result_ref: Optional[str] = None
-    result: Optional[dict | list[dict]] = None
+    result: Optional[Union[dict, list[dict]]] = None
     ui_event: Optional[dict] = None
     confirmation: Optional[dict] = None
     warning_or_error: Optional[dict] = None
     audit_ref: str
+
+
+class TrainingPlanItemCreateRequest(BaseModel):
+    plan_version: Optional[int] = None
+    item_payload: dict[str, object]
+
+
+class TrainingPlanExecutionCreateRequest(BaseModel):
+    scenario_ref: str
+    run_refs: list[str]
+    planned_dose: dict[str, object]
+    completed_dose: dict[str, object]
+    completion_status: Literal["completed", "partial", "skipped"]
+    user_feedback: str
+
+
+class TrainingPlanRetestCreateRequest(BaseModel):
+    kind: Literal["matched", "near_transfer"]
+    expected_metric_ref: str
+    expected_direction: Literal[
+        "lower_better",
+        "higher_better",
+        "target_band",
+        "descriptive_only",
+        "comparison_only",
+    ]
+    analysis_refs: list[str]
+    comparability: Literal["comparable", "not_comparable", "unavailable"]
+    result: str
+    limitations: list[str]
+
+
+class EvidenceSegmentPlayback(BaseModel):
+    schema_version: Literal["evidence_segment_playback.v1"]
+    availability: Literal["available", "unavailable"]
+    video_route: Optional[str] = None
+    relative_start_ms: Optional[int] = None
+    relative_end_ms: Optional[int] = None
+    limitations: list[str] = Field(default_factory=list)
+
+
+class FrontendEvidenceSegment(BaseModel):
+    segment_id: str
+    analysis_ref: str
+    analyzer_ref: Optional[str] = None
+    segment_kind: Optional[str] = None
+    start_ms: Optional[int] = None
+    end_ms: Optional[int] = None
+    focus_start_ms: Optional[int] = None
+    focus_end_ms: Optional[int] = None
+    title_key: Optional[str] = None
+    rank_reason: Optional[str] = None
+    issue_refs: list[str] = Field(default_factory=list)
+    metric_refs: list[str] = Field(default_factory=list)
+    event_refs: list[str] = Field(default_factory=list)
+    available_channels: list[str] = Field(default_factory=list)
+    source_coverage: Optional[float] = None
+    confidence: Optional[float] = None
+    limitations: list[str] = Field(default_factory=list)
+    playback: EvidenceSegmentPlayback
+
+
+class FrontendEvidenceSegmentsResponse(BaseModel):
+    schema_version: Literal["frontend_evidence_segments.v1"]
+    analysis_ref: str
+    video_availability: Literal["available", "unavailable"]
+    video_route: Optional[str] = None
+    canonical_window_start_ms: Optional[int] = None
+    segments: list[FrontendEvidenceSegment]
 
 PROVIDER_KINDS = Literal["builtin", "custom_openai_compatible"]
 PROVIDER_STATUSES = Literal[

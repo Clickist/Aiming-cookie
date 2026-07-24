@@ -129,6 +129,52 @@ class KovaaKCaptureFinalizer:
         ):
             log.warning("capture shutdown release returned an unexpected status")
 
+    async def finalizing_capture_session(self) -> str | None:
+        """Return the exited native session that is still retaining its replay buffer."""
+        if self._native_client is None:
+            return None
+        try:
+            status = await asyncio.to_thread(self._native_client.status)
+        except (NativeCaptureRetryableError, NativeCaptureTerminalError) as error:
+            log.warning("capture exit status unavailable: %s", error.code)
+            return None
+        capture_session_id = status.get("captureSessionId")
+        if (
+            status.get("phase") != "finalizing"
+            or status.get("kovaakProcessPresent") is not False
+            or not isinstance(capture_session_id, str)
+        ):
+            return None
+        return capture_session_id
+
+    async def release_capture_session(self, capture_session_id: str) -> bool:
+        """Release one exited session, preserving a live KovaaK session's pre-roll."""
+        if self._native_client is None:
+            return False
+        try:
+            status = await asyncio.to_thread(self._native_client.status)
+        except (NativeCaptureRetryableError, NativeCaptureTerminalError) as error:
+            log.warning("capture exit release status unavailable: %s", error.code)
+            return False
+        if (
+            status.get("phase") != "finalizing"
+            or status.get("kovaakProcessPresent") is not False
+            or status.get("captureSessionId") != capture_session_id
+        ):
+            return False
+        try:
+            released = await asyncio.to_thread(
+                self._native_client.release_capture_session,
+                capture_session_id,
+            )
+        except (NativeCaptureRetryableError, NativeCaptureTerminalError) as error:
+            log.warning("capture exit release failed: %s", error.code)
+            return False
+        return (
+            released.get("phase") == "waiting_for_kovaak"
+            and released.get("captureSessionId") is None
+        )
+
     async def finalize(self, discovery: KovaaKFileDiscovery) -> dict:
         merged = await self._merge_discovery(discovery)
         trace_pending: kovaak_run_store.TracePendingError | None = None
@@ -246,7 +292,7 @@ class KovaaKCaptureFinalizer:
             raise CaptureFinalizationPending("capture_session_mismatch")
 
         if trace_needs_snapshot:
-            covered_through_epoch_ms = None
+            snapshot: dict[str, object] | None = None
             if (
                 status.get("phase") in {"capturing", "degraded"}
                 and status.get("raw", {}).get("state") == "capturing"
@@ -259,12 +305,8 @@ class KovaaKCaptureFinalizer:
                     )
                 except (NativeCaptureRetryableError, NativeCaptureTerminalError):
                     pass
-                else:
-                    covered_through_epoch_ms = snapshot.get(
-                        "coveredThroughEpochMs"
-                    )
             run, trace_pending = await self._attach_trace_snapshot(
-                run, covered_through_epoch_ms,
+                run, snapshot,
             )
 
         if run.get("video_state") == "attached":
@@ -388,14 +430,14 @@ class KovaaKCaptureFinalizer:
     async def _attach_trace_snapshot(
         self,
         run: dict,
-        covered_through_epoch_ms: int | None,
+        raw_snapshot_receipt: dict[str, object] | None,
     ) -> tuple[dict, kovaak_run_store.TracePendingError | None]:
         try:
             attached = await kovaak_run_store.attach_mouse_trace_snapshot_window(
                 run,
                 user_id=self._user_id,
                 raw_input_snapshot_path=self._raw_input_snapshot_path,
-                covered_through_epoch_ms=covered_through_epoch_ms,
+                raw_snapshot_receipt=raw_snapshot_receipt,
                 require_coverage=True,
             )
         except kovaak_run_store.TracePendingError as error:

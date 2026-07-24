@@ -119,6 +119,12 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
             events.append("ingestion-stop")
 
     class FakeFinalizer:
+        async def finalizing_capture_session(self):
+            return None
+
+        async def release_capture_session(self, capture_session_id: str) -> bool:
+            raise AssertionError(f"unexpected release for {capture_session_id}")
+
         async def shutdown(self) -> None:
             events.append("finalizer-shutdown")
 
@@ -202,6 +208,124 @@ async def test_finalizer_future_drain_cancels_pending_work_before_db_close() -> 
 
 
 @pytest.mark.asyncio
+async def test_capture_exit_release_waits_for_known_finalizers_then_releases_once() -> None:
+    tracker = desktop_runtime.FinalizerFutureTracker()
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    released = asyncio.Event()
+
+    class FakeFinalizer:
+        async def finalizing_capture_session(self):
+            return "session-1"
+
+        async def release_capture_session(self, capture_session_id: str) -> bool:
+            assert capture_session_id == "session-1"
+            released.set()
+            return True
+
+    async def pending_finalizer() -> dict:
+        started.set()
+        await finish.wait()
+        return {"id": 1}
+
+    future = asyncio.run_coroutine_threadsafe(
+        pending_finalizer(), asyncio.get_running_loop(),
+    )
+    tracker.track(future)
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    releases = desktop_runtime.CaptureExitReleaseTracker(grace_seconds=1)
+    await releases.observe(FakeFinalizer(), tracker)
+    assert not released.is_set()
+
+    finish.set()
+    await asyncio.wait_for(released.wait(), timeout=1)
+    await releases.drain()
+    assert future.result() == {"id": 1}
+
+
+@pytest.mark.asyncio
+async def test_capture_exit_release_uses_hard_grace_when_no_finalizer_arrives() -> None:
+    released: list[str] = []
+
+    class FakeFinalizer:
+        async def finalizing_capture_session(self):
+            return "session-1"
+
+        async def release_capture_session(self, capture_session_id: str) -> bool:
+            released.append(capture_session_id)
+            return True
+
+    releases = desktop_runtime.CaptureExitReleaseTracker(grace_seconds=0)
+    await releases.observe(FakeFinalizer(), desktop_runtime.FinalizerFutureTracker())
+    assert releases._task is not None
+    await asyncio.wait_for(releases._task, timeout=1)
+
+    assert released == ["session-1"]
+
+
+@pytest.mark.asyncio
+async def test_capture_exit_release_drain_cancels_pending_hard_grace_promptly() -> None:
+    class FakeFinalizer:
+        async def finalizing_capture_session(self):
+            return "session-1"
+
+        async def release_capture_session(self, capture_session_id: str) -> bool:
+            raise AssertionError(f"unexpected release for {capture_session_id}")
+
+    releases = desktop_runtime.CaptureExitReleaseTracker(grace_seconds=30)
+    await releases.observe(FakeFinalizer(), desktop_runtime.FinalizerFutureTracker())
+    assert releases._task is not None
+
+    await releases.drain()
+
+    assert releases._task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_capture_exit_release_does_not_release_while_kovaak_is_alive() -> None:
+    class FakeFinalizer:
+        async def finalizing_capture_session(self):
+            return None
+
+        async def release_capture_session(self, capture_session_id: str) -> bool:
+            raise AssertionError(f"unexpected release for {capture_session_id}")
+
+    releases = desktop_runtime.CaptureExitReleaseTracker(grace_seconds=0)
+    await releases.observe(FakeFinalizer(), desktop_runtime.FinalizerFutureTracker())
+    await releases.drain()
+
+
+@pytest.mark.asyncio
+async def test_capture_exit_release_allows_the_next_capture_session_without_app_exit() -> None:
+    released: list[str] = []
+
+    class FakeFinalizer:
+        current_session = "session-1"
+
+        async def finalizing_capture_session(self):
+            return self.current_session
+
+        async def release_capture_session(self, capture_session_id: str) -> bool:
+            released.append(capture_session_id)
+            self.current_session = None
+            return True
+
+    finalizer = FakeFinalizer()
+    releases = desktop_runtime.CaptureExitReleaseTracker(grace_seconds=0)
+    await releases.observe(finalizer, desktop_runtime.FinalizerFutureTracker())
+    assert releases._task is not None
+    await asyncio.wait_for(releases._task, timeout=1)
+
+    finalizer.current_session = "session-2"
+    await releases.observe(finalizer, desktop_runtime.FinalizerFutureTracker())
+    assert releases._task is not None
+    await asyncio.wait_for(releases._task, timeout=1)
+
+    assert released == ["session-1", "session-2"]
+
+
+@pytest.mark.asyncio
 async def test_runtime_does_not_emit_ready_when_worker_exits_during_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -261,6 +385,51 @@ async def test_ingestion_service_routes_discovery_through_one_finalizer(
 
     assert result == {"id": 7}
     assert observed == [discovery]
+
+
+@pytest.mark.asyncio
+async def test_ingestion_service_serializes_heavy_finalizers_and_drain_cancels_queued_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stats_dir = tmp_path / "stats"
+    stats_dir.mkdir()
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIR", stats_dir)
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIR", None)
+    first_started = asyncio.Event()
+    allow_first = asyncio.Event()
+    second_started = asyncio.Event()
+
+    class FakeFinalizer:
+        async def finalize(self, discovery):
+            if discovery.stem == "first":
+                first_started.set()
+                await allow_first.wait()
+            else:
+                second_started.set()
+            return {"stem": discovery.stem}
+
+    tracker = desktop_runtime.FinalizerFutureTracker()
+    service = desktop_runtime.create_kovaak_ingestion_service(
+        asyncio.get_running_loop(), FakeFinalizer(), tracker,
+    )
+    first = desktop_runtime.kovaak_ingest.KovaaKFileDiscovery(
+        stem="first", stats_path=stats_dir / "First Stats.csv",
+    )
+    second = desktop_runtime.kovaak_ingest.KovaaKFileDiscovery(
+        stem="second", stats_path=stats_dir / "Second Stats.csv",
+    )
+    first_future = service._watchers[0].callback(first)
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    second_future = service._watchers[0].callback(second)
+    await asyncio.sleep(0)
+    assert second_started.is_set() is False
+
+    await tracker.drain()
+
+    assert first_future.cancelled()
+    assert second_future.cancelled()
+    assert second_started.is_set() is False
 
 
 class _FakeServerShell:
