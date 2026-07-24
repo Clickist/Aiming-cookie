@@ -4,6 +4,7 @@
 
 ## Active
 
+- [`2026-07-24-full-review-remediation.md`](2026-07-24-full-review-remediation.md)：backend full review 的当前正确性修复与小范围合同漂移已由三路 terra-high 分波收口；frontend、packaging、release、长期规模与缺少 caller context 的项目保留为明确 Gate，主审完成后分批 commit。
 - [`2026-07-20-complete-coach-analysis-context-v1.md`](2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的规范化 Run facts、数据后处理、专项 analyzer、有界 evidence tools、知识、画像、计划与复测实施顺序；pre-activation 治理已完成，点点已授权从 Task 1 起继续推进，每次只执行一个 Task。
 - [`2026-07-13-reflek-capability-adoption.md`](2026-07-13-reflek-capability-adoption.md)：RefleK 能力采纳、input-native 分析、Run/trace correctness、History/evidence replay 与 Coach 结构化接入；Task 1–6A 已完成，Task 6B 与任何 v1 Benchmark UI 均未获授权，必须等待点点明确指定。
 - [`2026-07-13-coach-productization-provider-management.md`](2026-07-13-coach-productization-provider-management.md)：指标到训练解释链、input-native 核心指标、Pi provider/model/auth、Coach 用户级产品命令与 Provider Settings；点点已授权按建议顺序推进，每次只执行一个 Task。

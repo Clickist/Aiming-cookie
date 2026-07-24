@@ -103,11 +103,22 @@ KovaaK 本地 ingestion 由 Desktop runtime 在启动时管理：
 - `KOVAAK_WATCH_POLL_SECONDS` 控制 watcher 轮询间隔；
 - Windows Raw Input 默认关闭，可用 `AIMING_COOKIE_RAW_INPUT_ENABLED=1` 做开发启动 opt-in，正式产品必须通过带说明的 UI 授权；
 - `KovaaKRun` 由 `GET /api/kovaak-runs` 和 `GET /api/kovaak-runs/{id}` 读取，接口受 Desktop launch token 保护；
+- Analysis 完成后，前端通过 `GET /api/sessions/{id}` 读取安全结果，通过 `GET /api/sessions/{id}/evidence-segments` 读取 `frontend_evidence_segments.v1` 与相对 seek anchor，再用 `GET /api/sessions/{id}/video` 播放 managed MP4；这些接口不返回原始 CSV、`.perf`、Raw trace、frame 或绝对路径；
+- Task 11 的用户训练事实接口为 `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions` 和 `POST /api/training-plan-items/{item_ref}/retests`，均必须带 `Idempotency-Key`；Coach bridge 不可调用 execution/retest 写入；
 - Raw Input 只支持 Windows；macOS/Linux 开发环境必须验证 video fallback，不得把 unsupported 当成捕获成功。
 
 ## 4. 常用验证
 
 按改动范围运行最小相关检查；以下命令是仓库当前可用的主要入口：
+
+运行 Web pytest 前，测试入口会在导入 backend 前强制覆盖 `DATABASE_URL` 为唯一的临时 SQLite 路径。PowerShell 手动运行时仍应显式使用临时 DB/root 和不存在的 KovaaK 路径：
+
+```powershell
+$testRoot = Join-Path ([IO.Path]::GetTempPath()) ("aiming_cookie_pytest_" + [guid]::NewGuid().ToString("N"))
+$env:DATABASE_URL = "sqlite+aiosqlite:///" + (Join-Path $testRoot "test.db").Replace("\", "/")
+$env:DATA_ROOT = $testRoot
+$env:KOVAAK_INSTALL_DIR = Join-Path $testRoot "missing-kovaak"
+```
 
 ```bash
 # Python 全量或相关测试
