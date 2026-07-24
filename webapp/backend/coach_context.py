@@ -10,6 +10,36 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION = "coach_diagnostic_context.v1"
+COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION = "coach_diagnostic_context.v2"
+COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION = "coach_diagnostic_context.v3"
+_COACH_CONTEXT_V2_TOP_LEVEL_FIELDS = frozenset(
+    {
+        "schema_version",
+        "analysis_ref",
+        "scenario",
+        "run_facts",
+        "diagnosis",
+        "evidence_summary",
+        "trends",
+        "training",
+        "limitations",
+    }
+)
+_COACH_CONTEXT_V3_TOP_LEVEL_FIELDS = frozenset(
+    {*_COACH_CONTEXT_V2_TOP_LEVEL_FIELDS, "processed_events"}
+)
+_PROCESSED_EVENT_QUERY_CAPABILITIES = [
+    "analysis.events.list",
+    "analysis.events.get",
+    "analysis.events.rank",
+    "analysis.events.filter",
+    "analysis.events.aggregate",
+    "analysis.events.co_occurrence",
+    "analysis.events.sequence",
+    "analysis.evidence.compare",
+]
+_COACH_CONTEXT_MAX_BYTES = 32 * 1024
+_COACH_FACTS_MAX_BYTES = 8 * 1024
 
 _MISSING = object()
 _METRIC_FIELDS = frozenset(
@@ -321,6 +351,26 @@ def _project_issue(issue: object) -> dict[str, object] | None:
         if values:
             out[key] = values
 
+    primary = issue.get("primary_evidence_segment_ref")
+    if primary is not None:
+        primary = _safe_scalar(primary)
+        if (
+            primary is _MISSING
+            or not isinstance(primary, str)
+            or not primary.startswith("analysis:")
+            or ":segment:" not in primary
+        ):
+            return None
+        out["primary_evidence_segment_ref"] = primary
+    supporting = _safe_string_list(issue.get("supporting_evidence_segment_refs"))
+    if len(supporting) > 2 or any(
+        not ref.startswith("analysis:") or ":segment:" not in ref
+        for ref in supporting
+    ):
+        return None
+    if supporting:
+        out["supporting_evidence_segment_refs"] = supporting
+
     verification = issue.get("verification")
     if isinstance(verification, Mapping):
         projected_verification: dict[str, object] = {}
@@ -565,6 +615,344 @@ def _project_evidence_summary(result: Mapping[str, Any], schema_version: str) ->
     return {"availability": availability, "alignment": {}}
 
 
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _project_bounded_v2_section_summary(value: object) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    expected = {
+        "section_key",
+        "section_ref",
+        "completeness",
+        "present_field_count",
+        "source_absent_field_count",
+        "omitted_known_field_count",
+    }
+    if set(value) != expected:
+        return None
+    section_key = value.get("section_key")
+    section_ref = value.get("section_ref")
+    completeness = value.get("completeness")
+    if not isinstance(section_key, str) or _safe_scalar(section_key) is _MISSING:
+        return None
+    if not isinstance(section_ref, str) or _safe_scalar(section_ref) is _MISSING:
+        return None
+    if completeness not in {"complete_allowlisted", "partial"}:
+        return None
+    counts: dict[str, int] = {}
+    for key in (
+        "present_field_count",
+        "source_absent_field_count",
+        "omitted_known_field_count",
+    ):
+        count = value.get(key)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            return None
+        counts[key] = count
+    return {
+        "section_key": section_key,
+        "section_ref": section_ref,
+        "completeness": completeness,
+        **counts,
+    }
+
+
+def _project_v2_run_facts(value: object) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    mode = value.get("mode")
+    if mode not in {"inline", "section_refs", "unavailable"}:
+        return None
+    limitations = _safe_string_list(value.get("limitations"))
+    if len(limitations) > 8:
+        return None
+
+    if mode == "unavailable":
+        if set(value) - {"mode", "field_registry_version", "limitations"}:
+            return None
+        if "field_registry_version" in value and value.get("field_registry_version") != "source_field_registry.v1":
+            return None
+        projected_unavailable = {"mode": mode}
+        if "field_registry_version" in value:
+            projected_unavailable["field_registry_version"] = value["field_registry_version"]
+        projected_unavailable["limitations"] = limitations
+        return projected_unavailable
+
+    field_registry_version = value.get("field_registry_version")
+    if "field_registry_version" in value and field_registry_version != "source_field_registry.v1":
+        return None
+    if mode == "inline":
+        if set(value) - {"mode", "field_registry_version", "facts", "limitations"}:
+            return None
+        facts = value.get("facts")
+        if not isinstance(facts, Mapping):
+            return None
+        try:
+            from kovaak_tracker.analysis_evidence import validate_canonical_run_facts_v1
+
+            validated = validate_canonical_run_facts_v1(facts)
+        except (TypeError, ValueError, KeyError):
+            return None
+        if len(_canonical_json_bytes(validated)) > _COACH_FACTS_MAX_BYTES:
+            return None
+        projected_inline = {
+            "mode": mode,
+            "facts": validated,
+            "limitations": limitations,
+        }
+        if "field_registry_version" in value:
+            projected_inline["field_registry_version"] = field_registry_version
+        return projected_inline
+
+    if set(value) - {
+        "mode",
+        "field_registry_version",
+        "section_summaries",
+        "limitations",
+    }:
+        return None
+    summaries = value.get("section_summaries")
+    if not isinstance(summaries, list) or len(summaries) > 7:
+        return None
+    projected = []
+    for item in summaries:
+        summary = _project_bounded_v2_section_summary(item)
+        if summary is None:
+            return None
+        projected.append(summary)
+    projected_section_refs = {
+        "mode": mode,
+        "section_summaries": projected,
+        "limitations": limitations,
+    }
+    if "field_registry_version" in value:
+        projected_section_refs["field_registry_version"] = field_registry_version
+    return projected_section_refs
+
+
+def _project_v2_scenario(value: object) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    allowed = {"scenario_profile_ref", "analyzer_refs", "support_status", "limitations"}
+    if set(value) - allowed:
+        return None
+    profile_ref = value.get("scenario_profile_ref")
+    if profile_ref is not None and (
+        not isinstance(profile_ref, str) or _safe_scalar(profile_ref) is _MISSING
+    ):
+        return None
+    analyzer_refs = _safe_string_list(value.get("analyzer_refs"))
+    if len(analyzer_refs) > 16:
+        return None
+    status = value.get("support_status")
+    if status not in {"supported", "partial", "outcome_only", "unsupported", "unavailable"}:
+        return None
+    limitations = _safe_string_list(value.get("limitations"))
+    if len(limitations) > 8:
+        return None
+    return {
+        "scenario_profile_ref": profile_ref,
+        "analyzer_refs": analyzer_refs,
+        "support_status": status,
+        "limitations": limitations,
+    }
+
+
+def _project_v2_evidence_summary(value: object) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    allowed = {
+        "availability",
+        "alignment",
+        "coverage",
+        "confidence",
+        "artifact_ref",
+        "evidence_revision",
+        "segment_refs",
+    }
+    if set(value) - allowed:
+        return None
+    availability: dict[str, object] = {}
+    for key, raw in _mapping(value.get("availability")).items():
+        if _is_forbidden_key(key):
+            continue
+        safe = _safe_scalar(raw)
+        if safe is not _MISSING:
+            availability[str(key)] = safe
+    alignment: dict[str, object] = {}
+    for key in ("status", "coverage_ratio"):
+        if key in _mapping(value.get("alignment")):
+            safe = _safe_scalar(_mapping(value.get("alignment")).get(key))
+            if safe is not _MISSING:
+                alignment[key] = safe
+    projected: dict[str, object] = {"availability": availability, "alignment": alignment}
+    for key in ("coverage", "confidence"):
+        if key in value:
+            safe = _safe_scalar(value.get(key))
+            if safe is not _MISSING:
+                projected[key] = safe
+    for key in ("artifact_ref", "evidence_revision"):
+        if key in value:
+            safe = _safe_scalar(value.get(key))
+            if safe is not _MISSING:
+                projected[key] = safe
+    segment_refs = _safe_string_list(value.get("segment_refs"))
+    if len(segment_refs) > 24:
+        return None
+    projected["segment_refs"] = segment_refs
+    return projected
+
+
+def _project_v2_context(context: Mapping[str, Any]) -> dict[str, object] | None:
+    if set(context) != _COACH_CONTEXT_V2_TOP_LEVEL_FIELDS:
+        return None
+    if context.get("schema_version") != COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION:
+        return None
+    analysis_ref = _validated_analysis_ref(context.get("analysis_ref"))
+    if analysis_ref is None or analysis_ref["analysis_result_version"] != "analysis_result.v2":
+        return None
+    scenario = _project_v2_scenario(context.get("scenario"))
+    run_facts = _project_v2_run_facts(context.get("run_facts"))
+    evidence = _project_v2_evidence_summary(context.get("evidence_summary"))
+    if scenario is None or run_facts is None or evidence is None:
+        return None
+    raw_diagnosis = _mapping(context.get("diagnosis"))
+    for raw_issue in raw_diagnosis.get("issues") or []:
+        if not isinstance(raw_issue, Mapping):
+            continue
+        raw_supporting = raw_issue.get("supporting_evidence_segment_refs")
+        if isinstance(raw_supporting, list) and len(raw_supporting) > 2:
+            return None
+    diagnosis = _project_diagnosis(
+        context.get("diagnosis"),
+        require_deterministic_metrics=True,
+    )
+    segment_refs = list(evidence.get("segment_refs") or [])
+    for issue in diagnosis["issues"]:
+        primary = issue.get("primary_evidence_segment_ref")
+        supporting = issue.get("supporting_evidence_segment_refs") or []
+        for ref in [primary, *supporting]:
+            if isinstance(ref, str) and ref not in segment_refs:
+                segment_refs.append(ref)
+    if len(segment_refs) > 24:
+        return None
+    evidence["segment_refs"] = segment_refs
+    if len(diagnosis["summary"]) > 24 or len(diagnosis["issues"]) > 6:
+        return None
+    trends = context.get("trends")
+    if not isinstance(trends, list) or len(trends) > 4:
+        return None
+    if not all(isinstance(item, Mapping) for item in trends):
+        return None
+    projected_trends = [dict(item) for item in trends]
+    training = context.get("training")
+    if not isinstance(training, Mapping) or set(training) != {"active_plan_ref", "recent_retest_ref"}:
+        return None
+    projected_training: dict[str, object] = {}
+    for key in ("active_plan_ref", "recent_retest_ref"):
+        ref = training.get(key)
+        if ref is not None and (not isinstance(ref, str) or _safe_scalar(ref) is _MISSING):
+            return None
+        projected_training[key] = ref
+    limitations = _safe_string_list(context.get("limitations"))
+    if len(limitations) > 8:
+        return None
+    projected = {
+        "schema_version": COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+        "analysis_ref": analysis_ref,
+        "scenario": scenario,
+        "run_facts": run_facts,
+        "diagnosis": diagnosis,
+        "evidence_summary": evidence,
+        "trends": projected_trends,
+        "training": projected_training,
+        "limitations": limitations,
+    }
+    if len(_canonical_json_bytes(projected)) > _COACH_CONTEXT_MAX_BYTES:
+        return None
+    return projected
+
+
+def _project_v3_processed_events(
+    value: object,
+    *,
+    analysis_id: str,
+) -> dict[str, object] | None:
+    if not isinstance(value, Mapping) or set(value) != {
+        "mode", "tables", "query_capabilities", "limitations",
+    }:
+        return None
+    if value.get("mode") != "table_refs":
+        return None
+    tables = value.get("tables")
+    if not isinstance(tables, list) or not 1 <= len(tables) <= 8:
+        return None
+    from kovaak_tracker.analysis_evidence import validate_processed_event_table_v1
+
+    projected_tables: list[dict] = []
+    refs: set[str] = set()
+    try:
+        for table in tables:
+            validated = validate_processed_event_table_v1(table)
+            if validated["analysis_ref"] != analysis_id or validated["table_ref"] in refs:
+                return None
+            refs.add(validated["table_ref"])
+            projected_tables.append(validated)
+    except (TypeError, ValueError):
+        return None
+    capabilities = _safe_string_list(value.get("query_capabilities"))
+    if capabilities != _PROCESSED_EVENT_QUERY_CAPABILITIES:
+        return None
+    limitations = _safe_string_list(value.get("limitations"))
+    if len(limitations) > 8:
+        return None
+    return {
+        "mode": "table_refs",
+        "tables": projected_tables,
+        "query_capabilities": list(_PROCESSED_EVENT_QUERY_CAPABILITIES),
+        "limitations": limitations,
+    }
+
+
+def _project_v3_context(context: Mapping[str, Any]) -> dict[str, object] | None:
+    if set(context) != _COACH_CONTEXT_V3_TOP_LEVEL_FIELDS:
+        return None
+    if context.get("schema_version") != COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION:
+        return None
+    v2_input = {
+        key: value
+        for key, value in context.items()
+        if key != "processed_events"
+    }
+    v2_input["schema_version"] = COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION
+    projected_v2 = _project_v2_context(v2_input)
+    if projected_v2 is None:
+        return None
+    analysis_id = projected_v2["analysis_ref"]["analysis_id"]
+    processed = _project_v3_processed_events(
+        context.get("processed_events"),
+        analysis_id=analysis_id,
+    )
+    if processed is None:
+        return None
+    projected = {
+        **projected_v2,
+        "schema_version": COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+        "processed_events": processed,
+    }
+    if len(_canonical_json_bytes(projected)) > _COACH_CONTEXT_MAX_BYTES:
+        return None
+    return projected
+
+
 def _validated_analysis_ref(
     value: object,
     *,
@@ -659,6 +1047,99 @@ def project_coach_diagnostic_context(
 
     deterministic = _mapping(analysis_result.get("deterministic"))
     evidence = _mapping(analysis_result.get("evidence"))
+    if schema_version == "analysis_result.v2" and isinstance(
+        evidence.get("derived_artifact"), Mapping
+    ):
+        legacy = {
+            "schema_version": COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+            "analysis_ref": _project_analysis_ref(analysis_result, schema_version),
+            "diagnosis": _project_diagnosis(
+                deterministic.get("diagnosis"),
+                fallback_summary=deterministic.get("metrics"),
+                require_deterministic_metrics=True,
+            ),
+            "evidence_summary": _project_evidence_summary(analysis_result, schema_version),
+            "warnings": _project_warnings(
+                analysis_result.get("warnings"), evidence.get("warnings")
+            ),
+        }
+        facts = deterministic.get("canonical_run_facts")
+        if not isinstance(facts, Mapping):
+            facts = analysis_result.get("canonical_run_facts")
+        if isinstance(facts, Mapping):
+            run_facts = {
+                "mode": "inline",
+                "field_registry_version": "source_field_registry.v1",
+                "facts": facts,
+                "limitations": [],
+            }
+        else:
+            run_facts = {
+                "mode": "unavailable",
+                "limitations": ["canonical_run_facts_not_inline_available"],
+            }
+        artifact = _mapping(evidence.get("derived_artifact"))
+        scenario_data = _mapping(analysis_result.get("scenario"))
+        if analysis_result.get("analysis_type") == "dynamic_clicking":
+            snapshot = _mapping(analysis_result.get("input_snapshot"))
+            resolution = _mapping(snapshot.get("scenario_resolution"))
+            scenario_data = {
+                "scenario_profile_ref": resolution.get("scenario_profile_ref"),
+                "analyzer_refs": [analysis_result.get("analysis_version")],
+                "support_status": deterministic.get("support_status", "unavailable"),
+                "limitations": deterministic.get("limitations") or [],
+            }
+        scenario_ref = scenario_data.get("scenario_profile_ref")
+        scenario = {
+            "scenario_profile_ref": scenario_ref if isinstance(scenario_ref, str) else None,
+            "analyzer_refs": _safe_string_list(scenario_data.get("analyzer_refs")),
+            "support_status": (
+                scenario_data.get("support_status")
+                if scenario_data.get("support_status") in {
+                    "supported", "partial", "outcome_only", "unsupported", "unavailable",
+                }
+                else "supported" if scenario_data else "unavailable"
+            ),
+            "limitations": _safe_string_list(scenario_data.get("limitations"))[:8],
+        }
+        evidence_summary = dict(legacy["evidence_summary"])
+        evidence_summary["segment_refs"] = []
+        artifact_ref = _safe_scalar(artifact.get("artifact_ref"))
+        revision = _safe_scalar(artifact.get("evidence_revision"))
+        if artifact_ref is not _MISSING:
+            evidence_summary["artifact_ref"] = artifact_ref
+        if revision is not _MISSING:
+            evidence_summary["evidence_revision"] = revision
+        v2 = {
+            "schema_version": COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+            "analysis_ref": legacy["analysis_ref"],
+            "scenario": scenario,
+            "run_facts": run_facts,
+            "diagnosis": legacy["diagnosis"],
+            "evidence_summary": evidence_summary,
+            "trends": [],
+            "training": {"active_plan_ref": None, "recent_retest_ref": None},
+            "limitations": [],
+        }
+        processed_tables = evidence.get("processed_event_tables")
+        if isinstance(processed_tables, list) and processed_tables:
+            v3 = {
+                **v2,
+                "schema_version": COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+                "processed_events": {
+                    "mode": "table_refs",
+                    "tables": processed_tables,
+                    "query_capabilities": list(_PROCESSED_EVENT_QUERY_CAPABILITIES),
+                    "limitations": [],
+                },
+            }
+            projected_v3 = _project_v3_context(v3)
+            if projected_v3 is not None:
+                return projected_v3
+            raise ValueError("processed event context cannot be projected safely")
+        projected_v2 = _project_v2_context(v2)
+        if projected_v2 is not None:
+            return projected_v2
     return {
         "schema_version": COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
         "analysis_ref": _project_analysis_ref(analysis_result, schema_version),
@@ -751,6 +1232,10 @@ def coerce_coach_diagnostic_context(value: object) -> dict[str, object] | None:
         return None
     if isinstance(value, Mapping):
         schema_version = value.get("schema_version")
+        if schema_version == COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION:
+            return _project_v3_context(value)
+        if schema_version == COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION:
+            return _project_v2_context(value)
         if schema_version == COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION:
             return _project_existing_context(value)
         if schema_version in {"analysis_result.v1", "analysis_result.v2"}:
@@ -767,7 +1252,19 @@ def serialize_coach_diagnostic_context(context: Mapping[str, Any] | None) -> str
     """Use one exact JSON serialization for Pi's string-only runtime contract."""
     if context is None:
         return None
-    return json.dumps(context, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
+    try:
+        wire = _canonical_json_bytes(context)
+    except (TypeError, ValueError):
+        return None
+    if (
+        context.get("schema_version") in {
+            COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+            COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+        }
+        and len(wire) > _COACH_CONTEXT_MAX_BYTES
+    ):
+        return None
+    return wire.decode("utf-8")
 
 
 def diagnostic_context_to_coach_diagnosis(context: Mapping[str, Any] | None):
@@ -827,6 +1324,14 @@ def diagnostic_context_to_coach_diagnosis(context: Mapping[str, Any] | None):
                 limitations=_safe_string_list(issue_data.get("limitations")),
                 expected_result=str(issue_data.get("expected_result") or ""),
                 verification=dict(_mapping(issue_data.get("verification"))),
+                primary_evidence_segment_ref=(
+                    str(issue_data["primary_evidence_segment_ref"])
+                    if issue_data.get("primary_evidence_segment_ref") is not None
+                    else None
+                ),
+                supporting_evidence_segment_refs=_safe_string_list(
+                    issue_data.get("supporting_evidence_segment_refs")
+                ),
             )
         )
     return CoachDiagnosis(

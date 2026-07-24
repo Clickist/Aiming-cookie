@@ -360,6 +360,8 @@ async def append_message(
 ) -> int:
     from .coach_context import (
         COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
         coerce_coach_diagnostic_context,
     )
 
@@ -368,7 +370,11 @@ async def append_message(
     canonical_context = None
     if (
         isinstance(context, dict)
-        and context.get("schema_version") == COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION
+        and context.get("schema_version") in {
+            COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+            COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+            COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+        }
     ):
         canonical_context = coerce_coach_diagnostic_context(context)
     context_json = json.dumps(
@@ -396,6 +402,8 @@ async def append_message(
 async def load_messages(thread_id: int) -> list[dict[str, Any]]:
     from .coach_context import (
         COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
         coerce_coach_diagnostic_context,
     )
 
@@ -421,7 +429,11 @@ async def load_messages(thread_id: int) -> list[dict[str, Any]]:
                 if (
                     isinstance(value, dict)
                     and value.get("schema_version")
-                    == COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION
+                    in {
+                        COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+                        COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+                        COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+                    }
                 ):
                     context = coerce_coach_diagnostic_context(value)
             except (json.JSONDecodeError, TypeError):

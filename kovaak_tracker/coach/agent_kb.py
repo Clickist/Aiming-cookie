@@ -57,7 +57,7 @@ def _chunk(entry: dict, registry_version: str) -> KnowledgeChunk:
     }
 
 
-_data = load_registry()
+_data = load_registry(registry_version="2026-07-14.v1")
 KB: list[KnowledgeChunk] = [
     _chunk(entry, _data["registry_version"])
     for entry in _data["entries"]

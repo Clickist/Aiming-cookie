@@ -11,6 +11,8 @@ const { Type } = (await loadPiAi()) as {
 
 type JsonRecord = Record<string, unknown>;
 
+const METRIC_VERSION_RE = /^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*\.v[1-9][0-9]*$/;
+
 function hasDuplicateJsonObjectKeys(source: string): boolean {
 	let offset = 0;
 
@@ -119,13 +121,47 @@ function hasDuplicateJsonObjectKeys(source: string): boolean {
 	return duplicate;
 }
 
-const TOP_LEVEL_KEYS = new Set([
+const V1_TOP_LEVEL_KEYS = new Set([
 	"schema_version",
 	"analysis_ref",
 	"diagnosis",
 	"evidence_summary",
 	"warnings",
 ]);
+const V2_TOP_LEVEL_KEYS = new Set([
+	"schema_version",
+	"analysis_ref",
+	"scenario",
+	"run_facts",
+	"diagnosis",
+	"evidence_summary",
+	"trends",
+	"training",
+	"limitations",
+]);
+const V3_TOP_LEVEL_KEYS = new Set([...V2_TOP_LEVEL_KEYS, "processed_events"]);
+const PROCESSED_EVENTS_KEYS = new Set([
+	"mode", "tables", "query_capabilities", "limitations",
+]);
+const PROCESSED_TABLE_KEYS = new Set([
+	"schema_version", "table_ref", "analysis_ref", "analyzer_ref", "family",
+	"event_kind", "row_count", "included_count", "excluded_count", "completeness",
+	"field_catalog", "index_fields", "rows_ref", "limitations",
+]);
+const PROCESSED_FIELD_KEYS = new Set([
+	"field_key", "role", "value_type", "unit", "metric_key", "metric_version",
+	"expected_direction", "limitations",
+]);
+const PROCESSED_QUERY_CAPABILITIES = [
+	"analysis.events.list",
+	"analysis.events.get",
+	"analysis.events.rank",
+	"analysis.events.filter",
+	"analysis.events.aggregate",
+	"analysis.events.co_occurrence",
+	"analysis.events.sequence",
+	"analysis.evidence.compare",
+];
 const ANALYSIS_REF_KEYS = new Set([
 	"analysis_id",
 	"analysis_result_version",
@@ -156,6 +192,8 @@ const ISSUE_KEYS = new Set([
 	"metric_refs",
 	"event_refs",
 	"limitations",
+	"primary_evidence_segment_ref",
+	"supporting_evidence_segment_refs",
 	"verification",
 	"root_causes",
 	"prescriptions",
@@ -231,6 +269,15 @@ const EVIDENCE_SUMMARY_KEYS = new Set([
 	"availability",
 	"alignment",
 	"coverage",
+]);
+const V2_EVIDENCE_SUMMARY_KEYS = new Set([
+	"availability",
+	"alignment",
+	"coverage",
+	"confidence",
+	"artifact_ref",
+	"evidence_revision",
+	"segment_refs",
 ]);
 const ALIGNMENT_KEYS = new Set(["status", "coverage_ratio"]);
 const WARNING_KEYS = new Set([
@@ -415,9 +462,22 @@ function validateIssue(value: unknown): boolean {
 		if (
 			key === "metric_refs" ||
 			key === "event_refs" ||
-			key === "limitations"
+			key === "limitations" ||
+			key === "supporting_evidence_segment_refs"
 		) {
-			return isSafeStringArray(item);
+			return isSafeStringArray(item) &&
+				(key !== "supporting_evidence_segment_refs" || (
+					item.length <= 2 &&
+					item.every((ref) => ref.startsWith("analysis:") && ref.includes(":segment:"))
+				));
+		}
+		if (key === "primary_evidence_segment_ref") {
+			return item === null || (
+				typeof item === "string" &&
+				item.startsWith("analysis:") &&
+				item.includes(":segment:") &&
+				isSafeScalar(item)
+			);
 		}
 		if (key === "verification") return validateVerification(item);
 		if (key === "root_causes")
@@ -563,6 +623,154 @@ function validateEvidenceSummary(value: unknown): boolean {
 	});
 }
 
+function validateBoundedFactsValue(value: unknown, depth = 0): boolean {
+	if (depth > 8) return false;
+	if (isSafeScalar(value)) return true;
+	if (Array.isArray(value)) {
+		return value.length <= 512 && value.every((item) => validateBoundedFactsValue(item, depth + 1));
+	}
+	if (!isRecord(value) || Object.keys(value).length > 128) return false;
+	return Object.entries(value).every(
+		([key, item]) => !isForbiddenKey(key) && validateBoundedFactsValue(item, depth + 1),
+	);
+}
+
+function validateV2RunFacts(value: unknown): boolean {
+	if (!isRecord(value) || typeof value.mode !== "string") return false;
+	const limitations = value.limitations;
+	if (!isSafeStringArray(limitations) || limitations.length > 8) return false;
+	if (value.mode === "unavailable") {
+		return hasOnlyKeys(value, new Set(["mode", "field_registry_version", "limitations"]));
+	}
+	if (
+		"field_registry_version" in value &&
+		value.field_registry_version !== "source_field_registry.v1"
+	) return false;
+	if (value.mode === "inline") {
+		const inlineKeys = new Set(["mode", "field_registry_version", "facts", "section_summaries", "limitations"]);
+		if (!hasOnlyKeys(value, inlineKeys) || !("facts" in value) || !("limitations" in value)) return false;
+		if ("section_summaries" in value && (!Array.isArray(value.section_summaries) || value.section_summaries.length !== 0)) return false;
+		return (
+			isRecord(value.facts) &&
+			validateBoundedFactsValue(value.facts) &&
+			Buffer.byteLength(JSON.stringify(value.facts), "utf8") <= 8 * 1024
+		);
+	}
+	if (value.mode !== "section_refs") return false;
+	if (!hasOnlyKeys(value, new Set(["mode", "field_registry_version", "section_summaries", "limitations"]))) return false;
+	if (!("section_summaries" in value) || !("limitations" in value)) return false;
+	const summaries = value.section_summaries;
+	if (!Array.isArray(summaries) || summaries.length > 7) return false;
+	return summaries.every((item) => {
+		if (!isRecord(item) || !hasExactKeys(item, new Set([
+			"section_key",
+			"section_ref",
+			"completeness",
+			"present_field_count",
+			"source_absent_field_count",
+			"omitted_known_field_count",
+		]))) return false;
+		return (
+			typeof item.section_key === "string" && !isUnsafeString(item.section_key) &&
+			typeof item.section_ref === "string" && !isUnsafeString(item.section_ref) &&
+			(item.completeness === "complete_allowlisted" || item.completeness === "partial") &&
+			["present_field_count", "source_absent_field_count", "omitted_known_field_count"].every((key) =>
+				typeof item[key] === "number" && Number.isInteger(item[key]) && item[key] >= 0,
+			)
+		);
+	});
+}
+
+function validateV2Scenario(value: unknown): boolean {
+	if (!isRecord(value) || !hasExactKeys(value, new Set([
+		"scenario_profile_ref",
+		"analyzer_refs",
+		"support_status",
+		"limitations",
+	]))) return false;
+	return (
+		(value.scenario_profile_ref === null || (typeof value.scenario_profile_ref === "string" && !isUnsafeString(value.scenario_profile_ref))) &&
+		isSafeStringArray(value.analyzer_refs) && value.analyzer_refs.length <= 16 &&
+		typeof value.support_status === "string" && new Set(["supported", "partial", "outcome_only", "unsupported", "unavailable"]).has(value.support_status) &&
+		isSafeStringArray(value.limitations) && value.limitations.length <= 8
+	);
+}
+
+function validateV2EvidenceSummary(value: unknown): boolean {
+	if (!isRecord(value) || !hasOnlyKeys(value, V2_EVIDENCE_SUMMARY_KEYS)) return false;
+	if (!("availability" in value) || !("alignment" in value)) return false;
+	if (!isRecord(value.availability) || !Object.entries(value.availability).every(([key, item]) => !isForbiddenKey(key) && isSafeScalar(item))) return false;
+	if (!validateFlatRecord(value.alignment, ALIGNMENT_KEYS)) return false;
+	for (const key of ["coverage", "confidence", "artifact_ref", "evidence_revision"]) {
+		if (key in value && !isSafeScalar(value[key])) return false;
+	}
+	return !("segment_refs" in value) || (isSafeStringArray(value.segment_refs) && value.segment_refs.length <= 24);
+}
+
+function validateV2Context(value: JsonRecord): boolean {
+	if (!hasExactKeys(value, V2_TOP_LEVEL_KEYS) || value.schema_version !== "coach_diagnostic_context.v2") return false;
+	const resultVersion = validatedAnalysisRefVersion(value.analysis_ref);
+	if (resultVersion !== "analysis_result.v2") return false;
+	if (!validateV2Scenario(value.scenario) || !validateV2RunFacts(value.run_facts)) return false;
+	if (!validateDiagnosis(value.diagnosis, resultVersion) || !validateV2EvidenceSummary(value.evidence_summary)) return false;
+	if (!Array.isArray(value.trends) || value.trends.length > 4 || !value.trends.every((item) => validateBoundedFactsValue(item))) return false;
+	if (!isRecord(value.training) || !hasExactKeys(value.training, new Set(["active_plan_ref", "recent_retest_ref"]))) return false;
+	if (!Object.values(value.training).every((item) => item === null || (typeof item === "string" && !isUnsafeString(item)))) return false;
+	if (!isSafeStringArray(value.limitations) || value.limitations.length > 8) return false;
+	return Buffer.byteLength(JSON.stringify(value), "utf8") <= 32 * 1024;
+}
+
+function validateProcessedEventTable(value: unknown, analysisId: string): boolean {
+	if (!isRecord(value) || !hasExactKeys(value, PROCESSED_TABLE_KEYS)) return false;
+	if (value.schema_version !== "processed_event_table.v1" || value.analysis_ref !== analysisId) return false;
+	if (
+		typeof value.table_ref !== "string" || !value.table_ref.startsWith(`${analysisId}:table:`) ||
+		value.rows_ref !== value.table_ref || isUnsafeString(value.table_ref)
+	) return false;
+	for (const key of ["analyzer_ref", "family", "event_kind"]) {
+		if (typeof value[key] !== "string" || isUnsafeString(value[key])) return false;
+	}
+	for (const key of ["row_count", "included_count", "excluded_count"]) {
+		if (typeof value[key] !== "number" || !Number.isInteger(value[key]) || value[key] < 0) return false;
+	}
+	if (value.row_count !== value.included_count) return false;
+	if (!new Set(["complete", "partial", "unavailable"]).has(String(value.completeness))) return false;
+	if (value.completeness === "complete" && value.excluded_count !== 0) return false;
+	if (!Array.isArray(value.field_catalog) || value.field_catalog.length < 1 || value.field_catalog.length > 64) return false;
+	const fieldKeys = new Set<string>();
+	for (const field of value.field_catalog) {
+		if (!isRecord(field) || !hasExactKeys(field, PROCESSED_FIELD_KEYS)) return false;
+		if (typeof field.field_key !== "string" || isUnsafeString(field.field_key) || fieldKeys.has(field.field_key)) return false;
+		fieldKeys.add(field.field_key);
+		if (!new Set(["identity", "timing", "condition", "metric", "outcome", "quality"]).has(String(field.role))) return false;
+		if (!new Set(["number", "string", "ref", "string_list", "boolean"]).has(String(field.value_type))) return false;
+		for (const key of ["unit", "metric_key", "metric_version"]) {
+			if (field[key] !== null && (typeof field[key] !== "string" || isUnsafeString(field[key]))) return false;
+		}
+		if (field.metric_version !== null && !METRIC_VERSION_RE.test(field.metric_version as string)) return false;
+		if (!new Set(["lower_better", "higher_better", "target_band", "descriptive_only", "comparison_only"]).has(String(field.expected_direction))) return false;
+		if (!isSafeStringArray(field.limitations) || field.limitations.length > 8) return false;
+	}
+	if (!isSafeStringArray(value.index_fields) || value.index_fields.length > 8 || !value.index_fields.every((field) => fieldKeys.has(field))) return false;
+	return isSafeStringArray(value.limitations) && value.limitations.length <= 8;
+}
+
+function validateV3Context(value: JsonRecord): boolean {
+	if (!hasExactKeys(value, V3_TOP_LEVEL_KEYS) || value.schema_version !== "coach_diagnostic_context.v3") return false;
+	const { processed_events: processedEvents, ...v2Fields } = value;
+	if (!validateV2Context({ ...v2Fields, schema_version: "coach_diagnostic_context.v2" })) return false;
+	if (!isRecord(processedEvents) || !hasExactKeys(processedEvents, PROCESSED_EVENTS_KEYS)) return false;
+	if (processedEvents.mode !== "table_refs") return false;
+	if (!Array.isArray(processedEvents.tables) || processedEvents.tables.length < 1 || processedEvents.tables.length > 8) return false;
+	const analysisRef = value.analysis_ref;
+	if (!isRecord(analysisRef) || typeof analysisRef.analysis_id !== "string") return false;
+	if (!processedEvents.tables.every((table) => validateProcessedEventTable(table, analysisRef.analysis_id as string))) return false;
+	if (!isSafeStringArray(processedEvents.query_capabilities)) return false;
+	if (JSON.stringify(processedEvents.query_capabilities) !== JSON.stringify(PROCESSED_QUERY_CAPABILITIES)) return false;
+	if (!isSafeStringArray(processedEvents.limitations) || processedEvents.limitations.length > 8) return false;
+	return Buffer.byteLength(JSON.stringify(value), "utf8") <= 32 * 1024;
+}
+
 function validatedAnalysisRefVersion(
 	value: unknown,
 ): AnalysisResultVersion | undefined {
@@ -607,8 +815,10 @@ function validatedAnalysisRefVersion(
 }
 
 function isCanonicalDiagnosticContext(value: unknown): value is JsonRecord {
-	if (!isRecord(value) || !hasOnlyKeys(value, TOP_LEVEL_KEYS)) return false;
-	if (Object.keys(value).length !== TOP_LEVEL_KEYS.size) return false;
+	if (!isRecord(value)) return false;
+	if (value.schema_version === "coach_diagnostic_context.v3") return validateV3Context(value);
+	if (value.schema_version === "coach_diagnostic_context.v2") return validateV2Context(value);
+	if (!hasExactKeys(value, V1_TOP_LEVEL_KEYS)) return false;
 	if (value.schema_version !== "coach_diagnostic_context.v1") return false;
 	const resultVersion = validatedAnalysisRefVersion(value.analysis_ref);
 	if (resultVersion === undefined) return false;
@@ -623,6 +833,8 @@ function isCanonicalDiagnosticContext(value: unknown): value is JsonRecord {
 export function createAnalysisSummaryTool(analysisSummary: string | null) {
 	let summaryText = "当前没有可用的分析摘要。";
 	let hasAnalysis = false;
+	let contextSchema: "coach_diagnostic_context.v1" | "coach_diagnostic_context.v2" | "coach_diagnostic_context.v3" =
+		"coach_diagnostic_context.v1";
 	if (
 		analysisSummary &&
 		analysisSummary.trim().length > 0 &&
@@ -636,6 +848,7 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
 			) {
 				summaryText = analysisSummary;
 				hasAnalysis = true;
+				contextSchema = parsed.schema_version;
 			}
 		} catch {
 			// Fail closed; invalid input never becomes model-visible content.
@@ -646,14 +859,14 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
 		name: "get_analysis_summary",
 		label: "Get diagnostic context",
 		description:
-			"返回本轮请求中已附带的 coach_diagnostic_context.v1 JSON（只读，不访问磁盘或数据库）。",
+			"返回本轮请求中已附带的 coach_diagnostic_context.v1/v2/v3 JSON（只读，不访问磁盘或数据库）。",
 		parameters: Type.Object({}, { additionalProperties: false }),
 		async execute() {
 			return {
 				content: [{ type: "text", text: summaryText }],
 				details: {
 					has_analysis: hasAnalysis,
-					context_schema: "coach_diagnostic_context.v1",
+					context_schema: contextSchema,
 				},
 			};
 		},

@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 
 from .agent_kb import BY_TOPIC, KB
 from .diagnosis import CoachDiagnosis
-from .knowledge_registry import entry_ref, load_registry, query_registry
+from .knowledge_registry import claim_ref, entry_ref, load_registry, query_registry
 from .knowledge import KNOWLEDGE
 from .planning import TrainingPlan
 
@@ -399,15 +399,24 @@ def make_fetch_knowledge() -> Callable[[str], dict[str, Any]]:
         if not selected:
             return {
                 "error": "unknown signal",
-                "valid_signals": sorted(KNOWLEDGE.keys()),
+                "valid_signals": sorted({
+                    item
+                    for entry in data["entries"]
+                    if entry["status"] == "active"
+                    for item in entry["signals"]
+                }),
             }
-        legacy = KNOWLEDGE.get(canonical, {})
+        cues = [
+            entry["cue"]["text"]
+            for entry in selected
+            if isinstance(entry.get("cue"), dict)
+        ]
         return {
             "signal": canonical,
-            "community": legacy.get("community", ""),
-            "cues": legacy.get("cues", []),
+            "community": cues[0] if cues else "",
+            "cues": cues,
             "registry_version": data["registry_version"],
-            "entries": [_entry_payload(entry) for entry in selected],
+            "entries": [_entry_payload(entry, data) for entry in selected],
         }
     return _handler
 
@@ -433,13 +442,70 @@ def _topics_for_kind(kind: str) -> list[str]:
     )})
 
 
-def _entry_payload(entry: dict[str, Any]) -> dict[str, Any]:
+def _v2_sections(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    sections = [entry["definition"], entry["scope"], entry["expected_direction"]]
+    sections.extend(entry["mechanisms"])
+    for name in (
+        "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+        "stop_adjust_rule",
+    ):
+        value = entry[name]
+        if isinstance(value, dict):
+            sections.append(value)
+        elif isinstance(value, list):
+            sections.extend(value)
+    return sections
+
+
+def _entry_payload(entry: dict[str, Any], registry_data: dict[str, Any]) -> dict[str, Any]:
+    if registry_data["schema_version"] == "coach_knowledge_registry.v1":
+        return {
+            "entry_ref": entry_ref(entry),
+            "entry_version": entry["entry_version"],
+            "content": entry["text"],
+            "sources": list(entry["sources"]),
+            "max_claim_level": entry["max_claim_level"],
+            "limitations": list(entry["limitations"]),
+            "counterevidence": list(entry["counterevidence"]),
+            "supported_uses": list(entry["supported_uses"]),
+        }
+    sections = _v2_sections(entry)
+    sources_by_ref = {
+        source["source_ref"]: source for source in registry_data["sources"]
+    }
+    claim_rank = {
+        "experimental": 0,
+        "community_practice": 1,
+        "community_consensus": 2,
+        "research_supported": 3,
+        "deterministic_rule": 4,
+    }
+    max_claim_level = max(
+        (section["claim_level"] for section in sections),
+        key=claim_rank.__getitem__,
+    )
     return {
         "entry_ref": entry_ref(entry),
         "entry_version": entry["entry_version"],
-        "content": entry["text"],
-        "sources": list(entry["sources"]),
-        "max_claim_level": entry["max_claim_level"],
+        "content": entry["definition"]["text"],
+        "coaching_record": {
+            "family_scope": list(entry["family_scope"]),
+            "observation_refs": list(entry["observation_refs"]),
+            "quality_prerequisites": list(entry["quality_prerequisites"]),
+            "expected_direction": entry["expected_direction"]["text"],
+            "alternative_explanations": list(entry["alternative_explanations"]),
+            "forbidden_inferences": list(entry["forbidden_inferences"]),
+            "cue": entry["cue"],
+            "dose_guardrail": entry["dose_guardrail"],
+            "matched_retest": entry["matched_retest"],
+            "near_transfer_retest": entry["near_transfer_retest"],
+            "stop_adjust_rule": entry["stop_adjust_rule"],
+        },
+        "sources": [sources_by_ref[source_ref] for source_ref in entry["sources"]],
+        "max_claim_level": max_claim_level,
+        "section_refs": [section["section_ref"] for section in sections],
+        "claim_refs": [claim_ref(section) for section in sections],
+        "claim_levels": [section["claim_level"] for section in sections],
         "limitations": list(entry["limitations"]),
         "counterevidence": list(entry["counterevidence"]),
         "supported_uses": list(entry["supported_uses"]),

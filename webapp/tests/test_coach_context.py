@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict
+import json
 from typing import Any
 
 import pytest
@@ -149,6 +151,80 @@ def _canonical_context() -> dict:
             "warnings": [],
         }
     )
+
+
+def _canonical_run_facts(*, oversized: bool = False) -> dict:
+    limitations = []
+    if oversized:
+        limitations = [f"limit-{index:03d}-" + ("x" * 220) for index in range(40)]
+    return {
+        "schema_version": "canonical_run_facts.v1",
+        "analysis_ref": "analysis:42",
+        "scenario_profile_ref": None,
+        "canonical_time_window_ref": "analysis:42:canonical-window",
+        "field_registry_version": "source_field_registry.v1",
+        "source_contracts": [
+            {
+                "source_kind": "stats",
+                "source_ref": "run:42:stats",
+                "parser_version": "kovaak_stats.v1",
+                "source_schema_version": None,
+                "recognized_schema_status": "recognized",
+                "unknown_field_observability": "not_observable",
+            }
+        ],
+        "sections": [
+            {
+                "section_key": "scenario",
+                "facts": {"stats_display_name": "Fixture"},
+                "present_field_keys": ["stats.summary.Scenario"],
+                "source_absent_field_keys": ["stats.summary.Hash"],
+                "omitted_known_fields": [],
+                "completeness": "complete_allowlisted",
+            }
+        ],
+        "outcome_record_sets": {
+            "stats_kill_rows_ref": "analysis:42:stats-kill-rows",
+            "performance_metric_changes_ref": None,
+        },
+        "completeness": "partial",
+        "unknown_field_policy": "excluded",
+        "limitations": limitations,
+    }
+
+
+def _v2_context(*, run_facts: dict) -> dict:
+    return {
+        "schema_version": "coach_diagnostic_context.v2",
+        "analysis_ref": {
+            "analysis_id": "analysis:42",
+            "analysis_result_version": "analysis_result.v2",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+        },
+        "scenario": {
+            "scenario_profile_ref": None,
+            "analyzer_refs": ["native_flicking.v1"],
+            "support_status": "supported",
+            "limitations": [],
+        },
+        "run_facts": run_facts,
+        "diagnosis": {
+            "profile": {},
+            "issues": [],
+            "summary": {},
+            "comparison": None,
+            "meta": {},
+        },
+        "evidence_summary": {
+            "availability": {"stats": "available"},
+            "alignment": {"status": "aligned"},
+            "segment_refs": [],
+        },
+        "trends": [],
+        "training": {"active_plan_ref": None, "recent_retest_ref": None},
+        "limitations": [],
+    }
 
 
 @pytest.mark.parametrize(
@@ -958,3 +1034,472 @@ async def test_chat_storage_persists_same_sanitized_context_for_both_messages(mo
     assert "dx" not in serialized
     assert "/private" not in serialized
     assert "source_path" not in serialized
+
+
+def test_historical_v1_context_is_read_exactly_without_v2_upgrade():
+    context = _canonical_context()
+
+    assert coerce_coach_diagnostic_context(context) == context
+    assert context["schema_version"] == "coach_diagnostic_context.v1"
+    assert "run_facts" not in context
+    assert json.loads(serialize_coach_diagnostic_context(context)) == context
+
+
+def test_v2_inline_context_preserves_allowlisted_facts_and_stays_within_budget():
+    facts = _canonical_run_facts()
+    context = _v2_context(
+        run_facts={
+            "mode": "inline",
+            "field_registry_version": "source_field_registry.v1",
+            "facts": facts,
+            "limitations": [],
+        }
+    )
+
+    canonical = coerce_coach_diagnostic_context(context)
+
+    assert canonical == context
+    assert set(canonical) == {
+        "schema_version",
+        "analysis_ref",
+        "scenario",
+        "run_facts",
+        "diagnosis",
+        "evidence_summary",
+        "trends",
+        "training",
+        "limitations",
+    }
+    assert canonical["schema_version"] == "coach_diagnostic_context.v2"
+    assert canonical["run_facts"]["mode"] == "inline"
+    facts_wire = json.dumps(
+        facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    context_wire = json.dumps(
+        canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    assert len(facts_wire) <= 8 * 1024
+    assert len(context_wire) <= 32 * 1024
+
+
+def test_new_analysis_with_committed_evidence_projects_to_v2_without_upgrading_legacy_results():
+    context = project_coach_diagnostic_context(
+        {
+            "schema_version": "analysis_result.v2",
+            "analysis_id": "analysis:42",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+            "deterministic": {"diagnosis": {}, "metrics": {}},
+            "evidence": {
+                "availability": {"stats": "available"},
+                "alignment": {"status": "aligned"},
+                "warnings": [],
+                "derived_artifact": {
+                    "artifact_ref": "analysis:42:evidence:abc",
+                    "evidence_revision": "sha256:abc",
+                    "contract_version": "analysis_evidence_artifact.v1",
+                    "checksum_sha256": "abc",
+                    "size_bytes": 1,
+                },
+            },
+            "warnings": [],
+        }
+    )
+
+    assert context["schema_version"] == "coach_diagnostic_context.v2"
+    assert context["run_facts"] == {
+        "mode": "unavailable",
+        "limitations": ["canonical_run_facts_not_inline_available"],
+    }
+    assert context["evidence_summary"]["artifact_ref"] == "analysis:42:evidence:abc"
+
+
+def test_new_analysis_with_processed_table_projects_v3_directory_without_rows():
+    table = {
+        "schema_version": "processed_event_table.v1",
+        "table_ref": "analysis:42:table:static_flick",
+        "analysis_ref": "analysis:42",
+        "analyzer_ref": "native_flicking.v1",
+        "family": "static_clicking",
+        "event_kind": "static_flick",
+        "row_count": 73,
+        "included_count": 73,
+        "excluded_count": 0,
+        "completeness": "complete",
+        "field_catalog": [{
+            "field_key": "corrective_count",
+            "role": "metric",
+            "value_type": "number",
+            "unit": "count",
+            "metric_key": "static_clicking.corrective_count",
+            "metric_version": "native_flicking.v1",
+            "expected_direction": "comparison_only",
+            "limitations": [],
+        }],
+        "index_fields": ["corrective_count"],
+        "rows_ref": "analysis:42:table:static_flick",
+        "limitations": [],
+    }
+    context = project_coach_diagnostic_context({
+        "schema_version": "analysis_result.v2",
+        "analysis_id": "analysis:42",
+        "analysis_type": "flicking",
+        "input_mode": "input_native",
+        "deterministic": {"diagnosis": {}, "metrics": {}},
+        "evidence": {
+            "availability": {"raw_input": "available"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+            "derived_artifact": {
+                "artifact_ref": "analysis:42:evidence:abc",
+                "evidence_revision": "sha256:abc",
+                "contract_version": "analysis_evidence_artifact.v1",
+                "checksum_sha256": "abc",
+                "size_bytes": 1,
+            },
+            "processed_event_tables": [table],
+        },
+        "warnings": [],
+    })
+
+    assert context["schema_version"] == "coach_diagnostic_context.v3"
+    assert context["processed_events"] == {
+        "mode": "table_refs",
+        "tables": [table],
+        "query_capabilities": [
+            "analysis.events.list",
+            "analysis.events.get",
+            "analysis.events.rank",
+            "analysis.events.filter",
+            "analysis.events.aggregate",
+            "analysis.events.co_occurrence",
+            "analysis.events.sequence",
+            "analysis.evidence.compare",
+        ],
+        "limitations": [],
+    }
+    wire = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    assert "compact_rows" not in wire
+    assert '"attributes"' not in wire
+    assert len(wire.encode("utf-8")) <= 32 * 1024
+    from webapp.backend.coach_service import _reachable_context_refs
+
+    assert "analysis:42:table:static_flick" in _reachable_context_refs(context)
+    assert coerce_coach_diagnostic_context(_v2_context(
+        run_facts={"mode": "unavailable", "limitations": []}
+    ))["schema_version"] == "coach_diagnostic_context.v2"
+
+
+def test_dynamic_context_projects_frozen_profile_analyzer_and_table_without_rows():
+    table = {
+        "schema_version": "processed_event_table.v1",
+        "table_ref": "analysis:43:table:dynamic_click",
+        "analysis_ref": "analysis:43",
+        "analyzer_ref": "dynamic_clicking.v1",
+        "family": "dynamic_clicking",
+        "event_kind": "dynamic_click",
+        "row_count": 118,
+        "included_count": 118,
+        "excluded_count": 0,
+        "completeness": "complete",
+        "field_catalog": [{
+            "field_key": "normalized_click_error",
+            "role": "metric",
+            "value_type": "number",
+            "unit": "visible_radius",
+            "metric_key": "dynamic_clicking.normalized_click_error",
+            "metric_version": "dynamic_clicking.normalized_click_error.v1",
+            "expected_direction": "comparison_only",
+            "limitations": [],
+        }],
+        "index_fields": ["normalized_click_error"],
+        "rows_ref": "analysis:43:table:dynamic_click",
+        "limitations": [],
+    }
+    context = project_coach_diagnostic_context({
+        "schema_version": "analysis_result.v2",
+        "analysis_version": "dynamic_clicking.v1",
+        "analysis_id": "analysis:43",
+        "analysis_type": "dynamic_clicking",
+        "input_mode": "multimodal",
+        "input_snapshot": {
+            "scenario_resolution": {
+                "scenario_profile_ref": "scenario:dynamic.fixture@1",
+            },
+        },
+        "deterministic": {
+            "support_status": "supported",
+            "limitations": ["motion_predictability_evidence_unavailable"],
+            "metrics": {},
+            "diagnosis": {
+                "profile": {},
+                "issues": [{
+                    "signal": "relative velocity mismatch",
+                    "priority": 1,
+                    "priority_reason": "matched comparison candidate",
+                    "claim_level": "deterministic_rule",
+                    "metric_refs": ["dynamic_clicking.relative_velocity"],
+                    "event_refs": ["analysis:43:dynamic-click:7"],
+                    "limitations": ["motion_predictability_evidence_unavailable"],
+                }],
+                "summary": {},
+                "comparison": None,
+                "meta": {
+                    "summary_type": "dynamic_clicking",
+                    "classification": "deterministic",
+                },
+            },
+        },
+        "evidence": {
+            "availability": {"raw_input": "available", "mp4": "available"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+            "derived_artifact": {
+                "artifact_ref": "analysis:43:evidence:abc",
+                "evidence_revision": "sha256:abc",
+                "contract_version": "analysis_evidence_artifact.v1",
+                "checksum_sha256": "abc",
+                "size_bytes": 1,
+            },
+            "processed_event_tables": [table],
+        },
+        "warnings": [],
+    })
+
+    assert context["schema_version"] == "coach_diagnostic_context.v3"
+    assert context["scenario"] == {
+        "scenario_profile_ref": "scenario:dynamic.fixture@1",
+        "analyzer_refs": ["dynamic_clicking.v1"],
+        "support_status": "supported",
+        "limitations": ["motion_predictability_evidence_unavailable"],
+    }
+    assert context["processed_events"]["tables"] == [table]
+    assert context["diagnosis"]["issues"][0]["signal"] == (
+        "relative velocity mismatch"
+    )
+    assert context["diagnosis"]["issues"][0]["event_refs"] == [
+        "analysis:43:dynamic-click:7"
+    ]
+    wire = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    assert "processed_rows" not in wire
+    assert '"attributes"' not in wire
+
+
+def test_tracking_context_uses_generic_processed_table_directory_without_rows():
+    table = {
+        "schema_version": "processed_event_table.v1",
+        "table_ref": "analysis:44:table:tracking_episode",
+        "analysis_ref": "analysis:44",
+        "analyzer_ref": "continuous_tracking.v1",
+        "family": "continuous_tracking",
+        "event_kind": "tracking_episode",
+        "row_count": 1,
+        "included_count": 1,
+        "excluded_count": 0,
+        "completeness": "complete",
+        "field_catalog": [{
+            "field_key": "target_relative_error_px",
+            "role": "metric",
+            "value_type": "number",
+            "unit": "px",
+            "metric_key": "continuous_tracking.target_relative_error_px",
+            "metric_version": "continuous_tracking.target_relative_error_px.v1",
+            "expected_direction": "comparison_only",
+            "limitations": [],
+        }],
+        "index_fields": ["target_relative_error_px"],
+        "rows_ref": "analysis:44:table:tracking_episode",
+        "limitations": [],
+    }
+    context = project_coach_diagnostic_context({
+        "schema_version": "analysis_result.v2",
+        "analysis_version": "continuous_tracking.v1",
+        "analysis_id": "analysis:44",
+        "analysis_type": "continuous_tracking",
+        "input_mode": "multimodal",
+        "scenario": {
+            "scenario_profile_ref": "scenario:tracking.fixture@1",
+            "analyzer_refs": ["continuous_tracking.v1"],
+            "support_status": "supported",
+            "limitations": [],
+        },
+        "input_snapshot": {
+            "scenario_resolution": {
+                "scenario_profile_ref": "scenario:tracking.fixture@1",
+            },
+        },
+        "deterministic": {
+            "support_status": "supported",
+            "limitations": [],
+            "metrics": {},
+            "diagnosis": {
+                "profile": {},
+                "issues": [],
+                "summary": {},
+                "comparison": None,
+                "meta": {
+                    "summary_type": "continuous_tracking",
+                    "classification": "deterministic",
+                },
+            },
+        },
+        "evidence": {
+            "availability": {"mp4": "available"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+            "derived_artifact": {
+                "artifact_ref": "analysis:44:evidence:abc",
+                "evidence_revision": "sha256:abc",
+                "contract_version": "analysis_evidence_artifact.v1",
+                "checksum_sha256": "abc",
+                "size_bytes": 1,
+            },
+            "processed_event_tables": [table],
+        },
+        "warnings": [],
+    })
+
+    assert context["schema_version"] == "coach_diagnostic_context.v3"
+    assert context["scenario"] == {
+        "scenario_profile_ref": "scenario:tracking.fixture@1",
+        "analyzer_refs": ["continuous_tracking.v1"],
+        "support_status": "supported",
+        "limitations": [],
+    }
+    assert context["processed_events"]["tables"] == [table]
+    wire = json.dumps(context, ensure_ascii=False, sort_keys=True)
+    assert "processed_rows" not in wire
+    assert '"attributes"' not in wire
+
+
+def test_processed_table_projection_failure_does_not_silently_fall_back_to_v2():
+    table = {
+        "schema_version": "processed_event_table.v1",
+        "table_ref": "analysis:42:table:static_flick",
+        "analysis_ref": "analysis:42",
+        "analyzer_ref": "native_flicking.v1",
+        "family": "static_clicking",
+        "event_kind": "static_flick",
+        "row_count": 1,
+        "included_count": 1,
+        "excluded_count": 0,
+        "completeness": "complete",
+        "field_catalog": [{
+            "field_key": "corrective_count",
+            "role": "metric",
+            "value_type": "number",
+            "unit": "count",
+            "metric_key": "static_clicking.corrective_count",
+            "metric_version": "not-a-version",
+            "expected_direction": "comparison_only",
+            "limitations": [],
+        }],
+        "index_fields": ["corrective_count"],
+        "rows_ref": "analysis:42:table:static_flick",
+        "limitations": [],
+    }
+
+    with pytest.raises(ValueError, match="cannot be projected safely"):
+        project_coach_diagnostic_context({
+            "schema_version": "analysis_result.v2",
+            "analysis_id": "analysis:42",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+            "deterministic": {"diagnosis": {}, "metrics": {}},
+            "evidence": {
+                "availability": {"raw_input": "available"},
+                "alignment": {"status": "aligned"},
+                "warnings": [],
+                "derived_artifact": {
+                    "artifact_ref": "analysis:42:evidence:abc",
+                    "evidence_revision": "sha256:abc",
+                    "contract_version": "analysis_evidence_artifact.v1",
+                    "checksum_sha256": "abc",
+                    "size_bytes": 1,
+                },
+                "processed_event_tables": [table],
+            },
+            "warnings": [],
+        })
+
+
+def test_v2_inline_facts_over_8k_are_rejected_instead_of_silent_truncation():
+    facts = _canonical_run_facts(oversized=True)
+    facts_wire = json.dumps(
+        facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    assert len(facts_wire) > 8 * 1024
+
+    context = _v2_context(
+        run_facts={
+            "mode": "inline",
+            "field_registry_version": "source_field_registry.v1",
+            "facts": facts,
+            "limitations": [],
+        }
+    )
+
+    assert coerce_coach_diagnostic_context(context) is None
+
+
+def test_v2_section_refs_are_bounded_and_do_not_rehydrate_facts():
+    context = _v2_context(
+        run_facts={
+            "mode": "section_refs",
+            "field_registry_version": "source_field_registry.v1",
+            "section_summaries": [
+                {
+                    "section_key": "scenario",
+                    "section_ref": "analysis:42:facts:scenario",
+                    "completeness": "complete_allowlisted",
+                    "present_field_count": 1,
+                    "source_absent_field_count": 1,
+                    "omitted_known_field_count": 0,
+                }
+            ],
+            "limitations": ["facts_over_inline_budget"],
+        }
+    )
+
+    canonical = coerce_coach_diagnostic_context(context)
+
+    assert canonical == context
+    assert canonical["run_facts"]["mode"] == "section_refs"
+    assert "facts" not in canonical["run_facts"]
+    assert len(
+        json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ) <= 32 * 1024
+
+
+def test_v2_issue_segment_refs_are_projected_and_seed_context_reachability():
+    context = _v2_context(
+        run_facts={"mode": "unavailable", "limitations": []}
+    )
+    primary = "analysis:42:segment:worst:1"
+    supporting = [
+        "analysis:42:segment:typical:1",
+        "analysis:42:segment:improved:1",
+    ]
+    context["diagnosis"]["issues"] = [
+        {
+            "signal": "sparc low",
+            "severity": "info",
+            "claim_level": "experimental",
+            "primary_evidence_segment_ref": primary,
+            "supporting_evidence_segment_refs": supporting,
+        }
+    ]
+
+    canonical = coerce_coach_diagnostic_context(context)
+
+    assert canonical["diagnosis"]["issues"][0]["primary_evidence_segment_ref"] == primary
+    assert canonical["diagnosis"]["issues"][0]["supporting_evidence_segment_refs"] == supporting
+    assert canonical["evidence_summary"]["segment_refs"] == [primary, *supporting]
+
+    too_many = deepcopy(context)
+    too_many["diagnosis"]["issues"][0]["supporting_evidence_segment_refs"].append(
+        "analysis:42:segment:extra:1"
+    )
+    assert coerce_coach_diagnostic_context(too_many) is None

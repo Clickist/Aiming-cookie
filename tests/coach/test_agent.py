@@ -283,7 +283,11 @@ def test_narrate_diagnosis_end_to_end_mock():
     tool_result_content = backend.calls[1]["messages"][-1]["content"][0]["content"]
     parsed = json.loads(tool_result_content)
     assert parsed["signal"] == "sparc low"
-    assert "MattyOW" in parsed["community"] or "张力" in parsed["community"]
+    assert parsed["registry_version"] == "2026-07-22.v2"
+    assert 1 <= len(parsed["entries"]) <= 3
+    assert parsed["community"] in parsed["cues"]
+    assert all(entry["entry_ref"].startswith("knowledge:") for entry in parsed["entries"])
+    assert all(entry["coaching_record"]["matched_retest"] for entry in parsed["entries"])
 
 
 # ---------------------------------------------------------------------------

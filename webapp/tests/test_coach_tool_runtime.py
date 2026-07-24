@@ -114,6 +114,72 @@ def test_runtime_accepts_only_versioned_knowledge_references_for_persistence():
     assert result.tool_events == [safe_event]
 
 
+def _v2_knowledge_event() -> dict:
+    from kovaak_tracker.coach.agent_tools import make_fetch_knowledge
+
+    result = make_fetch_knowledge()("reverse high")
+    entries = result["entries"]
+    return {
+        "type": "knowledge",
+        "registry_version": result["registry_version"],
+        "topic": "static_clicking",
+        "issue_signal": result["signal"],
+        "entry_refs": [entry["entry_ref"] for entry in entries],
+        "entry_versions": [entry["entry_version"] for entry in entries],
+        "section_refs": [
+            ref for entry in entries for ref in entry["section_refs"]
+        ],
+        "claim_refs": [
+            ref for entry in entries for ref in entry["claim_refs"]
+        ],
+        "claim_levels": [
+            level for entry in entries for level in entry["claim_levels"]
+        ],
+        "source_refs": [
+            source["source_ref"]
+            for entry in entries
+            for source in entry["sources"]
+        ],
+        "source_levels": [
+            source["source_level"]
+            for entry in entries
+            for source in entry["sources"]
+        ],
+        "max_claim_levels": [entry["max_claim_level"] for entry in entries],
+    }
+
+
+def test_runtime_accepts_v2_section_source_and_claim_refs_only():
+    safe_event = _v2_knowledge_event()
+    patcher, _ = _mock_sidecar(_response(tool_events=[safe_event]))
+    with patcher:
+        result = run_pi_coach_turn(
+            user_id="owner-a",
+            profile=_PROFILE,
+            messages=[{"role": "user", "content": "解释制动"}],
+            analysis_summary=None,
+            return_result=True,
+        )
+
+    assert result.tool_events == [safe_event]
+    assert "text" not in json.dumps(result.tool_events)
+
+
+@pytest.mark.parametrize("field", ["section_refs", "claim_refs", "claim_levels"])
+def test_runtime_rejects_v2_knowledge_ref_mismatch(field):
+    event = _v2_knowledge_event()
+    event[field] = ["invented-ref"]
+    patcher, _ = _mock_sidecar(_response(tool_events=[event]))
+    with patcher, pytest.raises(CoachRuntimeError, match="knowledge"):
+        run_pi_coach_turn(
+            user_id="owner-a",
+            profile=_PROFILE,
+            messages=[{"role": "user", "content": "解释制动"}],
+            analysis_summary=None,
+            return_result=True,
+        )
+
+
 @pytest.mark.parametrize(
     "unsafe_field",
     [
@@ -205,6 +271,33 @@ def test_runtime_rejects_unsafe_tool_event_instead_of_persisting_internal_payloa
             user_id="owner-a",
             profile=_PROFILE,
             messages=[{"role": "user", "content": "读取分析"}],
+            analysis_summary=None,
+            tool_bridge=_BRIDGE,
+            return_result=True,
+        )
+
+
+def test_runtime_rejects_full_evidence_result_in_persistable_tool_event():
+    unsafe = {
+        "type": "product_command",
+        "command_id": "cmd-evidence-full-result",
+        "command_name": "analysis.evidence.signal_window",
+        "status": "succeeded",
+        "result_ref": "analysis:12:segment:1:signal-window",
+        "audit_ref": "coach_audit:evidence:1",
+        "ui_event": None,
+        "warning_or_error": None,
+        "result": {
+            "points": [[0, 1.0]],
+            "next_cursor": "cursor:must-not-persist",
+        },
+    }
+    patcher, _ = _mock_sidecar(_response(tool_events=[unsafe]))
+    with patcher, pytest.raises(CoachRuntimeError, match="tool event"):
+        run_pi_coach_turn(
+            user_id="owner-a",
+            profile=_PROFILE,
+            messages=[{"role": "user", "content": "查看信号"}],
             analysis_summary=None,
             tool_bridge=_BRIDGE,
             return_result=True,
@@ -523,13 +616,19 @@ async def test_real_analysis_registry_pi_event_is_persisted_as_refs_only(monkeyp
 
     assert runtime_result is not None
     assert result.reply is not None
-    assert result.tool_events[0]["entry_refs"][0] == "knowledge:metric.sparc.definition@1"
+    assert result.tool_events[0]["entry_refs"] == [
+        "knowledge:static.flicking-terminal-control@1",
+        "knowledge:tracking.control-smoothness@1",
+        "knowledge:hypothesis.tension-management@1",
+    ]
     messages = await coach_store.load_messages(int(thread["id"]))
     trace = messages[-1]["trace"]
     assert trace == result.tool_events
-    assert trace[0]["registry_version"] == "2026-07-14.v1"
+    assert trace[0]["registry_version"] == "2026-07-22.v2"
     assert trace[0]["entry_versions"] == [1, 1, 1]
-    assert "product:metric:sparc" in trace[0]["source_refs"]
+    assert "product.complete-coach-spec" in trace[0]["source_refs"]
+    assert "static.flicking-terminal-control.definition" in trace[0]["section_refs"]
+    assert "claim:static.flicking-terminal-control.definition" in trace[0]["claim_refs"]
     assert "deterministic_rule" in trace[0]["max_claim_levels"]
     serialized_trace = json.dumps(trace, ensure_ascii=False)
     for forbidden in (

@@ -40,7 +40,7 @@ class ActivePlanReplacementRequired(TrainingPlanError):
 
 
 _WRITE_LOCK = asyncio.Lock()
-_REF_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_REF_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}:[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
 _PATH_RE = re.compile(r"(?:^/|^[A-Za-z]:[\\/]|^\\\\)")
 _FORBIDDEN_KEY_RE = re.compile(
     r"(?:credential|secret|password|token|api[_-]?key|authorization|private[_-]?key|"
@@ -640,3 +640,343 @@ async def list_transitions(owner_id: str, plan_id: str) -> list[dict[str, Any]]:
         }
         for row in await cur.fetchall()
     ]
+
+
+# Task 11 facts are append-only and intentionally separate from the legacy
+# plan payload.  A plan revision therefore remains immutable while execution
+# and retest rows retain the exact item revision used by the learner.
+_ITEM_STATUSES = {"planned", "active", "completed", "cancelled"}
+_EXECUTION_STATUSES = {"completed", "partial", "skipped"}
+_RETEST_KINDS = {"matched", "near_transfer"}
+_RETEST_COMPARABILITY = {"comparable", "not_comparable", "unavailable"}
+
+
+def _validate_plan_item(value: Mapping[str, Any]) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise InvalidTrainingPlan("plan item must be an object")
+    required = {
+        "diagnosis_ref", "knowledge_ref", "scenario_profile_ref", "baseline_metric_ref",
+        "expected_direction", "practice_condition", "cue", "dose_guardrail",
+        "matched_retest_ref", "near_transfer_retest_ref", "review_date",
+    }
+    if set(value) != required:
+        raise InvalidTrainingPlan("plan item requires the complete prescription contract")
+    refs = {
+        "diagnosis_ref": "diagnosis",
+        "knowledge_ref": "knowledge",
+        "scenario_profile_ref": "scenario",
+        "baseline_metric_ref": "metric",
+        "matched_retest_ref": "retest-spec",
+        "near_transfer_retest_ref": "retest-spec",
+    }
+    normalized = {
+        field: _validate_ref(value[field], field, required_prefix=prefix)
+        for field, prefix in refs.items()
+    }
+    direction = _required_text(value["expected_direction"], "expected_direction", max_length=64)
+    if direction not in {"lower_better", "higher_better", "target_band", "descriptive_only", "comparison_only"}:
+        raise InvalidTrainingPlan("expected_direction is invalid")
+    for field in ("practice_condition", "cue", "dose_guardrail", "review_date"):
+        normalized[field] = _required_text(value[field], field)
+    normalized["expected_direction"] = direction
+    return normalized
+
+
+def _validate_dose(value: Mapping[str, Any], field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {"amount", "unit"}:
+        raise InvalidTrainingPlan(f"{field} must contain amount and unit")
+    amount = value["amount"]
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount < 0:
+        raise InvalidTrainingPlan(f"{field}.amount is invalid")
+    return {"amount": float(amount), "unit": _required_text(value["unit"], f"{field}.unit", max_length=40)}
+
+
+def _validate_ref_list(value: Sequence[str], field: str, prefix: str) -> list[str]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or not value or len(value) > 16:
+        raise InvalidTrainingPlan(f"{field} must contain 1 to 16 references")
+    return [_validate_ref(ref, field, required_prefix=prefix) for ref in value]
+
+
+async def _select_item_row(conn: Any, owner_id: str, item_ref: str) -> Any:
+    cur = await conn.execute(
+        "SELECT item_ref, owner_id, plan_id, plan_version, item_revision, status, item_payload_json, "
+        "created_at, updated_at FROM training_plan_items WHERE owner_id=? AND item_ref=?",
+        (owner_id, item_ref),
+    )
+    row = await cur.fetchone()
+    if row is not None:
+        return row
+    cur = await conn.execute("SELECT 1 FROM training_plan_items WHERE item_ref=?", (item_ref,))
+    if await cur.fetchone() is not None:
+        raise PlanForbidden(item_ref)
+    raise PlanNotFound(item_ref)
+
+
+def _item_projection(row: Mapping[str, Any], *, status_ref: str | None = None) -> dict[str, Any]:
+    payload = _decode(row["item_payload_json"])
+    item_revision = int(row["item_revision"])
+    return {
+        "item_ref": row["item_ref"],
+        "plan_id": row["plan_id"],
+        "plan_revision": int(row["plan_version"]),
+        "plan_revision_ref": f"{row['plan_id']}:v{row['plan_version']}",
+        "item_revision": item_revision,
+        "item_revision_ref": f"{row['item_ref']}:v{item_revision}",
+        "status": row["status"],
+        "status_ref": status_ref,
+        **payload,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+async def add_plan_item(
+    owner_id: str,
+    plan_id: str,
+    item_payload: Mapping[str, Any],
+    *,
+    plan_version: int | None = None,
+) -> dict[str, Any]:
+    owner_id = _required_owner(owner_id)
+    plan_id = _required_plan_id(plan_id)
+    payload = _validate_plan_item(item_payload)
+    conn = await get_conn()
+    async with _WRITE_LOCK:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            plan = await _select_plan_row(conn, owner_id, plan_id)
+            version = int(plan["current_version"]) if plan_version is None else plan_version
+            if not isinstance(version, int) or version < 1:
+                raise InvalidTrainingPlan("plan_version is invalid")
+            await _select_version_row(conn, owner_id, plan_id, version)
+            item_ref = f"plan-item:{uuid.uuid4().hex}"
+            await conn.execute(
+                "INSERT INTO training_plan_items(item_ref, owner_id, plan_id, plan_version, item_revision, status, item_payload_json) "
+                "VALUES(?, ?, ?, ?, 1, 'planned', ?)",
+                (item_ref, owner_id, plan_id, version, _json(payload)),
+            )
+            status_ref = f"plan-item-status:{uuid.uuid4().hex}"
+            await conn.execute(
+                "INSERT INTO training_plan_item_statuses(status_ref, owner_id, item_ref, plan_id, plan_version, "
+                "from_status, to_status, reason) VALUES(?, ?, ?, ?, ?, NULL, 'planned', NULL)",
+                (status_ref, owner_id, item_ref, plan_id, version),
+            )
+            await conn.commit()
+        except Exception:
+            await conn.execute("ROLLBACK")
+            raise
+    row = await _select_item_row(conn, owner_id, item_ref)
+    return _item_projection(row, status_ref=status_ref)
+
+
+async def list_plan_items(owner_id: str, plan_id: str) -> list[dict[str, Any]]:
+    owner_id = _required_owner(owner_id)
+    plan_id = _required_plan_id(plan_id)
+    conn = await get_conn()
+    await _select_plan_row(conn, owner_id, plan_id)
+    cur = await conn.execute(
+        "SELECT item_ref, owner_id, plan_id, plan_version, item_revision, status, item_payload_json, created_at, updated_at "
+        "FROM training_plan_items WHERE owner_id=? AND plan_id=? ORDER BY item_ref",
+        (owner_id, plan_id),
+    )
+    return [_item_projection(row) for row in await cur.fetchall()]
+
+
+async def set_plan_item_status(
+    owner_id: str, item_ref: str, status: str, *, reason: str | None = None,
+) -> dict[str, Any]:
+    owner_id = _required_owner(owner_id)
+    item_ref = _validate_ref(item_ref, "item_ref", required_prefix="plan-item")
+    if status not in _ITEM_STATUSES:
+        raise InvalidTrainingPlan("unknown plan item status")
+    if reason is not None:
+        reason = _required_text(reason, "reason")
+    conn = await get_conn()
+    async with _WRITE_LOCK:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = await _select_item_row(conn, owner_id, item_ref)
+            previous = row["status"]
+            if previous == status:
+                await conn.commit()
+                return _item_projection(row)
+            status_ref = f"plan-item-status:{uuid.uuid4().hex}"
+            await conn.execute(
+                "UPDATE training_plan_items SET status=?, updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND item_ref=?",
+                (status, owner_id, item_ref),
+            )
+            await conn.execute(
+                "INSERT INTO training_plan_item_statuses(status_ref, owner_id, item_ref, plan_id, plan_version, from_status, to_status, reason) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                (status_ref, owner_id, item_ref, row["plan_id"], row["plan_version"], previous, status, reason),
+            )
+            await conn.commit()
+        except Exception:
+            await conn.execute("ROLLBACK")
+            raise
+    row = await _select_item_row(conn, owner_id, item_ref)
+    return _item_projection(row, status_ref=status_ref)
+
+
+async def record_user_execution(
+    owner_id: str,
+    item_ref: str,
+    *,
+    scenario_ref: str,
+    run_refs: Sequence[str],
+    planned_dose: Mapping[str, Any],
+    completed_dose: Mapping[str, Any],
+    completion_status: str,
+    user_feedback: str,
+    recorded_by: str = "user",
+) -> dict[str, Any]:
+    owner_id = _required_owner(owner_id)
+    item_ref = _validate_ref(item_ref, "item_ref", required_prefix="plan-item")
+    scenario_ref = _validate_ref(scenario_ref, "scenario_ref", required_prefix="scenario")
+    refs = _validate_ref_list(run_refs, "run_refs", "run")
+    planned = _validate_dose(planned_dose, "planned_dose")
+    completed = _validate_dose(completed_dose, "completed_dose")
+    if completion_status not in _EXECUTION_STATUSES:
+        raise InvalidTrainingPlan("unknown execution status")
+    if recorded_by != "user":
+        raise InvalidTrainingPlan("plan execution must be recorded by the user")
+    feedback = _required_text(user_feedback, "user_feedback", max_length=1000)
+    conn = await get_conn()
+    async with _WRITE_LOCK:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = await _select_item_row(conn, owner_id, item_ref)
+            execution_ref = f"plan-execution:{uuid.uuid4().hex}"
+            await conn.execute(
+                "INSERT INTO training_plan_executions(execution_ref, owner_id, item_ref, plan_id, plan_version, item_revision, "
+                "scenario_ref, run_refs_json, planned_dose_json, completed_dose_json, completion_status, user_feedback) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (execution_ref, owner_id, item_ref, row["plan_id"], row["plan_version"], row["item_revision"], scenario_ref,
+                 _json(refs), _json(planned), _json(completed), completion_status, feedback),
+            )
+            await conn.commit()
+        except Exception:
+            await conn.execute("ROLLBACK")
+            raise
+    return {
+        "execution_ref": execution_ref, "owner_id": owner_id, "item_ref": item_ref,
+        "plan_revision_ref": f"{row['plan_id']}:v{row['plan_version']}",
+        "item_revision_ref": f"{item_ref}:v{row['item_revision']}",
+        "scenario_ref": scenario_ref, "run_refs": refs, "planned_dose": planned,
+        "completed_dose": completed, "completion_status": completion_status,
+        "user_feedback": feedback,
+    }
+
+
+async def list_plan_executions(owner_id: str, item_ref: str) -> list[dict[str, Any]]:
+    owner_id = _required_owner(owner_id)
+    item_ref = _validate_ref(item_ref, "item_ref", required_prefix="plan-item")
+    conn = await get_conn()
+    await _select_item_row(conn, owner_id, item_ref)
+    cur = await conn.execute(
+        "SELECT execution_ref, plan_id, plan_version, item_revision, scenario_ref, run_refs_json, planned_dose_json, "
+        "completed_dose_json, completion_status, user_feedback, created_at FROM training_plan_executions "
+        "WHERE owner_id=? AND item_ref=? ORDER BY created_at, execution_ref",
+        (owner_id, item_ref),
+    )
+    return [
+        {
+            "execution_ref": row["execution_ref"], "item_ref": item_ref,
+            "plan_revision_ref": f"{row['plan_id']}:v{row['plan_version']}",
+            "item_revision_ref": f"{item_ref}:v{row['item_revision']}",
+            "scenario_ref": row["scenario_ref"], "run_refs": _decode(row["run_refs_json"]),
+            "planned_dose": _decode(row["planned_dose_json"]), "completed_dose": _decode(row["completed_dose_json"]),
+            "completion_status": row["completion_status"], "user_feedback": row["user_feedback"],
+            "created_at": row["created_at"],
+        }
+        for row in await cur.fetchall()
+    ]
+
+
+async def record_retest(
+    owner_id: str,
+    item_ref: str,
+    *,
+    kind: str,
+    expected_metric_ref: str,
+    expected_direction: str,
+    analysis_refs: Sequence[str],
+    comparability: str,
+    result: str,
+    limitations: Sequence[str],
+) -> dict[str, Any]:
+    owner_id = _required_owner(owner_id)
+    item_ref = _validate_ref(item_ref, "item_ref", required_prefix="plan-item")
+    if kind not in _RETEST_KINDS:
+        raise InvalidTrainingPlan("unknown retest kind")
+    metric_ref = _validate_ref(expected_metric_ref, "expected_metric_ref", required_prefix="metric")
+    if expected_direction not in {"lower_better", "higher_better", "target_band", "descriptive_only", "comparison_only"}:
+        raise InvalidTrainingPlan("expected_direction is invalid")
+    refs = _validate_ref_list(analysis_refs, "analysis_refs", "analysis")
+    if comparability not in _RETEST_COMPARABILITY:
+        raise InvalidTrainingPlan("unknown retest comparability")
+    result = _required_text(result, "result")
+    if isinstance(limitations, (str, bytes)) or not isinstance(limitations, Sequence) or not limitations or len(limitations) > 16:
+        raise InvalidTrainingPlan("limitations must contain 1 to 16 entries")
+    normalized_limitations = [_required_text(item, "limitations") for item in limitations]
+    conn = await get_conn()
+    async with _WRITE_LOCK:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = await _select_item_row(conn, owner_id, item_ref)
+            retest_ref = f"retest:{uuid.uuid4().hex}"
+            await conn.execute(
+                "INSERT INTO training_plan_retests(retest_ref, owner_id, item_ref, plan_id, plan_version, item_revision, kind, "
+                "expected_metric_ref, expected_direction, analysis_refs_json, comparability, result, limitations_json) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (retest_ref, owner_id, item_ref, row["plan_id"], row["plan_version"], row["item_revision"], kind, metric_ref,
+                 expected_direction, _json(refs), comparability, result, _json(normalized_limitations)),
+            )
+            await conn.commit()
+        except Exception:
+            await conn.execute("ROLLBACK")
+            raise
+    return {
+        "retest_ref": retest_ref, "owner_id": owner_id, "item_ref": item_ref,
+        "plan_revision_ref": f"{row['plan_id']}:v{row['plan_version']}",
+        "item_revision_ref": f"{item_ref}:v{row['item_revision']}", "kind": kind,
+        "expected_metric_ref": metric_ref, "expected_direction": expected_direction,
+        "analysis_refs": refs, "comparability": comparability, "result": result,
+        "limitations": normalized_limitations,
+    }
+
+
+async def list_retests(owner_id: str, item_ref: str) -> list[dict[str, Any]]:
+    owner_id = _required_owner(owner_id)
+    item_ref = _validate_ref(item_ref, "item_ref", required_prefix="plan-item")
+    conn = await get_conn()
+    await _select_item_row(conn, owner_id, item_ref)
+    cur = await conn.execute(
+        "SELECT retest_ref, plan_id, plan_version, item_revision, kind, expected_metric_ref, expected_direction, "
+        "analysis_refs_json, comparability, result, limitations_json, created_at FROM training_plan_retests "
+        "WHERE owner_id=? AND item_ref=? ORDER BY rowid", (owner_id, item_ref),
+    )
+    return [
+        {
+            "retest_ref": row["retest_ref"], "item_ref": item_ref,
+            "plan_revision_ref": f"{row['plan_id']}:v{row['plan_version']}",
+            "item_revision_ref": f"{item_ref}:v{row['item_revision']}", "kind": row["kind"],
+            "expected_metric_ref": row["expected_metric_ref"], "expected_direction": row["expected_direction"],
+            "analysis_refs": _decode(row["analysis_refs_json"]), "comparability": row["comparability"],
+            "result": row["result"], "limitations": _decode(row["limitations_json"]), "created_at": row["created_at"],
+        }
+        for row in await cur.fetchall()
+    ]
+
+
+async def get_recent_retest_ref(owner_id: str) -> str | None:
+    owner_id = _required_owner(owner_id)
+    conn = await get_conn()
+    row = await (
+        await conn.execute(
+            "SELECT retest_ref FROM training_plan_retests WHERE owner_id=? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (owner_id,),
+        )
+    ).fetchone()
+    return str(row["retest_ref"]) if row is not None else None
