@@ -1,0 +1,19 @@
+{
+  "schema_version": "visual_target_detector.v2",
+  "aim_point_mode": "fixed_viewport_center",
+  "excluded_regions": [
+    [0.485, 0.03, 0.515, 0.08],
+    [0.49, 0.95, 0.515, 1.0],
+    [0.0, 0.0, 0.02, 1.0],
+    [0.98, 0.0, 1.0, 1.0],
+    [0.0, 0.0, 1.0, 0.02],
+    [0.0, 0.98, 1.0, 1.0]
+  ],
+  "target": {
+    "hsv_lower": [0, 0, 0],
+    "hsv_upper": [179, 255, 130],
+    "min_area": 100,
+    "max_area_ratio": 0.02,
+    "shape": "round"
+  }
+}

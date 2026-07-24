@@ -9,20 +9,711 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pandas as pd
 import pytest
 
-from webapp.backend import db, queue, worker
+from webapp.backend import config, db, evidence_store, queue, worker
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
     ANALYSIS_RESULT_V2_SCHEMA_VERSION,
     LEGACY_ANALYSIS_VERSION,
     build_analysis_result_v1,
+    validate_analysis_result_v2_for_persistence,
 )
 
 
 @pytest.mark.asyncio
 async def test_process_one_empty_returns_false():
     assert await worker.process_one() is False
+
+
+def test_worker_attaches_committed_evidence_before_terminal_result(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    analysis_ref = "analysis:77"
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 0,
+        "end_ms": 1_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": analysis_ref,
+        "canonical_time_window": window,
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+    job = {
+        "id": 77,
+        "user_id": "owner:1",
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "sources": {
+                "stats": {
+                    "artifact_ref": "run:1:stats",
+                    "parser_version": "kovaak_stats.v1",
+                },
+                "performance": {
+                    "artifact_ref": "run:1:performance",
+                    "parser_version": "kovaak_performance.v1",
+                },
+            },
+        },
+    }
+    result = {
+        "evidence": {},
+        "artifact_manifest": {
+            "schema_version": "artifact_manifest.v2",
+            "external_inputs": [
+                {"id": "run:1:stats"},
+                {"id": "run:1:performance"},
+            ],
+            "owned_outputs": [{"id": analysis_ref}],
+        },
+    }
+    with patch(
+        "webapp.backend.worker._read_frozen_source_bytes",
+        return_value=b"fixture",
+    ), patch(
+        "kovaak_tracker.csv_parser.parse_stats_bytes",
+        return_value=object(),
+    ), patch(
+        "kovaak_tracker.performance_parser.parse_performance_bytes",
+        return_value=object(),
+    ), patch(
+        "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+        return_value=artifact,
+    ):
+        updated = worker._maybe_commit_analysis_evidence(job, result)
+
+    safe_ref = updated["evidence"]["derived_artifact"]
+    assert evidence_store._artifact_file(
+        77, safe_ref["evidence_revision"],
+    ).is_file()
+    evidence_entry = updated["artifact_manifest"]["owned_outputs"][-1]
+    assert evidence_entry["kind"] == "analysis_evidence"
+    assert evidence_entry["id"] == safe_ref["artifact_ref"]
+    assert evidence_entry["derived_from"] == [
+        "run:1:stats", "run:1:performance",
+    ]
+
+
+def test_worker_commits_validated_visual_signals_into_local_evidence(
+    monkeypatch, tmp_path,
+):
+    from kovaak_tracker.visual_signals import (
+        build_visual_quality_profile_v2,
+        preprocess_visual_signals_v1,
+    )
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    analysis_ref = "analysis:79"
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 0,
+        "end_ms": 1_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    selector = {
+        "schema_version": "visual_runtime_selector.v1",
+        "scenario_hash": "fixture-hash",
+        "resolution": [1920, 1080],
+        "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+        "fov": 103.0,
+    }
+    profile = build_visual_quality_profile_v2(
+        producer_id="fixture_detector",
+        producer_version="fixture_detector.v1",
+        annotation_set_ref="annotation-set:fixture.v1",
+        annotation_protocol_version="visual_annotation_protocol.v1",
+        coordinate_space="capture_pixels",
+        calibration_context={
+            "detector_config_ref": "detector-config:fixture.v1",
+            "hud_mask_version": None,
+            "annotated_map_or_background_labels": ["fixture"],
+            "annotated_target_appearance_labels": ["sphere"],
+        },
+        validated_selectors=[selector],
+        required_selector_keys_by_metric_family={
+            "tracking": [
+                "scenario_hash", "resolution", "canonical_video_mapping_version",
+            ],
+        },
+        required_quality_fields_by_metric_family={
+            "tracking": [
+                "center_error_median_px", "center_error_p95_px",
+                "radius_or_hitbox_error_px", "false_positive_rate",
+                "identity_switch_rate", "occlusion_reentry_accuracy",
+                "minimum_coverage",
+            ],
+        },
+        compatibility_predicate_version="visual_runtime_compatibility.v2",
+        acceptance_thresholds={
+            "center_error_median_px": 2.0,
+            "center_error_p95_px": 4.0,
+            "radius_or_hitbox_error_px": 2.0,
+            "false_positive_rate": 0.05,
+            "identity_switch_rate": 0.01,
+            "occlusion_reentry_accuracy": 0.95,
+            "minimum_coverage": 0.9,
+        },
+        validation_results={
+            "center_error_median_px": 1.0,
+            "center_error_p95_px": 2.0,
+            "radius_or_hitbox_error_px": 1.0,
+            "false_positive_rate": 0.0,
+            "identity_switch_rate": 0.0,
+            "occlusion_reentry_accuracy": 1.0,
+            "minimum_coverage": 1.0,
+        },
+        validated_metric_families=["tracking"],
+        status="accepted",
+        limitations=[],
+    )
+    visual = preprocess_visual_signals_v1(
+        analysis_ref=analysis_ref,
+        canonical_time_window=window,
+        frame_observations=[{
+            "source_pts_ms": 0,
+            "crosshair": {"x": 100.0, "y": 100.0},
+            "targets": [{
+                "detector_ref": "target-1",
+                "x": 110.0,
+                "y": 100.0,
+                "visible_radius": 12.0,
+                "confidence": 1.0,
+            }],
+            "scene": "gameplay",
+        }],
+        visual_quality_profile=profile,
+        visual_runtime_selector=selector,
+        video_time_mapping={
+            "schema_version": "visual_video_time_mapping.v1",
+            "source_pts_origin_ms": 0.0,
+            "canonical_origin_ms": window["start_ms"],
+            "mapping_method": "run_owned_exact_canonical_clip",
+            "timebase_version": window["timebase_version"],
+        },
+    )
+    generic_artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": analysis_ref,
+        "canonical_time_window": window,
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+    job = {
+        "id": 79,
+        "user_id": "owner:visual",
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "sources": {
+                "stats": {"artifact_ref": "run:79:stats", "parser_version": "kovaak_stats.v1"},
+                "performance": {"artifact_ref": "run:79:performance", "parser_version": "kovaak_performance.v1"},
+            },
+        },
+    }
+    result = {
+        "evidence": {},
+        "artifact_manifest": {
+            "schema_version": "artifact_manifest.v2",
+            "external_inputs": [{"id": "run:79:stats"}, {"id": "run:79:performance"}],
+            "owned_outputs": [{"id": analysis_ref}],
+        },
+    }
+    with patch("webapp.backend.worker._read_frozen_source_bytes", return_value=b"fixture"), \
+         patch("kovaak_tracker.csv_parser.parse_stats_bytes", return_value=object()), \
+         patch("kovaak_tracker.performance_parser.parse_performance_bytes", return_value=object()), \
+         patch(
+             "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+             return_value=generic_artifact,
+         ):
+        updated = worker._maybe_commit_analysis_evidence(
+            job,
+            result,
+            visual_result=visual,
+        )
+
+    committed = evidence_store.validate_committed_analysis_evidence(
+        session_id=79,
+        owner_id="owner:visual",
+        safe_ref=updated["evidence"]["derived_artifact"],
+    )
+    assert committed["signal_bundles"] == [visual["signal_bundle"]]
+    assert committed["event_bundles"] == [visual["event_bundle"]]
+    assert "local_samples" not in committed
+
+
+def test_worker_downgrades_visual_summary_when_visual_artifact_commit_fails(
+    monkeypatch, tmp_path,
+):
+    from kovaak_tracker.visual_signals import (
+        build_visual_quality_profile_v2,
+        preprocess_visual_signals_v1,
+    )
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    analysis_ref = "analysis:80"
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 0,
+        "end_ms": 1_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    selector = {
+        "schema_version": "visual_runtime_selector.v1",
+        "scenario_hash": "fixture-hash",
+        "resolution": [1920, 1080],
+        "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+        "fov": 103.0,
+    }
+    profile = build_visual_quality_profile_v2(
+        producer_id="fixture_detector",
+        producer_version="fixture_detector.v1",
+        annotation_set_ref="annotation-set:fixture.v1",
+        annotation_protocol_version="visual_annotation_protocol.v1",
+        coordinate_space="capture_pixels",
+        calibration_context={
+            "detector_config_ref": "detector-config:fixture.v1",
+            "hud_mask_version": None,
+            "annotated_map_or_background_labels": ["fixture"],
+            "annotated_target_appearance_labels": ["sphere"],
+        },
+        validated_selectors=[selector],
+        required_selector_keys_by_metric_family={
+            "tracking": [
+                "scenario_hash", "resolution", "canonical_video_mapping_version",
+            ],
+        },
+        required_quality_fields_by_metric_family={
+            "tracking": [
+                "center_error_median_px", "center_error_p95_px",
+                "radius_or_hitbox_error_px", "false_positive_rate",
+                "identity_switch_rate", "occlusion_reentry_accuracy",
+                "minimum_coverage",
+            ],
+        },
+        compatibility_predicate_version="visual_runtime_compatibility.v2",
+        acceptance_thresholds={
+            "center_error_median_px": 2.0,
+            "center_error_p95_px": 4.0,
+            "radius_or_hitbox_error_px": 2.0,
+            "false_positive_rate": 0.05,
+            "identity_switch_rate": 0.01,
+            "occlusion_reentry_accuracy": 0.95,
+            "minimum_coverage": 0.9,
+        },
+        validation_results={
+            "center_error_median_px": 1.0,
+            "center_error_p95_px": 2.0,
+            "radius_or_hitbox_error_px": 1.0,
+            "false_positive_rate": 0.0,
+            "identity_switch_rate": 0.0,
+            "occlusion_reentry_accuracy": 1.0,
+            "minimum_coverage": 1.0,
+        },
+        validated_metric_families=["tracking"],
+        status="accepted",
+        limitations=[],
+    )
+    visual = preprocess_visual_signals_v1(
+        analysis_ref=analysis_ref,
+        canonical_time_window=window,
+        frame_observations=[{
+            "source_pts_ms": 0,
+            "crosshair": {"x": 100.0, "y": 100.0},
+            "targets": [{
+                "detector_ref": "target-1",
+                "x": 110.0,
+                "y": 100.0,
+                "visible_radius": 12.0,
+                "confidence": 1.0,
+            }],
+            "scene": "gameplay",
+        }],
+        visual_quality_profile=profile,
+        visual_runtime_selector=selector,
+        video_time_mapping={
+            "schema_version": "visual_video_time_mapping.v1",
+            "source_pts_origin_ms": 0.0,
+            "canonical_origin_ms": window["start_ms"],
+            "mapping_method": "run_owned_exact_canonical_clip",
+            "timebase_version": window["timebase_version"],
+        },
+    )
+    generic_artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": analysis_ref,
+        "canonical_time_window": window,
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+    job = {
+        "id": 80,
+        "user_id": "owner:visual",
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "sources": {
+                "stats": {"artifact_ref": "run:80:stats", "parser_version": "kovaak_stats.v1"},
+                "performance": {"artifact_ref": "run:80:performance", "parser_version": "kovaak_performance.v1"},
+            },
+        },
+    }
+    result = {
+        "deterministic": {"visual_validation": visual["safe_summary"]},
+        "warnings": [],
+        "evidence": {},
+        "artifact_manifest": {
+            "schema_version": "artifact_manifest.v2",
+            "external_inputs": [{"id": "run:80:stats"}, {"id": "run:80:performance"}],
+            "owned_outputs": [{"id": analysis_ref}],
+        },
+    }
+    committed_artifacts: list[dict] = []
+    real_write = evidence_store.write_analysis_evidence_artifact
+
+    def write_artifact(*, session_id: int, owner_id: str, artifact: dict) -> dict:
+        committed_artifacts.append(artifact)
+        if len(committed_artifacts) == 1:
+            raise OSError("fixture write failure")
+        return real_write(session_id=session_id, owner_id=owner_id, artifact=artifact)
+
+    with patch("webapp.backend.worker._read_frozen_source_bytes", return_value=b"fixture"), \
+         patch("kovaak_tracker.csv_parser.parse_stats_bytes", return_value=object()), \
+         patch("kovaak_tracker.performance_parser.parse_performance_bytes", return_value=object()), \
+         patch(
+             "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+             return_value=generic_artifact,
+         ), \
+         patch(
+             "webapp.backend.evidence_store.write_analysis_evidence_artifact",
+             side_effect=write_artifact,
+         ):
+        updated = worker._maybe_commit_analysis_evidence(
+            job,
+            result,
+            visual_result=visual,
+        )
+
+    assert len(committed_artifacts) == 2
+    assert committed_artifacts[0]["signal_bundles"] == [visual["signal_bundle"]]
+    assert committed_artifacts[1]["signal_bundles"] == []
+    committed = evidence_store.validate_committed_analysis_evidence(
+        session_id=80,
+        owner_id="owner:visual",
+        safe_ref=updated["evidence"]["derived_artifact"],
+    )
+    assert committed["signal_bundles"] == []
+    assert committed["limitations"] == ["visual_artifact_commit_failed"]
+    assert updated["deterministic"]["visual_validation"] == {
+        "schema_version": "visual_signal_summary.v1",
+        "status": "unavailable",
+        "quality_status": "unavailable",
+        "producer_version": None,
+        "enabled_metric_families": [],
+        "track_count": 0,
+        "observation_count": 0,
+        "target_coverage": None,
+        "crosshair_coverage": None,
+        "completeness": "unavailable",
+        "event_counts": {},
+        "limitations": ["visual_artifact_commit_failed"],
+    }
+    assert updated["warnings"] == [{"code": "visual_artifact_commit_failed"}]
+
+
+def test_worker_downgrades_visual_summary_when_base_artifact_build_fails():
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 0,
+        "end_ms": 1_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    job = {
+        "id": 81,
+        "user_id": "owner:visual",
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "sources": {
+                "stats": {
+                    "artifact_ref": "run:81:stats",
+                    "parser_version": "kovaak_stats.v1",
+                },
+                "performance": {
+                    "artifact_ref": "run:81:performance",
+                    "parser_version": "kovaak_performance.v1",
+                },
+            },
+        },
+    }
+    result = {
+        "deterministic": {
+            "visual_validation": {
+                "schema_version": "visual_signal_summary.v1",
+                "status": "available",
+                "quality_status": "accepted",
+            },
+        },
+        "warnings": [],
+        "evidence": {},
+        "artifact_manifest": {
+            "schema_version": "artifact_manifest.v2",
+            "external_inputs": [],
+            "owned_outputs": [],
+        },
+    }
+
+    with patch(
+        "webapp.backend.worker._read_frozen_source_bytes",
+        return_value=b"fixture",
+    ), patch(
+        "kovaak_tracker.csv_parser.parse_stats_bytes",
+        return_value=object(),
+    ), patch(
+        "kovaak_tracker.performance_parser.parse_performance_bytes",
+        return_value=object(),
+    ), patch(
+        "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+        side_effect=ValueError("fixture base artifact failure"),
+    ):
+        updated = worker._maybe_commit_analysis_evidence(
+            job,
+            result,
+            visual_result={"safe_summary": {"status": "available"}},
+        )
+
+    assert updated["deterministic"]["visual_validation"] == (
+        worker._unavailable_visual_summary("visual_artifact_commit_failed")
+    )
+    assert updated["deterministic"]["limitations"] == [
+        "visual_artifact_commit_failed"
+    ]
+    assert "derived_artifact" not in updated["evidence"]
+
+
+def test_static_native_artifact_projects_stable_flick_refs_and_ranked_segments(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    analysis_ref = "analysis:78"
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 0,
+        "end_ms": 1_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    generic_artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": analysis_ref,
+        "canonical_time_window": window,
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+    job = {
+        "id": 78,
+        "user_id": "owner:static",
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "scenario_resolution": {
+                "scenario_profile_ref": "scenario:static.fixture@1",
+                "aim_family": "static_clicking",
+            },
+            "trace": {"artifact_ref": "run:78:trace"},
+            "sources": {
+                "stats": {
+                    "artifact_ref": "run:78:stats",
+                    "parser_version": "kovaak_stats.v1",
+                },
+                "performance": {
+                    "artifact_ref": "run:78:performance",
+                    "parser_version": "kovaak_performance.v1",
+                },
+            },
+        },
+    }
+    result = {
+        "analysis_version": "native_flicking.v1",
+        "evidence": {},
+        "deterministic": {
+            "diagnosis": {
+                "issues": [
+                    {
+                        "signal": "peak speed variation",
+                        "event_refs": ["flick:2"],
+                        "metric_refs": ["peak_speed"],
+                    }
+                ]
+            },
+            "metrics": {
+                "peak_speed": {
+                    "key": "peak_speed",
+                    "value": 300.0,
+                    "unit": "raw_counts_per_second",
+                    "availability": "available",
+                    "classification": "deterministic",
+                    "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                    "metric_version": "native_flicking.v1",
+                    "sample_count": 3,
+                    "coverage": 1.0,
+                    "limitations": ["target_relative_facts_unavailable"],
+                    "sample_refs": ["flick:1", "flick:2", "flick:3"],
+                },
+            },
+            "timeline": [
+                {
+                    "id": "flick:1",
+                    "event_type": "flick",
+                    "start_ms": 100.0,
+                    "peak_ms": 120.0,
+                    "end_ms": 160.0,
+                    "settle_end_ms": 180.0,
+                    "metrics": {"peak_speed": 100.0, "corrective_count": 3},
+                    "limitations": ["target_relative_facts_unavailable"],
+                },
+                {
+                    "id": "flick:2",
+                    "event_type": "flick",
+                    "start_ms": 300.0,
+                    "peak_ms": 320.0,
+                    "end_ms": 360.0,
+                    "settle_end_ms": 380.0,
+                    "metrics": {"peak_speed": 500.0, "corrective_count": 4},
+                    "limitations": ["target_relative_facts_unavailable"],
+                },
+                {
+                    "id": "flick:3",
+                    "event_type": "flick",
+                    "start_ms": 500.0,
+                    "peak_ms": 520.0,
+                    "end_ms": 560.0,
+                    "settle_end_ms": 580.0,
+                    "metrics": {"peak_speed": 300.0, "corrective_count": 1},
+                    "limitations": ["target_relative_facts_unavailable"],
+                },
+            ],
+        },
+        "artifact_manifest": {
+            "schema_version": "artifact_manifest.v2",
+            "external_inputs": [
+                {"id": "run:78:stats"},
+                {"id": "run:78:performance"},
+            ],
+            "owned_outputs": [{"id": analysis_ref}],
+        },
+    }
+    with patch(
+        "webapp.backend.worker._read_frozen_source_bytes",
+        return_value=b"fixture",
+    ), patch(
+        "kovaak_tracker.csv_parser.parse_stats_bytes",
+        return_value=object(),
+    ), patch(
+        "kovaak_tracker.performance_parser.parse_performance_bytes",
+        return_value=object(),
+    ), patch(
+        "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+        return_value=generic_artifact,
+    ):
+        updated = worker._maybe_commit_analysis_evidence(job, result)
+
+    artifact = evidence_store.validate_committed_analysis_evidence(
+        session_id=78,
+        owner_id="owner:static",
+        safe_ref=updated["evidence"]["derived_artifact"],
+    )
+    events = [
+        event
+        for bundle in artifact["event_bundles"]
+        for event in bundle["events"]
+    ]
+    assert [event["event_id"] for event in events] == [
+        "analysis:78:event:static-flick:1",
+        "analysis:78:event:static-flick:2",
+        "analysis:78:event:static-flick:3",
+    ]
+    assert {segment["rank_reason"] for segment in artifact["evidence_segments"]} == {
+        "typical", "worst", "improved",
+    }
+    assert all(
+        len(segment["event_refs"]) == 1
+        and segment["event_refs"][0] in {event["event_id"] for event in events}
+        for segment in artifact["evidence_segments"]
+    )
+    peak_speed = next(
+        metric
+        for metric in artifact["metric_records"]
+        if metric["metric_key"] == "static_clicking.peak_speed"
+    )
+    assert peak_speed["event_refs"] == [
+        "analysis:78:event:static-flick:1",
+        "analysis:78:event:static-flick:2",
+        "analysis:78:event:static-flick:3",
+    ]
+    tables = updated["evidence"]["processed_event_tables"]
+    assert len(tables) == 1
+    assert tables[0]["table_ref"] == "analysis:78:table:static_flick"
+    assert tables[0]["row_count"] == 3
+    assert tables[0]["completeness"] == "complete"
+    assert "rows" not in tables[0] and "attributes" not in tables[0]
+    issue = updated["deterministic"]["diagnosis"]["issues"][0]
+    assert issue["event_refs"] == ["analysis:78:event:static-flick:2"]
+    assert issue["primary_evidence_segment_ref"] == "analysis:78:segment:worst:2"
+    assert len(issue["supporting_evidence_segment_refs"]) <= 2
+    rendered = json.dumps(artifact, ensure_ascii=False)
+    assert "overshoot" not in rendered
+    assert "undershoot" not in rendered
+    assert "target_relative_error" not in rendered
 
 
 @pytest.mark.asyncio
@@ -553,6 +1244,85 @@ def _native_snapshot() -> dict:
     }
 
 
+def _native_v2_snapshot() -> dict:
+    snapshot = _native_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v2"
+    snapshot["sources"]["stats"]["parser_version"] = "kovaak_stats.v2"
+    snapshot["sources"]["performance"]["parser_version"] = "kovaak_performance.v2"
+    snapshot["canonical_time_window"] = {
+        "schema_version": "canonical_time_window.v1",
+        "timebase_version": "time_alignment.v2",
+        "start_ms": 1_699_897_600_797,
+        "end_ms": 1_699_897_660_797,
+        "duration_ms": 60_000,
+        "start_source": "stats_challenge_start",
+        "end_source": "timer_profile",
+        "stats_anchor_status": "mapped_local_time",
+        "stats_time_of_day_ms": 6_400_797,
+        "stats_local_to_utc_mapping": {
+            "version": "stats_local_to_utc.v1",
+            "source": "fixture",
+            "utc_offset_minutes": 480,
+        },
+        "warnings": [],
+        "window_semantics": "half_open",
+    }
+    return snapshot
+
+
+def _scenario_resolution(
+    *,
+    manifest_status: str = "unlisted",
+    dispatch: str = "none",
+    aim_family: str = "static_clicking",
+    allowed_analyzers: list[str] | None = None,
+) -> dict:
+    active = manifest_status == "active"
+    listed = manifest_status != "unlisted"
+    return {
+        "schema_version": "scenario_resolution.v1",
+        "scenario_hash": "fixture-hash",
+        "display_name": "Tile Frenzy",
+        "registry_version": "scenario_registry.test.v1",
+        "manifest_version": "scenario_manifest.test.v1",
+        "scenario_profile_ref": "scenario:static.fixture@1" if listed else None,
+        "classification_source": "reviewed_registry" if listed else "unknown",
+        "classification_confidence": "confirmed" if listed else "unknown",
+        "profile_status": (
+            "retired" if manifest_status == "retired" else "active"
+        ) if listed else "unknown",
+        "reviewed_at": "2026-07-20T00:00:00Z" if listed else None,
+        "source_refs": ["review:fixture"] if listed else [],
+        "supersedes": [],
+        "manifest_status": manifest_status,
+        "fixture_ref": "fixture:scenario" if listed else None,
+        "review_source_ref": "review:scenario" if listed else None,
+        "manifest_reviewed_at": "2026-07-20T00:00:00Z" if listed else None,
+        "family_gate_refs": ["gate:family"] if listed else [],
+        "aim_family": aim_family if listed else "unknown",
+        "subdomains": ["precision"] if listed else [],
+        "target_motion": {
+            "model": (
+                "predictable" if aim_family == "dynamic_clicking" else "static"
+            ) if listed else "unknown",
+            "target_count_model": "single" if listed else "unknown",
+        },
+        "allowed_analyzers": (
+            allowed_analyzers
+            if allowed_analyzers is not None
+            else ["native_flicking.v1"]
+        ) if listed else [],
+        "allowed_metric_families": (
+            ["dynamic_clicking"]
+            if aim_family == "dynamic_clicking"
+            else ["input_kinematics"]
+        ) if listed else [],
+        "claim_ceiling": "family_specific" if active else "outcome_only",
+        "family_analyzer_dispatch": dispatch,
+        "limitations": [] if active else ["scenario_not_in_active_manifest"],
+    }
+
+
 def _video_source(path: Path) -> dict:
     stat = path.stat()
     return {
@@ -566,6 +1336,476 @@ def _video_source(path: Path) -> dict:
         "availability": "available",
         "format_version": "mp4",
     }
+
+
+def _dynamic_visual_summary(*, enabled: bool) -> dict:
+    return {
+        "visual_quality_profile_ref": "visual-profile:dynamic-fixture.v1",
+        "quality": {
+            "status": "accepted" if enabled else "limited",
+            "enabled_metric_families": ["dynamic_clicking"] if enabled else [],
+            "limitations": [] if enabled else ["fixture_quality_gate"],
+        },
+        "safe_summary": {
+            "schema_version": "visual_signal_summary.v1",
+            "status": "available",
+            "quality_status": "accepted" if enabled else "limited",
+            "producer_version": "fixture_detector.v1",
+            "enabled_metric_families": ["dynamic_clicking"] if enabled else [],
+            "track_count": 1,
+            "observation_count": 3,
+            "target_coverage": 1.0,
+            "crosshair_coverage": 1.0,
+            "completeness": "complete",
+            "event_counts": {},
+            "limitations": [] if enabled else ["fixture_quality_gate"],
+        },
+    }
+
+
+def _dynamic_analysis_summary() -> dict:
+    metric = {
+        "schema_version": "metric_record.v1",
+        "metric_key": "dynamic_clicking.normalized_click_error",
+        "metric_version": "dynamic_clicking.normalized_click_error.v1",
+        "value": 0.9,
+        "unit": "visible_radius",
+        "availability": "available",
+        "classification": "deterministic",
+        "provenance": {
+            "kind": "derived",
+            "source_refs": ["analysis:121:source:dynamic-analysis"],
+        },
+        "population": {"sample_count": 1, "valid_count": 1, "excluded_count": 0},
+        "distribution": None,
+        "condition_refs": [],
+        "event_refs": ["analysis:121:dynamic-click:1"],
+        "evidence_segment_refs": ["analysis:121:segment:dynamic:1"],
+        "coverage": 1.0,
+        "confidence": 1.0,
+        "limitations": [],
+    }
+    return {
+        "schema_version": "dynamic_clicking_analysis.v1",
+        "analysis_version": "dynamic_clicking.v1",
+        "analysis_ref": "analysis:121",
+        "analysis_type": "dynamic_clicking",
+        "support_status": "supported",
+        "scenario_motion_class": "predictable",
+        "metrics": {metric["metric_key"]: metric},
+        "processed_rows": [{
+            "event_ref": "analysis:121:dynamic-click:1",
+            "normalized_click_error": 0.9,
+        }],
+        "processed_event_table": {
+            "row_count": 1,
+        },
+        "comparison": None,
+        "limitations": ["motion_predictability_evidence_unavailable"],
+    }
+
+
+def _tracking_visual_summary(*, enabled: bool) -> dict:
+    return {
+        "visual_quality_profile_ref": "visual-profile:tracking-fixture.v1",
+        "quality": {
+            "status": "accepted" if enabled else "limited",
+            "enabled_metric_families": ["tracking"] if enabled else [],
+            "limitations": [] if enabled else ["fixture_quality_gate"],
+        },
+        "safe_summary": {
+            "schema_version": "visual_signal_summary.v1",
+            "status": "available",
+            "quality_status": "accepted" if enabled else "limited",
+            "producer_version": "fixture_detector.v1",
+            "enabled_metric_families": ["tracking"] if enabled else [],
+            "track_count": 1,
+            "observation_count": 3,
+            "target_coverage": 1.0,
+            "crosshair_coverage": 1.0,
+            "completeness": "complete",
+            "event_counts": {},
+            "limitations": [] if enabled else ["fixture_quality_gate"],
+        },
+    }
+
+
+def _tracking_analysis_summary() -> dict:
+    metric_key = "continuous_tracking.target_relative_error_px"
+    metric = {
+        "schema_version": "metric_record.v1",
+        "metric_key": metric_key,
+        "metric_version": f"{metric_key}.v1",
+        "value": 8.0,
+        "unit": "px",
+        "availability": "available",
+        "classification": "deterministic",
+        "provenance": {
+            "kind": "derived",
+            "source_refs": ["analysis:123:source:tracking-analysis"],
+        },
+        "population": {"sample_count": 3, "valid_count": 3, "excluded_count": 0},
+        "distribution": None,
+        "condition_refs": ["analysis:123:condition:predictable"],
+        "event_refs": ["analysis:123:tracking-episode:1"],
+        "evidence_segment_refs": ["analysis:123:segment:tracking:1"],
+        "coverage": 1.0,
+        "confidence": 1.0,
+        "limitations": [],
+    }
+    return {
+        "schema_version": "continuous_tracking_analysis.v1",
+        "analysis_version": "continuous_tracking.v1",
+        "analysis_ref": "analysis:123",
+        "analysis_type": "continuous_tracking",
+        "support_status": "supported",
+        "scenario_motion_class": "predictable",
+        "metrics": {metric_key: metric},
+        "processed_rows": [{
+            "event_ref": "analysis:123:tracking-episode:1",
+            "row_kind": "tracking_episode",
+            "target_relative_error_px": 8.0,
+        }],
+        "comparison": None,
+        "limitations": [],
+    }
+
+
+def _switching_visual_summary(*, enabled: bool) -> dict:
+    return {
+        "visual_quality_profile_ref": "visual-profile:switching-fixture.v1",
+        "quality": {
+            "status": "accepted" if enabled else "limited",
+            "enabled_metric_families": ["switching"] if enabled else [],
+            "limitations": [] if enabled else ["fixture_quality_gate"],
+        },
+        "safe_summary": {
+            "schema_version": "visual_signal_summary.v1",
+            "status": "available",
+            "quality_status": "accepted" if enabled else "limited",
+            "producer_version": "fixture_detector.v1",
+            "enabled_metric_families": ["switching"] if enabled else [],
+            "track_count": 3,
+            "observation_count": 10,
+            "target_coverage": 1.0,
+            "crosshair_coverage": 1.0,
+            "completeness": "complete",
+            "event_counts": {"shot": 2, "kill": 2},
+            "limitations": [] if enabled else ["fixture_quality_gate"],
+        },
+    }
+
+
+def _switching_analysis_summary() -> dict:
+    metric_key = "target_switching.transition_time_ms"
+    metric = {
+        "schema_version": "metric_record.v1",
+        "metric_key": metric_key,
+        "metric_version": f"{metric_key}.v1",
+        "value": 120.0,
+        "unit": "ms",
+        "availability": "available",
+        "classification": "deterministic",
+        "provenance": {
+            "kind": "derived",
+            "source_refs": ["analysis:124:source:target-switching-analysis"],
+        },
+        "population": {"sample_count": 1, "valid_count": 1, "excluded_count": 0},
+        "distribution": None,
+        "condition_refs": ["condition:target_switching:observable_chain"],
+        "event_refs": ["analysis:124:switch-chain:1"],
+        "evidence_segment_refs": ["analysis:124:segment:switching:1"],
+        "coverage": 1.0,
+        "confidence": 1.0,
+        "limitations": ["comparison_only_no_static_threshold"],
+    }
+    return {
+        "schema_version": "target_switching_analysis.v1",
+        "analysis_version": "target_switching.v1",
+        "analysis_ref": "analysis:124",
+        "analysis_type": "target_switching",
+        "support_status": "supported",
+        "metrics": {metric_key: metric},
+        "processed_rows": [{
+            "event_ref": "analysis:124:switch-chain:1",
+            "row_kind": "switch_chain",
+            "classification": "observable_target_switch",
+            "transition_time_ms": 120.0,
+            "limitations": [],
+        }],
+        "comparison": None,
+        "limitations": [],
+    }
+
+
+def test_dynamic_result_uses_joint_target_crosshair_and_click_coverage():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="dynamic_clicking",
+        allowed_analyzers=["dynamic_clicking.v1"],
+    )
+    job = {
+        "id": 121,
+        "user_id": "u1",
+        "analysis_type": "dynamic_clicking",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "managed.mp4",
+    }
+    visual = _dynamic_visual_summary(enabled=True)
+    visual["safe_summary"]["crosshair_coverage"] = 0.75
+
+    result = worker._build_dynamic_result_v2(
+        job,
+        _dynamic_analysis_summary(),
+        visual,
+        created_at="2026-07-22T00:00:00Z",
+        completed_at="2026-07-22T00:01:00Z",
+    )
+
+    assert result["evidence"]["coverage"] == pytest.approx(0.75)
+
+
+def test_dynamic_evidence_merge_failure_downgrades_public_result(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="dynamic_clicking",
+        allowed_analyzers=["dynamic_clicking.v1"],
+    )
+    job = {
+        "id": 121,
+        "user_id": "u1",
+        "analysis_type": "dynamic_clicking",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "managed.mp4",
+    }
+    visual = _dynamic_visual_summary(enabled=True)
+    dynamic = _dynamic_analysis_summary()
+    result = worker._build_dynamic_result_v2(
+        job,
+        dynamic,
+        visual,
+        created_at="2026-07-22T00:00:00Z",
+        completed_at="2026-07-22T00:01:00Z",
+    )
+    base_artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": "analysis:121",
+        "canonical_time_window": snapshot["canonical_time_window"],
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+
+    with patch("webapp.backend.worker._read_frozen_source_bytes", return_value=b"fixture"), \
+         patch("kovaak_tracker.csv_parser.parse_stats_bytes", return_value=object()), \
+         patch("kovaak_tracker.performance_parser.parse_performance_bytes", return_value=object()), \
+         patch(
+             "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+             return_value=base_artifact,
+         ), \
+         patch(
+             "kovaak_tracker.visual_signals.extend_analysis_evidence_with_visual_signals_v1",
+             return_value=base_artifact,
+         ), \
+         patch(
+             "kovaak_tracker.dynamic_clicking_analysis.extend_analysis_evidence_with_dynamic_clicking_v1",
+             side_effect=ValueError("fixture dynamic merge failure"),
+         ):
+        updated = worker._maybe_commit_analysis_evidence(
+            job,
+            result,
+            visual_result=visual,
+            dynamic_result=dynamic,
+        )
+
+    assert updated["analysis_version"] == "scenario_outcome_only.v1"
+    assert updated["analysis_type"] == "dynamic_clicking"
+    assert updated["deterministic"]["support_status"] == "outcome_only"
+    assert updated["deterministic"]["metrics"] == {}
+    assert "diagnosis" not in updated["deterministic"]
+    assert updated["deterministic"]["limitations"] == [
+        "dynamic_clicking_evidence_artifact_unavailable"
+    ]
+    assert "derived_artifact" in updated["evidence"]
+
+
+def test_tracking_evidence_merge_failure_downgrades_public_result(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="continuous_tracking",
+        allowed_analyzers=["continuous_tracking.v1"],
+    )
+    snapshot["scenario_resolution"]["allowed_metric_families"] = [
+        "continuous_tracking"
+    ]
+    job = {
+        "id": 123,
+        "user_id": "u1",
+        "analysis_type": "continuous_tracking",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "managed.mp4",
+    }
+    visual = _tracking_visual_summary(enabled=True)
+    tracking = _tracking_analysis_summary()
+    result = worker._build_continuous_tracking_result_v2(
+        job,
+        tracking,
+        visual,
+        created_at="2026-07-22T00:00:00Z",
+        completed_at="2026-07-22T00:01:00Z",
+    )
+    base_artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": "analysis:123",
+        "canonical_time_window": snapshot["canonical_time_window"],
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+
+    with patch("webapp.backend.worker._read_frozen_source_bytes", return_value=b"fixture"), \
+         patch("kovaak_tracker.csv_parser.parse_stats_bytes", return_value=object()), \
+         patch("kovaak_tracker.performance_parser.parse_performance_bytes", return_value=object()), \
+         patch(
+             "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+             return_value=base_artifact,
+         ), \
+         patch(
+             "kovaak_tracker.visual_signals.extend_analysis_evidence_with_visual_signals_v1",
+             return_value=base_artifact,
+         ), \
+         patch(
+             "kovaak_tracker.tracking_analysis.extend_analysis_evidence_with_continuous_tracking_v1",
+             side_effect=ValueError("fixture tracking merge failure"),
+         ):
+        updated = worker._maybe_commit_analysis_evidence(
+            job,
+            result,
+            visual_result=visual,
+            tracking_result=tracking,
+        )
+
+    assert updated["analysis_version"] == "scenario_outcome_only.v1"
+    assert updated["analysis_type"] == "continuous_tracking"
+    assert updated["deterministic"]["support_status"] == "outcome_only"
+    assert updated["deterministic"]["metrics"] == {}
+    assert "diagnosis" not in updated["deterministic"]
+    assert updated["deterministic"]["limitations"] == [
+        "continuous_tracking_evidence_artifact_unavailable"
+    ]
+    assert "derived_artifact" in updated["evidence"]
+
+
+def test_switching_evidence_merge_failure_downgrades_public_result(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="target_switching",
+        allowed_analyzers=["target_switching.v1"],
+    )
+    snapshot["scenario_resolution"].update({
+        "target_motion": {"model": "mixed", "target_count_model": "concurrent"},
+        "allowed_metric_families": ["target_switching"],
+    })
+    job = {
+        "id": 124,
+        "user_id": "u1",
+        "analysis_type": "target_switching",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "managed.mp4",
+    }
+    visual = _switching_visual_summary(enabled=True)
+    switching = _switching_analysis_summary()
+    result = worker._build_target_switching_result_v2(
+        job,
+        switching,
+        visual,
+        created_at="2026-07-22T00:00:00Z",
+        completed_at="2026-07-22T00:01:00Z",
+    )
+    base_artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": "analysis:124",
+        "canonical_time_window": snapshot["canonical_time_window"],
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+
+    with patch("webapp.backend.worker._read_frozen_source_bytes", return_value=b"fixture"), \
+         patch("kovaak_tracker.csv_parser.parse_stats_bytes", return_value=object()), \
+         patch("kovaak_tracker.performance_parser.parse_performance_bytes", return_value=object()), \
+         patch(
+             "kovaak_tracker.analysis_evidence.build_analysis_evidence_artifact_v1",
+             return_value=base_artifact,
+         ), \
+         patch(
+             "kovaak_tracker.visual_signals.extend_analysis_evidence_with_visual_signals_v1",
+             return_value=base_artifact,
+         ), \
+         patch(
+             "kovaak_tracker.target_switching_analysis.extend_analysis_evidence_with_target_switching_v1",
+             side_effect=ValueError("fixture switching merge failure"),
+         ):
+        updated = worker._maybe_commit_analysis_evidence(
+            job,
+            result,
+            visual_result=visual,
+            switching_result=switching,
+        )
+
+    assert updated["analysis_version"] == "scenario_outcome_only.v1"
+    assert updated["analysis_type"] == "target_switching"
+    assert updated["deterministic"]["support_status"] == "outcome_only"
+    assert updated["deterministic"]["metrics"] == {}
+    assert "diagnosis" not in updated["deterministic"]
+    assert updated["deterministic"]["limitations"] == [
+        "target_switching_evidence_artifact_unavailable"
+    ]
+    assert "derived_artifact" in updated["evidence"]
 
 
 def _native_adapter_result() -> dict:
@@ -711,6 +1951,18 @@ def _native_adapter_result() -> dict:
     }
 
 
+def _native_v2_adapter_result() -> dict:
+    result = _native_adapter_result()
+    result["evidence"]["alignment"].update(
+        {
+            "challenge_start_epoch_ms": 1_699_897_600_797,
+            "challenge_end_epoch_ms": 1_699_897_660_797,
+            "window_semantics": "half_open",
+        }
+    )
+    return result
+
+
 def test_real_native_metrics_feed_deterministic_explanation_contract():
     from kovaak_tracker.native_flicking_analysis import analyze_native_flicking
 
@@ -740,6 +1992,64 @@ def test_real_native_metrics_feed_deterministic_explanation_contract():
     assert issue["limitations"] == ["threshold_requires_product_calibration"]
     assert issue["prescriptions"][0]["target_metrics"] == ["decel_frac"]
     assert deterministic["diagnosis"]["summary"]["decel_frac"]["med"] == pytest.approx(5 / 6)
+
+
+def test_partial_native_alignment_is_unclassified_and_keeps_metrics_limited():
+    native_result = {
+        "input_mode": "input_native",
+        "status": "partial",
+        "evidence": {
+            "alignment": {"status": "partial"},
+            "coverage": 0.5,
+        },
+        "deterministic": {
+            "trajectory": {"unit": "raw_counts", "point_count": 2},
+            "metrics": {
+                "path_length": {
+                    "key": "path_length",
+                    "value": 5.0,
+                    "unit": "raw_counts",
+                    "availability": "available",
+                    "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                    "metric_version": "native_flicking.v1",
+                    "sample_count": 2,
+                    "coverage": 0.5,
+                    "limitations": [],
+                },
+            },
+            "timeline": [],
+        },
+        "limitations": ["alignment_partial", "left_click_anchors_missing"],
+    }
+
+    deterministic = worker._native_deterministic_v2(native_result)
+
+    assert deterministic["diagnosis"]["profile"]["archetype_id"] == "unclassified"
+    assert deterministic["diagnosis"]["profile"]["confidence"] == 0.0
+    metric = deterministic["metrics"]["path_length"]
+    assert metric["coverage"] == pytest.approx(0.5)
+    assert "alignment_partial" in metric["limitations"]
+
+
+def test_visual_pts_quality_caps_metric_coverage_without_dropping_value():
+    metrics = {
+        "continuous_tracking.target_relative_error_px": {
+            "value": 8.0,
+            "coverage": 1.0,
+            "limitations": [],
+        },
+    }
+    quality = worker._visual_quality_projection({
+        "limitations": ["missing_frame_pts"],
+        "safe_summary": {"target_coverage": 0.75, "crosshair_coverage": 0.8},
+    })
+
+    worker._project_metric_quality(metrics, quality)
+
+    metric = metrics["continuous_tracking.target_relative_error_px"]
+    assert metric["value"] == 8.0
+    assert metric["coverage"] == pytest.approx(0.75)
+    assert metric["limitations"] == ["missing_frame_pts"]
 
 
 async def _capture_mode_result(
@@ -928,6 +2238,944 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
 
 
 @pytest.mark.asyncio
+async def test_process_one_v2_native_projects_frozen_window_into_result():
+    snapshot = _native_v2_snapshot()
+    job = {
+        "id": 107,
+        "user_id": "u1",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result, calls, _native_mock, cv_mock = await _capture_mode_result(
+        job,
+        native_result=_native_v2_adapter_result(),
+    )
+
+    assert calls == ["native"]
+    cv_mock.assert_not_called()
+    assert result["input_snapshot"]["canonical_time_window"] == (
+        snapshot["canonical_time_window"]
+    )
+    assert result["evidence"]["alignment"]["challenge_start_epoch_ms"] == (
+        snapshot["canonical_time_window"]["start_ms"]
+    )
+    assert result["evidence"]["alignment"]["challenge_end_epoch_ms"] == (
+        snapshot["canonical_time_window"]["end_ms"]
+    )
+    assert result["evidence"]["sources"]["stats"]["parser_or_format_version"] == (
+        "kovaak_stats.v2"
+    )
+    assert result["evidence"]["sources"]["performance"]["parser_or_format_version"] == (
+        "kovaak_performance.v2"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("manifest_status", ["unlisted", "pending_gate", "retired"])
+async def test_process_one_non_active_scenario_is_outcome_only_without_family_analyzer(
+    manifest_status: str,
+):
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status=manifest_status,
+    )
+    job = {
+        "id": 108,
+        "user_id": "u1",
+        "analysis_type": "flicking",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result, calls, native_mock, cv_mock = await _capture_mode_result(
+        job,
+        native_result=_native_v2_adapter_result(),
+    )
+
+    assert calls == []
+    native_mock.assert_not_called()
+    cv_mock.assert_not_called()
+    assert result["analysis_version"] == "scenario_outcome_only.v1"
+    assert result["deterministic"] == {
+        "support_status": "outcome_only",
+        "metrics": {},
+        "limitations": ["scenario_not_in_active_manifest"],
+    }
+    assert "diagnosis" not in result["deterministic"]
+    assert result["input_snapshot"]["scenario_resolution"] == (
+        snapshot["scenario_resolution"]
+    )
+    assert {warning["code"] for warning in result["warnings"]} == {
+        "scenario_outcome_only"
+    }
+    validated = validate_analysis_result_v2_for_persistence(
+        result,
+        owner_id="u1",
+        analysis_id="analysis:108",
+        analysis_type="flicking",
+        input_mode="input_native",
+        kovaak_run_ref="run:42",
+    )
+    assert validated["deterministic"]["metrics"] == {}
+
+
+@pytest.mark.asyncio
+async def test_process_one_active_exact_hash_dispatches_only_frozen_allowed_analyzer():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+    )
+    job = {
+        "id": 109,
+        "user_id": "u1",
+        "analysis_type": "flicking",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result, calls, native_mock, cv_mock = await _capture_mode_result(
+        job,
+        native_result=_native_v2_adapter_result(),
+    )
+
+    assert calls == ["native"]
+    native_mock.assert_called_once()
+    cv_mock.assert_not_called()
+    assert result["analysis_version"] == "native_flicking.v1"
+
+
+def test_dynamic_dispatch_requires_exact_active_multimodal_analyzer_contract():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="dynamic_clicking",
+        allowed_analyzers=["dynamic_clicking.v1"],
+    )
+    job = {"analysis_type": "dynamic_clicking", "input_snapshot": snapshot}
+
+    assert worker._scenario_dispatch(job, "multimodal") == "dynamic_clicking.v1"
+    assert worker._scenario_dispatch(job, "input_native") == "outcome_only"
+    snapshot["scenario_resolution"]["allowed_analyzers"] = ["tracking.v1"]
+    assert worker._scenario_dispatch(job, "multimodal") == "outcome_only"
+
+
+def test_non_object_native_snapshot_is_a_terminal_input_error():
+    with pytest.raises(
+        worker.SourceSnapshotChangedError,
+        match="unsupported input snapshot",
+    ):
+        worker._scenario_dispatch(
+            {"analysis_type": "flicking", "input_snapshot": None},
+            "input_native",
+        )
+
+
+def test_tracking_dispatch_requires_exact_active_multimodal_analyzer_contract():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="continuous_tracking",
+        allowed_analyzers=["continuous_tracking.v1"],
+    )
+    snapshot["scenario_resolution"]["allowed_metric_families"] = [
+        "continuous_tracking"
+    ]
+    job = {"analysis_type": "continuous_tracking", "input_snapshot": snapshot}
+
+    assert worker._scenario_dispatch(job, "multimodal") == "continuous_tracking.v1"
+    assert worker._scenario_dispatch(job, "input_native") == "outcome_only"
+    snapshot["scenario_resolution"]["allowed_metric_families"] = ["dynamic_clicking"]
+    assert worker._scenario_dispatch(job, "multimodal") == "outcome_only"
+
+
+def test_switching_dispatch_requires_exact_active_multimodal_analyzer_contract():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="target_switching",
+        allowed_analyzers=["target_switching.v1"],
+    )
+    snapshot["scenario_resolution"]["allowed_metric_families"] = [
+        "target_switching"
+    ]
+    job = {"analysis_type": "target_switching", "input_snapshot": snapshot}
+
+    assert worker._scenario_dispatch(job, "multimodal") == "target_switching.v1"
+    assert worker._scenario_dispatch(job, "input_native") == "outcome_only"
+    snapshot["scenario_resolution"]["allowed_analyzers"] = ["continuous_tracking.v1"]
+    assert worker._scenario_dispatch(job, "multimodal") == "outcome_only"
+
+
+def test_switching_worker_adapter_uses_only_stable_identity_and_direct_outcome_chains():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["canonical_time_window"] = {
+        **snapshot["canonical_time_window"],
+        "start_ms": 0,
+        "end_ms": 300,
+        "duration_ms": 300,
+    }
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="target_switching",
+        allowed_analyzers=["target_switching.v1"],
+    )
+    snapshot["scenario_resolution"]["allowed_metric_families"] = [
+        "target_switching"
+    ]
+    job = {"id": 124, "input_snapshot": snapshot}
+    samples = [
+        {"canonical_time_ms": time_ms, "x": 0.0, "y": 0.0, "confidence": 1.0}
+        for time_ms in (0, 100, 200)
+    ]
+    visual = {
+        "analysis_ref": "analysis:124",
+        "canonical_time_window": snapshot["canonical_time_window"],
+        "quality": {
+            "status": "accepted",
+            "enabled_metric_families": ["switching"],
+            "limitations": [],
+        },
+        "local_samples": {
+            "crosshair.position": samples,
+            "target.1.position": [
+                {**sample, "visible_radius": 10.0} for sample in samples
+            ],
+            "target.2.position": [
+                {**sample, "x": 20.0 - sample["canonical_time_ms"] / 10.0,
+                 "visible_radius": 10.0}
+                for sample in samples
+            ],
+        },
+        "track_summaries": [
+            {
+                "track_ref": f"analysis:124:target-track:{track_id}",
+                "identity_source": "detector_ref",
+                "limitations": [],
+            }
+            for track_id in (1, 2)
+        ],
+        "signal_bundle": {"schema_version": "signal_bundle.v1"},
+        "sample_sets": [],
+        "event_bundle": {"schema_version": "event_bundle.v1"},
+    }
+    chains = [{"chain_ref": "analysis:124:observed-switch-chain:1"}]
+    captured = {}
+
+    def analyze(payload):
+        captured.update(payload)
+        return {"analysis_version": "target_switching.v1"}
+
+    with patch(
+        "kovaak_tracker.target_switching_analysis.build_switching_chains_from_visual_outcomes_v1",
+        return_value=chains,
+    ) as build_chains, patch(
+        "kovaak_tracker.target_switching_analysis.analyze_target_switching_v1",
+        side_effect=analyze,
+    ):
+        assert worker.run_target_switching_analysis(job, visual) == {
+            "analysis_version": "target_switching.v1"
+        }
+
+    assert captured["chains"] == chains
+    assert captured["visual_quality"]["enabled_metric_families"] == [
+        "target_switching"
+    ]
+    assert all(track["identity_observable"] for track in captured["target_tracks"])
+    assert build_chains.call_args.kwargs["source_event_bundle"] is visual["event_bundle"]
+
+    visual["track_summaries"][1]["identity_source"] = "deterministic_proximity"
+    with pytest.raises(ValueError, match="identity"):
+        worker.run_target_switching_analysis(job, visual)
+
+
+def test_tracking_worker_adapter_requires_one_target_and_passes_only_validated_changes():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["canonical_time_window"] = {
+        **snapshot["canonical_time_window"],
+        "start_ms": 0,
+        "end_ms": 300,
+        "duration_ms": 300,
+    }
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="continuous_tracking",
+        allowed_analyzers=["continuous_tracking.v1"],
+    )
+    snapshot["scenario_resolution"]["allowed_metric_families"] = [
+        "continuous_tracking"
+    ]
+    job = {"id": 122, "input_snapshot": snapshot}
+    samples = [
+        {"canonical_time_ms": time_ms, "x": 100.0, "y": 100.0, "confidence": 1.0}
+        for time_ms in (0, 100, 200)
+    ]
+    visual = {
+        "analysis_ref": "analysis:122",
+        "canonical_time_window": snapshot["canonical_time_window"],
+        "quality": {"status": "accepted", "enabled_metric_families": ["tracking"]},
+        "local_samples": {
+            "crosshair.position": samples,
+            "target.1.position": [
+                {**sample, "visible_radius": 10.0} for sample in samples
+            ],
+        },
+        "track_summaries": [{"track_ref": "analysis:122:target-track:1", "limitations": []}],
+        "event_bundle": {
+            "schema_version": "event_bundle.v1",
+            "analysis_ref": "analysis:122",
+            "events": [
+                {
+                    "event_id": "analysis:122:target-change:1",
+                    "event_kind": "target_change_point",
+                    "start_ms": 100,
+                    "end_ms": 100,
+                    "actor_refs": ["analysis:122:target-track:1"],
+                    "source_refs": ["analysis:122:source:fixture"],
+                    "confidence": 1.0,
+                    "attributes": {"change_kind": "direction_reversal"},
+                    "limitations": [],
+                },
+            ],
+            "outcome_associations": [],
+        },
+        "signal_bundle": {"channels": [{"channel_key": "crosshair.position_x"}]},
+    }
+    captured = {}
+
+    def analyze(payload):
+        captured.update(payload)
+        return {"analysis_version": "continuous_tracking.v1"}
+
+    with patch("kovaak_tracker.tracking_analysis.analyze_continuous_tracking_v1", analyze):
+        assert worker.run_continuous_tracking_analysis(job, visual) == {
+            "analysis_version": "continuous_tracking.v1"
+        }
+
+    assert captured["target_track"]["track_ref"] == "analysis:122:target-track:1"
+    assert captured["player_motion_status"] == "unavailable_fixed_viewport_center"
+    assert all(
+        sample["measurement_complete"]
+        for sample in captured["target_track"]["samples"]
+    )
+    assert all(
+        sample["measurement_complete"]
+        for sample in captured["crosshair_samples"]
+    )
+    assert captured["target_change_points"] == [{
+        "event_ref": "analysis:122:target-change:1", "time_ms": 100,
+    }]
+    assert captured["alignment_latency_ms"] is None
+    visual["local_samples"]["target.1.position"][0].pop("visible_radius")
+    with patch("kovaak_tracker.tracking_analysis.analyze_continuous_tracking_v1", analyze):
+        worker.run_continuous_tracking_analysis(job, visual)
+    assert captured["target_track"]["samples"][0]["radius"] is None
+    visual["local_samples"]["target.1.position"][0]["visible_radius"] = 10.0
+    visual["limitations"] = ["reentry_identity_unresolved"]
+    with pytest.raises(ValueError, match="identity"):
+        worker.run_continuous_tracking_analysis(job, visual)
+    visual.pop("limitations")
+    visual["local_samples"]["target.2.position"] = visual["local_samples"]["target.1.position"]
+    with pytest.raises(ValueError, match="unambiguous"):
+        worker.run_continuous_tracking_analysis(job, visual)
+
+
+def test_tracking_public_result_projects_profile_and_analyzer_to_coach_context():
+    from webapp.backend.coach_context import project_coach_diagnostic_context
+
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="continuous_tracking",
+        allowed_analyzers=["continuous_tracking.v1"],
+    )
+    snapshot["scenario_resolution"]["allowed_metric_families"] = [
+        "continuous_tracking"
+    ]
+    job = {
+        "id": 123,
+        "user_id": "u1",
+        "analysis_type": "continuous_tracking",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "managed.mp4",
+    }
+    result = worker._build_continuous_tracking_result_v2(
+        job,
+        {
+            "support_status": "supported",
+            "scenario_motion_class": "predictable",
+            "metrics": {},
+            "processed_rows": [],
+            "comparison": None,
+            "limitations": [],
+        },
+        {
+            "safe_summary": {
+                "target_coverage": 1.0,
+                "crosshair_coverage": 1.0,
+            },
+        },
+        created_at="2026-07-22T00:00:00Z",
+        completed_at="2026-07-22T00:01:00Z",
+    )
+    result["evidence"]["derived_artifact"] = {
+        "artifact_ref": "analysis:123:evidence:abc",
+        "evidence_revision": "sha256:abc",
+        "contract_version": "analysis_evidence_artifact.v1",
+        "checksum_sha256": "abc",
+        "size_bytes": 1,
+    }
+
+    context = project_coach_diagnostic_context(result)
+
+    assert result["scenario"] == {
+        "scenario_profile_ref": "scenario:static.fixture@1",
+        "analyzer_refs": ["continuous_tracking.v1"],
+        "support_status": "supported",
+        "limitations": [],
+    }
+    assert context["schema_version"] == "coach_diagnostic_context.v2"
+    assert context["scenario"] == result["scenario"]
+    assert "processed_rows" not in json.dumps(result)
+    assert "local_samples" not in json.dumps(result)
+
+
+def test_dynamic_worker_adapter_uses_raw_clicks_and_visual_numeric_signals():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["canonical_time_window"] = {
+        "schema_version": "canonical_time_window.v1",
+        "timebase_version": "time_alignment.v2",
+        "start_ms": 0,
+        "end_ms": 300,
+        "duration_ms": 300,
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+        "window_semantics": "half_open",
+    }
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="dynamic_clicking",
+        allowed_analyzers=["dynamic_clicking.v1"],
+    )
+    job = {"id": 120, "input_snapshot": snapshot}
+    visual = {
+        "analysis_ref": "analysis:120",
+        "canonical_time_window": snapshot["canonical_time_window"],
+        "quality": {
+            "status": "accepted",
+            "enabled_metric_families": ["dynamic_clicking"],
+            "limitations": [],
+        },
+        "local_samples": {
+            "crosshair.position": [
+                {"canonical_time_ms": time_ms, "x": 100.0, "y": 100.0, "confidence": 1.0}
+                for time_ms in (0, 100, 200)
+            ],
+            "target.1.position": [
+                {"canonical_time_ms": 0, "x": 120.0, "y": 100.0, "visible_radius": 10.0, "confidence": 1.0},
+                {"canonical_time_ms": 100, "x": 114.5, "y": 100.0, "visible_radius": 10.0, "confidence": 1.0},
+                {"canonical_time_ms": 200, "x": 109.0, "y": 100.0, "visible_radius": 10.0, "confidence": 1.0},
+            ],
+        },
+        "track_summaries": [{
+            "track_ref": "analysis:120:target-track:1",
+            "limitations": [],
+        }],
+        "signal_bundle": {
+            "channels": [
+                {"channel_key": key}
+                for key in (
+                    "crosshair.position_x", "crosshair.position_y",
+                    "target.1.position_x", "target.1.position_y",
+                    "target.1.visible_radius",
+                )
+            ],
+        },
+        "event_bundle": {
+            "schema_version": "event_bundle.v1",
+            "analysis_ref": "analysis:120",
+            "events": [{
+                "event_id": "analysis:120:target-available:1",
+                "event_kind": "target_available",
+                "start_ms": 0,
+                "end_ms": 0,
+                "actor_refs": ["analysis:120:target-track:1"],
+                "source_refs": ["analysis:120:source:fixture"],
+                "confidence": 1.0,
+                "attributes": {},
+                "limitations": [],
+            }],
+            "outcome_associations": [],
+        },
+    }
+    trace_points = [
+        {"timestamp_ms": 0, "dx": 0, "dy": 0, "buttons": 0},
+        {"timestamp_ms": 200, "dx": 0, "dy": 0, "buttons": 1},
+    ]
+
+    with patch("webapp.backend.worker._read_frozen_source_bytes", return_value=b"trace"), patch(
+        "webapp.backend.kovaak_run_store.decode_mouse_snapshot_bytes",
+        return_value=trace_points,
+    ):
+        result = worker.run_dynamic_clicking_analysis(job, visual)
+
+    assert result["analysis_version"] == "dynamic_clicking.v1"
+    assert result["processed_rows"][0]["click_time_ms"] == 200
+    assert result["processed_rows"][0]["click_ref"] == (
+        "analysis:120:event:raw-shot:1"
+    )
+    assert result["processed_rows"][0]["normalized_click_error"] == pytest.approx(0.9)
+    assert result["metrics"]["dynamic_clicking.target_state_accuracy"]["availability"] == "unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("quality_enabled", "expected_version"),
+    [(True, "dynamic_clicking.v1"), (False, "scenario_outcome_only.v1")],
+)
+async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_quality(
+    tmp_path: Path,
+    quality_enabled: bool,
+    expected_version: str,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"stable-video")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="dynamic_clicking",
+        allowed_analyzers=["dynamic_clicking.v1"],
+    )
+    video_source = _video_source(source_video)
+    video_source.update({
+        "ownership": "run",
+        "artifact_ref": "run:42:video:fixture",
+    })
+    snapshot["sources"]["video"] = video_source
+    job = {
+        "id": 121,
+        "user_id": "u1",
+        "analysis_type": "dynamic_clicking",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+    completed: list[dict] = []
+
+    async def mark_done(_sid, result, _cost, *, worker_id):
+        completed.append(result)
+        return True
+
+    visual_result = _dynamic_visual_summary(enabled=quality_enabled)
+    dynamic_mock = MagicMock(return_value=_dynamic_analysis_summary())
+    native_mock = MagicMock()
+    baseline_mock = AsyncMock(return_value={
+        "comparable": True,
+        "reason": None,
+        "baseline_analysis_ref": "analysis:119",
+        "baseline_metrics": {
+            "dynamic_clicking.normalized_click_error": 0.4,
+        },
+        "metric_comparisons": {},
+    })
+    with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), patch(
+        "webapp.backend.queue.claim_next", new=AsyncMock(return_value=job),
+    ), patch(
+        "webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True),
+    ), patch(
+        "webapp.backend.queue.mark_done", new=AsyncMock(side_effect=mark_done),
+    ), patch(
+        "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=object(),
+    ), patch(
+        "webapp.backend.worker.run_visual_preprocessing", return_value=visual_result,
+    ), patch(
+        "webapp.backend.worker.run_dynamic_clicking_analysis", dynamic_mock,
+    ), patch(
+        "webapp.backend.worker.run_native_analysis", native_mock,
+    ), patch(
+        "webapp.backend.history_trends.matched_dynamic_baseline_for_user",
+        new=baseline_mock,
+    ), patch(
+        "webapp.backend.worker._maybe_commit_analysis_evidence",
+        side_effect=lambda _job, result, **_kwargs: result,
+    ):
+        assert await worker.process_one() is True
+
+    assert len(completed) == 1
+    result = completed[0]
+    assert result["analysis_version"] == expected_version
+    assert result["analysis_type"] == "dynamic_clicking"
+    native_mock.assert_not_called()
+    if quality_enabled:
+        dynamic_mock.assert_called_once_with(job, visual_result, None)
+        assert result["deterministic"]["metrics"][
+            "dynamic_clicking.normalized_click_error"
+        ]["value"] == pytest.approx(0.9)
+        issue = result["deterministic"]["diagnosis"]["issues"][0]
+        assert issue["signal"] == "dynamic click error high"
+        assert "severity" not in issue and "prescriptions" not in issue
+        assert result["deterministic"]["candidate_observations"][0][
+            "knowledge_entry_refs"
+        ] == ["knowledge:dynamic.click-error-and-acquisition@1"]
+        assert "processed_rows" not in json.dumps(result)
+    else:
+        dynamic_mock.assert_not_called()
+        assert result["deterministic"]["metrics"] == {}
+        assert result["deterministic"]["limitations"] == [
+            "dynamic_clicking_visual_quality_unavailable"
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("quality_enabled", "expected_version"),
+    [(True, "continuous_tracking.v1"), (False, "scenario_outcome_only.v1")],
+)
+async def test_process_one_tracking_uses_only_tracking_analyzer_after_quality_gate(
+    tmp_path: Path,
+    quality_enabled: bool,
+    expected_version: str,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"stable-video")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="continuous_tracking",
+        allowed_analyzers=["continuous_tracking.v1"],
+    )
+    snapshot["scenario_resolution"]["allowed_metric_families"] = [
+        "continuous_tracking"
+    ]
+    video_source = _video_source(source_video)
+    video_source.update({
+        "ownership": "run",
+        "artifact_ref": "run:42:video:fixture",
+    })
+    snapshot["sources"]["video"] = video_source
+    job = {
+        "id": 123,
+        "user_id": "u1",
+        "analysis_type": "continuous_tracking",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+    completed: list[dict] = []
+
+    async def mark_done(_sid, result, _cost, *, worker_id):
+        completed.append(result)
+        return True
+
+    visual_result = _tracking_visual_summary(enabled=quality_enabled)
+    tracking_mock = MagicMock(return_value=_tracking_analysis_summary())
+    native_mock = MagicMock()
+    with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), patch(
+        "webapp.backend.queue.claim_next", new=AsyncMock(return_value=job),
+    ), patch(
+        "webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True),
+    ), patch(
+        "webapp.backend.queue.mark_done", new=AsyncMock(side_effect=mark_done),
+    ), patch(
+        "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=object(),
+    ), patch(
+        "webapp.backend.worker.run_visual_preprocessing", return_value=visual_result,
+    ), patch(
+        "webapp.backend.worker.run_continuous_tracking_analysis", tracking_mock,
+    ), patch(
+        "webapp.backend.worker.run_native_analysis", native_mock,
+    ), patch(
+        "webapp.backend.history_trends.matched_tracking_baseline_for_user",
+        new=AsyncMock(return_value={"comparable": False, "reason": "no_comparable_baseline"}),
+    ), patch(
+        "webapp.backend.worker._maybe_commit_analysis_evidence",
+        side_effect=lambda _job, result, **_kwargs: result,
+    ):
+        assert await worker.process_one() is True
+
+    result = completed[0]
+    assert result["analysis_version"] == expected_version
+    assert result["analysis_type"] == "continuous_tracking"
+    native_mock.assert_not_called()
+    if quality_enabled:
+        tracking_mock.assert_called_once_with(job, visual_result)
+        assert result["deterministic"]["metrics"][
+            "continuous_tracking.target_relative_error_px"
+        ]["value"] == 8.0
+        assert result["scenario"]["analyzer_refs"] == ["continuous_tracking.v1"]
+        assert "processed_rows" not in json.dumps(result)
+    else:
+        tracking_mock.assert_not_called()
+        assert result["deterministic"]["metrics"] == {}
+        assert result["deterministic"]["limitations"] == [
+            "continuous_tracking_visual_quality_unavailable"
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("quality_enabled", "expected_version"),
+    [(True, "target_switching.v1"), (False, "scenario_outcome_only.v1")],
+)
+async def test_process_one_switching_requires_quality_and_formal_chain(
+    tmp_path: Path,
+    quality_enabled: bool,
+    expected_version: str,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"stable-video")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="target_switching",
+        allowed_analyzers=["target_switching.v1"],
+    )
+    snapshot["scenario_resolution"].update({
+        "target_motion": {"model": "mixed", "target_count_model": "concurrent"},
+        "allowed_metric_families": ["target_switching"],
+    })
+    video_source = _video_source(source_video)
+    video_source.update({
+        "ownership": "run",
+        "artifact_ref": "run:42:video:fixture",
+    })
+    snapshot["sources"]["video"] = video_source
+    job = {
+        "id": 124,
+        "user_id": "u1",
+        "analysis_type": "target_switching",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+    completed: list[dict] = []
+    committed: list[dict] = []
+
+    async def mark_done(_sid, result, _cost, *, worker_id):
+        completed.append(result)
+        return True
+
+    def commit(_job, result, **kwargs):
+        committed.append(kwargs)
+        return result
+
+    visual_result = _switching_visual_summary(enabled=quality_enabled)
+    switching_mock = MagicMock(return_value=_switching_analysis_summary())
+    native_mock = MagicMock()
+    baseline_mock = AsyncMock(return_value={
+        "comparable": True,
+        "reason": None,
+        "baseline_analysis_ref": "analysis:120",
+        "baseline_metrics": {"target_switching.transition_time_ms": 90.0},
+        "metric_comparisons": {},
+    })
+    with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), patch(
+        "webapp.backend.queue.claim_next", new=AsyncMock(return_value=job),
+    ), patch(
+        "webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True),
+    ), patch(
+        "webapp.backend.queue.mark_done", new=AsyncMock(side_effect=mark_done),
+    ), patch(
+        "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=object(),
+    ), patch(
+        "webapp.backend.worker.run_visual_preprocessing", return_value=visual_result,
+    ), patch(
+        "webapp.backend.worker.run_target_switching_analysis", switching_mock,
+    ), patch(
+        "webapp.backend.worker.run_native_analysis", native_mock,
+    ), patch(
+        "webapp.backend.history_trends.matched_target_switching_baseline_for_user",
+        new=baseline_mock,
+    ), patch(
+        "webapp.backend.worker._maybe_commit_analysis_evidence",
+        side_effect=commit,
+    ):
+        assert await worker.process_one() is True
+
+    result = completed[0]
+    assert len(committed) == 1
+    assert committed[0]["visual_result"] == visual_result
+    assert result["analysis_version"] == expected_version
+    assert result["analysis_type"] == "target_switching"
+    native_mock.assert_not_called()
+    if quality_enabled:
+        switching_mock.assert_called_once_with(job, visual_result, None)
+        assert result["deterministic"]["metrics"][
+            "target_switching.transition_time_ms"
+        ]["value"] == 120.0
+        assert result["scenario"]["analyzer_refs"] == ["target_switching.v1"]
+        assert committed[0]["switching_result"]["analysis_version"] == (
+            "target_switching.v1"
+        )
+        assert "processed_rows" not in json.dumps(result)
+    else:
+        switching_mock.assert_not_called()
+        baseline_mock.assert_not_called()
+        assert result["deterministic"]["metrics"] == {}
+        assert result["deterministic"]["limitations"] == [
+            "target_switching_visual_quality_unavailable"
+        ]
+        assert committed[0]["switching_result"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_field", ["scenario_profile_ref", "scenario_hash"])
+async def test_process_one_rejects_forged_active_resolution_before_family_analyzer(
+    missing_field: str,
+):
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+    )
+    snapshot["scenario_resolution"][missing_field] = None
+    job = {
+        "id": 110,
+        "user_id": "u1",
+        "analysis_type": "flicking",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    _error, native_mock, cv_mock = await _capture_mode_failure(
+        job,
+        native_result=_native_v2_adapter_result(),
+    )
+
+    native_mock.assert_not_called()
+    cv_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot_version", ["analysis_input_snapshot.v4", None])
+async def test_process_one_unknown_snapshot_version_cannot_enter_legacy_flicking(
+    snapshot_version: str | None,
+):
+    snapshot = _native_v2_snapshot()
+    if snapshot_version is None:
+        snapshot.pop("schema_version")
+    else:
+        snapshot["schema_version"] = snapshot_version
+    job = {
+        "id": 111,
+        "user_id": "u1",
+        "analysis_type": "flicking",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    _error, native_mock, cv_mock = await _capture_mode_failure(
+        job,
+        native_result=_native_v2_adapter_result(),
+    )
+
+    native_mock.assert_not_called()
+    cv_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_native_retry_reuses_the_same_frozen_canonical_window():
+    snapshot = _native_v2_snapshot()
+    sid = await queue.enqueue(
+        "u1",
+        "",
+        "",
+        input_mode="input_native",
+        input_snapshot=snapshot,
+    )
+
+    first = await queue.claim_next("first-worker")
+    assert first is not None
+    assert first["input_snapshot"]["canonical_time_window"] == (
+        snapshot["canonical_time_window"]
+    )
+    assert await queue.mark_failed(sid, "retryable failure", worker_id="first-worker")
+    await queue.requeue_for_retry(sid)
+
+    second = await queue.claim_next("second-worker")
+    assert second is not None
+    assert second["input_snapshot"] == first["input_snapshot"]
+
+
+@pytest.mark.asyncio
 async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails(tmp_path: Path):
     source_video = tmp_path / "source.mp4"
     managed_video = tmp_path / "managed.mp4"
@@ -991,10 +3239,522 @@ async def test_process_one_multimodal_keeps_native_result_when_video_cv_fails(tm
         "availability": "available",
         "format_version": "mp4",
     }
-    assert result["warnings"] == [{"code": "video_cv_unavailable"}]
+    assert result["warnings"] == [
+        {"code": "video_cv_unavailable"},
+        {"code": "legacy_static_compatibility"},
+    ]
     assert result["deterministic"]["diagnosis"]["meta"]["input_mode"] == "multimodal"
     assert "target_relative_error" not in result["deterministic"]["metrics"]
     assert "overshoot_distance" not in result["deterministic"]["metrics"]
+
+
+@pytest.mark.asyncio
+async def test_v2_multimodal_does_not_run_visual_analyzer_without_reviewed_profile(
+    tmp_path: Path,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"stable-video")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_v2_snapshot()
+    snapshot["sources"]["video"] = _video_source(source_video)
+    job = {
+        "id": 108,
+        "user_id": "u1",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result, calls, _native_mock, cv_mock = await _capture_mode_result(
+        job,
+        native_result=_native_v2_adapter_result(),
+        parsed_stats=object(),
+    )
+
+    assert calls == ["native"]
+    cv_mock.assert_not_called()
+    assert result["evidence"]["availability"]["mp4"] == "available"
+    assert result["deterministic"]["visual_validation"] == {
+        "schema_version": "visual_signal_summary.v1",
+        "status": "unavailable",
+        "quality_status": "unavailable",
+        "producer_version": None,
+        "enabled_metric_families": [],
+        "track_count": 0,
+        "observation_count": 0,
+        "target_coverage": None,
+        "crosshair_coverage": None,
+        "completeness": "unavailable",
+        "event_counts": {},
+        "limitations": ["visual_quality_profile_unavailable"],
+    }
+    assert result["warnings"] == [
+        {"code": "video_cv_unavailable"},
+        {"code": "legacy_static_compatibility"},
+    ]
+
+
+def test_visual_preprocessing_uses_only_registered_run_owned_video(
+    tmp_path: Path,
+):
+    from kovaak_tracker.visual_signals import (
+        VISUAL_PRODUCER_ID,
+        VISUAL_PRODUCER_VERSION,
+        VisualPreprocessingUnavailable,
+        visual_detector_config_ref_v1,
+    )
+
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"stable-video")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+    )
+    video = _video_source(source_video)
+    video.update({
+        "ownership": "run",
+        "artifact_ref": "run:42:video:fixturedigest",
+    })
+    snapshot["sources"]["video"] = video
+    job = {
+        "id": 113,
+        "user_id": "u1",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "fov": 55.0,
+    }
+    detector_config = {
+        "schema_version": "visual_target_detector.v2",
+        "aim_point_mode": "fixed_viewport_center",
+        "excluded_regions": [],
+        "target": {
+            "hsv_lower": [170, 180, 180],
+            "hsv_upper": [10, 255, 255],
+            "min_area": 50,
+            "max_area_ratio": 0.05,
+            "shape": "round",
+        },
+    }
+    detector_config_ref = visual_detector_config_ref_v1(detector_config)
+    producer = {
+        "detector_config_ref": detector_config_ref,
+        "visual_quality_profile": {
+            "status": "accepted",
+            "producer_id": VISUAL_PRODUCER_ID,
+            "producer_version": VISUAL_PRODUCER_VERSION,
+            "calibration_context": {
+                "detector_config_ref": detector_config_ref,
+            },
+        },
+        "detector_config": detector_config,
+    }
+    expected = {"safe_summary": {"status": "available"}}
+    parsed_stats = MagicMock()
+    parsed_stats.resolution = "1920x1080"
+    parsed_stats.fov = 103.0
+
+    with patch.dict(
+        worker._REVIEWED_VISUAL_PRODUCERS,
+        {"scenario:static.fixture@1": producer},
+        clear=True,
+    ), patch(
+        "kovaak_tracker.visual_signals.preprocess_visual_video_v1",
+        return_value=expected,
+    ) as preprocess:
+        assert worker.run_visual_preprocessing(job, parsed_stats=parsed_stats) == expected
+
+    assert preprocess.call_args.kwargs == {
+        "media_path": str(managed_video),
+        "analysis_ref": "analysis:113",
+        "canonical_time_window": snapshot["canonical_time_window"],
+        "visual_quality_profile": producer["visual_quality_profile"],
+        "visual_runtime_selector": {
+            "schema_version": "visual_runtime_selector.v1",
+            "scenario_hash": "fixture-hash",
+            "resolution": [1920, 1080],
+            "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+            "fov": 103.0,
+        },
+        "video_time_mapping": {
+            "schema_version": "visual_video_time_mapping.v1",
+            "source_pts_origin_ms": 0.0,
+            "canonical_origin_ms": snapshot["canonical_time_window"]["start_ms"],
+            "mapping_method": "run_owned_exact_canonical_clip",
+            "timebase_version": "time_alignment.v2",
+        },
+        "detector_config": producer["detector_config"],
+        "source_ref": "run:42:video:fixturedigest",
+    }
+
+    snapshot["sources"]["video"]["ownership"] = "analysis"
+    with patch.dict(
+        worker._REVIEWED_VISUAL_PRODUCERS,
+        {"scenario:static.fixture@1": producer},
+        clear=True,
+    ), pytest.raises(VisualPreprocessingUnavailable) as failure:
+        worker.run_visual_preprocessing(job, parsed_stats=parsed_stats)
+
+    assert failure.value.code == "visual_quality_profile_unavailable"
+
+    snapshot["sources"]["video"]["ownership"] = "run"
+    snapshot["schema_version"] = "analysis_input_snapshot.v2"
+    with patch.dict(
+        worker._REVIEWED_VISUAL_PRODUCERS,
+        {"scenario:static.fixture@1": producer},
+        clear=True,
+    ), pytest.raises(VisualPreprocessingUnavailable):
+        worker.run_visual_preprocessing(job, parsed_stats=parsed_stats)
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"]["scenario_hash"] = None
+    with patch.dict(
+        worker._REVIEWED_VISUAL_PRODUCERS,
+        {"scenario:static.fixture@1": producer},
+        clear=True,
+    ), pytest.raises(VisualPreprocessingUnavailable):
+        worker.run_visual_preprocessing(job, parsed_stats=parsed_stats)
+
+    snapshot["scenario_resolution"]["scenario_hash"] = "fixture-hash"
+    parsed_stats.resolution = "invalid"
+    with patch.dict(
+        worker._REVIEWED_VISUAL_PRODUCERS,
+        {"scenario:static.fixture@1": producer},
+        clear=True,
+    ), pytest.raises(VisualPreprocessingUnavailable):
+        worker.run_visual_preprocessing(job, parsed_stats=parsed_stats)
+
+    parsed_stats.resolution = "1920x1080"
+    producer["detector_config"]["target"]["hsv_upper"][2] = 254
+    with patch.dict(
+        worker._REVIEWED_VISUAL_PRODUCERS,
+        {"scenario:static.fixture@1": producer},
+        clear=True,
+    ), pytest.raises(VisualPreprocessingUnavailable):
+        worker.run_visual_preprocessing(job, parsed_stats=parsed_stats)
+
+    producer["detector_config"]["target"]["hsv_upper"][2] = 255
+    producer["visual_quality_profile"]["producer_version"] = (
+        "visual_round_detector.circularity_0_60.v2"
+    )
+    with patch.dict(
+        worker._REVIEWED_VISUAL_PRODUCERS,
+        {"scenario:static.fixture@1": producer},
+        clear=True,
+    ), pytest.raises(VisualPreprocessingUnavailable):
+        worker.run_visual_preprocessing(job, parsed_stats=parsed_stats)
+
+    producer["visual_quality_profile"]["producer_version"] = VISUAL_PRODUCER_VERSION
+    producer["detector_config_ref"] = "detector-config:other.v1"
+    with patch.dict(
+        worker._REVIEWED_VISUAL_PRODUCERS,
+        {"scenario:static.fixture@1": producer},
+        clear=True,
+    ), pytest.raises(VisualPreprocessingUnavailable):
+        worker.run_visual_preprocessing(job, parsed_stats=parsed_stats)
+
+
+def test_reviewed_single_target_tracking_profile_uses_reviewed_legacy_csrt_producer(
+    tmp_path: Path,
+):
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"stable-video")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+        aim_family="continuous_tracking",
+        allowed_analyzers=["continuous_tracking.v1"],
+    )
+    snapshot["scenario_resolution"].update({
+        "scenario_hash": "b2ae4a24b710e36afc6e57c61f590ab4",
+        "display_name": "WHJ SmoothStrafeSphere Easy",
+        "scenario_profile_ref": "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
+        "target_motion": {"model": "predictable", "target_count_model": "single"},
+        "allowed_metric_families": ["continuous_tracking"],
+    })
+    video = _video_source(source_video)
+    video.update({
+        "ownership": "run",
+        "artifact_ref": "run:42:video:fixturedigest",
+    })
+    snapshot["sources"]["video"] = video
+    job = {
+        "id": 114,
+        "user_id": "u1",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "fov": None,
+    }
+    parsed_stats = MagicMock()
+    parsed_stats.resolution = "1920x1080"
+    parsed_stats.fov = None
+    expected = {"safe_summary": {"status": "available"}}
+
+    with patch(
+        "kovaak_tracker.visual_signals.preprocess_visual_video_single_target_csrt_v1",
+        return_value=expected,
+    ) as single_target_csrt, patch(
+        "kovaak_tracker.visual_signals.preprocess_visual_video_temporal_v1",
+    ) as temporal, patch(
+        "kovaak_tracker.visual_signals.preprocess_visual_video_v1",
+    ) as non_temporal:
+        assert worker.run_visual_preprocessing(job, parsed_stats=parsed_stats) == expected
+
+    single_target_csrt.assert_called_once()
+    temporal.assert_not_called()
+    non_temporal.assert_not_called()
+    quality_profile = single_target_csrt.call_args.kwargs["visual_quality_profile"]
+    assert quality_profile["validation_results"] == {
+        "center_error_median_px": 3.28,
+        "center_error_p95_px": 6.03,
+        "false_positive_rate": 0.0,
+        "identity_switch_rate": 0.0,
+        "minimum_coverage": 1.0,
+        "occlusion_reentry_accuracy": None,
+        "radius_or_hitbox_error_px": 1.0,
+    }
+    assert "occlusion_reentry_accuracy" not in quality_profile[
+        "required_quality_fields_by_metric_family"
+    ]["tracking"]
+    assert any(
+        "Occlusion re-entry was not observed" in limitation
+        for limitation in quality_profile["limitations"]
+    )
+    assert single_target_csrt.call_args.kwargs["visual_runtime_selector"] == {
+        "schema_version": "visual_runtime_selector.v1",
+        "scenario_hash": "b2ae4a24b710e36afc6e57c61f590ab4",
+        "resolution": [1920, 1080],
+        "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+        "fov": None,
+    }
+    assert single_target_csrt.call_args.kwargs["detector_config"]["target"] == {
+        "hsv_lower": [0, 0, 0],
+        "hsv_upper": [179, 255, 80],
+        "min_area": 50,
+        "max_area_ratio": 0.05,
+        "shape": "round",
+    }
+
+
+def test_profile_contribution_uses_only_supported_evidence_backed_metrics():
+    metric_key = "continuous_tracking.target_relative_error_px"
+    result = {
+        "schema_version": "analysis_result.v2",
+        "analysis_version": "continuous_tracking.v1",
+        "analysis_type": "continuous_tracking",
+        "scenario": {
+            "scenario_profile_ref": "scenario:tracking.fixture@1",
+            "support_status": "supported",
+        },
+        "deterministic": {
+            "support_status": "supported",
+            "metrics": {
+                metric_key: {
+                    "value": 8.0,
+                    "unit": "px",
+                    "availability": "available",
+                    "classification": "deterministic",
+                    "provenance": {"kind": "derived", "sources": ["run:42"]},
+                    "metric_version": f"{metric_key}.v1",
+                    "coverage": 1.0,
+                    "limitations": [],
+                },
+                "continuous_tracking.phase_lag_ms": {
+                    "value": 12.0,
+                    "unit": "ms",
+                    "availability": "available",
+                    "classification": "model_inferred",
+                    "provenance": {"kind": "inferred", "sources": ["run:42"]},
+                    "metric_version": "continuous_tracking.phase_lag_ms.v1",
+                    "coverage": 1.0,
+                    "limitations": [],
+                },
+            },
+        },
+        "evidence": {"derived_artifact": {"artifact_ref": "analysis:1:evidence:abc"}},
+    }
+
+    payload = worker._build_profile_contribution_payload(result)
+
+    assert payload == {
+        "schema_version": "profile_contribution.v1",
+        "source_kind": "deterministic",
+        "dimensions": [{
+            "dimension_key": metric_key,
+            "scope": "exact_scenario",
+            "scenario_profile_ref": "scenario:tracking.fixture@1",
+            "metric_ref": f"metric:{metric_key}@{metric_key}.v1",
+            "metric_value": 8.0,
+            "unit": "px",
+            "expected_direction": "lower_better",
+            "confidence": "high",
+            "comparability": "comparable",
+            "supporting_metric_refs": [f"metric:{metric_key}@{metric_key}.v1"],
+            "counterexample_refs": [],
+            "candidate_hypothesis_refs": [],
+        }],
+    }
+    result["scenario"]["support_status"] = "outcome_only"
+    assert worker._build_profile_contribution_payload(result) is None
+
+
+@pytest.mark.asyncio
+async def test_v3_multimodal_commits_validated_visual_result_before_terminal_write(
+    tmp_path: Path,
+):
+    from kovaak_tracker.visual_signals import (
+        build_visual_quality_profile_v2,
+        preprocess_visual_signals_v1,
+    )
+
+    source_video = tmp_path / "source.mp4"
+    managed_video = tmp_path / "managed.mp4"
+    source_video.write_bytes(b"stable-video")
+    managed_video.write_bytes(source_video.read_bytes())
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = _scenario_resolution(
+        manifest_status="active",
+        dispatch="allowed",
+    )
+    snapshot["sources"]["video"] = _video_source(source_video)
+    window = snapshot["canonical_time_window"]
+    selector = {
+        "schema_version": "visual_runtime_selector.v1",
+        "scenario_hash": "fixture-hash",
+        "resolution": [1920, 1080],
+        "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+        "fov": 103.0,
+    }
+    profile = build_visual_quality_profile_v2(
+        producer_id="fixture_detector",
+        producer_version="fixture_detector.v1",
+        annotation_set_ref="annotation-set:fixture.v1",
+        annotation_protocol_version="visual_annotation_protocol.v1",
+        coordinate_space="capture_pixels",
+        calibration_context={
+            "detector_config_ref": "detector-config:fixture.v1",
+            "hud_mask_version": None,
+            "annotated_map_or_background_labels": ["fixture"],
+            "annotated_target_appearance_labels": ["sphere"],
+        },
+        validated_selectors=[selector],
+        required_selector_keys_by_metric_family={
+            "tracking": [
+                "scenario_hash", "resolution", "canonical_video_mapping_version",
+            ],
+        },
+        required_quality_fields_by_metric_family={
+            "tracking": [
+                "center_error_median_px", "center_error_p95_px",
+                "radius_or_hitbox_error_px", "false_positive_rate",
+                "identity_switch_rate", "occlusion_reentry_accuracy",
+                "minimum_coverage",
+            ],
+        },
+        compatibility_predicate_version="visual_runtime_compatibility.v2",
+        acceptance_thresholds={
+            "center_error_median_px": 2.0,
+            "center_error_p95_px": 4.0,
+            "radius_or_hitbox_error_px": 2.0,
+            "false_positive_rate": 0.05,
+            "identity_switch_rate": 0.01,
+            "occlusion_reentry_accuracy": 0.95,
+            "minimum_coverage": 0.9,
+        },
+        validation_results={
+            "center_error_median_px": 1.0,
+            "center_error_p95_px": 2.0,
+            "radius_or_hitbox_error_px": 1.0,
+            "false_positive_rate": 0.0,
+            "identity_switch_rate": 0.0,
+            "occlusion_reentry_accuracy": 1.0,
+            "minimum_coverage": 1.0,
+        },
+        validated_metric_families=["tracking"],
+        status="accepted",
+        limitations=[],
+    )
+    visual = preprocess_visual_signals_v1(
+        analysis_ref="analysis:112",
+        canonical_time_window=window,
+        frame_observations=[{
+            "source_pts_ms": 0,
+            "crosshair": {"x": 100.0, "y": 100.0},
+            "targets": [{
+                "detector_ref": "target-1",
+                "x": 110.0,
+                "y": 100.0,
+                "visible_radius": 12.0,
+                "confidence": 1.0,
+            }],
+            "scene": "gameplay",
+        }],
+        visual_quality_profile=profile,
+        visual_runtime_selector=selector,
+        video_time_mapping={
+            "schema_version": "visual_video_time_mapping.v1",
+            "source_pts_origin_ms": 0.0,
+            "canonical_origin_ms": window["start_ms"],
+            "mapping_method": "run_owned_exact_canonical_clip",
+            "timebase_version": window["timebase_version"],
+        },
+    )
+    job = {
+        "id": 112,
+        "user_id": "u1",
+        "analysis_type": "flicking",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": str(managed_video),
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+    completed: list[dict] = []
+    committed_visual: list[dict] = []
+
+    async def mark_done(_sid, result, _cost, *, worker_id):
+        completed.append(result)
+        return True
+
+    def commit(_job, result, **kwargs):
+        committed_visual.append(kwargs["visual_result"])
+        return result
+
+    with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), \
+         patch("webapp.backend.queue.claim_next", new=AsyncMock(return_value=job)), \
+         patch("webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True)), \
+         patch("webapp.backend.queue.mark_done", new=AsyncMock(side_effect=mark_done)), \
+         patch(
+             "webapp.backend.worker.run_native_analysis",
+             return_value=(_native_v2_adapter_result(), object()),
+         ), \
+         patch("webapp.backend.worker.run_visual_preprocessing", return_value=visual), \
+         patch("webapp.backend.worker._maybe_commit_analysis_evidence", side_effect=commit):
+        assert await worker.process_one() is True
+
+    assert committed_visual == [visual]
+    assert completed[0]["deterministic"]["visual_validation"] == visual["safe_summary"]
+    assert "local_samples" not in json.dumps(completed[0])
 
 
 @pytest.mark.asyncio
@@ -1196,7 +3956,7 @@ async def test_video_fallback_cv_failure_does_not_log_input_paths(
 
 
 @pytest.mark.asyncio
-async def test_process_one_accepts_managed_video_with_different_mtime(
+async def test_process_one_accepts_run_owned_video_without_mtime_fingerprint(
     tmp_path: Path,
 ):
     source_video = tmp_path / "source.mp4"
@@ -1204,10 +3964,11 @@ async def test_process_one_accepts_managed_video_with_different_mtime(
     source_video.write_bytes(b"frozen-video-revision")
     managed_video.write_bytes(source_video.read_bytes())
     source = _video_source(source_video)
+    source_mtime_ns = source["fingerprint"].pop("mtime_ns")
     managed_stat = managed_video.stat()
     os.utime(
         managed_video,
-        ns=(managed_stat.st_atime_ns, source["fingerprint"]["mtime_ns"] + 2_000_000_000),
+        ns=(managed_stat.st_atime_ns, source_mtime_ns + 2_000_000_000),
     )
     snapshot = _native_snapshot()
     snapshot["sources"]["video"] = source
@@ -1342,7 +4103,7 @@ async def test_process_one_multimodal_reuses_stats_frozen_by_native_analysis(
         "timeline": [],
     }
     assert result["evidence"]["availability"]["mp4"] == "available"
-    assert result["warnings"] == []
+    assert result["warnings"] == [{"code": "legacy_static_compatibility"}]
     assert result["deterministic"]["diagnosis"]["meta"]["input_mode"] == "multimodal"
 
 
@@ -1484,3 +4245,157 @@ def test_native_result_marks_desktop_owner_as_local_profile():
 
     assert result["owner_id"] == config.DESKTOP_LOCAL_PROFILE
     assert result["local_profile"] == config.DESKTOP_LOCAL_PROFILE
+
+
+def test_worker_maps_frozen_raw_stats_and_reviewed_tracks_into_outcome_producer():
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 1_000,
+        "end_ms": 3_000,
+        "duration_ms": 2_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    job = {
+        "id": 700,
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "trace": {"artifact_ref": "run:7:trace:abc"},
+            "sources": {
+                "stats": {
+                    "artifact_ref": "run:7:stats:abc",
+                    "parser_version": "kovaak_stats.v1",
+                },
+                "video": {"artifact_ref": "run:7:video:abc"},
+            },
+            "scenario_resolution": {
+                "scenario_profile_ref": "scenario-profile:fixture@1",
+            },
+        },
+    }
+    parsed_stats = MagicMock()
+    parsed_stats.kills = pd.DataFrame([{
+        "Kill #": 1,
+        "time_s": 1.01,
+        "Shots": 1,
+        "Hits": 1,
+        "OverShots": 0,
+    }])
+    visual = {
+        "analysis_ref": "analysis:700",
+        "canonical_time_window": window,
+        "quality": {"status": "accepted"},
+        "visual_quality_profile_ref": "visual-quality-profile:fixture@1",
+        "visual_runtime_selector": {"resolution": [200, 200]},
+        "local_samples": {
+            "target.1.position": [{
+                "canonical_time_ms": 1_995,
+                "x": 102.0,
+                "y": 100.0,
+                "visible_radius": 10.0,
+                "confidence": 1.0,
+            }],
+        },
+        "track_summaries": [{
+            "track_ref": "analysis:700:target-track:1",
+            "identity_source": "detector_ref",
+            "limitations": [],
+        }],
+    }
+    raw_points = [
+        {"timestamp_ms": 1_990, "dx": 0, "dy": 0, "buttons": 0},
+        {"timestamp_ms": 2_000, "dx": 0, "dy": 0, "buttons": 1},
+        {"timestamp_ms": 2_005, "dx": 0, "dy": 0, "buttons": 1},
+    ]
+    registry = {
+        "schema_version": "outcome_association_rule_registry.v1",
+        "registry_version": "fixture.v1",
+        "entries": [{"status": "active", "binding": {}}],
+    }
+    event_bundle = {"schema_version": "event_bundle.v2"}
+    captured = {}
+
+    def associate(**kwargs):
+        captured.update(kwargs)
+        return {
+            "schema_version": "outcome_association_result.v1",
+            "status": "available",
+            "event_bundle": event_bundle,
+            "limitations": [],
+        }
+
+    with patch(
+        "kovaak_tracker.outcome_association.load_outcome_association_rule_registry_v1",
+        return_value=registry,
+    ), patch(
+        "webapp.backend.worker._read_frozen_source_bytes",
+        return_value=b"trace",
+    ), patch(
+        "webapp.backend.kovaak_run_store.decode_mouse_snapshot_bytes",
+        return_value=raw_points,
+    ), patch(
+        "kovaak_tracker.outcome_association.associate_one_shot_kills_v1",
+        side_effect=associate,
+    ):
+        assert worker._build_validated_outcome_association(
+            job, parsed_stats, visual,
+        ) is event_bundle
+
+    assert captured["click_events"] == [
+        {"event_ref": "analysis:700:event:raw-shot:1", "time_ms": 2_000},
+    ]
+    assert captured["stats_kills"] == [{
+        "event_ref": "analysis:700:event:stats-kill:1",
+        "time_ms": 2_010,
+        "kill_index": 1,
+        "shots": 1,
+        "hits": 1,
+        "overshots": 0,
+    }]
+    assert captured["stats_parser_version"] == "kovaak_stats.v1"
+    assert captured["target_tracks"][0]["identity_status"] == "stable"
+
+
+def test_worker_does_not_read_private_sources_when_rule_registry_is_empty():
+    with patch(
+        "kovaak_tracker.outcome_association.load_outcome_association_rule_registry_v1",
+        return_value={
+            "schema_version": "outcome_association_rule_registry.v1",
+            "registry_version": "fixture.v1",
+            "entries": [],
+        },
+    ), patch(
+        "webapp.backend.worker._read_frozen_source_bytes",
+        side_effect=AssertionError("private source should not be read"),
+    ):
+        assert worker._build_validated_outcome_association({}, object(), {}) is None
+
+
+def test_raw_click_edge_requires_observed_release_before_press():
+    held_at_boundary = [
+        {"timestamp_ms": 1_000, "buttons": 1},
+        {"timestamp_ms": 1_010, "buttons": 0},
+    ]
+    assert worker._raw_left_button_rising_edges(
+        held_at_boundary,
+        analysis_ref="analysis:1",
+        start_ms=1_000,
+        end_ms=2_000,
+    ) == []
+
+    observed_edge = [
+        {"timestamp_ms": 1_000, "buttons": 0},
+        {"timestamp_ms": 1_010, "buttons": 1},
+    ]
+    assert worker._raw_left_button_rising_edges(
+        observed_edge,
+        analysis_ref="analysis:1",
+        start_ms=1_000,
+        end_ms=2_000,
+    ) == [{
+        "event_ref": "analysis:1:event:raw-shot:1",
+        "time_ms": 1_010,
+    }]

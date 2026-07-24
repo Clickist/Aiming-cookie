@@ -10,7 +10,8 @@ Covers:
 from __future__ import annotations
 
 from kovaak_tracker.advice_tracking import (
-    advise_tracking, _flatten_metrics, THRESHOLDS, Finding,
+    advise_tracking, build_tracking_candidate_advice, _flatten_metrics,
+    THRESHOLDS, Finding,
 )
 from kovaak_tracker.coach.report import build_report
 
@@ -83,6 +84,131 @@ def test_flatten_metrics_partial_groups():
 
 def test_healthy_tracking_no_findings():
     assert advise_tracking(_healthy_tracking_summary()) == []
+
+
+# ---- tracking_analysis.v1 comparison-only candidate advice ----
+
+def test_tracking_candidate_advice_uses_matched_baseline_and_row_evidence():
+    analysis = {
+        "metrics": {
+            "continuous_tracking.phase_lag_ms": {"value": 24.0},
+            "continuous_tracking.loss_count": {"value": 5.0},
+            "continuous_tracking.reacquisition_latency_ms": {"value": 210.0},
+            "continuous_tracking.observed_change_response_ms": {"value": 0.60},
+            "continuous_tracking.correction_direction_reversal_count": {"value": 7.0},
+            "continuous_tracking.sparc": {"value": -6.0},
+            "continuous_tracking.target_relative_error_px": {"value": 8.0},
+            "continuous_tracking.time_in_radius_ratio": {"value": 0.90},
+        },
+        "comparison": {
+            "comparable": True,
+            "baseline_metrics": {
+                "continuous_tracking.phase_lag_ms": 12.0,
+                "continuous_tracking.loss_count": 2.0,
+                "continuous_tracking.reacquisition_latency_ms": 90.0,
+                "continuous_tracking.observed_change_response_ms": 0.25,
+                "continuous_tracking.correction_direction_reversal_count": 3.0,
+                "continuous_tracking.sparc": -4.0,
+                "continuous_tracking.target_relative_error_px": 8.0,
+                "continuous_tracking.time_in_radius_ratio": 0.90,
+            },
+        },
+        "processed_rows": [
+            {
+                "event_ref": "analysis:1:tracking:failure",
+                "phase_lag_ms": 30.0,
+                "loss_count": 6.0,
+                "reacquisition_latency_ms": 260.0,
+                "observed_change_response_ms": 0.8,
+                "correction_burden": 9.0,
+                "sparc": -7.0,
+            },
+            {
+                "event_ref": "analysis:1:tracking:recovery",
+                "phase_lag_ms": 8.0,
+                "loss_count": 1.0,
+                "reacquisition_latency_ms": 60.0,
+                "observed_change_response_ms": 0.1,
+                "correction_burden": 2.0,
+                "sparc": -3.0,
+            },
+        ],
+        "limitations": ["comparison_is_descriptive_only"],
+    }
+
+    advice = build_tracking_candidate_advice(analysis)
+
+    assert [item["signal"] for item in advice] == [
+        "tracking lag high",
+        "loss count high",
+        "off target long",
+        "accel mismatch high",
+        "correction burden high",
+        "sparc low",
+    ]
+    assert all("severity" not in item and "prescriptions" not in item for item in advice)
+    assert all(
+        item["supporting_row_refs"] == ["analysis:1:tracking:failure"]
+        for item in advice
+    )
+    assert all(
+        item["counterexample_row_refs"] == ["analysis:1:tracking:recovery"]
+        for item in advice
+    )
+    assert [item["knowledge_entry_refs"] for item in advice] == [
+        ["knowledge:tracking.predictable-speed-matching@1"],
+        ["knowledge:tracking.reactive-change-response@1"],
+        ["knowledge:tracking.reactive-change-response@1"],
+        ["knowledge:tracking.reactive-change-response@1"],
+        ["knowledge:tracking.control-smoothness@1"],
+        ["knowledge:tracking.control-smoothness@1"],
+    ]
+    assert all("alternative_explanations" in item["requested_knowledge_sections"] for item in advice)
+    assert all("matched_retest" in item["requested_knowledge_sections"] for item in advice)
+
+
+def test_tracking_candidate_advice_requires_comparability_and_relative_decline():
+    analysis = {
+        "metrics": {
+            "continuous_tracking.phase_lag_ms": {"value": 24.0},
+            "continuous_tracking.sparc": {"value": -3.0},
+        },
+        "comparison": {
+            "comparable": True,
+            "baseline_metrics": {
+                "continuous_tracking.phase_lag_ms": 12.0,
+                "continuous_tracking.sparc": -4.0,
+            },
+        },
+        "processed_rows": [],
+    }
+
+    assert [item["signal"] for item in build_tracking_candidate_advice(analysis)] == [
+        "tracking lag high",
+    ]
+    analysis["comparison"]["comparable"] = False
+    assert build_tracking_candidate_advice(analysis) == []
+
+
+def test_tracking_smoothness_candidate_requires_accuracy_and_coverage_guardrails():
+    analysis = {
+        "metrics": {
+            "continuous_tracking.sparc": {"value": -6.0},
+            "continuous_tracking.target_relative_error_px": {"value": 12.0},
+            "continuous_tracking.time_in_radius_ratio": {"value": 0.70},
+        },
+        "comparison": {
+            "comparable": True,
+            "baseline_metrics": {
+                "continuous_tracking.sparc": -4.0,
+                "continuous_tracking.target_relative_error_px": 8.0,
+                "continuous_tracking.time_in_radius_ratio": 0.90,
+            },
+        },
+        "processed_rows": [],
+    }
+
+    assert build_tracking_candidate_advice(analysis) == []
 
 
 # ---- A. accuracy_low ----

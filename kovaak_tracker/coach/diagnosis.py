@@ -37,6 +37,12 @@ class DiagnosisIssue:
     limitations: list[str] = field(default_factory=list)
     expected_result: str = ""
     verification: dict[str, Any] = field(default_factory=dict)
+    primary_evidence_segment_ref: str | None = None
+    supporting_evidence_segment_refs: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if len(self.supporting_evidence_segment_refs) > 2:
+            raise ValueError("supporting evidence segments must be at most two")
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,39 @@ class CoachReport:
     figures: dict[str, Any]
     narration: str | None
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CandidateKnowledgeRefs:
+    registry_version: str
+    entry_refs: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if len(self.entry_refs) > 3 or any(
+            not isinstance(ref, str) or not ref.startswith("knowledge:")
+            for ref in self.entry_refs
+        ):
+            raise ValueError("candidate knowledge refs are invalid")
+
+
+def resolve_candidate_knowledge_refs(
+    *,
+    issue_signal: str | None,
+    metric_refs: list[str],
+) -> CandidateKnowledgeRefs:
+    """Attach v2 explanations after an analyzer has already produced a fact."""
+    from .knowledge_registry import entry_ref, load_registry, query_registry
+
+    registry = load_registry()
+    entries = query_registry(
+        registry,
+        issue_signal=issue_signal,
+        metric_refs=metric_refs,
+    )
+    return CandidateKnowledgeRefs(
+        registry_version=registry["registry_version"],
+        entry_refs=[entry_ref(entry) for entry in entries],
+    )
 
 
 from . import profiles
@@ -75,6 +114,7 @@ def build_diagnosis(findings, summary, comparison, meta):
 def _match_profile(findings, meta=None):
     meta = meta or {}
     summary_type = meta.get("summary_type")
+    quality_status = meta.get("quality_status")
     signals = {f.signal for f in findings}
     best, best_score = None, 0.0
     for arch in profiles.ARCHETYPES:
@@ -94,6 +134,8 @@ def _match_profile(findings, meta=None):
     # fluid_precise / fluid_tracker: positive profile, matched when no negative
     # signals fire. Pick by summary_type (flicking vs tracking).
     if (best is None or best_score < _MATCH_THRESHOLD) and not signals:
+        if quality_status not in {None, "available", "accepted"}:
+            return ProfileMatch("unclassified", "未分类", 0.0, [])
         if summary_type == "tracking":
             fluid = next(
                 (a for a in profiles.ARCHETYPES if a["id"] == "fluid_tracker"),

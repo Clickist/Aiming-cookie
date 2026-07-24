@@ -12,6 +12,7 @@ from .contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
     ANALYSIS_RESULT_V2_SCHEMA_VERSION,
     LEGACY_ANALYSIS_VERSION,
+    validate_scenario_resolution_v1,
 )
 from .db import get_conn
 from .workspace import session_dir
@@ -19,6 +20,10 @@ from .workspace import session_dir
 
 _SAFE_SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SAFE_IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SAFE_SCENARIO_PROFILE_REF = re.compile(
+    r"^scenario:[A-Za-z0-9][A-Za-z0-9._-]{0,159}@[1-9][0-9]*$"
+)
+_SAFE_SCENARIO_HASH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 _ALIGNMENT_STATUSES = {"aligned", "partial", "failed", "unavailable", "not_required"}
 _EVIDENCE_AVAILABILITIES = {"available", "missing", "unsupported", "unavailable", "invalid"}
 _V2_INPUT_MODES = {"input_native", "multimodal", "video_fallback"}
@@ -61,6 +66,65 @@ def _scenario_identity_version(result: dict) -> str | None:
     return _safe_identity(value)
 
 
+def _scenario_resolution(result: dict) -> dict | None:
+    snapshot = result.get("input_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    resolution = snapshot.get("scenario_resolution")
+    return resolution if isinstance(resolution, dict) else None
+
+
+def _scenario_resolution_is_invalid(result: dict) -> bool:
+    snapshot = result.get("input_snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    resolution = snapshot.get("scenario_resolution")
+    if resolution is None:
+        return snapshot.get("schema_version") == "analysis_input_snapshot.v3"
+    try:
+        validate_scenario_resolution_v1(resolution)
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
+def _scenario_profile_ref(result: dict) -> str | None:
+    resolution = _scenario_resolution(result)
+    value = resolution.get("scenario_profile_ref") if resolution else None
+    return (
+        value
+        if isinstance(value, str) and _SAFE_SCENARIO_PROFILE_REF.fullmatch(value)
+        else None
+    )
+
+
+def _scenario_hash(result: dict) -> str | None:
+    resolution = _scenario_resolution(result)
+    value = resolution.get("scenario_hash") if resolution else None
+    return (
+        value
+        if isinstance(value, str) and _SAFE_SCENARIO_HASH.fullmatch(value)
+        else None
+    )
+
+
+def _scenario_registry_version(result: dict) -> str | None:
+    resolution = _scenario_resolution(result)
+    return _safe_identity(resolution.get("registry_version")) if resolution else None
+
+
+def _analysis_version(result: dict) -> str | None:
+    value = result.get("analysis_version")
+    return _safe_identity(value) if value is not None else None
+
+
+def _timebase_version(result: dict) -> str | None:
+    snapshot = result.get("input_snapshot")
+    window = snapshot.get("canonical_time_window") if isinstance(snapshot, dict) else None
+    value = window.get("timebase_version") if isinstance(window, dict) else None
+    return _safe_identity(value) if value is not None else None
+
+
 def _full_coverage(value: object) -> bool:
     return (
         not isinstance(value, bool)
@@ -89,24 +153,110 @@ def _quality_reason(result: dict, metric: dict) -> str | None:
     return None
 
 
+def _family_comparability_reason(
+    current: dict,
+    baseline: dict,
+    current_metric: dict,
+    baseline_metric: dict,
+    missing_reason: str,
+) -> str | None:
+    current_deterministic = current.get("deterministic")
+    baseline_deterministic = baseline.get("deterministic")
+    if not isinstance(current_deterministic, dict) or not isinstance(
+        baseline_deterministic, dict
+    ):
+        return missing_reason
+    current_profile = _safe_identity(
+        current_deterministic.get("visual_quality_profile_ref")
+    )
+    baseline_profile = _safe_identity(
+        baseline_deterministic.get("visual_quality_profile_ref")
+    )
+    if not current_profile or not baseline_profile:
+        return "visual_quality_profile_missing"
+    if current_profile != baseline_profile:
+        return "visual_quality_profile_mismatch"
+    current_motion = _safe_identity(
+        current_deterministic.get("scenario_motion_class")
+    )
+    baseline_motion = _safe_identity(
+        baseline_deterministic.get("scenario_motion_class")
+    )
+    if not current_motion or current_motion != baseline_motion:
+        return "motion_condition_mismatch"
+    condition_sets = []
+    for metric in (current_metric, baseline_metric):
+        raw_refs = metric.get("condition_refs")
+        if not isinstance(raw_refs, list) or not raw_refs:
+            return "metric_condition_missing"
+        refs = tuple(sorted(filter(None, (_safe_identity(ref) for ref in raw_refs))))
+        if len(refs) != len(raw_refs):
+            return "metric_condition_missing"
+        condition_sets.append(refs)
+    if condition_sets[0] != condition_sets[1]:
+        return "metric_condition_mismatch"
+    return None
+
+
 def compare_analysis_results(current: dict, baseline: dict, metric_key: str) -> dict:
     """Compare two fully compatible v2 deterministic metrics."""
     if current.get("schema_version") != ANALYSIS_RESULT_V2_SCHEMA_VERSION or baseline.get(
         "schema_version"
     ) != ANALYSIS_RESULT_V2_SCHEMA_VERSION:
         return {"comparable": False, "reason": "analysis_result_version_mismatch"}
-    predicates = (
+    if "analysis_version" in current or "analysis_version" in baseline:
+        current_analysis_version = _analysis_version(current)
+        baseline_analysis_version = _analysis_version(baseline)
+        if not current_analysis_version or current_analysis_version != baseline_analysis_version:
+            return {"comparable": False, "reason": "analysis_version_mismatch"}
+    if (
+        isinstance(current.get("input_snapshot"), dict)
+        and "canonical_time_window" in current["input_snapshot"]
+    ) or (
+        isinstance(baseline.get("input_snapshot"), dict)
+        and "canonical_time_window" in baseline["input_snapshot"]
+    ):
+        current_timebase = _timebase_version(current)
+        baseline_timebase = _timebase_version(baseline)
+        if not current_timebase or current_timebase != baseline_timebase:
+            return {"comparable": False, "reason": "timebase_version_mismatch"}
+    if _scenario_resolution_is_invalid(current) or _scenario_resolution_is_invalid(
+        baseline
+    ):
+        return {"comparable": False, "reason": "scenario_resolution_invalid"}
+    current_resolution = _scenario_resolution(current)
+    baseline_resolution = _scenario_resolution(baseline)
+    scenario_predicates = (
         (
-            "analysis_type",
-            _safe_identity(current.get("analysis_type")),
-            _safe_identity(baseline.get("analysis_type")),
+            "scenario_hash",
+            _scenario_hash(current),
+            _scenario_hash(baseline),
         ),
+        (
+            "scenario_profile_ref",
+            _scenario_profile_ref(current),
+            _scenario_profile_ref(baseline),
+        ),
+        (
+            "scenario_registry_version",
+            _scenario_registry_version(current),
+            _scenario_registry_version(baseline),
+        ),
+    ) if current_resolution is not None or baseline_resolution is not None else (
         ("scenario", _scenario(current), _scenario(baseline)),
         (
             "scenario_identity_version",
             _scenario_identity_version(current),
             _scenario_identity_version(baseline),
         ),
+    )
+    predicates = (
+        (
+            "analysis_type",
+            _safe_identity(current.get("analysis_type")),
+            _safe_identity(baseline.get("analysis_type")),
+        ),
+        *scenario_predicates,
         (
             "input_mode",
             _safe_input_mode(current.get("input_mode")),
@@ -128,6 +278,21 @@ def compare_analysis_results(current: dict, baseline: dict, metric_key: str) -> 
         or _safe_identity(baseline_metric.get("key")) != metric_key
     ):
         return {"comparable": False, "reason": "metric_key_mismatch"}
+    family_missing_reason = {
+        "dynamic_clicking": "dynamic_comparability_missing",
+        "continuous_tracking": "continuous_tracking_comparability_missing",
+        "target_switching": "target_switching_comparability_missing",
+    }.get(current.get("analysis_type"))
+    if family_missing_reason:
+        reason = _family_comparability_reason(
+            current,
+            baseline,
+            current_metric,
+            baseline_metric,
+            family_missing_reason,
+        )
+        if reason:
+            return {"comparable": False, "reason": reason}
     for result, metric in ((current, current_metric), (baseline, baseline_metric)):
         reason = _quality_reason(result, metric)
         if reason:
@@ -173,6 +338,183 @@ def compare_analysis_results(current: dict, baseline: dict, metric_key: str) -> 
         "delta": delta,
         "percent_change": percent,
     }
+
+
+def build_matched_dynamic_baseline(
+    current: dict,
+    baselines: list[tuple[int, dict]],
+    metric_keys: list[str],
+) -> dict:
+    """Select the first prior Run with at least one fully comparable metric."""
+    if current.get("analysis_type") != "dynamic_clicking":
+        return {"comparable": False, "reason": "analysis_type_mismatch"}
+    for session_id, baseline in baselines:
+        baseline_metrics: dict[str, float] = {}
+        comparisons: dict[str, dict[str, float | None]] = {}
+        for metric_key in metric_keys:
+            comparison = compare_analysis_results(current, baseline, metric_key)
+            if not comparison["comparable"]:
+                continue
+            baseline_metrics[metric_key] = comparison["baseline"]
+            comparisons[metric_key] = {
+                "current": comparison["current"],
+                "baseline": comparison["baseline"],
+                "delta": comparison["delta"],
+                "percent_change": comparison["percent_change"],
+            }
+        if baseline_metrics:
+            baseline_ref = baseline.get("analysis_id")
+            if not isinstance(baseline_ref, str) or not baseline_ref.startswith("analysis:"):
+                baseline_ref = f"analysis:{session_id}"
+            return {
+                "comparable": True,
+                "reason": None,
+                "baseline_analysis_ref": baseline_ref,
+                "baseline_metrics": baseline_metrics,
+                "metric_comparisons": comparisons,
+            }
+    return {"comparable": False, "reason": "no_comparable_baseline"}
+
+
+async def matched_dynamic_baseline_for_user(
+    user_id: str,
+    current: dict,
+    metric_keys: list[str],
+) -> dict:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, result FROM sessions WHERE user_id=? AND status='done' "
+        "AND result IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 100",
+        (user_id,),
+    )
+    rows = await cur.fetchall()
+    baselines: list[tuple[int, dict]] = []
+    for row in rows:
+        try:
+            result = json.loads(row["result"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
+            baselines.append((int(row["id"]), result))
+    return build_matched_dynamic_baseline(current, baselines, metric_keys)
+
+
+def build_matched_tracking_baseline(
+    current: dict,
+    baselines: list[tuple[int, dict]],
+    metric_keys: list[str],
+) -> dict:
+    """Select the first prior Run with at least one fully comparable metric."""
+    if current.get("analysis_type") != "continuous_tracking":
+        return {"comparable": False, "reason": "analysis_type_mismatch"}
+    for session_id, baseline in baselines:
+        baseline_metrics: dict[str, float] = {}
+        comparisons: dict[str, dict[str, float | None]] = {}
+        for metric_key in metric_keys:
+            comparison = compare_analysis_results(current, baseline, metric_key)
+            if not comparison["comparable"]:
+                continue
+            baseline_metrics[metric_key] = comparison["baseline"]
+            comparisons[metric_key] = {
+                "current": comparison["current"],
+                "baseline": comparison["baseline"],
+                "delta": comparison["delta"],
+                "percent_change": comparison["percent_change"],
+            }
+        if baseline_metrics:
+            baseline_ref = baseline.get("analysis_id")
+            if not isinstance(baseline_ref, str) or not baseline_ref.startswith("analysis:"):
+                baseline_ref = f"analysis:{session_id}"
+            return {
+                "comparable": True,
+                "reason": None,
+                "baseline_analysis_ref": baseline_ref,
+                "baseline_metrics": baseline_metrics,
+                "metric_comparisons": comparisons,
+            }
+    return {"comparable": False, "reason": "no_comparable_baseline"}
+
+
+async def matched_tracking_baseline_for_user(
+    user_id: str,
+    current: dict,
+    metric_keys: list[str],
+) -> dict:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, result FROM sessions WHERE user_id=? AND status='done' "
+        "AND result IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 100",
+        (user_id,),
+    )
+    rows = await cur.fetchall()
+    baselines: list[tuple[int, dict]] = []
+    for row in rows:
+        try:
+            result = json.loads(row["result"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
+            baselines.append((int(row["id"]), result))
+    return build_matched_tracking_baseline(current, baselines, metric_keys)
+
+
+def build_matched_target_switching_baseline(
+    current: dict,
+    baselines: list[tuple[int, dict]],
+    metric_keys: list[str],
+) -> dict:
+    """Select the first prior Run with at least one fully comparable metric."""
+    if current.get("analysis_type") != "target_switching":
+        return {"comparable": False, "reason": "analysis_type_mismatch"}
+    for session_id, baseline in baselines:
+        baseline_metrics: dict[str, float] = {}
+        comparisons: dict[str, dict[str, float | None]] = {}
+        for metric_key in metric_keys:
+            comparison = compare_analysis_results(current, baseline, metric_key)
+            if not comparison["comparable"]:
+                continue
+            baseline_metrics[metric_key] = comparison["baseline"]
+            comparisons[metric_key] = {
+                "current": comparison["current"],
+                "baseline": comparison["baseline"],
+                "delta": comparison["delta"],
+                "percent_change": comparison["percent_change"],
+            }
+        if baseline_metrics:
+            baseline_ref = baseline.get("analysis_id")
+            if not isinstance(baseline_ref, str) or not baseline_ref.startswith("analysis:"):
+                baseline_ref = f"analysis:{session_id}"
+            return {
+                "comparable": True,
+                "reason": None,
+                "baseline_analysis_ref": baseline_ref,
+                "baseline_metrics": baseline_metrics,
+                "metric_comparisons": comparisons,
+            }
+    return {"comparable": False, "reason": "no_comparable_baseline"}
+
+
+async def matched_target_switching_baseline_for_user(
+    user_id: str,
+    current: dict,
+    metric_keys: list[str],
+) -> dict:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, result FROM sessions WHERE user_id=? AND status='done' "
+        "AND result IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 100",
+        (user_id,),
+    )
+    rows = await cur.fetchall()
+    baselines: list[tuple[int, dict]] = []
+    for row in rows:
+        try:
+            result = json.loads(row["result"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
+            baselines.append((int(row["id"]), result))
+    return build_matched_target_switching_baseline(current, baselines, metric_keys)
 
 
 def safe_scenario(value: object) -> str | None:
