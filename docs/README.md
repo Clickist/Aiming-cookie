@@ -44,6 +44,9 @@
 - [`deployment-guide.md`](deployment-guide.md)：2026-07-10 部署候选调研快照；使用前必须重新核实并通过新的 active plan；
 - [`superpowers/assessments/`](superpowers/assessments/)：评估证据与历史决策输入。
   - [`superpowers/assessments/2026-07-13-reflek-capability-adoption.md`](superpowers/assessments/2026-07-13-reflek-capability-adoption.md)：RefleK 全产品能力、数据链、分析与 Coach 采纳评估。
+  - [`superpowers/assessments/2026-07-22-real-run-analysis-capability-audit.md`](superpowers/assessments/2026-07-22-real-run-analysis-capability-audit.md)：现存 normal/timescale/restart/pause 实机四件套、已产品化采集规则、Task 6-9 可用与禁止用途，以及 visual input 合同纠偏。
+  - [`superpowers/assessments/2026-07-22-task10-cross-family-coach-knowledge-research.md`](superpowers/assessments/2026-07-22-task10-cross-family-coach-knowledge-research.md)：Task 10R 的真人教练/社区 cue、运动控制证据边界、跨 family observation-to-coaching 矩阵与 Registry v2 输入。
+  - [`superpowers/assessments/2026-07-24-backend-full-review-ledger.md`](superpowers/assessments/2026-07-24-backend-full-review-ledger.md)：当前 dirty worktree 的 12 路后端、原生采集、性能、数据、Coach、安全、扩展性、文档与 UI/UX 全量审计；包含 confirmed findings、待实测边界、驳回项和修复顺序。
 
 ## 归档边界
 

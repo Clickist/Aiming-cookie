@@ -9,7 +9,7 @@
 
 ## 1. 产品一句话
 
-基于物理 + 运动学的 **KovaaK's 瞄准诊断 + AI 教练**。桌面应用：采集真实训练输入 → 公平指标 → 三层根因诊断 → 对话式 AI 教练 → 长期进步追踪。
+基于物理 + 运动学的 **KovaaK's 瞄准诊断 + AI 教练**。桌面应用：采集真实训练输入 → 完整动作级数据与公平指标 → 可追溯候选诊断 → AI Coach 综合解释与训练 → 长期进步追踪。
 
 **产品关系（2026-07-10 澄清；2026-07-13 输入原生与商业模式更新）**：这是以 **Aiming Coach** 为核心的一个开源免费产品，不分免费版 / 付费版，也不以订阅、credits 或能力墙向用户收费。长期上，**Aiming Coach 是常驻关系与产品操作层**——降低用户对界面与流程的学习成本；KovaaK Run、输入原生运动学、视频增强、确定性报告和持久化的瞄准表现记录，都是教练的客观观测、专业判断依据与长期病历，而不是与教练并列的第二套产品。
 
@@ -20,7 +20,7 @@
 **核心信念**：
 1. **公平指标**——跨距离/速度可比的运动学量（decel_frac / SPARC / linearity / throughput），比"命中率"更诚实地暴露问题
 2. **减速段是诊断核心**——flick 的"刹车"段最能反映控制质量（社区 Zeonlo / Bardpill + 神经科学 Becker 2020 交叉验证）
-3. **AI 教练做个性化诊断**——指标是骨架，教练把指标翻译成"你具体哪里有问题、怎么练"
+3. **AI 教练做个性化综合诊断**——测量与完整的动作级 processed data 是骨架，规则层提供候选观察；教练必须结合支持证据、反例、历史和知识体系判断"你具体哪里有问题、为什么、怎么练"，而不是复述规则结论
 4. **开源免费，信任优先**——产品能力不设付费墙；只有当证据与用户上下文支持外设可能成为限制时，Coach 才可提供可选推荐。官方购买链接可以包含联盟代码并产生佣金，但佣金不得影响诊断、推荐触发或商品排序，商业关系必须清晰披露
 
 **张力感知的演变**（理论诚实记录）：早期设想从录像推断"手部张力"（PTC, Pure Tension Coeff），后经审视确认**不成立**——PTC 实为 miss-frame 加速度-误差密度，不直接测肌肉张力。当前产品以减速段质量（SPARC 等）为核心诊断，手部张力留待远期手部摄像头验证。相关历史设计已归档，不再作为产品合同。
@@ -40,8 +40,8 @@
 | # | 价值 | 实现 |
 |---|---|---|
 | 1 | 公平指标 | decel_frac / SPARC / linearity / throughput / reverse_ratio / path_efficiency 等（学术锚点：Balasubramanian 2012 / Fitts / Novak 2002） |
-| 2 | 三层根因诊断 | 症状 → 物理 → 处方（规则引擎 `advice.py` / `advice_tracking.py`） |
-| 3 | AI 教练对话 | 可调用应用能力的常驻 Coach；以项目内 Pi 源码为 runtime 基线，由 Aiming Cookie 接管并产品化改造 |
+| 2 | 三层候选诊断 | 观察 → 候选机制/替代解释 → 处方（规则引擎 `advice.py` / `advice_tracking.py`）；不把未测因果升级为事实 |
+| 3 | AI 教练对话 | 可调用应用能力的常驻 Coach；能查询整局完整动作级 processed data、寻找规律与反例并形成最终教学解释，而不是确定性报告的转述层 |
 | 4 | 长期进步追踪 | 趋势 + ④ 渐进式训练计划（`progress.py` / `planning.py`） |
 | 5 | 可配置 LLM Coach | 当前产品不设付费墙；用户在 Settings 中选择并连接可用 LLM provider，Coach 与确定性诊断属于同一产品闭环 |
 | 6 | 常驻教练降学习成本 | provider 可用时 coach agent 可随时进入并调用当前用户拥有的产品能力；用户少记「该点哪个菜单」，多靠对话完成回访、分析与计划 |
@@ -69,7 +69,7 @@
 
 产品能力按以下依赖关系演进；具体施工顺序、当前 Gate 与未来里程碑只在 `docs/ROADMAP.md` 维护。
 
-1. **完整 Coach 诊断闭环**：自动采集 Raw + KovaaK 窗口回放缓冲并事后切成独立 Run → 用户确认一条 Run → static/dynamic clicking、continuous tracking 或 target switching 的专项分析 → 确定性诊断 → 有界 Coach 证据上下文 → 本地历史、计划与复测；movement aiming 没有移动遥测时只保留 outcome-only；未选择 Run 保留为待分析，手动 `MP4 + Stats` 作为独立 fallback；
+1. **完整 Coach 诊断闭环**：自动采集 Raw + KovaaK 窗口回放缓冲并事后切成独立 Run → 用户确认一条 Run → static/dynamic clicking、continuous tracking 或 target switching 的专项分析 → 完整动作级 processed data、指标与候选诊断 → Coach 基于支持证据和反例综合解释 → 本地历史、计划与复测；movement aiming 没有移动遥测时只保留 outcome-only；未选择 Run 保留为待分析，手动 `MP4 + Stats` 作为独立 fallback；
 2. **闭环可靠性与共同设计语言**：状态/失败/恢复、通知、日志、History 支撑，以及统一 token 和基础组件；
 3. **本地视觉预处理与质量 Gate**：Raw Input 负责输入运动学；当前 MP4 仅在本地确定性预处理为目标、准星、误差和事件数值证据，并受质量 Gate 约束。未来若让视觉模型读取片段，必须另立版本化、显式授权且有预算上限的合同；
 4. **运营与生态能力**：开源发布、Provider / 认证接入、显式导出 / 导入、经验证的外设目录、商业关系披露和联盟链接治理；
@@ -179,13 +179,13 @@ processing（本地 runtime，可后台 / 可切走）
   ↓ 完成时
 全局 toast + 顶栏角标（不强制跳转）
   ↓
-diagnosis_report（确定性诊断 / 无 LLM 仍完整）
-  ├ 输入运动学 + 三层根因 + 指标 + 规则化处方 cues + 图
+diagnosis_report（确定性测量与规则化候选观察 / 无 LLM 仍可用）
+  ├ 输入运动学 + 动作级数据概况 + 候选机制/替代解释 + 指标 + 规则化处方 cues + 图
   ├ 明确显示证据来源：Raw Input / Performance / Stats / MP4
   └ 无可靠视觉证据时不显示或不声称目标相对误差类结论
   ↓
 provider 可用 → 第一次分析完成后自动展开 Coach
-  └ 观察 → 白话解释 → 证据 → 训练方法 → 预期变化 → 复测
+  └ 检查整局动作与反例 → 观察 → 白话解释 → 证据 → 训练方法 → 预期变化 → 复测
 provider 不可用 → 保留本地指标、确定性诊断、规则化提示和 History；显示“连接 Provider 以激活 Coach”
   ↓
 history（待分析训练 + 训练记录 + 分析记录）
@@ -216,7 +216,7 @@ history（待分析训练 + 训练记录 + 分析记录）
 ## 7. 功能边界
 
 ### v1（开源早期版）
-- static/dynamic clicking、continuous tracking 与 target switching 的专项诊断（公平指标 + 三层根因 + 处方）；movement aiming 缺少玩家移动遥测时只提供 outcome-only
+- static/dynamic clicking、continuous tracking 与 target switching 的专项分析（完整动作级 processed data + 公平指标 + 候选诊断 + Coach 综合解释与处方）；movement aiming 缺少玩家移动遥测时只提供 outcome-only
 - KovaaK Run 自动发现与本地训练记录（Stats / Performance）
 - Windows Desktop 自动采集 Raw Input 与仅 KovaaK 窗口的有界硬件编码回放缓冲，Stats / Performance 到达后事后切成独立待分析 Run
 - Windows Raw Input opt-in 与输入原生 flicking 基础诊断；非 Windows 明确降级到视频 fallback
@@ -301,7 +301,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - 自动采集能够把连续 KovaaK Challenge 事后切成独立 Run；单局默认确认、多局选一条，其余待分析 Run 可在 History 找回；
 - 满足 `Stats AND (MP4 OR (Raw + Performance))` 的 Run 可通过用户界面完成对应模式分析；自动采集不足或非 Windows 时，真实 MP4 + Stats CSV 仍可完成 video-fallback 分析、Report 和最小 History 回看；
 - 异常退出不会留下无法恢复的永久进行中状态，失败可识别、可恢复或可重试；
-- 无 LLM 时 deterministic diagnosis / prescription 仍完整可用；
+- 无 LLM 时确定性测量、候选观察和规则化 prescription 仍完整可用；
 - 分析和相关 managed 文件按规则删除，且不级联删除 Coach 消息或长期档案；
 - Storage 显示分类占用，Run-owned 自动录像与 Raw trace 只由用户显式管理，不静默自动清理；
 - 受控访问、真实素材 E2E、关键 Browser/Desktop 交互、build 和健康检查通过。
@@ -310,7 +310,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 
 **产品成功**：
 - v1 阶段：首发四类目标 aim family（static clicking、dynamic clicking、continuous tracking、target switching）均通过各自分析、质量与知识 Gate；首次 Provider onboarding 与本地 fallback 的预期清晰，留存和反馈质量高
-- 用户认可诊断准确（"这说的就是我"）+ coach 有用（"比我自己看指标懂多了"）
+- 用户认可诊断准确（"这说的就是我"）+ Coach 能从完整动作数据中主动发现规律、反例和优先问题（"比我自己看指标和规则报告懂多了"）
 - B 阶段：Coach 能基于证据给出针对性训练方法，用户愿意执行并完成复测，长期档案能够支持后续调整
 - C 阶段：外设推荐被用户认为相关、透明且可忽略；联盟收入来自有帮助的推荐，不以牺牲诊断信任或训练效果为代价
 
