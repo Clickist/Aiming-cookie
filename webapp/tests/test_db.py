@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import os
+from pathlib import Path
 
 import aiosqlite
 import pytest
@@ -72,6 +74,12 @@ async def _has_legacy_chat_message_id_unique_index(conn) -> bool:
     return await cur.fetchone() is not None
 
 
+def _isolated_schema_db_path() -> str:
+    path = os.path.abspath(db.DB_PATH)
+    assert Path(path).parent != Path.cwd().resolve()
+    return path
+
+
 @pytest.mark.asyncio
 async def test_init_schema_creates_sessions_table():
     conn = await db.get_conn()
@@ -95,9 +103,97 @@ async def test_init_schema_creates_index():
 
 
 @pytest.mark.asyncio
+async def test_transaction_gate_allows_same_task_nesting_and_releases_after_cancellation():
+    conn = await db.get_conn()
+    entered = asyncio.Event()
+
+    async def cancelled_transaction() -> None:
+        await conn.execute("BEGIN IMMEDIATE")
+        await conn.execute("INSERT INTO sessions(user_id) VALUES('cancelled-owner')")
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            if conn.in_transaction:
+                await conn.rollback()
+
+    task = asyncio.create_task(cancelled_transaction())
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    async def nested_write() -> None:
+        nested_conn = await db.get_conn()
+        await nested_conn.execute("BEGIN IMMEDIATE")
+        await nested_conn.execute("INSERT INTO sessions(user_id) VALUES('nested-owner')")
+        row = await (
+            await nested_conn.execute(
+                "SELECT user_id FROM sessions WHERE user_id='nested-owner'",
+            )
+        ).fetchone()
+        assert row["user_id"] == "nested-owner"
+        await nested_conn.commit()
+
+    await asyncio.wait_for(nested_write(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_transaction_gate_rolls_back_abandoned_cancelled_owner():
+    conn = await db.get_conn()
+    entered = asyncio.Event()
+
+    async def abandoned_transaction() -> None:
+        await conn.execute("BEGIN IMMEDIATE")
+        await conn.execute("INSERT INTO sessions(user_id) VALUES('abandoned-owner')")
+        entered.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(abandoned_transaction())
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    async def write_after_abandonment() -> None:
+        await conn.execute("INSERT INTO sessions(user_id) VALUES('after-abandonment')")
+        await conn.commit()
+
+    await asyncio.wait_for(write_after_abandonment(), timeout=1)
+    rows = await (
+        await conn.execute(
+            "SELECT user_id FROM sessions WHERE user_id IN "
+            "('abandoned-owner', 'after-abandonment') ORDER BY user_id",
+        )
+    ).fetchall()
+    assert [row["user_id"] for row in rows] == ["after-abandonment"]
+
+
+@pytest.mark.asyncio
+async def test_transaction_gate_serializes_normal_concurrent_writes():
+    async def write_user(user_id: str) -> None:
+        conn = await db.get_conn()
+        await conn.execute("INSERT INTO sessions(user_id) VALUES(?)", (user_id,))
+        await conn.commit()
+
+    await asyncio.wait_for(
+        asyncio.gather(write_user("concurrent-a"), write_user("concurrent-b")),
+        timeout=1,
+    )
+    conn = await db.get_conn()
+    rows = await (
+        await conn.execute(
+            "SELECT user_id FROM sessions WHERE user_id IN ('concurrent-a', 'concurrent-b') "
+            "ORDER BY user_id",
+        )
+    ).fetchall()
+    assert [row["user_id"] for row in rows] == ["concurrent-a", "concurrent-b"]
+
+
+@pytest.mark.asyncio
 async def test_init_schema_migrates_v0_to_v13_transactionally():
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
         os.remove(db_path)
     conn = await aiosqlite.connect(db_path)
@@ -151,7 +247,7 @@ async def test_init_schema_migrates_v0_to_v13_transactionally():
 @pytest.mark.asyncio
 async def test_init_schema_v1_to_v13_idempotent():
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -216,7 +312,7 @@ async def test_init_schema_v1_to_v13_idempotent():
 @pytest.mark.asyncio
 async def test_init_schema_rejects_newer_user_version():
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
         os.remove(db_path)
     conn = await aiosqlite.connect(db_path)
@@ -242,7 +338,7 @@ async def test_init_schema_fresh_user_version_is_v13_with_legacy_column():
 @pytest.mark.asyncio
 async def test_init_schema_migrates_v2_to_v13_idempotent():
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -509,6 +605,34 @@ async def test_connection_enforces_foreign_keys_for_relational_contracts():
 
 
 @pytest.mark.asyncio
+async def test_v16_profile_and_plan_loop_tables_are_present_and_migration_is_transactional():
+    conn = await aiosqlite.connect(":memory:")
+    try:
+        await conn.execute("BEGIN IMMEDIATE")
+        await db._migrate_v16_profile_plan_loop(conn)
+        await conn.execute("ROLLBACK")
+        for table in (
+            "profile_contributions",
+            "profile_contribution_revisions",
+            "profile_contribution_tombstones",
+            "aiming_profile_state",
+            "aiming_profile_dimensions",
+            "training_plan_items",
+            "training_plan_item_statuses",
+            "training_plan_executions",
+            "training_plan_retests",
+        ):
+            row = await (
+                await conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,),
+                )
+            ).fetchone()
+            assert row is None
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
 async def test_v11_v12_migration_helpers_respect_caller_transaction():
     conn = await aiosqlite.connect(":memory:")
     try:
@@ -537,7 +661,7 @@ async def test_v11_v12_migration_helpers_respect_caller_transaction():
 @pytest.mark.asyncio
 async def test_init_schema_migrates_v10_to_v13_training_plan_contract_idempotently():
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -556,7 +680,7 @@ async def test_init_schema_migrates_v10_to_v13_training_plan_contract_idempotent
 @pytest.mark.asyncio
 async def test_v11_to_v13_adds_persistent_coach_command_contract_idempotently():
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
         os.remove(db_path)
     conn = await aiosqlite.connect(db_path)
@@ -612,7 +736,7 @@ async def test_fresh_v14_schema_uses_v13_helper_and_exact_tombstone_ddl(
     monkeypatch,
 ):
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
         os.remove(db_path)
 
@@ -633,7 +757,7 @@ async def test_fresh_v14_schema_uses_v13_helper_and_exact_tombstone_ddl(
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 15
+    assert db.TARGET_USER_VERSION == 16
     assert calls == 1
     assert "analysis_deletion_tombstones" not in db.SCHEMA
     assert _normalized_ddl(db._V13_ANALYSIS_DELETION_TOMBSTONES) == _normalized_ddl(
@@ -710,7 +834,7 @@ async def test_init_schema_upgrades_v12_to_v15_with_tombstone_contract():
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 15
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == db.TARGET_USER_VERSION
     assert await _table_exists(conn, "analysis_deletion_tombstones")
 
 
@@ -727,7 +851,7 @@ async def test_init_schema_v15_second_call_is_idempotent_and_preserves_tombstone
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 15
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == db.TARGET_USER_VERSION
     row = await (
         await conn.execute(
             "SELECT owner_id, cleanup_state, cleanup_attempts, last_error_code "
@@ -832,7 +956,7 @@ async def test_v14_to_v15_adds_run_evidence_tombstones_without_changing_runs():
 
     await db.init_schema()
     conn = await db.get_conn()
-    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 15
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == db.TARGET_USER_VERSION
     row = await (
         await conn.execute(
             "SELECT user_id, source_key, video_state, video_path FROM kovaak_runs "
@@ -854,7 +978,7 @@ async def test_v14_to_v15_adds_run_evidence_tombstones_without_changing_runs():
 @pytest.mark.asyncio
 async def test_init_schema_migrates_v13_to_v15_preserving_run_and_session_rows():
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
         os.remove(db_path)
     conn = await aiosqlite.connect(db_path)
@@ -907,8 +1031,8 @@ async def test_init_schema_migrates_v13_to_v15_preserving_run_and_session_rows()
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 15
-    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == 15
+    assert db.TARGET_USER_VERSION == 16
+    assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == db.TARGET_USER_VERSION
     session = await (
         await conn.execute(
             "SELECT id, user_id, status, video_path, csv_path FROM sessions WHERE id=7"

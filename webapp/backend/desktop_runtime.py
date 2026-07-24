@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from concurrent.futures import Future
+from concurrent.futures import CancelledError, Future
 import json
 import logging
 import os
 import signal
 import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -23,6 +24,8 @@ from .native_capture_client import NativeCaptureClient
 
 LOOPBACK_HOST = "127.0.0.1"
 SERVER_START_POLL_SECONDS = 0.01
+CAPTURE_EXIT_STATUS_POLL_SECONDS = 0.5
+CAPTURE_EXIT_HARD_GRACE_SECONDS = 30
 PARENT_STDIN_WATCH_ENV = "AIMING_COOKIE_WATCH_PARENT_STDIN"
 log = logging.getLogger(__name__)
 
@@ -51,6 +54,22 @@ class FinalizerFutureTracker:
         with self._lock:
             self._futures.discard(future)
 
+    def has_pending(self) -> bool:
+        with self._lock:
+            return bool(self._futures)
+
+    async def wait_for_capture_exit_drain(self, grace_seconds: float) -> bool:
+        deadline = time.monotonic() + max(grace_seconds, 0)
+        observed_finalizer = self.has_pending()
+        while True:
+            if observed_finalizer and not self.has_pending():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, CAPTURE_EXIT_STATUS_POLL_SECONDS))
+            observed_finalizer = observed_finalizer or self.has_pending()
+
     async def drain(self) -> None:
         with self._lock:
             self._closed = True
@@ -63,6 +82,68 @@ class FinalizerFutureTracker:
                 return_exceptions=True,
             )
 
+
+class CaptureExitReleaseTracker:
+    """Release an exited native session after finalizers drain or hard grace."""
+
+    def __init__(self, *, grace_seconds: float = CAPTURE_EXIT_HARD_GRACE_SECONDS) -> None:
+        self._grace_seconds = grace_seconds
+        self._released_sessions: set[str] = set()
+        self._task: asyncio.Task[None] | None = None
+        self._session_id: str | None = None
+
+    async def observe(
+        self,
+        finalizer: KovaaKCaptureFinalizer,
+        finalizer_futures: FinalizerFutureTracker,
+    ) -> None:
+        capture_session_id = await finalizer.finalizing_capture_session()
+        if capture_session_id is None or capture_session_id in self._released_sessions:
+            return
+        if (
+            self._task is not None
+            and not self._task.done()
+            and self._session_id == capture_session_id
+        ):
+            return
+        self._session_id = capture_session_id
+        self._task = asyncio.create_task(
+            self._drain_then_release(
+                finalizer, finalizer_futures, capture_session_id,
+            )
+        )
+
+    async def _drain_then_release(
+        self,
+        finalizer: KovaaKCaptureFinalizer,
+        finalizer_futures: FinalizerFutureTracker,
+        capture_session_id: str,
+    ) -> None:
+        await finalizer_futures.wait_for_capture_exit_drain(self._grace_seconds)
+        if await finalizer.release_capture_session(capture_session_id):
+            self._released_sessions.add(capture_session_id)
+
+    async def monitor(
+        self,
+        finalizer: KovaaKCaptureFinalizer,
+        finalizer_futures: FinalizerFutureTracker,
+        stop_event: asyncio.Event,
+    ) -> None:
+        while not stop_event.is_set():
+            await self.observe(finalizer, finalizer_futures)
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=CAPTURE_EXIT_STATUS_POLL_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                pass
+
+    async def drain(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
 
 def create_server(port: int) -> uvicorn.Server:
     """Create the loopback-only API server without request access logs."""
@@ -177,10 +258,17 @@ def create_kovaak_ingestion_service(
     finalizer_futures: FinalizerFutureTracker | None = None,
 ) -> kovaak_ingest.KovaaKIngestionService:
     """Create the Desktop-only watcher bridge without changing Web runtime behavior."""
+    finalizer_lock = asyncio.Lock()
+
+    async def finalize_one(
+        discovery: kovaak_ingest.KovaaKFileDiscovery,
+    ) -> dict:
+        async with finalizer_lock:
+            return await finalizer.finalize(discovery)
 
     def on_discovery(discovery: kovaak_ingest.KovaaKFileDiscovery) -> Future[dict]:
         future = asyncio.run_coroutine_threadsafe(
-            finalizer.finalize(discovery),
+            finalize_one(discovery),
             loop,
         )
         if finalizer_futures is not None:
@@ -189,6 +277,8 @@ def create_kovaak_ingestion_service(
         def report_result(done: Future[dict]) -> None:
             try:
                 done.result()
+            except CancelledError:
+                return
             except Exception:
                 log.exception("KovaaK run ingestion failed for %s", discovery.stem)
 
@@ -216,6 +306,12 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     stop_task = asyncio.create_task(shutdown_requested.wait())
     finalizer = create_kovaak_capture_finalizer()
     finalizer_futures = FinalizerFutureTracker()
+    capture_exit_releases = CaptureExitReleaseTracker()
+    capture_exit_task = asyncio.create_task(
+        capture_exit_releases.monitor(
+            finalizer, finalizer_futures, shutdown_requested,
+        )
+    )
     ingestion_service = create_kovaak_ingestion_service(
         asyncio.get_running_loop(), finalizer, finalizer_futures,
     )
@@ -262,8 +358,12 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         stop_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await stop_task
-        worker_stop.set()
         ingestion_service.stop()
+        await capture_exit_releases.drain()
+        capture_exit_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await capture_exit_task
+        worker_stop.set()
         await finalizer_futures.drain()
         await finalizer.shutdown()
         server.should_exit = True

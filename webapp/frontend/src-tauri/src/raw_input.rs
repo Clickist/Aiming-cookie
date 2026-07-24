@@ -50,11 +50,20 @@ pub struct MousePoint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotBarrierReceipt {
+    #[serde(rename = "receiptVersion")]
+    pub receipt_version: &'static str,
+    #[serde(rename = "captureSessionStartEpochMs")]
+    pub capture_session_start_epoch_ms: i64,
     #[serde(rename = "coveredThroughEpochMs")]
     pub covered_through_ms: i64,
     #[serde(rename = "snapshotAtEpochMs")]
     pub snapshot_at_ms: i64,
     pub point_count: usize,
+    pub queue_dropped_points: u64,
+    pub queue_drop_first_epoch_ms: Option<i64>,
+    pub queue_drop_last_epoch_ms: Option<i64>,
+    pub ring_expired_points: u64,
+    pub ring_expired_through_epoch_ms: Option<i64>,
     pub clock_source: &'static str,
     pub timebase_version: &'static str,
 }
@@ -146,6 +155,13 @@ pub struct RingBuffer {
     window: Duration,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RingPushOutcome {
+    Accepted,
+    Rejected,
+    ExpiredOldest(i64),
+}
+
 impl RingBuffer {
     pub fn new(window: Duration) -> Self {
         Self {
@@ -154,22 +170,22 @@ impl RingBuffer {
         }
     }
 
-    pub fn push(&mut self, point: MousePoint) -> bool {
+    fn push(&mut self, point: MousePoint) -> RingPushOutcome {
         if self
             .points
             .back()
             .is_some_and(|previous| point.timestamp_ms < previous.timestamp_ms)
         {
-            return false;
+            return RingPushOutcome::Rejected;
         }
         self.points.push_back(point);
         let cutoff = point.timestamp_ms - self.window.as_millis() as i64;
         self.prune_before(cutoff);
         if self.points.len() > MAX_SNAPSHOT_POINTS {
-            self.points.pop_front();
-            return false;
+            let expired = self.points.pop_front().expect("ring has an oldest point");
+            return RingPushOutcome::ExpiredOldest(expired.timestamp_ms);
         }
-        true
+        RingPushOutcome::Accepted
     }
 
     pub fn clear(&mut self) {
@@ -403,7 +419,10 @@ struct CaptureDiagnostics {
     kovaak_process_present: std::sync::atomic::AtomicBool,
     buffered_points: std::sync::atomic::AtomicUsize,
     dropped_points: std::sync::atomic::AtomicU64,
+    queue_drop_first_epoch_ms: std::sync::atomic::AtomicI64,
+    queue_drop_last_epoch_ms: std::sync::atomic::AtomicI64,
     expired_points: std::sync::atomic::AtomicU64,
+    ring_expired_through_epoch_ms: std::sync::atomic::AtomicI64,
     snapshot: Mutex<SnapshotStatus>,
     clock_anchor: CaptureClockAnchor,
 }
@@ -415,7 +434,10 @@ impl CaptureDiagnostics {
             kovaak_process_present: std::sync::atomic::AtomicBool::new(false),
             buffered_points: std::sync::atomic::AtomicUsize::new(0),
             dropped_points: std::sync::atomic::AtomicU64::new(0),
+            queue_drop_first_epoch_ms: std::sync::atomic::AtomicI64::new(i64::MAX),
+            queue_drop_last_epoch_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
             expired_points: std::sync::atomic::AtomicU64::new(0),
+            ring_expired_through_epoch_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
             snapshot: Mutex::new(SnapshotStatus::default()),
             clock_anchor: capture_clock_anchor(),
         }
@@ -447,14 +469,20 @@ impl CaptureDiagnostics {
             .store(points, std::sync::atomic::Ordering::Release);
     }
 
-    fn record_drop(&self) {
+    fn record_drop(&self, timestamp_ms: i64) {
         self.dropped_points
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.queue_drop_first_epoch_ms
+            .fetch_min(timestamp_ms, std::sync::atomic::Ordering::Relaxed);
+        self.queue_drop_last_epoch_ms
+            .fetch_max(timestamp_ms, std::sync::atomic::Ordering::Relaxed);
     }
 
-    fn record_expired(&self, points: usize) {
+    fn record_expired(&self, points: usize, through_epoch_ms: i64) {
         self.expired_points
             .fetch_add(points as u64, std::sync::atomic::Ordering::Relaxed);
+        self.ring_expired_through_epoch_ms
+            .fetch_max(through_epoch_ms, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn record_snapshot_success(&self, timestamp_ms: i64, points: usize) {
@@ -891,8 +919,12 @@ fn snapshot_worker(
         Ok(points) => {
             let mut ring = RingBuffer::new(Duration::from_secs(DEFAULT_BUFFER_MINUTES * 60));
             for point in points {
-                if !ring.push(point) {
-                    diagnostics.record_drop();
+                match ring.push(point) {
+                    RingPushOutcome::Accepted => {}
+                    RingPushOutcome::Rejected => diagnostics.record_drop(point.timestamp_ms),
+                    RingPushOutcome::ExpiredOldest(timestamp_ms) => {
+                        diagnostics.record_expired(1, timestamp_ms)
+                    }
                 }
             }
             ring
@@ -914,7 +946,7 @@ fn snapshot_worker(
     };
     let expired = ring.prune_before(now_ms() - MAX_SNAPSHOT_SPAN_MS);
     if expired > 0 {
-        diagnostics.record_expired(expired);
+        diagnostics.record_expired(expired, now_ms() - MAX_SNAPSHOT_SPAN_MS);
         diagnostics.record_buffered_points(ring.len());
         let _ = write_worker_snapshot(&snapshot_path, &ring, &diagnostics);
     }
@@ -926,20 +958,26 @@ fn snapshot_worker(
             Ok(CaptureMessage::Point(point)) => {
                 let expired = ring.prune_before(point.timestamp_ms - MAX_SNAPSHOT_SPAN_MS);
                 if expired > 0 {
-                    diagnostics.record_expired(expired);
+                    diagnostics.record_expired(expired, point.timestamp_ms - MAX_SNAPSHOT_SPAN_MS);
                 }
-                if ring.push(point) {
-                    diagnostics.record_buffered_points(ring.len());
-                    cadence.mark_dirty(Instant::now());
-                } else {
-                    diagnostics.record_drop();
+                match ring.push(point) {
+                    RingPushOutcome::Accepted => {
+                        diagnostics.record_buffered_points(ring.len());
+                        cadence.mark_dirty(Instant::now());
+                    }
+                    RingPushOutcome::Rejected => diagnostics.record_drop(point.timestamp_ms),
+                    RingPushOutcome::ExpiredOldest(timestamp_ms) => {
+                        diagnostics.record_expired(1, timestamp_ms);
+                        diagnostics.record_buffered_points(ring.len());
+                        cadence.mark_dirty(Instant::now());
+                    }
                 }
             }
             Ok(CaptureMessage::Flush) => {
                 let now = Instant::now();
                 let expired = ring.prune_before(now_ms() - MAX_SNAPSHOT_SPAN_MS);
                 if expired > 0 {
-                    diagnostics.record_expired(expired);
+                    diagnostics.record_expired(expired, now_ms() - MAX_SNAPSHOT_SPAN_MS);
                     diagnostics.record_buffered_points(ring.len());
                 }
                 if expired > 0 || cadence.should_flush(now, true) {
@@ -955,10 +993,35 @@ fn snapshot_worker(
                 let now = Instant::now();
                 let result =
                     write_worker_snapshot(&snapshot_path, &ring, &diagnostics).map(|snapshot| {
+                        let queue_dropped_points = diagnostics
+                            .dropped_points
+                            .load(std::sync::atomic::Ordering::Acquire);
+                        let ring_expired_points = diagnostics
+                            .expired_points
+                            .load(std::sync::atomic::Ordering::Acquire);
                         SnapshotBarrierReceipt {
+                            receipt_version: "raw_snapshot_receipt.v2",
+                            capture_session_start_epoch_ms: diagnostics.clock_anchor.utc_epoch_ms,
                             covered_through_ms,
                             snapshot_at_ms: snapshot.snapshot_at_ms,
                             point_count: snapshot.point_count,
+                            queue_dropped_points,
+                            queue_drop_first_epoch_ms: (queue_dropped_points > 0).then_some(
+                                diagnostics
+                                    .queue_drop_first_epoch_ms
+                                    .load(std::sync::atomic::Ordering::Acquire),
+                            ),
+                            queue_drop_last_epoch_ms: (queue_dropped_points > 0).then_some(
+                                diagnostics
+                                    .queue_drop_last_epoch_ms
+                                    .load(std::sync::atomic::Ordering::Acquire),
+                            ),
+                            ring_expired_points,
+                            ring_expired_through_epoch_ms: (ring_expired_points > 0).then_some(
+                                diagnostics
+                                    .ring_expired_through_epoch_ms
+                                    .load(std::sync::atomic::Ordering::Acquire),
+                            ),
                             clock_source: diagnostics.clock_anchor.clock_source,
                             timebase_version: diagnostics.clock_anchor.timebase_version,
                         }
@@ -971,7 +1034,7 @@ fn snapshot_worker(
                 let now = Instant::now();
                 let expired = ring.prune_before(now_ms() - MAX_SNAPSHOT_SPAN_MS);
                 if expired > 0 {
-                    diagnostics.record_expired(expired);
+                    diagnostics.record_expired(expired, now_ms() - MAX_SNAPSHOT_SPAN_MS);
                     diagnostics.record_buffered_points(ring.len());
                 }
                 if expired > 0 || cadence.should_flush(now, false) {
@@ -984,7 +1047,7 @@ fn snapshot_worker(
                 let now = Instant::now();
                 let expired = ring.prune_before(now_ms() - MAX_SNAPSHOT_SPAN_MS);
                 if expired > 0 {
-                    diagnostics.record_expired(expired);
+                    diagnostics.record_expired(expired, now_ms() - MAX_SNAPSHOT_SPAN_MS);
                     diagnostics.record_buffered_points(ring.len());
                 }
                 if expired > 0 || cadence.should_flush(now, true) {
@@ -1310,15 +1373,19 @@ unsafe fn capture_raw_mouse(
     }
     let dx = std::ptr::read_unaligned(mouse.add(12) as *const i32);
     let dy = std::ptr::read_unaligned(mouse.add(16) as *const i32);
-    match points.try_send(CaptureMessage::Point(MousePoint {
+    let point = MousePoint {
         timestamp_ms: diagnostics.capture_timestamp_ms(),
         dx,
         dy,
         buttons: *buttons,
-    })) {
+    };
+    match points.try_send(CaptureMessage::Point(point)) {
         Ok(()) => {}
-        Err(std::sync::mpsc::TrySendError::Full(_))
-        | Err(std::sync::mpsc::TrySendError::Disconnected(_)) => diagnostics.record_drop(),
+        Err(std::sync::mpsc::TrySendError::Full(CaptureMessage::Point(point)))
+        | Err(std::sync::mpsc::TrySendError::Disconnected(CaptureMessage::Point(point))) => {
+            diagnostics.record_drop(point.timestamp_ms)
+        }
+        Err(_) => unreachable!("point enqueue returns the original point message"),
     }
     Ok(())
 }
@@ -1673,8 +1740,8 @@ mod tests {
     #[test]
     fn capture_diagnostics_expose_drop_and_snapshot_failure() {
         let diagnostics = CaptureDiagnostics::new();
-        diagnostics.record_drop();
-        diagnostics.record_expired(2);
+        diagnostics.record_drop(40);
+        diagnostics.record_expired(2, 39);
         diagnostics.record_snapshot_failure("trace_snapshot_failed", "disk full".to_string());
 
         let failed = diagnostics.status();
@@ -1696,6 +1763,30 @@ mod tests {
         assert_eq!(recovered.last_snapshot_at_ms, Some(42));
         assert_eq!(recovered.snapshot_error, None);
         assert_eq!(recovered.snapshot_error_code, None);
+    }
+
+    #[test]
+    fn raw_snapshot_receipt_v2_preserves_bounded_loss_scope() {
+        let receipt = SnapshotBarrierReceipt {
+            receipt_version: "raw_snapshot_receipt.v2",
+            capture_session_start_epoch_ms: 1_000,
+            covered_through_ms: 2_000,
+            snapshot_at_ms: 2_001,
+            point_count: 17,
+            queue_dropped_points: 2,
+            queue_drop_first_epoch_ms: Some(1_200),
+            queue_drop_last_epoch_ms: Some(1_300),
+            ring_expired_points: 0,
+            ring_expired_through_epoch_ms: None,
+            clock_source: "utc_epoch_ms+qpc",
+            timebase_version: "time_alignment.v2",
+        };
+
+        let serialized = serde_json::to_value(receipt).unwrap();
+        assert_eq!(serialized["receiptVersion"], "raw_snapshot_receipt.v2");
+        assert_eq!(serialized["queueDropFirstEpochMs"], 1_200);
+        assert_eq!(serialized["queueDropLastEpochMs"], 1_300);
+        assert!(serialized["ringExpiredThroughEpochMs"].is_null());
     }
 
     #[test]

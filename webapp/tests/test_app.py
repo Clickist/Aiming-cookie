@@ -28,7 +28,11 @@ async def test_lifespan_reconciles_after_schema_before_api_ready(monkeypatch):
         events.append("schema")
 
     async def fake_reconcile_analysis_deletions() -> dict[str, int]:
-        events.append("reconcile")
+        events.append("deletions")
+        return {"processed": 0, "cleaned": 0, "failed": 0}
+
+    async def fake_reconcile_stale_uploads() -> dict[str, int]:
+        events.append("uploads")
         return {"processed": 0, "cleaned": 0, "failed": 0}
 
     monkeypatch.setattr(app_module, "init_schema", fake_init_schema)
@@ -37,11 +41,16 @@ async def test_lifespan_reconciles_after_schema_before_api_ready(monkeypatch):
         "reconcile_analysis_deletions",
         fake_reconcile_analysis_deletions,
     )
+    monkeypatch.setattr(
+        queue,
+        "reconcile_stale_uploads",
+        fake_reconcile_stale_uploads,
+    )
 
     async with app_module.lifespan(app_module.app):
         events.append("ready")
 
-    assert events == ["schema", "reconcile", "ready"]
+    assert events == ["schema", "deletions", "uploads", "ready"]
 
 
 @pytest.mark.asyncio

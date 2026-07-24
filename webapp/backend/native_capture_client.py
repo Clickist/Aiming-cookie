@@ -133,22 +133,59 @@ def _validate_status(value: object) -> dict[str, object]:
 
 
 def _validate_snapshot_barrier(value: object) -> dict[str, object]:
-    snapshot = _exact_object(
-        value,
-        {
-            "coveredThroughEpochMs",
-            "snapshotAtEpochMs",
-            "pointCount",
-            "clockSource",
-            "timebaseVersion",
-        },
-        "response",
-    )
+    legacy_keys = {
+        "coveredThroughEpochMs",
+        "snapshotAtEpochMs",
+        "pointCount",
+        "clockSource",
+        "timebaseVersion",
+    }
+    v2_keys = legacy_keys | {
+        "receiptVersion",
+        "captureSessionStartEpochMs",
+        "queueDroppedPoints",
+        "queueDropFirstEpochMs",
+        "queueDropLastEpochMs",
+        "ringExpiredPoints",
+        "ringExpiredThroughEpochMs",
+    }
+    if not isinstance(value, dict):
+        raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
+    snapshot = value
+    keys = set(snapshot)
+    if keys == v2_keys:
+        if snapshot.get("receiptVersion") != "raw_snapshot_receipt.v2":
+            raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
+        _strict_int(snapshot.get("captureSessionStartEpochMs"), "response")
+        queue_dropped = _strict_int(
+            snapshot.get("queueDroppedPoints"), "response", minimum=0,
+        )
+        queue_first = snapshot.get("queueDropFirstEpochMs")
+        queue_last = snapshot.get("queueDropLastEpochMs")
+        if queue_dropped == 0:
+            if queue_first is not None or queue_last is not None:
+                raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
+        else:
+            first = _strict_int(queue_first, "response")
+            last = _strict_int(queue_last, "response")
+            if first > last:
+                raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
+        ring_expired = _strict_int(
+            snapshot.get("ringExpiredPoints"), "response", minimum=0,
+        )
+        ring_through = snapshot.get("ringExpiredThroughEpochMs")
+        if ring_expired == 0:
+            if ring_through is not None:
+                raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
+        else:
+            _strict_int(ring_through, "response")
+    elif keys != legacy_keys:
+        raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
     covered_through = _strict_int(
         snapshot.get("coveredThroughEpochMs"), "response",
     )
     snapshot_at = _strict_int(snapshot.get("snapshotAtEpochMs"), "response")
-    _strict_int(snapshot.get("pointCount"), "response")
+    _strict_int(snapshot.get("pointCount"), "response", minimum=0)
     if covered_through > snapshot_at:
         raise NativeCaptureProtocolError("capture_control_response_schema_invalid")
     if snapshot.get("clockSource") != "utc_epoch_ms+qpc":
