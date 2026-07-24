@@ -6,11 +6,13 @@ from unittest.mock import patch
 
 import pytest
 
+from kovaak_tracker.analysis_evidence import build_processed_event_table_catalog_v1
 from kovaak_tracker.native_flicking_analysis import (
     NativeFlickingAnalysisError,
     _event_sparc,
     align_points_to_challenge,
     analyze_native_flicking,
+    build_native_static_evidence_extension,
     derive_trajectory,
 )
 
@@ -68,6 +70,36 @@ def test_derived_trajectory_uses_prefix_sums_without_mutating_raw_points():
     assert raw_points == original_points
 
 
+def test_native_analysis_derives_trajectory_once():
+    points = [
+        point(1_000, 0, 0),
+        point(1_050, 5, 0),
+        point(1_100, 0, 0, buttons=1),
+        point(1_200, 0, 0),
+    ]
+
+    with patch(
+        "kovaak_tracker.native_flicking_analysis.derive_trajectory",
+        wraps=derive_trajectory,
+    ) as derive:
+        result = analyze_native_flicking(points, performance(duration_ms=200))
+
+    assert result["status"] == "available"
+    assert derive.call_count == 1
+
+
+def test_public_alignment_rederives_points_with_forged_cumulative_fields():
+    raw_points = [
+        {**point(1_000, 3, 0), "x_raw_counts": 999, "y_raw_counts": -999},
+        {**point(1_050, 2, 0), "x_raw_counts": 998, "y_raw_counts": -998},
+    ]
+
+    aligned = align_points_to_challenge(raw_points, performance(duration_ms=100))
+
+    assert [item["x_raw_counts"] for item in aligned["points"]] == [3, 5]
+    assert [item["y_raw_counts"] for item in aligned["points"]] == [0, 0]
+
+
 def test_trajectory_accepts_same_millisecond_records_but_rejects_invalid_timestamps():
     assert [item["x_raw_counts"] for item in derive_trajectory([
         point(1_000, 1, 0),
@@ -80,6 +112,18 @@ def test_trajectory_accepts_same_millisecond_records_but_rejects_invalid_timesta
     with pytest.raises(NativeFlickingAnalysisError, match="timestamp_ms"):
         derive_trajectory([point("not-an-epoch", 1, 0)])
 
+    aligned = align_points_to_challenge(
+        [
+            point(1_000, 1, 0),
+            point(1_000, 2, 0),
+            point(1_000, 3, 0),
+            point(1_200, 0, 0),
+        ],
+        performance(),
+    )
+    assert [item["dx"] for item in aligned["points"]] == [1, 2, 3]
+    assert [item["x_raw_counts"] for item in aligned["points"]] == [1, 3, 6]
+
 
 def test_alignment_reports_aligned_partial_failed_and_unavailable_with_coverage():
     perf = performance()
@@ -90,7 +134,7 @@ def test_alignment_reports_aligned_partial_failed_and_unavailable_with_coverage(
     )
     assert aligned["status"] == "aligned"
     assert aligned["coverage_ratio"] == 1.0
-    assert [item["timestamp_ms"] for item in aligned["points"]] == [1_000, 1_100, 1_200]
+    assert [item["timestamp_ms"] for item in aligned["points"]] == [1_000, 1_100]
 
     partial = align_points_to_challenge(
         [point(950, 0, 0), point(1_100, 0, 0)],
@@ -108,6 +152,103 @@ def test_alignment_reports_aligned_partial_failed_and_unavailable_with_coverage(
     unavailable = align_points_to_challenge([point(1_000, 0, 0)], None)
     assert unavailable["status"] == "unavailable"
     assert unavailable["coverage_ratio"] is None
+
+
+def test_frozen_canonical_window_overrides_drifting_performance_anchor():
+    frozen_window = {
+        "schema_version": "canonical_time_window.v1",
+        "timebase_version": "time_alignment.v2",
+        "start_ms": 1_000,
+        "end_ms": 1_200,
+        "duration_ms": 200,
+        "start_source": "stats_challenge_start",
+        "end_source": "timer_profile",
+        "warnings": [],
+    }
+
+    aligned = align_points_to_challenge(
+        [point(1_000, 0, 0), point(1_100, 1, 0), point(1_200, 9, 0)],
+        performance(start_ms=9_000, duration_ms=500),
+        canonical_window=frozen_window,
+    )
+
+    assert aligned["anchor_source"] == "stats_challenge_start+timer_profile"
+    assert aligned["challenge_start_epoch_ms"] == 1_000
+    assert aligned["challenge_end_epoch_ms"] == 1_200
+    assert [item["timestamp_ms"] for item in aligned["points"]] == [1_000, 1_100]
+
+
+def test_frozen_millisecond_window_keeps_118_clicks_matching_stats_shots():
+    start_ms = 1_699_897_600_797
+    end_ms = start_ms + 60_000
+    click_times = [start_ms + 20 + index * 510 for index in range(118)]
+    points = [point(start_ms - 1, 0, 0)]
+    for timestamp_ms in click_times:
+        points.extend(
+            [
+                point(timestamp_ms - 10, 1, 0),
+                point(timestamp_ms, 0, 0, buttons=1),
+                point(timestamp_ms + 1, 0, 0),
+            ]
+        )
+    points.append(point(end_ms, 0, 0))
+    stats = {
+        "summary": {"Shots Fired": "118"},
+        "weapon_aggregates": [{"Weapon": "Gun", "Shots": 118}],
+    }
+    frozen_window = {
+        "schema_version": "canonical_time_window.v1",
+        "timebase_version": "time_alignment.v2",
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "duration_ms": 60_000,
+        "start_source": "stats_challenge_start",
+        "end_source": "timer_profile",
+        "warnings": [],
+    }
+
+    result = analyze_native_flicking(
+        points,
+        performance(start_ms=start_ms - 797, duration_ms=60_000),
+        stats=stats,
+        canonical_window=frozen_window,
+    )
+
+    assert result["evidence"]["alignment"]["challenge_start_epoch_ms"] == start_ms
+    assert result["evidence"]["alignment"]["challenge_end_epoch_ms"] == end_ms
+    assert result["deterministic"]["metrics"]["flick_count"]["value"] == 118
+    assert len(_flick_events(result)) == 118
+    assert result["evidence"]["sources"]["stats"]["facts"] == stats
+
+
+def test_performance_timeline_uses_same_half_open_frozen_window():
+    frozen_window = {
+        "schema_version": "canonical_time_window.v1",
+        "timebase_version": "time_alignment.v2",
+        "start_ms": 1_000,
+        "end_ms": 1_200,
+        "duration_ms": 200,
+        "start_source": "stats_challenge_start",
+        "end_source": "timer_profile",
+        "warnings": [],
+    }
+    result = analyze_native_flicking(
+        [point(1_000, 1, 0), point(1_100, 1, 0), point(1_200, 0, 0)],
+        performance(
+            events=[
+                {"timestamp": 0.199, "payload_type": "shotsFired", "count": 1},
+                {"timestamp": 0.200, "payload_type": "shotsFired", "count": 1},
+            ]
+        ),
+        canonical_window=frozen_window,
+    )
+
+    performance_events = [
+        event
+        for event in result["deterministic"]["timeline"]
+        if event.get("source") == "performance"
+    ]
+    assert [event["relative_ms"] for event in performance_events] == [199.0]
 
 
 def test_legacy_performance_snapshot_with_pause_is_unavailable():
@@ -139,8 +280,13 @@ def test_legacy_performance_snapshot_with_stats_pause_count_is_unavailable():
 
 def test_metrics_stay_in_raw_counts_without_calibration_and_keep_provenance():
     result = analyze_native_flicking(
-        [point(1_000, 3, 4), point(1_100, 0, 10), point(1_200, 0, 20)],
-        performance(),
+        [
+            point(1_000, 3, 4),
+            point(1_100, 0, 10),
+            point(1_200, 0, 20),
+            point(1_202, 0, 0),
+        ],
+        performance(duration_ms=201),
         stats={"kills": 2, "scenario": "test"},
     )
 
@@ -154,7 +300,7 @@ def test_metrics_stay_in_raw_counts_without_calibration_and_keep_provenance():
         "availability": "available",
         "provenance": {"kind": "derived", "sources": ["raw_input"]},
         "metric_version": "native_flicking.v1",
-        "sample_count": 3,
+            "sample_count": 3,
         "coverage": 1.0,
         "limitations": [],
     }
@@ -176,7 +322,7 @@ def test_same_millisecond_records_contribute_to_time_based_metrics():
             point(1_100, 0, 4),
             point(1_200, 0, 0),
         ],
-        performance(),
+        performance(duration_ms=201),
     )
 
     metrics = result["deterministic"]["metrics"]
@@ -195,7 +341,7 @@ def test_nonuniform_sampling_uses_duration_weighted_means():
             point(1_400, 60, 0),
             point(1_500, 10, 0),
         ],
-        performance(duration_ms=500),
+        performance(duration_ms=501),
     )
 
     metrics = result["deterministic"]["metrics"]
@@ -383,6 +529,142 @@ def test_multiple_flicks_produce_stable_distributions_and_descriptive_outliers()
     assert peak_speed["sample_count"] == 6
 
 
+def test_static_migration_keeps_existing_metric_envelopes_and_flick_refs_stable():
+    points = [point(1_000, 0, 0)]
+    timestamp = 1_000
+    for distance in (1, 2, 3, 4, 5, 20):
+        timestamp += 10
+        points.append(point(timestamp, distance, 0))
+        timestamp += 10
+        points.append(point(timestamp, 0, 0))
+        timestamp += 10
+        points.append(point(timestamp, 0, 0, buttons=1))
+        timestamp += 1
+        points.append(point(timestamp, 0, 0, buttons=0))
+        timestamp += 9
+        points.append(point(timestamp, 0, 0))
+
+    result = analyze_native_flicking(
+        points,
+        performance(duration_ms=timestamp - 1_000),
+    )
+    peak_speed = result["deterministic"]["metrics"]["peak_speed"]
+
+    assert [event["id"] for event in _flick_events(result)] == [
+        f"flick:{index}" for index in range(1, 7)
+    ]
+    assert {
+        key: peak_speed[key]
+        for key in (
+            "metric_version", "unit", "value", "median", "p25", "p75",
+            "p90", "min", "max", "outlier_method", "outlier_refs",
+            "sample_refs", "sample_count", "coverage", "limitations",
+        )
+    } == {
+        "metric_version": "native_flicking.v1",
+        "unit": "raw_counts_per_second",
+        "value": 300.0,
+        "median": 300.0,
+        "p25": 200.0,
+        "p75": 500.0,
+        "p90": 2_000.0,
+        "min": 100.0,
+        "max": 2_000.0,
+        "outlier_method": "tukey_1_5_iqr_descriptive",
+        "outlier_refs": ["flick:6"],
+        "sample_refs": [f"flick:{index}" for index in range(1, 7)],
+        "sample_count": 6,
+        "coverage": 1.0,
+        "limitations": ["descriptive_distribution_not_health_threshold"],
+    }
+    rendered = repr(result)
+    assert "overshoot" not in rendered
+    assert "undershoot" not in rendered
+    assert "target_relative_error" not in rendered
+
+
+def test_static_evidence_single_long_flick_is_typical_and_declares_segment_truncation():
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 0,
+        "end_ms": 30_000,
+        "duration_ms": 30_000,
+        "window_semantics": "half_open",
+        "timebase_version": "time_alignment.v2",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    artifact = {
+        "schema_version": "analysis_evidence_artifact.v1",
+        "analysis_ref": "analysis:9",
+        "canonical_time_window": window,
+        "canonical_run_facts": None,
+        "normalized_outcome_records": [],
+        "signal_bundles": [],
+        "event_bundles": [],
+        "metric_records": [],
+        "evidence_segments": [],
+        "sample_sets": [],
+        "limitations": [],
+    }
+    native_result = {
+        "evidence": {"coverage": 1.0},
+        "deterministic": {
+            "metrics": {
+                "corrective_count": {
+                    "key": "corrective_count",
+                    "value": 2.0,
+                    "unit": "count",
+                    "availability": "available",
+                    "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                    "metric_version": "native_flicking.v1",
+                    "sample_count": 1,
+                    "coverage": 1.0,
+                    "limitations": ["descriptive_distribution_not_health_threshold"],
+                },
+            },
+            "timeline": [
+                {
+                    "id": "flick:1",
+                    "event_type": "flick",
+                    "start_ms": 0.0,
+                    "peak_ms": 1_000.0,
+                    "end_ms": 19_000.0,
+                    "settle_end_ms": 20_000.0,
+                    "metrics": {"corrective_count": 2},
+                    "coverage": 1.0,
+                    "quality": "available",
+                    "limitations": ["target_relative_facts_unavailable"],
+                }
+            ],
+        },
+    }
+
+    projected = build_native_static_evidence_extension(
+        artifact,
+        native_result,
+        raw_source_ref="run:9:trace",
+        scenario_profile_ref="scenario:static.fixture@1",
+    )
+    table = build_processed_event_table_catalog_v1(projected)[0]
+    catalog_versions = {
+        field["metric_key"]: field["metric_version"]
+        for field in table["field_catalog"]
+        if field["metric_key"] is not None
+    }
+
+    event = projected["event_bundles"][0]["events"][0]
+    segment = projected["evidence_segments"][0]
+    for metric in projected["metric_records"]:
+        assert catalog_versions[metric["metric_key"]] == metric["metric_version"]
+    assert event["end_ms"] == 20_000
+    assert segment["rank_reason"] == "typical"
+    assert segment["end_ms"] - segment["start_ms"] == 12_000
+    assert "insufficient_events_for_within_run_rank" in segment["limitations"]
+    assert "segment_truncated_to_12s" in segment["limitations"]
+
+
 def test_sparc_uses_an_explicit_uniform_resampling_contract():
     speed_distances = [2, 1, 0, 1, 2, 1, 0, 1]
     points = [point(1_000, 0, 0)]
@@ -527,7 +809,7 @@ def test_nonuniform_flick_timing_uses_elapsed_time_not_sample_position():
             point(1_500, 10, 0),
             point(1_600, 0, 0, buttons=1),
         ],
-        performance(duration_ms=600),
+        performance(duration_ms=601),
     )
     event = _flick_events(result)[0]
 
@@ -607,6 +889,17 @@ def test_worker_uses_unchanged_frozen_native_snapshot(tmp_path):
     ):
         path.write_bytes(payload)
     snapshot = {
+        "schema_version": "analysis_input_snapshot.v2",
+        "canonical_time_window": {
+            "schema_version": "canonical_time_window.v1",
+            "timebase_version": "time_alignment.v2",
+            "start_ms": 1_000,
+            "end_ms": 1_200,
+            "duration_ms": 200,
+            "start_source": "stats_challenge_start",
+            "end_source": "timer_profile",
+            "warnings": [],
+        },
         "sources": {
             "stats": {"path": str(stats_path), "fingerprint": frozen_fingerprint(stats_path)},
             "performance": {
@@ -627,11 +920,28 @@ def test_worker_uses_unchanged_frozen_native_snapshot(tmp_path):
         "kovaak_tracker.csv_parser.parse_stats_bytes", return_value=parsed_stats,
     ), patch(
         "kovaak_tracker.performance_parser.parse_performance_bytes",
-        return_value=performance(),
+        return_value=performance(start_ms=9_000),
     ):
         result = worker.run_native_analysis(snapshot)
 
     assert result["status"] == "available"
+    assert result["evidence"]["alignment"]["challenge_start_epoch_ms"] == 1_000
+
+
+def test_worker_rejects_v2_native_snapshot_without_canonical_window():
+    from webapp.backend import worker
+
+    snapshot = {
+        "schema_version": "analysis_input_snapshot.v2",
+        "sources": {
+            "stats": {"path": "stats.csv"},
+            "performance": {"path": "performance.perf"},
+        },
+        "trace": {"path": "trace.bin"},
+    }
+
+    with pytest.raises(ValueError, match="canonical time window missing"):
+        worker.run_native_analysis(snapshot)
 
 
 @pytest.mark.parametrize("changed_source", ["stats", "performance", "raw_input"])
@@ -784,11 +1094,12 @@ def test_worker_consumes_the_same_bytes_it_fingerprinted(
             path.write_bytes(original_bytes[kind])
             os.utime(path, ns=original_times[kind])
 
-    def analyze(trace_points, parsed_performance, *, stats):
+    def analyze(trace_points, parsed_performance, *, stats, canonical_window):
         captured.update({
             "trace": trace_points,
             "performance": parsed_performance,
             "stats": stats,
+            "canonical_window": canonical_window,
         })
         return {"status": "available"}
 

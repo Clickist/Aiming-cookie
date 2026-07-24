@@ -21,6 +21,7 @@ Assumptions and non-goals:
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from math import ceil, gcd, hypot, isfinite
 from typing import Any
 
@@ -65,7 +66,10 @@ def derive_trajectory(points: Iterable[Mapping[str, Any] | Any]) -> list[dict[st
 
 def align_points_to_challenge(
     points: Iterable[Mapping[str, Any] | Any] | None,
-    performance: Mapping[str, Any] | Any | None,
+    performance: Mapping[str, Any] | Any | None = None,
+    *,
+    canonical_window: Mapping[str, Any] | Any | None = None,
+    _trajectory_is_derived: bool = False,
 ) -> dict[str, Any]:
     """Align canonical epoch records to a Performance challenge window.
 
@@ -77,16 +81,18 @@ def align_points_to_challenge(
     if points is None:
         return _alignment_result("unavailable", None, (), "raw_input_missing")
 
-    trajectory = derive_trajectory(points)
-    context = _performance_context(performance)
+    trajectory = points if _trajectory_is_derived else derive_trajectory(points)
+    context = (
+        _canonical_window_context(canonical_window)
+        if canonical_window is not None
+        else _performance_context(performance)
+    )
     if context is None:
         return _alignment_result("unavailable", None, (), "performance_anchor_missing")
 
-    start_ms, duration_ms, alignment_provenance, half_open = context
-    end_ms = start_ms + duration_ms
+    start_ms, end_ms, alignment_provenance, window_warnings = context
+    duration_ms = end_ms - start_ms
     inside = tuple(item for item in trajectory if start_ms <= item["timestamp_ms"] < end_ms)
-    if not half_open:
-        inside = tuple(item for item in trajectory if start_ms <= item["timestamp_ms"] <= end_ms)
     if not inside:
         return _alignment_result("failed", 0.0, (), "trace_outside_challenge_window")
 
@@ -97,18 +103,23 @@ def align_points_to_challenge(
     covered_duration_ms = max(0, overlap_end - overlap_start)
     coverage_ratio = covered_duration_ms / duration_ms
     status = "aligned" if first_raw <= start_ms and last_raw >= end_ms else "partial"
-    warnings = () if status == "aligned" else ("trace_coverage_partial",)
+    warnings = list(window_warnings)
+    if status != "aligned":
+        warnings.append("trace_coverage_partial")
     return {
         "timebase_version": ALIGNMENT_VERSION,
         "raw_clock_source": "system_wall_clock_epoch_ms",
         "anchor_source": alignment_provenance,
+        "challenge_start_epoch_ms": start_ms,
+        "challenge_end_epoch_ms": end_ms,
+        "window_semantics": "half_open",
         "offset_ms": inside[0]["timestamp_ms"] - start_ms,
         "challenge_time_range_ms": [0, duration_ms],
         "status": status,
         "coverage_ratio": coverage_ratio,
         "covered_duration_ms": covered_duration_ms,
         "points": list(inside),
-        "warnings": list(warnings),
+        "warnings": list(dict.fromkeys(warnings)),
     }
 
 
@@ -118,6 +129,7 @@ def analyze_native_flicking(
     *,
     stats: Mapping[str, Any] | None = None,
     calibration: Mapping[str, Any] | None = None,
+    canonical_window: Mapping[str, Any] | Any | None = None,
 ) -> dict[str, Any]:
     """Analyze raw mouse movement without video, target, or sensitivity guesses.
 
@@ -156,7 +168,12 @@ def analyze_native_flicking(
         sources["performance"]["alignment"] = "unavailable"
         return _unavailable_result(sources, alignment, "raw_input_invalid")
 
-    alignment = align_points_to_challenge(trajectory, performance)
+    alignment = align_points_to_challenge(
+        trajectory,
+        performance,
+        canonical_window=canonical_window,
+        _trajectory_is_derived=True,
+    )
     sources["raw_input"]["alignment"] = alignment["status"]
     sources["performance"]["alignment"] = alignment["status"]
     if alignment["status"] == "unavailable":
@@ -170,11 +187,10 @@ def analyze_native_flicking(
     if calibrated is not None:
         metrics["calibrated_path_length"] = calibrated
 
-    performance_context = _performance_context(performance)
-    if performance_context is None:
+    challenge_start_ms = alignment.get("challenge_start_epoch_ms")
+    challenge_end_ms = alignment.get("challenge_end_epoch_ms")
+    if not isinstance(challenge_start_ms, int) or not isinstance(challenge_end_ms, int):
         return _unavailable_result(sources, alignment, "performance_anchor_missing", trajectory)
-    challenge_start_ms, challenge_duration_ms, _, _ = performance_context
-    challenge_end_ms = challenge_start_ms + challenge_duration_ms
     click_anchors = _left_click_anchors(
         trajectory,
         challenge_start_ms,
@@ -198,7 +214,15 @@ def analyze_native_flicking(
     elif not flick_events:
         limitations.append("no_movement_clicks_ignored")
 
-    timeline = _sorted_timeline([*flick_events, *_performance_timeline(performance)])
+    timeline = _sorted_timeline(
+        [
+            *flick_events,
+            *_performance_timeline(
+                performance,
+                duration_ms=challenge_end_ms - challenge_start_ms,
+            ),
+        ]
+    )
     return {
         "analysis_type": "flicking",
         "input_mode": "input_native",
@@ -222,6 +246,406 @@ def analyze_native_flicking(
     }
 
 
+def build_native_static_evidence_extension(
+    artifact: Mapping[str, Any],
+    native_result: Mapping[str, Any] | None,
+    *,
+    raw_source_ref: str | None = None,
+    scenario_profile_ref: str | None = None,
+) -> dict[str, Any]:
+    """Project an input-native result into the bounded evidence contract.
+
+    This is deliberately an adapter: all metric values, versions, and native
+    event segmentation remain those produced above.  The adapter only adds
+    analysis-scoped refs and private derived sample sets; it never creates
+    target-relative facts.
+    """
+    from .analysis_evidence import validate_analysis_evidence_artifact_v1
+
+    projected = deepcopy(dict(artifact))
+    if not isinstance(native_result, Mapping):
+        return validate_analysis_evidence_artifact_v1(projected)
+    analysis_ref = projected["analysis_ref"]
+    window = projected["canonical_time_window"]
+    window_start = int(window["start_ms"])
+    window_end = int(window["end_ms"])
+    deterministic = native_result.get("deterministic") or {}
+    if not isinstance(raw_source_ref, str) or not raw_source_ref:
+        return validate_analysis_evidence_artifact_v1(projected)
+    raw_ref = raw_source_ref
+    source_coverage = max(
+        0.0,
+        min(1.0, float((native_result.get("evidence") or {}).get("coverage") or 0.0)),
+    )
+
+    trajectory = deterministic.get("trajectory") or {}
+    points = trajectory.get("points") if isinstance(trajectory, Mapping) else None
+    if isinstance(points, list):
+        projected["sample_sets"], projected["signal_bundles"] = _native_signal_bundles(
+            points,
+            analysis_ref=analysis_ref,
+            window_start=window_start,
+            window_end=window_end,
+            source_ref=raw_ref,
+            source_coverage=source_coverage,
+        )
+
+    flicks = [
+        item for item in (deterministic.get("timeline") or [])
+        if isinstance(item, Mapping) and item.get("event_type") == "flick"
+    ]
+    event_bundle, legacy_to_event = _native_event_bundle(
+        flicks,
+        analysis_ref=analysis_ref,
+        window_start=window_start,
+        window_end=window_end,
+        source_ref=raw_ref,
+    )
+    projected["event_bundles"] = [event_bundle] if event_bundle["events"] else []
+    projected["metric_records"] = _native_metric_records(
+        deterministic.get("metrics") or {},
+        source_ref=raw_ref,
+        scenario_profile_ref=scenario_profile_ref,
+        legacy_to_event=legacy_to_event,
+    )
+    projected["evidence_segments"] = _native_segments(
+        flicks,
+        projected["metric_records"],
+        analysis_ref=analysis_ref,
+        window_start=window_start,
+        window_end=window_end,
+        available_channels=[
+            channel["channel_key"]
+            for bundle in projected["signal_bundles"]
+            for channel in bundle["channels"]
+        ],
+        source_coverage=source_coverage,
+        legacy_to_event=legacy_to_event,
+    )
+    for metric in projected["metric_records"]:
+        metric_ref = f"metric:{metric['metric_key']}@{metric['metric_version']}"
+        metric["evidence_segment_refs"] = [
+            segment["segment_id"]
+            for segment in projected["evidence_segments"]
+            if metric_ref in segment["metric_refs"]
+        ]
+    validate_analysis_evidence_artifact_v1(projected)
+    return projected
+
+
+def _native_signal_bundles(
+    points: list[Mapping[str, Any]],
+    *,
+    analysis_ref: str,
+    window_start: int,
+    window_end: int,
+    source_ref: str,
+    source_coverage: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    inside = [
+        dict(point) for point in points
+        if isinstance(point.get("timestamp_ms"), int)
+        and window_start <= int(point["timestamp_ms"]) < window_end
+    ]
+    if not inside:
+        return [], []
+    base_x = int(inside[0].get("x_raw_counts") or 0)
+    base_y = int(inside[0].get("y_raw_counts") or 0)
+    sample_sets: list[dict[str, Any]] = []
+    channels: list[dict[str, Any]] = []
+
+    def add_channel(key: str, unit: str, values: list[list[float | int]]) -> None:
+        if not values:
+            return
+        sample_id = f"{analysis_ref}:samples:{key.replace('.', '-') }"
+        sample_sets.append({"sample_set_id": sample_id, "channel_key": key, "unit": unit, "points": values})
+        channels.append({
+            "channel_key": key,
+            "source_refs": [source_ref],
+            "coordinate_space": "raw_input_counts",
+            "unit": unit,
+            "sample_rate_semantics": "irregular_source_order",
+            "samples_ref": sample_id,
+            "coverage": source_coverage,
+            "confidence_summary": source_coverage,
+            "transform_version": "native_flicking.trajectory.v1",
+            "limitations": ["target_relative_facts_unavailable"],
+        })
+
+    add_channel(
+        "mouse.position_x",
+        "raw_counts",
+        [[int(point["timestamp_ms"]), int(point.get("x_raw_counts") or 0) - base_x] for point in inside],
+    )
+    add_channel(
+        "mouse.position_y",
+        "raw_counts",
+        [[int(point["timestamp_ms"]), int(point.get("y_raw_counts") or 0) - base_y] for point in inside],
+    )
+    speed_samples = _speed_samples(inside)
+    add_channel("mouse.speed", "raw_counts_per_second", [[timestamp, speed] for timestamp, speed, _ in speed_samples])
+    acceleration_samples = _acceleration_samples(speed_samples)
+    add_channel(
+        "mouse.acceleration",
+        "raw_counts_per_second_squared",
+        [[timestamp, acceleration] for timestamp, acceleration, _ in acceleration_samples],
+    )
+    return sample_sets, [{
+        "schema_version": "signal_bundle.v1",
+        "analysis_ref": analysis_ref,
+        "canonical_time_window_ref": f"{analysis_ref}:canonical-window",
+        "visual_quality_profile_ref": None,
+        "observed_visual_domain": None,
+        "channels": channels,
+    }] if channels else []
+
+
+def _native_event_bundle(
+    flicks: list[Mapping[str, Any]],
+    *,
+    analysis_ref: str,
+    window_start: int,
+    window_end: int,
+    source_ref: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    events: list[dict[str, Any]] = []
+    legacy_to_event: dict[str, str] = {}
+    attr_keys = {
+        "movement_duration_ms", "time_to_peak_ms", "accel_duration_ms", "decel_duration_ms",
+        "settle_duration_ms", "decel_frac", "peak_position_pct", "peak_speed", "path_length",
+        "displacement", "path_efficiency", "straightness", "reverse_ratio",
+        "direction_reverse_ratio", "corrective_count", "submovement_count",
+        "trough_depth_ratio", "submovement_overlap", "sparc",
+    }
+    for index, flick in enumerate(flicks, 1):
+        legacy_id = flick.get("id")
+        if not isinstance(legacy_id, str):
+            legacy_id = f"flick:{index}"
+        event_id = f"{analysis_ref}:event:static-flick:{index}"
+        start = _native_integral_ms(flick.get("start_ms"), window_start)
+        movement_end = _native_integral_ms(flick.get("end_ms"), window_start)
+        settle_end = _native_integral_ms(flick.get("settle_end_ms"), window_start)
+        if start is None or movement_end is None or settle_end is None:
+            continue
+        end = min(window_end, max(start, settle_end))
+        if not (window_start <= start < window_end and start <= end <= window_end):
+            continue
+        metrics = flick.get("metrics") or {}
+        attributes: dict[str, Any] = {
+            "legacy_event_ref": legacy_id,
+            "peak_ms": _native_integral_ms(flick.get("peak_ms"), window_start),
+            "settle_end_ms": settle_end,
+            "quality": str(flick.get("quality") or "available"),
+        }
+        for key in attr_keys:
+            value = metrics.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)):
+                continue
+            attributes[key] = value
+        attributes = {key: value for key, value in attributes.items() if value is not None}
+        limitations = list(dict.fromkeys(str(item) for item in (flick.get("limitations") or []) if isinstance(item, str)))
+        events.append({
+            "event_id": event_id,
+            "event_kind": "static_flick",
+            "start_ms": start,
+            "end_ms": end,
+            "actor_refs": [],
+            "source_refs": [source_ref],
+            "confidence": max(0.0, min(1.0, float(flick.get("coverage") or 0.0))),
+            "attributes": attributes,
+            "limitations": limitations,
+        })
+        legacy_to_event[legacy_id] = event_id
+    return {"schema_version": "event_bundle.v1", "analysis_ref": analysis_ref, "events": events, "outcome_associations": []}, legacy_to_event
+
+
+def _native_integral_ms(value: Any, offset: int) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)):
+        return None
+    if int(value) != value:
+        return None
+    return int(value) + offset
+
+
+def _native_metric_records(
+    metrics: Mapping[str, Any],
+    *,
+    source_ref: str,
+    scenario_profile_ref: str | None,
+    legacy_to_event: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for key, legacy in metrics.items():
+        if not isinstance(key, str) or not isinstance(legacy, Mapping):
+            continue
+        value = legacy.get("value")
+        availability = legacy.get("availability")
+        if availability not in {"available", "partial", "unavailable"}:
+            continue
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not isfinite(float(value))
+        ):
+            continue
+        metric_key = f"static_clicking.{key}"
+        metric_version = str(legacy.get("metric_version") or METRIC_VERSION)
+        sample_count = int(legacy.get("sample_count") or 0)
+        valid_count = sample_count if availability != "unavailable" else 0
+        limitations = list(dict.fromkeys(str(item) for item in (legacy.get("limitations") or []) if isinstance(item, str)))
+        distribution = None
+        if any(field in legacy for field in ("min", "p25", "median", "p75", "p90", "max")):
+            distribution = {
+                "min": legacy.get("min"), "p10": None, "p25": legacy.get("p25"),
+                "median": legacy.get("median", value), "p75": legacy.get("p75"),
+                "p90": legacy.get("p90"), "max": legacy.get("max"), "histogram_bins": [],
+            }
+            limitations.append("p10_and_histogram_not_emitted_by_native_adapter")
+        condition_refs = [scenario_profile_ref] if isinstance(scenario_profile_ref, str) else []
+        calibration_ref = legacy.get("calibration_ref")
+        if isinstance(calibration_ref, str):
+            condition_refs.append(calibration_ref)
+        event_refs = [
+            legacy_to_event[ref]
+            for ref in [*(legacy.get("outlier_refs") or []), *(legacy.get("sample_refs") or [])]
+            if isinstance(ref, str) and ref in legacy_to_event
+        ]
+        records.append({
+            "schema_version": "metric_record.v1",
+            "metric_key": metric_key,
+            "metric_version": metric_version,
+            "value": None if availability == "unavailable" else value,
+            "unit": str(legacy.get("unit") or "source_native"),
+            "availability": availability,
+            "classification": "deterministic",
+            "provenance": {"kind": "derived", "source_refs": [source_ref]},
+            "population": {"sample_count": max(0, sample_count), "valid_count": max(0, valid_count), "excluded_count": 0},
+            "distribution": distribution,
+            "condition_refs": list(dict.fromkeys(condition_refs)),
+            "event_refs": list(dict.fromkeys(event_refs)),
+            "evidence_segment_refs": [],
+            "coverage": legacy.get("coverage"),
+            "confidence": legacy.get("coverage"),
+            "limitations": list(dict.fromkeys(limitations)),
+        })
+    return records
+
+
+def _native_segments(
+    flicks: list[Mapping[str, Any]],
+    metric_records: list[dict[str, Any]],
+    *,
+    analysis_ref: str,
+    window_start: int,
+    window_end: int,
+    available_channels: list[str],
+    source_coverage: float,
+    legacy_to_event: dict[str, str],
+) -> list[dict[str, Any]]:
+    candidates: list[tuple[int, str, float]] = []
+    for index, flick in enumerate(flicks, 1):
+        legacy_id = flick.get("id") if isinstance(flick.get("id"), str) else f"flick:{index}"
+        event_id = legacy_to_event.get(legacy_id)
+        value = (flick.get("metrics") or {}).get("corrective_count")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)):
+            value = (flick.get("metrics") or {}).get("peak_speed")
+        if event_id is not None and isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(float(value)):
+            candidates.append((index, event_id, float(value)))
+    if not candidates:
+        return []
+    values = sorted(item[2] for item in candidates)
+    median = values[(len(values) - 1) // 2]
+    distances = {event_id: abs(value - median) for _, event_id, value in candidates}
+    uses_correction_rank = any(
+        isinstance((flicks[index - 1].get("metrics") or {}).get("corrective_count"), (int, float))
+        and not isinstance((flicks[index - 1].get("metrics") or {}).get("corrective_count"), bool)
+        for index, _, _ in candidates
+    )
+    if len(candidates) == 1:
+        selected: list[tuple[str, tuple[int, str, float]]] = [("typical", candidates[0])]
+    else:
+        worst = (
+            max(candidates, key=lambda item: (item[2], -item[0]))
+            if uses_correction_rank
+            else max(candidates, key=lambda item: (distances[item[1]], item[2], -item[0]))
+        )
+        first_half = candidates[: max(1, len(candidates) // 2)]
+        later = candidates[len(first_half):]
+        improved = None
+        if later:
+            if uses_correction_rank:
+                first_score = sorted(item[2] for item in first_half)[(len(first_half) - 1) // 2]
+                candidate = min(later, key=lambda item: (item[2], item[0]))
+                improved_condition = candidate[2] < first_score
+            else:
+                first_score = sorted(abs(item[2] - median) for item in first_half)[(len(first_half) - 1) // 2]
+                candidate = min(later, key=lambda item: (abs(item[2] - median), item[0]))
+                improved_condition = abs(candidate[2] - median) < first_score
+            if improved_condition:
+                improved = candidate
+        selected = [("worst", worst)]
+        if improved is not None and improved[1] not in {candidate[1] for _, candidate in selected}:
+            selected.append(("improved", improved))
+        remaining = [item for item in candidates if item[1] not in {candidate[1] for _, candidate in selected}]
+        if remaining:
+            typical = min(remaining, key=lambda item: (distances[item[1]], item[0]))
+            selected.append(("typical", typical))
+    segments: list[dict[str, Any]] = []
+    rank_metric_key = "static_clicking.corrective_count" if uses_correction_rank else "static_clicking.peak_speed"
+    rank_metric = next(
+        (metric for metric in metric_records if metric["metric_key"] == rank_metric_key),
+        None,
+    )
+    metric_ref = (
+        f"metric:{rank_metric_key}@{rank_metric['metric_version']}"
+        if rank_metric is not None
+        else f"metric:static_clicking.peak_speed@{METRIC_VERSION}"
+    )
+    for rank_reason, (index, event_id, _) in selected:
+        flick = flicks[index - 1]
+        start = _native_integral_ms(flick.get("start_ms"), window_start)
+        movement_end = _native_integral_ms(flick.get("end_ms"), window_start)
+        settle_end = _native_integral_ms(flick.get("settle_end_ms"), window_start)
+        if start is None or movement_end is None or settle_end is None:
+            continue
+        end = min(window_end, max(start + 1, settle_end))
+        truncated = end - start > 12_000
+        if truncated:
+            end = min(window_end, start + 12_000)
+        if not (window_start <= start < end <= window_end):
+            continue
+        focus_end = min(end, max(start + 1, movement_end))
+        limitations = ["within_run_rank_not_learning_effect", "descriptive_rank_not_health_threshold"]
+        if len(candidates) == 1:
+            limitations.append("insufficient_events_for_within_run_rank")
+        if truncated:
+            limitations.append("segment_truncated_to_12s")
+        if rank_reason == "improved":
+            limitations = ["within_run_late_relative_improvement_not_learning_effect", "descriptive_rank_not_health_threshold"]
+        segments.append({
+            "schema_version": "evidence_segment.v1",
+            "segment_id": f"{analysis_ref}:segment:{rank_reason}:{index}",
+            "analysis_ref": analysis_ref,
+            "analyzer_ref": METRIC_VERSION,
+            "segment_kind": rank_reason,
+            "start_ms": start,
+            "end_ms": end,
+            "focus_start_ms": start,
+            "focus_end_ms": focus_end,
+            "title_key": f"static_clicking.{rank_reason}",
+            "rank_reason": rank_reason,
+            "issue_refs": [],
+            "metric_refs": [metric_ref],
+            "event_refs": [event_id],
+            "available_channels": available_channels,
+            "source_coverage": max(0.0, min(1.0, source_coverage)),
+            "confidence": max(0.0, min(1.0, source_coverage)),
+            "video_playback": {"availability": "unavailable", "artifact_ref": None, "start_ms": None, "end_ms": None},
+            "limitations": limitations,
+        })
+    return segments
+
+
 def _left_click_anchors(
     points: list[dict[str, int]],
     start_ms: int,
@@ -232,7 +656,7 @@ def _left_click_anchors(
     previous_pressed = False
     for point in points:
         pressed = bool(point["buttons"] & 1)
-        if pressed and not previous_pressed and start_ms <= point["timestamp_ms"] <= end_ms:
+        if pressed and not previous_pressed and start_ms <= point["timestamp_ms"] < end_ms:
             anchors.append(point["timestamp_ms"])
         previous_pressed = pressed
     return anchors
@@ -268,11 +692,17 @@ def _event_points(
     points: list[dict[str, int]],
     start_ms: int,
     end_ms: int,
+    *,
+    include_start: bool = False,
 ) -> list[dict[str, int]]:
     return [
         point
         for point in points
-        if start_ms < point["timestamp_ms"] <= end_ms
+        if (
+            start_ms <= point["timestamp_ms"] <= end_ms
+            if include_start
+            else start_ms < point["timestamp_ms"] <= end_ms
+        )
     ]
 
 
@@ -523,8 +953,13 @@ def _build_flick_events(
     events: list[dict[str, Any]] = []
     first_observed_ms = aligned_points[0]["timestamp_ms"] if aligned_points else challenge_start_ms
     previous_anchor_ms = max(challenge_start_ms, first_observed_ms)
-    for anchor_ms in anchors:
-        event_points = _event_points(aligned_points, previous_anchor_ms, anchor_ms)
+    for anchor_index, anchor_ms in enumerate(anchors):
+        event_points = _event_points(
+            aligned_points,
+            previous_anchor_ms,
+            anchor_ms,
+            include_start=anchor_index == 0,
+        )
         quantities = _event_quantities(
             event_points,
             aligned_speed_buckets,
@@ -724,7 +1159,35 @@ def _require_integer(record: Mapping[str, Any] | Any, key: str, index: int) -> i
     return value
 
 
-def _performance_context(performance: Mapping[str, Any] | Any | None) -> tuple[int, int, str, bool] | None:
+def _canonical_window_context(
+    window: Mapping[str, Any] | Any | None,
+) -> tuple[int, int, str, tuple[str, ...]] | None:
+    if window is None:
+        return None
+    if _value(window, "schema_version") != "canonical_time_window.v1":
+        return None
+    start_ms = _value(window, "start_ms")
+    end_ms = _value(window, "end_ms")
+    duration_ms = _value(window, "duration_ms")
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in (start_ms, end_ms, duration_ms)):
+        return None
+    if start_ms < 0 or end_ms <= start_ms or duration_ms != end_ms - start_ms:
+        return None
+    start_source = _value(window, "start_source")
+    end_source = _value(window, "end_source")
+    if not isinstance(start_source, str) or not start_source or not isinstance(end_source, str) or not end_source:
+        return None
+    raw_warnings = _value(window, "warnings") or ()
+    if not isinstance(raw_warnings, (list, tuple)) or not all(
+        isinstance(item, str) and item for item in raw_warnings
+    ):
+        return None
+    return start_ms, end_ms, start_source + "+" + end_source, tuple(raw_warnings)
+
+
+def _performance_context(
+    performance: Mapping[str, Any] | Any | None,
+) -> tuple[int, int, str, tuple[str, ...]] | None:
     if performance is None:
         return None
     header = _value(performance, "header") or performance
@@ -747,7 +1210,12 @@ def _performance_context(performance: Mapping[str, Any] | Any | None) -> tuple[i
                 )
             except (TimeAlignmentError, TypeError, ValueError):
                 return None
-            return anchor, int(direct_duration), "legacy.performance.challenge_start_utc+time_limit_ms", False
+            return (
+                anchor,
+                anchor + int(direct_duration),
+                "legacy.performance.challenge_start_utc+time_limit_ms",
+                (),
+            )
 
     try:
         window = resolve_time_window(
@@ -760,7 +1228,12 @@ def _performance_context(performance: Mapping[str, Any] | Any | None) -> tuple[i
         )
     except (TimeAlignmentError, TypeError, ValueError):
         return None
-    return window.start_ms, window.duration_ms, window.start_source + "+" + window.end_source, True
+    return (
+        window.start_ms,
+        window.end_ms,
+        window.start_source + "+" + window.end_source,
+        window.warnings,
+    )
 
 
 def _alignment_result(
@@ -933,7 +1406,11 @@ def _calibrated_path_length(
     )
 
 
-def _performance_timeline(performance: Mapping[str, Any] | Any | None) -> list[dict[str, Any]]:
+def _performance_timeline(
+    performance: Mapping[str, Any] | Any | None,
+    *,
+    duration_ms: int | None = None,
+) -> list[dict[str, Any]]:
     events = _value(performance, "events")
     if events is None:
         return []
@@ -944,7 +1421,13 @@ def _performance_timeline(performance: Mapping[str, Any] | Any | None) -> list[d
             timestamp = _value(event, "timestamp")
             if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
                 timestamp_ms = timestamp * 1_000
-        if not isinstance(timestamp_ms, (int, float)) or isinstance(timestamp_ms, bool):
+        if (
+            not isinstance(timestamp_ms, (int, float))
+            or isinstance(timestamp_ms, bool)
+            or not isfinite(float(timestamp_ms))
+            or timestamp_ms < 0
+            or (duration_ms is not None and timestamp_ms >= duration_ms)
+        ):
             continue
         item = {
             "relative_ms": float(timestamp_ms),
@@ -1010,5 +1493,6 @@ __all__ = [
     "NativeFlickingAnalysisError",
     "align_points_to_challenge",
     "analyze_native_flicking",
+    "build_native_static_evidence_extension",
     "derive_trajectory",
 ]

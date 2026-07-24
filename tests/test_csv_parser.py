@@ -37,6 +37,48 @@ def test_parse_stats_bytes_matches_file_parser():
     assert from_bytes.kills.equals(from_file.kills)
 
 
+def test_stats_preserve_millisecond_start_unwrap_midnight_and_parse_weapon_aggregates():
+    parsed = parse_stats_bytes(
+        b"\n".join(
+            [
+                b"Kill #,Timestamp,Bot,Weapon,TTK,Shots,Hits,Accuracy,Damage Done,Damage Possible,Efficiency,Cheated,OverShots",
+                b"1,23:59:59.797,target,BB Gun,0.001000s,1,1,1.0,1.0,1.0,1.0,0,0",
+                b"2,00:00:00.047,target,BB Gun,0.001000s,1,0,0.0,0.0,1.0,0.0,0,0",
+                b"Weapon,Shots,Hits,Damage Done,Damage Possible,,Sens Scale,Horiz Sens",
+                b"BB Gun,2,1,1.0,2.0,,Source,1.0",
+                b"",
+                b"Challenge Start:,23:59:59.797",
+                b"Scenario:,midnight fixture",
+                b"",
+            ]
+        ),
+        file_name="midnight Stats.csv",
+    )
+
+    assert parsed.challenge_start.microsecond == 797_000
+    assert parsed.kills["time_s"].tolist() == [0.0, 0.25]
+    assert parsed.weapon_aggregates == (
+        {
+            "Weapon": "BB Gun",
+            "Shots": 2,
+            "Hits": 1,
+            "Damage Done": 1.0,
+            "Damage Possible": 2.0,
+        },
+    )
+    assert parsed.field_presence == {
+        "summary": ("Challenge Start", "Scenario"),
+        "config": (),
+        "weapon_aggregates": (
+            "Weapon",
+            "Shots",
+            "Hits",
+            "Damage Done",
+            "Damage Possible",
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # 各 game yaw → cm/360 正确计算
 # ---------------------------------------------------------------------------

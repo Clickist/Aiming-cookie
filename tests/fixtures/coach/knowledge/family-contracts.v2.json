@@ -1,0 +1,62 @@
+{
+  "schema_version": "coach_knowledge_family_contracts.v2",
+  "registry_version": "2026-07-22.v2",
+  "families": [
+    {
+      "family": "static_clicking",
+      "required_observations": ["event.flick", "metric.terminal_control"],
+      "quality_prerequisites": ["input_kinematics_available", "same_metric_version", "matched_static_condition"],
+      "expected_direction": "comparison_only",
+      "forbidden_inferences": ["target_relative_error_without_track", "body_cause_from_kinematics"],
+      "knowledge_entry_ids": ["static.flicking-terminal-control"]
+    },
+    {
+      "family": "dynamic_clicking",
+      "required_observations": ["event.dynamic_click", "event.repeated_click", "field.target_center", "field.outcome_association", "field.shot_rule", "field.relative_velocity", "event.target_change"],
+      "quality_prerequisites": ["visual_profile_accepted", "canonical_time_aligned", "outcome_association_available", "target_identity_continuous"],
+      "expected_direction": "comparison_only",
+      "forbidden_inferences": ["reading_equals_reaction_time", "predictive_control_without_segment_evidence", "visual_attention_from_trajectory"],
+      "knowledge_entry_ids": ["dynamic.click-error-and-acquisition", "dynamic.speed-matching-and-reading"]
+    },
+    {
+      "family": "predictable_tracking",
+      "required_observations": ["episode.tracking", "field.relative_velocity", "field.steady_segment"],
+      "quality_prerequisites": ["visual_profile_accepted", "canonical_time_aligned", "steady_segment_sufficient", "target_identity_continuous"],
+      "expected_direction": "target_band",
+      "forbidden_inferences": ["phase_lag_equals_reaction_time", "tension_from_speed_mismatch"],
+      "knowledge_entry_ids": ["tracking.predictable-speed-matching"]
+    },
+    {
+      "family": "reactive_tracking",
+      "required_observations": ["event.target_change", "event.loss", "event.reacquisition"],
+      "quality_prerequisites": ["visual_profile_accepted", "canonical_time_aligned", "motion_change_validated", "target_identity_continuous"],
+      "expected_direction": "comparison_only",
+      "forbidden_inferences": ["capture_offset_as_human_response", "detector_loss_as_player_loss", "slow_reflex_diagnosis"],
+      "knowledge_entry_ids": ["tracking.reactive-change-response"]
+    },
+    {
+      "family": "control_tracking",
+      "required_observations": ["episode.tracking", "metric.smoothness", "metric.coverage"],
+      "quality_prerequisites": ["visual_profile_accepted", "canonical_time_aligned", "sparc_version_fixed", "matched_filter_window"],
+      "expected_direction": "comparison_only",
+      "forbidden_inferences": ["correction_is_always_bad", "smoothness_equals_accuracy", "muscle_tension_from_sparc"],
+      "knowledge_entry_ids": ["tracking.control-smoothness"]
+    },
+    {
+      "family": "target_switching",
+      "required_observations": ["event.switch_chain", "event.previous_outcome", "event.leave", "event.transition", "event.next_acquire", "event.settle_or_fire", "field.outcome_association", "field.expected_target_rule"],
+      "quality_prerequisites": ["visual_profile_accepted", "canonical_time_aligned", "target_identity_continuous", "outcome_association_available"],
+      "expected_direction": "comparison_only",
+      "forbidden_inferences": ["nearest_target_is_correct_selection", "selection_without_expected_target_rule", "consecutive_flicks_are_switching_diagnosis"],
+      "knowledge_entry_ids": ["switching.transition-and-arrival", "switching.selection-observable-only"]
+    },
+    {
+      "family": "movement_aiming",
+      "required_observations": ["field.stats_outcome", "field.input_kinematics"],
+      "quality_prerequisites": ["movement_telemetry_unavailable"],
+      "expected_direction": "descriptive_only",
+      "forbidden_inferences": ["counter_strafe_diagnosis", "movement_sync_prescription", "movement_reading_claim"],
+      "knowledge_entry_ids": ["movement.outcome-only-boundary"]
+    }
+  ]
+}

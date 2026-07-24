@@ -1,5 +1,8 @@
+import pytest
+
 from kovaak_tracker.coach.diagnosis import (
     RootCause, ProfileMatch, DiagnosisIssue, CoachDiagnosis,
+    resolve_candidate_knowledge_refs,
 )
 from kovaak_tracker.coach import profiles
 
@@ -25,6 +28,44 @@ def test_diagnosis_frozen():
         pass
 
 
+def test_issue_has_one_primary_and_at_most_two_supporting_evidence_segments():
+    issue = DiagnosisIssue(
+        signal="sparc low",
+        severity="info",
+        root_causes=[],
+        prescriptions=[],
+        priority=1,
+        priority_reason="fixture",
+        primary_evidence_segment_ref="analysis:7:segment:worst:1",
+        supporting_evidence_segment_refs=[
+            "analysis:7:segment:typical:1",
+            "analysis:7:segment:improved:1",
+        ],
+    )
+
+    assert issue.primary_evidence_segment_ref == "analysis:7:segment:worst:1"
+    assert issue.supporting_evidence_segment_refs == [
+        "analysis:7:segment:typical:1",
+        "analysis:7:segment:improved:1",
+    ]
+
+    with pytest.raises(ValueError, match="at most two"):
+        DiagnosisIssue(
+            signal="sparc low",
+            severity="info",
+            root_causes=[],
+            prescriptions=[],
+            priority=1,
+            priority_reason="fixture",
+            primary_evidence_segment_ref="analysis:7:segment:worst:1",
+            supporting_evidence_segment_refs=[
+                "analysis:7:segment:typical:1",
+                "analysis:7:segment:improved:1",
+                "analysis:7:segment:extra:1",
+            ],
+        )
+
+
 from kovaak_tracker.coach.diagnosis import build_diagnosis
 from kovaak_tracker.advice import Finding, Prescription
 
@@ -39,6 +80,18 @@ def test_match_long_decel_profile():
     d = build_diagnosis(findings, {}, None, {})
     assert d.profile.archetype_id == "long_decel"
     assert d.profile.confidence == 1.0
+
+
+def test_partial_evidence_cannot_receive_default_fluid_profile():
+    diagnosis = build_diagnosis(
+        [],
+        {},
+        None,
+        {"summary_type": "flicking", "quality_status": "limited"},
+    )
+
+    assert diagnosis.profile.archetype_id == "unclassified"
+    assert diagnosis.profile.confidence == 0.0
 
 
 def test_secondary_tags_collect_other_hits():
@@ -125,3 +178,22 @@ def test_profile_and_root_cause_labels_stay_observational():
     assert diagnosis.profile.label == "参考速度效率偏低型"
     assert "发力不足" not in str(diagnosis.issues[0].root_causes)
     assert "未被输入数据直接测量" in diagnosis.issues[0].root_causes[1].text
+
+
+def test_candidate_knowledge_refs_only_annotate_an_existing_analyzer_fact():
+    refs = resolve_candidate_knowledge_refs(
+        issue_signal="post change error high",
+        metric_refs=["metric:post_change_error"],
+    )
+
+    assert refs.registry_version == "2026-07-22.v2"
+    assert 1 <= len(refs.entry_refs) <= 3
+    assert all(ref.startswith("knowledge:") for ref in refs.entry_refs)
+    assert not hasattr(refs, "severity")
+    assert not hasattr(refs, "prescriptions")
+
+    unknown = resolve_candidate_knowledge_refs(
+        issue_signal="unimplemented measured fact",
+        metric_refs=[],
+    )
+    assert unknown.entry_refs == []

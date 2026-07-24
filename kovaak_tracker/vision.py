@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Callable
 
 import cv2
@@ -17,11 +18,11 @@ def _make_mask(hsv: np.ndarray, hsv_lo: np.ndarray, hsv_hi: np.ndarray) -> np.nd
     """
     if hsv_lo[0] > hsv_hi[0]:
         mask_lo = cv2.inRange(hsv,
-                              np.array([0, hsv_lo[1], hsv_lo[2]]),
-                              np.array([hsv_hi[0], hsv_hi[1], hsv_hi[2]]))
+                              np.array([0, hsv_lo[1], hsv_lo[2]], dtype=np.uint8),
+                              np.array([hsv_hi[0], hsv_hi[1], hsv_hi[2]], dtype=np.uint8))
         mask_hi = cv2.inRange(hsv,
-                              np.array([hsv_lo[0], hsv_lo[1], hsv_lo[2]]),
-                              np.array([179, hsv_hi[1], hsv_hi[2]]))
+                              np.array([hsv_lo[0], hsv_lo[1], hsv_lo[2]], dtype=np.uint8),
+                              np.array([179, hsv_hi[1], hsv_hi[2]], dtype=np.uint8))
         return cv2.bitwise_or(mask_lo, mask_hi)
     return cv2.inRange(hsv, hsv_lo, hsv_hi)
 
@@ -76,26 +77,62 @@ def detect_point_by_color(
     ignore_bottom_ui: bool = False,
 ) -> tuple[Point | None, int | None, int | None]:
     """Find the color blob closest to the screen center."""
+    candidates = detect_color_blobs(
+        frame,
+        hsv_lo,
+        hsv_hi,
+        min_area=min_area,
+        max_area_ratio=max_area_ratio,
+        max_aspect_ratio=max_aspect_ratio,
+        ignore_top_ui=ignore_top_ui,
+        ignore_bottom_ui=ignore_bottom_ui,
+    )
+    if not candidates:
+        return None, None, None
+
+    h_img, w_img = frame.shape[:2]
+    center_x, center_y = w_img // 2, h_img // 2
+    best = min(
+        candidates,
+        key=lambda item: (
+            (item["x"] - center_x) ** 2 + (item["y"] - center_y) ** 2,
+            item["x"],
+            item["y"],
+        ),
+    )
+    return (
+        (int(best["x"]), int(best["y"])),
+        int(best["width"]),
+        int(best["height"]),
+    )
+
+
+def detect_color_blobs(
+    frame: np.ndarray,
+    hsv_lo: np.ndarray,
+    hsv_hi: np.ndarray,
+    *,
+    min_area: float = 50,
+    max_area_ratio: float = 0.05,
+    max_aspect_ratio: float | None = None,
+    ignore_top_ui: bool = False,
+    ignore_bottom_ui: bool = False,
+    min_circularity: float | None = None,
+    include_contours: bool = False,
+) -> list[dict[str, object]]:
+    """Return every color blob accepted by the shared legacy vision filters."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask = _make_mask(hsv, hsv_lo, hsv_hi)
     mask = _apply_morphology(mask)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None, None, None
-
     h_img, w_img = frame.shape[:2]
-    center_x, center_y = w_img // 2, h_img // 2
     max_valid_area = w_img * h_img * max_area_ratio
-
-    best_pos: Point | None = None
-    best_w: int | None = None
-    best_h: int | None = None
-    min_dist = float("inf")
+    candidates: list[dict[str, object]] = []
 
     for contour in contours:
-        area = cv2.contourArea(contour)
-        if not min_area < area < max_valid_area:
+        area = float(cv2.contourArea(contour))
+        if area < min_area or area > max_valid_area:
             continue
 
         _, _, width, height = cv2.boundingRect(contour)
@@ -119,14 +156,35 @@ def detect_point_by_color(
         if ignore_bottom_ui and cy > h_img * 0.88:
             continue
 
-        dist = (cx - center_x) ** 2 + (cy - center_y) ** 2
-        if dist < min_dist:
-            min_dist = dist
-            best_pos = (cx, cy)
-            best_w = width
-            best_h = height
-
-    return best_pos, best_w, best_h
+        perimeter = float(cv2.arcLength(contour, True))
+        circularity = (
+            4.0 * math.pi * area / (perimeter * perimeter)
+            if perimeter
+            else 0.0
+        )
+        if min_circularity is not None and circularity < min_circularity:
+            continue
+        candidate: dict[str, object] = {
+            "x": float(moments["m10"] / moments["m00"]),
+            "y": float(moments["m01"] / moments["m00"]),
+            "width": int(width),
+            "height": int(height),
+            "area": area,
+            "visible_radius": math.sqrt(area / math.pi),
+            "circularity": circularity,
+            "confidence": (
+                min(1.0, max(0.0, circularity))
+                if min_circularity is not None
+                else 1.0
+            ),
+        }
+        if include_contours:
+            candidate["_contour"] = contour.copy()
+        candidates.append(candidate)
+    candidates.sort(
+        key=lambda item: (item["x"], item["y"], item["visible_radius"])
+    )
+    return candidates
 
 
 def detect_ball_by_color(
@@ -159,47 +217,13 @@ def detect_crosshair_by_color(
       - No sky deadzone filter (crosshairs can be anywhere).
       - No aspect ratio filter (crosshairs can be thin vertical/horizontal lines).
     """
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask = _make_mask(hsv, hsv_lo, hsv_hi)
-    mask = _apply_morphology(mask)
-
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None, None, None
-
-    h_img, w_img = frame.shape[:2]
-    center_x, center_y = w_img // 2, h_img // 2
-    max_valid_area = w_img * h_img * 0.05
-
-    best_pos: Point | None = None
-    best_w: int | None = None
-    best_h: int | None = None
-    min_dist = float("inf")
-
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < 5 or area > max_valid_area:
-            continue
-
-        _, _, width, height = cv2.boundingRect(contour)
-        if height == 0:
-            continue
-
-        moments = cv2.moments(contour)
-        if moments["m00"] == 0:
-            continue
-
-        cx = int(moments["m10"] / moments["m00"])
-        cy = int(moments["m01"] / moments["m00"])
-
-        dist = (cx - center_x) ** 2 + (cy - center_y) ** 2
-        if dist < min_dist:
-            min_dist = dist
-            best_pos = (cx, cy)
-            best_w = width
-            best_h = height
-
-    return best_pos, best_w, best_h
+    return detect_point_by_color(
+        frame,
+        hsv_lo,
+        hsv_hi,
+        min_area=5,
+        max_area_ratio=0.05,
+    )
 
 
 def get_tracker(warn_callback: Callable[[str], None] | None = None):

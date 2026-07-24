@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 
 ANALYSIS_RESULT_SCHEMA_VERSION = "analysis_result.v1"
 ANALYSIS_RESULT_V2_SCHEMA_VERSION = "analysis_result.v2"
 ANALYSIS_VERSION = "flicking_fair_summary.v1"
 NATIVE_ANALYSIS_VERSION = "native_flicking.v1"
+DYNAMIC_CLICKING_ANALYSIS_VERSION = "dynamic_clicking.v1"
+CONTINUOUS_TRACKING_ANALYSIS_VERSION = "continuous_tracking.v1"
+TARGET_SWITCHING_ANALYSIS_VERSION = "target_switching.v1"
 LEGACY_ANALYSIS_VERSION = "legacy_unversioned"
 SUMMARY_TYPE = "flicking"
 ARTIFACT_MANIFEST_SCHEMA_VERSION = "artifact_manifest.v1"
@@ -25,6 +29,57 @@ _ARTIFACT_OWNERS_V2 = frozenset({"analysis", "kovaak_run", "user_source"})
 _METRIC_PROVENANCE_KINDS_V2 = frozenset({"measured", "derived", "fused", "inferred"})
 _EVIDENCE_V2_FIELDS = frozenset(
     {"sources", "provenance", "availability", "alignment", "warnings"}
+)
+_PUBLIC_EVIDENCE_SEGMENT_FIELDS = (
+    "segment_id", "analysis_ref", "analyzer_ref", "segment_kind", "start_ms", "end_ms",
+    "focus_start_ms", "focus_end_ms", "title_key", "rank_reason", "issue_refs",
+    "metric_refs", "event_refs", "available_channels", "source_coverage", "confidence",
+    "limitations",
+)
+_ANALYSIS_EVIDENCE_REF_FIELDS = frozenset(
+    {
+        "artifact_ref",
+        "evidence_revision",
+        "contract_version",
+        "checksum_sha256",
+        "size_bytes",
+    }
+)
+_SCENARIO_RESOLUTION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "scenario_hash",
+        "display_name",
+        "registry_version",
+        "manifest_version",
+        "scenario_profile_ref",
+        "classification_source",
+        "classification_confidence",
+        "profile_status",
+        "reviewed_at",
+        "source_refs",
+        "supersedes",
+        "manifest_status",
+        "fixture_ref",
+        "review_source_ref",
+        "manifest_reviewed_at",
+        "family_gate_refs",
+        "aim_family",
+        "subdomains",
+        "target_motion",
+        "allowed_analyzers",
+        "allowed_metric_families",
+        "claim_ceiling",
+        "family_analyzer_dispatch",
+        "limitations",
+    }
+)
+_SCENARIO_HASH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+_SCENARIO_PROFILE_REF_RE = re.compile(
+    r"^scenario:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+@[1-9][0-9]*$"
+)
+_VERSIONED_ANALYZER_RE = re.compile(
+    r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*\.v[1-9][0-9]*$"
 )
 
 _ERROR_CATEGORIES = frozenset(
@@ -457,7 +512,304 @@ def _validate_evidence_v2(evidence: object) -> dict:
             raise ValueError(f"evidence.{field} must be a dict")
     if not isinstance(evidence.get("warnings"), list):
         raise ValueError("evidence.warnings must be a list")
+    derived_artifact = evidence.get("derived_artifact")
+    if derived_artifact is not None:
+        if not isinstance(derived_artifact, dict) or set(derived_artifact) != _ANALYSIS_EVIDENCE_REF_FIELDS:
+            raise ValueError("evidence.derived_artifact must be a safe artifact ref")
+        for field in ("artifact_ref", "evidence_revision", "contract_version", "checksum_sha256"):
+            _validate_stable_ref(f"evidence.derived_artifact.{field}", derived_artifact.get(field))
+        if derived_artifact["contract_version"] not in {
+            "analysis_evidence_artifact.v1",
+            "analysis_evidence_artifact.v2",
+        }:
+            raise UnsupportedContractVersion(derived_artifact["contract_version"])
+        revision = derived_artifact["evidence_revision"]
+        checksum = derived_artifact["checksum_sha256"]
+        if not revision.startswith("sha256:") or revision[7:] != checksum:
+            raise ValueError("evidence.derived_artifact revision/checksum mismatch")
+        if (
+            isinstance(derived_artifact["size_bytes"], bool)
+            or not isinstance(derived_artifact["size_bytes"], int)
+            or derived_artifact["size_bytes"] <= 0
+        ):
+            raise ValueError("evidence.derived_artifact.size_bytes must be positive")
+    processed_tables = evidence.get("processed_event_tables")
+    if processed_tables is not None:
+        if not isinstance(processed_tables, list) or not 1 <= len(processed_tables) <= 8:
+            raise ValueError("evidence.processed_event_tables must be a bounded list")
+        from kovaak_tracker.analysis_evidence import validate_processed_event_table_v1
+
+        table_refs: set[str] = set()
+        for table in processed_tables:
+            validated = validate_processed_event_table_v1(table)
+            if validated["table_ref"] in table_refs:
+                raise ValueError("evidence.processed_event_tables contains duplicate refs")
+            table_refs.add(validated["table_ref"])
     return evidence
+
+
+def _validate_canonical_time_window(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("input_snapshot.canonical_time_window must be a dict")
+    if value.get("schema_version") != "canonical_time_window.v1":
+        raise UnsupportedContractVersion(value.get("schema_version"))
+    start_ms = value.get("start_ms")
+    end_ms = value.get("end_ms")
+    duration_ms = value.get("duration_ms")
+    if any(
+        isinstance(item, bool) or not isinstance(item, int)
+        for item in (start_ms, end_ms, duration_ms)
+    ) or start_ms < 0 or end_ms <= start_ms or duration_ms != end_ms - start_ms:
+        raise ValueError("input_snapshot.canonical_time_window has an invalid range")
+    if value.get("window_semantics") != "half_open":
+        raise ValueError("input_snapshot.canonical_time_window must be half_open")
+    for field in ("timebase_version", "start_source", "end_source"):
+        _require_nonempty_string(
+            f"input_snapshot.canonical_time_window.{field}", value.get(field)
+        )
+    warnings = value.get("warnings")
+    if not isinstance(warnings, list) or not all(
+        isinstance(item, str) and item for item in warnings
+    ):
+        raise ValueError("input_snapshot.canonical_time_window.warnings must be a list")
+    return value
+
+
+def _validate_string_list(field: str, value: object, *, allow_empty: bool = True) -> list:
+    if (
+        not isinstance(value, list)
+        or len(value) > 64
+        or (not allow_empty and not value)
+    ):
+        raise ValueError(f"{field} must be a list")
+    if not all(
+        isinstance(item, str)
+        and item
+        and len(item) <= 500
+        and not any(ord(char) < 32 for char in item)
+        for item in value
+    ):
+        raise ValueError(f"{field} must contain non-empty strings")
+    if len(set(value)) != len(value):
+        raise ValueError(f"{field} must not contain duplicates")
+    return value
+
+
+def validate_scenario_resolution_v1(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("input_snapshot.scenario_resolution must be a dict")
+    if set(value) != _SCENARIO_RESOLUTION_FIELDS:
+        raise ValueError("input_snapshot.scenario_resolution fields are invalid")
+    if value.get("schema_version") != "scenario_resolution.v1":
+        raise UnsupportedContractVersion(value.get("schema_version"))
+
+    scenario_hash = value.get("scenario_hash")
+    if scenario_hash is not None:
+        if (
+            not isinstance(scenario_hash, str)
+            or not _SCENARIO_HASH_RE.fullmatch(scenario_hash)
+        ):
+            raise ValueError("scenario_resolution.scenario_hash is invalid")
+    display_name = value.get("display_name")
+    if display_name is not None:
+        if (
+            not isinstance(display_name, str)
+            or not display_name.strip()
+            or len(display_name) > 240
+            or any(ord(char) < 32 for char in display_name)
+        ):
+            raise ValueError("scenario_resolution.display_name is invalid")
+    for field in ("registry_version", "manifest_version"):
+        version = value.get(field)
+        if (
+            not isinstance(version, str)
+            or not version.strip()
+            or len(version) > 80
+            or any(ord(char) < 32 for char in version)
+        ):
+            raise ValueError(f"scenario_resolution.{field} is invalid")
+    profile_ref = value.get("scenario_profile_ref")
+    if profile_ref is not None:
+        if (
+            not isinstance(profile_ref, str)
+            or not _SCENARIO_PROFILE_REF_RE.fullmatch(profile_ref)
+        ):
+            raise ValueError("scenario_resolution.scenario_profile_ref is invalid")
+
+    classification_source = value.get("classification_source")
+    if classification_source not in {
+        "reviewed_registry", "official_metadata", "unknown", "name_heuristic",
+        "user_declaration",
+    }:
+        raise ValueError("scenario_resolution.classification_source is invalid")
+    confidence = value.get("classification_confidence")
+    if confidence not in {"confirmed", "candidate", "unknown"}:
+        raise ValueError("scenario_resolution.classification_confidence is invalid")
+    profile_status = value.get("profile_status")
+    if profile_status not in {"active", "superseded", "retired", "unknown"}:
+        raise ValueError("scenario_resolution.profile_status is invalid")
+    reviewed_at = value.get("reviewed_at")
+    if reviewed_at is not None:
+        if (
+            not isinstance(reviewed_at, str)
+            or not reviewed_at.strip()
+            or len(reviewed_at) > 40
+        ):
+            raise ValueError("scenario_resolution.reviewed_at is invalid")
+    source_refs = _validate_string_list(
+        "scenario_resolution.source_refs", value.get("source_refs")
+    )
+    supersedes = _validate_string_list(
+        "scenario_resolution.supersedes", value.get("supersedes")
+    )
+    for index, superseded_ref in enumerate(supersedes):
+        _validate_stable_ref(
+            f"scenario_resolution.supersedes[{index}]", superseded_ref
+        )
+    manifest_status = value.get("manifest_status")
+    if manifest_status not in {"active", "pending_gate", "retired", "unlisted"}:
+        raise ValueError("scenario_resolution.manifest_status is invalid")
+    fixture_ref = value.get("fixture_ref")
+    review_source_ref = value.get("review_source_ref")
+    manifest_reviewed_at = value.get("manifest_reviewed_at")
+    for field, field_value in (
+        ("fixture_ref", fixture_ref),
+        ("review_source_ref", review_source_ref),
+        ("manifest_reviewed_at", manifest_reviewed_at),
+    ):
+        if field_value is not None:
+            if (
+                not isinstance(field_value, str)
+                or not field_value.strip()
+                or len(field_value) > 500
+            ):
+                raise ValueError(f"scenario_resolution.{field} is invalid")
+    family_gate_refs = _validate_string_list(
+        "scenario_resolution.family_gate_refs", value.get("family_gate_refs")
+    )
+    aim_family = value.get("aim_family")
+    if aim_family not in {
+        "static_clicking",
+        "dynamic_clicking",
+        "continuous_tracking",
+        "target_switching",
+        "movement_aiming",
+        "unknown",
+    }:
+        raise ValueError("scenario_resolution.aim_family is invalid")
+
+    subdomains = _validate_string_list(
+        "scenario_resolution.subdomains", value.get("subdomains")
+    )
+    if set(subdomains) - {
+        "precision", "speed", "smooth", "reactive", "predictable", "control", "mixed",
+    }:
+        raise ValueError("scenario_resolution.subdomains is invalid")
+    target_motion = value.get("target_motion")
+    if not isinstance(target_motion, dict) or set(target_motion) != {
+        "model", "target_count_model",
+    }:
+        raise ValueError("scenario_resolution.target_motion fields are invalid")
+    if target_motion.get("model") not in {
+        "static", "predictable", "reactive", "mixed", "unknown",
+    } or target_motion.get("target_count_model") not in {
+        "single", "sequential", "concurrent", "unknown",
+    }:
+        raise ValueError("scenario_resolution.target_motion enum is invalid")
+    allowed_analyzers = _validate_string_list(
+        "scenario_resolution.allowed_analyzers", value.get("allowed_analyzers")
+    )
+    allowed_metric_families = _validate_string_list(
+        "scenario_resolution.allowed_metric_families",
+        value.get("allowed_metric_families"),
+    )
+    claim_ceiling = value.get("claim_ceiling")
+    if claim_ceiling not in {"family_specific", "descriptive_only", "outcome_only"}:
+        raise ValueError("scenario_resolution.claim_ceiling is invalid")
+    dispatch = value.get("family_analyzer_dispatch")
+    if dispatch not in {"allowed", "none"}:
+        raise ValueError("scenario_resolution.family_analyzer_dispatch is invalid")
+    if not all(_VERSIONED_ANALYZER_RE.fullmatch(item) for item in allowed_analyzers):
+        raise ValueError("scenario_resolution.allowed_analyzers is invalid")
+    if set(allowed_metric_families) - {
+        "outcome", "input_kinematics", "static_clicking", "dynamic_clicking",
+        "continuous_tracking", "target_switching",
+    }:
+        raise ValueError("scenario_resolution.allowed_metric_families is invalid")
+    limitations = _validate_string_list(
+        "scenario_resolution.limitations",
+        value.get("limitations"),
+        allow_empty=manifest_status == "active",
+    )
+
+    if profile_ref is None:
+        if reviewed_at is not None or source_refs or supersedes:
+            raise ValueError("scenario_resolution profile provenance requires a profile ref")
+    elif (
+        scenario_hash is None
+        or classification_source not in {"reviewed_registry", "official_metadata"}
+        or confidence != "confirmed"
+        or reviewed_at is None
+        or not source_refs
+        or aim_family == "unknown"
+    ):
+        raise ValueError("scenario_resolution profile provenance is incomplete")
+
+    if manifest_status == "unlisted":
+        if (
+            fixture_ref is not None
+            or review_source_ref is not None
+            or manifest_reviewed_at is not None
+            or family_gate_refs
+        ):
+            raise ValueError("scenario_resolution unlisted manifest has gate provenance")
+    elif (
+        scenario_hash is None
+        or fixture_ref is None
+        or review_source_ref is None
+        or manifest_reviewed_at is None
+        or not family_gate_refs
+    ):
+        raise ValueError("scenario_resolution listed manifest provenance is incomplete")
+
+    if manifest_status == "active":
+        if (
+            scenario_hash is None
+            or
+            profile_ref is None
+            or profile_status != "active"
+            or classification_source not in {"reviewed_registry", "official_metadata"}
+            or confidence != "confirmed"
+            or aim_family == "unknown"
+            or dispatch != "allowed"
+            or not allowed_analyzers
+            or claim_ceiling != "family_specific"
+        ):
+            raise ValueError("scenario_resolution active dispatch is inconsistent")
+    elif dispatch != "none":
+        raise ValueError("scenario_resolution dispatch requires an active manifest entry")
+
+    if manifest_status in {"pending_gate", "retired"} and (
+        profile_ref is None
+        or classification_source not in {"reviewed_registry", "official_metadata"}
+        or confidence != "confirmed"
+        or aim_family == "unknown"
+    ):
+        raise ValueError("scenario_resolution listed profile is inconsistent")
+
+    if classification_source == "unknown" and (
+        profile_ref is not None
+        or confidence != "unknown"
+        or profile_status != "unknown"
+        or aim_family != "unknown"
+        or subdomains
+        or target_motion != {"model": "unknown", "target_count_model": "unknown"}
+        or allowed_analyzers
+        or claim_ceiling != "outcome_only"
+        or not limitations
+    ):
+        raise ValueError("scenario_resolution.scenario_profile_ref is invalid for unknown")
+    return value
 
 
 def _validate_analysis_result_v2(result: dict) -> dict:
@@ -484,12 +836,39 @@ def _validate_analysis_result_v2(result: dict) -> dict:
         _validate_stable_ref("local_profile", local_profile)
         if owner_id is None:
             raise ValueError("local_profile requires owner_id")
-    _validate_evidence_v2(result.get("evidence"))
+    evidence = _validate_evidence_v2(result.get("evidence"))
+    for table in evidence.get("processed_event_tables") or []:
+        if table.get("analysis_ref") != analysis_id:
+            raise ValueError("processed event table is bound to another analysis")
 
     if not isinstance(result.get("deterministic"), dict):
         raise ValueError("deterministic must be a dict")
     if not isinstance(result.get("input_snapshot"), dict):
         raise ValueError("input_snapshot must be a dict")
+    input_snapshot = result["input_snapshot"]
+    snapshot_version = input_snapshot.get("schema_version")
+    if snapshot_version in {"analysis_input_snapshot.v2", "analysis_input_snapshot.v3"}:
+        scenario_resolution = input_snapshot.get("scenario_resolution")
+        if snapshot_version == "analysis_input_snapshot.v3" and scenario_resolution is None:
+            raise ValueError("analysis_input_snapshot.v3 requires scenario_resolution")
+        if scenario_resolution is not None:
+            validate_scenario_resolution_v1(scenario_resolution)
+        canonical_value = input_snapshot.get("canonical_time_window")
+        if canonical_value is None and input_mode in {"input_native", "multimodal"}:
+            raise ValueError("native input snapshot requires a canonical time window")
+        if canonical_value is not None:
+            canonical_window = _validate_canonical_time_window(canonical_value)
+        else:
+            canonical_window = None
+        if input_mode in {"input_native", "multimodal"} and canonical_window is not None:
+            alignment = result["evidence"].get("alignment") or {}
+            if (
+                alignment.get("challenge_start_epoch_ms")
+                != canonical_window["start_ms"]
+                or alignment.get("challenge_end_epoch_ms")
+                != canonical_window["end_ms"]
+            ):
+                raise ValueError("evidence alignment must match the frozen canonical window")
     if not isinstance(result.get("warnings"), list):
         raise ValueError("warnings must be a list")
     if not isinstance(result.get("errors"), list):
@@ -808,6 +1187,27 @@ def coerce_analysis_result(
         created_at=created_at,
         updated_at=updated_at,
     )
+
+
+def decode_input_snapshot_json(raw_snapshot: object) -> dict | None:
+    try:
+        parsed = json.loads(raw_snapshot) if raw_snapshot else None
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def project_error_for_session(error: dict | None) -> dict | None:
+    if not isinstance(error, dict):
+        return None
+    return {
+        key: error.get(key)
+        for key in ("schema_version", "category", "code", "message", "retryable", "trace_id")
+    }
+
+
+def project_evidence_segment(segment: dict) -> dict:
+    return {key: segment[key] for key in _PUBLIC_EVIDENCE_SEGMENT_FIELDS if key in segment}
 
 
 def dump_contract_json(value: object) -> str:
