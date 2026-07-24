@@ -135,7 +135,7 @@ async def test_ingest_rejects_second_stats_source_for_same_run_identity(tmp_path
     run = (await kovaak_run_store.list_kovaak_runs("u1"))[0]
     assert run["stats_path"] == str(first)
     assert run["stats_summary"]["source"]["sha256"]
-    assert run["stats_summary"]["source"]["parser_version"] == "kovaak_stats.v1"
+    assert run["stats_summary"]["source"]["parser_version"] == "kovaak_stats.v2"
 
 
 @pytest.mark.asyncio
@@ -1113,6 +1113,29 @@ async def test_analysis_input_snapshot_freezes_raw_trace_fingerprint(tmp_path: P
         ),
         mouse_trace_path=str(trace),
     )
+    await kovaak_run_store.set_run_alignment(
+        run["id"],
+        "u1",
+        state="resolved",
+        summary={
+            "start_ms": 1_000,
+            "end_ms": 2_000,
+            "duration_ms": 1_000,
+            "start_source": "stats_challenge_start",
+            "end_source": "timer_profile",
+            "timebase_version": "time_alignment.v2",
+            "stats_anchor_status": "mapped_local_time",
+            "stats_time_of_day_ms": 1_000,
+            "stats_local_to_utc_mapping": {
+                "version": "stats_local_to_utc.v1",
+                "source": "fixture",
+                "utc_offset_minutes": 0,
+            },
+            "warnings": [],
+        },
+        start_epoch_ms=1_000,
+        end_epoch_ms=2_000,
+    )
 
     snapshot = await kovaak_run_store.build_analysis_input_snapshot(run["id"], "u1")
 
@@ -1124,6 +1147,26 @@ async def test_analysis_input_snapshot_freezes_raw_trace_fingerprint(tmp_path: P
     public = kovaak_run_store.public_analysis_input_snapshot(snapshot)
     assert public["trace"]["fingerprint"] == snapshot["trace"]["fingerprint"]
     assert "path" not in public["trace"]
+    assert snapshot["schema_version"] == "analysis_input_snapshot.v3"
+    assert snapshot["canonical_time_window"] == {
+        "schema_version": "canonical_time_window.v1",
+        "timebase_version": "time_alignment.v2",
+        "start_ms": 1_000,
+        "end_ms": 2_000,
+        "duration_ms": 1_000,
+        "start_source": "stats_challenge_start",
+        "end_source": "timer_profile",
+        "stats_anchor_status": "mapped_local_time",
+        "stats_time_of_day_ms": 1_000,
+        "stats_local_to_utc_mapping": {
+            "version": "stats_local_to_utc.v1",
+            "source": "fixture",
+            "utc_offset_minutes": 0,
+        },
+        "warnings": [],
+        "window_semantics": "half_open",
+    }
+    assert public["canonical_time_window"] == snapshot["canonical_time_window"]
 
 
 def test_public_analysis_input_snapshot_strips_file_uris():
@@ -1717,6 +1760,55 @@ def test_public_analysis_input_snapshot_preserves_scenario_identity_version():
     assert public["scenario_identity_version"] == "kovaak_scenario.v1"
     assert "path" not in public["sources"]["stats"]
     assert "path" not in public["trace"]
+
+
+@pytest.mark.asyncio
+async def test_analysis_input_snapshot_freezes_unknown_exact_hash_without_name_dispatch(
+    tmp_path: Path,
+    monkeypatch,
+):
+    stats = tmp_path / "same-name Stats.csv"
+    performance = tmp_path / "same-name Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    run = {
+        "id": 41,
+        "scenario": "Same Display Name",
+        "stats_path": str(stats),
+        "performance_path": str(performance),
+        "stats_summary": {
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+        },
+        "performance_summary": {
+            "header": {"scenario_hash": "observed-but-unreviewed-hash"},
+            "source": kovaak_run_store._source_metadata(
+                performance, kovaak_run_store.PERFORMANCE_PARSER_VERSION,
+            ),
+        },
+        "trace_state": "none",
+        "alignment_state": "unavailable",
+        "video_state": "none",
+    }
+
+    async def get_run(_run_id: int, _user_id: str):
+        return run
+
+    monkeypatch.setattr(kovaak_run_store, "get_kovaak_run", get_run)
+
+    snapshot = await kovaak_run_store.build_analysis_input_snapshot(41, "u1")
+
+    resolution = snapshot["scenario_resolution"]
+    assert resolution["scenario_hash"] == "observed-but-unreviewed-hash"
+    assert resolution["display_name"] == "Same Display Name"
+    assert resolution["scenario_profile_ref"] is None
+    assert resolution["classification_source"] == "unknown"
+    assert resolution["family_analyzer_dispatch"] == "none"
+    assert resolution["claim_ceiling"] == "outcome_only"
+    public = kovaak_run_store.public_analysis_input_snapshot(snapshot)
+    assert public["scenario_resolution"] == resolution
+    assert str(tmp_path) not in json.dumps(public)
 
 
 def _write_capture_video_bundle(

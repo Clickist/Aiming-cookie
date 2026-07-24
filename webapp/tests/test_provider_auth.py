@@ -34,7 +34,7 @@ def reset_provider_auth_state():
 @pytest.mark.asyncio
 async def test_v9_to_v10_backfills_api_key_once_and_clears_legacy_column():
     await db.close_conn()
-    db_path = "./aiming_cookie_test.db"
+    db_path = os.path.abspath(db.DB_PATH)
     if os.path.exists(db_path):
         os.remove(db_path)
 

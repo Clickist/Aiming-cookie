@@ -14,7 +14,7 @@ import re
 import stat
 import struct
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
@@ -41,9 +41,11 @@ MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024
 MAX_SNAPSHOT_POINTS = 1_000_000
 MAX_SNAPSHOT_SPAN_MS = 10 * 60 * 1000
 SUPPORTED_BUTTON_MASK = 0b111
-STATS_PARSER_VERSION = "kovaak_stats.v1"
-PERFORMANCE_PARSER_VERSION = "kovaak_performance.v1"
+STATS_PARSER_VERSION = "kovaak_stats.v2"
+PERFORMANCE_PARSER_VERSION = "kovaak_performance.v2"
 SCENARIO_IDENTITY_VERSION = "kovaak_scenario.v1"
+ANALYSIS_INPUT_SNAPSHOT_VERSION = "analysis_input_snapshot.v3"
+CANONICAL_TIME_WINDOW_VERSION = "canonical_time_window.v1"
 _SHA256_DIGEST = re.compile(r"^[0-9a-fA-F]{64}$")
 _STRICT_IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]+$")
 _ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -124,6 +126,20 @@ def _assert_source_identity(
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _stats_time_mapping_for_performance(start_epoch_ms: int) -> dict[str, object]:
+    instant = datetime.fromtimestamp(start_epoch_ms / 1_000, timezone.utc)
+    local = instant.astimezone()
+    offset = local.utcoffset()
+    if offset is None:
+        raise TimeAlignmentError("anchor_timezone_unmapped: system timezone offset unavailable")
+    offset_minutes = int(offset.total_seconds() // 60)
+    return {
+        "version": "stats_local_to_utc.v1",
+        "source": "system_timezone_at_performance_anchor",
+        "utc_offset_minutes": offset_minutes,
+    }
 
 
 def _validate_snapshot_points(points: list[dict[str, int]]) -> list[dict[str, int]]:
@@ -748,6 +764,7 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
             },
             "path": str(Path(path).resolve()),
             "availability": "available",
+            "parser_version": source.get("parser_version"),
         }
     trace: dict[str, object] | None = None
     trace_path = run.get("mouse_trace_path")
@@ -770,13 +787,83 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
     video_availability, video = _current_video_evidence(run)
     if video_availability == "available" and video is not None:
         sources["video"] = video
+    canonical_time_window = _canonical_time_window_from_run(run)
+    performance_summary = run.get("performance_summary")
+    performance_header = (
+        performance_summary.get("header")
+        if isinstance(performance_summary, dict)
+        else None
+    )
+    observed_scenario_hash = (
+        performance_header.get("scenario_hash")
+        if isinstance(performance_header, dict)
+        else None
+    )
+    from kovaak_tracker.scenario_profiles import resolve_scenario_profile
+
+    scenario_resolution = resolve_scenario_profile(
+        observed_scenario_hash if isinstance(observed_scenario_hash, str) else None,
+        run.get("scenario") if isinstance(run.get("scenario"), str) else None,
+    )
     return {
-        "schema_version": "analysis_input_snapshot.v1",
+        "schema_version": ANALYSIS_INPUT_SNAPSHOT_VERSION,
         "run_id": run_id,
         "scenario": run.get("scenario"),
         "scenario_identity_version": SCENARIO_IDENTITY_VERSION,
+        "scenario_resolution": scenario_resolution,
         "sources": sources,
         "trace": trace,
+        "canonical_time_window": canonical_time_window,
+    }
+
+
+def _canonical_time_window_from_run(run: dict) -> dict[str, object] | None:
+    if run.get("alignment_state") != "resolved":
+        return None
+    start_ms = run.get("window_start_epoch_ms")
+    end_ms = run.get("window_end_epoch_ms")
+    summary = run.get("alignment_summary")
+    if (
+        isinstance(start_ms, bool)
+        or isinstance(end_ms, bool)
+        or not isinstance(start_ms, int)
+        or not isinstance(end_ms, int)
+        or end_ms <= start_ms
+        or not isinstance(summary, dict)
+    ):
+        raise ValueError("source_unavailable: canonical time window is invalid")
+    duration_ms = end_ms - start_ms
+    if (
+        summary.get("start_ms", start_ms) != start_ms
+        or summary.get("end_ms", end_ms) != end_ms
+        or summary.get("duration_ms") != duration_ms
+    ):
+        raise ValueError("source_unavailable: canonical time window changed")
+    start_source = summary.get("start_source")
+    end_source = summary.get("end_source")
+    warnings = summary.get("warnings") or ()
+    if (
+        not isinstance(start_source, str)
+        or not start_source
+        or not isinstance(end_source, str)
+        or not end_source
+        or not isinstance(warnings, (list, tuple))
+        or not all(isinstance(item, str) and item for item in warnings)
+    ):
+        raise ValueError("source_unavailable: canonical time provenance is invalid")
+    return {
+        "schema_version": CANONICAL_TIME_WINDOW_VERSION,
+        "timebase_version": summary.get("timebase_version", "time_alignment.v2"),
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "duration_ms": duration_ms,
+        "start_source": start_source,
+        "end_source": end_source,
+        "stats_anchor_status": summary.get("stats_anchor_status", "missing"),
+        "stats_time_of_day_ms": summary.get("stats_time_of_day_ms"),
+        "stats_local_to_utc_mapping": summary.get("stats_local_to_utc_mapping"),
+        "warnings": list(warnings),
+        "window_semantics": "half_open",
     }
 
 
@@ -790,14 +877,22 @@ def public_analysis_input_snapshot(snapshot: dict) -> dict:
     trace = snapshot.get("trace")
     sanitized_trace = _sanitize_public_value(trace)
     public_trace = sanitized_trace if isinstance(sanitized_trace, dict) else None
-    return {
+    public_snapshot = {
         "schema_version": snapshot.get("schema_version", "analysis_input_snapshot.v1"),
         "run_id": snapshot.get("run_id"),
         "scenario": _public_string(snapshot.get("scenario")),
         "scenario_identity_version": snapshot.get("scenario_identity_version"),
         "sources": sources,
         "trace": public_trace,
+        "canonical_time_window": _sanitize_public_value(
+            snapshot.get("canonical_time_window")
+        ),
     }
+    if "scenario_resolution" in snapshot:
+        public_snapshot["scenario_resolution"] = _sanitize_public_value(
+            snapshot.get("scenario_resolution")
+        )
+    return public_snapshot
 
 
 async def upsert_kovaak_run(
@@ -882,6 +977,7 @@ async def attach_mouse_trace_snapshot_window(
     user_id: str,
     raw_input_snapshot_path: str | Path | None,
     covered_through_epoch_ms: int | None = None,
+    raw_snapshot_receipt: dict[str, object] | None = None,
     require_coverage: bool = False,
 ) -> dict:
     """Attach one canonical Raw window after an optional native coverage barrier."""
@@ -896,6 +992,16 @@ async def attach_mouse_trace_snapshot_window(
     ):
         return run
     within_retention = _now_ms() <= end_ms + MAX_SNAPSHOT_SPAN_MS
+    if raw_snapshot_receipt is not None:
+        receipt_error, covered_through_epoch_ms = _raw_snapshot_receipt_quality(
+            raw_snapshot_receipt,
+            start_ms=start_ms,
+            end_ms=end_ms,
+        )
+        if receipt_error is not None:
+            return await mark_mouse_trace_unavailable(
+                run["id"], user_id, receipt_error,
+            ) or run
     if require_coverage and (
         isinstance(covered_through_epoch_ms, bool)
         or not isinstance(covered_through_epoch_ms, int)
@@ -977,6 +1083,87 @@ async def attach_mouse_trace_snapshot_window(
         ) or run
 
 
+def _raw_snapshot_receipt_quality(
+    receipt: dict[str, object],
+    *,
+    start_ms: int,
+    end_ms: int,
+) -> tuple[str | None, int | None]:
+    legacy_keys = {
+        "coveredThroughEpochMs",
+        "snapshotAtEpochMs",
+        "pointCount",
+        "clockSource",
+        "timebaseVersion",
+    }
+    v2_keys = legacy_keys | {
+        "receiptVersion",
+        "captureSessionStartEpochMs",
+        "queueDroppedPoints",
+        "queueDropFirstEpochMs",
+        "queueDropLastEpochMs",
+        "ringExpiredPoints",
+        "ringExpiredThroughEpochMs",
+    }
+    if set(receipt) == legacy_keys:
+        return "trace_legacy_quality_unknown", None
+    if (
+        set(receipt) != v2_keys
+        or receipt.get("receiptVersion") != "raw_snapshot_receipt.v2"
+    ):
+        return "trace_quality_insufficient", None
+
+    values: dict[str, int] = {}
+    for key in (
+        "captureSessionStartEpochMs",
+        "coveredThroughEpochMs",
+        "snapshotAtEpochMs",
+        "pointCount",
+        "queueDroppedPoints",
+        "ringExpiredPoints",
+    ):
+        value = receipt.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return "trace_quality_insufficient", None
+        values[key] = value
+    if (
+        values["coveredThroughEpochMs"] > values["snapshotAtEpochMs"]
+        or receipt.get("clockSource") != "utc_epoch_ms+qpc"
+        or receipt.get("timebaseVersion") != "time_alignment.v2"
+    ):
+        return "trace_quality_insufficient", None
+    queue_first = receipt.get("queueDropFirstEpochMs")
+    queue_last = receipt.get("queueDropLastEpochMs")
+    if values["queueDroppedPoints"] == 0:
+        if queue_first is not None or queue_last is not None:
+            return "trace_quality_insufficient", None
+    elif (
+        isinstance(queue_first, bool)
+        or isinstance(queue_last, bool)
+        or not isinstance(queue_first, int)
+        or not isinstance(queue_last, int)
+        or queue_first > queue_last
+    ):
+        return "trace_quality_insufficient", None
+    elif queue_first < end_ms and queue_last >= start_ms:
+        return "trace_raw_queue_dropped", values["coveredThroughEpochMs"]
+
+    ring_through = receipt.get("ringExpiredThroughEpochMs")
+    if values["ringExpiredPoints"] == 0:
+        if ring_through is not None:
+            return "trace_quality_insufficient", None
+    elif (
+        isinstance(ring_through, bool)
+        or not isinstance(ring_through, int)
+    ):
+        return "trace_quality_insufficient", None
+    elif ring_through >= start_ms:
+        return "trace_raw_ring_expired", values["coveredThroughEpochMs"]
+    if values["captureSessionStartEpochMs"] > start_ms:
+        return "trace_raw_window_coverage_gap", values["coveredThroughEpochMs"]
+    return None, values["coveredThroughEpochMs"]
+
+
 async def ingest_discovery(
     discovery: KovaaKFileDiscovery,
     *,
@@ -1010,6 +1197,12 @@ async def ingest_discovery(
             "summary": stats.summary,
             "config": stats.config,
             "kill_count": int(len(stats.kills.index)),
+            "weapon_aggregates": list(
+                getattr(stats, "weapon_aggregates", ()) or ()
+            ),
+            "field_presence": dict(
+                getattr(stats, "field_presence", {}) or {}
+            ),
             "source": stats_source,
         }
         stats_pause_count = stats.summary.get("Pause Count")
@@ -1027,6 +1220,10 @@ async def ingest_discovery(
         performance_summary = {
             "header": asdict(performance.header),
             "event_count": len(performance.events),
+            "source_event_count": performance.source_event_count,
+            "omitted_event_indexes": list(performance.omitted_event_indexes),
+            "timeline_status": performance.timeline_status,
+            "unknown_field_observability": performance.unknown_field_observability,
             "source": performance_source,
         }
         profile = performance.header.challenge_profile
@@ -1123,7 +1320,9 @@ async def ingest_discovery(
                 stats_challenge_start=stats_start,
                 stats_event_times_seconds=stats_event_times_seconds,
                 pause_count=stats_pause_count,
-                local_timezone=datetime.now().astimezone().tzinfo,
+                stats_local_to_utc_mapping=_stats_time_mapping_for_performance(
+                    performance.header.challenge_start_utc
+                ),
             )
         except TimeAlignmentError as error:
             alignment_error = str(error)
@@ -1144,6 +1343,7 @@ async def ingest_discovery(
             if error_prefix in {
                 "pause_unsupported",
                 "anchor_conflict",
+                "anchor_timezone_unmapped",
                 "duration_missing",
             }
             else "time_alignment_unavailable"

@@ -13,6 +13,7 @@ from .contracts import (
     build_error_v1,
     coerce_analysis_result,
     coerce_error_v1,
+    decode_input_snapshot_json,
     dump_contract_json,
     normalize_json_value,
     validate_analysis_result_v2_for_persistence,
@@ -197,10 +198,7 @@ async def claim_next(worker_id: str) -> Optional[dict]:
             return None
         result = dict(claimed)
         raw_snapshot = result.pop("input_snapshot_json", None)
-        try:
-            result["input_snapshot"] = json.loads(raw_snapshot) if raw_snapshot else None
-        except (TypeError, json.JSONDecodeError):
-            result["input_snapshot"] = None
+        result["input_snapshot"] = decode_input_snapshot_json(raw_snapshot)
         return result
     except Exception:
         await conn.execute("ROLLBACK")
@@ -360,7 +358,7 @@ async def requeue_for_retry(session_id: int) -> dict:
             if not csv_path or not os.path.isfile(csv_path):
                 await conn.execute("COMMIT")
                 raise RetryNotAllowed("missing_csv", "输入 CSV 已不存在，请重新上传分析")
-        elif not row["input_snapshot_json"]:
+        elif decode_input_snapshot_json(row["input_snapshot_json"]) is None:
             await conn.execute("COMMIT")
             raise RetryNotAllowed("missing_snapshot", "分析输入快照不存在，请重新提交分析")
         now = _utc_now_sqlite()
@@ -489,6 +487,37 @@ async def abort_uploading_session(session_id: int, user_id: str) -> bool:
     )
     await conn.commit()
     return cur.rowcount == 1
+
+
+async def reconcile_stale_uploads() -> dict[str, int]:
+    """Remove startup-left managed upload workspaces before unlocking owners."""
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id FROM sessions WHERE status='uploading' ORDER BY id",
+    )
+    session_ids = [int(row["id"]) for row in await cur.fetchall()]
+    cleaned = 0
+    failed = 0
+
+    for session_id in session_ids:
+        try:
+            remove_session_workspace(session_id)
+        except OSError:
+            failed += 1
+            continue
+
+        cur = await conn.execute(
+            "DELETE FROM sessions WHERE id=? AND status='uploading'",
+            (session_id,),
+        )
+        await conn.commit()
+        cleaned += cur.rowcount
+
+    return {
+        "processed": len(session_ids),
+        "cleaned": cleaned,
+        "failed": failed,
+    }
 
 
 async def list_storage_sessions(user_id: str) -> list[dict]:
@@ -626,6 +655,31 @@ async def _record_analysis_cleanup_failure(session_id: int) -> None:
             raise
 
 
+async def _invalidate_profile_for_deleted_analysis(
+    session_id: int, user_id: str,
+) -> bool:
+    try:
+        from . import aiming_profile_store
+
+        await aiming_profile_store.invalidate_analysis_contribution(
+            user_id,
+            f"analysis:{session_id}",
+            reason="analysis_deleted",
+        )
+    except aiming_profile_store.ProfileNotFound:
+        return True
+    except Exception as exc:
+        # Deletion remains authoritative; startup reconciliation retries the
+        # profile tombstone without blocking source/workspace cleanup.
+        log.warning(
+            "profile contribution invalidation unavailable session=%s error=%s",
+            session_id,
+            type(exc).__name__,
+        )
+        return False
+    return True
+
+
 async def delete_session(session_id: int, user_id: str) -> dict:
     conn = await get_conn()
     try:
@@ -667,6 +721,10 @@ async def delete_session(session_id: int, user_id: str) -> dict:
         await _rollback_without_masking(conn)
         raise
 
+    profile_invalidated = await _invalidate_profile_for_deleted_analysis(
+        session_id, user_id,
+    )
+
     try:
         workspace_removed = remove_session_workspace(session_id)
     except OSError:
@@ -678,10 +736,11 @@ async def delete_session(session_id: int, user_id: str) -> dict:
             "cleanup_failed": ["workspace"],
         }
 
-    try:
-        await _finalize_analysis_cleanup(session_id)
-    except Exception:
-        pass
+    if profile_invalidated:
+        try:
+            await _finalize_analysis_cleanup(session_id)
+        except Exception:
+            pass
     return {
         "deleted": True,
         "id": session_id,
@@ -693,14 +752,20 @@ async def delete_session(session_id: int, user_id: str) -> dict:
 async def reconcile_analysis_deletions() -> dict[str, int]:
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT analysis_session_id FROM analysis_deletion_tombstones "
+        "SELECT analysis_session_id, owner_id FROM analysis_deletion_tombstones "
         "ORDER BY analysis_session_id",
     )
-    session_ids = [int(row["analysis_session_id"]) for row in await cur.fetchall()]
+    tombstones = [
+        (int(row["analysis_session_id"]), str(row["owner_id"]))
+        for row in await cur.fetchall()
+    ]
     cleaned = 0
     failed = 0
 
-    for session_id in session_ids:
+    for session_id, owner_id in tombstones:
+        if not await _invalidate_profile_for_deleted_analysis(session_id, owner_id):
+            failed += 1
+            continue
         try:
             remove_session_workspace(session_id)
         except OSError:
@@ -711,8 +776,33 @@ async def reconcile_analysis_deletions() -> dict[str, int]:
         await _finalize_analysis_cleanup(session_id)
         cleaned += 1
 
+    try:
+        conn = await get_conn()
+        cur = await conn.execute(
+            "SELECT id, user_id, result FROM sessions WHERE status='done' AND result IS NOT NULL "
+            "ORDER BY id",
+        )
+        rows = await cur.fetchall()
+        from . import aiming_profile_store
+
+        for row in rows:
+            try:
+                parsed = json.loads(row["result"])
+                payload = aiming_profile_store.build_contribution_from_analysis_result(
+                    parsed
+                )
+                if payload is not None:
+                    await aiming_profile_store.record_deterministic_contribution(
+                        str(row["user_id"]), f"analysis:{row['id']}", payload,
+                    )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        await aiming_profile_store.reconcile_profiles()
+    except Exception as exc:
+        log.warning("aiming profile reconciliation unavailable error=%s", type(exc).__name__)
+
     return {
-        "processed": len(session_ids),
+        "processed": len(tombstones),
         "cleaned": cleaned,
         "failed": failed,
     }
@@ -732,18 +822,7 @@ async def get_session(session_id: int) -> Optional[dict]:
     if row is None:
         return None
     d = dict(row)
-    raw_snapshot = d.get("input_snapshot_json")
-    if raw_snapshot:
-        try:
-            parsed_snapshot = json.loads(raw_snapshot)
-        except (TypeError, json.JSONDecodeError):
-            d["input_snapshot"] = None
-        else:
-            d["input_snapshot"] = (
-                parsed_snapshot if isinstance(parsed_snapshot, dict) else None
-            )
-    else:
-        d["input_snapshot"] = None
+    d["input_snapshot"] = decode_input_snapshot_json(d.get("input_snapshot_json"))
     d.pop("input_snapshot_json", None)
     d["created_at"] = sqlite_timestamp_to_wire_utc(d.get("created_at")) or ""
     d["started_at"] = sqlite_timestamp_to_wire_utc(d.get("started_at"))

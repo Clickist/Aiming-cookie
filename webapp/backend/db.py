@@ -1,22 +1,127 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
-from typing import Optional
+from typing import Awaitable, Callable, Optional, TypeVar
 
 import aiosqlite
 
 from .config import DB_PATH
 
-_conn: Optional[aiosqlite.Connection] = None
-
-TARGET_USER_VERSION = 15
+_Result = TypeVar("_Result")
 
 
-async def get_conn() -> aiosqlite.Connection:
+class _TransactionGate:
+    """Serialize access while one task owns the shared SQLite transaction."""
+
+    def __init__(self, conn: aiosqlite.Connection) -> None:
+        self._conn = conn
+        self._lock = asyncio.Lock()
+        self._owner: Optional[asyncio.Task] = None
+
+    async def run(self, operation: Callable[[], Awaitable[_Result]]) -> _Result:
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("database access requires an asyncio task")
+        acquired = False
+        if self._owner is not task:
+            await self._lock.acquire()
+            acquired = True
+            self._owner = task
+            task.add_done_callback(self._rollback_abandoned_transaction)
+        try:
+            result = await operation()
+        except BaseException:
+            if acquired and not self._conn.in_transaction:
+                self._release(task)
+            raise
+        if self._owner is task and not self._conn.in_transaction:
+            self._release(task)
+        return result
+
+    def _rollback_abandoned_transaction(self, task: asyncio.Task) -> None:
+        if self._owner is task and not task.get_loop().is_closed():
+            task.get_loop().create_task(self._finish_abandoned_transaction(task))
+
+    async def _finish_abandoned_transaction(self, task: asyncio.Task) -> None:
+        if self._owner is not task:
+            return
+        try:
+            try:
+                if self._conn.in_transaction:
+                    await self._conn.rollback()
+            except ValueError:
+                # Fixture/runtime shutdown may close the raw connection first.
+                pass
+        finally:
+            self._release(task)
+
+    def _release(self, task: asyncio.Task) -> None:
+        if self._owner is task:
+            self._owner = None
+            self._lock.release()
+
+    async def close(self) -> None:
+        if self._conn.in_transaction:
+            await self._conn.rollback()
+        await self._conn.close()
+        if self._owner is not None:
+            self._owner = None
+            if self._lock.locked():
+                self._lock.release()
+
+
+class _GatedConnection:
+    """Expose the existing aiosqlite API with shared transaction ownership."""
+
+    def __init__(self, conn: aiosqlite.Connection) -> None:
+        self._conn = conn
+        self._gate = _TransactionGate(conn)
+
+    @property
+    def row_factory(self):
+        return self._conn.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value) -> None:
+        self._conn.row_factory = value
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._conn.in_transaction
+
+    async def execute(self, sql: str, parameters=None):
+        return await self._gate.run(lambda: self._conn.execute(sql, parameters))
+
+    async def executemany(self, sql: str, parameters):
+        return await self._gate.run(lambda: self._conn.executemany(sql, parameters))
+
+    async def executescript(self, sql_script: str):
+        return await self._gate.run(lambda: self._conn.executescript(sql_script))
+
+    async def commit(self) -> None:
+        await self._gate.run(self._conn.commit)
+
+    async def rollback(self) -> None:
+        await self._gate.run(self._conn.rollback)
+
+    async def close(self) -> None:
+        await self._gate.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+_conn: Optional[_GatedConnection] = None
+
+TARGET_USER_VERSION = 16
+
+
+async def get_conn() -> _GatedConnection:
     global _conn
     if _conn is None:
-        _conn = await aiosqlite.connect(DB_PATH)
+        _conn = _GatedConnection(await aiosqlite.connect(DB_PATH))
         _conn.row_factory = aiosqlite.Row
         await _conn.execute("PRAGMA foreign_keys=ON")
         await _conn.execute("PRAGMA journal_mode=WAL")
@@ -516,6 +621,7 @@ async def init_schema() -> None:
         await _migrate_v13_analysis_deletion_tombstones(conn)
         await _migrate_v14_kovaak_run_evidence(conn)
         await _migrate_v15_run_evidence_deletion_tombstones(conn)
+        await _migrate_v16_profile_plan_loop(conn)
         await conn.commit()
         return
 
@@ -549,6 +655,8 @@ async def init_schema() -> None:
             await _migrate_v14_kovaak_run_evidence(conn)
         if user_version < 15:
             await _migrate_v15_run_evidence_deletion_tombstones(conn)
+        if user_version < 16:
+            await _migrate_v16_profile_plan_loop(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -624,6 +732,142 @@ async def _migrate_v15_run_evidence_deletion_tombstones(
     await _execute_transactional_script(
         conn, _V15_RUN_EVIDENCE_DELETION_TOMBSTONES,
     )
+
+
+_V16_PROFILE_PLAN_LOOP = """
+CREATE TABLE IF NOT EXISTS profile_contributions (
+    owner_id TEXT NOT NULL CHECK(TRIM(owner_id) <> ''),
+    analysis_ref TEXT NOT NULL CHECK(TRIM(analysis_ref) <> ''),
+    contribution_ref TEXT NOT NULL UNIQUE,
+    current_revision INTEGER NOT NULL CHECK(current_revision >= 1),
+    status TEXT NOT NULL CHECK(status IN ('active', 'invalidated')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(owner_id, analysis_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_profile_contributions_owner_status
+    ON profile_contributions(owner_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS profile_contribution_revisions (
+    owner_id TEXT NOT NULL,
+    analysis_ref TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision >= 1),
+    payload_json TEXT NOT NULL,
+    payload_digest TEXT NOT NULL CHECK(LENGTH(payload_digest) = 64),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(owner_id, analysis_ref, revision),
+    FOREIGN KEY(owner_id, analysis_ref)
+        REFERENCES profile_contributions(owner_id, analysis_ref)
+);
+
+CREATE TABLE IF NOT EXISTS profile_contribution_tombstones (
+    tombstone_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL CHECK(TRIM(owner_id) <> ''),
+    analysis_ref TEXT NOT NULL CHECK(TRIM(analysis_ref) <> ''),
+    invalidated_revision INTEGER NOT NULL CHECK(invalidated_revision >= 1),
+    reason TEXT NOT NULL CHECK(TRIM(reason) <> ''),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(owner_id, analysis_ref, invalidated_revision)
+);
+CREATE INDEX IF NOT EXISTS idx_profile_tombstones_owner_created
+    ON profile_contribution_tombstones(owner_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS aiming_profile_state (
+    owner_id TEXT PRIMARY KEY CHECK(TRIM(owner_id) <> ''),
+    rebuild_state TEXT NOT NULL DEFAULT 'clean'
+        CHECK(rebuild_state IN ('clean', 'pending')),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS aiming_profile_dimensions (
+    owner_id TEXT NOT NULL,
+    dimension_key TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('exact_scenario', 'cross_scenario_normalized')),
+    scope_ref TEXT NOT NULL,
+    projection_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(owner_id, dimension_key, scope, scope_ref),
+    FOREIGN KEY(owner_id) REFERENCES aiming_profile_state(owner_id)
+);
+CREATE INDEX IF NOT EXISTS idx_aiming_profile_dimensions_owner
+    ON aiming_profile_dimensions(owner_id, dimension_key);
+
+CREATE TABLE IF NOT EXISTS training_plan_items (
+    item_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL CHECK(plan_version >= 1),
+    item_revision INTEGER NOT NULL DEFAULT 1 CHECK(item_revision >= 1),
+    status TEXT NOT NULL CHECK(status IN ('planned', 'active', 'completed', 'cancelled')),
+    item_payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(owner_id, item_ref),
+    FOREIGN KEY(plan_id, plan_version)
+        REFERENCES training_plan_versions(plan_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_training_plan_items_owner_plan
+    ON training_plan_items(owner_id, plan_id, plan_version, item_ref);
+
+CREATE TABLE IF NOT EXISTS training_plan_item_statuses (
+    status_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    item_ref TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    from_status TEXT,
+    to_status TEXT NOT NULL CHECK(to_status IN ('planned', 'active', 'completed', 'cancelled')),
+    reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(item_ref) REFERENCES training_plan_items(item_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_training_plan_item_statuses_owner_item
+    ON training_plan_item_statuses(owner_id, item_ref, created_at);
+
+CREATE TABLE IF NOT EXISTS training_plan_executions (
+    execution_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    item_ref TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    item_revision INTEGER NOT NULL,
+    scenario_ref TEXT NOT NULL,
+    run_refs_json TEXT NOT NULL,
+    planned_dose_json TEXT NOT NULL,
+    completed_dose_json TEXT NOT NULL,
+    completion_status TEXT NOT NULL CHECK(completion_status IN ('completed', 'partial', 'skipped')),
+    user_feedback TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(item_ref) REFERENCES training_plan_items(item_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_training_plan_executions_owner_item
+    ON training_plan_executions(owner_id, item_ref, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS training_plan_retests (
+    retest_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    item_ref TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    item_revision INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('matched', 'near_transfer')),
+    expected_metric_ref TEXT NOT NULL,
+    expected_direction TEXT NOT NULL,
+    analysis_refs_json TEXT NOT NULL,
+    comparability TEXT NOT NULL CHECK(comparability IN ('comparable', 'not_comparable', 'unavailable')),
+    result TEXT NOT NULL,
+    limitations_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(item_ref) REFERENCES training_plan_items(item_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_training_plan_retests_owner_item
+    ON training_plan_retests(owner_id, item_ref, created_at DESC);
+"""
+
+
+async def _migrate_v16_profile_plan_loop(conn: aiosqlite.Connection) -> None:
+    """v15 -> v16: durable aiming profile and Training Plan execution facts."""
+    await _execute_transactional_script(conn, _V16_PROFILE_PLAN_LOOP)
 
 
 async def _execute_transactional_script(

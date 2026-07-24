@@ -176,9 +176,16 @@ def test_native_client_flushes_raw_snapshot_with_strict_coverage_receipt() -> No
         "ok": True,
         "captureSessionId": "session-1",
         "snapshot": {
+            "receiptVersion": "raw_snapshot_receipt.v2",
+            "captureSessionStartEpochMs": 1_000,
             "coveredThroughEpochMs": 2_000,
             "snapshotAtEpochMs": 2_001,
             "pointCount": 17,
+            "queueDroppedPoints": 0,
+            "queueDropFirstEpochMs": None,
+            "queueDropLastEpochMs": None,
+            "ringExpiredPoints": 0,
+            "ringExpiredThroughEpochMs": None,
             "clockSource": "utc_epoch_ms+qpc",
             "timebaseVersion": "time_alignment.v2",
         },
@@ -199,6 +206,30 @@ def test_native_client_flushes_raw_snapshot_with_strict_coverage_receipt() -> No
     invalid["snapshot"] = dict(response["snapshot"])
     invalid["snapshot"]["coveredThroughEpochMs"] = 2_002
     address, _captured, thread = _serve_once(_json_line(invalid))
+    with pytest.raises(NativeCaptureProtocolError, match="schema"):
+        NativeCaptureClient(address, "a" * 64).flush_raw_snapshot("session-1")
+    thread.join(timeout=1)
+
+    legacy = dict(response)
+    legacy["snapshot"] = {
+        key: value
+        for key, value in response["snapshot"].items()
+        if key in {
+            "coveredThroughEpochMs",
+            "snapshotAtEpochMs",
+            "pointCount",
+            "clockSource",
+            "timebaseVersion",
+        }
+    }
+    address, _captured, thread = _serve_once(_json_line(legacy))
+    assert NativeCaptureClient(address, "a" * 64).flush_raw_snapshot("session-1") == legacy["snapshot"]
+    thread.join(timeout=1)
+
+    incomplete = dict(response)
+    incomplete["snapshot"] = dict(response["snapshot"])
+    incomplete["snapshot"].pop("ringExpiredPoints")
+    address, _captured, thread = _serve_once(_json_line(incomplete))
     with pytest.raises(NativeCaptureProtocolError, match="schema"):
         NativeCaptureClient(address, "a" * 64).flush_raw_snapshot("session-1")
     thread.join(timeout=1)

@@ -20,15 +20,24 @@ from . import (
     provider_commands,
     provider_store,
     db,
+    evidence_store,
     history_trends,
     kovaak_run_store,
     queue,
 )
 from .auth import get_request_user_id, require_desktop_token
 from .coach_service import run_chat_turn
-from .coach_context import project_coach_diagnostic_context
+from .coach_context import (
+    coerce_coach_diagnostic_context,
+    project_coach_diagnostic_context,
+)
 from .health import build_coach_runtime_status
-from .contracts import UnsupportedContractVersion, analysis_result_to_coach_report
+from .contracts import (
+    UnsupportedContractVersion,
+    analysis_result_to_coach_report,
+    project_error_for_session,
+    project_evidence_segment,
+)
 from .queue import (
     RetryNotAllowed,
     SessionForbidden,
@@ -79,6 +88,12 @@ from .schemas import (
     StorageCategoryTotals,
     StorageSessionItem,
     Timeline,
+    TrainingPlanExecutionCreateRequest,
+    TrainingPlanItemCreateRequest,
+    TrainingPlanRetestCreateRequest,
+    FrontendEvidenceSegment,
+    FrontendEvidenceSegmentsResponse,
+    EvidenceSegmentPlayback,
     TimelineEvent,
 )
 from .workspace import (
@@ -207,9 +222,13 @@ async def analyze_paths(
     workspace = session_dir(sid)
     managed_video = workspace / "video.mp4"
     managed_csv = workspace / "stats.csv"
+    temp_video = workspace / "video.mp4.tmp"
+    temp_csv = workspace / "stats.csv.tmp"
     try:
-        copy_path_to_path(FilePath(video_path), managed_video)
-        copy_path_to_path(FilePath(csv_path), managed_csv)
+        copy_path_to_path(FilePath(video_path), temp_video)
+        copy_path_to_path(FilePath(csv_path), temp_csv)
+        temp_video.replace(managed_video)
+        temp_csv.replace(managed_csv)
         await _update_session_input_paths(sid, str(managed_video), str(managed_csv))
         if not await queue.finish_upload(sid):
             raise HTTPException(409, "上传状态已失效，请重新提交")
@@ -286,21 +305,25 @@ async def analyze(
     ws.mkdir(parents=True, exist_ok=True)
     video_path = ws / f"video{video_ext}"
     csv_path = ws / f"stats{csv_ext}"
-    await _update_session_input_paths(sid, str(video_path), str(csv_path))
+    video_temp_path = ws / f"video{video_ext}.tmp"
+    csv_temp_path = ws / f"stats{csv_ext}.tmp"
 
     try:
         await stream_upload_to_path(
             video,
-            video_path,
+            video_temp_path,
             max_bytes=config.MAX_VIDEO_BYTES,
             field="video",
         )
         await stream_upload_to_path(
             csv,
-            csv_path,
+            csv_temp_path,
             max_bytes=config.MAX_CSV_BYTES,
             field="csv",
         )
+        video_temp_path.replace(video_path)
+        csv_temp_path.replace(csv_path)
+        await _update_session_input_paths(sid, str(video_path), str(csv_path))
     except UploadSizeExceeded as exc:
         await _abort_uploading_session(sid)
         if exc.field == "video":
@@ -328,7 +351,7 @@ def _session_status_response(s: dict, *, history: dict | None = None) -> Session
         id=s["id"],
         status=s["status"],
         result=s["result"],
-        error=s["error"],
+        error=project_error_for_session(s["error"]),
         llm_cost_cny=float(s["llm_cost_cny"] or 0),
         created_at=s["created_at"],
         attempts=int(s["attempts"] or 0),
@@ -389,6 +412,79 @@ async def get_history_trend(
     except coach_commands.ProductCommandError as exc:
         raise HTTPException(400, exc.message) from exc
     return HistoryTrendResponse(**trend)
+
+
+async def _execute_explicit_training_plan_fact(
+    owner_id: str,
+    command_name: str,
+    parameters: dict,
+    idempotency_key: Optional[str],
+) -> CoachProductCommandResult:
+    result = await coach_commands.execute_product_command(
+        owner_id,
+        {
+            "command_name": command_name,
+            "parameters": parameters,
+            "idempotency_key": idempotency_key,
+        },
+        authorization_source="explicit_user_request",
+    )
+    _raise_product_command_error(result)
+    return CoachProductCommandResult(**result)
+
+
+@router.post(
+    "/training-plans/{plan_ref}/items",
+    response_model=CoachProductCommandResult,
+)
+async def create_training_plan_item(
+    body: TrainingPlanItemCreateRequest,
+    plan_ref: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
+    return await _execute_explicit_training_plan_fact(
+        x_user_id,
+        "training_plan.item.add",
+        {"plan_ref": plan_ref, **body.model_dump()},
+        idempotency_key,
+    )
+
+
+@router.post(
+    "/training-plan-items/{item_ref}/executions",
+    response_model=CoachProductCommandResult,
+)
+async def record_training_plan_execution(
+    body: TrainingPlanExecutionCreateRequest,
+    item_ref: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
+    return await _execute_explicit_training_plan_fact(
+        x_user_id,
+        "training_plan.execution.record",
+        {"item_ref": item_ref, **body.model_dump()},
+        idempotency_key,
+    )
+
+
+@router.post(
+    "/training-plan-items/{item_ref}/retests",
+    response_model=CoachProductCommandResult,
+)
+async def record_training_plan_retest(
+    body: TrainingPlanRetestCreateRequest,
+    item_ref: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
+    return await _execute_explicit_training_plan_fact(
+        x_user_id,
+        "training_plan.retest.record",
+        {"item_ref": item_ref, **body.model_dump()},
+        idempotency_key,
+    )
 
 
 @router.get("/benchmarks", response_model=BenchmarkRecordListResponse)
@@ -552,6 +648,29 @@ async def _diagnosis_from_done_session(s: dict):
     if not isinstance(result, dict):
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
     context = project_coach_diagnostic_context(result)
+    owner_id = s.get("user_id")
+    if isinstance(owner_id, str) and owner_id:
+        try:
+            from . import aiming_profile_store, training_plan_store
+
+            profile = await aiming_profile_store.get_profile_snapshot(owner_id)
+            recent_retest_ref = await training_plan_store.get_recent_retest_ref(
+                owner_id
+            )
+            context["training"] = {
+                "active_plan_ref": profile.get("active_plan_ref"),
+                "recent_retest_ref": recent_retest_ref,
+            }
+            validated = coerce_coach_diagnostic_context(context)
+            if validated is None:
+                raise ValueError("training context projection is invalid")
+            context = validated
+        except Exception as error:
+            log.warning(
+                "coach training context unavailable owner=%s error=%s",
+                owner_id,
+                type(error).__name__,
+            )
     analysis_ref = context.get("analysis_ref")
     if isinstance(analysis_ref, dict) and analysis_ref.get("analysis_id") is None:
         analysis_ref["analysis_id"] = f"analysis:{s['id']}"
@@ -1170,6 +1289,85 @@ async def get_session_video(
         raise HTTPException(404, "视频文件不存在或已归档")
     video_path = s.get("video_path") or ""
     return FileResponse(video_path, media_type="video/mp4")
+
+
+@router.get(
+    "/sessions/{session_id}/evidence-segments",
+    response_model=FrontendEvidenceSegmentsResponse,
+)
+async def list_session_evidence_segments(
+    session_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    """Return bounded EvidenceSegment metadata and local MP4 seek anchors."""
+    s = await _get_owned_session(session_id, x_user_id)
+    if s["status"] != "done":
+        raise HTTPException(409, "分析未完成")
+    result = s.get("result") or {}
+    safe_ref = (result.get("evidence") or {}).get("derived_artifact")
+    if not isinstance(safe_ref, dict):
+        raise HTTPException(404, "Evidence 不可用")
+    try:
+        artifact = await evidence_store.read_analysis_evidence_artifact(
+            owner_id=x_user_id,
+            analysis_ref=f"analysis:{session_id}",
+            artifact_ref=safe_ref.get("artifact_ref"),
+            evidence_revision=safe_ref.get("evidence_revision"),
+        )
+    except (ValueError, OSError):
+        raise HTTPException(404, "Evidence 不可用") from None
+
+    snapshot = s.get("input_snapshot") or {}
+    window = snapshot.get("canonical_time_window") if isinstance(snapshot, dict) else None
+    window_start = window.get("start_ms") if isinstance(window, dict) else None
+    window_end = window.get("end_ms") if isinstance(window, dict) else None
+    valid_window = (
+        isinstance(window_start, int)
+        and isinstance(window_end, int)
+        and window_end > window_start
+    )
+    replay = history_trends.visual_replay_capability(s)
+    video_available = replay.get("kind") == "seekable_mp4"
+    video_route = f"/api/sessions/{session_id}/video" if video_available else None
+    projected: list[FrontendEvidenceSegment] = []
+    for raw in list(artifact.get("evidence_segments") or [])[:64]:
+        if not isinstance(raw, dict):
+            continue
+        safe = project_evidence_segment(raw)
+        focus_start = safe.get("focus_start_ms")
+        focus_end = safe.get("focus_end_ms")
+        playback_limitations = list(safe.get("limitations") or [])
+        relative_start = None
+        relative_end = None
+        if (
+            video_available
+            and valid_window
+            and isinstance(focus_start, int)
+            and isinstance(focus_end, int)
+        ):
+            relative_start = max(0, focus_start - window_start)
+            relative_end = min(window_end - window_start, max(relative_start, focus_end - window_start))
+        else:
+            playback_limitations.append("local_video_seek_unavailable")
+        projected.append(FrontendEvidenceSegment(
+            **safe,
+            playback=EvidenceSegmentPlayback(
+                schema_version="evidence_segment_playback.v1",
+                availability="available" if relative_start is not None else "unavailable",
+                video_route=video_route if relative_start is not None else None,
+                relative_start_ms=relative_start,
+                relative_end_ms=relative_end,
+                limitations=list(dict.fromkeys(playback_limitations)),
+            ),
+        ))
+    return FrontendEvidenceSegmentsResponse(
+        schema_version="frontend_evidence_segments.v1",
+        analysis_ref=f"analysis:{session_id}",
+        video_availability="available" if video_available else "unavailable",
+        video_route=video_route,
+        canonical_window_start_ms=window_start if valid_window else None,
+        segments=projected,
+    )
 
 
 @router.get("/sessions/{session_id}/timeline", response_model=Timeline)

@@ -1517,8 +1517,9 @@ mod tests {
     use super::{
         control_error_response, managed_export_paths, monitor_start_failure_status,
         parse_control_request, read_control_line, replay_failure_code, response_type_for_request,
-        CaptureCoordinatorStatus, CapturePhase, CaptureSourceState, ControlRequest,
-        ExportReplayRequest, FileFingerprint, ReceiptRecord, CONTROL_MAX_MESSAGE_BYTES,
+        CaptureCoordinatorStatus, CapturePhase, CaptureSourceState, CaptureSourceStatus,
+        ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord,
+        CONTROL_MAX_MESSAGE_BYTES,
     };
     use crate::window_capture::ReplayExportFailureKind;
     use std::fs;
@@ -1549,6 +1550,36 @@ mod tests {
         let retry = failed.after_enable(false, None);
         assert!(retry.enabled);
         assert_eq!(retry.phase, CapturePhase::WaitingForKovaak);
+    }
+
+    #[test]
+    fn process_exit_finalization_release_allows_a_new_capture_session() {
+        let capturing = CaptureCoordinatorStatus {
+            enabled: true,
+            phase: CapturePhase::Capturing,
+            capture_session_id: Some("session-1".to_string()),
+            kovaak_process_present: true,
+            window_handle: Some(1),
+            reason: None,
+            raw: CaptureSourceStatus {
+                state: CaptureSourceState::Capturing,
+                reason: None,
+            },
+            video: CaptureSourceStatus {
+                state: CaptureSourceState::Capturing,
+                reason: None,
+            },
+        };
+
+        let finalizing = capturing.after_process_exit();
+        assert_eq!(finalizing.phase, CapturePhase::Finalizing);
+        assert_eq!(finalizing.capture_session_id.as_deref(), Some("session-1"));
+
+        let waiting = CaptureCoordinatorStatus::after_release(false);
+        assert_eq!(waiting.phase, CapturePhase::WaitingForKovaak);
+        assert!(waiting.capture_session_id.is_none());
+        assert_eq!(waiting.raw.state, CaptureSourceState::Waiting);
+        assert_eq!(waiting.video.state, CaptureSourceState::Waiting);
     }
 
     #[test]

@@ -98,6 +98,16 @@ async def test_desktop_path_import_copies_sources_to_managed_workspace(
     video.write_bytes(b"original-video")
     csv.write_bytes(b"frame,time_s\n0,0\n")
     monkeypatch.setattr(config, "DATA_ROOT", managed_root)
+    destinations = []
+    original_copy = routes.copy_path_to_path
+
+    def record_temp_destination(source, destination):
+        destinations.append(destination)
+        assert destination.name.endswith(".tmp")
+        assert not destination.with_name(destination.name[:-4]).exists()
+        return original_copy(source, destination)
+
+    monkeypatch.setattr(routes, "copy_path_to_path", record_temp_destination)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
@@ -122,6 +132,8 @@ async def test_desktop_path_import_copies_sources_to_managed_workspace(
     assert session is not None
     assert session["user_id"] == config.DESKTOP_LOCAL_PROFILE
     assert session["status"] == "queued"
+    assert destinations == [workspace / "video.mp4.tmp", workspace / "stats.csv.tmp"]
+    assert list(workspace.glob("*.tmp")) == []
 
 
 @pytest.mark.asyncio
