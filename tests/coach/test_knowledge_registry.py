@@ -76,7 +76,7 @@ def valid_registry() -> dict:
 
 
 def test_loads_packaged_registry_and_resolves_stable_refs():
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-14.v1")
     assert loaded["schema_version"] == "coach_knowledge_registry.v1"
     assert loaded["entries"]
     first = loaded["entries"][0]
@@ -217,7 +217,7 @@ def test_full_migration_audit_covers_every_legacy_asset_exactly_once():
 
 
 def test_migration_audit_actions_and_targets_are_valid():
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-14.v1")
     entry_ids = {entry["entry_id"] for entry in loaded["entries"]}
     allowed_actions = {"migrate", "rewrite", "merge", "experimental_only", "reject"}
     for row in _load_audit()["sources"]:
@@ -233,7 +233,7 @@ def test_migration_audit_actions_and_targets_are_valid():
 def test_full_registry_covers_all_flicking_and_tracking_signals():
     from kovaak_tracker.coach.knowledge import KNOWLEDGE
 
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-14.v1")
     for signal in KNOWLEDGE:
         results = registry.query_registry(loaded, issue_signal=signal)
         assert results, signal
@@ -247,7 +247,7 @@ def test_full_registry_covers_all_flicking_and_tracking_signals():
 
 
 def test_full_registry_contains_required_knowledge_domains():
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-14.v1")
     categories = {entry["category"] for entry in loaded["entries"] if entry["status"] == "active"}
     assert {
         "metric_definition", "kinematic_mechanism", "diagnostic_scope", "research",
@@ -264,7 +264,7 @@ def test_full_registry_contains_required_knowledge_domains():
 
 
 def test_body_tension_and_settings_are_experimental_with_counterevidence():
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-14.v1")
     entries = [
         entry for entry in loaded["entries"]
         if entry["category"] in {"body_tension_hypothesis", "settings_experiment"}
@@ -277,7 +277,10 @@ def test_body_tension_and_settings_are_experimental_with_counterevidence():
 
 
 def test_registry_rewrites_old_absolute_threshold_and_fixed_setting_claims():
-    wire = json.dumps(registry.load_registry(), ensure_ascii=False)
+    wire = json.dumps(
+        registry.load_registry(registry_version="2026-07-14.v1"),
+        ensure_ascii=False,
+    )
     for forbidden in (
         "指标健康区间", "主流健康", "降 sens 5-10%", "70-80 cm/360",
         "每天 10 分钟", "SPARC 是运动平滑度金标准",
@@ -286,7 +289,7 @@ def test_registry_rewrites_old_absolute_threshold_and_fixed_setting_claims():
 
 
 def test_verification_entries_define_retest_and_insufficient_evidence_behavior():
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-14.v1")
     entries = registry.query_registry(
         loaded,
         topic="prescription_verification",
@@ -302,7 +305,7 @@ def test_legacy_python_knowledge_modules_are_registry_backed():
     from kovaak_tracker.coach.agent_kb import BY_TOPIC, KB
     from kovaak_tracker.coach.knowledge import KNOWLEDGE
 
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-14.v1")
     active = [entry for entry in loaded["entries"] if entry["status"] == "active"]
     assert len(KB) == len(active)
     assert all(chunk["entry_ref"].startswith("knowledge:") for chunk in KB)
@@ -321,7 +324,13 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"]
+    assert result["registry_version"] == "2026-07-22.v2"
+    assert all(item["section_refs"] for item in result["entries"])
+    assert all(item["claim_refs"] for item in result["entries"])
+    assert all(
+        len(item["section_refs"]) == len(item["claim_refs"])
+        for item in result["entries"]
+    )
 
 
 def test_legacy_source_specific_fetch_is_registry_backed_and_bounded():
@@ -332,3 +341,163 @@ def test_legacy_source_specific_fetch_is_registry_backed_and_bounded():
     assert result["entry_ref"].startswith("knowledge:")
     assert result["entry_version"] == 1
     assert result["limitations"]
+
+
+def test_v2_is_active_while_v1_historical_registry_resolves_exactly():
+    active = registry.load_registry()
+    historical = registry.load_registry(registry_version="2026-07-14.v1")
+
+    assert active["schema_version"] == "coach_knowledge_registry.v2"
+    assert active["registry_version"] != historical["registry_version"]
+    assert historical["schema_version"] == "coach_knowledge_registry.v1"
+    assert len(historical["entries"]) == 43
+    with pytest.raises(registry.KnowledgeRegistryError, match="unknown registry version"):
+        registry.load_registry(registry_version="unknown.v99")
+
+
+def test_historical_entry_resolution_never_guesses_across_registries():
+    historical = registry.load_registry(registry_version="2026-07-14.v1")
+    historical_ref = registry.entry_ref(historical["entries"][0])
+    resolved = registry.resolve_entry(
+        registry_version=historical["registry_version"],
+        entry_reference=historical_ref,
+    )
+
+    assert resolved == historical["entries"][0]
+    with pytest.raises(registry.KnowledgeRegistryError, match="unknown knowledge entry"):
+        registry.resolve_entry(
+            registry_version=registry.load_registry()["registry_version"],
+            entry_reference=historical_ref,
+        )
+
+
+def test_v2_schema_registry_and_family_contract_fixture_are_complete():
+    root = Path(__file__).resolve().parents[2]
+    knowledge_root = root / "knowledge" / "coach"
+    schema = json.loads((knowledge_root / "schema.v2.json").read_text(encoding="utf-8"))
+    packaged = json.loads((knowledge_root / "registry.v2.json").read_text(encoding="utf-8"))
+    fixture = json.loads(
+        (root / "tests" / "fixtures" / "coach" / "knowledge" / "family-contracts.v2.json")
+        .read_text(encoding="utf-8")
+    )
+
+    Draft202012Validator.check_schema(schema)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(packaged),
+        key=lambda error: list(error.path),
+    )
+    assert errors == [], [error.message for error in errors[:5]]
+    assert registry.validate_registry(packaged) == registry.load_registry()
+    assert fixture["schema_version"] == "coach_knowledge_family_contracts.v2"
+    contracts = {item["family"]: item for item in fixture["families"]}
+    assert set(contracts) == {
+        "static_clicking",
+        "dynamic_clicking",
+        "predictable_tracking",
+        "reactive_tracking",
+        "control_tracking",
+        "target_switching",
+        "movement_aiming",
+    }
+    active_ids = {
+        entry["entry_id"] for entry in packaged["entries"] if entry["status"] == "active"
+    }
+    for family, contract in contracts.items():
+        assert contract["required_observations"], family
+        assert contract["knowledge_entry_ids"], family
+        assert set(contract["knowledge_entry_ids"]) <= active_ids
+
+
+def test_v2_entries_are_complete_independent_coaching_records():
+    loaded = registry.load_registry()
+    singular_sections = {
+        "definition",
+        "scope",
+        "expected_direction",
+        "cue",
+        "matched_retest",
+        "near_transfer_retest",
+    }
+    repeated_sections = {"mechanisms", "dose_guardrail", "stop_adjust_rule"}
+    for entry in loaded["entries"]:
+        if entry["status"] != "active":
+            continue
+        assert entry["family_scope"]
+        assert entry["observation_refs"]
+        assert entry["quality_prerequisites"]
+        source_refs = set(entry["sources"])
+        sections = []
+        for name in singular_sections:
+            section = entry[name]
+            if section != "not_applicable":
+                sections.append((name, section))
+        for name in repeated_sections:
+            value = entry[name]
+            if value != "not_applicable":
+                sections.extend((name, section) for section in value)
+        for name, section in sections:
+            assert section["section_ref"].startswith(f"{entry['entry_id']}.")
+            assert registry.claim_ref(section) == f"claim:{section['section_ref']}"
+            assert section["source_refs"]
+            assert set(section["source_refs"]) <= source_refs
+            assert section["text"], (entry["entry_id"], name)
+
+
+def test_v2_research_claims_use_primary_sources_and_sources_cover_entry_families():
+    loaded = registry.load_registry()
+    assert all(
+        source["source_ref"] != "research.task10-assessment"
+        for source in loaded["sources"]
+    )
+    assert all(
+        source["author_or_org"] != "Aiming Cookie research assessment"
+        for source in loaded["sources"]
+        if source["source_level"] == "academic_peer_reviewed"
+    )
+
+    invalid = copy.deepcopy(loaded)
+    source = next(
+        item for item in invalid["sources"]
+        if item["source_ref"] == "community.rawinput-tracking"
+    )
+    source["applicability"] = ["predictable_tracking"]
+    with pytest.raises(registry.KnowledgeRegistryError, match="family scope"):
+        registry.validate_registry(invalid)
+
+
+def test_v2_migration_audit_disposes_every_v1_entry_once():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    v1 = json.loads((root / "registry.v1.json").read_text(encoding="utf-8"))
+    v2 = json.loads((root / "registry.v2.json").read_text(encoding="utf-8"))
+    audit = json.loads((root / "migration-audit.v2.json").read_text(encoding="utf-8"))
+    rows = audit["entries"]
+
+    assert audit["schema_version"] == "coach_knowledge_migration_audit.v2"
+    assert len(rows) == len(v1["entries"]) == 43
+    assert len({(row["v1_entry_id"], row["v1_entry_version"]) for row in rows}) == 43
+    assert {row["action"] for row in rows} <= {
+        "carry_forward", "rewrite", "split", "retire", "reject",
+    }
+    v2_ids = {entry["entry_id"] for entry in v2["entries"]}
+    for row in rows:
+        assert row["reason"].strip()
+        if row["action"] in {"retire", "reject"}:
+            assert row["target_entry_ids"] == []
+        else:
+            assert row["target_entry_ids"]
+            assert set(row["target_entry_ids"]) <= v2_ids
+
+
+def test_v2_movement_outcome_only_cannot_prescribe_or_imply_measured_facts():
+    entries = registry.query_registry(topic="movement_aiming")
+    assert entries
+    for entry in entries:
+        for section_name in (
+            "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+        ):
+            assert entry[section_name] == "not_applicable"
+        assert "severity" not in json.dumps(entry)
+        assert "measured" not in {
+            section["claim_level"]
+            for section in (entry["definition"], entry["scope"], entry["expected_direction"])
+        }

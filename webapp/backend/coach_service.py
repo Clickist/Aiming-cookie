@@ -20,6 +20,42 @@ class CoachChatResult:
     context: Optional[dict] = None
 
 
+def _reachable_context_refs(context: object) -> set[str]:
+    """Seed a bridge only with refs already visible in this turn's context."""
+    if not isinstance(context, dict):
+        return set()
+    refs: set[str] = set()
+    analysis_ref = context.get("analysis_ref")
+    if isinstance(analysis_ref, dict):
+        analysis_id = analysis_ref.get("analysis_id")
+        if isinstance(analysis_id, str) and analysis_id.startswith("analysis:"):
+            refs.add(analysis_id)
+
+    evidence = context.get("evidence_summary")
+    if isinstance(evidence, dict):
+        for ref in evidence.get("segment_refs", []):
+            if isinstance(ref, str) and ref.startswith("analysis:") and ":segment:" in ref:
+                refs.add(ref)
+
+    run_facts = context.get("run_facts")
+    if isinstance(run_facts, dict):
+        for summary in run_facts.get("section_summaries", []):
+            if not isinstance(summary, dict):
+                continue
+            ref = summary.get("section_ref")
+            if isinstance(ref, str) and ref.startswith("analysis:") and ":facts:" in ref:
+                refs.add(ref)
+    processed = context.get("processed_events")
+    if isinstance(processed, dict):
+        for table in processed.get("tables", []):
+            if not isinstance(table, dict):
+                continue
+            ref = table.get("table_ref")
+            if isinstance(ref, str) and ref.startswith("analysis:") and ":table:" in ref:
+                refs.add(ref)
+    return refs
+
+
 async def run_chat_turn(
     *,
     x_user_id: str,
@@ -165,6 +201,7 @@ async def run_chat_turn(
                 tool_bridge_endpoint,
                 desktop_token=desktop_token or None,
                 ttl_seconds=min(config.COACH_RUNTIME_TIMEOUT_SECONDS, 900),
+                reachable_refs=_reachable_context_refs(context),
             )
         turn = CoachTurn(
             prior_messages=prior_messages,

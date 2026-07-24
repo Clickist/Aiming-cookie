@@ -1,0 +1,79 @@
+{
+  "$id": "coach_knowledge_registry.schema.v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Aiming Cookie Coach Knowledge Registry v2",
+  "type": "object",
+  "required": ["schema_version", "registry_version", "signal_aliases", "sources", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "coach_knowledge_registry.v2"},
+    "registry_version": {"type": "string", "minLength": 1, "maxLength": 80},
+    "signal_aliases": {"type": "object", "maxProperties": 128, "additionalProperties": {"$ref": "#/$defs/token"}},
+    "sources": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/source"}},
+    "entries": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"$ref": "#/$defs/entry"}}
+  },
+  "$defs": {
+    "token": {"type": "string", "minLength": 1, "maxLength": 160, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/ -]{0,159}$"},
+    "text": {"type": "string", "minLength": 1, "maxLength": 1200},
+    "source": {
+      "type": "object",
+      "required": ["source_ref", "source_level", "title", "author_or_org", "retrieved_at", "locator", "applicability", "supports_sections"],
+      "additionalProperties": false,
+      "properties": {
+        "source_ref": {"$ref": "#/$defs/token"},
+        "source_level": {"enum": ["product_contract", "academic_peer_reviewed", "community_organization", "coach_first_party", "community_consensus", "personal_experience_unverified", "experimental"]},
+        "title": {"$ref": "#/$defs/text"},
+        "author_or_org": {"$ref": "#/$defs/text"},
+        "published_at": {"type": ["string", "null"], "maxLength": 32},
+        "retrieved_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "locator": {"$ref": "#/$defs/text"},
+        "applicability": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "supports_sections": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}}
+      }
+    },
+    "section": {
+      "type": "object",
+      "required": ["section_ref", "claim_level", "source_refs", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "section_ref": {"$ref": "#/$defs/token"},
+        "claim_level": {"enum": ["deterministic_rule", "research_supported", "community_practice", "community_consensus", "experimental"]},
+        "source_refs": {"type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "text": {"$ref": "#/$defs/text"}
+      }
+    },
+    "notApplicable": {"const": "not_applicable"},
+    "entry": {
+      "type": "object",
+      "required": ["entry_id", "entry_version", "status", "category", "topics", "signals", "metric_refs", "family_scope", "observation_refs", "quality_prerequisites", "definition", "scope", "expected_direction", "mechanisms", "alternative_explanations", "forbidden_inferences", "limitations", "counterevidence", "cue", "dose_guardrail", "matched_retest", "near_transfer_retest", "stop_adjust_rule", "sources", "supported_uses"],
+      "additionalProperties": false,
+      "properties": {
+        "entry_id": {"type": "string", "minLength": 3, "maxLength": 160, "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"},
+        "entry_version": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["active", "retired"]},
+        "category": {"enum": ["observation_definition", "mechanism", "training_cue", "prescription_verification", "limitation", "outcome_only"]},
+        "topics": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "signals": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "metric_refs": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "family_scope": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"enum": ["static_clicking", "dynamic_clicking", "predictable_tracking", "reactive_tracking", "control_tracking", "target_switching", "movement_aiming"]}},
+        "observation_refs": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "quality_prerequisites": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "definition": {"$ref": "#/$defs/section"},
+        "scope": {"$ref": "#/$defs/section"},
+        "expected_direction": {"allOf": [{"$ref": "#/$defs/section"}, {"properties": {"text": {"enum": ["lower_better", "higher_better", "target_band", "descriptive_only", "comparison_only"]}}}]},
+        "mechanisms": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/section"}},
+        "alternative_explanations": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "forbidden_inferences": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "limitations": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "counterevidence": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "cue": {"oneOf": [{"$ref": "#/$defs/section"}, {"$ref": "#/$defs/notApplicable"}]},
+        "dose_guardrail": {"oneOf": [{"type": "array", "minItems": 1, "maxItems": 16, "items": {"$ref": "#/$defs/section"}}, {"$ref": "#/$defs/notApplicable"}]},
+        "matched_retest": {"oneOf": [{"$ref": "#/$defs/section"}, {"$ref": "#/$defs/notApplicable"}]},
+        "near_transfer_retest": {"oneOf": [{"$ref": "#/$defs/section"}, {"$ref": "#/$defs/notApplicable"}]},
+        "stop_adjust_rule": {"oneOf": [{"type": "array", "minItems": 1, "maxItems": 8, "items": {"$ref": "#/$defs/section"}}, {"$ref": "#/$defs/notApplicable"}]},
+        "sources": {"type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "supported_uses": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"enum": ["definition", "mechanism", "diagnostic_scope", "training_cue", "candidate_hypothesis", "verification"]}}
+      }
+    }
+  }
+}

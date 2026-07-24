@@ -236,11 +236,17 @@ def _canonical_analysis_summary(analysis_summary: str | None) -> str | None:
 
     from .coach_context import (
         COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
         coerce_coach_diagnostic_context,
         serialize_coach_diagnostic_context,
     )
 
-    if parsed.get("schema_version") != COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION:
+    if parsed.get("schema_version") not in {
+        COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+    }:
         return None
     canonical = coerce_coach_diagnostic_context(parsed)
     if canonical is None:
@@ -292,7 +298,7 @@ _TOOL_EVENT_KEYS = {
     "knowledge": {
         "type", "registry_version", "topic", "issue_signal",
         "entry_refs", "entry_versions", "source_refs", "source_levels",
-        "max_claim_levels",
+        "max_claim_levels", "section_refs", "claim_refs", "claim_levels",
     },
     "product_command": {
         "type", "command_id", "command_name", "status", "result_ref",
@@ -327,6 +333,8 @@ _KNOWLEDGE_SOURCE_LEVELS = frozenset({
     "product_contract",
     "academic_peer_reviewed",
     "community_consensus",
+    "community_organization",
+    "coach_first_party",
     "personal_experience_unverified",
     "experimental",
 })
@@ -334,13 +342,16 @@ _KNOWLEDGE_CLAIM_LEVELS = frozenset({
     "deterministic_rule",
     "research_supported",
     "community_consensus",
+    "community_practice",
     "experimental",
 })
+_KNOWLEDGE_EVENT_KEYS_V1 = _TOOL_EVENT_KEYS["knowledge"] - {
+    "section_refs", "claim_refs", "claim_levels",
+}
+_KNOWLEDGE_EVENT_KEYS_V2 = _TOOL_EVENT_KEYS["knowledge"]
 
 
 def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
-    if set(value) != _TOOL_EVENT_KEYS["knowledge"]:
-        raise CoachRuntimeError("unsafe knowledge event fields")
     registry_version = value.get("registry_version")
     topic = value.get("topic")
     issue_signal = value.get("issue_signal")
@@ -358,6 +369,13 @@ def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
         )
     ):
         raise CoachRuntimeError("unsafe knowledge event value")
+    expected_keys = (
+        _KNOWLEDGE_EVENT_KEYS_V2
+        if registry_version == "2026-07-22.v2"
+        else _KNOWLEDGE_EVENT_KEYS_V1
+    )
+    if set(value) != expected_keys:
+        raise CoachRuntimeError("unsafe knowledge event fields")
 
     entry_refs = value.get("entry_refs")
     entry_versions = value.get("entry_versions")
@@ -395,11 +413,17 @@ def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
     if not all(level in _KNOWLEDGE_CLAIM_LEVELS for level in max_claim_levels):
         raise CoachRuntimeError("unsafe knowledge claim level")
 
-    from kovaak_tracker.coach.knowledge_registry import entry_ref, load_registry
+    from kovaak_tracker.coach.knowledge_registry import (
+        KnowledgeRegistryError,
+        claim_ref,
+        entry_ref,
+        load_registry,
+    )
 
-    registry = load_registry()
-    if registry_version != registry["registry_version"]:
-        raise CoachRuntimeError("unknown knowledge registry version")
+    try:
+        registry = load_registry(registry_version=registry_version)
+    except KnowledgeRegistryError as error:
+        raise CoachRuntimeError("unknown knowledge registry version") from error
     active_by_ref = {
         entry_ref(entry): entry
         for entry in registry["entries"]
@@ -409,12 +433,77 @@ def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
         entries = [active_by_ref[ref] for ref in entry_refs]
     except KeyError as error:
         raise CoachRuntimeError("unknown knowledge entry reference") from error
-    expected_sources = [source for entry in entries for source in entry["sources"]]
+    if registry["schema_version"] == "coach_knowledge_registry.v1":
+        expected_sources = [source for entry in entries for source in entry["sources"]]
+        if (
+            entry_versions != [entry["entry_version"] for entry in entries]
+            or source_refs != [source["source_ref"] for source in expected_sources]
+            or source_levels != [source["source_level"] for source in expected_sources]
+            or max_claim_levels != [entry["max_claim_level"] for entry in entries]
+        ):
+            raise CoachRuntimeError("knowledge event does not match canonical registry")
+        return dict(value)
+
+    section_refs = value.get("section_refs")
+    claim_refs = value.get("claim_refs")
+    claim_levels = value.get("claim_levels")
+    if not all(isinstance(items, list) for items in (
+        section_refs, claim_refs, claim_levels,
+    )) or not (
+        len(section_refs) == len(claim_refs) == len(claim_levels) <= 32
+    ):
+        raise CoachRuntimeError("unsafe knowledge section list")
+    if not all(
+        isinstance(ref, str) and len(ref) <= 200 and _safe_tool_scalar(ref)
+        for ref in [*section_refs, *claim_refs]
+    ) or not all(level in _KNOWLEDGE_CLAIM_LEVELS for level in claim_levels):
+        raise CoachRuntimeError("unsafe knowledge section reference")
+
+    def sections_for_entry(entry: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        sections = [entry["definition"], entry["scope"], entry["expected_direction"]]
+        sections.extend(entry["mechanisms"])
+        for name in (
+            "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+            "stop_adjust_rule",
+        ):
+            value = entry[name]
+            if isinstance(value, Mapping):
+                sections.append(value)
+            elif isinstance(value, list):
+                sections.extend(value)
+        return sections
+
+    canonical_sections = [section for entry in entries for section in sections_for_entry(entry)]
+    sources_by_ref = {
+        source["source_ref"]: source for source in registry["sources"]
+    }
+    expected_sources = [
+        sources_by_ref[source_ref]
+        for entry in entries
+        for source_ref in entry["sources"]
+    ]
+    claim_rank = {
+        "experimental": 0,
+        "community_practice": 1,
+        "community_consensus": 2,
+        "research_supported": 3,
+        "deterministic_rule": 4,
+    }
+    expected_max_claims = [
+        max(
+            (section["claim_level"] for section in sections_for_entry(entry)),
+            key=claim_rank.__getitem__,
+        )
+        for entry in entries
+    ]
     if (
         entry_versions != [entry["entry_version"] for entry in entries]
         or source_refs != [source["source_ref"] for source in expected_sources]
         or source_levels != [source["source_level"] for source in expected_sources]
-        or max_claim_levels != [entry["max_claim_level"] for entry in entries]
+        or max_claim_levels != expected_max_claims
+        or section_refs != [section["section_ref"] for section in canonical_sections]
+        or claim_refs != [claim_ref(section) for section in canonical_sections]
+        or claim_levels != [section["claim_level"] for section in canonical_sections]
     ):
         raise CoachRuntimeError("knowledge event does not match canonical registry")
     return dict(value)

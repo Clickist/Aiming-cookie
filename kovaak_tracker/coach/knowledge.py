@@ -5,7 +5,7 @@ from .knowledge_registry import entry_ref, load_registry, query_registry
 
 
 def _legacy_knowledge() -> dict[str, dict[str, object]]:
-    data = load_registry()
+    data = load_registry(registry_version="2026-07-14.v1")
     signals = sorted({
         signal
         for entry in data["entries"]

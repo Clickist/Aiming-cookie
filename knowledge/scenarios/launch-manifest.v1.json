@@ -1,0 +1,17 @@
+{
+  "schema_version": "launch_scenario_manifest.v1",
+  "manifest_version": "2026-07-23.v1",
+  "entries": [
+    {
+      "scenario_hash": "b2ae4a24b710e36afc6e57c61f590ab4",
+      "scenario_profile_ref": "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
+      "fixture_ref": "fixture:whj-smooth-strafe-sphere-easy-single-target.v1",
+      "review_source_ref": "review:whj-smooth-strafe-sphere-easy-single-target-tracking",
+      "reviewed_at": "2026-07-23T00:00:00Z",
+      "family_gate_refs": [
+        "gate:temporal-csrt-single-target-tracking.v1"
+      ],
+      "status": "active"
+    }
+  ]
+}

@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scenario_profiles.schema.v1",
+  "oneOf": [
+    { "$ref": "#/$defs/registry" },
+    { "$ref": "#/$defs/launchManifest" }
+  ],
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "versionText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "displayText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "profileRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^scenario:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+@[1-9][0-9]*$"
+    },
+    "assetRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "scenarioHash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "stringList": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/safeText" }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_id", "entry_version", "status", "scenario_hash", "display_name",
+        "taxonomy_source", "reviewed_at", "source_refs", "supersedes", "aim_family",
+        "subdomains", "target_motion", "allowed_analyzers",
+        "allowed_metric_families", "classification_confidence", "limitations"
+      ],
+      "properties": {
+        "entry_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+        },
+        "entry_version": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["active", "superseded", "retired"] },
+        "scenario_hash": { "$ref": "#/$defs/scenarioHash" },
+        "display_name": { "$ref": "#/$defs/displayText" },
+        "taxonomy_source": { "enum": ["reviewed_registry", "official_metadata", "unknown"] },
+        "reviewed_at": { "type": "string", "format": "date-time", "maxLength": 40 },
+        "source_refs": {
+          "allOf": [
+            { "$ref": "#/$defs/stringList" },
+            { "minItems": 1 }
+          ]
+        },
+        "supersedes": { "$ref": "#/$defs/stringList" },
+        "aim_family": {
+          "enum": [
+            "static_clicking", "dynamic_clicking", "continuous_tracking", "target_switching",
+            "movement_aiming"
+          ]
+        },
+        "subdomains": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["precision", "speed", "smooth", "reactive", "predictable", "control", "mixed"]
+          }
+        },
+        "target_motion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "target_count_model"],
+          "properties": {
+            "model": { "enum": ["static", "predictable", "reactive", "mixed", "unknown"] },
+            "target_count_model": { "enum": ["single", "sequential", "concurrent", "unknown"] }
+          }
+        },
+        "allowed_analyzers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)*\\.v[1-9][0-9]*$"
+          }
+        },
+        "allowed_metric_families": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "outcome", "input_kinematics", "static_clicking", "dynamic_clicking",
+              "continuous_tracking", "target_switching"
+            ]
+          }
+        },
+        "classification_confidence": { "const": "confirmed" },
+        "limitations": {
+          "allOf": [
+            { "$ref": "#/$defs/stringList" },
+            { "minItems": 1 }
+          ]
+        }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "registry_version", "entries"],
+      "properties": {
+        "schema_version": { "const": "scenario_profile_registry.v1" },
+        "registry_version": { "$ref": "#/$defs/versionText" },
+        "entries": {
+          "type": "array",
+          "maxItems": 512,
+          "items": { "$ref": "#/$defs/profile" }
+        }
+      }
+    },
+    "manifestEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_hash", "scenario_profile_ref", "fixture_ref", "review_source_ref",
+        "reviewed_at", "family_gate_refs", "status"
+      ],
+      "properties": {
+        "scenario_hash": { "$ref": "#/$defs/scenarioHash" },
+        "scenario_profile_ref": { "$ref": "#/$defs/profileRef" },
+        "fixture_ref": { "$ref": "#/$defs/assetRef" },
+        "review_source_ref": { "$ref": "#/$defs/assetRef" },
+        "reviewed_at": { "type": "string", "format": "date-time", "maxLength": 40 },
+        "family_gate_refs": {
+          "allOf": [
+            { "$ref": "#/$defs/stringList" },
+            { "minItems": 1 }
+          ]
+        },
+        "status": { "enum": ["pending_gate", "active", "retired"] }
+      }
+    },
+    "launchManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "manifest_version", "entries"],
+      "properties": {
+        "schema_version": { "const": "launch_scenario_manifest.v1" },
+        "manifest_version": { "$ref": "#/$defs/versionText" },
+        "entries": {
+          "type": "array",
+          "maxItems": 512,
+          "items": { "$ref": "#/$defs/manifestEntry" }
+        }
+      }
+    }
+  }
+}

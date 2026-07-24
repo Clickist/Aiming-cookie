@@ -6,6 +6,9 @@ export const PROVIDER_PROFILE_STATUS_SCHEMA = "coach_provider_profile_status.v1"
 export const PROVIDER_AUTH_CAPABILITIES_SCHEMA = "coach_provider_auth_capabilities.v1" as const;
 export const PROVIDER_AUTH_OPERATION_SCHEMA = "coach_provider_auth_operation.v1" as const;
 export const PROVIDER_AUTH_RESULT_SCHEMA = "coach_provider_auth_result.v1" as const;
+export const COACH_DIAGNOSTIC_CONTEXT_V1_SCHEMA = "coach_diagnostic_context.v1" as const;
+export const COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA = "coach_diagnostic_context.v2" as const;
+export const COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA = "coach_diagnostic_context.v3" as const;
 
 export const CODING_AGENT_DEFAULT_PROMPT_MARKER =
   "expert coding assistant operating inside pi, a coding agent harness";
@@ -35,6 +38,9 @@ export type CoachRuntimeToolEvent =
       entry_versions: number[];
       source_refs: string[];
       source_levels: string[];
+      section_refs: string[];
+      claim_refs: string[];
+      claim_levels: string[];
       max_claim_levels: string[];
     }
   | {
