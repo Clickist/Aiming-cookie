@@ -55,7 +55,6 @@ def test_parse_header_profile_and_event_payloads():
     event = b"".join(
         [
             field(1, 5, f32(1.25)),
-            field(2, 2, field(1, 0, 7)),
             field(5, 2, field(1, 5, f32(0.5))),
         ]
     )
@@ -70,6 +69,206 @@ def test_parse_header_profile_and_event_payloads():
     assert parsed.events[0].payload_type == "damageDone"
     assert parsed.events[0].timestamp == pytest.approx(1.25)
     assert parsed.events[0].delta == pytest.approx(0.5)
+
+
+def test_parser_preserves_known_field_presence_and_event_source_order():
+    header = b"".join(
+        [
+            field(1, 2, b"scenario"),
+            field(3, 0, 0),
+        ]
+    )
+    first_event = b"".join(
+        [
+            field(1, 5, f32(0.0)),
+            field(2, 2, field(1, 0, 0)),
+        ]
+    )
+    second_event = b"".join(
+        [
+            field(1, 5, f32(0.0)),
+            field(3, 2, field(1, 0, 0)),
+        ]
+    )
+
+    parsed = parse_performance_bytes(
+        b"".join(
+            [
+                field(1, 2, header),
+                field(2, 2, first_event),
+                field(2, 2, second_event),
+            ]
+        )
+    )
+
+    assert parsed.header.field_presence == {
+        "scenario_name": "present",
+        "scenario_hash": "source_absent",
+        "challenge_start_utc": "present",
+        "schema_version": "source_absent",
+        "challenge_profile": "source_absent",
+    }
+    assert [event.source_event_index for event in parsed.events] == [0, 1]
+    assert [event.field_presence["timestamp"] for event in parsed.events] == ["present", "present"]
+    assert [event.field_presence["shotsFired"] for event in parsed.events] == ["present", "source_absent"]
+    assert [event.field_presence["shotsHit"] for event in parsed.events] == ["source_absent", "present"]
+
+
+def test_profile_presence_distinguishes_explicit_zero_empty_and_empty_packed_values():
+    profile = b"".join(
+        [
+            field(1, 5, f32(0.0)),
+            field(2, 2, b""),
+            field(3, 2, b""),
+            field(4, 0, 0),
+            field(5, 2, b""),
+            field(6, 0, 0),
+            field(7, 2, b""),
+            field(8, 2, b""),
+            field(9, 5, f32(0.0)),
+            field(10, 5, f32(0.0)),
+            field(11, 5, f32(0.0)),
+            field(12, 5, f32(0.0)),
+        ]
+    )
+
+    parsed = parse_performance_bytes(field(1, 2, field(5, 2, profile)))
+    parsed_profile = parsed.header.challenge_profile
+
+    assert set(parsed_profile.field_presence.values()) == {"present"}
+    assert parsed_profile.player_profile == ""
+    assert parsed_profile.added_bots == ("",)
+    assert parsed_profile.bot_max_lives == ()
+    assert parsed_profile.bot_teams == ()
+    assert parsed_profile.time_limit == 0.0
+
+
+def test_multiple_known_event_payloads_are_rejected():
+    event = b"".join(
+        [
+            field(1, 5, f32(1.25)),
+            field(2, 2, field(1, 0, 7)),
+            field(5, 2, field(1, 5, f32(0.5))),
+        ]
+    )
+
+    with pytest.raises(PerformanceParseError, match="multiple.*payload"):
+        parse_performance_bytes(field(2, 2, event))
+
+
+@pytest.mark.parametrize(
+    ("event", "message"),
+    [
+        (field(2, 2, field(1, 0, 7)), "timestamp"),
+        (field(1, 5, f32(1.25)), "payload"),
+    ],
+)
+def test_event_requires_timestamp_and_payload(event, message):
+    with pytest.raises(PerformanceParseError, match=message):
+        parse_performance_bytes(field(2, 2, event))
+
+
+@pytest.mark.parametrize(
+    "timestamp", [float("nan"), float("inf"), float("-inf"), -0.001]
+)
+def test_event_timestamp_must_be_finite_and_non_negative(timestamp):
+    event = b"".join(
+        [
+            field(1, 5, f32(timestamp)),
+            field(2, 2, field(1, 0, 7)),
+        ]
+    )
+
+    with pytest.raises(PerformanceParseError, match="timestamp"):
+        parse_performance_bytes(field(2, 2, event))
+
+
+def test_event_timestamp_is_half_up_quantized_and_end_exclusive():
+    profile = b"".join([field(1, 5, f32(1.0)), field(10, 5, f32(1.0))])
+    header = field(1, 2, field(5, 2, profile))
+    accepted = b"".join(
+        [field(1, 5, f32(0.0005)), field(2, 2, field(1, 0, 1))]
+    )
+
+    parsed = parse_performance_bytes(header + field(2, 2, accepted))
+    assert parsed.events[0].timestamp_ms == 1
+
+    for rejected_timestamp in (1.0, 1.001):
+        rejected = b"".join(
+            [
+                field(1, 5, f32(rejected_timestamp)),
+                field(2, 2, field(1, 0, 1)),
+            ]
+        )
+        with pytest.raises(PerformanceParseError, match="half-open"):
+            parse_performance_bytes(header + field(2, 2, rejected))
+
+
+def test_unknown_payload_is_omitted_but_keeps_its_source_order_hole():
+    unknown_payload = b"".join(
+        [
+            field(1, 5, f32(0.25)),
+            field(99, 2, field(1, 0, 7)),
+        ]
+    )
+    known_payload = b"".join(
+        [
+            field(1, 5, f32(0.25)),
+            field(2, 2, field(1, 0, 7)),
+        ]
+    )
+
+    parsed = parse_performance_bytes(
+        b"".join(
+            [
+                field(99, 0, 7),
+                field(2, 2, unknown_payload),
+                field(2, 2, known_payload),
+            ]
+        )
+    )
+
+    assert parsed.unknown_field_observability == "detected"
+    assert parsed.timeline_status == "partial"
+    assert parsed.omitted_event_indexes == (0,)
+    assert [event.source_event_index for event in parsed.events] == [1]
+
+
+@pytest.mark.parametrize(
+    ("payload_field", "nested_value"),
+    [
+        (2, field(1, 0, 7)),
+        (5, field(1, 5, f32(0.5))),
+    ],
+)
+def test_unknown_nested_field_after_known_value_is_detected(
+    payload_field, nested_value,
+):
+    event = b"".join(
+        [
+            field(1, 5, f32(0.25)),
+            field(payload_field, 2, nested_value + field(99, 0, 7)),
+        ]
+    )
+
+    parsed = parse_performance_bytes(field(2, 2, event))
+
+    assert parsed.events[0].unknown_field_observability == "detected"
+    assert parsed.unknown_field_observability == "detected"
+
+
+def test_known_only_payload_has_proven_unknown_field_observability_none():
+    event = b"".join(
+        [
+            field(1, 5, f32(0.25)),
+            field(2, 2, field(1, 0, 7)),
+        ]
+    )
+
+    parsed = parse_performance_bytes(field(2, 2, event))
+
+    assert parsed.events[0].unknown_field_observability == "none"
+    assert parsed.unknown_field_observability == "none"
 
 
 def test_unknown_fields_are_skipped():

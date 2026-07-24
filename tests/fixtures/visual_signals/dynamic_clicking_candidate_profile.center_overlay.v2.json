@@ -1,0 +1,80 @@
+{
+  "schema_version": "visual_quality_profile.v2",
+  "profile_ref": "visual-quality:visual_signals.round_detector@visual_round_detector.circularity_0_60_center_overlay_0_50.v2",
+  "producer_id": "visual_signals.round_detector",
+  "producer_version": "visual_round_detector.circularity_0_60_center_overlay_0_50.v2",
+  "annotation_set_ref": "annotation-set:task6-calibration+holdout.v2",
+  "annotation_protocol_version": "visual_annotation_protocol.v1",
+  "coordinate_space": "capture_pixels",
+  "calibration_context": {
+    "detector_config_ref": "detector-config:sha256:5a0a5e2fcc4b324eed0c8b2a230e1cf3da141249752678ad162c20fb9ab7caca",
+    "hud_mask_version": "visual_hud_mask.task6.v1",
+    "annotated_map_or_background_labels": [
+      "task4-timescale-field"
+    ],
+    "annotated_target_appearance_labels": [
+      "round-target"
+    ]
+  },
+  "validated_selectors": [
+    {
+      "schema_version": "visual_runtime_selector.v1",
+      "scenario_hash": "a5be19c6e6aeb0d774c5e9d9fb497e91",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+      "fov": null
+    }
+  ],
+  "required_selector_keys_by_metric_family": {
+    "dynamic_clicking": [
+      "scenario_hash",
+      "resolution",
+      "canonical_video_mapping_version"
+    ]
+  },
+  "required_quality_fields_by_metric_family": {
+    "dynamic_clicking": [
+      "center_error_median_px",
+      "center_error_p95_px",
+      "false_positive_rate",
+      "minimum_coverage",
+      "radius_or_hitbox_error_px"
+    ]
+  },
+  "quality_status_by_metric_family": {
+    "dynamic_clicking": "accepted"
+  },
+  "compatibility_predicate_version": "visual_runtime_compatibility.v2",
+  "acceptance_thresholds": {
+    "center_error_median_px": 2.0,
+    "center_error_p95_px": 4.0,
+    "false_positive_rate": 0.05,
+    "identity_switch_rate": 0.01,
+    "minimum_coverage": 0.9,
+    "occlusion_reentry_accuracy": 0.95,
+    "radius_or_hitbox_error_px": 2.0
+  },
+  "validation_results": {
+    "center_error_median_px": 1.3642379262396331,
+    "center_error_p95_px": 2.9577324091698625,
+    "false_positive_rate": 0.0,
+    "identity_switch_rate": null,
+    "minimum_coverage": 0.9571428571428572,
+    "occlusion_reentry_accuracy": null,
+    "radius_or_hitbox_error_px": 0.7595572716512207
+  },
+  "validated_metric_families": [
+    "dynamic_clicking"
+  ],
+  "status": "accepted",
+  "limitations": [
+    "candidate_profile_not_registered_for_production",
+    "center_overlay_gate_single_run_only",
+    "identity_continuity_not_observed",
+    "occlusion_reentry_not_observed",
+    "two_hud_occluded_annotations_removed_in_protocol_audit"
+  ]
+}

@@ -19,7 +19,8 @@ Differences from flicking advice (see spec
 """
 from __future__ import annotations
 
-from typing import Optional
+from math import isfinite
+from typing import Any, Mapping, Optional
 
 from .advice import Prescription, Finding  # reuse dataclass contract
 
@@ -278,4 +279,193 @@ def _scalar(d: dict, key: str) -> Optional[float]:
         return None
 
 
-__all__ = ["Prescription", "Finding", "advise_tracking", "_flatten_metrics", "THRESHOLDS"]
+_TRACKING_CANDIDATES = (
+    (
+        "continuous_tracking.phase_lag_ms",
+        "phase_lag_ms",
+        "tracking lag high",
+        "metric:phase_lag",
+        "absolute_higher",
+        "knowledge:tracking.predictable-speed-matching@1",
+    ),
+    (
+        "continuous_tracking.loss_count",
+        "loss_count",
+        "loss count high",
+        "metric:loss_count",
+        "higher",
+        "knowledge:tracking.reactive-change-response@1",
+    ),
+    (
+        "continuous_tracking.reacquisition_latency_ms",
+        "reacquisition_latency_ms",
+        "off target long",
+        "metric:reacquisition_time",
+        "higher",
+        "knowledge:tracking.reactive-change-response@1",
+    ),
+    (
+        "continuous_tracking.observed_change_response_ms",
+        "observed_change_response_ms",
+        "accel mismatch high",
+        "metric:change_response",
+        "higher",
+        "knowledge:tracking.reactive-change-response@1",
+    ),
+    (
+        "continuous_tracking.correction_direction_reversal_count",
+        "correction_burden",
+        "correction burden high",
+        "metric:correction_burden",
+        "higher",
+        "knowledge:tracking.control-smoothness@1",
+    ),
+    (
+        "continuous_tracking.sparc",
+        "sparc",
+        "sparc low",
+        "metric:sparc",
+        "lower",
+        "knowledge:tracking.control-smoothness@1",
+    ),
+)
+
+
+def _finite_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if isfinite(number) else None
+
+
+def _is_worse_than_baseline(current: float, baseline: float, direction: str) -> bool:
+    if direction == "higher":
+        return current > baseline
+    if direction == "absolute_higher":
+        return abs(current) > abs(baseline)
+    return current < baseline
+
+
+def _tracking_control_guardrails_hold(
+    metrics: Mapping[str, Any], baseline: Mapping[str, Any],
+) -> bool:
+    error = metrics.get("continuous_tracking.target_relative_error_px")
+    current_error = _finite_number(error.get("value")) if isinstance(error, Mapping) else None
+    baseline_error = _finite_number(
+        baseline.get("continuous_tracking.target_relative_error_px")
+    )
+    coverage = metrics.get("continuous_tracking.time_in_radius_ratio")
+    current_coverage = (
+        _finite_number(coverage.get("value")) if isinstance(coverage, Mapping) else None
+    )
+    baseline_coverage = _finite_number(
+        baseline.get("continuous_tracking.time_in_radius_ratio")
+    )
+    return (
+        current_error is not None
+        and baseline_error is not None
+        and current_coverage is not None
+        and baseline_coverage is not None
+        and current_error <= baseline_error
+        and current_coverage >= baseline_coverage
+    )
+
+
+def _tracking_knowledge_refs(
+    signal: str,
+    knowledge_metric_ref: str,
+    expected_entry_ref: str,
+) -> tuple[str, list[str]]:
+    from .coach.diagnosis import resolve_candidate_knowledge_refs
+
+    knowledge = resolve_candidate_knowledge_refs(
+        issue_signal=signal,
+        metric_refs=[knowledge_metric_ref],
+    )
+    return (
+        knowledge.registry_version,
+        [ref for ref in knowledge.entry_refs if ref == expected_entry_ref],
+    )
+
+
+def build_tracking_candidate_advice(
+    analysis: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Return comparison-only candidate observations from tracking_analysis.v1."""
+    comparison = analysis.get("comparison")
+    if not isinstance(comparison, Mapping) or comparison.get("comparable") is not True:
+        return []
+    metrics = analysis.get("metrics")
+    baseline = comparison.get("baseline_metrics")
+    if not isinstance(metrics, Mapping) or not isinstance(baseline, Mapping):
+        return []
+    rows = [
+        row for row in analysis.get("processed_rows") or []
+        if isinstance(row, Mapping) and isinstance(row.get("event_ref"), str)
+    ]
+    candidates = []
+    for (
+        metric_key,
+        row_field,
+        signal,
+        knowledge_metric_ref,
+        direction,
+        expected_entry_ref,
+    ) in _TRACKING_CANDIDATES:
+        metric = metrics.get(metric_key)
+        current = _finite_number(metric.get("value")) if isinstance(metric, Mapping) else None
+        reference = _finite_number(baseline.get(metric_key))
+        if (
+            current is None
+            or reference is None
+            or not _is_worse_than_baseline(current, reference, direction)
+        ):
+            continue
+        if metric_key in {
+            "continuous_tracking.correction_direction_reversal_count",
+            "continuous_tracking.sparc",
+        } and not _tracking_control_guardrails_hold(metrics, baseline):
+            continue
+        registry_version, knowledge_entry_refs = _tracking_knowledge_refs(
+            signal,
+            knowledge_metric_ref,
+            expected_entry_ref,
+        )
+        if not knowledge_entry_refs:
+            continue
+        supporting_refs = [
+            row["event_ref"] for row in rows
+            if (value := _finite_number(row.get(row_field))) is not None
+            and _is_worse_than_baseline(value, reference, direction)
+        ]
+        counterexample_refs = [
+            row["event_ref"] for row in rows
+            if (value := _finite_number(row.get(row_field))) is not None
+            and not _is_worse_than_baseline(value, reference, direction)
+        ]
+        candidates.append({
+            "signal": signal,
+            "claim_level": "deterministic_rule",
+            "metric_refs": [metric_key],
+            "observation": {
+                "current": current,
+                "matched_baseline": reference,
+                "delta": current - reference,
+            },
+            "supporting_row_refs": supporting_refs,
+            "counterexample_row_refs": counterexample_refs,
+            "knowledge_registry_version": registry_version,
+            "knowledge_entry_refs": knowledge_entry_refs,
+            "requested_knowledge_sections": [
+                "definition", "mechanisms", "alternative_explanations",
+                "cue", "dose_guardrail", "matched_retest", "stop_adjust_rule",
+            ],
+            "limitations": list(analysis.get("limitations") or []),
+        })
+    return candidates
+
+
+__all__ = [
+    "Prescription", "Finding", "advise_tracking", "build_tracking_candidate_advice",
+    "_flatten_metrics", "THRESHOLDS",
+]

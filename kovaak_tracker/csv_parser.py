@@ -16,7 +16,7 @@ seconds.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -74,6 +74,8 @@ class KovaaKStats:
     summary: dict[str, str]
     config: dict[str, str]
     file_name: str
+    weapon_aggregates: tuple[dict[str, object], ...] = ()
+    field_presence: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def challenge_start(self) -> datetime:
@@ -162,21 +164,45 @@ def parse_stats_bytes(data: bytes, *, file_name: str = "<memory>") -> KovaaKStat
         )
 
     kill_rows: list[list[str]] = []
-    weapon_row_idx = len(lines)
+    weapon_header_idx = len(lines)
     for idx in range(1, len(lines)):
         line = lines[idx]
         if line.strip() == "":
-            weapon_row_idx = idx
-            break
+            continue
         cells = line.split(",")
         # Kill table has exactly len(KILL_HEADER) columns. A line starting with
         # the weapon-name header ("Weapon,Shots,...") marks the weapon-config row
         # and ends the kill table.
         if cells and cells[0] == "Weapon":
-            weapon_row_idx = idx
+            weapon_header_idx = idx
             break
         kill_rows.append(cells)
-    summary, config = _parse_kv_blocks(lines, weapon_row_idx + 2)
+
+    weapon_aggregates: list[dict[str, object]] = []
+    summary_start_idx = weapon_header_idx + 1
+    if weapon_header_idx < len(lines):
+        weapon_header = [cell.strip() for cell in lines[weapon_header_idx].split(",")]
+        required_weapon_fields = (
+            "Weapon",
+            "Shots",
+            "Hits",
+            "Damage Done",
+            "Damage Possible",
+        )
+        if tuple(weapon_header[:5]) != required_weapon_fields:
+            raise ValueError("Unexpected KovaaK's weapon aggregate header")
+        row_idx = weapon_header_idx + 1
+        while row_idx < len(lines) and lines[row_idx].strip():
+            cells = lines[row_idx].split(",")
+            if not cells or not cells[0].strip():
+                break
+            weapon_aggregates.append(_parse_weapon_aggregate(cells))
+            row_idx += 1
+        while row_idx < len(lines) and not lines[row_idx].strip():
+            row_idx += 1
+        summary_start_idx = row_idx
+
+    summary, config = _parse_kv_blocks(lines, summary_start_idx - 1)
 
     kills = pd.DataFrame(kill_rows, columns=list(KILL_HEADER))
     # Coerce numeric columns. TTK carries an "s" suffix ("0.395000s").
@@ -187,13 +213,71 @@ def parse_stats_bytes(data: bytes, *, file_name: str = "<memory>") -> KovaaKStat
         kills[col] = pd.to_numeric(kills[col], errors="coerce")
     kills["TTK"] = pd.to_numeric(kills["TTK"].str.rstrip("s"), errors="coerce")
     kills["Timestamp_dt"] = kills["Timestamp"].map(_parse_wallclock)
-    kills["time_s"] = (kills["Timestamp_dt"] - _parse_wallclock(summary["Challenge Start"])).dt.total_seconds()
+    kills["time_s"] = _unwrap_relative_seconds(
+        kills["Timestamp_dt"].tolist(),
+        _parse_wallclock(summary["Challenge Start"]),
+    )
 
     return KovaaKStats(
         kills=kills,
         summary=summary,
         config=config,
         file_name=file_name,
+        weapon_aggregates=tuple(weapon_aggregates),
+        field_presence={
+            "summary": tuple(summary),
+            "config": tuple(config),
+            "weapon_aggregates": (
+                "Weapon",
+                "Shots",
+                "Hits",
+                "Damage Done",
+                "Damage Possible",
+            ) if weapon_aggregates else (),
+        },
+    )
+
+
+def _parse_weapon_aggregate(cells: list[str]) -> dict[str, object]:
+    fields = ("Weapon", "Shots", "Hits", "Damage Done", "Damage Possible")
+    aggregate: dict[str, object] = {}
+    aggregate["Weapon"] = cells[0].strip()
+    for index, field_name in enumerate(fields[1:], start=1):
+        raw = cells[index].strip() if index < len(cells) else ""
+        if raw == "":
+            aggregate[field_name] = None
+        elif field_name in {"Shots", "Hits"}:
+            try:
+                aggregate[field_name] = int(raw)
+            except ValueError as exc:
+                raise ValueError(f"invalid weapon aggregate {field_name}: {raw!r}") from exc
+        else:
+            try:
+                aggregate[field_name] = float(raw)
+            except ValueError as exc:
+                raise ValueError(f"invalid weapon aggregate {field_name}: {raw!r}") from exc
+    return aggregate
+
+
+def _unwrap_relative_seconds(
+    timestamps: list[datetime], challenge_start: datetime
+) -> list[float]:
+    start_us = _time_of_day_microseconds(challenge_start)
+    previous: float | None = None
+    result: list[float] = []
+    for timestamp in timestamps:
+        delta = (_time_of_day_microseconds(timestamp) - start_us) / 1_000_000.0
+        while delta < 0 or (previous is not None and delta < previous):
+            delta += 24 * 60 * 60
+        result.append(delta)
+        previous = delta
+    return result
+
+
+def _time_of_day_microseconds(value: datetime) -> int:
+    return (
+        ((value.hour * 60 + value.minute) * 60 + value.second) * 1_000_000
+        + value.microsecond
     )
 
 

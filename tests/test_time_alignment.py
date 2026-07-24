@@ -157,7 +157,19 @@ def test_missing_stats_start_falls_back_explicitly_to_perf_anchor():
 
     assert result.start_ms == 1_699_897_600_000
     assert result.start_source == "performance_challenge_start_utc"
+    assert result.stats_anchor_status == "missing"
     assert "stats_anchor_missing" in result.warnings
+
+
+def test_exact_stats_epoch_has_stable_status_without_warning():
+    result = resolve_time_window(
+        performance(),
+        stats_challenge_start_epoch_ms=1_699_897_600_000,
+    )
+
+    assert result.start_ms == 1_699_897_600_000
+    assert result.stats_anchor_status == "explicit_epoch"
+    assert result.warnings == ()
 
 
 def test_conflicting_stats_start_fails_closed():
@@ -176,3 +188,46 @@ def test_missing_duration_fails_closed():
             stats_challenge_start="01:46:40.321",
             local_timezone=LOCAL_TZ,
         )
+
+
+def test_stats_time_of_day_without_mapping_keeps_only_performance_second_identity():
+    start_ms = int(
+        datetime(2023, 11, 14, 1, 46, 40, tzinfo=timezone.utc).timestamp()
+        * 1_000
+    )
+
+    result = resolve_time_window(
+        performance(start_ms=start_ms),
+        stats_challenge_start="01:46:40.797",
+    )
+
+    assert result.start_ms == start_ms + 797
+    assert result.stats_anchor_status == "unmapped_second_identity"
+    assert result.stats_time_of_day_ms == 6_400_797
+    assert result.stats_local_to_utc_mapping is None
+    assert "stats_time_of_day_unmapped" in result.warnings
+
+
+def test_stats_time_of_day_requires_mapping_when_seconds_do_not_match_utc():
+    with pytest.raises(TimeAlignmentError, match="anchor_timezone_unmapped"):
+        resolve_time_window(
+            performance(),
+            stats_challenge_start="01:46:40.797",
+        )
+
+
+def test_versioned_stats_timezone_mapping_is_preserved_in_window():
+    mapping = {
+        "version": "stats_local_to_utc.v1",
+        "source": "fixture",
+        "utc_offset_minutes": 480,
+    }
+    result = resolve_time_window(
+        performance(),
+        stats_challenge_start="01:46:40.797",
+        stats_local_to_utc_mapping=mapping,
+    )
+
+    assert result.start_ms == 1_699_897_600_797
+    assert result.stats_anchor_status == "mapped_local_time"
+    assert result.stats_local_to_utc_mapping == mapping

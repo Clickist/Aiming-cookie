@@ -27,6 +27,7 @@ from webapp.backend.contracts import (
     coerce_error_v1,
     dump_contract_json,
     normalize_json_value,
+    project_evidence_segment,
 )
 
 
@@ -336,6 +337,202 @@ def test_build_analysis_result_v2_supports_explicit_input_modes(input_mode: str)
     }
 
 
+def test_public_evidence_segment_projector_allowlists_fields():
+    segment = {
+        "segment_id": "analysis:42:segment:1",
+        "analysis_ref": "analysis:42",
+        "title_key": "review.segment",
+        "private_payload": {"secret": "do-not-return"},
+    }
+
+    assert project_evidence_segment(segment) == {
+        "segment_id": "analysis:42:segment:1",
+        "analysis_ref": "analysis:42",
+        "title_key": "review.segment",
+    }
+
+
+def _v2_window_result_kwargs(*, input_mode: str, include_window: bool = True) -> dict:
+    start_ms = 1_699_897_600_797
+    end_ms = start_ms + 60_000
+    input_snapshot = {"schema_version": "analysis_input_snapshot.v2"}
+    if include_window:
+        input_snapshot["canonical_time_window"] = {
+            "schema_version": "canonical_time_window.v1",
+            "timebase_version": "time_alignment.v2",
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "duration_ms": 60_000,
+            "start_source": "stats_challenge_start",
+            "end_source": "timer_profile",
+            "warnings": [],
+            "window_semantics": "half_open",
+        }
+    return {
+        "analysis_id": "analysis-42",
+        "analysis_type": "flicking",
+        "input_mode": input_mode,
+        "kovaak_run_ref": "run-42",
+        "evidence": {
+            "sources": [],
+            "provenance": {},
+            "availability": {},
+            "alignment": {
+                "status": "aligned",
+                "challenge_start_epoch_ms": start_ms,
+                "challenge_end_epoch_ms": end_ms,
+            },
+            "warnings": [],
+        },
+        "deterministic": {},
+        "artifact_manifest": build_artifact_manifest_v2(
+            external_inputs=[],
+            owned_outputs=[{"id": "analysis-42", "kind": "analysis_result"}],
+        ),
+        "input_snapshot": input_snapshot,
+        "created_at": "2026-07-13T12:00:00Z",
+        "completed_at": "2026-07-13T12:01:00Z",
+        "warnings": [],
+        "errors": [],
+    }
+
+
+def _unknown_scenario_resolution() -> dict:
+    return {
+        "schema_version": "scenario_resolution.v1",
+        "scenario_hash": "unreviewed-hash",
+        "display_name": "Same Display Name",
+        "registry_version": "scenario_registry.test.v1",
+        "manifest_version": "scenario_manifest.test.v1",
+        "scenario_profile_ref": None,
+        "classification_source": "unknown",
+        "classification_confidence": "unknown",
+        "profile_status": "unknown",
+        "reviewed_at": None,
+        "source_refs": [],
+        "supersedes": [],
+        "manifest_status": "unlisted",
+        "fixture_ref": None,
+        "review_source_ref": None,
+        "manifest_reviewed_at": None,
+        "family_gate_refs": [],
+        "aim_family": "unknown",
+        "subdomains": [],
+        "target_motion": {"model": "unknown", "target_count_model": "unknown"},
+        "allowed_analyzers": [],
+        "allowed_metric_families": [],
+        "claim_ceiling": "outcome_only",
+        "family_analyzer_dispatch": "none",
+        "limitations": ["scenario_not_in_active_manifest"],
+    }
+
+
+def test_analysis_result_v2_native_requires_frozen_canonical_window():
+    with pytest.raises(ValueError, match="requires a canonical time window"):
+        build_analysis_result_v2(
+            **_v2_window_result_kwargs(
+                input_mode="input_native",
+                include_window=False,
+            )
+        )
+
+
+def test_analysis_result_v2_rejects_alignment_that_disagrees_with_frozen_window():
+    kwargs = _v2_window_result_kwargs(input_mode="input_native")
+    kwargs["evidence"]["alignment"]["challenge_end_epoch_ms"] += 1
+
+    with pytest.raises(ValueError, match="must match the frozen canonical window"):
+        build_analysis_result_v2(**kwargs)
+
+
+def test_analysis_result_v2_rejects_processed_table_bound_to_another_analysis():
+    kwargs = _v2_window_result_kwargs(input_mode="input_native")
+    kwargs["evidence"]["processed_event_tables"] = [{
+        "schema_version": "processed_event_table.v1",
+        "table_ref": "analysis-other:table:static_flick",
+        "analysis_ref": "analysis-other",
+        "analyzer_ref": "native_flicking.v1",
+        "family": "static_clicking",
+        "event_kind": "static_flick",
+        "row_count": 1,
+        "included_count": 1,
+        "excluded_count": 0,
+        "completeness": "complete",
+        "field_catalog": [{
+            "field_key": "corrective_count",
+            "role": "metric",
+            "value_type": "number",
+            "unit": "count",
+            "metric_key": "static_clicking.corrective_count",
+            "metric_version": "native_flicking.v1",
+            "expected_direction": "comparison_only",
+            "limitations": [],
+        }],
+        "index_fields": ["corrective_count"],
+        "rows_ref": "analysis-other:table:static_flick",
+        "limitations": [],
+    }]
+
+    with pytest.raises(ValueError, match="bound to another analysis"):
+        build_analysis_result_v2(**kwargs)
+
+
+def test_analysis_result_v2_video_fallback_may_omit_canonical_window():
+    result = build_analysis_result_v2(
+        **_v2_window_result_kwargs(
+            input_mode="video_fallback",
+            include_window=False,
+        )
+    )
+
+    assert result["input_snapshot"] == {
+        "schema_version": "analysis_input_snapshot.v2"
+    }
+
+
+def test_analysis_result_v2_preserves_frozen_unknown_scenario_resolution():
+    kwargs = _v2_window_result_kwargs(input_mode="input_native")
+    kwargs["input_snapshot"]["schema_version"] = "analysis_input_snapshot.v3"
+    resolution = _unknown_scenario_resolution()
+    kwargs["input_snapshot"]["scenario_resolution"] = resolution
+
+    result = build_analysis_result_v2(**kwargs)
+
+    assert result["input_snapshot"]["scenario_resolution"] == resolution
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("classification_confidence", "high", "classification_confidence"),
+        ("family_analyzer_dispatch", "native_flicking.v1", "dispatch"),
+        ("limitations", [], "limitations"),
+        ("scenario_profile_ref", "scenario:guessed@1", "scenario_profile_ref"),
+    ],
+)
+def test_analysis_result_v2_rejects_inconsistent_unknown_scenario_resolution(
+    field: str,
+    value: object,
+    message: str,
+):
+    kwargs = _v2_window_result_kwargs(input_mode="input_native")
+    kwargs["input_snapshot"]["schema_version"] = "analysis_input_snapshot.v3"
+    resolution = _unknown_scenario_resolution()
+    resolution[field] = value
+    kwargs["input_snapshot"]["scenario_resolution"] = resolution
+
+    with pytest.raises(ValueError, match=message):
+        build_analysis_result_v2(**kwargs)
+
+
+def test_analysis_input_snapshot_v3_requires_frozen_scenario_resolution():
+    kwargs = _v2_window_result_kwargs(input_mode="input_native")
+    kwargs["input_snapshot"]["schema_version"] = "analysis_input_snapshot.v3"
+
+    with pytest.raises(ValueError, match="requires scenario_resolution"):
+        build_analysis_result_v2(**kwargs)
+
+
 def test_analysis_result_v2_allows_metric_names_that_describe_paths():
     result = build_analysis_result_v2(
         analysis_id="analysis-42",
@@ -555,6 +752,27 @@ def test_artifact_manifest_v2_rejects_duplicate_or_misowned_artifacts():
             external_inputs=[],
             owned_outputs=[{"id": "run:1:trace", "kind": "raw_input"}],
         )
+
+
+def test_analysis_result_v2_validates_derived_evidence_safe_ref():
+    kwargs = _v2_window_result_kwargs(input_mode="input_native")
+    kwargs["evidence"]["derived_artifact"] = {
+        "artifact_ref": "analysis:42:evidence:abc",
+        "evidence_revision": "sha256:" + "a" * 64,
+        "contract_version": "analysis_evidence_artifact.v1",
+        "checksum_sha256": "a" * 64,
+        "size_bytes": 10,
+    }
+    result = build_analysis_result_v2(**kwargs)
+    assert result["evidence"]["derived_artifact"]["contract_version"] == "analysis_evidence_artifact.v1"
+
+    kwargs["evidence"]["derived_artifact"]["contract_version"] = "analysis_evidence_artifact.v2"
+    result = build_analysis_result_v2(**kwargs)
+    assert result["evidence"]["derived_artifact"]["contract_version"] == "analysis_evidence_artifact.v2"
+
+    kwargs["evidence"]["derived_artifact"]["size_bytes"] = 0
+    with pytest.raises(ValueError, match="size_bytes"):
+        build_analysis_result_v2(**kwargs)
 
     with pytest.raises(ValueError, match="duplicate"):
         build_artifact_manifest_v2(
