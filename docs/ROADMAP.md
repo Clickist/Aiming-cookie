@@ -12,7 +12,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 → bounded evidence-backed Coach → local history, plan, and retest
 ```
 
-现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成合入后的实现和自动化/字段验证基础；它们仍受真实 Tauri product-path、AMD/Intel 物理硬件等发布 Gate 约束，NVIDIA 结果不能替代。完整 Coach 的统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端尚未完成，input-native 仍只能作为 Preview / Experimental。
+现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成合入后的实现和自动化/字段验证基础；它们仍受真实 Tauri product-path、AMD/Intel 物理硬件等发布 Gate 约束，NVIDIA 结果不能替代。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和前端 handoff contract 已形成；正式前端尚未实现，input-native 仍只能作为 Preview / Experimental。当前只有经过真实 Gate 的 tracking 单场景进入 production manifest，不能把这一条扩写成其它 family 全部已放行。
 
 完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留 Provider-first onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化，不包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
 
@@ -21,7 +21,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 ### P0 — 完整 Coach launch 闭环
 
 1. 保持已合入的自动采集、Run finalization、pending Run 与 Run-owned evidence 生命周期；以 AMD/Intel 物理硬件和真实 product-path 验证决定其发布放行，不重做已闭合实现；
-2. 冻结并实现 canonical time、ScenarioProfile、私有 signal/evidence artifact 与 bounded Coach evidence broker；
+2. 冻结并实现 canonical time、ScenarioProfile、私有 signal/evidence artifact、完整动作级 processed event table 与 bounded Coach evidence broker；broker 必须支持固定的精确读取、排序、筛选、聚合、共同出现、时序和反例比较，不能只暴露代表片段；
 3. 建立 input-native / multimodal / video-fallback 的 versioned AnalysisResult 和 evidence provenance，并让 MP4 只在本地确定性预处理为数值证据；
 4. 分别完成 static clicking、dynamic clicking、continuous tracking 与 target switching 的专项 analyzer、质量 Gate、知识/处方、画像、计划和复测；movement aiming 无移动遥测时只保留 outcome-only；
 5. 已冻结的 Provider/model/auth、Training Plan、History/Analysis command、confirmation、audit/idempotency 与 Python↔Pi 边界由现有合同和回归保护；非硬阻断的额外真实数据/E2E 不再作为正式前端启动前置；
@@ -87,6 +87,7 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 
 当前 active implementation plans：
 
+- [`superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md`](superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的 Run facts、processed event tables、visual producer、跨 family analyzer、Knowledge Registry v2、画像/计划/复测与 release Gate；
 - [`superpowers/plans/2026-07-13-reflek-capability-adoption.md`](superpowers/plans/2026-07-13-reflek-capability-adoption.md)：Analysis/evidence correctness、Run/trace 与 Coach 结构化能力；
 - [`superpowers/plans/2026-07-13-coach-productization-provider-management.md`](superpowers/plans/2026-07-13-coach-productization-provider-management.md)：解释/处方合同、input-native 核心指标、Pi provider/model/auth、用户级 Coach 命令与 Provider Settings；
 - [`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)：正式前端重建；边界由 active [`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md) 冻结。Task 1 已完成，Task 2–7 尚未获得具体 Task 授权。
@@ -100,7 +101,7 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 5. Windows Desktop pre-frontend Task 1–2 已完成并归档；当前没有新的已授权切片，等待点点明确指定；
 6. 每次只执行一个被点点指定的 active plan Task；新增数据可靠性工作在 spec/plan 获批前不得直接施工。
 7. 自动采集局部合同已由 [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md) 冻结；Capture Coordinator、Run Finalizer、Run-owned evidence、pending Run readiness 与 Storage/recovery 的实施证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 仍是本 Roadmap 的外部发布 Gate，不是继续扩大旧 plan 的内部 Task。Frontend Task 2 可独立建立 tokens/primitives，Task 3/4/6 在对应 capability 通过前不得伪造完成状态。
-8. 完整 Coach spec/plan 已在采集集成、上游文档和状态索引协调后由点点批准为 active；后续按 canonical time → scenario → evidence broker → family analyzer → profile/plan/retest 顺序执行，每次只执行一个被授权 Task。
+8. 完整 Coach spec/plan 已在采集集成、上游文档和状态索引协调后由点点批准为 active；Task 1-5 后先补 processed event table 的 Coach 消费与真实 event/segment comparison，再进入 visual producer 和其它 family analyzer；每次只执行一个被授权 Task。
 
 ## 4. Desktop Complete Coach Go/No-Go Gates
 
@@ -119,7 +120,7 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 - Provider 可选择、配置、连接、测试和恢复；只有要求认证的 Provider 才显示认证步骤，未配置或失败不阻塞确定性诊断；
 - 第一次分析完成且 Provider 可用时自动展开 Coach；Coach 能把指标转成证据、白话解释、训练 cue、预期变化与复测，并可调用本地 profile 拥有的产品命令。
 - static clicking、dynamic clicking、continuous tracking 与 target switching 各自至少有通过 ScenarioProfile、analyzer、knowledge、fixture、必要视觉质量和真实 Run Gate 的 launch scenario；movement aiming 无移动遥测时只显示 outcome-only。
-- Coach 可读取 bounded L1-L3 规范化 facts/evidence/diagnosis，不可读取 Raw、MP4、原始 CSV/protobuf、私有 parser payload 或未知字段；当前 MP4 只由本地确定性预处理器消费。
+- Coach 可读取 bounded L1-L3 规范化 facts/evidence/diagnosis，包括整局完整动作级 processed event table 的固定查询结果；不可读取 Raw、MP4、原始 CSV/protobuf、私有 parser payload 或未知字段。Coach 能检查支持证据和反例后独立综合候选诊断；当前 MP4 只由本地确定性预处理器消费。
 
 ### 数据可靠性
 

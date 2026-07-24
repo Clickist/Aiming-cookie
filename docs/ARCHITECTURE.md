@@ -102,7 +102,7 @@ AnalysisResult
 
 约束：
 
-- deterministic summary、diagnosis 和 prescription 是 Coach 的事实输入，不由 LLM 改写；
+- measured/derived 数值、事件、时间、来源、质量和 limitations 是 Coach 不得改写或重算的事实输入；deterministic diagnosis/prescription 是规则层生成的可追溯候选观察与初始排序，不是不可挑战的最终因果结论。Coach 可结合完整动作级 processed data、反例、历史和知识重新排序、保留或拒绝候选解释，但不得伪造测量、覆盖正式指标或把假设写成事实；
 - `analysis_type` 必须显式，不能靠字段猜测 flicking/tracking；
 - `input_mode` 必须显式区分 input-native / multimodal / video-fallback；报告和 UI 不能靠是否有 MP4 或 trace 猜测；
 - `analysis_id` 必须绑定所属 Analysis Session 的稳定引用（当前 wire format 为 `analysis:{session_id}`）；terminal write 必须同时校验 owner/local profile、`analysis_type`、`input_mode` 与可选 `kovaak_run_id/ref` 均匹配已 claim 的 request，结构合法但属于另一 request 的结果必须 fail-closed；
@@ -222,8 +222,21 @@ Coach 是用户关系层，不属于某个 analysis session：
 
 - L0 原始载体与私有实现对象（Raw trace、MP4/frame、原始 Stats CSV、Performance protobuf、绝对路径、私有 parser payload 与未知字段）只留在本地 Runtime/受管 artifact，不能进入 Provider request、Coach tool result、message、trace、普通 API 或日志；
 - L1 CanonicalSourceFacts、L2 DerivedEvidence 与 L3 diagnosis/profile/plan 必须版本化、类型化、字段白名单化并带 provenance、completeness 与 limitation；完整规范化 facts 不等于原始载体或 future unknown field；
+- L2 必须保留 analyzer 定义的全部动作级 processed event rows：static 每次 flick/click、dynamic 每次 acquisition/click、tracking 每个 episode/change/loss/reacquisition 或固定分析窗口、switching 每条 leave-to-first-outcome 链。它们可以留在本地 artifact 并通过固定查询操作消费，但不能只剩若干代表片段或整局摘要；EvidenceSegment 主要是解释和本地视频回放锚点；
 - 用户启用 Coach 并选择 Provider 后，L1-L3 的 bounded context/tool results 是普通 Coach turn 数据，不增加逐 Run consent。owner、capability、预算和审计边界仍在本地 bridge 强制；
 - MP4 在当前合同中只由本地确定性预处理器生成数值 signals/events/confidence，Coach 引用 EvidenceSegment，用户在 UI 播放本地片段。未来视觉模型必须另立版本化合同，明确用户授权、限定片段、Provider、预算、retention 与 `model_inferred` 边界。
+
+#### Backend-to-frontend handoff contract
+
+正式前端只消费以下版本化后端边界，不读取 Analysis-owned artifact 文件、不解析原始载体，也不复制 Coach command 逻辑：
+
+- `GET /api/sessions/{analysis_id}`：读取 owner-scoped、已校验的 `AnalysisResult` summary；
+- `GET /api/sessions/{analysis_id}/evidence-segments`：读取 `frontend_evidence_segments.v1`，包含安全 EvidenceSegment metadata、coverage/confidence/limitations，以及相对该 Analysis canonical window 的 `evidence_segment_playback.v1` seek anchor；不包含 frame、MP4 bytes、路径或 parser payload；
+- `GET /api/sessions/{analysis_id}/video`：仅在 owner-scoped managed MP4 可用时流式播放；前端用上一个接口的相对毫秒 anchor 定位；
+- `/api/coach/tools/execute`：只给 Coach bridge 使用，所有 evidence 下钻仍受 bridge reachable refs、owner、cursor 和 budget 约束；
+- `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions`、`POST /api/training-plan-items/{item_ref}/retests`：显式用户写入训练事实，要求 `Idempotency-Key`；execution/retest 不进入 Coach 的 TypeScript tool allow-list，模型不能把推断伪装成用户执行。
+
+Analysis 删除后，以上 Analysis/Evidence refs 返回 unavailable/deleted 语义；原有 Coach 消息、画像和训练历史不被级联删除。
 
 ### 4.5 Coach Knowledge Registry
 
@@ -242,6 +255,7 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 边界：
 
 - 通过与 UI 共用的稳定产品命令查询、创建、修改和执行当前本地 profile 可用能力；Coach 不是只读投影，也不得绕过本地 ownership、capability 或确认策略；
+- Coach 对诊断拥有综合判断权：应能检查完整 processed event table 的覆盖、条件分布、支持证据与反例，并明确接受、降低或拒绝规则层候选诊断；它不拥有正式指标重算权，也不能把聊天推断回写成测量事实；
 - 工具调用、失败、确认和结果定位必须形成可见事件；
 - knowledge tool 在所有 v1 turn 中作为只读产品工具可用，不依赖写命令 bridge；实际使用的 registry/entry/version/source refs 进入安全 trace；
 - 不允许通用 coding-agent 权限无边界暴露给产品用户；

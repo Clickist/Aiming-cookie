@@ -1,6 +1,6 @@
 # Versioned Coach Knowledge Registry Design
 
-> **状态：active。** 点点于 2026-07-14 明确授权优先完成后端 Knowledge Registry，并要求 Flicking、Tracking、身体/张力和设置实验一起纳入。本文只冻结 Knowledge 的事实源、版本、检索、claim 与审计合同；不授权正式前端。
+> **状态：active。** 点点于 2026-07-14 明确授权优先完成后端 Knowledge Registry，并要求 Flicking、Tracking、身体/张力和设置实验一起纳入；2026-07-22 增加跨 family v2 与 v1 历史兼容合同。本文只冻结 Knowledge 的事实源、版本、检索、claim 与审计合同；不授权正式前端。
 
 ## 1. 目标与非目标
 
@@ -34,13 +34,19 @@ knowledge/coach/
   schema.v1.json
   registry.v1.json
   migration-audit.v1.json
+  schema.v2.json
+  registry.v2.json
+  migration-audit.v2.json
 ```
 
-- `registry.v1.json` 是运行时知识正文与索引字段的唯一事实源；Python 与 TypeScript 只能读取它，不能各自维护正文副本。
+- v1 是已发布的 legacy wire contract；其三个 asset 在 v2 上线后保持不可变，继续服务历史 refs/trace 和 compatibility adapter，不承载新的跨 family production entry。
+- v2 上线后，`registry.v2.json` 是 active production retrieval 的唯一知识正文与索引事实源；Python 与 TypeScript 只能读取同一 active asset，不能各自维护正文副本。
 - `schema.v1.json` 是完整的 Draft 2020-12 structural wire contract（entry properties、enum、长度、唯一性与 source/claim 条件）；Python/TypeScript loader 继续叠加 unsafe sentinel、alias chain、duplicate active version 等 fail-closed 规则，并由标准 schema validation 与 parity tests 保证一致。
+- `schema.v2.json` 使用新的 `coach_knowledge_registry.v2` schema name；不得在 `coach_knowledge_registry.v1` 名下增加 required fields 或让同一 schema name 表示两种 shape。
 - `migration-audit.v1.json` 记录每个旧 Python chunk、legacy signal 和 TS seed 的 `migrate | rewrite | merge | experimental_only | reject` 处置及目标 entry refs。
+- `migration-audit.v2.json` 逐条记录 v1 entry 的 `carry_forward | rewrite | split | retire | reject`，并指向 v2 entry/section refs；未审计条目不得进入 v2 active retrieval。
 - Markdown 研究、理论、社区和处方文档继续是来源证据与审查材料，不是 runtime retrieval source。
-- SQLite 只保存 Coach 实际使用的 registry/entry/version/source refs；不复制 Registry 正文，不与 Git asset 双写。
+- SQLite 只保存 Coach 实际使用的 registry/entry/version/section/source/claim refs；不复制 Registry 正文，不与 Git asset 双写。
 - Registry 是产品级只读资产，不按 owner 变化；用户数据、Analysis、Training Plan 和对话仍按本地 owner 隔离。
 
 ## 3. Registry 与 entry contract
@@ -103,6 +109,33 @@ knowledge:<entry_id>@<entry_version>
 registry:<registry_version>
 ```
 
+### 3.1 Cross-family v2 entry 与 claim contract
+
+v2 不把一条大段正文当成完整教学知识。每条 active entry 必须是一个可校验的观察到教学闭环，至少包含：
+
+```text
+entry identity/status/category/topics/signals/metric refs
+family_scope[] / observation_refs[]
+definition / scope / quality_prerequisites[]
+expected_direction
+mechanisms[] / alternative_explanations[] / forbidden_inferences[]
+limitations[] / counterevidence[]
+cue / dose_guardrail[]
+matched_retest / near_transfer_retest / stop_adjust_rule[]
+sources[] / supported_uses[]
+```
+
+规则：
+
+- `expected_direction` 只能是 `lower_better | higher_better | target_band | descriptive_only | comparison_only`；需要联合条件的 metric 不得压成无条件单向分数。
+- definition、mechanism、direction、cue、dose 与 retest 等 claim-bearing section 各自保存 stable section ref、`claim_level` 与 `source_refs[]`。同一 entry 可以同时含 research-supported mechanism 和 community-practice cue，但 Coach 必须分别表述其证据等级。
+- v2 source 至少保存 stable `source_ref`、`source_level`、`title`、`author_or_org`、optional `published_at`、`retrieved_at`、`locator`、`applicability[]` 与 `supports_sections[]`。
+- v2 source level 增加 `coach_first_party | community_organization`；它们最高只能支持 `community_practice`。单一作者/机构材料不得标为 `community_consensus`，营销/服务页只能证明其自述的流程与 taxonomy，不能证明效果。
+- product contract、academic、community practice 和 experimental claim 不得互相代替。身体/张力、意图、眼动、注意力和没有规则真值的 selection 仍只能是候选或不可观测边界。
+- v2 active entry 缺任何必需 section、section provenance 或 counterevidence 时，不得进入正式 diagnosis -> prescription chain。
+- v1 与 v2 的历史解析键是 `registry_version + entry_ref`；仅凭 `entry_ref` 不得跨 Registry 猜版本。同一 turn 只能引用一个 registry version。
+- tool result 可返回最多三条完整 bounded v2 entry；SQLite trace 只保存 registry/entry/section/source/claim refs，不复制正文。
+
 ## 4. 内容范围与证据纪律
 
 首版同时覆盖：
@@ -148,7 +181,7 @@ supported_use?
 - Knowledge tool 读取固定 Registry asset 不等于给模型 filesystem tool；模型不能提交路径或选择 Registry 文件。
 - Tool result 返回完整的 bounded selected entries；tool event 只保存安全引用：registry version、entry refs、entry versions、source refs/levels、max claim levels、topic/signal。
 - Python legacy Coach tools 改为 Registry compatibility adapter；`knowledge.py`、`agent_kb.py` 不再维护独立正文。
-- 历史 Coach message trace 保留当时实际使用的 entry/version refs；Registry 更新不重写历史 trace。
+- 历史 Coach message trace 保留当时实际使用的 registry/entry/version/section/source/claim refs；Registry 更新不重写历史 trace。验证或重放按 `registry_version` 加载精确的不可变 Registry，新 turn 只使用 active production Registry。
 - Analysis facts 与 Knowledge refs 分开：entry 不能冒充 metric/event/evidence ref。
 
 ## 7. Migration audit
@@ -172,13 +205,15 @@ supported_use?
 ## 8. Tests / Gate
 
 - Draft 2020-12 schema 必须能接受 canonical Registry/合法 fixture，并拒绝 unknown fields、非法 enum、空 limitation 与 source/claim 冲突；大小、重复 ID/version、signal alias chain 与 unsafe sentinel 继续由 runtime validator fail closed；
+- v1 asset 与既有历史 trace 保持可解析；v2 active retrieval 不修改 v1 shape，并按 `registry_version + entry_ref` 防止跨版本串读；
+- v2 每个 active entry 的完整 section、字段级 claim/source provenance、community ceiling、matched/near-transfer retest 和 stop rule 均由 schema/runtime validator 强制；
 - Python/TS 对同一 query 返回相同 entry refs、versions 和顺序；
 - 37 + 19 + 11 migration audit coverage 完整；
 - Flicking 19 个 canonical signals 均至少有一个 entry；Dynamic clicking、Tracking、Switching、身体/张力、settings 与 verification 均有覆盖；
 - body/tension/settings 只能 experimental；community 不得 deterministic；Knowledge 不得 measured；
 - 所有 v1 turn 无 bridge 仍有 knowledge tool；v0 无 knowledge/product tools；
 - 每次最多 3 条，未知条件不全库 fallback；
-- trace 保存 registry/entry/version/source/claim refs，且不含正文、路径、secret、raw payload；
+- trace 保存 registry/entry/version/section/source/claim refs，且不含正文、路径、secret、raw payload；
 - 真实 Analysis signal/metric → retrieval → Pi tool event E2E；
 - Python full suite、Pi runtime tests、strict TypeScript、diff/sentinel 检查通过。
 
