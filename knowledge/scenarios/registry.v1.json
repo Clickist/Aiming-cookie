@@ -1,0 +1,32 @@
+{
+  "schema_version": "scenario_profile_registry.v1",
+  "registry_version": "2026-07-23.v1",
+  "entries": [
+    {
+      "entry_id": "tracking.whj_smooth_strafe_sphere_easy",
+      "entry_version": 1,
+      "status": "active",
+      "scenario_hash": "b2ae4a24b710e36afc6e57c61f590ab4",
+      "display_name": "WHJ SmoothStrafeSphere Easy",
+      "taxonomy_source": "reviewed_registry",
+      "reviewed_at": "2026-07-23T00:00:00Z",
+      "source_refs": [
+        "review:whj-smooth-strafe-sphere-easy-single-target-tracking"
+      ],
+      "supersedes": [],
+      "aim_family": "continuous_tracking",
+      "subdomains": ["smooth", "predictable"],
+      "target_motion": {
+        "model": "predictable",
+        "target_count_model": "single"
+      },
+      "allowed_analyzers": ["continuous_tracking.v1"],
+      "allowed_metric_families": ["continuous_tracking"],
+      "classification_confidence": "confirmed",
+      "limitations": [
+        "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.",
+        "Unknown hashes and concurrent target layouts are not classified by this entry."
+      ]
+    }
+  ]
+}

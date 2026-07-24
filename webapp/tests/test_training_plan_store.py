@@ -5,6 +5,7 @@ import copy
 import pytest
 
 from webapp.backend import training_plan_store as store
+from webapp.backend import aiming_profile_store
 
 
 PLAN_PAYLOAD = {
@@ -184,4 +185,108 @@ async def test_training_plan_references_enforce_their_declared_kinds():
             PLAN_PAYLOAD,
             evidence_refs=["run:42"],
             verification_targets=VERIFICATION_TARGETS,
+        )
+
+
+PLAN_ITEM = {
+    "diagnosis_ref": "diagnosis:late-correction@2",
+    "knowledge_ref": "knowledge:terminal-control@2",
+    "scenario_profile_ref": "scenario:sixshot@1",
+    "baseline_metric_ref": "metric:terminal_control",
+    "expected_direction": "lower_better",
+    "practice_condition": "same sensitivity and target size",
+    "cue": "Land once; do not chase the target.",
+    "dose_guardrail": "three sets of two minutes",
+    "matched_retest_ref": "retest-spec:sixshot-matched@1",
+    "near_transfer_retest_ref": "retest-spec:sixshot-size-transfer@1",
+    "review_date": "after three completed sessions",
+}
+
+
+@pytest.mark.asyncio
+async def test_plan_items_executions_and_both_retest_kinds_are_owner_scoped_append_only():
+    draft = await store.create_draft(
+        "owner-a", PLAN_PAYLOAD, verification_targets=VERIFICATION_TARGETS,
+    )
+    item = await store.add_plan_item("owner-a", draft["plan_id"], PLAN_ITEM)
+    assert item["item_ref"].startswith("plan-item:")
+    assert item["plan_revision_ref"] == f"{draft['plan_id']}:v1"
+    assert item["status"] == "planned"
+    await store.save_plan("owner-a", draft["plan_id"])
+    await store.activate_plan("owner-a", draft["plan_id"])
+    snapshot = await aiming_profile_store.get_profile_snapshot("owner-a")
+    assert snapshot["active_plan_ref"] == draft["plan_id"]
+    assert snapshot["next_retest_refs"] == [
+        "retest-spec:sixshot-matched@1",
+        "retest-spec:sixshot-size-transfer@1",
+    ]
+
+    execution = await store.record_user_execution(
+        "owner-a",
+        item["item_ref"],
+        scenario_ref="scenario:sixshot@1",
+        run_refs=["run:42"],
+        planned_dose={"amount": 6, "unit": "minutes"},
+        completed_dose={"amount": 5, "unit": "minutes"},
+        completion_status="partial",
+        user_feedback="Late corrections appeared after the second set.",
+    )
+    matched = await store.record_retest(
+        "owner-a",
+        item["item_ref"],
+        kind="matched",
+        expected_metric_ref="metric:terminal_control",
+        expected_direction="lower_better",
+        analysis_refs=["analysis:43"],
+        comparability="comparable",
+        result="improved",
+        limitations=["one comparable retest"],
+    )
+    transfer = await store.record_retest(
+        "owner-a",
+        item["item_ref"],
+        kind="near_transfer",
+        expected_metric_ref="metric:terminal_control",
+        expected_direction="lower_better",
+        analysis_refs=["analysis:44"],
+        comparability="not_comparable",
+        result="inconclusive",
+        limitations=["target size changed"],
+    )
+
+    assert execution["execution_ref"].startswith("plan-execution:")
+    assert execution["item_revision_ref"] == item["item_revision_ref"]
+    assert matched["kind"] == "matched"
+    assert transfer["kind"] == "near_transfer"
+    assert len(await store.list_plan_executions("owner-a", item["item_ref"])) == 1
+    assert [entry["kind"] for entry in await store.list_retests("owner-a", item["item_ref"])] == [
+        "matched", "near_transfer",
+    ]
+
+    with pytest.raises(store.PlanForbidden):
+        await store.list_plan_items("owner-b", draft["plan_id"])
+
+
+@pytest.mark.asyncio
+async def test_plan_item_requires_stable_refs_and_user_execution_rejects_llm_writer():
+    draft = await store.create_draft(
+        "owner-a", PLAN_PAYLOAD, verification_targets=VERIFICATION_TARGETS,
+    )
+    missing = copy.deepcopy(PLAN_ITEM)
+    missing.pop("near_transfer_retest_ref")
+    with pytest.raises(store.InvalidTrainingPlan):
+        await store.add_plan_item("owner-a", draft["plan_id"], missing)
+
+    item = await store.add_plan_item("owner-a", draft["plan_id"], PLAN_ITEM)
+    with pytest.raises(store.InvalidTrainingPlan):
+        await store.record_user_execution(
+            "owner-a",
+            item["item_ref"],
+            scenario_ref="scenario:sixshot@1",
+            run_refs=["run:42"],
+            planned_dose={"amount": 6, "unit": "minutes"},
+            completed_dose={"amount": 6, "unit": "minutes"},
+            completion_status="completed",
+            user_feedback="Finished.",
+            recorded_by="llm",
         )

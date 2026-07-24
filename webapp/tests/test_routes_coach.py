@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import db, provider_store, queue
+from webapp.backend import db, provider_store, queue, training_plan_store
 from webapp.backend.app import app
 from webapp.backend.contracts import (
     ARTIFACT_MANIFEST_SCHEMA_VERSION,
@@ -79,9 +79,218 @@ async def _seed_done_session(
     return sid
 
 
+async def _seed_task11_plan(owner_id: str) -> dict:
+    return await training_plan_store.generate_draft(
+        owner_id,
+        {
+            "title": "Tracking speed match",
+            "diagnostic_context": {
+                "analysis_refs": ["analysis:5"],
+                "metric_refs": ["metric:continuous_tracking.target_relative_error_px@v1"],
+                "knowledge_refs": ["knowledge:tracking-speed-matching@1"],
+            },
+            "prescriptions": [{
+                "scenario": "WHJ SmoothStrafeSphere Easy",
+                "cue": "Match speed before correcting position.",
+                "purpose": "Reduce target-relative error.",
+                "target_metric_refs": ["metric:continuous_tracking.target_relative_error_px@v1"],
+                "expected_direction": "lower_better",
+                "source_level": "deterministic_rule",
+            }],
+        },
+        evidence_refs=["analysis:5"],
+        verification_targets=[{
+            "target_metric": "metric:continuous_tracking.target_relative_error_px@v1",
+            "expected_direction": "lower_better",
+            "comparable_requirements": ["same scenario"],
+            "retest_after": "after three sessions",
+            "insufficient_evidence_behavior": "collect another comparable run",
+        }],
+    )
+
+
 # ---------------------------------------------------------------------------
 # /video
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task11_plan_fact_routes_are_owner_scoped_and_idempotent():
+    owner_id = "route-plan-owner"
+    plan = await _seed_task11_plan(owner_id)
+    headers = {"X-User-Id": owner_id}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=headers,
+    ) as client:
+        item = await client.post(
+            f"/api/training-plans/{plan['plan_ref']}/items",
+            headers={"Idempotency-Key": "route-item-1"},
+            json={
+                "plan_version": 1,
+                "item_payload": {
+                    "diagnosis_ref": "diagnosis:tracking-error@1",
+                    "knowledge_ref": "knowledge:tracking-speed-matching@1",
+                    "scenario_profile_ref": "scenario:tracking.whj@1",
+                    "baseline_metric_ref": "metric:continuous_tracking.target_relative_error_px@v1",
+                    "expected_direction": "lower_better",
+                    "practice_condition": "Repeat the same scenario.",
+                    "cue": "Match speed before correcting position.",
+                    "dose_guardrail": "Stop after three degraded runs.",
+                    "matched_retest_ref": "retest-spec:tracking-matched@1",
+                    "near_transfer_retest_ref": "retest-spec:tracking-transfer@1",
+                    "review_date": "2026-07-30",
+                },
+            },
+        )
+        assert item.status_code == 200, item.text
+        item_ref = item.json()["result_ref"]
+        replay = await client.post(
+            f"/api/training-plans/{plan['plan_ref']}/items",
+            headers={"Idempotency-Key": "route-item-1"},
+            json=item.request.content and json.loads(item.request.content),
+        )
+        assert replay.status_code == 200
+        assert replay.json()["result_ref"] == item_ref
+
+        execution = await client.post(
+            f"/api/training-plan-items/{item_ref}/executions",
+            headers={"Idempotency-Key": "route-execution-1"},
+            json={
+                "scenario_ref": "scenario:tracking.whj@1",
+                "run_refs": ["run:52207"],
+                "planned_dose": {"amount": 3, "unit": "runs"},
+                "completed_dose": {"amount": 2, "unit": "runs"},
+                "completion_status": "partial",
+                "user_feedback": "Fatigue increased.",
+            },
+        )
+        assert execution.status_code == 200, execution.text
+
+        retest = await client.post(
+            f"/api/training-plan-items/{item_ref}/retests",
+            headers={"Idempotency-Key": "route-retest-1"},
+            json={
+                "kind": "matched",
+                "expected_metric_ref": "metric:continuous_tracking.target_relative_error_px@v1",
+                "expected_direction": "lower_better",
+                "analysis_refs": ["analysis:5"],
+                "comparability": "comparable",
+                "result": "improved",
+                "limitations": ["one comparable retest"],
+            },
+        )
+        assert retest.status_code == 200, retest.text
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "other-owner"},
+    ) as other:
+        forbidden = await other.post(
+            f"/api/training-plan-items/{item_ref}/executions",
+            headers={"Idempotency-Key": "route-execution-other"},
+            json={
+                "scenario_ref": "scenario:tracking.whj@1",
+                "run_refs": ["run:52207"],
+                "planned_dose": {"amount": 1, "unit": "runs"},
+                "completed_dose": {"amount": 1, "unit": "runs"},
+                "completion_status": "completed",
+                "user_feedback": "other",
+            },
+        )
+    assert forbidden.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_done_session_context_includes_owner_scoped_active_plan_and_recent_retest():
+    owner_id = "context-plan-owner"
+    plan = await _seed_task11_plan(owner_id)
+    await training_plan_store.save_plan(owner_id, plan["plan_ref"])
+    await training_plan_store.activate_plan(owner_id, plan["plan_ref"])
+    item = await training_plan_store.add_plan_item(
+        owner_id,
+        plan["plan_ref"],
+        {
+            "diagnosis_ref": "diagnosis:tracking-error@1",
+            "knowledge_ref": "knowledge:tracking-speed-matching@1",
+            "scenario_profile_ref": "scenario:tracking.whj@1",
+            "baseline_metric_ref": "metric:continuous_tracking.target_relative_error_px@v1",
+            "expected_direction": "lower_better",
+            "practice_condition": "Repeat the same scenario.",
+            "cue": "Match speed first.",
+            "dose_guardrail": "Stop after three degraded runs.",
+            "matched_retest_ref": "retest-spec:tracking-matched@1",
+            "near_transfer_retest_ref": "retest-spec:tracking-transfer@1",
+            "review_date": "2026-07-30",
+        },
+    )
+    retest = await training_plan_store.record_retest(
+        owner_id,
+        item["item_ref"],
+        kind="matched",
+        expected_metric_ref="metric:continuous_tracking.target_relative_error_px@v1",
+        expected_direction="lower_better",
+        analysis_refs=["analysis:5"],
+        comparability="comparable",
+        result="improved",
+        limitations=["one comparable retest"],
+    )
+    result = {
+        "schema_version": "analysis_result.v2",
+        "analysis_version": "continuous_tracking.v1",
+        "analysis_id": "analysis:5",
+        "analysis_type": "continuous_tracking",
+        "input_mode": "multimodal",
+        "scenario": {
+            "scenario_profile_ref": "scenario:tracking.whj@1",
+            "analyzer_refs": ["continuous_tracking.v1"],
+            "support_status": "partial",
+            "limitations": [],
+        },
+        "deterministic": {
+            "support_status": "partial",
+            "metrics": {"continuous_tracking.target_relative_error_px": {
+                "value": 12.5,
+                "unit": "px",
+                "metric_version": "continuous_tracking.target_relative_error_px.v1",
+                "classification": "deterministic",
+                "provenance": {"kind": "derived", "sources": ["analysis:5:source:tracking"]},
+            }},
+            "diagnosis": {
+                "profile": {},
+                "issues": [],
+                "summary": {"continuous_tracking.target_relative_error_px": {
+                    "value": 12.5,
+                    "unit": "px",
+                    "metric_version": "continuous_tracking.target_relative_error_px.v1",
+                    "classification": "deterministic",
+                    "provenance": {"kind": "derived", "sources": ["analysis:5:source:tracking"]},
+                }},
+                "comparison": None,
+                "meta": {"summary_type": "continuous_tracking", "classification": "deterministic"},
+            },
+        },
+        "evidence": {
+            "availability": {"mp4": "available"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+            "derived_artifact": {
+                "artifact_ref": "analysis:5:evidence:abc",
+                "evidence_revision": "sha256:abc",
+            },
+        },
+        "warnings": [],
+    }
+
+    context = await routes_mod._diagnosis_from_done_session({
+        "id": 5,
+        "user_id": owner_id,
+        "result": result,
+    })
+
+    assert context["training"] == {
+        "active_plan_ref": plan["plan_ref"],
+        "recent_retest_ref": retest["retest_ref"],
+    }
 
 
 @pytest.mark.asyncio
@@ -89,6 +298,76 @@ async def test_video_404_when_session_missing():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get("/api/sessions/99999/video")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_evidence_segment_route_returns_only_bounded_seek_contract(monkeypatch):
+    sid = 42
+    result = {
+        "schema_version": "analysis_result.v2",
+        "evidence": {
+            "derived_artifact": {
+                "artifact_ref": f"analysis:{sid}:evidence:abc",
+                "evidence_revision": "sha256:" + ("a" * 64),
+            },
+        },
+    }
+    snapshot = {
+        "canonical_time_window": {"start_ms": 1000, "end_ms": 7000},
+    }
+
+    async def get_owned_session(_session_id: int, _owner_id: str):
+        return {
+            "id": sid,
+            "user_id": "u1",
+            "status": "done",
+            "input_mode": "multimodal",
+            "video_path": "",
+            "result": result,
+            "input_snapshot": snapshot,
+        }
+
+    monkeypatch.setattr(routes_mod, "_get_owned_session", get_owned_session)
+    async def read_artifact(**_kwargs):
+        return {
+            "evidence_segments": [{
+                "segment_id": f"analysis:{sid}:segment:1",
+                "analysis_ref": f"analysis:{sid}",
+                "analyzer_ref": "continuous_tracking.v1",
+                "segment_kind": "tracking_episode",
+                "start_ms": 1500,
+                "end_ms": 2500,
+                "focus_start_ms": 1800,
+                "focus_end_ms": 2200,
+                "title_key": "tracking.error",
+                "rank_reason": "largest error",
+                "issue_refs": [],
+                "metric_refs": ["continuous_tracking.target_relative_error_px"],
+                "event_refs": [],
+                "available_channels": [],
+                "source_coverage": 1.0,
+                "confidence": 0.9,
+                "limitations": [],
+            }],
+        }
+
+    monkeypatch.setattr(
+        routes_mod.evidence_store,
+        "read_analysis_evidence_artifact",
+        read_artifact,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.get(f"/api/sessions/{sid}/evidence-segments")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["schema_version"] == "frontend_evidence_segments.v1"
+    assert body["video_availability"] == "unavailable"
+    assert body["segments"][0]["playback"]["availability"] == "unavailable"
+    assert body["segments"][0]["playback"]["relative_start_ms"] is None
+    assert "path" not in json.dumps(body)
 
 
 @pytest.mark.asyncio

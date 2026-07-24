@@ -33,13 +33,16 @@ test("canonical Analysis issue and metric drive Pi knowledge retrieval and safe 
 
   const response = await runAnalysisKnowledgeE2E(JSON.stringify(context));
   assert.equal(response.ok, true);
-  assert.match(response.reply ?? "", /knowledge:metric\.sparc\.definition@1/);
+  assert.match(response.reply ?? "", /knowledge:static\.flicking-terminal-control@1/);
   assert.equal(response.tool_events.length, 1);
   const event = response.tool_events[0];
   assert.equal(event?.type, "knowledge");
   if (event?.type !== "knowledge") throw new Error("missing knowledge event");
   assert.equal(event.issue_signal, "sparc low");
-  assert.ok(event.entry_refs.includes("knowledge:metric.sparc.definition@1"));
+  assert.ok(event.entry_refs.includes("knowledge:static.flicking-terminal-control@1"));
   assert.deepEqual(event.entry_refs.map((ref) => Number(ref.split("@")[1])), event.entry_versions);
+  assert.ok(event.section_refs.length > 0);
+  assert.ok(event.claim_refs.every((ref) => ref.startsWith("claim:")));
+  assert.ok(event.claim_levels.length >= event.max_claim_levels.length);
   assert.ok(!JSON.stringify(event).includes("threshold_requires_product_calibration"));
 });

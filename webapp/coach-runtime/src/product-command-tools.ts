@@ -17,6 +17,11 @@ export const PRODUCT_COMMAND_NAMES = [
   "analysis.compare", "navigation.open", "analysis.create_from_run", "analysis.retry",
   "training_plan.generate_draft", "training_plan.save", "training_plan.activate",
   "training_plan.pause", "training_plan.adjust", "training_plan.review",
+  "analysis.metrics.distribution", "analysis.evidence.list", "analysis.evidence.signal_window",
+  "analysis.evidence.compare", "analysis.run_facts.get", "analysis.outcomes.timeline",
+  "analysis.events.list", "analysis.events.get", "analysis.events.rank",
+  "analysis.events.filter", "analysis.events.aggregate", "analysis.events.co_occurrence",
+  "analysis.events.sequence", "profile.aiming.snapshot",
 ] as const;
 type ProductCommandName = typeof PRODUCT_COMMAND_NAMES[number];
 
@@ -27,7 +32,7 @@ const WRITE_COMMANDS = new Set<ProductCommandName>([
 const FORBIDDEN_KEYS = new Set([
   "owner", "owner_id", "owner_scope", "actor", "risk", "path", "video_path",
   "url", "credential", "credentials", "api_key", "authorization", "token",
-  "bearer_token", "desktop_token", "raw_trace", "payload", "endpoint",
+  "bearer_token", "desktop_token", "password", "secret", "raw_trace", "payload", "endpoint",
 ]);
 const PRODUCT_COMMAND_STATUSES = new Set([
   "succeeded", "failed", "cancelled", "needs_confirmation", "unavailable",

@@ -206,6 +206,75 @@ def test_build_turn_request_reprojects_canonical_looking_analysis_summary():
         assert sentinel not in request["analysis_summary"]
 
 
+@pytest.mark.asyncio
+async def test_v2_context_seeds_only_its_reachable_analysis_ref_for_tool_bridge(monkeypatch):
+    from webapp.backend import coach_commands, coach_service, coach_store
+    from webapp.backend.coach_engine import EngineCompleteResult
+
+    context = {
+        "schema_version": "coach_diagnostic_context.v2",
+        "analysis_ref": {
+            "analysis_id": "analysis:42",
+            "analysis_result_version": "analysis_result.v2",
+            "analysis_type": "flicking",
+            "input_mode": "input_native",
+        },
+        "scenario": {
+            "scenario_profile_ref": None,
+            "analyzer_refs": [],
+            "support_status": "supported",
+            "limitations": [],
+        },
+        "run_facts": {"mode": "unavailable", "limitations": []},
+        "diagnosis": {
+            "profile": {}, "issues": [], "summary": {},
+            "comparison": None, "meta": {},
+        },
+        "evidence_summary": {
+            "availability": {}, "alignment": {}, "segment_refs": [],
+        },
+        "trends": [],
+        "training": {"active_plan_ref": None, "recent_retest_ref": None},
+        "limitations": [],
+    }
+    thread = await coach_store.get_or_create_primary_thread("bridge-context-owner")
+    captured: dict = {}
+    original_issue = coach_commands.issue_tool_bridge
+
+    async def default_profile(owner_id: str):
+        assert owner_id == "bridge-context-owner"
+        return {"credential": {"type": "api_key", "key": "runtime-key"}}
+
+    def issue(*args, **kwargs):
+        captured["reachable_refs"] = kwargs.get("reachable_refs")
+        return original_issue(*args, **kwargs)
+
+    async def complete(turn):
+        captured["context"] = turn.diagnostic_context
+        return EngineCompleteResult(reply="ok", notes=[], tool_events=[])
+
+    monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(coach_service.provider_store, "get_default_runtime_profile", default_profile)
+    monkeypatch.setattr(coach_service.provider_store, "runtime_profile_configured", lambda _: True)
+    monkeypatch.setattr(coach_service.coach_commands, "issue_tool_bridge", issue)
+    monkeypatch.setattr(coach_service, "complete_turn_async", complete)
+
+    result = await coach_service.run_chat_turn(
+        x_user_id="bridge-context-owner",
+        thread_id=int(thread["id"]),
+        prior_messages=[],
+        user_msg_to_store="查看本次证据",
+        diagnosis=context,
+        legacy_session_id=None,
+        cost_session_id=None,
+        tool_bridge_endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
+    )
+
+    assert result.reply == "ok"
+    assert captured["context"] == context
+    assert captured["reachable_refs"] == {"analysis:42"}
+
+
 def test_run_pi_coach_turn_http_fails_fallback_subprocess():
     messages = [{"role": "user", "content": "x"}]
     with patch("webapp.backend.coach_runtime.httpx.Client") as mock_client_cls:

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { CoachToolBridge } from "../src/contracts.ts";
-import { createProductCommandTool } from "../src/product-command-tools.ts";
+import {
+  PRODUCT_COMMAND_NAMES,
+  createProductCommandTool,
+} from "../src/product-command-tools.ts";
 
 const BEARER = "bridge-bearer-secret-sentinel";
 const DESKTOP = "desktop-secret-sentinel";
@@ -45,6 +48,32 @@ test("product bridge accepts only the fixed loopback command route", () => {
   assert.equal(createProductCommandTool(bridge()).name, "run_product_command");
 });
 
+test("product command allowlist includes every bounded evidence query", () => {
+  const evidenceQueries = [
+    "analysis.metrics.distribution",
+    "analysis.evidence.list",
+    "analysis.evidence.signal_window",
+    "analysis.evidence.compare",
+    "analysis.run_facts.get",
+    "analysis.outcomes.timeline",
+    "analysis.events.list",
+    "analysis.events.get",
+    "analysis.events.rank",
+    "analysis.events.filter",
+    "analysis.events.aggregate",
+    "analysis.events.co_occurrence",
+    "analysis.events.sequence",
+  ];
+
+  for (const commandName of evidenceQueries) {
+    assert.ok(
+      PRODUCT_COMMAND_NAMES.includes(commandName as typeof PRODUCT_COMMAND_NAMES[number]),
+      `missing bounded evidence command: ${commandName}`,
+    );
+  }
+  assert.ok(PRODUCT_COMMAND_NAMES.includes("profile.aiming.snapshot"));
+});
+
 test("product command rejects model-supplied authority, paths, URLs, credentials and raw payloads", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
@@ -60,6 +89,8 @@ test("product command rejects model-supplied authority, paths, URLs, credentials
       { link: "https://example.com" },
       { note: "open https://evil.example/x then /Users/person/private.csv" },
       { credential: "secret" },
+      { password: "secret" },
+      { secret: "secret" },
       { raw_trace: [1, 2] },
       { payload: { arbitrary: true } },
     ];
@@ -111,6 +142,51 @@ test("write calls use stable turn-local idempotency and never return bridge secr
     assert.match(first.content[0]?.text ?? "", /path_efficiency/);
     assert.ok(!JSON.stringify(first).includes(BEARER));
     assert.ok(!JSON.stringify(first).includes(DESKTOP));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("provider receives the bounded result while the trace event retains only its audit projection", async () => {
+  const originalFetch = globalThis.fetch;
+  const fullResult = {
+    schema_version: "coach_product_command_result.v1",
+    command_id: "command:events:1",
+    status: "succeeded",
+    result_ref: "analysis:7:events:page:1",
+    audit_ref: "audit:events:1",
+    result: {
+      analysis_ref: "analysis:7",
+      event_refs: ["event:analysis:7:shot:1"],
+      records: [{ event_ref: "event:analysis:7:shot:1", event_kind: "shot", start_ms: 120 }],
+      next_cursor: "cursor:opaque-events-page-2",
+    },
+  };
+  globalThis.fetch = (async () => new Response(JSON.stringify(fullResult), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  })) as typeof fetch;
+  try {
+    const result = await createProductCommandTool(bridge()).execute("events-page-1", {
+      command_name: "analysis.events.list" as typeof PRODUCT_COMMAND_NAMES[number],
+      parameters: { analysis_ref: "analysis:7", scope: "whole_run", event_kinds: ["shot"], limit: 20 },
+    });
+
+    assert.equal(result.content[0]?.text, JSON.stringify(fullResult));
+    assert.deepEqual(result.details.event, {
+      type: "product_command",
+      command_id: "command:events:1",
+      command_name: "analysis.events.list",
+      status: "succeeded",
+      result_ref: "analysis:7:events:page:1",
+      audit_ref: "audit:events:1",
+      ui_event: null,
+      warning_or_error: null,
+    });
+    assert.ok(JSON.stringify(result.details.event).includes("analysis:7:events:page:1"));
+    assert.ok(!JSON.stringify(result.details.event).includes("next_cursor"));
+    assert.ok(!JSON.stringify(result.details.event).includes("opaque-events-page-2"));
+    assert.ok(!("result" in result.details.event));
   } finally {
     globalThis.fetch = originalFetch;
   }
