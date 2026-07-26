@@ -750,6 +750,6 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 
 - 正式局部设计合同：[`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)；
 - 自动采集、Run 选择与存储合同：[`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md)；
-- tests-first 施工合同：[`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)。
+- 已完成的 tests-first 施工合同：[`archive/completed/plans/2026-07-13-frontend-product-reconstruction.md`](archive/completed/plans/2026-07-13-frontend-product-reconstruction.md)。
 
-原 prototype 只提供过能力接线证据，不作为正式设计起点；它已在 frontend reconstruction Task 1 经点点确认范围后删除。当前只保留 capability adapters 与 Tauri/runtime，正式产品路由暂时不可用。Task 2–7 仍必须由点点逐个明确指定，不得为维持外壳恢复 prototype。
+原 prototype 只提供过能力接线证据，不作为正式设计起点；它已在 frontend reconstruction Task 1 经点点确认范围后删除。Task 2–7 已按本设计合同逐项授权、实现并完成当前 Browser/Desktop 自动化验收；正式产品路由、capability adapters 与 Tauri/runtime 均已存在。后续不得恢复 prototype，也不得把已完成 plan 当作新增 UI 或发布工程的授权入口。
