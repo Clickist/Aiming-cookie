@@ -31,6 +31,23 @@ npm.cmd --prefix webapp\frontend install
 
 PowerShell 可能因 execution policy 拒绝 Node 安装器提供的 `npm.ps1`；仓库命令统一使用 `npm.cmd`，不需要修改系统 execution policy。Pi 的 Node 版本要求以 `third_party/pi/package.json` 的 `engines` 为准。
 
+### pinned Pi 安装恢复
+
+Coach runtime 直接加载 `third_party/pi` workspace 的编译产物。若出现 `packages/ai/dist/compat.js` 缺失或流式测试超时，先检查 `third_party/pi/package-lock.json`、workspace link 和 `packages/ai/dist/`；已确认过的一类故障是 lockfile、缓存和 link 完整，但未纳入 Git 的 package `dist` 没有生成，并非依赖版本漂移。
+
+Windows PowerShell 使用既有 lockfile 恢复，不升级或新增依赖：
+
+```powershell
+npm.cmd --prefix third_party\pi ci --ignore-scripts --no-audit --no-fund
+
+Push-Location third_party\pi
+npm.cmd exec --workspace @earendil-works/pi-ai -- tsgo -p tsconfig.build.json --noCheck
+npm.cmd exec --workspace @earendil-works/pi-agent-core -- tsgo -p tsconfig.build.json --noCheck
+Pop-Location
+```
+
+这里的定向 emit 使用仓库已提交的 generated TypeScript，不调用 `@earendil-works/pi-ai` 的 `generate-models` / `generate-image-models` 在线生成步骤；不要用根级 `npm run build` 代替恢复命令，否则可能改写 pinned source。恢复后必须运行下文的 Coach runtime focused tests，确认 `compat.js` 可加载且 fake stream 正常结束。
+
 桌面壳开发还需要本机 Rust toolchain 和 Tauri 2 的平台依赖。
 
 ## 2. 本地 Web 开发
@@ -91,8 +108,25 @@ npm run tauri dev
 Windows PowerShell：
 
 ```powershell
-npm.cmd --prefix webapp\frontend run tauri dev
+$env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
+$env:AIMING_COOKIE_PYTHON = (Resolve-Path .venv\Scripts\python.exe).Path
+$env:AIMING_COOKIE_PROJECT_ROOT = (Resolve-Path .).Path
+npm.cmd --prefix webapp\frontend run tauri -- dev
 ```
+
+`AIMING_COOKIE_PYTHON` 必须指向已安装 `webapp/requirements.txt` 的解释器；不要依赖 `PATH` 中的全局 Python。Windows 上覆盖 `APPDATA` / `LOCALAPPDATA` 不会改变 Tauri `app.path().app_data_dir()` 使用的 Known Folder。需要隔离 Desktop smoke 时，使用独立 identifier：
+
+```powershell
+$env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
+$env:AIMING_COOKIE_PYTHON = (Resolve-Path .venv\Scripts\python.exe).Path
+$env:AIMING_COOKIE_PROJECT_ROOT = (Resolve-Path .).Path
+$env:KOVAAK_INSTALL_DIR = "C:\__aiming_cookie_test_no_kovaak__"
+$smokeId = "com.aimingcookie.smoke$((Get-Date).ToString('yyyyMMddHHmmss'))"
+$smokeConfig = '{\"identifier\":\"' + $smokeId + '\"}'
+npm.cmd --prefix webapp\frontend run tauri -- dev --no-watch --config $smokeConfig
+```
+
+该命令会把 Tauri app data、SQLite、Raw Input 和 managed media 根目录隔离到 smoke identifier 下；结束后先正常关闭桌面窗口，确认 Python sidecar 与随机 loopback 端口同时退出。
 
 Desktop 的打包、签名、公证和更新链路尚未构成稳定发布流程；当前状态与阻塞以 `PROGRESS.md` 为准。
 

@@ -374,7 +374,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - **职责边界**：Domain Core 保持确定性；Local Analysis Runtime 负责 job、文件和本地 History；Coach Agent Runtime 负责本地长期关系、工具编排与交互事件；用户选择的 Provider 负责 LLM 推理；在线表面只承担 Landing、release 分发和无身份外设目录
 - **单一开源免费且无账号的产品**：不存在免费/付费两套产品、能力墙、注册、登录或产品鉴权服务器。首次启动先进入 Provider onboarding；购买外设与否不影响任何产品能力
 - **教练与分析**：目标上教练可跨次、可不绑单次分析；分析/表现档案是上下文与病历。过渡实现可挂在分析 session 下，终局不锁死为「对话从属于分析」
-- **删除分析不抹教练记忆**：进行中不可删；删完成分析只去该次产物与输入文件
+- **删除分析不抹教练记忆**：进行中不可删；删除 terminal Analysis 只清理该 Analysis 自有结果与 managed artifacts，不删除 KovaaK Run、Run-owned Raw/MP4、用户源文件或 Coach 历史
 - **常驻 Coach 是 Agent 操作层**：provider 可用时 agent 可随时进入、调用稳定的应用工具，减少用户对多页面流程的记忆负担；项目内 Pi 源码是 Coach runtime 基线，项目可直接修改且不承诺跟随上游升级；已有可用的 workspace、权限或 sandbox 能力优先保留，不无证据重写
 - **持久表现档案 + 上下文衔接**：支撑长教练关系体验；窗口顶满后的 session 衔接另研究，不在本条锁实现
 - **输入原生分析提前进入产品，但首发保持 Preview / Experimental**（2026-07-13）：Raw Input 不再只是远期采集基础设施。KovaaK Run + Performance / Stats + Windows Raw Input 组成 v1 的输入原生 flicking 预览路径；视频降级为可选视觉增强或无 Raw Input 时的 fallback。完整 flick segmentation、核心 fair metrics、高 polling-rate correctness 与 Windows 实机 Gate 通过后，才能解除 Preview。基础运动学、目标语义和视觉证据必须按来源分层，不把 Raw Input 过度解释为完整视觉测量。
