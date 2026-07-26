@@ -1,10 +1,19 @@
 # Aiming Cookie 当前进度
 
-> **最后整理：2026-07-24。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
+> **最后整理：2026-07-26。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
 
 ## 1. 当前结论
 
 - 产品方向是 Desktop-first local-first、确定性诊断主路径；已确定的 launch scope 为 static/dynamic clicking、continuous tracking 与 target switching，movement aiming 缺少玩家移动遥测时保持 outcome-only。Aiming Cookie 开源免费，不提供产品账号、登录或用户鉴权服务器；Coach 是 Provider 可用时的长期关系与产品操作层。pinned Pi built-in provider/model catalog 已确认为完整产品 catalog，不另设 Aiming Cookie allow-list。
+
+### 2026-07-26 Frontend reconstruction closeout snapshot
+
+- **Frontend reconstruction Task 2–7 已完成当前实现与计划内自动化验证，但不代表 release-ready。** Task 2 落地 executable tokens、light/dark/system theme 与最小 primitives；Task 3–6 完成条件启动、Provider onboarding、App shell、New Analysis、Tasks、History、Analysis workspace、Coach sidebar 与 Settings。Task 7 Browser E2E 首轮为 `38/38`，managed media 回归覆盖补齐后最终为 `39 passed`；截图基线为 `14` 张，accessibility 为 `5/5`。Desktop matrix 已覆盖 sidecar READY、共享 IA、采集 gate、文件选择、Raw Input/回放缓冲状态、窗口尺寸、Storage read model 与 WebView reload 后任务找回；后者不是“真实 worker 进程重启恢复”的替代证据。
+- **Managed Run-owned MP4 回放链路已闭合当前合同。** Browser 通过 owner-scoped range streaming 播放，Tauri 通过 path-free `aiming-cookie-media` managed protocol 播放同一 Run-owned MP4；真实 managed MP4 可加载并返回 `206`，来源被移除时返回 `managed_video_unavailable.v1` / HTTP `410`，Analysis Video 只显示局部不可用，不把 native 结果或整页伪装成失败。EvidenceSegment 继续只暴露相对 canonical window 的 seek anchor，不向 WebView、Coach 或 DTO 暴露绝对路径。
+- **前端前置后端能力合同已版本化落地。** 条件启动与采集/任务/校准采用 `product_state.v1`、`capture_status.v1`、`task_list.v1` / task detail 与 calibration adoption v1；校准采用链为 Stats 自动读取 > `manual_override` > `profile_default` > undetermined，并在 AnalysisResult 冻结采用值与来源。Coach 支持主会话携带 `0..N` 条 context ref、逐消息冻结实际上下文、agent-run 工具执行/文字生成两态、停止/重试与 confirmation pending/completed 审计；Calibration Profile 支持 owner-scoped 读写删，incomplete capture 支持逐项读取和幂等安全移除。所有公开 DTO 保持 path-free、secret-free、owner-scoped。
+- **设计裁决已同步到执行合同。** 支持 Coach 的宽窗口在 Provider ready 时默认展开，首次手动收起后记忆；默认宽度 `360px`、范围 `320–480px`、键盘步进 `16px`，形态断点为并排 `>=1160px`、覆盖 `840–1160px`、临时占满 `<840px`（或并排后主工作区 `<480px`）。Dark 前景四个 token 已去除粉橙偏色：`on-background` / `on-surface` / `inverse-surface` 为 `#e9e4dd`，`on-surface-variant` 为 `#b6ada2`；实测对比度依次为 `14.92`、`14.64`、`10.42`、`8.37`，均满足 AA。Task 7 目标尺寸按 plan line 479 冻结为主操作 `>=40px`、工具栏 `>=36px`、IconButton `>=32x32px`；产品不支持触控，原生系统控件不在该尺寸验收范围。
+- **Shutdown ordering race 已修复并纳入回归。** Tauri 在 `CloseRequested` 即发起幂等 shutdown，Python 先停止 capture-control 消费方再关闭原生 endpoint/服务；真实 `Alt+F4` 关闭中 `capture_control_unavailable`、`capture_export_failed`、ASGI traceback 均为 `0`，真实 timeout/协议故障仍保持可见。该缺陷不再是当前开放 blocker，但干净关闭必须继续作为发布回归项。
+- **发布状态仍为 No-Go。** 仍需真实 KovaaK 的 input-native / multimodal / video-fallback 三模式端到端、高 polling-rate correctness/性能、AMD/Intel 硬件编码与回放、真实 Provider 网络和 OAuth/device-code、真实 worker 进程重启恢复，以及 installer、版本、签名、公证、updater、校验值、真实下载链接和发布验证。Browser fixture、NVIDIA 结果或当前 Tauri smoke 均不能替代这些 release Gate。
 
 ### 2026-07-24 Backend closeout snapshot
 

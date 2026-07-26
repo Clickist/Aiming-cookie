@@ -13,6 +13,7 @@
 > - [`../../frontend-uiux-design.md`](../../frontend-uiux-design.md)
 > - [`../../../DESIGN-cursor.md`](../../../DESIGN-cursor.md)
 > - [`../../design-system.md`](../../design-system.md)
+> - [`../../opendesign-desktop-handoff.md`](../../opendesign-desktop-handoff.md)：派生设计交接入口；只约束设计流程与验收，不覆盖上游合同，也不自动授权 Task
 > - 已列为 active 的 [`../specs/2026-07-13-frontend-product-reconstruction-design.md`](../specs/2026-07-13-frontend-product-reconstruction-design.md)
 > - 已有能力合同：[`../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md`](../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md)、[`../specs/2026-07-13-analysis-evidence-coach-context-design.md`](../specs/2026-07-13-analysis-evidence-coach-context-design.md)、[`../specs/2026-07-17-automatic-run-capture-design.md`](../specs/2026-07-17-automatic-run-capture-design.md)
 >
@@ -129,6 +130,8 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 5. 重跑该 Task 的 focused checks，再运行全局 Gate。
 
 “测试”可包含 unit、contract、route smoke、Playwright、Tauri/browser fixture、accessibility audit、截图比对和静态检查，但必须在 Task 开始前写清楚预期。
+
+Task 3-6 以 Browser 作为快速实现和多数 UI 状态验收环境；每个已经具备可测试条件、且涉及 Desktop capability 的垂直流程，在对应 Task 收口前还必须运行 focused `tauri dev` smoke。完整 Browser/Desktop 矩阵仍由 Task 7 验收；Browser mock 或代理通过不能替代 Tauri file picker、per-launch runtime、managed media、窗口、CSP、启动/退出和后台恢复证据。无法运行真实 Desktop smoke 时必须明确报告，不得静默推迟或写成已通过。
 
 ### 4.2 Allowed files
 
@@ -473,7 +476,7 @@ Logo 只作品牌标识，不承担返回首页或营销页导航。Coach 是跨
 - Browser failure matrix：offline、service unavailable、partial/source unavailable、permission denied、alignment failed、queued/running/failed/retryable；
 - Tauri/Desktop smoke：进程 gate 自动采集状态、连续多局事后切 Run、文件选择、Raw Input/窗口回放缓冲状态、Run-owned managed video URL、窗口尺寸、存储占用和任务恢复；
 - 关键页面宽/中/窄三档截图；system/light/dark 截图；核心空态、失败态、partial 态截图；
-- accessibility：landmarks、focus order、visible focus、skip link、drawer/dialog focus trap、Escape、ARIA live、44px targets、200% zoom、reduced motion、视频键盘控制、图表文本替代；
+- accessibility：landmarks、focus order、visible focus、skip link、drawer/dialog focus trap、Escape、ARIA live、目标尺寸：主操作 ≥40px、工具栏控件 ≥36px、IconButton ≥32×32px（桌面指针产品，不支持触控；WCAG 2.2 AA 24×24px 下限全部满足；原生系统控件，如 Windows 原生文件选择器，不在此目标尺寸验收范围内）、200% zoom、reduced motion、视频键盘控制、图表文本替代；
 - screenshot review 不只看像素差异，还检查信息层级、状态可解释性、密度、主题对比和不泄漏路径/trace；
 - 在无 Windows 实机或 Tauri 环境时明确报告未运行，不得把 mock 通过写成真实 Desktop Gate 通过。
 

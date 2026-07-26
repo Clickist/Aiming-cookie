@@ -56,6 +56,8 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 
 ### P1 — 预览与发布工程
 
+正式前端与发布工程按以下顺序推进：OpenDesign 先完成并经点点确认桌面设计方向；获得对应 Task 授权后，以 Browser 为主要迭代环境实现共享前端，并在每个涉及 Desktop capability 的垂直流程完成后运行 focused `tauri dev` smoke；Browser/Desktop E2E 通过后生成真实产品截图与演示 MP4；再设计和实现 Landing；最后完成 installer、版本、校验值、真实下载链接与发布验证。Browser 通过不替代 Tauri 或 Windows release Gate。
+
 - frontend static/bundle 策略；
 - Python runtime distribution；
 - installer、正式 icon、签名、公证和 updater；

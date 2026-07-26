@@ -49,7 +49,7 @@ All themes expose the identical token names below. Values are intentionally sema
 | Token | Light | Dark | Role |
 | --- | --- | --- | --- |
 | `background` | `#f7f5f0` | `#12110f` | App canvas |
-| `on-background` | `#24211d` | `#fadcd3` | Canvas text |
+| `on-background` | `#24211d` | `#e9e4dd` | Canvas text |
 | `surface` | `#fffdf8` | `#1e100b` | Base surface |
 | `surface-dim` | `#ebe7df` | `#1e100b` | Recessed surface |
 | `surface-bright` | `#ffffff` | `#48352f` | Raised surface |
@@ -59,8 +59,8 @@ All themes expose the identical token names below. Values are intentionally sema
 | `surface-container` | `#ebe6de` | `#1c1b18` | Default container |
 | `surface-container-high` | `#e4ded5` | `#372620` | High container |
 | `surface-container-highest` | `#dcd5cb` | `#43302a` | Highest container |
-| `on-surface` | `#24211d` | `#fadcd3` | Primary surface text |
-| `on-surface-variant` | `#625c54` | `#c9beb4` | Secondary text |
+| `on-surface` | `#24211d` | `#e9e4dd` | Primary surface text |
+| `on-surface-variant` | `#625c54` | `#b6ada2` | Secondary text |
 | `primary` | `#c83d00` | `#ff7a45` | Primary action and active signal |
 | `on-primary` | `#ffffff` | `#3a0d00` | Text on primary |
 | `primary-container` | `#ffe1d5` | `#7e2500` | Low-emphasis primary surface |
@@ -96,7 +96,7 @@ All themes expose the identical token names below. Values are intentionally sema
 | `event-miss` | `#c53442` | `#ff6b78` | Miss event |
 | `event-corrective` | `#1769c2` | `#70b7ff` | Corrective event |
 | `event-peak` | `#c83d00` | `#ff7a45` | Peak-tension event |
-| `inverse-surface` | `#312b25` | `#fadcd3` | Inverted surface |
+| `inverse-surface` | `#312b25` | `#e9e4dd` | Inverted surface |
 | `inverse-on-surface` | `#f9eee8` | `#3e2c26` | Text on inverted surface |
 | `inverse-primary` | `#ffb59d` | `#ac3400` | Action on inverted surface |
 

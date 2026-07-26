@@ -23,6 +23,7 @@
 - 产品问题：`PRD.md`；涉及交付先后时再读 `ROADMAP.md`、`PROGRESS.md`。
 - 架构或数据合同：`PRD.md` 相关段落 + `ARCHITECTURE.md`，然后核对代码和测试。
 - 前端产品设计：`PRD.md` + `frontend-uiux-design.md`；涉及视觉再读 `DESIGN-cursor.md` 与 `design-system.md`。
+- OpenDesign 桌面前端设计交接：从 [`opendesign-desktop-handoff.md`](opendesign-desktop-handoff.md) 进入；它只路由既有事实源、冻结设计自由度与交付 Gate，不构成 implementation Task 授权。Landing 明确延后到正式桌面截图和演示素材可用后。
 - 开发与验证：`DEVELOPMENT.md`，再进入相关代码目录。
 - 当前施工：只使用 [`superpowers/plans/README.md`](superpowers/plans/README.md) 列为 active 的 plan/Task。
 - 局部设计：只使用 [`superpowers/specs/README.md`](superpowers/specs/README.md) 列为 active 的 spec。
