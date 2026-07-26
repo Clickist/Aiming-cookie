@@ -1,0 +1,625 @@
+.page,
+.workspace {
+  min-width: 0;
+  color: var(--on-surface);
+}
+
+.page {
+  display: grid;
+  gap: 16px;
+  width: min(840px, 100%);
+  margin-inline: auto;
+  padding: 28px;
+}
+
+.workspace {
+  display: grid;
+  gap: 18px;
+  min-height: calc(100vh - 56px);
+  padding: 24px 28px 36px;
+}
+
+.analysisHeader {
+  display: grid;
+  gap: 14px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.headerTopline,
+.pendingHeader,
+.titleRow,
+.sectionHeading,
+.issueHeader,
+.playerOverlay > header,
+.chartBand > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.backLink {
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.backLink:hover {
+  color: var(--primary);
+}
+
+.titleRow h1 {
+  max-width: 720px;
+  margin: 2px 0 3px;
+  font-size: 22px;
+  letter-spacing: 0;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.eyebrow,
+.sectionKicker {
+  margin: 0;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.timestamp,
+.muted {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.titleBadges,
+.profileLine,
+.issueActions,
+.timelineFilters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.titleBadges {
+  max-width: 420px;
+  justify-content: flex-end;
+}
+
+.titleTabs {
+  margin-block-start: 2px;
+}
+
+.view {
+  min-width: 0;
+}
+
+.diagnosisTrack {
+  display: grid;
+  gap: 28px;
+  width: min(720px, 100%);
+  margin-inline: auto;
+}
+
+.diagnosisLead {
+  display: grid;
+  gap: 10px;
+  padding-block: 12px 20px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.diagnosisLead h2 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0;
+  line-height: 1.35;
+}
+
+.profileLine {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.profileLine > span + span {
+  border-inline-start: 1px solid var(--outline-variant);
+  padding-inline-start: 7px;
+}
+
+.issueList {
+  display: grid;
+  gap: 14px;
+}
+
+.issue {
+  display: grid;
+  gap: 16px;
+  border-block: 1px solid var(--outline-variant);
+  padding: 20px 0;
+}
+
+.issue[data-selected="true"] {
+  border-block-color: var(--primary);
+}
+
+.issueHeader h3,
+.sectionHeading h2,
+.playerOverlay h2,
+.chartBand h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.priorityReason {
+  margin: 0;
+  color: var(--on-surface-variant);
+}
+
+.rootCauseGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container-low);
+}
+
+.rootCause {
+  min-width: 0;
+  padding: 14px;
+}
+
+.rootCause + .rootCause {
+  border-inline-start: 1px solid var(--outline-variant);
+}
+
+.rootCause span,
+.prescriptionBlock h4,
+.sectionHeading > span {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rootCause p {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.prescriptionBlock {
+  display: grid;
+  gap: 8px;
+  border-inline-start: 3px solid var(--primary);
+  padding-inline-start: 14px;
+}
+
+.prescriptionBlock h4 {
+  margin: 0;
+}
+
+.prescriptionBlock > div {
+  display: grid;
+  gap: 2px;
+}
+
+.prescriptionBlock span {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.metricSummary,
+.evidenceSourceSection,
+.metricsColumn,
+.chartsColumn {
+  display: grid;
+  gap: 14px;
+}
+
+.metricSummaryRows,
+.evidenceRows {
+  display: grid;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.metricSummaryRow,
+.evidenceRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto minmax(160px, auto);
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  border: 0;
+  border-bottom: 1px solid var(--outline-variant);
+  padding: 9px 0;
+  background: transparent;
+  color: var(--on-surface);
+  text-align: start;
+}
+
+.metricSummaryRow {
+  cursor: pointer;
+}
+
+.metricSummaryRow:hover strong {
+  color: var(--primary);
+}
+
+.metricSummaryRow small,
+.evidenceRow span {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.videoColumn {
+  display: grid;
+  gap: 16px;
+  width: min(1120px, 100%);
+  margin-inline: auto;
+}
+
+.playerStage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container-lowest);
+}
+
+.video {
+  display: block;
+  width: 100%;
+  max-height: calc(100vh - 330px);
+  min-height: 360px;
+  background: var(--inverse-surface);
+  object-fit: contain;
+}
+
+.playerOverlay {
+  position: absolute;
+  inset: auto 14px 14px;
+  z-index: 2;
+  max-height: min(260px, 55%);
+  overflow: auto;
+  border: 1px solid var(--outline);
+  border-radius: 6px;
+  padding: 14px;
+  background: var(--surface);
+  color: var(--on-surface);
+}
+
+.playerOverlay dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 10px 0 0;
+}
+
+.playerOverlay dl div {
+  display: flex;
+  gap: 5px;
+}
+
+.playerOverlay dt {
+  color: var(--on-surface-variant);
+}
+
+.playerOverlay dd {
+  margin: 0;
+}
+
+.timelineSection {
+  display: grid;
+  gap: 8px;
+}
+
+.timelineFilters {
+  min-height: 34px;
+}
+
+.timelineFilters > span {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.timelineFilters button {
+  min-height: 30px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  padding: 4px 9px;
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.timelineFilters button[aria-pressed="true"] {
+  border-color: var(--outline);
+  color: var(--on-surface);
+}
+
+.timelineTrack {
+  position: relative;
+  height: 42px;
+  border-block: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+}
+
+.timelineInput {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.001;
+}
+
+.segmentRange {
+  position: absolute;
+  inset-block: 7px 21px;
+  z-index: 4;
+  min-width: 5px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--tertiary-container);
+  cursor: pointer;
+}
+
+.segmentRange[data-related="true"] {
+  background: var(--primary-container);
+}
+
+.eventMarker {
+  position: absolute;
+  inset-block-start: 5px;
+  z-index: 5;
+  width: 3px;
+  height: 30px;
+  border: 0;
+  padding: 0;
+  background: var(--outline);
+  cursor: pointer;
+  transform: translateX(-1px);
+}
+
+.eventMarker[data-event="kill"] { background: var(--event-kill); }
+.eventMarker[data-event="miss"] { background: var(--event-miss); }
+.eventMarker[data-event="corrective"] { background: var(--event-corrective); }
+.eventMarker[data-event="peak"] { background: var(--event-peak); }
+
+.timelineMeta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.dataLayout {
+  display: grid;
+  grid-template-columns: minmax(480px, 1.05fr) minmax(360px, 0.95fr);
+  gap: 26px;
+  width: min(1180px, 100%);
+  margin-inline: auto;
+}
+
+.metricGroup {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.metricGroup > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--surface-container-high);
+}
+
+.metricGroup h3,
+.metricGroup header span {
+  margin: 0;
+  font-size: 12px;
+}
+
+.metricGroupRows {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.metricRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  align-content: center;
+  flex: 1;
+  gap: 9px 14px;
+  min-height: 82px;
+  border-bottom: 1px solid var(--outline-variant);
+  padding: 12px;
+  outline: none;
+}
+
+.metricRow:focus-visible {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.metricRow:last-child {
+  border-bottom: 0;
+}
+
+.metricRow > div:first-child,
+.metricValue {
+  display: grid;
+  gap: 2px;
+}
+
+.metricRow span,
+.metricRow dt,
+.metricRow dd,
+.metricLimitations {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.metricValue {
+  justify-items: end;
+}
+
+.metricRow dl {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 14px;
+  margin: 0;
+}
+
+.metricRow dl div {
+  display: flex;
+  gap: 5px;
+}
+
+.metricRow dd {
+  margin: 0;
+}
+
+.metricLimitations {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.limitedMetrics {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--outline-variant);
+  padding-block-start: 16px;
+}
+
+.chartBand {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--outline-variant);
+  padding-block-end: 18px;
+}
+
+.distributionPlot {
+  display: grid;
+  gap: 8px;
+}
+
+.distributionPlot button {
+  display: grid;
+  grid-template-columns: 100px minmax(80px, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--on-surface);
+  text-align: start;
+  cursor: pointer;
+}
+
+.distributionPlot i {
+  display: block;
+  height: 8px;
+  min-width: 3px;
+  background: var(--event-corrective);
+}
+
+.distributionPlot strong {
+  text-align: end;
+}
+
+.chartSummary {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+@media (max-width: 960px) {
+  .workspace {
+    padding-inline: 20px;
+  }
+
+  .titleRow,
+  .dataLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .titleRow {
+    display: grid;
+  }
+
+  .titleBadges {
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .dataLayout {
+    gap: 30px;
+  }
+
+  .playerStage,
+  .video {
+    min-height: 300px;
+  }
+
+  .video {
+    max-height: calc(100vh - 315px);
+  }
+}
+
+@media (max-width: 680px) {
+  .page,
+  .workspace {
+    padding-inline: 14px;
+  }
+
+  .rootCauseGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .rootCause + .rootCause {
+    border-block-start: 1px solid var(--outline-variant);
+    border-inline-start: 0;
+  }
+
+  .metricSummaryRow,
+  .evidenceRow {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .playerStage,
+  .video {
+    min-height: 240px;
+  }
+
+  .video {
+    max-height: 52vh;
+  }
+
+  .playerOverlay {
+    inset-inline: 8px;
+    inset-block-end: 8px;
+  }
+
+  .dataLayout {
+    display: block;
+  }
+
+  .chartsColumn {
+    margin-block-start: 28px;
+  }
+}
