@@ -15,19 +15,41 @@ import type {
   BenchmarkRecord,
   BenchmarkRecordCreate,
   BenchmarkRecordListResponse,
+  CalibrationValues,
+  CalibrationProfileV1,
+  CaptureStatusV1,
   ChatResponse,
   CoachPrimaryAttachResponse,
   CoachPrimaryMessageResponse,
   CoachPrimaryResponse,
   CoachRuntimeStatusResponse,
+  CoachAgentRunV1,
+  CoachConfirmationV1,
+  CoachContextListV1,
+  CoachContextMutationV1,
+  CoachContextRefV1,
   DeleteSessionResponse,
   HistoryTrend,
+  IncompleteCaptureListV1,
+  IncompleteCaptureRemovalV1,
   KovaaKAnalysisRequest,
   KovaaKRunItem,
   KovaaKRunListResponse,
-  SessionListResponse,
+  ProductStateV1,
+  ProviderAuthCapabilitiesV1,
+  ProviderAuthOperation,
+  ProviderCatalogV1,
+  ProviderProfile,
+  ProviderProfileCreate,
+  ProviderProfileListResponse,
+  ProviderProfileStatus,
+  RunEvidenceRemovalResponse,
   SessionStatus,
+  SessionListResponse,
   StorageResponse,
+  FrontendEvidenceSegmentsV1,
+  TaskDetailV1,
+  TaskListV1,
   Timeline,
 } from "./types";
 
@@ -73,8 +95,8 @@ async function apiFetch(
 export interface UploadOptions {
   /** Required Stats CSV (KovaaK's export). Backend hard-requires it. */
   csv: File;
-  cmPer360?: number;
-  fov?: number;
+  profileDefault?: CalibrationValues;
+  manualOverride?: CalibrationValues;
   /** Override X-User-Id (defaults to env or "dev"). */
   userId?: string;
   signal?: AbortSignal;
@@ -83,8 +105,8 @@ export interface UploadOptions {
 export interface DesktopPathImportOptions {
   videoPath: string;
   csvPath: string;
-  cmPer360?: number;
-  fov?: number;
+  profileDefault?: CalibrationValues;
+  manualOverride?: CalibrationValues;
   signal?: AbortSignal;
 }
 
@@ -96,12 +118,8 @@ export async function uploadVideo(
   const form = new FormData();
   form.append("video", video);
   form.append("csv", opts.csv);
-  if (opts.cmPer360 !== undefined) {
-    form.append("cm_per_360", String(opts.cmPer360));
-  }
-  if (opts.fov !== undefined) {
-    form.append("fov", String(opts.fov));
-  }
+  appendCalibration(form, "profile_default", opts.profileDefault);
+  appendCalibration(form, "manual_override", opts.manualOverride);
 
   const res = await apiFetch(
     "/api/analyze",
@@ -124,14 +142,27 @@ export async function importDesktopPaths(
       body: JSON.stringify({
         video_path: opts.videoPath,
         csv_path: opts.csvPath,
-        cm_per_360: opts.cmPer360,
-        fov: opts.fov,
+        profile_default: opts.profileDefault,
+        manual_override: opts.manualOverride,
       }),
     },
     { desktopToken: true, signal: opts.signal },
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as AnalyzeResponse;
+}
+
+function appendCalibration(
+  form: FormData,
+  prefix: "profile_default" | "manual_override",
+  values: CalibrationValues | undefined,
+): void {
+  if (typeof values?.cm_per_360 === "number") {
+    form.append(`${prefix}_cm_per_360`, String(values.cm_per_360));
+  }
+  if (typeof values?.fov === "number") {
+    form.append(`${prefix}_fov`, String(values.fov));
+  }
 }
 
 /** Desktop storage listing. Browser sessions cannot call this route. */
@@ -389,4 +420,453 @@ export async function postCoachPrimaryMessage(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachPrimaryMessageResponse;
+}
+
+export async function getAnalysisEvidenceSegments(
+  sessionId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<FrontendEvidenceSegmentsV1> {
+  const res = await apiFetch(
+    `/api/sessions/${sessionId}/evidence-segments`,
+    { method: "GET" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as FrontendEvidenceSegmentsV1;
+}
+
+export async function getHistorySessions(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<SessionListResponse> {
+  return listSessions(opts);
+}
+
+export async function getHistoryRun(
+  runId: number,
+  opts: { signal?: AbortSignal } = {},
+): Promise<KovaaKRunItem> {
+  return getKovaakRun(runId, opts);
+}
+
+export async function getHistoryAnalysisDetail(
+  sessionId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<SessionStatus> {
+  return getSession(sessionId, opts);
+}
+
+export async function getProductState(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProductStateV1> {
+  const res = await apiFetch("/api/product-state", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProductStateV1;
+}
+
+export async function completeOnboarding(
+  completionKind: "connected" | "skipped",
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProductStateV1> {
+  const res = await apiFetch(
+    "/api/product-state/onboarding",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ completed: true, completion_kind: completionKind }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProductStateV1;
+}
+
+export async function getCaptureStatus(
+  opts: { signal?: AbortSignal } = {},
+): Promise<CaptureStatusV1> {
+  const res = await apiFetch(
+    "/api/capture-status",
+    { method: "GET" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CaptureStatusV1;
+}
+
+export async function listTasks(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<TaskListV1> {
+  const res = await apiFetch("/api/tasks", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as TaskListV1;
+}
+
+export async function getTask(
+  taskRef: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<TaskDetailV1> {
+  const res = await apiFetch(
+    `/api/tasks/${encodeURIComponent(taskRef)}`,
+    { method: "GET" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as TaskDetailV1;
+}
+
+export async function getProviderCatalog(
+  opts: { signal?: AbortSignal } = {},
+): Promise<ProviderCatalogV1> {
+  const res = await apiFetch("/api/providers/catalog", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderCatalogV1;
+}
+
+export async function getProviderAuthCapabilities(
+  opts: { signal?: AbortSignal } = {},
+): Promise<ProviderAuthCapabilitiesV1> {
+  const res = await apiFetch("/api/provider-auth/capabilities", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderAuthCapabilitiesV1;
+}
+
+export async function listProviderProfiles(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfileListResponse> {
+  const res = await apiFetch("/api/provider-profiles", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfileListResponse;
+}
+
+export async function getDefaultProviderStatus(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfileStatus> {
+  const res = await apiFetch("/api/provider-profiles/status", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfileStatus;
+}
+
+export async function createProviderProfile(
+  profile: ProviderProfileCreate,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfile> {
+  const res = await apiFetch(
+    "/api/provider-profiles",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfile;
+}
+
+export async function testProviderProfile(
+  profileId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfileStatus> {
+  const res = await apiFetch(
+    `/api/provider-profiles/${profileId}/test`,
+    { method: "POST" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfileStatus;
+}
+
+export async function authorizeProviderProfile(
+  profileId: number,
+  mode: "api_key" | "oauth",
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderAuthOperation> {
+  const res = await apiFetch(
+    `/api/provider-profiles/${profileId}/auth/authorize`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderAuthOperation;
+}
+
+export async function getProviderAuthOperation(
+  operationId: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderAuthOperation> {
+  const res = await apiFetch(
+    `/api/provider-auth-operations/${encodeURIComponent(operationId)}`,
+    { method: "GET" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderAuthOperation;
+}
+
+export async function submitProviderAuthInput(
+  operationId: string,
+  promptId: string,
+  value: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderAuthOperation> {
+  const res = await apiFetch(
+    `/api/provider-auth-operations/${encodeURIComponent(operationId)}/input`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt_id: promptId, value }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderAuthOperation;
+}
+
+export async function cancelProviderAuthOperation(
+  operationId: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderAuthOperation> {
+  const res = await apiFetch(
+    `/api/provider-auth-operations/${encodeURIComponent(operationId)}/cancel`,
+    { method: "POST" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderAuthOperation;
+}
+
+export async function setProviderApiKey(
+  profileId: number,
+  apiKey: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfile> {
+  const res = await apiFetch(
+    `/api/provider-profiles/${profileId}/auth/api-key`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfile;
+}
+
+export async function deleteProviderCredential(
+  profileId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfile> {
+  const res = await apiFetch(
+    `/api/provider-profiles/${profileId}/auth/credential`,
+    { method: "DELETE" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfile;
+}
+
+export async function setDefaultProviderProfile(
+  profileId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfile> {
+  const res = await apiFetch(
+    `/api/provider-profiles/${profileId}/default`,
+    { method: "POST" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfile;
+}
+
+export async function deleteProviderProfile(
+  profileId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<{ deleted: boolean; id: number }> {
+  const res = await apiFetch(`/api/provider-profiles/${profileId}`, { method: "DELETE" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as { deleted: boolean; id: number };
+}
+
+export async function getCoachContexts(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachContextListV1> {
+  const res = await apiFetch("/api/coach/context", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachContextListV1;
+}
+
+export async function attachCoachContext(
+  context: {
+    kind: CoachContextRefV1["kind"];
+    analysis_ref: string;
+    target_ref?: string;
+    start_ms?: number;
+    end_ms?: number;
+    comparison_analysis_ref?: string;
+  },
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachContextMutationV1> {
+  const res = await apiFetch(
+    "/api/coach/context/attach",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schema_version: "coach_context_attach.v1", ...context }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachContextMutationV1;
+}
+
+export async function detachCoachContext(
+  contextRef: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachContextMutationV1> {
+  const res = await apiFetch(
+    `/api/coach/context/${encodeURIComponent(contextRef)}/detach`,
+    { method: "POST" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachContextMutationV1;
+}
+
+export async function createCoachAgentRun(
+  content: string,
+  contextRefs: string[],
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachAgentRunV1> {
+  const res = await apiFetch(
+    "/api/coach/agent-runs",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schema_version: "coach_agent_run_request.v1",
+        content,
+        context_refs: contextRefs,
+      }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachAgentRunV1;
+}
+
+export async function getCoachAgentRun(
+  runRef: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachAgentRunV1> {
+  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}`, { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachAgentRunV1;
+}
+
+export async function stopCoachAgentRun(
+  runRef: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachAgentRunV1> {
+  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}/stop`, { method: "POST" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachAgentRunV1;
+}
+
+export async function retryCoachAgentRun(
+  runRef: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachAgentRunV1> {
+  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}/retry`, { method: "POST" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachAgentRunV1;
+}
+
+export async function decideCoachConfirmation(
+  confirmationRef: string,
+  decision: "confirm" | "reject",
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachConfirmationV1> {
+  const res = await apiFetch(
+    `/api/coach/confirmations/${encodeURIComponent(confirmationRef)}/decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schema_version: "coach_confirmation_decision.v1", decision }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachConfirmationV1;
+}
+
+export async function getCalibrationProfile(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CalibrationProfileV1> {
+  const res = await apiFetch("/api/calibration-profile", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CalibrationProfileV1;
+}
+
+export async function saveCalibrationProfile(
+  values: CalibrationValues,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CalibrationProfileV1> {
+  const res = await apiFetch(
+    "/api/calibration-profile",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schema_version: "calibration_profile_update.v1", ...values }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CalibrationProfileV1;
+}
+
+export async function deleteCalibrationProfile(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CalibrationProfileV1> {
+  const res = await apiFetch("/api/calibration-profile", { method: "DELETE" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CalibrationProfileV1;
+}
+
+export async function listIncompleteCaptures(
+  opts: { signal?: AbortSignal } = {},
+): Promise<IncompleteCaptureListV1> {
+  const res = await apiFetch("/api/storage/incomplete", { method: "GET" }, { ...opts, desktopToken: true });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as IncompleteCaptureListV1;
+}
+
+export async function removeIncompleteCapture(
+  itemRef: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<IncompleteCaptureRemovalV1> {
+  const res = await apiFetch(
+    `/api/storage/incomplete/${encodeURIComponent(itemRef)}`,
+    { method: "DELETE" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as IncompleteCaptureRemovalV1;
+}
+
+export async function removeRunEvidence(
+  runId: number,
+  kind: "video" | "raw",
+  opts: { signal?: AbortSignal } = {},
+): Promise<RunEvidenceRemovalResponse> {
+  const res = await apiFetch(
+    `/api/kovaak-runs/${runId}/evidence/${kind}`,
+    { method: "DELETE" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as RunEvidenceRemovalResponse;
 }

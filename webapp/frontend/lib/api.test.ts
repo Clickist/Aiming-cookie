@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { analyzeKovaakRun, listSessions, retrySession } from "./api";
+import {
+  analyzeKovaakRun,
+  completeOnboarding,
+  createProviderProfile,
+  listSessions,
+  retrySession,
+} from "./api";
+import { getManagedVideoUrl } from "./desktop";
 
 const originalFetch = globalThis.fetch;
 const originalWindow = Reflect.get(globalThis, "window");
@@ -107,4 +114,89 @@ test("analysis write requests forward their stable idempotency keys", async () =
     new Headers(requests[1]?.init?.headers).get("Idempotency-Key"),
     "retry-key",
   );
+});
+
+test("desktop managed video URL survives Windows Tauri path encoding", async () => {
+  const convertedPaths: string[] = [];
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      convertFileSrc: (path: string, protocol: string) => {
+        assert.equal(protocol, "aiming-cookie-media");
+        convertedPaths.push(path);
+        return `http://${protocol}.localhost/${encodeURIComponent(path)}`;
+      },
+    },
+  });
+
+  const url = await getManagedVideoUrl(42);
+
+  assert.deepEqual(convertedPaths, [""]);
+  assert.equal(url, "http://aiming-cookie-media.localhost/analysis/42");
+  assert.doesNotMatch(url ?? "", /%2F/i);
+  assert.doesNotMatch(url ?? "", /Users|AppData|sessions|\\/);
+});
+
+test("onboarding completion persists an explicit completion kind", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      schema_version: "product_state.v1",
+      availability: "available",
+      onboarding_completed: true,
+      onboarding_completion_kind: "skipped",
+      has_pending_runs: false,
+      has_runs: false,
+      has_analyses: false,
+      error: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  await completeOnboarding("skipped");
+
+  assert.equal(requests[0]?.input, "/api/product-state/onboarding");
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    completed: true,
+    completion_kind: "skipped",
+  });
+});
+
+test("provider credential is write-only and is not copied into browser storage", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      id: 2,
+      name: "OpenAI",
+      provider_id: "openai",
+      kind: "builtin",
+      base_url: null,
+      model_id: "gpt-test",
+      is_default: true,
+      configured: true,
+      credential_configured: true,
+      has_api_key: true,
+      status: "ready",
+      created_at: "2026-07-25T00:00:00Z",
+      updated_at: "2026-07-25T00:00:00Z",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const created = await createProviderProfile({
+    name: "OpenAI",
+    provider_id: "openai",
+    kind: "builtin",
+    model_id: "gpt-test",
+    api_key: "write-only-secret",
+    is_default: true,
+  });
+
+  assert.equal(created.has_api_key, true);
+  assert.equal("api_key" in created, false);
+  assert.equal(requests[0]?.input, "/api/provider-profiles");
 });
