@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import asyncio
 import logging
 import os
 import shutil
@@ -8,11 +9,15 @@ from pathlib import Path as FilePath
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, Header, HTTPException, Path, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from . import (
     benchmark_store,
+    calibration_profile_store,
+    coach_agent_runs,
     coach_commands,
+    coach_confirmations,
+    coach_context_refs,
     coach_runtime,
     coach_store,
     config,
@@ -32,6 +37,12 @@ from .coach_context import (
     project_coach_diagnostic_context,
 )
 from .health import build_coach_runtime_status
+from .read_models import (
+    build_capture_status_v1,
+    build_product_state_v1,
+    build_task_detail_v1,
+    build_task_list_v1,
+)
 from .contracts import (
     UnsupportedContractVersion,
     analysis_result_to_coach_report,
@@ -61,6 +72,18 @@ from .schemas import (
     CoachPrimaryMessageResponse,
     CoachPrimaryResponse,
     CoachProductCommandResult,
+    CoachAgentRunOut,
+    CoachAgentRunRequest,
+    CoachConfirmationDecisionRequest,
+    CoachConfirmationOut,
+    CoachConfirmationRequest,
+    CoachContextAttachRequest,
+    CoachContextListResponse,
+    CoachContextMutationResponse,
+    CalibrationProfileOut,
+    CalibrationProfileUpdateRequest,
+    IncompleteCaptureListResponse,
+    IncompleteCaptureRemovalResponse,
     CoachRuntimeStatusResponse,
     ProviderProfileCreate,
     ProviderApiKeyRequest,
@@ -94,7 +117,13 @@ from .schemas import (
     FrontendEvidenceSegment,
     FrontendEvidenceSegmentsResponse,
     EvidenceSegmentPlayback,
+    ManagedVideoUnavailableResponse,
     TimelineEvent,
+    CaptureStatusResponse,
+    OnboardingStateRequest,
+    ProductStateResponse,
+    TaskDetailResponse,
+    TaskListResponse,
 )
 from .workspace import (
     UploadSizeExceeded,
@@ -103,6 +132,7 @@ from .workspace import (
     session_dir,
     stream_upload_to_path,
 )
+from .native_capture_client import NativeCaptureClient, NativeCaptureRetryableError
 
 router = APIRouter(prefix="/api")
 log = logging.getLogger(__name__)
@@ -217,7 +247,14 @@ async def analyze_paths(
     _require_upload_disk_space(video_size + csv_size)
 
     sid = await queue.enqueue(
-        user_id, "", "", cm_per_360=request.cm_per_360, fov=request.fov, status="uploading",
+        user_id,
+        "",
+        "",
+        cm_per_360=request.cm_per_360,
+        fov=request.fov,
+        profile_default=(request.profile_default.model_dump() if request.profile_default else None),
+        manual_override=(request.manual_override.model_dump() if request.manual_override else None),
+        status="uploading",
     )
     workspace = session_dir(sid)
     managed_video = workspace / "video.mp4"
@@ -260,12 +297,179 @@ async def get_storage(_: None = Depends(require_desktop_token)):
     )
 
 
+@router.get("/storage/incomplete", response_model=IncompleteCaptureListResponse)
+async def get_incomplete_capture_storage(
+    _: None = Depends(require_desktop_token),
+):
+    raw_items = await kovaak_run_store.list_incomplete_capture_items(
+        config.DESKTOP_LOCAL_PROFILE, config.DATA_ROOT,
+    )
+    items = [
+        {key: value for key, value in item.items() if not key.startswith("_")}
+        for item in raw_items
+    ]
+    return IncompleteCaptureListResponse(
+        total_bytes=sum(int(item["size_bytes"]) for item in items),
+        items=items,
+    )
+
+
+@router.delete(
+    "/storage/incomplete/{item_ref}",
+    response_model=IncompleteCaptureRemovalResponse,
+)
+async def remove_incomplete_capture_storage(
+    item_ref: str = Path(...),
+    _: None = Depends(require_desktop_token),
+):
+    result = await kovaak_run_store.remove_incomplete_capture_item(
+        config.DESKTOP_LOCAL_PROFILE, item_ref, config.DATA_ROOT,
+    )
+    if result is None:
+        raise HTTPException(404, "Incomplete capture item is unavailable")
+    return IncompleteCaptureRemovalResponse(**result)
+
+
+@router.get("/product-state", response_model=ProductStateResponse)
+async def get_product_state(x_user_id: str = Depends(get_request_user_id)):
+    """Conditional-start state; unavailable is never projected as an empty state."""
+    try:
+        state = await queue.get_product_state(x_user_id)
+    except Exception:
+        log.exception("product state read failed user=%s", x_user_id)
+        state = {"read_error": "database_unavailable"}
+    return ProductStateResponse(**build_product_state_v1(**state))
+
+
+@router.post("/product-state/onboarding", response_model=ProductStateResponse)
+async def set_product_onboarding(
+    request: OnboardingStateRequest,
+    x_user_id: str = Depends(get_request_user_id),
+):
+    """Persist an explicit connected/skipped onboarding completion decision."""
+    try:
+        state = await queue.set_onboarding_state(
+            x_user_id,
+            completed=request.completed,
+            completion_kind=request.completion_kind,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception:
+        log.exception("product onboarding write failed user=%s", x_user_id)
+        return ProductStateResponse(**build_product_state_v1(
+            read_error="product_state_unavailable",
+        ))
+    return ProductStateResponse(**build_product_state_v1(**state))
+
+
+@router.get("/capture-status", response_model=CaptureStatusResponse)
+async def get_capture_status(
+    request: Request,
+    _: None = Depends(require_desktop_token),
+):
+    """Aggregate native coordinator status with path-free Run attachments."""
+    try:
+        runs = await kovaak_run_store.list_kovaak_run_summaries(
+            config.DESKTOP_LOCAL_PROFILE,
+        )
+        native_status = None
+        if config.NATIVE_CAPTURE_CONTROL_ADDR and config.NATIVE_CAPTURE_CONTROL_SECRET:
+            client = NativeCaptureClient(
+                config.NATIVE_CAPTURE_CONTROL_ADDR,
+                config.NATIVE_CAPTURE_CONTROL_SECRET,
+            )
+            native_status = await asyncio.to_thread(client.status)
+        elif bool(config.NATIVE_CAPTURE_CONTROL_ADDR) != bool(
+            config.NATIVE_CAPTURE_CONTROL_SECRET
+        ):
+            raise RuntimeError("native capture control configuration is incomplete")
+        status = build_capture_status_v1(native_status=native_status, runs=runs)
+    except NativeCaptureRetryableError as error:
+        if (
+            error.code == "capture_control_unavailable"
+            and getattr(request.app.state, "desktop_shutdown_requested", False)
+        ):
+            log.info("capture status read skipped during desktop shutdown")
+        else:
+            log.exception("capture status read failed: %s", error.code)
+        status = build_capture_status_v1(read_error="capture_status_unavailable")
+    except Exception:
+        log.exception("capture status read failed")
+        status = build_capture_status_v1(read_error="capture_status_unavailable")
+    return CaptureStatusResponse(**status)
+
+
+def _task_groups(rows: list[dict]) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        group = row.get("task_group_ref") or f"task:{row.get('id')}"
+        groups.setdefault(str(group), []).append(row)
+    out: list[dict] = []
+    for group_rows in groups.values():
+        current = max(
+            group_rows,
+            key=lambda row: (int(row.get("attempt_number") or 1), int(row.get("id") or 0)),
+        )
+        out.append(build_task_detail_v1(current, attempts=group_rows))
+    out.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return out
+
+
+@router.get("/tasks", response_model=TaskListResponse)
+async def list_tasks(x_user_id: str = Depends(get_request_user_id)):
+    try:
+        rows = await queue.list_task_rows(x_user_id)
+        projected = _task_groups(rows)
+        return TaskListResponse(
+            schema_version="task_list.v1",
+            availability="available",
+            tasks=projected,
+            error=None,
+        )
+    except Exception:
+        log.exception("task list read failed user=%s", x_user_id)
+        return TaskListResponse(**build_task_list_v1(read_error="task_list_unavailable"))
+
+
+@router.get("/tasks/{task_ref}", response_model=TaskDetailResponse)
+async def get_task(task_ref: str, x_user_id: str = Depends(get_request_user_id)):
+    try:
+        rows = await queue.get_task_rows(task_ref, x_user_id)
+        if not rows and task_ref.startswith("analysis:"):
+            try:
+                session_id = int(task_ref.split(":", 1)[1])
+            except (TypeError, ValueError):
+                session_id = 0
+            session = await queue.get_session(session_id) if session_id > 0 else None
+            if session and session.get("user_id") == x_user_id:
+                rows = await queue.get_task_rows(
+                    session.get("task_group_ref") or f"task:{session_id}", x_user_id,
+                )
+    except Exception:
+        log.exception("task detail read failed user=%s", x_user_id)
+        return TaskDetailResponse(**build_task_detail_v1(
+            {}, read_error="task_detail_unavailable",
+        ))
+    if not rows:
+        raise HTTPException(404, "task not found")
+    current = max(
+        rows,
+        key=lambda row: (int(row.get("attempt_number") or 1), int(row.get("id") or 0)),
+    )
+    return TaskDetailResponse(**build_task_detail_v1(current, attempts=rows))
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(
     video: UploadFile = File(...),
     csv: UploadFile = File(...),
     cm_per_360: Optional[float] = Form(default=None),
     fov: Optional[float] = Form(default=None),
+    profile_default_cm_per_360: Optional[float] = Form(default=None),
+    profile_default_fov: Optional[float] = Form(default=None),
+    manual_override_cm_per_360: Optional[float] = Form(default=None),
+    manual_override_fov: Optional[float] = Form(default=None),
     x_user_id: str = Depends(get_request_user_id),
 ):
     """接收 flicking 视频 + Stats CSV,入队异步分析。
@@ -299,6 +503,18 @@ async def analyze(
         "",
         cm_per_360=cm_per_360,
         fov=fov,
+        profile_default={
+            "cm_per_360": profile_default_cm_per_360,
+            "fov": profile_default_fov,
+        },
+        manual_override=(
+            {
+                "cm_per_360": manual_override_cm_per_360,
+                "fov": manual_override_fov,
+            }
+            if manual_override_cm_per_360 is not None or manual_override_fov is not None
+            else None
+        ),
         status="uploading",
     )
     ws = session_dir(sid)
@@ -572,6 +788,8 @@ async def analyze_kovaak_run(
         input_mode=request.input_mode,
         cm_per_360=request.cm_per_360,
         fov=request.fov,
+        profile_default=(request.profile_default.model_dump() if request.profile_default else None),
+        manual_override=(request.manual_override.model_dump() if request.manual_override else None),
         managed_video_source=video_source,
         idempotency_key=idempotency_key,
     )
@@ -635,7 +853,9 @@ async def retry_session(
         authorization_source="explicit_user_request",
     )
     _raise_product_command_error(result)
-    session = await queue.get_session(session_id)
+    retried = result.get("result") if isinstance(result, dict) else None
+    returned_id = retried.get("id") if isinstance(retried, dict) else None
+    session = await queue.get_session(returned_id if isinstance(returned_id, int) else session_id)
     if session is None:  # Defensive: retry handler succeeded only for an existing session.
         raise HTTPException(404, "session 不存在")
     return _session_status_response(session)
@@ -648,6 +868,16 @@ async def _diagnosis_from_done_session(s: dict):
     if not isinstance(result, dict):
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
     context = project_coach_diagnostic_context(result)
+    replay = history_trends.visual_replay_capability(s)
+    if replay.get("kind") == "unavailable":
+        evidence_summary = context.get("evidence_summary")
+        availability = (
+            evidence_summary.get("availability")
+            if isinstance(evidence_summary, dict)
+            else None
+        )
+        if isinstance(availability, dict) and "mp4" in availability:
+            availability["mp4"] = "unavailable"
     owner_id = s.get("user_id")
     if isinstance(owner_id, str) and owner_id:
         try:
@@ -688,6 +918,7 @@ def _coach_thread_message_out(m: dict) -> CoachThreadMessageOut:
         created_at=m["created_at"],
         legacy_session_id=m.get("legacy_session_id"),
         context=m.get("context"),
+        context_refs=m.get("context_refs") or [],
     )
 
 
@@ -1087,6 +1318,209 @@ async def execute_coach_tool_bridge(
     return CoachProductCommandResult(**result)
 
 
+def _validate_public_body(model, payload: dict, message: str):
+    try:
+        return model.model_validate(payload)
+    except Exception as error:
+        raise HTTPException(400, message) from error
+
+
+@router.get("/coach/context", response_model=CoachContextListResponse)
+async def get_coach_contexts(
+    x_user_id: str = Depends(get_request_user_id),
+):
+    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    return CoachContextListResponse(
+        contexts=await coach_context_refs.list_contexts(int(thread["id"])),
+    )
+
+
+@router.post("/coach/context/attach", response_model=CoachContextMutationResponse)
+async def attach_coach_context(
+    payload: dict = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    body = _validate_public_body(
+        CoachContextAttachRequest, payload, "Coach context request is invalid",
+    )
+    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    try:
+        action, context = await coach_context_refs.attach_context(
+            x_user_id,
+            int(thread["id"]),
+            kind=body.kind,
+            analysis_ref=body.analysis_ref,
+            target_ref=body.target_ref,
+            start_ms=body.start_ms,
+            end_ms=body.end_ms,
+            comparison_analysis_ref=body.comparison_analysis_ref,
+        )
+    except coach_context_refs.ContextRefError as error:
+        status = 404 if error.code == "not_found" else 409 if error.code.endswith("unavailable") else 400
+        raise HTTPException(status, error.code) from error
+    return CoachContextMutationResponse(action=action, context=context)
+
+
+@router.post(
+    "/coach/context/{context_ref}/detach",
+    response_model=CoachContextMutationResponse,
+)
+async def detach_coach_context(
+    context_ref: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    result = await coach_context_refs.detach_context(
+        x_user_id, int(thread["id"]), context_ref,
+    )
+    if result is None:
+        raise HTTPException(404, "Coach context is unavailable")
+    action, context = result
+    return CoachContextMutationResponse(action=action, context=context)
+
+
+@router.post(
+    "/coach/agent-runs", response_model=CoachAgentRunOut, status_code=202,
+)
+async def create_coach_agent_run(
+    request: Request,
+    payload: dict = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    body = _validate_public_body(
+        CoachAgentRunRequest, payload, "Coach agent run request is invalid",
+    )
+    try:
+        result = await coach_agent_runs.create_run(
+            x_user_id,
+            body.content,
+            context_refs=body.context_refs,
+            tool_bridge_endpoint=_coach_tool_bridge_endpoint(request),
+            desktop_token=config.DESKTOP_LAUNCH_TOKEN or None,
+        )
+    except (coach_agent_runs.AgentRunError, coach_context_refs.ContextRefError) as error:
+        raise HTTPException(400, error.code) from error
+    return CoachAgentRunOut(**result)
+
+
+@router.get("/coach/agent-runs/{run_ref}", response_model=CoachAgentRunOut)
+async def get_coach_agent_run(
+    run_ref: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    result = await coach_agent_runs.get_run(x_user_id, run_ref)
+    if result is None:
+        raise HTTPException(404, "Coach agent run is unavailable")
+    return CoachAgentRunOut(**result)
+
+
+@router.post("/coach/agent-runs/{run_ref}/stop", response_model=CoachAgentRunOut)
+async def stop_coach_agent_run(
+    run_ref: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    result = await coach_agent_runs.stop_run(x_user_id, run_ref)
+    if result is None:
+        raise HTTPException(404, "Coach agent run is unavailable")
+    return CoachAgentRunOut(**result)
+
+
+@router.post(
+    "/coach/agent-runs/{run_ref}/retry",
+    response_model=CoachAgentRunOut,
+    status_code=202,
+)
+async def retry_coach_agent_run(
+    request: Request,
+    run_ref: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        result = await coach_agent_runs.retry_run(
+            x_user_id,
+            run_ref,
+            tool_bridge_endpoint=_coach_tool_bridge_endpoint(request),
+            desktop_token=config.DESKTOP_LAUNCH_TOKEN or None,
+        )
+    except coach_agent_runs.AgentRunError as error:
+        raise HTTPException(409, error.code) from error
+    if result is None:
+        raise HTTPException(404, "Coach agent run is unavailable")
+    return CoachAgentRunOut(**result)
+
+
+@router.post("/coach/confirmations", response_model=CoachConfirmationOut)
+async def create_coach_confirmation(
+    payload: dict = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    body = _validate_public_body(
+        CoachConfirmationRequest, payload, "Coach confirmation request is invalid",
+    )
+    try:
+        result = await coach_confirmations.create_confirmation(
+            x_user_id, body.action, body.target_ref,
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    return CoachConfirmationOut(**result)
+
+
+@router.post(
+    "/coach/confirmations/{confirmation_ref}/decision",
+    response_model=CoachConfirmationOut,
+)
+async def decide_coach_confirmation(
+    payload: dict = Body(...),
+    confirmation_ref: str = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    body = _validate_public_body(
+        CoachConfirmationDecisionRequest, payload, "Coach confirmation decision is invalid",
+    )
+    try:
+        result = await coach_confirmations.decide_confirmation(
+            x_user_id, confirmation_ref, body.decision,
+        )
+    except coach_confirmations.ConfirmationError as error:
+        raise HTTPException(409, error.code) from error
+    if result is None:
+        raise HTTPException(404, "Coach confirmation is unavailable")
+    return CoachConfirmationOut(**result)
+
+
+@router.get("/calibration-profile", response_model=CalibrationProfileOut)
+async def get_calibration_profile(
+    x_user_id: str = Depends(get_request_user_id),
+):
+    return CalibrationProfileOut(
+        **await calibration_profile_store.get_profile(x_user_id),
+    )
+
+
+@router.put("/calibration-profile", response_model=CalibrationProfileOut)
+async def save_calibration_profile(
+    body: CalibrationProfileUpdateRequest = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        result = await calibration_profile_store.save_profile(
+            x_user_id, cm_per_360=body.cm_per_360, fov=body.fov,
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    return CalibrationProfileOut(**result)
+
+
+@router.delete("/calibration-profile", response_model=CalibrationProfileOut)
+async def delete_calibration_profile(
+    x_user_id: str = Depends(get_request_user_id),
+):
+    return CalibrationProfileOut(
+        **await calibration_profile_store.delete_profile(x_user_id),
+    )
+
+
 @router.get("/coach/primary", response_model=CoachPrimaryResponse)
 async def get_coach_primary(
     x_user_id: str = Depends(get_request_user_id),
@@ -1286,7 +1720,12 @@ async def get_session_video(
     s = await _get_owned_session(session_id, x_user_id)
     replay = history_trends.visual_replay_capability(s)
     if replay.get("kind") != "seekable_mp4":
-        raise HTTPException(404, "视频文件不存在或已归档")
+        unavailable = ManagedVideoUnavailableResponse(
+            schema_version="managed_video_unavailable.v1",
+            availability="unavailable",
+            reason=replay.get("reason") or "managed_video_unavailable",
+        )
+        return JSONResponse(status_code=410, content=unavailable.model_dump())
     video_path = s.get("video_path") or ""
     return FileResponse(video_path, media_type="video/mp4")
 

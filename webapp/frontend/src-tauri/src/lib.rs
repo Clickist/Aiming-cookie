@@ -1,4 +1,5 @@
 mod capture_coordinator;
+mod media_protocol;
 mod raw_input;
 mod runtime;
 mod window_capture;
@@ -48,10 +49,18 @@ fn desktop_capture_coordinator_set_enabled(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let managed_media = Arc::new(media_protocol::ManagedMediaProtocol::default());
+    let media_handler = Arc::clone(&managed_media);
     tauri::Builder::default()
+        .register_uri_scheme_protocol("aiming-cookie-media", move |_context, request| {
+            media_handler.response(request)
+        })
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(move |app| {
             let app_data_dir = app.path().app_data_dir()?;
+            managed_media
+                .configure(app_data_dir.clone())
+                .map_err(io::Error::other)?;
             let raw_input_path = app_data_dir.join("raw-input").join("buffer.bin");
             let raw_input = Arc::new(RawInputState::new(raw_input_path));
             let window_capture = Arc::new(Mutex::new(
@@ -92,7 +101,10 @@ pub fn run() {
             desktop_capture_coordinator_set_enabled,
         ])
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
                 window.app_handle().state::<RuntimeState>().shutdown();
                 window
                     .app_handle()

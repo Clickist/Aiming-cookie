@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal, Optional, Union
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 class ErrorV1(BaseModel):
@@ -28,11 +28,20 @@ class AnalyzeResponse(BaseModel):
     session_id: int
 
 
+class CalibrationValues(BaseModel):
+    """Path-free calibration inputs; Stats values are selected by the worker."""
+
+    cm_per_360: Optional[float] = None
+    fov: Optional[float] = None
+
+
 class AnalyzePathsRequest(BaseModel):
     video_path: str
     csv_path: str
     cm_per_360: Optional[float] = None
     fov: Optional[float] = None
+    profile_default: Optional[CalibrationValues] = None
+    manual_override: Optional[CalibrationValues] = None
 
 
 class KovaaKAnalysisRequest(BaseModel):
@@ -42,6 +51,8 @@ class KovaaKAnalysisRequest(BaseModel):
     video_path: Optional[str] = None
     cm_per_360: Optional[float] = None
     fov: Optional[float] = None
+    profile_default: Optional[CalibrationValues] = None
+    manual_override: Optional[CalibrationValues] = None
 
 
 class StorageSessionItem(BaseModel):
@@ -163,6 +174,107 @@ class SessionListItem(BaseModel):
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionListItem]
+
+
+class ProductStateResponse(BaseModel):
+    schema_version: Literal["product_state.v1"]
+    availability: Literal["available", "unavailable"]
+    onboarding_completed: Optional[bool] = None
+    onboarding_completion_kind: Optional[Literal["connected", "skipped", "legacy"]] = None
+    has_pending_runs: Optional[bool] = None
+    has_runs: Optional[bool] = None
+    has_analyses: Optional[bool] = None
+    error: Optional[dict] = None
+
+
+class OnboardingStateRequest(BaseModel):
+    completed: bool = True
+    completion_kind: Literal["connected", "skipped", "legacy"]
+
+
+class CaptureRunAttachment(BaseModel):
+    run_ref: str
+    raw_attached: bool
+    video_attached: bool
+
+
+class CaptureStatusResponse(BaseModel):
+    schema_version: Literal["capture_status.v1"]
+    availability: Literal["available", "unavailable"]
+    platform_supported: Optional[bool] = None
+    raw_input_permission: Literal["granted", "denied", "not_determined"]
+    capture_enabled: Optional[bool] = None
+    kovaak_process_present: Optional[bool] = None
+    replay_buffer_active: Optional[bool] = None
+    runtime_health: Literal["healthy", "degraded", "unavailable"]
+    finalization_state: str
+    pause_state: Literal["clear", "fail_closed", "unknown"]
+    pause_fail_closed: bool
+    runs: list[CaptureRunAttachment] = Field(default_factory=list)
+    error: Optional[dict] = None
+
+
+class TaskFailure(BaseModel):
+    domain: Literal[
+        "source_file", "alignment", "kinematics", "video",
+        "provider", "coach", "network",
+    ]
+    code: str
+    message: str
+    retryable: bool
+
+
+class TaskPartialOutcome(BaseModel):
+    status: Literal["partial"]
+    native_preserved: bool
+    visual_status: str
+    reason_code: str
+
+
+class TaskAttempt(BaseModel):
+    attempt_ref: str
+    attempt_number: int
+    state: Literal["importing", "queued", "running", "done", "failed", "retrying"]
+    state_label: str
+    phase: Optional[str] = None
+    failure: Optional[TaskFailure] = None
+    partial_outcome: Optional[TaskPartialOutcome] = None
+    retryable: bool = False
+    can_delete: bool
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class TaskDetailResponse(BaseModel):
+    schema_version: Literal["task_detail.v1"]
+    availability: Literal["available", "unavailable"]
+    task_ref: Optional[str] = None
+    analysis_ref: Optional[str] = None
+    state: Optional[str] = None
+    state_label: Optional[str] = None
+    phase: Optional[str] = None
+    phase_label: Optional[str] = None
+    input_mode: Optional[str] = None
+    analysis_type: Optional[str] = None
+    run_ref: Optional[str] = None
+    failure: Optional[TaskFailure] = None
+    partial_outcome: Optional[TaskPartialOutcome] = None
+    retryable: Optional[bool] = None
+    can_delete: Optional[bool] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    attempt_number: Optional[int] = None
+    attempt_history: list[TaskAttempt] = Field(default_factory=list)
+    error: Optional[dict] = None
+
+
+class TaskListResponse(BaseModel):
+    schema_version: Literal["task_list.v1"]
+    availability: Literal["available", "unavailable"]
+    tasks: list[TaskDetailResponse] = Field(default_factory=list)
+    error: Optional[dict] = None
 
 
 class KovaaKRunListItem(BaseModel):
@@ -298,6 +410,7 @@ class CoachThreadMessageOut(BaseModel):
     created_at: str
     legacy_session_id: Optional[int] = None
     context: Optional[dict] = None
+    context_refs: list[dict] = []
 
 
 class CoachAnalysisRefOut(BaseModel):
@@ -355,6 +468,192 @@ class CoachProductCommandResult(BaseModel):
     audit_ref: str
 
 
+class CoachContextAttachRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["coach_context_attach.v1"]
+    kind: Literal[
+        "analysis", "issue", "time_range", "metric", "evidence_segment", "comparison"
+    ]
+    analysis_ref: str
+    target_ref: Optional[str] = None
+    start_ms: Optional[float] = Field(default=None, ge=0)
+    end_ms: Optional[float] = Field(default=None, ge=0)
+    comparison_analysis_ref: Optional[str] = None
+
+
+class CoachContextRefOut(BaseModel):
+    schema_version: Literal["coach_context_ref.v1"]
+    context_ref: str
+    kind: Literal[
+        "analysis", "issue", "time_range", "metric", "evidence_segment", "comparison"
+    ]
+    status: Literal["active", "detached", "deleted"]
+    label: str
+    analysis_ref: str
+    comparison_analysis_ref: Optional[str] = None
+    target_ref: Optional[str] = None
+    time_range_ms: Optional[list[float]] = None
+    attached_at: str
+    detached_at: Optional[str] = None
+    deleted_at: Optional[str] = None
+
+
+class CoachContextListResponse(BaseModel):
+    schema_version: Literal["coach_context_list.v1"] = "coach_context_list.v1"
+    contexts: list[CoachContextRefOut]
+
+
+class CoachContextMutationResponse(BaseModel):
+    schema_version: Literal["coach_context_mutation.v1"] = "coach_context_mutation.v1"
+    action: Literal["attached", "already_attached", "detached", "already_detached"]
+    context: CoachContextRefOut
+
+
+class CoachAgentRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["coach_agent_run_request.v1"]
+    content: str = Field(min_length=1, max_length=12_000)
+    context_refs: Optional[list[str]] = Field(default=None, max_length=8)
+
+
+class CoachAgentRunErrorOut(BaseModel):
+    domain: Literal["network", "model", "permission", "tool"]
+    code: str
+    message: str
+    retryable: bool
+
+
+class CoachAgentRunEventOut(BaseModel):
+    schema_version: Literal["coach_agent_run_event.v1"]
+    event_ref: str
+    sequence: int
+    type: Literal["status", "phase", "tool", "text", "confirmation", "error"]
+    phase: Literal["queued", "text_generation", "tool_execution", "completed"]
+    code: str
+    message: str
+    payload: Optional[dict] = None
+    created_at: str
+
+
+class CoachAgentRunOut(BaseModel):
+    schema_version: Literal["coach_agent_run.v1"]
+    run_ref: str
+    parent_run_ref: Optional[str] = None
+    attempt: int
+    status: Literal["queued", "running", "succeeded", "failed", "stopped"]
+    phase: Literal["queued", "text_generation", "tool_execution", "completed"]
+    partial_text: Optional[str] = None
+    error: Optional[CoachAgentRunErrorOut] = None
+    contexts: list[CoachContextRefOut]
+    events: list[CoachAgentRunEventOut]
+    created_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class CoachConfirmationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["coach_confirmation_request.v1"]
+    action: Literal[
+        "analysis_delete",
+        "overwrite",
+        "provider_credential_change",
+        "provider_oauth_authorize",
+        "provider_oauth_revoke",
+        "upload_share",
+        "external_purchase",
+        "coach_side_effect",
+        "navigation",
+        "query",
+    ]
+    target_ref: str
+
+
+class CoachConfirmationDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["coach_confirmation_decision.v1"]
+    decision: Literal["confirm", "reject"]
+
+
+class CoachConfirmationImpactOut(BaseModel):
+    code: str
+    message: str
+
+
+class CoachConfirmationOut(BaseModel):
+    schema_version: Literal["coach_confirmation.v1"]
+    confirmation_ref: str
+    action: str
+    target_ref: str
+    status: Literal["pending", "confirmed", "rejected"]
+    impact: CoachConfirmationImpactOut
+    audit_ref: Optional[str] = None
+    audit_state: Optional[Literal["pending", "completed"]] = None
+    execution: Optional[CoachProductCommandResult] = None
+    created_at: str
+    decided_at: Optional[str] = None
+
+
+class CalibrationProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["calibration_profile_update.v1"]
+    cm_per_360: Optional[float] = Field(default=None, gt=0, le=1000)
+    fov: Optional[float] = Field(default=None, gt=0, le=180)
+
+
+class CalibrationValuesOut(BaseModel):
+    cm_per_360: Optional[float] = None
+    fov: Optional[float] = None
+
+
+class CalibrationProfileOut(BaseModel):
+    schema_version: Literal["calibration_profile.v1"]
+    configured: bool
+    values: CalibrationValuesOut
+    dpi: Optional[float] = None
+    sensitivity: Optional[float] = None
+    adoption_priority: list[
+        Literal["stats", "manual_override", "profile_default", "undetermined"]
+    ]
+    updated_at: Optional[str] = None
+    deletion_state: Optional[Literal["completed", "already_absent"]] = None
+
+
+class IncompleteCaptureImpactOut(BaseModel):
+    code: Literal["incomplete_recovery_only"]
+    message: str
+
+
+class IncompleteCaptureItemOut(BaseModel):
+    schema_version: Literal["incomplete_capture_item.v1"]
+    item_ref: str
+    run_ref: str
+    size_bytes: int
+    reason: Literal["interrupted_finalization", "unclassified_capture_artifact"]
+    removable: bool
+    impact: IncompleteCaptureImpactOut
+    created_at: str
+
+
+class IncompleteCaptureListResponse(BaseModel):
+    schema_version: Literal["incomplete_capture_list.v1"] = "incomplete_capture_list.v1"
+    total_bytes: int
+    items: list[IncompleteCaptureItemOut]
+
+
+class IncompleteCaptureRemovalResponse(BaseModel):
+    schema_version: Literal["incomplete_capture_removal.v1"]
+    item_ref: str
+    removal_state: Literal["completed", "pending_cleanup", "already_unavailable"]
+    reclaimed_bytes: int
+    impact: IncompleteCaptureImpactOut
+
+
 class TrainingPlanItemCreateRequest(BaseModel):
     plan_version: Optional[int] = None
     item_payload: dict[str, object]
@@ -392,6 +691,16 @@ class EvidenceSegmentPlayback(BaseModel):
     relative_start_ms: Optional[int] = None
     relative_end_ms: Optional[int] = None
     limitations: list[str] = Field(default_factory=list)
+
+
+class ManagedVideoUnavailableResponse(BaseModel):
+    schema_version: Literal["managed_video_unavailable.v1"]
+    availability: Literal["unavailable"]
+    reason: Literal[
+        "input_native_has_no_visual_replay",
+        "run_owned_video_unavailable",
+        "managed_video_unavailable",
+    ]
 
 
 class FrontendEvidenceSegment(BaseModel):

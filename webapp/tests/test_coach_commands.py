@@ -1278,7 +1278,7 @@ async def _seed_run_owned_video(
     ],
 )
 @pytest.mark.asyncio
-async def test_analysis_modes_consume_run_owned_video_without_analysis_copy(
+async def test_analysis_modes_consume_run_owned_video_via_managed_hard_link(
     tmp_path: Path,
     input_mode: str,
     include_trace: bool,
@@ -1298,9 +1298,10 @@ async def test_analysis_modes_consume_run_owned_video_without_analysis_copy(
 
     assert session["input_mode"] == input_mode
     if uses_video:
-        assert session["video_path"] == str(video.resolve())
+        managed_video = session_dir(session["id"]) / "video.mp4"
+        assert Path(session["video_path"]) == managed_video
+        assert managed_video.samefile(video)
         assert session["input_snapshot"]["sources"]["video"]["ownership"] == "run"
-        assert not (session_dir(session["id"]) / "video.mp4").exists()
     else:
         assert session["video_path"] == ""
         assert "video" not in session["input_snapshot"]["sources"]

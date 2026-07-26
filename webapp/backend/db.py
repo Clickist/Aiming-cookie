@@ -115,7 +115,7 @@ class _GatedConnection:
 
 _conn: Optional[_GatedConnection] = None
 
-TARGET_USER_VERSION = 16
+TARGET_USER_VERSION = 18
 
 
 async def get_conn() -> _GatedConnection:
@@ -163,9 +163,28 @@ CREATE TABLE IF NOT EXISTS sessions (
     started_at TEXT,
     finished_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    task_group_ref TEXT,
+    parent_session_id INTEGER,
+    attempt_number INTEGER NOT NULL DEFAULT 1,
+    task_state TEXT,
+    task_phase TEXT,
+    failure_domain TEXT,
+    partial_outcome_json TEXT,
+    calibration_request_json TEXT,
+    calibration_snapshot_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user_status ON sessions(user_id, status);
+
+CREATE TABLE IF NOT EXISTS product_state (
+    owner_id TEXT PRIMARY KEY,
+    onboarding_completed INTEGER NOT NULL DEFAULT 0 CHECK(onboarding_completed IN (0, 1)),
+    onboarding_completion_kind TEXT CHECK(
+        onboarding_completion_kind IN ('connected', 'skipped', 'legacy')
+    ),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -411,6 +430,175 @@ _V8_COACH_COLUMNS: tuple[tuple[str, str], ...] = (
     ("context_json", "TEXT"),
 )
 
+_V17_SESSION_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("task_group_ref", "TEXT"),
+    ("parent_session_id", "INTEGER"),
+    ("attempt_number", "INTEGER NOT NULL DEFAULT 1"),
+    ("task_state", "TEXT"),
+    ("task_phase", "TEXT"),
+    ("failure_domain", "TEXT"),
+    ("partial_outcome_json", "TEXT"),
+    ("calibration_request_json", "TEXT"),
+    ("calibration_snapshot_json", "TEXT"),
+)
+
+_V17_PRODUCT_STATE_TABLE = """
+CREATE TABLE IF NOT EXISTS product_state (
+    owner_id TEXT PRIMARY KEY,
+    onboarding_completed INTEGER NOT NULL DEFAULT 0 CHECK(onboarding_completed IN (0, 1)),
+    onboarding_completion_kind TEXT CHECK(
+        onboarding_completion_kind IN ('connected', 'skipped', 'legacy')
+    ),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+_V18_TASK6_CONTRACTS = """
+CREATE TABLE IF NOT EXISTS coach_context_refs (
+    context_ref TEXT PRIMARY KEY,
+    thread_id INTEGER NOT NULL,
+    dedupe_key TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN (
+        'analysis', 'issue', 'time_range', 'metric', 'evidence_segment', 'comparison'
+    )),
+    analysis_session_id INTEGER NOT NULL CHECK(analysis_session_id > 0),
+    comparison_session_id INTEGER,
+    target_ref TEXT,
+    start_ms REAL,
+    end_ms REAL,
+    label TEXT NOT NULL,
+    projection_json TEXT NOT NULL,
+    comparison_projection_json TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'detached', 'deleted')),
+    attached_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    detached_at TEXT,
+    deleted_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(thread_id, dedupe_key),
+    FOREIGN KEY(thread_id) REFERENCES coach_threads(id),
+    CHECK(comparison_session_id IS NULL OR comparison_session_id > 0),
+    CHECK(start_ms IS NULL OR start_ms >= 0),
+    CHECK(end_ms IS NULL OR (start_ms IS NOT NULL AND end_ms >= start_ms))
+);
+CREATE INDEX IF NOT EXISTS idx_coach_context_refs_thread_status
+    ON coach_context_refs(thread_id, status, attached_at, context_ref);
+
+CREATE TABLE IF NOT EXISTS coach_agent_runs (
+    run_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    thread_id INTEGER NOT NULL,
+    parent_run_ref TEXT,
+    attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt >= 1),
+    status TEXT NOT NULL CHECK(status IN (
+        'queued', 'running', 'succeeded', 'failed', 'stopped'
+    )),
+    phase TEXT NOT NULL CHECK(phase IN (
+        'queued', 'text_generation', 'tool_execution', 'completed'
+    )),
+    content TEXT NOT NULL,
+    context_refs_json TEXT NOT NULL DEFAULT '[]',
+    partial_text TEXT,
+    error_json TEXT,
+    stop_requested INTEGER NOT NULL DEFAULT 0 CHECK(stop_requested IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT,
+    finished_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(thread_id) REFERENCES coach_threads(id)
+);
+CREATE INDEX IF NOT EXISTS idx_coach_agent_runs_owner_created
+    ON coach_agent_runs(owner_id, created_at DESC, run_ref);
+
+CREATE TABLE IF NOT EXISTS coach_agent_run_events (
+    event_ref TEXT PRIMARY KEY,
+    run_ref TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK(sequence >= 1),
+    event_type TEXT NOT NULL CHECK(event_type IN (
+        'status', 'phase', 'tool', 'text', 'confirmation', 'error'
+    )),
+    phase TEXT NOT NULL CHECK(phase IN (
+        'queued', 'text_generation', 'tool_execution', 'completed'
+    )),
+    code TEXT NOT NULL,
+    message TEXT NOT NULL,
+    payload_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_ref, sequence),
+    FOREIGN KEY(run_ref) REFERENCES coach_agent_runs(run_ref)
+);
+
+CREATE TABLE IF NOT EXISTS coach_confirmation_requests (
+    confirmation_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_ref TEXT NOT NULL,
+    impact_code TEXT NOT NULL,
+    impact_message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'confirmed', 'rejected')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_coach_confirmation_requests_owner_status
+    ON coach_confirmation_requests(owner_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS coach_confirmation_audits (
+    audit_ref TEXT PRIMARY KEY,
+    confirmation_ref TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('confirm', 'reject')),
+    result_status TEXT NOT NULL CHECK(result_status IN ('confirmed', 'rejected')),
+    execution_result_json TEXT,
+    audit_state TEXT NOT NULL DEFAULT 'completed'
+        CHECK(audit_state IN ('pending', 'completed')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(confirmation_ref),
+    FOREIGN KEY(confirmation_ref) REFERENCES coach_confirmation_requests(confirmation_ref)
+);
+
+CREATE TABLE IF NOT EXISTS calibration_profiles (
+    owner_id TEXT PRIMARY KEY,
+    cm_per_360 REAL,
+    fov REAL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(cm_per_360 IS NULL OR (cm_per_360 > 0 AND cm_per_360 <= 1000)),
+    CHECK(fov IS NULL OR (fov > 0 AND fov <= 180)),
+    CHECK(cm_per_360 IS NOT NULL OR fov IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS incomplete_capture_deletion_tombstones (
+    item_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    run_id INTEGER NOT NULL CHECK(run_id > 0),
+    artifact_relpath TEXT NOT NULL CHECK(TRIM(artifact_relpath) <> ''),
+    expected_sha256 TEXT NOT NULL CHECK(LENGTH(expected_sha256) = 64),
+    expected_size INTEGER NOT NULL CHECK(expected_size >= 0),
+    cleanup_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(cleanup_state IN ('pending', 'failed', 'completed')),
+    cleanup_attempts INTEGER NOT NULL DEFAULT 0 CHECK(cleanup_attempts >= 0),
+    last_error_code TEXT,
+    reclaimed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(reclaimed_bytes >= 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(run_id) REFERENCES kovaak_runs(id),
+    CHECK(
+        (cleanup_state = 'pending' AND cleanup_attempts = 0
+            AND last_error_code IS NULL)
+        OR
+        (cleanup_state = 'failed' AND cleanup_attempts >= 1
+            AND last_error_code = 'artifact_cleanup_failed')
+        OR
+        (cleanup_state = 'completed' AND cleanup_attempts >= 1
+            AND last_error_code IS NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_incomplete_capture_tombstones_owner_state
+    ON incomplete_capture_deletion_tombstones(owner_id, cleanup_state, created_at);
+"""
+
 _V9_PROVIDER_PROFILE_TABLE = """
 CREATE TABLE IF NOT EXISTS provider_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -622,6 +810,8 @@ async def init_schema() -> None:
         await _migrate_v14_kovaak_run_evidence(conn)
         await _migrate_v15_run_evidence_deletion_tombstones(conn)
         await _migrate_v16_profile_plan_loop(conn)
+        await _migrate_v17_capability_contracts(conn)
+        await _migrate_v18_task6_contracts(conn)
         await conn.commit()
         return
 
@@ -657,6 +847,10 @@ async def init_schema() -> None:
             await _migrate_v15_run_evidence_deletion_tombstones(conn)
         if user_version < 16:
             await _migrate_v16_profile_plan_loop(conn)
+        if user_version < 17:
+            await _migrate_v17_capability_contracts(conn)
+        if user_version < 18:
+            await _migrate_v18_task6_contracts(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -868,6 +1062,51 @@ CREATE INDEX IF NOT EXISTS idx_training_plan_retests_owner_item
 async def _migrate_v16_profile_plan_loop(conn: aiosqlite.Connection) -> None:
     """v15 -> v16: durable aiming profile and Training Plan execution facts."""
     await _execute_transactional_script(conn, _V16_PROFILE_PLAN_LOOP)
+
+
+async def _migrate_v17_capability_contracts(conn: aiosqlite.Connection) -> None:
+    """v16 -> v17: product state, task attempts and calibration snapshots."""
+    for column, definition in _V17_SESSION_COLUMNS:
+        await _migrate_add_column_if_missing(conn, "sessions", column, definition)
+    await _execute_transactional_script(conn, _V17_PRODUCT_STATE_TABLE)
+    await conn.execute(
+        "UPDATE sessions SET task_group_ref=COALESCE(task_group_ref, 'analysis:' || id), "
+        "attempt_number=COALESCE(attempt_number, 1), "
+        "task_state=COALESCE(task_state, CASE status "
+        "WHEN 'uploading' THEN 'importing' WHEN 'queued' THEN 'queued' "
+        "WHEN 'running' THEN 'running' WHEN 'done' THEN 'done' "
+        "WHEN 'succeeded' THEN 'done' WHEN 'failed' THEN 'failed' ELSE status END)"
+    )
+
+
+async def _migrate_v18_task6_contracts(conn: aiosqlite.Connection) -> None:
+    """v17 -> v18: Coach run/context, calibration and incomplete cleanup."""
+    await _migrate_add_column_if_missing(
+        conn, "coach_messages", "context_refs_json", "TEXT",
+    )
+    await _execute_transactional_script(conn, _V18_TASK6_CONTRACTS)
+    await _migrate_add_column_if_missing(
+        conn, "coach_context_refs", "comparison_projection_json", "TEXT",
+    )
+    for column, definition in (
+        ("parameters_json", "TEXT"),
+        ("idempotency_key", "TEXT"),
+        ("thread_id", "INTEGER"),
+        ("user_message_ref", "TEXT"),
+    ):
+        await _migrate_add_column_if_missing(
+            conn, "coach_command_confirmations", column, definition,
+        )
+    await _migrate_add_column_if_missing(
+        conn, "coach_confirmation_audits", "execution_result_json", "TEXT",
+    )
+    await _migrate_add_column_if_missing(
+        conn, "coach_confirmation_audits", "audit_state", "TEXT NOT NULL DEFAULT 'completed'",
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coach_confirmation_audits_pending "
+        "ON coach_confirmation_audits(owner_id, audit_state, created_at)"
+    )
 
 
 async def _execute_transactional_script(

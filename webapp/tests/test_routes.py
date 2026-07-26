@@ -9,6 +9,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from webapp.backend import coach_commands, config, db, kovaak_run_store, queue
+import webapp.backend.routes as routes_mod
 from webapp.backend.app import app
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
@@ -764,6 +765,97 @@ async def _seed_route_video_run(tmp_path: Path, source_key: str) -> tuple[dict, 
     ), video
 
 
+def _run_owned_video_result(session_id: int, run_id: int) -> dict:
+    analysis_ref = f"analysis:{session_id}"
+    video_ref = f"{analysis_ref}:video"
+    result = build_analysis_result_v2(
+        analysis_id=analysis_ref,
+        analysis_type="flicking",
+        input_mode="video_fallback",
+        kovaak_run_ref=f"run:{run_id}",
+        evidence={
+            "sources": {
+                "mp4": {
+                    "source": "mp4",
+                    "role": "visual_evidence",
+                    "availability": "available",
+                    "artifact_ref": video_ref,
+                    "parser_or_format_version": "mp4",
+                    "alignment": "aligned",
+                    "warnings": [],
+                },
+            },
+            "provenance": {"adapter": "run-owned-video-test"},
+            "availability": {"mp4": "available"},
+            "alignment": {"status": "aligned", "coverage_ratio": 1.0},
+            "coverage": 1.0,
+            "warnings": [],
+        },
+        deterministic={
+            "metrics": {},
+            "timeline": [],
+            "diagnosis": {"profile": {"label": "Run-owned video review"}},
+        },
+        artifact_manifest={
+            "schema_version": "artifact_manifest.v2",
+            "analysis_id": analysis_ref,
+            "external_inputs": [{
+                "id": video_ref,
+                "kind": "mp4",
+                "source": "mp4",
+                "availability": "available",
+                "ownership": "analysis",
+                "managed": True,
+                "local_only": True,
+                "status": "available",
+                "format_version": "mp4",
+                "derived_from": [],
+            }],
+            "owned_outputs": [{
+                "id": analysis_ref,
+                "kind": "analysis_result",
+                "source": "analysis",
+                "availability": "available",
+                "ownership": "analysis",
+                "managed": True,
+                "local_only": True,
+                "status": "available",
+                "format_version": "analysis_result.v2",
+                "derived_from": [video_ref],
+            }],
+        },
+        input_snapshot={
+            "schema_version": "analysis_input_snapshot.v1",
+            "run_id": run_id,
+            "scenario": "Scenario",
+            "sources": {
+                "video": {
+                    "artifact_ref": video_ref,
+                    "availability": "available",
+                    "format_version": "mp4",
+                },
+            },
+            "canonical_time_window": {
+                "start_ms": 1000,
+                "end_ms": 7000,
+                "timebase_version": "time_alignment.v2",
+            },
+        },
+        created_at="2026-07-25T00:00:00Z",
+        completed_at="2026-07-25T00:00:01Z",
+        warnings=[],
+        errors=[],
+    )
+    result["evidence"]["derived_artifact"] = {
+        "artifact_ref": f"{analysis_ref}:evidence:abc",
+        "evidence_revision": "sha256:" + ("a" * 64),
+        "contract_version": "analysis_evidence_artifact.v1",
+        "checksum_sha256": "a" * 64,
+        "size_bytes": 10,
+    }
+    return result
+
+
 @pytest.mark.asyncio
 async def test_run_owned_video_route_analyzes_one_run_and_leaves_other_pending(
     monkeypatch: pytest.MonkeyPatch,
@@ -798,9 +890,143 @@ async def test_run_owned_video_route_analyzes_one_run_and_leaves_other_pending(
     assert str(tmp_path) not in listed.text
     assert str(tmp_path) not in detail.text
     session = await queue.get_session(created.json()["session_id"])
-    assert session["video_path"] == str(selected_video.resolve())
+    managed_video = Path(session["video_path"])
+    assert managed_video == session_dir(created.json()["session_id"]) / "video.mp4"
+    assert managed_video.samefile(selected_video)
     conn = await db.get_conn()
     assert (await (await conn.execute("SELECT COUNT(*) FROM sessions")).fetchone())[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_owned_analysis_video_and_segments_are_owner_scoped_and_degrade_on_removal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    run, run_video = await _seed_route_video_run(tmp_path, "playback")
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+    ) as client:
+        created = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers={"Idempotency-Key": "run-owned-playback"},
+            json={"input_mode": "video_fallback"},
+        )
+    assert created.status_code == 200, created.text
+    session_id = created.json()["session_id"]
+    session = await queue.get_session(session_id)
+    private_snapshot = dict(session["input_snapshot"])
+    private_snapshot["canonical_time_window"] = {
+        "start_ms": 1000,
+        "end_ms": 7000,
+        "timebase_version": "time_alignment.v2",
+    }
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', input_snapshot_json=?, result=? WHERE id=?",
+        (
+            json.dumps(private_snapshot, ensure_ascii=False, separators=(",", ":")),
+            dump_contract_json(_run_owned_video_result(session_id, run["id"])),
+            session_id,
+        ),
+    )
+    await conn.commit()
+
+    async def read_artifact(**_kwargs):
+        return {"evidence_segments": [{
+            "segment_id": f"analysis:{session_id}:segment:1",
+            "analysis_ref": f"analysis:{session_id}",
+            "segment_kind": "flick",
+            "focus_start_ms": 1800,
+            "focus_end_ms": 2200,
+            "title_key": "flick.overshoot",
+            "rank_reason": "representative",
+            "issue_refs": ["issue:overshoot"],
+            "metric_refs": ["metric:decel"],
+            "event_refs": ["flick:1"],
+            "available_channels": ["mp4"],
+            "source_coverage": 1.0,
+            "confidence": 0.9,
+            "limitations": [],
+        }]}
+
+    monkeypatch.setattr(
+        routes_mod.evidence_store,
+        "read_analysis_evidence_artifact",
+        read_artifact,
+    )
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "")
+    owner_headers = {"X-User-Id": config.DESKTOP_LOCAL_PROFILE}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        replay = await client.get(
+            f"/api/sessions/{session_id}/video",
+            headers={**owner_headers, "Range": "bytes=2-6"},
+        )
+        segments = await client.get(
+            f"/api/sessions/{session_id}/evidence-segments",
+            headers=owner_headers,
+        )
+        forbidden = await client.get(
+            f"/api/sessions/{session_id}/video",
+            headers={"X-User-Id": "other-owner"},
+        )
+
+    assert replay.status_code == 206
+    assert replay.content == run_video.read_bytes()[2:7]
+    assert segments.status_code == 200, segments.text
+    segment_body = segments.json()
+    assert segment_body["schema_version"] == "frontend_evidence_segments.v1"
+    assert segment_body["video_availability"] == "available"
+    assert segment_body["segments"][0]["playback"] == {
+        "schema_version": "evidence_segment_playback.v1",
+        "availability": "available",
+        "video_route": f"/api/sessions/{session_id}/video",
+        "relative_start_ms": 800,
+        "relative_end_ms": 1200,
+        "limitations": [],
+    }
+    assert forbidden.status_code == 403
+    assert str(tmp_path) not in replay.text + segments.text + forbidden.text
+
+    removed = await kovaak_run_store.remove_run_evidence(
+        run["id"], config.DESKTOP_LOCAL_PROFILE, "video", tmp_path / "data",
+    )
+    assert removed["removal_state"] == "completed"
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=owner_headers,
+    ) as client:
+        unavailable = await client.get(f"/api/sessions/{session_id}/video")
+        detail = await client.get(f"/api/sessions/{session_id}")
+        stale_segment = await client.get(
+            f"/api/sessions/{session_id}/evidence-segments"
+        )
+
+    assert unavailable.status_code == 410
+    assert unavailable.json() == {
+        "schema_version": "managed_video_unavailable.v1",
+        "availability": "unavailable",
+        "reason": "run_owned_video_unavailable",
+    }
+    history = detail.json()["history"]
+    assert history["visual_replay"]["kind"] == "unavailable"
+    mp4_ref = next(ref for ref in history["evidence_refs"] if ref["source"] == "mp4")
+    assert mp4_ref["availability"] == "unavailable"
+    coach_context = await routes_mod._diagnosis_from_done_session(
+        await queue.get_session(session_id)
+    )
+    assert coach_context["evidence_summary"]["availability"]["mp4"] == "unavailable"
+    stale_body = stale_segment.json()
+    assert stale_body["segments"][0]["segment_id"] == f"analysis:{session_id}:segment:1"
+    assert stale_body["video_availability"] == "unavailable"
+    assert stale_body["segments"][0]["playback"]["availability"] == "unavailable"
+    assert str(tmp_path) not in unavailable.text + detail.text + stale_segment.text
 
 
 @pytest.mark.asyncio

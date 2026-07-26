@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -252,6 +253,40 @@ async def test_exit_release_does_not_release_a_live_kovaak_session(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_code", "expected_records"),
+    [
+        ("capture_control_unavailable", 0),
+        ("capture_control_timeout", 1),
+    ],
+)
+async def test_exit_monitor_silently_retries_transient_unavailable_but_reports_real_failure(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error_code: str,
+    expected_records: int,
+) -> None:
+    client = FakeNativeCaptureClient(tmp_path / "data")
+
+    def fail_status() -> dict:
+        raise NativeCaptureRetryableError(error_code)
+
+    client.status = fail_status  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.INFO):
+        assert await _finalizer(tmp_path, client).finalizing_capture_session() is None
+
+    records = [
+        record for record in caplog.records
+        if record.name == "webapp.backend.kovaak_capture_finalizer"
+    ]
+    assert len(records) == expected_records
+    if records:
+        assert records[0].levelno == logging.WARNING
+        assert error_code in records[0].getMessage()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_releases_only_matching_finalizing_session_without_mutating_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -295,6 +330,43 @@ async def test_shutdown_does_not_release_non_finalizing_session(
 @pytest.mark.asyncio
 async def test_shutdown_without_native_client_is_a_noop(tmp_path: Path) -> None:
     await _finalizer(tmp_path, None).shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_code", "expected_level"),
+    [
+        ("capture_control_unavailable", logging.INFO),
+        ("capture_control_timeout", logging.WARNING),
+    ],
+)
+async def test_shutdown_logs_expected_endpoint_loss_separately_from_real_failure(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error_code: str,
+    expected_level: int,
+) -> None:
+    client = FakeNativeCaptureClient(tmp_path / "data")
+
+    def fail_status() -> dict:
+        raise NativeCaptureRetryableError(error_code)
+
+    client.status = fail_status  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.INFO):
+        await _finalizer(tmp_path, client).shutdown()
+
+    records = [
+        record for record in caplog.records
+        if record.name == "webapp.backend.kovaak_capture_finalizer"
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == expected_level
+    assert records[0].exc_info is None
+    if error_code == "capture_control_unavailable":
+        assert error_code not in records[0].getMessage()
+    else:
+        assert error_code in records[0].getMessage()
 
 
 @pytest.mark.asyncio

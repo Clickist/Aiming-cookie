@@ -757,7 +757,7 @@ async def test_fresh_v14_schema_uses_v13_helper_and_exact_tombstone_ddl(
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 16
+    assert db.TARGET_USER_VERSION == 18
     assert calls == 1
     assert "analysis_deletion_tombstones" not in db.SCHEMA
     assert _normalized_ddl(db._V13_ANALYSIS_DELETION_TOMBSTONES) == _normalized_ddl(
@@ -876,6 +876,78 @@ async def test_v13_migration_helper_respects_caller_transaction_rollback():
         await conn.close()
 
 
+async def _create_v17_tables_needed_by_v18(conn: aiosqlite.Connection) -> None:
+    await conn.executescript(
+        """
+        CREATE TABLE coach_messages (
+            id INTEGER PRIMARY KEY,
+            content TEXT NOT NULL
+        );
+        CREATE TABLE coach_command_confirmations (
+            confirmation_ref TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            command_name TEXT NOT NULL,
+            parameters_digest TEXT NOT NULL,
+            risk TEXT NOT NULL,
+            safe_summary_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+
+@pytest.mark.asyncio
+async def test_v18_migration_helper_is_transactional_and_idempotent():
+    conn = await aiosqlite.connect(":memory:")
+    try:
+        await _create_v17_tables_needed_by_v18(conn)
+        await conn.execute("BEGIN IMMEDIATE")
+        await db._migrate_v18_task6_contracts(conn)
+        assert await _table_exists(conn, "coach_context_refs")
+        assert "parameters_json" in {
+            row[1]
+            for row in await (
+                await conn.execute("PRAGMA table_info(coach_command_confirmations)")
+            ).fetchall()
+        }
+
+        await conn.execute("ROLLBACK")
+
+        assert not await _table_exists(conn, "coach_context_refs")
+        assert "parameters_json" not in {
+            row[1]
+            for row in await (
+                await conn.execute("PRAGMA table_info(coach_command_confirmations)")
+            ).fetchall()
+        }
+
+        await conn.execute("BEGIN IMMEDIATE")
+        await db._migrate_v18_task6_contracts(conn)
+        await conn.commit()
+        await db._migrate_v18_task6_contracts(conn)
+        await conn.commit()
+
+        context_columns = [
+            row[1]
+            for row in await (
+                await conn.execute("PRAGMA table_info(coach_context_refs)")
+            ).fetchall()
+        ]
+        assert context_columns.count("comparison_projection_json") == 1
+        command_columns = [
+            row[1]
+            for row in await (
+                await conn.execute("PRAGMA table_info(coach_command_confirmations)")
+            ).fetchall()
+        ]
+        assert command_columns.count("parameters_json") == 1
+    finally:
+        await conn.close()
+
+
 @pytest.mark.asyncio
 async def test_v12_to_v13_init_schema_rolls_back_table_and_version_on_failure(
     monkeypatch,
@@ -976,7 +1048,7 @@ async def test_v14_to_v15_adds_run_evidence_tombstones_without_changing_runs():
 
 
 @pytest.mark.asyncio
-async def test_init_schema_migrates_v13_to_v15_preserving_run_and_session_rows():
+async def test_init_schema_migrates_v13_to_v18_preserving_run_and_session_rows():
     await db.close_conn()
     db_path = _isolated_schema_db_path()
     if os.path.exists(db_path):
@@ -1031,11 +1103,12 @@ async def test_init_schema_migrates_v13_to_v15_preserving_run_and_session_rows()
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 16
+    assert db.TARGET_USER_VERSION == 18
     assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == db.TARGET_USER_VERSION
     session = await (
         await conn.execute(
-            "SELECT id, user_id, status, video_path, csv_path FROM sessions WHERE id=7"
+            "SELECT id, user_id, status, video_path, csv_path, task_group_ref, "
+            "attempt_number, task_state FROM sessions WHERE id=7"
         )
     ).fetchone()
     assert tuple(session) == (
@@ -1044,6 +1117,9 @@ async def test_init_schema_migrates_v13_to_v15_preserving_run_and_session_rows()
         "succeeded",
         "/user/video.mp4",
         "/user/stats.csv",
+        "analysis:7",
+        1,
+        "done",
     )
     run = await (
         await conn.execute(
@@ -1084,3 +1160,19 @@ async def test_init_schema_migrates_v13_to_v15_preserving_run_and_session_rows()
         "video_summary_json",
         "video_error",
     } <= columns
+    session_columns = {
+        row[1]
+        for row in await (await conn.execute("PRAGMA table_info(sessions)")).fetchall()
+    }
+    assert {
+        "task_group_ref",
+        "parent_session_id",
+        "attempt_number",
+        "task_state",
+        "task_phase",
+        "failure_domain",
+        "partial_outcome_json",
+        "calibration_request_json",
+        "calibration_snapshot_json",
+    } <= session_columns
+    assert await _table_exists(conn, "product_state")

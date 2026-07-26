@@ -184,6 +184,47 @@ test("analysis tool accepts the frozen v2 context without upgrading historical v
 	assert.equal(v2Result.content[0]?.text, v2);
 });
 
+test("analysis tool accepts comparison contexts only with two safe projections", async () => {
+	const comparisonProjection = structuredClone(CANONICAL_ANALYSIS_CONTEXT);
+	comparisonProjection.analysis_ref = {
+		...comparisonProjection.analysis_ref,
+		analysis_id: "analysis:43",
+	};
+	const comparison = {
+		schema_version: "coach_turn_context.v1",
+		contexts: [{
+			context_ref: "context:comparison-42-43",
+			kind: "comparison",
+			analysis_ref: "analysis:42",
+			comparison_analysis_ref: "analysis:43",
+			target_ref: null,
+			time_range_ms: null,
+			projection: CANONICAL_ANALYSIS_CONTEXT,
+			comparison_projection: comparisonProjection,
+		}],
+	};
+
+	const accepted = await createAnalysisSummaryTool(JSON.stringify(comparison)).execute();
+	assert.equal(accepted.details.has_analysis, true);
+	assert.equal(accepted.details.context_schema, "coach_turn_context.v1");
+
+	const missingProjection = structuredClone(comparison) as {
+		contexts: Array<Record<string, unknown>>;
+	};
+	delete missingProjection.contexts[0]?.comparison_projection;
+	const poisoned = structuredClone(comparison) as {
+		contexts: Array<Record<string, unknown>>;
+	};
+	const poisonedProjection = poisoned.contexts[0]?.comparison_projection;
+	assert.ok(poisonedProjection && typeof poisonedProjection === "object");
+	(poisonedProjection as Record<string, unknown>).raw_trace = [{ dx: 1 }];
+	for (const rejectedValue of [missingProjection, poisoned]) {
+		const rejected = await createAnalysisSummaryTool(JSON.stringify(rejectedValue)).execute();
+		assert.equal(rejected.details.has_analysis, false);
+		assert.equal(rejected.content[0]?.text, "当前没有可用的分析摘要。");
+	}
+});
+
 test("analysis tool accepts v3 processed table directory without event rows", async () => {
 	const v3 = JSON.stringify(CANONICAL_ANALYSIS_CONTEXT_V3);
 	const result = await createAnalysisSummaryTool(v3).execute();

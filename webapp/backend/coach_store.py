@@ -206,8 +206,12 @@ async def create_command_confirmation(
     parameters_digest: str,
     risk: str,
     safe_summary: Mapping[str, Any],
+    parameters: Mapping[str, Any],
     confirmation_ref: str,
     *,
+    idempotency_key: str | None,
+    thread_id: int | None,
+    user_message_ref: str | None,
     ttl_seconds: int = 15 * 60,
 ) -> dict[str, str]:
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
@@ -216,7 +220,9 @@ async def create_command_confirmation(
     await conn.execute(
         "INSERT INTO coach_command_confirmations("
         "confirmation_ref, owner_id, command_name, parameters_digest, risk, "
-        "safe_summary_json, status, expires_at) VALUES(?, ?, ?, ?, ?, ?, 'pending', ?)",
+        "safe_summary_json, parameters_json, idempotency_key, thread_id, "
+        "user_message_ref, status, expires_at) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
         (
             confirmation_ref,
             owner_id,
@@ -224,11 +230,26 @@ async def create_command_confirmation(
             parameters_digest,
             risk,
             _json_wire(safe_summary),
+            _json_wire(parameters),
+            idempotency_key,
+            thread_id,
+            user_message_ref,
             expires_wire,
         ),
     )
     await conn.commit()
     return {"confirmation_ref": confirmation_ref, "expires_at": expires_wire}
+
+
+async def cancel_command_confirmation(owner_id: str, confirmation_ref: str) -> bool:
+    conn = await get_conn()
+    cursor = await conn.execute(
+        "UPDATE coach_command_confirmations SET status='cancelled' "
+        "WHERE confirmation_ref=? AND owner_id=? AND status='pending'",
+        (confirmation_ref, owner_id),
+    )
+    await conn.commit()
+    return cursor.rowcount == 1
 
 
 async def consume_command_confirmation(
@@ -357,6 +378,7 @@ async def append_message(
     trace: Optional[list] = None,
     legacy_session_id: Optional[int] = None,
     context: Optional[dict] = None,
+    context_refs: Optional[list[dict[str, Any]]] = None,
 ) -> int:
     from .coach_context import (
         COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
@@ -384,11 +406,21 @@ async def append_message(
         sort_keys=True,
         separators=(",", ":"),
     ) if canonical_context is not None else None
+    context_refs_json = json.dumps(
+        context_refs or [],
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     cur = await conn.execute(
         "INSERT INTO coach_messages("
-        "thread_id, role, content, trace_json, legacy_session_id, context_json"
-        ") VALUES(?, ?, ?, ?, ?, ?) RETURNING id",
-        (thread_id, role, content, trace_json, legacy_session_id, context_json),
+        "thread_id, role, content, trace_json, legacy_session_id, context_json, context_refs_json"
+        ") VALUES(?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        (
+            thread_id, role, content, trace_json, legacy_session_id, context_json,
+            context_refs_json,
+        ),
     )
     row = await cur.fetchone()
     await conn.execute(
@@ -409,7 +441,8 @@ async def load_messages(thread_id: int) -> list[dict[str, Any]]:
 
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id, role, content, created_at, trace_json, legacy_session_id, context_json "
+        "SELECT id, role, content, created_at, trace_json, legacy_session_id, context_json, "
+        "context_refs_json "
         "FROM coach_messages WHERE thread_id=? ORDER BY id",
         (thread_id,),
     )
@@ -438,6 +471,18 @@ async def load_messages(thread_id: int) -> list[dict[str, Any]]:
                     context = coerce_coach_diagnostic_context(value)
             except (json.JSONDecodeError, TypeError):
                 context = None
+        context_refs: list[dict[str, Any]] = []
+        if r["context_refs_json"]:
+            try:
+                parsed_refs = json.loads(r["context_refs_json"])
+                if isinstance(parsed_refs, list) and all(
+                    isinstance(item, dict) for item in parsed_refs
+                ):
+                    from .coach_context_refs import overlay_snapshot_statuses
+
+                    context_refs = await overlay_snapshot_statuses(parsed_refs)
+            except (json.JSONDecodeError, TypeError):
+                context_refs = []
         out.append({
             "id": r["id"],
             "role": r["role"],
@@ -446,6 +491,7 @@ async def load_messages(thread_id: int) -> list[dict[str, Any]]:
             "trace": trace,
             "legacy_session_id": r["legacy_session_id"],
             "context": context,
+            "context_refs": context_refs,
         })
     return out
 
@@ -497,6 +543,9 @@ async def mark_analysis_refs_deleted(
         "WHERE analysis_session_id=? AND status='active'",
         (analysis_session_id,),
     )
+    from .coach_context_refs import mark_analysis_deleted
+
+    await mark_analysis_deleted(analysis_session_id, conn=conn)
     if owns_commit:
         await conn.commit()
     return int(cur.rowcount or 0)

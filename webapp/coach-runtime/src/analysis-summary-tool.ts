@@ -830,10 +830,49 @@ function isCanonicalDiagnosticContext(value: unknown): value is JsonRecord {
 	);
 }
 
+function isCanonicalContextBundle(value: unknown): value is JsonRecord {
+	if (!isRecord(value) || !hasExactKeys(value, new Set(["schema_version", "contexts"]))) {
+		return false;
+	}
+	if (value.schema_version !== "coach_turn_context.v1") return false;
+	if (!Array.isArray(value.contexts) || value.contexts.length > 8) return false;
+	const refs = new Set<string>();
+	for (const item of value.contexts) {
+		if (!isRecord(item) || !hasExactKeys(item, new Set([
+			"context_ref", "kind", "analysis_ref", "comparison_analysis_ref",
+			"target_ref", "time_range_ms", "projection", "comparison_projection",
+		]))) return false;
+		if (
+			typeof item.context_ref !== "string" || isUnsafeString(item.context_ref) ||
+			refs.has(item.context_ref)
+		) return false;
+		refs.add(item.context_ref);
+		if (!new Set(["analysis", "issue", "time_range", "metric", "evidence_segment", "comparison"]).has(String(item.kind))) return false;
+		if (typeof item.analysis_ref !== "string" || !/^analysis:[1-9][0-9]*$/.test(item.analysis_ref)) return false;
+		if (item.comparison_analysis_ref !== null && (
+			typeof item.comparison_analysis_ref !== "string" ||
+			!/^analysis:[1-9][0-9]*$/.test(item.comparison_analysis_ref)
+		)) return false;
+		if (item.target_ref !== null && (typeof item.target_ref !== "string" || !isSafeScalar(item.target_ref))) return false;
+		if (item.time_range_ms !== null && (
+			!Array.isArray(item.time_range_ms) || item.time_range_ms.length !== 2 ||
+			!item.time_range_ms.every((part) => typeof part === "number" && Number.isFinite(part) && part >= 0) ||
+			item.time_range_ms[1] < item.time_range_ms[0]
+		)) return false;
+		if (!isCanonicalDiagnosticContext(item.projection)) return false;
+		if (item.kind === "comparison") {
+			if (item.comparison_analysis_ref === null || !isCanonicalDiagnosticContext(item.comparison_projection)) return false;
+		} else if (item.comparison_analysis_ref !== null || item.comparison_projection !== null) {
+			return false;
+		}
+	}
+	return true;
+}
+
 export function createAnalysisSummaryTool(analysisSummary: string | null) {
 	let summaryText = "当前没有可用的分析摘要。";
 	let hasAnalysis = false;
-	let contextSchema: "coach_diagnostic_context.v1" | "coach_diagnostic_context.v2" | "coach_diagnostic_context.v3" =
+	let contextSchema: "coach_diagnostic_context.v1" | "coach_diagnostic_context.v2" | "coach_diagnostic_context.v3" | "coach_turn_context.v1" =
 		"coach_diagnostic_context.v1";
 	if (
 		analysisSummary &&
@@ -844,10 +883,10 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
 			const parsed = JSON.parse(analysisSummary);
 			if (
 				!hasDuplicateJsonObjectKeys(analysisSummary) &&
-				isCanonicalDiagnosticContext(parsed)
+				(isCanonicalDiagnosticContext(parsed) || isCanonicalContextBundle(parsed))
 			) {
 				summaryText = analysisSummary;
-				hasAnalysis = true;
+				hasAnalysis = isCanonicalContextBundle(parsed) ? parsed.contexts.length > 0 : true;
 				contextSchema = parsed.schema_version;
 			}
 		} catch {
@@ -859,7 +898,7 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
 		name: "get_analysis_summary",
 		label: "Get diagnostic context",
 		description:
-			"返回本轮请求中已附带的 coach_diagnostic_context.v1/v2/v3 JSON（只读，不访问磁盘或数据库）。",
+			"返回本轮请求中已附带的 coach_diagnostic_context.v1/v2/v3 或 coach_turn_context.v1 JSON（只读，不访问磁盘或数据库）。",
 		parameters: Type.Object({}, { additionalProperties: false }),
 		async execute() {
 			return {
