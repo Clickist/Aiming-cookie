@@ -1,0 +1,409 @@
+.task6-coach-sidebar {
+  position: relative;
+  display: flex;
+  flex: 0 0 var(--task6-coach-width);
+  width: var(--task6-coach-width);
+  min-width: 320px;
+  max-width: 480px;
+  min-height: calc(100vh - 48px);
+  flex-direction: column;
+  border-left: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+}
+
+.task6-resizer {
+  position: absolute;
+  inset: 0 auto 0 -5px;
+  z-index: 2;
+  width: 10px;
+  cursor: col-resize;
+}
+
+.task6-resizer:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.task6-coach-header,
+.task6-section-heading,
+.task6-page-header,
+.task6-row-title,
+.task6-inline-actions,
+.task6-composer-actions,
+.task6-provider-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task6-coach-header {
+  min-height: 56px;
+  justify-content: space-between;
+  padding: 8px 12px 8px 16px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.task6-coach-header > div:first-child {
+  display: grid;
+}
+
+.task6-coach-header small,
+.task6-muted,
+.task6-provider-row p,
+.task6-storage-row p {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.task6-width-presets {
+  display: flex;
+  gap: 2px;
+}
+
+.task6-width-presets button,
+.task6-coach-header > button,
+.task6-context-chip button,
+.task6-back-workspace {
+  min-height: 32px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+
+.task6-coach-panel {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: auto minmax(180px, 1fr) auto;
+}
+
+.task6-coach-state,
+.task6-contexts,
+.task6-messages,
+.task6-composer {
+  padding: 16px;
+}
+
+.task6-coach-state {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.task6-contexts {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.task6-section-heading {
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.task6-context-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task6-context-chip {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-container);
+}
+
+.task6-context-chip > button:first-child {
+  display: grid;
+  min-width: 0;
+  height: auto;
+  padding: 5px 8px;
+  border: 0;
+  text-align: left;
+}
+
+.task6-context-chip > button:last-child {
+  border-width: 0 0 0 1px;
+}
+
+.task6-context-chip[data-status="deleted"] {
+  border-style: dashed;
+}
+
+.task6-context-chip span,
+.task6-message p,
+.task6-notice,
+.task6-settings-section p {
+  overflow-wrap: anywhere;
+}
+
+.task6-messages {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.task6-message {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--outline);
+  background: var(--surface-container);
+}
+
+.task6-message[data-role="user"] {
+  border-left-color: var(--primary);
+}
+
+.task6-message header {
+  margin-bottom: 4px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.task6-message p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.task6-message-contexts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.task6-message-contexts button {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  font-size: 12px;
+}
+
+.task6-tool-event {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.task6-composer {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--outline-variant);
+  background: var(--surface-container-lowest);
+}
+
+.task6-composer textarea,
+.task6-provider-form select,
+.task6-auth-operation select,
+.task6-theme-options {
+  width: 100%;
+  border: 1px solid var(--outline);
+  border-radius: 6px;
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+}
+
+.task6-composer textarea {
+  min-height: 72px;
+  resize: vertical;
+  padding: 10px;
+  font: inherit;
+}
+
+.task6-composer-actions {
+  justify-content: flex-end;
+}
+
+.task6-live-region {
+  min-height: 18px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.task6-coach-drawer[data-mode="full"] .ac-drawer {
+  width: 100%;
+  max-width: none;
+}
+
+.task6-coach-drawer[data-mode="overlay"] .ac-drawer {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.task6-back-workspace {
+  margin-bottom: 12px;
+  padding: 0 10px;
+}
+
+.task6-settings-page {
+  width: min(1160px, 100%);
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.task6-page-header {
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.task6-page-header h1 {
+  margin: 2px 0 0;
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.task6-eyebrow {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.task6-settings-grid {
+  display: grid;
+  gap: 24px;
+}
+
+.task6-settings-section > .ac-panel__header {
+  display: flex;
+  justify-content: space-between;
+}
+
+.task6-provider-row,
+.task6-storage-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(240px, auto);
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.task6-provider-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.task6-provider-actions .ac-field {
+  min-width: 220px;
+}
+
+.task6-provider-form {
+  display: grid;
+  max-width: 720px;
+  gap: 12px;
+  padding-top: 18px;
+}
+
+.task6-auth-operation {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+}
+
+.task6-auth-operation select {
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+.task6-provider-form select {
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+.task6-field-grid,
+.task6-status-grid,
+.task6-storage-categories {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.task6-status-grid div,
+.task6-storage-categories div {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+}
+
+.task6-status-grid dt {
+  color: var(--on-surface-variant);
+}
+
+.task6-status-grid dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.task6-theme-options {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+}
+
+.task6-theme-options label {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+}
+
+.task6-storage-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 14px 0;
+}
+
+.task6-storage-total strong {
+  font-family: var(--font-mono);
+  font-size: 20px;
+}
+
+@media (max-width: 839px) {
+  .task6-settings-page {
+    padding: 16px;
+  }
+
+  .task6-provider-row,
+  .task6-storage-row,
+  .task6-field-grid,
+  .task6-status-grid,
+  .task6-storage-categories {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task6-provider-actions {
+    justify-content: flex-start;
+  }
+
+  .task6-theme-options {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task6-coach-sidebar,
+  .task6-coach-drawer .ac-drawer,
+  .task6-message {
+    transition: none;
+    animation: none;
+  }
+}

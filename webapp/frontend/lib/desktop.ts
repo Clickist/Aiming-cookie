@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
-import { appDataDir, join } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
+
+import type { DesktopCaptureCoordinatorStatus } from "./types";
 
 export interface DesktopRuntimeConnection {
   baseUrl: string;
@@ -19,6 +20,25 @@ export async function getDesktopRuntimeConnection(): Promise<DesktopRuntimeConne
   }
   connectionPromise ??= invoke<DesktopRuntimeConnection>("desktop_runtime_connection");
   return connectionPromise;
+}
+
+export async function getDesktopCaptureCoordinatorStatus(): Promise<DesktopCaptureCoordinatorStatus> {
+  if (!isDesktopRuntime()) {
+    throw new Error("Automatic capture is only available in the desktop app");
+  }
+  return invoke<DesktopCaptureCoordinatorStatus>("desktop_capture_coordinator_status");
+}
+
+export async function setDesktopCaptureEnabled(
+  enabled: boolean,
+): Promise<DesktopCaptureCoordinatorStatus> {
+  if (!isDesktopRuntime()) {
+    throw new Error("Automatic capture is only available in the desktop app");
+  }
+  return invoke<DesktopCaptureCoordinatorStatus>(
+    "desktop_capture_coordinator_set_enabled",
+    { enabled },
+  );
 }
 
 async function pickSinglePath(
@@ -48,11 +68,10 @@ export function pickDesktopCsvPath(): Promise<string | null> {
 
 export async function getManagedVideoUrl(sessionId: number): Promise<string | null> {
   if (!isDesktopRuntime()) return null;
-  const videoPath = await join(
-    await appDataDir(),
-    "sessions",
-    String(sessionId),
-    "video.mp4",
-  );
-  return convertFileSrc(videoPath);
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+    throw new Error("Analysis id is invalid");
+  }
+  // Tauri encodes the entire file-path argument, so append the virtual route separately.
+  const protocolBase = convertFileSrc("", "aiming-cookie-media");
+  return new URL(`/analysis/${sessionId}`, protocolBase).toString();
 }
