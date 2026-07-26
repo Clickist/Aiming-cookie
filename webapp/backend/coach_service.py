@@ -5,7 +5,14 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from . import coach_commands, coach_store, config, provider_commands, provider_store
+from . import (
+    coach_commands,
+    coach_confirmations,
+    coach_store,
+    config,
+    provider_commands,
+    provider_store,
+)
 from .coach_engine import CoachTurn, complete_turn_async
 
 log = logging.getLogger(__name__)
@@ -18,6 +25,8 @@ class CoachChatResult:
     assistant_content: str
     tool_events: list[dict]
     context: Optional[dict] = None
+    status: str = "succeeded"
+    error: dict | None = None
 
 
 def _reachable_context_refs(context: object) -> set[str]:
@@ -25,6 +34,17 @@ def _reachable_context_refs(context: object) -> set[str]:
     if not isinstance(context, dict):
         return set()
     refs: set[str] = set()
+    if context.get("schema_version") == "coach_turn_context.v1":
+        for item in context.get("contexts", []):
+            if not isinstance(item, dict):
+                continue
+            refs.update(_reachable_context_refs(item.get("projection")))
+            refs.update(_reachable_context_refs(item.get("comparison_projection")))
+            for key in ("context_ref", "analysis_ref", "comparison_analysis_ref", "target_ref"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    refs.add(value)
+        return refs
     analysis_ref = context.get("analysis_ref")
     if isinstance(analysis_ref, dict):
         analysis_id = analysis_ref.get("analysis_id")
@@ -63,14 +83,23 @@ async def run_chat_turn(
     prior_messages: list[dict],
     user_msg_to_store: str,
     diagnosis: Any | None,
+    diagnostic_context: dict | None = None,
+    context_refs: list[dict] | None = None,
     legacy_session_id: Optional[int],
     cost_session_id: Optional[int],
     tool_bridge_endpoint: Optional[str] = None,
     desktop_token: Optional[str] = None,
+    persist: bool = True,
+    user_message_id: int | None = None,
+    agent_run_ref: str | None = None,
 ) -> CoachChatResult:
     from .coach_context import coerce_coach_diagnostic_context
 
-    context = coerce_coach_diagnostic_context(diagnosis)
+    context = (
+        diagnostic_context
+        if diagnostic_context is not None
+        else coerce_coach_diagnostic_context(diagnosis)
+    )
     provider_profile = (
         await provider_store.get_default_runtime_profile(x_user_id)
         if config.COACH_RUNTIME == "pi"
@@ -86,26 +115,32 @@ async def run_chat_turn(
     ):
         notes = ["LLM Provider 未配置，请先在 Provider Settings 完成连接测试"]
         assistant_content = "(Coach Provider 未配置，暂未生成回复)"
-        await coach_store.append_message(
-            thread_id,
-            "user",
-            user_msg_to_store,
-            legacy_session_id=legacy_session_id,
-            context=context,
-        )
-        await coach_store.append_message(
-            thread_id,
-            "assistant",
-            assistant_content,
-            legacy_session_id=legacy_session_id,
-            context=context,
-        )
+        if persist:
+            await coach_store.append_message(
+                thread_id, "user", user_msg_to_store,
+                legacy_session_id=legacy_session_id,
+                context=context,
+                context_refs=context_refs,
+            )
+            await coach_store.append_message(
+                thread_id, "assistant", assistant_content,
+                legacy_session_id=legacy_session_id,
+                context=context,
+                context_refs=context_refs,
+            )
         return CoachChatResult(
             reply=None,
             notes=notes,
             assistant_content=assistant_content,
             tool_events=[],
             context=context,
+            status="failed",
+            error={
+                "domain": "permission",
+                "code": "provider_unconfigured",
+                "message": "Coach Provider is not configured",
+                "retryable": False,
+            },
         )
 
     if config.COACH_RUNTIME == "pi" and provider_profile is not None:
@@ -127,70 +162,82 @@ async def run_chat_turn(
                     redact_provider_secrets(str(error), provider_profile),
                 )
                 assistant_content = "(Coach Provider credential 已过期，暂未生成回复)"
-                await coach_store.append_message(
-                    thread_id,
-                    "user",
-                    user_msg_to_store,
-                    legacy_session_id=legacy_session_id,
-                    context=context,
+                if persist:
+                    await coach_store.append_message(
+                        thread_id, "user", user_msg_to_store,
+                        legacy_session_id=legacy_session_id, context=context,
+                        context_refs=context_refs,
+                    )
+                    await coach_store.append_message(
+                        thread_id, "assistant", assistant_content,
+                        legacy_session_id=legacy_session_id, context=context,
+                        context_refs=context_refs,
+                    )
+                return CoachChatResult(
+                    None, notes, assistant_content, [], context, "failed",
+                    {
+                        "domain": "permission", "code": "credential_refresh_failed",
+                        "message": "Provider credential refresh failed", "retryable": True,
+                    },
                 )
-                await coach_store.append_message(
-                    thread_id,
-                    "assistant",
-                    assistant_content,
-                    legacy_session_id=legacy_session_id,
-                    context=context,
-                )
-                return CoachChatResult(None, notes, assistant_content, [], context)
             if refreshed.get("status") != "succeeded":
                 notes = ["Provider credential 刷新未完成，请重新认证"]
                 assistant_content = "(Coach Provider credential 刷新未完成，暂未生成回复)"
-                await coach_store.append_message(
-                    thread_id,
-                    "user",
-                    user_msg_to_store,
-                    legacy_session_id=legacy_session_id,
-                    context=context,
+                if persist:
+                    await coach_store.append_message(
+                        thread_id, "user", user_msg_to_store,
+                        legacy_session_id=legacy_session_id, context=context,
+                        context_refs=context_refs,
+                    )
+                    await coach_store.append_message(
+                        thread_id, "assistant", assistant_content,
+                        legacy_session_id=legacy_session_id, context=context,
+                        context_refs=context_refs,
+                    )
+                return CoachChatResult(
+                    None, notes, assistant_content, [], context, "failed",
+                    {
+                        "domain": "permission", "code": "credential_refresh_incomplete",
+                        "message": "Provider credential refresh is incomplete", "retryable": True,
+                    },
                 )
-                await coach_store.append_message(
-                    thread_id,
-                    "assistant",
-                    assistant_content,
-                    legacy_session_id=legacy_session_id,
-                    context=context,
-                )
-                return CoachChatResult(None, notes, assistant_content, [], context)
             provider_profile = await provider_store.get_default_runtime_profile(x_user_id)
             if not provider_store.runtime_profile_configured(provider_profile):
                 notes = ["Provider credential 刷新后仍不可用，请重新认证"]
                 assistant_content = "(Coach Provider credential 不可用，暂未生成回复)"
-                await coach_store.append_message(
-                    thread_id,
-                    "user",
-                    user_msg_to_store,
-                    legacy_session_id=legacy_session_id,
-                    context=context,
+                if persist:
+                    await coach_store.append_message(
+                        thread_id, "user", user_msg_to_store,
+                        legacy_session_id=legacy_session_id, context=context,
+                        context_refs=context_refs,
+                    )
+                    await coach_store.append_message(
+                        thread_id, "assistant", assistant_content,
+                        legacy_session_id=legacy_session_id, context=context,
+                        context_refs=context_refs,
+                    )
+                return CoachChatResult(
+                    None, notes, assistant_content, [], context, "failed",
+                    {
+                        "domain": "permission", "code": "credential_unavailable",
+                        "message": "Provider credential is unavailable", "retryable": False,
+                    },
                 )
-                await coach_store.append_message(
-                    thread_id,
-                    "assistant",
-                    assistant_content,
-                    legacy_session_id=legacy_session_id,
-                    context=context,
-                )
-                return CoachChatResult(None, notes, assistant_content, [], context)
 
-    user_message_id = await coach_store.append_message(
-        thread_id,
-        "user",
-        user_msg_to_store,
-        legacy_session_id=legacy_session_id,
-        context=context,
-    )
+    if persist:
+        user_message_id = await coach_store.append_message(
+            thread_id, "user", user_msg_to_store,
+            legacy_session_id=legacy_session_id, context=context,
+            context_refs=context_refs,
+        )
+    elif user_message_id is None:
+        raise ValueError("user_message_id is required when persistence is disabled")
 
     notes: list[str] = []
     reply: Optional[str] = None
     tool_events: list[dict] = []
+    status = "succeeded"
+    failure: dict | None = None
     tool_bridge: dict | None = None
     try:
         if config.COACH_RUNTIME == "pi" and tool_bridge_endpoint:
@@ -210,11 +257,14 @@ async def run_chat_turn(
             user_id=x_user_id,
             provider_profile=provider_profile,
             tool_bridge=tool_bridge,
+            run_ref=agent_run_ref,
         )
         engine_result = await complete_turn_async(turn)
         reply = engine_result.reply
         notes = list(engine_result.notes)
         tool_events = list(engine_result.tool_events)
+        status = engine_result.status
+        failure = engine_result.error
     except Exception as e:
         # Keep provider credentials out of both logs and the persisted/API note.
         log.warning("coach chat 失败 user=%s error=%s", x_user_id, type(e).__name__)
@@ -222,19 +272,49 @@ async def run_chat_turn(
 
         message = redact_provider_secrets(str(e), provider_profile)
         notes.append(f"对话失败: {message}")
+        status = "failed"
+        failure = {
+            "domain": "model",
+            "code": "generation_failed",
+            "message": "Coach generation failed",
+            "retryable": True,
+        }
     finally:
         if tool_bridge is not None:
             await coach_commands.revoke_tool_bridge(tool_bridge["bearer_token"])
 
+    try:
+        confirmation_events = await coach_confirmations.sync_product_command_confirmations(
+            x_user_id, f"coach_message:{user_message_id}",
+        )
+        pending_by_command = {
+            event["command_id"]: event
+            for event in confirmation_events
+            if isinstance(event.get("command_id"), str)
+        }
+        merged_events: list[dict] = []
+        for event in tool_events:
+            command_id = event.get("command_id") if isinstance(event, dict) else None
+            merged_events.append(pending_by_command.pop(command_id, event))
+        merged_events.extend(pending_by_command.values())
+        tool_events = merged_events
+    except Exception:
+        log.exception("coach confirmation projection failed user=%s", x_user_id)
+        status = "failed"
+        failure = {
+            "domain": "tool",
+            "code": "confirmation_projection_failed",
+            "message": "Coach action confirmation is temporarily unavailable",
+            "retryable": True,
+        }
+
     assistant_content = reply if reply is not None else "(本次未能生成回复,见 notes)"
-    await coach_store.append_message(
-        thread_id,
-        "assistant",
-        assistant_content,
-        trace=tool_events,
-        legacy_session_id=legacy_session_id,
-        context=context,
-    )
+    if persist:
+        await coach_store.append_message(
+            thread_id, "assistant", assistant_content,
+            trace=tool_events, legacy_session_id=legacy_session_id,
+            context=context, context_refs=context_refs,
+        )
     # cost_session_id remains in the compatibility call signature. Selected
     # providers do not share a trustworthy CNY pricing/usage contract, so active
     # turns neither estimate DeepSeek cost nor mutate legacy llm_cost_cny.
@@ -245,4 +325,6 @@ async def run_chat_turn(
         assistant_content=assistant_content,
         tool_events=tool_events,
         context=context,
+        status=status,
+        error=failure,
     )

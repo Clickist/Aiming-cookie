@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from .config import DEFAULT_MAX_ATTEMPTS, DESKTOP_LOCAL_PROFILE, LEASE_TTL_SECONDS
@@ -20,7 +21,12 @@ from .contracts import (
 )
 from . import coach_store, history_trends
 from .db import get_conn
-from .workspace import remove_session_workspace, workspace_size_bytes
+from .workspace import (
+    copy_path_to_path,
+    remove_session_workspace,
+    session_dir,
+    workspace_size_bytes,
+)
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +115,8 @@ async def enqueue(
     *, status: str = "queued", analysis_type: str = "flicking",
     input_mode: str = "video_fallback", kovaak_run_id: int | None = None,
     input_snapshot: dict | None = None,
+    profile_default: dict | None = None,
+    manual_override: dict | None = None,
 ) -> int:
     if input_mode not in _INPUT_MODES:
         raise ValueError(f"unsupported input_mode: {input_mode}")
@@ -120,11 +128,21 @@ async def enqueue(
         )
         if await cur.fetchone() is None:
             raise PermissionError("kovaak run is not owned by this user")
+    if manual_override is None and (cm_per_360 is not None or fov is not None):
+        manual_override = {"cm_per_360": cm_per_360, "fov": fov}
+    calibration_request = {
+        "profile_default": dict(profile_default) if isinstance(profile_default, dict) else None,
+        "manual_override": dict(manual_override) if isinstance(manual_override, dict) else None,
+    }
+    initial_task_state = "importing" if status == "uploading" else (
+        "queued" if status == "queued" else status
+    )
     cur = await conn.execute(
         "INSERT INTO sessions("
         "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, "
-        "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts"
-        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?) RETURNING id",
+        "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts, "
+        "task_group_ref, attempt_number, task_state, calibration_request_json"
+        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, 1, ?, ?) RETURNING id",
         (
             user_id,
             status,
@@ -138,17 +156,25 @@ async def enqueue(
             json.dumps(input_snapshot, ensure_ascii=False, separators=(",", ":"))
             if input_snapshot is not None else None,
             DEFAULT_MAX_ATTEMPTS,
+            initial_task_state,
+            json.dumps(calibration_request, ensure_ascii=False, separators=(",", ":")),
         ),
     )
     row = await cur.fetchone()
+    session_id = row["id"]
+    await conn.execute(
+        "UPDATE sessions SET task_group_ref=? WHERE id=?",
+        (f"task:{session_id}", session_id),
+    )
     await conn.commit()
-    return row["id"]
+    return session_id
 
 
 async def finish_upload(session_id: int) -> bool:
     conn = await get_conn()
     cur = await conn.execute(
-        "UPDATE sessions SET status='queued', updated_at=CURRENT_TIMESTAMP "
+        "UPDATE sessions SET status='queued', task_state='queued', "
+        "task_phase='preparing_training_record', updated_at=CURRENT_TIMESTAMP "
         "WHERE id=? AND status='uploading'",
         (session_id,),
     )
@@ -174,7 +200,8 @@ async def claim_next(worker_id: str) -> Optional[dict]:
         now = _utc_now_sqlite()
         lease_exp = _lease_expiry_sqlite(now)
         await conn.execute(
-            "UPDATE sessions SET status='running', "
+            "UPDATE sessions SET status='running', task_state='running', "
+            "task_phase='preparing_training_record', "
             "attempts = attempts + 1, "
             "worker_id = ?, "
             "started_at = COALESCE(started_at, ?), "
@@ -186,7 +213,9 @@ async def claim_next(worker_id: str) -> Optional[dict]:
         )
         cur = await conn.execute(
             "SELECT id, user_id, video_path, csv_path, cm_per_360, fov, analysis_type, "
-            "input_mode, kovaak_run_id, input_snapshot_json, "
+            "input_mode, kovaak_run_id, input_snapshot_json, task_group_ref, "
+            "parent_session_id, attempt_number, task_state, task_phase, failure_domain, "
+            "partial_outcome_json, calibration_request_json, calibration_snapshot_json, "
             "created_at, attempts, max_attempts, worker_id, started_at, "
             "lease_expires_at, heartbeat_at "
             "FROM sessions WHERE id=?",
@@ -199,6 +228,13 @@ async def claim_next(worker_id: str) -> Optional[dict]:
         result = dict(claimed)
         raw_snapshot = result.pop("input_snapshot_json", None)
         result["input_snapshot"] = decode_input_snapshot_json(raw_snapshot)
+        raw_calibration = result.pop("calibration_request_json", None)
+        try:
+            result["calibration_request"] = (
+                json.loads(raw_calibration) if raw_calibration else None
+            )
+        except (TypeError, json.JSONDecodeError):
+            result["calibration_request"] = None
         return result
     except Exception:
         await conn.execute("ROLLBACK")
@@ -262,7 +298,8 @@ async def recover_stale_jobs(now: str | None = None) -> dict:
             max_attempts = int(row["max_attempts"] or DEFAULT_MAX_ATTEMPTS)
             if attempts < max_attempts:
                 await conn.execute(
-                    "UPDATE sessions SET status = 'queued', "
+                    "UPDATE sessions SET status = 'queued', task_state='queued', "
+                    "task_phase='preparing_training_record', "
                     "worker_id = NULL, lease_expires_at = NULL, "
                     "heartbeat_at = NULL, finished_at = NULL, "
                     "updated_at = ? WHERE id = ?",
@@ -282,7 +319,8 @@ async def recover_stale_jobs(now: str | None = None) -> dict:
                     trace_id=None,
                 )
                 await conn.execute(
-                    "UPDATE sessions SET status = 'failed', error = ?, "
+                    "UPDATE sessions SET status = 'failed', task_state='failed', "
+                    "error = ?, failure_domain='network', "
                     "worker_id = NULL, lease_expires_at = NULL, "
                     "heartbeat_at = NULL, finished_at = ?, updated_at = ? "
                     "WHERE id = ?",
@@ -326,16 +364,13 @@ class SessionNotDeletable(Exception):
 
 
 async def requeue_for_retry(session_id: int) -> dict:
-    """User-initiated retry: failed session with input files still present → queued.
-
-    Resets attempts to 0. Raises RetryNotAllowed on invalid state / missing files.
-    """
+    """Create a new attempt from a failed session and copy its managed inputs."""
     conn = await get_conn()
+    new_id: int | None = None
     await conn.execute("BEGIN IMMEDIATE")
     try:
         cur = await conn.execute(
-            "SELECT id, status, video_path, csv_path, input_mode, "
-            "input_snapshot_json FROM sessions WHERE id = ?",
+            "SELECT * FROM sessions WHERE id = ?",
             (session_id,),
         )
         row = await cur.fetchone()
@@ -347,6 +382,25 @@ async def requeue_for_retry(session_id: int) -> dict:
             raise RetryNotAllowed(
                 "invalid_status",
                 f"仅 failed 状态可重试，当前为 {row['status']}",
+            )
+        cur = await conn.execute(
+            "SELECT 1 FROM sessions WHERE parent_session_id=? LIMIT 1",
+            (session_id,),
+        )
+        if await cur.fetchone() is not None:
+            await conn.execute("COMMIT")
+            raise RetryNotAllowed(
+                "invalid_status", "this failed attempt already has a retry attempt",
+            )
+        cur = await conn.execute(
+            "SELECT id FROM sessions WHERE user_id=? "
+            "AND status IN ('uploading', 'queued', 'running') LIMIT 1",
+            (row["user_id"],),
+        )
+        if await cur.fetchone() is not None:
+            await conn.execute("COMMIT")
+            raise RetryNotAllowed(
+                "active_analysis", "已有其它 Analysis 正在进行",
             )
         input_mode = row["input_mode"] or "video_fallback"
         if input_mode == "video_fallback":
@@ -361,22 +415,71 @@ async def requeue_for_retry(session_id: int) -> dict:
         elif decode_input_snapshot_json(row["input_snapshot_json"]) is None:
             await conn.execute("COMMIT")
             raise RetryNotAllowed("missing_snapshot", "分析输入快照不存在，请重新提交分析")
-        now = _utc_now_sqlite()
-        await conn.execute(
-            "UPDATE sessions SET status = 'queued', attempts = 0, "
-            "error = NULL, result = NULL, worker_id = NULL, "
-            "lease_expires_at = NULL, heartbeat_at = NULL, "
-            "started_at = NULL, finished_at = NULL, "
-            "llm_cost_cny = 0, updated_at = ? WHERE id = ?",
-            (now, session_id),
+        source = dict(row)
+        parent_group = source.get("task_group_ref") or f"task:{session_id}"
+        next_attempt = int(source.get("attempt_number") or 1) + 1
+        cur = await conn.execute(
+            "INSERT INTO sessions("
+            "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, "
+            "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts, "
+            "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
+            "calibration_request_json"
+            ") VALUES(?, 'uploading', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, "
+            "'retrying', 'preparing_training_record', ?) RETURNING id",
+            (
+                source["user_id"], source.get("video_path"), source.get("csv_path"),
+                source.get("cm_per_360"), source.get("fov"), source.get("analysis_type"),
+                source.get("input_mode"), source.get("kovaak_run_id"),
+                source.get("input_snapshot_json"), source.get("max_attempts") or DEFAULT_MAX_ATTEMPTS,
+                parent_group, session_id, next_attempt, source.get("calibration_request_json"),
+            ),
         )
+        new_id = int((await cur.fetchone())["id"])
         await conn.execute("COMMIT")
     except RetryNotAllowed:
         raise
     except Exception:
         await conn.execute("ROLLBACK")
+        if new_id is not None:
+            try:
+                remove_session_workspace(new_id)
+            except OSError:
+                pass
         raise
-    s = await get_session(session_id)
+
+    try:
+        copied_video = None
+        copied_csv = None
+        if input_mode in {"video_fallback", "multimodal"}:
+            if source.get("video_path"):
+                copied_video = session_dir(new_id) / "video.mp4"
+                copy_path_to_path(Path(source["video_path"]), copied_video)
+            if input_mode == "video_fallback" and source.get("csv_path"):
+                copied_csv = session_dir(new_id) / "stats.csv"
+                copy_path_to_path(Path(source["csv_path"]), copied_csv)
+        await conn.execute("BEGIN IMMEDIATE")
+        cur = await conn.execute(
+            "UPDATE sessions SET status='queued', video_path=?, csv_path=?, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='uploading'",
+            (
+                str(copied_video) if copied_video else source.get("video_path"),
+                str(copied_csv) if copied_csv else source.get("csv_path"),
+                new_id,
+            ),
+        )
+        if cur.rowcount != 1:
+            raise RuntimeError("retry attempt reservation was lost")
+        await conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            await conn.execute("ROLLBACK")
+        try:
+            remove_session_workspace(new_id)
+        except OSError:
+            pass
+        await abort_uploading_session(new_id, source["user_id"])
+        raise
+    s = await get_session(new_id)
     if s is None:
         raise RetryNotAllowed("not_found", "session 不存在")
     return s
@@ -386,6 +489,7 @@ async def mark_done(
     session_id: int, result: dict, llm_cost: float, *, worker_id: str,
 ) -> bool:
     conn = await get_conn()
+    row = None
     if result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
         cur = await conn.execute(
             "SELECT user_id, analysis_type, input_mode, kovaak_run_id FROM sessions "
@@ -405,29 +509,66 @@ async def mark_done(
             kovaak_run_ref=f"run:{run_id}" if run_id is not None else None,
             require_local_profile=row["user_id"] == DESKTOP_LOCAL_PROFILE,
         )
+    partial_outcome = None
+    calibration_snapshot = None
+    if isinstance(result.get("input_snapshot"), dict):
+        candidate = result["input_snapshot"].get("calibration")
+        if isinstance(candidate, dict):
+            calibration_snapshot = candidate
+    if (
+        row is not None
+        and row["input_mode"] == "multimodal"
+        and isinstance(result.get("evidence"), dict)
+        and isinstance(result["evidence"].get("availability"), dict)
+        and result["evidence"]["availability"].get("mp4") in {
+            "unavailable", "missing", "not_present",
+        }
+        and isinstance(result.get("deterministic"), dict)
+        and result["deterministic"].get("status") in {"available", "limited"}
+    ):
+        partial_outcome = {
+            "status": "partial",
+            "native_preserved": True,
+            "visual_status": "unavailable",
+            "reason_code": "video_unavailable",
+        }
     cur = await conn.execute(
-        "UPDATE sessions SET status='done', result=?, llm_cost_cny=?, "
+        "UPDATE sessions SET status='done', task_state='done', task_phase=NULL, "
+        "partial_outcome_json=?, calibration_snapshot_json=?, result=?, llm_cost_cny=?, "
         "lease_expires_at=NULL, heartbeat_at=NULL, worker_id=NULL, "
         "finished_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
         "WHERE id=? AND status='running' AND worker_id=?",
-        (dump_contract_json(result), llm_cost, session_id, worker_id),
+        (
+            json.dumps(partial_outcome, ensure_ascii=False, separators=(",", ":"))
+            if partial_outcome else None,
+            json.dumps(calibration_snapshot, ensure_ascii=False, separators=(",", ":"))
+            if calibration_snapshot else None,
+            dump_contract_json(result), llm_cost, session_id, worker_id,
+        ),
     )
     await conn.commit()
     return cur.rowcount > 0
 
 
-async def mark_failed(session_id: int, error: str | dict, *, worker_id: str) -> bool:
+async def mark_failed(
+    session_id: int,
+    error: str | dict,
+    *,
+    worker_id: str,
+    failure_domain: str | None = None,
+) -> bool:
     if isinstance(error, dict):
         payload = dump_contract_json(error)
     else:
         payload = error
     conn = await get_conn()
     cur = await conn.execute(
-        "UPDATE sessions SET status='failed', error=?, "
+        "UPDATE sessions SET status='failed', task_state='failed', "
+        "task_phase=NULL, failure_domain=COALESCE(?, failure_domain), error=?, "
         "lease_expires_at=NULL, heartbeat_at=NULL, worker_id=NULL, "
         "finished_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
         "WHERE id=? AND status='running' AND worker_id=?",
-        (payload, session_id, worker_id),
+        (failure_domain, payload, session_id, worker_id),
     )
     await conn.commit()
     return cur.rowcount > 0
@@ -808,12 +949,157 @@ async def reconcile_analysis_deletions() -> dict[str, int]:
     }
 
 
+def _task_row_from_db(row) -> dict:
+    item = dict(row)
+    for json_key, public_key in (
+        ("error", "error"),
+        ("result", "result"),
+        ("partial_outcome_json", "partial_outcome_json"),
+        ("calibration_request_json", "calibration_request"),
+        ("calibration_snapshot_json", "calibration_snapshot"),
+    ):
+        raw_value = item.get(json_key)
+        if json_key in {"error", "result"}:
+            try:
+                item[public_key] = json.loads(raw_value) if raw_value else None
+            except (TypeError, json.JSONDecodeError):
+                item[public_key] = raw_value
+        else:
+            try:
+                item[public_key] = json.loads(raw_value) if raw_value else None
+            except (TypeError, json.JSONDecodeError):
+                item[public_key] = None
+        if public_key != json_key:
+            item.pop(json_key, None)
+    for key in ("created_at", "started_at", "finished_at"):
+        item[key] = sqlite_timestamp_to_wire_utc(item.get(key))
+    return item
+
+
+async def list_task_rows(user_id: str) -> list[dict]:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, user_id, status, analysis_type, input_mode, kovaak_run_id, "
+        "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
+        "failure_domain, partial_outcome_json, error, result, calibration_request_json, "
+        "calibration_snapshot_json, created_at, started_at, finished_at "
+        "FROM sessions WHERE user_id=? ORDER BY created_at DESC, id DESC",
+        (user_id,),
+    )
+    return [_task_row_from_db(row) for row in await cur.fetchall()]
+
+
+async def get_task_rows(task_ref: str, user_id: str) -> list[dict]:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, user_id, status, analysis_type, input_mode, kovaak_run_id, "
+        "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
+        "failure_domain, partial_outcome_json, error, result, calibration_request_json, "
+        "calibration_snapshot_json, created_at, started_at, finished_at "
+        "FROM sessions WHERE user_id=? AND task_group_ref=? "
+        "ORDER BY attempt_number, id",
+        (user_id, task_ref),
+    )
+    return [_task_row_from_db(row) for row in await cur.fetchall()]
+
+
+async def set_task_phase(
+    session_id: int,
+    phase: str,
+    *,
+    worker_id: str | None = None,
+) -> bool:
+    conn = await get_conn()
+    where = "id=?"
+    parameters: list[object] = [session_id]
+    if worker_id is not None:
+        where += " AND status='running' AND worker_id=?"
+        parameters.append(worker_id)
+    cur = await conn.execute(
+        f"UPDATE sessions SET task_phase=?, task_state='running', updated_at=CURRENT_TIMESTAMP "
+        f"WHERE {where}",
+        [phase, *parameters],
+    )
+    await conn.commit()
+    return cur.rowcount == 1
+
+
+async def set_failure_domain(session_id: int, failure_domain: str) -> bool:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "UPDATE sessions SET failure_domain=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (failure_domain, session_id),
+    )
+    await conn.commit()
+    return cur.rowcount == 1
+
+
+async def get_product_state(user_id: str) -> dict:
+    """Read owner-scoped onboarding and existence flags without private fields."""
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT onboarding_completed, onboarding_completion_kind "
+        "FROM product_state WHERE owner_id=?",
+        (user_id,),
+    )
+    row = await cur.fetchone()
+    cur = await conn.execute(
+        "SELECT COUNT(*) AS count FROM kovaak_runs WHERE user_id=?", (user_id,),
+    )
+    run_count = int((await cur.fetchone())["count"])
+    cur = await conn.execute(
+        "SELECT COUNT(*) AS count FROM sessions WHERE user_id=? AND status <> 'uploading'",
+        (user_id,),
+    )
+    analysis_count = int((await cur.fetchone())["count"])
+    pending_runs = False
+    if run_count:
+        from . import kovaak_run_store
+
+        for run in await kovaak_run_store.list_kovaak_run_summaries(user_id):
+            if run.get("readiness_state") in {"pending_analysis", "incomplete_evidence"}:
+                pending_runs = True
+                break
+    return {
+        "onboarding_completed": bool(row and row["onboarding_completed"]),
+        "onboarding_completion_kind": row["onboarding_completion_kind"] if row else None,
+        "has_pending_runs": pending_runs,
+        "has_runs": run_count > 0,
+        "has_analyses": analysis_count > 0,
+    }
+
+
+async def set_onboarding_state(
+    user_id: str,
+    *,
+    completed: bool,
+    completion_kind: str,
+) -> dict:
+    if not completed:
+        raise ValueError("onboarding can only be marked completed")
+    if completion_kind not in {"connected", "skipped", "legacy"}:
+        raise ValueError("invalid onboarding completion kind")
+    conn = await get_conn()
+    await conn.execute(
+        "INSERT INTO product_state(owner_id, onboarding_completed, onboarding_completion_kind) "
+        "VALUES(?, 1, ?) ON CONFLICT(owner_id) DO UPDATE SET "
+        "onboarding_completed=1, onboarding_completion_kind=excluded.onboarding_completion_kind, "
+        "updated_at=CURRENT_TIMESTAMP",
+        (user_id, completion_kind),
+    )
+    await conn.commit()
+    return await get_product_state(user_id)
+
+
 async def get_session(session_id: int) -> Optional[dict]:
     conn = await get_conn()
     cur = await conn.execute(
         "SELECT id, user_id, status, video_path, csv_path, analysis_type, input_mode, "
         "kovaak_run_id, input_snapshot_json, result, error, "
         "llm_cost_cny, cm_per_360, fov, attempts, max_attempts, worker_id, "
+        "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
+        "failure_domain, partial_outcome_json, calibration_request_json, "
+        "calibration_snapshot_json, "
         "started_at, finished_at, created_at, updated_at "
         "FROM sessions WHERE id=?",
         (session_id,),
@@ -824,6 +1110,16 @@ async def get_session(session_id: int) -> Optional[dict]:
     d = dict(row)
     d["input_snapshot"] = decode_input_snapshot_json(d.get("input_snapshot_json"))
     d.pop("input_snapshot_json", None)
+    for json_key, public_key in (
+        ("partial_outcome_json", "partial_outcome"),
+        ("calibration_request_json", "calibration_request"),
+        ("calibration_snapshot_json", "calibration_snapshot"),
+    ):
+        raw_value = d.pop(json_key, None)
+        try:
+            d[public_key] = json.loads(raw_value) if raw_value else None
+        except (TypeError, json.JSONDecodeError):
+            d[public_key] = None
     d["created_at"] = sqlite_timestamp_to_wire_utc(d.get("created_at")) or ""
     d["started_at"] = sqlite_timestamp_to_wire_utc(d.get("started_at"))
     d["finished_at"] = sqlite_timestamp_to_wire_utc(d.get("finished_at"))

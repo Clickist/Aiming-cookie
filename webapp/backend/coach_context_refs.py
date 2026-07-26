@@ -1,0 +1,414 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from . import queue
+from .coach_context import coerce_coach_diagnostic_context, project_coach_diagnostic_context
+from .db import get_conn
+
+
+CONTEXT_BUNDLE_SCHEMA_VERSION = "coach_turn_context.v1"
+_ANALYSIS_REF = re.compile(r"^analysis:([1-9][0-9]*)$")
+_SAFE_TARGET_REF = re.compile(r"^[A-Za-z][A-Za-z0-9_.:@-]{1,200}$")
+_KINDS = {"analysis", "issue", "time_range", "metric", "evidence_segment", "comparison"}
+
+
+class ContextRefError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def coerce_context_bundle(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping) or value.get("schema_version") != CONTEXT_BUNDLE_SCHEMA_VERSION:
+        return None
+    items = value.get("contexts")
+    if not isinstance(items, list) or len(items) > 8:
+        return None
+    canonical_items: list[dict[str, Any]] = []
+    allowed = {
+        "context_ref", "kind", "analysis_ref", "comparison_analysis_ref",
+        "target_ref", "time_range_ms", "projection", "comparison_projection",
+    }
+    for item in items:
+        if not isinstance(item, Mapping) or set(item) != allowed:
+            return None
+        if not isinstance(item.get("context_ref"), str) or item.get("kind") not in _KINDS:
+            return None
+        if _ANALYSIS_REF.fullmatch(str(item.get("analysis_ref") or "")) is None:
+            return None
+        comparison_ref = item.get("comparison_analysis_ref")
+        if comparison_ref is not None and _ANALYSIS_REF.fullmatch(str(comparison_ref)) is None:
+            return None
+        target_ref = item.get("target_ref")
+        if target_ref is not None and (
+            not isinstance(target_ref, str) or _SAFE_TARGET_REF.fullmatch(target_ref) is None
+        ):
+            return None
+        time_range = item.get("time_range_ms")
+        if time_range is not None and (
+            not isinstance(time_range, list)
+            or len(time_range) != 2
+            or not all(isinstance(part, (int, float)) and part >= 0 for part in time_range)
+            or time_range[1] < time_range[0]
+        ):
+            return None
+        projection = coerce_coach_diagnostic_context(item.get("projection"))
+        if projection is None:
+            return None
+        comparison_projection = item.get("comparison_projection")
+        if item.get("kind") == "comparison":
+            comparison_projection = coerce_coach_diagnostic_context(comparison_projection)
+            if comparison_ref is None or comparison_projection is None:
+                return None
+        elif comparison_ref is not None or comparison_projection is not None:
+            return None
+        canonical_items.append({
+            "context_ref": item["context_ref"],
+            "kind": item["kind"],
+            "analysis_ref": item["analysis_ref"],
+            "comparison_analysis_ref": comparison_ref,
+            "target_ref": target_ref,
+            "time_range_ms": time_range,
+            "projection": projection,
+            "comparison_projection": comparison_projection,
+        })
+    if len({item["context_ref"] for item in canonical_items}) != len(canonical_items):
+        return None
+    return {"schema_version": CONTEXT_BUNDLE_SCHEMA_VERSION, "contexts": canonical_items}
+
+
+def _analysis_id(value: str | None) -> int:
+    match = _ANALYSIS_REF.fullmatch(value or "")
+    if match is None:
+        raise ContextRefError("invalid_analysis_ref", "Analysis reference is invalid")
+    return int(match.group(1))
+
+
+async def _owned_done_analysis(owner_id: str, ref: str) -> dict[str, Any]:
+    session_id = _analysis_id(ref)
+    session = await queue.get_session(session_id)
+    if session is None or session.get("user_id") != owner_id:
+        raise ContextRefError("not_found", "Analysis is unavailable")
+    if session.get("status") != "done" or not isinstance(session.get("result"), Mapping):
+        raise ContextRefError("analysis_unavailable", "Analysis is not ready for Coach context")
+    return session
+
+
+def _projection(session: Mapping[str, Any]) -> dict[str, Any]:
+    projected = project_coach_diagnostic_context(session["result"])
+    analysis_ref = projected.get("analysis_ref")
+    if isinstance(analysis_ref, dict) and analysis_ref.get("analysis_id") is None:
+        analysis_ref["analysis_id"] = f"analysis:{session['id']}"
+    canonical = coerce_coach_diagnostic_context(projected)
+    if canonical is None:
+        raise ContextRefError("context_unavailable", "Coach context projection is unavailable")
+    serialized = json.dumps(
+        canonical, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
+    )
+    if len(serialized.encode("utf-8")) > 64 * 1024:
+        raise ContextRefError("context_too_large", "Coach context exceeds the bounded projection budget")
+    return canonical
+
+
+def _validate_target(kind: str, analysis_ref: str, target_ref: str | None, projection: Mapping[str, Any]) -> str:
+    if kind == "analysis":
+        if target_ref is not None:
+            raise ContextRefError("invalid_target_ref", "Analysis context does not accept a target")
+        return analysis_ref
+    if kind == "comparison":
+        if target_ref is not None:
+            raise ContextRefError("invalid_target_ref", "Comparison context does not accept a target")
+        return analysis_ref
+    if not isinstance(target_ref, str) or not _SAFE_TARGET_REF.fullmatch(target_ref):
+        raise ContextRefError("invalid_target_ref", "Context target is invalid")
+    if kind == "issue":
+        prefix = f"{analysis_ref}:issue:"
+        if not target_ref.startswith(prefix):
+            raise ContextRefError("invalid_target_ref", "Issue reference does not belong to the Analysis")
+        try:
+            index = int(target_ref.removeprefix(prefix))
+        except ValueError as error:
+            raise ContextRefError("invalid_target_ref", "Issue reference is invalid") from error
+        issues = (projection.get("diagnosis") or {}).get("issues") or []
+        if not 0 <= index < len(issues):
+            raise ContextRefError("not_found", "Issue reference is unavailable")
+    elif kind == "metric":
+        diagnosis = projection.get("diagnosis") or {}
+        known = set((diagnosis.get("summary") or {}).keys())
+        for issue in diagnosis.get("issues") or []:
+            if isinstance(issue, Mapping):
+                known.update(str(ref) for ref in issue.get("metric_refs") or [])
+        if target_ref not in known:
+            raise ContextRefError("not_found", "Metric reference is unavailable")
+    elif kind == "evidence_segment":
+        refs = set((projection.get("evidence_summary") or {}).get("segment_refs") or [])
+        if target_ref not in refs:
+            raise ContextRefError("not_found", "EvidenceSegment reference is unavailable")
+    return target_ref
+
+
+def _label(kind: str, analysis_ref: str, target_ref: str | None, start_ms: float | None, end_ms: float | None) -> str:
+    if kind == "analysis":
+        return analysis_ref
+    if kind == "time_range":
+        if start_ms == end_ms:
+            return f"{analysis_ref} @ {start_ms:g} ms"
+        return f"{analysis_ref} @ {start_ms:g}-{end_ms:g} ms"
+    if kind == "comparison":
+        return f"{analysis_ref} comparison"
+    return target_ref or analysis_ref
+
+
+def _public(row: Mapping[str, Any], *, status: str | None = None) -> dict[str, Any]:
+    return {
+        "schema_version": "coach_context_ref.v1",
+        "context_ref": row["context_ref"],
+        "kind": row["kind"],
+        "status": status or row["status"],
+        "label": row["label"],
+        "analysis_ref": f"analysis:{row['analysis_session_id']}",
+        "comparison_analysis_ref": (
+            f"analysis:{row['comparison_session_id']}" if row.get("comparison_session_id") else None
+        ),
+        "target_ref": row.get("target_ref"),
+        "time_range_ms": (
+            [row["start_ms"], row["end_ms"]] if row.get("start_ms") is not None else None
+        ),
+        "attached_at": row["attached_at"],
+        "detached_at": row.get("detached_at"),
+        "deleted_at": row.get("deleted_at"),
+    }
+
+
+async def attach_context(
+    owner_id: str,
+    thread_id: int,
+    *,
+    kind: str,
+    analysis_ref: str,
+    target_ref: str | None = None,
+    start_ms: float | None = None,
+    end_ms: float | None = None,
+    comparison_analysis_ref: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    if kind not in _KINDS:
+        raise ContextRefError("invalid_kind", "Context kind is invalid")
+    session = await _owned_done_analysis(owner_id, analysis_ref)
+    projection = _projection(session)
+    comparison_id = None
+    comparison_projection = None
+    if kind == "time_range":
+        if start_ms is None:
+            raise ContextRefError("invalid_time_range", "Time context requires start_ms")
+        if end_ms is None:
+            end_ms = start_ms
+        if start_ms < 0 or end_ms < start_ms:
+            raise ContextRefError("invalid_time_range", "Time range is invalid")
+    elif start_ms is not None or end_ms is not None:
+        raise ContextRefError("invalid_time_range", "Only time_range context accepts time bounds")
+    if kind == "comparison":
+        comparison = await _owned_done_analysis(owner_id, comparison_analysis_ref or "")
+        comparison_id = int(comparison["id"])
+        comparison_projection = _projection(comparison)
+    elif comparison_analysis_ref is not None:
+        raise ContextRefError("invalid_comparison_ref", "Only comparison context accepts another Analysis")
+    target = _validate_target(kind, analysis_ref, target_ref, projection)
+    descriptor = {
+        "kind": kind,
+        "analysis_ref": analysis_ref,
+        "target_ref": target,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "comparison_analysis_ref": comparison_analysis_ref,
+    }
+    dedupe_key = hashlib.sha256(
+        json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    context_ref = f"context:{dedupe_key[:24]}"
+    conn = await get_conn()
+    existing = await (
+        await conn.execute(
+            "SELECT * FROM coach_context_refs WHERE thread_id=? AND dedupe_key=?",
+            (thread_id, dedupe_key),
+        )
+    ).fetchone()
+    if existing is not None and existing["status"] == "active":
+        return "already_attached", _public(dict(existing))
+    projection_json = json.dumps(
+        projection, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
+    )
+    comparison_projection_json = (
+        json.dumps(
+            comparison_projection,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if comparison_projection is not None
+        else None
+    )
+    label = _label(kind, analysis_ref, target, start_ms, end_ms)
+    await conn.execute(
+        "INSERT INTO coach_context_refs(context_ref, thread_id, dedupe_key, kind, "
+        "analysis_session_id, comparison_session_id, target_ref, start_ms, end_ms, label, "
+        "projection_json, comparison_projection_json, status) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active') "
+        "ON CONFLICT(thread_id, dedupe_key) DO UPDATE SET status='active', "
+        "projection_json=excluded.projection_json, "
+        "comparison_projection_json=excluded.comparison_projection_json, "
+        "label=excluded.label, detached_at=NULL, "
+        "deleted_at=NULL, attached_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP",
+        (
+            context_ref, thread_id, dedupe_key, kind, int(session["id"]), comparison_id,
+            target, start_ms, end_ms, label, projection_json, comparison_projection_json,
+        ),
+    )
+    await conn.commit()
+    row = await (
+        await conn.execute(
+            "SELECT * FROM coach_context_refs WHERE thread_id=? AND dedupe_key=?",
+            (thread_id, dedupe_key),
+        )
+    ).fetchone()
+    return "attached", _public(dict(row))
+
+
+async def list_contexts(thread_id: int, *, active_only: bool = True) -> list[dict[str, Any]]:
+    conn = await get_conn()
+    sql = "SELECT * FROM coach_context_refs WHERE thread_id=?"
+    params: tuple[Any, ...] = (thread_id,)
+    if active_only:
+        sql += " AND status='active'"
+    rows = await (await conn.execute(sql + " ORDER BY attached_at, context_ref", params)).fetchall()
+    return [_public(dict(row)) for row in rows]
+
+
+async def detach_context(owner_id: str, thread_id: int, context_ref: str) -> tuple[str, dict[str, Any]] | None:
+    conn = await get_conn()
+    row = await (
+        await conn.execute(
+            "SELECT c.* FROM coach_context_refs c JOIN coach_threads t ON t.id=c.thread_id "
+            "WHERE c.context_ref=? AND c.thread_id=? AND t.user_id=?",
+            (context_ref, thread_id, owner_id),
+        )
+    ).fetchone()
+    if row is None:
+        return None
+    if row["status"] != "active":
+        return "already_detached", _public(dict(row))
+    await conn.execute(
+        "UPDATE coach_context_refs SET status='detached', detached_at=CURRENT_TIMESTAMP, "
+        "updated_at=CURRENT_TIMESTAMP WHERE context_ref=?",
+        (context_ref,),
+    )
+    await conn.commit()
+    updated = await (
+        await conn.execute("SELECT * FROM coach_context_refs WHERE context_ref=?", (context_ref,))
+    ).fetchone()
+    return "detached", _public(dict(updated))
+
+
+async def build_context_bundle(
+    thread_id: int,
+    requested_refs: Sequence[str] | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    conn = await get_conn()
+    rows = await (
+        await conn.execute(
+            "SELECT * FROM coach_context_refs WHERE thread_id=? AND status='active' "
+            "ORDER BY attached_at, context_ref",
+            (thread_id,),
+        )
+    ).fetchall()
+    available = {row["context_ref"]: dict(row) for row in rows}
+    refs = list(available) if requested_refs is None else list(requested_refs)
+    if len(refs) > 8 or len(refs) != len(set(refs)):
+        raise ContextRefError("invalid_context_refs", "Context refs must be unique and bounded")
+    if any(ref not in available for ref in refs):
+        raise ContextRefError("context_unavailable", "One or more contexts are unavailable")
+    contexts = []
+    snapshots = []
+    for ref in refs:
+        row = available[ref]
+        try:
+            projection = json.loads(row["projection_json"])
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ContextRefError("context_unavailable", "Context projection is unavailable") from error
+        canonical = coerce_coach_diagnostic_context(projection)
+        if canonical is None:
+            raise ContextRefError("context_unavailable", "Context projection is invalid")
+        comparison_canonical = None
+        if row["kind"] == "comparison":
+            try:
+                comparison_projection = json.loads(row["comparison_projection_json"])
+            except (TypeError, json.JSONDecodeError) as error:
+                raise ContextRefError(
+                    "context_unavailable", "Comparison context projection is unavailable",
+                ) from error
+            comparison_canonical = coerce_coach_diagnostic_context(comparison_projection)
+            if comparison_canonical is None:
+                raise ContextRefError(
+                    "context_unavailable", "Comparison context projection is invalid",
+                )
+        snapshots.append(_public(row))
+        contexts.append({
+            "context_ref": ref,
+            "kind": row["kind"],
+            "analysis_ref": f"analysis:{row['analysis_session_id']}",
+            "comparison_analysis_ref": (
+                f"analysis:{row['comparison_session_id']}" if row.get("comparison_session_id") else None
+            ),
+            "target_ref": row.get("target_ref"),
+            "time_range_ms": (
+                [row["start_ms"], row["end_ms"]] if row.get("start_ms") is not None else None
+            ),
+            "projection": canonical,
+            "comparison_projection": comparison_canonical,
+        })
+    bundle = {"schema_version": CONTEXT_BUNDLE_SCHEMA_VERSION, "contexts": contexts}
+    encoded = json.dumps(bundle, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > 256 * 1024:
+        raise ContextRefError("context_too_large", "Combined Coach context exceeds the budget")
+    return bundle, snapshots
+
+
+async def mark_analysis_deleted(analysis_session_id: int, *, conn=None) -> int:
+    owns_commit = conn is None
+    if conn is None:
+        conn = await get_conn()
+    cursor = await conn.execute(
+        "UPDATE coach_context_refs SET status='deleted', deleted_at=CURRENT_TIMESTAMP, "
+        "updated_at=CURRENT_TIMESTAMP WHERE status='active' AND "
+        "(analysis_session_id=? OR comparison_session_id=?)",
+        (analysis_session_id, analysis_session_id),
+    )
+    if owns_commit:
+        await conn.commit()
+    return int(cursor.rowcount or 0)
+
+
+async def overlay_snapshot_statuses(snapshots: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    if not snapshots:
+        return []
+    conn = await get_conn()
+    out: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        value = dict(snapshot)
+        ref = value.get("context_ref")
+        row = await (
+            await conn.execute(
+                "SELECT status, deleted_at FROM coach_context_refs WHERE context_ref=?",
+                (ref,),
+            )
+        ).fetchone()
+        if row is not None and row["status"] == "deleted":
+            value["status"] = "deleted"
+            value["deleted_at"] = row["deleted_at"]
+        out.append(value)
+    return out

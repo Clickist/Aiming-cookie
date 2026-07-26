@@ -827,8 +827,8 @@ async def test_process_one_happy_path_writes_analysis_result_v2():
     assert result["analysis_type"] == "flicking"
     assert result["input_mode"] == "video_fallback"
     assert result["input_snapshot"]["calibration"] == {
-        "cm_per_360": 30.0,
-        "fov": 90.0,
+        "cm_per_360": {"value": 30.0, "source": "manual_override"},
+        "fov": {"value": 90.0, "source": "manual_override"},
     }
     assert result["narration"] == {
         "status": "available",
@@ -841,6 +841,29 @@ async def test_process_one_happy_path_writes_analysis_result_v2():
     assert len(result["deterministic"]["timeline"]) == 2
     assert result["created_at"].endswith("Z")
     assert result["completed_at"].endswith("Z")
+
+
+def test_video_fallback_explicit_manual_override_wins_over_legacy_flat_values():
+    stats = MagicMock(cm_per_360=None, fov=None)
+    with patch(
+        "kovaak_tracker.pan_tracker.analyze_flicking_fair_summary",
+        return_value=({}, {}),
+    ) as analyze:
+        _summary, extras = worker.run_analysis(
+            "video.mp4",
+            "stats.csv",
+            cm_per_360=30.0,
+            fov=90.0,
+            stats=stats,
+            manual_override={"cm_per_360": 40.0, "fov": 100.0},
+        )
+
+    assert analyze.call_args.kwargs["cm_per_360"] == 40.0
+    assert analyze.call_args.kwargs["fov"] == 100.0
+    assert extras["calibration"] == {
+        "cm_per_360": {"value": 40.0, "source": "manual_override"},
+        "fov": {"value": 100.0, "source": "manual_override"},
+    }
 
 
 @pytest.mark.asyncio
@@ -2153,7 +2176,13 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
     )
 
     assert calls == ["native"]
-    native_mock.assert_called_once_with(snapshot, 30.0, 90.0)
+    native_mock.assert_called_once_with(
+        snapshot,
+        30.0,
+        90.0,
+        profile_default=None,
+        manual_override=None,
+    )
     cv_mock.assert_not_called()
     assert result["schema_version"] == "analysis_result.v2"
     assert result["analysis_version"] == "native_flicking.v1"
@@ -2301,10 +2330,15 @@ async def test_process_one_non_active_scenario_is_outcome_only_without_family_an
         "created_at": "2026-07-13 12:00:00",
     }
 
-    result, calls, native_mock, cv_mock = await _capture_mode_result(
-        job,
-        native_result=_native_v2_adapter_result(),
-    )
+    parsed_stats = MagicMock(cm_per_360=34.0, fov=103.0)
+    with patch(
+        "webapp.backend.worker._parse_frozen_stats_for_visual",
+        return_value=parsed_stats,
+    ) as parse_stats:
+        result, calls, native_mock, cv_mock = await _capture_mode_result(
+            job,
+            native_result=_native_v2_adapter_result(),
+        )
 
     assert calls == []
     native_mock.assert_not_called()
@@ -2319,6 +2353,11 @@ async def test_process_one_non_active_scenario_is_outcome_only_without_family_an
     assert result["input_snapshot"]["scenario_resolution"] == (
         snapshot["scenario_resolution"]
     )
+    parse_stats.assert_called_once_with(snapshot)
+    assert result["input_snapshot"]["calibration"] == {
+        "cm_per_360": {"value": 34.0, "source": "stats"},
+        "fov": {"value": 103.0, "source": "stats"},
+    }
     assert {warning["code"] for warning in result["warnings"]} == {
         "scenario_outcome_only"
     }
@@ -2331,6 +2370,101 @@ async def test_process_one_non_active_scenario_is_outcome_only_without_family_an
         kovaak_run_ref="run:42",
     )
     assert validated["deterministic"]["metrics"] == {}
+
+
+@pytest.mark.asyncio
+async def test_outcome_only_legacy_flat_calibration_is_frozen_into_result_and_terminal_snapshot():
+    from webapp.backend import kovaak_run_store
+
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id="u1", source_key="legacy-flat-outcome-only", scenario="Scenario",
+    )
+    snapshot = _native_v2_snapshot()
+    snapshot["run_id"] = run["id"]
+    snapshot["scenario_resolution"] = _scenario_resolution(manifest_status="unlisted")
+    sid = await queue.enqueue(
+        "u1", "", "",
+        cm_per_360=34.0,
+        fov=103.0,
+        input_mode="input_native",
+        kovaak_run_id=run["id"],
+        input_snapshot=snapshot,
+    )
+    # Simulate a pre-calibration-request job that only has legacy flat columns.
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET calibration_request_json=NULL WHERE id=?", (sid,),
+    )
+    await conn.commit()
+
+    parsed_stats = MagicMock(cm_per_360=None, fov=None)
+    with patch(
+        "webapp.backend.worker._parse_frozen_stats_for_visual",
+        return_value=parsed_stats,
+    ), patch(
+        "webapp.backend.worker._maybe_commit_analysis_evidence",
+        side_effect=lambda _job, result, **_kwargs: result,
+    ):
+        assert await worker.process_one() is True
+
+    session = await queue.get_session(sid)
+    expected = {
+        "cm_per_360": {"value": 34.0, "source": "manual_override"},
+        "fov": {"value": 103.0, "source": "manual_override"},
+    }
+    assert session["status"] == "done"
+    assert session["result"]["input_snapshot"]["calibration"] == expected
+    assert session["calibration_snapshot"] == expected
+
+
+@pytest.mark.parametrize("mode", ["video", "native"])
+def test_legacy_flat_values_do_not_override_explicit_manual_calibration(mode: str):
+    stats = MagicMock(cm_per_360=None, fov=None)
+    if mode == "video":
+        with patch(
+            "kovaak_tracker.pan_tracker.analyze_flicking_fair_summary",
+            return_value=({}, {}),
+        ) as analyze:
+            _summary, extras = worker.run_analysis(
+                "video.mp4",
+                "stats.csv",
+                cm_per_360=30.0,
+                fov=90.0,
+                stats=stats,
+                manual_override={"cm_per_360": 40.0, "fov": 100.0},
+            )
+        assert (analyze.call_args.kwargs["cm_per_360"], analyze.call_args.kwargs["fov"]) == (
+            40.0, 100.0,
+        )
+    else:
+        with patch(
+            "webapp.backend.worker._read_frozen_source_bytes",
+            return_value=b"fixture",
+        ), patch(
+            "webapp.backend.kovaak_run_store.decode_mouse_snapshot_bytes",
+            return_value=[],
+        ), patch(
+            "kovaak_tracker.csv_parser.parse_stats_bytes",
+            return_value=stats,
+        ), patch(
+            "kovaak_tracker.performance_parser.parse_performance_bytes",
+            return_value=object(),
+        ), patch(
+            "kovaak_tracker.native_flicking_analysis.analyze_native_flicking",
+            return_value={},
+        ) as analyze:
+            result = worker.run_native_analysis(
+                _native_snapshot(),
+                cm_per_360=30.0,
+                fov=90.0,
+                manual_override={"cm_per_360": 40.0, "fov": 100.0},
+            )
+        assert result["calibration"] == {
+            "cm_per_360": {"value": 40.0, "source": "manual_override"},
+            "fov": {"value": 100.0, "source": "manual_override"},
+        }
+        assert analyze.call_args.kwargs["stats"]["cm_per_360"] == 40.0
+        assert analyze.call_args.kwargs["stats"]["fov"] == 100.0
 
 
 @pytest.mark.asyncio
@@ -4153,6 +4287,10 @@ async def test_process_one_video_fallback_writes_v2_without_raw_provenance():
     assert result["analysis_version"] == "flicking_fair_summary.v1"
     assert result["owner_id"] == "u1"
     assert result["input_mode"] == "video_fallback"
+    assert result["input_snapshot"]["calibration"] == {
+        "cm_per_360": {"value": 30.0, "source": "manual_override"},
+        "fov": {"value": 90.0, "source": "manual_override"},
+    }
     assert "kovaak_run_ref" not in result
     assert "raw_input" not in result["evidence"]["sources"]
     assert result["evidence"]["availability"] == {"stats": "available", "mp4": "available"}

@@ -31,6 +31,7 @@ from .kovaak_ingest import (
     RetryableIngestionError,
     normalize_kovaak_stem,
 )
+from .workspace import session_dir
 
 
 SNAPSHOT_MAGIC = b"ACRI"
@@ -356,6 +357,7 @@ def _public_alignment(run: dict) -> dict[str, object]:
         "method",
         "anchor",
         "coverage",
+        "error_code",
     }
     public_summary = {
         key: value
@@ -891,6 +893,10 @@ def public_analysis_input_snapshot(snapshot: dict) -> dict:
     if "scenario_resolution" in snapshot:
         public_snapshot["scenario_resolution"] = _sanitize_public_value(
             snapshot.get("scenario_resolution")
+        )
+    if "calibration" in snapshot:
+        public_snapshot["calibration"] = _sanitize_public_value(
+            snapshot.get("calibration")
         )
     return public_snapshot
 
@@ -1878,6 +1884,7 @@ async def invalidate_run_for_video_coverage_gap(
                 tombstone = {
                     "run_id": run_id,
                     "evidence_kind": "raw",
+                    "owner_id": user_id,
                     "artifact_relpath": relative_path,
                     "expected_sha256": fingerprint["sha256"],
                     "expected_size": fingerprint["size"],
@@ -2114,6 +2121,12 @@ async def _cleanup_evidence_tombstone(
             }
             if observed != expected:
                 raise OSError("Run evidence fingerprint changed before cleanup")
+        if evidence_kind == "video":
+            await _remove_analysis_video_aliases(
+                run_id,
+                str(row["owner_id"]),
+                artifact,
+            )
         reclaimed = _unlink_run_evidence_artifact(artifact)
         if evidence_kind == "video":
             reclaimed += _unlink_run_evidence_artifact(_video_receipt_path(artifact))
@@ -2129,6 +2142,55 @@ async def _cleanup_evidence_tombstone(
     )
     await conn.commit()
     return True, reclaimed
+
+
+async def _remove_analysis_video_aliases(
+    run_id: int,
+    owner_id: str,
+    run_video: Path,
+) -> None:
+    conn = await get_conn()
+    rows = await (
+        await conn.execute(
+            "SELECT id, video_path, input_snapshot_json FROM sessions "
+            "WHERE kovaak_run_id=? AND user_id=?",
+            (run_id, owner_id),
+        )
+    ).fetchall()
+    cleared: list[int] = []
+    run_video = run_video.resolve()
+    for row in rows:
+        session_id = int(row["id"])
+        alias = session_dir(session_id) / "video.mp4"
+        stored_path = row["video_path"]
+        if not isinstance(stored_path, str) or Path(stored_path).resolve() != alias.resolve():
+            continue
+        try:
+            snapshot = json.loads(row["input_snapshot_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        video_source = (snapshot.get("sources") or {}).get("video")
+        source_path = video_source.get("path") if isinstance(video_source, dict) else None
+        if not isinstance(source_path, str) or Path(source_path).resolve() != run_video:
+            continue
+        try:
+            metadata = alias.lstat()
+        except FileNotFoundError:
+            cleared.append(session_id)
+            continue
+        if alias.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+            raise OSError("Analysis video alias is not a regular file")
+        if run_video.is_file() and not alias.samefile(run_video):
+            continue
+        alias.unlink()
+        cleared.append(session_id)
+    if cleared:
+        placeholders = ",".join("?" for _ in cleared)
+        await conn.execute(
+            f"UPDATE sessions SET video_path=NULL WHERE id IN ({placeholders})",
+            tuple(cleared),
+        )
+        await conn.commit()
 
 
 def _removal_result(
@@ -2247,6 +2309,7 @@ async def remove_run_evidence(
     tombstone = {
         "run_id": run_id,
         "evidence_kind": evidence_kind,
+        "owner_id": user_id,
         "artifact_relpath": relative_path,
         "expected_sha256": fingerprint["sha256"],
         "expected_size": fingerprint["size"],
@@ -2334,6 +2397,257 @@ async def run_storage_usage(
                 else:
                     totals["incomplete_recovery_bytes"] += metadata.st_size
     return totals
+
+
+def _incomplete_reason(path: Path) -> str:
+    name = path.name.casefold()
+    if "partial" in name or "recovery" in name or name.endswith(".tmp"):
+        return "interrupted_finalization"
+    return "unclassified_capture_artifact"
+
+
+def _incomplete_item(
+    *,
+    owner_id: str,
+    run_id: int,
+    relative_path: str,
+    path: Path,
+) -> dict[str, object]:
+    fingerprint = _file_fingerprint(path)
+    item_key = json.dumps(
+        {
+            "owner_id": owner_id,
+            "run_id": run_id,
+            "relative_path": relative_path,
+            "sha256": fingerprint["sha256"],
+            "size": fingerprint["size"],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    item_ref = f"incomplete:{hashlib.sha256(item_key.encode('utf-8')).hexdigest()[:32]}"
+    return {
+        "schema_version": "incomplete_capture_item.v1",
+        "item_ref": item_ref,
+        "run_ref": f"run:{run_id}",
+        "size_bytes": int(fingerprint["size"]),
+        "reason": _incomplete_reason(path),
+        "removable": True,
+        "impact": {
+            "code": "incomplete_recovery_only",
+            "message": (
+                "Only this incomplete recovery artifact will be removed; "
+                "Run evidence and user source files are unchanged."
+            ),
+        },
+        "created_at": datetime.fromtimestamp(
+            path.stat().st_mtime, tz=timezone.utc,
+        ).isoformat().replace("+00:00", "Z"),
+        "_relative_path": relative_path,
+        "_sha256": fingerprint["sha256"],
+    }
+
+
+async def list_incomplete_capture_items(
+    owner_id: str,
+    data_root: str | Path,
+) -> list[dict[str, object]]:
+    conn = await get_conn()
+    rows = await (
+        await conn.execute(
+            "SELECT id, video_path, video_state, mouse_trace_path, trace_state "
+            "FROM kovaak_runs WHERE user_id=? ORDER BY id",
+            (owner_id,),
+        )
+    ).fetchall()
+    root = Path(data_root).resolve()
+    items: list[dict[str, object]] = []
+    for row in rows:
+        run_id = int(row["id"])
+        run_root = (root / "runs" / str(run_id)).resolve()
+        if not run_root.is_dir():
+            continue
+        owned: set[Path] = set()
+        try:
+            if row["video_state"] == "attached" and row["video_path"]:
+                video, _ = _managed_evidence_artifact(
+                    data_root, run_id, "video", row["video_path"],
+                )
+                owned.update({video, _video_receipt_path(video)})
+            if row["trace_state"] == "attached" and row["mouse_trace_path"]:
+                raw, _ = _managed_evidence_artifact(
+                    data_root, run_id, "raw", row["mouse_trace_path"],
+                )
+                owned.add(raw)
+        except ValueError:
+            pass
+        for directory, _, names in os.walk(run_root, followlinks=False):
+            for name in names:
+                candidate = Path(directory) / name
+                try:
+                    metadata = candidate.lstat()
+                except OSError:
+                    continue
+                if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+                    continue
+                resolved = candidate.resolve()
+                if resolved in owned:
+                    continue
+                try:
+                    relative_path = resolved.relative_to(root).as_posix()
+                except ValueError:
+                    continue
+                items.append(_incomplete_item(
+                    owner_id=owner_id,
+                    run_id=run_id,
+                    relative_path=relative_path,
+                    path=resolved,
+                ))
+    return items
+
+
+def _resolve_incomplete_relpath(
+    data_root: str | Path,
+    run_id: int,
+    relative_path: str,
+) -> Path:
+    if (
+        not relative_path
+        or "\\" in relative_path
+        or any(part in {"", ".", ".."} for part in relative_path.split("/"))
+    ):
+        raise ValueError("stored incomplete capture path is invalid")
+    root = Path(data_root).resolve()
+    run_root = (root / "runs" / str(run_id)).resolve()
+    candidate = (root / Path(*relative_path.split("/"))).resolve()
+    try:
+        candidate.relative_to(run_root)
+    except ValueError as error:
+        raise ValueError("stored incomplete capture path escapes the Run root") from error
+    return candidate
+
+
+async def _cleanup_incomplete_capture_tombstone(
+    tombstone: dict[str, object],
+    data_root: str | Path,
+) -> tuple[bool, int]:
+    item_ref = str(tombstone["item_ref"])
+    try:
+        artifact = _resolve_incomplete_relpath(
+            data_root,
+            int(tombstone["run_id"]),
+            str(tombstone["artifact_relpath"]),
+        )
+        reclaimed = 0
+        try:
+            metadata = artifact.lstat()
+        except FileNotFoundError:
+            metadata = None
+        if metadata is not None:
+            if artifact.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+                raise OSError("incomplete capture artifact is not a regular file")
+            observed = _file_fingerprint(artifact)
+            if (
+                observed["sha256"] != tombstone["expected_sha256"]
+                or int(observed["size"]) != int(tombstone["expected_size"])
+            ):
+                raise OSError("incomplete capture fingerprint changed before cleanup")
+            reclaimed = metadata.st_size
+            artifact.unlink()
+    except (OSError, ValueError):
+        conn = await get_conn()
+        await conn.execute(
+            "UPDATE incomplete_capture_deletion_tombstones SET cleanup_state='failed', "
+            "cleanup_attempts=cleanup_attempts+1, last_error_code='artifact_cleanup_failed', "
+            "updated_at=CURRENT_TIMESTAMP WHERE item_ref=?",
+            (item_ref,),
+        )
+        await conn.commit()
+        return False, 0
+    conn = await get_conn()
+    await conn.execute(
+        "UPDATE incomplete_capture_deletion_tombstones SET cleanup_state='completed', "
+        "cleanup_attempts=cleanup_attempts+1, last_error_code=NULL, reclaimed_bytes=?, "
+        "updated_at=CURRENT_TIMESTAMP WHERE item_ref=?",
+        (reclaimed, item_ref),
+    )
+    await conn.commit()
+    return True, reclaimed
+
+
+async def remove_incomplete_capture_item(
+    owner_id: str,
+    item_ref: str,
+    data_root: str | Path,
+) -> dict[str, object] | None:
+    conn = await get_conn()
+    existing = await (
+        await conn.execute(
+            "SELECT * FROM incomplete_capture_deletion_tombstones "
+            "WHERE item_ref=? AND owner_id=?",
+            (item_ref, owner_id),
+        )
+    ).fetchone()
+    if existing is not None:
+        row = dict(existing)
+        if row["cleanup_state"] == "completed":
+            return {
+                "schema_version": "incomplete_capture_removal.v1",
+                "item_ref": item_ref,
+                "removal_state": "already_unavailable",
+                "reclaimed_bytes": 0,
+                "impact": {
+                    "code": "incomplete_recovery_only",
+                    "message": "The incomplete recovery artifact is already unavailable.",
+                },
+            }
+        completed, reclaimed = await _cleanup_incomplete_capture_tombstone(row, data_root)
+        return {
+            "schema_version": "incomplete_capture_removal.v1",
+            "item_ref": item_ref,
+            "removal_state": "completed" if completed else "pending_cleanup",
+            "reclaimed_bytes": reclaimed,
+            "impact": {
+                "code": "incomplete_recovery_only",
+                "message": "Only the incomplete recovery artifact is affected.",
+            },
+        }
+    current = {
+        str(item["item_ref"]): item
+        for item in await list_incomplete_capture_items(owner_id, data_root)
+    }.get(item_ref)
+    if current is None:
+        return None
+    run_ref = str(current["run_ref"])
+    run_id = int(run_ref.split(":", 1)[1])
+    await conn.execute(
+        "INSERT INTO incomplete_capture_deletion_tombstones(item_ref, owner_id, run_id, "
+        "artifact_relpath, expected_sha256, expected_size) VALUES(?, ?, ?, ?, ?, ?)",
+        (
+            item_ref, owner_id, run_id, current["_relative_path"],
+            current["_sha256"], current["size_bytes"],
+        ),
+    )
+    await conn.commit()
+    tombstone = await (
+        await conn.execute(
+            "SELECT * FROM incomplete_capture_deletion_tombstones WHERE item_ref=?",
+            (item_ref,),
+        )
+    ).fetchone()
+    completed, reclaimed = await _cleanup_incomplete_capture_tombstone(
+        dict(tombstone), data_root,
+    )
+    return {
+        "schema_version": "incomplete_capture_removal.v1",
+        "item_ref": item_ref,
+        "removal_state": "completed" if completed else "pending_cleanup",
+        "reclaimed_bytes": reclaimed,
+        "impact": {
+            "code": "incomplete_recovery_only",
+            "message": "Only the incomplete recovery artifact is affected.",
+        },
+    }
 
 
 async def reconcile_run_videos(data_root: str | Path) -> dict[str, int]:

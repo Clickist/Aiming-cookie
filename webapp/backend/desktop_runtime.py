@@ -130,13 +130,12 @@ class CaptureExitReleaseTracker:
         stop_event: asyncio.Event,
     ) -> None:
         while not stop_event.is_set():
-            await self.observe(finalizer, finalizer_futures)
             try:
                 await asyncio.wait_for(
                     stop_event.wait(), timeout=CAPTURE_EXIT_STATUS_POLL_SECONDS,
                 )
             except asyncio.TimeoutError:
-                pass
+                await self.observe(finalizer, finalizer_futures)
 
     async def drain(self) -> None:
         if self._task is None:
@@ -297,6 +296,7 @@ def create_kovaak_ingestion_service(
 async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     """Run API and worker until Tauri requests shutdown or either exits."""
     shutdown_requested = stop_event or asyncio.Event()
+    app.state.desktop_shutdown_requested = False
     remove_handlers = _install_shutdown_signal_handlers(shutdown_requested)
     _watch_parent_stdin(shutdown_requested)
     server = create_server(0)
@@ -307,11 +307,7 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     finalizer = create_kovaak_capture_finalizer()
     finalizer_futures = FinalizerFutureTracker()
     capture_exit_releases = CaptureExitReleaseTracker()
-    capture_exit_task = asyncio.create_task(
-        capture_exit_releases.monitor(
-            finalizer, finalizer_futures, shutdown_requested,
-        )
-    )
+    capture_exit_task: asyncio.Task[None] | None = None
     ingestion_service = create_kovaak_ingestion_service(
         asyncio.get_running_loop(), finalizer, finalizer_futures,
     )
@@ -341,6 +337,11 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
             json.dumps({"type": "ready", "port": port}, separators=(",", ":")),
             flush=True,
         )
+        capture_exit_task = asyncio.create_task(
+            capture_exit_releases.monitor(
+                finalizer, finalizer_futures, shutdown_requested,
+            )
+        )
 
         done, _ = await asyncio.wait(
             {server_task, worker_task, stop_task},
@@ -354,26 +355,31 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
             raise RuntimeStartupError("worker exited unexpectedly")
     finally:
         active_error = sys.exc_info()[0] is not None
+        app.state.desktop_shutdown_requested = True
         remove_handlers()
         stop_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await stop_task
-        ingestion_service.stop()
+        if capture_exit_task is not None:
+            capture_exit_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await capture_exit_task
         await capture_exit_releases.drain()
-        capture_exit_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await capture_exit_task
+        ingestion_service.stop()
         worker_stop.set()
         await finalizer_futures.drain()
-        await finalizer.shutdown()
         server.should_exit = True
-        tasks = [server_task]
+        server_results = await asyncio.gather(server_task, return_exceptions=True)
+        await finalizer.shutdown()
+        worker_results: list[object] = []
         if worker_task is not None:
-            tasks.append(worker_task)
-        cleanup_results = await asyncio.gather(*tasks, return_exceptions=True)
+            worker_results = list(
+                await asyncio.gather(worker_task, return_exceptions=True)
+            )
         await db.close_conn()
+        app.state.desktop_shutdown_requested = False
         if not active_error:
-            for result in cleanup_results:
+            for result in [*server_results, *worker_results]:
                 if isinstance(result, BaseException):
                     raise result
 

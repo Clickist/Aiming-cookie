@@ -46,6 +46,17 @@ type TurnOptions = {
   streamFn?: StreamFn;
 };
 
+const activeTurns = new Map<string, { abort: () => void }>();
+const stopRequested = new Set<string>();
+
+export function stopCoachTurn(runId: string): boolean {
+  const active = activeTurns.get(runId);
+  if (!active) return false;
+  stopRequested.add(runId);
+  active.abort();
+  return true;
+}
+
 function parseMessages(raw: unknown): CoachRuntimeMessage[] {
   if (!Array.isArray(raw)) {
     throw new Error("messages must be an array");
@@ -175,6 +186,22 @@ function extractAssistantReply(messages: unknown[]): string {
   throw new Error("No assistant reply in agent transcript");
 }
 
+function extractAssistantPartial(messages: unknown[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message) || message.role !== "assistant") continue;
+    const content = message.content;
+    if (!Array.isArray(content)) continue;
+    const text = content
+      .filter((block) => isRecord(block) && block.type === "text" && typeof block.text === "string")
+      .map((block) => (block as { text: string }).text)
+      .join("")
+      .trim();
+    if (text.length > 0) return text;
+  }
+  return null;
+}
+
 function responseSchemaFor(rawRequest: unknown): CoachRuntimeTurnSchema {
   return isRecord(rawRequest) && rawRequest.schema_version === COACH_RUNTIME_TURN_SCHEMA_V0
     ? COACH_RUNTIME_TURN_SCHEMA_V0
@@ -210,14 +237,17 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
   const secrets = [...extractRuntimeSecrets(rawRequest), ...extractBridgeSecrets(rawRequest)];
   let agent: {
     prompt: (input: unknown) => Promise<void>;
+    abort: () => void;
     state: { messages: unknown[]; tools: Array<{ name: string }> };
   } | null = null;
+  let activeRunId: string | null = null;
   try {
     const request = parseRequest(rawRequest);
     const resolved = await resolveProviderModel(request.model);
     const { Agent } = (await loadPiAgent()) as {
       Agent: new (opts: Record<string, unknown>) => {
         prompt: (input: unknown) => Promise<void>;
+        abort: () => void;
         state: { messages: unknown[]; tools: Array<{ name: string }> };
       };
     };
@@ -240,21 +270,52 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       },
     });
 
+    if (activeTurns.has(request.run_id)) {
+      throw new Error("Duplicate active Coach run id");
+    }
+    activeRunId = request.run_id;
+    activeTurns.set(request.run_id, { abort: () => agent?.abort() });
+
     await agent.prompt(prompt);
+    if (stopRequested.has(request.run_id)) {
+      return failureResponse(
+        makeError({
+          category: "coach_runtime",
+          code: "stopped",
+          message: "Coach generation stopped",
+          retryable: true,
+        }),
+        [],
+        request.schema_version,
+        collectToolEvents(agent.state.messages),
+        redactRuntimeSecrets(extractAssistantPartial(agent.state.messages) ?? "", secrets) || null,
+      );
+    }
     const reply = redactRuntimeSecrets(extractAssistantReply(agent.state.messages), secrets);
     return successResponse(reply, [], request.schema_version, collectToolEvents(agent.state.messages));
   } catch (error) {
+    const stopped = activeRunId !== null && stopRequested.has(activeRunId);
     return failureResponse(
       makeError({
         category: "coach_runtime",
-        code: errorCode(error),
-        message: redactRuntimeSecrets(error instanceof Error ? error.message : String(error), secrets),
-        retryable: false,
+        code: stopped ? "stopped" : errorCode(error),
+        message: stopped
+          ? "Coach generation stopped"
+          : redactRuntimeSecrets(error instanceof Error ? error.message : String(error), secrets),
+        retryable: stopped,
       }),
       [],
       responseSchema,
       agent === null ? [] : collectToolEvents(agent.state.messages),
+      agent === null
+        ? null
+        : redactRuntimeSecrets(extractAssistantPartial(agent.state.messages) ?? "", secrets) || null,
     );
+  } finally {
+    if (activeRunId !== null) {
+      activeTurns.delete(activeRunId);
+      stopRequested.delete(activeRunId);
+    }
   }
 }
 

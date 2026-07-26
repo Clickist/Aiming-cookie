@@ -674,6 +674,8 @@ async def test_requeue_failed_session_for_retry(tmp_path):
         worker_id=TEST_WORKER,
     )
     s = await queue.requeue_for_retry(sid)
+    retry_id = s["id"]
+    assert retry_id != sid
     assert s["status"] == "queued"
     assert s["attempts"] == 0
     assert s["error"] is None
@@ -684,11 +686,156 @@ async def test_requeue_failed_session_for_retry(tmp_path):
     assert ei.value.code == "invalid_status"
 
     await queue.claim_next(TEST_WORKER)
-    await queue.mark_failed(sid, "x", worker_id=TEST_WORKER)
-    video.unlink()
+    await queue.mark_failed(retry_id, "x", worker_id=TEST_WORKER)
+    Path(s["video_path"]).unlink()
     with pytest.raises(queue.RetryNotAllowed) as ei2:
-        await queue.requeue_for_retry(sid)
+        await queue.requeue_for_retry(retry_id)
     assert ei2.value.code == "missing_video"
+
+
+@pytest.mark.asyncio
+async def test_retry_insert_failure_preserves_original_error(tmp_path):
+    video = tmp_path / "v.mp4"
+    csv = tmp_path / "s.csv"
+    video.write_bytes(b"video")
+    csv.write_text("a,b\n")
+    sid = await queue.enqueue("u1", str(video), str(csv))
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_failed(sid, "original failure", worker_id=TEST_WORKER)
+    original_before = await queue.get_session(sid)
+
+    conn = await db.get_conn()
+    await conn.execute(
+        """
+        CREATE TRIGGER inject_retry_insert_failure
+        BEFORE INSERT ON sessions
+        WHEN NEW.parent_session_id IS NOT NULL
+        BEGIN
+            SELECT RAISE(ABORT, 'injected retry insert failure');
+        END
+        """
+    )
+    await conn.commit()
+
+    with pytest.raises(aiosqlite.IntegrityError, match="injected retry insert failure"):
+        await queue.requeue_for_retry(sid)
+
+    original = await queue.get_session(sid)
+    assert original is not None
+    assert original["status"] == "failed"
+    assert original["error"] == original_before["error"]
+    row = await (
+        await conn.execute("SELECT COUNT(*) AS count FROM sessions")
+    ).fetchone()
+    assert row["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_copy_failure_rolls_back_and_cleans_workspace(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    video = tmp_path / "v.mp4"
+    csv = tmp_path / "s.csv"
+    video.write_bytes(b"video")
+    csv.write_text("a,b\n")
+    sid = await queue.enqueue("u1", str(video), str(csv))
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_failed(sid, "original failure", worker_id=TEST_WORKER)
+    original_before = await queue.get_session(sid)
+    touched_workspaces: list[Path] = []
+
+    def interrupted_copy(source: Path, destination: Path) -> int:
+        del source
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"partial")
+        touched_workspaces.append(destination.parent)
+        raise OSError("injected retry copy failure")
+
+    monkeypatch.setattr(queue, "copy_path_to_path", interrupted_copy)
+
+    with pytest.raises(OSError, match="injected retry copy failure"):
+        await queue.requeue_for_retry(sid)
+
+    original = await queue.get_session(sid)
+    assert original is not None
+    assert original["status"] == "failed"
+    assert original["error"] == original_before["error"]
+    conn = await db.get_conn()
+    row = await (
+        await conn.execute("SELECT COUNT(*) AS count FROM sessions")
+    ).fetchone()
+    assert row["count"] == 1
+    assert len(touched_workspaces) == 1
+    assert not touched_workspaces[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_retries_preserve_single_active_analysis_per_owner(tmp_path):
+    failed_ids = []
+    for index in range(2):
+        video = tmp_path / f"v{index}.mp4"
+        csv = tmp_path / f"s{index}.csv"
+        video.write_bytes(b"video")
+        csv.write_text("a,b\n")
+        failed_ids.append(await queue.enqueue("u1", str(video), str(csv)))
+        claimed = await queue.claim_next(f"worker-{index}")
+        assert claimed is not None
+        await queue.mark_failed(
+            claimed["id"], "original failure", worker_id=f"worker-{index}",
+        )
+
+    results = await asyncio.gather(
+        *(queue.requeue_for_retry(session_id) for session_id in failed_ids),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, dict) for result in results) == 1
+    failures = [result for result in results if isinstance(result, queue.RetryNotAllowed)]
+    assert len(failures) == 1
+    assert failures[0].code == "active_analysis"
+    active = await queue.get_active_session("u1")
+    assert active is not None
+
+
+@pytest.mark.asyncio
+async def test_retry_process_crash_is_recoverable_as_stale_upload(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    video = tmp_path / "v.mp4"
+    csv = tmp_path / "s.csv"
+    video.write_bytes(b"video")
+    csv.write_text("a,b\n")
+    sid = await queue.enqueue("u1", str(video), str(csv))
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_failed(sid, "original failure", worker_id=TEST_WORKER)
+    touched_workspaces: list[Path] = []
+
+    def crash_during_copy(source: Path, destination: Path) -> int:
+        del source
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"partial")
+        touched_workspaces.append(destination.parent)
+        raise _InjectedProcessCrash()
+
+    monkeypatch.setattr(queue, "copy_path_to_path", crash_during_copy)
+
+    with pytest.raises(_InjectedProcessCrash):
+        await queue.requeue_for_retry(sid)
+
+    conn = await db.get_conn()
+    if conn.in_transaction:
+        await conn.rollback()
+    summary = await queue.reconcile_stale_uploads()
+    assert summary["cleaned"] == 1
+    assert len(touched_workspaces) == 1
+    assert not touched_workspaces[0].exists()
+    original = await queue.get_session(sid)
+    assert original is not None
+    assert original["status"] == "failed"
 
 
 @pytest.mark.asyncio

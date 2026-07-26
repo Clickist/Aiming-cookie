@@ -811,7 +811,11 @@ def visual_replay_capability(session: dict) -> dict[str, object]:
         "seekable": False,
         "endpoint": None,
         "artifact_ref": artifact_ref,
-        "reason": "visual_replay_unavailable",
+        "reason": (
+            "run_owned_video_unavailable"
+            if session.get("kovaak_run_id") is not None
+            else "managed_video_unavailable"
+        ),
     }
 
 
@@ -907,6 +911,12 @@ async def analysis_history_detail(session: dict) -> dict[str, object]:
     result_analysis_ref = result.get("analysis_id")
     if isinstance(result_analysis_ref, str) and result_analysis_ref == analysis_ref:
         analysis_ref = result_analysis_ref
+    visual_replay = visual_replay_capability(session)
+    evidence_refs = evidence_references(result, analysis_ref)
+    if visual_replay["kind"] == "unavailable":
+        for reference in evidence_refs:
+            if reference.get("source") == "mp4":
+                reference["availability"] = "unavailable"
     return {
         "analysis_ref": analysis_ref,
         "run_ref": f"run:{run_id}" if run_id is not None else None,
@@ -919,12 +929,12 @@ async def analysis_history_detail(session: dict) -> dict[str, object]:
             alignment_status=alignment.get("status"),
             coverage=evidence.get("coverage"),
         ),
-        "visual_replay": visual_replay_capability(session),
+        "visual_replay": visual_replay,
         "diagnosis_locator": {
             "analysis_ref": analysis_ref,
             "section": "diagnosis",
         },
-        "evidence_refs": evidence_references(result, analysis_ref),
+        "evidence_refs": evidence_refs,
     }
 
 

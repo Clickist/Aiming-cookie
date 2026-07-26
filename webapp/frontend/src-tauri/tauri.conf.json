@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost",
+      "csp": "connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost aiming-cookie-media: http://aiming-cookie-media.localhost",
       "assetProtocol": {
         "enable": true,
         "scope": [

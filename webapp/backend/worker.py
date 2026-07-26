@@ -27,6 +27,7 @@ from .contracts import (
     build_error_v1,
     validate_scenario_resolution_v1,
 )
+from .read_models import resolve_calibration_v1
 
 log = logging.getLogger(__name__)
 
@@ -878,7 +879,8 @@ async def _heartbeat_loop(session_id: int, stop: asyncio.Event) -> None:
 def run_analysis(
     video_path: str, csv_path: str,
     cm_per_360: float | None = None, fov: float | None = None,
-    *, stats=None,
+    *, stats=None, profile_default: Mapping[str, object] | None = None,
+    manual_override: Mapping[str, object] | None = None,
 ) -> tuple[dict, dict]:
     """调 kovaak_tracker.analyze_flicking_fair_summary,返回 (summary, extras)。
 
@@ -891,13 +893,22 @@ def run_analysis(
     from kovaak_tracker.pan_tracker import analyze_flicking_fair_summary
 
     # CSV fallback(若 caller 没传):从 KovaaK CSV config 块读真实值
-    if stats is None and (cm_per_360 is None or fov is None):
+    if stats is None:
         stats = parse_stats_csv(csv_path)
-    if stats is not None:
-        if cm_per_360 is None:
-            cm_per_360 = stats.cm_per_360
-        if fov is None:
-            fov = stats.fov
+    stats_values = {
+        "cm_per_360": getattr(stats, "cm_per_360", None) if stats is not None else None,
+        "fov": getattr(stats, "fov", None) if stats is not None else None,
+    }
+    manual_override = _manual_override_or_legacy(
+        manual_override, cm_per_360=cm_per_360, fov=fov,
+    )
+    calibration = resolve_calibration_v1(
+        stats=stats_values,
+        manual_override=manual_override,
+        profile_default=profile_default,
+    )
+    cm_per_360 = calibration["cm_per_360"]["value"]
+    fov = calibration["fov"]["value"]
 
     summary, extras = analyze_flicking_fair_summary(
         video_path,
@@ -907,6 +918,8 @@ def run_analysis(
         stats=stats,
         return_extras=True,
     )
+    if isinstance(extras, dict):
+        extras["calibration"] = calibration
     return summary, extras
 
 
@@ -1011,6 +1024,8 @@ def run_native_analysis(
     fov: float | None = None,
     *,
     return_parsed_stats: bool = False,
+    profile_default: Mapping[str, object] | None = None,
+    manual_override: Mapping[str, object] | None = None,
 ):
     """Load a frozen Run snapshot and invoke the native flicking adapter."""
     from .kovaak_run_store import decode_mouse_snapshot_bytes
@@ -1039,12 +1054,21 @@ def run_native_analysis(
     )
     trace_bytes = _read_frozen_source_bytes("raw_input", trace)
     parsed_stats = parse_stats_bytes(stats_bytes, file_name=Path(stats_path).name)
+    manual_override = _manual_override_or_legacy(
+        manual_override, cm_per_360=cm_per_360, fov=fov,
+    )
+    calibration = resolve_calibration_v1(
+        stats={"cm_per_360": parsed_stats.cm_per_360, "fov": parsed_stats.fov},
+        manual_override=manual_override,
+        profile_default=profile_default,
+    )
     stats = {
         "summary": dict(parsed_stats.summary),
         "config": dict(parsed_stats.config),
         "scenario": parsed_stats.scenario,
-        "cm_per_360": cm_per_360 if cm_per_360 is not None else parsed_stats.cm_per_360,
-        "fov": fov if fov is not None else parsed_stats.fov,
+        "cm_per_360": calibration["cm_per_360"]["value"],
+        "fov": calibration["fov"]["value"],
+        "calibration": calibration,
         "kill_count": int(len(parsed_stats.kills.index))
         if hasattr(parsed_stats, "kills")
         else None,
@@ -1063,7 +1087,47 @@ def run_native_analysis(
         stats=stats,
         canonical_window=canonical_window,
     )
+    if isinstance(result, dict):
+        result["calibration"] = calibration
     return (result, parsed_stats) if return_parsed_stats else result
+
+
+def _manual_override_or_legacy(
+    manual_override: Mapping[str, object] | None,
+    *,
+    cm_per_360: float | None,
+    fov: float | None,
+) -> Mapping[str, object] | None:
+    """Treat pre-contract flat values as manual input only when override is absent."""
+    if isinstance(manual_override, Mapping):
+        return manual_override
+    if cm_per_360 is None and fov is None:
+        return None
+    return {"cm_per_360": cm_per_360, "fov": fov}
+
+
+def _freeze_job_calibration(job: dict, parsed_stats: object) -> dict:
+    request = job.get("calibration_request")
+    manual = request.get("manual_override") if isinstance(request, Mapping) else None
+    profile = request.get("profile_default") if isinstance(request, Mapping) else None
+    manual = _manual_override_or_legacy(
+        manual,
+        cm_per_360=job.get("cm_per_360"),
+        fov=job.get("fov"),
+    )
+    calibration = resolve_calibration_v1(
+        stats={
+            "cm_per_360": getattr(parsed_stats, "cm_per_360", None),
+            "fov": getattr(parsed_stats, "fov", None),
+        },
+        manual_override=manual,
+        profile_default=profile,
+    )
+    snapshot = job.get("input_snapshot")
+    if isinstance(snapshot, dict):
+        snapshot["calibration"] = calibration
+    job["calibration_snapshot"] = calibration
+    return calibration
 
 
 def _parse_frozen_stats_for_visual(snapshot: Mapping[str, object]):
@@ -2649,6 +2713,9 @@ def _build_native_result_v2(
     if visual_validation is not None:
         deterministic["visual_validation"] = visual_validation
     public_snapshot = public_analysis_input_snapshot(snapshot)
+    calibration = native_result.get("calibration")
+    if isinstance(calibration, Mapping):
+        public_snapshot["calibration"] = dict(calibration)
     if input_mode == "input_native":
         public_snapshot.get("sources", {}).pop("video", None)
     elif video_availability is not None:
@@ -2807,10 +2874,9 @@ def _build_video_fallback_result_v2(
     })
     public_snapshot["sources"]["video"] = video_source
     public_snapshot["trace"] = None
-    public_snapshot["calibration"] = {
-        "cm_per_360": job.get("cm_per_360"),
-        "fov": job.get("fov"),
-    }
+    calibration = job.get("calibration_snapshot")
+    if isinstance(calibration, Mapping):
+        public_snapshot["calibration"] = dict(calibration)
     stats_availability = (
         "available"
         if stats_source and stats_source.get("availability") == "available"
@@ -2955,9 +3021,24 @@ async def process_one() -> bool:
             job,
             input_mode,
         )
+        calibration_request = job.get("calibration_request")
+        profile_default = (
+            calibration_request.get("profile_default")
+            if isinstance(calibration_request, Mapping) else None
+        )
+        manual_override = (
+            calibration_request.get("manual_override")
+            if isinstance(calibration_request, Mapping) else None
+        )
+        await queue.set_task_phase(sid, "aligning_input_events", worker_id=WORKER_ID)
 
         scenario_dispatch = _scenario_dispatch(job, input_mode)
         if scenario_dispatch == "outcome_only":
+            frozen_stats = await asyncio.to_thread(
+                _parse_frozen_stats_for_visual,
+                job.get("input_snapshot") or {},
+            )
+            _freeze_job_calibration(job, frozen_stats)
             result = _build_outcome_only_result_v2(
                 job,
                 created_at=created_at_iso,
@@ -2965,11 +3046,13 @@ async def process_one() -> bool:
             )
             cost = 0.0
         elif scenario_dispatch == DYNAMIC_CLICKING_ANALYSIS_VERSION:
+            await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
             snapshot = job.get("input_snapshot") or {}
             frozen_stats = await asyncio.to_thread(
                 _parse_frozen_stats_for_visual,
                 snapshot,
             )
+            _freeze_job_calibration(job, frozen_stats)
             try:
                 visual_result = await asyncio.to_thread(
                     run_visual_preprocessing,
@@ -3094,11 +3177,13 @@ async def process_one() -> bool:
                                 )
             cost = 0.0
         elif scenario_dispatch == CONTINUOUS_TRACKING_ANALYSIS_VERSION:
+            await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
             snapshot = job.get("input_snapshot") or {}
             frozen_stats = await asyncio.to_thread(
                 _parse_frozen_stats_for_visual,
                 snapshot,
             )
+            _freeze_job_calibration(job, frozen_stats)
             try:
                 visual_result = await asyncio.to_thread(
                     run_visual_preprocessing,
@@ -3208,11 +3293,13 @@ async def process_one() -> bool:
                                 )
             cost = 0.0
         elif scenario_dispatch == TARGET_SWITCHING_ANALYSIS_VERSION:
+            await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
             snapshot = job.get("input_snapshot") or {}
             frozen_stats = await asyncio.to_thread(
                 _parse_frozen_stats_for_visual,
                 snapshot,
             )
+            _freeze_job_calibration(job, frozen_stats)
             try:
                 visual_result = await asyncio.to_thread(
                     run_visual_preprocessing,
@@ -3343,6 +3430,7 @@ async def process_one() -> bool:
                                 )
             cost = 0.0
         elif input_mode in {"input_native", "multimodal"}:
+            await queue.set_task_phase(sid, "computing_kinematics", worker_id=WORKER_ID)
             if input_mode == "multimodal":
                 native_result, frozen_stats = await asyncio.to_thread(
                     run_native_analysis,
@@ -3350,6 +3438,8 @@ async def process_one() -> bool:
                     job.get("cm_per_360"),
                     job.get("fov"),
                     return_parsed_stats=True,
+                    profile_default=profile_default,
+                    manual_override=manual_override,
                 )
             else:
                 native_result = await asyncio.to_thread(
@@ -3357,12 +3447,22 @@ async def process_one() -> bool:
                     job.get("input_snapshot") or {},
                     job.get("cm_per_360"),
                     job.get("fov"),
+                    profile_default=profile_default,
+                    manual_override=manual_override,
                 )
                 frozen_stats = None
+            if isinstance(native_result, Mapping) and isinstance(
+                native_result.get("calibration"), Mapping
+            ):
+                job["calibration_snapshot"] = dict(native_result["calibration"])
+                snapshot = job.get("input_snapshot")
+                if isinstance(snapshot, dict):
+                    snapshot["calibration"] = dict(native_result["calibration"])
             video_availability = None
             warnings: list[dict] = []
             visual_validation = None
             if input_mode == "multimodal":
+                await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
                 snapshot = job.get("input_snapshot") or {}
                 if snapshot.get("schema_version") in {
                     "analysis_input_snapshot.v2", "analysis_input_snapshot.v3",
@@ -3438,6 +3538,7 @@ async def process_one() -> bool:
             )
             cost = 0.0
         else:
+            await queue.set_task_phase(sid, "computing_kinematics", worker_id=WORKER_ID)
             try:
                 summary, extras = await asyncio.to_thread(
                     run_analysis,
@@ -3445,7 +3546,26 @@ async def process_one() -> bool:
                     job["csv_path"],
                     job.get("cm_per_360"),
                     job.get("fov"),
+                    profile_default=profile_default,
+                    manual_override=manual_override,
                 )
+                if isinstance(extras, Mapping) and isinstance(
+                    extras.get("calibration"), Mapping
+                ):
+                    job["calibration_snapshot"] = dict(extras["calibration"])
+                    snapshot = job.get("input_snapshot")
+                    if isinstance(snapshot, dict):
+                        snapshot["calibration"] = dict(extras["calibration"])
+                else:
+                    job["calibration_snapshot"] = resolve_calibration_v1(
+                        stats=None,
+                        manual_override=_manual_override_or_legacy(
+                            manual_override,
+                            cm_per_360=job.get("cm_per_360"),
+                            fov=job.get("fov"),
+                        ),
+                        profile_default=profile_default,
+                    )
             except Exception as error:
                 await asyncio.to_thread(
                     _assert_managed_video_matches_snapshot,
@@ -3523,6 +3643,7 @@ async def process_one() -> bool:
             job,
             input_mode,
         )
+        await queue.set_task_phase(sid, "generating_diagnostics", worker_id=WORKER_ID)
         result = await asyncio.to_thread(
             _maybe_commit_analysis_evidence,
             job,
@@ -3557,6 +3678,7 @@ async def process_one() -> bool:
             retryable=False,
             trace_id=None,
         )
+        await queue.set_failure_domain(sid, "source_file")
         if not await queue.mark_failed(sid, error_v1, worker_id=WORKER_ID):
             log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)
     except Exception:
@@ -3569,6 +3691,8 @@ async def process_one() -> bool:
             retryable=True,
             trace_id=trace_id,
         )
+        domain = "video" if input_mode == "multimodal" else "kinematics"
+        await queue.set_failure_domain(sid, domain)
         if not await queue.mark_failed(sid, error_v1, worker_id=WORKER_ID):
             log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)
         # 不删输入文件：支持用户 retry；与「用户自己删」产品决定一致。
