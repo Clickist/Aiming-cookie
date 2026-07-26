@@ -314,13 +314,26 @@ async def _create_confirmation(
 ) -> dict[str, Any]:
     confirmation_ref = f"confirmation:{uuid.uuid4().hex}"
     digest = _idempotency_digest(command_name, dict(parameters))
+    context = _audit_context.get()
     stored = await coach_store.create_command_confirmation(
         owner_id,
         command_name,
         digest,
         risk,
         _safe_parameter_summary(parameters),
+        parameters,
         confirmation_ref,
+        idempotency_key=(
+            context.get("idempotency_key")
+            if isinstance(context.get("idempotency_key"), str)
+            else None
+        ),
+        thread_id=(context.get("thread_id") if isinstance(context.get("thread_id"), int) else None),
+        user_message_ref=(
+            context.get("user_message_ref")
+            if isinstance(context.get("user_message_ref"), str)
+            else None
+        ),
     )
     return {**stored, "parameters_digest": digest}
 
@@ -536,6 +549,33 @@ def _matches_frozen_copy(
     return path.stat().st_size == expected_size and digest.hexdigest() == expected_sha
 
 
+def _matches_frozen_hard_link(
+    path: Path,
+    source: Path,
+    fingerprint: object,
+) -> bool:
+    if not isinstance(fingerprint, Mapping):
+        return False
+    expected_sha = fingerprint.get("sha256")
+    expected_size = fingerprint.get("size")
+    if (
+        not isinstance(expected_sha, str)
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+    ):
+        return False
+    try:
+        if path.is_symlink() or not path.is_file() or not path.samefile(source):
+            return False
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return path.stat().st_size == expected_size and digest.hexdigest() == expected_sha
+    except OSError:
+        return False
+
+
 def _freeze_video_source(path: Path) -> dict[str, object]:
     try:
         digest = hashlib.sha256()
@@ -711,6 +751,8 @@ async def create_analysis_from_run(
     input_mode: Literal["input_native", "multimodal", "video_fallback"] | None = "input_native",
     cm_per_360: float | None = None,
     fov: float | None = None,
+    profile_default: Mapping[str, object] | None = None,
+    manual_override: Mapping[str, object] | None = None,
     managed_video_source: Path | None = None,
     managed_video_fingerprint: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
@@ -812,6 +854,8 @@ async def create_analysis_from_run(
         "",
         cm_per_360=cm_per_360,
         fov=fov,
+        profile_default=dict(profile_default) if isinstance(profile_default, Mapping) else None,
+        manual_override=dict(manual_override) if isinstance(manual_override, Mapping) else None,
         analysis_type=_analysis_type_for_snapshot(snapshot),
         input_mode=input_mode,
         kovaak_run_id=run_id,
@@ -854,7 +898,20 @@ async def create_analysis_from_run(
         elif run_video_source is not None and input_mode in {
             "multimodal", "video_fallback",
         }:
-            managed_video = str(run_video_source.resolve())
+            video_destination = workspace / "video.mp4"
+            workspace.mkdir(parents=True, exist_ok=True)
+            os.link(run_video_source, video_destination)
+            if not _matches_frozen_hard_link(
+                video_destination,
+                run_video_source,
+                run_video_fingerprint,
+            ):
+                raise ProductCommandError(
+                    "source_unavailable",
+                    "Run video revision changed before managed link",
+                    kind="unavailable",
+                )
+            managed_video = str(video_destination)
         if input_mode == "video_fallback":
             stats_source = snapshot["sources"].get("stats")
             if not isinstance(stats_source, Mapping):
@@ -910,7 +967,9 @@ async def retry_analysis(owner_id: str, analysis_id: int, *, thread_id: int | No
     try:
         updated = await queue.requeue_for_retry(analysis_id)
     except queue.RetryNotAllowed as exc:
-        kind = "unavailable" if exc.code in {"not_found", "missing_video", "missing_csv", "missing_snapshot"} else "failed"
+        kind = "unavailable" if exc.code in {
+            "active_analysis", "not_found", "missing_video", "missing_csv", "missing_snapshot",
+        } else "failed"
         raise ProductCommandError(exc.code, exc.message, kind=kind) from exc
     return _safe_analysis(updated)
 
@@ -1180,8 +1239,10 @@ async def execute_trusted_analysis_create(
     input_mode: Literal["input_native", "multimodal", "video_fallback"] | None,
     cm_per_360: float | None,
     fov: float | None,
-    managed_video_source: Path | None,
-    idempotency_key: str | None,
+    profile_default: Mapping[str, object] | None = None,
+    manual_override: Mapping[str, object] | None = None,
+    managed_video_source: Path | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Execute the validated desktop Analysis write through the shared journal."""
     command_name = "analysis.create_from_run"
@@ -1215,6 +1276,8 @@ async def execute_trusted_analysis_create(
         "input_mode": input_mode,
         "cm_per_360": cm_per_360,
         "fov": fov,
+        "profile_default": dict(profile_default) if isinstance(profile_default, Mapping) else None,
+        "manual_override": dict(manual_override) if isinstance(manual_override, Mapping) else None,
         "video_source_identity": source_identity,
     }
     token = _audit_context.set({
@@ -1248,6 +1311,8 @@ async def execute_trusted_analysis_create(
                     "input_mode": input_mode,
                     "cm_per_360": cm_per_360,
                     "fov": fov,
+                    "profile_default": dict(profile_default) if isinstance(profile_default, Mapping) else None,
+                    "manual_override": dict(manual_override) if isinstance(manual_override, Mapping) else None,
                     "managed_video_source": managed_video_source,
                     "managed_video_fingerprint": video_fingerprint,
                 },
@@ -1461,7 +1526,12 @@ async def _execute_product_command_inner(
         elif command_name == "analysis.retry":
             analysis_id, ref = _parse_ref(parameters.get("analysis_ref"), "analysis")
             retried = await retry_analysis(owner_id, analysis_id, thread_id=thread_id)
-            result = _result(command_id, "succeeded", result_ref=ref, result=retried)
+            result = _result(
+                command_id,
+                "succeeded",
+                result_ref=retried.get("analysis_ref") or ref,
+                result=retried,
+            )
         elif command_name in _EXPLICIT_USER_FACT_COMMANDS:
             fact, fact_ref = await _execute_training_plan_fact(
                 owner_id, command_name, parameters,

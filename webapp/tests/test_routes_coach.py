@@ -371,13 +371,15 @@ async def test_evidence_segment_route_returns_only_bounded_seek_contract(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_video_404_when_file_absent():
-    """video_path 指向不存在的文件 → 404。"""
+async def test_video_returns_versioned_unavailable_when_file_absent():
+    """A missing managed video is an unavailable capability, not an empty route."""
     sid = await _seed_done_session(video_path="/definitely/not/here.mp4")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "u1"}) as client:
         resp = await client.get(f"/api/sessions/{sid}/video")
-    assert resp.status_code == 404
-    assert "不存在" in resp.json()["detail"]
+    assert resp.status_code == 410
+    assert resp.json()["schema_version"] == "managed_video_unavailable.v1"
+    assert resp.json()["availability"] == "unavailable"
+    assert "/definitely/not/here.mp4" not in resp.text
 
 
 @pytest.mark.asyncio
@@ -416,7 +418,7 @@ async def test_video_404_when_unversioned_legacy_path_is_outside_managed_workspa
     ) as client:
         response = await client.get(f"/api/sessions/{sid}/video")
 
-    assert response.status_code == 404
+    assert response.status_code == 410
     assert b"EXTERNAL_VIDEO_MUST_NOT_BE_READ" not in response.content
 
 
@@ -886,16 +888,16 @@ async def test_coach_runtime_pi_uses_run_pi_coach_turn(monkeypatch):
     pi_calls: list[dict] = []
     chat_calls: list[int] = []
 
-    def fake_pi(**kwargs):
+    async def fake_pi(**kwargs):
         pi_calls.append(kwargs)
-        return "pi 教练回复"
+        return coach_runtime_mod.PiCoachTurnResult("pi 教练回复", [], [])
 
     def fake_chat(diagnosis, messages, backend, **kwargs):
         chat_calls.append(1)
         return "不应调用"
 
     monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
-    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn_async", fake_pi)
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
     monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
 
@@ -948,7 +950,7 @@ async def test_coach_runtime_pi_failure_fallback_python(monkeypatch):
 
     await _seed_default_provider()
 
-    def fake_pi(**kwargs):
+    async def fake_pi(**kwargs):
         raise CoachRuntimeError("mock pi down")
 
     def fake_chat(diagnosis, messages, backend, **kwargs):
@@ -956,7 +958,7 @@ async def test_coach_runtime_pi_failure_fallback_python(monkeypatch):
 
     monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
     monkeypatch.setattr(config_mod, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
-    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn_async", fake_pi)
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
     monkeypatch.setattr(coach_engine_mod, "load_backend_for_profile", lambda profile: object())
 
@@ -985,7 +987,7 @@ async def test_coach_runtime_pi_failure_no_fallback(monkeypatch):
 
     chat_calls: list[int] = []
 
-    def fake_pi(**kwargs):
+    async def fake_pi(**kwargs):
         raise CoachRuntimeError("mock pi down")
 
     def fake_chat(diagnosis, messages, backend, **kwargs):
@@ -994,7 +996,7 @@ async def test_coach_runtime_pi_failure_no_fallback(monkeypatch):
 
     monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
     monkeypatch.setattr(config_mod, "COACH_RUNTIME_FALLBACK_PYTHON", "0")
-    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn_async", fake_pi)
     monkeypatch.setattr(agent_mod, "chat_with_coach", fake_chat)
     monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
 
@@ -1019,12 +1021,12 @@ async def test_coach_runtime_pi_failure_no_fallback(monkeypatch):
 async def test_coach_runtime_pi_without_default_profile_is_recoverably_unconfigured(monkeypatch):
     pi_calls: list[dict] = []
 
-    def fake_pi(**kwargs):
+    async def fake_pi(**kwargs):
         pi_calls.append(kwargs)
-        return "must not run"
+        return coach_runtime_mod.PiCoachTurnResult("must not run", [], [])
 
     monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
-    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn_async", fake_pi)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
@@ -1046,12 +1048,12 @@ async def test_coach_runtime_pi_without_default_profile_is_recoverably_unconfigu
 async def test_selected_profile_secret_does_not_enter_coach_messages_or_context(monkeypatch):
     await _seed_default_provider("secret-user")
 
-    def fake_pi(**kwargs):
-        assert kwargs["profile"]["api_key"] == "selected-secret-key"
-        return "安全回复"
+    async def fake_pi(**kwargs):
+        assert kwargs["profile"]["credential"]["key"] == "selected-secret-key"
+        return coach_runtime_mod.PiCoachTurnResult("安全回复", [], [])
 
     monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
-    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn", fake_pi)
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn_async", fake_pi)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",

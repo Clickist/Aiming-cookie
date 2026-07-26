@@ -1,6 +1,7 @@
 """Client for the local Pi coach sidecar and its provider catalog."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -43,10 +44,18 @@ class CoachRuntimeError(RuntimeError):
         *,
         tool_events: Sequence[Mapping[str, Any]] = (),
         side_effects_possible: bool = False,
+        error_category: str = "coach_runtime",
+        error_code: str = "runtime_failed",
+        retryable: bool = True,
+        partial_reply: str | None = None,
     ) -> None:
         super().__init__(message)
         self.tool_events = [dict(event) for event in tool_events]
         self.side_effects_possible = side_effects_possible
+        self.error_category = error_category
+        self.error_code = error_code
+        self.retryable = retryable
+        self.partial_reply = partial_reply
 
 
 class ProviderUnconfiguredError(CoachRuntimeError):
@@ -234,6 +243,23 @@ def _canonical_analysis_summary(analysis_summary: str | None) -> str | None:
     if not isinstance(parsed, Mapping):
         return None
 
+    from .coach_context_refs import (
+        CONTEXT_BUNDLE_SCHEMA_VERSION,
+        coerce_context_bundle,
+    )
+
+    if parsed.get("schema_version") == CONTEXT_BUNDLE_SCHEMA_VERSION:
+        bundle = coerce_context_bundle(parsed)
+        if bundle is None:
+            return None
+        return json.dumps(
+            bundle,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
     from .coach_context import (
         COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
         COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
@@ -263,6 +289,7 @@ def _build_turn_request(
     analysis_summary: str | None,
     system_prompt: str | None,
     tool_bridge: Mapping[str, Any] | None = None,
+    run_id: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     normalized_messages: list[dict[str, str]] = []
     for m in messages:
@@ -280,7 +307,7 @@ def _build_turn_request(
     effective_user_id = user_id.strip() if isinstance(user_id, str) and user_id.strip() else _DEFAULT_USER_ID
     payload: dict[str, Any] = {
         "schema_version": schema_version,
-        "run_id": str(uuid.uuid4()),
+        "run_id": run_id or str(uuid.uuid4()),
         "user_id": effective_user_id,
         "messages": normalized_messages,
         "analysis_summary": _canonical_analysis_summary(analysis_summary),
@@ -302,7 +329,7 @@ _TOOL_EVENT_KEYS = {
     },
     "product_command": {
         "type", "command_id", "command_name", "status", "result_ref",
-        "audit_ref", "ui_event", "warning_or_error",
+        "audit_ref", "ui_event", "warning_or_error", "confirmation",
     },
 }
 _FORBIDDEN_EVENT_KEYS = {
@@ -534,6 +561,41 @@ def _validate_safe_ui_event(value: object) -> dict[str, Any] | None:
     return dict(value)
 
 
+def _validate_confirmation_event(value: object) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema_version", "confirmation_ref", "action", "target_ref", "status",
+        "impact", "audit_ref", "audit_state", "execution", "created_at", "decided_at",
+    }:
+        raise CoachRuntimeError("unsafe tool event confirmation")
+    impact = value.get("impact")
+    if (
+        value.get("schema_version") != "coach_confirmation.v1"
+        or value.get("action") != "coach_side_effect"
+        or value.get("status") != "pending"
+        or not isinstance(value.get("confirmation_ref"), str)
+        or not str(value["confirmation_ref"]).startswith("confirmation:")
+        or not isinstance(value.get("target_ref"), str)
+        or not isinstance(impact, Mapping)
+        or set(impact) != {"code", "message"}
+        or value.get("audit_ref") is not None
+        or value.get("audit_state") is not None
+        or value.get("execution") is not None
+        or value.get("decided_at") is not None
+    ):
+        raise CoachRuntimeError("unsafe tool event confirmation")
+    if not all(
+        _safe_tool_scalar(field)
+        for field in (
+            value["confirmation_ref"], value["target_ref"], value.get("created_at"),
+            impact.get("code"), impact.get("message"),
+        )
+    ):
+        raise CoachRuntimeError("unsafe tool event confirmation value")
+    return {**dict(value), "impact": dict(impact)}
+
+
 def _validate_tool_events(value: object) -> list[dict[str, Any]]:
     if value is None:
         return []
@@ -553,6 +615,8 @@ def _validate_tool_events(value: object) -> list[dict[str, Any]]:
         event = dict(item)
         if event_type == "product_command":
             event["ui_event"] = _validate_safe_ui_event(event.get("ui_event"))
+            if "confirmation" in event:
+                event["confirmation"] = _validate_confirmation_event(event.get("confirmation"))
             warning = event.get("warning_or_error")
             if warning is not None:
                 if not isinstance(warning, Mapping) or set(warning) - {"code", "message", "retryable"}:
@@ -561,7 +625,7 @@ def _validate_tool_events(value: object) -> list[dict[str, Any]]:
                     raise CoachRuntimeError("unsafe tool event warning value")
                 event["warning_or_error"] = dict(warning)
         for key, field in event.items():
-            if key in {"ui_event", "warning_or_error"}:
+            if key in {"ui_event", "warning_or_error", "confirmation"}:
                 continue
             if isinstance(field, list):
                 if len(field) > 32 or not all(_safe_tool_scalar(entry) for entry in field):
@@ -594,8 +658,19 @@ def _validate_turn_response(
         err = response.get("error") or {}
         if isinstance(err, Mapping):
             message = str(err.get("message") or err.get("code") or "unknown error")
+            category = str(err.get("category") or "coach_runtime")
+            code = str(err.get("code") or "runtime_failed")
+            retryable = bool(err.get("retryable"))
         else:
             message = "coach-runtime 返回 ok=false"
+            category = "coach_runtime"
+            code = "runtime_failed"
+            retryable = True
+        partial_reply = response.get("partial_reply")
+        if not isinstance(partial_reply, str) or not partial_reply.strip():
+            partial_reply = None
+        elif any(secret in partial_reply for secret in secrets):
+            partial_reply = redact(partial_reply)
         message = redact(message)
         if exit_code is not None and exit_code != 0:
             message = f"{message} (exit {exit_code})"
@@ -603,6 +678,10 @@ def _validate_turn_response(
             message,
             tool_events=tool_events,
             side_effects_possible=bool(tool_events),
+            error_category=category,
+            error_code=code,
+            retryable=retryable,
+            partial_reply=partial_reply,
         )
 
     reply = response.get("reply")
@@ -686,6 +765,56 @@ def _post_turn_to_sidecar(request: dict[str, Any], timeout_s: int) -> dict[str, 
     return parsed
 
 
+async def _post_turn_to_sidecar_async(
+    request: dict[str, Any], timeout_s: int,
+) -> dict[str, Any]:
+    schema_version = str(request.get("schema_version") or COACH_RUNTIME_TURN_SCHEMA_V0)
+    path = "/v1/turn" if schema_version == COACH_RUNTIME_TURN_SCHEMA_V1 else "/v0/turn"
+    url = f"{COACH_SIDECAR_URL.rstrip('/')}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            response = await client.post(url, json=request)
+    except httpx.HTTPError as error:
+        raise CoachRuntimeError(
+            f"sidecar 不可达: {type(error).__name__}",
+            side_effects_possible=not isinstance(error, httpx.ConnectError),
+            error_category="network",
+            error_code="sidecar_unreachable",
+            retryable=True,
+        ) from error
+    if response.status_code != 200:
+        try:
+            parsed = response.json()
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("ok") is False:
+            return parsed
+        raise CoachRuntimeError(
+            f"sidecar HTTP {response.status_code}",
+            side_effects_possible=True,
+            error_category="network",
+            error_code="sidecar_http_error",
+            retryable=response.status_code >= 500,
+        )
+    try:
+        parsed = response.json()
+    except json.JSONDecodeError as error:
+        raise CoachRuntimeError(
+            "sidecar 响应非 JSON",
+            side_effects_possible=True,
+            error_code="invalid_sidecar_response",
+            retryable=False,
+        ) from error
+    if not isinstance(parsed, dict):
+        raise CoachRuntimeError(
+            "sidecar 响应须为 JSON 对象",
+            side_effects_possible=True,
+            error_code="invalid_sidecar_response",
+            retryable=False,
+        )
+    return parsed
+
+
 def _run_turn_via_subprocess(
     request: dict[str, Any],
     timeout_s: int,
@@ -734,6 +863,58 @@ def _run_turn_via_subprocess(
             side_effects_possible=True,
         ) from error
     response["_exit_code"] = completed.returncode
+    return response
+
+
+async def _run_turn_via_subprocess_async(
+    request: dict[str, Any], timeout_s: int,
+) -> dict[str, Any]:
+    cmd = _subprocess_command()
+    env = os.environ.copy()
+    env.pop("AIMING_COOKIE_DESKTOP_TOKEN", None)
+    env.update({
+        "PI_SOURCE_DIR": str(PI_SOURCE_DIR.resolve()),
+        "TSX_TSCONFIG_PATH": str((PI_SOURCE_DIR / "tsconfig.json").resolve()),
+    })
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        stdout, _stderr = await asyncio.wait_for(
+            process.communicate(
+                json.dumps(request, ensure_ascii=False).encode("utf-8"),
+            ),
+            timeout=timeout_s,
+        )
+    except asyncio.CancelledError:
+        process.kill()
+        await process.wait()
+        raise
+    except asyncio.TimeoutError as error:
+        process.kill()
+        await process.wait()
+        raise CoachRuntimeError(
+            f"coach-runtime 超时（>{timeout_s}s）",
+            side_effects_possible=True,
+            error_category="network",
+            error_code="runtime_timeout",
+            retryable=True,
+        ) from error
+    stdout_text = stdout.decode("utf-8", errors="replace")
+    if process.returncode != 0 and not stdout_text.strip():
+        raise CoachRuntimeError(
+            f"coach-runtime exit {process.returncode}",
+            side_effects_possible=True,
+            error_code="runtime_exit",
+            retryable=True,
+        )
+    response = _parse_turn_response_stdout(stdout_text)
+    response["_exit_code"] = process.returncode
     return response
 
 
@@ -811,6 +992,76 @@ def run_pi_coach_turn(
             ) from error
         raise
     return result if return_result else result.reply
+
+
+async def run_pi_coach_turn_async(
+    *,
+    messages: Sequence[Mapping[str, str]],
+    analysis_summary: str | None,
+    user_id: str | None = None,
+    profile: Mapping[str, Any] | None = None,
+    system_prompt: str | None = None,
+    tool_bridge: Mapping[str, Any] | None = None,
+    run_id: str | None = None,
+    timeout_s: int | None = None,
+) -> PiCoachTurnResult:
+    schema_version = (
+        COACH_RUNTIME_TURN_SCHEMA_V1
+        if profile is not None
+        else COACH_RUNTIME_TURN_SCHEMA_V0
+    )
+    request, secrets = _build_turn_request(
+        schema_version=schema_version,
+        user_id=user_id,
+        profile=profile,
+        messages=messages,
+        analysis_summary=analysis_summary,
+        system_prompt=system_prompt,
+        tool_bridge=tool_bridge,
+        run_id=run_id,
+    )
+    timeout = timeout_s if timeout_s is not None else COACH_RUNTIME_TIMEOUT_SECONDS
+    response: dict[str, Any] | None = None
+    exit_code: int | None = None
+    try:
+        response = await _post_turn_to_sidecar_async(request, timeout)
+    except CoachRuntimeError as error:
+        if not _sidecar_fallback_enabled() or (
+            schema_version == COACH_RUNTIME_TURN_SCHEMA_V1
+            and error.side_effects_possible
+        ):
+            raise
+        _log.warning(
+            "coach sidecar unavailable, async subprocess fallback: %s",
+            redact_provider_secrets(str(error), request.get("model")),
+        )
+    if response is None:
+        response = await _run_turn_via_subprocess_async(request, timeout)
+        exit_code = response.pop("_exit_code", None)
+    return _validate_turn_response(
+        response,
+        expected_schema=schema_version,
+        exit_code=exit_code,
+        secrets=secrets,
+    )
+
+
+async def stop_pi_coach_turn(run_id: str, timeout_s: float = 2.0) -> bool:
+    if not run_id:
+        return False
+    url = f"{COACH_SIDECAR_URL.rstrip('/')}/v1/turn/{quote(run_id, safe='')}/stop"
+    try:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            response = await client.post(url)
+    except httpx.HTTPError:
+        return False
+    if response.status_code != 200:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("stopped") is True
 
 
 async def fetch_provider_catalog(timeout_s: float = 5.0) -> Any:

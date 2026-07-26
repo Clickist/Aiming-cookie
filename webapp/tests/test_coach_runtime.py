@@ -520,6 +520,33 @@ def test_runtime_engine_uncertain_turn_without_events_skips_python_fallback(monk
     assert python_calls == 0
 
 
+def test_sync_pi_runtime_safe_python_fallback_reports_success(monkeypatch):
+    from webapp.backend import coach_engine
+
+    error = CoachRuntimeError("pi unavailable")
+
+    class Pi:
+        def complete(self, turn):
+            raise error
+
+    class Python:
+        def complete_with_notes(self, turn):
+            return "fallback reply", ["python note"]
+
+    monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(config, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
+    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi(), python=Python())
+    result = engine.complete_with_notes(coach_engine.CoachTurn(
+        prior_messages=[],
+        user_message="safe fallback",
+    ))
+
+    assert result.reply == "fallback reply"
+    assert result.status == "succeeded"
+    assert result.error is None
+    assert "python note" in result.notes
+
+
 def test_run_pi_coach_turn_http_success_skips_subprocess():
     with _mock_httpx_post_success("仅 HTTP"):
         with patch("webapp.backend.coach_runtime.subprocess.run") as mock_run:

@@ -27,6 +27,10 @@ async def test_lifespan_reconciles_after_schema_before_api_ready(monkeypatch):
     async def fake_init_schema() -> None:
         events.append("schema")
 
+    async def fake_reconcile_pending_confirmations() -> dict[str, int]:
+        events.append("confirmations")
+        return {"processed": 0, "completed": 0, "failed": 0}
+
     async def fake_reconcile_analysis_deletions() -> dict[str, int]:
         events.append("deletions")
         return {"processed": 0, "cleaned": 0, "failed": 0}
@@ -36,6 +40,11 @@ async def test_lifespan_reconciles_after_schema_before_api_ready(monkeypatch):
         return {"processed": 0, "cleaned": 0, "failed": 0}
 
     monkeypatch.setattr(app_module, "init_schema", fake_init_schema)
+    monkeypatch.setattr(
+        app_module.coach_confirmations,
+        "reconcile_pending_confirmations",
+        fake_reconcile_pending_confirmations,
+    )
     monkeypatch.setattr(
         queue,
         "reconcile_analysis_deletions",
@@ -50,7 +59,44 @@ async def test_lifespan_reconciles_after_schema_before_api_ready(monkeypatch):
     async with app_module.lifespan(app_module.app):
         events.append("ready")
 
-    assert events == ["schema", "deletions", "uploads", "ready"]
+    assert events == ["schema", "confirmations", "deletions", "uploads", "ready"]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_reconciles_pending_confirmation_audit_before_ready() -> None:
+    conn = await db.get_conn()
+    await conn.execute(
+        "INSERT INTO coach_confirmation_requests(confirmation_ref, owner_id, action, "
+        "target_ref, impact_code, impact_message, status) VALUES(?, ?, ?, ?, ?, ?, ?)",
+        (
+            "confirmation:startup-recovery",
+            "startup-owner",
+            "analysis_delete",
+            "analysis:1",
+            "analysis_becomes_unavailable",
+            "impact",
+            "confirmed",
+        ),
+    )
+    await conn.execute(
+        "INSERT INTO coach_confirmation_audits(audit_ref, confirmation_ref, owner_id, "
+        "decision, result_status, audit_state) VALUES(?, ?, ?, 'confirm', 'confirmed', 'pending')",
+        (
+            "confirmation_audit:startup-recovery",
+            "confirmation:startup-recovery",
+            "startup-owner",
+        ),
+    )
+    await conn.commit()
+
+    async with app_module.lifespan(app_module.app):
+        row = await (
+            await conn.execute(
+                "SELECT audit_state FROM coach_confirmation_audits WHERE confirmation_ref=?",
+                ("confirmation:startup-recovery",),
+            )
+        ).fetchone()
+        assert row["audit_state"] == "completed"
 
 
 @pytest.mark.asyncio

@@ -76,6 +76,23 @@ test("POST /v0/turn with invalid JSON returns 400", async () => {
   }
 });
 
+test("POST /v1/turn/:runId/stop is a versioned idempotent runtime control", async () => {
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "POST", "/v1/turn/agent_run%3Atest/stop");
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, {
+      schema_version: "coach_runtime_stop.v1",
+      stopped: false,
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
 test("GET /v1/catalog exposes the full non-secret Pi catalog", async () => {
   const server = createSidecarServer();
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));

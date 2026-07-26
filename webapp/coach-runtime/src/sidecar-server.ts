@@ -7,7 +7,7 @@ import {
 } from "./provider-auth.ts";
 import { getProviderProfileStatus, testProviderConnection } from "./provider-profile.ts";
 import { listBuiltinProviderCatalog } from "./provider-models.ts";
-import { runCoachTurn } from "./turn.ts";
+import { runCoachTurn, stopCoachTurn } from "./turn.ts";
 
 export const DEFAULT_SIDECAR_HOST = "127.0.0.1";
 export const DEFAULT_SIDECAR_PORT = 8765;
@@ -236,6 +236,16 @@ export async function handleSidecarRequest(
 
     const response = await runCoachTurn(parsed);
     writeJson(res, turnStatusCode(response), response);
+    return;
+  }
+
+  const stopMatch = url.pathname.match(/^\/v1\/turn\/([^/]+)\/stop$/);
+  if (req.method === "POST" && stopMatch) {
+    const runId = decodeURIComponent(stopMatch[1]);
+    writeJson(res, 200, {
+      schema_version: "coach_runtime_stop.v1",
+      stopped: stopCoachTurn(runId),
+    });
     return;
   }
 

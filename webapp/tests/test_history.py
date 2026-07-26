@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -678,11 +679,23 @@ async def test_visual_evidence_failure_does_not_disable_managed_mp4_replay(
 
 
 @pytest.mark.parametrize(
-    ("input_mode", "include_mp4", "remove_video", "expected_kind"),
+    (
+        "input_mode", "include_mp4", "remove_video", "expected_kind",
+        "expected_reason",
+    ),
     [
-        pytest.param("input_native", True, False, "native_only", id="native-only"),
-        pytest.param("multimodal", True, True, "unavailable", id="missing-mp4"),
-        pytest.param("multimodal", False, False, "unavailable", id="uncontracted-mp4"),
+        pytest.param(
+            "input_native", True, False, "native_only",
+            "input_native_has_no_visual_replay", id="native-only",
+        ),
+        pytest.param(
+            "multimodal", True, True, "unavailable",
+            "run_owned_video_unavailable", id="missing-mp4",
+        ),
+        pytest.param(
+            "multimodal", False, False, "unavailable",
+            "run_owned_video_unavailable", id="uncontracted-mp4",
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -692,6 +705,7 @@ async def test_analysis_detail_replay_gate_rejects_non_seekable_cases(
     include_mp4: bool,
     remove_video: bool,
     expected_kind: str,
+    expected_reason: str,
 ):
     user_id = f"u_replay_{expected_kind}_{include_mp4}_{remove_video}"
     sid, _, _, _, _ = await _seed_v2_history_analysis(
@@ -718,7 +732,12 @@ async def test_analysis_detail_replay_gate_rejects_non_seekable_cases(
     assert replay["reason"] is not None
     if input_mode == "input_native" or not include_mp4:
         assert replay["artifact_ref"] is None
-    assert video_response.status_code == 404
+    assert video_response.status_code == 410
+    assert video_response.json() == {
+        "schema_version": "managed_video_unavailable.v1",
+        "availability": "unavailable",
+        "reason": expected_reason,
+    }
 
 
 @pytest.mark.asyncio
@@ -829,9 +848,15 @@ async def test_delete_terminal_analysis_preserves_run_owned_video(tmp_path: Path
     )
     analysis_workspace = session_dir(sid)
     analysis_workspace.mkdir(parents=True)
+    analysis_video = analysis_workspace / "video.mp4"
+    os.link(run_video, analysis_video)
     (analysis_workspace / "result.json").write_bytes(b"analysis-owned")
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
+    await conn.execute(
+        "UPDATE sessions SET status='done', video_path=? WHERE id=?",
+        (str(analysis_video.resolve()), sid),
+    )
     await conn.commit()
+    assert analysis_video.samefile(run_video)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),

@@ -8,7 +8,7 @@ import {
 import { createFakeStreamFn } from "../src/fake-stream.ts";
 import { loadPiAi } from "../src/pi-source.ts";
 import type { StreamFn } from "../src/stream-openai-compatible.ts";
-import { runCoachTurn, runCoachTurnWithFakeStream } from "../src/turn.ts";
+import { runCoachTurn, runCoachTurnWithFakeStream, stopCoachTurn } from "../src/turn.ts";
 
 const SECRET = "turn-secret-sentinel-do-not-return";
 const BRIDGE_SECRET = "bridge-secret-sentinel-do-not-return";
@@ -294,6 +294,45 @@ test("failed turn preserves product-command events that completed before the str
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("stopping an active turn preserves its partial reply", async () => {
+  let started!: () => void;
+  const streamStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const partialText = "保留这段已生成内容";
+  const runId = "agent_run:stop-partial";
+  const streamFn: StreamFn = async (_model, _context, options) => {
+    const ai = await loadPiAi();
+    const createStream = ai.createAssistantMessageEventStream as () => {
+      push(event: unknown): void;
+    };
+    const stream = createStream();
+    const signal = options?.signal as AbortSignal | undefined;
+    queueMicrotask(() => {
+      const initial = assistant([{ type: "text", text: "" }], "stop");
+      const partial = assistant([{ type: "text", text: partialText }], "stop");
+      stream.push({ type: "start", partial: initial });
+      stream.push({ type: "text_start", contentIndex: 0, partial: initial });
+      stream.push({ type: "text_delta", contentIndex: 0, delta: partialText, partial });
+      started();
+      signal?.addEventListener("abort", () => {
+        stream.push({ type: "error", reason: "aborted", error: partial });
+      }, { once: true });
+    });
+    return stream;
+  };
+
+  const turn = runCoachTurn({ ...baseRequest(), run_id: runId }, { streamFn });
+  await streamStarted;
+  assert.equal(stopCoachTurn(runId), true);
+  const response = await turn;
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error?.code, "stopped");
+  assert.equal(response.partial_reply, partialText);
+  assert.equal(stopCoachTurn(runId), false);
 });
 
 test("unknown selected provider/model returns a closed non-secret error", async () => {

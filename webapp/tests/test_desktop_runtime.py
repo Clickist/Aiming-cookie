@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from webapp.backend import desktop_runtime
+from webapp.backend import desktop_runtime, routes
+from webapp.backend.native_capture_client import NativeCaptureRetryableError
 
 
 def test_server_is_configured_for_dynamic_loopback_without_access_logs() -> None:
@@ -128,6 +131,17 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
         async def shutdown(self) -> None:
             events.append("finalizer-shutdown")
 
+    class FakeCaptureExitReleaseTracker:
+        async def monitor(self, _finalizer, _finalizer_futures, _stop_event):
+            events.append("capture-monitor-start")
+            try:
+                await asyncio.Future()
+            finally:
+                events.append("capture-monitor-stop")
+
+        async def drain(self) -> None:
+            events.append("capture-release-drain")
+
     async def close_conn() -> None:
         events.append("db-close")
 
@@ -156,6 +170,11 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
         "create_kovaak_ingestion_service",
         lambda _loop, _finalizer, _tasks: FakeIngestionService(),
     )
+    monkeypatch.setattr(
+        desktop_runtime,
+        "CaptureExitReleaseTracker",
+        FakeCaptureExitReleaseTracker,
+    )
     monkeypatch.setattr(desktop_runtime.db, "close_conn", close_conn)
     monkeypatch.setattr("builtins.print", fake_print)
 
@@ -166,7 +185,14 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
     stop.set()
     await asyncio.wait_for(task, timeout=1)
 
-    assert events == [
+    assert [
+        event for event in events
+        if event not in {
+            "capture-monitor-start",
+            "capture-monitor-stop",
+            "capture-release-drain",
+        }
+    ] == [
         "api-start",
         "worker-start",
         "trace-reconcile",
@@ -174,11 +200,66 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
         "ingestion-start",
         "ready",
         "ingestion-stop",
-        "finalizer-shutdown",
         "api-stop",
         "worker-stop",
+        "finalizer-shutdown",
         "db-close",
     ]
+    assert events.index("capture-monitor-stop") < events.index("capture-release-drain")
+    assert events.index("capture-release-drain") < events.index("ingestion-stop")
+    assert events.index("ready") < events.index("capture-monitor-start")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_code", "expected_level"),
+    [
+        ("capture_control_unavailable", logging.INFO),
+        ("capture_control_timeout", logging.ERROR),
+    ],
+)
+async def test_capture_status_distinguishes_shutdown_unavailable_from_real_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error_code: str,
+    expected_level: int,
+) -> None:
+    class FailingNativeCaptureClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def status(self) -> dict:
+            raise NativeCaptureRetryableError(error_code)
+
+    async def no_runs(_user_id: str) -> list[dict]:
+        return []
+
+    monkeypatch.setattr(routes.config, "NATIVE_CAPTURE_CONTROL_ADDR", "127.0.0.1:1")
+    monkeypatch.setattr(routes.config, "NATIVE_CAPTURE_CONTROL_SECRET", "0" * 64)
+    monkeypatch.setattr(routes, "NativeCaptureClient", FailingNativeCaptureClient)
+    monkeypatch.setattr(
+        routes.kovaak_run_store,
+        "list_kovaak_run_summaries",
+        no_runs,
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(desktop_shutdown_requested=True),
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger=routes.__name__):
+        response = await routes.get_capture_status(request=request, _=None)
+
+    assert response.availability == "unavailable"
+    records = [record for record in caplog.records if record.name == routes.__name__]
+    assert len(records) == 1
+    assert records[0].levelno == expected_level
+    assert (records[0].exc_info is not None) is (expected_level == logging.ERROR)
+    if error_code == "capture_control_unavailable":
+        assert error_code not in records[0].getMessage()
+    else:
+        assert error_code in records[0].getMessage() or records[0].exc_info is not None
 
 
 @pytest.mark.asyncio
@@ -280,6 +361,37 @@ async def test_capture_exit_release_drain_cancels_pending_hard_grace_promptly() 
     await releases.drain()
 
     assert releases._task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_capture_exit_monitor_waits_before_the_first_status_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    stop = asyncio.Event()
+
+    class FakeFinalizer:
+        async def finalizing_capture_session(self):
+            nonlocal calls
+            calls += 1
+            return None
+
+    monkeypatch.setattr(
+        desktop_runtime,
+        "CAPTURE_EXIT_STATUS_POLL_SECONDS",
+        0.03,
+    )
+    monitor = desktop_runtime.CaptureExitReleaseTracker()
+    task = asyncio.create_task(
+        monitor.monitor(FakeFinalizer(), desktop_runtime.FinalizerFutureTracker(), stop)
+    )
+
+    await asyncio.sleep(0.015)
+    assert calls == 0
+    await asyncio.sleep(0.1)
+    assert calls >= 1
+    stop.set()
+    await asyncio.wait_for(task, timeout=1)
 
 
 @pytest.mark.asyncio

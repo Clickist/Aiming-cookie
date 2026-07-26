@@ -44,6 +44,14 @@ _TERMINAL_VIDEO_ERRORS = {
 log = logging.getLogger(__name__)
 
 
+def _log_shutdown_control_failure(operation: str, error: Exception) -> None:
+    code = getattr(error, "code", "capture_shutdown_failed")
+    if code == "capture_control_unavailable":
+        log.info("native capture endpoint already stopped during desktop shutdown")
+        return
+    log.warning("capture shutdown %s failed: %s", operation, code)
+
+
 def _source_key(discovery: KovaaKFileDiscovery) -> str:
     if discovery.stem:
         return discovery.stem
@@ -107,7 +115,7 @@ class KovaaKCaptureFinalizer:
         try:
             status = await asyncio.to_thread(self._native_client.status)
         except (NativeCaptureRetryableError, NativeCaptureTerminalError) as error:
-            log.warning("capture shutdown status unavailable: %s", error.code)
+            _log_shutdown_control_failure("status", error)
             return
         capture_session_id = status.get("captureSessionId")
         if (
@@ -121,7 +129,7 @@ class KovaaKCaptureFinalizer:
                 capture_session_id,
             )
         except (NativeCaptureRetryableError, NativeCaptureTerminalError) as error:
-            log.warning("capture shutdown release failed: %s", error.code)
+            _log_shutdown_control_failure("release", error)
             return
         if (
             released.get("phase") != "waiting_for_kovaak"
@@ -136,7 +144,8 @@ class KovaaKCaptureFinalizer:
         try:
             status = await asyncio.to_thread(self._native_client.status)
         except (NativeCaptureRetryableError, NativeCaptureTerminalError) as error:
-            log.warning("capture exit status unavailable: %s", error.code)
+            if error.code != "capture_control_unavailable":
+                log.warning("capture exit status unavailable: %s", error.code)
             return None
         capture_session_id = status.get("captureSessionId")
         if (

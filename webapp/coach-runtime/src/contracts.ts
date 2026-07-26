@@ -133,6 +133,7 @@ export type CoachRuntimeTurnResponse = {
   schema_version: CoachRuntimeTurnSchema;
   ok: boolean;
   reply: string | null;
+  partial_reply: string | null;
   error: CoachRuntimeError | null;
   notes: string[];
   tool_events: CoachRuntimeToolEvent[];
@@ -272,6 +273,7 @@ export function successResponse(
     schema_version: schemaVersion,
     ok: true,
     reply,
+    partial_reply: null,
     error: null,
     notes,
     tool_events: toolEvents,
@@ -283,11 +285,13 @@ export function failureResponse(
   notes: string[] = [],
   schemaVersion: CoachRuntimeTurnSchema = COACH_RUNTIME_TURN_SCHEMA,
   toolEvents: CoachRuntimeToolEvent[] = [],
+  partialReply: string | null = null,
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
     ok: false,
     reply: null,
+    partial_reply: partialReply,
     error,
     notes,
     tool_events: toolEvents,
