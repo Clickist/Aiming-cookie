@@ -8,26 +8,13 @@ import { Button, Notice, Status } from "@/ui/primitives";
 
 import { EvidenceChip } from "@/components/task3/Task3Shared";
 
-export function RunInspector({
-  run,
-  onClose,
-}: {
+export function RunInspector({ run }: {
   run: KovaaKRunItem | KovaaKRunListItem;
-  onClose: () => void;
 }) {
   const projection = useMemo(() => presentRunInspector(run), [run]);
   const hasAnalysis = run.analysis_count > 0;
   return (
-    <aside aria-label="Run 详情" className="task4-inspector">
-      <header className="task4-inspector-header">
-        <div>
-          <span className="task3-section-kicker">Run inspector</span>
-          <h2>{projection.identity.scenario}</h2>
-        </div>
-        <Button onClick={onClose} variant="ghost">关闭</Button>
-      </header>
-
-      <div className="task4-inspector-body">
+    <div className="task4-inspector-body">
         <section aria-labelledby="run-identity-title">
           <h3 id="run-identity-title">训练身份</h3>
           <dl className="task4-facts">
@@ -82,7 +69,6 @@ export function RunInspector({
           <p className="task4-muted">当前版本没有独立来源查看或 Storage 管理页；Evidence 状态已在本 Inspector 展示。</p>
           {run.limitations.length ? <Notice tone="warning" title="来源限制">{run.limitations.join("、")}</Notice> : null}
         </section>
-      </div>
-    </aside>
+    </div>
   );
 }

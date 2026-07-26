@@ -17,7 +17,7 @@ import {
   getTrendPresentation,
 } from "@/lib/contracts";
 import type { HistoryTrend, KovaaKRunItem, KovaaKRunListItem, SessionListItem, SessionStatus } from "@/lib/types";
-import { Button, Empty, ErrorState, Loading, Notice, Status } from "@/ui/primitives";
+import { Button, Dialog, Drawer, Empty, ErrorState, Loading, Notice, Status } from "@/ui/primitives";
 
 import { EvidenceChip, PageHeading, PreviewBadge } from "@/components/task3/Task3Shared";
 import { RunInspector } from "./RunInspector";
@@ -220,24 +220,36 @@ export function HistoryClient() {
         {trend ? <Notice tone={getTrendPresentation(trend).comparable ? "info" : "warning"}>{getTrendPresentation(trend).summary}</Notice> : <p className="task4-muted">仅在场景、模式、指标、单位、校准与质量均满足时生成趋势；不会制造伪 PB。</p>}
       </section>
 
-      {selectedPendingRun ? (
-        <div className="task4-pending-confirm" role="dialog" aria-modal="true" aria-labelledby="pending-confirm-title">
-          <div className="task4-confirm-panel">
-            <h2 id="pending-confirm-title">确认这条 Run</h2>
+      <Dialog
+        footer={selectedPendingRun ? (
+          <div className="task4-operation-list">
+            <Button href={`/analyze?run=${encodeURIComponent(selectedPendingRun.run_ref)}`}>去新建分析</Button>
+            <Button onClick={() => setSelectedPendingRun(null)} variant="secondary">取消</Button>
+          </div>
+        ) : null}
+        onClose={() => setSelectedPendingRun(null)}
+        open={Boolean(selectedPendingRun)}
+        title="确认这条 Run"
+      >
+        {selectedPendingRun ? (
+          <>
             <p>{selectedPendingRun.scenario ?? "未知场景"} · {new Date(selectedPendingRun.created_at).toLocaleString("zh-CN")}</p>
             <Notice title="下一步">确认只会把这条 Run 带到新建分析页，不会自动提交任务；其它待分析 Run 保持原状。</Notice>
-            <div className="task4-operation-list"><Button href={`/analyze?run=${encodeURIComponent(selectedPendingRun.run_ref)}`}>去新建分析</Button><Button onClick={() => setSelectedPendingRun(null)} variant="secondary">取消</Button></div>
-          </div>
-        </div>
-      ) : null}
+          </>
+        ) : null}
+      </Dialog>
 
-      {selectedRun ? <div className="task4-inspector-overlay"><RunInspector onClose={() => setSelectedRun(null)} run={selectedRun} /></div> : null}
+      <Drawer
+        onClose={() => setSelectedRun(null)}
+        open={Boolean(selectedRun)}
+        title={selectedRun ? `Run 详情 · ${selectedRun.scenario ?? "未知场景"}` : "Run 详情"}
+      >
+        {selectedRun ? <RunInspector run={selectedRun} /> : null}
+      </Drawer>
 
-      {detailId !== null ? (
-        <div className="task4-detail-overlay" role="dialog" aria-modal="true" aria-labelledby="detail-title">
-          <div className="task4-detail-panel">
-            <header><h2 id="detail-title">分析摘要</h2><Button onClick={() => setDetailId(null)} variant="ghost">关闭</Button></header>
-            {detailLoading ? <Loading>正在按需加载摘要</Loading> : detailError ? <ErrorState title="分析详情暂时不可用"><p>原列表仍保留，稍后可以重试。</p><Button onClick={() => void loadDetail(detailId)} variant="secondary">重试</Button></ErrorState> : detail ? (
+      <Dialog onClose={() => setDetailId(null)} open={detailId !== null} title="分析摘要">
+        {detailId !== null ? (
+          detailLoading ? <Loading>正在按需加载摘要</Loading> : detailError ? <ErrorState title="分析详情暂时不可用"><p>原列表仍保留，稍后可以重试。</p><Button onClick={() => void loadDetail(detailId)} variant="secondary">重试</Button></ErrorState> : detail ? (
               <div className="task4-detail-summary">
                 <Status tone={sessionTone(detail.status)}>{sessionStatus(detail.status)}</Status>
                 <p>完整 Diagnosis、Video、Data 由 Analysis workspace 负责。</p>
@@ -249,10 +261,9 @@ export function HistoryClient() {
                   </dl>
                 ) : <p className="task4-muted">当前没有可用的安全摘要投影。</p>}
               </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+            ) : null
+        ) : null}
+      </Dialog>
 
     </div>
   );

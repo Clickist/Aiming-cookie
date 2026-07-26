@@ -59,7 +59,7 @@ a {
   border-radius: 6px;
   cursor: pointer;
   text-decoration: none;
-  transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+  transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out, transform 160ms ease-out;
 }
 
 .ac-button {
@@ -96,6 +96,11 @@ a {
 
 .ac-button:hover:not(:disabled) {
   filter: brightness(0.96);
+}
+
+.ac-button[data-variant="primary"]:active:not(:disabled),
+.ac-button[data-variant="secondary"]:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 
 .ac-button:disabled,
@@ -291,16 +296,27 @@ a {
   opacity: 0.32;
 }
 
+.ac-drawer-backdrop {
+  transition: opacity 200ms ease-out;
+}
+
+.ac-drawer-backdrop[data-state="closed"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .ac-drawer {
   position: fixed;
   z-index: 41;
   display: flex;
   flex-direction: column;
+  width: min(100vw, 480px);
   max-width: min(100vw, 480px);
   height: 100vh;
   border-inline-start: 1px solid var(--outline-variant);
   background: var(--surface);
   color: var(--on-surface);
+  transition: transform 200ms ease-out;
 }
 
 .ac-drawer[data-side="right"] {
@@ -308,9 +324,17 @@ a {
   inset-inline-end: 0;
 }
 
+.ac-drawer[data-side="right"][data-state="closed"] {
+  transform: translateX(100%);
+}
+
 .ac-drawer[data-side="left"] {
   inset-block: 0;
   inset-inline-start: 0;
+}
+
+.ac-drawer[data-side="left"][data-state="closed"] {
+  transform: translateX(-100%);
 }
 
 .ac-drawer__header,
@@ -335,11 +359,24 @@ a {
   right: 24px;
   bottom: 24px;
   z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   max-width: min(420px, calc(100vw - 48px));
   border: 1px solid var(--outline);
   border-radius: 6px;
   padding: 12px 14px;
   background: var(--inverse-surface);
+  color: var(--inverse-on-surface);
+}
+
+.ac-toast__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.ac-toast__close {
+  flex: 0 0 auto;
   color: var(--inverse-on-surface);
 }
 
@@ -421,5 +458,10 @@ a {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0ms !important;
+  }
+
+  .ac-button[data-variant="primary"]:active:not(:disabled),
+  .ac-button[data-variant="secondary"]:active:not(:disabled) {
+    transform: none;
   }
 }

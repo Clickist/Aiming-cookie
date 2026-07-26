@@ -93,87 +93,17 @@
   gap: 12px;
 }
 
-.task4-pending-confirm,
-.task4-detail-overlay,
-.task4-inspector-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 45;
-  display: grid;
-  justify-items: end;
-  background: color-mix(in srgb, var(--inverse-surface) 30%, transparent);
-}
-
-.task4-pending-confirm,
-.task4-detail-overlay {
-  place-items: center;
-}
-
-.task4-confirm-panel,
-.task4-detail-panel {
-  width: min(520px, calc(100vw - 32px));
-  border: 1px solid var(--outline-variant);
-  border-radius: 6px;
-  padding: 20px;
-  background: var(--surface);
-  color: var(--on-surface);
-}
-
-.task4-confirm-panel h2,
-.task4-detail-panel h2 {
-  margin: 0;
-  font-size: 17px;
-}
-
-.task4-confirm-panel p {
-  color: var(--on-surface-variant);
-}
-
 .task4-operation-list {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.task4-detail-panel > header,
-.task4-inspector-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.task4-detail-panel > header {
-  margin-block-end: 16px;
-}
-
-.task4-inspector {
-  display: flex;
-  flex-direction: column;
-  width: min(480px, 100vw);
-  height: 100vh;
-  border-inline-start: 1px solid var(--outline-variant);
-  background: var(--surface);
-  color: var(--on-surface);
-}
-
-.task4-inspector-header {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--outline-variant);
-  padding: 18px;
-}
-
-.task4-inspector-header h2 {
-  margin: 3px 0 0;
-  font-size: 17px;
-}
-
 .task4-inspector-body {
   display: grid;
   gap: 22px;
   min-height: 0;
-  overflow: auto;
-  padding: 18px;
+  padding: 2px;
 }
 
 .task4-inspector-body section {
