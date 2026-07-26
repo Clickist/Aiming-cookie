@@ -301,7 +301,7 @@ export function CoachPanel({
       >
         <p>{pendingConfirmation?.impact.message}</p>
       </Dialog>
-      {feedback ? <Toast onClick={() => setFeedback(null)}>{feedback}</Toast> : null}
+      {feedback ? <Toast onClose={() => setFeedback(null)}>{feedback}</Toast> : null}
     </div>
   );
 }

@@ -3,10 +3,13 @@
 import {
   useEffect,
   useId,
+  useRef,
+  useState,
   type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 
@@ -145,22 +148,46 @@ export interface TabItem {
 }
 
 export interface TabsProps extends HTMLAttributes<HTMLDivElement> {
+  id: string;
   items: readonly TabItem[];
+  panelId: string;
   value: string;
   onValueChange: (value: string) => void;
 }
 
-export function Tabs({ items, value, onValueChange, className, ...props }: TabsProps) {
+export function Tabs({ id, items, panelId, value, onValueChange, className, ...props }: TabsProps) {
+  const enabledItems = items.filter((item) => !item.disabled);
+  const tabId = (itemValue: string) => `${id}-${itemValue}-tab`;
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, itemValue: string) => {
+    if (!new Set(["ArrowLeft", "ArrowRight", "Home", "End"]).has(event.key)) return;
+    event.preventDefault();
+    const currentIndex = enabledItems.findIndex((item) => item.value === itemValue);
+    if (currentIndex < 0) return;
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? enabledItems.length - 1
+        : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + enabledItems.length) % enabledItems.length;
+    const next = enabledItems[nextIndex];
+    onValueChange(next.value);
+    document.getElementById(tabId(next.value))?.focus();
+  };
+
   return (
-    <div {...props} className={["ac-tabs", className].filter(Boolean).join(" ")} role="tablist">
+    <div {...props} className={["ac-tabs", className].filter(Boolean).join(" ")} id={id} role="tablist">
       {items.map((item) => (
         <button
+          aria-controls={panelId}
           aria-selected={item.value === value}
           className="ac-tab"
           disabled={item.disabled}
+          id={tabId(item.value)}
           key={item.value}
           onClick={() => onValueChange(item.value)}
+          onKeyDown={(event) => handleKeyDown(event, item.value)}
           role="tab"
+          tabIndex={item.value === value ? 0 : -1}
           type="button"
         >
           {item.label}
@@ -170,14 +197,47 @@ export function Tabs({ items, value, onValueChange, className, ...props }: TabsP
   );
 }
 
+function useAnimatedPresence(open: boolean, exitMs: number): { present: boolean; state: "open" | "closed" } {
+  const [present, setPresent] = useState(open);
+  const [state, setState] = useState<"open" | "closed">(open ? "open" : "closed");
+
+  useEffect(() => {
+    let frame: number | undefined;
+    let timer: number | undefined;
+    if (open) {
+      setPresent(true);
+      setState("closed");
+      frame = window.requestAnimationFrame(() => setState("open"));
+    } else {
+      setState("closed");
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        setPresent(false);
+      } else {
+        timer = window.setTimeout(() => setPresent(false), exitMs);
+      }
+    }
+    return () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [exitMs, open]);
+
+  return { present, state };
+}
+
 function useModalInteraction(open: boolean, onClose: () => void, containerId: string) {
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!open) return undefined;
     const previous = document.activeElement as HTMLElement | null;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -206,7 +266,7 @@ function useModalInteraction(open: boolean, onClose: () => void, containerId: st
       document.removeEventListener("keydown", onKeyDown);
       previous?.focus();
     };
-  }, [containerId, onClose, open]);
+  }, [containerId, open]);
 }
 
 export interface DrawerProps {
@@ -220,12 +280,22 @@ export interface DrawerProps {
 export function Drawer({ open, onClose, title, children, side = "right" }: DrawerProps) {
   const id = useId().replaceAll(":", "");
   const titleId = `${id}-title`;
-  useModalInteraction(open, onClose, id);
-  if (!open) return null;
+  const presence = useAnimatedPresence(open, 200);
+  useModalInteraction(open && presence.present, onClose, id);
+  if (!presence.present) return null;
   return (
     <>
-      <div className="ac-drawer-backdrop" onMouseDown={onClose} />
-      <aside aria-labelledby={titleId} aria-modal="true" className="ac-drawer" data-side={side} id={id} role="dialog">
+      <div className="ac-drawer-backdrop" data-state={presence.state} onMouseDown={open ? onClose : undefined} />
+      <aside
+        aria-hidden={!open || undefined}
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="ac-drawer"
+        data-side={side}
+        data-state={presence.state}
+        id={id}
+        role="dialog"
+      >
         <header className="ac-drawer__header">
           <h2 id={titleId}>{title}</h2>
           <IconButton label="Close" onClick={onClose} size="compact">×</IconButton>
@@ -238,15 +308,29 @@ export function Drawer({ open, onClose, title, children, side = "right" }: Drawe
 
 export const Sheet = Drawer;
 
-export interface ToastProps extends HTMLAttributes<HTMLDivElement> {
+export interface ToastProps extends Omit<HTMLAttributes<HTMLDivElement>, "onClose"> {
+  closeLabel?: string;
   tone?: Tone;
   live?: "polite" | "assertive";
+  onClose?: () => void;
 }
 
-export function Toast({ tone = "neutral", live = "polite", className, children, ...props }: ToastProps) {
+export function Toast({ tone = "neutral", live = "polite", closeLabel = "关闭通知", onClose, className, children, ...props }: ToastProps) {
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!onCloseRef.current) return undefined;
+    const timer = window.setTimeout(() => onCloseRef.current?.(), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [children]);
+
   return (
     <div {...props} aria-live={live} className={["ac-toast", className].filter(Boolean).join(" ")} data-tone={tone} role={live === "assertive" ? "alert" : "status"}>
-      {children}
+      <div className="ac-toast__body">{children}</div>
+      {onClose ? <IconButton className="ac-toast__close" label={closeLabel} onClick={onClose} size="compact">×</IconButton> : null}
     </div>
   );
 }

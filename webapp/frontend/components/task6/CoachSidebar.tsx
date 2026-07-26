@@ -1,43 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 
 import { attachCoachContext } from "@/lib/api";
-import { coachLayoutMode } from "@/lib/contracts";
+import {
+  coachLayoutMode,
+  COACH_DEFAULT_WIDTH,
+  COACH_MAX_WIDTH,
+  COACH_MIN_WIDTH,
+  COACH_WIDTH_STEP,
+} from "@/lib/contracts";
 import type { ProviderProfileState } from "@/lib/types";
 import { Drawer } from "@/ui/primitives";
 
 import { CoachPanel } from "./CoachPanel";
 
-const WIDTH_KEY = "aiming-cookie.ui.coach-width";
-const MIN_WIDTH = 320;
-const DEFAULT_WIDTH = 360;
-const MAX_WIDTH = 480;
-const WIDTH_STEP = 16;
 const SIDE_BY_SIDE_BREAKPOINT = 1160;
 const OVERLAY_BREAKPOINT = 840;
-
-function clampWidth(value: number): number {
-  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value));
-}
 
 export function CoachSidebar({
   capability,
   open,
   onClose,
+  onWidthChange,
   pathname,
+  width,
 }: {
   capability: "loading" | ProviderProfileState | "unavailable";
   open: boolean;
   onClose: () => void;
+  onWidthChange: (width: number) => void;
   pathname: string;
+  width: number;
 }) {
   const [availableWidth, setAvailableWidth] = useState(0);
-  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const dragRef = useRef<{ pointerId: number; startWidth: number; startX: number } | null>(null);
 
   useEffect(() => {
-    const stored = Number(window.localStorage.getItem(WIDTH_KEY));
-    if (Number.isFinite(stored) && stored > 0) setWidth(clampWidth(stored));
     const update = () => setAvailableWidth(document.documentElement.clientWidth);
     update();
     window.addEventListener("resize", update);
@@ -52,16 +51,30 @@ export function CoachSidebar({
     ? `analysis:${pathname.split("/")[2]}`
     : null;
 
-  const setCoachWidth = (next: number) => {
-    const clamped = clampWidth(next);
-    setWidth(clamped);
-    window.localStorage.setItem(WIDTH_KEY, String(clamped));
-  };
-
   const resizeKeys = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    setCoachWidth(width + (event.key === "ArrowLeft" ? -WIDTH_STEP : WIDTH_STEP));
+    onWidthChange(width + (event.key === "ArrowLeft" ? -COACH_WIDTH_STEP : COACH_WIDTH_STEP));
+  };
+
+  const startResize = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    dragRef.current = { pointerId: event.pointerId, startWidth: width, startX: event.clientX };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveResize = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    onWidthChange(drag.startWidth + drag.startX - event.clientX);
+  };
+
+  const finishResize = (event: PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   const attachCurrent = async (analysisRef: string) => {
@@ -77,17 +90,18 @@ export function CoachSidebar({
     />
   );
 
-  if (!open) return null;
   if (layout.mode !== "side-by-side") {
     return (
       <div className="task6-coach-drawer" data-mode={layout.mode === "full" || availableWidth < OVERLAY_BREAKPOINT ? "full" : "overlay"}>
-        <Drawer onClose={onClose} open title="Coach">
+        <Drawer onClose={onClose} open={open} title="Coach">
           {layout.mode === "full" ? <button className="task6-back-workspace" onClick={onClose} type="button">← 返回主工作区</button> : null}
           {panel}
         </Drawer>
       </div>
     );
   }
+
+  if (!open) return null;
 
   return (
     <aside
@@ -99,20 +113,25 @@ export function CoachSidebar({
       <div
         aria-label="调整 Coach 宽度"
         aria-orientation="vertical"
-        aria-valuemax={MAX_WIDTH}
-        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={COACH_MAX_WIDTH}
+        aria-valuemin={COACH_MIN_WIDTH}
         aria-valuenow={layout.width}
         className="task6-resizer"
         onKeyDown={resizeKeys}
+        onLostPointerCapture={() => { dragRef.current = null; }}
+        onPointerCancel={finishResize}
+        onPointerDown={startResize}
+        onPointerMove={moveResize}
+        onPointerUp={finishResize}
         role="separator"
         tabIndex={0}
       />
       <header className="task6-coach-header">
         <div><strong>Coach</strong><small>长期训练关系</small></div>
         <div className="task6-width-presets" aria-label="Coach 宽度预设">
-          <button onClick={() => setCoachWidth(MIN_WIDTH)} type="button">窄</button>
-          <button onClick={() => setCoachWidth(DEFAULT_WIDTH)} type="button">默认</button>
-          <button onClick={() => setCoachWidth(MAX_WIDTH)} type="button">宽</button>
+          <button onClick={() => onWidthChange(COACH_MIN_WIDTH)} type="button">窄</button>
+          <button onClick={() => onWidthChange(COACH_DEFAULT_WIDTH)} type="button">默认</button>
+          <button onClick={() => onWidthChange(COACH_MAX_WIDTH)} type="button">宽</button>
         </div>
         <button aria-label="收起 Coach" onClick={onClose} type="button">×</button>
       </header>

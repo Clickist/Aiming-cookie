@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
 import { getDefaultProviderStatus, getSession, listTasks } from "@/lib/api";
+import { clampCoachWidth, COACH_DEFAULT_WIDTH } from "@/lib/contracts";
 import type { ProviderProfileState } from "@/lib/types";
 import { Badge } from "@/ui/primitives";
 import { CoachSidebar } from "@/components/task6/CoachSidebar";
 
 const COACH_OPEN_KEY = "aiming-cookie.ui.coach-open";
 const COACH_FIRST_ANALYSIS_KEY = "aiming-cookie.ui.coach-first-analysis-opened";
+const COACH_WIDTH_KEY = "aiming-cookie.ui.coach-width";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 
@@ -32,9 +34,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [capability, setCapability] = useState<CoachCapability>("loading");
   const [activeTaskCount, setActiveTaskCount] = useState<number | null>(null);
   const [coachOpen, setCoachOpen] = useState(false);
+  const [coachWidth, setCoachWidth] = useState(COACH_DEFAULT_WIDTH);
   const [preferenceLoaded, setPreferenceLoaded] = useState(false);
   const shellHidden = pathname === "/" || pathname.startsWith("/onboarding");
   const coachSupported = !shellHidden && !pathname.startsWith("/settings");
+
+  useEffect(() => {
+    const stored = Number(window.localStorage.getItem(COACH_WIDTH_KEY));
+    if (Number.isFinite(stored) && stored > 0) setCoachWidth(clampCoachWidth(stored));
+  }, []);
 
   useEffect(() => {
     if (shellHidden) return;
@@ -96,6 +104,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     setPreferenceLoaded(true);
   };
 
+  const updateCoachWidth = (requestedWidth: number) => {
+    const nextWidth = clampCoachWidth(requestedWidth);
+    setCoachWidth(nextWidth);
+    window.localStorage.setItem(COACH_WIDTH_KEY, String(nextWidth));
+  };
+
   const navItems = useMemo(() => [
     { href: "/history", label: "历史" },
     { href: "/analyze", label: "＋ 新建分析" },
@@ -124,9 +138,22 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link href="/settings">设置</Link>
         </nav>
       </header>
-      <div className="task3-workspace" data-coach-open={showCoach || undefined}>
+      <div
+        className="task3-workspace"
+        data-coach-open={showCoach || undefined}
+        style={{ "--task3-coach-width": `${coachWidth}px` } as CSSProperties}
+      >
         <main id="main-content" tabIndex={-1}>{children}</main>
-        {coachSupported ? <CoachSidebar capability={capability} onClose={closeCoach} open={showCoach} pathname={pathname} /> : null}
+        {coachSupported ? (
+          <CoachSidebar
+            capability={capability}
+            onClose={closeCoach}
+            onWidthChange={updateCoachWidth}
+            open={showCoach}
+            pathname={pathname}
+            width={coachWidth}
+          />
+        ) : null}
       </div>
     </div>
   );

@@ -19,6 +19,8 @@ import styles from "./task5.module.css";
 import { VideoView } from "./VideoView";
 
 type WorkspaceTab = "diagnosis" | "video" | "data";
+const ANALYSIS_TABS_ID = "analysis-view-tabs";
+const ANALYSIS_PANEL_ID = "analysis-view-panel";
 
 const FAMILY_STATUS_LABEL = {
   supported: "正式支持",
@@ -230,12 +232,14 @@ export function AnalysisWorkspace() {
         <Tabs
           aria-label="Analysis 视图"
           className={styles.titleTabs}
+          id={ANALYSIS_TABS_ID}
           items={[
             { value: "diagnosis", label: "诊断" },
             { value: "video", label: "视频" },
             { value: "data", label: "数据" },
           ]}
           onValueChange={(value) => setTab(value as WorkspaceTab)}
+          panelId={ANALYSIS_PANEL_ID}
           value={tab}
         />
       </header>
@@ -246,7 +250,12 @@ export function AnalysisWorkspace() {
         </Notice>
       ) : null}
 
-      <div className={styles.view} role="tabpanel">
+      <div
+        aria-labelledby={`${ANALYSIS_TABS_ID}-${tab}-tab`}
+        className={styles.view}
+        id={ANALYSIS_PANEL_ID}
+        role="tabpanel"
+      >
         {tab === "diagnosis" ? (
           <DiagnosisView
             onAskCoach={openCoach}

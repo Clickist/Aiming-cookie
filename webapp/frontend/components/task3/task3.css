@@ -96,7 +96,7 @@
 }
 
 .task3-workspace[data-coach-open="true"] {
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) var(--task3-coach-width, 360px);
 }
 
 .task3-workspace > main {
@@ -476,6 +476,15 @@
   background: var(--surface);
 }
 
+.task3-onboarding-step {
+  animation: task3-onboarding-fade 180ms ease-out;
+}
+
+@keyframes task3-onboarding-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .task3-onboarding-sheet h1,
 .task3-onboarding-sheet p {
   margin-block: 0;
@@ -809,7 +818,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task3-skip-link {
+  .task3-skip-link,
+  .task3-onboarding-step {
     transition: none;
+    animation: none !important;
   }
 }

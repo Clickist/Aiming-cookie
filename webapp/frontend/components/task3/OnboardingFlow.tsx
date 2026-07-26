@@ -233,7 +233,7 @@ export function OnboardingFlow() {
       </div>
 
       {step === 1 ? (
-        <section className="task3-onboarding-sheet" aria-labelledby="provider-title">
+        <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="provider-title" key="provider">
           <div className="task3-eyebrow">第一步 · Coach Provider</div>
           <h1 id="provider-title">连接你自己的 AI Provider</h1>
           <p className="task3-lead">Aiming Cookie 本身开源免费。第三方 Provider 可能按其规则收费；未连接时，本地指标、确定性诊断和历史记录仍可正常使用。</p>
@@ -324,7 +324,7 @@ export function OnboardingFlow() {
           </button>
         </section>
       ) : (
-        <section className="task3-onboarding-sheet" aria-labelledby="capture-title">
+        <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="capture-title" key="capture">
           <div className="task3-eyebrow">第二步 · 自动采集</div>
           <h1 id="capture-title">训练后自动整理证据</h1>
           <p className="task3-lead">桌面版可在 KovaaK 运行时准备 300 秒硬件编码回放缓冲，并优先保留 Raw Input。每一局完成后仍由你确认要分析哪一条 Run。</p>

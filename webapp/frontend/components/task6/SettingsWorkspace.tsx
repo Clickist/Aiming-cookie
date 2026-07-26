@@ -474,7 +474,7 @@ export function SettingsWorkspace() {
       >
         <p>{confirmAction?.impact}</p>
       </Dialog>
-      {feedback ? <Toast onClick={() => setFeedback(null)}>{feedback}</Toast> : null}
+      {feedback ? <Toast onClose={() => setFeedback(null)}>{feedback}</Toast> : null}
     </div>
   );
 }
