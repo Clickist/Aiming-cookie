@@ -11,13 +11,21 @@ async function source(relativePath: string): Promise<string> {
 
 test("Coach shell implements side-by-side, overlay, and full-content modes", async () => {
   const shell = await source("components/task6/CoachSidebar.tsx");
+  const appShell = await source("components/task3/AppShell.tsx");
+  const appStyles = await source("components/task3/task3.css");
   const panel = await source("components/task6/CoachPanel.tsx");
   const styles = await source("components/task6/task6.css");
+  const contracts = await source("lib/contracts.ts");
   assert.match(shell, /1160/);
   assert.match(shell, /840/);
-  assert.match(shell, /320/);
-  assert.match(shell, /480/);
-  assert.match(shell, /16/);
+  assert.match(contracts, /COACH_MIN_WIDTH\s*=\s*320/);
+  assert.match(contracts, /COACH_DEFAULT_WIDTH\s*=\s*360/);
+  assert.match(contracts, /COACH_MAX_WIDTH\s*=\s*480/);
+  assert.match(contracts, /COACH_WIDTH_STEP\s*=\s*16/);
+  assert.match(appShell, /--task3-coach-width/);
+  assert.match(appStyles, /var\(--task3-coach-width/);
+  assert.match(shell, /setPointerCapture/);
+  assert.match(shell, /onPointerMove/);
   assert.match(shell, /aria-valuemin/);
   assert.match(panel, /aria-live/);
   assert.match(styles, /prefers-reduced-motion/);

@@ -550,11 +550,20 @@ export function presentRunInspector(run: KovaaKRunListItem): RunInspectorPresent
 
 export type CoachLayoutMode = "side-by-side" | "overlay" | "full";
 
+export const COACH_MIN_WIDTH = 320;
+export const COACH_DEFAULT_WIDTH = 360;
+export const COACH_MAX_WIDTH = 480;
+export const COACH_WIDTH_STEP = 16;
+
+export function clampCoachWidth(value: number): number {
+  return Math.min(COACH_MAX_WIDTH, Math.max(COACH_MIN_WIDTH, Math.round(value)));
+}
+
 export function coachLayoutMode(
   availableWidth: number,
   requestedWidth: number,
 ): { mode: CoachLayoutMode; width: number } {
-  const width = Math.min(480, Math.max(320, Math.round(requestedWidth)));
+  const width = clampCoachWidth(requestedWidth);
   if (availableWidth < 840 || availableWidth - width < 480) {
     return { mode: "full", width };
   }
