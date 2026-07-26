@@ -1,23 +1,23 @@
 # Frontend Product Reconstruction — Implementation Plan
 
-> **状态：active，但当前无已授权 Task。** 本计划已完成文档审阅并列入 `docs/superpowers/plans/README.md` 的 Active 区；点点已设定后端前置硬终点，但尚未明确指定下一个 frontend Task。
+> **状态：completed，2026-07-26 归档。** Task 1–7 已由点点逐项授权并完成当前实现、Browser/Desktop E2E、截图与 accessibility 验收；真实 KovaaK、跨 GPU、Provider/OAuth、worker restart 与发布工程继续由 Roadmap Gate 管理。
 >
-> Task 1 已于 2026-07-13 获得点点明确授权和精确删除范围确认，并已完成 prototype inventory/删除与 adapter 边界验证。Task 2–7 均须等待点点明确指定，executor 才能按对应 Allowed files、Tests first、冻结决策与 Stop rule 开工。
+> Task 1 已于 2026-07-13 获得点点明确授权和精确删除范围确认；Task 2–7 随后均由点点逐项授权并按对应 Allowed files、Tests first、冻结决策与 Stop rule 完成。以下正文保留获批时的执行合同和历史激活边界，不再作为新的施工入口。
 >
 > **本计划只覆盖正式产品前端重建。** 原 `/history`、`/analyze`、临时 App shell 和 prototype components 已在 Task 1 删除；当前只保留 capability adapters 与 Tauri/runtime。正式重建必须从上游产品与设计合同开始，不得恢复 prototype。
 >
 > **依赖：**
 >
-> - [`../../PRD.md`](../../PRD.md)
-> - [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)
-> - [`../../frontend-uiux-design.md`](../../frontend-uiux-design.md)
-> - [`../../../DESIGN-cursor.md`](../../../DESIGN-cursor.md)
-> - [`../../design-system.md`](../../design-system.md)
-> - [`../../opendesign-desktop-handoff.md`](../../opendesign-desktop-handoff.md)：派生设计交接入口；只约束设计流程与验收，不覆盖上游合同，也不自动授权 Task
-> - 已列为 active 的 [`../specs/2026-07-13-frontend-product-reconstruction-design.md`](../specs/2026-07-13-frontend-product-reconstruction-design.md)
-> - 已有能力合同：[`../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md`](../specs/2026-07-13-kovaak-run-trace-lifecycle-design.md)、[`../specs/2026-07-13-analysis-evidence-coach-context-design.md`](../specs/2026-07-13-analysis-evidence-coach-context-design.md)、[`../specs/2026-07-17-automatic-run-capture-design.md`](../specs/2026-07-17-automatic-run-capture-design.md)
+> - [`../../../PRD.md`](../../../PRD.md)
+> - [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)
+> - [`../../../frontend-uiux-design.md`](../../../frontend-uiux-design.md)
+> - [`../../../../DESIGN-cursor.md`](../../../../DESIGN-cursor.md)
+> - [`../../../design-system.md`](../../../design-system.md)
+> - [`../../../opendesign-desktop-handoff.md`](../../../opendesign-desktop-handoff.md)：派生设计交接入口；只约束设计流程与验收，不覆盖上游合同，也不自动授权 Task
+> - 已列为 active 的 [`../../../superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](../../../superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)
+> - 已有能力合同：[`../../../superpowers/specs/2026-07-13-kovaak-run-trace-lifecycle-design.md`](../../../superpowers/specs/2026-07-13-kovaak-run-trace-lifecycle-design.md)、[`../../../superpowers/specs/2026-07-13-analysis-evidence-coach-context-design.md`](../../../superpowers/specs/2026-07-13-analysis-evidence-coach-context-design.md)、[`../../../superpowers/specs/2026-07-17-automatic-run-capture-design.md`](../../../superpowers/specs/2026-07-17-automatic-run-capture-design.md)
 >
-> Frontend reconstruction spec 与本计划均已 active；Task 1 已完成，Task 2–7 当前未授权。
+> Frontend reconstruction spec 继续作为稳定局部设计合同；本计划 Task 1–7 已完成并归档。
 
 ## 1. 目标与非目标
 
@@ -208,7 +208,7 @@ Task 3-6 以 Browser 作为快速实现和多数 UI 状态验收环境；每个�
 
 ## Task 2 — Executable tokens / theme / primitives
 
-**状态：未授权。**
+**历史激活状态：最初未授权，后由点点明确授权并完成。**
 
 ### 目的
 
@@ -442,7 +442,7 @@ Task 3-6 以 Browser 作为快速实现和多数 UI 状态验收环境；每个�
 - Coach 不是旧 `/coach` 页面，也不是 Analysis 底部小面板；它是 App shell 右侧关系层。onboarding 只负责结构化激活，不建立另一条 Coach 会话；
 - 不恢复 `CoachClient.tsx`、session-bound Coach route 或旧 `StorageSettings` / `ThemeController`；
 - L0 原始载体不进入 Coach context/tool results；用户已选择 Provider 时，有界 L1-L3 可作为普通 Coach turn 数据发送，不设置逐 Run 同意 Gate；
-- Provider/model/auth 只实现 active [`../specs/2026-07-13-coach-product-commands-explanations-provider-design.md`](../specs/2026-07-13-coach-product-commands-explanations-provider-design.md) 与后端 capability API 已明确支持的状态，不根据 Pi 存在的接口自动宣称产品已支持；
+- Provider/model/auth 只实现 active [`../../../superpowers/specs/2026-07-13-coach-product-commands-explanations-provider-design.md`](../../../superpowers/specs/2026-07-13-coach-product-commands-explanations-provider-design.md) 与后端 capability API 已明确支持的状态，不根据 Pi 存在的接口自动宣称产品已支持；
 - Benchmark 不进入默认 Coach context。
 
 ### Stop rule

@@ -38,7 +38,7 @@ OpenDesign 的职责是补齐现有合同有意留下的最后一段设计空间
 4. [`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)：正式前端局部设计合同；
 5. [`DESIGN-cursor.md`](../DESIGN-cursor.md)：视觉方向、语义色板与共同基础；
 6. [`design-system.md`](design-system.md)：token、主题、primitives 与视觉评审治理；
-7. [`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)：Task 2-7 的施工顺序、Allowed files、Tests first 与 Stop rule；
+7. [`archive/completed/plans/2026-07-13-frontend-product-reconstruction.md`](archive/completed/plans/2026-07-13-frontend-product-reconstruction.md)：已完成 Task 2-7 的施工顺序、Allowed files、Tests first 与 Stop rule；
 8. [`PROGRESS.md`](PROGRESS.md) 与当前代码：当前实际完成度和可运行能力。
 
 OpenDesign 应通过链接读取原文，不在新产物中复制整段长期事实。发现冲突时停止并报告具体文件与条目，不自行选择一个版本继续设计。
@@ -46,10 +46,10 @@ OpenDesign 应通过链接读取原文，不在新产物中复制整段长期事
 ## 3. 当前实现边界
 
 - 历史 product UI prototype 已删除；不得恢复或把旧截图当成正式视觉基线。
-- 当前只保留 `webapp/frontend/lib/**` capability adapters、tests 和 `src-tauri/**` runtime。
-- 正式 `app/` / `pages/` 路由尚不存在；当前 `next build` 失败是已记录的前端缺口。
-- Frontend reconstruction Task 1 已完成；Task 2-7 尚需点点逐个明确授权。
-- OpenDesign 的第一轮输出是设计提案，不得以“需要预览”为由直接创建正式路由或修改产品代码。
+- `webapp/frontend/app/**` 正式路由、共享 UI/primitives、capability adapters、tests 与 `src-tauri/**` runtime 均已存在。
+- Frontend reconstruction Task 1–7 已完成，production build、Browser E2E、截图、accessibility 与 focused Desktop matrix 已形成当前验证基础；这不等于 release-ready。
+- 已完成的 reconstruction plan 已归档；后续 UI、Landing 或发布工程必须使用新的 active Task。
+- OpenDesign 第一轮输出仍是设计证据，不反向覆盖 PRD、Architecture、UI/UX 合同或当前代码事实。
 
 ## 4. 已冻结与可设计内容
 

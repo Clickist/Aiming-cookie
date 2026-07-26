@@ -84,7 +84,7 @@ Task 10R 研究前置已完成，但不替代 Task 6 的代码和真实 visual-q
 - `docs/superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`
 - `docs/superpowers/specs/README.md`
 - `docs/superpowers/plans/2026-07-13-coach-productization-provider-management.md`
-- `docs/superpowers/plans/2026-07-13-frontend-product-reconstruction.md`
+- `docs/archive/completed/plans/2026-07-13-frontend-product-reconstruction.md`
 - `docs/superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md`
 - `docs/superpowers/plans/README.md`
 

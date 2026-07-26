@@ -12,7 +12,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 → bounded evidence-backed Coach → local history, plan, and retest
 ```
 
-现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成合入后的实现和自动化/字段验证基础；它们仍受真实 Tauri product-path、AMD/Intel 物理硬件等发布 Gate 约束，NVIDIA 结果不能替代。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和前端 handoff contract 已形成；正式前端尚未实现，input-native 仍只能作为 Preview / Experimental。当前只有经过真实 Gate 的 tracking 单场景进入 production manifest，不能把这一条扩写成其它 family 全部已放行。
+现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成合入后的实现和自动化/字段验证基础；它们仍受真实 Tauri product-path、AMD/Intel 物理硬件等发布 Gate 约束，NVIDIA 结果不能替代。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 仍只能作为 Preview / Experimental，Browser fixture 或当前 Tauri smoke 不能替代真实 KovaaK 三模式 Gate。当前只有经过真实 Gate 的 tracking 单场景进入 production manifest，不能把这一条扩写成其它 family 全部已放行。
 
 完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留 Provider-first onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化，不包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
 
@@ -28,8 +28,8 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 6. 让自动 MP4 成为 Run-owned 直观回放与视觉 evidence；multimodal 仍只用 Raw 计算运动学，录像失败时保留满足条件的 native 结果；
 7. 在 Settings 显示分类存储占用，并允许用户分别手动管理 Run-owned 自动 MP4、Raw trace 和未完成采集数据；不启用静默自动清理；
 8. 保持 native import、managed storage、launch token、runtime lifecycle、KovaaK watcher 和 Raw Input opt-in 的既有能力；Windows Steam 多库发现、50-file bound 与 launch-token descendant isolation 已完成自动化和本机 Gate；
-9. 正式前端后续根据 [`frontend-uiux-design.md`](frontend-uiux-design.md) 与 active frontend reconstruction spec 重建应用骨架、首次 Provider onboarding、分析工作区和 Coach sidebar；跳过 Provider 后没有 Coach，只有本地确定性闭环；
-10. Frontend reconstruction Task 1 已完成；Task 2–7 仍须由点点明确指定具体 Task 后才能执行，UI 只消费稳定 capability，不反向定义后端合同。
+9. 保持已完成的正式前端应用骨架、首次 Provider onboarding、分析工作区、Coach sidebar 与 Settings；继续用真实 product-path Gate 验证其消费的 capability，跳过 Provider 后没有 Coach，只有本地确定性闭环；
+10. Frontend reconstruction Task 1–7 已完成并归档；后续 UI 功能或发布改动必须使用新的 active Task，不能复用已完成 plan 扩大范围，UI 仍只消费稳定 capability、不反向定义后端合同。
 
 ### P0 — 冻结本地数据可靠性合同
 
@@ -56,7 +56,7 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 
 ### P1 — 预览与发布工程
 
-正式前端与发布工程按以下顺序推进：OpenDesign 先完成并经点点确认桌面设计方向；获得对应 Task 授权后，以 Browser 为主要迭代环境实现共享前端，并在每个涉及 Desktop capability 的垂直流程完成后运行 focused `tauri dev` smoke；Browser/Desktop E2E 通过后生成真实产品截图与演示 MP4；再设计和实现 Landing；最后完成 installer、版本、校验值、真实下载链接与发布验证。Browser 通过不替代 Tauri 或 Windows release Gate。
+OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成。发布工程继续按以下顺序推进：先完成真实 KovaaK 三模式、高 polling-rate、跨 GPU、真实 Provider/OAuth 与 worker restart Gate；再生成真实产品截图与演示 MP4，设计和实现 Landing；最后完成 installer、版本、校验值、真实下载链接与发布验证。Browser 通过不替代 Tauri 或 Windows release Gate。
 
 - frontend static/bundle 策略；
 - Python runtime distribution；
@@ -92,17 +92,16 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 - [`superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md`](superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的 Run facts、processed event tables、visual producer、跨 family analyzer、Knowledge Registry v2、画像/计划/复测与 release Gate；
 - [`superpowers/plans/2026-07-13-reflek-capability-adoption.md`](superpowers/plans/2026-07-13-reflek-capability-adoption.md)：Analysis/evidence correctness、Run/trace 与 Coach 结构化能力；
 - [`superpowers/plans/2026-07-13-coach-productization-provider-management.md`](superpowers/plans/2026-07-13-coach-productization-provider-management.md)：解释/处方合同、input-native 核心指标、Pi provider/model/auth、用户级 Coach 命令与 Provider Settings；
-- [`superpowers/plans/2026-07-13-frontend-product-reconstruction.md`](superpowers/plans/2026-07-13-frontend-product-reconstruction.md)：正式前端重建；边界由 active [`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md) 冻结。Task 1 已完成，Task 2–7 尚未获得具体 Task 授权。
 
 下一可执行切片必须遵守：
 
 1. RefleK Task 6A backend History/evidence read model 与 comparability 已完成；Task 6B 与正式 frontend 继续 deferred；
 2. Pi coding-agent、AgentHarness/skills/prompt/filesystem harness 的上游 Windows 全仓失败不属于当前产品 Gate；若未来采纳对应 capability，必须另立 active Task；
-3. Frontend Task 2–7 尚未授权；获得具体 Task 授权后继续遵守 active plan 的顺序、Allowed files、Tests first 与 Stop rule；
+3. Frontend reconstruction Task 1–7 已完成并归档；新的 UI、Landing 或发布工程必须先建立并授权新的 active Task，不能继续执行已归档 plan；
 4. Analysis deletion/reconciliation Task 1–3 已完成并归档；terminal Analysis 的 SQLite logical delete、managed workspace cleanup 与 startup/API Gate 已闭合；
 5. Windows Desktop pre-frontend Task 1–2 已完成并归档；当前没有新的已授权切片，等待点点明确指定；
 6. 每次只执行一个被点点指定的 active plan Task；新增数据可靠性工作在 spec/plan 获批前不得直接施工。
-7. 自动采集局部合同已由 [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md) 冻结；Capture Coordinator、Run Finalizer、Run-owned evidence、pending Run readiness 与 Storage/recovery 的实施证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 仍是本 Roadmap 的外部发布 Gate，不是继续扩大旧 plan 的内部 Task。Frontend Task 2 可独立建立 tokens/primitives，Task 3/4/6 在对应 capability 通过前不得伪造完成状态。
+7. 自动采集局部合同已由 [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md) 冻结；Capture Coordinator、Run Finalizer、Run-owned evidence、pending Run readiness 与 Storage/recovery 的实施证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 仍是本 Roadmap 的外部发布 Gate，不是继续扩大旧 plan 的内部 Task；正式前端已实现的 capability 消费继续由合同测试和真实 product-path Gate 保护。
 8. 完整 Coach spec/plan 已在采集集成、上游文档和状态索引协调后由点点批准为 active；Task 1-5 后先补 processed event table 的 Coach 消费与真实 event/segment comparison，再进入 visual producer 和其它 family analyzer；每次只执行一个被授权 Task。
 
 ## 4. Desktop Complete Coach Go/No-Go Gates
