@@ -9,6 +9,8 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "test": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs --test lib/*.test.ts",
+    "test:e2e": "npm run build && playwright test",
+    "test:e2e:update": "npm run build && playwright test --update-snapshots",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -21,6 +23,7 @@
     "react-plotly.js": "^2.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.51.1",
     "@tailwindcss/postcss": "4.3.2",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.10.0",
