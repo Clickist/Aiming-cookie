@@ -274,10 +274,21 @@ class NativeCaptureClient:
         self._read_timeout_seconds = float(read_timeout_seconds)
 
     def status(self) -> dict[str, object]:
-        response = self._request(
-            {"type": "status", "secret": self._secret},
-            "statusResult",
-        )
+        for attempt in range(3):
+            try:
+                response = self._request(
+                    {"type": "status", "secret": self._secret},
+                    "statusResult",
+                )
+                break
+            except NativeCaptureRetryableError as error:
+                if attempt < 2 and error.code in {
+                    "capture_unavailable",
+                    "capture_control_unavailable",
+                    "capture_control_response_lost",
+                }:
+                    continue
+                raise
         response = _exact_object(
             response,
             {"type", "ok", "status"},

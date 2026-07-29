@@ -96,6 +96,50 @@ def test_native_client_enforces_loopback_secret_and_strict_status_schema() -> No
     thread.join(timeout=1)
 
 
+def test_native_status_retries_lost_transport_without_retrying_forever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = NativeCaptureClient("127.0.0.1:1234", "a" * 64)
+    calls = 0
+
+    def recover(_request: dict, _expected_type: str) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise NativeCaptureRetryableError("capture_control_unavailable")
+        return _status_response()
+
+    monkeypatch.setattr(client, "_request", recover)
+    assert client.status()["phase"] == "capturing"
+    assert calls == 2
+
+    calls = 0
+
+    def recover_server_read(_request: dict, _expected_type: str) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise NativeCaptureRetryableError("capture_unavailable")
+        return _status_response()
+
+    monkeypatch.setattr(client, "_request", recover_server_read)
+    assert client.status()["phase"] == "capturing"
+    assert calls == 2
+
+    calls = 0
+
+    def remain_unavailable(_request: dict, _expected_type: str) -> dict:
+        nonlocal calls
+        calls += 1
+        raise NativeCaptureRetryableError("capture_control_response_lost")
+
+    monkeypatch.setattr(client, "_request", remain_unavailable)
+    with pytest.raises(NativeCaptureRetryableError) as exc_info:
+        client.status()
+    assert exc_info.value.code == "capture_control_response_lost"
+    assert calls == 3
+
+
 def test_native_client_export_and_release_never_send_paths() -> None:
     export_response = {
         "type": "exportReplayResult",

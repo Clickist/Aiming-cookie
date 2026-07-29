@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from webapp.backend.kovaak_ingest import (
+    ExpectedIngestionState,
     KovaaKDirectoryWatcher,
     NonRetryableIngestionError,
     is_performance_path,
@@ -186,6 +188,34 @@ def test_watcher_retries_after_async_callback_future_fails(tmp_path: Path):
     assert len(futures) == 2
     assert retried == first
     futures[1].set_result(None)
+    assert watcher.scan_once() == []
+
+
+def test_watcher_expected_async_state_logs_without_traceback(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    from concurrent.futures import Future
+
+    future = Future()
+    watcher = KovaaKDirectoryWatcher(
+        tmp_path,
+        lambda _discovery: future,
+        stable_scans=1,
+    )
+    (tmp_path / "1wall Stats.csv").write_text("stats", encoding="utf-8")
+    caplog.set_level(logging.INFO, logger="webapp.backend.kovaak_ingest")
+
+    assert len(watcher.scan_once()) == 1
+    future.set_exception(ExpectedIngestionState("waiting_for_sources"))
+
+    records = [
+        record for record in caplog.records
+        if "KovaaK ingestion" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
+    assert records[0].exc_info is None
     assert watcher.scan_once() == []
 
 

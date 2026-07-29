@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from concurrent.futures import CancelledError, Future
+from concurrent.futures import Future
 import json
 import logging
 import os
@@ -273,15 +273,6 @@ def create_kovaak_ingestion_service(
         if finalizer_futures is not None:
             finalizer_futures.track(future)
 
-        def report_result(done: Future[dict]) -> None:
-            try:
-                done.result()
-            except CancelledError:
-                return
-            except Exception:
-                log.exception("KovaaK run ingestion failed for %s", discovery.stem)
-
-        future.add_done_callback(report_result)
         return future
 
     return kovaak_ingest.KovaaKIngestionService(
