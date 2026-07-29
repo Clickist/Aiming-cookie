@@ -1017,7 +1017,7 @@ python -m pytest webapp/tests/test_aiming_profile_store.py webapp/tests/test_db.
 
 ## Task 12 - Integrated release gates and frontend handoff
 
-> **实施状态：in progress / backend handoff frozen, complete release Gate pending（2026-07-24）。** 后端已冻结 `frontend_evidence_segments.v1`、`evidence_segment_playback.v1` 与 owner-scoped managed-MP4 route，且一个真实 Tracking Run 已通过 source -> analyzer -> evidence -> Coach query -> profile 全链回放；完整 Python 为 `1202 passed, 5 skipped`，Coach TypeScript 为 `71 passed`，compileall 与 `git diff --check` 通过。本 Task 不创建前端文件。Static、Dynamic、Switching 尚未各有一个 production-active exact scenario，性能/完整跨-family release matrix 也未全部通过，因此 Task 12 不得标 completed。
+> **实施状态：in progress / Tracking field blockers remediated, complete release Gate blocked（2026-07-27）。** 真实 `Run 479` 已通过 source -> analyzer -> evidence -> Coach query -> profile 与 Desktop managed playback 链；后续 remediation 已闭合 video-fallback、Analysis Data、Tasks 失败域/时间一致性与产品节奏 capture lifecycle，并保持 Tracking artifact 字节 parity。当前完整 Gate 为 Python `1301 passed, 5 skipped`、Coach `75 passed`、Browser Playwright `47 passed, 3 skipped`、MSVC Rust `73 passed, 7 ignored`。本 Task 本身不创建或修改前端文件。Static、Dynamic、Switching 尚未各有一个 production-active exact scenario，高 polling-rate、AMD/Intel、真实 Provider/OAuth、真实 worker restart 与发布工程也未闭合，因此 Task 12 不得标 completed。
 
 ### 目的
 
@@ -1058,6 +1058,21 @@ python -m pytest webapp/tests/test_aiming_profile_store.py webapp/tests/test_db.
 3. 在不提交私人原始数据的前提下运行真实 Run validation，保存聚合/标注证据到 Progress。
 4. 冻结 EvidenceSegment API/local playback adapter，向 frontend plan 增加独立 Task；本 Task 不越权修改 UI。
 5. 只有所有 Gate 通过才把 plan 标 completed；未通过项保留在 Roadmap/Progress。
+
+### 2026-07-27 field checkpoint
+
+| Gate | 状态 | 证据 / 阻断 |
+|---|---|---|
+| Tracking source / capture | passed on current NVIDIA host | `Run 479`：60 秒，Stats / Performance / Raw / MP4 available，Raw `51,443` points / `0` drop，MP4 `3,632` packets / `0` encoder/drop error |
+| input-native | passed with limitation | `Analysis 1` 诚实保持 Preview / outcome-only，未伪造 target-relative 机制结论 |
+| multimodal Tracking | passed with latency target miss | `Analysis 3` 产品链通过；production Python 3.11 / OpenCV 5.0 三轮为 `147.242s / 151.134s / 148.039s`，中位数 `148.039s`，artifact 均与 reference 字节一致，quality `accepted`、target/crosshair coverage `99.944% / 100%`；计划 `<=130s` 目标未达到 |
+| Coach-safe context / profile / no Provider | passed | `coach_diagnostic_context.v3`、`analysis.evidence.list` 返回 3 segments、`profile_contribution.v1` 为 5 dimensions；Provider 未配置时只显示激活入口 |
+| privacy / owner / idempotency | passed for exercised path | 公开 API、context、tool result 与 UI 无 path / Raw trace / CSV / protobuf / private payload / secret / token / traceback；跨 owner 拒绝，同 key 重放返回同一 Analysis |
+| deletion / retry / restart recovery | passed | 删除探针保留 Run-owned MP4 与 deleted Coach ref；`Analysis 2 -> 3` attempt 历史在重启后找回。stale lease 使用既有 `kinematics` domain 与真实写入时间，v19 仅修复精确命中的未来异常行 |
+| video-fallback Desktop playback | passed | EvidenceSegment 与 managed MP4 availability 已解耦；无 segment 时正式 `VideoView` 仍播放 Run-owned MP4，媒体缺失局部降级为 path-free HTTP 410，artifact 损坏继续 fail-closed |
+| Analysis Data UX | passed for Tracking evidence | `frontend_analysis_data.v1` 提供 bounded events/distribution 与 120 点目标相对误差；英文限制只在技术详情，正式 UI 使用用户语义并折叠 unavailable 指标，1280/960 无横向滚动 |
+| Desktop lifecycle log | passed at product cadence / stress residual recorded | 真实 Tauri 40 次 250ms status 全 available，正常关闭四类错误为 0 且进程/端口清理；50ms 人工压力曾有 `1/120` transient unavailable，无 traceback 或 export 误分类 |
+| Static / Dynamic / Switching / cross-hardware | blocked | 缺 production-active exact scenario 实证、高 polling-rate 与 AMD/Intel 物理 Gate，不得用 Tracking 单行替代 |
 
 ### Verify
 

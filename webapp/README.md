@@ -4,17 +4,17 @@
 
 ## 快速启动
 
-从仓库根目录启动 Coach sidecar 与 API：
+先按 [`../docs/DEVELOPMENT.md`](../docs/DEVELOPMENT.md) 使用 CPython 3.11 创建仓库 `.venv`。macOS / Linux 从仓库根目录启动 Coach sidecar 与 API：
 
 ```bash
-pip install -r webapp/requirements.txt
+.venv/bin/python -m pip install -r webapp/requirements.txt
 ./scripts/dev-up.sh
 ```
 
 另开终端启动 worker 与前端：
 
 ```bash
-python -m webapp.backend.worker
+.venv/bin/python -m webapp.backend.worker
 cd webapp/frontend
 npm install
 npm run dev
@@ -23,7 +23,15 @@ npm run dev
 只启动 API：
 
 ```bash
-uvicorn webapp.backend.app:app --reload
+.venv/bin/python -m uvicorn webapp.backend.app:app --reload
+```
+
+Windows PowerShell 使用对应的 venv 解释器：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r webapp\requirements.txt
+.\.venv\Scripts\python.exe -m webapp.backend.worker
+.\.venv\Scripts\python.exe -m uvicorn webapp.backend.app:app --reload
 ```
 
 Desktop/Tauri 开发命令见 [`../docs/DEVELOPMENT.md`](../docs/DEVELOPMENT.md)。
@@ -31,9 +39,11 @@ Desktop/Tauri 开发命令见 [`../docs/DEVELOPMENT.md`](../docs/DEVELOPMENT.md)
 ## 测试
 
 ```bash
-pytest webapp/tests/ -v
+.venv/bin/python -m pytest webapp/tests/ -v
 cd webapp/frontend && npm run type-check
 ```
+
+Windows PowerShell 的 Python 测试入口为 `.\.venv\Scripts\python.exe -m pytest webapp\tests -v`。
 
 需要 build、Rust 或 Desktop runtime 验证时，使用 [`../docs/DEVELOPMENT.md`](../docs/DEVELOPMENT.md) 中的命令，避免在多个 README 维护不同版本。
 

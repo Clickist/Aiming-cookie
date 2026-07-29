@@ -4,15 +4,15 @@
 
 ## 1. 环境与依赖
 
-当前仓库包含 Python、Node.js/Next.js、Pi runtime 和 Rust/Tauri 组件。具体版本约束以各自依赖文件和 lockfile 为准，不在本文重复固定易过期的版本号。
+当前仓库支持 CPython 3.11.x；pytest 会在 collection 前拒绝其他 Python 实现或 minor 版本。Node.js/Next.js、Pi runtime 和 Rust/Tauri 的具体版本约束以各自依赖文件和 lockfile 为准，不在本文重复固定易过期的版本号。
 
 macOS / Linux：
 
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -r webapp/requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r webapp/requirements.txt
 
 npm --prefix third_party/pi install
 npm --prefix webapp/frontend install
@@ -21,7 +21,7 @@ npm --prefix webapp/frontend install
 Windows PowerShell：
 
 ```powershell
-py -m venv .venv
+py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pip install -r webapp\requirements.txt
 
@@ -71,8 +71,7 @@ source .venv/Scripts/activate
 终端 2 启动分析 worker。macOS / Linux：
 
 ```bash
-source .venv/bin/activate
-python -m webapp.backend.worker
+.venv/bin/python -m webapp.backend.worker
 ```
 
 Windows PowerShell：
@@ -156,14 +155,14 @@ $env:KOVAAK_INSTALL_DIR = Join-Path $testRoot "missing-kovaak"
 
 ```bash
 # Python 全量或相关测试
-pytest
-pytest webapp/tests
+.venv/bin/python -m pytest
+.venv/bin/python -m pytest webapp/tests
 
 # Frontend
 cd webapp/frontend
 npm run type-check
 npm test
-npm run build
+npm run test:e2e
 
 # Tauri / Rust
 cd webapp/frontend/src-tauri
@@ -189,10 +188,10 @@ Push-Location third_party\pi
 npm.cmd test --workspace @earendil-works/pi-ai
 Pop-Location
 
-# Frontend adapters；正式 route 状态以 PROGRESS.md 为准
+# Frontend unit/contracts 与 production-build Playwright；正式 route 状态以 PROGRESS.md 为准
 npm.cmd --prefix webapp\frontend run type-check
 npm.cmd --prefix webapp\frontend test
-npm.cmd --prefix webapp\frontend run build
+npm.cmd --prefix webapp\frontend run test:e2e
 
 # Tauri / Rust MSVC
 $env:PATH = "$HOME\.cargo\bin;$env:PATH"

@@ -24,7 +24,7 @@ OpenDesign 的职责是补齐现有合同有意留下的最后一段设计空间
 本次不负责：
 
 - 修改 PRD、Architecture、input mode、数据归属、删除或 Provider 安全合同；
-- 新增 Dashboard、产品账号、订阅、Benchmark、社区或独立 Coach 页面；
+- 新增 Dashboard、产品账号、订阅、独立 Benchmark 页面、排行榜、社区或独立 Coach 页面；
 - 实现 Landing、安装器、更新器、签名或发布链；
 - 在设计阶段修改正式前端、backend、Tauri、依赖或 lockfile。
 
@@ -64,7 +64,7 @@ OpenDesign 应通过链接读取原文，不在新产物中复制整段长期事
 - Coach、History、Analysis 与本地能力在 Provider 不可用时按合同局部降级，不能整页失败。
 - Browser 与 Desktop 使用同一产品 IA 和视觉语言，只通过 capability state 表达能力差异。
 - Run、Analysis、Raw trace、自动 MP4、用户 Stats/Performance 和 managed copy 的归属与删除语义彼此分离。
-- Benchmark 不进入 v1 正式 UI。
+- KovaaK 成绩只允许 PRD 已批准的有限手动同步入口与最小成绩视图；不得扩成独立页面、排行榜或通用平台，也不突出外部作者、课程代号或阶段体系。
 
 ### 4.2 留给 OpenDesign 的设计空间
 
@@ -73,6 +73,13 @@ OpenDesign 应通过链接读取原文，不在新产物中复制整段长期事
 - Coach 并排、drawer、临时占满内容区三种形态的具体 Layout；
 - 导航、页面标题区、状态区和主要操作的具体排布；
 - onboarding 的最终像素布局；
+- onboarding 与 Settings 中 Steam Profile URL、明确同意、本地已连接账号、手动同步、最近成功时间、失败保留旧数据和最小成绩视图的具体布局；
+
+### 4.3 本轮 KovaaK 成绩设计提示词
+
+请在现有 Aiming Cookie 桌面应用的信息架构和设计系统内，设计同一套可复用的 KovaaK 成绩连接模块，并分别放入首次 onboarding 与 Settings。模块包含：Steam Profile URL 输入（兼容 17 位 ID）、说明其只在本机保存为已连接账号并用于用户主动刷新一组经过审核的 KovaaK 训练项目最高分、明确同意控件、连接/刷新/移除按钮、最近成功同步时间、整体完成度，以及失败时“这次没有更新，上次成绩仍然可用”的可恢复状态。不要回显完整 URL/ID，也不要把它设计成产品登录、Steam OAuth、账号卡、排行榜或独立 Benchmark 页面；用户侧不要出现外部作者、课程代号或内部接口名称。
+
+同时设计一个紧凑的最小成绩视图：默认直接显示整体进度和项目列表，课程大类只用于轻量分组，子分类只在展开后的项目行作为弱化的“训练侧重”，不要增加一排用户必须理解的分类 Tab。行内显示项目名、最高分、项目档位和未完成状态；支持 Coach 从项目行发起“先看看这个项目”，但不展示 Steam Profile URL/ID，不把低分或课程标签写成动作、身体或外设诊断。覆盖未连接、同步中、首次成功、部分项目未打、刷新失败但有旧数据和窄窗口状态；保持工作型、克制、可扫描，不使用卡片套卡片。
 - 精确 breakpoint、动效时长、过渡方式与视觉微调；
 - 图表、时间轴、视频、EvidenceSegment 和 Coach 引用之间的视觉联动；
 - 空态、局部失败、刷新与恢复的具体呈现；
@@ -238,7 +245,7 @@ OpenDesign 的设计方向只有在以下条件全部满足时才可进入生产
 5. Analysis 的 Diagnosis、Video、Data 各有清晰职责，没有复制成三个完整报告；
 6. Coach 在宽、中、窄窗口均可用，不遮挡或压坏关键内容；
 7. 视觉与 `DESIGN-cursor.md` 的语义 palette 和克制方向一致；
-8. 没有新增账号、Dashboard、Benchmark、付费墙或未经批准的能力；
+8. 没有新增账号、Dashboard、独立 Benchmark 页面、排行榜、付费墙或未经批准的能力；有限 KovaaK 成绩模块严格停留在 onboarding / Settings 与最小成绩视图；
 9. 设计可以由现有技术栈和 active plan 的最小 primitives 实现；
 10. 截图中不存在路径、Raw trace、secret、token、假指标或过度承诺。
 

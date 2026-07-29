@@ -334,7 +334,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - Raw Input 不直接替代目标/准星视觉证据；没有可靠来源时不输出目标相对误差、视觉反应时刻等结论
 - 桌面发布工程细节（Python bundling、installer、签名、公证、自动更新，另 plan）
 - 订阅、credits、能力付费墙或 LLM 额度转售
-- Benchmark、external progress、在线 Benchmark provider、外部身份和 leaderboard 不进入 v1 正式 UI；后端或研究能力存在不等于产品已交付
+- 通用 Benchmark 平台、排行榜浏览、社交比较、后台自动抓取和任意 Benchmark provider 不进入 v1。v1 只允许用户明确同意后，以 Steam Profile URL 或 17 位 ID 手动读取一组随产品审核的 KovaaK 训练项目最高分、项目档位和完成度；用户可在本地保存一个本人已连接账号以便后续手动刷新。聊天中临时提交的其它 Profile 只在该回合查询，身份和成绩都不持久化；两类身份均不进入 Coach Provider。用户界面只称“KovaaK 成绩”或“训练项目成绩”，不突出外部作者、课程代号或难度体系。Coach 可用去身份成绩决定先检查哪个项目，但不能凭分数或课程标签直接诊断 reading、动作机制、身体状态或外设问题
 
 ## 12. 约束与依赖
 
