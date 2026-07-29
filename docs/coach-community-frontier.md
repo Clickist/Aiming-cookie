@@ -1,10 +1,10 @@
-# 瞄准社区前沿（Deep Research, 2026-06-29）
+# 瞄准社区前沿（Deep Research, 2026-06-29；Raw Input 补充 2026-07-29）
 
-> **研究截止日期：2026-06-29。状态：时间敏感参考。** 本文不能作为产品范围、架构、指标定义或诊断规则的事实源；只能用于 Coach 解释文案、profile 标签和处方理由。使用玩家排名、赛季、产品或社区规则前必须重新核实。
+> **研究批次：原始 deep research 截止 2026-06-29；Raw Input 社区经典补充收录于 2026-07-29。状态：时间敏感参考。** 本文不能作为产品范围、架构、指标定义或诊断规则的事实源；只能用于 Coach 解释文案、profile 标签和处方理由。使用玩家排名、赛季、产品或社区规则前必须重新核实。
 >
 > 第二轮 deep research，专攻**社区前沿**（学术不研究 KovaaK's/aim trainer 消费品，瞄准实际前沿在社区）。5 angle fan-out → 12 源 fetch → 35 claim → 25 对抗验证 → **6 存活** + 19 被反驳（透明列出）。
 > 94 agents / 1.69M tokens / ~44 min。遭遇 429 限流，部分 verify 失败，但 6 存活 claim 均经投票 + 多源确认。
-> **关键性质**：社区内容**时间敏感**（Voltaic season 标签、Celestial 计数、顶级玩家名次都流动），且信源以论坛/视频为主（学术同行评审几乎缺位）。所有内容**只进 narrator 文案 + profile 标签 + 训练处方理由**，**不进诊断规则**（那是 `coach-theory-foundation.md` 学术根基的领地）。
+> **关键性质**：社区内容**时间敏感**（Voltaic season 标签、Celestial 计数、顶级玩家名次都流动），且信源以论坛/视频为主（学术同行评审几乎缺位）。本文只提供研究输入；只有单条 Knowledge Registry entry 明确授予的用途才能进入 Provider Coach 表达，不能自动成为 profile 事实、诊断规则、身体机制、默认剂量、场景处方或 Training Plan 写入依据。
 
 ## 信源分级（沿用）
 
@@ -25,13 +25,13 @@
 - 完整映射：clicking = dynamic/static/linear；tracking = precise/control/reactive；switching = stability/evasive/speed
 - **信源**【权威社区共识】：Voltaic 官方 S5 blog、r/Voltaic S5 benchmarks、KovaaK's S5 focus playlists
 - **经久度**：高（Voltaic 当前官方分类，S5 期内稳定）
-- **系统含义**：narrator 词汇用这套分类（clicking/tracking/switching + 子类）；profile 标签可对齐
+- **系统含义**：Provider Coach 可在 Registry 边界内使用这套分类（clicking/tracking/switching + 子类）；profile 标签可对齐
 
 ### §1.2 三支柱 + 颜色编码（red/blue/purple）
 **claim**：社区共识的瞄准技能分类是三支柱（clicking / tracking / target-switching），Voltaic Weakness-Specific Routines 2.0 全程颜色编码（红=clicking，蓝=tracking，紫=switching）。S5（2024-2025）仍沿用，无争议。
 - **信源**【权威社区共识】：r/Voltaic、Scribd PDF、Voltaic blog S5 announcement
 - **经久度**：高（无争议，S5 仍用）。少数异见：把「Movement Aiming」当第四支柱
-- **系统含义**：UI/narrator 可用颜色约定；三支柱是社区通用语
+- **系统含义**：UI / Provider Coach 可用颜色约定；三支柱是社区通用语
 
 ### §1.3 顶级玩家子技能分化：smoothness/stability vs explosive-speed/reactive 很少同时顶峰
 **claim**：Celestial 级世界 #1 Voltaic precise-tracking 记录保持者（VT Matty / 'Corporate Serf'）自述是 smoothness/stability 型玩家，**明确 static clicking 是弱项**。支持「smoothness/stability 瞄准 vs 爆发速度/reactive 瞄准是不同子技能，很少同时顶峰」。
@@ -56,19 +56,19 @@
 - **信源**【权威社区共识】：Voltaic VDIM guide、r/FPSAimTrainer "Proper Static Clicking Form"、多个教学视频（2022-2026 稳定）
 - **经久度**：高（多年教学稳定，未被取代）
 - **异见**：少数「one-flick purity」流派（HnA 场景）；主流共识是 micro-correction 是预期的，只有**过度反复修正**才是缺陷。社区把「clean vs sloppy」操作化为「一次果断修正 vs 反复抖动」
-- **系统含义**：**与学术 `coach-theory-foundation.md` 的 corrective submovement 直接呼应**——社区「micro-correction」= 学术「corrective submovement」。narrator 技术描述 + 处方理由可用此三步；`two_stage` 画像（discrete corrective）有社区对应
+- **系统含义**：**与学术 `coach-theory-foundation.md` 的 corrective submovement 直接呼应**——社区「micro-correction」= 学术「corrective submovement」。Provider Coach 的技术解释与处方理由可用此三步；`two_stage` 画像（discrete corrective）有社区对应
 
 ---
 
 ## §2 社区经验补充（19 条，理论重审：保留）
 
-> **方法论修正（2026-06-29）**：社区内容不能用学术标准（peer review / 多源交叉 / 对抗投票 2-3 票）严苛要求——社区本质是论坛/视频/个人经验，信源天然弱。判定社区内容应用**理论一致性**：与学术根基（`coach-theory-foundation.md` / `aim-kinematics-research.md`）**冲突 → 排除**；**不冲突 → 保留**（标社区经验/未经验证），进 narrator 文案库。deep-research 默认的「信源形式淘汰（单源/时间敏感/未达 2 票）」对社区**过严**，会粗暴排除有价值的实战经验——这里用理论重审。
+> **方法论修正（2026-06-29）**：社区内容不能用学术标准（peer review / 多源交叉 / 对抗投票 2-3 票）严苛要求——社区本质是论坛/视频/个人经验，信源天然弱。判定社区内容应用**理论一致性**：与学术根基（`coach-theory-foundation.md` / `aim-kinematics-research.md`）**冲突 → 排除**；**不冲突 → 保留**（标社区经验/未经验证），进入 Registry 候选素材。deep-research 默认的「信源形式淘汰（单源/时间敏感/未达 2 票）」对社区**过严**，会粗暴排除有价值的实战经验——这里用理论重审。
 
-deep-research 对抗投票淘汰了 19 条社区 claim（多数仅因「单源/时间敏感/未达 2 票」这类**信源形式**理由）。**理论重审发现：19 条无一与学术根基冲突**——它们是社区训练法/技术/配置/评估法，与学术**互补**（更具体，不否认学术）。故**全部保留**为社区经验素材（标信源等级，进 narrator 文案，**不进诊断规则**——诊断只用学术根基）：
+deep-research 对抗投票淘汰了 19 条社区 claim（多数仅因「单源/时间敏感/未达 2 票」这类**信源形式**理由）。**理论重审发现：19 条无一与学术根基冲突**——它们是社区训练法/技术/配置/评估法，与学术**互补**（更具体，不否认学术）。故**全部保留**为社区经验素材（标信源等级，按 Registry 审核用途供 Provider Coach 使用，**不进诊断规则**——诊断只用学术根基）：
 
 | # | claim（中文摘要）| 与学术的关系 | 保留定位 |
 |---|---|---|---|
-| 1 | mattyow #1 S5 1312 + rank 列表 | 事实（无理论冲突）| 时间敏感参考，narrator 对标 |
+| 1 | mattyow #1 S5 1312 + rank 列表 | 事实（无理论冲突）| 时间敏感参考，Coach 对标 |
 | 2 | harmonic mean 排序 + 每子类≥1 分 | Voltaic 机制设计 | v0 确认；社区机制事实 |
 | 3 | Corporate Serf 3305 runs/55h 单场景 | 与 CI 张力但不否认（block 也能进步，交错更优）| 个案，标「单场景有效但 CI 更优」|
 | 4 | VDIM two-day-per-category | 与 CI **一致**（跨天交错）| 训练编排经验 |
@@ -88,7 +88,7 @@ deep-research 对抗投票淘汰了 19 条社区 claim（多数仅因「单源/�
 | 18 | S5 strafe scenarios（bounce aim）| 新场景类型，无冲突 | 社区新实践 |
 | 19 | 4 scenarios 最权重 tracking | 评估法，无冲突 | 社区评估 |
 
-**结论**：19 条全部保留为社区经验素材。它们未被学术验证（信源弱），但**不与学术冲突**——是社区在学术之上的**具体实践层**。narrator 可引用（标「社区经验/未经验证」），诊断规则仍只用学术根基。
+**结论**：19 条全部保留为社区经验素材。它们未被学术验证（信源弱），但**不与学术冲突**——是社区在学术之上的**具体实践层**。Provider Coach 可按 Registry 审核用途引用（标「社区经验/未经验证」），诊断规则仍只用学术根基。
 
 > **排除规则**：只有当社区内容**与学术冲突**（如否认 Fitts law、主张"反馈越多越好"等已被学术证伪的）才用理论证伪排除。本轮 19 条无此情况——所以零排除。
 
@@ -96,7 +96,7 @@ deep-research 对抗投票淘汰了 19 条社区 claim（多数仅因「单源/�
 
 ## 社区具体实践手册（怎么练——deep-research 丢弃上下文的恢复）
 
-> 上面 §1/§2 是 claim 级摘要（deep-research synth 产物，泛泛）。这一节恢复 fetch 阶段抓到的**具体可操作内容**——社区实际怎么练、什么配置、什么技术要点。这才是 narrator 文案和训练处方的**实操素材**。
+> 上面 §1/§2 是 claim 级摘要（deep-research synth 产物，泛泛）。这一节恢复 fetch 阶段抓到的**具体可操作内容**——社区实际怎么练、什么配置、什么技术要点。这些是 Registry 审核后可供 Provider Coach 解释或训练理由使用的**实操素材**。
 > 来源：r/FPSAimTrainer 多帖（Proper Static Clicking Form / how to improve / critique / tension management）、Voltaic VDIM guide（Scribd/YouTube, Lowgravity56）、Voltaic sensitivity chart（X/Twitter + r/Voltaic）。
 
 ### static clicking（静态点击）技术
@@ -131,9 +131,9 @@ Voltaic sensitivity chart（[X/Twitter 官方](https://x.com/VoltaicAim/status/1
 | dynamic clicking / tracking | **30-** | 快、反应 |
 | 通用最优 | **28-43** | 平衡（aiming.pro） |
 
-**铁律**（与学术 `aim-kinematics-research.md` §4 一致）：sens 是放大器/缩小器，**不是根因**。制动失控根因是发力-释放不对称，调 sens 是辅助实验，**必须复测验证**。
+**边界**：sens 是放大器/缩小器，**不是根因**。社区中“发力-释放不对称”可以作为制动问题的候选解释或单变量实验方向，不能作为已知根因；调整 sens 也只能作为可逆实验，并且**必须复测验证**。
 
-> 这些具体内容**进 narrator 文案 + 训练处方**（如「练 static 时 flick 到位后用 wrist micro，别边甩边点」+「static 推荐 40+ cm/360」），**不进诊断规则**（学术根基领地）。
+> 这些具体内容可按 Registry 的审核用途进入 Provider Coach 解释或训练理由，**不进诊断规则**（学术根基领地）。
 
 ---
 
@@ -164,7 +164,54 @@ Corporate Serf（Celestial 级，Voltaic precise tracking 世界 #1）的训练�
 - **Personal Best (PB) Method**：刷 PB——单场景持续刷到突破 plateau
 - **underflick 练习法**：故意欠冲再修，练 corrective submovement 速度（与学术 submovement 理论呼应）
 
-> 这些进 narrator 文案（"Pasu 练完整加减速循环"/"Multiclick 练落点精度"）+ 训练处方（"按 progression 分层"/"5-10 runs/session"），不进诊断规则。
+> 这些可按 Registry 的审核用途进入 Provider Coach 解释或训练理由，不进诊断规则。
+
+---
+
+## Raw Input 社区经典补充（2023-2025；收录于 2026-07-29）
+
+> **收录规则**：aiming-specific 知识主要由社区生产。社区经典不因单一作者、视频形式、缺少同行评审或存在流派分歧而淘汰；只要不与现有运动控制根基明确冲突，就完整保留作者、日期、适用条件、具体数字和分歧。证据等级约束 Coach 如何引用和能否驱动运行时动作，不决定这类内容是否值得进入社区知识层。
+
+### 九篇来源与知识定位
+
+| 文章 | 作者 / 日期 | 内化的社区知识 | 使用边界 |
+|---|---|---|---|
+| [Friction: the most impactful variable in your setup](https://rawinput.net/resources/padsnskates) | immie / 2025-11-29 | static/dynamic friction、stopping behavior、表面磨损及 pad/skate 组合共同塑造操作感 | 外设作为用户报告的上下文和可逆实验；具体产品、贴数和寿命仍保留为作者经验 |
+| [You will NEVER find your PERFECT Sensitivity](https://rawinput.net/resources/perfect-sensitivity) | Keeah / 2025-10-07 | 不存在脱离任务与技术的唯一 perfect sensitivity；cm/360 是统一交流单位；高低 sens 有 agility/stability 权衡 | 具体 `30-80 cm/360` 和肌群说法按作者观点保留，不升级为系统默认范围或身体事实 |
+| [How to Aim Train for TacFPS](https://rawinput.net/resources/linear) | MattyOW / 2025-01-24 | linear clicking 区别于 evasive dynamic；readable motion 中可结合 leading、click timing 与 trailing micro | 可作 taxonomy、cue 和未来 exact scenario 候选；不从 trainer 轨迹直接宣称 TacFPS crosshair placement 或游戏迁移 |
+| [What's the best way to flick?](https://rawinput.net/resources/flick) | pinguefy / Viscose / 2024-08-26 | active lock、pad pressure、finger drag、mouse lift、tension release 是社区讨论 flick 制动的不同策略 | 完整保留流派及作者偏好；只能由用户自报和单变量实验讨论，不能由运动学自动识别身体策略 |
+| [Does mouse grip actually matter?](https://rawinput.net/resources/mousegrips) | Viscose / 2024-05-13 | palm/claw/fingertip 是描述性分类；真实 grip 会随任务变化；舒适、适配和疼痛优先于模仿标准姿势 | 可用于非处方式解释和安全提问；不把 grip、肌群贡献或疼痛写成 deterministic profile fact |
+| [How Score Farming can help your aim](https://rawinput.net/resources/scorefarm) | MattyOW / 2024-04-21 | score farming、cheesing、技术优化和一般训练不是同一目标；FOV、sens、edge tracking、pattern learning 都可能是规则内策略 | 先明确用户目标并保留版本/规则上下文；作者的具体刷分策略不自动成为迁移训练默认值 |
+| [Did being top 10 in aim trainers help me in-game?](https://rawinput.net/resources/topten) | Viscose / 2024-02-21 | raw mouse control 与 game-specific skill 分层；应从主游戏反复动作选择 trainer 条件；偏科和专项选择影响迁移体验 | 完整保留作者长期个案与 `20%` 时间建议；主游戏迁移仍需独立 evidence，不把个案改写成因果定律 |
+| [Muscle memory is a myth (kinda)](https://rawinput.net/resources/muscle-memory) | Viscose / 2024-01-30 | aiming 的社区 muscle-memory 观更接近可适应的精细控制，而非记住固定物理距离；sens 可在训练中成为变式工具 | 文章提及但未给出链接的实验保留为待追原始来源；社区解释可用，学术机制引用现有 theory foundation |
+| [Is mouse accel actually an aiming cheat code?](https://rawinput.net/resources/mouse-accel) | Viscose / 2023-11-21 | acceleration curve 同时改变不同速度区间的输入映射；可能带来即时收益、学习代价、适应和动机变化 | 保留作者长期使用与退出经验；记录为输入配置上下文和可逆实验，不普遍化为必须启用或关闭 |
+
+### 内化主题 1：设置不是答案，而是技术与任务的上下文
+
+- **surface stack**：mousepad 材料/软硬、静摩擦、动摩擦、stopping behavior、磨损、skate 材料与覆盖共同构成实际表面条件；同一个 pad 名称不能代表跨时间不变的摩擦状态。
+- **sensitivity**：sens 不是一次测出的唯一答案，而是影响 agility、stability、可用动作幅度和训练暴露的工具。不同 sens 建议及范围都可保留为社区实践，但必须带作者、任务与日期。
+- **input mapping**：mouse acceleration 不是简单的高/低 sens，而是随输入速度变化的映射；比较 Run 时若用户报告改变了曲线，应把它视为 changed variable。
+- **grip**：palm/claw/fingertip 用来描述接触与手指活动自由度，不是三种固定正确姿势。自然变化、舒适与无痛优先；不为追求标签强迫固定手型。
+
+系统使用时，以上内容首先是 intake 上下文、替代解释和单变量实验材料。已有 TeachingSession `changed_variable`、execution confirmation、matched/near-transfer retest 足以承载实验，不需要另造外设 profile 或设置 store。
+
+### 内化主题 2：社区技术包含多种合法策略
+
+- **flick 制动**不是单一动作：主动锁定、向下压垫、手指拖垫、抬鼠标和中途释放 tension 都是社区实际存在的策略；作者对优劣的排序与高手个案一起保留，而不是裁成唯一标准动作。
+- **linear clicking**把稳定可读的直线运动、shot timing 和 leading 单独提出，补足 dynamic clicking 内部的策略差异。leading 不是随机猜测：是否合理取决于 motion predictability、target viability、落点与结果。
+- **trailing micro**描述准星持续落在目标运动之后并追赶的社区现象；它可成为观察词和 cue，但主游戏 crosshair placement、peek 语义与玩家意图仍需要主游戏证据。
+
+系统使用时，技术策略只有在单条 Registry entry 明确授权时才可进入 Provider Coach 解释、候选假设或用户选择的 cue；它们不自动形成处方理由、默认剂量、场景选择或计划写入。身体执行方式、意图和优劣不能仅由 Raw Input 或普通视频自动判定。
+
+### 内化主题 3：先区分用户到底在优化什么
+
+Raw Input 三篇训练哲学材料共同说明至少要区分：
+
+1. **benchmark / leaderboard score**：允许研究规则内的 FOV、sens、edge tracking、pattern、reset 和 threshold 策略；
+2. **aim-trainer technique**：关注场景要求的动作、reading、pacing、稳定性与可重复执行；
+3. **main-game transfer**：从主游戏反复出现的动作选择练习条件，并把游戏知识、武器、移动、地图和决策独立训练与验证。
+
+同一做法可能对一个目标有效、对另一个目标无效。Coach intake 应先澄清训练目标，再解释为什么 benchmark performance、动作学习和主游戏迁移不能互相冒充。个人时间比例、PB 方法和刷分流程完整保留为社区实践，但不变成通用剂量。
 
 ---
 
@@ -179,11 +226,11 @@ Corporate Serf（Celestial 级，Voltaic precise tracking 世界 #1）的训练�
 
 ## §4 对系统的总结指导
 
-1. **社区内容只进 narrator 文案 + profile 标签 + 训练处方理由**，**不进诊断规则**（advice/diagnosis）——社区随版本/KOL 变，易过时；诊断根基用学术（`coach-theory-foundation.md`）。
+1. **社区内容只是研究输入**。只有单条 Registry entry 的明确 `supported_uses` 才能进入 Provider Coach；它不自动进入 profile、诊断规则、身体机制、默认剂量、场景处方或 Training Plan 写入。社区随版本/KOL 变，易过时；诊断根基用学术（`coach-theory-foundation.md`）。
 2. **可直接用的社区词汇**：三支柱（clicking/tracking/switching）+ 颜色、static clicking 三步（big flick → micro → confirm）、smoothness vs speed 子型。
-3. **社区↔学术呼应**：社区「micro-correction」= 学术「corrective submovement」（§1.6 ↔ `coach-theory-foundation.md` §1.7）；这是社区经验有学术根基的少数点，可在 narrator 同时引用两层。
-4. **时间敏感内容定期复核**：顶级玩家名/rank/S5 season/energy 数字（§1.4 等）随版本变，系统不硬编码，narrator 引用时标注「截至 2025-05」类时间戳。
-5. **被反驳的具体数字/rank/方法论不引用**（§2）——对抗验证淘汰率高是社区内容的常态。
+3. **社区↔学术呼应**：社区「micro-correction」= 学术「corrective submovement」（§1.6 ↔ `coach-theory-foundation.md` §1.7）；这是社区经验有学术根基的少数点，Provider Coach 可在 Registry 边界内同时引用两层。
+4. **时间敏感内容定期复核**：顶级玩家名/rank/S5 season/energy 数字（§1.4 等）随版本变，系统不硬编码，Provider Coach 引用时标注「截至 2025-05」类时间戳。
+5. **被反驳、存在争议或只由单一作者提出的具体数字/rank/方法论仍完整归档**；引用时连同作者、日期、适用条件、分歧或反证，不作为无条件默认建议。
 
 ---
 
@@ -197,6 +244,7 @@ Corporate Serf（Celestial 级，Voltaic precise tracking 世界 #1）的训练�
 
 **【个人经验/视频】**（标未经验证）：
 - Corporate Serf YouTube：[How to Rank Up in Voltaic](https://www.youtube.com/watch?v=VzNA36hmN1Y)、[tracking top list](https://www.youtube.com/watch?v=8Qjrl4hsnSQ)
+- Raw Input 九篇作者级社区经典：见“Raw Input 社区经典补充”来源表（immie、Keeah、MattyOW、pinguefy、Viscose，2023-2025）
 - r/FPSAimTrainer（Proper Static Clicking Form 等讨论）
 - KovaaK's Steam discussions
 - 多个教学视频（Voltaic Static Clicking Guide、micro-adjusting 等）

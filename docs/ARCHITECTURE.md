@@ -218,6 +218,25 @@ Coach 是用户关系层，不属于某个 analysis session：
 - analysis session scoped chat 只能作为迁移兼容层，不可成为新功能依赖；
 - schema、summary/换窗、长期档案和 Pi session 投影若需变化，必须由 active spec/plan 单独冻结。
 
+Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 或训练事实：
+
+- 每个 owner / primary Coach thread 最多一条 active `TeachingSession`；它只保存当前 lesson 的受限状态、版本、当前 run 锁、待确认引用和可重建的 `TeachingTurnContract`，不保存 Raw、路径、Provider secret 或未经确认的训练结果；
+- `TeachingSession` 的候选解释、cue、单一变更变量和 retest intent 是教学过程状态。Training Plan item、execution 和 retest 仍是独立、owner-scoped 的正式事实，只有现有 trusted confirmation 可写入；
+- 每次 Agent run 绑定一个不可变 `TeachingTurnContract` snapshot。它只允许一个下一教学动作和一个用户问题；重试必须重放原 contract，不能从聊天文本重新猜阶段；
+- session 的推进、confirmed-fact reconciliation、可比性判定、暂停和不适停止由本地 planner/store 决定。Provider 只能表达已批准的内容，不能声明完成、选择状态转移或把候选机制升级为测量事实；
+- Analysis/history 是 metric comparability 与 meaningful-change policy 的唯一事实源。没有按 exact metric/version/conditions 注册的重复测量误差、worthwhile change 与必要 guardrail 时，非零 delta 必须保持 inconclusive；Profile 只能将精确相等的可比值显示为 stable，不能把任意非零差异显示为 improving/deteriorating；
+- ratio 的数学等价展示可以保留其原单位语义（例如有明确来源的 ratio 显示为百分比）。本地 validator 拦截的是无来源的语义扩展、好坏评价、发生频率或因果解释，而不是等价格式本身；
+- 删除 Analysis 只会令 session 中对应 evidence ref unavailable；不会删除 session、消息或已经确认的训练事实。若 session 无法继续安全教学，planner 必须回到 intake / unresolved，而非猜测替代证据。
+
+### 4.3.1 有限 KovaaK 成绩同步与训练阶段进阶
+
+- v1 只接入一份随产品发布并经过审核的 versioned course catalog。它冻结 39 组两阶段项目配对、来源课程分类和可选 exact local ScenarioProfile ref；它不是第二套 Scenario Registry，也不能用外部名称替代本地 hash。外部作者、课程代号和阶段名称属于内部 provenance，不作为用户侧功能名称；
+- Steam Profile URL 或 17 位 ID 必须由用户明确提交并同意使用。用户可在本地 owner scope 保存一个规范化的本人 Steam ID，用于后续显式手动刷新；它独立于 Benchmark snapshot，删除连接不删除既有成绩。聊天中提交的临时 Profile 仅存于当前 turn 的内存绑定，既不写入 Benchmark、消息、trace、audit、confirmation 或 Training Plan，也不影响用户历史成绩。两类身份均不得进入 LLM Provider 请求、Coach context、普通日志、公开导出或遥测；临时输入在到达 LLM 前必须替换为只在 loopback bridge 内有效的 opaque ref。
+- KovaaK 网页后端没有稳定公开 API 合同。同步必须设置超时，完整校验两个阶段各 39 个已知且无重复的场景，并在单一 SQLite 事务中写入现有 `benchmark_records`。任一阶段失败时不写半份快照，保留上次成功数据，且不影响 Analysis、History 或 Coach 可用性；
+- Coach 只接收 versioned、去身份、大小受限的成绩摘要：课程版本、同步时间、完成度、项目名称、最高分、项目档位和待检查顺序。分数只帮助选择先检查哪个项目或难度；具体动作问题仍必须来自当前 Analysis 和 Registry；
+- 较低阶段仍按现有 exact Analysis、Training Plan item、执行确认与 matched retest 完成教学。只有已注册、带 exact metric/version/conditions 证据的 improvement policy 得出的确认复测结果，或用户明确确认一次主观结果为 improved 时，Coach 才可建议对应的更高阶段项目；当前 Analysis metric 的任意非零 delta 不自动构成 improved/worsened。该建议是下一次压力测试和新基线，不是迁移已成功；
+- 更高阶段项目没有 reviewed exact hash / analyzer contract 时只能显示项目名称级建议，不能生成正式 Training Plan item、可比 Analysis 或迁移结论。获得 exact identity 后继续复用现有 11 字段 plan item 和 confirmation，不新增课程进度状态机。
+
 ### 4.4 Coach evidence boundary
 
 - L0 原始载体与私有实现对象（Raw trace、MP4/frame、原始 Stats CSV、Performance protobuf、绝对路径、私有 parser payload 与未知字段）只留在本地 Runtime/受管 artifact，不能进入 Provider request、Coach tool result、message、trace、普通 API 或日志；
@@ -234,7 +253,10 @@ Coach 是用户关系层，不属于某个 analysis session：
 - `GET /api/sessions/{analysis_id}/evidence-segments`：读取 `frontend_evidence_segments.v1`，包含安全 EvidenceSegment metadata、coverage/confidence/limitations，以及相对该 Analysis canonical window 的 `evidence_segment_playback.v1` seek anchor；不包含 frame、MP4 bytes、路径或 parser payload；
 - `GET /api/sessions/{analysis_id}/video`：仅在 owner-scoped managed MP4 可用时流式播放；前端用上一个接口的相对毫秒 anchor 定位；
 - `/api/coach/tools/execute`：只给 Coach bridge 使用，所有 evidence 下钻仍受 bridge reachable refs、owner、cursor 和 budget 约束；
-- `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions`、`POST /api/training-plan-items/{item_ref}/retests`：显式用户写入训练事实，要求 `Idempotency-Key`；execution/retest 不进入 Coach 的 TypeScript tool allow-list，模型不能把推断伪装成用户执行。
+- `POST /api/benchmarks/sync/kovaaks`：用户明确同意后手动刷新有限 KovaaK 成绩；失败不覆盖上次成功快照，响应不回显 Steam Profile URL 或 ID；
+- `/api/kovaak-connection`：本地 owner scope 的已连接账号状态、设置和移除；公开响应不回显 Steam Profile URL 或 ID；
+- `POST /api/kovaak-connection/refresh`：使用已连接账号手动刷新有限 KovaaK 成绩；没有连接或上游失败不覆盖上次成功快照；
+- `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions`、`POST /api/training-plan-items/{item_ref}/retests`：显式用户写入训练事实，要求 `Idempotency-Key`。Coach bridge 可预填同一三类训练事实，但 `coach_inferred` 调用只能返回 `needs_confirmation`；只有 trusted UI/backend confirmation 才能写入。模型不得把推断、沉默或聊天语气伪装为已完成练习、主观反馈或复测结果。
 
 Analysis 删除后，以上 Analysis/Evidence refs 返回 unavailable/deleted 语义；原有 Coach 消息、画像和训练历史不被级联删除。
 
@@ -246,6 +268,12 @@ Analysis 删除后，以上 Analysis/Evidence refs 返回 unavailable/deleted �
 - SQLite 只持久化历史对话实际使用的 registry/entry/version/source refs，不复制 Registry 正文，也不与静态 asset 双写；
 - metric 定义、运动学机制、诊断适用范围、学术研究、社区 cue、处方/verification、Tracking 和身体/张力候选假设均可进入 Registry，但必须保留 source level、最高 claim、limitations 与 counterevidence；
 - 身体、张力、握持、灵敏度和硬件内容在没有直接传感器或可比实验时只能作为 `experimental` 候选假设，不得生成 measured/deterministic root cause；
+- Registry capability 采用严格递增前缀：`explanation_only` → `diagnosis_support` → `candidate_experiment` → `scenario_prescription`。消费者必须显式请求所需 capability；Provider 可自然组织表达，但不得把低权限 entry 提升为诊断、实验或处方；
+- `explanation_only` 不携带 cue、剂量或复测；`candidate_experiment` 必须携带可逆 cue、dose guardrail、matched retest 与 stop rule；只有 `scenario_prescription` 可以绑定 exact local scenario 和 near-transfer retest；
+- Registry 版本、schema 与 entry ref 必须显式校验并 fail closed；entry 正文、字段或 capability 语义变化必须提升 `entry_version`，不得复用已有 `knowledge:<id>@<version>`；历史 v1/v2/v3 按原 version 精确可读，新版本只能通过同一 loader/query API 发布，禁止另建 community store、resolver 或 Provider authored knowledge state；
+- 新 `analysis_result.v2` issue 可携带 `observation_ref` 与成对的 `knowledge_registry_version` / `knowledge_entry_refs`。producer 只能复用 Registry 已声明的 observation ref；没有精确覆盖的本地 observation 仍可展示，但不获得 Coach 教学或 Training Plan 写入授权；
+- Coach 优先按 exact version、单一 entry ref 与 observation ref 解析，显式 `metric:*` 仅作一致性检查。未知、失活或不匹配的引用 fail closed；缺少 refs 的历史 signal 仅能作旧数据显示，不能由此编译新的 prepared Training Plan item；
+- Analysis 不复制 Registry 的 definition/cue/dose/retest 正文。Provider 在取得通过 capability 的 Registry 内容后可以自然改写表达，但不得提升 capability 或生成新的 knowledge ref；
 - 第一版只允许基于显式 topic/signal alias/metric/use 的 bounded deterministic retrieval；embedding、在线搜索或 LLM 相似度不得触发正式 diagnosis。
 
 ## 5. Coach Agent Runtime
@@ -274,7 +302,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - UI/API 只允许 set/replace/delete credential，并返回 `configured`、`auth_mode`、`credential_source`、`needs_reauth`、`last_test` 等状态，不得读回 secret；
 - auth/refresh operation 对 credential 状态的完成写入必须绑定其启动时 revision；旧 operation 的成功 credential 或失败 `needs_reauth` 标记都不得覆盖、污染用户随后替换的新 credential；
 - `LLM_PROVIDER` 与 `kovaak_tracker/coach/providers.json` 只保留为旧环境/配置兼容入口，不得继续充当 provider/model 事实源；迁移必须保留显式选择，不能把 obsolete `deepseek-chat` 静默改写为其它 model；
-- active Coach turn 与 Analysis narration 只能使用 owner 当前 selected local profile；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；Provider 不可用时 deterministic Analysis 仍完成，narration 标为 not requested / unavailable；
+- active Coach turn 只能使用 owner 当前 selected local profile；Analysis worker 不得加载 Provider 或生成 narration，新 `analysis_result.v2` 只保留 `not_requested` / `null` 兼容 envelope，旧 v1/unversioned narration 继续可读；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；
 - provider/model 目录、API key/ambient auth、OAuth/device-code 和 OpenAI-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
 - Provider/model/credential/sidecar 失败只影响 Coach readiness，不得阻塞 Analysis、History 或 deterministic report/prescription；
 - Pi coding-agent、shell、filesystem 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；
@@ -316,7 +344,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 顺序原则：
 
 1. 先保证 Capture Coordinator、Stats/Performance 事后 Run finalization、Raw/MP4 Run-owned evidence、用户选择与手动存储管理可靠；再冻结统一时间、场景、规范化 evidence 和 bounded Coach broker，接通 static/dynamic clicking、continuous tracking 与 target switching 的专项 analyzer；
-2. 完成完整 Pi catalog、selected provider/model、本地 credential persistence、必要的 Pi auth/OAuth/device-code 与首次 onboarding，再恢复用户可达的分析工作区、训练记录选择、视频/数据联动、完整 Provider Settings 和 Coach 侧栏；
+2. 完成完整 Pi catalog、selected provider/model、本地 credential persistence、首发支持的 Provider 认证方式与首次 onboarding，再恢复用户可达的分析工作区、训练记录选择、视频/数据联动、完整 Provider Settings 和 Coach 侧栏；OAuth/device-code 可以后续接入，不阻塞首发闭环；
 3. 冻结并实现 source unavailable、Run/trace 删除、import/delete/runtime crash 等恢复合同；
 4. 完成 Desktop packaging、Windows 实机验证、静态 Landing/release 分发和发布链；
 5. 完成跨 family 的质量、fixture、真实 Run 与 Coach usefulness Gate；没有移动遥测的 movement aiming 继续只保留 outcome-only；
