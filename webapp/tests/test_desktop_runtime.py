@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from webapp.backend import desktop_runtime, routes
+from webapp.backend.kovaak_capture_finalizer import CaptureFinalizationWaiting
 from webapp.backend.native_capture_client import NativeCaptureRetryableError
 
 
@@ -255,11 +256,44 @@ async def test_capture_status_distinguishes_shutdown_unavailable_from_real_failu
     records = [record for record in caplog.records if record.name == routes.__name__]
     assert len(records) == 1
     assert records[0].levelno == expected_level
-    assert (records[0].exc_info is not None) is (expected_level == logging.ERROR)
+    assert records[0].exc_info is None
     if error_code == "capture_control_unavailable":
         assert error_code not in records[0].getMessage()
     else:
         assert error_code in records[0].getMessage() or records[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_capture_status_keeps_unexpected_failure_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class BrokenNativeCaptureClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def status(self) -> dict:
+            raise RuntimeError("unexpected native failure")
+
+    async def no_runs(_user_id: str) -> list[dict]:
+        return []
+
+    monkeypatch.setattr(routes.config, "NATIVE_CAPTURE_CONTROL_ADDR", "127.0.0.1:1")
+    monkeypatch.setattr(routes.config, "NATIVE_CAPTURE_CONTROL_SECRET", "0" * 64)
+    monkeypatch.setattr(routes, "NativeCaptureClient", BrokenNativeCaptureClient)
+    monkeypatch.setattr(routes.kovaak_run_store, "list_kovaak_run_summaries", no_runs)
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(desktop_shutdown_requested=False)),
+    )
+
+    with caplog.at_level(logging.ERROR, logger=routes.__name__):
+        response = await routes.get_capture_status(request=request, _=None)
+
+    assert response.availability == "unavailable"
+    records = [record for record in caplog.records if record.name == routes.__name__]
+    assert len(records) == 1
+    assert records[0].levelno == logging.ERROR
+    assert records[0].exc_info is not None
 
 
 @pytest.mark.asyncio
@@ -395,6 +429,84 @@ async def test_capture_exit_monitor_waits_before_the_first_status_poll(
 
 
 @pytest.mark.asyncio
+async def test_capture_exit_monitor_releases_promptly_when_finalizers_drain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = desktop_runtime.FinalizerFutureTracker()
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    observed = asyncio.Event()
+    released = asyncio.Event()
+    stop = asyncio.Event()
+
+    class FakeFinalizer:
+        async def finalizing_capture_session(self):
+            observed.set()
+            return "session-1"
+
+        async def release_capture_session(self, capture_session_id: str) -> bool:
+            assert capture_session_id == "session-1"
+            released.set()
+            return True
+
+    async def pending_finalizer() -> dict:
+        started.set()
+        await finish.wait()
+        return {"id": 1}
+
+    monkeypatch.setattr(
+        desktop_runtime,
+        "CAPTURE_EXIT_STATUS_POLL_SECONDS",
+        0.01,
+    )
+    future = asyncio.run_coroutine_threadsafe(
+        pending_finalizer(), asyncio.get_running_loop(),
+    )
+    tracker.track(future)
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    monitor = desktop_runtime.CaptureExitReleaseTracker(grace_seconds=0.3)
+    task = asyncio.create_task(
+        monitor.monitor(FakeFinalizer(), tracker, stop)
+    )
+
+    try:
+        await asyncio.wait_for(observed.wait(), timeout=1)
+        assert tracker.has_pending()
+
+        finish.set()
+        await asyncio.wait_for(released.wait(), timeout=0.15)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+        await monitor.drain()
+    assert future.result() == {"id": 1}
+
+
+@pytest.mark.asyncio
+async def test_capture_exit_monitor_propagates_status_failure_after_finalizers_drain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeFinalizer:
+        async def finalizing_capture_session(self):
+            raise NativeCaptureRetryableError("capture_export_failed")
+
+    monkeypatch.setattr(
+        desktop_runtime,
+        "CAPTURE_EXIT_STATUS_POLL_SECONDS",
+        0.001,
+    )
+    monitor = desktop_runtime.CaptureExitReleaseTracker()
+    with pytest.raises(NativeCaptureRetryableError, match="capture_export_failed"):
+        await asyncio.wait_for(
+            monitor.monitor(
+                FakeFinalizer(), desktop_runtime.FinalizerFutureTracker(), asyncio.Event(),
+            ),
+            timeout=1,
+        )
+
+
+@pytest.mark.asyncio
 async def test_capture_exit_release_does_not_release_while_kovaak_is_alive() -> None:
     class FakeFinalizer:
         async def finalizing_capture_session(self):
@@ -497,6 +609,80 @@ async def test_ingestion_service_routes_discovery_through_one_finalizer(
 
     assert result == {"id": 7}
     assert observed == [discovery]
+
+
+@pytest.mark.asyncio
+async def test_ingestion_service_logs_unexpected_future_failure_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stats_dir = tmp_path / "stats"
+    stats_dir.mkdir()
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIR", stats_dir)
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIR", None)
+    finalized = asyncio.Event()
+
+    class FakeFinalizer:
+        async def finalize(self, _discovery):
+            finalized.set()
+            raise RuntimeError("unexpected ingestion failure")
+
+    service = desktop_runtime.create_kovaak_ingestion_service(
+        asyncio.get_running_loop(),
+        FakeFinalizer(),
+    )
+    caplog.set_level(logging.ERROR)
+
+    (stats_dir / "Broken Stats.csv").write_text("stats", encoding="utf-8")
+    assert service._watchers[0].scan_once() == []
+    assert len(service._watchers[0].scan_once()) == 1
+    await asyncio.wait_for(finalized.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    records = [
+        record for record in caplog.records
+        if "KovaaK" in record.getMessage() and record.exc_info is not None
+    ]
+    assert len(records) == 1
+
+
+@pytest.mark.asyncio
+async def test_ingestion_service_treats_waiting_for_sources_as_expected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stats_dir = tmp_path / "stats"
+    stats_dir.mkdir()
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIR", stats_dir)
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIR", None)
+    finalized = asyncio.Event()
+
+    class FakeFinalizer:
+        async def finalize(self, _discovery):
+            finalized.set()
+            raise CaptureFinalizationWaiting("waiting_for_sources")
+
+    service = desktop_runtime.create_kovaak_ingestion_service(
+        asyncio.get_running_loop(),
+        FakeFinalizer(),
+    )
+    caplog.set_level(logging.INFO)
+
+    (stats_dir / "Waiting Stats.csv").write_text("stats", encoding="utf-8")
+    assert service._watchers[0].scan_once() == []
+    assert len(service._watchers[0].scan_once()) == 1
+    await asyncio.wait_for(finalized.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    records = [
+        record for record in caplog.records
+        if "KovaaK" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
+    assert records[0].exc_info is None
 
 
 @pytest.mark.asyncio

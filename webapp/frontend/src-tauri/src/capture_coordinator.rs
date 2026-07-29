@@ -1255,10 +1255,15 @@ fn response_type_for_request(request: &ControlRequest) -> &'static str {
 }
 
 fn control_error_response(response_type: &'static str, code: &str) -> serde_json::Value {
+    let code = if response_type == "statusResult" {
+        "capture_unavailable"
+    } else {
+        sanitize_code(code)
+    };
     serde_json::json!({
         "type": response_type,
         "ok": false,
-        "code": sanitize_code(code),
+        "code": code,
     })
 }
 
@@ -1404,6 +1409,7 @@ fn managed_export_paths(
 fn sanitize_code(code: &str) -> &'static str {
     match code {
         "capture_unavailable" => "capture_unavailable",
+        "control_read_failed" => "capture_unavailable",
         "capture_session_mismatch" => "capture_session_mismatch",
         "control_auth_failed" => "control_auth_failed",
         "control_message_invalid" => "control_message_invalid",
@@ -1695,6 +1701,19 @@ mod tests {
         assert_eq!(response["ok"], false);
         assert_eq!(response["code"], "capture_export_failed");
         assert!(!response.to_string().contains("private"));
+
+        let status_response = control_error_response(
+            response_type_for_request(&status),
+            "C:\\private\\capture status unavailable",
+        );
+        assert_eq!(status_response["type"], "statusResult");
+        assert_eq!(status_response["ok"], false);
+        assert_eq!(status_response["code"], "capture_unavailable");
+        assert!(!status_response.to_string().contains("private"));
+
+        let read_failure = control_error_response("controlError", "control_read_failed");
+        assert_eq!(read_failure["type"], "controlError");
+        assert_eq!(read_failure["code"], "capture_unavailable");
 
         let malformed = control_error_response("controlError", "control_message_invalid");
         assert_eq!(malformed["type"], "controlError");

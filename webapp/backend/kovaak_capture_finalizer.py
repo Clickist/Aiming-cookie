@@ -10,8 +10,8 @@ from pathlib import Path
 
 from . import kovaak_run_store
 from .kovaak_ingest import (
+    ExpectedIngestionState,
     KovaaKFileDiscovery,
-    NonRetryableIngestionError,
     RetryableIngestionError,
     normalize_kovaak_stem,
 )
@@ -27,7 +27,7 @@ class CaptureFinalizationPending(RetryableIngestionError):
     pass
 
 
-class CaptureFinalizationWaiting(NonRetryableIngestionError):
+class CaptureFinalizationWaiting(ExpectedIngestionState):
     pass
 
 
