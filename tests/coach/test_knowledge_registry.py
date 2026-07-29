@@ -324,7 +324,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-07-22.v2"
+    assert result["registry_version"] == "2026-07-29.v4"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -343,11 +343,11 @@ def test_legacy_source_specific_fetch_is_registry_backed_and_bounded():
     assert result["limitations"]
 
 
-def test_v2_is_active_while_v1_historical_registry_resolves_exactly():
+def test_v4_is_active_while_v1_historical_registry_resolves_exactly():
     active = registry.load_registry()
     historical = registry.load_registry(registry_version="2026-07-14.v1")
 
-    assert active["schema_version"] == "coach_knowledge_registry.v2"
+    assert active["schema_version"] == "coach_knowledge_registry.v3"
     assert active["registry_version"] != historical["registry_version"]
     assert historical["schema_version"] == "coach_knowledge_registry.v1"
     assert len(historical["entries"]) == 43
@@ -387,7 +387,9 @@ def test_v2_schema_registry_and_family_contract_fixture_are_complete():
         key=lambda error: list(error.path),
     )
     assert errors == [], [error.message for error in errors[:5]]
-    assert registry.validate_registry(packaged) == registry.load_registry()
+    assert registry.validate_registry(packaged) == registry.load_registry(
+        registry_version="2026-07-22.v2"
+    )
     assert fixture["schema_version"] == "coach_knowledge_family_contracts.v2"
     contracts = {item["family"]: item for item in fixture["families"]}
     assert set(contracts) == {
@@ -409,7 +411,7 @@ def test_v2_schema_registry_and_family_contract_fixture_are_complete():
 
 
 def test_v2_entries_are_complete_independent_coaching_records():
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-28.v3")
     singular_sections = {
         "definition",
         "scope",
@@ -444,7 +446,7 @@ def test_v2_entries_are_complete_independent_coaching_records():
 
 
 def test_v2_research_claims_use_primary_sources_and_sources_cover_entry_families():
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-07-28.v3")
     assert all(
         source["source_ref"] != "research.task10-assessment"
         for source in loaded["sources"]
@@ -489,7 +491,10 @@ def test_v2_migration_audit_disposes_every_v1_entry_once():
 
 
 def test_v2_movement_outcome_only_cannot_prescribe_or_imply_measured_facts():
-    entries = registry.query_registry(topic="movement_aiming")
+    entries = registry.query_registry(
+        registry.load_registry(registry_version="2026-07-28.v3"),
+        topic="movement_aiming",
+    )
     assert entries
     for entry in entries:
         for section_name in (
@@ -501,3 +506,264 @@ def test_v2_movement_outcome_only_cannot_prescribe_or_imply_measured_facts():
             section["claim_level"]
             for section in (entry["definition"], entry["scope"], entry["expected_direction"])
         }
+
+
+def test_v3_scenario_prescriptions_are_explicit_and_limited_to_reviewed_families():
+    loaded = registry.load_registry(registry_version="2026-07-28.v3")
+
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v2.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v3.json").read_text(encoding="utf-8"))
+    assert list(Draft202012Validator(schema).iter_errors(packaged)) == []
+
+    assert loaded["registry_version"] == "2026-07-28.v3"
+    expected = {
+        "static.flicking-terminal-control": "scenario:static.1wall_6targets_small@1",
+        "dynamic.click-error-and-acquisition": "scenario:dynamic.pasu_small_reload@1",
+        "dynamic.speed-matching-and-reading": "scenario:dynamic.pasu_small_reload@1",
+        "tracking.predictable-speed-matching": "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
+        "switching.transition-and-arrival": "scenario:switching.beants_larger@1",
+    }
+    for entry in loaded["entries"]:
+        prescription = entry["scenario_prescription"]
+        if entry["entry_id"] in expected:
+            assert prescription["scenario_profile_ref"] == expected[entry["entry_id"]]
+            assert prescription["practice_condition"]
+            assert prescription["review_after"] == "next comparable practice session"
+            assert prescription["source_refs"]
+            assert prescription["claim_level"] == "experimental"
+        else:
+            assert prescription == "not_applicable"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda data: data["entries"][0].pop("scenario_prescription"), "scenario_prescription"),
+        (lambda data: data["entries"][0]["scenario_prescription"].update(scenario_profile_ref="scenario:bad/ref"), "scenario_profile_ref"),
+        (lambda data: data["entries"][0]["scenario_prescription"].update(source_refs=["unknown.source"]), "source_refs"),
+        (lambda data: data["entries"][0]["scenario_prescription"].update(review_after="later"), "review_after"),
+        (lambda data: data["entries"][0]["scenario_prescription"].update(claim_level="research_supported"), "ceiling"),
+        (lambda data: data["sources"][0]["supports_sections"].remove("scenario_prescription"), "support"),
+    ],
+)
+def test_v3_rejects_invalid_scenario_prescription_contract(mutation, message):
+    invalid = copy.deepcopy(
+        registry.load_registry(registry_version="2026-07-28.v3")
+    )
+    mutation(invalid)
+
+    with pytest.raises(registry.KnowledgeRegistryError, match=message):
+        registry.validate_registry(invalid)
+
+
+@pytest.mark.parametrize("scenario_profile_ref", [
+    "scenario:movement.unreviewed@99",
+    "scenario:static.retired@1",
+    "scenario:static.1wall_6targets_small@99",
+])
+def test_v3_rejects_scenario_prescriptions_outside_active_scenario_profiles(
+    scenario_profile_ref,
+):
+    invalid = copy.deepcopy(
+        registry.load_registry(registry_version="2026-07-28.v3")
+    )
+    invalid["entries"][0]["scenario_prescription"]["scenario_profile_ref"] = (
+        scenario_profile_ref
+    )
+
+    with pytest.raises(registry.KnowledgeRegistryError, match="active scenario"):
+        registry.validate_registry(invalid)
+
+
+_RAWINPUT_V4_ENTRY_IDS = {
+    "community.friction-and-surface",
+    "community.task-specific-sensitivity",
+    "community.linear-clicking-strategy",
+    "community.flick-stopping-strategies",
+    "community.adaptive-mouse-grip",
+    "community.score-farming-context",
+    "community.aim-trainer-transfer",
+    "community.sensitivity-variation",
+    "community.mouse-acceleration-context",
+}
+
+
+def test_v4_schema_python_and_article_sources_are_complete():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v4.json").read_text(encoding="utf-8"))
+
+    Draft202012Validator.check_schema(schema)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(packaged),
+        key=lambda error: list(error.path),
+    )
+    assert errors == [], [error.message for error in errors[:5]]
+    validated = registry.load_registry(registry_version="2026-07-29.v4")
+    assert validated == registry.validate_registry(packaged)
+    assert validated["schema_version"] == "coach_knowledge_registry.v3"
+    article_entries = {
+        entry["entry_id"]: entry
+        for entry in validated["entries"]
+        if entry["entry_id"] in _RAWINPUT_V4_ENTRY_IDS
+    }
+    assert set(article_entries) == _RAWINPUT_V4_ENTRY_IDS
+    article_sources = {
+        source["author_or_org"]
+        for source in validated["sources"]
+        if source["source_ref"].startswith("community.rawinput.article.")
+    }
+    assert article_sources == {"immie", "Keeah", "MattyOW", "pinguefy / Viscose", "Viscose"}
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_valid"),
+    [
+        ("257_sources", True),
+        ("33_topics", True),
+        ("unsafe_text", False),
+        ("blank_text", False),
+        ("501_char_list_text", False),
+        ("invalid_alias", False),
+    ],
+)
+def test_v4_json_schema_and_python_validator_boundary_parity(case, expected_valid):
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
+    candidate = json.loads((root / "registry.v4.json").read_text(encoding="utf-8"))
+
+    if case == "257_sources":
+        template = candidate["sources"][0]
+        while len(candidate["sources"]) < 257:
+            source = copy.deepcopy(template)
+            source["source_ref"] = f"community.synthetic.source-{len(candidate['sources'])}"
+            candidate["sources"].append(source)
+    elif case == "33_topics":
+        candidate["entries"][0]["topics"] = [f"topic.{index}" for index in range(33)]
+    elif case == "unsafe_text":
+        candidate["entries"][0]["definition"]["text"] = "api_key=supersecret"
+    elif case == "blank_text":
+        candidate["entries"][0]["definition"]["text"] = "   "
+    elif case == "501_char_list_text":
+        candidate["entries"][0]["alternative_explanations"][0] = "x" * 501
+    else:
+        candidate["signal_aliases"]["bad?alias"] = "canonical.signal"
+
+    schema_valid = not list(Draft202012Validator(schema).iter_errors(candidate))
+    try:
+        registry.validate_registry(candidate)
+    except registry.KnowledgeRegistryError:
+        python_valid = False
+    else:
+        python_valid = True
+
+    assert schema_valid is expected_valid
+    assert python_valid is expected_valid
+
+
+def test_v4_capabilities_are_ordered_and_gate_prescription_fields():
+    loaded = registry.load_registry(registry_version="2026-07-29.v4")
+    entries = {entry["entry_id"]: entry for entry in loaded["entries"]}
+
+    explanation = entries["community.score-farming-context"]
+    assert explanation["supported_uses"] == ["explanation_only"]
+    for name in (
+        "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+        "stop_adjust_rule", "scenario_prescription",
+    ):
+        assert name not in explanation
+
+    experiment = entries["community.friction-and-surface"]
+    assert experiment["supported_uses"] == [
+        "explanation_only", "diagnosis_support", "candidate_experiment",
+    ]
+    assert experiment["cue"] != "not_applicable"
+    assert experiment["dose_guardrail"] != "not_applicable"
+    assert experiment["matched_retest"] != "not_applicable"
+    assert experiment["stop_adjust_rule"] != "not_applicable"
+    assert "near_transfer_retest" not in experiment
+    assert "scenario_prescription" not in experiment
+
+    prescribed = entries["static.flicking-terminal-control"]
+    assert prescribed["supported_uses"] == [
+        "explanation_only", "diagnosis_support", "candidate_experiment",
+        "scenario_prescription",
+    ]
+    assert prescribed["scenario_prescription"] != "not_applicable"
+    assert prescribed["near_transfer_retest"] != "not_applicable"
+    assert registry.validate_registry(loaded) == loaded
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data["entries"][0].update(
+            supported_uses=["candidate_experiment"],
+        ),
+        lambda data: next(
+            entry for entry in data["entries"]
+            if entry["entry_id"] == "community.score-farming-context"
+        ).update(cue={
+            "section_ref": "community.score-farming-context.cue",
+            "claim_level": "community_practice",
+            "source_refs": ["community.rawinput.article.scorefarm"],
+            "text": "unexpected cue",
+        }),
+        lambda data: next(
+            entry for entry in data["entries"]
+            if entry["entry_id"] == "community.friction-and-surface"
+        ).pop("matched_retest"),
+        lambda data: next(
+            entry for entry in data["entries"]
+            if entry["entry_id"] == "static.flicking-terminal-control"
+        ).update(supported_uses=[
+            "explanation_only", "diagnosis_support", "candidate_experiment",
+        ]),
+    ],
+)
+def test_v4_rejects_capability_and_field_mismatches(mutate):
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    invalid = json.loads((root / "registry.v4.json").read_text(encoding="utf-8"))
+    mutate(invalid)
+
+    with pytest.raises(registry.KnowledgeRegistryError, match="capability|supported_uses|required|forbidden"):
+        registry.validate_registry(invalid)
+
+
+def test_v4_migration_audit_accounts_for_v3_and_nine_new_entries():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    v3 = json.loads((root / "registry.v3.json").read_text(encoding="utf-8"))
+    v4 = json.loads((root / "registry.v4.json").read_text(encoding="utf-8"))
+    audit = json.loads(
+        (root / "migrations" / "2026-07-29-v3-to-v4-audit.json")
+        .read_text(encoding="utf-8")
+    )
+
+    assert audit["schema_version"] == "coach_knowledge_migration_audit.v3"
+    assert audit["source_registry_version"] == "2026-07-28.v3"
+    assert audit["target_registry_version"] == "2026-07-29.v4"
+    assert {
+        row["source_entry_ref"] for row in audit["migrated_entries"]
+    } == {
+        registry.entry_ref(entry) for entry in v3["entries"]
+    }
+    migrated_ids = {entry["entry_id"] for entry in v3["entries"]}
+    assert {
+        row["target_entry_ref"] for row in audit["migrated_entries"]
+    } == {
+        f"knowledge:{entry_id}@2" for entry_id in migrated_ids
+    }
+    assert {
+        registry.entry_ref(entry) for entry in v4["entries"]
+        if entry["entry_id"] in migrated_ids
+    } == {
+        f"knowledge:{entry_id}@2" for entry_id in migrated_ids
+    }
+    assert not (
+        {registry.entry_ref(entry) for entry in v3["entries"]}
+        & {registry.entry_ref(entry) for entry in v4["entries"]}
+    )
+    assert {
+        row["target_entry_ref"] for row in audit["new_entries"]
+    } == {f"knowledge:{entry_id}@1" for entry_id in _RAWINPUT_V4_ENTRY_IDS}

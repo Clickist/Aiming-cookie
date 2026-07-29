@@ -23,6 +23,7 @@ class CoachTurn:
     user_id: str = "dev"
     provider_profile: Mapping[str, Any] | None = field(default=None, repr=False)
     tool_bridge: Mapping[str, Any] | None = field(default=None, repr=False)
+    teaching_turn: Mapping[str, Any] | None = field(default=None, repr=False)
     run_ref: str | None = None
 
 
@@ -129,6 +130,7 @@ class PiCoachEngine:
             messages=pi_messages,
             analysis_summary=analysis_summary,
             tool_bridge=turn.tool_bridge,
+            teaching_turn=turn.teaching_turn,
             return_result=True,
         )
 
@@ -143,6 +145,7 @@ class PiCoachEngine:
                 turn.diagnostic_context if turn.diagnostic_context is not None else turn.diagnosis
             ),
             tool_bridge=turn.tool_bridge,
+            teaching_turn=turn.teaching_turn,
             run_id=turn.run_ref,
         )
 

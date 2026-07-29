@@ -12,6 +12,25 @@ const { Type } = (await loadPiAi()) as {
 type JsonRecord = Record<string, unknown>;
 
 const METRIC_VERSION_RE = /^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*\.v[1-9][0-9]*$/;
+const OBSERVATION_REF_RE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
+const KNOWLEDGE_REGISTRY_VERSION_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.v[1-9][0-9]*$/;
+const KNOWLEDGE_ENTRY_REF_RE = /^knowledge:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+@[1-9][0-9]*$/;
+const BENCHMARK_COURSE_LABELS = new Set([
+	"click_timing:precision",
+	"click_timing:reading",
+	"click_timing:stability",
+	"control_tracking:arm",
+	"control_tracking:blending",
+	"control_tracking:fingertip",
+	"control_tracking:wrist",
+	"flick_tech:micro",
+	"flick_tech:post_flick",
+	"flick_tech:speed",
+	"flick_tech:stability",
+	"reactive_tracking:control",
+	"reactive_tracking:reading",
+	"reactive_tracking:speed",
+]);
 
 function hasDuplicateJsonObjectKeys(source: string): boolean {
 	let offset = 0;
@@ -189,6 +208,9 @@ const ISSUE_KEYS = new Set([
 	"plain_language_meaning",
 	"expected_result",
 	"claim_level",
+	"observation_ref",
+	"knowledge_registry_version",
+	"knowledge_entry_refs",
 	"metric_refs",
 	"event_refs",
 	"limitations",
@@ -209,6 +231,7 @@ const PRESCRIPTION_KEYS = new Set([
 	"reason",
 	"cue",
 	"purpose",
+	"dosage",
 	"retest_after",
 	"stop_or_adjust_rule",
 	"target_metrics",
@@ -301,12 +324,14 @@ const CLAIM_LEVELS = new Set([
 	"measured",
 	"deterministic_rule",
 	"research_supported",
+	"community_practice",
 	"community_consensus",
 	"experimental",
 ]);
 const SOURCE_LEVELS = new Set([
 	"product_contract",
 	"academic_peer_reviewed",
+	"community_practice",
 	"community_consensus",
 	"personal_experience_unverified",
 	"experimental",
@@ -458,7 +483,37 @@ function validatePrescription(value: unknown): boolean {
 
 function validateIssue(value: unknown): boolean {
 	if (!isRecord(value) || !hasOnlyKeys(value, ISSUE_KEYS)) return false;
+	const hasKnowledgeRegistryVersion = "knowledge_registry_version" in value;
+	const hasKnowledgeEntryRefs = "knowledge_entry_refs" in value;
+	if (hasKnowledgeRegistryVersion !== hasKnowledgeEntryRefs) return false;
 	return Object.entries(value).every(([key, item]) => {
+		if (key === "observation_ref") {
+			return (
+				typeof item === "string" &&
+				item.length <= 160 &&
+				OBSERVATION_REF_RE.test(item)
+			);
+		}
+		if (key === "knowledge_registry_version") {
+			return (
+				typeof item === "string" &&
+				KNOWLEDGE_REGISTRY_VERSION_RE.test(item)
+			);
+		}
+		if (key === "knowledge_entry_refs") {
+			return (
+				Array.isArray(item) &&
+				item.length > 0 &&
+				item.length <= 8 &&
+				item.every(
+					(ref) =>
+						typeof ref === "string" &&
+						ref.length <= 180 &&
+						KNOWLEDGE_ENTRY_REF_RE.test(ref),
+				) &&
+				new Set(item).size === item.length
+			);
+		}
 		if (
 			key === "metric_refs" ||
 			key === "event_refs" ||
@@ -830,12 +885,78 @@ function isCanonicalDiagnosticContext(value: unknown): value is JsonRecord {
 	);
 }
 
+function isCanonicalBenchmarkSummary(value: unknown): value is JsonRecord {
+	if (!isRecord(value) || !hasExactKeys(value, new Set([
+		"schema_version", "catalog_ref", "catalog_version", "observed_at", "completion",
+		"provisional_ranks", "scenarios", "review_candidates",
+	]))) return false;
+	if (
+		value.schema_version !== "coach_benchmark_summary.v1" ||
+		value.catalog_ref !== "benchmark-catalog:viscose-s2@1" ||
+		typeof value.catalog_version !== "string" || value.catalog_version.length > 120 ||
+		typeof value.observed_at !== "string" || value.observed_at.length > 40 ||
+		!Number.isFinite(Date.parse(value.observed_at)) ||
+		!isRecord(value.completion) || !isRecord(value.provisional_ranks) ||
+		!Array.isArray(value.scenarios) || value.scenarios.length !== 78 ||
+		!Array.isArray(value.review_candidates) || value.review_candidates.length > 8
+	) return false;
+	for (const difficulty of ["easier", "medium"]) {
+		const completion = value.completion[difficulty];
+		const rank = value.provisional_ranks[difficulty];
+		if (!isRecord(completion) || !hasExactKeys(completion, new Set(["completed", "required"])) ||
+			!Number.isInteger(completion.completed) || !Number.isInteger(completion.required) ||
+			completion.completed < 0 || completion.completed > completion.required || completion.required !== 39 ||
+			!Number.isInteger(rank) || rank < 0 || rank > 9) return false;
+	}
+	if (Object.keys(value.completion).length !== 2 || Object.keys(value.provisional_ranks).length !== 2) return false;
+	const itemKeys = new Set<string>();
+	const scenariosByKey = new Map<string, JsonRecord>();
+	const validItem = (item: unknown): item is JsonRecord => {
+		if (!isRecord(item) || !hasExactKeys(item, new Set([
+			"difficulty", "scenario_name", "category", "subcategory", "score", "scenario_rank",
+		]))) return false;
+		if (
+			(item.difficulty !== "easier" && item.difficulty !== "medium") ||
+			typeof item.scenario_name !== "string" || item.scenario_name.length === 0 ||
+			item.scenario_name.length > 200 || isUnsafeString(item.scenario_name) ||
+			typeof item.category !== "string" || typeof item.subcategory !== "string" ||
+			!BENCHMARK_COURSE_LABELS.has(`${item.category}:${item.subcategory}`) ||
+			typeof item.score !== "number" || !Number.isFinite(item.score) || item.score < 0 ||
+			!Number.isInteger(item.scenario_rank) || item.scenario_rank < 0 || item.scenario_rank > 9
+		) return false;
+		return true;
+	};
+	for (const item of value.scenarios) {
+		if (!validItem(item)) return false;
+		const key = `${item.difficulty}:${item.scenario_name}`;
+		if (itemKeys.has(key)) return false;
+		itemKeys.add(key);
+		scenariosByKey.set(key, item);
+	}
+	const candidateKeys = new Set<string>();
+	return value.review_candidates.every((item) => {
+		if (!validItem(item)) return false;
+		const key = `${item.difficulty}:${item.scenario_name}`;
+		const scenario = scenariosByKey.get(key);
+		if (
+			candidateKeys.has(key) || scenario === undefined ||
+			scenario.category !== item.category || scenario.subcategory !== item.subcategory ||
+			scenario.score !== item.score || scenario.scenario_rank !== item.scenario_rank
+		) return false;
+		candidateKeys.add(key);
+		return true;
+	});
+}
+
 function isCanonicalContextBundle(value: unknown): value is JsonRecord {
-	if (!isRecord(value) || !hasExactKeys(value, new Set(["schema_version", "contexts"]))) {
+	if (!isRecord(value) || !hasOnlyKeys(value, new Set([
+		"schema_version", "contexts", "benchmark_summary",
+	]))) {
 		return false;
 	}
 	if (value.schema_version !== "coach_turn_context.v1") return false;
 	if (!Array.isArray(value.contexts) || value.contexts.length > 8) return false;
+	if ("benchmark_summary" in value && value.benchmark_summary !== null && !isCanonicalBenchmarkSummary(value.benchmark_summary)) return false;
 	const refs = new Set<string>();
 	for (const item of value.contexts) {
 		if (!isRecord(item) || !hasExactKeys(item, new Set([
@@ -872,7 +993,7 @@ function isCanonicalContextBundle(value: unknown): value is JsonRecord {
 export function createAnalysisSummaryTool(analysisSummary: string | null) {
 	let summaryText = "当前没有可用的分析摘要。";
 	let hasAnalysis = false;
-	let contextSchema: "coach_diagnostic_context.v1" | "coach_diagnostic_context.v2" | "coach_diagnostic_context.v3" | "coach_turn_context.v1" =
+	let contextSchema: "coach_diagnostic_context.v1" | "coach_diagnostic_context.v2" | "coach_diagnostic_context.v3" | "coach_turn_context.v1" | "coach_benchmark_summary.v1" =
 		"coach_diagnostic_context.v1";
 	if (
 		analysisSummary &&
@@ -883,10 +1004,12 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
 			const parsed = JSON.parse(analysisSummary);
 			if (
 				!hasDuplicateJsonObjectKeys(analysisSummary) &&
-				(isCanonicalDiagnosticContext(parsed) || isCanonicalContextBundle(parsed))
+				(isCanonicalDiagnosticContext(parsed) || isCanonicalContextBundle(parsed) || isCanonicalBenchmarkSummary(parsed))
 			) {
 				summaryText = analysisSummary;
-				hasAnalysis = isCanonicalContextBundle(parsed) ? parsed.contexts.length > 0 : true;
+				hasAnalysis = isCanonicalContextBundle(parsed)
+					? parsed.contexts.length > 0 || ("benchmark_summary" in parsed && parsed.benchmark_summary !== null)
+					: true;
 				contextSchema = parsed.schema_version;
 			}
 		} catch {
@@ -898,7 +1021,7 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
 		name: "get_analysis_summary",
 		label: "Get diagnostic context",
 		description:
-			"返回本轮请求中已附带的 coach_diagnostic_context.v1/v2/v3 或 coach_turn_context.v1 JSON（只读，不访问磁盘或数据库）。",
+			"返回本轮请求中已附带的 Coach 分析或去标识化 benchmark summary JSON（只读，不访问磁盘或数据库）。分数和排名只能决定优先查看什么，不能诊断 reading、紧张、握法或硬件原因。",
 		parameters: Type.Object({}, { additionalProperties: false }),
 		async execute() {
 			return {

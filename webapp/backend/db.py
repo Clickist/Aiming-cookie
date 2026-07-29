@@ -115,7 +115,7 @@ class _GatedConnection:
 
 _conn: Optional[_GatedConnection] = None
 
-TARGET_USER_VERSION = 18
+TARGET_USER_VERSION = 21
 
 
 async def get_conn() -> _GatedConnection:
@@ -289,6 +289,13 @@ CREATE TABLE IF NOT EXISTS benchmark_records (
 );
 CREATE INDEX IF NOT EXISTS idx_benchmark_records_user_observed
     ON benchmark_records(user_id, observed_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS kovaak_connections (
+    owner_id TEXT PRIMARY KEY,
+    steam_id TEXT NOT NULL CHECK(LENGTH(steam_id) = 17 AND steam_id NOT GLOB '*[^0-9]*'),
+    connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE IF NOT EXISTS training_plans (
     plan_id TEXT PRIMARY KEY,
@@ -498,9 +505,13 @@ CREATE TABLE IF NOT EXISTS coach_agent_runs (
         'queued', 'text_generation', 'tool_execution', 'completed'
     )),
     content TEXT NOT NULL,
+    user_message_id INTEGER,
     context_refs_json TEXT NOT NULL DEFAULT '[]',
     partial_text TEXT,
     error_json TEXT,
+    teaching_session_ref TEXT,
+    teaching_state_version INTEGER,
+    teaching_contract_json TEXT,
     stop_requested INTEGER NOT NULL DEFAULT 0 CHECK(stop_requested IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at TEXT,
@@ -510,6 +521,27 @@ CREATE TABLE IF NOT EXISTS coach_agent_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_coach_agent_runs_owner_created
     ON coach_agent_runs(owner_id, created_at DESC, run_ref);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_agent_runs_active_teaching_session
+    ON coach_agent_runs(teaching_session_ref)
+    WHERE teaching_session_ref IS NOT NULL AND status IN ('queued', 'running');
+
+CREATE TABLE IF NOT EXISTS teaching_sessions (
+    session_ref TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    thread_id INTEGER NOT NULL UNIQUE,
+    state_json TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0),
+    active_run_ref TEXT,
+    pending_confirmation_ref TEXT,
+    pause_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(owner_id, thread_id),
+    FOREIGN KEY(thread_id) REFERENCES coach_threads(id),
+    FOREIGN KEY(active_run_ref) REFERENCES coach_agent_runs(run_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_teaching_sessions_owner_thread
+    ON teaching_sessions(owner_id, thread_id);
 
 CREATE TABLE IF NOT EXISTS coach_agent_run_events (
     event_ref TEXT PRIMARY KEY,
@@ -812,6 +844,9 @@ async def init_schema() -> None:
         await _migrate_v16_profile_plan_loop(conn)
         await _migrate_v17_capability_contracts(conn)
         await _migrate_v18_task6_contracts(conn)
+        await _migrate_v19_stale_failure_timestamps(conn)
+        await _migrate_v20_teaching_sessions(conn)
+        await _migrate_v21_kovaak_connections(conn)
         await conn.commit()
         return
 
@@ -851,6 +886,12 @@ async def init_schema() -> None:
             await _migrate_v17_capability_contracts(conn)
         if user_version < 18:
             await _migrate_v18_task6_contracts(conn)
+        if user_version < 19:
+            await _migrate_v19_stale_failure_timestamps(conn)
+        if user_version < 20:
+            await _migrate_v20_teaching_sessions(conn)
+        if user_version < 21:
+            await _migrate_v21_kovaak_connections(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -1107,6 +1148,68 @@ async def _migrate_v18_task6_contracts(conn: aiosqlite.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_coach_confirmation_audits_pending "
         "ON coach_confirmation_audits(owner_id, audit_state, created_at)"
     )
+
+
+async def _migrate_v19_stale_failure_timestamps(conn: aiosqlite.Connection) -> None:
+    """Repair only future timestamps written by injected stale-job clocks."""
+    columns = {
+        row[1]
+        for row in await (await conn.execute("PRAGMA table_info(sessions)")).fetchall()
+    }
+    if not {"status", "error", "finished_at", "updated_at"}.issubset(columns):
+        return
+    await conn.execute(
+        "UPDATE sessions SET finished_at=NULL, updated_at=CURRENT_TIMESTAMP "
+        "WHERE status='failed' AND json_valid(error) "
+        "AND json_extract(error, '$.code')='stale_lease_exhausted' "
+        "AND finished_at IS NOT NULL AND updated_at=finished_at "
+        "AND finished_at > datetime('now', '+1 day')"
+    )
+
+
+async def _migrate_v20_teaching_sessions(conn: aiosqlite.Connection) -> None:
+    """v19 -> v20: persistent owner/thread-scoped teaching state."""
+    for column, definition in (
+        ("user_message_id", "INTEGER"),
+        ("teaching_session_ref", "TEXT"),
+        ("teaching_state_version", "INTEGER"),
+        ("teaching_contract_json", "TEXT"),
+    ):
+        await _migrate_add_column_if_missing(conn, "coach_agent_runs", column, definition)
+    await _execute_transactional_script(conn, """
+        CREATE TABLE IF NOT EXISTS teaching_sessions (
+            session_ref TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            thread_id INTEGER NOT NULL UNIQUE,
+            state_json TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0),
+            active_run_ref TEXT,
+            pending_confirmation_ref TEXT,
+            pause_reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(owner_id, thread_id),
+            FOREIGN KEY(thread_id) REFERENCES coach_threads(id),
+            FOREIGN KEY(active_run_ref) REFERENCES coach_agent_runs(run_ref)
+        );
+        CREATE INDEX IF NOT EXISTS idx_teaching_sessions_owner_thread
+            ON teaching_sessions(owner_id, thread_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_agent_runs_active_teaching_session
+            ON coach_agent_runs(teaching_session_ref)
+            WHERE teaching_session_ref IS NOT NULL AND status IN ('queued', 'running');
+    """)
+
+
+async def _migrate_v21_kovaak_connections(conn: aiosqlite.Connection) -> None:
+    """v20 -> v21: one local public KovaaK identity per owner."""
+    await _execute_transactional_script(conn, """
+        CREATE TABLE IF NOT EXISTS kovaak_connections (
+            owner_id TEXT PRIMARY KEY,
+            steam_id TEXT NOT NULL CHECK(LENGTH(steam_id) = 17 AND steam_id NOT GLOB '*[^0-9]*'),
+            connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
 
 async def _execute_transactional_script(

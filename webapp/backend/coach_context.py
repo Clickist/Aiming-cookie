@@ -99,10 +99,16 @@ _META_FIELDS = frozenset(
 )
 _WARNING_FIELDS = frozenset({"code", "domain", "retryable", "user_message_key", "evidence_ref"})
 _CLAIM_LEVELS = frozenset(
-    {"measured", "deterministic_rule", "research_supported", "community_consensus", "experimental"}
+    {
+        "measured", "deterministic_rule", "research_supported",
+        "community_practice", "community_consensus", "experimental",
+    }
 )
 _SOURCE_LEVELS = frozenset(
-    {"product_contract", "academic_peer_reviewed", "community_consensus", "personal_experience_unverified", "experimental"}
+    {
+        "product_contract", "academic_peer_reviewed", "community_practice",
+        "community_consensus", "personal_experience_unverified", "experimental",
+    }
 )
 _EVIDENCE_REF_FIELDS = (
     "id",
@@ -321,6 +327,116 @@ def _project_summary(
     return out
 
 
+def resolve_registry_teaching_entry(issue: Mapping[str, Any]) -> dict[str, Any] | None:
+    registry_version = issue.get("knowledge_registry_version")
+    entry_refs_raw = issue.get("knowledge_entry_refs")
+    observation_ref = issue.get("observation_ref")
+    if (
+        not isinstance(registry_version, str)
+        or not registry_version.strip()
+        or not isinstance(entry_refs_raw, list)
+        or len(entry_refs_raw) != 1
+        or not isinstance(entry_refs_raw[0], str)
+        or not entry_refs_raw[0].strip()
+        or not isinstance(observation_ref, str)
+        or not observation_ref.strip()
+    ):
+        return None
+    entry_ref = entry_refs_raw[0].strip()
+    explicit_registry_metrics = {
+        metric_ref
+        for metric_ref in _safe_string_list(issue.get("metric_refs"))
+        if metric_ref.startswith("metric:")
+    }
+    try:
+        from kovaak_tracker.coach.knowledge_registry import (
+            KnowledgeRegistryError,
+            resolve_entry,
+        )
+
+        entry = resolve_entry(
+            registry_version=registry_version.strip(),
+            entry_reference=entry_ref,
+        )
+    except (KeyError, TypeError, ValueError, OSError, KnowledgeRegistryError):
+        return None
+    if entry.get("status") != "active":
+        return None
+    if observation_ref.strip() not in entry.get("observation_refs", []):
+        return None
+    if explicit_registry_metrics and not explicit_registry_metrics.intersection(
+        entry.get("metric_refs", [])
+    ):
+        return None
+    return entry
+
+
+def _registry_teaching_overlay(issue: Mapping[str, Any]) -> dict[str, Any] | None:
+    entry = resolve_registry_teaching_entry(issue)
+    if entry is None or "candidate_experiment" not in entry.get("supported_uses", []):
+        return None
+
+    cue = entry.get("cue")
+    dose = entry.get("dose_guardrail")
+    matched_retest = entry.get("matched_retest")
+    stop_rules = entry.get("stop_adjust_rule")
+    definition = entry.get("definition")
+    expected_direction = entry.get("expected_direction")
+    if (
+        not isinstance(cue, Mapping)
+        or not isinstance(dose, list)
+        or len(dose) != 1
+        or not isinstance(dose[0], Mapping)
+        or not isinstance(matched_retest, Mapping)
+        or not isinstance(stop_rules, list)
+        or len(stop_rules) != 1
+        or not isinstance(stop_rules[0], Mapping)
+        or not isinstance(definition, Mapping)
+        or not isinstance(expected_direction, Mapping)
+    ):
+        return None
+    texts = {
+        "cue": cue.get("text"),
+        "dosage": dose[0].get("text"),
+        "retest_after": matched_retest.get("text"),
+        "stop_or_adjust_rule": stop_rules[0].get("text"),
+        "purpose": definition.get("text"),
+        "direction": expected_direction.get("text"),
+    }
+    if any(not isinstance(value, str) or not value.strip() for value in texts.values()):
+        return None
+    source_level = cue.get("claim_level")
+    return {
+        "root_cause": {"level": "training", "text": texts["purpose"]},
+        "prescription": {
+            "cue": texts["cue"],
+            "purpose": texts["purpose"],
+            "dosage": texts["dosage"],
+            "target_metrics": list(entry.get("metric_refs") or []),
+            "expected_direction": [texts["direction"]],
+            "retest_after": texts["retest_after"],
+            "stop_or_adjust_rule": texts["stop_or_adjust_rule"],
+            "source_level": (
+                source_level if source_level in _SOURCE_LEVELS else "experimental"
+            ),
+        },
+    }
+
+
+def _issue_with_registry_teaching(issue: object) -> object:
+    if not isinstance(issue, Mapping):
+        return issue
+    overlay = _registry_teaching_overlay(issue)
+    if overlay is None:
+        return issue
+    enriched = dict(issue)
+    root_causes = issue.get("root_causes")
+    if not isinstance(root_causes, list) or not root_causes:
+        enriched["root_causes"] = [overlay["root_cause"]]
+    enriched["prescriptions"] = [overlay["prescription"]]
+    return enriched
+
+
 def _project_issue(issue: object) -> dict[str, object] | None:
     if not isinstance(issue, Mapping):
         return None
@@ -350,6 +466,15 @@ def _project_issue(issue: object) -> dict[str, object] | None:
         values = _safe_string_list(issue.get(key))
         if values:
             out[key] = values
+
+    if resolve_registry_teaching_entry(issue) is not None:
+        out["observation_ref"] = issue["observation_ref"].strip()
+        out["knowledge_registry_version"] = issue[
+            "knowledge_registry_version"
+        ].strip()
+        out["knowledge_entry_refs"] = [
+            issue["knowledge_entry_refs"][0].strip()
+        ]
 
     primary = issue.get("primary_evidence_segment_ref")
     if primary is not None:
@@ -415,6 +540,7 @@ def _project_issue(issue: object) -> dict[str, object] | None:
             "reason",
             "cue",
             "purpose",
+            "dosage",
             "retest_after",
             "stop_or_adjust_rule",
         ):
@@ -478,6 +604,7 @@ def _project_diagnosis(
     *,
     fallback_summary: object = None,
     require_deterministic_metrics: bool,
+    attach_registry_teaching: bool = False,
 ) -> dict[str, object]:
     data = _mapping(diagnosis)
     profile = _mapping(data.get("profile"))
@@ -495,7 +622,12 @@ def _project_diagnosis(
     issues = [
         projected
         for issue in data.get("issues") or []
-        if (projected := _project_issue(issue)) is not None
+        if (
+            projected := _project_issue(
+                _issue_with_registry_teaching(issue)
+                if attach_registry_teaching else issue
+            )
+        ) is not None
     ]
     summary = _project_summary(
         data.get("summary"),
@@ -922,6 +1054,22 @@ def _project_v3_processed_events(
     }
 
 
+def _without_inline_processed_event_refs(
+    diagnosis: Mapping[str, Any],
+) -> dict[str, object]:
+    projected = dict(diagnosis)
+    projected["summary"] = {
+        metric_key: {
+            field: field_value
+            for field, field_value in metric.items()
+            if field not in {"sample_refs", "outlier_refs"}
+        }
+        for metric_key, metric in _mapping(projected.get("summary")).items()
+        if isinstance(metric, Mapping)
+    }
+    return projected
+
+
 def _project_v3_context(context: Mapping[str, Any]) -> dict[str, object] | None:
     if set(context) != _COACH_CONTEXT_V3_TOP_LEVEL_FIELDS:
         return None
@@ -936,6 +1084,12 @@ def _project_v3_context(context: Mapping[str, Any]) -> dict[str, object] | None:
     projected_v2 = _project_v2_context(v2_input)
     if projected_v2 is None:
         return None
+    projected_v2 = {
+        **projected_v2,
+        "diagnosis": _without_inline_processed_event_refs(
+            _mapping(projected_v2.get("diagnosis"))
+        ),
+    }
     analysis_id = projected_v2["analysis_ref"]["analysis_id"]
     processed = _project_v3_processed_events(
         context.get("processed_events"),
@@ -1057,6 +1211,7 @@ def project_coach_diagnostic_context(
                 deterministic.get("diagnosis"),
                 fallback_summary=deterministic.get("metrics"),
                 require_deterministic_metrics=True,
+                attach_registry_teaching=True,
             ),
             "evidence_summary": _project_evidence_summary(analysis_result, schema_version),
             "warnings": _project_warnings(
@@ -1123,9 +1278,13 @@ def project_coach_diagnostic_context(
         }
         processed_tables = evidence.get("processed_event_tables")
         if isinstance(processed_tables, list) and processed_tables:
+            queryable_diagnosis = _without_inline_processed_event_refs(
+                _mapping(v2["diagnosis"])
+            )
             v3 = {
                 **v2,
                 "schema_version": COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+                "diagnosis": queryable_diagnosis,
                 "processed_events": {
                     "mode": "table_refs",
                     "tables": processed_tables,
@@ -1147,6 +1306,7 @@ def project_coach_diagnostic_context(
             deterministic.get("diagnosis"),
             fallback_summary=deterministic.get("metrics"),
             require_deterministic_metrics=schema_version == "analysis_result.v2",
+            attach_registry_teaching=True,
         ),
         "evidence_summary": _project_evidence_summary(analysis_result, schema_version),
         "warnings": _project_warnings(

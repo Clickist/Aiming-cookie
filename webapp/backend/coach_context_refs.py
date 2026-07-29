@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -12,6 +14,9 @@ from .db import get_conn
 
 
 CONTEXT_BUNDLE_SCHEMA_VERSION = "coach_turn_context.v1"
+BENCHMARK_SUMMARY_SCHEMA_VERSION = "coach_benchmark_summary.v1"
+_BENCHMARK_PROVIDER = "kovaaks-webapp"
+_BENCHMARK_REVIEW_CANDIDATE_LIMIT = 8
 _ANALYSIS_REF = re.compile(r"^analysis:([1-9][0-9]*)$")
 _SAFE_TARGET_REF = re.compile(r"^[A-Za-z][A-Za-z0-9_.:@-]{1,200}$")
 _KINDS = {"analysis", "issue", "time_range", "metric", "evidence_segment", "comparison"}
@@ -21,6 +26,231 @@ class ContextRefError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _finite_nonnegative(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def _rank(value: object) -> int | None:
+    number = _finite_nonnegative(value)
+    if number is None or not number.is_integer() or number > 9:
+        return None
+    return int(number)
+
+
+def _observed_at(value: object) -> str | None:
+    if not isinstance(value, str) or len(value) > 40:
+        return None
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return value
+
+
+def project_benchmark_summary(records: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Project one complete KovaaK snapshot without exposing identity or provider payloads."""
+    try:
+        from .benchmark_catalog import load_catalog
+
+        catalog = load_catalog()
+    except ValueError:
+        return None
+    scenario_lookup = {
+        item["scenario_id"]: (difficulty, item["scenario_name"])
+        for difficulty in ("easier", "medium")
+        for pair in catalog["pairs"]
+        for item in [pair[difficulty]]
+    }
+    expected_metric_keys = {"score", "scenario_rank", "overall_rank"}
+    snapshots: dict[str, list[Mapping[str, Any]]] = {}
+    for record in records:
+        if (
+            record.get("provider") != _BENCHMARK_PROVIDER
+            or record.get("catalog_version") != catalog["catalog_version"]
+            or record.get("metric_key") not in expected_metric_keys
+        ):
+            continue
+        observed_at = _observed_at(record.get("observed_at"))
+        if observed_at is None:
+            continue
+        snapshots.setdefault(observed_at, []).append(record)
+
+    for observed_at in sorted(snapshots, reverse=True):
+        metrics: dict[tuple[str, str], float] = {}
+        valid = True
+        for record in snapshots[observed_at]:
+            scenario_id = record.get("scenario_id")
+            metric_key = record.get("metric_key")
+            if not isinstance(scenario_id, str) or not isinstance(metric_key, str):
+                valid = False
+                break
+            if metric_key == "overall_rank":
+                if scenario_id not in {
+                    "benchmark:viscose-s2:easier", "benchmark:viscose-s2:medium",
+                }:
+                    valid = False
+                    break
+            elif scenario_id not in scenario_lookup:
+                valid = False
+                break
+            value = _finite_nonnegative(record.get("value"))
+            key = (scenario_id, metric_key)
+            if value is None or key in metrics:
+                valid = False
+                break
+            metrics[key] = value
+        if not valid:
+            continue
+
+        scenarios: list[dict[str, Any]] = []
+        for difficulty in ("easier", "medium"):
+            for pair in catalog["pairs"]:
+                scenario = pair[difficulty]
+                scenario_id = scenario["scenario_id"]
+                score = metrics.get((scenario_id, "score"))
+                rank = _rank(metrics.get((scenario_id, "scenario_rank")))
+                if score is None or rank is None:
+                    valid = False
+                    break
+                scenarios.append({
+                    "difficulty": difficulty,
+                    "scenario_name": scenario["scenario_name"],
+                    "category": pair["category"],
+                    "subcategory": pair["subcategory"],
+                    "score": score,
+                    "scenario_rank": rank,
+                })
+            if not valid:
+                break
+        ranks = {
+            difficulty: _rank(metrics.get((f"benchmark:viscose-s2:{difficulty}", "overall_rank")))
+            for difficulty in ("easier", "medium")
+        }
+        if not valid or any(rank is None for rank in ranks.values()) or len(metrics) != 158:
+            continue
+        candidates = sorted(
+            scenarios,
+            key=lambda item: (item["scenario_rank"], item["score"], item["difficulty"], item["scenario_name"]),
+        )[:_BENCHMARK_REVIEW_CANDIDATE_LIMIT]
+        return {
+            "schema_version": BENCHMARK_SUMMARY_SCHEMA_VERSION,
+            "catalog_ref": catalog["catalog_ref"],
+            "catalog_version": catalog["catalog_version"],
+            "observed_at": observed_at,
+            "completion": {
+                difficulty: {
+                    "completed": sum(
+                        1
+                        for item in scenarios
+                        if item["difficulty"] == difficulty and item["score"] > 0
+                    ),
+                    "required": 39,
+                }
+                for difficulty in ("easier", "medium")
+            },
+            "provisional_ranks": ranks,
+            "scenarios": scenarios,
+            "review_candidates": [dict(item) for item in candidates],
+        }
+    return None
+
+
+def _coerce_benchmark_summary(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema_version", "catalog_ref", "catalog_version", "observed_at", "completion",
+        "provisional_ranks", "scenarios", "review_candidates",
+    }:
+        return None
+    if value.get("schema_version") != BENCHMARK_SUMMARY_SCHEMA_VERSION:
+        return None
+    try:
+        from .benchmark_catalog import load_catalog
+
+        catalog = load_catalog()
+    except ValueError:
+        return None
+    if (
+        value.get("catalog_ref") != catalog["catalog_ref"]
+        or value.get("catalog_version") != catalog["catalog_version"]
+        or _observed_at(value.get("observed_at")) is None
+    ):
+        return None
+    completion = value.get("completion")
+    ranks = value.get("provisional_ranks")
+    scenarios = value.get("scenarios")
+    candidates = value.get("review_candidates")
+    if not isinstance(completion, Mapping) or not isinstance(ranks, Mapping):
+        return None
+    if set(completion) != {"easier", "medium"}:
+        return None
+    for difficulty in ("easier", "medium"):
+        item = completion.get(difficulty)
+        if (
+            not isinstance(item, Mapping)
+            or set(item) != {"completed", "required"}
+            or not isinstance(item.get("completed"), int)
+            or isinstance(item.get("completed"), bool)
+            or item.get("required") != 39
+            or not 0 <= item["completed"] <= item["required"]
+        ):
+            return None
+    if set(ranks) != {"easier", "medium"} or any(_rank(item) is None for item in ranks.values()):
+        return None
+    if not isinstance(scenarios, list) or len(scenarios) != 78 or not isinstance(candidates, list) or len(candidates) > _BENCHMARK_REVIEW_CANDIDATE_LIMIT:
+        return None
+    allowed_scenarios = {
+        (difficulty, pair[difficulty]["scenario_name"]): {
+            "category": pair["category"],
+            "subcategory": pair["subcategory"],
+        }
+        for difficulty in ("easier", "medium")
+        for pair in catalog["pairs"]
+    }
+
+    def valid_item(item: object) -> bool:
+        if not isinstance(item, Mapping) or set(item) != {
+            "difficulty", "scenario_name", "category", "subcategory", "score", "scenario_rank",
+        }:
+            return False
+        source_labels = allowed_scenarios.get((item.get("difficulty"), item.get("scenario_name")))
+        return (
+            source_labels is not None
+            and item.get("category") == source_labels["category"]
+            and item.get("subcategory") == source_labels["subcategory"]
+            and _finite_nonnegative(item.get("score")) is not None
+            and _rank(item.get("scenario_rank")) is not None
+        )
+    if not all(valid_item(item) for item in scenarios) or not all(valid_item(item) for item in candidates):
+        return None
+    scenario_items = {
+        (item["difficulty"], item["scenario_name"]): dict(item)
+        for item in scenarios
+    }
+    candidate_keys = [
+        (item["difficulty"], item["scenario_name"])
+        for item in candidates
+    ]
+    if (
+        len(scenario_items) != 78
+        or len(candidate_keys) != len(set(candidate_keys))
+        or any(scenario_items.get(key) != dict(item) for key, item in zip(candidate_keys, candidates))
+    ):
+        return None
+    return {
+        "schema_version": BENCHMARK_SUMMARY_SCHEMA_VERSION,
+        "catalog_ref": value["catalog_ref"],
+        "catalog_version": value["catalog_version"],
+        "observed_at": value["observed_at"],
+        "completion": {difficulty: dict(completion[difficulty]) for difficulty in ("easier", "medium")},
+        "provisional_ranks": {difficulty: int(ranks[difficulty]) for difficulty in ("easier", "medium")},
+        "scenarios": [dict(item) for item in scenarios],
+        "review_candidates": [dict(item) for item in candidates],
+    }
 
 
 def coerce_context_bundle(value: object) -> dict[str, Any] | None:
@@ -79,7 +309,16 @@ def coerce_context_bundle(value: object) -> dict[str, Any] | None:
         })
     if len({item["context_ref"] for item in canonical_items}) != len(canonical_items):
         return None
-    return {"schema_version": CONTEXT_BUNDLE_SCHEMA_VERSION, "contexts": canonical_items}
+    benchmark_summary = _coerce_benchmark_summary(value.get("benchmark_summary"))
+    if value.get("benchmark_summary") is not None and benchmark_summary is None:
+        return None
+    if set(value) not in ({"schema_version", "contexts"}, {"schema_version", "contexts", "benchmark_summary"}):
+        return None
+    return {
+        "schema_version": CONTEXT_BUNDLE_SCHEMA_VERSION,
+        "contexts": canonical_items,
+        "benchmark_summary": benchmark_summary,
+    }
 
 
 def _analysis_id(value: str | None) -> int:
@@ -289,6 +528,22 @@ async def list_contexts(thread_id: int, *, active_only: bool = True) -> list[dic
     return [_public(dict(row)) for row in rows]
 
 
+async def unavailable_context_refs(context_refs: Sequence[str]) -> set[str]:
+    refs = {ref for ref in context_refs if isinstance(ref, str)}
+    if not refs:
+        return set()
+    conn = await get_conn()
+    placeholders = ", ".join("?" for _ in refs)
+    rows = await (
+        await conn.execute(
+            "SELECT context_ref FROM coach_context_refs "
+            f"WHERE status!='active' AND context_ref IN ({placeholders})",
+            tuple(refs),
+        )
+    ).fetchall()
+    return {str(row["context_ref"]) for row in rows}
+
+
 async def detach_context(owner_id: str, thread_id: int, context_ref: str) -> tuple[str, dict[str, Any]] | None:
     conn = await get_conn()
     row = await (
@@ -371,7 +626,28 @@ async def build_context_bundle(
             "projection": canonical,
             "comparison_projection": comparison_canonical,
         })
-    bundle = {"schema_version": CONTEXT_BUNDLE_SCHEMA_VERSION, "contexts": contexts}
+    thread = await (
+        await conn.execute("SELECT user_id FROM coach_threads WHERE id=?", (thread_id,))
+    ).fetchone()
+    benchmark_summary = None
+    if thread is not None:
+        try:
+            from . import benchmark_catalog, benchmark_store
+
+            catalog = benchmark_catalog.load_catalog()
+            records = await benchmark_store.list_latest_snapshot(
+                thread["user_id"],
+                provider=_BENCHMARK_PROVIDER,
+                catalog_version=catalog["catalog_version"],
+            )
+            benchmark_summary = project_benchmark_summary(records)
+        except (AttributeError, ValueError):
+            benchmark_summary = None
+    bundle = {
+        "schema_version": CONTEXT_BUNDLE_SCHEMA_VERSION,
+        "contexts": contexts,
+        "benchmark_summary": benchmark_summary,
+    }
     encoded = json.dumps(bundle, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > 256 * 1024:
         raise ContextRefError("context_too_large", "Combined Coach context exceeds the budget")

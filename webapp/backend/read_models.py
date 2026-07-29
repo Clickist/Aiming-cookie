@@ -11,12 +11,13 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, TypeVar
 
 PRODUCT_STATE_SCHEMA_VERSION = "product_state.v1"
 CAPTURE_STATUS_SCHEMA_VERSION = "capture_status.v1"
 TASK_LIST_SCHEMA_VERSION = "task_list.v1"
 TASK_DETAIL_SCHEMA_VERSION = "task_detail.v1"
+ANALYSIS_DATA_SCHEMA_VERSION = "frontend_analysis_data.v1"
 
 _TASK_PHASE_LABELS = {
     "preparing_training_record": "Preparing training record",
@@ -46,6 +47,9 @@ _FORBIDDEN_TEXT = re.compile(
     r"(?:[A-Za-z]:[\\/]|/(?:Users|home|private|tmp|var)/|Traceback|secret|token|password)",
     re.IGNORECASE,
 )
+_PUBLIC_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._@+-]{0,239}$")
+_EVENT_KIND = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+_T = TypeVar("_T")
 
 
 def _error_payload(code: str, message: str) -> dict[str, object]:
@@ -53,6 +57,229 @@ def _error_payload(code: str, message: str) -> dict[str, object]:
         "code": code,
         "message": message,
         "retryable": False,
+    }
+
+
+def _finite_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        return None
+    return int(round(numeric))
+
+
+def _bounded_evenly(items: Sequence[_T], maximum: int) -> list[_T]:
+    if len(items) <= maximum:
+        return list(items)
+    return [items[round(index * (len(items) - 1) / (maximum - 1))] for index in range(maximum)]
+
+
+def _safe_analysis_limitations(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(
+        item
+        for item in value
+        if isinstance(item, str)
+        and 0 < len(item) <= 240
+        and not _FORBIDDEN_TEXT.search(item)
+    ))
+
+
+def _project_event_rows(
+    artifact: Mapping[str, object], *, window_start_ms: int, window_end_ms: int,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    events_by_ref: dict[str, dict[str, object]] = {}
+    bundles = artifact.get("event_bundles")
+    for bundle in bundles if isinstance(bundles, list) else []:
+        if not isinstance(bundle, Mapping):
+            continue
+        events = bundle.get("events")
+        for raw in events if isinstance(events, list) else []:
+            if not isinstance(raw, Mapping):
+                continue
+            event_ref = raw.get("event_id")
+            kind = raw.get("event_kind")
+            start_ms = _finite_int(raw.get("start_ms"))
+            if (
+                not isinstance(event_ref, str)
+                or not _PUBLIC_REF.fullmatch(event_ref)
+                or not isinstance(kind, str)
+                or not _EVENT_KIND.fullmatch(kind)
+                or start_ms is None
+                or not window_start_ms <= start_ms < window_end_ms
+            ):
+                continue
+            events_by_ref.setdefault(event_ref, {
+                "event_ref": event_ref,
+                "kind": kind,
+                "relative_ms": start_ms - window_start_ms,
+            })
+    events = sorted(events_by_ref.values(), key=lambda item: (item["relative_ms"], item["event_ref"]))
+    counts: dict[str, int] = {}
+    for event in events:
+        kind = str(event["kind"])
+        counts[kind] = counts.get(kind, 0) + 1
+    distribution = [
+        {"kind": kind, "count": count}
+        for kind, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    first_by_kind: dict[str, dict[str, object]] = {}
+    for event in events:
+        first_by_kind.setdefault(str(event["kind"]), event)
+    representatives = list(first_by_kind.values())
+    if len(representatives) >= 128:
+        return _bounded_evenly(representatives, 128), distribution
+    selected_refs = {str(event["event_ref"]) for event in representatives}
+    remaining = [event for event in events if str(event["event_ref"]) not in selected_refs]
+    markers = representatives + _bounded_evenly(remaining, 128 - len(representatives))
+    return sorted(markers, key=lambda item: (item["relative_ms"], item["event_ref"])), distribution
+
+
+def _sample_values(sample_set: object, *, window_start_ms: int, window_end_ms: int) -> dict[int, float]:
+    if not isinstance(sample_set, Mapping):
+        return {}
+    points = sample_set.get("points")
+    if not isinstance(points, list):
+        return {}
+    values: dict[int, float] = {}
+    for point in points:
+        if not isinstance(point, list) or len(point) != 2:
+            continue
+        time_ms = _finite_int(point[0])
+        value = point[1]
+        if (
+            time_ms is None
+            or not window_start_ms <= time_ms < window_end_ms
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            continue
+        values[time_ms] = float(value)
+    return values
+
+
+def _target_relative_error_radius(
+    artifact: Mapping[str, object], *, window_start_ms: int, window_end_ms: int,
+) -> dict[str, object]:
+    sample_sets = artifact.get("sample_sets")
+    samples_by_ref = {
+        sample.get("sample_set_id"): sample
+        for sample in sample_sets if isinstance(sample_sets, list) and isinstance(sample, Mapping)
+        if isinstance(sample.get("sample_set_id"), str)
+    }
+    target_channels: dict[str, dict[str, str]] = {}
+    bundles = artifact.get("signal_bundles")
+    for bundle in bundles if isinstance(bundles, list) else []:
+        if not isinstance(bundle, Mapping):
+            continue
+        channels = bundle.get("channels")
+        for channel in channels if isinstance(channels, list) else []:
+            if not isinstance(channel, Mapping):
+                continue
+            key = channel.get("channel_key")
+            sample_ref = channel.get("samples_ref")
+            if not isinstance(key, str) or not isinstance(sample_ref, str):
+                continue
+            match = re.fullmatch(
+                r"target\.([A-Za-z0-9._:-]+)\.(position_x|position_y|visible_radius)", key,
+            )
+            if match:
+                target_channels.setdefault(match.group(1), {})[match.group(2)] = sample_ref
+            elif key == "crosshair.position_x":
+                target_channels.setdefault("__crosshair__", {})["position_x"] = sample_ref
+            elif key == "crosshair.position_y":
+                target_channels.setdefault("__crosshair__", {})["position_y"] = sample_ref
+
+    crosshair = target_channels.pop("__crosshair__", {})
+    required = {"position_x", "position_y", "visible_radius"}
+    candidates = [
+        channels for channels in target_channels.values()
+        if required <= set(channels) and {"position_x", "position_y"} <= set(crosshair)
+    ]
+    if not candidates:
+        return {
+            "availability": "unavailable",
+            "reason": "target_relative_channels_unavailable",
+            "points": [],
+        }
+    if len(candidates) != 1:
+        return {
+            "availability": "unavailable",
+            "reason": "target_relative_target_ambiguous",
+            "points": [],
+        }
+
+    target = candidates[0]
+    sample_maps = {
+        name: _sample_values(samples_by_ref.get(sample_ref), window_start_ms=window_start_ms, window_end_ms=window_end_ms)
+        for name, sample_ref in {
+            "crosshair_x": crosshair["position_x"],
+            "crosshair_y": crosshair["position_y"],
+            "target_x": target["position_x"],
+            "target_y": target["position_y"],
+            "radius": target["visible_radius"],
+        }.items()
+    }
+    common_times = set.intersection(*(set(values) for values in sample_maps.values())) if sample_maps else set()
+    points = []
+    for time_ms in sorted(common_times):
+        radius = sample_maps["radius"][time_ms]
+        if radius <= 0:
+            continue
+        error = math.hypot(
+            sample_maps["crosshair_x"][time_ms] - sample_maps["target_x"][time_ms],
+            sample_maps["crosshair_y"][time_ms] - sample_maps["target_y"][time_ms],
+        ) / radius
+        if math.isfinite(error):
+            points.append({
+                "relative_ms": time_ms - window_start_ms,
+                "normalized_error_radius": round(error, 2),
+            })
+    if not points:
+        return {
+            "availability": "unavailable",
+            "reason": "target_relative_samples_unavailable",
+            "points": [],
+        }
+    return {
+        "availability": "available",
+        "reason": None,
+        "points": _bounded_evenly(points, 120),
+    }
+
+
+def build_frontend_analysis_data_v1(
+    *, analysis_ref: str, artifact: Mapping[str, object],
+) -> dict[str, object]:
+    """Project one validated, owner-bound artifact without coordinate channels."""
+    if not _PUBLIC_REF.fullmatch(analysis_ref) or artifact.get("analysis_ref") != analysis_ref:
+        raise ValueError("analysis data artifact is bound to another analysis")
+    window = artifact.get("canonical_time_window")
+    if not isinstance(window, Mapping):
+        raise ValueError("analysis data canonical window is unavailable")
+    window_start_ms = _finite_int(window.get("start_ms"))
+    window_end_ms = _finite_int(window.get("end_ms"))
+    if window_start_ms is None or window_end_ms is None or window_end_ms <= window_start_ms:
+        raise ValueError("analysis data canonical window is invalid")
+    markers, distribution = _project_event_rows(
+        artifact,
+        window_start_ms=window_start_ms,
+        window_end_ms=window_end_ms,
+    )
+    return {
+        "schema_version": ANALYSIS_DATA_SCHEMA_VERSION,
+        "analysis_ref": analysis_ref,
+        "limitations": _safe_analysis_limitations(artifact.get("limitations")),
+        "event_markers": markers,
+        "event_distribution": distribution,
+        "target_relative_error_radius": _target_relative_error_radius(
+            artifact,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+        ),
     }
 
 
@@ -412,11 +639,13 @@ def resolve_calibration_v1(
 
 
 __all__ = [
+    "ANALYSIS_DATA_SCHEMA_VERSION",
     "CAPTURE_STATUS_SCHEMA_VERSION",
     "PRODUCT_STATE_SCHEMA_VERSION",
     "TASK_DETAIL_SCHEMA_VERSION",
     "TASK_LIST_SCHEMA_VERSION",
     "build_capture_status_v1",
+    "build_frontend_analysis_data_v1",
     "build_product_state_v1",
     "build_task_detail_v1",
     "build_task_list_v1",

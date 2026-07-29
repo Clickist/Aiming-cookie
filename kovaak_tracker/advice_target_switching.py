@@ -6,7 +6,7 @@ from math import isfinite
 from typing import Any, Mapping
 
 
-_TRANSITION_ENTRY_REF = "knowledge:switching.transition-and-arrival@1"
+_TRANSITION_ENTRY_REF = "knowledge:switching.transition-and-arrival@2"
 
 
 def _number(value: Any) -> float | None:
@@ -22,6 +22,8 @@ def _number(value: Any) -> float | None:
 
 def _observable_chain(row: Mapping[str, Any]) -> bool:
     classification = row.get("classification")
+    if classification == "stats_bounded_switch_chain":
+        return row.get("row_kind") == "switch_chain"
     if classification is not None:
         return classification == "observable_target_switch"
     return row.get("row_kind") in {"target_switch_chain", "switch_chain"}
@@ -79,6 +81,7 @@ def _candidate(
         },
         "supporting_row_refs": [row["event_ref"] for row in supporting_rows],
         "counterexample_row_refs": [row["event_ref"] for row in counterexample_rows],
+        "observation_ref": "event.switch_chain",
         "knowledge_registry_version": registry_version,
         "knowledge_entry_refs": knowledge_entry_refs,
         "requested_knowledge_sections": [

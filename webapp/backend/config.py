@@ -4,7 +4,9 @@ import os
 import re
 import sys
 import tempfile
+from ipaddress import ip_address
 from pathlib import Path, PureWindowsPath
+from urllib.parse import urlsplit
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "sqlite+aiosqlite:///./aiming_cookie_dev.db"
@@ -344,9 +346,38 @@ COACH_RUNTIME_TIMEOUT_SECONDS = int(
     os.environ.get("COACH_RUNTIME_TIMEOUT_SECONDS", "120")
 )
 COACH_SIDECAR_PORT = int(os.environ.get("COACH_SIDECAR_PORT", "8765"))
-COACH_SIDECAR_URL = os.environ.get(
+
+
+def _validate_coach_sidecar_url(value: str) -> str:
+    """Accept only an explicit local HTTP sidecar origin and path prefix."""
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("COACH_SIDECAR_URL must be a valid loopback HTTP URL") from error
+    if (
+        parsed.scheme != "http"
+        or not host
+        or parsed.username is not None
+        or parsed.query
+        or parsed.fragment
+        or port is None
+        or not 1 <= port <= 65535
+    ):
+        raise ValueError("COACH_SIDECAR_URL must be a loopback HTTP URL with an explicit port")
+    try:
+        loopback = ip_address(host).is_loopback
+    except ValueError as error:
+        raise ValueError("COACH_SIDECAR_URL host must be an IP literal loopback address") from error
+    if not loopback or "%" in host:
+        raise ValueError("COACH_SIDECAR_URL host must be an IP literal loopback address")
+    return value
+
+
+COACH_SIDECAR_URL = _validate_coach_sidecar_url(os.environ.get(
     "COACH_SIDECAR_URL", f"http://127.0.0.1:{COACH_SIDECAR_PORT}"
-).strip()
+).strip())
 COACH_SIDECAR_FALLBACK_SUBPROCESS = os.environ.get(
     "COACH_SIDECAR_FALLBACK_SUBPROCESS", "1"
 ).strip()

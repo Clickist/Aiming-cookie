@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, Header, HT
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import (
+    benchmark_catalog,
     benchmark_store,
     calibration_profile_store,
     coach_agent_runs,
@@ -28,6 +29,9 @@ from . import (
     evidence_store,
     history_trends,
     kovaak_run_store,
+    kovaak_benchmark_provider,
+    kovaak_benchmark_service,
+    kovaak_connection_store,
     queue,
 )
 from .auth import get_request_user_id, require_desktop_token
@@ -38,6 +42,7 @@ from .coach_context import (
 )
 from .health import build_coach_runtime_status
 from .read_models import (
+    build_frontend_analysis_data_v1,
     build_capture_status_v1,
     build_product_state_v1,
     build_task_detail_v1,
@@ -61,6 +66,12 @@ from .schemas import (
     BenchmarkRecordCreate,
     BenchmarkRecordListResponse,
     BenchmarkRecordOut,
+    KovaaKBenchmarkSyncRequest,
+    KovaaKBenchmarkSyncResponse,
+    KovaaKConnectionDeleteResponse,
+    KovaaKConnectionSaveRequest,
+    KovaaKConnectionStatusResponse,
+    KovaaKScoresResponse,
     KovaaKAnalysisRequest,
     ChatMessageOut,
     ChatRequest,
@@ -116,6 +127,7 @@ from .schemas import (
     TrainingPlanRetestCreateRequest,
     FrontendEvidenceSegment,
     FrontendEvidenceSegmentsResponse,
+    FrontendAnalysisDataResponse,
     EvidenceSegmentPlayback,
     ManagedVideoUnavailableResponse,
     TimelineEvent,
@@ -392,7 +404,7 @@ async def get_capture_status(
         ):
             log.info("capture status read skipped during desktop shutdown")
         else:
-            log.exception("capture status read failed: %s", error.code)
+            log.error("capture status read failed: %s", error.code)
         status = build_capture_status_v1(read_error="capture_status_unavailable")
     except Exception:
         log.exception("capture status read failed")
@@ -703,11 +715,18 @@ async def record_training_plan_retest(
     )
 
 
+def _public_benchmark_record(record: dict) -> BenchmarkRecordOut:
+    return BenchmarkRecordOut(**{
+        field: record[field]
+        for field in BenchmarkRecordOut.model_fields
+    })
+
+
 @router.get("/benchmarks", response_model=BenchmarkRecordListResponse)
 async def list_benchmarks(x_user_id: str = Depends(get_request_user_id)):
     records = await benchmark_store.list_records(x_user_id)
     return BenchmarkRecordListResponse(
-        records=[BenchmarkRecordOut(**record) for record in records]
+        records=[_public_benchmark_record(record) for record in records]
     )
 
 
@@ -722,7 +741,97 @@ async def create_benchmark(
         )
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
-    return BenchmarkRecordOut(**record)
+    return _public_benchmark_record(record)
+
+
+@router.post(
+    "/benchmarks/sync/kovaaks",
+    response_model=KovaaKBenchmarkSyncResponse,
+)
+async def sync_kovaak_benchmarks(
+    request: Request,
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        sync_request = KovaaKBenchmarkSyncRequest.model_validate(await request.json())
+    except (TypeError, ValueError):
+        raise HTTPException(422, "KovaaK score sync input is invalid") from None
+    try:
+        result = await kovaak_benchmark_service.sync_owner_snapshot(
+            x_user_id, sync_request.steam_id,
+        )
+    except (ValueError, kovaak_benchmark_provider.KovaaKBenchmarkError):
+        raise HTTPException(502, "KovaaK benchmark sync is unavailable") from None
+    return KovaaKBenchmarkSyncResponse(**result)
+
+
+@router.get("/kovaak-connection", response_model=KovaaKConnectionStatusResponse)
+async def get_kovaak_connection(x_user_id: str = Depends(get_request_user_id)):
+    return KovaaKConnectionStatusResponse(
+        connected=await kovaak_connection_store.get_connection(x_user_id) is not None,
+    )
+
+
+@router.put("/kovaak-connection", response_model=KovaaKConnectionStatusResponse)
+async def save_kovaak_connection(
+    request: Request,
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        connection_request = KovaaKConnectionSaveRequest.model_validate(
+            await request.json(),
+        )
+    except (TypeError, ValueError):
+        raise HTTPException(422, "KovaaK connection input is invalid") from None
+    await kovaak_connection_store.save_connection(
+        x_user_id, connection_request.steam_profile,
+    )
+    return KovaaKConnectionStatusResponse(connected=True)
+
+
+@router.delete("/kovaak-connection", response_model=KovaaKConnectionDeleteResponse)
+async def delete_kovaak_connection(x_user_id: str = Depends(get_request_user_id)):
+    return KovaaKConnectionDeleteResponse(
+        deleted=await kovaak_connection_store.delete_connection(x_user_id),
+    )
+
+
+@router.post(
+    "/kovaak-connection/refresh",
+    response_model=KovaaKBenchmarkSyncResponse,
+)
+async def refresh_kovaak_connection(x_user_id: str = Depends(get_request_user_id)):
+    try:
+        result = await kovaak_benchmark_service.refresh_connected_snapshot(x_user_id)
+    except kovaak_benchmark_service.KovaaKConnectionNotFound:
+        raise HTTPException(404, "KovaaK account is not connected") from None
+    except (ValueError, kovaak_benchmark_provider.KovaaKBenchmarkError):
+        raise HTTPException(502, "KovaaK benchmark sync is unavailable") from None
+    return KovaaKBenchmarkSyncResponse(**result)
+
+
+def _unavailable_kovaak_scores() -> dict:
+    return kovaak_benchmark_service.unavailable_score_projection()
+
+
+def _project_kovaak_scores(summary: object) -> dict:
+    return kovaak_benchmark_service.project_score_summary(summary)
+
+
+@router.get("/kovaak-scores", response_model=KovaaKScoresResponse)
+async def get_kovaak_scores(x_user_id: str = Depends(get_request_user_id)):
+    """Return the latest complete, identity-free KovaaK score snapshot."""
+    catalog = benchmark_catalog.load_catalog()
+    return _project_kovaak_scores(
+        coach_context_refs.project_benchmark_summary(
+            await benchmark_store.list_latest_snapshot(
+                x_user_id,
+                provider="kovaaks-webapp",
+                catalog_version=catalog["catalog_version"],
+                exact_record_count=158,
+            ),
+        ),
+    )
 
 
 @router.get("/kovaak-runs", response_model=KovaaKRunListResponse)
@@ -1707,6 +1816,38 @@ async def get_chat_history(
 # ---------------------------------------------------------------------------
 
 
+@router.get(
+    "/sessions/{session_id}/analysis-data",
+    response_model=FrontendAnalysisDataResponse,
+)
+async def get_session_analysis_data(
+    session_id: int = Path(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    """Return the bounded, path-free data projection for one owned Analysis."""
+    s = await _get_owned_session(session_id, x_user_id)
+    if s["status"] != "done":
+        raise HTTPException(409, "分析未完成")
+    result = s.get("result") or {}
+    safe_ref = (result.get("evidence") or {}).get("derived_artifact")
+    if not isinstance(safe_ref, dict):
+        raise HTTPException(404, "Analysis Data 不可用")
+    try:
+        artifact = await evidence_store.read_analysis_evidence_artifact(
+            owner_id=x_user_id,
+            analysis_ref=f"analysis:{session_id}",
+            artifact_ref=safe_ref.get("artifact_ref"),
+            evidence_revision=safe_ref.get("evidence_revision"),
+        )
+        projection = build_frontend_analysis_data_v1(
+            analysis_ref=f"analysis:{session_id}",
+            artifact=artifact,
+        )
+    except (ValueError, OSError):
+        raise HTTPException(404, "Analysis Data 不可用") from None
+    return FrontendAnalysisDataResponse(**projection)
+
+
 @router.get("/sessions/{session_id}/video")
 async def get_session_video(
     session_id: int = Path(...),
@@ -1744,17 +1885,6 @@ async def list_session_evidence_segments(
         raise HTTPException(409, "分析未完成")
     result = s.get("result") or {}
     safe_ref = (result.get("evidence") or {}).get("derived_artifact")
-    if not isinstance(safe_ref, dict):
-        raise HTTPException(404, "Evidence 不可用")
-    try:
-        artifact = await evidence_store.read_analysis_evidence_artifact(
-            owner_id=x_user_id,
-            analysis_ref=f"analysis:{session_id}",
-            artifact_ref=safe_ref.get("artifact_ref"),
-            evidence_revision=safe_ref.get("evidence_revision"),
-        )
-    except (ValueError, OSError):
-        raise HTTPException(404, "Evidence 不可用") from None
 
     snapshot = s.get("input_snapshot") or {}
     window = snapshot.get("canonical_time_window") if isinstance(snapshot, dict) else None
@@ -1768,6 +1898,25 @@ async def list_session_evidence_segments(
     replay = history_trends.visual_replay_capability(s)
     video_available = replay.get("kind") == "seekable_mp4"
     video_route = f"/api/sessions/{session_id}/video" if video_available else None
+    if not isinstance(safe_ref, dict):
+        return FrontendEvidenceSegmentsResponse(
+            schema_version="frontend_evidence_segments.v1",
+            analysis_ref=f"analysis:{session_id}",
+            video_availability="available" if video_available else "unavailable",
+            video_route=video_route,
+            canonical_window_start_ms=window_start if valid_window else None,
+            segments=[],
+        )
+    try:
+        artifact = await evidence_store.read_analysis_evidence_artifact(
+            owner_id=x_user_id,
+            analysis_ref=f"analysis:{session_id}",
+            artifact_ref=safe_ref.get("artifact_ref"),
+            evidence_revision=safe_ref.get("evidence_revision"),
+        )
+    except (ValueError, OSError):
+        raise HTTPException(404, "Evidence 不可用") from None
+
     projected: list[FrontendEvidenceSegment] = []
     for raw in list(artifact.get("evidence_segments") or [])[:64]:
         if not isinstance(raw, dict):

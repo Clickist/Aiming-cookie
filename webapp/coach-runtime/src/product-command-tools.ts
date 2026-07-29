@@ -14,23 +14,30 @@ const { Type } = (await loadPiAi()) as { Type: TypeBuilder };
 
 export const PRODUCT_COMMAND_NAMES = [
   "run.list", "run.get", "history.list", "history.trend", "analysis.get",
-  "analysis.compare", "navigation.open", "analysis.create_from_run", "analysis.retry",
+  "analysis.compare", "navigation.open", "analysis.create_from_run", "analysis.retry", "analysis.delete",
   "training_plan.generate_draft", "training_plan.save", "training_plan.activate",
-  "training_plan.pause", "training_plan.adjust", "training_plan.review",
+  "training_plan.pause", "training_plan.adjust", "training_plan.review", "training_plan.item.add",
+  "training_plan.execution.record", "training_plan.retest.record",
   "analysis.metrics.distribution", "analysis.evidence.list", "analysis.evidence.signal_window",
   "analysis.evidence.compare", "analysis.run_facts.get", "analysis.outcomes.timeline",
   "analysis.events.list", "analysis.events.get", "analysis.events.rank",
   "analysis.events.filter", "analysis.events.aggregate", "analysis.events.co_occurrence",
   "analysis.events.sequence", "profile.aiming.snapshot",
+  "kovaak_scores.lookup", "kovaak_scores.refresh_connected",
 ] as const;
 type ProductCommandName = typeof PRODUCT_COMMAND_NAMES[number];
+const KOVAAK_SCORE_COMMANDS = new Set<ProductCommandName>([
+  "kovaak_scores.lookup", "kovaak_scores.refresh_connected",
+]);
 
 const WRITE_COMMANDS = new Set<ProductCommandName>([
-  "analysis.create_from_run", "analysis.retry", "training_plan.generate_draft",
+  "analysis.create_from_run", "analysis.retry", "analysis.delete", "training_plan.generate_draft",
   "training_plan.save", "training_plan.activate", "training_plan.pause", "training_plan.adjust",
+  "training_plan.item.add", "training_plan.execution.record", "training_plan.retest.record",
 ]);
 const FORBIDDEN_KEYS = new Set([
-  "owner", "owner_id", "owner_scope", "actor", "risk", "path", "video_path",
+  "owner", "owner_id", "owner_scope", "actor", "risk", "authority", "confirmation", "confirmation_ref",
+  "request_basis", "path", "video_path",
   "url", "credential", "credentials", "api_key", "authorization", "token",
   "bearer_token", "desktop_token", "password", "secret", "raw_trace", "payload", "endpoint",
 ]);
@@ -84,12 +91,27 @@ function stableKey(bridge: CoachToolBridge, commandName: string, parameters: Rec
   return `turn:${createHash("sha256").update(canonicalJson({ turn: bridge.turn_id, commandName, parameters })).digest("hex")}`;
 }
 
+function hasExactKeys(parameters: Record<string, unknown>, keys: string[]): boolean {
+  const received = Object.keys(parameters);
+  return received.length === keys.length && keys.every((key) => Object.hasOwn(parameters, key));
+}
+
+function hasValidCommandParameters(commandName: ProductCommandName, parameters: Record<string, unknown>): boolean {
+  if (commandName === "kovaak_scores.lookup") {
+    return hasExactKeys(parameters, ["profile_ref"]) &&
+      typeof parameters.profile_ref === "string" && /^steam_profile:[1-9]\d*$/.test(parameters.profile_ref);
+  }
+  if (commandName === "kovaak_scores.refresh_connected") return hasExactKeys(parameters, []);
+  return true;
+}
+
 function safeCommandEvent(result: Record<string, unknown>, commandName: string) {
   if (result.schema_version !== "coach_product_command_result.v1" || typeof result.command_id !== "string" ||
       typeof result.status !== "string" || !PRODUCT_COMMAND_STATUSES.has(result.status) ||
       typeof result.audit_ref !== "string") {
     throw new Error("Product command returned an invalid result");
   }
+  const isKovaakScoreCommand = KOVAAK_SCORE_COMMANDS.has(commandName as ProductCommandName);
   return {
     type: "product_command" as const,
     command_id: result.command_id,
@@ -97,8 +119,8 @@ function safeCommandEvent(result: Record<string, unknown>, commandName: string) 
     status: result.status,
     result_ref: typeof result.result_ref === "string" ? result.result_ref : null,
     audit_ref: result.audit_ref,
-    ui_event: isRecord(result.ui_event) ? result.ui_event : null,
-    warning_or_error: isRecord(result.warning_or_error) ? result.warning_or_error : null,
+    ui_event: !isKovaakScoreCommand && isRecord(result.ui_event) ? result.ui_event : null,
+    warning_or_error: !isKovaakScoreCommand && isRecord(result.warning_or_error) ? result.warning_or_error : null,
   };
 }
 
@@ -108,14 +130,17 @@ export function createProductCommandTool(bridge: CoachToolBridge) {
   return {
     name: "run_product_command",
     label: "Run product command",
-    description: "通过 Aiming Cookie 产品命令层查询、导航或提出可恢复动作。写操作授权与确认只由可信 UI/backend 决定；不得提交 authorization、confirmation、owner、risk、路径、URL、credential 或任意 payload。",
+    description: "通过 Aiming Cookie 产品命令层查询、导航或提出可恢复动作。Coach 可以准备用户明确陈述的训练事实；写入仍必须由可信 UI/backend 确认后执行。Evidence 必须从已附加的 analysis:N 开始：先调用 analysis.evidence.list，parameters 只传 analysis_ref（可选 limit/segment_kinds/issue_refs）；仅当结果返回 segment_ref 与 available_channels 后，才能调用 analysis.evidence.signal_window，并且 parameters 只传该 segment_ref 与从 available_channels 选择的 channel_keys。事件列表 analysis.events.list 只传 analysis_ref、scope='whole_run'、从 processed event table 目录选择的 event_kinds，以及可选 limit；scope='evidence_segment' 时还必须传已返回且 reachable 的 segment_ref。ProcessedEventTable 查询必须从上下文目录或成功结果取得 table_ref 与 field_catalog，不能用 analysis_ref 代替 table_ref：analysis.events.aggregate 只传 table_ref、数值 fields，以及可选 group_by='run_phase' 或已注册分类字段；analysis.events.rank 只传 table_ref、数值 field、direction='asc'|'desc'、predicates 数组和 limit；analysis.events.filter 只传 table_ref、predicates 与可选 limit；analysis.events.get 只传已返回的 table_ref 与 event_ref。不得猜 artifact/segment/table/event ref 或字段。删除 Analysis 使用 analysis.delete，parameters 必须精确为已附加上下文中的 {\"analysis_ref\":\"analysis:N\"}；仅对本轮已 reachable 的 Analysis，数字 shorthand N 会在可信 bridge 内规范化。删除必须等待可信 UI/backend 的结构化确认。写操作授权与确认只由可信 UI/backend 决定；不得提交 authorization、confirmation、owner、risk、路径、URL、credential 或任意 payload。",
     parameters: Type.Object({
       command_name: commandSchema,
       parameters: Type.Object({}, { additionalProperties: true }),
       idempotency_key: Type.Optional(Type.String({ maxLength: 256 })),
     }, { additionalProperties: false }),
     async execute(_id: string, params: { command_name: ProductCommandName; parameters: Record<string, unknown>; idempotency_key?: string }, signal?: AbortSignal) {
-      if (!PRODUCT_COMMAND_NAMES.includes(params.command_name) || !isRecord(params.parameters) || containsForbidden(params.parameters)) {
+      const isKovaakScoreCommand = KOVAAK_SCORE_COMMANDS.has(params.command_name);
+      if (!PRODUCT_COMMAND_NAMES.includes(params.command_name) || !isRecord(params.parameters) ||
+          !hasValidCommandParameters(params.command_name, params.parameters) ||
+          (!isKovaakScoreCommand && containsForbidden(params.parameters))) {
         throw new Error("Product command contains unsupported fields");
       }
       const body: Record<string, unknown> = {

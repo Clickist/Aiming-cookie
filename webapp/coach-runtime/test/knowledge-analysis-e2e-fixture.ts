@@ -97,7 +97,11 @@ function knowledgeQueryFromAnalysis(context: unknown) {
       .filter((value): value is string => typeof value === "string")
       .map((value) => value.startsWith("metric:") ? value : `metric:${value}`)
     : [];
-  return { issue_signal: issue.signal, metric_refs: metricRefs, supported_use: "definition" };
+  return {
+    issue_signal: issue.signal,
+    metric_refs: metricRefs,
+    supported_use: "explanation_only",
+  };
 }
 
 export function createAnalysisKnowledgeE2EStream(): StreamFn {

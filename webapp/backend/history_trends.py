@@ -19,11 +19,18 @@ from .workspace import session_dir
 
 
 _SAFE_SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-_SAFE_IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SAFE_IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
 _SAFE_SCENARIO_PROFILE_REF = re.compile(
     r"^scenario:[A-Za-z0-9][A-Za-z0-9._-]{0,159}@[1-9][0-9]*$"
 )
 _SAFE_SCENARIO_HASH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+_TARGET_SWITCHING_CHAIN_CONDITION_REF = (
+    "condition:target_switching:stats_kill_bounded_chain"
+)
+_TARGET_SWITCHING_COMPARISON_METRICS = {
+    "target_switching.transition_time_ms",
+    "target_switching.settle_duration_ms",
+}
 _ALIGNMENT_STATUSES = {"aligned", "partial", "failed", "unavailable", "not_required"}
 _EVIDENCE_AVAILABILITIES = {"available", "missing", "unsupported", "unavailable", "invalid"}
 _V2_INPUT_MODES = {"input_native", "multimodal", "video_fallback"}
@@ -134,6 +141,23 @@ def _full_coverage(value: object) -> bool:
     )
 
 
+def _has_complete_switching_metric_evidence(result: dict, metric: dict) -> bool:
+    deterministic = result.get("deterministic")
+    evidence = result.get("evidence")
+    evidence_coverage = evidence.get("coverage") if isinstance(evidence, dict) else None
+    return (
+        result.get("analysis_type") == "target_switching"
+        and isinstance(deterministic, dict)
+        and deterministic.get("support_status") == "supported"
+        and metric.get("key") in _TARGET_SWITCHING_COMPARISON_METRICS
+        and metric.get("condition_refs") == [_TARGET_SWITCHING_CHAIN_CONDITION_REF]
+        and isinstance(evidence_coverage, (int, float))
+        and not isinstance(evidence_coverage, bool)
+        and math.isfinite(float(evidence_coverage))
+        and 0.0 < float(evidence_coverage) <= 1.0
+    )
+
+
 def _quality_reason(result: dict, metric: dict) -> str | None:
     if metric.get("classification") != "deterministic":
         return "metric_not_deterministic"
@@ -144,7 +168,10 @@ def _quality_reason(result: dict, metric: dict) -> str | None:
     evidence = result.get("evidence")
     if not isinstance(evidence, dict):
         return "insufficient_evidence_coverage"
-    if not _full_coverage(evidence.get("coverage")):
+    if (
+        not _full_coverage(evidence.get("coverage"))
+        and not _has_complete_switching_metric_evidence(result, metric)
+    ):
         return "insufficient_evidence_coverage"
     alignment_value = evidence.get("alignment")
     alignment = alignment_value.get("status") if isinstance(alignment_value, dict) else None
@@ -466,7 +493,14 @@ def build_matched_target_switching_baseline(
     """Select the first prior Run with at least one fully comparable metric."""
     if current.get("analysis_type") != "target_switching":
         return {"comparable": False, "reason": "analysis_type_mismatch"}
+    current_run_ref = current.get("kovaak_run_ref")
     for session_id, baseline in baselines:
+        if (
+            isinstance(current_run_ref, str)
+            and current_run_ref
+            and baseline.get("kovaak_run_ref") == current_run_ref
+        ):
+            continue
         baseline_metrics: dict[str, float] = {}
         comparisons: dict[str, dict[str, float | None]] = {}
         for metric_key in metric_keys:

@@ -14,6 +14,7 @@ from kovaak_tracker.coach.agent import (
     DEFAULT_MAX_TURNS,
 )
 from kovaak_tracker.advice import Prescription
+from kovaak_tracker.coach import agent_tools
 from kovaak_tracker.coach.agent_tools import build_diagnosis_tools, diagnosis_payload
 from kovaak_tracker.coach.diagnosis import (
     CoachDiagnosis, DiagnosisIssue, ProfileMatch, RootCause,
@@ -283,11 +284,31 @@ def test_narrate_diagnosis_end_to_end_mock():
     tool_result_content = backend.calls[1]["messages"][-1]["content"][0]["content"]
     parsed = json.loads(tool_result_content)
     assert parsed["signal"] == "sparc low"
-    assert parsed["registry_version"] == "2026-07-22.v2"
+    assert parsed["registry_version"] == "2026-07-29.v4"
     assert 1 <= len(parsed["entries"]) <= 3
     assert parsed["community"] in parsed["cues"]
     assert all(entry["entry_ref"].startswith("knowledge:") for entry in parsed["entries"])
     assert all(entry["coaching_record"]["matched_retest"] for entry in parsed["entries"])
+
+
+def test_registry_payload_omits_forbidden_prescription_sections_for_low_capability_entry():
+    from kovaak_tracker.coach.knowledge_registry import load_registry
+
+    registry = load_registry(registry_version="2026-07-29.v4")
+    explanation_only = next(
+        entry for entry in registry["entries"]
+        if entry["entry_id"] == "community.linear-clicking-strategy"
+    )
+
+    payload = agent_tools._entry_payload(explanation_only, registry)
+
+    record = payload["coaching_record"]
+    assert record["observation_refs"] == []
+    assert "cue" not in record
+    assert "dose_guardrail" not in record
+    assert "matched_retest" not in record
+    assert "near_transfer_retest" not in record
+    assert "stop_adjust_rule" not in record
 
 
 # ---------------------------------------------------------------------------

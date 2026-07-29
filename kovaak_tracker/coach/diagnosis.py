@@ -39,6 +39,9 @@ class DiagnosisIssue:
     verification: dict[str, Any] = field(default_factory=dict)
     primary_evidence_segment_ref: str | None = None
     supporting_evidence_segment_refs: list[str] = field(default_factory=list)
+    observation_ref: str | None = None
+    knowledge_registry_version: str | None = None
+    knowledge_entry_refs: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if len(self.supporting_evidence_segment_refs) > 2:
@@ -99,6 +102,12 @@ from . import profiles
 
 _MATCH_THRESHOLD = 0.5
 _SEVERITY_WEIGHT = {"fix": 3, "watch": 2, "info": 1}
+_STATIC_REGISTRY_ENTRY_PREFIX = "knowledge:static.flicking-terminal-control@"
+_STATIC_OBSERVATION_REFS = {
+    "reverse_ratio high": "metric.terminal_control",
+    "submovement two-stage": "metric.terminal_control",
+    "sparc low": "metric.terminal_control",
+}
 
 
 def build_diagnosis(findings, summary, comparison, meta):
@@ -159,6 +168,22 @@ def _build_issues(findings):
     enriched.sort(key=lambda x: (-_SEVERITY_WEIGHT.get(x[0].severity, 1),))
     issues = []
     for rank, (f, rcs) in enumerate(enriched, 1):
+        observation_ref = _STATIC_OBSERVATION_REFS.get(f.signal)
+        registry_version = None
+        knowledge_entry_refs: list[str] = []
+        if observation_ref is not None:
+            knowledge = resolve_candidate_knowledge_refs(
+                issue_signal=f.signal,
+                metric_refs=list(f.metric_refs),
+            )
+            knowledge_entry_refs = [
+                ref for ref in knowledge.entry_refs
+                if ref.startswith(_STATIC_REGISTRY_ENTRY_PREFIX)
+            ]
+            if knowledge_entry_refs:
+                registry_version = knowledge.registry_version
+            else:
+                observation_ref = None
         if f.claim_level == "experimental" or f.severity == "info":
             priority_reason = f"[{f.claim_level}] 观察项排序第 {rank}"
         else:
@@ -177,6 +202,9 @@ def _build_issues(findings):
             limitations=list(f.limitations),
             expected_result=f.expected_result,
             verification=dict(f.verification),
+            observation_ref=observation_ref,
+            knowledge_registry_version=registry_version,
+            knowledge_entry_refs=knowledge_entry_refs,
         ))
     return issues
 
