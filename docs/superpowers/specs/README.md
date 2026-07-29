@@ -4,6 +4,8 @@
 
 ## Active
 
+- [`2026-07-30-kovaak-connected-account-and-coach-lookup-design.md`](2026-07-30-kovaak-connected-account-and-coach-lookup-design.md): 本地已连接 KovaaK 账号与 Coach turn-scoped 临时 Profile 查询的身份、存储、工具和隐私合同。
+
 - [`2026-07-13-kovaak-run-trace-lifecycle-design.md`](2026-07-13-kovaak-run-trace-lifecycle-design.md)：KovaaK source pairing、Raw Input buffer、trace attach、reconciliation 与稳定引用合同。
 - [`2026-07-17-automatic-run-capture-design.md`](2026-07-17-automatic-run-capture-design.md)：Raw + 300 秒 KovaaK 窗口硬件编码回放缓冲、Stats/Performance 事后切 Run、normal/timescale 永久 MP4、暂停局 fail-closed、单局/多局选择、手动 fallback 与分类存储管理合同。
 - [`2026-07-13-analysis-evidence-coach-context-design.md`](2026-07-13-analysis-evidence-coach-context-design.md)：三种 input mode、AnalysisResult v2、evidence provenance 与 Coach allow-list context。
@@ -12,6 +14,8 @@
 - [`2026-07-14-versioned-coach-knowledge-registry-design.md`](2026-07-14-versioned-coach-knowledge-registry-design.md)：Coach canonical Knowledge Registry、版本/source/claim/limitation、Flicking/Tracking/身体候选知识、确定性检索与历史引用合同。
 - [`2026-07-16-analysis-deletion-reconciliation-design.md`](2026-07-16-analysis-deletion-reconciliation-design.md)：terminal Analysis 的 SQLite logical delete、Coach 保留、transient cleanup tombstone 与 managed workspace reconciliation。
 - [`2026-07-20-complete-coach-analysis-context-design.md`](2026-07-20-complete-coach-analysis-context-design.md)：完整 Coach 的规范化 Run facts、分页 timeline/events、有界 evidence tools、知识、画像、计划与复测合同。
+- [`2026-07-27-coach-guided-teaching-loop-design.md`](2026-07-27-coach-guided-teaching-loop-design.md)：Coach 主动带练的 intake、候选假设、teach-back、单变量练习、执行确认、matched/near-transfer 复测与改口合同；`TeachingSession`、`TeachingTurnContract`、本地 planner/renderer/validator 的数据归属与边界也在此冻结。
+- [`2026-07-29-viscose-s2-sync-coach-progression-design.md`](2026-07-29-viscose-s2-sync-coach-progression-design.md)：有限 Viscose S2 Easier/Medium 成绩同步、去身份 Coach 投影、课程配对与复用 TeachingSession 的 Easier→复测→Medium 建议边界。
 
 此前关于 IA、常驻 Coach 与 Pi Coach runtime 的耐久结论，已经分别吸收到 PRD、Architecture 和 frontend UI/UX 合同。旧文件位于 [`../../archive/retired/specs/`](../../archive/retired/specs/)，仅用于历史追溯，不得作为当前实施授权。
 
