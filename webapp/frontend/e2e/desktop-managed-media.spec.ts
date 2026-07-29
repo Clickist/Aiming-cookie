@@ -29,7 +29,18 @@ test("real Tauri WebView plays managed media and degrades a removed source local
   const page = browser.contexts()[0]?.pages()[0];
   expect(page, "Tauri WebView page").toBeDefined();
   await page!.unrouteAll({ behavior: "wait" });
-  await installApiFixtures(page!, apiScenario({ analysis: analysisSession() }));
+  const base = analysisSession();
+  const baseResult = base.result;
+  if (!baseResult || baseResult.schema_version !== "analysis_result.v2") {
+    throw new Error("video fallback fixture requires AnalysisResultV2");
+  }
+  await installApiFixtures(page!, apiScenario({
+    analysis: analysisSession({
+      input_mode: "video_fallback",
+      result: { ...baseResult, input_mode: "video_fallback" },
+      history: { ...base.history!, input_mode: "video_fallback" },
+    }),
+  }));
 
   await page!.goto("http://localhost:3000/analysis/42");
   const rangeResponse = page!.waitForResponse((response) =>

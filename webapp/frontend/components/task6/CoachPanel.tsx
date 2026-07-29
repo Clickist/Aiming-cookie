@@ -141,8 +141,11 @@ export function CoachPanel({
   };
 
   const locateContext = (context: ReturnType<typeof presentCoachContext>) => {
-    window.dispatchEvent(new CustomEvent("aiming-cookie:coach-locate", { detail: context.locator ?? { kind: context.kind } }));
-    setFeedback("已定位");
+    const located = !window.dispatchEvent(new CustomEvent("aiming-cookie:coach-locate", {
+      cancelable: true,
+      detail: context.locator ?? { kind: context.kind },
+    }));
+    setFeedback(located ? "已定位" : "未能定位，请重试。");
   };
 
   const send = async () => {

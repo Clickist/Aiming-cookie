@@ -76,6 +76,25 @@ const FAMILY_LABELS: Record<string, string> = {
   unknown: "未确认分类",
 };
 
+const SWITCHING_PRESENTATION_TEXT: Record<string, string> = {
+  "target_switching.transition_time_ms": "切换耗时",
+  "target_switching.transition_distance_px": "切换距离",
+  "target_switching.path_efficiency": "路径效率",
+  "target_switching.settle_duration_ms": "稳定耗时",
+  "switch transition slow": "切换耗时高于可比基线",
+  "switch arrival error high": "到达后稳定耗时高于可比基线",
+};
+
+const OBSERVATION_REF_RE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
+const KNOWLEDGE_REGISTRY_VERSION_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.v[1-9][0-9]*$/;
+const KNOWLEDGE_ENTRY_REF_RE = /^knowledge:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+@[1-9][0-9]*$/;
+const CLAIM_LEVEL_LABELS: Record<string, string> = {
+  deterministic_rule: "规则化观察",
+  experimental: "探索性观察",
+  research_supported: "研究支持",
+  community_consensus: "社区经验",
+};
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -96,8 +115,24 @@ function safeStrings(value: unknown): string[] {
   });
 }
 
+function safeStableRef(value: unknown, pattern: RegExp, maxLength: number): string | null {
+  return typeof value === "string" && value.length <= maxLength && pattern.test(value)
+    ? value
+    : null;
+}
+
+function safeKnowledgeEntryRefs(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8) return [];
+  if (!value.every((item) => safeStableRef(item, KNOWLEDGE_ENTRY_REF_RE, 180))) return [];
+  return new Set(value).size === value.length ? value : [];
+}
+
 function safeNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function presentSwitchingText(value: string): string {
+  return SWITCHING_PRESENTATION_TEXT[value] ?? value;
 }
 
 function familyStatus(result: AnalysisResultV2): AnalysisFamilySupportState {
@@ -122,6 +157,7 @@ function familyStatus(result: AnalysisResultV2): AnalysisFamilySupportState {
 
 export interface AnalysisMetricPresentation {
   key: string;
+  referenceKey?: string;
   value: number | string | null;
   unit: string | null;
   availability: string;
@@ -136,7 +172,15 @@ export interface AnalysisIssuePresentation {
   severity: "info" | "watch" | "fix";
   priority: number;
   priorityReason: string;
+  presentationKind: "registry-backed" | "legacy";
   claimLevel: string | null;
+  claimLabel: string | null;
+  candidateExplanation: string | null;
+  expectedResult: string | null;
+  hasHistoricalCandidateDetails: boolean;
+  observationRef: string | null;
+  knowledgeRegistryVersion: string | null;
+  knowledgeEntryRefs: string[];
   rootCauses: Array<{ level: string; text: string }>;
   prescriptions: Array<{ scenario: string; reason: string; cue: string | null }>;
   metricRefs: string[];
@@ -179,7 +223,8 @@ export interface AnalysisWorkspacePresentation {
 function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisMetricPresentation {
   if (typeof value === "number") {
     return {
-      key,
+      key: presentSwitchingText(key),
+      referenceKey: key,
       value: safeNumber(value),
       unit: null,
       availability: "available",
@@ -189,8 +234,10 @@ function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisM
       limitations: ["legacy_metric_metadata_unavailable"],
     };
   }
+  const referenceKey = safeString(value.key) ?? key;
   return {
-    key: safeString(value.key) ?? key,
+    key: presentSwitchingText(referenceKey),
+    referenceKey,
     value: typeof value.value === "string" ? safeString(value.value) : safeNumber(value.value),
     unit: safeString(value.unit),
     availability: safeString(value.availability) ?? "unavailable",
@@ -205,8 +252,9 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
   const issues = Array.isArray(value) ? value : [];
   return issues.flatMap((raw) => {
     const issue = record(raw);
-    const signal = safeString(issue.signal);
-    if (!signal) return [];
+    const signalRaw = safeString(issue.signal);
+    if (!signalRaw) return [];
+    const signal = presentSwitchingText(signalRaw);
     const severity: AnalysisIssuePresentation["severity"] = issue.severity === "fix" || issue.severity === "watch"
       ? issue.severity
       : "info";
@@ -223,12 +271,41 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
       if (!scenario || !reason) return [];
       return [{ scenario, reason, cue: safeString(prescription.cue) }];
     });
+    const observationRef = safeStableRef(issue.observation_ref, OBSERVATION_REF_RE, 160);
+    const knowledgeRegistryVersion = safeStableRef(
+      issue.knowledge_registry_version,
+      KNOWLEDGE_REGISTRY_VERSION_RE,
+      80,
+    );
+    const knowledgeEntryRefs = safeKnowledgeEntryRefs(issue.knowledge_entry_refs);
+    const hasKnowledgePair = knowledgeRegistryVersion !== null && knowledgeEntryRefs.length > 0;
+    const presentationKind: AnalysisIssuePresentation["presentationKind"] = observationRef !== null && hasKnowledgePair
+      ? "registry-backed"
+      : "legacy";
+    const claimLevel = safeString(issue.claim_level);
     return [{
       signal,
       severity,
       priority: safeNumber(issue.priority) ?? 999,
-      priorityReason: safeString(issue.priority_reason) ?? "当前合同未提供优先级理由",
-      claimLevel: safeString(issue.claim_level),
+      priorityReason: presentSwitchingText(
+        safeString(issue.priority_reason) ?? "当前合同未提供优先级理由",
+      ),
+      presentationKind,
+      claimLevel,
+      claimLabel: presentationKind === "registry-backed"
+        ? CLAIM_LEVEL_LABELS[claimLevel ?? ""] ?? "未标注"
+        : null,
+      candidateExplanation: presentationKind === "registry-backed"
+        ? safeString(issue.plain_language_meaning)
+        : null,
+      expectedResult: presentationKind === "registry-backed"
+        ? safeString(issue.expected_result)
+        : null,
+      hasHistoricalCandidateDetails: presentationKind === "legacy"
+        && (rootCauses.length > 0 || prescriptions.length > 0),
+      observationRef,
+      knowledgeRegistryVersion: hasKnowledgePair ? knowledgeRegistryVersion : null,
+      knowledgeEntryRefs: hasKnowledgePair ? knowledgeEntryRefs : [],
       rootCauses,
       prescriptions,
       metricRefs: safeStrings(issue.metric_refs),
@@ -247,11 +324,14 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
   const profileRaw = record(diagnosis.profile);
   const profileLabel = safeString(profileRaw.label);
   const issues = presentIssues(diagnosis.issues);
+  const familySupport = familyStatus(result);
   const metrics = Object.entries(result.deterministic.metrics ?? {}).map(([key, metric]) =>
     presentMetric(key, metric)
   );
   const formal = metrics.filter((metric) =>
-    metric.availability === "available" && metric.classification === "deterministic"
+    familySupport === "supported"
+    && metric.availability === "available"
+    && metric.classification === "deterministic"
   );
   const evidenceSources = Array.isArray(result.evidence.sources)
     ? result.evidence.sources
@@ -298,7 +378,7 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     family: {
       code: familyCode,
       label: FAMILY_LABELS[familyCode] ?? FAMILY_LABELS.unknown,
-      status: familyStatus(result),
+      status: familySupport,
     },
     evidence,
     limitations,
@@ -310,8 +390,8 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     },
     partial,
     headline: issues[0]
-      ? `最需要处理：${issues[0].signal}`
-      : "当前证据不足以形成正式机制诊断",
+      ? `重点观察：${issues[0].signal}`
+      : "当前证据不足以形成重点观察",
     profile: profileLabel ? {
       label: profileLabel,
       confidence: safeNumber(profileRaw.confidence),
@@ -388,6 +468,12 @@ export function getRunModeAvailability(
     available: run.supported_input_modes.includes(mode),
     limitations: run.limitations,
   };
+}
+
+export function isRunPauseFailClosed(
+  run: Pick<KovaaKRunListItem, "alignment">,
+): boolean {
+  return run.alignment.error_code === "pause_unsupported";
 }
 
 function hasCalibrationValue(values: CalibrationValues | undefined): boolean {

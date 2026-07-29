@@ -51,29 +51,52 @@ export function VideoView({
   const overlayTriggerRef = useRef<HTMLElement | null>(null);
   const [segments, setSegments] = useState<FrontendEvidenceSegmentsV1 | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(presentation.video.kind !== "native-only");
+  const [loading, setLoading] = useState(presentation.video.kind === "seekable");
   const [loadFailed, setLoadFailed] = useState(false);
+  const [segmentsLoading, setSegmentsLoading] = useState(presentation.video.kind === "seekable");
+  const [segmentsFailed, setSegmentsFailed] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
   const [selectedEvent, setSelectedEvent] = useState<number | null>(null);
   const [activeTypes, setActiveTypes] = useState<string[]>(() => Array.from(new Set(presentation.timeline.map((event) => event.type))));
+
+  const loadSegments = useCallback(async () => {
+    setSegmentsLoading(true);
+    setSegmentsFailed(false);
+    setSegments(null);
+    try {
+      setSegments(await getAnalysisEvidenceSegments(analysisId));
+    } catch {
+      setSegments(null);
+      setSegmentsFailed(true);
+    } finally {
+      setSegmentsLoading(false);
+    }
+  }, [analysisId]);
 
   const loadEvidence = useCallback(async () => {
     if (presentation.video.kind === "native-only") return;
     setLoading(true);
     setLoadFailed(false);
+    setSegments(null);
+    setSegmentsLoading(false);
+    setSegmentsFailed(false);
+    if (presentation.video.kind !== "seekable") {
+      setVideoUrl(null);
+      setLoading(false);
+      return;
+    }
     try {
-      const evidence = await getAnalysisEvidenceSegments(analysisId);
       const managed = isDesktopRuntime() ? await getManagedVideoUrl(analysisId) : null;
-      setSegments(evidence);
-      setVideoUrl(evidence.video_availability === "available" ? managed ?? getVideoUrl(analysisId) : null);
+      setVideoUrl(managed ?? getVideoUrl(analysisId));
     } catch {
-      setSegments(null);
       setVideoUrl(null);
       setLoadFailed(true);
-    } finally {
       setLoading(false);
+      return;
     }
-  }, [analysisId, presentation.video.kind]);
+    setLoading(false);
+    await loadSegments();
+  }, [loadSegments, analysisId, presentation.video.kind]);
 
   useEffect(() => {
     void loadEvidence();
@@ -165,6 +188,10 @@ export function VideoView({
           className={styles.video}
           controls
           onDurationChange={(event) => setDurationMs(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration * 1000 : 0)}
+          onError={() => {
+            setVideoUrl(null);
+            setLoadFailed(true);
+          }}
           onTimeUpdate={(event) => onCurrentTimeChange(event.currentTarget.currentTime * 1000)}
           preload="metadata"
           ref={videoRef}
@@ -199,8 +226,18 @@ export function VideoView({
             );
           })}
         </div>
+        {segmentsLoading ? <Loading>正在读取证据片段</Loading> : null}
+        {segmentsFailed ? (
+          <Notice tone="warning" title="证据片段暂时不可用">
+            视频仍可播放；片段恢复后可以重试读取。
+            <Button onClick={() => void loadSegments()} size="compact" variant="secondary">重试证据片段</Button>
+          </Notice>
+        ) : null}
+        {!segmentsLoading && !segmentsFailed && segmentRows.length === 0 ? (
+          <Empty title="没有可用证据片段">此 Analysis 没有返回可定位的片段。</Empty>
+        ) : null}
         <div className={styles.timelineTrack}>
-          {segmentRows.map((segment) => {
+          {!segmentsLoading && !segmentsFailed ? segmentRows.map((segment) => {
             const start = segment.playback.relative_start_ms;
             const end = segment.playback.relative_end_ms;
             if (start === null || end === null) return null;
@@ -215,7 +252,7 @@ export function VideoView({
                 type="button"
               />
             );
-          })}
+          }) : null}
           {visibleEvents.map((event) => {
             const index = presentation.timeline.indexOf(event);
             const time = eventTimeMs(event);

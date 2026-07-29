@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import type { Page, Route } from "@playwright/test";
 
 import type {
@@ -6,6 +9,7 @@ import type {
   CaptureStatusV1,
   CoachContextListV1,
   CoachPrimaryResponse,
+  FrontendAnalysisDataV1,
   FrontendEvidenceSegmentsV1,
   HistoryTrend,
   IncompleteCaptureListV1,
@@ -26,6 +30,7 @@ import type {
 } from "../lib/types";
 
 const NOW = "2026-07-25T06:32:00Z";
+const TASK7_VIDEO = readFile(path.join(__dirname, "task7-video.mp4"));
 
 export const PRODUCT_STATE: ProductStateV1 = {
   schema_version: "product_state.v1",
@@ -303,6 +308,42 @@ export function analysisSession(overrides: Partial<SessionStatus> = {}): Session
   };
 }
 
+export function registryBackedAnalysisSession(): SessionStatus {
+  const base = analysisSession();
+  const result = base.result;
+  if (!result || result.schema_version !== "analysis_result.v2") {
+    throw new Error("registry-backed fixture requires AnalysisResult v2");
+  }
+  const diagnosis = result.deterministic.diagnosis;
+  const firstIssue = diagnosis?.issues[0];
+  if (!diagnosis || !firstIssue) {
+    throw new Error("registry-backed fixture requires a diagnosis issue");
+  }
+  const issue = {
+    ...firstIssue,
+    claim_level: "deterministic_rule",
+    observation_ref: "static_clicking.reverse_ratio",
+    knowledge_registry_version: "2026-07-29.v4",
+    knowledge_entry_refs: ["knowledge:static.flicking-terminal-control@2"],
+    plain_language_meaning: "停枪控制不稳是当前证据支持的候选解释，不代表已确认的身体或动作根因。",
+    expected_result: "反向修正出现得更早，且在同一场景和证据质量下可以复测。",
+  };
+  delete issue.root_causes;
+  delete issue.prescriptions;
+  return analysisSession({
+    result: {
+      ...result,
+      deterministic: {
+        ...result.deterministic,
+        diagnosis: {
+          ...diagnosis,
+          issues: [issue, ...diagnosis.issues.slice(1)],
+        },
+      },
+    },
+  });
+}
+
 export function partialAnalysisSession(): SessionStatus {
   const result: AnalysisResultV2 = {
     ...ANALYSIS_RESULT,
@@ -399,6 +440,29 @@ export const UNAVAILABLE_EVIDENCE_SEGMENTS: FrontendEvidenceSegmentsV1 = {
   video_route: null,
   canonical_window_start_ms: null,
   segments: [],
+};
+
+export const ANALYSIS_DATA: FrontendAnalysisDataV1 = {
+  schema_version: "frontend_analysis_data.v1",
+  analysis_ref: "analysis:42",
+  limitations: ["visual_quality_limited"],
+  event_markers: [
+    { event_ref: "analysis:42:event:target-change:1", kind: "target_change_point", relative_ms: 800 },
+    { event_ref: "analysis:42:event:tracking-loss:1", kind: "tracking_loss", relative_ms: 1200 },
+  ],
+  event_distribution: [
+    { kind: "target_change_point", count: 2 },
+    { kind: "tracking_loss", count: 1 },
+  ],
+  target_relative_error_radius: {
+    availability: "available",
+    reason: null,
+    points: [
+      { relative_ms: 400, normalized_error_radius: 0.35 },
+      { relative_ms: 800, normalized_error_radius: 0.8 },
+      { relative_ms: 1200, normalized_error_radius: 0.45 },
+    ],
+  },
 };
 
 export const PROVIDER_CATALOG: ProviderCatalogV1 = {
@@ -514,6 +578,7 @@ export interface ApiScenario {
   tasks: TaskDetailV1[];
   sessions: SessionListItem[];
   analysis: SessionStatus;
+  analysisData: FrontendAnalysisDataV1;
   evidenceSegments: FrontendEvidenceSegmentsV1;
   capture: CaptureStatusV1;
   providerStatus: ProviderProfileStatus;
@@ -528,6 +593,7 @@ export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
     tasks: TASKS,
     sessions: SESSION_LIST,
     analysis: analysisSession(),
+    analysisData: ANALYSIS_DATA,
     evidenceSegments: EVIDENCE_SEGMENTS,
     capture: CAPTURE_STATUS,
     providerStatus: READY_PROVIDER_STATUS,
@@ -543,6 +609,41 @@ function runDetail(run: KovaaKRunListItem): KovaaKRunItem {
 
 async function fulfillJson(route: Route, body: unknown, status = 200): Promise<void> {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+async function fulfillVideo(route: Route): Promise<void> {
+  const body = await TASK7_VIDEO;
+  const range = route.request().headers().range;
+  if (!range) {
+    await route.fulfill({
+      status: 200,
+      contentType: "video/mp4",
+      headers: { "Accept-Ranges": "bytes", "Content-Length": String(body.length) },
+      body,
+    });
+    return;
+  }
+  const match = /^bytes=(\d+)-(\d*)$/.exec(range);
+  const start = match ? Number(match[1]) : body.length;
+  const end = match?.[2] ? Math.min(Number(match[2]), body.length - 1) : body.length - 1;
+  if (!match || start >= body.length || end < start) {
+    await route.fulfill({
+      status: 416,
+      headers: { "Content-Range": `bytes */${body.length}` },
+    });
+    return;
+  }
+  const chunk = body.subarray(start, end + 1);
+  await route.fulfill({
+    status: 206,
+    contentType: "video/mp4",
+    headers: {
+      "Accept-Ranges": "bytes",
+      "Content-Length": String(chunk.length),
+      "Content-Range": `bytes ${start}-${end}/${body.length}`,
+    },
+    body: chunk,
+  });
 }
 
 export async function installApiFixtures(page: Page, scenario = apiScenario()): Promise<void> {
@@ -575,9 +676,10 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     }
     if (/^\/api\/kovaak-runs\/\d+\/analyze$/.test(path)) return fulfillJson(route, { session_id: 42 });
     if (path === "/api/sessions") return fulfillJson(route, { sessions: scenario.sessions });
+    if (path === "/api/sessions/42/analysis-data") return fulfillJson(route, scenario.analysisData);
     if (path === "/api/sessions/42/evidence-segments") return fulfillJson(route, scenario.evidenceSegments);
     if (path === "/api/sessions/42/video") {
-      await route.fulfill({ status: 200, contentType: "video/mp4", body: Buffer.alloc(0) });
+      await fulfillVideo(route);
       return;
     }
     if (path === "/api/sessions/42/retry") return fulfillJson(route, { ...scenario.analysis, id: 43, status: "queued" });

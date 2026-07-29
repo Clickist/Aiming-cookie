@@ -10,6 +10,7 @@ import {
   apiScenario,
   installApiFixtures,
   installDesktopBridge,
+  registryBackedAnalysisSession,
 } from "../fixtures/task7-fixtures";
 
 test.describe("Task 7 browser smoke", () => {
@@ -90,14 +91,28 @@ test.describe("Task 7 browser smoke", () => {
     await installApiFixtures(page, apiScenario({ analysis: analysisSession() }));
     await page.goto("/analysis/42");
     await expect(page.getByRole("heading", { name: "1wall 6targets small" })).toBeVisible();
-    await expect(page.getByText("最需要处理：停枪控制不稳", { exact: true })).toBeVisible();
+    await expect(page.getByText("重点观察：停枪控制不稳", { exact: true })).toBeVisible();
+    await expect(page.getByText("历史候选说明", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看证据" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看指标" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "问 Coach" })).toBeVisible();
 
     await page.getByRole("tab", { name: "视频" }).click();
     await expect(page.getByRole("slider", { name: "分析时间轴" })).toBeVisible();
 
     await page.getByRole("tab", { name: "数据" }).click();
     await expect(page.getByRole("heading", { name: "正式指标" })).toBeVisible();
-    await expect(page.getByRole("img", { name: "按事件类型统计的分布图" })).toBeVisible();
+    await expect(page.getByRole("group", { name: "按已验证事件种类统计的分布图" })).toBeVisible();
+  });
+
+  test("registry-backed Analysis labels candidate explanations without restoring legacy prescriptions", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({ analysis: registryBackedAnalysisSession() }));
+    await page.goto("/analysis/42");
+    await expect(page.getByText("重点观察：停枪控制不稳", { exact: true })).toBeVisible();
+    await expect(page.getByText("证据等级：规则化观察", { exact: true })).toBeVisible();
+    await expect(page.getByText("候选解释", { exact: true })).toBeVisible();
+    await expect(page.getByText("规则化练习建议", { exact: true })).toBeVisible();
+    await expect(page.getByText("历史候选说明", { exact: true })).toHaveCount(0);
   });
 
   test("Coach supports a primary conversation without a session binding", async ({ page }) => {

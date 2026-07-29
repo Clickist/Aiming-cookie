@@ -24,7 +24,7 @@ export interface Prescription {
   reason: string;
 }
 
-/** One layer of a finding's cause. Mirrors diagnosis.RootCause. */
+/** A legacy candidate explanation layer. Mirrors diagnosis.RootCause. */
 export interface RootCause {
   /** "symptom" | "physical" | "training" */
   level: string;
@@ -39,15 +39,20 @@ export interface ProfileMatch {
   secondary_tags: string[];
 }
 
-/** A diagnosed issue, enriched with root-cause layers and prescriptions. */
+/** A diagnosed issue. New v2 results carry observations; legacy fields remain readable. */
 export interface DiagnosisIssue {
   signal: string;
   severity: Severity;
-  root_causes: RootCause[];
-  prescriptions: Prescription[];
+  root_causes?: RootCause[];
+  prescriptions?: Prescription[];
   priority: number;
   priority_reason: string;
+  plain_language_meaning?: string;
+  expected_result?: string;
   claim_level?: string;
+  observation_ref?: string;
+  knowledge_registry_version?: string;
+  knowledge_entry_refs?: string[];
   metric_refs?: string[];
   event_refs?: string[];
   limitations?: string[];
@@ -412,6 +417,77 @@ export interface FrontendEvidenceSegmentsV1 {
   segments: FrontendEvidenceSegmentV1[];
 }
 
+export interface FrontendAnalysisDataMarkerV1 {
+  event_ref: string;
+  kind: string;
+  relative_ms: number;
+}
+
+export interface FrontendAnalysisDataDistributionV1 {
+  kind: string;
+  count: number;
+}
+
+export interface TargetRelativeErrorRadiusPointV1 {
+  relative_ms: number;
+  normalized_error_radius: number;
+}
+
+export interface TargetRelativeErrorRadiusV1 {
+  availability: "available" | "unavailable";
+  reason: string | null;
+  points: TargetRelativeErrorRadiusPointV1[];
+}
+
+export interface FrontendAnalysisDataV1 {
+  schema_version: "frontend_analysis_data.v1";
+  analysis_ref: string;
+  limitations: string[];
+  event_markers: FrontendAnalysisDataMarkerV1[];
+  event_distribution: FrontendAnalysisDataDistributionV1[];
+  target_relative_error_radius: TargetRelativeErrorRadiusV1;
+}
+
+export interface KovaaKScoreSyncRequestV1 {
+  schema_version: "kovaak_benchmark_sync_request.v1";
+  steam_id: string;
+  identity_consent: boolean;
+}
+
+export interface KovaaKScoreSyncResultV1 {
+  schema_version: "kovaak_benchmark_sync_result.v1";
+  imported_score_count: number;
+  difficulty_counts: Record<"easier" | "medium", number>;
+  observed_at: string;
+}
+
+export interface KovaaKScoreStageV1 {
+  stage: "easier" | "medium";
+  completed: number;
+  required: number;
+  rank: number;
+  rank_name: string;
+}
+
+export interface KovaaKScoreItemV1 {
+  stage: "easier" | "medium";
+  name: string;
+  category: string;
+  subcategory: string;
+  score: number;
+  item_rank: number;
+  item_rank_name: string;
+  completed: boolean;
+}
+
+export interface KovaaKScoresV1 {
+  schema_version: "kovaak_scores.v1";
+  availability: "available" | "unavailable";
+  observed_at: string | null;
+  stages: KovaaKScoreStageV1[];
+  items: KovaaKScoreItemV1[];
+}
+
 /** One row from GET /api/sessions (no full result payload). */
 export interface SessionListItem {
   id: number;
@@ -758,16 +834,12 @@ export interface BenchmarkRecordCreate {
   value: number;
   observed_at: string;
   availability?: BenchmarkAvailability;
-  external_identity_ref?: string | null;
-  identity_consent?: boolean;
 }
 
 export interface BenchmarkRecord extends BenchmarkRecordCreate {
   id: number;
   created_at: string;
   availability: BenchmarkAvailability;
-  external_identity_ref: string | null;
-  identity_consent: boolean;
 }
 
 export interface BenchmarkRecordListResponse {

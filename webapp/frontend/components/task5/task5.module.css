@@ -505,6 +505,51 @@
   padding-block-start: 16px;
 }
 
+.comparabilityNote,
+.unavailableMetrics > p {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.unavailableMetrics {
+  border-top: 1px solid var(--outline-variant);
+  padding-block-start: 16px;
+}
+
+.unavailableMetrics summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.unavailableMetrics > p {
+  margin-block-start: 6px;
+}
+
+.unavailableMetrics > div {
+  margin-block-start: 8px;
+}
+
+.analysisLimitations {
+  border-top: 1px solid var(--outline-variant);
+  padding-block-start: 16px;
+}
+
+.analysisLimitations h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.analysisLimitations ul,
+.technicalLimitations ul {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding-inline-start: 18px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
 .chartBand {
   display: grid;
   gap: 12px;
@@ -522,6 +567,7 @@
   grid-template-columns: 100px minmax(80px, 1fr) 28px;
   align-items: center;
   gap: 8px;
+  min-height: 24px;
   border: 0;
   padding: 2px 0;
   background: transparent;
@@ -545,6 +591,40 @@
   margin: 0;
   color: var(--on-surface-variant);
   font-size: 12px;
+}
+
+.compactUnavailable {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+}
+
+.errorSeries {
+  display: flex;
+  align-items: end;
+  gap: 1px;
+  height: 92px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.errorSeries i {
+  min-width: 0;
+  flex: 1 1 0;
+  background: var(--event-corrective);
+}
+
+.distributionPlot button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.technicalLimitations {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.technicalLimitations summary {
+  cursor: pointer;
 }
 
 @media (max-width: 960px) {

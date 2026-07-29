@@ -5,8 +5,10 @@ import {
   analyzeKovaakRun,
   completeOnboarding,
   createProviderProfile,
+  getKovaaKScores,
   listSessions,
   retrySession,
+  syncKovaaKScores,
 } from "./api";
 import { getManagedVideoUrl } from "./desktop";
 
@@ -114,6 +116,57 @@ test("analysis write requests forward their stable idempotency keys", async () =
     new Headers(requests[1]?.init?.headers).get("Idempotency-Key"),
     "retry-key",
   );
+});
+
+test("KovaaK scores API helper reads the neutral identity-free contract", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      schema_version: "kovaak_scores.v1",
+      availability: "unavailable",
+      observed_at: null,
+      stages: [],
+      items: [],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const scores = await getKovaaKScores();
+
+  assert.equal(requests[0]?.input, "/api/kovaak-scores");
+  assert.equal(scores.availability, "unavailable");
+  assert.equal(scores.observed_at, null);
+});
+
+test("KovaaK score sync helper forwards the stable input contract", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      schema_version: "kovaak_benchmark_sync_result.v1",
+      imported_score_count: 78,
+      difficulty_counts: { easier: 39, medium: 39 },
+      observed_at: "2026-07-29T10:15:00Z",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const result = await syncKovaaKScores({
+    schema_version: "kovaak_benchmark_sync_request.v1",
+    steam_id: "00000000000000000",
+    identity_consent: true,
+  });
+
+  assert.equal(requests[0]?.input, "/api/benchmarks/sync/kovaaks");
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    schema_version: "kovaak_benchmark_sync_request.v1",
+    steam_id: "00000000000000000",
+    identity_consent: true,
+  });
+  assert.equal(result.imported_score_count, 78);
 });
 
 test("desktop managed video URL survives Windows Tauri path encoding", async () => {
