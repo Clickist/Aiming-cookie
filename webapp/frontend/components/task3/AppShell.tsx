@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import { getDefaultProviderStatus, getSession, listTasks } from "@/lib/api";
 import { clampCoachWidth, COACH_DEFAULT_WIDTH } from "@/lib/contracts";
 import type { ProviderProfileState } from "@/lib/types";
-import { Badge } from "@/ui/primitives";
 import { CoachSidebar } from "@/components/task6/CoachSidebar";
 
 const COACH_OPEN_KEY = "aiming-cookie.ui.coach-open";
@@ -125,17 +124,36 @@ export function AppShell({ children }: { children: ReactNode }) {
         <span className="task3-logo" aria-label="Aiming Cookie">Aiming Cookie</span>
         <nav aria-label="主要导航" className="task3-primary-nav">
           {navItems.map((item) => (
-            <Link aria-current={pathname.startsWith(item.href) ? "page" : undefined} href={item.href} key={item.href}>
+            <Link
+              aria-current={(item.href === "/analyze"
+                ? pathname === "/analyze" || pathname.startsWith("/analysis/")
+                : pathname.startsWith(item.href)) ? "page" : undefined}
+              href={item.href}
+              key={item.href}
+            >
               {item.label}
             </Link>
           ))}
         </nav>
         <nav aria-label="工具导航" className="task3-tool-nav">
           <Link aria-current={pathname.startsWith("/tasks") ? "page" : undefined} href="/tasks">
-            任务 {activeTaskCount ? <Badge tone="info">{activeTaskCount}</Badge> : null}
+            <span className="task3-task-nav-label">任务{activeTaskCount ? <span aria-label={`${activeTaskCount} 个活动任务`} className="task3-task-nav-dot" title={`${activeTaskCount} 个活动任务`} /> : null}</span>
           </Link>
-          {coachSupported ? <button aria-expanded={coachOpen} className="task3-toolbar-action" onClick={toggleCoach} type="button">Coach</button> : null}
-          <Link href="/settings">设置</Link>
+          <span
+            className="task3-toolbar-tooltip"
+            title={coachSupported ? undefined : "当前页面不支持 Coach"}
+          >
+            <button
+              aria-expanded={coachOpen}
+              className="task3-toolbar-action"
+              disabled={!coachSupported}
+              onClick={toggleCoach}
+              type="button"
+            >
+              Coach
+            </button>
+          </span>
+          <Link aria-current={pathname.startsWith("/settings") ? "page" : undefined} href="/settings">设置</Link>
         </nav>
       </header>
       <div
@@ -143,7 +161,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         data-coach-open={showCoach || undefined}
         style={{ "--task3-coach-width": `${coachWidth}px` } as CSSProperties}
       >
-        <main id="main-content" tabIndex={-1}>{children}</main>
+        <main className="task3-route-content" id="main-content" key={pathname} tabIndex={-1}>{children}</main>
         {coachSupported ? (
           <CoachSidebar
             capability={capability}

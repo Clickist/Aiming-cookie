@@ -29,10 +29,14 @@ import type {
   CoachContextMutationV1,
   CoachContextRefV1,
   DeleteSessionResponse,
+  FrontendAnalysisDataV1,
   HistoryTrend,
   IncompleteCaptureListV1,
   IncompleteCaptureRemovalV1,
   KovaaKAnalysisRequest,
+  KovaaKScoreSyncRequestV1,
+  KovaaKScoreSyncResultV1,
+  KovaaKScoresV1,
   KovaaKRunItem,
   KovaaKRunListResponse,
   ProductStateV1,
@@ -433,6 +437,44 @@ export async function getAnalysisEvidenceSegments(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as FrontendEvidenceSegmentsV1;
+}
+
+export async function getAnalysisData(
+  sessionId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<FrontendAnalysisDataV1> {
+  const res = await apiFetch(
+    `/api/sessions/${sessionId}/analysis-data`,
+    { method: "GET" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as FrontendAnalysisDataV1;
+}
+
+export async function syncKovaaKScores(
+  body: KovaaKScoreSyncRequestV1,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<KovaaKScoreSyncResultV1> {
+  const res = await apiFetch(
+    "/api/benchmarks/sync/kovaaks",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKScoreSyncResultV1;
+}
+
+export async function getKovaaKScores(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<KovaaKScoresV1> {
+  const res = await apiFetch("/api/kovaak-scores", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKScoresV1;
 }
 
 export async function getHistorySessions(

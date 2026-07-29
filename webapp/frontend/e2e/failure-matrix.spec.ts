@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import {
   CAPTURE_STATUS,
+  EVIDENCE_SEGMENTS,
   RUN_MULTIMODAL,
   analysisSession,
   apiScenario,
@@ -95,6 +96,75 @@ test.describe("Task 7 failure matrix", () => {
     await expect(page.getByText("视觉证据当前不可用")).toBeVisible();
   });
 
+  test("video fallback requests managed playback when EvidenceSegment overlays are unavailable", async ({ page }) => {
+    const base = analysisSession();
+    const baseResult = base.result;
+    if (!baseResult || baseResult.schema_version !== "analysis_result.v2") {
+      throw new Error("video fallback fixture requires AnalysisResultV2");
+    }
+    await installApiFixtures(page, apiScenario({
+      analysis: analysisSession({
+        input_mode: "video_fallback",
+        result: { ...baseResult, input_mode: "video_fallback" },
+        history: { ...base.history!, input_mode: "video_fallback" },
+      }),
+      failures: { "/api/sessions/42/evidence-segments": 404 },
+    }));
+    let requestedUrl = "";
+    await page.route("**/api/sessions/42/video", async (route) => {
+      requestedUrl = route.request().url();
+      await route.fallback();
+    });
+
+    await page.goto("/analysis/42");
+    await page.getByRole("tab", { name: "视频" }).click();
+    await expect.poll(() => requestedUrl).not.toBe("");
+    expect(new URL(requestedUrl).pathname).toBe("/api/sessions/42/video");
+  });
+
+  test("EvidenceSegment failure stays local to the timeline and retry preserves the player", async ({ page }) => {
+    await installApiFixtures(page, apiScenario());
+    let segmentRequests = 0;
+    await page.route("**/api/sessions/42/evidence-segments", async (route) => {
+      segmentRequests += 1;
+      if (segmentRequests === 1) {
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "unavailable" }) });
+        return;
+      }
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(EVIDENCE_SEGMENTS) });
+    });
+
+    await page.goto("/analysis/42");
+    await page.getByRole("tab", { name: "视频" }).click();
+    const player = page.locator("video");
+    await expect(player).toBeVisible();
+    await expect(page.getByText("证据片段暂时不可用")).toBeVisible();
+    await player.evaluate((element) => element.dataset.testPlayer = "retained");
+
+    await page.getByRole("button", { name: "重试证据片段" }).click();
+    await expect.poll(() => segmentRequests).toBe(2);
+    await expect(page.getByText("证据片段暂时不可用")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /证据片段/ }).first()).toBeVisible();
+    await expect(player).toHaveAttribute("data-test-player", "retained");
+  });
+
+  test("an empty EvidenceSegment response remains an empty timeline state", async ({ page }) => {
+    await installApiFixtures(page, apiScenario());
+    await page.route("**/api/sessions/42/evidence-segments", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...EVIDENCE_SEGMENTS, segments: [] }),
+      });
+    });
+
+    await page.goto("/analysis/42");
+    await page.getByRole("tab", { name: "视频" }).click();
+    await expect(page.locator("video")).toBeVisible();
+    await expect(page.getByText("没有可用证据片段")).toBeVisible();
+    await expect(page.getByText("证据片段暂时不可用")).toHaveCount(0);
+  });
+
   test("Desktop managed video preserves the handler route segments", async ({ page }) => {
     await installDesktopBridge(page);
     await installApiFixtures(page, apiScenario({ analysis: analysisSession() }));
@@ -115,6 +185,7 @@ test.describe("Task 7 failure matrix", () => {
     await page.goto("/analysis/42");
     await page.getByRole("tab", { name: "视频" }).click();
     await expect.poll(() => requestedUrl).not.toBe("");
+    await expect(page.getByText("视觉证据当前不可用")).toBeVisible();
 
     expect(new URL(requestedUrl).pathname).toBe("/analysis/42");
     expect(requestedUrl).not.toMatch(/%2F/i);

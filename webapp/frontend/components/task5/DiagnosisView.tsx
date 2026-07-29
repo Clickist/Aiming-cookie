@@ -3,10 +3,10 @@ import { Badge, Button, Empty, Notice, Status } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
 
-const ROOT_LEVEL_LABEL: Record<string, string> = {
-  symptom: "表现层",
-  physical: "动作机制层",
-  training: "训练层",
+const LEGACY_CANDIDATE_LEVEL_LABEL: Record<string, string> = {
+  symptom: "观察到的表现",
+  physical: "动作机制候选",
+  training: "历史训练方向",
 };
 
 function severityTone(severity: "info" | "watch" | "fix"): "neutral" | "warning" | "error" {
@@ -37,7 +37,7 @@ export function DiagnosisView({
   return (
     <div className={styles.diagnosisTrack}>
       <section className={styles.diagnosisLead} aria-labelledby="diagnosis-title">
-        <p className={styles.sectionKicker}>优先结论</p>
+        <p className={styles.sectionKicker}>重点观察</p>
         <h2 id="diagnosis-title">{presentation.headline}</h2>
         {presentation.profile ? (
           <div className={styles.profileLine}>
@@ -53,43 +53,60 @@ export function DiagnosisView({
       </section>
 
       {presentation.issues.length === 0 ? (
-        <Empty title="当前证据不足以形成正式机制诊断">
+        <Empty title="当前证据不足以形成重点观察">
           查看数据来源和限制，或在后续收集更完整的证据。
         </Empty>
       ) : (
-        <section className={styles.issueList} aria-label="诊断问题">
+        <section className={styles.issueList} aria-label="观察项">
           {presentation.issues.map((issue, index) => (
             <article className={styles.issue} data-selected={selectedIssue === index || undefined} key={`${issue.priority}-${issue.signal}`}>
               <header className={styles.issueHeader}>
                 <div>
-                  <p className={styles.sectionKicker}>优先级 {index + 1}</p>
+                  <p className={styles.sectionKicker}>观察项 {index + 1}</p>
                   <h3>{issue.signal}</h3>
                 </div>
-                <Status tone={severityTone(issue.severity)}>{issue.severity === "fix" ? "需要处理" : issue.severity === "watch" ? "持续观察" : "信息"}</Status>
+                <div className={styles.profileLine}>
+                  {issue.presentationKind === "registry-backed" ? <Badge>证据等级：{issue.claimLabel}</Badge> : null}
+                  <Status tone={severityTone(issue.severity)}>{issue.severity === "fix" ? "优先观察" : issue.severity === "watch" ? "持续观察" : "信息"}</Status>
+                </div>
               </header>
               <p className={styles.priorityReason}>{issue.priorityReason}</p>
 
-              <div className={styles.rootCauseGrid} aria-label="三层根因">
-                {issue.rootCauses.length ? issue.rootCauses.map((cause) => (
-                  <div className={styles.rootCause} key={`${cause.level}-${cause.text}`}>
-                    <span>{ROOT_LEVEL_LABEL[cause.level] ?? cause.level}</span>
-                    <p>{cause.text}</p>
+              {issue.presentationKind === "registry-backed" ? (
+                <>
+                  <div className={styles.prescriptionBlock} aria-label="候选解释">
+                    <h4>候选解释</h4>
+                    <span>{issue.candidateExplanation ?? "当前 Analysis 未提供额外候选解释。"}</span>
                   </div>
-                )) : <p className={styles.muted}>当前合同没有足够证据支持根因分层。</p>}
-              </div>
-
-              {issue.prescriptions.length ? (
-                <div className={styles.prescriptionBlock}>
-                  <h4>处方</h4>
-                  {issue.prescriptions.map((prescription) => (
+                  <div className={styles.prescriptionBlock} aria-label="规则化练习建议">
+                    <h4>规则化练习建议</h4>
+                    <span>{issue.expectedResult
+                      ? `一次只围绕该观察练习，并在可比条件下复测：${issue.expectedResult}`
+                      : "一次只围绕该观察调整练习；具体场景、动作提示和剂量不由当前 Analysis 推断。"}</span>
+                  </div>
+                </>
+              ) : issue.hasHistoricalCandidateDetails ? (
+                <div className={styles.prescriptionBlock} aria-label="历史候选说明">
+                  <h4>历史候选说明</h4>
+                  <div className={styles.rootCauseGrid}>
+                    {issue.rootCauses.length ? issue.rootCauses.map((cause) => (
+                      <div className={styles.rootCause} key={`${cause.level}-${cause.text}`}>
+                        <span>{LEGACY_CANDIDATE_LEVEL_LABEL[cause.level] ?? cause.level}</span>
+                        <p>{cause.text}</p>
+                      </div>
+                    )) : <p className={styles.muted}>历史记录未提供候选解释。</p>}
+                  </div>
+                  {issue.prescriptions.length ? issue.prescriptions.map((prescription) => (
                     <div key={`${prescription.scenario}-${prescription.reason}`}>
                       <strong>{prescription.scenario}</strong>
                       <span>{prescription.reason}</span>
                       {prescription.cue ? <span>提示：{prescription.cue}</span> : null}
                     </div>
-                  ))}
+                  )) : null}
                 </div>
-              ) : null}
+              ) : (
+                <p className={styles.muted}>当前观察未关联版本化知识，且没有历史候选说明可展示。</p>
+              )}
 
               {issue.limitations.length ? <Notice tone="warning">{issue.limitations.join(" · ")}</Notice> : null}
               <footer className={styles.issueActions}>

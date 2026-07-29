@@ -19,6 +19,13 @@ test("analysis route implements one workspace with three title tabs", async () =
   assert.match(workspace, /数据/);
   assert.match(workspace, /<Tabs/);
   assert.match(primitives, /aria-selected/);
+
+  const coachLocator = await source("components/task5/AnalysisWorkspace.tsx");
+  assert.match(coachLocator, /window\.addEventListener\("aiming-cookie:coach-locate", locateCoachContext\)/);
+  assert.match(coachLocator, /window\.removeEventListener\("aiming-cookie:coach-locate", locateCoachContext\)/);
+  assert.match(coachLocator, /event\.preventDefault\(\)/);
+  assert.match(coachLocator, /setTab\("video"\)/);
+  assert.match(coachLocator, /setPlayheadMs\(locator\.relative_start_ms\)/);
   assert.doesNotMatch(workspace, /第二条|Benchmark|ReportView/);
 });
 
@@ -33,21 +40,80 @@ test("video view consumes managed URLs and evidence segment anchors", async () =
   assert.doesNotMatch(video, /raw_trace|video_path|file:\/\//);
 });
 
-test("diagnosis and data views expose evidence and limitations without unsafe fields", async () => {
+test("video view keeps EvidenceSegment failure and retry local to the timeline", async () => {
+  const video = await source("components/task5/VideoView.tsx");
+  assert.match(video, /segmentsLoading/);
+  assert.match(video, /segmentsFailed/);
+  assert.match(video, /loadSegments/);
+  assert.match(video, /证据片段暂时不可用/);
+  assert.match(video, /重试证据片段/);
+  assert.match(video, /没有可用证据片段/);
+});
+
+test("diagnosis distinguishes current observations from legacy candidate explanations", async () => {
   const diagnosis = await source("components/task5/DiagnosisView.tsx");
   const data = await source("components/task5/DataView.tsx");
   assert.match(diagnosis, /priorityReason/);
   assert.match(diagnosis, /rootCauses/);
+  assert.match(diagnosis, /presentationKind/);
+  assert.match(diagnosis, /claimLabel/);
+  assert.match(diagnosis, /重点观察/);
+  assert.match(diagnosis, /候选解释/);
+  assert.match(diagnosis, /规则化练习建议/);
+  assert.match(diagnosis, /历史候选说明/);
   assert.match(diagnosis, /查看证据/);
+  assert.match(diagnosis, /查看指标/);
+  assert.match(diagnosis, /问 Coach/);
+  assert.doesNotMatch(diagnosis, /最需要处理|三层根因|<h4>处方<\/h4>/);
   assert.match(data, /metrics\.formal/);
   assert.match(data, /文本摘要/);
   assert.match(data, /limitations/);
   assert.doesNotMatch(`${diagnosis}${data}`, /raw_trace|stats_source_ref|performance_source_ref|absolute_path/);
 });
 
+test("data view consumes the bounded analysis-data projection without a pseudo trend", async () => {
+  const data = await source("components/task5/DataView.tsx");
+  assert.match(data, /getAnalysisData/);
+  assert.match(data, /event_distribution/);
+  assert.match(data, /target_relative_error_radius/);
+  assert.match(data, /onSelectTime/);
+  assert.match(data, /tracking_fixed_window: "固定跟踪窗口"/);
+  assert.match(data, /tracking_episode: "跟踪片段"/);
+  assert.match(data, /low_confidence: "低可信度观测"/);
+  assert.match(data, /共 \$\{radiusPoints\.length\} 个样本/);
+  assert.match(data, /"continuous_tracking\.target_relative_error_px": "目标偏差"/);
+  assert.match(data, /"continuous_tracking\.time_in_radius_ratio": "目标范围内时间占比"/);
+  assert.match(data, /no_target_visible: "个别帧未检测到目标"/);
+  assert.match(data, /metricLabel\(metricReference\(metric\)\)/);
+  assert.match(data, /item\.dataset\.metricLabel === selectedMetric/);
+  assert.match(data, /"target_switching\.transition_time_ms": "切换耗时"/);
+  assert.match(data, /"target_switching\.transition_distance_px": "切换距离"/);
+  assert.match(data, /"target_switching\.path_efficiency": "路径效率"/);
+  assert.match(data, /"target_switching\.settle_duration_ms": "稳定耗时"/);
+  assert.match(data, /referenceKey === "target_switching\.path_efficiency"/);
+  assert.match(data, /kill: "击杀"/);
+  assert.match(data, /switch_chain: "目标切换链"/);
+  assert.match(data, /transition: "开始切换"/);
+  assert.match(data, /next_target_acquired: "到达下一目标"/);
+  assert.match(data, /settle: "稳定完成"/);
+  assert.match(data, /return METRIC_LABELS\[key\] \?\? key/);
+  assert.match(data, /source\.includes\("tracking-analysis"\)/);
+  assert.match(data, /unavailableMetrics/);
+  assert.match(data, /<details className=\{styles\.unavailableMetrics\}>/);
+  assert.doesNotMatch(data, /metric\.sources\.join\(" \+ "\)/);
+  assert.doesNotMatch(data, /radiusPoints\.map\(\(point\) => <button/);
+  assert.doesNotMatch(data, /跨记录趋势|<p className={styles\.sectionKicker}>Trend/);
+});
+
 test("analysis components use frozen tokens and no raw colors", async () => {
   const css = await source("components/task5/task5.module.css");
+  const dataView = await source("components/task5/DataView.tsx");
   assert.match(css, /var\(--surface/);
   assert.match(css, /var\(--outline-variant\)/);
+  assert.match(css, /\.distributionPlot button \{[\s\S]*min-height: 24px/);
+  assert.match(dataView, /className=\{styles\.distributionPlot\} role="group"/);
+  assert.doesNotMatch(dataView, /className=\{styles\.distributionPlot\} role="img"/);
+  assert.match(css, /\.errorSeries \{[\s\S]*gap: 1px/);
+  assert.match(css, /\.errorSeries i \{[\s\S]*min-width: 0/);
   assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}|rgb\(|hsl\(/);
 });

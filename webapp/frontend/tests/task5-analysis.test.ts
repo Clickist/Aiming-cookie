@@ -201,6 +201,186 @@ test("workspace separates formal metrics from experimental or unavailable metric
   assert.deepEqual(presentation?.metrics.limited.map((metric) => metric.key), ["visual_guess"]);
   assert.equal(presentation?.issues.length, 1);
   assert.equal(presentation?.issues[0]?.rootCauses.length, 3);
+  assert.equal(presentation?.issues[0]?.prescriptions.length, 1);
+  assert.equal(presentation?.issues[0]?.presentationKind, "legacy");
+  assert.equal(presentation?.issues[0]?.hasHistoricalCandidateDetails, true);
+});
+
+test("workspace keeps deterministic metrics descriptive when family trust is not formal", () => {
+  const partial = result({ deterministic: {
+    ...result().deterministic,
+    support_status: "partial",
+  } });
+  const descriptiveOnly = result({
+    input_snapshot: {
+      ...result().input_snapshot,
+      scenario_resolution: {
+        ...result().input_snapshot.scenario_resolution!,
+        claim_ceiling: "descriptive_only",
+        family_analyzer_dispatch: "none",
+      },
+    },
+  });
+  const outcomeOnly = result({ deterministic: {
+    ...result().deterministic,
+    support_status: "outcome_only",
+  } });
+  const unavailable = result({
+    input_snapshot: {
+      ...result().input_snapshot,
+      scenario_resolution: {
+        ...result().input_snapshot.scenario_resolution!,
+        family_analyzer_dispatch: "none",
+      },
+    },
+  });
+
+  for (const value of [partial, descriptiveOnly, outcomeOnly, unavailable]) {
+    const presentation = presentAnalysisWorkspace(session({ result: value }));
+    assert.deepEqual(presentation?.metrics.formal, []);
+    assert.deepEqual(
+      presentation?.metrics.limited.map((metric) => metric.key),
+      ["sparc", "visual_guess"],
+    );
+  }
+});
+
+test("workspace preserves only safe optional issue knowledge refs", () => {
+  const withRefs = result();
+  const issue = withRefs.deterministic.diagnosis?.issues[0];
+  assert.ok(issue);
+  issue.observation_ref = "event.flick";
+  issue.knowledge_registry_version = "2026-07-29.v4";
+  issue.knowledge_entry_refs = ["knowledge:static.flicking-terminal-control@2"];
+  issue.plain_language_meaning = "This observation is a candidate explanation, not a confirmed mechanism.";
+  issue.claim_level = "deterministic_rule";
+
+  const projected = presentAnalysisWorkspace(session({ result: withRefs }))?.issues[0];
+  assert.equal(projected?.observationRef, "event.flick");
+  assert.equal(projected?.knowledgeRegistryVersion, "2026-07-29.v4");
+  assert.deepEqual(projected?.knowledgeEntryRefs, ["knowledge:static.flicking-terminal-control@2"]);
+  assert.equal(projected?.candidateExplanation, "This observation is a candidate explanation, not a confirmed mechanism.");
+  assert.equal(projected?.claimLevel, "deterministic_rule");
+  assert.equal(projected?.claimLabel, "规则化观察");
+  assert.equal(projected?.presentationKind, "registry-backed");
+  assert.equal(projected?.hasHistoricalCandidateDetails, false);
+
+  const malformed = result();
+  const malformedIssue = malformed.deterministic.diagnosis?.issues[0];
+  assert.ok(malformedIssue);
+  malformedIssue.observation_ref = "C:\\Users\\point\\private";
+  malformedIssue.knowledge_registry_version = "2026-07-29.v4";
+  malformedIssue.knowledge_entry_refs = ["knowledge:static.flicking-terminal-control@0"];
+
+  const filtered = presentAnalysisWorkspace(session({ result: malformed }))?.issues[0];
+  assert.equal(filtered?.observationRef, null);
+  assert.equal(filtered?.knowledgeRegistryVersion, null);
+  assert.deepEqual(filtered?.knowledgeEntryRefs, []);
+  assert.equal(filtered?.presentationKind, "legacy");
+
+  const incomplete = result();
+  const incompleteIssue = incomplete.deterministic.diagnosis?.issues[0];
+  assert.ok(incompleteIssue);
+  incompleteIssue.knowledge_registry_version = "2026-07-29.v4";
+  incompleteIssue.knowledge_entry_refs = ["knowledge:static.flicking-terminal-control@2"];
+  assert.equal(presentAnalysisWorkspace(session({ result: incomplete }))?.issues[0]?.presentationKind, "legacy");
+});
+
+test("workspace presents only known Switching identifiers as natural user text", () => {
+  const switching = result();
+  switching.deterministic.metrics = {
+    "target_switching.transition_time_ms": {
+      key: "target_switching.transition_time_ms",
+      value: 180,
+      unit: "ms",
+      availability: "available",
+      coverage: 1,
+      classification: "deterministic",
+      metric_version: "target_switching.v1",
+      limitations: [],
+      provenance: { kind: "derived", sources: ["stats"] },
+    },
+    "target_switching.transition_distance_px": {
+      key: "target_switching.transition_distance_px",
+      value: 320,
+      unit: "px",
+      availability: "available",
+      coverage: 1,
+      classification: "deterministic",
+      metric_version: "target_switching.v1",
+      limitations: [],
+      provenance: { kind: "derived", sources: ["stats"] },
+    },
+    "target_switching.path_efficiency": {
+      key: "target_switching.path_efficiency",
+      value: 0.84,
+      unit: "ratio",
+      availability: "available",
+      coverage: 1,
+      classification: "deterministic",
+      metric_version: "target_switching.v1",
+      limitations: [],
+      provenance: { kind: "derived", sources: ["stats"] },
+    },
+    "target_switching.settle_duration_ms": {
+      key: "target_switching.settle_duration_ms",
+      value: 95,
+      unit: "ms",
+      availability: "available",
+      coverage: 1,
+      classification: "deterministic",
+      metric_version: "target_switching.v1",
+      limitations: [],
+      provenance: { kind: "derived", sources: ["stats"] },
+    },
+    "unknown.safe_metric": {
+      key: "unknown.safe_metric",
+      value: 1,
+      unit: "count",
+      availability: "available",
+      coverage: 1,
+      classification: "deterministic",
+      metric_version: "unknown.v1",
+      limitations: [],
+      provenance: { kind: "derived", sources: ["stats"] },
+    },
+  };
+  switching.deterministic.diagnosis!.issues = [{
+    signal: "switch transition slow",
+    severity: "watch",
+    priority: 1,
+    priority_reason: "target_switching.transition_time_ms",
+    metric_refs: ["target_switching.transition_time_ms"],
+    event_refs: ["event.switch_chain"],
+  }, {
+    signal: "switch arrival error high",
+    severity: "watch",
+    priority: 2,
+    priority_reason: "unknown.safe_reason",
+    metric_refs: ["target_switching.settle_duration_ms"],
+    event_refs: ["event.settle"],
+  }];
+
+  const presentation = presentAnalysisWorkspace(session({ result: switching }));
+  assert.deepEqual(
+    presentation?.metrics.formal.map((metric) => [metric.key, metric.referenceKey]),
+    [
+      ["切换耗时", "target_switching.transition_time_ms"],
+      ["切换距离", "target_switching.transition_distance_px"],
+      ["路径效率", "target_switching.path_efficiency"],
+      ["稳定耗时", "target_switching.settle_duration_ms"],
+      ["unknown.safe_metric", "unknown.safe_metric"],
+    ],
+  );
+  assert.equal(presentation?.issues[0]?.signal, "切换耗时高于可比基线");
+  assert.equal(presentation?.issues[0]?.priorityReason, "切换耗时");
+  assert.deepEqual(presentation?.issues[0]?.metricRefs, ["target_switching.transition_time_ms"]);
+  assert.deepEqual(presentation?.issues[0]?.eventRefs, ["event.switch_chain"]);
+  assert.equal(presentation?.issues[1]?.signal, "到达后稳定耗时高于可比基线");
+  assert.equal(presentation?.issues[1]?.priorityReason, "unknown.safe_reason");
+  assert.deepEqual(presentation?.issues[1]?.metricRefs, ["target_switching.settle_duration_ms"]);
+  assert.deepEqual(presentation?.issues[1]?.eventRefs, ["event.settle"]);
+  assert.doesNotMatch(presentation?.headline ?? "", /target_switching\./);
 });
 
 test("native-only and multimodal visual failure remain honest without erasing native results", () => {

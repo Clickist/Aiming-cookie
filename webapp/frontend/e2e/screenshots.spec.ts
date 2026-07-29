@@ -8,6 +8,7 @@ import {
   installApiFixtures,
   installDesktopBridge,
   partialAnalysisSession,
+  registryBackedAnalysisSession,
   setThemePreference,
   UNAVAILABLE_EVIDENCE_SEGMENTS,
 } from "../fixtures/task7-fixtures";
@@ -64,7 +65,12 @@ test.describe("Task 7 screenshot baselines", () => {
     ["数据", "analysis-data-1280-dark.png"],
   ] as const) {
     test(`analysis ${tabName} 1280 dark`, async ({ page }) => {
-      await prepare(page, { theme: "dark", width: 1280, height: 820 });
+      await prepare(page, {
+        theme: "dark",
+        width: 1280,
+        height: 820,
+        scenario: tabName === "诊断" ? apiScenario({ analysis: registryBackedAnalysisSession() }) : undefined,
+      });
       await page.goto("/analysis/42");
       await expect(page.getByRole("heading", { name: "1wall 6targets small" })).toBeVisible();
       if (tabName !== "诊断") await page.getByRole("tab", { name: tabName }).click();
@@ -96,6 +102,18 @@ test.describe("Task 7 screenshot baselines", () => {
     await page.goto("/analysis/42");
     await expect(page.getByText("视觉结果部分不可用")).toBeVisible();
     await expect(page).toHaveScreenshot("analysis-partial-960-light.png", { animations: "disabled", fullPage: true });
+  });
+
+  test("analysis registry-backed 960 light", async ({ page }) => {
+    await prepare(page, {
+      theme: "light",
+      width: 960,
+      height: 640,
+      scenario: apiScenario({ analysis: registryBackedAnalysisSession() }),
+    });
+    await page.goto("/analysis/42");
+    await expect(page.getByText("候选解释", { exact: true })).toBeVisible();
+    await expect(page).toHaveScreenshot("analysis-registry-960-light.png", { animations: "disabled", fullPage: true });
   });
 
   test("analyze narrow dark", async ({ page }) => {
