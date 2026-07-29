@@ -34,7 +34,7 @@ from kovaak_tracker.analysis_evidence import (
     validate_normalized_outcome_timeline_v1,
 )
 
-from . import coach_store, evidence_store, history_trends, kovaak_run_store, queue
+from . import coach_retest_decision, coach_store, evidence_store, history_trends, kovaak_run_store, queue
 from .contracts import project_evidence_segment
 from .workspace import copy_path_to_path, remove_session_workspace, session_dir
 
@@ -54,6 +54,8 @@ _QUERY_COMMANDS = {
     "profile.aiming.snapshot",
     "navigation.open",
     "training_plan.review",
+    "kovaak_scores.lookup",
+    "kovaak_scores.refresh_connected",
 }
 _EVIDENCE_QUERY_COMMANDS = frozenset({
     "analysis.metrics.distribution",
@@ -73,6 +75,7 @@ _EVIDENCE_QUERY_COMMANDS = frozenset({
 _WRITE_COMMANDS = {
     "analysis.create_from_run",
     "analysis.retry",
+    "analysis.delete",
     "training_plan.generate_draft",
     "training_plan.save",
     "training_plan.activate",
@@ -109,6 +112,16 @@ _PATH_OR_URL_TEXT_RE = re.compile(
     r'''(?:/|~[\\/]|\.{1,2}[\\/]|[A-Za-z]:[\\/]|\\\\))''',
     re.IGNORECASE,
 )
+_STEAM_ID = re.compile(r"^[0-9]{17}$")
+_STEAM_PROFILE_REF = re.compile(r"^steam_profile:([1-9][0-9]*)$")
+_STEAM_PROFILE_URL_IN_TEXT = re.compile(
+    r"https://steamcommunity\.com/profiles/([0-9]{17})/(?![A-Za-z0-9_/?#=&-])",
+)
+_STEAM_ID_IN_TEXT = re.compile(r"(?<![0-9])([0-9]{17})(?![0-9])")
+_KOVAAK_SCORE_COMMANDS = frozenset({
+    "kovaak_scores.lookup",
+    "kovaak_scores.refresh_connected",
+})
 
 
 class ProductCommandError(Exception):
@@ -122,6 +135,49 @@ class ProductCommandError(Exception):
         self.message = message
         self.kind = kind
         self.result_ref = result_ref
+
+
+def prepare_temporary_steam_profiles(value: object) -> tuple[str, dict[str, str]]:
+    """Replace current-message Steam identities before they can be persisted."""
+    if not isinstance(value, str):
+        raise ValueError("Coach text is invalid")
+    refs_by_steam_id: dict[str, str] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        steam_id = match.group(1)
+        profile_ref = refs_by_steam_id.setdefault(
+            steam_id, f"steam_profile:{len(refs_by_steam_id) + 1}",
+        )
+        return profile_ref
+
+    prepared = _STEAM_PROFILE_URL_IN_TEXT.sub(replace, value)
+    prepared = _STEAM_ID_IN_TEXT.sub(replace, prepared)
+    return prepared, {ref: steam_id for steam_id, ref in refs_by_steam_id.items()}
+
+
+def redact_temporary_steam_profiles(value: object) -> str:
+    """Remove historical Steam identities without making them callable this turn."""
+    if not isinstance(value, str):
+        return ""
+    redacted = _STEAM_PROFILE_URL_IN_TEXT.sub("[Steam Profile hidden]", value)
+    return _STEAM_ID_IN_TEXT.sub("[Steam Profile hidden]", redacted)
+
+
+def contains_temporary_steam_profile(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(
+            _STEAM_PROFILE_URL_IN_TEXT.search(value)
+            or _STEAM_ID_IN_TEXT.search(value)
+        )
+    if isinstance(value, Mapping):
+        return any(
+            contains_temporary_steam_profile(key)
+            or contains_temporary_steam_profile(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(contains_temporary_steam_profile(item) for item in value)
+    return False
 
 
 class CommandJournal(Protocol):
@@ -383,6 +439,92 @@ def _audit_ref() -> str:
 
 def _error(code: str, message: str) -> dict[str, str]:
     return {"code": code, "message": message}
+
+
+def _unavailable_kovaak_score_summary() -> dict[str, Any]:
+    return {
+        "schema_version": "kovaak_scores.v1",
+        "availability": "unavailable",
+        "observed_at": None,
+        "stages": [],
+        "items": [],
+    }
+
+
+def _bounded_kovaak_score_summary(snapshot: object) -> dict[str, Any]:
+    """Keep a lookup tool result small and free of provider identity data."""
+    if not isinstance(snapshot, Mapping) or snapshot.get("availability") != "available":
+        return _unavailable_kovaak_score_summary()
+    observed_at = snapshot.get("observed_at")
+    stages = snapshot.get("stages")
+    items = snapshot.get("items")
+    if (
+        snapshot.get("schema_version") != "kovaak_scores.v1"
+        or not isinstance(observed_at, str)
+        or len(observed_at) > 40
+        or not isinstance(stages, list)
+        or not isinstance(items, list)
+        or len(stages) > 2
+    ):
+        return _unavailable_kovaak_score_summary()
+    safe_stages: list[dict[str, Any]] = []
+    for stage in stages:
+        if (
+            not isinstance(stage, Mapping)
+            or stage.get("stage") not in {"easier", "medium"}
+            or not isinstance(stage.get("completed"), int)
+            or isinstance(stage.get("completed"), bool)
+            or not isinstance(stage.get("required"), int)
+            or isinstance(stage.get("required"), bool)
+            or not isinstance(stage.get("rank"), int)
+            or isinstance(stage.get("rank"), bool)
+            or not isinstance(stage.get("rank_name"), str)
+        ):
+            return _unavailable_kovaak_score_summary()
+        safe_stages.append({
+            "stage": stage["stage"],
+            "completed": stage["completed"],
+            "required": stage["required"],
+            "rank": stage["rank"],
+            "rank_name": stage["rank_name"],
+        })
+    safe_items: list[dict[str, Any]] = []
+    for item in items:
+        if (
+            not isinstance(item, Mapping)
+            or item.get("stage") not in {"easier", "medium"}
+            or not all(isinstance(item.get(field), str) and item[field] for field in (
+                "name", "category", "subcategory", "item_rank_name",
+            ))
+            or not isinstance(item.get("score"), (int, float))
+            or isinstance(item.get("score"), bool)
+            or not math.isfinite(float(item["score"]))
+            or not isinstance(item.get("item_rank"), int)
+            or isinstance(item.get("item_rank"), bool)
+            or not isinstance(item.get("completed"), bool)
+        ):
+            return _unavailable_kovaak_score_summary()
+        safe_items.append({
+            "stage": item["stage"],
+            "name": item["name"],
+            "category": item["category"],
+            "subcategory": item["subcategory"],
+            "score": float(item["score"]),
+            "item_rank": item["item_rank"],
+            "item_rank_name": item["item_rank_name"],
+            "completed": item["completed"],
+        })
+    candidates = sorted(
+        safe_items,
+        key=lambda item: (item["item_rank"], item["score"], item["stage"], item["name"]),
+    )[:8]
+    return {
+        "schema_version": "kovaak_scores.v1",
+        "availability": "available",
+        "observed_at": observed_at,
+        "stages": safe_stages,
+        "items": candidates,
+    }
 
 
 def _risk_for(command_name: str) -> str:
@@ -1186,6 +1328,18 @@ async def execute_product_command(
     command_name = envelope.get("command_name")
     if not isinstance(command_name, str) or command_name not in _COMMANDS:
         return await _finish(owner_id, _result(command_id, "failed", warning_or_error=_error("unsupported_command", "command is not allowed")))
+    if command_name in _KOVAAK_SCORE_COMMANDS:
+        return await _finish(
+            owner_id,
+            _result(
+                command_id,
+                "failed",
+                warning_or_error=_error(
+                    "bridge_required",
+                    "KovaaK score commands are available only during the active Coach turn",
+                ),
+            ),
+        )
     try:
         parameters = _require_mapping(envelope.get("parameters", {}))
     except ProductCommandError as exc:
@@ -1335,8 +1489,72 @@ async def _execute_product_command_inner(
 ) -> dict[str, Any]:
     digest = None
     if (
+        command_name == "training_plan.retest.record"
+        and authorization_source == "coach_inferred"
+        and isinstance(parameters.get("analysis_refs"), list)
+        and len(parameters["analysis_refs"]) == 2
+    ):
+        limitations = parameters.get("limitations")
+        if not isinstance(limitations, list) or not all(
+            isinstance(item, str) for item in limitations
+        ):
+            return await _finish(
+                owner_id,
+                _result(
+                    command_id,
+                    "failed",
+                    warning_or_error=_error(
+                        "invalid_parameters", "limitations must be a list of strings",
+                    ),
+                ),
+            )
+        try:
+            decision = await coach_retest_decision.decide_two_analysis_retest(
+                owner_id,
+                parameters["analysis_refs"],
+                parameters.get("expected_metric_ref"),
+            )
+        except coach_retest_decision.AnalysisForbidden:
+            return await _finish(
+                owner_id,
+                _result(command_id, "failed", warning_or_error=_error("forbidden", "无权访问该 Analysis")),
+            )
+        except coach_retest_decision.AnalysisUnavailable:
+            return await _finish(
+                owner_id,
+                _result(
+                    command_id,
+                    "unavailable",
+                    warning_or_error=_error("analysis_unavailable", "Analysis 结果不可用"),
+                ),
+            )
+        except coach_retest_decision.AnalysisInvalid as exc:
+            return await _finish(
+                owner_id,
+                _result(command_id, "failed", warning_or_error=_error("invalid_parameters", str(exc))),
+            )
+        parameters = {
+            **parameters,
+            "comparability": decision["comparability"],
+            "result": decision["result"],
+            "limitations": list(dict.fromkeys([*limitations, *decision["limitations"]])),
+        }
+    if command_name == "analysis.delete":
+        try:
+            _exact_parameters(parameters, {"analysis_ref"})
+            _parse_ref(parameters.get("analysis_ref"), "analysis")
+        except ProductCommandError as exc:
+            return await _finish(
+                owner_id,
+                _result(
+                    command_id,
+                    "failed",
+                    warning_or_error=_error(exc.code, exc.message),
+                ),
+            )
+    if (
         command_name in _EXPLICIT_USER_FACT_COMMANDS
-        and authorization_source != "explicit_user_request"
+        and authorization_source == "system_safe"
     ):
         return await _finish(
             owner_id,
@@ -1345,7 +1563,7 @@ async def _execute_product_command_inner(
                 "failed",
                 warning_or_error=_error(
                     "explicit_user_required",
-                    "执行记录和复测只能由用户明确提交",
+                    "执行记录和复测必须由用户确认或明确提交",
                 ),
             ),
         )
@@ -1531,6 +1749,30 @@ async def _execute_product_command_inner(
                 "succeeded",
                 result_ref=retried.get("analysis_ref") or ref,
                 result=retried,
+            )
+        elif command_name == "analysis.delete":
+            analysis_id, ref = _parse_ref(parameters.get("analysis_ref"), "analysis")
+            try:
+                deleted = await queue.delete_session(analysis_id, owner_id)
+            except queue.SessionNotFound as exc:
+                raise ProductCommandError(
+                    "not_found", "Analysis 不存在", kind="unavailable", result_ref=ref,
+                ) from exc
+            except queue.SessionForbidden as exc:
+                raise ProductCommandError("forbidden", "无权访问此 Analysis") from exc
+            except queue.SessionNotDeletable as exc:
+                raise ProductCommandError(
+                    exc.code, exc.message, kind="unavailable", result_ref=ref,
+                ) from exc
+            result = _result(
+                command_id,
+                "succeeded",
+                result_ref=ref,
+                result={
+                    "analysis_ref": ref,
+                    "deleted": bool(deleted.get("deleted")),
+                    "cleanup_pending": bool(deleted.get("cleanup_failed")),
+                },
             )
         elif command_name in _EXPLICIT_USER_FACT_COMMANDS:
             fact, fact_ref = await _execute_training_plan_fact(
@@ -3343,6 +3585,7 @@ class _ToolBridge:
     signal_points_used: int = 0
     signal_bytes_used: int = 0
     reachable_refs: set[str] = field(default_factory=set)
+    temporary_profile_refs: dict[str, str] = field(default_factory=dict)
     cursors: dict[str, dict[str, Any]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -3399,6 +3642,7 @@ def issue_tool_bridge(
     max_calls: int = 6,
     *,
     reachable_refs: set[str] | None = None,
+    temporary_profile_refs: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Issue an in-memory, turn-scoped bearer bridge for one Coach turn."""
     parsed = urlparse(endpoint)
@@ -3422,6 +3666,19 @@ def issue_tool_bridge(
         raise ValueError("ttl_seconds must be between 1 and 900")
     if not isinstance(max_calls, int) or not 1 <= max_calls <= 6:
         raise ValueError("max_calls must be between 1 and 6")
+    safe_profile_refs: dict[str, str] = {}
+    if temporary_profile_refs is not None:
+        if not isinstance(temporary_profile_refs, Mapping):
+            raise ValueError("temporary profile refs are invalid")
+        for profile_ref, steam_id in temporary_profile_refs.items():
+            if (
+                not isinstance(profile_ref, str)
+                or _STEAM_PROFILE_REF.fullmatch(profile_ref) is None
+                or not isinstance(steam_id, str)
+                or _STEAM_ID.fullmatch(steam_id) is None
+            ):
+                raise ValueError("temporary profile refs are invalid")
+            safe_profile_refs[profile_ref] = steam_id
     token = secrets.token_urlsafe(32)
     token_digest = _bridge_digest(token)
     expires_at = time.time() + ttl_seconds
@@ -3438,6 +3695,7 @@ def issue_tool_bridge(
         max_calls=max_calls,
         calls=0,
         reachable_refs=set(reachable_refs or ()),
+        temporary_profile_refs=safe_profile_refs,
     )
     bridge: dict[str, Any] = {
         "schema_version": "coach_tool_bridge.v1",
@@ -3450,6 +3708,146 @@ def issue_tool_bridge(
     if desktop_token is not None:
         bridge["desktop_token"] = desktop_token
     return bridge
+
+
+async def _execute_kovaak_scores_bridge(
+    bridge: _ToolBridge,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    command_id = _command_id(payload.get("command_id"))
+    command_name = payload.get("command_name")
+    parameters = payload.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return _result(
+            command_id,
+            "failed",
+            warning_or_error=_error("invalid_parameters", "parameters must be an object"),
+        )
+    if command_name == "kovaak_scores.lookup":
+        if set(parameters) != {"profile_ref"}:
+            return _result(
+                command_id,
+                "failed",
+                warning_or_error=_error(
+                    "invalid_parameters", "kovaak_scores.lookup accepts only profile_ref",
+                ),
+            )
+        profile_ref = parameters.get("profile_ref")
+        steam_id = (
+            bridge.temporary_profile_refs.get(profile_ref)
+            if isinstance(profile_ref, str) and _STEAM_PROFILE_REF.fullmatch(profile_ref)
+            else None
+        )
+        if steam_id is None:
+            return _result(
+                command_id,
+                "unavailable",
+                warning_or_error=_error(
+                    "temporary_profile_unavailable",
+                    "this temporary profile is not available in the current Coach turn",
+                ),
+            )
+        try:
+            from . import kovaak_benchmark_service
+
+            snapshot = await kovaak_benchmark_service.project_temporary_snapshot(steam_id)
+        except Exception:
+            return _result(
+                command_id,
+                "unavailable",
+                warning_or_error=_error(
+                    "kovaak_scores_unavailable", "KovaaK scores are temporarily unavailable",
+                ),
+            )
+        summary = _bounded_kovaak_score_summary(snapshot)
+        if summary["availability"] != "available":
+            return _result(
+                command_id,
+                "unavailable",
+                warning_or_error=_error(
+                    "kovaak_scores_unavailable", "KovaaK scores are temporarily unavailable",
+                ),
+            )
+        # This result stays in the bridge response only: no journal/audit write.
+        return _result(
+            command_id,
+            "succeeded",
+            result_ref="kovaak_scores:temporary",
+            result=summary,
+        )
+    if command_name == "kovaak_scores.refresh_connected":
+        if parameters:
+            return _result(
+                command_id,
+                "failed",
+                warning_or_error=_error(
+                    "invalid_parameters", "kovaak_scores.refresh_connected accepts no parameters",
+                ),
+            )
+        audit_token = _audit_context.set({
+            "thread_id": bridge.thread_id,
+            "user_message_ref": bridge.user_message_ref,
+            "command_name": "kovaak_scores.refresh_connected",
+            "risk": _risk_for("kovaak_scores.refresh_connected"),
+            "authorization_source": "coach_inferred",
+            "idempotency_key": None,
+            "parameters_digest": None,
+            "safe_parameters_summary": {},
+        })
+
+        async def finish_refresh(result: dict[str, Any]) -> dict[str, Any]:
+            try:
+                return await _finish(bridge.owner_id, result)
+            finally:
+                _audit_context.reset(audit_token)
+
+        try:
+            from . import kovaak_benchmark_service
+
+            snapshot = await kovaak_benchmark_service.refresh_connected_score_summary(
+                bridge.owner_id,
+            )
+        except Exception as error:
+            try:
+                from . import kovaak_benchmark_service
+
+                missing = isinstance(error, kovaak_benchmark_service.KovaaKConnectionNotFound)
+            except (AttributeError, ImportError):
+                missing = False
+            return await finish_refresh(
+                _result(
+                    command_id,
+                    "unavailable",
+                    warning_or_error=_error(
+                        "connected_account_unavailable" if missing else "kovaak_scores_unavailable",
+                        "connect your KovaaK profile first" if missing else "KovaaK scores are temporarily unavailable",
+                    ),
+                ),
+            )
+        summary = _bounded_kovaak_score_summary(snapshot)
+        if summary["availability"] != "available":
+            return await finish_refresh(
+                _result(
+                    command_id,
+                    "unavailable",
+                    warning_or_error=_error(
+                        "kovaak_scores_unavailable", "KovaaK scores are temporarily unavailable",
+                    ),
+                ),
+            )
+        return await finish_refresh(
+            _result(
+                command_id,
+                "succeeded",
+                result_ref="kovaak_scores:connected",
+                result=summary,
+            ),
+        )
+    return _result(
+        command_id,
+        "failed",
+        warning_or_error=_error("unsupported_command", "command is not allowed"),
+    )
 
 
 async def execute_tool_bridge(bearer_token: str, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -3489,6 +3887,41 @@ async def execute_tool_bridge(bearer_token: str, payload: Mapping[str, Any]) -> 
         }
         trusted_payload["user_message_ref"] = bridge.user_message_ref
         command_name = trusted_payload.get("command_name")
+        parameters = trusted_payload.get("parameters")
+        if command_name in _KOVAAK_SCORE_COMMANDS:
+            return await _execute_kovaak_scores_bridge(bridge, trusted_payload)
+        if command_name == "analysis.delete":
+            command_id = _command_id(trusted_payload.get("command_id"))
+            if not isinstance(parameters, Mapping) or set(parameters) != {"analysis_ref"}:
+                return _result(
+                    command_id,
+                    "failed",
+                    warning_or_error=_error(
+                        "invalid_parameters",
+                        "analysis.delete accepts only analysis_ref",
+                    ),
+                )
+            analysis_ref = parameters["analysis_ref"]
+            if isinstance(analysis_ref, str) and re.fullmatch(r"[1-9][0-9]*", analysis_ref):
+                analysis_ref = f"analysis:{analysis_ref}"
+            try:
+                _parse_ref(analysis_ref, "analysis")
+            except ProductCommandError as error:
+                return _result(
+                    command_id,
+                    "failed",
+                    warning_or_error=_error(error.code, error.message),
+                )
+            if analysis_ref not in bridge.reachable_refs:
+                return _result(
+                    command_id,
+                    "failed",
+                    warning_or_error=_error(
+                        "unreachable_ref",
+                        "reference was not reached in this Coach turn",
+                    ),
+                )
+            trusted_payload["parameters"] = {"analysis_ref": analysis_ref}
         if command_name in _EVIDENCE_QUERY_COMMANDS:
             return await _execute_evidence_bridge(bridge, trusted_payload)
         result = await execute_product_command(

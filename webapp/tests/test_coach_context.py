@@ -12,6 +12,7 @@ from webapp.backend.coach_context import (
     coerce_coach_diagnostic_context,
     diagnostic_context_to_coach_diagnosis,
     project_coach_diagnostic_context,
+    resolve_registry_teaching_entry,
     serialize_coach_diagnostic_context,
 )
 
@@ -1185,6 +1186,20 @@ def test_new_analysis_with_processed_table_projects_v3_directory_without_rows():
     from webapp.backend.coach_service import _reachable_context_refs
 
     assert "analysis:42:table:static_flick" in _reachable_context_refs(context)
+    persisted = deepcopy(context)
+    persisted["diagnosis"]["summary"]["corrective_count"] = {
+        "value": 2.0,
+        "unit": "count",
+        "availability": "available",
+        "classification": "deterministic",
+        "metric_version": "native_flicking.v1",
+        "sample_refs": [f"flick:{index}" for index in range(1, 74)],
+        "outlier_refs": ["flick:73"],
+    }
+    coerced = coerce_coach_diagnostic_context(persisted)
+    assert coerced is not None
+    assert "sample_refs" not in coerced["diagnosis"]["summary"]["corrective_count"]
+    assert "outlier_refs" not in coerced["diagnosis"]["summary"]["corrective_count"]
     assert coerce_coach_diagnostic_context(_v2_context(
         run_facts={"mode": "unavailable", "limitations": []}
     ))["schema_version"] == "coach_diagnostic_context.v2"
@@ -1503,3 +1518,241 @@ def test_v2_issue_segment_refs_are_projected_and_seed_context_reachability():
         "analysis:42:segment:extra:1"
     )
     assert coerce_coach_diagnostic_context(too_many) is None
+
+
+def _registry_backed_result(
+    *,
+    signal: str,
+    metric_ref: str,
+    analysis_version: str = "dynamic_clicking.v1",
+    analysis_type: str = "dynamic_clicking",
+    input_mode: str = "multimodal",
+    scenario_profile_ref: str = "scenario:dynamic.fixture@1",
+) -> dict:
+    from kovaak_tracker.coach.knowledge_registry import entry_ref, load_registry, query_registry
+
+    registry = load_registry(registry_version="2026-07-29.v4")
+    entry = next((
+        item for item in query_registry(
+            registry,
+            issue_signal=signal,
+            metric_refs=[metric_ref],
+        )
+        if signal in item["signals"]
+    ), None)
+    return {
+        "schema_version": "analysis_result.v2",
+        "analysis_version": analysis_version,
+        "analysis_id": "analysis:88",
+        "analysis_type": analysis_type,
+        "input_mode": input_mode,
+        "input_snapshot": {
+            "scenario_resolution": {
+                "scenario_profile_ref": scenario_profile_ref,
+            },
+        },
+        "deterministic": {
+            "support_status": "supported",
+            "metrics": {},
+            "diagnosis": {
+                "profile": {},
+                "issues": [{
+                    "signal": signal,
+                    "priority": 1,
+                    "priority_reason": "matched comparison candidate",
+                    "plain_language_meaning": "相近条件下的动态瞄准表现出现了可重复差异",
+                    "claim_level": "deterministic_rule",
+                    "metric_refs": [metric_ref],
+                    **({
+                        "observation_ref": entry["observation_refs"][0],
+                        "knowledge_registry_version": registry["registry_version"],
+                        "knowledge_entry_refs": [entry_ref(entry)],
+                    } if entry is not None else {}),
+                    "verification": {
+                        "comparable_requirements": ["same motion condition"],
+                    },
+                }],
+                "summary": {},
+                "comparison": None,
+                "meta": {
+                    "summary_type": "dynamic_clicking",
+                    "classification": "deterministic",
+                },
+            },
+        },
+        "evidence": {
+            "availability": {"raw_input": "available", "mp4": "available"},
+            "alignment": {"status": "aligned"},
+            "warnings": [],
+            "derived_artifact": {
+                "artifact_ref": "analysis:88:evidence:abc",
+                "evidence_revision": "sha256:abc",
+                "contract_version": "analysis_evidence_artifact.v1",
+                "checksum_sha256": "abc",
+                "size_bytes": 1,
+            },
+        },
+        "warnings": [],
+    }
+
+
+def test_analyzer_issue_reuses_one_exact_registry_prescription_without_new_schema():
+    context = project_coach_diagnostic_context(
+        _registry_backed_result(
+            signal="relative velocity mismatch",
+            metric_ref="metric:relative_velocity_gain",
+        )
+    )
+
+    issue = context["diagnosis"]["issues"][0]
+    assert issue["observation_ref"] == "field.relative_velocity"
+    assert issue["knowledge_registry_version"] == "2026-07-29.v4"
+    assert issue["knowledge_entry_refs"] == [
+        "knowledge:dynamic.speed-matching-and-reading@2"
+    ]
+    assert issue["root_causes"] == [{
+        "level": "training",
+        "text": (
+            "Speed matching is a teaching descriptor for persistent signed "
+            "target-relative velocity mismatch; reading is a candidate training "
+            "direction after validated target changes."
+        ),
+    }]
+    assert issue["prescriptions"] == [{
+        "cue": (
+            "On a long readable strafe, match direction and speed before committing "
+            "the click; after a validated change, re-read the new motion first."
+        ),
+        "purpose": issue["root_causes"][0]["text"],
+        "dosage": (
+            "Vary one of speed, change density, or target size per block and keep "
+            "hard variants as stress tests."
+        ),
+        "target_metrics": [
+            "metric:relative_velocity_gain",
+            "metric:post_change_error",
+            "metric:lead_lag_descriptor",
+        ],
+        "expected_direction": ["target_band"],
+        "retest_after": "Retest later on the same motion script or matched change type.",
+        "stop_or_adjust_rule": (
+            "Do not use a prediction explanation when predictability evidence is "
+            "missing; report a descriptive lead or lag instead."
+        ),
+        "source_level": "community_practice",
+    }]
+
+
+def test_unknown_issue_does_not_receive_a_registry_candidate_or_prescription():
+    context = project_coach_diagnostic_context(
+        _registry_backed_result(
+            signal="unknown unregistered signal",
+            metric_ref="metric:unknown_unregistered_metric",
+        )
+    )
+
+    issue = context["diagnosis"]["issues"][0]
+    assert "root_causes" not in issue
+    assert "prescriptions" not in issue
+
+
+@pytest.mark.parametrize(
+    (
+        "analysis_version", "analysis_type", "input_mode", "scenario_profile_ref",
+        "signal", "metric_ref",
+    ),
+    [
+        (
+            "native_flicking.v1", "flicking", "input_native",
+            "scenario:static.fixture@1", "reverse_ratio high", "metric:reverse_ratio",
+        ),
+        (
+            "dynamic_clicking.v1", "dynamic_clicking", "multimodal",
+            "scenario:dynamic.fixture@1", "relative velocity mismatch",
+            "metric:relative_velocity_gain",
+        ),
+        (
+            "continuous_tracking.v1", "continuous_tracking", "multimodal",
+            "scenario:tracking.fixture@1", "speed mismatch high", "metric:tracking_error",
+        ),
+    ],
+)
+def test_static_dynamic_and_tracking_reuse_one_complete_registry_overlay(
+    analysis_version,
+    analysis_type,
+    input_mode,
+    scenario_profile_ref,
+    signal,
+    metric_ref,
+):
+    context = project_coach_diagnostic_context(_registry_backed_result(
+        signal=signal,
+        metric_ref=metric_ref,
+        analysis_version=analysis_version,
+        analysis_type=analysis_type,
+        input_mode=input_mode,
+        scenario_profile_ref=scenario_profile_ref,
+    ))
+
+    issue = context["diagnosis"]["issues"][0]
+    assert len(issue["root_causes"]) == 1
+    assert len(issue["prescriptions"]) == 1
+    assert issue["prescriptions"][0]["cue"]
+    assert issue["prescriptions"][0]["dosage"]
+    assert issue["prescriptions"][0]["retest_after"]
+    assert issue["prescriptions"][0]["stop_or_adjust_rule"]
+
+
+def test_registry_prescription_replaces_analyzer_prescription_without_field_mixing():
+    result = _registry_backed_result(
+        signal="relative velocity mismatch",
+        metric_ref="metric:relative_velocity_gain",
+    )
+    issue = result["deterministic"]["diagnosis"]["issues"][0]
+    issue["root_causes"] = [{"level": "control", "text": "Analyzer candidate"}]
+    issue["prescriptions"] = [{
+        "cue": "Analyzer cue",
+        "purpose": "Analyzer purpose",
+        "source_level": "experimental",
+    }]
+
+    projected = project_coach_diagnostic_context(result)["diagnosis"]["issues"][0]
+
+    assert projected["root_causes"] == issue["root_causes"]
+    assert projected["prescriptions"] != issue["prescriptions"]
+    assert projected["prescriptions"][0]["dosage"]
+    assert projected["prescriptions"][0]["retest_after"]
+    assert projected["prescriptions"][0]["stop_or_adjust_rule"]
+
+
+def test_registry_teaching_resolution_requires_exact_version_ref_observation_and_metric_match():
+    issue = _registry_backed_result(
+        signal="relative velocity mismatch",
+        metric_ref="metric:relative_velocity_gain",
+    )["deterministic"]["diagnosis"]["issues"][0]
+
+    resolved = resolve_registry_teaching_entry(issue)
+
+    assert resolved is not None
+    assert resolved["entry_id"] == "dynamic.speed-matching-and-reading"
+    for field, value in (
+        ("knowledge_registry_version", "unknown.registry"),
+        ("knowledge_entry_refs", ["knowledge:unknown.entry@1"]),
+        ("observation_ref", "event.unknown"),
+        ("metric_refs", ["metric:unrelated"]),
+    ):
+        mismatched = deepcopy(issue)
+        mismatched[field] = value
+        assert resolve_registry_teaching_entry(mismatched) is None
+
+
+def test_legacy_signal_only_issue_does_not_resolve_a_new_registry_entry():
+    issue = _registry_backed_result(
+        signal="relative velocity mismatch",
+        metric_ref="metric:relative_velocity_gain",
+    )["deterministic"]["diagnosis"]["issues"][0]
+    issue.pop("knowledge_registry_version")
+    issue.pop("knowledge_entry_refs")
+    issue.pop("observation_ref")
+
+    assert resolve_registry_teaching_entry(issue) is None

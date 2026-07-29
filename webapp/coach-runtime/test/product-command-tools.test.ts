@@ -72,6 +72,159 @@ test("product command allowlist includes every bounded evidence query", () => {
     );
   }
   assert.ok(PRODUCT_COMMAND_NAMES.includes("profile.aiming.snapshot"));
+  assert.ok(PRODUCT_COMMAND_NAMES.includes("analysis.delete"));
+  assert.ok(PRODUCT_COMMAND_NAMES.includes("kovaak_scores.lookup"));
+  assert.ok(PRODUCT_COMMAND_NAMES.includes("kovaak_scores.refresh_connected"));
+});
+
+test("KovaaK score lookup only forwards a bridge-issued profile reference", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    requests.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify(commandResult()), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const tool = createProductCommandTool(bridge());
+    await tool.execute("lookup", {
+      command_name: "kovaak_scores.lookup",
+      parameters: { profile_ref: "steam_profile:1" },
+    });
+    assert.deepEqual(requests, [{
+      command_name: "kovaak_scores.lookup",
+      parameters: { profile_ref: "steam_profile:1" },
+    }]);
+
+    for (const parameters of [
+      { profile_ref: "https://steamcommunity.com/profiles/76561199033719938" },
+      { profile_ref: "76561199033719938" },
+      { profile_ref: "steam_profile:0" },
+      { profile_ref: "steam_profile:1", extra: "field" },
+      { profile_ref: { ref: "steam_profile:1" } },
+      { profile_ref: ["steam_profile:1"] },
+    ]) {
+      await assert.rejects(
+        tool.execute("lookup-rejected", { command_name: "kovaak_scores.lookup", parameters }),
+        /unsupported fields/,
+      );
+    }
+    assert.equal(requests.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("KovaaK connected-account refresh accepts exactly an empty parameter object", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    requests.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify(commandResult()), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const tool = createProductCommandTool(bridge());
+    await tool.execute("refresh", { command_name: "kovaak_scores.refresh_connected", parameters: {} });
+    assert.deepEqual(requests, [{ command_name: "kovaak_scores.refresh_connected", parameters: {} }]);
+
+    for (const parameters of [
+      { profile_ref: "steam_profile:1" },
+      { url: "https://steamcommunity.com/profiles/76561199033719938" },
+      { steam_id: "76561199033719938" },
+      { nested: {} },
+    ]) {
+      await assert.rejects(
+        tool.execute("refresh-rejected", { command_name: "kovaak_scores.refresh_connected", parameters }),
+        /unsupported fields/,
+      );
+    }
+    assert.equal(requests.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("KovaaK score command events retain no profile reference or score payload", async () => {
+  const originalFetch = globalThis.fetch;
+  const scorePayload = { total_records: 78, completed: 18 };
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    schema_version: "coach_product_command_result.v1",
+    command_id: "command:kovaak:1",
+    status: "succeeded",
+    result_ref: "kovaak_scores:temporary:1",
+    audit_ref: "audit:kovaak:1",
+    result: scorePayload,
+    ui_event: { result: scorePayload },
+    warning_or_error: { scorePayload },
+  }), { status: 200 })) as typeof fetch;
+  try {
+    const result = await createProductCommandTool(bridge()).execute("lookup", {
+      command_name: "kovaak_scores.lookup",
+      parameters: { profile_ref: "steam_profile:1" },
+    });
+    assert.deepEqual(result.details.event, {
+      type: "product_command",
+      command_id: "command:kovaak:1",
+      command_name: "kovaak_scores.lookup",
+      status: "succeeded",
+      result_ref: "kovaak_scores:temporary:1",
+      audit_ref: "audit:kovaak:1",
+      ui_event: null,
+      warning_or_error: null,
+    });
+    assert.ok(!JSON.stringify(result.details.event).includes("steam_profile:1"));
+    assert.ok(!JSON.stringify(result.details.event).includes("total_records"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("guided teaching facts are registered as write commands", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    requests.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify(commandResult()), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const tool = createProductCommandTool(bridge());
+    const cases = [
+      ["training_plan.item.add", { plan_ref: "plan:1", item_payload: { title: "Practice" } }],
+      ["training_plan.execution.record", { item_ref: "item:1", scenario_ref: "scenario:1", run_refs: [] }],
+      ["training_plan.retest.record", { item_ref: "item:1", kind: "matched", run_refs: [] }],
+    ] as const;
+
+    for (const [command_name, parameters] of cases) {
+      assert.ok(PRODUCT_COMMAND_NAMES.includes(command_name));
+      await tool.execute("first", { command_name, parameters });
+      await tool.execute("second", { command_name, parameters });
+    }
+
+    assert.equal(requests.length, 6);
+    for (let index = 0; index < requests.length; index += 2) {
+      assert.equal(requests[index].command_name, requests[index + 1].command_name);
+      assert.equal(requests[index].idempotency_key, requests[index + 1].idempotency_key);
+      assert.match(String(requests[index].idempotency_key), /^turn:[a-f0-9]{64}$/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("product tool documents the reachable Evidence query chain", () => {
+  const description = createProductCommandTool(bridge()).description;
+  assert.match(description, /Coach 可以准备用户明确陈述的训练事实/);
+  assert.match(description, /可信 UI\/backend 确认后执行/);
+  assert.match(description, /analysis:N/);
+  assert.match(description, /analysis\.evidence\.list/);
+  assert.match(description, /analysis\.evidence\.signal_window/);
+  assert.match(description, /segment_ref/);
+  assert.match(description, /available_channels/);
+  assert.match(description, /analysis\.events\.list/);
+  assert.match(description, /scope='whole_run'/);
+  assert.match(description, /event_kinds/);
+  assert.match(description, /analysis\.events\.aggregate/);
+  assert.match(description, /table_ref/);
+  assert.match(description, /field_catalog/);
 });
 
 test("product command rejects model-supplied authority, paths, URLs, credentials and raw payloads", async () => {
@@ -147,6 +300,43 @@ test("write calls use stable turn-local idempotency and never return bridge secr
   }
 });
 
+test("guided teaching facts reject model-supplied confirmation and unsafe fields", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (async () => {
+    fetchCalls += 1;
+    return new Response(JSON.stringify(commandResult()), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const tool = createProductCommandTool(bridge());
+    const commandNames = [
+      "training_plan.item.add",
+      "training_plan.execution.record",
+      "training_plan.retest.record",
+    ] as const;
+    const unsafeParameters = [
+      { authority: "coach" },
+      { confirmation_ref: "confirmation:model" },
+      { owner_id: "other" },
+      { path: "C:\\private\\run.csv" },
+      { secret: "model-secret" },
+      { payload: { raw_trace: [1, 2] } },
+    ];
+
+    for (const command_name of commandNames) {
+      for (const parameters of unsafeParameters) {
+        await assert.rejects(
+          tool.execute("call", { command_name, parameters }),
+          /unsupported fields/,
+        );
+      }
+    }
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("provider receives the bounded result while the trace event retains only its audit projection", async () => {
   const originalFetch = globalThis.fetch;
   const fullResult = {
@@ -187,6 +377,39 @@ test("provider receives the bounded result while the trace event retains only it
     assert.ok(!JSON.stringify(result.details.event).includes("next_cursor"));
     assert.ok(!JSON.stringify(result.details.event).includes("opaque-events-page-2"));
     assert.ok(!("result" in result.details.event));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("guided teaching facts retain only safe audit projections in the trace", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    ...commandResult(),
+    result: { item_ref: "item:1", private_note: "do not trace this" },
+  }), { status: 200 })) as typeof fetch;
+  try {
+    const tool = createProductCommandTool(bridge());
+    const cases = [
+      ["training_plan.item.add", { plan_ref: "plan:1", item_payload: { title: "Practice" } }],
+      ["training_plan.execution.record", { item_ref: "item:1", scenario_ref: "scenario:1", run_refs: [] }],
+      ["training_plan.retest.record", { item_ref: "item:1", kind: "matched", run_refs: [] }],
+    ] as const;
+
+    for (const [command_name, parameters] of cases) {
+      const result = await tool.execute("call", { command_name, parameters });
+      assert.deepEqual(result.details.event, {
+        type: "product_command",
+        command_id: "command:1",
+        command_name,
+        status: "succeeded",
+        result_ref: "analysis:7",
+        audit_ref: "audit:1",
+        ui_event: { schema_version: "coach_ui_event.v1", kind: "analysis", analysis_ref: "analysis:7" },
+        warning_or_error: null,
+      });
+      assert.ok(!JSON.stringify(result.details.event).includes("private_note"));
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

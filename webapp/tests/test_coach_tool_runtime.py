@@ -617,15 +617,15 @@ async def test_real_analysis_registry_pi_event_is_persisted_as_refs_only(monkeyp
     assert runtime_result is not None
     assert result.reply is not None
     assert result.tool_events[0]["entry_refs"] == [
-        "knowledge:static.flicking-terminal-control@1",
-        "knowledge:tracking.control-smoothness@1",
-        "knowledge:hypothesis.tension-management@1",
+        "knowledge:static.flicking-terminal-control@2",
+        "knowledge:tracking.control-smoothness@2",
+        "knowledge:hypothesis.tension-management@2",
     ]
     messages = await coach_store.load_messages(int(thread["id"]))
     trace = messages[-1]["trace"]
     assert trace == result.tool_events
-    assert trace[0]["registry_version"] == "2026-07-22.v2"
-    assert trace[0]["entry_versions"] == [1, 1, 1]
+    assert trace[0]["registry_version"] == "2026-07-29.v4"
+    assert trace[0]["entry_versions"] == [2, 2, 2]
     assert "product.complete-coach-spec" in trace[0]["source_refs"]
     assert "static.flicking-terminal-control.definition" in trace[0]["section_refs"]
     assert "claim:static.flicking-terminal-control.definition" in trace[0]["claim_refs"]

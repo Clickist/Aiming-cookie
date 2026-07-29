@@ -82,6 +82,47 @@ async def create_record(user_id: str, record: dict[str, Any]) -> dict:
     return await get_record(int(row["id"]), user_id)
 
 
+async def create_records_atomically(
+    user_id: str,
+    records: list[dict[str, Any]],
+) -> list[dict]:
+    """Validate the complete snapshot before committing any of its records."""
+    if not records:
+        raise ValueError("records are required")
+    values = [_validate_record(record) for record in records]
+    conn = await get_conn()
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        await conn.executemany(
+            "INSERT INTO benchmark_records(user_id, provider, provider_license_note, "
+            "catalog_version, scenario_id, metric_key, unit, value, observed_at, "
+            "availability, external_identity_ref, identity_consent) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    user_id,
+                    value["provider"],
+                    value["provider_license_note"],
+                    value["catalog_version"],
+                    value["scenario_id"],
+                    value["metric_key"],
+                    value["unit"],
+                    value["value"],
+                    value["observed_at"],
+                    value["availability"],
+                    value["external_identity_ref"],
+                    1 if value["identity_consent"] else 0,
+                )
+                for value in values
+            ],
+        )
+        await conn.commit()
+    except BaseException:
+        await conn.rollback()
+        raise
+    return values
+
+
 async def get_record(record_id: int, user_id: str) -> dict | None:
     conn = await get_conn()
     cur = await conn.execute(
@@ -105,7 +146,53 @@ async def list_records(user_id: str) -> list[dict]:
         "ORDER BY observed_at DESC, id DESC",
         (user_id,),
     )
-    return [record for row in await cur.fetchall() if (record := await get_record(row["id"], user_id))]
+    return [
+        record for row in await cur.fetchall()
+        if (record := await get_record(row["id"], user_id))
+    ]
+
+
+async def list_latest_snapshot(
+    user_id: str,
+    *,
+    provider: str,
+    catalog_version: str,
+    exact_record_count: int | None = None,
+) -> list[dict]:
+    """Return one owner-scoped successful import snapshot, never a mixed history."""
+    conn = await get_conn()
+    cur = await conn.execute(
+        "WITH latest_snapshot AS ("
+        "SELECT observed_at FROM benchmark_records "
+        "WHERE user_id=? AND provider=? AND catalog_version=? AND availability='available' "
+        "GROUP BY observed_at "
+        "HAVING ? IS NULL OR COUNT(*)=? "
+        "ORDER BY observed_at DESC LIMIT 1"
+        ") "
+        "SELECT id, provider, provider_license_note, catalog_version, scenario_id, "
+        "metric_key, unit, value, observed_at, availability, external_identity_ref, "
+        "identity_consent, created_at FROM benchmark_records "
+        "WHERE user_id=? AND provider=? AND catalog_version=? "
+        "AND availability='available' "
+        "AND observed_at=(SELECT observed_at FROM latest_snapshot) "
+        "ORDER BY id",
+        (
+            user_id,
+            provider,
+            catalog_version,
+            exact_record_count,
+            exact_record_count,
+            user_id,
+            provider,
+            catalog_version,
+        ),
+    )
+    records = []
+    for row in await cur.fetchall():
+        record = dict(row)
+        record["identity_consent"] = bool(record["identity_consent"])
+        records.append(record)
+    return records
 
 
 def comparable(left: dict, right: dict) -> bool:

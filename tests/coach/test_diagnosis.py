@@ -186,7 +186,7 @@ def test_candidate_knowledge_refs_only_annotate_an_existing_analyzer_fact():
         metric_refs=["metric:post_change_error"],
     )
 
-    assert refs.registry_version == "2026-07-22.v2"
+    assert refs.registry_version == "2026-07-29.v4"
     assert 1 <= len(refs.entry_refs) <= 3
     assert all(ref.startswith("knowledge:") for ref in refs.entry_refs)
     assert not hasattr(refs, "severity")
@@ -197,3 +197,38 @@ def test_candidate_knowledge_refs_only_annotate_an_existing_analyzer_fact():
         metric_refs=[],
     )
     assert unknown.entry_refs == []
+
+
+def test_static_registry_backed_issue_carries_exact_observation_and_knowledge_refs():
+    diagnosis = build_diagnosis([
+        Finding(
+            signal="reverse_ratio high",
+            severity="info",
+            diagnosis="fixture",
+            metric_refs=["reverse_ratio"],
+        ),
+    ], {}, None, {})
+
+    issue = diagnosis.issues[0]
+    assert issue.observation_ref == "metric.terminal_control"
+    assert issue.knowledge_registry_version == "2026-07-29.v4"
+    assert issue.knowledge_entry_refs == [
+        "knowledge:static.flicking-terminal-control@2"
+    ]
+
+
+def test_static_issue_without_registry_coverage_stays_visible_without_refs():
+    diagnosis = build_diagnosis([
+        Finding(
+            signal="decel_frac high",
+            severity="info",
+            diagnosis="fixture",
+            metric_refs=["decel_frac"],
+        ),
+    ], {}, None, {})
+
+    issue = diagnosis.issues[0]
+    assert issue.signal == "decel_frac high"
+    assert issue.observation_ref is None
+    assert issue.knowledge_registry_version is None
+    assert issue.knowledge_entry_refs == []

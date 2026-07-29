@@ -59,7 +59,7 @@ test("TypeScript and Python return identical entry refs and order", () => {
 });
 
 test("TypeScript and Python reject the same duplicate-section corpus", () => {
-  const malformed = structuredClone(loadKnowledgeRegistry());
+  const malformed = structuredClone(loadKnowledgeRegistry("2026-07-28.v3"));
   if (malformed.schema_version !== "coach_knowledge_registry.v2") throw new Error("missing v2 registry");
   const entry = malformed.entries[0];
   if (!entry || !("family_scope" in entry)) throw new Error("missing v2 entry");

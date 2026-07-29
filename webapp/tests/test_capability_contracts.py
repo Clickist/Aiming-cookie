@@ -6,15 +6,146 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from webapp.backend.read_models import (
+    build_frontend_analysis_data_v1,
     build_capture_status_v1,
     build_product_state_v1,
     build_task_detail_v1,
     build_task_list_v1,
     resolve_calibration_v1,
 )
-from webapp.backend import queue
+from webapp.backend import db, queue
 from webapp.backend.app import app
 from webapp.backend.kovaak_run_store import public_analysis_input_snapshot
+import webapp.backend.routes as routes_mod
+
+
+def _tracking_artifact_for_data_projection(analysis_ref: str, *, sample_count: int = 160) -> dict:
+    points = list(range(sample_count))
+    return {
+        "analysis_ref": analysis_ref,
+        "canonical_time_window": {"start_ms": 1_000, "end_ms": 1_000 + sample_count},
+        "event_bundles": [{
+            "events": [{
+                "event_id": f"{analysis_ref}:event:{index}",
+                "event_kind": "target_change_point",
+                "start_ms": 1_000 + index,
+            } for index in points],
+        }],
+        "signal_bundles": [{
+            "channels": [{
+                "channel_key": key,
+                "samples_ref": f"{analysis_ref}:samples:{key}",
+            } for key in (
+                "crosshair.position_x",
+                "crosshair.position_y",
+                "target.1.position_x",
+                "target.1.position_y",
+                "target.1.visible_radius",
+            )],
+        }],
+        "sample_sets": [
+            {
+                "sample_set_id": f"{analysis_ref}:samples:{key}",
+                "points": [[1_000 + index, value] for index in points],
+            }
+            for key, value in (
+                ("crosshair.position_x", 0),
+                ("crosshair.position_y", 0),
+                ("target.1.position_x", 10),
+                ("target.1.position_y", 0),
+                ("target.1.visible_radius", 10),
+            )
+        ],
+        "limitations": ["visual_quality_limited"],
+        "raw_trace": [{"x": 0, "y": 0}],
+        "artifact_path": "C:\\private\\artifact.json",
+        "secret": "not-for-frontend",
+    }
+
+
+def test_frontend_analysis_data_projection_is_bounded_and_irreversible():
+    projection = build_frontend_analysis_data_v1(
+        analysis_ref="analysis:71",
+        artifact=_tracking_artifact_for_data_projection("analysis:71"),
+    )
+
+    assert projection["schema_version"] == "frontend_analysis_data.v1"
+    assert projection["analysis_ref"] == "analysis:71"
+    assert len(projection["event_markers"]) == 128
+    assert projection["event_distribution"] == [
+        {"kind": "target_change_point", "count": 160},
+    ]
+    assert all(
+        set(marker) == {"event_ref", "kind", "relative_ms"}
+        for marker in projection["event_markers"]
+    )
+    error_radius = projection["target_relative_error_radius"]
+    assert error_radius["availability"] == "available"
+    assert error_radius["reason"] is None
+    assert len(error_radius["points"]) == 120
+    assert all(
+        set(point) == {"relative_ms", "normalized_error_radius"}
+        and point["normalized_error_radius"] == 1.0
+        for point in error_radius["points"]
+    )
+    serialized = json.dumps(projection)
+    assert "raw_trace" not in serialized
+    assert "artifact_path" not in serialized
+    assert "C:\\private" not in serialized
+    assert "not-for-frontend" not in serialized
+
+    without_radius = _tracking_artifact_for_data_projection("analysis:71", sample_count=3)
+    without_radius["signal_bundles"][0]["channels"] = without_radius["signal_bundles"][0]["channels"][:-1]
+    unavailable = build_frontend_analysis_data_v1(
+        analysis_ref="analysis:71",
+        artifact=without_radius,
+    )["target_relative_error_radius"]
+    assert unavailable == {
+        "availability": "unavailable",
+        "reason": "target_relative_channels_unavailable",
+        "points": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_frontend_analysis_data_route_reads_only_the_owned_committed_revision(monkeypatch):
+    session_id = await queue.enqueue("data-owner", "", "")
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (json.dumps({
+            "evidence": {"derived_artifact": {
+                "artifact_ref": f"analysis:{session_id}:evidence:fixture",
+                "evidence_revision": "sha256:fixture",
+            }},
+        }), session_id),
+    )
+    await conn.commit()
+
+    async def read_artifact(**kwargs):
+        assert kwargs == {
+            "owner_id": "data-owner",
+            "analysis_ref": f"analysis:{session_id}",
+            "artifact_ref": f"analysis:{session_id}:evidence:fixture",
+            "evidence_revision": "sha256:fixture",
+        }
+        return _tracking_artifact_for_data_projection(f"analysis:{session_id}", sample_count=3)
+
+    monkeypatch.setattr(routes_mod.evidence_store, "read_analysis_evidence_artifact", read_artifact)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        allowed = await client.get(
+            f"/api/sessions/{session_id}/analysis-data",
+            headers={"X-User-Id": "data-owner"},
+        )
+        forbidden = await client.get(
+            f"/api/sessions/{session_id}/analysis-data",
+            headers={"X-User-Id": "other-owner"},
+        )
+
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["analysis_ref"] == f"analysis:{session_id}"
+    assert "artifact_ref" not in allowed.text
+    assert forbidden.status_code == 403
 
 
 def test_product_state_distinguishes_empty_from_read_failure_and_skip_is_complete():

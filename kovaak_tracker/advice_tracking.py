@@ -286,7 +286,8 @@ _TRACKING_CANDIDATES = (
         "tracking lag high",
         "metric:phase_lag",
         "absolute_higher",
-        "knowledge:tracking.predictable-speed-matching@1",
+        "knowledge:tracking.predictable-speed-matching@2",
+        "episode.tracking",
     ),
     (
         "continuous_tracking.loss_count",
@@ -294,7 +295,8 @@ _TRACKING_CANDIDATES = (
         "loss count high",
         "metric:loss_count",
         "higher",
-        "knowledge:tracking.reactive-change-response@1",
+        "knowledge:tracking.reactive-change-response@2",
+        "event.loss",
     ),
     (
         "continuous_tracking.reacquisition_latency_ms",
@@ -302,7 +304,8 @@ _TRACKING_CANDIDATES = (
         "off target long",
         "metric:reacquisition_time",
         "higher",
-        "knowledge:tracking.reactive-change-response@1",
+        "knowledge:tracking.reactive-change-response@2",
+        "event.reacquisition",
     ),
     (
         "continuous_tracking.observed_change_response_ms",
@@ -310,7 +313,8 @@ _TRACKING_CANDIDATES = (
         "accel mismatch high",
         "metric:change_response",
         "higher",
-        "knowledge:tracking.reactive-change-response@1",
+        "knowledge:tracking.reactive-change-response@2",
+        "event.target_change",
     ),
     (
         "continuous_tracking.correction_direction_reversal_count",
@@ -318,7 +322,8 @@ _TRACKING_CANDIDATES = (
         "correction burden high",
         "metric:correction_burden",
         "higher",
-        "knowledge:tracking.control-smoothness@1",
+        "knowledge:tracking.control-smoothness@2",
+        "metric.smoothness",
     ),
     (
         "continuous_tracking.sparc",
@@ -326,7 +331,8 @@ _TRACKING_CANDIDATES = (
         "sparc low",
         "metric:sparc",
         "lower",
-        "knowledge:tracking.control-smoothness@1",
+        "knowledge:tracking.control-smoothness@2",
+        "metric.smoothness",
     ),
 )
 
@@ -411,6 +417,7 @@ def build_tracking_candidate_advice(
         knowledge_metric_ref,
         direction,
         expected_entry_ref,
+        observation_ref,
     ) in _TRACKING_CANDIDATES:
         metric = metrics.get(metric_key)
         current = _finite_number(metric.get("value")) if isinstance(metric, Mapping) else None
@@ -454,6 +461,7 @@ def build_tracking_candidate_advice(
             },
             "supporting_row_refs": supporting_refs,
             "counterexample_row_refs": counterexample_refs,
+            "observation_ref": observation_ref,
             "knowledge_registry_version": registry_version,
             "knowledge_entry_refs": knowledge_entry_refs,
             "requested_knowledge_sections": [

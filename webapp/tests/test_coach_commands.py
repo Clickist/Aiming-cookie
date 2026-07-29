@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from webapp.backend import (
+    benchmark_store,
     coach_commands,
     config,
     db,
@@ -98,6 +99,83 @@ async def test_product_command_rejects_paths_and_urls_embedded_in_text(monkeypat
     assert result["status"] == "failed"
     assert result["warning_or_error"]["code"] == "untrusted_field"
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_analysis_delete_is_confirmed_owner_scoped_and_idempotent(monkeypatch):
+    calls: list[tuple[int, str]] = []
+
+    async def delete(session_id: int, owner_id: str):
+        calls.append((session_id, owner_id))
+        return {
+            "deleted": True,
+            "id": session_id,
+            "files_removed": ["workspace"],
+            "cleanup_failed": [],
+        }
+
+    monkeypatch.setattr(queue, "delete_session", delete)
+    command = {
+        "command_id": "cmd-delete-analysis-3",
+        "command_name": "analysis.delete",
+        "parameters": {"analysis_ref": "analysis:3"},
+        "idempotency_key": "delete-analysis-3",
+    }
+
+    pending = await coach_commands.execute_product_command(
+        "owner-delete", command, authorization_source="coach_inferred", thread_id=7,
+    )
+    assert pending["status"] == "needs_confirmation"
+    assert pending["confirmation"]["target_ref"] == "analysis:3"
+    assert calls == []
+
+    wrong_owner = await coach_commands.execute_product_command(
+        "other-owner",
+        {**command, "confirmation_ref": pending["confirmation"]["confirmation_ref"]},
+        authorization_source="confirmed",
+        thread_id=7,
+    )
+    assert wrong_owner["warning_or_error"]["code"] == "invalid_confirmation"
+    assert calls == []
+
+    confirmed = await coach_commands.execute_product_command(
+        "owner-delete",
+        {**command, "confirmation_ref": pending["confirmation"]["confirmation_ref"]},
+        authorization_source="confirmed",
+        thread_id=7,
+    )
+    replay = await coach_commands.execute_product_command(
+        "owner-delete", command, authorization_source="explicit_user_request", thread_id=7,
+    )
+
+    assert confirmed["status"] == "succeeded"
+    assert confirmed["result"] == {
+        "analysis_ref": "analysis:3",
+        "deleted": True,
+        "cleanup_pending": False,
+    }
+    assert replay["status"] == "succeeded"
+    assert calls == [(3, "owner-delete")]
+
+
+@pytest.mark.asyncio
+async def test_analysis_delete_rejects_extra_parameters_before_confirmation(monkeypatch):
+    async def delete(*_args, **_kwargs):
+        raise AssertionError("invalid delete must not reach queue")
+
+    monkeypatch.setattr(queue, "delete_session", delete)
+    result = await coach_commands.execute_product_command(
+        "owner-delete-invalid",
+        {
+            "command_name": "analysis.delete",
+            "parameters": {"analysis_ref": "analysis:3", "cascade": True},
+            "idempotency_key": "delete-analysis-invalid",
+        },
+        authorization_source="coach_inferred",
+    )
+
+    assert result["status"] == "failed"
+    assert result["warning_or_error"]["code"] == "invalid_parameters"
 
 
 def test_analysis_type_follows_reviewed_scenario_family():
@@ -1102,7 +1180,7 @@ async def test_explicit_user_plan_item_execution_and_retest_commands_are_idempot
     assert replay["result_ref"] == item["result_ref"]
     item_ref = item["result_ref"]
 
-    denied = await coach_commands.execute_product_command(
+    pending = await coach_commands.execute_product_command(
         owner,
         {
             "command_name": "training_plan.execution.record",
@@ -1119,8 +1197,7 @@ async def test_explicit_user_plan_item_execution_and_retest_commands_are_idempot
         },
         authorization_source="coach_inferred",
     )
-    assert denied["status"] == "failed"
-    assert denied["warning_or_error"]["code"] == "explicit_user_required"
+    assert pending["status"] == "needs_confirmation"
 
     execution = await coach_commands.execute_product_command(
         owner,
@@ -1165,6 +1242,281 @@ async def test_explicit_user_plan_item_execution_and_retest_commands_are_idempot
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_name",
+    [
+        "training_plan.item.add",
+        "training_plan.execution.record",
+        "training_plan.retest.record",
+    ],
+)
+async def test_coach_inferred_training_fact_requires_owner_scoped_confirmation_once(
+    monkeypatch: pytest.MonkeyPatch,
+    command_name: str,
+) -> None:
+    writes: list[tuple[str, str, dict]] = []
+
+    async def write_fact(owner_id: str, name: str, parameters: dict) -> tuple[dict, str]:
+        writes.append((owner_id, name, parameters))
+        return {"command_name": name}, f"fact:{name}"
+
+    monkeypatch.setattr(coach_commands, "_execute_training_plan_fact", write_fact)
+    command = {
+        "command_name": command_name,
+        "parameters": {"fact": command_name},
+        "idempotency_key": f"confirmation:{command_name}",
+    }
+    pending = await coach_commands.execute_product_command(
+        "owner-training-fact",
+        command,
+        authorization_source="coach_inferred",
+        thread_id=41,
+    )
+    confirmation_ref = pending["confirmation"]["confirmation_ref"]
+
+    assert pending["status"] == "needs_confirmation"
+    assert writes == []
+
+    system_attempt = await coach_commands.execute_product_command(
+        "owner-training-fact",
+        command,
+        authorization_source="system_safe",
+        thread_id=41,
+    )
+    wrong_owner = await coach_commands.execute_product_command(
+        "other-owner",
+        {**command, "confirmation_ref": confirmation_ref},
+        authorization_source="confirmed",
+        thread_id=41,
+    )
+    replay_pending = await coach_commands.execute_product_command(
+        "owner-training-fact",
+        command,
+        authorization_source="coach_inferred",
+        thread_id=41,
+    )
+    expired_command = {
+        **command,
+        "parameters": {"fact": f"{command_name}:expired"},
+        "idempotency_key": f"expired:{command_name}",
+    }
+    expired_pending = await coach_commands.execute_product_command(
+        "owner-training-fact",
+        expired_command,
+        authorization_source="coach_inferred",
+        thread_id=41,
+    )
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE coach_command_confirmations SET expires_at=? WHERE confirmation_ref=?",
+        ("2000-01-01T00:00:00Z", expired_pending["confirmation"]["confirmation_ref"]),
+    )
+    await conn.commit()
+    expired = await coach_commands.execute_product_command(
+        "owner-training-fact",
+        {
+            **expired_command,
+            "confirmation_ref": expired_pending["confirmation"]["confirmation_ref"],
+        },
+        authorization_source="confirmed",
+        thread_id=41,
+    )
+    confirmed = await coach_commands.execute_product_command(
+        "owner-training-fact",
+        {**command, "confirmation_ref": confirmation_ref},
+        authorization_source="confirmed",
+        thread_id=41,
+    )
+    replay_confirmed = await coach_commands.execute_product_command(
+        "owner-training-fact",
+        {**command, "confirmation_ref": confirmation_ref},
+        authorization_source="confirmed",
+        thread_id=41,
+    )
+
+    assert wrong_owner["status"] == "failed"
+    assert wrong_owner["warning_or_error"]["code"] == "invalid_confirmation"
+    assert system_attempt["warning_or_error"]["code"] == "explicit_user_required"
+    assert replay_pending["status"] == "needs_confirmation"
+    assert expired["status"] == "failed"
+    assert expired["warning_or_error"]["code"] == "invalid_confirmation"
+    assert confirmed["status"] == "succeeded"
+    assert replay_confirmed["status"] == "succeeded"
+    assert writes == [
+        ("owner-training-fact", command_name, {"fact": command_name}),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command_name", "untrusted_field"),
+    [
+        ("training_plan.item.add", "confirmation_ref"),
+        ("training_plan.execution.record", "request_basis"),
+        ("training_plan.retest.record", "owner_id"),
+    ],
+)
+async def test_bridge_rejects_model_confirmation_or_authority_for_training_facts(
+    command_name: str,
+    untrusted_field: str,
+) -> None:
+    bridge = coach_commands.issue_tool_bridge(
+        "owner-bridge-training-fact",
+        thread_id=42,
+        user_message_ref="message:training-fact",
+        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
+        ttl_seconds=60,
+        max_calls=1,
+    )
+    result = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {
+            "command_name": command_name,
+            "parameters": {"fact": command_name},
+            "idempotency_key": f"bridge:{command_name}",
+            untrusted_field: "model-supplied",
+        },
+    )
+
+    assert result["status"] == "failed"
+    assert result["warning_or_error"]["code"] == "untrusted_field"
+
+
+def _kovaak_score_snapshot() -> dict:
+    return {
+        "schema_version": "kovaak_scores.v1",
+        "availability": "available",
+        "observed_at": "2026-07-30T00:00:00Z",
+        "stages": [
+            {"stage": "easier", "completed": 18, "required": 39, "rank": 3, "rank_name": "Ermine"},
+            {"stage": "medium", "completed": 0, "required": 39, "rank": 0, "rank_name": "Iron"},
+        ],
+        "items": [
+            {
+                "stage": "easier",
+                "name": f"Scenario {index}",
+                "category": "clicking",
+                "subcategory": "dynamic",
+                "score": float(index),
+                "item_rank": index % 5,
+                "item_rank_name": "Ermine",
+                "completed": index > 0,
+            }
+            for index in range(12)
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_temporary_kovaak_lookup_only_resolves_bridge_profile_and_never_audits_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from webapp.backend import kovaak_benchmark_service
+
+    steam_id = "76561199033719938"
+    seen: list[str] = []
+
+    async def temporary_lookup(value: str) -> dict:
+        seen.append(value)
+        return _kovaak_score_snapshot()
+
+    monkeypatch.setattr(kovaak_benchmark_service, "project_temporary_snapshot", temporary_lookup)
+    bridge = coach_commands.issue_tool_bridge(
+        "owner-temporary-score",
+        thread_id=42,
+        user_message_ref="message:temporary-score",
+        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
+        ttl_seconds=60,
+        temporary_profile_refs={"steam_profile:1": steam_id},
+    )
+
+    result = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {
+            "command_name": "kovaak_scores.lookup",
+            "parameters": {"profile_ref": "steam_profile:1"},
+        },
+    )
+    raw_attempt = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {
+            "command_name": "kovaak_scores.lookup",
+            "parameters": {"profile_ref": f"https://steamcommunity.com/profiles/{steam_id}/"},
+        },
+    )
+
+    conn = await db.get_conn()
+    audit_count = await (await conn.execute(
+        "SELECT COUNT(*) AS count FROM coach_product_commands",
+    )).fetchone()
+    assert seen == [steam_id]
+    assert result["status"] == "succeeded"
+    assert result["result_ref"] == "kovaak_scores:temporary"
+    assert len(result["result"]["items"]) == 8
+    assert steam_id not in json.dumps(result, ensure_ascii=False)
+    assert raw_attempt["status"] == "unavailable"
+    assert audit_count["count"] == 0
+    assert await benchmark_store.list_records("owner-temporary-score") == []
+
+
+@pytest.mark.asyncio
+async def test_connected_kovaak_refresh_requires_a_saved_account_and_audits_only_safe_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from webapp.backend import kovaak_benchmark_service
+
+    async def missing(_owner_id: str) -> dict:
+        raise kovaak_benchmark_service.KovaaKConnectionNotFound("not connected")
+
+    monkeypatch.setattr(
+        kovaak_benchmark_service,
+        "refresh_connected_score_summary",
+        missing,
+        raising=False,
+    )
+    bridge = coach_commands.issue_tool_bridge(
+        "owner-connected-score",
+        thread_id=43,
+        user_message_ref="message:connected-score",
+        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
+        ttl_seconds=60,
+    )
+    unavailable = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {"command_name": "kovaak_scores.refresh_connected", "parameters": {}},
+    )
+
+    async def refresh(_owner_id: str) -> dict:
+        return _kovaak_score_snapshot()
+
+    monkeypatch.setattr(
+        kovaak_benchmark_service,
+        "refresh_connected_score_summary",
+        refresh,
+        raising=False,
+    )
+    refreshed = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {"command_name": "kovaak_scores.refresh_connected", "parameters": {}},
+    )
+    conn = await db.get_conn()
+    audit = await (await conn.execute(
+        "SELECT command_name, thread_id, user_message_ref, result_json "
+        "FROM coach_product_commands WHERE owner_id=? ORDER BY rowid DESC LIMIT 1",
+        ("owner-connected-score",),
+    )).fetchone()
+
+    assert unavailable["status"] == "unavailable"
+    assert unavailable["warning_or_error"]["code"] == "connected_account_unavailable"
+    assert refreshed["status"] == "succeeded"
+    assert refreshed["result_ref"] == "kovaak_scores:connected"
+    assert len(refreshed["result"]["items"]) == 8
+    assert audit["command_name"] == "kovaak_scores.refresh_connected"
+    assert audit["thread_id"] == 43
+    assert audit["user_message_ref"] == "message:connected-score"
+
+
+@pytest.mark.asyncio
 async def test_bridge_cannot_self_authorize_or_consume_confirmation(monkeypatch):
     calls = 0
 
@@ -1205,6 +1557,118 @@ async def test_bridge_cannot_self_authorize_or_consume_confirmation(monkeypatch)
     assert bridge["bearer_token"] not in repr(
         [pending, claimed_explicit, claimed_confirmed]
     )
+
+
+@pytest.mark.asyncio
+async def test_bridge_normalizes_only_reachable_analysis_delete_shorthand():
+    reachable = coach_commands.issue_tool_bridge(
+        "owner-delete-shorthand",
+        thread_id=23,
+        user_message_ref="message:delete-shorthand",
+        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
+        ttl_seconds=60,
+        max_calls=1,
+        reachable_refs={"analysis:3"},
+    )
+    unreachable = coach_commands.issue_tool_bridge(
+        "owner-delete-shorthand",
+        thread_id=23,
+        user_message_ref="message:delete-unreachable",
+        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
+        ttl_seconds=60,
+        max_calls=1,
+        reachable_refs={"analysis:3"},
+    )
+    base = {
+        "command_name": "analysis.delete",
+        "idempotency_key": "delete-shorthand",
+    }
+
+    pending = await coach_commands.execute_tool_bridge(
+        reachable["bearer_token"],
+        {**base, "parameters": {"analysis_ref": "3"}},
+    )
+    rejected = await coach_commands.execute_tool_bridge(
+        unreachable["bearer_token"],
+        {**base, "parameters": {"analysis_ref": "4"}},
+    )
+
+    assert pending["status"] == "needs_confirmation"
+    assert pending["confirmation"]["target_ref"] == "analysis:3"
+    assert rejected["status"] == "failed"
+    assert rejected["warning_or_error"]["code"] == "unreachable_ref"
+
+
+@pytest.mark.asyncio
+async def test_bridge_allows_analysis_delete_only_for_reachable_exact_canonical_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded: list[dict] = []
+
+    async def execute(owner_id: str, payload: dict, **_kwargs) -> dict:
+        forwarded.append({"owner_id": owner_id, "payload": payload})
+        return {
+            "schema_version": "coach_product_command_result.v1",
+            "command_id": payload.get("command_id", "command:delete"),
+            "status": "needs_confirmation",
+            "audit_ref": "audit:delete",
+        }
+
+    monkeypatch.setattr(coach_commands, "execute_product_command", execute)
+    bridge = coach_commands.issue_tool_bridge(
+        "owner-delete-reachable",
+        thread_id=24,
+        user_message_ref="message:delete-reachable",
+        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
+        ttl_seconds=60,
+        max_calls=5,
+        reachable_refs={"analysis:3"},
+    )
+    base = {"command_name": "analysis.delete", "idempotency_key": "delete-reachable"}
+
+    shorthand = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"], {**base, "command_id": "cmd-short", "parameters": {"analysis_ref": "3"}},
+    )
+    canonical = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"], {**base, "command_id": "cmd-canonical", "parameters": {"analysis_ref": "analysis:3"}},
+    )
+    unreachable_shorthand = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"], {**base, "command_id": "cmd-unreachable-short", "parameters": {"analysis_ref": "4"}},
+    )
+    unreachable_canonical = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"], {**base, "command_id": "cmd-unreachable-canonical", "parameters": {"analysis_ref": "analysis:4"}},
+    )
+    extra_parameter = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"], {**base, "command_id": "cmd-extra", "parameters": {"analysis_ref": "analysis:3", "cascade": True}},
+    )
+
+    assert shorthand["status"] == "needs_confirmation"
+    assert canonical["status"] == "needs_confirmation"
+    assert unreachable_shorthand["warning_or_error"]["code"] == "unreachable_ref"
+    assert unreachable_canonical["warning_or_error"]["code"] == "unreachable_ref"
+    assert extra_parameter["warning_or_error"]["code"] == "invalid_parameters"
+    assert forwarded == [
+        {
+            "owner_id": "owner-delete-reachable",
+            "payload": {
+                "command_id": "cmd-short",
+                "command_name": "analysis.delete",
+                "idempotency_key": "delete-reachable",
+                "parameters": {"analysis_ref": "analysis:3"},
+                "user_message_ref": "message:delete-reachable",
+            },
+        },
+        {
+            "owner_id": "owner-delete-reachable",
+            "payload": {
+                "command_id": "cmd-canonical",
+                "command_name": "analysis.delete",
+                "idempotency_key": "delete-reachable",
+                "parameters": {"analysis_ref": "analysis:3"},
+                "user_message_ref": "message:delete-reachable",
+            },
+        },
+    ]
 
 
 async def _seed_run_owned_video(

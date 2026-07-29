@@ -49,8 +49,12 @@ def test_switching_advice_keeps_transition_and_terminal_control_separate():
     assert all(item["supporting_row_refs"] == ["analysis:1:switch:slow"] for item in advice)
     assert all(item["counterexample_row_refs"] == ["analysis:1:switch:controlled"] for item in advice)
     assert [item["knowledge_entry_refs"] for item in advice] == [
-        ["knowledge:switching.transition-and-arrival@1"],
-        ["knowledge:switching.transition-and-arrival@1"],
+        ["knowledge:switching.transition-and-arrival@2"],
+        ["knowledge:switching.transition-and-arrival@2"],
+    ]
+    assert [item["observation_ref"] for item in advice] == [
+        "event.switch_chain",
+        "event.switch_chain",
     ]
     assert all(item["verification_targets"][0]["condition"] == "matched_comparable_baseline" for item in advice)
     assert all("near_transfer_retest" in item["requested_knowledge_sections"] for item in advice)

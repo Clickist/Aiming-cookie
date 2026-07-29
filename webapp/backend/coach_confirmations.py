@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import uuid
 from typing import Any
@@ -45,6 +46,69 @@ _ACTION_IMPACTS = {
     ),
 }
 _SAFE_REF = re.compile(r"^[a-z][a-z0-9_]*:[A-Za-z0-9_.:@-]{1,160}$")
+_CANONICAL_REF = re.compile(r"^[a-z][a-z0-9_-]{0,31}:[A-Za-z0-9][A-Za-z0-9._:@-]{0,159}$")
+_INTERNAL_REF = re.compile(r"\b[a-z][a-z0-9_-]{0,31}:[A-Za-z0-9]", re.IGNORECASE)
+_UNSAFE_DISPLAY_TEXT = re.compile(
+    r"(?:https?://|file:(?://)?|[A-Za-z]:[\\/]|\\\\|(?:^|\s)/\S+|"
+    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[:=]|"
+    r"\bbearer\s+\S+|\bsk-[A-Za-z0-9_-]{8,})",
+    re.IGNORECASE,
+)
+_ITEM_PAYLOAD_FIELDS = {
+    "diagnosis_ref",
+    "knowledge_ref",
+    "scenario_profile_ref",
+    "baseline_metric_ref",
+    "expected_direction",
+    "practice_condition",
+    "cue",
+    "dose_guardrail",
+    "matched_retest_ref",
+    "near_transfer_retest_ref",
+    "review_date",
+}
+_COMPLETION_LABELS = {
+    "completed": "已完成",
+    "partial": "部分完成",
+    "skipped": "已跳过",
+}
+_RETEST_KIND_LABELS = {
+    "matched": "同条件复测",
+    "near_transfer": "近迁移复测",
+}
+_COMPARABILITY_LABELS = {
+    "comparable": "与基线可比",
+    "not_comparable": "与基线不可比",
+    "unavailable": "可比性暂时无法确认",
+}
+_RETEST_OUTCOME_LABELS = {
+    "coach_retest_outcome.v1:improved": (
+        "这次表现有改善",
+        "确认后会继续当前训练项",
+    ),
+    "coach_retest_outcome.v1:unchanged": (
+        "这次基本没变化",
+        "确认后会把当前训练项退回待安排",
+    ),
+    "coach_retest_outcome.v1:mixed_or_inconclusive": (
+        "结果混合或暂时看不清",
+        "确认后会把当前训练项退回待安排",
+    ),
+    "coach_retest_outcome.v1:worsened": (
+        "这次表现变差",
+        "确认后会结束当前训练项",
+    ),
+}
+_LIMITATION_LABELS = {
+    "metric_change_policy_missing": "该指标还没有可靠的变化阈值",
+}
+_EXPECTED_DIRECTIONS = {
+    "lower_better",
+    "higher_better",
+    "target_band",
+    "descriptive_only",
+    "comparison_only",
+}
 _decision_lock = asyncio.Lock()
 
 
@@ -52,6 +116,223 @@ class ConfirmationError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _safe_display_text(value: object, *, maximum: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if (
+        not text
+        or len(text) > maximum
+        or any(ord(char) < 32 for char in text)
+        or _INTERNAL_REF.search(text)
+        or _UNSAFE_DISPLAY_TEXT.search(text)
+    ):
+        return None
+    return text
+
+
+def _safe_dose(value: object) -> str | None:
+    if not isinstance(value, dict) or set(value) != {"amount", "unit"}:
+        return None
+    amount = value.get("amount")
+    unit = _safe_display_text(value.get("unit"), maximum=40)
+    if (
+        isinstance(amount, bool)
+        or not isinstance(amount, (int, float))
+        or amount < 0
+        or amount > 1_000_000
+        or not math.isfinite(float(amount))
+        or unit is None
+    ):
+        return None
+    rendered = str(int(amount)) if float(amount).is_integer() else format(float(amount), ".6g")
+    return f"{rendered} {unit}"
+
+
+def _safe_ref_value(value: object, *, prefix: str) -> bool:
+    return (
+        isinstance(value, str)
+        and value.startswith(f"{prefix}:")
+        and _CANONICAL_REF.fullmatch(value) is not None
+    )
+
+
+def _bounded_impact(code: str, message: str) -> tuple[str, str] | None:
+    return (code, message) if len(message) <= 1000 else None
+
+
+def _project_item_impact(parameters: dict[str, Any]) -> tuple[str, str] | None:
+    allowed_shapes = (
+        {"plan_ref", "item_payload"},
+        {"plan_ref", "plan_version", "item_payload"},
+    )
+    if set(parameters) not in allowed_shapes:
+        return None
+    plan_version = parameters.get("plan_version")
+    if (
+        not _safe_ref_value(parameters.get("plan_ref"), prefix="plan")
+        or (
+            "plan_version" in parameters
+            and (
+                isinstance(plan_version, bool)
+                or not isinstance(plan_version, int)
+                or plan_version < 1
+            )
+        )
+    ):
+        return None
+    payload = parameters.get("item_payload")
+    if not isinstance(payload, dict) or set(payload) != _ITEM_PAYLOAD_FIELDS:
+        return None
+    ref_fields = {
+        "diagnosis_ref": "diagnosis",
+        "knowledge_ref": "knowledge",
+        "scenario_profile_ref": "scenario",
+        "baseline_metric_ref": "metric",
+        "matched_retest_ref": "retest-spec",
+        "near_transfer_retest_ref": "retest-spec",
+    }
+    if (
+        any(
+            not _safe_ref_value(payload.get(field), prefix=prefix)
+            for field, prefix in ref_fields.items()
+        )
+        or payload.get("expected_direction") not in _EXPECTED_DIRECTIONS
+        or _safe_display_text(payload.get("review_date"), maximum=64) is None
+    ):
+        return None
+    practice_condition = _safe_display_text(payload.get("practice_condition"), maximum=240)
+    cue = _safe_display_text(payload.get("cue"), maximum=240)
+    dose_guardrail = _safe_display_text(payload.get("dose_guardrail"), maximum=240)
+    if practice_condition is None or cue is None or dose_guardrail is None:
+        return None
+    return _bounded_impact(
+        "training_plan_item_will_be_added",
+        f"将把这项练习加入训练计划：练习条件“{practice_condition}”；"
+        f"本轮提示“{cue}”；训练边界“{dose_guardrail}”。",
+    )
+
+
+def _project_execution_impact(parameters: dict[str, Any]) -> tuple[str, str] | None:
+    if set(parameters) != {
+        "item_ref",
+        "scenario_ref",
+        "run_refs",
+        "planned_dose",
+        "completed_dose",
+        "completion_status",
+        "user_feedback",
+    }:
+        return None
+    run_refs = parameters.get("run_refs")
+    if (
+        not _safe_ref_value(parameters.get("item_ref"), prefix="plan-item")
+        or not _safe_ref_value(parameters.get("scenario_ref"), prefix="scenario")
+        or not isinstance(run_refs, list)
+        or not 1 <= len(run_refs) <= 16
+        or not all(_safe_ref_value(ref, prefix="run") for ref in run_refs)
+    ):
+        return None
+    planned = _safe_dose(parameters.get("planned_dose"))
+    completed = _safe_dose(parameters.get("completed_dose"))
+    status = _COMPLETION_LABELS.get(parameters.get("completion_status"))
+    feedback = _safe_display_text(parameters.get("user_feedback"), maximum=1000)
+    if planned is None or completed is None or status is None or feedback is None:
+        return None
+    return _bounded_impact(
+        "training_execution_will_be_recorded",
+        f"将记录这次训练：计划 {planned}，实际 {completed}，状态为{status}；"
+        f"你的反馈是“{feedback}”。",
+    )
+
+
+def _project_retest_impact(parameters: dict[str, Any]) -> tuple[str, str] | None:
+    if set(parameters) != {
+        "item_ref",
+        "kind",
+        "expected_metric_ref",
+        "expected_direction",
+        "analysis_refs",
+        "comparability",
+        "result",
+        "limitations",
+    }:
+        return None
+    analysis_refs = parameters.get("analysis_refs")
+    limitations = parameters.get("limitations")
+    if (
+        not _safe_ref_value(parameters.get("item_ref"), prefix="plan-item")
+        or not _safe_ref_value(parameters.get("expected_metric_ref"), prefix="metric")
+        or parameters.get("expected_direction") not in _EXPECTED_DIRECTIONS
+        or not isinstance(analysis_refs, list)
+        or not 1 <= len(analysis_refs) <= 16
+        or not all(_safe_ref_value(ref, prefix="analysis") for ref in analysis_refs)
+        or not isinstance(limitations, list)
+        or not 1 <= len(limitations) <= 16
+        or not all(
+            isinstance(item, str)
+            and 0 < len(item) <= 160
+            and _UNSAFE_DISPLAY_TEXT.search(item) is None
+            for item in limitations
+        )
+    ):
+        return None
+    kind = _RETEST_KIND_LABELS.get(parameters.get("kind"))
+    comparability = _COMPARABILITY_LABELS.get(parameters.get("comparability"))
+    if kind is None or comparability is None:
+        return None
+    policy_missing = "metric_change_policy_missing" in limitations
+    if parameters.get("comparability") == "comparable" and policy_missing:
+        outcome_text = "数字有变化，但现在还看不出是不是稳定变化"
+        effect_text = "确认后只记录这次复测，暂不调整当前训练项"
+    elif parameters.get("comparability") == "comparable":
+        outcome = _RETEST_OUTCOME_LABELS.get(parameters.get("result"))
+        if outcome is None:
+            return None
+        outcome_text, effect_text = outcome
+    else:
+        outcome_text = "本次结果暂不用于判断"
+        effect_text = "确认后暂不调整当前训练项"
+    limitation_labels = [
+        _LIMITATION_LABELS[item]
+        for item in limitations
+        if item in _LIMITATION_LABELS
+    ]
+    limitation_text = (
+        f"；限制是{'、'.join(limitation_labels)}"
+        if limitation_labels
+        else ""
+    )
+    return _bounded_impact(
+        "training_retest_will_be_recorded",
+        f"将记录一次{kind}：{comparability}，{outcome_text}；"
+        f"{effect_text}{limitation_text}。",
+    )
+
+
+def _project_product_confirmation_impact(
+    command_name: object,
+    parameters_json: object,
+) -> tuple[str, str]:
+    fallback = _ACTION_IMPACTS["coach_side_effect"]
+    if not isinstance(command_name, str) or not isinstance(parameters_json, str):
+        return fallback
+    try:
+        parameters = json.loads(parameters_json)
+    except (TypeError, json.JSONDecodeError):
+        return fallback
+    if not isinstance(parameters, dict):
+        return fallback
+    projector = {
+        "training_plan.item.add": _project_item_impact,
+        "training_plan.execution.record": _project_execution_impact,
+        "training_plan.retest.record": _project_retest_impact,
+    }.get(command_name)
+    if projector is None:
+        return fallback
+    return projector(parameters) or fallback
 
 
 def _out(
@@ -131,19 +412,23 @@ async def sync_product_command_confirmations(
             continue
         canonical = await (
             await conn.execute(
-                "SELECT confirmation_ref FROM coach_command_confirmations "
+                "SELECT confirmation_ref, command_name, parameters_json "
+                "FROM coach_command_confirmations "
                 "WHERE confirmation_ref=? AND owner_id=? AND user_message_ref=?",
                 (confirmation_ref, owner_id, user_message_ref),
             )
         ).fetchone()
-        if canonical is None:
+        if canonical is None or canonical["command_name"] != row["command_name"]:
             continue
         target_ref = confirmation.get("target_ref")
         if not isinstance(target_ref, str) or _SAFE_REF.fullmatch(target_ref) is None:
             target_ref = result.get("command_id")
         if not isinstance(target_ref, str) or _SAFE_REF.fullmatch(target_ref) is None:
             continue
-        impact = _ACTION_IMPACTS["coach_side_effect"]
+        impact = _project_product_confirmation_impact(
+            canonical["command_name"],
+            canonical["parameters_json"],
+        )
         await conn.execute(
             "INSERT INTO coach_confirmation_requests(confirmation_ref, owner_id, action, "
             "target_ref, impact_code, impact_message) VALUES(?, ?, 'coach_side_effect', ?, ?, ?) "
@@ -163,7 +448,7 @@ async def sync_product_command_confirmations(
         event = {
             "type": "product_command",
             "command_id": result.get("command_id"),
-            "command_name": row["command_name"],
+            "command_name": canonical["command_name"],
             "status": result.get("status"),
             "result_ref": result.get("result_ref"),
             "audit_ref": result.get("audit_ref"),

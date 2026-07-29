@@ -757,7 +757,7 @@ async def test_fresh_v14_schema_uses_v13_helper_and_exact_tombstone_ddl(
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 18
+    assert db.TARGET_USER_VERSION == 21
     assert calls == 1
     assert "analysis_deletion_tombstones" not in db.SCHEMA
     assert _normalized_ddl(db._V13_ANALYSIS_DELETION_TOMBSTONES) == _normalized_ddl(
@@ -949,6 +949,103 @@ async def test_v18_migration_helper_is_transactional_and_idempotent():
 
 
 @pytest.mark.asyncio
+async def test_v19_repairs_only_future_stale_lease_failure_timestamps():
+    conn = await aiosqlite.connect(":memory:")
+    conn.row_factory = aiosqlite.Row
+    try:
+        await conn.execute(
+            "CREATE TABLE sessions("
+            "id INTEGER PRIMARY KEY, status TEXT NOT NULL, error TEXT, "
+            "finished_at TEXT, updated_at TEXT NOT NULL)"
+        )
+        stale_error = (
+            '{"schema_version":"error.v1","category":"local_cv_runtime",'
+            '"code":"stale_lease_exhausted","message":"stale","retryable":true}'
+        )
+        other_error = stale_error.replace("stale_lease_exhausted", "analysis_failed")
+        await conn.executemany(
+            "INSERT INTO sessions(id, status, error, finished_at, updated_at) "
+            "VALUES(?, 'failed', ?, ?, ?)",
+            (
+                (1, stale_error, "2099-01-01 00:00:00", "2099-01-01 00:00:00"),
+                (2, other_error, "2099-01-01 00:00:00", "2099-01-01 00:00:00"),
+                (3, stale_error, "2099-01-01 00:00:00", "2098-01-01 00:00:00"),
+            ),
+        )
+        await db._migrate_v19_stale_failure_timestamps(conn)
+        rows = {
+            row["id"]: dict(row)
+            for row in await (await conn.execute(
+                "SELECT id, finished_at, updated_at FROM sessions ORDER BY id"
+            )).fetchall()
+        }
+
+        assert rows[1]["finished_at"] is None
+        assert rows[1]["updated_at"] != "2099-01-01 00:00:00"
+        assert rows[2]["finished_at"] == "2099-01-01 00:00:00"
+        assert rows[2]["updated_at"] == "2099-01-01 00:00:00"
+        assert rows[3]["finished_at"] == "2099-01-01 00:00:00"
+        assert rows[3]["updated_at"] == "2098-01-01 00:00:00"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_v20_teaching_session_migration_is_transactional_and_idempotent():
+    conn = await aiosqlite.connect(":memory:")
+    try:
+        await conn.executescript(
+            """
+            CREATE TABLE coach_threads (
+                id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                kind TEXT NOT NULL
+            );
+            CREATE TABLE coach_agent_runs (
+                run_ref TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                thread_id INTEGER NOT NULL,
+                attempt INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                content TEXT NOT NULL
+            );
+            """
+        )
+        await conn.execute("BEGIN IMMEDIATE")
+        await db._migrate_v20_teaching_sessions(conn)
+        assert await _table_exists(conn, "teaching_sessions")
+        await conn.execute("ROLLBACK")
+        assert not await _table_exists(conn, "teaching_sessions")
+
+        await conn.execute("BEGIN IMMEDIATE")
+        await db._migrate_v20_teaching_sessions(conn)
+        await conn.commit()
+        await db._migrate_v20_teaching_sessions(conn)
+        await conn.commit()
+
+        run_columns = {
+            row[1] for row in await (
+                await conn.execute("PRAGMA table_info(coach_agent_runs)")
+            ).fetchall()
+        }
+        assert {
+            "user_message_id", "teaching_session_ref", "teaching_state_version",
+            "teaching_contract_json",
+        } <= run_columns
+        assert await _table_exists(conn, "teaching_sessions")
+        index = await (
+            await conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND name='idx_coach_agent_runs_active_teaching_session'"
+            )
+        ).fetchone()
+        assert index is not None
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
 async def test_v12_to_v13_init_schema_rolls_back_table_and_version_on_failure(
     monkeypatch,
 ):
@@ -1103,8 +1200,14 @@ async def test_init_schema_migrates_v13_to_v18_preserving_run_and_session_rows()
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 18
+    assert db.TARGET_USER_VERSION == 21
     assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == db.TARGET_USER_VERSION
+    connection_columns = await (
+        await conn.execute("PRAGMA table_info(kovaak_connections)")
+    ).fetchall()
+    assert [row[1] for row in connection_columns] == [
+        "owner_id", "steam_id", "connected_at", "updated_at",
+    ]
     session = await (
         await conn.execute(
             "SELECT id, user_id, status, video_path, csv_path, task_group_ref, "

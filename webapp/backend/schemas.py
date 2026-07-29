@@ -332,6 +332,8 @@ class HistoryTrendResponse(BaseModel):
 
 
 class BenchmarkRecordCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     provider: str
     provider_license_note: str
     catalog_version: str
@@ -341,8 +343,6 @@ class BenchmarkRecordCreate(BaseModel):
     value: float
     observed_at: str
     availability: Literal["available", "stale", "unavailable"] = "available"
-    external_identity_ref: Optional[str] = None
-    identity_consent: bool = False
 
 
 class BenchmarkRecordOut(BenchmarkRecordCreate):
@@ -352,6 +352,87 @@ class BenchmarkRecordOut(BenchmarkRecordCreate):
 
 class BenchmarkRecordListResponse(BaseModel):
     records: list[BenchmarkRecordOut]
+
+
+class KovaaKBenchmarkSyncRequest(BaseModel):
+    schema_version: Literal["kovaak_benchmark_sync_request.v1"]
+    steam_id: str = Field(repr=False)
+    identity_consent: bool
+
+    @field_validator("steam_id")
+    @classmethod
+    def _steam_id(cls, value: str) -> str:
+        from .kovaak_benchmark_provider import normalize_steam_profile_input
+
+        return normalize_steam_profile_input(value)
+
+    @field_validator("identity_consent")
+    @classmethod
+    def _identity_consent(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("identity consent is required for each sync")
+        return value
+
+
+class KovaaKBenchmarkSyncResponse(BaseModel):
+    schema_version: Literal["kovaak_benchmark_sync_result.v1"]
+    imported_score_count: int
+    difficulty_counts: dict[Literal["easier", "medium"], int]
+    observed_at: str
+
+
+class KovaaKConnectionSaveRequest(BaseModel):
+    steam_profile: str = Field(repr=False)
+    identity_consent: bool
+
+    @field_validator("steam_profile")
+    @classmethod
+    def _steam_profile(cls, value: str) -> str:
+        from .kovaak_benchmark_provider import normalize_steam_profile_input
+
+        return normalize_steam_profile_input(value)
+
+    @field_validator("identity_consent")
+    @classmethod
+    def _identity_consent(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("identity consent is required to save a KovaaK connection")
+        return value
+
+
+class KovaaKConnectionStatusResponse(BaseModel):
+    connected: bool
+
+
+class KovaaKConnectionDeleteResponse(BaseModel):
+    deleted: bool
+
+
+class KovaaKScoreStage(BaseModel):
+    stage: Literal["easier", "medium"]
+    completed: int
+    required: int
+    rank: int
+    rank_name: str
+
+
+class KovaaKScoreItem(BaseModel):
+    stage: Literal["easier", "medium"]
+    name: str
+    category: str
+    subcategory: str
+    score: float
+    item_rank: int
+    item_rank_name: str
+    completed: bool
+
+
+class KovaaKScoresResponse(BaseModel):
+    schema_version: Literal["kovaak_scores.v1"]
+    availability: Literal["available", "unavailable"]
+    observed_at: Optional[str] = None
+    stages: list[KovaaKScoreStage] = Field(default_factory=list)
+    items: list[KovaaKScoreItem] = Field(default_factory=list)
 
 
 class DeleteSessionResponse(BaseModel):
@@ -731,6 +812,37 @@ class FrontendEvidenceSegmentsResponse(BaseModel):
     video_route: Optional[str] = None
     canonical_window_start_ms: Optional[int] = None
     segments: list[FrontendEvidenceSegment]
+
+
+class FrontendAnalysisDataMarker(BaseModel):
+    event_ref: str
+    kind: str
+    relative_ms: int
+
+
+class FrontendAnalysisDataDistribution(BaseModel):
+    kind: str
+    count: int
+
+
+class TargetRelativeErrorRadiusPoint(BaseModel):
+    relative_ms: int
+    normalized_error_radius: float
+
+
+class TargetRelativeErrorRadius(BaseModel):
+    availability: Literal["available", "unavailable"]
+    reason: Optional[str] = None
+    points: list[TargetRelativeErrorRadiusPoint]
+
+
+class FrontendAnalysisDataResponse(BaseModel):
+    schema_version: Literal["frontend_analysis_data.v1"]
+    analysis_ref: str
+    limitations: list[str] = Field(default_factory=list)
+    event_markers: list[FrontendAnalysisDataMarker]
+    event_distribution: list[FrontendAnalysisDataDistribution]
+    target_relative_error_radius: TargetRelativeErrorRadius
 
 PROVIDER_KINDS = Literal["builtin", "custom_openai_compatible"]
 PROVIDER_STATUSES = Literal[

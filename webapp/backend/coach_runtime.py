@@ -280,6 +280,72 @@ def _canonical_analysis_summary(analysis_summary: str | None) -> str | None:
     return serialize_coach_diagnostic_context(canonical)
 
 
+_TEACHING_TURN_ALLOWED_KEYS = {
+    "schema_version", "session_ref", "session_version", "phase", "observation",
+    "primary_candidate", "alternatives", "cue", "changed_variable",
+    "active_item_ref", "question_kind", "question", "allowed_command", "confirmation_intent",
+    "retest", "ratio_sources", "approved_dose", "prepared_plan_ref", "prepared_item",
+    "next_recommendation",
+}
+_TEACHING_TURN_FORBIDDEN_KEY = re.compile(
+    r"(?:^|_)(?:path|file|raw|trace|payload|secret|token|credential|authorization|"
+    r"owner|user_id|endpoint|url|api_key|password)(?:_|$)",
+    re.IGNORECASE,
+)
+_TEACHING_TURN_UNSAFE_VALUE = re.compile(
+    r"(?:[A-Za-z]:[\\/]|\\\\|file:|https?://|\bbearer\s+\S+|"
+    r"\bsk-[A-Za-z0-9_-]{8,})",
+    re.IGNORECASE,
+)
+_TEACHING_TURN_MAX_BYTES = 12_000
+_TEACHING_TURN_MAX_STRING_LENGTH = 4_000
+_TEACHING_TURN_MAX_DEPTH = 6
+_TEACHING_TURN_MAX_ITEMS = 32
+
+
+def normalize_teaching_turn(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Keep the Python bridge limited to a safe TeachingTurnContract envelope."""
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise CoachRuntimeError("teaching_turn 必须是对象")
+    unknown = set(value) - _TEACHING_TURN_ALLOWED_KEYS
+    if unknown:
+        raise CoachRuntimeError("teaching_turn 包含未知字段")
+
+    def normalize(item: Any, depth: int = 0) -> Any:
+        if depth > _TEACHING_TURN_MAX_DEPTH:
+            raise CoachRuntimeError("teaching_turn 嵌套过深")
+        if item is None or isinstance(item, (bool, int, float)):
+            return item
+        if isinstance(item, str):
+            if len(item) > _TEACHING_TURN_MAX_STRING_LENGTH:
+                raise CoachRuntimeError("teaching_turn 字符串过长")
+            if _TEACHING_TURN_UNSAFE_VALUE.search(item):
+                raise CoachRuntimeError("teaching_turn 包含不安全内容")
+            return item
+        if isinstance(item, Mapping):
+            if len(item) > _TEACHING_TURN_MAX_ITEMS:
+                raise CoachRuntimeError("teaching_turn 对象过大")
+            normalized: dict[str, Any] = {}
+            for key, child in item.items():
+                if not isinstance(key, str) or len(key) > 64 or _TEACHING_TURN_FORBIDDEN_KEY.search(key):
+                    raise CoachRuntimeError("teaching_turn 包含不安全字段")
+                normalized[key] = normalize(child, depth + 1)
+            return normalized
+        if isinstance(item, (list, tuple)):
+            if len(item) > _TEACHING_TURN_MAX_ITEMS:
+                raise CoachRuntimeError("teaching_turn 列表过大")
+            return [normalize(child, depth + 1) for child in item]
+        raise CoachRuntimeError("teaching_turn 包含不支持的值")
+
+    normalized = normalize(value)
+    encoded = json.dumps(normalized, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > _TEACHING_TURN_MAX_BYTES:
+        raise CoachRuntimeError("teaching_turn 过大")
+    return normalized
+
+
 def _build_turn_request(
     *,
     schema_version: str,
@@ -289,15 +355,21 @@ def _build_turn_request(
     analysis_summary: str | None,
     system_prompt: str | None,
     tool_bridge: Mapping[str, Any] | None = None,
+    teaching_turn: Mapping[str, Any] | None = None,
     run_id: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
+    from .coach_commands import redact_temporary_steam_profiles
+
     normalized_messages: list[dict[str, str]] = []
     for m in messages:
         role = m.get("role")
         content = m.get("content")
         if role not in ("user", "assistant", "system") or not isinstance(content, str):
             raise CoachRuntimeError("messages 项须含 role(user|assistant|system) 与 content 字符串")
-        normalized_messages.append({"role": role, "content": content})
+        normalized_messages.append({
+            "role": role,
+            "content": redact_temporary_steam_profiles(content),
+        })
     if not normalized_messages:
         raise CoachRuntimeError("messages 不能为空")
 
@@ -315,6 +387,11 @@ def _build_turn_request(
     }
     if system_prompt is not None:
         payload["system_prompt"] = system_prompt
+    normalized_teaching_turn = normalize_teaching_turn(teaching_turn)
+    if normalized_teaching_turn is not None:
+        if schema_version != COACH_RUNTIME_TURN_SCHEMA_V1:
+            raise CoachRuntimeError("teaching_turn 仅支持 selected Provider turn")
+        payload["teaching_turn"] = normalized_teaching_turn
     normalized_bridge, bridge_secrets = _normalize_tool_bridge(tool_bridge)
     if normalized_bridge is not None:
         payload["tool_bridge"] = normalized_bridge
@@ -398,7 +475,7 @@ def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
         raise CoachRuntimeError("unsafe knowledge event value")
     expected_keys = (
         _KNOWLEDGE_EVENT_KEYS_V2
-        if registry_version == "2026-07-22.v2"
+        if registry_version in {"2026-07-22.v2", "2026-07-28.v3", "2026-07-29.v4"}
         else _KNOWLEDGE_EVENT_KEYS_V1
     )
     if set(value) != expected_keys:
@@ -493,7 +570,7 @@ def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
             "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
             "stop_adjust_rule",
         ):
-            value = entry[name]
+            value = entry.get(name)
             if isinstance(value, Mapping):
                 sections.append(value)
             elif isinstance(value, list):
@@ -640,6 +717,7 @@ def _validate_turn_response(
     response: Mapping[str, Any],
     *,
     expected_schema: str,
+    expected_run_id: str | None = None,
     exit_code: int | None = None,
     secrets: Sequence[str] = (),
 ) -> PiCoachTurnResult:
@@ -652,6 +730,12 @@ def _validate_turn_response(
     if response.get("schema_version") != expected_schema:
         raise CoachRuntimeError(
             f"不支持的 schema_version: {response.get('schema_version')!r}"
+        )
+    if expected_run_id is not None and response.get("run_id") != expected_run_id:
+        raise CoachRuntimeError(
+            "coach-runtime run_id does not match the active turn",
+            error_code="turn_mismatch",
+            retryable=False,
         )
     tool_events = _validate_tool_events(response.get("tool_events"))
     if not response.get("ok"):
@@ -926,6 +1010,7 @@ def run_pi_coach_turn(
     profile: Mapping[str, Any] | None = None,
     system_prompt: str | None = None,
     tool_bridge: Mapping[str, Any] | None = None,
+    teaching_turn: Mapping[str, Any] | None = None,
     return_result: bool = False,
     timeout_s: int | None = None,
 ) -> str | PiCoachTurnResult:
@@ -943,6 +1028,7 @@ def run_pi_coach_turn(
         analysis_summary=analysis_summary,
         system_prompt=system_prompt,
         tool_bridge=tool_bridge,
+        teaching_turn=teaching_turn,
     )
     timeout = timeout_s if timeout_s is not None else COACH_RUNTIME_TIMEOUT_SECONDS
 
@@ -1002,6 +1088,7 @@ async def run_pi_coach_turn_async(
     profile: Mapping[str, Any] | None = None,
     system_prompt: str | None = None,
     tool_bridge: Mapping[str, Any] | None = None,
+    teaching_turn: Mapping[str, Any] | None = None,
     run_id: str | None = None,
     timeout_s: int | None = None,
 ) -> PiCoachTurnResult:
@@ -1018,6 +1105,7 @@ async def run_pi_coach_turn_async(
         analysis_summary=analysis_summary,
         system_prompt=system_prompt,
         tool_bridge=tool_bridge,
+        teaching_turn=teaching_turn,
         run_id=run_id,
     )
     timeout = timeout_s if timeout_s is not None else COACH_RUNTIME_TIMEOUT_SECONDS
@@ -1041,6 +1129,7 @@ async def run_pi_coach_turn_async(
     return _validate_turn_response(
         response,
         expected_schema=schema_version,
+        expected_run_id=request["run_id"] if run_id is not None else None,
         exit_code=exit_code,
         secrets=secrets,
     )
