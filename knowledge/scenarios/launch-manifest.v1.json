@@ -1,6 +1,6 @@
 {
   "schema_version": "launch_scenario_manifest.v1",
-  "manifest_version": "2026-07-23.v1",
+  "manifest_version": "2026-07-28.v1",
   "entries": [
     {
       "scenario_hash": "b2ae4a24b710e36afc6e57c61f590ab4",
@@ -10,6 +10,39 @@
       "reviewed_at": "2026-07-23T00:00:00Z",
       "family_gate_refs": [
         "gate:temporal-csrt-single-target-tracking.v1"
+      ],
+      "status": "active"
+    },
+    {
+      "scenario_hash": "7378a811f430b6072d052a75896afb98",
+      "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+      "fixture_ref": "fixture:1wall-6targets-small-static.v1",
+      "review_source_ref": "review:1wall-6targets-small-static-input-native",
+      "reviewed_at": "2026-07-27T00:00:00Z",
+      "family_gate_refs": [
+        "gate:static-input-native-evidence.v1"
+      ],
+      "status": "active"
+    },
+    {
+      "scenario_hash": "a37d2ba4f3f33d59ae7018e37445a5e9",
+      "scenario_profile_ref": "scenario:dynamic.pasu_small_reload@1",
+      "fixture_ref": "fixture:pasu-small-reload-dynamic.v1",
+      "review_source_ref": "review:pasu-small-reload-dynamic-split",
+      "reviewed_at": "2026-07-27T00:00:00Z",
+      "family_gate_refs": [
+        "gate:pasu-small-reload-visual-split.v1"
+      ],
+      "status": "active"
+    },
+    {
+      "scenario_hash": "3b42bdfd38a6b194737d650f3f53e8c1",
+      "scenario_profile_ref": "scenario:switching.beants_larger@1",
+      "fixture_ref": "fixture:beants-larger-switching.v1",
+      "review_source_ref": "review:beants-larger-switching-calibration-holdout",
+      "reviewed_at": "2026-07-28T00:00:00Z",
+      "family_gate_refs": [
+        "gate:beants-larger-event-local-episodes.v1"
       ],
       "status": "active"
     }

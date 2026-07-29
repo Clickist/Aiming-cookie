@@ -34,9 +34,20 @@ def _contribution(*, value: float, confidence: str = "high") -> dict:
 def _partial_analysis_result() -> dict:
     return {
         "schema_version": "analysis_result.v2",
+        "analysis_version": "continuous_tracking.v1",
         "scenario": {
             "scenario_profile_ref": "scenario:tracking.whj@1",
+            "aim_family": "continuous_tracking",
+            "analyzer_refs": ["continuous_tracking.v1"],
             "support_status": "partial",
+        },
+        "input_snapshot": {
+            "scenario_resolution": {
+                "scenario_profile_ref": "scenario:tracking.whj@1",
+                "aim_family": "continuous_tracking",
+                "allowed_analyzers": ["continuous_tracking.v1"],
+                "allowed_metric_families": ["continuous_tracking"],
+            },
         },
         "deterministic": {
             "support_status": "partial",
@@ -79,6 +90,139 @@ def test_partial_analysis_projects_each_available_metric_without_whole_result_ga
     assert payload["dimensions"][0]["confidence"] == "medium"
 
 
+def test_native_static_metrics_project_to_namespaced_profile_dimensions():
+    result = {
+        "schema_version": "analysis_result.v2",
+        "analysis_version": "native_flicking.v1",
+        "scenario": {
+            "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+            "aim_family": "static_clicking",
+            "analyzer_refs": ["native_flicking.v1"],
+            "support_status": "supported",
+        },
+        "input_snapshot": {
+            "scenario_resolution": {
+                "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+                "aim_family": "static_clicking",
+                "allowed_analyzers": ["native_flicking.v1"],
+                "allowed_metric_families": ["input_kinematics", "static_clicking"],
+            },
+        },
+        "deterministic": {
+            "support_status": "supported",
+            "metrics": {
+                "corrective_count": {
+                    "value": 2.0,
+                    "unit": "count",
+                    "availability": "available",
+                    "classification": "deterministic",
+                    "metric_version": "native_flicking.v1",
+                    "coverage": 1.0,
+                    "limitations": [],
+                    "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                },
+                "peak_speed": {
+                    "value": 2_000.0,
+                    "unit": "raw_counts_per_second",
+                    "availability": "available",
+                    "classification": "deterministic",
+                    "metric_version": "native_flicking.v1",
+                    "coverage": 1.0,
+                    "limitations": [],
+                    "provenance": {"kind": "derived", "sources": ["raw_input"]},
+                },
+            },
+        },
+        "evidence": {
+            "derived_artifact": {"artifact_ref": "analysis:9:evidence:1"},
+        },
+    }
+
+    payload = store.build_contribution_from_analysis_result(result)
+
+    assert payload is not None
+    assert [item["dimension_key"] for item in payload["dimensions"]] == [
+        "static_clicking.corrective_count",
+        "static_clicking.peak_speed",
+    ]
+    assert [item["metric_ref"] for item in payload["dimensions"]] == [
+        "metric:static_clicking.corrective_count@native_flicking.v1",
+        "metric:static_clicking.peak_speed@native_flicking.v1",
+    ]
+
+    wrong_family = copy.deepcopy(result)
+    wrong_family["scenario"]["aim_family"] = "dynamic_clicking"
+    wrong_family["scenario"]["scenario_profile_ref"] = "scenario:dynamic.fixture@1"
+    assert store.build_contribution_from_analysis_result(wrong_family) is None
+
+
+def test_profile_projection_rejects_metric_family_not_allowed_by_frozen_scenario():
+    result = {
+        "schema_version": "analysis_result.v2",
+        "analysis_version": "native_flicking.v1",
+        "scenario": {
+            "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+            "aim_family": "static_clicking",
+            "analyzer_refs": ["native_flicking.v1"],
+            "support_status": "supported",
+        },
+        "input_snapshot": {
+            "scenario_resolution": {
+                "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+                "aim_family": "static_clicking",
+                "allowed_analyzers": ["native_flicking.v1"],
+                "allowed_metric_families": ["static_clicking"],
+            },
+        },
+        "deterministic": {
+            "support_status": "supported",
+            "metrics": {
+                "target_switching.transition_time_ms": {
+                    "value": 120.0,
+                    "unit": "ms",
+                    "availability": "available",
+                    "classification": "deterministic",
+                    "metric_version": "target_switching.v1",
+                    "coverage": 1.0,
+                    "limitations": [],
+                    "provenance": {"kind": "derived"},
+                },
+            },
+        },
+        "evidence": {
+            "derived_artifact": {"artifact_ref": "analysis:1:evidence:1"},
+        },
+    }
+
+    assert store.build_contribution_from_analysis_result(result) is None
+
+
+def test_profile_projection_requires_frozen_scenario_resolution():
+    result = _partial_analysis_result()
+    result.pop("input_snapshot")
+
+    assert store.build_contribution_from_analysis_result(result) is None
+
+
+def test_profile_projection_ignores_unknown_metrics_before_family_gate():
+    result = _partial_analysis_result()
+    result["deterministic"]["metrics"]["future_metric_without_contract"] = {
+        "value": 1.0,
+        "unit": "count",
+        "metric_version": "future.v1",
+        "availability": "available",
+        "classification": "deterministic",
+        "provenance": {"kind": "derived"},
+    }
+
+    payload = store.build_contribution_from_analysis_result(result)
+
+    assert payload is not None
+    assert [item["dimension_key"] for item in payload["dimensions"]] == [
+        "continuous_tracking.target_relative_error_px",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_deterministic_contributions_are_owner_scoped_idempotent_and_materialize_trends():
     first = await store.record_deterministic_contribution(
@@ -99,7 +243,8 @@ async def test_deterministic_contributions_are_owner_scoped_idempotent_and_mater
     profile = await store.get_profile_snapshot("owner-a")
     dimension = profile["dimensions"][0]
     assert dimension["current_metric_value"] == 0.6
-    assert dimension["trend_direction"] == "improving"
+    assert dimension["trend_direction"] == "unknown"
+    assert dimension["limitations"] == ["metric_change_policy_missing"]
     assert dimension["supporting_metric_refs"] == ["metric:terminal_control"]
     assert dimension["counterexample_refs"] == ["evidence:counterexample-1"]
     assert dimension["candidate_hypothesis_refs"] == ["diagnosis:late-correction@2"]

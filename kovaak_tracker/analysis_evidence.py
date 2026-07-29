@@ -1058,6 +1058,304 @@ def validate_outcome_association_rule_binding_v1(value: object) -> dict:
     return _validate_outcome_rule_binding_v1(value, 0)
 
 
+def _validate_continuous_lg_track_predicate(value: object, path: str) -> dict:
+    _expect_exact(
+        value,
+        {
+            "identity_status", "max_sample_gap_ms", "require_inner_hitbox",
+            "hitbox_inset_px", "minimum_sample_confidence",
+            "minimum_candidate_time_margin_ms",
+        },
+        path,
+    )
+    if value["identity_status"] != "stable":
+        raise ValueError("continuous LG rule requires stable target identity")
+    max_gap = _finite_number(
+        f"{path}.max_sample_gap_ms", value["max_sample_gap_ms"], integer=True,
+    )
+    inset = _finite_number(f"{path}.hitbox_inset_px", value["hitbox_inset_px"])
+    confidence = _ratio(
+        f"{path}.minimum_sample_confidence", value["minimum_sample_confidence"],
+    )
+    candidate_margin = _finite_number(
+        f"{path}.minimum_candidate_time_margin_ms",
+        value["minimum_candidate_time_margin_ms"],
+        integer=True,
+    )
+    if (
+        max_gap < 0
+        or inset < 0
+        or candidate_margin < 0
+        or value["require_inner_hitbox"] is not True
+        or confidence != 1.0
+    ):
+        raise ValueError("continuous LG rule track predicate is invalid")
+    return copy.deepcopy(value)
+
+
+def validate_continuous_lg_rule_binding_v1(value: object) -> dict:
+    """Validate the independent contract for one held LG interval and many kills."""
+    path = "continuous_lg_rule_binding"
+    fields = {
+        "schema_version", "rule_ref", "rule_sha256", "scenario_profile_ref",
+        "canonical_timebase_version", "raw_hold_extractor_version",
+        "stats_parser_version", "outcome_semantics", "weapon_temporal_model",
+        "maximum_post_release_outcome_ms",
+        "track_predicate", "visual_quality_profile_ref", "fixture_set_ref",
+        "annotation_set_ref",
+    }
+    _expect_exact(value, fields, path)
+    if value["schema_version"] != "continuous_lg_kill_chain_rule_binding.v1":
+        raise UnsupportedEvidenceContractVersion(value["schema_version"])
+    for field in (
+        "rule_ref", "scenario_profile_ref", "visual_quality_profile_ref",
+        "fixture_set_ref", "annotation_set_ref",
+    ):
+        _safe_ref(f"{path}.{field}", value[field])
+    for field in (
+        "canonical_timebase_version", "raw_hold_extractor_version",
+        "stats_parser_version",
+    ):
+        _safe_token(f"{path}.{field}", value[field])
+    if value["raw_hold_extractor_version"] != "raw-left-held-interval.v1":
+        raise ValueError("continuous LG rule raw hold extractor is unsupported")
+    if value["outcome_semantics"] != "continuous_lg_kill_chain":
+        raise ValueError("continuous LG rule semantics are unsupported")
+    if value["weapon_temporal_model"] != "hitscan":
+        raise ValueError("continuous LG rule must be hitscan")
+    maximum_post_release = _finite_number(
+        f"{path}.maximum_post_release_outcome_ms",
+        value["maximum_post_release_outcome_ms"],
+        integer=True,
+    )
+    if not 0 <= maximum_post_release <= 100:
+        raise ValueError("continuous LG post-release outcome window is invalid")
+    _validate_continuous_lg_track_predicate(value["track_predicate"], f"{path}.track_predicate")
+    digest = value["rule_sha256"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("continuous LG rule digest is invalid")
+    digest_payload = {
+        key: copy.deepcopy(child)
+        for key, child in value.items()
+        if key != "rule_sha256"
+    }
+    if _canonical_sha256(digest_payload) != digest:
+        raise ValueError("continuous LG rule digest mismatch")
+    _assert_safe_json(value)
+    return copy.deepcopy(value)
+
+
+def _validate_continuous_lg_event(
+    value: object,
+    *,
+    path: str,
+) -> tuple[str, dict]:
+    _expect_exact(
+        value,
+        {
+            "event_id", "event_kind", "start_ms", "end_ms", "source_refs",
+            "confidence", "attributes", "limitations",
+        },
+        path,
+    )
+    event_id = _safe_ref(f"{path}.event_id", value["event_id"])
+    kind = value["event_kind"]
+    if kind not in {"input_hold", "kill"}:
+        raise ValueError("continuous LG event kind is invalid")
+    start = _finite_number(f"{path}.start_ms", value["start_ms"], integer=True)
+    end = _finite_number(f"{path}.end_ms", value["end_ms"], integer=True)
+    if start < 0 or end < start or (kind == "input_hold" and end <= start):
+        raise ValueError("continuous LG event interval is invalid")
+    if kind == "kill" and end != start:
+        raise ValueError("continuous LG kill must be instantaneous")
+    sources = _stable_refs(f"{path}.source_refs", value["source_refs"], allow_empty=False)
+    if _ratio(f"{path}.confidence", value["confidence"]) != 1.0:
+        raise ValueError("continuous LG event confidence is invalid")
+    attributes = value["attributes"]
+    if not isinstance(attributes, dict):
+        raise ValueError("continuous LG event attributes must be a dict")
+    if kind == "input_hold":
+        if attributes:
+            raise ValueError("continuous LG held interval has unexpected attributes")
+    else:
+        if set(attributes) - {"kill_index", "shots", "hits", "overshots"}:
+            raise ValueError("continuous LG kill attributes are invalid")
+        for field, number in attributes.items():
+            if isinstance(number, bool) or not isinstance(number, int) or number < 0:
+                raise ValueError("continuous LG kill attribute is invalid")
+    if _safe_string_list(f"{path}.limitations", value["limitations"]):
+        raise ValueError("continuous LG event limitations are not replayable")
+    return event_id, {
+        "event_kind": kind,
+        "start_ms": start,
+        "end_ms": end,
+        "source_refs": sources,
+    }
+
+
+def validate_continuous_lg_event_bundle_v1(value: object) -> dict:
+    """Validate held-LG kill associations without reusing one-shot semantics."""
+    _expect_exact(
+        value,
+        {
+            "schema_version", "analysis_ref", "rule_binding", "events",
+            "outcome_associations",
+        },
+        "continuous_lg_event_bundle",
+    )
+    if value["schema_version"] != "continuous_lg_event_bundle.v1":
+        raise UnsupportedEvidenceContractVersion(value["schema_version"])
+    analysis_ref = _safe_ref("continuous_lg_event_bundle.analysis_ref", value["analysis_ref"])
+    binding = validate_continuous_lg_rule_binding_v1(value["rule_binding"])
+    events = value["events"]
+    if not isinstance(events, list) or not events or len(events) > _MAX_LIST:
+        raise ValueError("continuous LG events must be a non-empty bounded list")
+    events_by_id: dict[str, dict] = {}
+    for index, event in enumerate(events):
+        event_id, normalized = _validate_continuous_lg_event(
+            event, path=f"continuous_lg_event_bundle.events[{index}]",
+        )
+        if event_id in events_by_id:
+            raise ValueError("continuous LG event ids must be unique")
+        events_by_id[event_id] = normalized
+    associations = value["outcome_associations"]
+    if not isinstance(associations, list) or not associations or len(associations) > _MAX_LIST:
+        raise ValueError("continuous LG associations must be a non-empty bounded list")
+    association_ids: set[str] = set()
+    outcome_refs: set[str] = set()
+    referenced_kills: set[str] = set()
+    association_fields = {
+        "association_id", "held_interval_ref", "outcome_event_ref",
+        "target_track_ref", "weapon_temporal_model", "association_kind",
+        "source_refs", "validation", "confidence", "availability", "limitations",
+    }
+    validation_fields = {
+        "schema_version", "rule_ref", "rule_sha256", "scenario_profile_ref",
+        "canonical_time_window_ref", "raw_input_source_ref", "stats_source_ref",
+        "visual_source_ref", "visual_quality_profile_ref",
+        "held_interval_start_ms", "held_interval_end_ms", "outcome_time_ms",
+        "geometric_candidate_count", "track_check",
+    }
+    track_check_fields = {
+        "identity_status", "sample_gap_ms", "sample_confidence",
+        "center_distance_px", "effective_radius_px",
+    }
+    for index, association in enumerate(associations):
+        path = f"continuous_lg_event_bundle.outcome_associations[{index}]"
+        _expect_exact(association, association_fields, path)
+        association_id = _safe_ref(f"{path}.association_id", association["association_id"])
+        if association_id in association_ids:
+            raise ValueError("continuous LG association ids must be unique")
+        association_ids.add(association_id)
+        held_ref = _safe_ref(f"{path}.held_interval_ref", association["held_interval_ref"])
+        outcome_ref = _safe_ref(f"{path}.outcome_event_ref", association["outcome_event_ref"])
+        target_ref = _safe_ref(f"{path}.target_track_ref", association["target_track_ref"])
+        if not target_ref.startswith(f"{analysis_ref}:target-track:") or not _TARGET_TRACK_SUFFIX_RE.fullmatch(
+            target_ref[len(f"{analysis_ref}:target-track:"):]
+        ):
+            raise ValueError("continuous LG target track is not analysis-bound")
+        if events_by_id.get(held_ref, {}).get("event_kind") != "input_hold":
+            raise ValueError("continuous LG held interval is unreachable")
+        if events_by_id.get(outcome_ref, {}).get("event_kind") != "kill":
+            raise ValueError("continuous LG outcome must reference a kill")
+        if outcome_ref in outcome_refs:
+            raise ValueError("continuous LG outcomes must be unique")
+        outcome_refs.add(outcome_ref)
+        referenced_kills.add(outcome_ref)
+        if (
+            association["weapon_temporal_model"] != "hitscan"
+            or association["association_kind"] != "validated_continuous_lg"
+            or association["availability"] != "available"
+            or _ratio(f"{path}.confidence", association["confidence"]) != 1.0
+            or _safe_string_list(f"{path}.limitations", association["limitations"])
+        ):
+            raise ValueError("continuous LG association state is invalid")
+        source_refs = _stable_refs(f"{path}.source_refs", association["source_refs"], allow_empty=False)
+        validation = association["validation"]
+        _expect_exact(validation, validation_fields, f"{path}.validation")
+        if validation["schema_version"] != "continuous_lg_outcome_association_validation.v1":
+            raise UnsupportedEvidenceContractVersion(validation["schema_version"])
+        if (
+            validation["rule_ref"] != binding["rule_ref"]
+            or validation["rule_sha256"] != binding["rule_sha256"]
+            or validation["scenario_profile_ref"] != binding["scenario_profile_ref"]
+            or validation["visual_quality_profile_ref"] != binding["visual_quality_profile_ref"]
+        ):
+            raise ValueError("continuous LG association rule binding is unavailable")
+        for field in (
+            "canonical_time_window_ref", "raw_input_source_ref", "stats_source_ref",
+            "visual_source_ref",
+        ):
+            _safe_ref(f"{path}.validation.{field}", validation[field])
+        if validation["canonical_time_window_ref"] != f"{analysis_ref}:canonical-window":
+            raise ValueError("continuous LG canonical window is invalid")
+        held_event = events_by_id[held_ref]
+        outcome_event = events_by_id[outcome_ref]
+        held_start = _finite_number(
+            f"{path}.validation.held_interval_start_ms",
+            validation["held_interval_start_ms"], integer=True,
+        )
+        held_end = _finite_number(
+            f"{path}.validation.held_interval_end_ms",
+            validation["held_interval_end_ms"], integer=True,
+        )
+        outcome_time = _finite_number(
+            f"{path}.validation.outcome_time_ms", validation["outcome_time_ms"], integer=True,
+        )
+        if (
+            (held_start, held_end) != (held_event["start_ms"], held_event["end_ms"])
+            or outcome_time != outcome_event["start_ms"]
+            or not held_start <= outcome_time <= (
+                held_end + binding["maximum_post_release_outcome_ms"]
+            )
+        ):
+            raise ValueError("continuous LG association timing is invalid")
+        if validation["geometric_candidate_count"] != 1:
+            raise ValueError("continuous LG geometric candidate is not unique")
+        track_check = validation["track_check"]
+        _expect_exact(track_check, track_check_fields, f"{path}.validation.track_check")
+        if track_check["identity_status"] != "stable":
+            raise ValueError("continuous LG target identity is unstable")
+        if _finite_number(
+            f"{path}.validation.track_check.sample_gap_ms",
+            track_check["sample_gap_ms"], integer=True,
+        ) > binding["track_predicate"]["max_sample_gap_ms"]:
+            raise ValueError("continuous LG sample gap is invalid")
+        if _ratio(
+            f"{path}.validation.track_check.sample_confidence",
+            track_check["sample_confidence"],
+        ) != 1.0:
+            raise ValueError("continuous LG sample confidence is invalid")
+        center_distance = _finite_number(
+            f"{path}.validation.track_check.center_distance_px",
+            track_check["center_distance_px"],
+        )
+        effective_radius = _finite_number(
+            f"{path}.validation.track_check.effective_radius_px",
+            track_check["effective_radius_px"],
+        )
+        if effective_radius <= 0 or center_distance > effective_radius:
+            raise ValueError("continuous LG target geometry is invalid")
+        required_sources = {
+            validation["raw_input_source_ref"], validation["stats_source_ref"],
+            validation["visual_source_ref"],
+        }
+        if (
+            not required_sources <= set(source_refs)
+            or validation["raw_input_source_ref"] not in held_event["source_refs"]
+            or validation["stats_source_ref"] not in outcome_event["source_refs"]
+        ):
+            raise ValueError("continuous LG association sources are incomplete")
+    kill_refs = {
+        event_id for event_id, event in events_by_id.items()
+        if event["event_kind"] == "kill"
+    }
+    if referenced_kills != kill_refs:
+        raise ValueError("continuous LG kill association is incomplete")
+    _assert_safe_json(value)
+    return copy.deepcopy(value)
+
+
 def validate_event_bundle_v2(
     value: object, *, registry: EvidenceKeyRegistry | None = None,
 ) -> dict:
@@ -1284,6 +1582,8 @@ def validate_event_bundle(
         return validate_event_bundle_v1(value, registry=registry)
     if version == "event_bundle.v2":
         return validate_event_bundle_v2(value, registry=registry)
+    if version == "continuous_lg_event_bundle.v1":
+        return validate_continuous_lg_event_bundle_v1(value)
     raise UnsupportedEvidenceContractVersion(version)
 
 
@@ -1936,7 +2236,9 @@ def _validate_analysis_evidence_artifact(
             ):
                 raise ValueError("outcome association target track ref is not reachable")
             validation = association.get("validation")
-            if association["association_kind"] != "validated_aligned":
+            if association["association_kind"] not in {
+                "validated_aligned", "validated_continuous_lg",
+            }:
                 continue
             track_id = target_ref[len(f"{analysis_ref}:target-track:"):]
             if (
@@ -3333,6 +3635,8 @@ __all__ = [
     "validate_analysis_evidence_artifact", "validate_analysis_evidence_artifact_v1",
     "validate_analysis_evidence_artifact_v2", "validate_canonical_run_facts_v1",
     "validate_event_bundle", "validate_event_bundle_v1", "validate_event_bundle_v2",
+    "validate_continuous_lg_event_bundle_v1",
+    "validate_continuous_lg_rule_binding_v1",
     "validate_evidence_segment_v1",
     "validate_metric_record_v1", "validate_normalized_outcome_timeline_v1",
     "validate_processed_event_table_v1",

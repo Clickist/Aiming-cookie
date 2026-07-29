@@ -331,6 +331,31 @@ def load_launch_manifest(
     return validate_launch_manifest(raw, registry=data)
 
 
+def active_scenario_profile_refs(
+    *,
+    registry: Mapping[str, Any] | None = None,
+    manifest: Mapping[str, Any] | None = None,
+) -> set[str]:
+    """Return exact profiles enabled by both the Registry and launch manifest."""
+    data = validate_registry(registry) if registry is not None else load_registry()
+    launch_manifest = (
+        validate_launch_manifest(manifest, registry=data)
+        if manifest is not None
+        else load_launch_manifest(registry=data)
+    )
+    registry_refs = {
+        scenario_profile_ref(entry)
+        for entry in data["entries"]
+        if entry["status"] == "active"
+    }
+    manifest_refs = {
+        entry["scenario_profile_ref"]
+        for entry in launch_manifest["entries"]
+        if entry["status"] == "active"
+    }
+    return registry_refs & manifest_refs
+
+
 def _outcome_only_resolution(
     *,
     scenario_hash: str | None,
@@ -474,6 +499,6 @@ def resolve_scenario_profile(
 
 __all__ = [
     "MANIFEST_PATH", "MANIFEST_SCHEMA_VERSION", "REGISTRY_PATH", "REGISTRY_SCHEMA_VERSION",
-    "RESOLUTION_SCHEMA_VERSION", "ScenarioProfileError", "load_launch_manifest", "load_registry",
+    "RESOLUTION_SCHEMA_VERSION", "ScenarioProfileError", "active_scenario_profile_refs", "load_launch_manifest", "load_registry",
     "resolve_scenario_profile", "scenario_profile_ref", "validate_launch_manifest", "validate_registry",
 ]

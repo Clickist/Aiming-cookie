@@ -677,7 +677,7 @@ def analyze_dynamic_clicking_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
         ]
         if recent_changes:
             change_state = "post_change"
-        condition_ref = f"{analysis_ref}:condition:{motion_class}:{change_state}"
+        condition_ref = f"condition:{motion_class}:{change_state}"
         row = {
             "event_ref": f"{analysis_ref}:dynamic-click:{index}",
             "click_ref": click_ref,

@@ -1,0 +1,59 @@
+{
+  "schema_version": "scenario_activation_fixture.v1",
+  "fixture_version": "pasu-small-reload-dynamic.v1",
+  "scenario_hash": "a37d2ba4f3f33d59ae7018e37445a5e9",
+  "scenario_profile_ref": "scenario:dynamic.pasu_small_reload@1",
+  "source_contracts": {
+    "stats": "kovaak_stats.v2",
+    "performance": "kovaak_performance.v2",
+    "raw_input": "raw_input.v1",
+    "video_mapping": "visual_video_time_mapping.v1"
+  },
+  "visual_gate": {
+    "status": "accepted",
+    "detector_config_ref": "detector-config:sha256:4ab84f03e409d95af53c273253ffca6c778bd908e1a33694ec5423be27923876",
+    "annotation_set_ref": "annotation-set:pasu-small-reload@f7d74af3-72ed691b",
+    "calibration": {
+      "run_ref": "run:1032",
+      "video_sha256": "9a1a62d9469b0f098b79351221b2ca8f58154a20f756f2291f1a0e2932d07791",
+      "ledger_sha256": "f7d74af395d4e85d9d7c3524bc35053a3ba6986a6c0d94213cbce51edeef37ff",
+      "reviewed_frames": 127,
+      "click_windows": 107,
+      "excluded_frames": 79
+    },
+    "untouched_holdout": {
+      "run_ref": "run:1347",
+      "video_sha256": "30aaf3c5cd38a1953f7db415e2f94c768832dc03484cc4830440283235fe643c",
+      "ledger_sha256": "72ed691bd251aa3732a7b301a641db1cf8648d94b08a04919614949967ffd9a7",
+      "reviewed_frames": 125,
+      "click_windows": 106,
+      "excluded_frames": 82,
+      "documented_misses": 1
+    },
+    "validation_results": {
+      "center_error_median_px": 1.032295,
+      "center_error_p95_px": 3.519083,
+      "radius_or_hitbox_error_px": 0.749257,
+      "false_positive_rate": 0.0,
+      "minimum_coverage": 0.992,
+      "identity_switch_rate": null,
+      "occlusion_reentry_accuracy": null
+    }
+  },
+  "outcome_gate": {
+    "status": "unavailable",
+    "production_rule_ref": null,
+    "calibration": {
+      "one_shot_candidates": 22,
+      "strict_inner_hit_matches": 4
+    },
+    "untouched_holdout": {
+      "one_shot_candidates": 16,
+      "strict_inner_hit_matches": 2
+    },
+    "limitations": [
+      "stable_runtime_target_identity_not_demonstrated",
+      "target_state_outcome_claims_disabled"
+    ]
+  }
+}

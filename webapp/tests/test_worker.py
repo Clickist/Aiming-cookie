@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 import pytest
 
+from kovaak_tracker import scenario_profiles
 from webapp.backend import config, db, evidence_store, queue, worker
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
@@ -718,7 +720,7 @@ def test_static_native_artifact_projects_stable_flick_refs_and_ranked_segments(
 
 @pytest.mark.asyncio
 async def test_process_one_happy_path():
-    """claim → run_analysis → run_report(含 narration) → mark_done (v2 envelope)。"""
+    """claim → local analysis/report → mark_done, without Analysis narration."""
     sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
     fake_summary = {"sparc": {"med": -7.5}}
     fake_extras = {
@@ -727,12 +729,11 @@ async def test_process_one_happy_path():
                     "peak_speed_px": 800.0, "duration_s": 0.18}],
         "kill_frames": [18], "corrective_frames": [],
     }
-    fake_report = {"diagnosis": {"x": 1}, "narration": "教练讲解", "notes": []}
+    fake_report = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
 
     with patch("webapp.backend.worker.run_analysis",
                return_value=(fake_summary, fake_extras)), \
          patch("webapp.backend.worker.run_report", return_value=fake_report) as mock_report, \
-         patch("webapp.backend.worker._load_backend", return_value=MagicMock()), \
          patch("webapp.backend.worker._delete_video_safely"):
         handled = await worker.process_one()
 
@@ -741,8 +742,9 @@ async def test_process_one_happy_path():
     assert s["status"] == "done"
     result = s["result"]
     assert result["schema_version"] == ANALYSIS_RESULT_V2_SCHEMA_VERSION
-    assert result["narration"]["status"] == "available"
-    assert result["narration"]["text"] == "教练讲解"
+    assert result["narration"]["status"] == "not_requested"
+    assert result["narration"]["text"] is None
+    assert len(mock_report.call_args.args) == 1
     report_summary = mock_report.call_args.args[0]
     assert report_summary["sparc"]["metric_version"] == (
         "flicking_fair_summary.sparc.v2"
@@ -753,7 +755,7 @@ async def test_process_one_happy_path():
 
 
 @pytest.mark.asyncio
-async def test_video_fallback_narration_uses_selected_profile_not_legacy_provider():
+async def test_video_fallback_does_not_read_or_load_selected_provider():
     sid = await queue.enqueue("owner-selected", "/tmp/v.mp4", "/tmp/s.csv")
     profile = {
         "profile_id": 7,
@@ -765,7 +767,7 @@ async def test_video_fallback_narration_uses_selected_profile_not_legacy_provide
         "credential": {"type": "api_key", "key": "local-only-key"},
     }
     backend = MagicMock(name="selected-backend")
-    fake_report = {"diagnosis": {}, "narration": "selected narration", "notes": []}
+    fake_report = {"diagnosis": {}, "narration": None, "notes": []}
 
     with patch(
         "webapp.backend.provider_store.get_default_runtime_profile",
@@ -777,9 +779,6 @@ async def test_video_fallback_narration_uses_selected_profile_not_legacy_provide
         "webapp.backend.coach_engine.load_backend_for_profile",
         return_value=backend,
     ) as load_selected, patch(
-        "webapp.backend.worker._load_backend",
-        wraps=worker._load_backend,
-    ) as load_selected_adapter, patch(
         "webapp.backend.worker.run_analysis",
         return_value=({}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}),
     ), patch(
@@ -788,13 +787,12 @@ async def test_video_fallback_narration_uses_selected_profile_not_legacy_provide
     ) as run_report:
         assert await worker.process_one() is True
 
-    get_profile.assert_awaited_once_with("owner-selected")
-    load_selected.assert_called_once_with(profile)
-    load_selected_adapter.assert_called_once_with(profile)
-    assert run_report.call_args.args[1] is backend
+    get_profile.assert_not_awaited()
+    load_selected.assert_not_called()
+    assert len(run_report.call_args.args) == 1
     session = await queue.get_session(sid)
-    assert session["result"]["narration"]["status"] == "available"
-    assert session["result"]["narration"]["text"] == "selected narration"
+    assert session["result"]["narration"]["status"] == "not_requested"
+    assert session["result"]["narration"]["text"] is None
     assert session["llm_cost_cny"] == 0.0
 
 
@@ -810,14 +808,13 @@ async def test_process_one_happy_path_writes_analysis_result_v2():
     fake_report = {
         "diagnosis": {"x": 1},
         "figures": {},
-        "narration": "讲解",
+        "narration": None,
         "notes": [],
     }
 
     with patch("webapp.backend.worker.run_analysis",
                return_value=({"a": {"med": 1}}, fake_extras)), \
          patch("webapp.backend.worker.run_report", return_value=fake_report), \
-         patch("webapp.backend.worker._load_backend", return_value=MagicMock()), \
          patch("webapp.backend.worker._delete_video_safely"):
         await worker.process_one()
 
@@ -831,8 +828,8 @@ async def test_process_one_happy_path_writes_analysis_result_v2():
         "fov": {"value": 90.0, "source": "manual_override"},
     }
     assert result["narration"] == {
-        "status": "available",
-        "text": "讲解",
+        "status": "not_requested",
+        "text": None,
         "provider": None,
         "model": None,
         "usage": None,
@@ -892,8 +889,8 @@ async def test_process_one_without_selected_provider_keeps_v2_narration_null():
 
 
 @pytest.mark.asyncio
-async def test_process_one_without_selected_provider_passes_none_to_report():
-    """未选择 Provider → deterministic report 保留，narration 不请求。"""
+async def test_process_one_calls_local_report_without_backend():
+    """The deterministic report has no Provider/backend argument."""
     sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
     fake_report_no_llm = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
 
@@ -911,9 +908,9 @@ async def test_process_one_without_selected_provider_passes_none_to_report():
     assert float(s["llm_cost_cny"]) == 0.0
     assert s["result"]["deterministic"]["timeline"] == []
     assert s["result"]["narration"]["status"] == "not_requested"
-    args, kwargs = mock_report.call_args
-    backend_arg = kwargs.get("backend", args[1] if len(args) > 1 else "MISSING")
-    assert backend_arg is None
+    assert mock_report.call_args.args
+    assert len(mock_report.call_args.args) == 1
+    assert mock_report.call_args.kwargs == {}
 
 
 @pytest.mark.asyncio
@@ -923,7 +920,7 @@ async def test_process_one_normalizes_non_finite_values_before_persisting():
     fake_report = {
         "diagnosis": {"summary": {"sparc": {"med": nan}}},
         "figures": {},
-        "narration": "ok",
+        "narration": None,
         "notes": [],
     }
 
@@ -932,7 +929,6 @@ async def test_process_one_normalizes_non_finite_values_before_persisting():
                                                   "kill_frames": [],
                                                   "corrective_frames": []})), \
          patch("webapp.backend.worker.run_report", return_value=fake_report), \
-         patch("webapp.backend.worker._load_backend", return_value=MagicMock()), \
          patch("webapp.backend.worker._delete_video_safely"):
         await worker.process_one()
 
@@ -1060,9 +1056,7 @@ async def test_run_based_video_fallback_writes_v2_without_raw_provenance(
     with patch(
         "webapp.backend.worker.run_analysis",
         return_value=({}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}),
-    ), patch("webapp.backend.worker.run_report", return_value=fake_report), patch(
-        "webapp.backend.worker._load_backend", side_effect=RuntimeError("offline")
-    ):
+    ), patch("webapp.backend.worker.run_report", return_value=fake_report):
         await worker.process_one()
 
     stored = await queue.get_session(sid)
@@ -1082,10 +1076,8 @@ async def test_run_based_video_fallback_writes_v2_without_raw_provenance(
 
 
 @pytest.mark.asyncio
-async def test_process_one_load_backend_failure_degrades_gracefully():
-    """_load_backend 失败(无 API key 等)→ 降级 backend=None,不 fail job。
-    CV 结果保留, narration unavailable。
-    """
+async def test_process_one_never_loads_narration_backend():
+    """Analysis keeps the deterministic report and never touches Provider setup."""
     sid = await queue.enqueue("u1", "/tmp/v.mp4", "/tmp/s.csv")
     fake_report = {"diagnosis": {"x": 1}, "narration": None, "notes": []}
 
@@ -1093,8 +1085,10 @@ async def test_process_one_load_backend_failure_degrades_gracefully():
                return_value=({"a": {"med": 1}}, {"fps": 60, "flicks": [],
                                                   "kill_frames": [],
                                                   "corrective_frames": []})), \
-         patch("webapp.backend.worker._load_backend",
-               side_effect=RuntimeError("no api key")), \
+         patch("webapp.backend.provider_store.get_default_runtime_profile",
+               new=AsyncMock(side_effect=RuntimeError("must not read"))) as get_profile, \
+         patch("webapp.backend.coach_engine.load_backend_for_profile",
+               side_effect=RuntimeError("must not load")) as load_backend, \
          patch("webapp.backend.worker.run_report",
                return_value=fake_report) as mock_report, \
          patch("webapp.backend.worker._delete_video_safely"):
@@ -1103,11 +1097,11 @@ async def test_process_one_load_backend_failure_degrades_gracefully():
     assert handled is True
     s = await queue.get_session(sid)
     assert s["status"] == "done"
-    assert s["result"]["narration"]["status"] == "unavailable"
+    assert s["result"]["narration"]["status"] == "not_requested"
     assert s["result"]["narration"]["text"] is None
-    args, kwargs = mock_report.call_args
-    backend_arg = kwargs.get("backend", args[1] if len(args) > 1 else "MISSING")
-    assert backend_arg is None
+    assert len(mock_report.call_args.args) == 1
+    get_profile.assert_not_awaited()
+    load_backend.assert_not_called()
 
 
 def test_build_timeline_combines_peaks_correctives_kills():
@@ -1185,7 +1179,6 @@ async def test_process_one_heartbeats_during_analysis():
          patch("webapp.backend.worker.run_analysis", side_effect=slow_analysis), \
          patch("webapp.backend.worker.run_report",
                return_value={"diagnosis": {}, "narration": None, "notes": []}), \
-         patch("webapp.backend.worker._load_backend", return_value=None), \
          patch("webapp.backend.queue.heartbeat", side_effect=counting_hb):
         await worker.process_one()
 
@@ -1338,7 +1331,7 @@ def _scenario_resolution(
         "allowed_metric_families": (
             ["dynamic_clicking"]
             if aim_family == "dynamic_clicking"
-            else ["input_kinematics"]
+            else ["input_kinematics", "static_clicking"]
         ) if listed else [],
         "claim_ceiling": "family_specific" if active else "outcome_only",
         "family_analyzer_dispatch": dispatch,
@@ -1499,7 +1492,7 @@ def _switching_visual_summary(*, enabled: bool) -> dict:
         "visual_quality_profile_ref": "visual-profile:switching-fixture.v1",
         "quality": {
             "status": "accepted" if enabled else "limited",
-            "enabled_metric_families": ["switching"] if enabled else [],
+            "enabled_metric_families": ["target_switching"] if enabled else [],
             "limitations": [] if enabled else ["fixture_quality_gate"],
         },
         "safe_summary": {
@@ -1507,7 +1500,7 @@ def _switching_visual_summary(*, enabled: bool) -> dict:
             "status": "available",
             "quality_status": "accepted" if enabled else "limited",
             "producer_version": "fixture_detector.v1",
-            "enabled_metric_families": ["switching"] if enabled else [],
+            "enabled_metric_families": ["target_switching"] if enabled else [],
             "track_count": 3,
             "observation_count": 10,
             "target_coverage": 1.0,
@@ -2013,8 +2006,29 @@ def test_real_native_metrics_feed_deterministic_explanation_contract():
     assert issue["metric_refs"] == ["decel_frac"]
     assert issue["event_refs"] == ["flick:1"]
     assert issue["limitations"] == ["threshold_requires_product_calibration"]
-    assert issue["prescriptions"][0]["target_metrics"] == ["decel_frac"]
+    assert "root_causes" not in issue and "prescriptions" not in issue
+    assert "observation_ref" not in issue
+    assert "knowledge_registry_version" not in issue
+    assert "knowledge_entry_refs" not in issue
     assert deterministic["diagnosis"]["summary"]["decel_frac"]["med"] == pytest.approx(5 / 6)
+
+
+def test_native_projection_keeps_registry_backed_static_issue_without_legacy_teaching_text():
+    diagnosis = worker._native_diagnosis({
+        "reverse_ratio": {
+            "med": 0.30,
+            "metric_version": "native_flicking.reverse_ratio.v1",
+            "sample_refs": ["flick:1"],
+        },
+    })
+
+    issue = diagnosis["issues"][0]
+    assert issue["observation_ref"] == "metric.terminal_control"
+    assert issue["knowledge_registry_version"] == "2026-07-29.v4"
+    assert issue["knowledge_entry_refs"] == [
+        "knowledge:static.flicking-terminal-control@2"
+    ]
+    assert "root_causes" not in issue and "prescriptions" not in issue
 
 
 def test_partial_native_alignment_is_unclassified_and_keeps_metrics_limited():
@@ -2102,11 +2116,24 @@ async def _capture_mode_result(
             raise cv_error
         return cv_result
 
+    async def isolated_cv(*_args, **_kwargs):
+        if cv_error is not None:
+            raise cv_error
+        if cv_result is not None:
+            return cv_result
+        from kovaak_tracker.visual_signals import VisualPreprocessingUnavailable
+
+        raise VisualPreprocessingUnavailable("visual_quality_profile_unavailable")
+
     with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), \
          patch("webapp.backend.queue.claim_next", new=AsyncMock(return_value=job)), \
          patch("webapp.backend.queue.heartbeat", new=AsyncMock(return_value=True)), \
          patch("webapp.backend.queue.mark_done", new=AsyncMock(side_effect=mark_done)), \
          patch("webapp.backend.worker.run_native_analysis", side_effect=native) as native_mock, \
+         patch(
+             "webapp.backend.worker.run_visual_preprocessing_isolated",
+             new=AsyncMock(side_effect=isolated_cv),
+         ), \
          patch("webapp.backend.worker.run_analysis", side_effect=cv) as cv_mock:
         assert await worker.process_one() is True
 
@@ -2263,7 +2290,10 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
     assert issue["claim_level"] == "experimental"
     assert issue["metric_refs"] == ["decel_frac"]
     assert issue["event_refs"] == ["flick:1"]
-    assert issue["prescriptions"][0]["target_metrics"] == ["decel_frac"]
+    assert "root_causes" not in issue and "prescriptions" not in issue
+    assert "observation_ref" not in issue
+    assert "knowledge_registry_version" not in issue
+    assert "knowledge_entry_refs" not in issue
 
 
 @pytest.mark.asyncio
@@ -2500,156 +2530,30 @@ async def test_process_one_active_exact_hash_dispatches_only_frozen_allowed_anal
     assert result["analysis_version"] == "native_flicking.v1"
 
 
-def test_dynamic_dispatch_requires_exact_active_multimodal_analyzer_contract():
+def test_exact_packaged_static_v3_snapshot_dispatches_native_flicking():
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"
-    snapshot["scenario_resolution"] = _scenario_resolution(
-        manifest_status="active",
-        dispatch="allowed",
-        aim_family="dynamic_clicking",
-        allowed_analyzers=["dynamic_clicking.v1"],
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "7378a811f430b6072d052a75896afb98",
+        display_name="1wall 6targets small",
     )
-    job = {"analysis_type": "dynamic_clicking", "input_snapshot": snapshot}
 
-    assert worker._scenario_dispatch(job, "multimodal") == "dynamic_clicking.v1"
-    assert worker._scenario_dispatch(job, "input_native") == "outcome_only"
-    snapshot["scenario_resolution"]["allowed_analyzers"] = ["tracking.v1"]
-    assert worker._scenario_dispatch(job, "multimodal") == "outcome_only"
+    assert worker._scenario_dispatch(
+        {"analysis_type": "flicking", "input_snapshot": snapshot},
+        "input_native",
+    ) == "native_flicking.v1"
 
-
-def test_non_object_native_snapshot_is_a_terminal_input_error():
-    with pytest.raises(
-        worker.SourceSnapshotChangedError,
-        match="unsupported input snapshot",
-    ):
-        worker._scenario_dispatch(
-            {"analysis_type": "flicking", "input_snapshot": None},
-            "input_native",
-        )
-
-
-def test_tracking_dispatch_requires_exact_active_multimodal_analyzer_contract():
-    snapshot = _native_v2_snapshot()
-    snapshot["schema_version"] = "analysis_input_snapshot.v3"
-    snapshot["scenario_resolution"] = _scenario_resolution(
-        manifest_status="active",
-        dispatch="allowed",
-        aim_family="continuous_tracking",
-        allowed_analyzers=["continuous_tracking.v1"],
-    )
-    snapshot["scenario_resolution"]["allowed_metric_families"] = [
-        "continuous_tracking"
-    ]
-    job = {"analysis_type": "continuous_tracking", "input_snapshot": snapshot}
-
-    assert worker._scenario_dispatch(job, "multimodal") == "continuous_tracking.v1"
-    assert worker._scenario_dispatch(job, "input_native") == "outcome_only"
-    snapshot["scenario_resolution"]["allowed_metric_families"] = ["dynamic_clicking"]
-    assert worker._scenario_dispatch(job, "multimodal") == "outcome_only"
-
-
-def test_switching_dispatch_requires_exact_active_multimodal_analyzer_contract():
-    snapshot = _native_v2_snapshot()
-    snapshot["schema_version"] = "analysis_input_snapshot.v3"
-    snapshot["scenario_resolution"] = _scenario_resolution(
-        manifest_status="active",
-        dispatch="allowed",
-        aim_family="target_switching",
-        allowed_analyzers=["target_switching.v1"],
-    )
-    snapshot["scenario_resolution"]["allowed_metric_families"] = [
-        "target_switching"
-    ]
-    job = {"analysis_type": "target_switching", "input_snapshot": snapshot}
-
-    assert worker._scenario_dispatch(job, "multimodal") == "target_switching.v1"
-    assert worker._scenario_dispatch(job, "input_native") == "outcome_only"
-    snapshot["scenario_resolution"]["allowed_analyzers"] = ["continuous_tracking.v1"]
-    assert worker._scenario_dispatch(job, "multimodal") == "outcome_only"
-
-
-def test_switching_worker_adapter_uses_only_stable_identity_and_direct_outcome_chains():
-    snapshot = _native_v2_snapshot()
-    snapshot["schema_version"] = "analysis_input_snapshot.v3"
-    snapshot["canonical_time_window"] = {
-        **snapshot["canonical_time_window"],
-        "start_ms": 0,
-        "end_ms": 300,
-        "duration_ms": 300,
-    }
-    snapshot["scenario_resolution"] = _scenario_resolution(
-        manifest_status="active",
-        dispatch="allowed",
-        aim_family="target_switching",
-        allowed_analyzers=["target_switching.v1"],
-    )
-    snapshot["scenario_resolution"]["allowed_metric_families"] = [
-        "target_switching"
-    ]
-    job = {"id": 124, "input_snapshot": snapshot}
-    samples = [
-        {"canonical_time_ms": time_ms, "x": 0.0, "y": 0.0, "confidence": 1.0}
-        for time_ms in (0, 100, 200)
-    ]
-    visual = {
-        "analysis_ref": "analysis:124",
-        "canonical_time_window": snapshot["canonical_time_window"],
-        "quality": {
-            "status": "accepted",
-            "enabled_metric_families": ["switching"],
-            "limitations": [],
+    metric_restricted = {
+        **snapshot,
+        "scenario_resolution": {
+            **snapshot["scenario_resolution"],
+            "allowed_metric_families": ["input_kinematics"],
         },
-        "local_samples": {
-            "crosshair.position": samples,
-            "target.1.position": [
-                {**sample, "visible_radius": 10.0} for sample in samples
-            ],
-            "target.2.position": [
-                {**sample, "x": 20.0 - sample["canonical_time_ms"] / 10.0,
-                 "visible_radius": 10.0}
-                for sample in samples
-            ],
-        },
-        "track_summaries": [
-            {
-                "track_ref": f"analysis:124:target-track:{track_id}",
-                "identity_source": "detector_ref",
-                "limitations": [],
-            }
-            for track_id in (1, 2)
-        ],
-        "signal_bundle": {"schema_version": "signal_bundle.v1"},
-        "sample_sets": [],
-        "event_bundle": {"schema_version": "event_bundle.v1"},
     }
-    chains = [{"chain_ref": "analysis:124:observed-switch-chain:1"}]
-    captured = {}
-
-    def analyze(payload):
-        captured.update(payload)
-        return {"analysis_version": "target_switching.v1"}
-
-    with patch(
-        "kovaak_tracker.target_switching_analysis.build_switching_chains_from_visual_outcomes_v1",
-        return_value=chains,
-    ) as build_chains, patch(
-        "kovaak_tracker.target_switching_analysis.analyze_target_switching_v1",
-        side_effect=analyze,
-    ):
-        assert worker.run_target_switching_analysis(job, visual) == {
-            "analysis_version": "target_switching.v1"
-        }
-
-    assert captured["chains"] == chains
-    assert captured["visual_quality"]["enabled_metric_families"] == [
-        "target_switching"
-    ]
-    assert all(track["identity_observable"] for track in captured["target_tracks"])
-    assert build_chains.call_args.kwargs["source_event_bundle"] is visual["event_bundle"]
-
-    visual["track_summaries"][1]["identity_source"] = "deterministic_proximity"
-    with pytest.raises(ValueError, match="identity"):
-        worker.run_target_switching_analysis(job, visual)
+    assert worker._scenario_dispatch(
+        {"analysis_type": "flicking", "input_snapshot": metric_restricted},
+        "input_native",
+    ) == "outcome_only"
 
 
 def test_tracking_worker_adapter_requires_one_target_and_passes_only_validated_changes():
@@ -2968,7 +2872,8 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
     ), patch(
         "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=object(),
     ), patch(
-        "webapp.backend.worker.run_visual_preprocessing", return_value=visual_result,
+        "webapp.backend.worker.run_visual_preprocessing_isolated",
+        new=AsyncMock(return_value=visual_result),
     ), patch(
         "webapp.backend.worker.run_dynamic_clicking_analysis", dynamic_mock,
     ), patch(
@@ -2989,15 +2894,29 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
     native_mock.assert_not_called()
     if quality_enabled:
         dynamic_mock.assert_called_once_with(job, visual_result, None)
+        assert result["scenario"] == {
+            "scenario_profile_ref": snapshot["scenario_resolution"][
+                "scenario_profile_ref"
+            ],
+            "aim_family": "dynamic_clicking",
+            "analyzer_refs": ["dynamic_clicking.v1"],
+            "support_status": "supported",
+            "limitations": list(dynamic_mock.return_value["limitations"]),
+        }
         assert result["deterministic"]["metrics"][
             "dynamic_clicking.normalized_click_error"
         ]["value"] == pytest.approx(0.9)
         issue = result["deterministic"]["diagnosis"]["issues"][0]
         assert issue["signal"] == "dynamic click error high"
         assert "severity" not in issue and "prescriptions" not in issue
+        assert issue["observation_ref"] == "event.dynamic_click"
+        assert issue["knowledge_registry_version"] == "2026-07-29.v4"
+        assert issue["knowledge_entry_refs"] == [
+            "knowledge:dynamic.click-error-and-acquisition@2"
+        ]
         assert result["deterministic"]["candidate_observations"][0][
             "knowledge_entry_refs"
-        ] == ["knowledge:dynamic.click-error-and-acquisition@1"]
+        ] == ["knowledge:dynamic.click-error-and-acquisition@2"]
         assert "processed_rows" not in json.dumps(result)
     else:
         dynamic_mock.assert_not_called()
@@ -3058,7 +2977,9 @@ async def test_process_one_tracking_uses_only_tracking_analyzer_after_quality_ga
         return True
 
     visual_result = _tracking_visual_summary(enabled=quality_enabled)
-    tracking_mock = MagicMock(return_value=_tracking_analysis_summary())
+    tracking_result = _tracking_analysis_summary() if quality_enabled else None
+    pipeline_mock = AsyncMock(return_value=(visual_result, tracking_result))
+    evidence_mock = AsyncMock(side_effect=lambda _job, result, *_args: result)
     native_mock = MagicMock()
     with patch("webapp.backend.queue.recover_stale_jobs", new=AsyncMock()), patch(
         "webapp.backend.queue.claim_next", new=AsyncMock(return_value=job),
@@ -3069,14 +2990,16 @@ async def test_process_one_tracking_uses_only_tracking_analyzer_after_quality_ga
     ), patch(
         "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=object(),
     ), patch(
-        "webapp.backend.worker.run_visual_preprocessing", return_value=visual_result,
-    ), patch(
-        "webapp.backend.worker.run_continuous_tracking_analysis", tracking_mock,
+        "webapp.backend.worker.run_continuous_tracking_pipeline_isolated",
+        new=pipeline_mock,
     ), patch(
         "webapp.backend.worker.run_native_analysis", native_mock,
     ), patch(
         "webapp.backend.history_trends.matched_tracking_baseline_for_user",
         new=AsyncMock(return_value={"comparable": False, "reason": "no_comparable_baseline"}),
+    ), patch(
+        "webapp.backend.worker.commit_continuous_tracking_evidence_isolated",
+        new=evidence_mock,
     ), patch(
         "webapp.backend.worker._maybe_commit_analysis_evidence",
         side_effect=lambda _job, result, **_kwargs: result,
@@ -3087,15 +3010,21 @@ async def test_process_one_tracking_uses_only_tracking_analyzer_after_quality_ga
     assert result["analysis_version"] == expected_version
     assert result["analysis_type"] == "continuous_tracking"
     native_mock.assert_not_called()
+    pipeline_mock.assert_awaited_once_with(job)
     if quality_enabled:
-        tracking_mock.assert_called_once_with(job, visual_result)
+        evidence_mock.assert_awaited_once_with(
+            job,
+            result,
+            visual_result,
+            tracking_result,
+        )
         assert result["deterministic"]["metrics"][
             "continuous_tracking.target_relative_error_px"
         ]["value"] == 8.0
         assert result["scenario"]["analyzer_refs"] == ["continuous_tracking.v1"]
         assert "processed_rows" not in json.dumps(result)
     else:
-        tracking_mock.assert_not_called()
+        evidence_mock.assert_not_awaited()
         assert result["deterministic"]["metrics"] == {}
         assert result["deterministic"]["limitations"] == [
             "continuous_tracking_visual_quality_unavailable"
@@ -3159,7 +3088,13 @@ async def test_process_one_switching_requires_quality_and_formal_chain(
         return result
 
     visual_result = _switching_visual_summary(enabled=quality_enabled)
+    episode_result = {
+        "schema_version": "visual_target_episode_artifact.v1",
+        "status": "available",
+    }
+    pipeline_mock = AsyncMock(return_value=(visual_result, episode_result))
     switching_mock = MagicMock(return_value=_switching_analysis_summary())
+    frozen_stats = object()
     native_mock = MagicMock()
     baseline_mock = AsyncMock(return_value={
         "comparable": True,
@@ -3175,9 +3110,12 @@ async def test_process_one_switching_requires_quality_and_formal_chain(
     ), patch(
         "webapp.backend.queue.mark_done", new=AsyncMock(side_effect=mark_done),
     ), patch(
-        "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=object(),
+        "webapp.backend.worker._parse_frozen_stats_for_visual", return_value=frozen_stats,
     ), patch(
-        "webapp.backend.worker.run_visual_preprocessing", return_value=visual_result,
+        "webapp.backend.worker.run_target_switching_pipeline_isolated",
+        new=pipeline_mock,
+    ), patch(
+        "webapp.backend.worker._target_switching_production_gate", return_value=True,
     ), patch(
         "webapp.backend.worker.run_target_switching_analysis", switching_mock,
     ), patch(
@@ -3193,12 +3131,15 @@ async def test_process_one_switching_requires_quality_and_formal_chain(
 
     result = completed[0]
     assert len(committed) == 1
+    pipeline_mock.assert_awaited_once_with(job)
     assert committed[0]["visual_result"] == visual_result
     assert result["analysis_version"] == expected_version
     assert result["analysis_type"] == "target_switching"
     native_mock.assert_not_called()
     if quality_enabled:
-        switching_mock.assert_called_once_with(job, visual_result, None)
+        switching_mock.assert_called_once_with(
+            job, visual_result, episode_result, frozen_stats,
+        )
         assert result["deterministic"]["metrics"][
             "target_switching.transition_time_ms"
         ]["value"] == 120.0
@@ -3686,6 +3627,54 @@ def test_reviewed_single_target_tracking_profile_uses_reviewed_legacy_csrt_produ
     }
 
 
+def test_reviewed_dynamic_profile_uses_exact_split_quality_and_hud_mask():
+    producer = worker._REVIEWED_VISUAL_PRODUCERS[
+        "scenario:dynamic.pasu_small_reload@1"
+    ]
+    assert producer["detector_config_ref"] == (
+        "detector-config:sha256:"
+        "4ab84f03e409d95af53c273253ffca6c778bd908e1a33694ec5423be27923876"
+    )
+    assert producer["detector_config"]["excluded_regions"] == [
+        [0.0, 0.0, 0.14, 0.08],
+        [0.44, 0.0, 0.56, 0.12],
+        [0.85, 0.08, 1.0, 0.17],
+        [0.385, 0.765, 0.615, 1.0],
+    ]
+    profile = producer["visual_quality_profile"]
+    assert profile["status"] == "accepted"
+    assert profile["validated_metric_families"] == ["dynamic_clicking"]
+    assert profile["validated_selectors"] == [{
+        "schema_version": "visual_runtime_selector.v1",
+        "scenario_hash": "a37d2ba4f3f33d59ae7018e37445a5e9",
+        "resolution": [1920, 1080],
+        "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+        "fov": 103.0,
+    }]
+    assert profile["validation_results"] == {
+        "center_error_median_px": 1.032295,
+        "center_error_p95_px": 3.519083,
+        "false_positive_rate": 0.0,
+        "identity_switch_rate": None,
+        "minimum_coverage": 0.992,
+        "occlusion_reentry_accuracy": None,
+        "radius_or_hitbox_error_px": 0.749257,
+    }
+    assert profile["required_quality_fields_by_metric_family"] == {
+        "dynamic_clicking": [
+            "center_error_median_px",
+            "center_error_p95_px",
+            "false_positive_rate",
+            "minimum_coverage",
+            "radius_or_hitbox_error_px",
+        ],
+    }
+    assert "identity_continuity_not_observed" in profile["limitations"]
+    assert "holdout_small_target_area_99_below_min_area_100" in profile[
+        "limitations"
+    ]
+
+
 def test_profile_contribution_uses_only_supported_evidence_backed_metrics():
     metric_key = "continuous_tracking.target_relative_error_px"
     result = {
@@ -3694,7 +3683,17 @@ def test_profile_contribution_uses_only_supported_evidence_backed_metrics():
         "analysis_type": "continuous_tracking",
         "scenario": {
             "scenario_profile_ref": "scenario:tracking.fixture@1",
+            "aim_family": "continuous_tracking",
+            "analyzer_refs": ["continuous_tracking.v1"],
             "support_status": "supported",
+        },
+        "input_snapshot": {
+            "scenario_resolution": {
+                "scenario_profile_ref": "scenario:tracking.fixture@1",
+                "aim_family": "continuous_tracking",
+                "allowed_analyzers": ["continuous_tracking.v1"],
+                "allowed_metric_families": ["continuous_tracking"],
+            },
         },
         "deterministic": {
             "support_status": "supported",
@@ -3882,7 +3881,10 @@ async def test_v3_multimodal_commits_validated_visual_result_before_terminal_wri
              "webapp.backend.worker.run_native_analysis",
              return_value=(_native_v2_adapter_result(), object()),
          ), \
-         patch("webapp.backend.worker.run_visual_preprocessing", return_value=visual), \
+         patch(
+             "webapp.backend.worker.run_visual_preprocessing_isolated",
+             new=AsyncMock(return_value=visual),
+         ), \
          patch("webapp.backend.worker._maybe_commit_analysis_evidence", side_effect=commit):
         assert await worker.process_one() is True
 
@@ -4025,7 +4027,7 @@ async def test_process_one_rejects_managed_video_changed_during_cv(
     with patch(
         "webapp.backend.provider_store.get_default_runtime_profile",
         new=provider_lookup,
-    ), patch("webapp.backend.worker._load_backend", return_value=None), patch(
+    ), patch(
         "webapp.backend.worker.run_report",
         return_value={"diagnosis": {}, "narration": None, "notes": []},
     ) as report_mock:
@@ -4276,8 +4278,7 @@ async def test_process_one_video_fallback_writes_v2_without_raw_provenance():
          patch(
              "webapp.backend.worker.run_report",
              return_value={"diagnosis": {}, "narration": None, "notes": []},
-         ), \
-         patch("webapp.backend.worker._load_backend", return_value=None):
+         ):
         assert await worker.process_one() is True
 
     assert len(completed) == 1

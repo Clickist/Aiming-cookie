@@ -22,6 +22,8 @@ from kovaak_tracker.analysis_evidence import (
     validate_analysis_evidence_artifact_v2,
     validate_analysis_evidence_artifact_v1,
     validate_canonical_run_facts_v1,
+    validate_continuous_lg_event_bundle_v1,
+    validate_continuous_lg_rule_binding_v1,
     validate_event_bundle_v2,
     validate_event_bundle_v1,
     validate_evidence_segment_v1,
@@ -1090,3 +1092,174 @@ def test_outcome_rule_v1_rejects_non_exact_sample_confidence_threshold():
 
     with pytest.raises(ValueError, match="exact sample confidence"):
         validate_event_bundle_v2(bundle)
+
+
+def _continuous_lg_binding() -> dict:
+    binding = {
+        "schema_version": "continuous_lg_kill_chain_rule_binding.v1",
+        "rule_ref": "outcome-association-rule:continuous-lg-fixture@1",
+        "scenario_profile_ref": "scenario-profile:continuous-lg-fixture@1",
+        "canonical_timebase_version": "test.v1",
+        "raw_hold_extractor_version": "raw-left-held-interval.v1",
+        "stats_parser_version": "kovaak_stats.v1",
+        "outcome_semantics": "continuous_lg_kill_chain",
+        "weapon_temporal_model": "hitscan",
+        "maximum_post_release_outcome_ms": 10,
+        "track_predicate": {
+            "identity_status": "stable",
+            "max_sample_gap_ms": 20,
+            "minimum_candidate_time_margin_ms": 16,
+            "require_inner_hitbox": True,
+            "hitbox_inset_px": 1.0,
+            "minimum_sample_confidence": 1.0,
+        },
+        "visual_quality_profile_ref": "visual-quality-profile:continuous-lg@1",
+        "fixture_set_ref": "fixture-set:continuous-lg@1",
+        "annotation_set_ref": "annotation-set:continuous-lg@1",
+    }
+    digest = hashlib.sha256(json.dumps(
+        binding, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    return {**binding, "rule_sha256": digest}
+
+
+def _continuous_lg_bundle() -> dict:
+    binding = _continuous_lg_binding()
+    return {
+        "schema_version": "continuous_lg_event_bundle.v1",
+        "analysis_ref": "analysis:continuous-lg:7",
+        "rule_binding": binding,
+        "events": [
+            {
+                "event_id": "analysis:continuous-lg:7:event:raw-hold:1",
+                "event_kind": "input_hold",
+                "start_ms": 2_000,
+                "end_ms": 2_600,
+                "source_refs": ["run:3:trace:def"],
+                "confidence": 1.0,
+                "attributes": {},
+                "limitations": [],
+            },
+            {
+                "event_id": "analysis:continuous-lg:7:event:stats-kill:1",
+                "event_kind": "kill",
+                "start_ms": 2_100,
+                "end_ms": 2_100,
+                "source_refs": ["run:3:stats:abc"],
+                "confidence": 1.0,
+                "attributes": {"kill_index": 1},
+                "limitations": [],
+            },
+            {
+                "event_id": "analysis:continuous-lg:7:event:stats-kill:2",
+                "event_kind": "kill",
+                "start_ms": 2_400,
+                "end_ms": 2_400,
+                "source_refs": ["run:3:stats:abc"],
+                "confidence": 1.0,
+                "attributes": {"kill_index": 2},
+                "limitations": [],
+            },
+        ],
+        "outcome_associations": [
+            {
+                "association_id": "analysis:continuous-lg:7:association:continuous-lg-kill:1",
+                "held_interval_ref": "analysis:continuous-lg:7:event:raw-hold:1",
+                "outcome_event_ref": "analysis:continuous-lg:7:event:stats-kill:1",
+                "target_track_ref": "analysis:continuous-lg:7:target-track:1",
+                "weapon_temporal_model": "hitscan",
+                "association_kind": "validated_continuous_lg",
+                "source_refs": ["run:3:trace:def", "run:3:stats:abc", "run:3:video:abc"],
+                "validation": {
+                    "schema_version": "continuous_lg_outcome_association_validation.v1",
+                    "rule_ref": binding["rule_ref"],
+                    "rule_sha256": binding["rule_sha256"],
+                    "scenario_profile_ref": binding["scenario_profile_ref"],
+                    "canonical_time_window_ref": "analysis:continuous-lg:7:canonical-window",
+                    "raw_input_source_ref": "run:3:trace:def",
+                    "stats_source_ref": "run:3:stats:abc",
+                    "visual_source_ref": "run:3:video:abc",
+                    "visual_quality_profile_ref": binding["visual_quality_profile_ref"],
+                    "held_interval_start_ms": 2_000,
+                    "held_interval_end_ms": 2_600,
+                    "outcome_time_ms": 2_100,
+                    "geometric_candidate_count": 1,
+                    "track_check": {
+                        "identity_status": "stable",
+                        "sample_gap_ms": 0,
+                        "sample_confidence": 1.0,
+                        "center_distance_px": 1.0,
+                        "effective_radius_px": 9.0,
+                    },
+                },
+                "confidence": 1.0,
+                "availability": "available",
+                "limitations": [],
+            },
+            {
+                "association_id": "analysis:continuous-lg:7:association:continuous-lg-kill:2",
+                "held_interval_ref": "analysis:continuous-lg:7:event:raw-hold:1",
+                "outcome_event_ref": "analysis:continuous-lg:7:event:stats-kill:2",
+                "target_track_ref": "analysis:continuous-lg:7:target-track:2",
+                "weapon_temporal_model": "hitscan",
+                "association_kind": "validated_continuous_lg",
+                "source_refs": ["run:3:trace:def", "run:3:stats:abc", "run:3:video:abc"],
+                "validation": {
+                    "schema_version": "continuous_lg_outcome_association_validation.v1",
+                    "rule_ref": binding["rule_ref"],
+                    "rule_sha256": binding["rule_sha256"],
+                    "scenario_profile_ref": binding["scenario_profile_ref"],
+                    "canonical_time_window_ref": "analysis:continuous-lg:7:canonical-window",
+                    "raw_input_source_ref": "run:3:trace:def",
+                    "stats_source_ref": "run:3:stats:abc",
+                    "visual_source_ref": "run:3:video:abc",
+                    "visual_quality_profile_ref": binding["visual_quality_profile_ref"],
+                    "held_interval_start_ms": 2_000,
+                    "held_interval_end_ms": 2_600,
+                    "outcome_time_ms": 2_400,
+                    "geometric_candidate_count": 1,
+                    "track_check": {
+                        "identity_status": "stable",
+                        "sample_gap_ms": 0,
+                        "sample_confidence": 1.0,
+                        "center_distance_px": 1.0,
+                        "effective_radius_px": 9.0,
+                    },
+                },
+                "confidence": 1.0,
+                "availability": "available",
+                "limitations": [],
+            },
+        ],
+    }
+
+
+def test_continuous_lg_contract_allows_multiple_kills_for_one_held_interval():
+    binding = _continuous_lg_binding()
+    bundle = _continuous_lg_bundle()
+
+    assert validate_continuous_lg_rule_binding_v1(binding) == binding
+    assert validate_continuous_lg_event_bundle_v1(bundle) == bundle
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda bundle: bundle["outcome_associations"][1].update({
+            "outcome_event_ref": bundle["outcome_associations"][0]["outcome_event_ref"],
+        }),
+        lambda bundle: bundle["outcome_associations"][0].update({
+            "shot_event_ref": "analysis:continuous-lg:7:event:fake-shot",
+        }),
+        lambda bundle: bundle["events"][0].update({"event_kind": "shot"}),
+        lambda bundle: bundle["outcome_associations"][0]["validation"]["track_check"].update({
+            "identity_status": "ambiguous",
+        }),
+    ],
+)
+def test_continuous_lg_contract_rejects_duplicate_outcomes_fake_shots_and_unstable_identity(mutate):
+    bundle = _continuous_lg_bundle()
+    mutate(bundle)
+
+    with pytest.raises(ValueError):
+        validate_continuous_lg_event_bundle_v1(bundle)
