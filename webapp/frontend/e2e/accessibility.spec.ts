@@ -4,6 +4,7 @@ import {
   apiScenario,
   installApiFixtures,
   partialAnalysisSession,
+  registryBackedAnalysisSession,
 } from "../fixtures/task7-fixtures";
 
 test.describe("Task 7 accessibility", () => {
@@ -89,7 +90,7 @@ test.describe("Task 7 accessibility", () => {
     await installApiFixtures(page, apiScenario({ analysis: partialAnalysisSession() }));
     await page.goto("/analysis/42");
     await page.getByRole("tab", { name: "数据" }).click();
-    await expect(page.getByRole("img", { name: "按事件类型统计的分布图" })).toBeVisible();
+    await expect(page.getByRole("group", { name: "按已验证事件种类统计的分布图" })).toBeVisible();
     await expect(page.getByText("文本摘要", { exact: false }).first()).toBeVisible();
 
     await page.unrouteAll({ behavior: "wait" });
@@ -104,5 +105,17 @@ test.describe("Task 7 accessibility", () => {
     const before = Number(await timeline.inputValue());
     await timeline.press("ArrowRight");
     expect(Number(await timeline.inputValue())).toBeGreaterThan(before);
+  });
+
+  test("registry-backed diagnosis remains operable without compact-layout overflow", async ({ page }) => {
+    await page.setViewportSize({ width: 960, height: 640 });
+    await installApiFixtures(page, apiScenario({ analysis: registryBackedAnalysisSession() }));
+    await page.goto("/analysis/42");
+    await expect(page.getByText("候选解释", { exact: true })).toBeVisible();
+    await expect(page.getByText("规则化练习建议", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看证据" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看指标" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "问 Coach" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 });

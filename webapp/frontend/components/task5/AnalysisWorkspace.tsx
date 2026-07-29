@@ -22,6 +22,11 @@ type WorkspaceTab = "diagnosis" | "video" | "data";
 const ANALYSIS_TABS_ID = "analysis-view-tabs";
 const ANALYSIS_PANEL_ID = "analysis-view-panel";
 
+type CoachLocator = {
+  view: WorkspaceTab;
+  relative_start_ms?: number;
+};
+
 const FAMILY_STATUS_LABEL = {
   supported: "正式支持",
   descriptive: "描述性结果",
@@ -33,6 +38,14 @@ function errorStatus(error: unknown): number | null {
   if (!(error instanceof Error)) return null;
   const match = /^ApiError_(\d{3})$/.exec(error.name);
   return match ? Number(match[1]) : null;
+}
+
+function isCoachLocator(value: unknown): value is CoachLocator {
+  if (!value || typeof value !== "object") return false;
+  const locator = value as { view?: unknown; relative_start_ms?: unknown };
+  if (locator.view !== "diagnosis" && locator.view !== "video" && locator.view !== "data") return false;
+  return locator.relative_start_ms === undefined
+    || (typeof locator.relative_start_ms === "number" && Number.isFinite(locator.relative_start_ms) && locator.relative_start_ms >= 0);
 }
 
 function stateLabel(state: AnalysisViewState): string {
@@ -114,6 +127,21 @@ export function AnalysisWorkspace() {
     () => session ? presentAnalysisWorkspace(session) : null,
     [session],
   );
+
+  useEffect(() => {
+    if (viewState !== "done" || !presentation) return undefined;
+    const locateCoachContext = (event: Event) => {
+      const locator = (event as CustomEvent<unknown>).detail;
+      if (!isCoachLocator(locator)) return;
+      setTab(locator.view);
+      if (locator.view === "video" && locator.relative_start_ms !== undefined) {
+        setPlayheadMs(locator.relative_start_ms);
+      }
+      event.preventDefault();
+    };
+    window.addEventListener("aiming-cookie:coach-locate", locateCoachContext);
+    return () => window.removeEventListener("aiming-cookie:coach-locate", locateCoachContext);
+  }, [presentation, viewState]);
 
   const retry = async () => {
     if (!session || retrying) return;

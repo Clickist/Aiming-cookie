@@ -5,6 +5,7 @@ import {
   buildRunAnalysisRequest,
   getProductStartRoute,
   getRunModeAvailability,
+  isRunPauseFailClosed,
   presentTask,
 } from "../lib/contracts";
 import type { KovaaKRunListItem, ProductStateV1, TaskDetailV1 } from "../lib/types";
@@ -100,6 +101,18 @@ test("run mode availability consumes supported_input_modes without re-deriving e
   assert.equal(getRunModeAvailability(run, "input_native").available, true);
   assert.equal(getRunModeAvailability(run, "multimodal").available, false);
   assert.equal(getRunModeAvailability(run, "video_fallback").available, false);
+});
+
+test("pause warning follows the selected Run instead of global capture history", () => {
+  const alignedRun = {
+    alignment: { state: "resolved" },
+  } satisfies Pick<KovaaKRunListItem, "alignment">;
+  const pausedRun = {
+    alignment: { state: "unavailable", error_code: "pause_unsupported" },
+  } satisfies Pick<KovaaKRunListItem, "alignment">;
+
+  assert.equal(isRunPauseFailClosed(alignedRun), false);
+  assert.equal(isRunPauseFailClosed(pausedRun), true);
 });
 
 test("analysis request keeps profile defaults and per-run overrides separate", () => {

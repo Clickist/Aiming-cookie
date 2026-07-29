@@ -43,6 +43,10 @@ test("Coach context is removable and L0 payloads never enter the UI adapter", as
   assert.match(coach, /message\.context_refs/);
   assert.match(contracts, /presentCoachContext/);
   assert.doesNotMatch(coach, /video_path|raw_trace|protobuf|api_key|access_token|refresh_token/);
+
+  assert.match(coach, /cancelable: true/);
+  assert.match(coach, /const located = !window\.dispatchEvent\(/);
+  assert.match(coach, /setFeedback\(located \? "已定位" : "未能定位，请重试。"\)/);
 });
 
 test("Settings route covers Provider, Profile, capture, theme, and Storage", async () => {

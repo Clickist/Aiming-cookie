@@ -55,6 +55,7 @@
 .task3-primary-nav a,
 .task3-tool-nav a,
 .task3-toolbar-action {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   min-height: 36px;
@@ -70,11 +71,47 @@
   white-space: nowrap;
 }
 
+.task3-primary-nav a,
+.task3-tool-nav a {
+  border-bottom: 2px solid transparent;
+}
+
 .task3-primary-nav a[aria-current="page"],
 .task3-tool-nav a[aria-current="page"],
 .task3-toolbar-action[aria-expanded="true"] {
   background: var(--surface-container-high);
   color: var(--on-surface);
+}
+
+.task3-primary-nav a[aria-current="page"],
+.task3-tool-nav a[aria-current="page"] {
+  border-bottom-color: var(--primary);
+}
+
+.task3-toolbar-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.task3-toolbar-tooltip {
+  display: inline-flex;
+}
+
+.task3-task-nav-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.task3-task-nav-dot {
+  position: absolute;
+  inset-block-start: -2px;
+  inset-inline-end: -5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+  content: "";
 }
 
 .task3-primary-nav a:focus-visible,
@@ -101,6 +138,21 @@
 
 .task3-workspace > main {
   min-width: 0;
+}
+
+.task3-route-content {
+  animation: task3-route-fade 140ms ease-out;
+}
+
+@keyframes task3-route-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .task3-coach-rail {
@@ -819,7 +871,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .task3-skip-link,
-  .task3-onboarding-step {
+  .task3-onboarding-step,
+  .task3-route-content {
     transition: none;
     animation: none !important;
   }

@@ -1,7 +1,10 @@
 import { chromium, expect, test, type Page } from "@playwright/test";
 
 import {
+  COACH_CONTEXTS,
   RUN_MULTIMODAL,
+  RUN_NATIVE,
+  TASKS,
   apiScenario,
   installApiFixtures,
   installDesktopBridge,
@@ -14,6 +17,31 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 }
 
 test.describe("release interaction polish", () => {
+  test("navigation active state, disabled Coach tooltip, and task dot preserve toolbar geometry", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await installApiFixtures(page, apiScenario({ tasks: [TASKS[2]] }));
+    await page.goto("/settings");
+
+    const coach = page.getByRole("button", { name: "Coach" });
+    await expect(coach).toBeDisabled();
+    await expect(coach.locator("..")).toHaveAttribute("title", "当前页面不支持 Coach");
+    await expect(page.getByRole("link", { name: "设置" })).toHaveAttribute("aria-current", "page");
+    await expect(page.locator(".task3-task-nav-dot")).toHaveCount(1);
+
+    const toolbarActions = page.locator(".task3-tool-nav > *");
+    const before = await toolbarActions.evaluateAll((nodes) => nodes.map((node) => {
+      const rect = node.getBoundingClientRect();
+      return [rect.left, rect.top, rect.width, rect.height];
+    }));
+    await page.goto("/tasks");
+    const after = await toolbarActions.evaluateAll((nodes) => nodes.map((node) => {
+      const rect = node.getBoundingClientRect();
+      return [rect.left, rect.top, rect.width, rect.height];
+    }));
+    expect(after).toEqual(before);
+    await expect(page.locator('a[href="/tasks"]')).toHaveAttribute("aria-current", "page");
+  });
+
   test("Coach width presets, pointer drag, and keyboard resize share the workspace width", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
     await installApiFixtures(page);
@@ -88,6 +116,20 @@ test.describe("release interaction polish", () => {
     await expect(detailTrigger).toBeFocused();
   });
 
+  test("History query Run ref selects the matching pending Run in Analyze", async ({ page }) => {
+    await installDesktopBridge(page);
+    await installApiFixtures(page, apiScenario({ runs: [RUN_MULTIMODAL, RUN_NATIVE] }));
+    await page.goto(`/analyze?run=${encodeURIComponent(RUN_NATIVE.run_ref)}`);
+
+    await expect(page.locator('input[name="run"]').nth(1)).toBeChecked();
+    await expect(page.locator(".task3-run-item[data-selected]")).toContainText(
+      RUN_NATIVE.scenario ?? "未知场景",
+    );
+
+    await page.goto("/analyze?run=run%3Amissing");
+    await expect(page.locator('input[name="run"]:checked')).toHaveCount(0);
+  });
+
   test("Analysis Tabs implement roving focus and tabpanel relationships without decorative motion", async ({ page }) => {
     await installApiFixtures(page);
     await page.goto("/analysis/42");
@@ -114,6 +156,42 @@ test.describe("release interaction polish", () => {
     await expect(diagnosis).toBeFocused();
     await diagnosis.press("ArrowLeft");
     await expect(data).toBeFocused();
+  });
+
+  test("Coach locator is acknowledged only by the active Analysis workspace", async ({ page }) => {
+    await installApiFixtures(page);
+    await page.goto("/history");
+    const contextButton = page.locator(".task6-context-chip > button").first();
+    await expect(contextButton).toHaveText(COACH_CONTEXTS.contexts[0]!.label);
+    await contextButton.click();
+    const feedback = page.locator(".ac-toast__body");
+    await expect(feedback).toHaveText("未能定位，请重试。");
+    await expect(feedback).not.toHaveText("已定位");
+
+    await page.goto("/analysis/42");
+    await expect(page.getByRole("tab", { name: "诊断" })).toBeVisible();
+    await expect(contextButton).toHaveText(COACH_CONTEXTS.contexts[0]!.label);
+    await contextButton.click();
+    await expect(feedback).toHaveText("已定位");
+    const acknowledged = await page.evaluate(() => !window.dispatchEvent(new CustomEvent(
+      "aiming-cookie:coach-locate",
+      { cancelable: true, detail: { view: "video", relative_start_ms: 500 } },
+    )));
+    expect(acknowledged).toBe(true);
+    await expect(page.getByRole("tab", { name: "视频" })).toHaveAttribute("aria-selected", "true");
+
+    const invalid = await page.evaluate(() => window.dispatchEvent(new CustomEvent(
+      "aiming-cookie:coach-locate",
+      { cancelable: true, detail: { view: "unknown", relative_start_ms: -1 } },
+    )));
+    expect(invalid).toBe(true);
+
+    await page.goto("/history");
+    const afterUnmount = await page.evaluate(() => window.dispatchEvent(new CustomEvent(
+      "aiming-cookie:coach-locate",
+      { cancelable: true, detail: { view: "video", relative_start_ms: 500 } },
+    )));
+    expect(afterUnmount).toBe(true);
   });
 
   test("Toast has a keyboard close action, auto-dismisses, and reduced motion is immediate", async ({ page }) => {
@@ -157,10 +235,12 @@ test.describe("release interaction polish", () => {
 
 test("real Tauri WebView preserves Coach resizing and all three responsive modes", async () => {
   const cdpUrl = process.env.AIMING_COOKIE_TAURI_CDP_URL;
+  const appUrl = process.env.AIMING_COOKIE_TAURI_APP_URL ?? "http://localhost:3000";
   test.skip(!cdpUrl, "requires an isolated Tauri smoke instance and its CDP endpoint");
 
   const browser = await chromium.connectOverCDP(cdpUrl!);
-  const page = browser.contexts()[0]?.pages()[0];
+  const pages = browser.contexts().flatMap((context) => context.pages());
+  const page = pages.find((candidate) => candidate.url().startsWith("http://localhost:")) ?? pages[0];
   expect(page, "Tauri WebView page").toBeDefined();
   await page!.unrouteAll({ behavior: "wait" });
   await installApiFixtures(page!);
@@ -170,7 +250,7 @@ test("real Tauri WebView preserves Coach resizing and all three responsive modes
   });
 
   await page!.setViewportSize({ width: 1280, height: 820 });
-  await page!.goto("http://localhost:3105/history");
+  await page!.goto(new URL("/history", appUrl).toString());
   const sidebar = page!.getByRole("complementary", { name: "Coach" });
   const separator = page!.getByRole("separator", { name: "调整 Coach 宽度" });
   await expect(sidebar).toBeVisible();

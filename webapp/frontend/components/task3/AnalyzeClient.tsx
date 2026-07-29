@@ -10,7 +10,7 @@ import {
   listKovaakRuns,
   uploadVideo,
 } from "@/lib/api";
-import { buildRunAnalysisRequest, getRunModeAvailability } from "@/lib/contracts";
+import { buildRunAnalysisRequest, getRunModeAvailability, isRunPauseFailClosed } from "@/lib/contracts";
 import { parseKovaaKConfig } from "@/lib/csv";
 import {
   isDesktopRuntime,
@@ -74,6 +74,9 @@ function capturePresentation(status: CaptureStatusV1 | null): { label: string; t
 
 export function AnalyzeClient() {
   const router = useRouter();
+  const requestedRunRef = typeof window === "undefined"
+    ? null
+    : new URLSearchParams(window.location.search).get("run");
   const [desktop, setDesktop] = useState(false);
   const [runs, setRuns] = useState<KovaaKRunListItem[]>([]);
   const [runsLoading, setRunsLoading] = useState(desktop);
@@ -106,13 +109,14 @@ export function AnalyzeClient() {
     if (runResult.status === "fulfilled") {
       const pending = runResult.value.runs.filter((run) => run.readiness_state === "pending_analysis");
       setRuns(pending);
-      setSelectedRunId(pending.length === 1 ? pending[0].id : null);
+      const requestedRun = pending.find((run) => run.run_ref === requestedRunRef);
+      setSelectedRunId(requestedRun?.id ?? (pending.length === 1 ? pending[0].id : null));
     } else {
       setRunsError(true);
     }
     setCaptureStatus(captureResult.status === "fulfilled" ? captureResult.value : null);
     setRunsLoading(false);
-  }, [desktop]);
+  }, [desktop, requestedRunRef]);
 
   useEffect(() => {
     void loadDesktopState();
@@ -317,7 +321,7 @@ export function AnalyzeClient() {
         </div>
       </section>
 
-      {captureStatus?.pause_fail_closed ? <Notice tone="warning" title="检测到暂停局">该 Run 按 fail-closed 处理，不会被当作完整训练证据。</Notice> : null}
+      {selectedRun && isRunPauseFailClosed(selectedRun) ? <Notice tone="warning" title="检测到暂停局">该 Run 按 fail-closed 处理，不会被当作完整训练证据。</Notice> : null}
       {submitError ? <Notice tone="error">{submitError}</Notice> : null}
     </div>
   );
