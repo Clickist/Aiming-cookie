@@ -195,6 +195,21 @@ _CLAIM_LEVELS = frozenset(
 _SOURCE_LEVELS = frozenset(
     {"product_contract", "academic_peer_reviewed", "community_consensus", "personal_experience_unverified", "experimental"}
 )
+_CAPABILITY_USES = frozenset({
+    "explanation_only", "diagnosis_support", "candidate_experiment",
+    "scenario_prescription",
+})
+
+
+def _has_capability(entry: dict[str, Any], capability: str) -> bool:
+    supported_uses = entry.get("supported_uses")
+    if not isinstance(supported_uses, list):
+        return False
+    # v1/v2 Registry assets predate capability labels and retain their full
+    # historical payload. v3 capability entries must only expose granted sections.
+    if not _CAPABILITY_USES.intersection(supported_uses):
+        return True
+    return capability in supported_uses
 
 
 def _is_path_like(value: str) -> bool:
@@ -409,7 +424,8 @@ def make_fetch_knowledge() -> Callable[[str], dict[str, Any]]:
         cues = [
             entry["cue"]["text"]
             for entry in selected
-            if isinstance(entry.get("cue"), dict)
+            if _has_capability(entry, "candidate_experiment")
+            and isinstance(entry.get("cue"), dict)
         ]
         return {
             "signal": canonical,
@@ -445,11 +461,17 @@ def _topics_for_kind(kind: str) -> list[str]:
 def _v2_sections(entry: dict[str, Any]) -> list[dict[str, Any]]:
     sections = [entry["definition"], entry["scope"], entry["expected_direction"]]
     sections.extend(entry["mechanisms"])
-    for name in (
-        "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
-        "stop_adjust_rule",
-    ):
-        value = entry[name]
+    section_capabilities = (
+        ("cue", "candidate_experiment"),
+        ("dose_guardrail", "candidate_experiment"),
+        ("matched_retest", "candidate_experiment"),
+        ("near_transfer_retest", "scenario_prescription"),
+        ("stop_adjust_rule", "candidate_experiment"),
+    )
+    for name, capability in section_capabilities:
+        if not _has_capability(entry, capability):
+            continue
+        value = entry.get(name)
         if isinstance(value, dict):
             sections.append(value)
         elif isinstance(value, list):
@@ -484,23 +506,28 @@ def _entry_payload(entry: dict[str, Any], registry_data: dict[str, Any]) -> dict
         (section["claim_level"] for section in sections),
         key=claim_rank.__getitem__,
     )
+    coaching_record = {
+        "family_scope": list(entry["family_scope"]),
+        "observation_refs": list(entry["observation_refs"]),
+        "quality_prerequisites": list(entry["quality_prerequisites"]),
+        "expected_direction": entry["expected_direction"]["text"],
+        "alternative_explanations": list(entry["alternative_explanations"]),
+        "forbidden_inferences": list(entry["forbidden_inferences"]),
+    }
+    for name in (
+        "cue", "dose_guardrail", "matched_retest", "stop_adjust_rule",
+    ):
+        if _has_capability(entry, "candidate_experiment") and name in entry:
+            coaching_record[name] = entry[name]
+    if _has_capability(entry, "scenario_prescription"):
+        for name in ("near_transfer_retest", "scenario_prescription"):
+            if name in entry:
+                coaching_record[name] = entry[name]
     return {
         "entry_ref": entry_ref(entry),
         "entry_version": entry["entry_version"],
         "content": entry["definition"]["text"],
-        "coaching_record": {
-            "family_scope": list(entry["family_scope"]),
-            "observation_refs": list(entry["observation_refs"]),
-            "quality_prerequisites": list(entry["quality_prerequisites"]),
-            "expected_direction": entry["expected_direction"]["text"],
-            "alternative_explanations": list(entry["alternative_explanations"]),
-            "forbidden_inferences": list(entry["forbidden_inferences"]),
-            "cue": entry["cue"],
-            "dose_guardrail": entry["dose_guardrail"],
-            "matched_retest": entry["matched_retest"],
-            "near_transfer_retest": entry["near_transfer_retest"],
-            "stop_adjust_rule": entry["stop_adjust_rule"],
-        },
+        "coaching_record": coaching_record,
         "sources": [sources_by_ref[source_ref] for source_ref in entry["sources"]],
         "max_claim_level": max_claim_level,
         "section_refs": [section["section_ref"] for section in sections],

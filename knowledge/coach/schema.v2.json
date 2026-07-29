@@ -43,6 +43,18 @@
       }
     },
     "notApplicable": {"const": "not_applicable"},
+    "scenarioPrescription": {
+      "type": "object",
+      "required": ["scenario_profile_ref", "practice_condition", "review_after", "source_refs", "claim_level"],
+      "additionalProperties": false,
+      "properties": {
+        "scenario_profile_ref": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^scenario:[A-Za-z0-9._:@-]+$"},
+        "practice_condition": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001F]+$"},
+        "review_after": {"enum": ["next comparable practice session", "next matched retest", "after one comparable practice block"]},
+        "source_refs": {"type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "claim_level": {"enum": ["deterministic_rule", "research_supported", "community_practice", "community_consensus", "experimental"]}
+      }
+    },
     "entry": {
       "type": "object",
       "required": ["entry_id", "entry_version", "status", "category", "topics", "signals", "metric_refs", "family_scope", "observation_refs", "quality_prerequisites", "definition", "scope", "expected_direction", "mechanisms", "alternative_explanations", "forbidden_inferences", "limitations", "counterevidence", "cue", "dose_guardrail", "matched_retest", "near_transfer_retest", "stop_adjust_rule", "sources", "supported_uses"],
@@ -71,8 +83,9 @@
         "matched_retest": {"oneOf": [{"$ref": "#/$defs/section"}, {"$ref": "#/$defs/notApplicable"}]},
         "near_transfer_retest": {"oneOf": [{"$ref": "#/$defs/section"}, {"$ref": "#/$defs/notApplicable"}]},
         "stop_adjust_rule": {"oneOf": [{"type": "array", "minItems": 1, "maxItems": 8, "items": {"$ref": "#/$defs/section"}}, {"$ref": "#/$defs/notApplicable"}]},
+        "scenario_prescription": {"oneOf": [{"$ref": "#/$defs/scenarioPrescription"}, {"$ref": "#/$defs/notApplicable"}]},
         "sources": {"type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
-        "supported_uses": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"enum": ["definition", "mechanism", "diagnostic_scope", "training_cue", "candidate_hypothesis", "verification"]}}
+        "supported_uses": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"enum": ["definition", "mechanism", "diagnostic_scope", "research_context", "training_cue", "practice_structure", "candidate_hypothesis", "verification"]}}
       }
     }
   }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import json
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from webapp.backend import (
     coach_agent_runs,
     coach_confirmations,
     coach_commands,
+    coach_store,
     coach_service,
     config,
     db,
@@ -94,7 +96,7 @@ async def _wait_for_run(
 @pytest.mark.asyncio
 async def test_v18_schema_contains_task6_contracts() -> None:
     conn = await db.get_conn()
-    assert db.TARGET_USER_VERSION == 18
+    assert db.TARGET_USER_VERSION >= 18
     tables = {
         row[0]
         for row in await (
@@ -316,6 +318,242 @@ async def test_comparison_context_carries_two_independent_safe_projections(
 
 
 @pytest.mark.asyncio
+async def test_agent_run_stop_waits_for_inflight_message_write_before_cancelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_started = asyncio.Event()
+    release_write = asyncio.Event()
+    append_cancelled = False
+    original_append = coach_store.append_message
+
+    async def delayed_append(thread_id: int, role: str, content: str, **kwargs) -> int:
+        nonlocal append_cancelled
+        if role == "user":
+            write_started.set()
+            try:
+                await release_write.wait()
+            except asyncio.CancelledError:
+                append_cancelled = True
+                raise
+        return await original_append(thread_id, role, content, **kwargs)
+
+    async def unavailable_remote_stop(_run_ref: str) -> bool:
+        return False
+
+    monkeypatch.setattr(coach_store, "append_message", delayed_append)
+    monkeypatch.setattr(coach_agent_runs.coach_runtime, "stop_pi_coach_turn", unavailable_remote_stop)
+    headers = {"X-User-Id": "owner-a"}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=headers,
+    ) as client:
+        created = await client.post("/api/coach/agent-runs", json={
+            "schema_version": "coach_agent_run_request.v1",
+            "content": "stop while the message is being stored",
+            "context_refs": [],
+        })
+        assert created.status_code == 202, created.text
+        run_ref = created.json()["run_ref"]
+        await asyncio.wait_for(write_started.wait(), timeout=1)
+
+        stop_request = asyncio.create_task(
+            client.post(f"/api/coach/agent-runs/{run_ref}/stop")
+        )
+        conn = await db.get_conn()
+        for _ in range(100):
+            row = await (
+                await conn.execute(
+                    "SELECT stop_requested FROM coach_agent_runs WHERE run_ref=?",
+                    (run_ref,),
+                )
+            ).fetchone()
+            if row is not None and row["stop_requested"] == 1:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("stop request was not persisted")
+
+        release_write.set()
+        stopped = await asyncio.wait_for(stop_request, timeout=1)
+        assert stopped.status_code == 200, stopped.text
+        assert stopped.json()["status"] == "stopped"
+        assert stopped.json()["partial_text"] is None
+        assert not append_cancelled
+        assert (await client.get(f"/api/coach/agent-runs/{run_ref}")).json()["status"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_late_stop_does_not_overwrite_terminal_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution_started = asyncio.Event()
+    release_execution = asyncio.Event()
+    initial_stop_read = asyncio.Event()
+    continue_stop = asyncio.Event()
+
+    async def complete_after_release(**_kwargs):
+        execution_started.set()
+        await release_execution.wait()
+        return {"status": "succeeded", "reply": "已完成", "tool_events": []}
+
+    original_get_run = coach_agent_runs.get_run
+    stop_get_calls = 0
+
+    async def delayed_stop_read(owner_id: str, run_ref: str):
+        nonlocal stop_get_calls
+        result = await original_get_run(owner_id, run_ref)
+        if stop_get_calls == 0:
+            stop_get_calls += 1
+            initial_stop_read.set()
+            await continue_stop.wait()
+        return result
+
+    monkeypatch.setattr(coach_agent_runs, "execute_turn", complete_after_release)
+    headers = {"X-User-Id": "owner-a"}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=headers,
+    ) as client:
+        created = await client.post("/api/coach/agent-runs", json={
+            "schema_version": "coach_agent_run_request.v1",
+            "content": "完成后再请求停止",
+            "context_refs": [],
+        })
+        assert created.status_code == 202, created.text
+        run_ref = created.json()["run_ref"]
+        await asyncio.wait_for(execution_started.wait(), timeout=1)
+        monkeypatch.setattr(coach_agent_runs, "get_run", delayed_stop_read)
+
+        stop_request = asyncio.create_task(
+            client.post(f"/api/coach/agent-runs/{run_ref}/stop")
+        )
+        await asyncio.wait_for(initial_stop_read.wait(), timeout=1)
+        release_execution.set()
+        completed = await _wait_for_run(client, run_ref, {"succeeded"})
+        assert completed["status"] == "succeeded"
+        continue_stop.set()
+        late_stop = await asyncio.wait_for(stop_request, timeout=1)
+        assert late_stop.status_code == 200, late_stop.text
+        assert late_stop.json()["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_stop_stale_current_read_does_not_overwrite_completion_before_task_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner_id = "owner-a"
+    run_ref = "agent_run:stale-current-read"
+    thread = await coach_store.get_or_create_primary_thread(owner_id)
+    conn = await db.get_conn()
+    await conn.execute(
+        "INSERT INTO coach_agent_runs("
+        "run_ref, owner_id, thread_id, attempt, status, phase, content, context_refs_json"
+        ") VALUES(?, ?, ?, 1, 'running', 'text_generation', ?, '[]')",
+        (run_ref, owner_id, int(thread["id"]), "finish while stop is reading"),
+    )
+    await conn.commit()
+
+    blocked_task = asyncio.create_task(asyncio.Event().wait())
+    coach_agent_runs._tasks[run_ref] = blocked_task
+    original_get_run = coach_agent_runs.get_run
+    get_calls = 0
+
+    async def stale_current_read(current_owner_id: str, current_run_ref: str):
+        nonlocal get_calls
+        result = await original_get_run(current_owner_id, current_run_ref)
+        get_calls += 1
+        if get_calls == 2:
+            await conn.execute(
+                "UPDATE coach_agent_runs SET status='succeeded', phase='completed', "
+                "finished_at=CURRENT_TIMESTAMP WHERE run_ref=?",
+                (run_ref,),
+            )
+            await conn.commit()
+            coach_agent_runs._tasks.pop(run_ref).cancel()
+        return result
+
+    monkeypatch.setattr(coach_agent_runs, "get_run", stale_current_read)
+    try:
+        result = await coach_agent_runs.stop_run(owner_id, run_ref)
+        assert result is not None
+        assert result["status"] == "succeeded"
+        actual = await original_get_run(owner_id, run_ref)
+        assert actual is not None
+        assert actual["status"] == "succeeded"
+        assert all(event["code"] != "run_stopped" for event in actual["events"])
+    finally:
+        coach_agent_runs._tasks.pop(run_ref, None)
+        blocked_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await blocked_task
+
+
+@pytest.mark.asyncio
+async def test_stop_returns_after_bounded_non_provider_write_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_started = asyncio.Event()
+    release_write = asyncio.Event()
+    append_cancelled = False
+    original_append = coach_store.append_message
+
+    async def delayed_append(thread_id: int, role: str, content: str, **kwargs) -> int:
+        nonlocal append_cancelled
+        if role == "user":
+            write_started.set()
+            try:
+                await release_write.wait()
+            except asyncio.CancelledError:
+                append_cancelled = True
+                raise
+        return await original_append(thread_id, role, content, **kwargs)
+
+    async def unavailable_remote_stop(_run_ref: str) -> bool:
+        return False
+
+    monkeypatch.setattr(coach_store, "append_message", delayed_append)
+    monkeypatch.setattr(coach_agent_runs.coach_runtime, "stop_pi_coach_turn", unavailable_remote_stop)
+    monkeypatch.setattr(coach_agent_runs, "_STOP_SETTLE_TIMEOUT_SECONDS", 0.01)
+    original_get_run = coach_agent_runs.get_run
+    get_calls = 0
+    late_get_attempted = asyncio.Event()
+
+    async def block_late_get(owner_id: str, run_ref: str):
+        nonlocal get_calls
+        get_calls += 1
+        if get_calls >= 3:
+            late_get_attempted.set()
+            await asyncio.Event().wait()
+        return await original_get_run(owner_id, run_ref)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers={"X-User-Id": "owner-a"},
+    ) as client:
+        created = await client.post("/api/coach/agent-runs", json={
+            "schema_version": "coach_agent_run_request.v1",
+            "content": "bound the stop wait around a database write",
+            "context_refs": [],
+        })
+        assert created.status_code == 202, created.text
+        run_ref = created.json()["run_ref"]
+        await asyncio.wait_for(write_started.wait(), timeout=1)
+        monkeypatch.setattr(coach_agent_runs, "get_run", block_late_get)
+
+        pending = await asyncio.wait_for(
+            client.post(f"/api/coach/agent-runs/{run_ref}/stop"), timeout=1,
+        )
+        assert pending.status_code == 200, pending.text
+        assert pending.json()["status"] == "running"
+        assert not append_cancelled
+        assert get_calls == 2
+        assert not late_get_attempted.is_set()
+        monkeypatch.setattr(coach_agent_runs, "get_run", original_get_run)
+        run_task = coach_agent_runs._tasks[run_ref]
+        release_write.set()
+        assert (await _wait_for_run(client, run_ref, {"stopped"}))["status"] == "stopped"
+        await asyncio.wait_for(run_task, timeout=1)
+        assert run_ref not in coach_agent_runs._tasks
+
+
+@pytest.mark.asyncio
 async def test_agent_run_stop_failure_domains_retry_and_unsafe_tool_event_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -400,6 +638,42 @@ async def test_agent_run_stop_failure_domains_retry_and_unsafe_tool_event_fail_c
         assert unsafe_run["error"]["domain"] == "permission"
         assert unsafe_run["error"]["code"] == "unsafe_tool_event"
         assert "private" not in json.dumps(unsafe_run, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_grounding_failure_never_persists_invalid_assistant_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def rejected(**_kwargs):
+        return {
+            "status": "failed",
+            "reply": None,
+            "tool_events": [],
+            "error": {
+                "domain": "model",
+                "code": "grounding_violation",
+                "message": "Coach response was rejected because it was not grounded",
+                "retryable": True,
+            },
+        }
+
+    monkeypatch.setattr(coach_agent_runs, "execute_turn", rejected)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "grounding-owner"},
+    ) as client:
+        created = await client.post("/api/coach/agent-runs", json={
+            "schema_version": "coach_agent_run_request.v1",
+            "content": "比较两次训练",
+            "context_refs": [],
+        })
+        failed = await _wait_for_run(client, created.json()["run_ref"], {"failed"})
+        primary = (await client.get("/api/coach/primary")).json()
+
+    assert failed["error"]["code"] == "grounding_violation"
+    assert failed["partial_text"] is None
+    assert [message["role"] for message in primary["messages"]] == ["user"]
 
 
 @pytest.mark.asyncio

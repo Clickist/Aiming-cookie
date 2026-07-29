@@ -1,0 +1,243 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-07-28.v3",
+  "target_registry_version": "2026-07-29.v4",
+  "generated_at": "2026-07-29",
+  "migrated_entries": [
+    {
+      "source_entry_ref": "knowledge:static.flicking-terminal-control@1",
+      "target_entry_ref": "knowledge:static.flicking-terminal-control@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment",
+        "scenario_prescription"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:dynamic.click-error-and-acquisition@1",
+      "target_entry_ref": "knowledge:dynamic.click-error-and-acquisition@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment",
+        "scenario_prescription"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:dynamic.speed-matching-and-reading@1",
+      "target_entry_ref": "knowledge:dynamic.speed-matching-and-reading@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment",
+        "scenario_prescription"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:tracking.predictable-speed-matching@1",
+      "target_entry_ref": "knowledge:tracking.predictable-speed-matching@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment",
+        "scenario_prescription"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:tracking.reactive-change-response@1",
+      "target_entry_ref": "knowledge:tracking.reactive-change-response@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:tracking.control-smoothness@1",
+      "target_entry_ref": "knowledge:tracking.control-smoothness@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:switching.transition-and-arrival@1",
+      "target_entry_ref": "knowledge:switching.transition-and-arrival@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment",
+        "scenario_prescription"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:switching.selection-observable-only@1",
+      "target_entry_ref": "knowledge:switching.selection-observable-only@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "mechanism",
+        "diagnostic_scope",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:hypothesis.tension-management@1",
+      "target_entry_ref": "knowledge:hypothesis.tension-management@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "candidate_hypothesis",
+        "training_cue",
+        "verification"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support",
+        "candidate_experiment"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    },
+    {
+      "source_entry_ref": "knowledge:movement.outcome-only-boundary@1",
+      "target_entry_ref": "knowledge:movement.outcome-only-boundary@2",
+      "action": "version_bumped_capability_reclassified",
+      "source_supported_uses": [
+        "definition",
+        "diagnostic_scope"
+      ],
+      "target_supported_uses": [
+        "explanation_only",
+        "diagnosis_support"
+      ],
+      "reason": "Preserve reviewed prose and exact v3 history while declaring the bounded v4 runtime capability."
+    }
+  ],
+  "new_entries": [
+    {
+      "target_entry_ref": "knowledge:community.friction-and-surface@1",
+      "source_ref": "community.rawinput.article.padsnskates",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.task-specific-sensitivity@1",
+      "source_ref": "community.rawinput.article.perfect-sensitivity",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.linear-clicking-strategy@1",
+      "source_ref": "community.rawinput.article.linear",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.flick-stopping-strategies@1",
+      "source_ref": "community.rawinput.article.flick",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.adaptive-mouse-grip@1",
+      "source_ref": "community.rawinput.article.mousegrips",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.score-farming-context@1",
+      "source_ref": "community.rawinput.article.scorefarm",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.aim-trainer-transfer@1",
+      "source_ref": "community.rawinput.article.topten",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.sensitivity-variation@1",
+      "source_ref": "community.rawinput.article.muscle-memory",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.mouse-acceleration-context@1",
+      "source_ref": "community.rawinput.article.mouse-accel",
+      "action": "add_reviewed_community_entry",
+      "reason": "Article-granular Raw Input source with explanation or reversible-experiment authority only."
+    }
+  ]
+}

@@ -634,24 +634,35 @@ async def test_recover_stale_requeues_when_attempts_remain():
 
 
 @pytest.mark.asyncio
-async def test_recover_stale_fails_when_attempts_exhausted():
+async def test_recover_stale_fails_when_attempts_exhausted(monkeypatch):
+    write_now = "2026-07-27 01:02:03"
+    monkeypatch.setattr(queue, "_utc_now_sqlite", lambda: write_now)
     conn = await db.get_conn()
     await conn.execute(
         "INSERT INTO sessions("
         "user_id, video_path, csv_path, status, attempts, max_attempts, "
-        "worker_id, lease_expires_at"
+        "worker_id, lease_expires_at, task_phase"
         ") VALUES('u1', '/a', '/a.csv', 'running', 3, 3, 'dead', "
-        "'2000-01-01 00:00:00')"
+        "'2000-01-01 00:00:00', 'generating_diagnostics')"
     )
     await conn.commit()
     cur = await conn.execute("SELECT id FROM sessions ORDER BY id DESC LIMIT 1")
     sid = (await cur.fetchone())["id"]
-    stats = await queue.recover_stale_jobs(now="2026-07-10 12:00:00")
+    stats = await queue.recover_stale_jobs(now="2099-01-01 00:00:00")
     assert stats["failed"] == 1
     s = await queue.get_session(sid)
     assert s["status"] == "failed"
     assert s["error"]["code"] == "stale_lease_exhausted"
     assert s["error"]["retryable"] is True
+    cur = await conn.execute(
+        "SELECT failure_domain, task_phase, finished_at, updated_at "
+        "FROM sessions WHERE id=?", (sid,),
+    )
+    terminal = await cur.fetchone()
+    assert terminal["failure_domain"] == "kinematics"
+    assert terminal["task_phase"] is None
+    assert terminal["finished_at"] == write_now
+    assert terminal["updated_at"] == write_now
 
 
 @pytest.mark.asyncio

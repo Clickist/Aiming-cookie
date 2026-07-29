@@ -11,16 +11,23 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from kovaak_tracker.scenario_profiles import active_scenario_profile_refs
+
 REGISTRY_SCHEMA_VERSION_V1 = "coach_knowledge_registry.v1"
 REGISTRY_SCHEMA_VERSION_V2 = "coach_knowledge_registry.v2"
-REGISTRY_SCHEMA_VERSION = REGISTRY_SCHEMA_VERSION_V2
+REGISTRY_SCHEMA_VERSION_V3 = "coach_knowledge_registry.v3"
+REGISTRY_SCHEMA_VERSION = REGISTRY_SCHEMA_VERSION_V3
 _REGISTRY_ROOT = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
 REGISTRY_PATH_V1 = _REGISTRY_ROOT / "registry.v1.json"
 REGISTRY_PATH_V2 = _REGISTRY_ROOT / "registry.v2.json"
-REGISTRY_PATH = REGISTRY_PATH_V2
+REGISTRY_PATH_V3 = _REGISTRY_ROOT / "registry.v3.json"
+REGISTRY_PATH_V4 = _REGISTRY_ROOT / "registry.v4.json"
+REGISTRY_PATH = REGISTRY_PATH_V4
 _PACKAGED_REGISTRIES = {
     "2026-07-14.v1": REGISTRY_PATH_V1,
     "2026-07-22.v2": REGISTRY_PATH_V2,
+    "2026-07-28.v3": REGISTRY_PATH_V3,
+    "2026-07-29.v4": REGISTRY_PATH_V4,
 }
 MAX_RESULTS = 3
 MAX_REGISTRY_BYTES = 512 * 1024
@@ -60,6 +67,19 @@ _ENTRY_FIELDS = {
     "metric_refs", "text", "sources", "max_claim_level", "limitations",
     "counterevidence", "supported_uses",
 }
+_SUPPORTED_USES_V3 = {
+    "explanation_only", "diagnosis_support", "candidate_experiment",
+    "scenario_prescription",
+}
+_CAPABILITY_PREFIXES_V3 = (
+    ("explanation_only",),
+    ("explanation_only", "diagnosis_support"),
+    ("explanation_only", "diagnosis_support", "candidate_experiment"),
+    (
+        "explanation_only", "diagnosis_support", "candidate_experiment",
+        "scenario_prescription",
+    ),
+)
 _ENTRY_FIELDS_V2 = {
     "entry_id", "entry_version", "status", "category", "topics", "signals",
     "metric_refs", "family_scope", "observation_refs", "quality_prerequisites",
@@ -67,6 +87,12 @@ _ENTRY_FIELDS_V2 = {
     "alternative_explanations", "forbidden_inferences", "limitations",
     "counterevidence", "cue", "dose_guardrail", "matched_retest",
     "near_transfer_retest", "stop_adjust_rule", "sources", "supported_uses",
+}
+_SCENARIO_PRESCRIPTION_FIELD = "scenario_prescription"
+_SCENARIO_PROFILE_REF_RE = re.compile(r"^scenario:[A-Za-z0-9._:@-]+$")
+_SCENARIO_REVIEW_AFTER = {
+    "next comparable practice session", "next matched retest",
+    "after one comparable practice block",
 }
 _CATEGORIES_V2 = {
     "observation_definition", "mechanism", "training_cue",
@@ -245,7 +271,13 @@ def _validate_registry_v1(raw: Any) -> dict[str, Any]:
     for alias, canonical in aliases_raw.items():
         alias_text = _required_text(alias, "signal alias", max_length=120)
         canonical_text = _required_text(canonical, "canonical signal", max_length=120)
-        if alias_text == canonical_text or alias_text in aliases or canonical_text in aliases_raw:
+        if (
+            not _TOKEN_RE.fullmatch(alias_text)
+            or not _TOKEN_RE.fullmatch(canonical_text)
+            or alias_text == canonical_text
+            or alias_text in aliases
+            or canonical_text in aliases_raw
+        ):
             raise KnowledgeRegistryError("signal alias is invalid or chained")
         aliases[alias_text] = canonical_text
     entries_raw = raw["entries"]
@@ -359,14 +391,86 @@ def _normalize_section_v2(
     }
 
 
+def _normalize_scenario_prescription_v2(
+    raw: Any,
+    *,
+    field: str,
+    entry_family_scope: set[str],
+    entry_source_refs: set[str],
+    sources_by_ref: Mapping[str, Mapping[str, Any]],
+    active_scenario_refs: set[str],
+) -> dict[str, Any] | str:
+    if raw == "not_applicable":
+        return raw
+    if not isinstance(raw, Mapping) or set(raw) != {
+        "scenario_profile_ref", "practice_condition", "review_after", "source_refs",
+        "claim_level",
+    }:
+        raise KnowledgeRegistryError(f"{field}.scenario_prescription fields are invalid")
+    scenario_profile_ref = _required_text(
+        raw["scenario_profile_ref"], f"{field}.scenario_profile_ref", max_length=200
+    )
+    if not _SCENARIO_PROFILE_REF_RE.fullmatch(scenario_profile_ref):
+        raise KnowledgeRegistryError(f"{field}.scenario_profile_ref is invalid")
+    if scenario_profile_ref not in active_scenario_refs:
+        raise KnowledgeRegistryError(f"{field}.scenario_profile_ref is not an active scenario")
+    practice_condition = _required_text(
+        raw["practice_condition"], f"{field}.practice_condition", max_length=500
+    )
+    review_after = raw["review_after"]
+    if review_after not in _SCENARIO_REVIEW_AFTER:
+        raise KnowledgeRegistryError(f"{field}.review_after is invalid")
+    claim_level = raw["claim_level"]
+    if claim_level not in _CLAIM_LEVELS_V2:
+        raise KnowledgeRegistryError(f"{field}.scenario_prescription.claim_level is invalid")
+    source_refs = _string_list(
+        raw["source_refs"], f"{field}.scenario_prescription.source_refs", allow_empty=False
+    )
+    if not set(source_refs) <= entry_source_refs:
+        raise KnowledgeRegistryError(f"{field}.scenario_prescription.source_refs escape the entry sources")
+    for source_ref in source_refs:
+        source = sources_by_ref[source_ref]
+        if _SCENARIO_PRESCRIPTION_FIELD not in source["supports_sections"]:
+            raise KnowledgeRegistryError(
+                f"{field}.scenario_prescription is unsupported by source {source_ref}"
+            )
+        applicability = set(source["applicability"])
+        if "all_families" not in applicability and not entry_family_scope <= applicability:
+            raise KnowledgeRegistryError(
+                f"{field}.scenario_prescription source {source_ref} does not cover the entry family scope"
+            )
+        ceiling = _SOURCE_CLAIM_CEILING[source["source_level"]]
+        if _CLAIM_RANK[claim_level] > _CLAIM_RANK[ceiling]:
+            raise KnowledgeRegistryError(
+                f"{field}.scenario_prescription.claim_level exceeds its source ceiling"
+            )
+    return {
+        "scenario_profile_ref": scenario_profile_ref,
+        "practice_condition": practice_condition,
+        "review_after": review_after,
+        "source_refs": source_refs,
+        "claim_level": claim_level,
+    }
+
+
 def _normalize_entry_v2(
     raw: Any,
     index: int,
     *,
     sources_by_ref: Mapping[str, Mapping[str, Any]],
+    requires_scenario_prescription: bool,
+    supported_uses_allowed: set[str] = _SUPPORTED_USES,
+    allow_non_outcome_not_applicable: bool = False,
+    allow_empty_observation_context: bool = False,
+    active_scenario_refs: set[str],
 ) -> dict[str, Any]:
-    if not isinstance(raw, Mapping) or set(raw) != _ENTRY_FIELDS_V2:
+    expected_fields = set(_ENTRY_FIELDS_V2)
+    if isinstance(raw, Mapping) and _SCENARIO_PRESCRIPTION_FIELD in raw:
+        expected_fields.add(_SCENARIO_PRESCRIPTION_FIELD)
+    if not isinstance(raw, Mapping) or set(raw) != expected_fields:
         raise KnowledgeRegistryError(f"entry[{index}] fields are invalid")
+    if requires_scenario_prescription and _SCENARIO_PRESCRIPTION_FIELD not in raw:
+        raise KnowledgeRegistryError(f"entry[{index}].scenario_prescription is required")
     field = f"entry[{index}]"
     entry_id = _required_text(raw["entry_id"], f"{field}.entry_id", max_length=160)
     if not _ENTRY_ID_RE.fullmatch(entry_id):
@@ -384,8 +488,9 @@ def _normalize_entry_v2(
     token_fields = {}
     for name, allow_empty in (
         ("topics", False), ("signals", True), ("metric_refs", True),
-        ("family_scope", False), ("observation_refs", False),
-        ("quality_prerequisites", False), ("sources", False),
+        ("family_scope", False),
+        ("observation_refs", allow_empty_observation_context),
+        ("quality_prerequisites", allow_empty_observation_context), ("sources", False),
         ("supported_uses", False),
     ):
         values = _string_list(raw[name], f"{field}.{name}", allow_empty=allow_empty)
@@ -396,7 +501,7 @@ def _normalize_entry_v2(
         raise KnowledgeRegistryError(f"{field}.family_scope is invalid")
     if set(token_fields["sources"]) - set(sources_by_ref):
         raise KnowledgeRegistryError(f"{field}.sources contains an unknown source")
-    if set(token_fields["supported_uses"]) - _SUPPORTED_USES:
+    if set(token_fields["supported_uses"]) - supported_uses_allowed:
         raise KnowledgeRegistryError(f"{field}.supported_uses is invalid")
     entry_source_refs = set(token_fields["sources"])
 
@@ -433,7 +538,7 @@ def _normalize_entry_v2(
     for name in ("cue", "matched_retest", "near_transfer_retest"):
         value = raw[name]
         if value == "not_applicable":
-            if not outcome_only:
+            if not outcome_only and not allow_non_outcome_not_applicable:
                 raise KnowledgeRegistryError(f"{field}.{name} cannot be not_applicable")
             prescription[name] = value
         else:
@@ -441,7 +546,7 @@ def _normalize_entry_v2(
     for name in ("dose_guardrail", "stop_adjust_rule"):
         value = raw[name]
         if value == "not_applicable":
-            if not outcome_only:
+            if not outcome_only and not allow_non_outcome_not_applicable:
                 raise KnowledgeRegistryError(f"{field}.{name} cannot be not_applicable")
             prescription[name] = value
             continue
@@ -450,8 +555,20 @@ def _normalize_entry_v2(
         prescription[name] = [section(name, item) for item in value]
     if outcome_only and set(token_fields["family_scope"]) != {"movement_aiming"}:
         raise KnowledgeRegistryError(f"{field} outcome_only scope is invalid")
+    scenario_prescription = (
+        _normalize_scenario_prescription_v2(
+            raw[_SCENARIO_PRESCRIPTION_FIELD],
+            field=field,
+                entry_family_scope=set(token_fields["family_scope"]),
+                entry_source_refs=entry_source_refs,
+                sources_by_ref=sources_by_ref,
+                active_scenario_refs=active_scenario_refs,
+            )
+        if _SCENARIO_PRESCRIPTION_FIELD in raw
+        else None
+    )
 
-    return {
+    normalized = {
         "entry_id": entry_id,
         "entry_version": version,
         "status": status,
@@ -471,6 +588,67 @@ def _normalize_entry_v2(
         "sources": token_fields["sources"],
         "supported_uses": token_fields["supported_uses"],
     }
+    if scenario_prescription is not None:
+        normalized[_SCENARIO_PRESCRIPTION_FIELD] = scenario_prescription
+    return normalized
+
+
+def _normalize_entry_v3(
+    raw: Any,
+    index: int,
+    *,
+    sources_by_ref: Mapping[str, Mapping[str, Any]],
+    active_scenario_refs: set[str],
+) -> dict[str, Any]:
+    field = f"entry[{index}]"
+    optional_fields = {
+        "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+        "stop_adjust_rule", _SCENARIO_PRESCRIPTION_FIELD,
+    }
+    base_fields = set(_ENTRY_FIELDS_V2) - optional_fields
+    if not isinstance(raw, Mapping) or not base_fields <= set(raw) or set(raw) - base_fields - optional_fields:
+        raise KnowledgeRegistryError(f"{field} fields are invalid")
+    supported_uses = _string_list(
+        raw["supported_uses"], f"{field}.supported_uses", allow_empty=False,
+    )
+    if tuple(supported_uses) not in _CAPABILITY_PREFIXES_V3:
+        raise KnowledgeRegistryError(f"{field}.supported_uses capability prefix is invalid")
+    if set(supported_uses) - _SUPPORTED_USES_V3:
+        raise KnowledgeRegistryError(f"{field}.supported_uses is invalid")
+
+    has_diagnosis = "diagnosis_support" in supported_uses
+    has_experiment = "candidate_experiment" in supported_uses
+    has_scenario = "scenario_prescription" in supported_uses
+    required_fields = set()
+    if has_experiment:
+        required_fields.update({"cue", "dose_guardrail", "matched_retest", "stop_adjust_rule"})
+    if has_scenario:
+        required_fields.update({"near_transfer_retest", _SCENARIO_PRESCRIPTION_FIELD})
+    forbidden_fields = optional_fields - required_fields
+    if not required_fields <= set(raw):
+        raise KnowledgeRegistryError(f"{field} capability required fields are missing")
+    if forbidden_fields.intersection(raw):
+        raise KnowledgeRegistryError(f"{field} capability forbidden fields are present")
+    if has_diagnosis:
+        if not raw.get("observation_refs") or not raw.get("quality_prerequisites"):
+            raise KnowledgeRegistryError(f"{field} diagnosis_support context is required")
+
+    normalized_input = dict(raw)
+    for name in optional_fields:
+        normalized_input.setdefault(name, "not_applicable")
+    normalized = _normalize_entry_v2(
+        normalized_input,
+        index,
+        sources_by_ref=sources_by_ref,
+        requires_scenario_prescription=True,
+        supported_uses_allowed=_SUPPORTED_USES_V3,
+        allow_non_outcome_not_applicable=True,
+        allow_empty_observation_context=True,
+        active_scenario_refs=active_scenario_refs,
+    )
+    for name in forbidden_fields:
+        normalized.pop(name, None)
+    return normalized
 
 
 def _validate_registry_v2(raw: Any) -> dict[str, Any]:
@@ -486,7 +664,13 @@ def _validate_registry_v2(raw: Any) -> dict[str, Any]:
     for alias, canonical in aliases_raw.items():
         alias_text = _required_text(alias, "signal alias", max_length=120)
         canonical_text = _required_text(canonical, "canonical signal", max_length=120)
-        if alias_text == canonical_text or alias_text in aliases or canonical_text in aliases_raw:
+        if (
+            not _TOKEN_RE.fullmatch(alias_text)
+            or not _TOKEN_RE.fullmatch(canonical_text)
+            or alias_text == canonical_text
+            or alias_text in aliases
+            or canonical_text in aliases_raw
+        ):
             raise KnowledgeRegistryError("signal alias is invalid or chained")
         aliases[alias_text] = canonical_text
 
@@ -503,8 +687,16 @@ def _validate_registry_v2(raw: Any) -> dict[str, Any]:
         raise KnowledgeRegistryError("entries must be a list")
     if not 1 <= len(entries_raw) <= MAX_ENTRIES:
         raise KnowledgeRegistryError("entries has invalid length")
+    requires_scenario_prescription = registry_version == "2026-07-28.v3"
+    active_scenario_refs = active_scenario_profile_refs()
     entries = [
-        _normalize_entry_v2(item, index, sources_by_ref=sources_by_ref)
+        _normalize_entry_v2(
+            item,
+            index,
+            sources_by_ref=sources_by_ref,
+            requires_scenario_prescription=requires_scenario_prescription,
+            active_scenario_refs=active_scenario_refs,
+        )
         for index, item in enumerate(entries_raw)
     ]
     seen_entries: set[tuple[str, int]] = set()
@@ -522,11 +714,13 @@ def _validate_registry_v2(raw: Any) -> dict[str, Any]:
         section_values = [entry["definition"], entry["scope"], entry["expected_direction"]]
         section_values.extend(entry["mechanisms"])
         for name in ("cue", "matched_retest", "near_transfer_retest"):
-            if entry[name] != "not_applicable":
-                section_values.append(entry[name])
+            value = entry.get(name)
+            if value is not None and value != "not_applicable":
+                section_values.append(value)
         for name in ("dose_guardrail", "stop_adjust_rule"):
-            if entry[name] != "not_applicable":
-                section_values.extend(entry[name])
+            value = entry.get(name)
+            if value is not None and value != "not_applicable":
+                section_values.extend(value)
         for section_value in section_values:
             section_reference = section_value["section_ref"]
             if section_reference in seen_sections:
@@ -534,6 +728,88 @@ def _validate_registry_v2(raw: Any) -> dict[str, Any]:
             seen_sections.add(section_reference)
     return copy.deepcopy({
         "schema_version": REGISTRY_SCHEMA_VERSION_V2,
+        "registry_version": registry_version,
+        "signal_aliases": aliases,
+        "sources": sources,
+        "entries": entries,
+    })
+
+
+def _validate_registry_v3(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, Mapping) or set(raw) != {
+        "schema_version", "registry_version", "signal_aliases", "sources", "entries",
+    }:
+        raise KnowledgeRegistryError("registry fields are invalid")
+    registry_version = _required_text(raw["registry_version"], "registry_version", max_length=80)
+    aliases_raw = raw["signal_aliases"]
+    if not isinstance(aliases_raw, Mapping) or len(aliases_raw) > 128:
+        raise KnowledgeRegistryError("signal_aliases must be an object")
+    aliases: dict[str, str] = {}
+    for alias, canonical in aliases_raw.items():
+        alias_text = _required_text(alias, "signal alias", max_length=120)
+        canonical_text = _required_text(canonical, "canonical signal", max_length=120)
+        if (
+            not _TOKEN_RE.fullmatch(alias_text)
+            or not _TOKEN_RE.fullmatch(canonical_text)
+            or alias_text == canonical_text
+            or alias_text in aliases
+            or canonical_text in aliases_raw
+        ):
+            raise KnowledgeRegistryError("signal alias is invalid or chained")
+        aliases[alias_text] = canonical_text
+
+    sources_raw = raw["sources"]
+    if isinstance(sources_raw, (str, bytes)) or not isinstance(sources_raw, Sequence) or not sources_raw:
+        raise KnowledgeRegistryError("sources must be a non-empty list")
+    sources = [_normalize_source_v2(item, index) for index, item in enumerate(sources_raw)]
+    sources_by_ref = {source["source_ref"]: source for source in sources}
+    if len(sources_by_ref) != len(sources):
+        raise KnowledgeRegistryError("duplicate source_ref")
+
+    entries_raw = raw["entries"]
+    if isinstance(entries_raw, (str, bytes)) or not isinstance(entries_raw, Sequence):
+        raise KnowledgeRegistryError("entries must be a list")
+    if not 1 <= len(entries_raw) <= MAX_ENTRIES:
+        raise KnowledgeRegistryError("entries has invalid length")
+    active_scenario_refs = active_scenario_profile_refs()
+    entries = [
+        _normalize_entry_v3(
+            item,
+            index,
+            sources_by_ref=sources_by_ref,
+            active_scenario_refs=active_scenario_refs,
+        )
+        for index, item in enumerate(entries_raw)
+    ]
+    seen_entries: set[tuple[str, int]] = set()
+    active_entries: set[str] = set()
+    seen_sections: set[str] = set()
+    for entry in entries:
+        key = (entry["entry_id"], entry["entry_version"])
+        if key in seen_entries:
+            raise KnowledgeRegistryError("duplicate entry version")
+        seen_entries.add(key)
+        if entry["status"] == "active":
+            if entry["entry_id"] in active_entries:
+                raise KnowledgeRegistryError("multiple active versions for entry")
+            active_entries.add(entry["entry_id"])
+        section_values = [entry["definition"], entry["scope"], entry["expected_direction"]]
+        section_values.extend(entry["mechanisms"])
+        for name in ("cue", "matched_retest", "near_transfer_retest"):
+            value = entry.get(name)
+            if value is not None and value != "not_applicable":
+                section_values.append(value)
+        for name in ("dose_guardrail", "stop_adjust_rule"):
+            value = entry.get(name)
+            if value is not None and value != "not_applicable":
+                section_values.extend(value)
+        for section_value in section_values:
+            section_reference = section_value["section_ref"]
+            if section_reference in seen_sections:
+                raise KnowledgeRegistryError("duplicate section_ref")
+            seen_sections.add(section_reference)
+    return copy.deepcopy({
+        "schema_version": REGISTRY_SCHEMA_VERSION_V3,
         "registry_version": registry_version,
         "signal_aliases": aliases,
         "sources": sources,
@@ -550,6 +826,8 @@ def validate_registry(raw: Any) -> dict[str, Any]:
         return _validate_registry_v1(raw)
     if schema_version == REGISTRY_SCHEMA_VERSION_V2:
         return _validate_registry_v2(raw)
+    if schema_version == REGISTRY_SCHEMA_VERSION_V3:
+        return _validate_registry_v3(raw)
     raise KnowledgeRegistryError("unsupported schema_version")
 
 
@@ -643,7 +921,8 @@ def query_registry(
 
 __all__ = [
     "KnowledgeRegistryError", "REGISTRY_PATH", "REGISTRY_PATH_V1", "REGISTRY_PATH_V2",
-    "REGISTRY_SCHEMA_VERSION", "REGISTRY_SCHEMA_VERSION_V1", "REGISTRY_SCHEMA_VERSION_V2",
+    "REGISTRY_PATH_V3", "REGISTRY_PATH_V4", "REGISTRY_SCHEMA_VERSION",
+    "REGISTRY_SCHEMA_VERSION_V1", "REGISTRY_SCHEMA_VERSION_V2", "REGISTRY_SCHEMA_VERSION_V3",
     "MAX_RESULTS", "claim_ref", "entry_ref", "load_registry", "query_registry",
     "resolve_entry", "validate_registry",
 ]

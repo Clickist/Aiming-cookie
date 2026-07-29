@@ -11,16 +11,19 @@ _CANDIDATES = (
         "dynamic_clicking.normalized_click_error",
         "normalized_click_error",
         "dynamic click error high",
+        "event.dynamic_click",
     ),
     (
         "dynamic_clicking.acquisition_time_ms",
         "acquisition_time_ms",
         "dynamic acquisition slow",
+        "event.dynamic_click",
     ),
     (
         "dynamic_clicking.relative_velocity",
         "relative_velocity_magnitude",
         "relative velocity mismatch",
+        "field.relative_velocity",
     ),
 )
 
@@ -71,7 +74,7 @@ def build_dynamic_clicking_candidate_advice(
         if isinstance(row, Mapping) and isinstance(row.get("event_ref"), str)
     ]
     candidates = []
-    for metric_key, row_field, signal in _CANDIDATES:
+    for metric_key, row_field, signal, observation_ref in _CANDIDATES:
         metric = metrics.get(metric_key)
         current = (
             _number(metric.get("value"))
@@ -116,6 +119,7 @@ def build_dynamic_clicking_candidate_advice(
             },
             "supporting_row_refs": supporting_refs,
             "counterexample_row_refs": counterexample_refs,
+            "observation_ref": observation_ref,
             "knowledge_registry_version": knowledge.registry_version,
             "knowledge_entry_refs": knowledge.entry_refs,
             "requested_knowledge_sections": [

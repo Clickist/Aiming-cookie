@@ -1030,6 +1030,86 @@ async def test_run_owned_analysis_video_and_segments_are_owner_scoped_and_degrad
 
 
 @pytest.mark.asyncio
+async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    run, run_video = await _seed_route_video_run(tmp_path, "video-fallback-empty")
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+    ) as client:
+        created = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers={"Idempotency-Key": "video-fallback-empty"},
+            json={"input_mode": "video_fallback"},
+        )
+
+    assert created.status_code == 200, created.text
+    session_id = created.json()["session_id"]
+    result = _run_owned_video_result(session_id, run["id"])
+    result["evidence"].pop("derived_artifact")
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (dump_contract_json(result), session_id),
+    )
+    await conn.commit()
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "")
+    owner_headers = {"X-User-Id": config.DESKTOP_LOCAL_PROFILE}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        replay = await client.get(
+            f"/api/sessions/{session_id}/video",
+            headers={**owner_headers, "Range": "bytes=2-6"},
+        )
+        segments = await client.get(
+            f"/api/sessions/{session_id}/evidence-segments",
+            headers=owner_headers,
+        )
+
+    assert replay.status_code == 206
+    assert replay.content == run_video.read_bytes()[2:7]
+    assert segments.status_code == 200, segments.text
+    assert segments.json()["schema_version"] == "frontend_evidence_segments.v1"
+    assert segments.json()["video_availability"] == "available"
+    assert segments.json()["video_route"] == f"/api/sessions/{session_id}/video"
+    assert segments.json()["segments"] == []
+    assert str(tmp_path) not in replay.text + segments.text
+
+    invalid_result = _run_owned_video_result(session_id, run["id"])
+    await conn.execute(
+        "UPDATE sessions SET result=? WHERE id=?",
+        (dump_contract_json(invalid_result), session_id),
+    )
+    await conn.commit()
+
+    async def reject_invalid_artifact(**_kwargs):
+        raise ValueError("invalid evidence artifact")
+
+    monkeypatch.setattr(
+        routes_mod.evidence_store,
+        "read_analysis_evidence_artifact",
+        reject_invalid_artifact,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=owner_headers,
+    ) as client:
+        invalid = await client.get(
+            f"/api/sessions/{session_id}/evidence-segments"
+        )
+
+    assert invalid.status_code == 404
+    assert str(tmp_path) not in invalid.text
+
+
+@pytest.mark.asyncio
 async def test_storage_and_run_evidence_removal_are_desktop_only_and_path_free(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

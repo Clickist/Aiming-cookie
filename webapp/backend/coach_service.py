@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from . import (
     coach_commands,
@@ -92,14 +92,36 @@ async def run_chat_turn(
     persist: bool = True,
     user_message_id: int | None = None,
     agent_run_ref: str | None = None,
+    teaching_turn: Mapping[str, Any] | None = None,
+    temporary_profile_refs: Mapping[str, str] | None = None,
 ) -> CoachChatResult:
     from .coach_context import coerce_coach_diagnostic_context
+
+    user_msg_to_store, discovered_profile_refs = coach_commands.prepare_temporary_steam_profiles(
+        user_msg_to_store,
+    )
+    profile_refs = dict(discovered_profile_refs)
+    if temporary_profile_refs is not None:
+        profile_refs.update(temporary_profile_refs)
+    safe_prior_messages: list[dict] = []
+    for message in prior_messages:
+        if not isinstance(message, dict):
+            continue
+        safe_message = dict(message)
+        if isinstance(safe_message.get("content"), str):
+            safe_message["content"] = coach_commands.redact_temporary_steam_profiles(
+                safe_message["content"],
+            )
+        safe_prior_messages.append(safe_message)
 
     context = (
         diagnostic_context
         if diagnostic_context is not None
         else coerce_coach_diagnostic_context(diagnosis)
     )
+    from .coach_runtime import normalize_teaching_turn
+
+    normalized_teaching_turn = normalize_teaching_turn(teaching_turn)
     provider_profile = (
         await provider_store.get_default_runtime_profile(x_user_id)
         if config.COACH_RUNTIME == "pi"
@@ -249,20 +271,29 @@ async def run_chat_turn(
                 desktop_token=desktop_token or None,
                 ttl_seconds=min(config.COACH_RUNTIME_TIMEOUT_SECONDS, 900),
                 reachable_refs=_reachable_context_refs(context),
+                temporary_profile_refs=profile_refs,
             )
         turn = CoachTurn(
-            prior_messages=prior_messages,
+            prior_messages=safe_prior_messages,
             user_message=user_msg_to_store,
             diagnostic_context=context,
             user_id=x_user_id,
             provider_profile=provider_profile,
             tool_bridge=tool_bridge,
+            teaching_turn=normalized_teaching_turn,
             run_ref=agent_run_ref,
         )
         engine_result = await complete_turn_async(turn)
-        reply = engine_result.reply
+        reply = (
+            coach_commands.redact_temporary_steam_profiles(engine_result.reply)
+            if engine_result.reply is not None
+            else None
+        )
         notes = list(engine_result.notes)
         tool_events = list(engine_result.tool_events)
+        if coach_commands.contains_temporary_steam_profile(tool_events):
+            tool_events = []
+            raise ValueError("Coach tool event contains a Steam identity")
         status = engine_result.status
         failure = engine_result.error
     except Exception as e:

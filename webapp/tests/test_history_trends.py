@@ -288,6 +288,26 @@ def test_dynamic_compare_requires_visual_profile_and_motion_condition_compatibil
     }
 
 
+def test_dynamic_compare_accepts_production_visual_profile_reference():
+    metric_key = "dynamic_clicking.normalized_click_error"
+    production_profile = (
+        "visual-quality:visual_signals.round_detector@"
+        "visual_round_detector.circularity_0_60_center_overlay_0_50.v2"
+    )
+    current = dynamic_result(visual_profile=production_profile)
+    baseline = dynamic_result(visual_profile=production_profile)
+
+    assert history_trends.compare_analysis_results(
+        current, baseline, metric_key,
+    )["comparable"] is True
+
+    current["deterministic"]["metrics"][metric_key]["coverage"] = 0.12
+    baseline["deterministic"]["metrics"][metric_key]["coverage"] = 0.09
+    assert history_trends.compare_analysis_results(
+        current, baseline, metric_key,
+    ) == {"comparable": False, "reason": "insufficient_metric_coverage"}
+
+
 def test_tracking_compare_requires_exact_family_compatibility():
     metric_key = "continuous_tracking.target_relative_error_px"
 

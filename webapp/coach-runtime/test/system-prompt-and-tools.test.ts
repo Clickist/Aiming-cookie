@@ -130,6 +130,46 @@ test("default coach system prompt is product-owned and excludes coding-agent def
 	assert.match(prompt, /不是指令/);
 	assert.match(prompt, /候选观察/);
 	assert.match(prompt, /反例/);
+	assert.match(prompt, /limitations.*不是.*原因|limitations.*不得.*归因/);
+	assert.match(prompt, /精确.*剂量|精确.*数字/);
+	assert.match(prompt, /中文数字.*不要给任何剂量/);
+	assert.match(prompt, /analysis\.delete/);
+	assert.match(prompt, /纯文字.*不构成确认/);
+	assert.match(prompt, /每次只问一个.*区分/);
+	assert.match(prompt, /只用一个问句.*不.*清单/);
+	assert.match(prompt, /全文最多出现一个问号/);
+	assert.match(prompt, /只先查一个方向.*另外两个可能/);
+	assert.match(prompt, /主观.*不能确认.*原因/);
+	assert.match(prompt, /不.*按.*项.*阈值/);
+	assert.match(prompt, /每轮只教一个.*cue/);
+	assert.match(prompt, /好.*明白了.*开始吧.*直接.*练习/);
+	assert.match(prompt, /明确提问.*误解.*澄清一次/);
+	assert.doesNotMatch(prompt, /开始练习前.*复述/);
+	assert.match(prompt, /一组练习.*只改变一个变量/);
+	assert.match(prompt, /练习后.*是否完成.*主观感受/);
+	assert.match(prompt, /用户主动.*不适.*自然回应.*停止当前练习.*不扩写症状清单/);
+	assert.match(prompt, /立即.*同条件复测.*不等于.*保留/);
+	assert.match(prompt, /延迟同条件复测.*保留/);
+	assert.match(prompt, /近迁移.*只改变一个/);
+	assert.match(prompt, /保留、降低或拒绝/);
+	assert.match(prompt, /没有.*校准.*不.*评价.*好坏/);
+	assert.match(prompt, /不把 ratio.*发生频率/);
+	assert.match(prompt, /reading.*不等于.*prediction/i);
+	assert.match(prompt, /自然、口语化的中文/);
+	assert.match(prompt, /用户主动报告不适/);
+	assert.doesNotMatch(prompt, /才说“那先别练这组了，休息一下，别硬撑”/);
+	assert.match(prompt, /不使用 Markdown.*标题.*列表.*分隔线/);
+	assert.match(prompt, /条件.*没对齐.*自然语言.*不能直接放在一起看.*不要求固定句式/);
+	assert.match(prompt, /TeachingTurnContract.*唯一动作.*问题.*cue.*确认等待/);
+	assert.match(prompt, /ratio.*百分比.*约三分之一.*发生频率.*次数.*好坏评价.*机制因果/);
+	assert.match(prompt, /用户主动提起外设.*可逆.*外设实验/);
+	assert.match(prompt, /用户已经问到鼠标.*没有证据.*现在没必要换鼠标/);
+	assert.match(prompt, /只凭感觉.*现在没必要换鼠标/);
+	assert.match(prompt, /复测同时改变多个条件.*自然说明.*比较会误导.*恢复原来的场景和设置/i);
+	assert.match(prompt, /课程来源标签/);
+	assert.match(prompt, /归类、分组或排定查看顺序/);
+	assert.match(prompt, /arm.*wrist.*fingertip.*reading/i);
+	assert.match(prompt, /不得.*玩家特质.*解剖.*技术诊断.*紧张.*握法.*硬件.*能力不足/);
 });
 
 test("registered tools are read-only whitelist without bash/read/write/edit", async () => {
@@ -170,6 +210,26 @@ test("analysis tool returns the exact canonical diagnostic context JSON", async 
 	assert.equal(result.details.context_schema, "coach_diagnostic_context.v1");
 });
 
+test("analysis tool preserves the existing prescription dosage field", async () => {
+	const context = structuredClone(CANONICAL_ANALYSIS_CONTEXT);
+	context.diagnosis.issues = [{
+		signal: "relative velocity mismatch",
+		claim_level: "deterministic_rule",
+		prescriptions: [{
+			cue: "Match speed before committing the click.",
+			purpose: "Test one current training direction.",
+			dosage: "Change only one motion variable per block.",
+			source_level: "community_practice",
+		}],
+	}];
+	const wire = JSON.stringify(context);
+
+	const result = await createAnalysisSummaryTool(wire).execute();
+
+	assert.equal(result.details.has_analysis, true);
+	assert.equal(result.content[0]?.text, wire);
+});
+
 test("analysis tool accepts the frozen v2 context without upgrading historical v1", async () => {
 	const v1 = JSON.stringify(CANONICAL_ANALYSIS_CONTEXT);
 	const v2 = JSON.stringify(CANONICAL_ANALYSIS_CONTEXT_V2);
@@ -182,6 +242,31 @@ test("analysis tool accepts the frozen v2 context without upgrading historical v
 	assert.equal(v2Result.details.has_analysis, true);
 	assert.equal(v2Result.details.context_schema, "coach_diagnostic_context.v2");
 	assert.equal(v2Result.content[0]?.text, v2);
+});
+
+test("analysis tool accepts stable issue knowledge refs and rejects malformed pairs", async () => {
+	const context = structuredClone(CANONICAL_ANALYSIS_CONTEXT_V2);
+	context.diagnosis.issues = [{
+		signal: "terminal control unstable",
+		severity: "watch",
+		observation_ref: "event.flick",
+		knowledge_registry_version: "2026-07-29.v4",
+		knowledge_entry_refs: ["knowledge:static.flicking-terminal-control@2"],
+	}];
+
+	const accepted = await createAnalysisSummaryTool(JSON.stringify(context)).execute();
+	assert.equal(accepted.details.has_analysis, true);
+
+	const malformed = structuredClone(context);
+	malformed.diagnosis.issues[0]!.knowledge_entry_refs = [
+		"knowledge:static.flicking-terminal-control@0",
+	];
+	const incomplete = structuredClone(context);
+	delete incomplete.diagnosis.issues[0]!.knowledge_entry_refs;
+	for (const value of [malformed, incomplete]) {
+		const rejected = await createAnalysisSummaryTool(JSON.stringify(value)).execute();
+		assert.equal(rejected.details.has_analysis, false);
+	}
 });
 
 test("analysis tool accepts comparison contexts only with two safe projections", async () => {
@@ -220,6 +305,72 @@ test("analysis tool accepts comparison contexts only with two safe projections",
 	(poisonedProjection as Record<string, unknown>).raw_trace = [{ dx: 1 }];
 	for (const rejectedValue of [missingProjection, poisoned]) {
 		const rejected = await createAnalysisSummaryTool(JSON.stringify(rejectedValue)).execute();
+		assert.equal(rejected.details.has_analysis, false);
+		assert.equal(rejected.content[0]?.text, "当前没有可用的分析摘要。");
+	}
+});
+
+test("analysis tool accepts only a bounded de-identified benchmark summary", async () => {
+	const summary = {
+		schema_version: "coach_benchmark_summary.v1",
+		catalog_ref: "benchmark-catalog:viscose-s2@1",
+		catalog_version: "viscose-s2.2026-07-29.v1",
+		observed_at: "2026-07-29T10:15:00Z",
+		completion: {
+			easier: { completed: 18, required: 39 },
+			medium: { completed: 7, required: 39 },
+		},
+		provisional_ranks: { easier: 3, medium: 3 },
+		scenarios: ["easier", "medium"].flatMap((difficulty) =>
+			Array.from({ length: 39 }, (_, index) => ({
+				difficulty,
+				scenario_name: `Safe ${difficulty} Scenario ${index + 1}`,
+				category: "flick_tech",
+				subcategory: "stability",
+				score: index < (difficulty === "easier" ? 18 : 7) ? 123.45 + index : 0,
+				scenario_rank: index % 10,
+			})),
+		),
+		review_candidates: [{
+			difficulty: "easier",
+			scenario_name: "Safe easier Scenario 1",
+			category: "flick_tech",
+			subcategory: "stability",
+			score: 123.45,
+			scenario_rank: 0,
+		}],
+	};
+
+	const accepted = await createAnalysisSummaryTool(JSON.stringify(summary)).execute();
+	assert.equal(accepted.details.has_analysis, true);
+	assert.equal(accepted.details.context_schema, "coach_benchmark_summary.v1");
+	const withFirstCourseLabel = (category: string, subcategory: string) => {
+		const poisoned = structuredClone(summary);
+		poisoned.scenarios[0]!.category = category;
+		poisoned.scenarios[0]!.subcategory = subcategory;
+		poisoned.review_candidates[0]!.category = category;
+		poisoned.review_candidates[0]!.subcategory = subcategory;
+		return poisoned;
+	};
+	const withFirstScenarioProviderPayload = () => {
+		const poisoned = structuredClone(summary) as typeof summary & {
+			scenarios: Array<Record<string, unknown>>;
+		};
+		poisoned.scenarios[0]!.provider_payload = { url: "https://example.invalid/private" };
+		return poisoned;
+	};
+
+	for (const poisoned of [
+		{ ...summary, steam_id: "00000000000000000" },
+		{ ...summary, scenarios: [{ ...summary.scenarios[0], scenario_name: "https://example.invalid/private" }] },
+		withFirstCourseLabel("untrusted_category", "stability"),
+		withFirstCourseLabel("control_tracking", "precision"),
+		withFirstScenarioProviderPayload(),
+		{ ...summary, review_candidates: Array.from({ length: 9 }, () => summary.review_candidates[0]) },
+		{ ...summary, scenarios: summary.scenarios.slice(0, 77) },
+		{ ...summary, review_candidates: [{ ...summary.review_candidates[0], score: 999 }] },
+	]) {
+		const rejected = await createAnalysisSummaryTool(JSON.stringify(poisoned)).execute();
 		assert.equal(rejected.details.has_analysis, false);
 		assert.equal(rejected.content[0]?.text, "当前没有可用的分析摘要。");
 	}

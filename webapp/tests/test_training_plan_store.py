@@ -290,3 +290,37 @@ async def test_plan_item_requires_stable_refs_and_user_execution_rejects_llm_wri
             user_feedback="Finished.",
             recorded_by="llm",
         )
+
+
+@pytest.mark.asyncio
+async def test_plan_item_status_changes_are_owner_scoped_and_idempotent():
+    draft = await store.create_draft(
+        "owner-a", PLAN_PAYLOAD, verification_targets=VERIFICATION_TARGETS,
+    )
+    item = await store.add_plan_item("owner-a", draft["plan_id"], PLAN_ITEM)
+
+    activated = await store.set_plan_item_status(
+        "owner-a",
+        item["item_ref"],
+        "active",
+        reason="coach_teaching_item_status.v1:confirmed_execution",
+    )
+    replay = await store.set_plan_item_status(
+        "owner-a",
+        item["item_ref"],
+        "active",
+        reason="coach_teaching_item_status.v1:confirmed_execution",
+    )
+
+    assert activated["status"] == "active"
+    assert activated["status_ref"].startswith("plan-item-status:")
+    assert replay["status"] == "active"
+    assert replay["status_ref"] is None
+    with pytest.raises(store.PlanForbidden):
+        await store.set_plan_item_status(
+            "owner-b",
+            item["item_ref"],
+            "cancelled",
+            reason="coach_teaching_revision.v1:reject",
+        )
+    assert (await store.list_plan_items("owner-a", draft["plan_id"]))[0]["status"] == "active"

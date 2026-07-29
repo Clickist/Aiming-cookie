@@ -59,6 +59,87 @@ export type CoachRuntimeMessage = {
   content: string;
 };
 
+export const TEACHING_TURN_CONTRACT_SCHEMA = "coach_teaching_turn.v1" as const;
+
+export type TeachingPhase =
+  | "intake"
+  | "hypothesize"
+  | "teach"
+  | "await_teach_back"
+  | "teach_back_repair"
+  | "practice_ready"
+  | "await_execution_confirmation"
+  | "retest_ready"
+  | "await_retest_confirmation"
+  | "revise"
+  | "follow_up"
+  | "paused"
+  | "stopped_for_discomfort";
+
+export type TeachingQuestionKind =
+  | "none"
+  | "discriminator"
+  | "teach_back"
+  | "teach_back_repair"
+  | "follow_up";
+
+export type TeachingAllowedCommand =
+  | "training_plan.item.add"
+  | "training_plan.execution.record"
+  | "training_plan.retest.record";
+
+export type TeachingRetestIntent = "none" | "immediate_matched" | "delayed_matched" | "near_transfer";
+export type TeachingRetestComparability = "unresolved" | "comparable" | "not_comparable" | "not_requested";
+export type TeachingRevisionDecision = "retain" | "lower" | "reject";
+
+export type TeachingPreparedPlanItem = {
+  diagnosis_ref: string;
+  knowledge_ref: string;
+  scenario_profile_ref: string;
+  baseline_metric_ref: string;
+  expected_direction: "lower_better" | "higher_better" | "target_band" | "descriptive_only" | "comparison_only";
+  practice_condition: string;
+  cue: string;
+  dose_guardrail: string;
+  matched_retest_ref: string;
+  near_transfer_retest_ref: string;
+  review_date: string;
+};
+
+export type TeachingNextRecommendation = {
+  scenario_name: string;
+  scenario_profile_ref: string | null;
+  message: string;
+};
+
+export type TeachingTurnContract = {
+  schema_version: typeof TEACHING_TURN_CONTRACT_SCHEMA;
+  session_ref: string;
+  session_version: number;
+  phase: TeachingPhase;
+  observation: string | null;
+  primary_candidate: string | null;
+  alternatives: string[];
+  cue: string | null;
+  changed_variable: string | null;
+  active_item_ref: string | null;
+  prepared_plan_ref: string | null;
+  prepared_item: TeachingPreparedPlanItem | null;
+  next_recommendation: TeachingNextRecommendation | null;
+  question_kind: TeachingQuestionKind;
+  question: string | null;
+  allowed_command: TeachingAllowedCommand | null;
+  confirmation_intent: "none" | "execution" | "retest";
+  retest: {
+    intent: TeachingRetestIntent;
+    comparability_required: boolean;
+    comparability: TeachingRetestComparability;
+    revision_decision: TeachingRevisionDecision | null;
+  };
+  ratio_sources: Array<{ label: string; value: number }>;
+  approved_dose: string | null;
+};
+
 /** Legacy v0 OpenAI-compatible model shape, retained only for migration compatibility. */
 export type CoachRuntimeModelConfig = {
   base_url: string;
@@ -116,6 +197,7 @@ export type CoachRuntimeTurnRequest = {
   system_prompt?: string;
   model: CoachRuntimeProviderProfile;
   tool_bridge?: CoachToolBridge;
+  teaching_turn?: TeachingTurnContract;
 };
 
 export type CoachRuntimeTurnSchema =
@@ -131,6 +213,7 @@ export type CoachRuntimeError = {
 
 export type CoachRuntimeTurnResponse = {
   schema_version: CoachRuntimeTurnSchema;
+  run_id: string | null;
   ok: boolean;
   reply: string | null;
   partial_reply: string | null;
@@ -268,9 +351,11 @@ export function successResponse(
   notes: string[] = [],
   schemaVersion: CoachRuntimeTurnSchema = COACH_RUNTIME_TURN_SCHEMA,
   toolEvents: CoachRuntimeToolEvent[] = [],
+  runId: string | null = null,
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
+    run_id: runId,
     ok: true,
     reply,
     partial_reply: null,
@@ -286,9 +371,11 @@ export function failureResponse(
   schemaVersion: CoachRuntimeTurnSchema = COACH_RUNTIME_TURN_SCHEMA,
   toolEvents: CoachRuntimeToolEvent[] = [],
   partialReply: string | null = null,
+  runId: string | null = null,
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
+    run_id: runId,
     ok: false,
     reply: null,
     partial_reply: partialReply,

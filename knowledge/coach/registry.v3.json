@@ -1,0 +1,1786 @@
+{
+    "schema_version":  "coach_knowledge_registry.v2",
+    "registry_version":  "2026-07-28.v3",
+    "signal_aliases":  {
+                           "acceleration mismatch high":  "accel mismatch high",
+                           "decel jitter":  "sparc low",
+                           "reverse high":  "reverse_ratio high",
+                           "throughput low":  "throughput below reference",
+                           "two_stage":  "submovement two-stage"
+                       },
+    "sources":  [
+                    {
+                        "source_ref":  "product.complete-coach-spec",
+                        "source_level":  "product_contract",
+                        "title":  "Complete Coach analysis context design",
+                        "author_or_org":  "Aiming Cookie",
+                        "published_at":  "2026-07-20",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "complete-coach-spec sections 8-9",
+                        "applicability":  [
+                                              "all_families"
+                                          ],
+                        "supports_sections":  [
+                                                  "definition",
+                                                  "scope",
+                                                  "expected_direction",
+                                                  "mechanisms",
+                                                  "limitations",
+                                                  "stop_adjust_rule",
+                                                  "scenario_prescription"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.moving-target-control",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Control strategies in directing the hand to moving targets",
+                        "author_or_org":  "Goodbody and Wolpert",
+                        "published_at":  "1992-01-01",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PubMed 1301368; task10-assessment section 6.3",
+                        "applicability":  [
+                                              "dynamic_clicking"
+                                          ],
+                        "supports_sections":  [
+                                                  "mechanisms",
+                                                  "limitations"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.visual-motion-extrapolation",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Extrapolation of visual motion for manual interception",
+                        "author_or_org":  "Soechting and Flanders",
+                        "published_at":  "2008-06-01",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "J Neurophysiol 10.1152/jn.90308.2008; task10-assessment section 6.3",
+                        "applicability":  [
+                                              "dynamic_clicking"
+                                          ],
+                        "supports_sections":  [
+                                                  "mechanisms",
+                                                  "limitations"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.accelerating-object-prediction",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Humans Can Track But Fail to Predict Accelerating Objects",
+                        "author_or_org":  "Kreyenmeier et al.",
+                        "published_at":  "2022-09-09",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PMC9469915; task10-assessment section 6.3",
+                        "applicability":  [
+                                              "dynamic_clicking"
+                                          ],
+                        "supports_sections":  [
+                                                  "mechanisms",
+                                                  "limitations"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.manual-intermittent-control",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Intermittency in human manual tracking tasks",
+                        "author_or_org":  "Miall et al.",
+                        "published_at":  "1993-03-01",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PubMed 12730041; task10-assessment section 7.4",
+                        "applicability":  [
+                                              "static_clicking",
+                                              "predictable_tracking",
+                                              "reactive_tracking",
+                                              "control_tracking"
+                                          ],
+                        "supports_sections":  [
+                                                  "mechanisms",
+                                                  "limitations"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.sparc-smoothness",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "On the analysis of movement smoothness",
+                        "author_or_org":  "Balasubramanian et al.",
+                        "published_at":  "2015-12-09",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PMC4674971; task10-assessment section 7.4",
+                        "applicability":  [
+                                              "static_clicking",
+                                              "control_tracking"
+                                          ],
+                        "supports_sections":  [
+                                                  "mechanisms",
+                                                  "limitations"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.sensorimotor-decision",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Decision-making in sensorimotor control",
+                        "author_or_org":  "Gallivan, Chapman, Wolpert, and Flanagan",
+                        "published_at":  "2018-09-01",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PMID 30089888; task10-assessment section 8",
+                        "applicability":  [
+                                              "target_switching"
+                                          ],
+                        "supports_sections":  [
+                                                  "mechanisms",
+                                                  "limitations"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.redirected-options",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Reaching movements are automatically redirected to nearby options during target split",
+                        "author_or_org":  "Kurtzer, Muraoka, Singh, Prasad, Chauhan, and Adhami",
+                        "published_at":  "2020-10-01",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PMID 32783570; task10-assessment section 8",
+                        "applicability":  [
+                                              "target_switching"
+                                          ],
+                        "supports_sections":  [
+                                                  "mechanisms",
+                                                  "limitations"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.challenge-point",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Challenge point: a framework for conceptualizing the effects of various practice conditions in motor learning",
+                        "author_or_org":  "Guadagnoli and Lee",
+                        "published_at":  "2004-06-01",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PubMed 15130871; task10-assessment section 9.2",
+                        "applicability":  [
+                                              "all_families"
+                                          ],
+                        "supports_sections":  [
+                                                  "dose_guardrail"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.retention-transfer",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "The effect of contextual interference on transfer in motor learning: a systematic review and meta-analysis",
+                        "author_or_org":  "Czyz, Wojcik, and Solarska",
+                        "published_at":  "2024-08-14",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PMID 39205981; task10-assessment section 9.3",
+                        "applicability":  [
+                                              "all_families"
+                                          ],
+                        "supports_sections":  [
+                                                  "matched_retest",
+                                                  "near_transfer_retest",
+                                                  "stop_adjust_rule"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.mouse-fatigue",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Impact of repetitive mouse aiming on muscle fatigue and fine motor performance of the distal upper limb",
+                        "author_or_org":  "Forman, Nikitin, Lang, Gabriel, Sonne, Kociolek, and Holmes",
+                        "published_at":  "2025-03-13",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "PMID 40117860; task10-assessment section 9.2",
+                        "applicability":  [
+                                              "all_families"
+                                          ],
+                        "supports_sections":  [
+                                                  "mechanisms",
+                                                  "dose_guardrail",
+                                                  "stop_adjust_rule"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.precision-mouse-force",
+                        "source_level":  "academic_peer_reviewed",
+                        "title":  "Effects of precision demands and mental pressure on muscle activation and hand forces in computer mouse tasks",
+                        "author_or_org":  "Visser et al.",
+                        "published_at":  "2004-02-05",
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "10.1080/00140130310001617967; task10-assessment section 9.2",
+                        "applicability":  [
+                                              "all_families"
+                                          ],
+                        "supports_sections":  [
+                                                  "scope",
+                                                  "expected_direction",
+                                                  "mechanisms",
+                                                  "limitations"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "community.rawinput-dynamic",
+                        "source_level":  "coach_first_party",
+                        "title":  "Dynamic clicking teaching vocabulary",
+                        "author_or_org":  "Raw Input",
+                        "published_at":  null,
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "task10-assessment sections 5-6",
+                        "applicability":  [
+                                              "dynamic_clicking"
+                                          ],
+                        "supports_sections":  [
+                                                  "definition",
+                                                  "cue",
+                                                  "dose_guardrail"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "community.rawinput-tracking",
+                        "source_level":  "coach_first_party",
+                        "title":  "Tracking teaching vocabulary",
+                        "author_or_org":  "Raw Input",
+                        "published_at":  null,
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "task10-assessment sections 5 and 7",
+                        "applicability":  [
+                                              "predictable_tracking",
+                                              "reactive_tracking",
+                                              "control_tracking"
+                                          ],
+                        "supports_sections":  [
+                                                  "definition",
+                                                  "cue",
+                                                  "dose_guardrail"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "community.rawinput-tension",
+                        "source_level":  "coach_first_party",
+                        "title":  "Tension management teaching vocabulary",
+                        "author_or_org":  "Raw Input",
+                        "published_at":  null,
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "task10-assessment sections 5 and 9",
+                        "applicability":  [
+                                              "all_families"
+                                          ],
+                        "supports_sections":  [
+                                                  "definition",
+                                                  "cue",
+                                                  "dose_guardrail"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "community.voltaic-coaching",
+                        "source_level":  "community_organization",
+                        "title":  "Coaching and benchmark taxonomy",
+                        "author_or_org":  "Voltaic",
+                        "published_at":  null,
+                        "retrieved_at":  "2026-07-22",
+                        "locator":  "task10-assessment sections 4-5",
+                        "applicability":  [
+                                              "all_families"
+                                          ],
+                        "supports_sections":  [
+                                                  "definition",
+                                                  "cue"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "product.scenario-registry",
+                        "source_level":  "product_contract",
+                        "title":  "Scenario registry",
+                        "author_or_org":  "Aiming Cookie",
+                        "published_at":  "2026-07-27",
+                        "retrieved_at":  "2026-07-28",
+                        "locator":  "knowledge/scenarios/registry.v1.json",
+                        "applicability":  [
+                                              "all_families"
+                                          ],
+                        "supports_sections":  [
+                                                  "scenario_prescription"
+                                              ]
+                    },
+                    {
+                        "source_ref":  "research.scenario-prescription",
+                        "source_level":  "experimental",
+                        "title":  "Scenario prescription research",
+                        "author_or_org":  "Aiming Cookie",
+                        "published_at":  null,
+                        "retrieved_at":  "2026-07-28",
+                        "locator":  "https://blog.voltaic.gg/announcing-the-voltaic-season-5-aiming-benchmarks-beta-for-kovaaks/; https://pubmed.ncbi.nlm.nih.gov/15130871/",
+                        "applicability":  [
+                                              "static_clicking",
+                                              "dynamic_clicking",
+                                              "predictable_tracking"
+                                          ],
+                        "supports_sections":  [
+                                                  "scenario_prescription"
+                                              ]
+                    }
+                ],
+    "entries":  [
+                    {
+                        "entry_id":  "static.flicking-terminal-control",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "observation_definition",
+                        "topics":  [
+                                       "static_clicking",
+                                       "terminal_control"
+                                   ],
+                        "signals":  [
+                                        "reverse_ratio high",
+                                        "submovement two-stage",
+                                        "sparc low"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:settle_time_ms",
+                                            "metric:corrective_count",
+                                            "metric:reverse_ratio",
+                                            "metric:sparc"
+                                        ],
+                        "family_scope":  [
+                                             "static_clicking"
+                                         ],
+                        "observation_refs":  [
+                                                 "event.flick",
+                                                 "metric.terminal_control"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "input_kinematics_available",
+                                                      "same_metric_version",
+                                                      "matched_static_condition"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "static.flicking-terminal-control.definition",
+                                           "claim_level":  "deterministic_rule",
+                                           "source_refs":  [
+                                                               "product.complete-coach-spec"
+                                                           ],
+                                           "text":  "Input-derived terminal control describes settling and corrections after a static flick; it is not target-relative error without a reliable target track."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "static.flicking-terminal-control.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "Compare only the same metric version and matched static conditions, using the player\u0027s own distribution when no calibration exists."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "static.flicking-terminal-control.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "comparison_only"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "static.flicking-terminal-control.mechanism",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.manual-intermittent-control",
+                                                                   "research.sparc-smoothness"
+                                                               ],
+                                               "text":  "Terminal adjustments can reflect task precision demands and movement control, but this observation does not identify a single cause."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "target size or distance changed",
+                                                         "event segmentation changed",
+                                                         "deliberate pacing changed"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not label input-only corrections as visual overshoot.",
+                                                     "Do not infer grip, muscle tension, or pain."
+                                                 ],
+                        "limitations":  [
+                                            "No absolute healthy threshold is available."
+                                        ],
+                        "counterevidence":  [
+                                                "A matched run with equal outcome and lower correction burden weakens this candidate."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "static.flicking-terminal-control.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.voltaic-coaching"
+                                                    ],
+                                    "text":  "Use one task-effect cue: arrive under control, then let the click follow the settled aim point."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "static.flicking-terminal-control.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.challenge-point",
+                                                                       "research.mouse-fatigue"
+                                                                   ],
+                                                   "text":  "Use a readable variant and change only one task variable; stop or reduce difficulty when discomfort or cue-unrelated quality collapse appears."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "static.flicking-terminal-control.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later with the same static scenario, settings, metric version, and target condition."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "static.flicking-terminal-control.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with only target size or distance changed."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "static.flicking-terminal-control.stop",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer",
+                                                                         "research.mouse-fatigue"
+                                                                     ],
+                                                     "text":  "Lower confidence or change the cue when matched evidence does not improve, near transfer regresses, or discomfort rises."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "product.complete-coach-spec",
+                                        "research.manual-intermittent-control",
+                                        "research.sparc-smoothness",
+                                        "research.challenge-point",
+                                        "research.retention-transfer",
+                                        "research.mouse-fatigue",
+                                        "community.voltaic-coaching",
+                                        "product.scenario-registry",
+                                        "research.scenario-prescription"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "mechanism",
+                                               "diagnostic_scope",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  {
+                                                      "scenario_profile_ref":  "scenario:static.1wall_6targets_small@1",
+                                                      "practice_condition":  "Exact static condition; test one terminal-control cue.",
+                                                      "review_after":  "next comparable practice session",
+                                                      "source_refs":  [
+                                                                          "product.complete-coach-spec",
+                                                                          "product.scenario-registry",
+                                                                          "research.scenario-prescription"
+                                                                      ],
+                                                      "claim_level":  "experimental"
+                                                  }
+                    },
+                    {
+                        "entry_id":  "dynamic.click-error-and-acquisition",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "observation_definition",
+                        "topics":  [
+                                       "dynamic_clicking",
+                                       "acquisition",
+                                       "click_timing"
+                                   ],
+                        "signals":  [
+                                        "dynamic click error high",
+                                        "dynamic acquisition slow"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:normalized_click_error",
+                                            "metric:acquisition_time_ms",
+                                            "metric:target_state_outcome",
+                                            "metric:click_pacing"
+                                        ],
+                        "family_scope":  [
+                                             "dynamic_clicking"
+                                         ],
+                        "observation_refs":  [
+                                                 "event.dynamic_click",
+                                                 "event.repeated_click",
+                                                 "field.target_center",
+                                                 "field.outcome_association",
+                                                 "field.shot_rule"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "visual_profile_accepted",
+                                                      "canonical_time_aligned",
+                                                      "outcome_association_available",
+                                                      "target_identity_continuous"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "dynamic.click-error-and-acquisition.definition",
+                                           "claim_level":  "deterministic_rule",
+                                           "source_refs":  [
+                                                               "product.complete-coach-spec"
+                                                           ],
+                                           "text":  "Dynamic click error and acquisition-to-click duration describe target-relative click conditions only when visual tracking and outcome association pass their gates."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "dynamic.click-error-and-acquisition.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "Compare error and outcome within matched target size, speed, and change conditions; do not treat aggregate accuracy as target-state truth."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "dynamic.click-error-and-acquisition.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "comparison_only"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "dynamic.click-error-and-acquisition.mechanism",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.moving-target-control",
+                                                                   "research.visual-motion-extrapolation"
+                                                               ],
+                                               "text":  "Moving-target control can combine acquisition, target-state reading, and terminal correction; the measured pattern alone does not select one mechanism."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "target changed at click",
+                                                         "detector or alignment error",
+                                                         "deliberate pacing",
+                                                         "target viability differs"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not call this reaction time.",
+                                                     "Do not claim the player failed to see the target."
+                                                 ],
+                        "limitations":  [
+                                            "No visual gate means this entry must not support target-relative claims."
+                                        ],
+                        "counterevidence":  [
+                                                "Stable error and outcome in the same condition weaken an acquisition candidate."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "dynamic.click-error-and-acquisition.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.rawinput-dynamic"
+                                                    ],
+                                    "text":  "Choose a readable moving target; identify its current motion, acquire it, then make one deliberate click instead of chasing a score."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "dynamic.click-error-and-acquisition.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.challenge-point"
+                                                                   ],
+                                                   "text":  "Lower one motion variable first and preserve outcome quality; do not prescribe a universal duration or accuracy target."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "dynamic.click-error-and-acquisition.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later with the same profile and motion-condition distribution."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "dynamic.click-error-and-acquisition.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with one unseen target size, distance, or layout change."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "dynamic.click-error-and-acquisition.stop",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Reduce the explanation to descriptive outcome when association or visual quality becomes unavailable."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "product.complete-coach-spec",
+                                        "research.moving-target-control",
+                                        "research.visual-motion-extrapolation",
+                                        "research.challenge-point",
+                                        "research.retention-transfer",
+                                        "community.rawinput-dynamic",
+                                        "product.scenario-registry",
+                                        "research.scenario-prescription"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "mechanism",
+                                               "diagnostic_scope",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  {
+                                                      "scenario_profile_ref":  "scenario:dynamic.pasu_small_reload@1",
+                                                      "practice_condition":  "Exact dynamic condition; vary one readable motion variable.",
+                                                      "review_after":  "next comparable practice session",
+                                                      "source_refs":  [
+                                                                          "product.complete-coach-spec",
+                                                                          "product.scenario-registry",
+                                                                          "research.scenario-prescription"
+                                                                      ],
+                                                      "claim_level":  "experimental"
+                                                  }
+                    },
+                    {
+                        "entry_id":  "dynamic.speed-matching-and-reading",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "mechanism",
+                        "topics":  [
+                                       "dynamic_clicking",
+                                       "speed_matching",
+                                       "movement_reading",
+                                       "prediction"
+                                   ],
+                        "signals":  [
+                                        "relative velocity mismatch",
+                                        "post change error high"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:relative_velocity_gain",
+                                            "metric:post_change_error",
+                                            "metric:lead_lag_descriptor"
+                                        ],
+                        "family_scope":  [
+                                             "dynamic_clicking"
+                                         ],
+                        "observation_refs":  [
+                                                 "field.relative_velocity",
+                                                 "event.target_change",
+                                                 "field.motion_predictability"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "visual_profile_accepted",
+                                                      "canonical_time_aligned",
+                                                      "target_identity_continuous",
+                                                      "motion_change_validated"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "dynamic.speed-matching-and-reading.definition",
+                                           "claim_level":  "community_practice",
+                                           "source_refs":  [
+                                                               "community.rawinput-dynamic"
+                                                           ],
+                                           "text":  "Speed matching is a teaching descriptor for persistent signed target-relative velocity mismatch; reading is a candidate training direction after validated target changes."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "dynamic.speed-matching-and-reading.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "Use relative motion only in aligned, target-identified windows. Predictive lead additionally requires segment-level predictability evidence."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "dynamic.speed-matching-and-reading.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "target_band"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "dynamic.speed-matching-and-reading.mechanism",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.moving-target-control",
+                                                                   "research.visual-motion-extrapolation",
+                                                                   "research.accelerating-object-prediction"
+                                                               ],
+                                               "text":  "Predictable and changing target motion can use different control strategies; a condition-dependent response is not a direct measurement of perception or intention."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "planned lead",
+                                                         "alignment bias",
+                                                         "short windows",
+                                                         "target speed or size differs",
+                                                         "occlusion or frame gap"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not equate reading with reaction time.",
+                                                     "Do not infer visual attention or tension from mismatch."
+                                                 ],
+                        "limitations":  [
+                                            "Scenario predictability alone is insufficient evidence of predictive control."
+                                        ],
+                        "counterevidence":  [
+                                                "The same mismatch without change-conditioned error weakens a reading candidate."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "dynamic.speed-matching-and-reading.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.rawinput-dynamic"
+                                                    ],
+                                    "text":  "On a long readable strafe, match direction and speed before committing the click; after a validated change, re-read the new motion first."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "dynamic.speed-matching-and-reading.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.challenge-point"
+                                                                   ],
+                                                   "text":  "Vary one of speed, change density, or target size per block and keep hard variants as stress tests."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "dynamic.speed-matching-and-reading.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later on the same motion script or matched change type."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "dynamic.speed-matching-and-reading.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with one new speed, phase, or change sequence."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "dynamic.speed-matching-and-reading.stop",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Do not use a prediction explanation when predictability evidence is missing; report a descriptive lead or lag instead."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "product.complete-coach-spec",
+                                        "research.moving-target-control",
+                                        "research.visual-motion-extrapolation",
+                                        "research.accelerating-object-prediction",
+                                        "research.challenge-point",
+                                        "research.retention-transfer",
+                                        "community.rawinput-dynamic",
+                                        "product.scenario-registry",
+                                        "research.scenario-prescription"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "mechanism",
+                                               "diagnostic_scope",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  {
+                                                      "scenario_profile_ref":  "scenario:dynamic.pasu_small_reload@1",
+                                                      "practice_condition":  "Same dynamic condition; vary one motion feature.",
+                                                      "review_after":  "next comparable practice session",
+                                                      "source_refs":  [
+                                                                          "product.complete-coach-spec",
+                                                                          "product.scenario-registry",
+                                                                          "research.scenario-prescription"
+                                                                      ],
+                                                      "claim_level":  "experimental"
+                                                  }
+                    },
+                    {
+                        "entry_id":  "tracking.predictable-speed-matching",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "observation_definition",
+                        "topics":  [
+                                       "predictable_tracking",
+                                       "speed_matching",
+                                       "lag_gain"
+                                   ],
+                        "signals":  [
+                                        "speed mismatch high",
+                                        "tracking lag high"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:tracking_error",
+                                            "metric:time_in_radius",
+                                            "metric:velocity_gain",
+                                            "metric:phase_lag"
+                                        ],
+                        "family_scope":  [
+                                             "predictable_tracking"
+                                         ],
+                        "observation_refs":  [
+                                                 "episode.tracking",
+                                                 "field.relative_velocity",
+                                                 "field.steady_segment"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "visual_profile_accepted",
+                                                      "canonical_time_aligned",
+                                                      "steady_segment_sufficient",
+                                                      "target_identity_continuous"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "tracking.predictable-speed-matching.definition",
+                                           "claim_level":  "deterministic_rule",
+                                           "source_refs":  [
+                                                               "product.complete-coach-spec"
+                                                           ],
+                                           "text":  "Predictable tracking compares error, coverage, and relative motion on sufficiently long near-steady segments."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "tracking.predictable-speed-matching.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "Phase and gain require an aligned steady segment; use descriptive error and coverage when this condition is absent."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "tracking.predictable-speed-matching.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "target_band"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "tracking.predictable-speed-matching.mechanism",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.manual-intermittent-control"
+                                                               ],
+                                               "text":  "Steady target-relative velocity mismatch can describe a control pattern, but it cannot identify sensory, muscular, or intent causes."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "intentional edge tracking",
+                                                         "alignment offset",
+                                                         "target depth or size",
+                                                         "short nonsteady segment"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not call phase lag reaction time.",
+                                                     "Do not infer tension from speed mismatch."
+                                                 ],
+                        "limitations":  [
+                                            "Correction presence alone is not poor smoothness."
+                                        ],
+                        "counterevidence":  [
+                                                "Matched coverage with stable error despite a different gain descriptor weakens a simple speed-matching explanation."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "tracking.predictable-speed-matching.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.rawinput-tracking"
+                                                    ],
+                                    "text":  "Keep the relative speed stable through the readable segment and use small corrections rather than repeated large catches."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "tracking.predictable-speed-matching.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.challenge-point"
+                                                                   ],
+                                                   "text":  "Use a readable script first and change only speed or phase when testing transfer."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "tracking.predictable-speed-matching.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later with the same script, settings, visual profile, and metric version."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "tracking.predictable-speed-matching.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with one phase or speed variation."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "tracking.predictable-speed-matching.stop",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Fall back to descriptive error and coverage when steady-segment assumptions fail."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "product.complete-coach-spec",
+                                        "research.manual-intermittent-control",
+                                        "research.challenge-point",
+                                        "research.retention-transfer",
+                                        "community.rawinput-tracking",
+                                        "product.scenario-registry",
+                                        "research.scenario-prescription"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "mechanism",
+                                               "diagnostic_scope",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  {
+                                                      "scenario_profile_ref":  "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
+                                                      "practice_condition":  "Exact predictable condition; test steady speed matching.",
+                                                      "review_after":  "next comparable practice session",
+                                                      "source_refs":  [
+                                                                          "product.complete-coach-spec",
+                                                                          "product.scenario-registry",
+                                                                          "research.scenario-prescription"
+                                                                      ],
+                                                      "claim_level":  "experimental"
+                                                  }
+                    },
+                    {
+                        "entry_id":  "tracking.reactive-change-response",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "observation_definition",
+                        "topics":  [
+                                       "reactive_tracking",
+                                       "movement_reading",
+                                       "reacquisition"
+                                   ],
+                        "signals":  [
+                                        "accel mismatch high",
+                                        "loss count high",
+                                        "off target long"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:change_response",
+                                            "metric:loss_count",
+                                            "metric:reacquisition_time",
+                                            "metric:post_change_stability"
+                                        ],
+                        "family_scope":  [
+                                             "reactive_tracking"
+                                         ],
+                        "observation_refs":  [
+                                                 "event.target_change",
+                                                 "event.loss",
+                                                 "event.reacquisition"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "visual_profile_accepted",
+                                                      "canonical_time_aligned",
+                                                      "motion_change_validated",
+                                                      "target_identity_continuous"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "tracking.reactive-change-response.definition",
+                                           "claim_level":  "deterministic_rule",
+                                           "source_refs":  [
+                                                               "product.complete-coach-spec"
+                                                           ],
+                                           "text":  "Reactive tracking describes post-change error, loss, reacquisition, and return stability after validated target changes."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "tracking.reactive-change-response.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "Compare validated change types against matched player distributions and keep system alignment distinct from conditional response."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "tracking.reactive-change-response.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "comparison_only"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "tracking.reactive-change-response.mechanism",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.manual-intermittent-control"
+                                                               ],
+                                               "text":  "A higher post-change return cost is a candidate response-control pattern, not a direct measure of human reaction time or attention."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "capture offset",
+                                                         "frame gap",
+                                                         "target too small",
+                                                         "occlusion",
+                                                         "anticipated response"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not call this slow reflexes.",
+                                                     "Do not claim the user did not see the change."
+                                                 ],
+                        "limitations":  [
+                                            "Detector loss must not be counted as player loss."
+                                        ],
+                        "counterevidence":  [
+                                                "Stable return after the same validated change weakens the candidate."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "tracking.reactive-change-response.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.rawinput-tracking"
+                                                    ],
+                                    "text":  "After the change, confirm the new direction, re-enter the target, and then restore stable tracking rather than forcing the old line."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "tracking.reactive-change-response.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.challenge-point"
+                                                                   ],
+                                                   "text":  "Start with gradual or sparse changes and modify only change type or density per block."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "tracking.reactive-change-response.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later with the same random condition and validated change distribution."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "tracking.reactive-change-response.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with one unseen change sequence."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "tracking.reactive-change-response.stop",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Remove response claims when change points, identity, or alignment are not accepted."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "product.complete-coach-spec",
+                                        "research.manual-intermittent-control",
+                                        "research.challenge-point",
+                                        "research.retention-transfer",
+                                        "community.rawinput-tracking"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "mechanism",
+                                               "diagnostic_scope",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  "not_applicable"
+                    },
+                    {
+                        "entry_id":  "tracking.control-smoothness",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "observation_definition",
+                        "topics":  [
+                                       "control_tracking",
+                                       "smoothness",
+                                       "correction_burden"
+                                   ],
+                        "signals":  [
+                                        "sparc low",
+                                        "correction burden high"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:sparc",
+                                            "metric:correction_burden",
+                                            "metric:tracking_error",
+                                            "metric:time_in_radius"
+                                        ],
+                        "family_scope":  [
+                                             "control_tracking"
+                                         ],
+                        "observation_refs":  [
+                                                 "episode.tracking",
+                                                 "metric.smoothness",
+                                                 "metric.coverage"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "visual_profile_accepted",
+                                                      "canonical_time_aligned",
+                                                      "sparc_version_fixed",
+                                                      "matched_filter_window"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "tracking.control-smoothness.definition",
+                                           "claim_level":  "deterministic_rule",
+                                           "source_refs":  [
+                                                               "product.complete-coach-spec"
+                                                           ],
+                                           "text":  "Control tracking evaluates smoothness and correction burden jointly with error and coverage under a fixed metric, window, and filter contract."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "tracking.control-smoothness.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "Do not optimize a smoothness score if accuracy or coverage worsens; intermittent correction can be task-appropriate."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "tracking.control-smoothness.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "comparison_only"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "tracking.control-smoothness.mechanism",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.manual-intermittent-control",
+                                                                   "research.sparc-smoothness"
+                                                               ],
+                                               "text":  "Manual tracking can include intermittent corrections; smoothness metrics describe a trajectory property, not a universal quality score."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "high change density",
+                                                         "intentional fast correction",
+                                                         "sampling or filter change",
+                                                         "target size change"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not infer tremor, tension, or muscle activation.",
+                                                     "Do not call every correction bad."
+                                                 ],
+                        "limitations":  [
+                                            "Short signals can make spectral measures unstable."
+                                        ],
+                        "counterevidence":  [
+                                                "Lower correction burden with worse error or coverage is not improvement."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "tracking.control-smoothness.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.rawinput-tracking"
+                                                    ],
+                                    "text":  "Keep the aim path continuous while preserving contact; use only the smallest correction needed to stay with the target."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "tracking.control-smoothness.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.challenge-point",
+                                                                       "research.mouse-fatigue"
+                                                                   ],
+                                                   "text":  "Use a smooth readable variant and retain error and coverage as guardrails; stop when discomfort or cue-unrelated deterioration appears."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "tracking.control-smoothness.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later with the same smooth condition and fixed processing version."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "tracking.control-smoothness.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with one target size or speed variation."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "tracking.control-smoothness.stop",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Stop treating smoothness as an improvement target when error or coverage regresses."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "product.complete-coach-spec",
+                                        "research.manual-intermittent-control",
+                                        "research.sparc-smoothness",
+                                        "research.challenge-point",
+                                        "research.mouse-fatigue",
+                                        "research.retention-transfer",
+                                        "community.rawinput-tracking"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "mechanism",
+                                               "diagnostic_scope",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  "not_applicable"
+                    },
+                    {
+                        "entry_id":  "switching.transition-and-arrival",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "observation_definition",
+                        "topics":  [
+                                       "target_switching",
+                                       "transition",
+                                       "acquisition",
+                                       "confirmation"
+                                   ],
+                        "signals":  [
+                                        "switch transition slow",
+                                        "switch arrival error high"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:inter_target_transition",
+                                            "metric:distance_conditioned_path",
+                                            "metric:next_target_acquisition",
+                                            "metric:first_shot_error",
+                                            "metric:target_switching.transition_time_ms",
+                                            "metric:target_switching.settle_duration_ms"
+                                        ],
+                        "family_scope":  [
+                                             "target_switching"
+                                         ],
+                        "observation_refs":  [
+                                                 "event.switch_chain",
+                                                 "event.previous_outcome",
+                                                 "event.leave",
+                                                 "event.transition",
+                                                 "event.next_acquire",
+                                                 "event.settle_or_fire",
+                                                 "field.outcome_association"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "visual_profile_accepted",
+                                                      "canonical_time_aligned",
+                                                      "target_identity_continuous",
+                                                      "outcome_association_available"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "switching.transition-and-arrival.definition",
+                                           "claim_level":  "deterministic_rule",
+                                           "source_refs":  [
+                                                               "product.complete-coach-spec"
+                                                           ],
+                                           "text":  "A switching chain separates prior outcome, leave, transport, next acquisition, settle, and first-shot outcome when those events are observable."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "switching.transition-and-arrival.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "Use complete identity and outcome chains to separate transition cost from arrival control; otherwise report a partial discrete acquisition only."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "switching.transition-and-arrival.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "comparison_only"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "switching.transition-and-arrival.mechanism",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.sensorimotor-decision"
+                                                               ],
+                                               "text":  "Multi-target switching can combine movement transport and target selection demands; a chain does not reveal unobserved intended priority."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "layout distance",
+                                                         "target count",
+                                                         "outcome delay",
+                                                         "identity gap",
+                                                         "target size"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not call consecutive flicks a complete switching diagnosis.",
+                                                     "Do not infer a wrong target choice without observable rules."
+                                                 ],
+                        "limitations":  [
+                                            "Partial chains cannot support selection claims."
+                                        ],
+                        "counterevidence":  [
+                                                "A matched layout with stable transport but poorer first-shot control narrows the issue to arrival rather than transition."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "switching.transition-and-arrival.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.voltaic-coaching"
+                                                    ],
+                                    "text":  "Train transport and arrival separately: leave the confirmed prior target, move directly, then settle on the next target before the first shot."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "switching.transition-and-arrival.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.challenge-point"
+                                                                   ],
+                                                   "text":  "Change only layout distance, direction, or target count per block and keep outcome quality visible."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "switching.transition-and-arrival.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later with the same target layout and outcome rules."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "switching.transition-and-arrival.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with one distance, direction, or target-count change."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "switching.transition-and-arrival.stop",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Remove transition or confirmation claims when identity or outcome association is incomplete."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "product.complete-coach-spec",
+                                        "research.sensorimotor-decision",
+                                        "research.challenge-point",
+                                        "research.retention-transfer",
+                                        "community.voltaic-coaching",
+                                        "product.scenario-registry"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "mechanism",
+                                               "diagnostic_scope",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  {
+                                                      "scenario_profile_ref":  "scenario:switching.beants_larger@1",
+                                                      "practice_condition":  "Same exact beanTS Larger condition; test either transition transport or arrival settle, changing one focus per block.",
+                                                      "review_after":  "next comparable practice session",
+                                                      "source_refs":  [
+                                                                          "product.complete-coach-spec",
+                                                                          "product.scenario-registry"
+                                                                      ],
+                                                      "claim_level":  "experimental"
+                                                  }
+                    },
+                    {
+                        "entry_id":  "switching.selection-observable-only",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "limitation",
+                        "topics":  [
+                                       "target_switching",
+                                       "selection",
+                                       "roadmapping"
+                                   ],
+                        "signals":  [
+                                        "selection evidence unavailable"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:selection_error"
+                                        ],
+                        "family_scope":  [
+                                             "target_switching"
+                                         ],
+                        "observation_refs":  [
+                                                 "field.expected_target_rule",
+                                                 "event.switch_chain"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "target_identity_continuous",
+                                                      "selection_rule_available",
+                                                      "outcome_association_available"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "switching.selection-observable-only.definition",
+                                           "claim_level":  "deterministic_rule",
+                                           "source_refs":  [
+                                                               "product.complete-coach-spec"
+                                                           ],
+                                           "text":  "Selection is analyzable only when the scenario exposes an expected-target rule; identity and proximity alone do not reveal intended or correct priority."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "switching.selection-observable-only.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "When no rule is available, describe the chosen target and route without a selection-error or roadmapping claim."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "switching.selection-observable-only.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "descriptive_only"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "switching.selection-observable-only.mechanism",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.sensorimotor-decision",
+                                                                   "research.redirected-options"
+                                                               ],
+                                               "text":  "Selection can be an independent sensorimotor dimension, but this product does not observe attention, intent, or game semantics by default."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "unknown priority",
+                                                         "target viability",
+                                                         "unobserved attention",
+                                                         "layout preference"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not label the nearest target as correct.",
+                                                     "Do not infer planning quality from an unruled scenario."
+                                                 ],
+                        "limitations":  [
+                                            "Most workshop scenarios do not expose target-priority truth."
+                                        ],
+                        "counterevidence":  [
+                                                "A declared rule and repeated violation are required before a selection candidate exists."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "switching.selection-observable-only.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.voltaic-coaching"
+                                                    ],
+                                    "text":  "When the scenario has an explicit rule, state it before the block and review only the observable route and outcome."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "switching.selection-observable-only.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.challenge-point"
+                                                                   ],
+                                                   "text":  "Do not add an unobservable planning objective; use the declared rule as the only selection variable."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "switching.selection-observable-only.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later under the same declared selection rule."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "switching.selection-observable-only.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with one layout or candidate-count variation while preserving the rule."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "switching.selection-observable-only.stop",
+                                                     "claim_level":  "deterministic_rule",
+                                                     "source_refs":  [
+                                                                         "product.complete-coach-spec"
+                                                                     ],
+                                                     "text":  "If the expected-target rule is absent, this entry must not produce issue, prescription, profile, or plan output."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "product.complete-coach-spec",
+                                        "research.sensorimotor-decision",
+                                        "research.redirected-options",
+                                        "research.challenge-point",
+                                        "research.retention-transfer",
+                                        "community.voltaic-coaching"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "mechanism",
+                                               "diagnostic_scope",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  "not_applicable"
+                    },
+                    {
+                        "entry_id":  "hypothesis.tension-management",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "training_cue",
+                        "topics":  [
+                                       "tension_management",
+                                       "single_variable_experiment"
+                                   ],
+                        "signals":  [
+                                        "tension hypothesis"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:sparc",
+                                            "metric:correction_burden",
+                                            "metric:relative_velocity_gain"
+                                        ],
+                        "family_scope":  [
+                                             "static_clicking",
+                                             "dynamic_clicking",
+                                             "predictable_tracking",
+                                             "reactive_tracking",
+                                             "control_tracking",
+                                             "target_switching"
+                                         ],
+                        "observation_refs":  [
+                                                 "field.user_report",
+                                                 "metric.kinematic_pattern",
+                                                 "event.matched_retest"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "user_report_available",
+                                                      "single_variable_experiment",
+                                                      "matched_retest_available"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "hypothesis.tension-management.definition",
+                                           "claim_level":  "community_practice",
+                                           "source_refs":  [
+                                                               "community.rawinput-tension"
+                                                           ],
+                                           "text":  "Tension management is a cue and candidate experiment, not a measurement of muscle activation, grip force, posture, or pain."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "hypothesis.tension-management.scope",
+                                      "claim_level":  "experimental",
+                                      "source_refs":  [
+                                                          "research.precision-mouse-force"
+                                                      ],
+                                      "text":  "Use only with a user report and one reversible cue change followed by a matched retest; retain competing explanations."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "hypothesis.tension-management.direction",
+                                                   "claim_level":  "experimental",
+                                                   "source_refs":  [
+                                                                       "research.precision-mouse-force"
+                                                                   ],
+                                                   "text":  "comparison_only"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "hypothesis.tension-management.mechanism",
+                                               "claim_level":  "experimental",
+                                               "source_refs":  [
+                                                                   "research.precision-mouse-force",
+                                                                   "research.mouse-fatigue"
+                                                               ],
+                                               "text":  "Kinematics alone cannot confirm a bodily cause; any benefit from a release cue remains a user- and condition-specific hypothesis."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "reading",
+                                                         "speed matching",
+                                                         "sensitivity",
+                                                         "friction",
+                                                         "fatigue",
+                                                         "measurement noise"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not say tension was detected.",
+                                                     "Do not diagnose a muscle, joint, grip, or medical condition."
+                                                 ],
+                        "limitations":  [
+                                            "No EMG, force, posture, or pain sensor is available."
+                                        ],
+                        "counterevidence":  [
+                                                "No matched improvement or increased discomfort rejects the experiment rather than confirming a cause."
+                                            ],
+                        "cue":  {
+                                    "section_ref":  "hypothesis.tension-management.cue",
+                                    "claim_level":  "community_practice",
+                                    "source_refs":  [
+                                                        "community.rawinput-tension"
+                                                    ],
+                                    "text":  "Try a low-risk release cue for one block, then compare the same condition without claiming a bodily diagnosis."
+                                },
+                        "dose_guardrail":  [
+                                               {
+                                                   "section_ref":  "hypothesis.tension-management.dose",
+                                                   "claim_level":  "research_supported",
+                                                   "source_refs":  [
+                                                                       "research.mouse-fatigue"
+                                                                   ],
+                                                   "text":  "Change one cue only; stop immediately for pain, numbness, weakness, or persistent discomfort."
+                                               }
+                                           ],
+                        "matched_retest":  {
+                                               "section_ref":  "hypothesis.tension-management.matched-retest",
+                                               "claim_level":  "research_supported",
+                                               "source_refs":  [
+                                                                   "research.retention-transfer"
+                                                               ],
+                                               "text":  "Retest later under the original matched condition and compare the outcome and kinematic pattern."
+                                           },
+                        "near_transfer_retest":  {
+                                                     "section_ref":  "hypothesis.tension-management.near-retest",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Retest later with one task-condition variation; this is not a health assessment."
+                                                 },
+                        "stop_adjust_rule":  [
+                                                 {
+                                                     "section_ref":  "hypothesis.tension-management.stop",
+                                                     "claim_level":  "research_supported",
+                                                     "source_refs":  [
+                                                                         "research.mouse-fatigue",
+                                                                         "research.retention-transfer"
+                                                                     ],
+                                                     "text":  "Stop the experiment for discomfort or when matched and near-transfer evidence do not support it."
+                                                 }
+                                             ],
+                        "sources":  [
+                                        "research.precision-mouse-force",
+                                        "research.mouse-fatigue",
+                                        "research.retention-transfer",
+                                        "community.rawinput-tension"
+                                    ],
+                        "supported_uses":  [
+                                               "candidate_hypothesis",
+                                               "training_cue",
+                                               "verification"
+                                           ],
+                        "scenario_prescription":  "not_applicable"
+                    },
+                    {
+                        "entry_id":  "movement.outcome-only-boundary",
+                        "entry_version":  1,
+                        "status":  "active",
+                        "category":  "outcome_only",
+                        "topics":  [
+                                       "movement_aiming",
+                                       "outcome_only"
+                                   ],
+                        "signals":  [
+                                        "movement telemetry unavailable"
+                                    ],
+                        "metric_refs":  [
+                                            "metric:outcome_totals",
+                                            "metric:input_kinematics"
+                                        ],
+                        "family_scope":  [
+                                             "movement_aiming"
+                                         ],
+                        "observation_refs":  [
+                                                 "field.stats_outcome",
+                                                 "field.input_kinematics"
+                                             ],
+                        "quality_prerequisites":  [
+                                                      "movement_telemetry_unavailable"
+                                                  ],
+                        "definition":  {
+                                           "section_ref":  "movement.outcome-only-boundary.definition",
+                                           "claim_level":  "deterministic_rule",
+                                           "source_refs":  [
+                                                               "product.complete-coach-spec"
+                                                           ],
+                                           "text":  "Without player movement, view, and target telemetry, movement aiming is limited to outcome totals and general input kinematics."
+                                       },
+                        "scope":  {
+                                      "section_ref":  "movement.outcome-only-boundary.scope",
+                                      "claim_level":  "deterministic_rule",
+                                      "source_refs":  [
+                                                          "product.complete-coach-spec"
+                                                      ],
+                                      "text":  "This is an explicit unavailable boundary, not evidence for counter-strafe, movement sync, or movement reading."
+                                  },
+                        "expected_direction":  {
+                                                   "section_ref":  "movement.outcome-only-boundary.direction",
+                                                   "claim_level":  "deterministic_rule",
+                                                   "source_refs":  [
+                                                                       "product.complete-coach-spec"
+                                                                   ],
+                                                   "text":  "descriptive_only"
+                                               },
+                        "mechanisms":  [
+                                           {
+                                               "section_ref":  "movement.outcome-only-boundary.mechanism",
+                                               "claim_level":  "deterministic_rule",
+                                               "source_refs":  [
+                                                                   "product.complete-coach-spec"
+                                                               ],
+                                               "text":  "No movement mechanism can be selected from the available sources."
+                                           }
+                                       ],
+                        "alternative_explanations":  [
+                                                         "unobserved player movement",
+                                                         "unobserved view state",
+                                                         "unobserved game rules"
+                                                     ],
+                        "forbidden_inferences":  [
+                                                     "Do not diagnose counter-strafe.",
+                                                     "Do not prescribe movement synchronization training."
+                                                 ],
+                        "limitations":  [
+                                            "The required joint telemetry is absent."
+                                        ],
+                        "counterevidence":  [
+                                                "A future validated movement telemetry contract would replace this boundary."
+                                            ],
+                        "cue":  "not_applicable",
+                        "dose_guardrail":  "not_applicable",
+                        "matched_retest":  "not_applicable",
+                        "near_transfer_retest":  "not_applicable",
+                        "stop_adjust_rule":  "not_applicable",
+                        "sources":  [
+                                        "product.complete-coach-spec"
+                                    ],
+                        "supported_uses":  [
+                                               "definition",
+                                               "diagnostic_scope"
+                                           ],
+                        "scenario_prescription":  "not_applicable"
+                    }
+                ]
+}

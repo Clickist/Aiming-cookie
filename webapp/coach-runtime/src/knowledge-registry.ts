@@ -6,13 +6,21 @@ import { isRecord } from "./contracts.ts";
 
 export const REGISTRY_SCHEMA_VERSION_V1 = "coach_knowledge_registry.v1";
 export const REGISTRY_SCHEMA_VERSION_V2 = "coach_knowledge_registry.v2";
-export const REGISTRY_SCHEMA_VERSION = REGISTRY_SCHEMA_VERSION_V2;
+export const REGISTRY_SCHEMA_VERSION_V3 = "coach_knowledge_registry.v3";
+export const REGISTRY_SCHEMA_VERSION = REGISTRY_SCHEMA_VERSION_V3;
 const REGISTRY_ROOT = join(
   dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "knowledge", "coach",
 );
+const SCENARIO_ROOT = join(
+  dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "knowledge", "scenarios",
+);
+const SCENARIO_REGISTRY_FILE = join(SCENARIO_ROOT, "registry.v1.json");
+const SCENARIO_MANIFEST_FILE = join(SCENARIO_ROOT, "launch-manifest.v1.json");
 const REGISTRY_FILES = new Map([
   ["2026-07-14.v1", join(REGISTRY_ROOT, "registry.v1.json")],
   ["2026-07-22.v2", join(REGISTRY_ROOT, "registry.v2.json")],
+  ["2026-07-28.v3", join(REGISTRY_ROOT, "registry.v3.json")],
+  ["2026-07-29.v4", join(REGISTRY_ROOT, "registry.v4.json")],
 ]);
 const MAX_REGISTRY_BYTES = 512 * 1024;
 const MAX_ENTRIES = 512;
@@ -50,6 +58,15 @@ const ENTRY_FIELDS = new Set([
   "metric_refs", "text", "sources", "max_claim_level", "limitations",
   "counterevidence", "supported_uses",
 ]);
+const SUPPORTED_USES_V3 = new Set([
+  "explanation_only", "diagnosis_support", "candidate_experiment", "scenario_prescription",
+]);
+const CAPABILITY_PREFIXES_V3 = [
+  ["explanation_only"],
+  ["explanation_only", "diagnosis_support"],
+  ["explanation_only", "diagnosis_support", "candidate_experiment"],
+  ["explanation_only", "diagnosis_support", "candidate_experiment", "scenario_prescription"],
+];
 const ENTRY_FIELDS_V2 = new Set([
   "entry_id", "entry_version", "status", "category", "topics", "signals",
   "metric_refs", "family_scope", "observation_refs", "quality_prerequisites",
@@ -58,6 +75,46 @@ const ENTRY_FIELDS_V2 = new Set([
   "counterevidence", "cue", "dose_guardrail", "matched_retest",
   "near_transfer_retest", "stop_adjust_rule", "sources", "supported_uses",
 ]);
+const SCENARIO_PRESCRIPTION_FIELD = "scenario_prescription";
+const SCENARIO_PROFILE_REF = /^scenario:[A-Za-z0-9._:@-]+$/;
+const SCENARIO_REVIEW_AFTER = new Set([
+  "next comparable practice session", "next matched retest", "after one comparable practice block",
+]);
+
+export function activeScenarioProfileRefs(
+  scenarioRegistryRaw: unknown = JSON.parse(readFileSync(SCENARIO_REGISTRY_FILE, "utf8")),
+  scenarioManifestRaw: unknown = JSON.parse(readFileSync(SCENARIO_MANIFEST_FILE, "utf8")),
+): Set<string> {
+  if (!isRecord(scenarioRegistryRaw) || !Array.isArray(scenarioRegistryRaw.entries)) {
+    throw new KnowledgeRegistryError("scenario registry is invalid");
+  }
+  if (!isRecord(scenarioManifestRaw) || !Array.isArray(scenarioManifestRaw.entries)) {
+    throw new KnowledgeRegistryError("scenario manifest is invalid");
+  }
+  const registryRefs = new Set<string>();
+  for (const entry of scenarioRegistryRaw.entries) {
+    if (!isRecord(entry) || entry.status !== "active") continue;
+    const entryId = text(entry.entry_id, "scenario entry_id", 160);
+    if (!Number.isInteger(entry.entry_version) || Number(entry.entry_version) < 1) {
+      throw new KnowledgeRegistryError("scenario entry_version is invalid");
+    }
+    const ref = `scenario:${entryId}@${entry.entry_version}`;
+    if (!SCENARIO_PROFILE_REF.test(ref)) {
+      throw new KnowledgeRegistryError("scenario profile ref is invalid");
+    }
+    registryRefs.add(ref);
+  }
+  const manifestRefs = new Set<string>();
+  for (const entry of scenarioManifestRaw.entries) {
+    if (!isRecord(entry) || entry.status !== "active") continue;
+    const ref = text(entry.scenario_profile_ref, "scenario_profile_ref", 200);
+    if (!SCENARIO_PROFILE_REF.test(ref)) {
+      throw new KnowledgeRegistryError("scenario profile ref is invalid");
+    }
+    manifestRefs.add(ref);
+  }
+  return new Set([...registryRefs].filter((ref) => manifestRefs.has(ref)));
+}
 const SOURCE_FIELDS_V2 = new Set([
   "source_ref", "source_level", "title", "author_or_org", "published_at",
   "retrieved_at", "locator", "applicability", "supports_sections",
@@ -112,6 +169,13 @@ export type KnowledgeSectionV2 = {
   source_refs: string[];
   text: string;
 };
+export type ScenarioPrescriptionV2 = {
+  scenario_profile_ref: string;
+  practice_condition: string;
+  review_after: string;
+  source_refs: string[];
+  claim_level: string;
+};
 export type KnowledgeEntryV2 = {
   entry_id: string;
   entry_version: number;
@@ -131,17 +195,18 @@ export type KnowledgeEntryV2 = {
   forbidden_inferences: string[];
   limitations: string[];
   counterevidence: string[];
-  cue: KnowledgeSectionV2 | "not_applicable";
-  dose_guardrail: KnowledgeSectionV2[] | "not_applicable";
-  matched_retest: KnowledgeSectionV2 | "not_applicable";
-  near_transfer_retest: KnowledgeSectionV2 | "not_applicable";
-  stop_adjust_rule: KnowledgeSectionV2[] | "not_applicable";
+  cue?: KnowledgeSectionV2 | "not_applicable";
+  dose_guardrail?: KnowledgeSectionV2[] | "not_applicable";
+  matched_retest?: KnowledgeSectionV2 | "not_applicable";
+  near_transfer_retest?: KnowledgeSectionV2 | "not_applicable";
+  stop_adjust_rule?: KnowledgeSectionV2[] | "not_applicable";
+  scenario_prescription?: ScenarioPrescriptionV2 | "not_applicable";
   sources: string[];
   supported_uses: string[];
 };
 export type KnowledgeEntry = KnowledgeEntryV1 | KnowledgeEntryV2;
 export type KnowledgeRegistry = {
-  schema_version: typeof REGISTRY_SCHEMA_VERSION_V1 | typeof REGISTRY_SCHEMA_VERSION_V2;
+  schema_version: typeof REGISTRY_SCHEMA_VERSION_V1 | typeof REGISTRY_SCHEMA_VERSION_V2 | typeof REGISTRY_SCHEMA_VERSION_V3;
   registry_version: string;
   signal_aliases: Record<string, string>;
   sources?: KnowledgeSourceV2[];
@@ -257,7 +322,9 @@ function validateKnowledgeRegistryV1(raw: unknown): KnowledgeRegistry {
   for (const [alias, canonicalRaw] of Object.entries(raw.signal_aliases)) {
     const aliasText = text(alias, "signal alias", 120);
     const canonical = text(canonicalRaw, "canonical signal", 120);
-    if (aliasText === canonical || Object.hasOwn(raw.signal_aliases, canonical)) throw new KnowledgeRegistryError("signal alias is invalid");
+    if (!TOKEN.test(aliasText) || !TOKEN.test(canonical) || aliasText === canonical || Object.hasOwn(raw.signal_aliases, canonical)) {
+      throw new KnowledgeRegistryError("signal alias is invalid");
+    }
     aliases[aliasText] = canonical;
   }
   if (!Array.isArray(raw.entries) || raw.entries.length < 1 || raw.entries.length > MAX_ENTRIES) {
@@ -369,13 +436,75 @@ function validateSectionV2(
   };
 }
 
+function validateScenarioPrescriptionV2(
+  raw: unknown,
+  entryFamilyScope: Set<string>,
+  entrySources: Set<string>,
+  sources: Map<string, KnowledgeSourceV2>,
+  activeScenarioRefs: Set<string>,
+): ScenarioPrescriptionV2 | "not_applicable" {
+  if (raw === "not_applicable") return raw;
+  const fields = new Set([
+    "scenario_profile_ref", "practice_condition", "review_after", "source_refs", "claim_level",
+  ]);
+  if (!isRecord(raw) || !keysEqual(raw, fields)) {
+    throw new KnowledgeRegistryError("scenario_prescription fields are invalid");
+  }
+  const scenarioProfileRef = text(raw.scenario_profile_ref, "scenario_prescription.scenario_profile_ref", 200);
+  if (!SCENARIO_PROFILE_REF.test(scenarioProfileRef)) {
+    throw new KnowledgeRegistryError("scenario_prescription.scenario_profile_ref is invalid");
+  }
+  if (!activeScenarioRefs.has(scenarioProfileRef)) {
+    throw new KnowledgeRegistryError("scenario_prescription.scenario_profile_ref is not an active scenario");
+  }
+  const practiceCondition = text(raw.practice_condition, "scenario_prescription.practice_condition", 500);
+  if (typeof raw.review_after !== "string" || !SCENARIO_REVIEW_AFTER.has(raw.review_after)) {
+    throw new KnowledgeRegistryError("scenario_prescription.review_after is invalid");
+  }
+  if (typeof raw.claim_level !== "string" || !CLAIM_LEVELS_V2.has(raw.claim_level)) {
+    throw new KnowledgeRegistryError("scenario_prescription.claim_level is invalid");
+  }
+  const sourceRefs = stringList(raw.source_refs, "scenario_prescription.source_refs", false);
+  for (const sourceRef of sourceRefs) {
+    const source = sources.get(sourceRef);
+    if (!entrySources.has(sourceRef) || !source) throw new KnowledgeRegistryError("scenario_prescription source_refs are invalid");
+    if (!source.supports_sections.includes(SCENARIO_PRESCRIPTION_FIELD)) {
+      throw new KnowledgeRegistryError("scenario_prescription source lacks support");
+    }
+    const applicability = new Set(source.applicability);
+    if (!applicability.has("all_families") && [...entryFamilyScope].some((family) => !applicability.has(family))) {
+      throw new KnowledgeRegistryError("scenario_prescription source does not cover the entry family scope");
+    }
+    if ((CLAIM_RANK[raw.claim_level] ?? 99) > (CLAIM_RANK[SOURCE_CEILING[source.source_level] ?? ""] ?? -1)) {
+      throw new KnowledgeRegistryError("scenario_prescription claim level exceeds source ceiling");
+    }
+  }
+  return {
+    scenario_profile_ref: scenarioProfileRef,
+    practice_condition: practiceCondition,
+    review_after: raw.review_after,
+    source_refs: sourceRefs,
+    claim_level: raw.claim_level,
+  };
+}
+
 function validateEntryV2(
   raw: unknown,
   index: number,
   sources: Map<string, KnowledgeSourceV2>,
+  requiresScenarioPrescription: boolean,
+  activeScenarioRefs: Set<string>,
+  supportedUsesAllowed = SUPPORTED_USES,
+  allowNonOutcomeNotApplicable = false,
+  allowEmptyObservationContext = false,
 ): KnowledgeEntryV2 {
-  if (!isRecord(raw) || !keysEqual(raw, ENTRY_FIELDS_V2)) {
+  const entryFields = new Set(ENTRY_FIELDS_V2);
+  if (isRecord(raw) && SCENARIO_PRESCRIPTION_FIELD in raw) entryFields.add(SCENARIO_PRESCRIPTION_FIELD);
+  if (!isRecord(raw) || !keysEqual(raw, entryFields)) {
     throw new KnowledgeRegistryError(`entry[${index}] fields are invalid`);
+  }
+  if (requiresScenarioPrescription && !(SCENARIO_PRESCRIPTION_FIELD in raw)) {
+    throw new KnowledgeRegistryError("scenario_prescription is required");
   }
   const entryId = text(raw.entry_id, "entry_id", 160);
   if (!ENTRY_ID.test(entryId)) throw new KnowledgeRegistryError("entry_id is invalid");
@@ -385,15 +514,15 @@ function validateEntryV2(
   const lists: Record<string, string[]> = {};
   for (const [name, allowEmpty] of [
     ["topics", false], ["signals", true], ["metric_refs", true],
-    ["family_scope", false], ["observation_refs", false],
-    ["quality_prerequisites", false], ["sources", false], ["supported_uses", false],
+    ["family_scope", false], ["observation_refs", allowEmptyObservationContext],
+    ["quality_prerequisites", allowEmptyObservationContext], ["sources", false], ["supported_uses", false],
   ] as const) {
     lists[name] = stringList(raw[name], name, allowEmpty);
     if (!lists[name].every((item) => TOKEN.test(item))) throw new KnowledgeRegistryError(`${name} contains invalid token`);
   }
   if (lists.family_scope.some((item) => !FAMILIES_V2.has(item))) throw new KnowledgeRegistryError("family_scope is invalid");
   if (lists.sources.some((item) => !sources.has(item))) throw new KnowledgeRegistryError("entry source is unknown");
-  if (lists.supported_uses.some((item) => !SUPPORTED_USES.has(item))) throw new KnowledgeRegistryError("supported_uses is invalid");
+  if (lists.supported_uses.some((item) => !supportedUsesAllowed.has(item))) throw new KnowledgeRegistryError("supported_uses is invalid");
   const entrySources = new Set(lists.sources);
   const entryFamilyScope = new Set(lists.family_scope);
   const section = (name: string, value: unknown = raw[name]) => (
@@ -412,14 +541,14 @@ function validateEntryV2(
   const outcomeOnly = raw.category === "outcome_only";
   const singular = (name: string): KnowledgeSectionV2 | "not_applicable" => {
     if (raw[name] === "not_applicable") {
-      if (!outcomeOnly) throw new KnowledgeRegistryError(`${name} cannot be not_applicable`);
+      if (!outcomeOnly && !allowNonOutcomeNotApplicable) throw new KnowledgeRegistryError(`${name} cannot be not_applicable`);
       return "not_applicable";
     }
     return section(name);
   };
   const repeated = (name: string): KnowledgeSectionV2[] | "not_applicable" => {
     if (raw[name] === "not_applicable") {
-      if (!outcomeOnly) throw new KnowledgeRegistryError(`${name} cannot be not_applicable`);
+      if (!outcomeOnly && !allowNonOutcomeNotApplicable) throw new KnowledgeRegistryError(`${name} cannot be not_applicable`);
       return "not_applicable";
     }
     if (!Array.isArray(raw[name]) || raw[name].length === 0) throw new KnowledgeRegistryError(`${name} is invalid`);
@@ -428,7 +557,12 @@ function validateEntryV2(
   if (outcomeOnly && (lists.family_scope.length !== 1 || lists.family_scope[0] !== "movement_aiming")) {
     throw new KnowledgeRegistryError("outcome_only scope is invalid");
   }
-  return {
+  const scenarioPrescription = SCENARIO_PRESCRIPTION_FIELD in raw
+    ? validateScenarioPrescriptionV2(
+      raw.scenario_prescription, entryFamilyScope, entrySources, sources, activeScenarioRefs,
+    )
+    : undefined;
+  const entry: KnowledgeEntryV2 = {
     entry_id: entryId,
     entry_version: Number(raw.entry_version),
     status: raw.status as "active" | "retired",
@@ -455,6 +589,73 @@ function validateEntryV2(
     sources: lists.sources,
     supported_uses: lists.supported_uses,
   };
+  if (scenarioPrescription !== undefined) entry.scenario_prescription = scenarioPrescription;
+  return entry;
+}
+
+function validateEntryV3(
+  raw: unknown,
+  index: number,
+  sources: Map<string, KnowledgeSourceV2>,
+  activeScenarioRefs: Set<string>,
+): KnowledgeEntryV2 {
+  const optionalFields = new Set([
+    "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+    "stop_adjust_rule", SCENARIO_PRESCRIPTION_FIELD,
+  ]);
+  const baseFields = new Set([...ENTRY_FIELDS_V2].filter((field) => !optionalFields.has(field)));
+  if (!isRecord(raw) || ![...baseFields].every((field) => field in raw)
+    || Object.keys(raw).some((field) => !baseFields.has(field) && !optionalFields.has(field))) {
+    throw new KnowledgeRegistryError(`entry[${index}] fields are invalid`);
+  }
+  const supportedUses = stringList(raw.supported_uses, "supported_uses", false);
+  const validPrefix = CAPABILITY_PREFIXES_V3.some((prefix) => (
+    prefix.length === supportedUses.length && prefix.every((value, offset) => supportedUses[offset] === value)
+  ));
+  if (!validPrefix || supportedUses.some((item) => !SUPPORTED_USES_V3.has(item))) {
+    throw new KnowledgeRegistryError("supported_uses capability prefix is invalid");
+  }
+  const hasDiagnosis = supportedUses.includes("diagnosis_support");
+  const hasExperiment = supportedUses.includes("candidate_experiment");
+  const hasScenario = supportedUses.includes("scenario_prescription");
+  const requiredFields = new Set<string>();
+  if (hasExperiment) {
+    for (const field of ["cue", "dose_guardrail", "matched_retest", "stop_adjust_rule"]) requiredFields.add(field);
+  }
+  if (hasScenario) {
+    requiredFields.add("near_transfer_retest");
+    requiredFields.add(SCENARIO_PRESCRIPTION_FIELD);
+  }
+  if ([...requiredFields].some((field) => !(field in raw))) {
+    throw new KnowledgeRegistryError("capability required fields are missing");
+  }
+  if ([...optionalFields].some((field) => !requiredFields.has(field) && field in raw)) {
+    throw new KnowledgeRegistryError("capability forbidden fields are present");
+  }
+  if (hasDiagnosis && (
+    !Array.isArray(raw.observation_refs) || raw.observation_refs.length === 0
+    || !Array.isArray(raw.quality_prerequisites) || raw.quality_prerequisites.length === 0
+  )) {
+    throw new KnowledgeRegistryError("diagnosis_support context is required");
+  }
+  const normalized: Record<string, unknown> = { ...raw };
+  for (const field of optionalFields) {
+    if (!(field in normalized)) normalized[field] = "not_applicable";
+  }
+  const result = validateEntryV2(
+    normalized,
+    index,
+    sources,
+    true,
+    activeScenarioRefs,
+    SUPPORTED_USES_V3,
+    true,
+    true,
+  );
+  for (const field of optionalFields) {
+    if (!requiredFields.has(field)) delete (result as unknown as Record<string, unknown>)[field];
+  }
+  return result;
 }
 
 function validateKnowledgeRegistryV2(raw: unknown): KnowledgeRegistry {
@@ -468,7 +669,9 @@ function validateKnowledgeRegistryV2(raw: unknown): KnowledgeRegistry {
   for (const [alias, canonicalRaw] of Object.entries(raw.signal_aliases)) {
     const aliasText = text(alias, "signal alias", 120);
     const canonical = text(canonicalRaw, "canonical signal", 120);
-    if (aliasText === canonical || Object.hasOwn(raw.signal_aliases, canonical)) throw new KnowledgeRegistryError("signal alias is invalid");
+    if (!TOKEN.test(aliasText) || !TOKEN.test(canonical) || aliasText === canonical || Object.hasOwn(raw.signal_aliases, canonical)) {
+      throw new KnowledgeRegistryError("signal alias is invalid");
+    }
     aliases[aliasText] = canonical;
   }
   if (!Array.isArray(raw.sources) || raw.sources.length === 0) throw new KnowledgeRegistryError("sources is invalid");
@@ -476,7 +679,11 @@ function validateKnowledgeRegistryV2(raw: unknown): KnowledgeRegistry {
   const sources = new Map(sourceList.map((source) => [source.source_ref, source]));
   if (sources.size !== sourceList.length) throw new KnowledgeRegistryError("duplicate source_ref");
   if (!Array.isArray(raw.entries) || raw.entries.length < 1 || raw.entries.length > MAX_ENTRIES) throw new KnowledgeRegistryError("entries is invalid");
-  const entries = raw.entries.map((entry, index) => validateEntryV2(entry, index, sources));
+  const requiresScenarioPrescription = registryVersion === "2026-07-28.v3";
+  const activeScenarioRefs = activeScenarioProfileRefs();
+  const entries = raw.entries.map((entry, index) => (
+    validateEntryV2(entry, index, sources, requiresScenarioPrescription, activeScenarioRefs)
+  ));
   const refs = new Set<string>();
   const active = new Set<string>();
   const sections = new Set<string>();
@@ -490,11 +697,11 @@ function validateKnowledgeRegistryV2(raw: unknown): KnowledgeRegistry {
     }
     for (const section of [
       entry.definition, entry.scope, entry.expected_direction, ...entry.mechanisms,
-      ...(entry.cue === "not_applicable" ? [] : [entry.cue]),
-      ...(entry.dose_guardrail === "not_applicable" ? [] : entry.dose_guardrail),
-      ...(entry.matched_retest === "not_applicable" ? [] : [entry.matched_retest]),
-      ...(entry.near_transfer_retest === "not_applicable" ? [] : [entry.near_transfer_retest]),
-      ...(entry.stop_adjust_rule === "not_applicable" ? [] : entry.stop_adjust_rule),
+      ...(entry.cue === undefined || entry.cue === "not_applicable" ? [] : [entry.cue]),
+      ...(entry.dose_guardrail === undefined || entry.dose_guardrail === "not_applicable" ? [] : entry.dose_guardrail),
+      ...(entry.matched_retest === undefined || entry.matched_retest === "not_applicable" ? [] : [entry.matched_retest]),
+      ...(entry.near_transfer_retest === undefined || entry.near_transfer_retest === "not_applicable" ? [] : [entry.near_transfer_retest]),
+      ...(entry.stop_adjust_rule === undefined || entry.stop_adjust_rule === "not_applicable" ? [] : entry.stop_adjust_rule),
     ]) {
       if (sections.has(section.section_ref)) throw new KnowledgeRegistryError("duplicate section_ref");
       sections.add(section.section_ref);
@@ -509,15 +716,73 @@ function validateKnowledgeRegistryV2(raw: unknown): KnowledgeRegistry {
   });
 }
 
+function validateKnowledgeRegistryV3(raw: unknown): KnowledgeRegistry {
+  if (!isRecord(raw) || !keysEqual(raw, new Set(["schema_version", "registry_version", "signal_aliases", "sources", "entries"]))) {
+    throw new KnowledgeRegistryError("registry fields are invalid");
+  }
+  if (raw.schema_version !== REGISTRY_SCHEMA_VERSION_V3) throw new KnowledgeRegistryError("schema_version is invalid");
+  const registryVersion = text(raw.registry_version, "registry_version", 80);
+  if (!isRecord(raw.signal_aliases) || Object.keys(raw.signal_aliases).length > 128) throw new KnowledgeRegistryError("signal_aliases is invalid");
+  const aliases: Record<string, string> = {};
+  for (const [alias, canonicalRaw] of Object.entries(raw.signal_aliases)) {
+    const aliasText = text(alias, "signal alias", 120);
+    const canonical = text(canonicalRaw, "canonical signal", 120);
+    if (!TOKEN.test(aliasText) || !TOKEN.test(canonical) || aliasText === canonical || Object.hasOwn(raw.signal_aliases, canonical)) {
+      throw new KnowledgeRegistryError("signal alias is invalid");
+    }
+    aliases[aliasText] = canonical;
+  }
+  if (!Array.isArray(raw.sources) || raw.sources.length === 0) throw new KnowledgeRegistryError("sources is invalid");
+  const sourceList = raw.sources.map(validateSourceV2);
+  const sources = new Map(sourceList.map((source) => [source.source_ref, source]));
+  if (sources.size !== sourceList.length) throw new KnowledgeRegistryError("duplicate source_ref");
+  if (!Array.isArray(raw.entries) || raw.entries.length < 1 || raw.entries.length > MAX_ENTRIES) throw new KnowledgeRegistryError("entries is invalid");
+  const activeScenarioRefs = activeScenarioProfileRefs();
+  const entries = raw.entries.map((entry, index) => (
+    validateEntryV3(entry, index, sources, activeScenarioRefs)
+  ));
+  const refs = new Set<string>();
+  const active = new Set<string>();
+  const sections = new Set<string>();
+  for (const entry of entries) {
+    const ref = `${entry.entry_id}@${entry.entry_version}`;
+    if (refs.has(ref)) throw new KnowledgeRegistryError("duplicate entry version");
+    refs.add(ref);
+    if (entry.status === "active") {
+      if (active.has(entry.entry_id)) throw new KnowledgeRegistryError("multiple active versions");
+      active.add(entry.entry_id);
+    }
+    for (const section of [
+      entry.definition, entry.scope, entry.expected_direction, ...entry.mechanisms,
+      ...(entry.cue === undefined || entry.cue === "not_applicable" ? [] : [entry.cue]),
+      ...(entry.dose_guardrail === undefined || entry.dose_guardrail === "not_applicable" ? [] : entry.dose_guardrail),
+      ...(entry.matched_retest === undefined || entry.matched_retest === "not_applicable" ? [] : [entry.matched_retest]),
+      ...(entry.near_transfer_retest === undefined || entry.near_transfer_retest === "not_applicable" ? [] : [entry.near_transfer_retest]),
+      ...(entry.stop_adjust_rule === undefined || entry.stop_adjust_rule === "not_applicable" ? [] : entry.stop_adjust_rule),
+    ]) {
+      if (sections.has(section.section_ref)) throw new KnowledgeRegistryError("duplicate section_ref");
+      sections.add(section.section_ref);
+    }
+  }
+  return structuredClone({
+    schema_version: REGISTRY_SCHEMA_VERSION_V3,
+    registry_version: registryVersion,
+    signal_aliases: aliases,
+    sources: sourceList,
+    entries,
+  });
+}
+
 export function validateKnowledgeRegistry(raw: unknown): KnowledgeRegistry {
   if (!isRecord(raw)) throw new KnowledgeRegistryError("registry must be an object");
   if (raw.schema_version === REGISTRY_SCHEMA_VERSION_V1) return validateKnowledgeRegistryV1(raw);
   if (raw.schema_version === REGISTRY_SCHEMA_VERSION_V2) return validateKnowledgeRegistryV2(raw);
+  if (raw.schema_version === REGISTRY_SCHEMA_VERSION_V3) return validateKnowledgeRegistryV3(raw);
   throw new KnowledgeRegistryError("schema_version is invalid");
 }
 
 const cached = new Map<string, KnowledgeRegistry>();
-export function loadKnowledgeRegistry(registryVersion = "2026-07-22.v2"): KnowledgeRegistry {
+export function loadKnowledgeRegistry(registryVersion = "2026-07-29.v4"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
   const registryFile = REGISTRY_FILES.get(registryVersion);

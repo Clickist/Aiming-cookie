@@ -39,6 +39,10 @@ def test_dynamic_advice_uses_matched_comparison_without_absolute_thresholds():
     assert all("severity" not in item and "prescriptions" not in item for item in advice)
     assert all(item["supporting_row_refs"] == ["analysis:1:dynamic-click:1"] for item in advice)
     assert all(item["knowledge_entry_refs"] for item in advice)
+    assert [item["observation_ref"] for item in advice] == [
+        "event.dynamic_click",
+        "field.relative_velocity",
+    ]
     assert all("alternative_explanations" in item["requested_knowledge_sections"] for item in advice)
     assert all("matched_retest" in item["requested_knowledge_sections"] for item in advice)
 

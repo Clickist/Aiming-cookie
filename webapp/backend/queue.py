@@ -261,7 +261,8 @@ async def recover_stale_jobs(now: str | None = None) -> dict:
 
     Returns ``{"requeued": int, "failed": int}``.
     """
-    now_s = now or _utc_now_sqlite()
+    write_now_s = _utc_now_sqlite()
+    now_s = now or write_now_s
     now_dt = _parse_sqlite_utc(now_s) or datetime.now(timezone.utc)
     stale_before = (now_dt - timedelta(seconds=LEASE_TTL_SECONDS)).strftime(
         "%Y-%m-%d %H:%M:%S"
@@ -303,7 +304,7 @@ async def recover_stale_jobs(now: str | None = None) -> dict:
                     "worker_id = NULL, lease_expires_at = NULL, "
                     "heartbeat_at = NULL, finished_at = NULL, "
                     "updated_at = ? WHERE id = ?",
-                    (now_s, sid),
+                    (write_now_s, sid),
                 )
                 requeued += 1
                 log.warning(
@@ -320,11 +321,11 @@ async def recover_stale_jobs(now: str | None = None) -> dict:
                 )
                 await conn.execute(
                     "UPDATE sessions SET status = 'failed', task_state='failed', "
-                    "error = ?, failure_domain='network', "
+                    "task_phase=NULL, error = ?, failure_domain='kinematics', "
                     "worker_id = NULL, lease_expires_at = NULL, "
                     "heartbeat_at = NULL, finished_at = ?, updated_at = ? "
                     "WHERE id = ?",
-                    (dump_contract_json(err), now_s, now_s, sid),
+                    (dump_contract_json(err), write_now_s, write_now_s, sid),
                 )
                 failed += 1
                 log.warning(

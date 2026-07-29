@@ -57,11 +57,11 @@ function sourceRecords(entry: KnowledgeEntry): Array<KnowledgeSourceV1 | Knowled
 
 function claimSections(entry: KnowledgeEntry): KnowledgeSectionV2[] {
   if (!isV2Entry(entry)) return [];
-  const optional = (value: KnowledgeSectionV2 | "not_applicable"): KnowledgeSectionV2[] => (
-    value === "not_applicable" ? [] : [value]
+  const optional = (value: KnowledgeSectionV2 | "not_applicable" | undefined): KnowledgeSectionV2[] => (
+    value === "not_applicable" || value === undefined ? [] : [value]
   );
-  const repeated = (value: KnowledgeSectionV2[] | "not_applicable"): KnowledgeSectionV2[] => (
-    value === "not_applicable" ? [] : value
+  const repeated = (value: KnowledgeSectionV2[] | "not_applicable" | undefined): KnowledgeSectionV2[] => (
+    value === "not_applicable" || value === undefined ? [] : value
   );
   return [
     entry.definition,

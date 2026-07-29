@@ -1018,6 +1018,30 @@ async def test_coach_runtime_pi_failure_no_fallback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_coach_runtime_pi_redacts_a_string_reply(monkeypatch):
+    steam_id = "76561199033719938"
+    await _seed_default_provider()
+
+    async def fake_pi(**_kwargs):
+        return coach_runtime_mod.PiCoachTurnResult(f"查看 {steam_id}", [], [])
+
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
+    monkeypatch.setattr(coach_runtime_mod, "run_pi_coach_turn_async", fake_pi)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.post(
+            "/api/coach/primary/messages",
+            json={"content": "普通回复"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["reply"] == "查看 [Steam Profile hidden]"
+
+
+@pytest.mark.asyncio
 async def test_coach_runtime_pi_without_default_profile_is_recoverably_unconfigured(monkeypatch):
     pi_calls: list[dict] = []
 
