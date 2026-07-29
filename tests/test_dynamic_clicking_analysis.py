@@ -277,6 +277,10 @@ def test_dynamic_clicking_computes_error_acquisition_and_relative_velocity():
     assert row["target_acceleration"] == pytest.approx(0.0)
     assert row["outcome_available"] is True
     assert row["outcome_success"] is True
+    assert row["condition_ref"] == "condition:predictable:steady"
+    assert result["metrics"][
+        "dynamic_clicking.normalized_click_error"
+    ]["condition_refs"] == ["condition:predictable:steady"]
     assert result["metrics"]["dynamic_clicking.target_state_accuracy"]["value"] == 1.0
     dynamic_event = result["evidence_extension"]["event_bundle"]["events"][0]
     assert dynamic_event["attributes"]["outcome_success"] == 1.0

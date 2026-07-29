@@ -16,7 +16,9 @@ import cv2
 import numpy as np
 import pytest
 
+import kovaak_tracker.visual_signals as visual_signals
 from kovaak_tracker.analysis_evidence import build_analysis_evidence_artifact_v1
+from kovaak_tracker.target_switching_analysis import analyze_target_switching_v1
 from kovaak_tracker.vision import detect_ball_by_color, detect_color_blobs
 from kovaak_tracker.visual_signals import (
     ROUND_DETECTOR_MIN_CIRCULARITY,
@@ -24,20 +26,27 @@ from kovaak_tracker.visual_signals import (
     VISUAL_PRODUCER_VERSION,
     VISUAL_SINGLE_TARGET_CSRT_PRODUCER_ID,
     VISUAL_SINGLE_TARGET_CSRT_PRODUCER_VERSION,
+    VISUAL_TARGET_EPISODE_PRODUCER_ID,
+    VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
     VISUAL_TEMPORAL_PRODUCER_ID,
     VISUAL_TEMPORAL_PRODUCER_VERSION,
     build_visual_quality_profile_v2,
     build_visual_annotation_ledger_v1,
+    build_visual_annotation_ledger_v2,
     detect_color_candidates_v1,
     detect_color_observations_v2,
     evaluate_visual_annotation_quality_v1,
+    evaluate_visual_split_quality_v1,
     evaluate_visual_runtime_compatibility_v2,
     extend_analysis_evidence_with_visual_signals_v1,
     preprocess_visual_video_single_target_csrt_v1,
     preprocess_visual_video_temporal_v1,
     preprocess_visual_video_v1,
+    preprocess_visual_target_episodes_v1,
+    project_visual_target_episodes_v1,
     preprocess_visual_signals_v1,
     visual_detector_config_ref_v1,
+    validate_visual_calibration_holdout_split_v1,
 )
 
 
@@ -226,6 +235,38 @@ def _single_target_csrt_profile(detector_config: dict, selector: dict) -> dict:
         acceptance_thresholds=base["acceptance_thresholds"],
         validation_results=base["validation_results"],
         validated_metric_families=["tracking"],
+        status="accepted",
+        limitations=[],
+    )
+
+
+def _target_episode_profile(detector_config: dict, selector: dict) -> dict:
+    base = _profile()
+    return build_visual_quality_profile_v2(
+        producer_id=VISUAL_TARGET_EPISODE_PRODUCER_ID,
+        producer_version=VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+        annotation_set_ref="annotation-set:synthetic-target-episode.v1",
+        annotation_protocol_version="visual_annotation_protocol.v1",
+        coordinate_space="capture_pixels",
+        calibration_context={
+            "detector_config_ref": visual_detector_config_ref_v1(detector_config),
+            "hud_mask_version": None,
+            "annotated_map_or_background_labels": ["synthetic"],
+            "annotated_target_appearance_labels": ["black-round"],
+        },
+        validated_selectors=[selector],
+        required_selector_keys_by_metric_family={
+            "switching": [
+                "scenario_hash", "resolution", "canonical_video_mapping_version",
+            ],
+        },
+        required_quality_fields_by_metric_family={
+            "switching": base["required_quality_fields_by_metric_family"]["switching"],
+        },
+        compatibility_predicate_version="visual_runtime_compatibility.v2",
+        acceptance_thresholds=base["acceptance_thresholds"],
+        validation_results=base["validation_results"],
+        validated_metric_families=["switching"],
         status="accepted",
         limitations=[],
     )
@@ -616,6 +657,470 @@ def test_crossing_and_reentry_have_deterministic_identity_without_selection_clai
     assert first["quality"]["enabled_metric_families"] == []
 
 
+def test_target_episode_adapter_is_order_independent_without_global_identity_claims():
+    result = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:switching-test",
+        frame_observations=[
+            _frame(0, targets=[
+                _target("left", 80, 100, 10),
+                _target("right", 130, 100, 12),
+            ]),
+            _frame(16, targets=[
+                _target("right", 126, 100, 12),
+                _target("left", 85, 100, 10),
+            ]),
+            _frame(32, targets=[
+                _target("right", 122, 100, 12),
+                _target("left", 90, 100, 10),
+            ]),
+        ],
+    )
+
+    assert result["schema_version"] == "visual_target_episode_artifact.v1"
+    assert result["status"] == "available"
+    assert result["limitations"] == []
+    assert [episode["episode_ref"] for episode in result["episodes"]] == [
+        "analysis:switching-test:target-episode:1",
+        "analysis:switching-test:target-episode:2",
+    ]
+    assert [sample["x"] for sample in result["episodes"][0]["samples"]] == [
+        80.0, 85.0, 90.0,
+    ]
+    assert [sample["x"] for sample in result["episodes"][1]["samples"]] == [
+        130.0, 126.0, 122.0,
+    ]
+    assert "identity" not in json.dumps(result)
+
+
+def test_target_episode_boundaries_are_local_and_keep_safe_episodes():
+    result = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:switching-test",
+        frame_observations=[
+            _frame(0, targets=[
+                _target(None, 80, 100, 10), _target(None, 120, 100, 10),
+            ]),
+            _frame(16, targets=[
+                _target(None, 82, 100, 10), _target(None, 118, 100, 10),
+            ]),
+            {
+                **_frame(32, targets=[]),
+                "target_ambiguities": [{
+                    "ambiguity_kind": "merged_target_component",
+                    "x": 100.0, "y": 100.0,
+                    "visible_radius": 18.0, "confidence": 0.5,
+                }],
+            },
+            _frame(48, targets=[
+                _target(None, 70, 100, 10), _target(None, 130, 100, 10),
+            ]),
+            _frame(64, targets=[
+                _target(None, 72, 100, 10), _target(None, 128, 100, 10),
+            ]),
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert "target_merge_ambiguous" in result["limitations"]
+    assert sorted(len(episode["samples"]) for episode in result["episodes"]) == [
+        2, 2, 2, 2,
+    ]
+    assert all(episode["status"] == "available" for episode in result["episodes"])
+    assert result["boundaries"] == [{
+        "source_pts_ms": 32.0,
+        "reason": "target_merge_ambiguous",
+    }]
+
+
+def test_target_episode_gap_does_not_bridge_or_interpolate_across_50ms():
+    result = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:switching-test",
+        frame_observations=[
+            _frame(0, targets=[_target(None, 100, 100, 10)]),
+            _frame(64, targets=[_target(None, 104, 100, 10)]),
+        ],
+    )
+
+    assert [
+        [sample["source_pts_ms"] for sample in episode["samples"]]
+        for episode in result["episodes"]
+    ] == [[0.0], [64.0]]
+    assert result["boundaries"] == [{
+        "source_pts_ms": 64.0,
+        "reason": "target_observation_gap",
+    }]
+
+
+def test_target_episode_merge_only_ends_spatially_affected_episode():
+    result = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:switching-test",
+        frame_observations=[
+            _frame(0, targets=[
+                _target(None, 50, 100, 10),
+                _target(None, 100, 100, 10),
+                _target(None, 150, 100, 10),
+            ]),
+            _frame(16, targets=[
+                _target(None, 52, 100, 10),
+                _target(None, 102, 100, 10),
+                _target(None, 152, 100, 10),
+            ]),
+            {
+                **_frame(32, targets=[]),
+                "target_ambiguities": [{
+                    "ambiguity_kind": "merged_target_component",
+                    "x": 102.0,
+                    "y": 100.0,
+                    "visible_radius": 18.0,
+                    "confidence": 0.5,
+                }],
+            },
+            _frame(48, targets=[
+                _target(None, 54, 100, 10),
+                _target(None, 104, 100, 10),
+                _target(None, 154, 100, 10),
+            ]),
+        ],
+    )
+
+    assert sorted(
+        [sample["source_pts_ms"] for sample in episode["samples"]]
+        for episode in result["episodes"]
+    ) == [[0.0, 16.0], [0.0, 16.0, 48.0], [0.0, 16.0, 48.0], [48.0]]
+    assert result["boundaries"] == [{
+        "source_pts_ms": 32.0,
+        "reason": "target_merge_ambiguous",
+    }]
+
+
+def test_target_episode_crossing_only_ends_crossing_pair_and_keeps_third_episode():
+    result = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:switching-test",
+        frame_observations=[
+            _frame(0, targets=[
+                _target(None, 100, 50, 10),
+                _target(None, 100, 150, 10),
+                _target(None, 180, 100, 10),
+            ]),
+            _frame(16, targets=[
+                _target(None, 100, 55, 10),
+                _target(None, 100, 145, 10),
+                _target(None, 182, 100, 10),
+            ]),
+            _frame(32, targets=[
+                _target(None, 80, 100, 10),
+                _target(None, 120, 100, 10),
+                _target(None, 184, 100, 10),
+            ]),
+            _frame(48, targets=[
+                _target(None, 78, 100, 10),
+                _target(None, 122, 100, 10),
+                _target(None, 186, 100, 10),
+            ]),
+        ],
+    )
+
+    assert any(
+        [sample["source_pts_ms"] for sample in episode["samples"]]
+        == [0.0, 16.0, 32.0, 48.0]
+        for episode in result["episodes"]
+    )
+    assert result["boundaries"] == [{
+        "source_pts_ms": 16.0,
+        "reason": "target_crossing_ambiguous",
+    }]
+
+
+def test_target_episode_reentry_starts_fresh_without_ending_safe_episode():
+    result = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:switching-test",
+        frame_observations=[
+            _frame(0, targets=[
+                _target(None, 50, 100, 10), _target(None, 150, 100, 10),
+            ]),
+            _frame(16, targets=[_target(None, 152, 100, 10)]),
+            _frame(32, targets=[
+                _target(None, 52, 100, 10), _target(None, 154, 100, 10),
+            ]),
+        ],
+    )
+
+    assert any(
+        [sample["source_pts_ms"] for sample in episode["samples"]]
+        == [0.0, 16.0, 32.0]
+        for episode in result["episodes"]
+    )
+    assert sorted(
+        [sample["source_pts_ms"] for sample in episode["samples"]]
+        for episode in result["episodes"]
+    ) == [[0.0], [0.0, 16.0, 32.0], [32.0]]
+    assert "identity" not in json.dumps(result)
+
+
+def test_target_episode_projection_drops_frames_and_uses_episode_refs():
+    visual = _preprocess([
+        _frame(0, targets=[
+            _target(None, 80, 100, 10), _target(None, 130, 100, 12),
+        ]),
+        _frame(16, targets=[
+            _target(None, 84, 100, 10), _target(None, 126, 100, 12),
+        ]),
+    ])
+    visual["frame_observations"] = [
+        _frame(0, targets=[
+            _target(None, 80, 100, 10), _target(None, 130, 100, 12),
+        ]),
+        _frame(16, targets=[
+            _target(None, 84, 100, 10), _target(None, 126, 100, 12),
+        ]),
+    ]
+    episodes = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:visual-test",
+        frame_observations=visual["frame_observations"],
+    )
+
+    projected = project_visual_target_episodes_v1(visual, episodes)
+
+    assert "frame_observations" not in projected
+    assert projected["quality"]["enabled_metric_families"] == []
+    assert {
+        summary["observation_source"] for summary in projected["track_summaries"]
+    } == {"event_local_target_episode"}
+    assert sorted(
+        key for key in projected["local_samples"] if key.startswith("target.")
+    ) == ["target.1.position", "target.2.position"]
+    assert "identity" not in json.dumps(projected)
+
+
+@pytest.mark.parametrize(
+    ("upstream_quality", "expected_status", "expected_families"),
+    [
+        (
+            {
+                "status": "rejected",
+                "enabled_metric_families": [],
+                "limitations": [
+                    "visual_quality_below_threshold:minimum_coverage",
+                ],
+            },
+            "rejected",
+            [],
+        ),
+        (
+            {
+                "status": "limited",
+                "enabled_metric_families": ["dynamic_clicking"],
+                "limitations": [
+                    "visual_quality_below_threshold:crosshair_coverage",
+                ],
+            },
+            "limited",
+            [],
+        ),
+    ],
+)
+def test_target_episode_projection_does_not_widen_upstream_quality(
+    upstream_quality, expected_status, expected_families
+):
+    projected = _project_target_episodes_with_upstream_quality(upstream_quality)
+
+    assert projected["quality"] == {
+        "status": expected_status,
+        "enabled_metric_families": expected_families,
+        "limitations": upstream_quality["limitations"],
+    }
+    assert projected["safe_summary"]["quality_status"] == expected_status
+    assert projected["safe_summary"]["enabled_metric_families"] == expected_families
+    assert projected["safe_summary"]["limitations"] == upstream_quality["limitations"]
+
+
+def _project_target_episodes_with_upstream_quality(upstream_quality):
+    visual = _preprocess([
+        _frame(0, targets=[
+            _target(None, 80, 100, 10), _target(None, 130, 100, 12),
+        ]),
+        _frame(16, targets=[
+            _target(None, 84, 100, 10), _target(None, 126, 100, 12),
+        ]),
+    ])
+    visual["frame_observations"] = [
+        _frame(0, targets=[
+            _target(None, 80, 100, 10), _target(None, 130, 100, 12),
+        ]),
+        _frame(16, targets=[
+            _target(None, 84, 100, 10), _target(None, 126, 100, 12),
+        ]),
+    ]
+    visual["quality"] = upstream_quality
+    visual["limitations"] = list(upstream_quality["limitations"])
+    visual["safe_summary"].update({
+        "quality_status": upstream_quality["status"],
+        "enabled_metric_families": list(upstream_quality["enabled_metric_families"]),
+        "limitations": list(upstream_quality["limitations"]),
+    })
+    episodes = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:visual-test",
+        frame_observations=visual["frame_observations"],
+    )
+
+    projected = project_visual_target_episodes_v1(visual, episodes)
+
+    return projected
+
+
+def test_rejected_target_episode_projection_is_outcome_only():
+    projected = _project_target_episodes_with_upstream_quality({
+        "status": "rejected",
+        "enabled_metric_families": [],
+        "limitations": ["visual_quality_below_threshold:minimum_coverage"],
+    })
+
+    result = analyze_target_switching_v1({
+        "schema_version": "target_switching_input.v1",
+        "analysis_ref": projected["analysis_ref"],
+        "canonical_time_window": projected["canonical_time_window"],
+        "scenario_resolution": {"aim_family": "target_switching"},
+        "visual_quality": projected["quality"],
+        "comparison": None,
+    })
+
+    assert result["support_status"] == "outcome_only"
+    assert result["processed_rows"] == []
+
+
+def test_target_episode_projection_keeps_non_quality_limitations_out_of_quality():
+    projected = _project_target_episodes_with_upstream_quality({
+        "status": "accepted",
+        "enabled_metric_families": ["switching"],
+        "limitations": [],
+    })
+    projected["limitations"] = ["missing_frame_pts"]
+    projected["safe_summary"]["limitations"] = ["missing_frame_pts"]
+    episodes = preprocess_visual_target_episodes_v1(
+        analysis_ref=projected["analysis_ref"],
+        frame_observations=[
+            _frame(0, targets=[
+                _target(None, 80, 100, 10), _target(None, 130, 100, 12),
+            ]),
+            _frame(16, targets=[
+                _target(None, 84, 100, 10), _target(None, 126, 100, 12),
+            ]),
+        ],
+    )
+
+    reprojection = project_visual_target_episodes_v1(projected, episodes)
+
+    assert reprojection["quality"]["limitations"] == []
+    assert reprojection["limitations"] == ["missing_frame_pts"]
+    assert reprojection["safe_summary"]["limitations"] == ["missing_frame_pts"]
+
+
+def test_target_episode_preprocessing_bypasses_global_identity_builder(monkeypatch):
+    detector_config = {
+        "schema_version": "visual_target_detector.v1",
+        "aim_point_mode": "fixed_viewport_center",
+        "target": {
+            "hsv_lower": [0, 0, 0],
+            "hsv_upper": [179, 255, 80],
+            "min_area": 50,
+            "max_area_ratio": 0.05,
+            "shape": "round",
+        },
+    }
+
+    def global_identity_builder(**_kwargs):
+        raise AssertionError("switching must not build global target identity")
+
+    kwargs = {
+        "analysis_ref": "analysis:switching-test",
+        "canonical_time_window": _window(),
+        "frame_observations": [
+            _frame(0, targets=[_target(None, 80, 100, 10)]),
+            _frame(17, targets=[_target(None, 84, 100, 10)]),
+            _frame(34, targets=[_target(None, 88, 100, 10)]),
+            _frame(51, targets=[_target(None, 92, 100, 10)]),
+            _frame(68, targets=[_target(None, 96, 100, 10)]),
+        ],
+        "visual_quality_profile": _target_episode_profile(detector_config, _selector()),
+        "visual_runtime_selector": _selector(),
+        "video_time_mapping": {
+            "schema_version": "visual_video_time_mapping.v1",
+            "source_pts_origin_ms": 0.0,
+            "canonical_origin_ms": _window()["start_ms"],
+            "mapping_method": "run_owned_exact_canonical_clip",
+            "timebase_version": _window()["timebase_version"],
+        },
+    }
+    legacy_result = visual_signals._preprocess_visual_signals_with_global_identity_v1(
+        **kwargs
+    )
+    legacy_result["frame_observations"] = kwargs["frame_observations"]
+    legacy_episodes = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:switching-test",
+        frame_observations=legacy_result["frame_observations"],
+    )
+    legacy_projected = project_visual_target_episodes_v1(
+        legacy_result, legacy_episodes
+    )
+
+    monkeypatch.setattr(
+        visual_signals,
+        "_preprocess_visual_signals_with_global_identity_v1",
+        global_identity_builder,
+    )
+    result = preprocess_visual_signals_v1(
+        **kwargs,
+    )
+
+    episodes = preprocess_visual_target_episodes_v1(
+        analysis_ref="analysis:switching-test",
+        frame_observations=result["frame_observations"],
+    )
+    projected = project_visual_target_episodes_v1(result, episodes)
+
+    assert result["quality"]["enabled_metric_families"] == ["switching"]
+    assert projected["quality"]["enabled_metric_families"] == ["target_switching"]
+    assert [sample["canonical_time_ms"] for sample in result["local_samples"]["crosshair.position"]] == [
+        1_000, 1_017, 1_034, 1_051, 1_068,
+    ]
+    assert [len(episode["samples"]) for episode in episodes["episodes"]] == [5]
+    assert projected["track_summaries"] == legacy_projected["track_summaries"]
+    assert {
+        key: value
+        for key, value in projected["local_samples"].items()
+        if key.startswith("target.")
+    } == {
+        key: value
+        for key, value in legacy_projected["local_samples"].items()
+        if key.startswith("target.")
+    }
+    assert "identity" not in json.dumps(projected)
+    assert "reentry" not in json.dumps(projected)
+
+
+def test_legacy_preprocessing_still_uses_global_identity_builder(monkeypatch):
+    calls = 0
+    original = visual_signals._preprocess_visual_signals_with_global_identity_v1
+
+    def global_identity_builder(**kwargs):
+        nonlocal calls
+        calls += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        visual_signals,
+        "_preprocess_visual_signals_with_global_identity_v1",
+        global_identity_builder,
+    )
+
+    result = _preprocess([
+        _frame(0, targets=[_target("legacy-target", 100, 100, 10)]),
+        _frame(17, targets=[_target("legacy-target", 104, 100, 10)]),
+    ])
+
+    assert calls == 1
+    assert result["track_summaries"][0]["identity_source"] == "detector_ref"
+
+
 def test_runtime_identity_ambiguity_only_disables_dependent_metric_families():
     result = _preprocess([
         _frame(0, targets=[_target("left", 80, 100, 10), _target("right", 120, 100, 10)]),
@@ -654,6 +1159,61 @@ def test_unkeyed_target_reentry_after_occlusion_never_claims_reliable_identity()
         "reentry_identity_unresolved" in track["limitations"]
         for track in result["track_summaries"]
     )
+
+
+def test_dynamic_only_profile_does_not_treat_reentry_as_required_quality():
+    base = _profile()
+    profile = build_visual_quality_profile_v2(
+        producer_id=base["producer_id"],
+        producer_version=base["producer_version"],
+        annotation_set_ref="annotation-set:dynamic-only.v1",
+        annotation_protocol_version=base["annotation_protocol_version"],
+        coordinate_space=base["coordinate_space"],
+        calibration_context=base["calibration_context"],
+        validated_selectors=base["validated_selectors"],
+        required_selector_keys_by_metric_family={
+            "dynamic_clicking": base[
+                "required_selector_keys_by_metric_family"
+            ]["dynamic_clicking"],
+        },
+        required_quality_fields_by_metric_family={
+            "dynamic_clicking": base[
+                "required_quality_fields_by_metric_family"
+            ]["dynamic_clicking"],
+        },
+        compatibility_predicate_version=base[
+            "compatibility_predicate_version"
+        ],
+        acceptance_thresholds=base["acceptance_thresholds"],
+        validation_results={
+            **base["validation_results"],
+            "identity_switch_rate": None,
+            "occlusion_reentry_accuracy": None,
+        },
+        validated_metric_families=["dynamic_clicking"],
+        status="accepted",
+        limitations=[
+            "identity_continuity_not_observed",
+            "occlusion_reentry_not_observed",
+        ],
+    )
+    result = _preprocess(
+        [
+            _frame(0, targets=[_target(None, 110, 100, 12)]),
+            _frame(16, targets=[]),
+            _frame(32, targets=[_target(None, 114, 100, 12)]),
+            _frame(48, targets=[_target(None, 118, 100, 12)]),
+            _frame(64, targets=[_target(None, 122, 100, 12)]),
+        ],
+        visual_quality_profile=profile,
+    )
+
+    assert "reentry_identity_unresolved" in result["limitations"]
+    assert result["quality"]["status"] == "accepted"
+    assert result["quality"]["enabled_metric_families"] == ["dynamic_clicking"]
+    assert "visual_quality_below_threshold:occlusion_reentry" not in result[
+        "quality"
+    ]["limitations"]
 
 
 def test_non_gameplay_scene_breaks_unkeyed_target_identity_continuity():
@@ -1191,6 +1751,292 @@ def test_annotation_ledger_is_bounded_reproducible_and_path_free():
         )
 
 
+def _dynamic_ledger_v2(
+    *,
+    role: str,
+    source_ref: str,
+    source_sha256: str,
+    frame_index: int,
+    x: float = 100.0,
+) -> dict:
+    return build_visual_annotation_ledger_v2(
+        dataset_role=role,
+        source_ref=source_ref,
+        source_sha256=source_sha256,
+        scenario_hash="a37d2ba4f3f33d59ae7018e37445a5e9",
+        visual_runtime_selector={
+            "schema_version": "visual_runtime_selector.v1",
+            "scenario_hash": "a37d2ba4f3f33d59ae7018e37445a5e9",
+            "resolution": [1920, 1080],
+            "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+            "fov": 103.0,
+        },
+        detector_config_ref="detector-config:sha256:" + "c" * 64,
+        annotation_protocol_version="visual_annotation_protocol.v2",
+        annotator_ref="reviewer:primary-annotation",
+        reviewer_ref="reviewer:independent-review",
+        review_round=1,
+        frames=[{
+            "frame_index": frame_index,
+            "targets": [{
+                "target_id": f"target-{frame_index}",
+                "state": "visible",
+                "x": x,
+                "y": 80.0,
+                "visible_radius": 12.0,
+                "exclusion_reason": None,
+            }],
+        }],
+        click_windows=[{
+            "click_ref": f"click-window:{frame_index}",
+            "frame_index": frame_index,
+            "status": "annotated",
+        }],
+    )
+
+
+def test_dynamic_annotation_ledger_v2_requires_independent_review_and_click_accounting():
+    ledger = _dynamic_ledger_v2(
+        role="calibration",
+        source_ref="field:pasu-small-reload:run-1032@2026-07-27",
+        source_sha256="a" * 64,
+        frame_index=10,
+    )
+    assert ledger["dataset_role"] == "calibration"
+    assert ledger["frames"][0]["targets"][0]["state"] == "visible"
+    assert ledger["click_windows"] == [{
+        "click_ref": "click-window:10",
+        "frame_index": 10,
+        "status": "annotated",
+    }]
+
+    with pytest.raises(ValueError, match="independent"):
+        build_visual_annotation_ledger_v2(
+            **{
+                **{key: value for key, value in ledger.items() if key not in {
+                    "schema_version", "annotator_ref", "reviewer_ref",
+                }},
+                "annotator_ref": "reviewer:same",
+                "reviewer_ref": "reviewer:same",
+            }
+        )
+
+    with pytest.raises(ValueError, match="click window"):
+        build_visual_annotation_ledger_v2(
+            **{
+                **{key: value for key, value in ledger.items() if key != "schema_version"},
+                "click_windows": [{
+                    "click_ref": "click-window:missing",
+                    "frame_index": 999,
+                    "status": "annotated",
+                }],
+            }
+        )
+
+
+def test_dynamic_split_rejects_run_or_digest_overlap_and_selector_mismatch():
+    calibration = _dynamic_ledger_v2(
+        role="calibration",
+        source_ref="field:pasu-small-reload:run-1032@2026-07-27",
+        source_sha256="a" * 64,
+        frame_index=10,
+    )
+    holdout = _dynamic_ledger_v2(
+        role="untouched_holdout",
+        source_ref="field:pasu-small-reload:run-1347@2026-07-27",
+        source_sha256="b" * 64,
+        frame_index=20,
+    )
+    split = validate_visual_calibration_holdout_split_v1(
+        calibration_ledger=calibration,
+        holdout_ledger=holdout,
+        expected_source_sha256_by_role={
+            "calibration": "a" * 64,
+            "untouched_holdout": "b" * 64,
+        },
+    )
+    assert split["schema_version"] == "visual_calibration_holdout_split.v1"
+    assert split["calibration"]["source_ref"].endswith("run-1032@2026-07-27")
+    assert split["untouched_holdout"]["source_ref"].endswith(
+        "run-1347@2026-07-27"
+    )
+
+    with pytest.raises(ValueError, match="overlap"):
+        validate_visual_calibration_holdout_split_v1(
+            calibration_ledger=calibration,
+            holdout_ledger={
+                **holdout,
+                "source_sha256": calibration["source_sha256"],
+            },
+            expected_source_sha256_by_role={
+                "calibration": "a" * 64,
+                "untouched_holdout": "a" * 64,
+            },
+        )
+    with pytest.raises(ValueError, match="digest"):
+        validate_visual_calibration_holdout_split_v1(
+            calibration_ledger=calibration,
+            holdout_ledger=holdout,
+            expected_source_sha256_by_role={
+                "calibration": "f" * 64,
+                "untouched_holdout": "b" * 64,
+            },
+        )
+    with pytest.raises(ValueError, match="selector"):
+        validate_visual_calibration_holdout_split_v1(
+            calibration_ledger=calibration,
+            holdout_ledger={
+                **holdout,
+                "visual_runtime_selector": {
+                    **holdout["visual_runtime_selector"],
+                    "resolution": [1280, 720],
+                },
+            },
+            expected_source_sha256_by_role={
+                "calibration": "a" * 64,
+                "untouched_holdout": "b" * 64,
+            },
+        )
+
+
+def test_dynamic_split_quality_requires_each_dataset_to_pass():
+    calibration = _dynamic_ledger_v2(
+        role="calibration",
+        source_ref="field:pasu-small-reload:run-1032@2026-07-27",
+        source_sha256="a" * 64,
+        frame_index=10,
+    )
+    holdout = _dynamic_ledger_v2(
+        role="untouched_holdout",
+        source_ref="field:pasu-small-reload:run-1347@2026-07-27",
+        source_sha256="b" * 64,
+        frame_index=20,
+    )
+    thresholds = {
+        "center_error_median_px": 2.0,
+        "center_error_p95_px": 4.0,
+        "radius_or_hitbox_error_px": 2.0,
+        "false_positive_rate": 0.05,
+        "minimum_coverage": 0.9,
+    }
+    calibration_predictions = [{
+        "frame_index": 10,
+        "targets": [{
+            "track_id": "calibration-prediction",
+            "x": 100.5,
+            "y": 80.0,
+            "visible_radius": 12.0,
+        }],
+    }]
+    holdout_predictions = [{"frame_index": 20, "targets": []}]
+    failed = evaluate_visual_split_quality_v1(
+        calibration_ledger=calibration,
+        calibration_predictions=calibration_predictions,
+        holdout_ledger=holdout,
+        holdout_predictions=holdout_predictions,
+        maximum_match_distance_px=10.0,
+        acceptance_thresholds=thresholds,
+    )
+    assert failed["calibration"]["accepted"] is True
+    assert failed["untouched_holdout"]["accepted"] is False
+    assert failed["status"] == "rejected"
+
+    holdout_predictions[0]["targets"] = [{
+        "track_id": "holdout-prediction",
+        "x": 101.0,
+        "y": 80.0,
+        "visible_radius": 13.0,
+    }]
+    accepted = evaluate_visual_split_quality_v1(
+        calibration_ledger=calibration,
+        calibration_predictions=calibration_predictions,
+        holdout_ledger=holdout,
+        holdout_predictions=holdout_predictions,
+        maximum_match_distance_px=10.0,
+        acceptance_thresholds=thresholds,
+    )
+    assert accepted["status"] == "accepted"
+    assert accepted["validation_results"]["center_error_median_px"] == 1.0
+    assert accepted["validation_results"]["minimum_coverage"] == 1.0
+    assert accepted["validation_results"]["identity_switch_rate"] is None
+    assert accepted["validation_results"]["occlusion_reentry_accuracy"] is None
+
+
+def test_dynamic_split_quality_reports_but_does_not_score_occluded_frames():
+    calibration = _dynamic_ledger_v2(
+        role="calibration",
+        source_ref="field:pasu-small-reload:run-1032@2026-07-27",
+        source_sha256="a" * 64,
+        frame_index=10,
+    )
+    calibration["frames"].append({
+        "frame_index": 11,
+        "targets": [{
+            "target_id": "reticle-occluded",
+            "state": "occluded",
+            "x": None,
+            "y": None,
+            "visible_radius": None,
+            "exclusion_reason": None,
+        }],
+    })
+    calibration["click_windows"].append({
+        "click_ref": "click-window:11",
+        "frame_index": 11,
+        "status": "ambiguous",
+    })
+    holdout = _dynamic_ledger_v2(
+        role="untouched_holdout",
+        source_ref="field:pasu-small-reload:run-1347@2026-07-27",
+        source_sha256="b" * 64,
+        frame_index=20,
+    )
+    result = evaluate_visual_split_quality_v1(
+        calibration_ledger=calibration,
+        calibration_predictions=[
+            {
+                "frame_index": 10,
+                "targets": [{
+                    "track_id": "visible",
+                    "x": 100.0,
+                    "y": 80.0,
+                    "visible_radius": 12.0,
+                }],
+            },
+            {
+                "frame_index": 11,
+                "targets": [{
+                    "track_id": "unscored-occlusion",
+                    "x": 960.0,
+                    "y": 540.0,
+                    "visible_radius": 8.0,
+                }],
+            },
+        ],
+        holdout_ledger=holdout,
+        holdout_predictions=[{
+            "frame_index": 20,
+            "targets": [{
+                "track_id": "holdout",
+                "x": 100.0,
+                "y": 80.0,
+                "visible_radius": 12.0,
+            }],
+        }],
+        maximum_match_distance_px=10.0,
+        acceptance_thresholds={
+            "center_error_median_px": 2.0,
+            "center_error_p95_px": 4.0,
+            "radius_or_hitbox_error_px": 2.0,
+            "false_positive_rate": 0.05,
+            "minimum_coverage": 0.9,
+        },
+    )
+    calibration_quality = result["calibration"]["quality"]
+    assert calibration_quality["excluded_frame_count"] == 1
+    assert calibration_quality["counts"]["false_positives"] == 0
+
+
 def test_annotation_quality_evaluator_does_not_invent_unobserved_identity_quality():
     result = evaluate_visual_annotation_quality_v1(
         annotations=[{
@@ -1477,6 +2323,28 @@ def test_visual_and_legacy_tracking_share_the_same_color_blob_primitive():
     assert legacy_position == (90, 50)
 
 
+def test_switching_detector_accepts_reviewed_health_bar_ball_without_weakening_default():
+    image = np.full((120, 200, 3), 255, dtype=np.uint8)
+    cv2.circle(image, (140, 65), 15, (0, 0, 0), -1)
+    cv2.rectangle(image, (115, 44), (165, 54), (0, 0, 0), -1)
+    kwargs = {
+        "hsv_lower": [0, 0, 0],
+        "hsv_upper": [179, 255, 80],
+        "min_area": 50,
+        "max_area_ratio": 0.05,
+        "shape": "round",
+        "excluded_regions": [],
+    }
+
+    assert detect_color_observations_v2(image, **kwargs)["targets"] == []
+    reviewed = detect_color_observations_v2(
+        image, minimum_circularity=0.45, **kwargs,
+    )
+
+    assert len(reviewed["targets"]) == 1
+    assert reviewed["targets"][0]["x"] == pytest.approx(140.0, abs=1.0)
+
+
 def test_local_video_decoder_uses_pts_and_does_not_return_media_path(monkeypatch):
     frames = []
     for target_x in (120, 125):
@@ -1582,6 +2450,54 @@ def test_local_video_decoder_uses_pts_and_does_not_return_media_path(monkeypatch
     assert result["local_samples"]["crosshair.position"][1]["canonical_time_ms"] == 1_017
     assert result["track_summaries"][0]["sample_count"] == 2
     assert "C:/private" not in repr(result)
+    assert "frame_observations" not in result
+
+    episode_profile = build_visual_quality_profile_v2(
+        producer_id=VISUAL_TARGET_EPISODE_PRODUCER_ID,
+        producer_version=VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+        annotation_set_ref="annotation-set:synthetic-switching.v1",
+        annotation_protocol_version="visual_annotation_protocol.v1",
+        coordinate_space="capture_pixels",
+        calibration_context={
+            "detector_config_ref": visual_detector_config_ref_v1(detector_config),
+            "hud_mask_version": "visual_hud_mask.synthetic.v1",
+            "annotated_map_or_background_labels": ["synthetic"],
+            "annotated_target_appearance_labels": ["round"],
+        },
+        validated_selectors=[selector],
+        required_selector_keys_by_metric_family={
+            "switching": [
+                "scenario_hash", "resolution", "canonical_video_mapping_version",
+            ],
+        },
+        required_quality_fields_by_metric_family={
+            "switching": _profile()["required_quality_fields_by_metric_family"]["switching"],
+        },
+        compatibility_predicate_version="visual_runtime_compatibility.v2",
+        acceptance_thresholds=_profile()["acceptance_thresholds"],
+        validation_results=_profile()["validation_results"],
+        validated_metric_families=["switching"],
+        status="accepted",
+        limitations=[],
+    )
+    episode_result = preprocess_visual_video_v1(
+        media_path="C:/private/fixture.mp4",
+        analysis_ref="analysis:visual-test",
+        canonical_time_window=_window(),
+        visual_quality_profile=episode_profile,
+        visual_runtime_selector=selector,
+        video_time_mapping={
+            "schema_version": "visual_video_time_mapping.v1",
+            "source_pts_origin_ms": 0.0,
+            "canonical_origin_ms": _window()["start_ms"],
+            "mapping_method": "run_owned_exact_canonical_clip",
+            "timebase_version": _window()["timebase_version"],
+        },
+        detector_config=detector_config,
+    )
+    assert len(episode_result["frame_observations"]) == 2
+    assert "identity" not in repr(episode_result["visual_quality_profile_ref"])
+    assert "C:/private" not in repr(episode_result)
 
     detector_config["target"]["hsv_upper"][2] = 254
     with pytest.raises(ValueError, match="does not match quality profile"):

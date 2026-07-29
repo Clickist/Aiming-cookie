@@ -76,6 +76,10 @@ _METRIC_DIRECTIONS = {
     "target_switching.transition_distance_px": "comparison_only",
     "target_switching.transition_time_ms": "lower_better",
 }
+_NATIVE_STATIC_PROFILE_METRIC_KEYS = {
+    "corrective_count": "static_clicking.corrective_count",
+    "peak_speed": "static_clicking.peak_speed",
+}
 
 
 def _text(value: Any, field: str, *, max_length: int = 256) -> str:
@@ -190,6 +194,46 @@ def _validate_contribution(owner_id: str, analysis_ref: str, payload: Mapping[st
     }
 
 
+def _frozen_profile_scenario_resolution(
+    result: Mapping[str, Any], scenario: Mapping[str, Any],
+) -> tuple[str, set[str]] | None:
+    input_snapshot = result.get("input_snapshot")
+    resolution = (
+        input_snapshot.get("scenario_resolution")
+        if isinstance(input_snapshot, Mapping)
+        else None
+    )
+    if not isinstance(resolution, Mapping):
+        return None
+    scenario_ref = scenario.get("scenario_profile_ref")
+    aim_family = scenario.get("aim_family")
+    analysis_version = result.get("analysis_version")
+    analyzer_refs = scenario.get("analyzer_refs")
+    allowed_analyzers = resolution.get("allowed_analyzers")
+    allowed_metric_families = resolution.get("allowed_metric_families")
+    if (
+        not isinstance(scenario_ref, str)
+        or not isinstance(aim_family, str)
+        or not isinstance(analysis_version, str)
+        or isinstance(analyzer_refs, (str, bytes))
+        or not isinstance(analyzer_refs, Sequence)
+        or isinstance(allowed_analyzers, (str, bytes))
+        or not isinstance(allowed_analyzers, Sequence)
+        or isinstance(allowed_metric_families, (str, bytes))
+        or not isinstance(allowed_metric_families, Sequence)
+        or resolution.get("scenario_profile_ref") != scenario_ref
+        or resolution.get("aim_family") != aim_family
+        or analysis_version not in analyzer_refs
+        or analysis_version not in allowed_analyzers
+    ):
+        return None
+    families = {
+        family for family in allowed_metric_families
+        if isinstance(family, str) and family
+    }
+    return (scenario_ref, families) if families else None
+
+
 def build_contribution_from_analysis_result(result: Mapping[str, Any]) -> dict[str, Any] | None:
     """Project only formal, evidence-backed metrics into an exact-scenario profile."""
     if not isinstance(result, Mapping) or result.get("schema_version") != "analysis_result.v2":
@@ -208,6 +252,10 @@ def build_contribution_from_analysis_result(result: Mapping[str, Any]) -> dict[s
         or not isinstance(evidence.get("derived_artifact"), Mapping)
     ):
         return None
+    frozen_resolution = _frozen_profile_scenario_resolution(result, scenario)
+    if frozen_resolution is None:
+        return None
+    _, allowed_metric_families = frozen_resolution
     metrics = deterministic.get("metrics")
     if not isinstance(metrics, Mapping):
         return None
@@ -215,12 +263,23 @@ def build_contribution_from_analysis_result(result: Mapping[str, Any]) -> dict[s
     for raw_key, raw_metric in sorted(metrics.items()):
         if not isinstance(raw_key, str) or not isinstance(raw_metric, Mapping):
             continue
-        direction = _METRIC_DIRECTIONS.get(raw_key)
+        metric_key = raw_key
+        if (
+            result.get("analysis_version") == "native_flicking.v1"
+            and scenario.get("aim_family") == "static_clicking"
+            and "native_flicking.v1" in (scenario.get("analyzer_refs") or [])
+        ):
+            metric_key = _NATIVE_STATIC_PROFILE_METRIC_KEYS.get(raw_key, raw_key)
+        direction = _METRIC_DIRECTIONS.get(metric_key)
+        if direction is None:
+            continue
+        metric_family, _, _ = metric_key.partition(".")
+        if metric_family not in allowed_metric_families:
+            return None
         value = raw_metric.get("value")
         provenance = raw_metric.get("provenance")
         if (
-            direction is None
-            or raw_metric.get("availability") != "available"
+            raw_metric.get("availability") != "available"
             or raw_metric.get("classification") != "deterministic"
             or isinstance(value, bool)
             or not isinstance(value, (int, float))
@@ -253,9 +312,9 @@ def build_contribution_from_analysis_result(result: Mapping[str, Any]) -> dict[s
             confidence = "medium"
         else:
             confidence = "low"
-        metric_ref = f"metric:{raw_key}@{version}"
+        metric_ref = f"metric:{metric_key}@{version}"
         dimensions.append({
-            "dimension_key": raw_key,
+            "dimension_key": metric_key,
             "scope": "exact_scenario",
             "scenario_profile_ref": scenario_ref,
             "metric_ref": metric_ref,
@@ -296,16 +355,14 @@ def _projection(group: list[dict[str, Any]], key: tuple[str, str, str]) -> dict[
     direction = first["dimension"]["expected_direction"]
     directions = {item["dimension"]["expected_direction"] for item in values}
     trend = "unknown"
+    limitations: list[str] = []
     if len(values) > 1 and len(directions) == 1 and direction in {"lower_better", "higher_better"}:
         before = float(first["dimension"]["metric_value"])
         after = float(latest["dimension"]["metric_value"])
         if after == before:
             trend = "stable"
-        elif (direction == "lower_better" and after < before) or (direction == "higher_better" and after > before):
-            trend = "improving"
         else:
-            trend = "deteriorating"
-    limitations: list[str] = []
+            limitations.append("metric_change_policy_missing")
     if len(values) < 2:
         limitations.append("insufficient_comparable_history")
     if len(directions) > 1:

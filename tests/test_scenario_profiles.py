@@ -57,15 +57,45 @@ def _manifest(profile: dict, *, status: str = "active") -> dict:
     }
 
 
-def test_packaged_registry_activates_only_the_reviewed_single_target_tracking_hash():
+def test_active_scenario_profile_refs_intersect_active_registry_and_manifest():
+    active = _profile()
+    pending = _profile(
+        entry_id="static.pending",
+        scenario_hash="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+    retired = _profile(
+        entry_id="static.retired",
+        scenario_hash="sha256:cccccccccccccccccccccccccccccccc",
+        status="retired",
+    )
+    manifest = _manifest(active)
+    pending_entry = _manifest(pending, status="pending_gate")["entries"][0]
+    retired_entry = _manifest(retired, status="retired")["entries"][0]
+    manifest["entries"].extend([pending_entry, retired_entry])
+
+    assert scenario_profiles.active_scenario_profile_refs(
+        registry=_registry(active, pending, retired), manifest=manifest,
+    ) == {"scenario:static.example@1"}
+
+
+def test_packaged_registry_activates_only_reviewed_launch_hashes():
     registry = scenario_profiles.load_registry()
     manifest = scenario_profiles.load_launch_manifest()
 
+    assert registry["registry_version"] == "2026-07-28.v1"
+    assert manifest["manifest_version"] == "2026-07-28.v1"
+
     assert [entry["scenario_hash"] for entry in registry["entries"]] == [
         "b2ae4a24b710e36afc6e57c61f590ab4",
+        "7378a811f430b6072d052a75896afb98",
+        "a37d2ba4f3f33d59ae7018e37445a5e9",
+        "3b42bdfd38a6b194737d650f3f53e8c1",
     ]
     assert [entry["scenario_hash"] for entry in manifest["entries"]] == [
         "b2ae4a24b710e36afc6e57c61f590ab4",
+        "7378a811f430b6072d052a75896afb98",
+        "a37d2ba4f3f33d59ae7018e37445a5e9",
+        "3b42bdfd38a6b194737d650f3f53e8c1",
     ]
     resolution = scenario_profiles.resolve_scenario_profile(
         "b2ae4a24b710e36afc6e57c61f590ab4",
@@ -82,12 +112,203 @@ def test_packaged_registry_activates_only_the_reviewed_single_target_tracking_ha
     assert resolution["allowed_metric_families"] == ["continuous_tracking"]
     assert resolution["family_analyzer_dispatch"] == "allowed"
 
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "7378a811f430b6072d052a75896afb98",
+        display_name="1wall 6targets small",
+    )
+    assert resolution["manifest_status"] == "active"
+    assert resolution["aim_family"] == "static_clicking"
+    assert resolution["target_motion"] == {
+        "model": "static", "target_count_model": "concurrent",
+    }
+    assert resolution["allowed_analyzers"] == ["native_flicking.v1"]
+    assert resolution["allowed_metric_families"] == [
+        "input_kinematics", "static_clicking",
+    ]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+
+    fixture = json.loads((
+        Path(__file__).parent / "fixtures" / "scenarios"
+        / "1wall-6targets-small-static.v1.json"
+    ).read_text(encoding="utf-8"))
+    assert fixture["scenario_hash"] == resolution["scenario_hash"]
+    assert fixture["scenario_profile_ref"] == resolution["scenario_profile_ref"]
+    assert fixture["field_review"] == {
+        "review_ref": "review:1wall-6targets-small-static-input-native",
+        "reviewed_at": "2026-07-27T00:00:00Z",
+        "target_motion": "static",
+        "simultaneous_target_count": 6,
+        "target_count_model": "concurrent",
+    }
+    assert fixture["aggregate_evidence"]["available_sources"] == [
+        "stats", "performance", "raw_input", "mp4",
+    ]
+    assert "path" not in json.dumps(fixture).casefold()
+
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "a37d2ba4f3f33d59ae7018e37445a5e9",
+        display_name="pasu small reload",
+    )
+    assert resolution["manifest_status"] == "active"
+    assert resolution["scenario_profile_ref"] == (
+        "scenario:dynamic.pasu_small_reload@1"
+    )
+    assert resolution["aim_family"] == "dynamic_clicking"
+    assert resolution["target_motion"] == {
+        "model": "reactive", "target_count_model": "concurrent",
+    }
+    assert resolution["allowed_analyzers"] == ["dynamic_clicking.v1"]
+    assert resolution["allowed_metric_families"] == ["dynamic_clicking"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+
+    dynamic_fixture = json.loads((
+        Path(__file__).parent / "fixtures" / "scenarios"
+        / "pasu-small-reload-dynamic.v1.json"
+    ).read_text(encoding="utf-8"))
+    assert dynamic_fixture["scenario_hash"] == resolution["scenario_hash"]
+    assert dynamic_fixture["scenario_profile_ref"] == (
+        resolution["scenario_profile_ref"]
+    )
+    assert dynamic_fixture["visual_gate"]["status"] == "accepted"
+    assert dynamic_fixture["visual_gate"]["calibration"]["run_ref"] == (
+        "run:1032"
+    )
+    assert dynamic_fixture["visual_gate"]["untouched_holdout"]["run_ref"] == (
+        "run:1347"
+    )
+    assert dynamic_fixture["visual_gate"]["validation_results"] == {
+        "center_error_median_px": 1.032295,
+        "center_error_p95_px": 3.519083,
+        "radius_or_hitbox_error_px": 0.749257,
+        "false_positive_rate": 0.0,
+        "minimum_coverage": 0.992,
+        "identity_switch_rate": None,
+        "occlusion_reentry_accuracy": None,
+    }
+    assert "path" not in json.dumps(dynamic_fixture).casefold()
+
+    same_name_unknown = scenario_profiles.resolve_scenario_profile(
+        "a37d2ba4f3f33d59ae7018e37445a5ea",
+        display_name="pasu small reload",
+    )
+    assert same_name_unknown["scenario_profile_ref"] is None
+    assert same_name_unknown["manifest_status"] == "unlisted"
+    assert same_name_unknown["claim_ceiling"] == "outcome_only"
+
+    same_name_unknown = scenario_profiles.resolve_scenario_profile(
+        "7378a811f430b6072d052a75896afb99",
+        display_name="1wall 6targets small",
+    )
+    assert same_name_unknown["scenario_profile_ref"] is None
+    assert same_name_unknown["classification_source"] == "name_heuristic"
+    assert same_name_unknown["manifest_status"] == "unlisted"
+    assert same_name_unknown["family_analyzer_dispatch"] == "none"
+    assert same_name_unknown["claim_ceiling"] == "outcome_only"
+
     resolution = scenario_profiles.resolve_scenario_profile("sha256:unknown")
     assert resolution["scenario_profile_ref"] is None
     assert resolution["classification_source"] == "unknown"
     assert resolution["classification_confidence"] == "unknown"
     assert resolution["family_analyzer_dispatch"] == "none"
     assert resolution["claim_ceiling"] == "outcome_only"
+
+
+def test_beants_larger_switching_activates_only_after_accepted_local_episode_gate():
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "3b42bdfd38a6b194737d650f3f53e8c1",
+        display_name="beanTS Larger",
+    )
+    fixture = json.loads((
+        Path(__file__).parent / "fixtures" / "scenarios"
+        / "beants-larger-switching.v1.json"
+    ).read_text(encoding="utf-8"))
+
+    assert resolution["scenario_profile_ref"] == "scenario:switching.beants_larger@1"
+    assert resolution["aim_family"] == "target_switching"
+    assert resolution["manifest_status"] == "active"
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "family_specific"
+    assert resolution["allowed_analyzers"] == ["target_switching.v1"]
+    assert resolution["allowed_metric_families"] == ["target_switching"]
+    manifest_entry = next(
+        entry for entry in scenario_profiles.load_launch_manifest()["entries"]
+        if entry["scenario_hash"] == resolution["scenario_hash"]
+    )
+    assert manifest_entry == {
+        "scenario_hash": resolution["scenario_hash"],
+        "scenario_profile_ref": resolution["scenario_profile_ref"],
+        "fixture_ref": "fixture:beants-larger-switching.v1",
+        "review_source_ref": "review:beants-larger-switching-calibration-holdout",
+        "reviewed_at": "2026-07-28T00:00:00Z",
+        "family_gate_refs": ["gate:beants-larger-event-local-episodes.v1"],
+        "status": "active",
+    }
+    gate = fixture["episode_gate"]
+    assert gate["status"] == "accepted"
+    assert gate["producer"] == {
+        "id": "visual_signals.event_local_target_episode",
+        "version": "visual_target_episode.local_unique_match.v1",
+    }
+    assert gate["detector_config_ref"] == (
+        "detector-config:sha256:"
+        "b3a5ee7add541acfcb172cb5eebcb91af4d506bfcf165f658809912d782cfea5"
+    )
+    assert gate["visual_quality_profile_ref"] == (
+        "visual-quality:visual_signals.event_local_target_episode@"
+        "visual_target_episode.local_unique_match.v1"
+    )
+    assert gate["acceptance"] == {
+        "minimum_local_contact_duration_ms": 50,
+        "maximum_local_contact_gap_ms": 50,
+        "minimum_local_target_confidence": 0.45,
+        "local_match_position_residual_px": 24.0,
+        "minimum_kill_chain_coverage": 0.6597938144329897,
+    }
+    assert gate["calibration"] == {
+        "run_ref": "run:1036",
+        "source_freeze_sha256": "596cbbcf9665fe0a583af2f574711b75ae565112bc0c123add987a56d18ab6a5",
+        "video_sha256": "2e1bf5f2938982866005aad8efe62bfcb1e352dc45fdca37a56999cad7958889",
+        "ledger_sha256": "0bc0a1baae9c336aade0d268a06062b987240ec9c0f780481dd12a84703f83df",
+        "stats_kill_count": 97,
+        "episode_count": 642,
+        "included_count": 64,
+        "rejected_count": 33,
+        "coverage": 0.6597938144329897,
+        "path_observable_count": 13,
+    }
+    assert gate["untouched_holdout"] == {
+        "run_ref": "run:1038",
+        "source_freeze_sha256": "072a2ac69c92959a744d31d0630a0ba0884062e7ad62c9bc9f84e8eb17bb7ad8",
+        "video_sha256": "a054a4159862e9d9382bda4489cbaf8885886c9fd8490485334ca23313548ff4",
+        "ledger_sha256": "169851f6a0ee4a9d16a4935823b0dd400a2a432dc1b938d4637bc043ce114664",
+        "stats_kill_count": 123,
+        "episode_count": 862,
+        "included_count": 83,
+        "rejected_count": 40,
+        "coverage": 0.6747967479674797,
+        "path_observable_count": 48,
+    }
+    assert fixture["input_activation_semantics"]["continuous_hold"] == "optional"
+    assert fixture["input_activation_semantics"]["discrete"] == "optional"
+    assert fixture["outcome_association"] == {
+        "status": "optional_enrichment_unavailable",
+        "rule_ref": None,
+        "rule_schema_version": None,
+        "outcome_semantics": "stats_kill_boundary",
+    }
+    serialized = json.dumps(fixture).casefold()
+    assert "c:\\\\" not in serialized
+    assert "e:\\\\" not in serialized
+    assert "\\\\users\\\\" not in serialized
+
+
+def test_beants_larger_name_only_stays_fail_closed():
+    assert scenario_profiles.resolve_scenario_profile(
+        None, display_name="beanTS Larger",
+    )["claim_ceiling"] == "outcome_only"
+    assert scenario_profiles.resolve_scenario_profile(
+        "3b42bdfd38a6b194737d650f3f53e8c2", display_name="beanTS Larger",
+    )["family_analyzer_dispatch"] == "none"
 
 
 def test_exact_active_hash_returns_reviewed_profile_and_allows_dispatch():

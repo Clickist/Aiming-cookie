@@ -1,0 +1,24 @@
+{
+  "schema_version": "scenario_activation_fixture.v1",
+  "fixture_version": "1wall-6targets-small-static.v1",
+  "scenario_hash": "7378a811f430b6072d052a75896afb98",
+  "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+  "source_contracts": {
+    "stats": "kovaak_stats.v2",
+    "performance": "kovaak_performance.v2",
+    "raw_input": "raw_input.v1"
+  },
+  "field_review": {
+    "review_ref": "review:1wall-6targets-small-static-input-native",
+    "reviewed_at": "2026-07-27T00:00:00Z",
+    "target_motion": "static",
+    "simultaneous_target_count": 6,
+    "target_count_model": "concurrent"
+  },
+  "aggregate_evidence": {
+    "canonical_window_duration_ms": 60000,
+    "performance_event_count": 375,
+    "pause_count": 0,
+    "available_sources": ["stats", "performance", "raw_input", "mp4"]
+  }
+}

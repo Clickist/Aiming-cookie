@@ -18,6 +18,7 @@ from statistics import median
 
 VISUAL_SIGNAL_SCHEMA_VERSION = "visual_signal_artifact.v1"
 VISUAL_ANNOTATION_LEDGER_SCHEMA_VERSION = "visual_annotation_ledger.v1"
+VISUAL_ANNOTATION_LEDGER_V2_SCHEMA_VERSION = "visual_annotation_ledger.v2"
 VISUAL_QUALITY_PROFILE_SCHEMA_VERSION = "visual_quality_profile.v2"
 VISUAL_PRODUCER_ID = "visual_signals.round_detector"
 # The field-reviewed round detector is part of the producer identity.  A
@@ -34,11 +35,19 @@ VISUAL_SINGLE_TARGET_CSRT_PRODUCER_ID = "visual_signals.legacy_single_target_csr
 VISUAL_SINGLE_TARGET_CSRT_PRODUCER_VERSION = (
     "visual_legacy_ball_csrt_single_target.v1"
 )
+VISUAL_TARGET_EPISODE_PRODUCER_ID = "visual_signals.event_local_target_episode"
+VISUAL_TARGET_EPISODE_PRODUCER_VERSION = (
+    "visual_target_episode.local_unique_match.v1"
+)
 ROUND_DETECTOR_MIN_CIRCULARITY = 0.60
 CENTER_OVERLAY_MIN_CIRCULARITY = 0.50
 _CENTER_PEAK_RELATIVE_HEIGHT = 0.75
 _CENTER_PEAK_MIN_RADIUS_PX = 3.0
 _CENTER_PEAK_NMS_RADIUS_FACTOR = 1.1
+_MULTI_TARGET_POSITION_RESIDUAL_PX = 24.0
+_MULTI_TARGET_VELOCITY_RESIDUAL_PX_PER_MS = 1.0
+_MULTI_TARGET_MAX_RADIUS_RATIO_DELTA = 0.25
+_TARGET_EPISODE_MAX_OBSERVATION_GAP_MS = 50.0
 
 _VERSION_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*\.v[1-9][0-9]*$")
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._@+-]{0,239}$")
@@ -520,6 +529,261 @@ def build_visual_annotation_ledger_v1(
     }
 
 
+def _source_sha256(field: str, value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        raise ValueError(f"{field} must be a SHA-256 hex digest")
+    return value.lower()
+
+
+def _validate_annotation_frames_v2(values: object) -> list[dict]:
+    if (
+        not isinstance(values, Sequence)
+        or isinstance(values, (str, bytes))
+        or not values
+        or len(values) > 10_000
+    ):
+        raise ValueError("frames must be a bounded non-empty sequence")
+    frames: list[dict] = []
+    seen_indices: set[int] = set()
+    target_states = {"visible", "occluded", "merged", "hud_excluded"}
+    for frame_position, value in enumerate(values):
+        if not isinstance(value, Mapping) or set(value) != {"frame_index", "targets"}:
+            raise ValueError(f"frames[{frame_position}] fields are invalid")
+        frame_index = value["frame_index"]
+        targets = value["targets"]
+        if (
+            isinstance(frame_index, bool)
+            or not isinstance(frame_index, int)
+            or frame_index < 0
+            or frame_index in seen_indices
+            or not isinstance(targets, Sequence)
+            or isinstance(targets, (str, bytes))
+            or len(targets) > 64
+        ):
+            raise ValueError(f"frames[{frame_position}] is invalid")
+        seen_indices.add(frame_index)
+        normalized_targets: list[dict] = []
+        seen_target_ids: set[str] = set()
+        for target_position, target in enumerate(targets):
+            field = f"frames[{frame_position}].targets[{target_position}]"
+            expected = {
+                "target_id", "state", "x", "y", "visible_radius",
+                "exclusion_reason",
+            }
+            if not isinstance(target, Mapping) or set(target) != expected:
+                raise ValueError(f"{field} fields are invalid")
+            target_id = _bounded_text(f"{field}.target_id", target["target_id"])
+            state = target["state"]
+            if state not in target_states or target_id in seen_target_ids:
+                raise ValueError(f"{field} is invalid")
+            seen_target_ids.add(target_id)
+            geometry_required = state in {"visible", "merged"}
+            raw_geometry = (target["x"], target["y"], target["visible_radius"])
+            if geometry_required:
+                x = _finite(f"{field}.x", raw_geometry[0])
+                y = _finite(f"{field}.y", raw_geometry[1])
+                radius = _finite(
+                    f"{field}.visible_radius", raw_geometry[2], minimum=0.0
+                )
+            elif any(item is not None for item in raw_geometry):
+                raise ValueError(f"{field} geometry is invalid for {state}")
+            else:
+                x = y = radius = None
+            exclusion_reason = target["exclusion_reason"]
+            if state == "hud_excluded":
+                exclusion_reason = _bounded_text(
+                    f"{field}.exclusion_reason", exclusion_reason
+                )
+            elif exclusion_reason is not None:
+                raise ValueError(f"{field}.exclusion_reason is invalid")
+            normalized_targets.append({
+                "target_id": target_id,
+                "state": state,
+                "x": x,
+                "y": y,
+                "visible_radius": radius,
+                "exclusion_reason": exclusion_reason,
+            })
+        frames.append({"frame_index": frame_index, "targets": normalized_targets})
+    return sorted(frames, key=lambda frame: frame["frame_index"])
+
+
+def _validate_click_windows(values: object, *, frame_indices: set[int]) -> list[dict]:
+    if (
+        not isinstance(values, Sequence)
+        or isinstance(values, (str, bytes))
+        or not values
+        or len(values) > 10_000
+    ):
+        raise ValueError("click windows must be a bounded non-empty sequence")
+    windows: list[dict] = []
+    seen_refs: set[str] = set()
+    for position, value in enumerate(values):
+        if not isinstance(value, Mapping) or set(value) != {
+            "click_ref", "frame_index", "status",
+        }:
+            raise ValueError(f"click window {position} fields are invalid")
+        click_ref = _stable_ref(f"click window {position}.click_ref", value["click_ref"])
+        frame_index = value["frame_index"]
+        if (
+            click_ref in seen_refs
+            or isinstance(frame_index, bool)
+            or not isinstance(frame_index, int)
+            or frame_index not in frame_indices
+            or value["status"] not in {"annotated", "hud_excluded", "ambiguous"}
+        ):
+            raise ValueError(f"click window {position} is invalid")
+        seen_refs.add(click_ref)
+        windows.append({
+            "click_ref": click_ref,
+            "frame_index": frame_index,
+            "status": value["status"],
+        })
+    return sorted(windows, key=lambda item: item["click_ref"])
+
+
+def build_visual_annotation_ledger_v2(
+    *,
+    dataset_role: str,
+    source_ref: str,
+    source_sha256: str,
+    scenario_hash: str,
+    visual_runtime_selector: Mapping[str, object],
+    detector_config_ref: str,
+    annotation_protocol_version: str,
+    annotator_ref: str,
+    reviewer_ref: str,
+    review_round: int,
+    frames: Sequence[Mapping[str, object]],
+    click_windows: Sequence[Mapping[str, object]],
+) -> dict:
+    """Build a path-free Dynamic ledger with explicit review and click coverage."""
+    if dataset_role not in {"calibration", "untouched_holdout"}:
+        raise ValueError("dataset_role is invalid")
+    source_ref = _stable_ref("source_ref", source_ref)
+    source_sha256 = _source_sha256("source_sha256", source_sha256)
+    scenario_hash = _bounded_text("scenario_hash", scenario_hash)
+    selector = _validate_runtime_selector(
+        visual_runtime_selector, "visual_runtime_selector"
+    )
+    if selector["scenario_hash"] != scenario_hash:
+        raise ValueError("visual runtime selector scenario hash is invalid")
+    detector_config_ref = _stable_ref("detector_config_ref", detector_config_ref)
+    annotation_protocol_version = _bounded_text(
+        "annotation_protocol_version", annotation_protocol_version
+    )
+    if not _VERSION_RE.fullmatch(annotation_protocol_version):
+        raise ValueError("annotation_protocol_version is not versioned")
+    annotator_ref = _stable_ref("annotator_ref", annotator_ref)
+    reviewer_ref = _stable_ref("reviewer_ref", reviewer_ref)
+    if annotator_ref == reviewer_ref:
+        raise ValueError("annotation requires an independent reviewer")
+    if (
+        isinstance(review_round, bool)
+        or not isinstance(review_round, int)
+        or not 1 <= review_round <= 16
+    ):
+        raise ValueError("review_round is invalid")
+    normalized_frames = _validate_annotation_frames_v2(frames)
+    normalized_windows = _validate_click_windows(
+        click_windows,
+        frame_indices={frame["frame_index"] for frame in normalized_frames},
+    )
+    return {
+        "schema_version": VISUAL_ANNOTATION_LEDGER_V2_SCHEMA_VERSION,
+        "dataset_role": dataset_role,
+        "source_ref": source_ref,
+        "source_sha256": source_sha256,
+        "scenario_hash": scenario_hash,
+        "visual_runtime_selector": selector,
+        "detector_config_ref": detector_config_ref,
+        "annotation_protocol_version": annotation_protocol_version,
+        "annotator_ref": annotator_ref,
+        "reviewer_ref": reviewer_ref,
+        "review_round": review_round,
+        "frames": normalized_frames,
+        "click_windows": normalized_windows,
+    }
+
+
+def _validate_annotation_ledger_v2(value: object, field: str) -> dict:
+    if not isinstance(value, Mapping) or value.get("schema_version") != (
+        VISUAL_ANNOTATION_LEDGER_V2_SCHEMA_VERSION
+    ):
+        raise ValueError(f"{field} is invalid")
+    rebuilt = build_visual_annotation_ledger_v2(**{
+        key: item for key, item in value.items() if key != "schema_version"
+    })
+    if rebuilt != dict(value):
+        raise ValueError(f"{field} is not canonical")
+    return rebuilt
+
+
+def _canonical_sha256(value: Mapping[str, object]) -> str:
+    encoded = json.dumps(
+        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_visual_calibration_holdout_split_v1(
+    *,
+    calibration_ledger: Mapping[str, object],
+    holdout_ledger: Mapping[str, object],
+    expected_source_sha256_by_role: Mapping[str, object],
+) -> dict:
+    """Freeze two distinct, exact-condition ledgers before detector tuning."""
+    calibration = _validate_annotation_ledger_v2(
+        calibration_ledger, "calibration_ledger"
+    )
+    holdout = _validate_annotation_ledger_v2(holdout_ledger, "holdout_ledger")
+    if calibration["dataset_role"] != "calibration" or holdout[
+        "dataset_role"
+    ] != "untouched_holdout":
+        raise ValueError("calibration and holdout roles are invalid")
+    if (
+        calibration["source_ref"] == holdout["source_ref"]
+        or calibration["source_sha256"] == holdout["source_sha256"]
+    ):
+        raise ValueError("calibration and holdout source overlap")
+    if not isinstance(expected_source_sha256_by_role, Mapping) or set(
+        expected_source_sha256_by_role
+    ) != {"calibration", "untouched_holdout"}:
+        raise ValueError("expected source digests are invalid")
+    for role, ledger in (
+        ("calibration", calibration), ("untouched_holdout", holdout),
+    ):
+        expected_digest = _source_sha256(
+            f"expected_source_sha256_by_role.{role}",
+            expected_source_sha256_by_role[role],
+        )
+        if ledger["source_sha256"] != expected_digest:
+            raise ValueError(f"{role} source digest mismatch")
+    if (
+        calibration["scenario_hash"] != holdout["scenario_hash"]
+        or calibration["visual_runtime_selector"]
+        != holdout["visual_runtime_selector"]
+        or calibration["detector_config_ref"] != holdout["detector_config_ref"]
+    ):
+        raise ValueError("calibration and holdout selector mismatch")
+    return {
+        "schema_version": "visual_calibration_holdout_split.v1",
+        "scenario_hash": calibration["scenario_hash"],
+        "visual_runtime_selector": calibration["visual_runtime_selector"],
+        "detector_config_ref": calibration["detector_config_ref"],
+        "calibration": {
+            "source_ref": calibration["source_ref"],
+            "source_sha256": calibration["source_sha256"],
+            "ledger_sha256": _canonical_sha256(calibration),
+        },
+        "untouched_holdout": {
+            "source_ref": holdout["source_ref"],
+            "source_sha256": holdout["source_sha256"],
+            "ledger_sha256": _canonical_sha256(holdout),
+        },
+    }
+
+
 def evaluate_visual_annotation_quality_v1(
     *,
     annotations: Sequence[Mapping[str, object]],
@@ -687,6 +951,197 @@ def evaluate_visual_annotation_quality_v1(
     }
 
 
+def _localization_annotations_from_v2(
+    ledger: Mapping[str, object],
+) -> tuple[list[dict], int]:
+    scored_frames = [
+        frame
+        for frame in ledger["frames"]
+        if all(target["state"] == "visible" for target in frame["targets"])
+    ]
+    annotations = [
+        {
+            "frame_index": frame["frame_index"],
+            "targets": [
+                {
+                    "target_id": target["target_id"],
+                    "x": target["x"],
+                    "y": target["y"],
+                    "visible_radius": target["visible_radius"],
+                }
+                for target in frame["targets"]
+                if target["state"] == "visible"
+            ],
+        }
+        for frame in scored_frames
+    ]
+    return annotations, len(ledger["frames"]) - len(scored_frames)
+
+
+def _predictions_for_ledger(
+    predictions: object,
+    *,
+    frame_indices: set[int],
+    field: str,
+) -> list[dict]:
+    if not isinstance(predictions, Sequence) or isinstance(predictions, (str, bytes)):
+        raise ValueError(f"{field} is invalid")
+    selected: list[Mapping[str, object]] = []
+    seen: set[int] = set()
+    for position, prediction in enumerate(predictions):
+        if not isinstance(prediction, Mapping):
+            raise ValueError(f"{field}[{position}] is invalid")
+        frame_index = prediction.get("frame_index")
+        if frame_index in frame_indices:
+            if frame_index in seen:
+                raise ValueError(f"{field} contains duplicate frames")
+            seen.add(frame_index)
+            selected.append(prediction)
+    missing = frame_indices - seen
+    if missing:
+        selected.extend({"frame_index": index, "targets": []} for index in missing)
+    return _validate_annotation_frames(
+        selected, identity_field="track_id", field=field
+    )
+
+
+def _localization_quality_only(result: Mapping[str, object]) -> dict:
+    normalized = copy.deepcopy(dict(result))
+    normalized["metrics"]["identity_switch_rate"] = None
+    normalized["metrics"]["occlusion_reentry_accuracy"] = None
+    for field in (
+        "identity_comparisons", "identity_switches", "occlusion_reentries",
+        "correct_occlusion_reentries",
+    ):
+        normalized["counts"][field] = 0
+    normalized["limitations"] = sorted(set([
+        *normalized["limitations"],
+        "identity_continuity_not_observed",
+        "occlusion_reentry_not_observed",
+    ]))
+    return normalized
+
+
+def _localization_quality_accepted(
+    metrics: Mapping[str, object], thresholds: Mapping[str, float]
+) -> bool:
+    maximum_fields = (
+        "center_error_median_px", "center_error_p95_px",
+        "radius_or_hitbox_error_px", "false_positive_rate",
+    )
+    return (
+        all(
+            metrics[field] is not None
+            and float(metrics[field]) <= thresholds[field]
+            for field in maximum_fields
+        )
+        and metrics["minimum_coverage"] is not None
+        and float(metrics["minimum_coverage"])
+        >= thresholds["minimum_coverage"]
+    )
+
+
+def evaluate_visual_split_quality_v1(
+    *,
+    calibration_ledger: Mapping[str, object],
+    calibration_predictions: Sequence[Mapping[str, object]],
+    holdout_ledger: Mapping[str, object],
+    holdout_predictions: Sequence[Mapping[str, object]],
+    maximum_match_distance_px: float,
+    acceptance_thresholds: Mapping[str, object],
+) -> dict:
+    """Require calibration and untouched holdout localization to pass separately."""
+    calibration = _validate_annotation_ledger_v2(
+        calibration_ledger, "calibration_ledger"
+    )
+    holdout = _validate_annotation_ledger_v2(holdout_ledger, "holdout_ledger")
+    validate_visual_calibration_holdout_split_v1(
+        calibration_ledger=calibration,
+        holdout_ledger=holdout,
+        expected_source_sha256_by_role={
+            "calibration": calibration["source_sha256"],
+            "untouched_holdout": holdout["source_sha256"],
+        },
+    )
+    required_fields = {
+        "center_error_median_px", "center_error_p95_px",
+        "radius_or_hitbox_error_px", "false_positive_rate", "minimum_coverage",
+    }
+    if not isinstance(acceptance_thresholds, Mapping) or set(
+        acceptance_thresholds
+    ) != required_fields:
+        raise ValueError("localization acceptance thresholds are invalid")
+    thresholds = {
+        field: (
+            _ratio(field, acceptance_thresholds[field])
+            if field in {"false_positive_rate", "minimum_coverage"}
+            else _finite(field, acceptance_thresholds[field], minimum=0.0)
+        )
+        for field in sorted(required_fields)
+    }
+
+    results: dict[str, dict] = {}
+    for role, ledger, predictions in (
+        ("calibration", calibration, calibration_predictions),
+        ("untouched_holdout", holdout, holdout_predictions),
+    ):
+        annotations, excluded_frame_count = _localization_annotations_from_v2(
+            ledger
+        )
+        frame_indices = {item["frame_index"] for item in annotations}
+        quality = _localization_quality_only(evaluate_visual_annotation_quality_v1(
+            annotations=annotations,
+            predictions=_predictions_for_ledger(
+                predictions,
+                frame_indices=frame_indices,
+                field=f"{role}_predictions",
+            ),
+            maximum_match_distance_px=maximum_match_distance_px,
+        ))
+        quality["excluded_frame_count"] = excluded_frame_count
+        results[role] = {
+            "accepted": _localization_quality_accepted(
+                quality["metrics"], thresholds
+            ),
+            "quality": quality,
+        }
+
+    maximum_fields = (
+        "center_error_median_px", "center_error_p95_px",
+        "radius_or_hitbox_error_px", "false_positive_rate",
+    )
+    validation_results = {
+        field: max(
+            float(results[role]["quality"]["metrics"][field])
+            for role in ("calibration", "untouched_holdout")
+            if results[role]["quality"]["metrics"][field] is not None
+        )
+        for field in maximum_fields
+    }
+    validation_results["minimum_coverage"] = min(
+        float(results[role]["quality"]["metrics"]["minimum_coverage"])
+        for role in ("calibration", "untouched_holdout")
+    )
+    validation_results["identity_switch_rate"] = None
+    validation_results["occlusion_reentry_accuracy"] = None
+    return {
+        "schema_version": "visual_split_quality.v1",
+        "status": (
+            "accepted"
+            if all(results[role]["accepted"] for role in results)
+            else "rejected"
+        ),
+        "acceptance_thresholds": thresholds,
+        "calibration": results["calibration"],
+        "untouched_holdout": results["untouched_holdout"],
+        "validation_results": validation_results,
+        "limitations": [
+            "identity_continuity_not_observed",
+            "occlusion_reentry_not_observed",
+        ],
+    }
+
+
 def evaluate_visual_runtime_compatibility_v2(
     visual_quality_profile: Mapping[str, object],
     visual_runtime_selector: Mapping[str, object],
@@ -839,6 +1294,7 @@ def detect_color_observations_v2(
     max_area_ratio: float,
     shape: str,
     excluded_regions: Sequence[Sequence[float]] = (),
+    minimum_circularity: float = ROUND_DETECTOR_MIN_CIRCULARITY,
 ) -> dict:
     """Return trackable targets separately from merged center components."""
     import numpy as np
@@ -858,6 +1314,9 @@ def detect_color_observations_v2(
         raise ValueError("detector shape is invalid")
     min_area = _finite("min_area", min_area, minimum=0.0)
     max_area_ratio = _ratio("max_area_ratio", max_area_ratio)
+    minimum_circularity = _ratio(
+        "minimum_circularity", minimum_circularity,
+    )
     if max_area_ratio == 0:
         raise ValueError("max_area_ratio must be positive")
     normalized_regions = _validate_excluded_regions(excluded_regions)
@@ -903,10 +1362,12 @@ def detect_color_observations_v2(
                 continue
             accepted = (
                 peak_count == 1
-                and circularity >= CENTER_OVERLAY_MIN_CIRCULARITY
+                and circularity >= min(
+                    CENTER_OVERLAY_MIN_CIRCULARITY, minimum_circularity,
+                )
             )
         else:
-            accepted = shape == "any" or circularity >= ROUND_DETECTOR_MIN_CIRCULARITY
+            accepted = shape == "any" or circularity >= minimum_circularity
         if accepted:
             targets.append({
                 "x": x,
@@ -1042,7 +1503,11 @@ def preprocess_visual_video_v1(
     if not isinstance(media_path, str) or not media_path:
         raise ValueError("local media source is required")
     profile = _validate_profile(visual_quality_profile)
-    if (
+    episode_mode = (
+        profile["producer_id"] == VISUAL_TARGET_EPISODE_PRODUCER_ID
+        and profile["producer_version"] == VISUAL_TARGET_EPISODE_PRODUCER_VERSION
+    )
+    if not episode_mode and (
         profile["producer_id"] != VISUAL_PRODUCER_ID
         or profile["producer_version"] != VISUAL_PRODUCER_VERSION
     ):
@@ -1086,6 +1551,9 @@ def preprocess_visual_video_v1(
             target_observations = detect_color_observations_v2(
                 image,
                 excluded_regions=excluded_regions,
+                minimum_circularity=(
+                    0.45 if episode_mode else ROUND_DETECTOR_MIN_CIRCULARITY
+                ),
                 **target_config,
             )
             observations.append({
@@ -1103,7 +1571,7 @@ def preprocess_visual_video_v1(
         capture.release()
     if not observations:
         raise ValueError("local media decoder returned no observations")
-    return preprocess_visual_signals_v1(
+    result = preprocess_visual_signals_v1(
         analysis_ref=analysis_ref,
         canonical_time_window=canonical_time_window,
         frame_observations=observations,
@@ -1113,6 +1581,9 @@ def preprocess_visual_video_v1(
         outcome_observations=outcome_observations,
         source_ref=source_ref or f"{analysis_ref}:source:local-visual",
     )
+    if episode_mode:
+        result["frame_observations"] = copy.deepcopy(observations)
+    return result
 
 
 def _tracker_bbox_from_target(target: Mapping[str, object]) -> tuple[int, int, int, int]:
@@ -1811,7 +2282,452 @@ def _event(
     }
 
 
-def preprocess_visual_signals_v1(
+def preprocess_visual_target_episodes_v1(
+    *,
+    analysis_ref: str,
+    frame_observations: Sequence[Mapping[str, object]],
+) -> dict:
+    """Build bounded local target-observation episodes without object identity.
+
+    Each episode is restricted to an unambiguous run of adjacent detector
+    observations.  A merge, crossing, non-unique match, missing frame, or
+    non-gameplay frame ends affected episodes.  Later observations always get
+    fresh episode refs, so this artifact cannot claim re-entry continuity.
+    """
+    analysis_ref = _stable_ref("analysis_ref", analysis_ref)
+    if (
+        not isinstance(frame_observations, Sequence)
+        or isinstance(frame_observations, (str, bytes))
+        or not frame_observations
+        or len(frame_observations) > 250_000
+    ):
+        raise ValueError("frame_observations must be a bounded non-empty sequence")
+
+    episodes: dict[int, dict] = {}
+    active_ids: set[int] = set()
+    boundaries: list[dict] = []
+    limitations: list[str] = []
+    previous_time: float | None = None
+
+    def add_boundary(source_pts_ms: float, reason: str, affected: set[int]) -> None:
+        if affected:
+            boundaries.append({
+                "source_pts_ms": source_pts_ms,
+                "reason": reason,
+            })
+
+    def end_active(source_pts_ms: float, reason: str, affected: set[int] | None = None) -> None:
+        nonlocal active_ids
+        ending = set(active_ids if affected is None else affected).intersection(active_ids)
+        add_boundary(source_pts_ms, reason, ending)
+        active_ids.difference_update(ending)
+
+    def normalized_targets(observation: Mapping[str, object]) -> list[dict]:
+        raw_targets = observation.get("targets") or []
+        if not isinstance(raw_targets, Sequence) or isinstance(raw_targets, (str, bytes)):
+            raise ValueError("targets must be a sequence")
+        targets: list[dict] = []
+        for target in raw_targets:
+            if not isinstance(target, Mapping):
+                raise ValueError("target observation must be a mapping")
+            targets.append({
+                "x": _finite("target.x", target.get("x")),
+                "y": _finite("target.y", target.get("y")),
+                "visible_radius": _finite(
+                    "target.visible_radius", target.get("visible_radius"), minimum=0.01,
+                ),
+                "confidence": _ratio("target.confidence", target.get("confidence")),
+            })
+        return sorted(targets, key=lambda target: (
+            target["x"], target["y"], target["visible_radius"],
+        ))
+
+    def start_episode(target: Mapping[str, object], source_pts_ms: float) -> int:
+        episode_id = len(episodes) + 1
+        episodes[episode_id] = {
+            "episode_ref": f"{analysis_ref}:target-episode:{episode_id}",
+            "status": "available",
+            "samples": [{"source_pts_ms": source_pts_ms, **dict(target)}],
+        }
+        active_ids.add(episode_id)
+        return episode_id
+
+    for frame_index, observation in enumerate(frame_observations):
+        if not isinstance(observation, Mapping):
+            raise ValueError(f"observation[{frame_index}] must be a mapping")
+        source_pts_ms = _finite(
+            f"observation[{frame_index}].source_pts_ms",
+            observation.get("source_pts_ms"),
+            minimum=0.0,
+        )
+        if previous_time is not None and source_pts_ms <= previous_time:
+            raise ValueError("source_pts_ms must be strictly increasing")
+        if (
+            previous_time is not None
+            and source_pts_ms - previous_time > _TARGET_EPISODE_MAX_OBSERVATION_GAP_MS
+        ):
+            end_active(source_pts_ms, "target_observation_gap")
+            if "target_observation_gap" not in limitations:
+                limitations.append("target_observation_gap")
+        previous_time = source_pts_ms
+        if observation.get("scene", "gameplay") != "gameplay":
+            end_active(source_pts_ms, "non_gameplay_scene")
+            if "non_gameplay_scene" not in limitations:
+                limitations.append("non_gameplay_scene")
+            continue
+        raw_ambiguities = observation.get("target_ambiguities") or []
+        if not isinstance(raw_ambiguities, Sequence) or isinstance(raw_ambiguities, (str, bytes)):
+            raise ValueError("target_ambiguities must be a sequence")
+        ambiguities: list[dict] = []
+        for ambiguity in raw_ambiguities:
+            if (
+                not isinstance(ambiguity, Mapping)
+                or ambiguity.get("ambiguity_kind") != "merged_target_component"
+            ):
+                raise ValueError("target ambiguities must be merged target components")
+            ambiguities.append({
+                "x": _finite("target ambiguity.x", ambiguity.get("x")),
+                "y": _finite("target ambiguity.y", ambiguity.get("y")),
+                "visible_radius": _finite(
+                    "target ambiguity.visible_radius",
+                    ambiguity.get("visible_radius"),
+                    minimum=0.01,
+                ),
+            })
+        if raw_ambiguities:
+            affected = {
+                episode_id
+                for episode_id in active_ids
+                if any(
+                    math.hypot(
+                        episodes[episode_id]["samples"][-1]["x"] - ambiguity["x"],
+                        episodes[episode_id]["samples"][-1]["y"] - ambiguity["y"],
+                    ) <= (
+                        episodes[episode_id]["samples"][-1]["visible_radius"]
+                        + ambiguity["visible_radius"]
+                    )
+                    for ambiguity in ambiguities
+                )
+            }
+            end_active(source_pts_ms, "target_merge_ambiguous", affected)
+            if "target_merge_ambiguous" not in limitations:
+                limitations.append("target_merge_ambiguous")
+            continue
+        targets = normalized_targets(observation)
+        if not targets:
+            end_active(source_pts_ms, "target_disappearance")
+            continue
+        if not active_ids:
+            for target in targets:
+                start_episode(target, source_pts_ms)
+            continue
+
+        candidate_ids_by_target: list[list[int]] = []
+        candidate_targets_by_episode: dict[int, list[int]] = {
+            episode_id: [] for episode_id in active_ids
+        }
+        for target_index, target in enumerate(targets):
+            candidates = [
+                episode_id
+                for episode_id in sorted(active_ids)
+                if math.hypot(
+                    target["x"] - episodes[episode_id]["samples"][-1]["x"],
+                    target["y"] - episodes[episode_id]["samples"][-1]["y"],
+                ) <= _MULTI_TARGET_POSITION_RESIDUAL_PX
+            ]
+            candidate_ids_by_target.append(candidates)
+            for episode_id in candidates:
+                candidate_targets_by_episode[episode_id].append(target_index)
+        pairs = [
+            (target_index, candidates[0])
+            for target_index, candidates in enumerate(candidate_ids_by_target)
+            if len(candidates) == 1
+            and len(candidate_targets_by_episode[candidates[0]]) == 1
+        ]
+        crossing_ids = {
+            episode_id
+            for pair_index, (left_target, left_episode) in enumerate(pairs)
+            for right_target, right_episode in pairs[pair_index + 1:]
+            if (
+                episodes[left_episode]["samples"][-1]["x"]
+                - episodes[right_episode]["samples"][-1]["x"]
+            ) * (
+                targets[left_target]["x"] - targets[right_target]["x"]
+            ) <= 0.0
+            for episode_id in (left_episode, right_episode)
+        }
+        if crossing_ids:
+            end_active(source_pts_ms, "target_crossing_ambiguous", crossing_ids)
+            if "target_crossing_ambiguous" not in limitations:
+                limitations.append("target_crossing_ambiguous")
+        crossing_target_indices = {
+            target_index
+            for target_index, episode_id in pairs
+            if episode_id in crossing_ids
+        }
+        matched_targets = {
+            target_index
+            for target_index, episode_id in pairs
+            if episode_id in active_ids
+        }
+        matched_ids = {
+            episode_id
+            for _target_index, episode_id in pairs
+            if episode_id in active_ids
+        }
+        ambiguous_ids = {
+            episode_id
+            for episode_id, candidates in candidate_targets_by_episode.items()
+            if len(candidates) > 1
+        }
+        ambiguous_ids.update(
+            episode_id
+            for candidates in candidate_ids_by_target
+            if len(candidates) > 1
+            for episode_id in candidates
+        )
+        if ambiguous_ids:
+            end_active(source_pts_ms, "target_local_match_ambiguous", ambiguous_ids)
+            if "target_local_match_ambiguous" not in limitations:
+                limitations.append("target_local_match_ambiguous")
+        for target_index, episode_id in pairs:
+            if episode_id not in active_ids:
+                continue
+            episodes[episode_id]["samples"].append({
+                "source_pts_ms": source_pts_ms,
+                **targets[target_index],
+            })
+        end_active(
+            source_pts_ms,
+            "target_disappearance",
+            active_ids.difference(matched_ids).difference(ambiguous_ids),
+        )
+        for target_index, target in enumerate(targets):
+            if (
+                target_index not in matched_targets
+                and target_index not in crossing_target_indices
+            ):
+                start_episode(target, source_pts_ms)
+
+    return {
+        "schema_version": "visual_target_episode_artifact.v1",
+        "producer": {
+            "id": VISUAL_TARGET_EPISODE_PRODUCER_ID,
+            "version": VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+        },
+        "status": "partial" if limitations else "available",
+        "limitations": limitations,
+        "episodes": [episodes[episode_id] for episode_id in sorted(episodes)],
+        "boundaries": boundaries,
+    }
+
+
+def project_visual_target_episodes_v1(
+    visual_result: Mapping[str, object],
+    episode_result: Mapping[str, object],
+) -> dict:
+    """Project safe local episodes into the existing numeric visual artifact."""
+    if not isinstance(visual_result, Mapping):
+        raise ValueError("visual result must be a mapping")
+    projected = copy.deepcopy(dict(visual_result))
+    analysis_ref = _stable_ref("analysis_ref", projected.get("analysis_ref"))
+    window, window_start, window_end = _window_bounds(projected.get("canonical_time_window"))
+    time_mapping = _validate_video_time_mapping(
+        projected.get("video_time_mapping"), canonical_time_window=window,
+    )
+    if (
+        not isinstance(episode_result, Mapping)
+        or episode_result.get("schema_version") != "visual_target_episode_artifact.v1"
+        or episode_result.get("producer") != {
+            "id": VISUAL_TARGET_EPISODE_PRODUCER_ID,
+            "version": VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+        }
+        or episode_result.get("status") not in {"available", "partial"}
+    ):
+        raise ValueError("target episode result is invalid")
+    episodes = episode_result.get("episodes")
+    if not isinstance(episodes, list) or not episodes:
+        raise ValueError("target episode evidence is unavailable")
+    signal_bundle = projected.get("signal_bundle")
+    sample_sets = projected.get("sample_sets")
+    local_samples = projected.get("local_samples")
+    if (
+        not isinstance(signal_bundle, Mapping)
+        or not isinstance(sample_sets, list)
+        or not isinstance(local_samples, Mapping)
+    ):
+        raise ValueError("visual numerical evidence is unavailable")
+    preserved_channels = [
+        copy.deepcopy(channel)
+        for channel in signal_bundle.get("channels") or []
+        if isinstance(channel, Mapping)
+        and not str(channel.get("channel_key") or "").startswith("target.")
+    ]
+    source_refs = sorted({
+        ref
+        for channel in preserved_channels
+        for ref in channel.get("source_refs") or []
+        if isinstance(ref, str)
+    })
+    if not source_refs:
+        raise ValueError("visual source reference is unavailable")
+    preserved_sample_sets = [
+        copy.deepcopy(sample_set)
+        for sample_set in sample_sets
+        if isinstance(sample_set, Mapping)
+        and not str(sample_set.get("channel_key") or "").startswith("target.")
+    ]
+    new_local_samples = {
+        key: copy.deepcopy(value)
+        for key, value in local_samples.items()
+        if not str(key).startswith("target.")
+    }
+    target_channels: list[dict] = []
+    target_sample_sets: list[dict] = []
+    track_summaries: list[dict] = []
+    episode_prefix = f"{analysis_ref}:target-episode:"
+    observation_count = len(projected.get("frame_observations") or [])
+    for raw_episode in episodes:
+        if (
+            not isinstance(raw_episode, Mapping)
+            or raw_episode.get("status") != "available"
+        ):
+            raise ValueError("target episode is invalid")
+        episode_ref = _stable_ref("episode_ref", raw_episode.get("episode_ref"))
+        if not episode_ref.startswith(episode_prefix):
+            raise ValueError("target episode is bound to another analysis")
+        episode_id = episode_ref[len(episode_prefix):]
+        if not re.fullmatch(r"[1-9][0-9]*", episode_id):
+            raise ValueError("target episode suffix is invalid")
+        canonical_samples = []
+        for raw_sample in raw_episode.get("samples") or []:
+            if not isinstance(raw_sample, Mapping):
+                raise ValueError("target episode sample is invalid")
+            canonical_time = _source_pts_to_canonical_time(
+                time_mapping,
+                _finite("episode sample source_pts_ms", raw_sample.get("source_pts_ms"), minimum=0.0),
+            )
+            if not window_start <= canonical_time < window_end:
+                continue
+            canonical_samples.append({
+                "canonical_time_ms": canonical_time,
+                "x": _finite("episode sample x", raw_sample.get("x")),
+                "y": _finite("episode sample y", raw_sample.get("y")),
+                "visible_radius": _finite(
+                    "episode sample radius", raw_sample.get("visible_radius"), minimum=0.01,
+                ),
+                "confidence": _ratio("episode sample confidence", raw_sample.get("confidence")),
+            })
+        if not canonical_samples:
+            continue
+        canonical_samples.sort(key=lambda item: item["canonical_time_ms"])
+        if len({item["canonical_time_ms"] for item in canonical_samples}) != len(canonical_samples):
+            raise ValueError("target episode sample times are duplicated")
+        prefix = f"target.{episode_id}"
+        new_local_samples[f"{prefix}.position"] = copy.deepcopy(canonical_samples)
+        for part, field in (
+            ("position_x", "x"),
+            ("position_y", "y"),
+            ("visible_radius", "visible_radius"),
+        ):
+            channel_key = f"{prefix}.{part}"
+            sample_ref = f"{analysis_ref}:samples:{channel_key.replace('.', '-') }"
+            points = [[sample["canonical_time_ms"], sample[field]] for sample in canonical_samples]
+            target_sample_sets.append({
+                "sample_set_id": sample_ref,
+                "channel_key": channel_key,
+                "unit": "px",
+                "points": points,
+            })
+            target_channels.append({
+                "channel_key": channel_key,
+                "source_refs": source_refs,
+                "coordinate_space": "capture_coordinates",
+                "unit": "px",
+                "sample_rate_semantics": "source_pts_irregular",
+                "samples_ref": sample_ref,
+                "coverage": min(1.0, len(points) / observation_count) if observation_count else 0.0,
+                "confidence_summary": sum(sample["confidence"] for sample in canonical_samples) / len(canonical_samples),
+                "transform_version": VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+                "limitations": [],
+            })
+        track_summaries.append({
+            "track_ref": f"{analysis_ref}:target-track:{episode_id}",
+            "observation_source": "event_local_target_episode",
+            "visible_radius_px": float(median(sample["visible_radius"] for sample in canonical_samples)),
+            "sample_count": len(canonical_samples),
+            "coverage": min(1.0, len(canonical_samples) / observation_count) if observation_count else 0.0,
+            "limitations": [],
+        })
+    if not track_summaries:
+        raise ValueError("target episode evidence is unavailable")
+    upstream_quality = projected.get("quality")
+    if not isinstance(upstream_quality, Mapping):
+        raise ValueError("upstream visual quality is unavailable")
+    upstream_status = upstream_quality.get("status")
+    upstream_families = upstream_quality.get("enabled_metric_families")
+    upstream_limitations = upstream_quality.get("limitations")
+    if (
+        upstream_status not in {"accepted", "limited", "rejected"}
+        or not isinstance(upstream_families, list)
+        or not isinstance(upstream_limitations, list)
+    ):
+        raise ValueError("upstream visual quality is invalid")
+    episode_limitations = list(episode_result.get("limitations") or [])
+    quality_limitations = list(dict.fromkeys([
+        *upstream_limitations,
+        *episode_limitations,
+    ]))
+    limitations = list(dict.fromkeys([
+        *(projected.get("limitations") or []),
+        *episode_limitations,
+    ]))
+    status = upstream_status
+    if status == "accepted" and episode_limitations:
+        status = "limited"
+    quality = {
+        "status": status,
+        "enabled_metric_families": (
+            ["target_switching"]
+            if status != "rejected" and "switching" in upstream_families
+            else []
+        ),
+        "limitations": quality_limitations,
+    }
+    projected["quality"] = quality
+    projected["track_summaries"] = track_summaries
+    projected["signal_bundle"] = {
+        **copy.deepcopy(dict(signal_bundle)),
+        "channels": [*preserved_channels, *target_channels],
+    }
+    projected["event_bundle"] = {
+        "schema_version": "event_bundle.v1",
+        "analysis_ref": analysis_ref,
+        "events": [],
+        "outcome_associations": [],
+    }
+    projected["sample_sets"] = [*preserved_sample_sets, *target_sample_sets]
+    projected["local_samples"] = new_local_samples
+    projected["limitations"] = limitations
+    projected.pop("frame_observations", None)
+    safe_summary = copy.deepcopy(dict(projected.get("safe_summary") or {}))
+    safe_summary.update({
+        "producer_version": VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+        "quality_status": quality["status"],
+        "enabled_metric_families": list(quality["enabled_metric_families"]),
+        "track_count": len(track_summaries),
+        "limitations": limitations,
+        "event_counts": {},
+    })
+    projected["safe_summary"] = safe_summary
+    from .analysis_evidence import validate_event_bundle_v1, validate_signal_bundle_v1
+
+    validate_signal_bundle_v1(projected["signal_bundle"])
+    validate_event_bundle_v1(projected["event_bundle"])
+    return projected
+
+
+def _preprocess_visual_signals_with_global_identity_v1(
     *,
     analysis_ref: str,
     canonical_time_window: Mapping[str, object],
@@ -2283,7 +3199,7 @@ def preprocess_visual_signals_v1(
                     f"visual_quality_below_threshold:{family}:identity_continuity"
                 )
     if "reentry_identity_unresolved" in limitations:
-        runtime_quality_limitations.append("visual_quality_below_threshold:occlusion_reentry")
+        reentry_dependent_families = []
         for family in compatible_families:
             required_quality_fields = set(
                 profile["required_quality_fields_by_metric_family"][family]
@@ -2291,10 +3207,15 @@ def preprocess_visual_signals_v1(
             if required_quality_fields & {
                 "identity_switch_rate", "occlusion_reentry_accuracy",
             }:
+                reentry_dependent_families.append(family)
                 runtime_disabled_families.add(family)
                 runtime_quality_limitations.append(
                     f"visual_quality_below_threshold:{family}:occlusion_reentry"
                 )
+        if reentry_dependent_families:
+            runtime_quality_limitations.append(
+                "visual_quality_below_threshold:occlusion_reentry"
+            )
     if "visual_event_budget_exceeded" in limitations:
         disable_all_compatible_families(
             "visual_quality_below_threshold:event_completeness"
@@ -2529,6 +3450,287 @@ def preprocess_visual_signals_v1(
     }
 
 
+def _preprocess_visual_target_episode_signals_v1(
+    *,
+    analysis_ref: str,
+    canonical_time_window: Mapping[str, object],
+    frame_observations: Sequence[Mapping[str, object]],
+    visual_quality_profile: Mapping[str, object],
+    visual_runtime_selector: Mapping[str, object],
+    video_time_mapping: Mapping[str, object],
+    outcome_observations: Sequence[Mapping[str, object]] = (),
+    source_ref: str | None = None,
+) -> dict:
+    """Prepare Switching observations without constructing global target identity."""
+    analysis_ref = _stable_ref("analysis_ref", analysis_ref)
+    window, window_start, window_end = _window_bounds(canonical_time_window)
+    profile = _validate_profile(visual_quality_profile)
+    selector = _validate_runtime_selector(
+        visual_runtime_selector, "visual_runtime_selector"
+    )
+    time_mapping = _validate_video_time_mapping(
+        video_time_mapping,
+        canonical_time_window=window,
+    )
+    compatibility = evaluate_visual_runtime_compatibility_v2(profile, selector)
+    source_ref = _stable_ref(
+        "source_ref", source_ref or f"{analysis_ref}:source:visual-observation"
+    )
+    if not isinstance(frame_observations, Sequence) or isinstance(
+        frame_observations, (str, bytes)
+    ):
+        raise ValueError("frame_observations must be a sequence")
+    if len(frame_observations) > 250_000:
+        raise ValueError("frame_observations exceeds the local artifact bound")
+    if not isinstance(outcome_observations, Sequence) or isinstance(
+        outcome_observations, (str, bytes)
+    ):
+        raise ValueError("outcome_observations must be a sequence")
+    if len(outcome_observations) > _EVENT_BUNDLE_LIMIT:
+        raise ValueError("outcome_observations exceeds the event bundle bound")
+
+    limitations: list[str] = list(compatibility["limitations"])
+    mapped: list[tuple[int, Mapping[str, object]]] = []
+    previous_pts: float | None = None
+    previous_canonical_time: int | None = None
+    for index, observation in enumerate(frame_observations):
+        if not isinstance(observation, Mapping):
+            raise ValueError(f"observation[{index}] must be a mapping")
+        pts = observation.get("source_pts_ms")
+        if pts is None:
+            if "missing_frame_pts" not in limitations:
+                limitations.append("missing_frame_pts")
+            continue
+        number = _finite(f"observation[{index}].source_pts_ms", pts, minimum=0.0)
+        if previous_pts is not None and number <= previous_pts:
+            if "non_monotonic_frame_pts" not in limitations:
+                limitations.append("non_monotonic_frame_pts")
+            continue
+        previous_pts = number
+        canonical_time = _source_pts_to_canonical_time(time_mapping, number)
+        if not window_start <= canonical_time < window_end:
+            if "frame_pts_outside_canonical_window" not in limitations:
+                limitations.append("frame_pts_outside_canonical_window")
+            continue
+        if (
+            previous_canonical_time is not None
+            and canonical_time - previous_canonical_time > _MAX_CONTIGUOUS_FRAME_GAP_MS
+            and "visual_frame_gap" not in limitations
+        ):
+            limitations.append("visual_frame_gap")
+        previous_canonical_time = canonical_time
+        mapped.append((canonical_time, observation))
+
+    if mapped:
+        mapped_times = [time_ms for time_ms, _ in mapped]
+        deltas = [
+            right - left
+            for left, right in zip(mapped_times, mapped_times[1:])
+            if right > left
+        ]
+        if deltas:
+            boundary_tolerance_ms = max(1, int(math.ceil(float(median(deltas)) * 1.5)))
+            if (
+                mapped_times[0] - window_start > boundary_tolerance_ms
+                or window_end - mapped_times[-1] > boundary_tolerance_ms
+            ):
+                limitations.append("visual_frame_boundary_gap")
+        else:
+            limitations.append("visual_frame_boundary_unverifiable")
+
+    crosshair_samples: list[dict] = []
+    for canonical_time, observation in mapped:
+        if observation.get("scene") != "gameplay":
+            if "non_gameplay_scene" not in limitations:
+                limitations.append("non_gameplay_scene")
+            continue
+        crosshair = observation.get("crosshair")
+        if crosshair is None:
+            if "crosshair_not_observed" not in limitations:
+                limitations.append("crosshair_not_observed")
+        elif isinstance(crosshair, Mapping):
+            crosshair_samples.append({
+                "canonical_time_ms": canonical_time,
+                "x": _finite("crosshair.x", crosshair.get("x")),
+                "y": _finite("crosshair.y", crosshair.get("y")),
+                "confidence": _ratio(
+                    "crosshair.confidence", crosshair.get("confidence", 1.0)
+                ),
+            })
+        else:
+            raise ValueError("crosshair observation is invalid")
+
+    valid_observation_count = len(mapped)
+    target_visible_count = sum(
+        1
+        for _, observation in mapped
+        if observation.get("scene") == "gameplay" and observation.get("targets")
+    )
+    frame_pts_coverage = (
+        valid_observation_count / len(frame_observations)
+        if frame_observations else 0.0
+    )
+    target_coverage = min(
+        target_visible_count / valid_observation_count if valid_observation_count else 0.0,
+        frame_pts_coverage,
+    )
+    crosshair_coverage = min(
+        len(crosshair_samples) / valid_observation_count if valid_observation_count else 0.0,
+        frame_pts_coverage,
+    )
+    runtime_quality_limitations: list[str] = []
+    if crosshair_coverage < 1.0:
+        runtime_quality_limitations.append(
+            "visual_quality_below_threshold:crosshair_coverage"
+        )
+    if {
+        "visual_frame_gap",
+        "visual_frame_boundary_gap",
+        "visual_frame_boundary_unverifiable",
+    }.intersection(limitations):
+        runtime_quality_limitations.append(
+            "visual_quality_below_threshold:frame_coverage"
+        )
+    quality = dict(compatibility)
+    if compatibility["enabled_metric_families"] and runtime_quality_limitations:
+        quality = {
+            "status": "limited",
+            "enabled_metric_families": [],
+            "limitations": [
+                *compatibility["limitations"], *runtime_quality_limitations,
+            ],
+        }
+        for limitation in runtime_quality_limitations:
+            if limitation not in limitations:
+                limitations.append(limitation)
+
+    sample_sets: list[dict] = []
+    channels: list[dict] = []
+    for channel_key, field in (
+        ("crosshair.position_x", "x"),
+        ("crosshair.position_y", "y"),
+    ):
+        sample_ref = f"{analysis_ref}:samples:{channel_key.replace('.', '-')}"
+        points = [[sample["canonical_time_ms"], sample[field]] for sample in crosshair_samples]
+        sample_sets.append({
+            "sample_set_id": sample_ref,
+            "channel_key": channel_key,
+            "unit": "px",
+            "points": points,
+        })
+        channels.append({
+            "channel_key": channel_key,
+            "source_refs": [source_ref],
+            "coordinate_space": "capture_coordinates",
+            "unit": "px",
+            "sample_rate_semantics": "source_pts_irregular",
+            "samples_ref": sample_ref,
+            "coverage": crosshair_coverage,
+            "confidence_summary": (
+                sum(sample["confidence"] for sample in crosshair_samples)
+                / len(crosshair_samples)
+                if crosshair_samples else 0.0
+            ),
+            "transform_version": profile["producer_version"],
+            "limitations": list(quality["limitations"]),
+        })
+
+    from .analysis_evidence import validate_event_bundle_v1, validate_signal_bundle_v1
+
+    signal_bundle = {
+        "schema_version": "signal_bundle.v1",
+        "analysis_ref": analysis_ref,
+        "canonical_time_window_ref": f"{analysis_ref}:canonical-window",
+        "visual_quality_profile_ref": profile["profile_ref"],
+        "observed_visual_domain": selector,
+        "channels": channels,
+    }
+    event_bundle = {
+        "schema_version": "event_bundle.v1",
+        "analysis_ref": analysis_ref,
+        "events": [],
+        "outcome_associations": [],
+    }
+    validate_signal_bundle_v1(signal_bundle)
+    validate_event_bundle_v1(event_bundle)
+    completeness = "partial" if any(item in limitations for item in (
+        "missing_frame_pts", "non_monotonic_frame_pts", "frame_pts_outside_canonical_window",
+        "visual_frame_gap", "visual_frame_boundary_gap", "visual_frame_boundary_unverifiable",
+    )) else "complete"
+    return {
+        "schema_version": VISUAL_SIGNAL_SCHEMA_VERSION,
+        "analysis_ref": analysis_ref,
+        "canonical_time_window": window,
+        "video_time_mapping": time_mapping,
+        "visual_quality_profile_ref": profile["profile_ref"],
+        "visual_runtime_selector": selector,
+        "quality": quality,
+        "completeness": completeness,
+        "track_summaries": [],
+        "signal_bundle": signal_bundle,
+        "event_bundle": event_bundle,
+        "sample_sets": sample_sets,
+        "local_samples": {"crosshair.position": crosshair_samples},
+        "frame_observations": [
+            copy.deepcopy(observation) for _canonical_time, observation in mapped
+        ],
+        "safe_summary": {
+            "schema_version": "visual_signal_summary.v1",
+            "status": "available",
+            "producer_version": profile["producer_version"],
+            "quality_status": quality["status"],
+            "enabled_metric_families": list(quality["enabled_metric_families"]),
+            "track_count": 0,
+            "observation_count": valid_observation_count,
+            "target_coverage": target_coverage,
+            "crosshair_coverage": crosshair_coverage,
+            "completeness": completeness,
+            "event_counts": {},
+            "limitations": list(limitations),
+        },
+        "limitations": limitations,
+    }
+
+
+def preprocess_visual_signals_v1(
+    *,
+    analysis_ref: str,
+    canonical_time_window: Mapping[str, object],
+    frame_observations: Sequence[Mapping[str, object]],
+    visual_quality_profile: Mapping[str, object],
+    visual_runtime_selector: Mapping[str, object],
+    video_time_mapping: Mapping[str, object],
+    outcome_observations: Sequence[Mapping[str, object]] = (),
+    source_ref: str | None = None,
+) -> dict:
+    """Select the reviewed producer's minimal preprocessing path."""
+    profile = _validate_profile(visual_quality_profile)
+    if (
+        profile["producer_id"] == VISUAL_TARGET_EPISODE_PRODUCER_ID
+        and profile["producer_version"] == VISUAL_TARGET_EPISODE_PRODUCER_VERSION
+    ):
+        return _preprocess_visual_target_episode_signals_v1(
+            analysis_ref=analysis_ref,
+            canonical_time_window=canonical_time_window,
+            frame_observations=frame_observations,
+            visual_quality_profile=profile,
+            visual_runtime_selector=visual_runtime_selector,
+            video_time_mapping=video_time_mapping,
+            outcome_observations=outcome_observations,
+            source_ref=source_ref,
+        )
+    return _preprocess_visual_signals_with_global_identity_v1(
+        analysis_ref=analysis_ref,
+        canonical_time_window=canonical_time_window,
+        frame_observations=frame_observations,
+        visual_quality_profile=profile,
+        visual_runtime_selector=visual_runtime_selector,
+        video_time_mapping=video_time_mapping,
+        outcome_observations=outcome_observations,
+        source_ref=source_ref,
+    )
+
+
 def extend_analysis_evidence_with_visual_signals_v1(
     artifact: Mapping[str, object],
     visual_result: Mapping[str, object],
@@ -2560,6 +3762,8 @@ __all__ = [
     "VISUAL_TEMPORAL_PRODUCER_ID",
     "VISUAL_SINGLE_TARGET_CSRT_PRODUCER_VERSION",
     "VISUAL_SINGLE_TARGET_CSRT_PRODUCER_ID",
+    "VISUAL_TARGET_EPISODE_PRODUCER_VERSION",
+    "VISUAL_TARGET_EPISODE_PRODUCER_ID",
     "ROUND_DETECTOR_MIN_CIRCULARITY",
     "CENTER_OVERLAY_MIN_CIRCULARITY",
     "VISUAL_QUALITY_PROFILE_SCHEMA_VERSION",
@@ -2575,5 +3779,7 @@ __all__ = [
     "preprocess_visual_video_v1",
     "preprocess_visual_video_temporal_v1",
     "preprocess_visual_video_single_target_csrt_v1",
+    "preprocess_visual_target_episodes_v1",
+    "project_visual_target_episodes_v1",
     "preprocess_visual_signals_v1",
 ]

@@ -1,0 +1,76 @@
+{
+  "schema_version": "scenario_activation_fixture.v1",
+  "fixture_version": "beants-larger-switching.v1",
+  "scenario_hash": "3b42bdfd38a6b194737d650f3f53e8c1",
+  "scenario_profile_ref": "scenario:switching.beants_larger@1",
+  "source_contracts": {
+    "stats": "kovaak_stats.v2",
+    "performance": "kovaak_performance.v2",
+    "raw_input": "raw_input.v1",
+    "video_mapping": "visual_video_time_mapping.v1"
+  },
+  "field_split": {
+    "calibration": {"run_ref": "run:1036", "status": "reviewed"},
+    "untouched_holdout": {"run_ref": "run:1038", "status": "reviewed"},
+    "limitations": [
+      "No target identity, re-entry, selection, first-damage or per-shot claim is enabled."
+    ]
+  },
+  "episode_gate": {
+    "status": "accepted",
+    "producer": {
+      "id": "visual_signals.event_local_target_episode",
+      "version": "visual_target_episode.local_unique_match.v1"
+    },
+    "visual_quality_profile_ref": "visual-quality:visual_signals.event_local_target_episode@visual_target_episode.local_unique_match.v1",
+    "detector_config_ref": "detector-config:sha256:b3a5ee7add541acfcb172cb5eebcb91af4d506bfcf165f658809912d782cfea5",
+    "acceptance": {
+      "minimum_local_contact_duration_ms": 50,
+      "maximum_local_contact_gap_ms": 50,
+      "minimum_local_target_confidence": 0.45,
+      "local_match_position_residual_px": 24.0,
+      "minimum_kill_chain_coverage": 0.6597938144329897
+    },
+    "calibration": {
+      "run_ref": "run:1036",
+      "source_freeze_sha256": "596cbbcf9665fe0a583af2f574711b75ae565112bc0c123add987a56d18ab6a5",
+      "video_sha256": "2e1bf5f2938982866005aad8efe62bfcb1e352dc45fdca37a56999cad7958889",
+      "ledger_sha256": "0bc0a1baae9c336aade0d268a06062b987240ec9c0f780481dd12a84703f83df",
+      "stats_kill_count": 97,
+      "episode_count": 642,
+      "included_count": 64,
+      "rejected_count": 33,
+      "coverage": 0.6597938144329897,
+      "path_observable_count": 13
+    },
+    "untouched_holdout": {
+      "run_ref": "run:1038",
+      "source_freeze_sha256": "072a2ac69c92959a744d31d0630a0ba0884062e7ad62c9bc9f84e8eb17bb7ad8",
+      "video_sha256": "a054a4159862e9d9382bda4489cbaf8885886c9fd8490485334ca23313548ff4",
+      "ledger_sha256": "169851f6a0ee4a9d16a4935823b0dd400a2a432dc1b938d4637bc043ce114664",
+      "stats_kill_count": 123,
+      "episode_count": 862,
+      "included_count": 83,
+      "rejected_count": 40,
+      "coverage": 0.6747967479674797,
+      "path_observable_count": 48
+    },
+    "manual_false_positive_review": {
+      "included_chains_reviewed": 147,
+      "observed_false_positives": 0
+    }
+  },
+  "input_activation_semantics": {
+    "schema_version": "scenario_input_activation_semantics.v1",
+    "scope": "exact_rule",
+    "continuous_hold": "optional",
+    "discrete": "optional",
+    "family_definition": "not_required"
+  },
+  "outcome_association": {
+    "status": "optional_enrichment_unavailable",
+    "rule_ref": null,
+    "rule_schema_version": null,
+    "outcome_semantics": "stats_kill_boundary"
+  }
+}

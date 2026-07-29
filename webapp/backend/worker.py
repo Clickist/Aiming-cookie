@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import json
 import logging
 import math
 import os
 import re
 import socket
+import sys
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -33,10 +35,22 @@ log = logging.getLogger(__name__)
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 SCENARIO_OUTCOME_ONLY_VERSION = "scenario_outcome_only.v1"
+VISUAL_WORKER_RESPONSE_LIMIT_BYTES = 64 * 1024 * 1024
+VISUAL_WORKER_SHUTDOWN_GRACE_SECONDS = 2.0
+VISUAL_WORKER_JOB_FIELDS = ("id", "kovaak_run_id", "video_path", "input_snapshot")
+VISUAL_WORKER_EVIDENCE_JOB_FIELDS = ("id", "user_id", "input_snapshot")
 
 _REVIEWED_TRACKING_SCENARIO_HASH = "b2ae4a24b710e36afc6e57c61f590ab4"
 _REVIEWED_TRACKING_SCENARIO_PROFILE_REF = (
     "scenario:tracking.whj_smooth_strafe_sphere_easy@1"
+)
+_REVIEWED_DYNAMIC_SCENARIO_HASH = "a37d2ba4f3f33d59ae7018e37445a5e9"
+_REVIEWED_DYNAMIC_SCENARIO_PROFILE_REF = "scenario:dynamic.pasu_small_reload@1"
+_REVIEWED_SWITCHING_SCENARIO_HASH = "3b42bdfd38a6b194737d650f3f53e8c1"
+_REVIEWED_SWITCHING_SCENARIO_PROFILE_REF = "scenario:switching.beants_larger@1"
+_REVIEWED_SWITCHING_DETECTOR_CONFIG_REF = (
+    "detector-config:sha256:"
+    "b3a5ee7add541acfcb172cb5eebcb91af4d506bfcf165f658809912d782cfea5"
 )
 
 
@@ -136,11 +150,212 @@ def _build_reviewed_single_target_tracking_producer() -> dict:
     }
 
 
+def _build_reviewed_dynamic_clicking_producer() -> dict:
+    """Bind the accepted Pasu split to the reviewed round detector."""
+    from kovaak_tracker.visual_signals import (
+        VISUAL_PRODUCER_ID,
+        VISUAL_PRODUCER_VERSION,
+        build_visual_quality_profile_v2,
+        visual_detector_config_ref_v1,
+    )
+
+    detector_config = {
+        "schema_version": "visual_target_detector.v2",
+        "aim_point_mode": "fixed_viewport_center",
+        "excluded_regions": [
+            [0.0, 0.0, 0.14, 0.08],
+            [0.44, 0.0, 0.56, 0.12],
+            [0.85, 0.08, 1.0, 0.17],
+            [0.385, 0.765, 0.615, 1.0],
+        ],
+        "target": {
+            "hsv_lower": [0, 0, 0],
+            "hsv_upper": [179, 255, 130],
+            "min_area": 100,
+            "max_area_ratio": 0.02,
+            "shape": "round",
+        },
+    }
+    detector_config_ref = visual_detector_config_ref_v1(detector_config)
+    visual_quality_profile = build_visual_quality_profile_v2(
+        producer_id=VISUAL_PRODUCER_ID,
+        producer_version=VISUAL_PRODUCER_VERSION,
+        annotation_set_ref=(
+            "annotation-set:pasu-small-reload@f7d74af3-72ed691b"
+        ),
+        annotation_protocol_version="visual_annotation_protocol.v2",
+        coordinate_space="capture_pixels",
+        calibration_context={
+            "detector_config_ref": detector_config_ref,
+            "hud_mask_version": "visual_hud_mask.pasu_small_reload.v1",
+            "annotated_map_or_background_labels": ["thecube-light-arena"],
+            "annotated_target_appearance_labels": ["black-round-moving-target"],
+        },
+        validated_selectors=[{
+            "schema_version": "visual_runtime_selector.v1",
+            "scenario_hash": _REVIEWED_DYNAMIC_SCENARIO_HASH,
+            "resolution": [1920, 1080],
+            "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+            "fov": 103.0,
+        }],
+        required_selector_keys_by_metric_family={
+            "dynamic_clicking": [
+                "scenario_hash",
+                "resolution",
+                "canonical_video_mapping_version",
+            ],
+        },
+        required_quality_fields_by_metric_family={
+            "dynamic_clicking": [
+                "center_error_median_px",
+                "center_error_p95_px",
+                "false_positive_rate",
+                "minimum_coverage",
+                "radius_or_hitbox_error_px",
+            ],
+        },
+        compatibility_predicate_version="visual_runtime_compatibility.v2",
+        acceptance_thresholds={
+            "center_error_median_px": 2.0,
+            "center_error_p95_px": 4.0,
+            "radius_or_hitbox_error_px": 2.0,
+            "false_positive_rate": 0.05,
+            "identity_switch_rate": 0.01,
+            "occlusion_reentry_accuracy": 0.95,
+            "minimum_coverage": 0.90,
+        },
+        validation_results={
+            "center_error_median_px": 1.032295,
+            "center_error_p95_px": 3.519083,
+            "radius_or_hitbox_error_px": 0.749257,
+            "false_positive_rate": 0.0,
+            "identity_switch_rate": None,
+            "occlusion_reentry_accuracy": None,
+            "minimum_coverage": 0.992,
+        },
+        validated_metric_families=["dynamic_clicking"],
+        status="accepted",
+        limitations=[
+            "exact_scenario_hash_resolution_and_video_mapping_only",
+            "reticle_merged_and_transition_frames_explicitly_excluded",
+            "holdout_small_target_area_99_below_min_area_100",
+            "identity_continuity_not_observed",
+            "occlusion_reentry_not_observed",
+            "outcome_association_not_production_registered",
+        ],
+    )
+    return {
+        "detector_config_ref": detector_config_ref,
+        "visual_quality_profile": visual_quality_profile,
+        "detector_config": detector_config,
+    }
+
+
+def _build_reviewed_target_switching_producer() -> dict:
+    """Bind the accepted beanTS split to the event-local episode adapter."""
+    from kovaak_tracker.visual_signals import (
+        VISUAL_TARGET_EPISODE_PRODUCER_ID,
+        VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+        build_visual_quality_profile_v2,
+        visual_detector_config_ref_v1,
+    )
+
+    detector_config = {
+        "schema_version": "visual_target_detector.v2",
+        "aim_point_mode": "fixed_viewport_center",
+        "excluded_regions": [
+            [0.505, 0.045, 0.515, 0.060],
+            [0.470, 0.960, 0.485, 0.980],
+        ],
+        "target": {
+            "hsv_lower": [0, 0, 0],
+            "hsv_upper": [179, 255, 80],
+            "min_area": 50,
+            "max_area_ratio": 0.05,
+            "shape": "round",
+        },
+    }
+    detector_config_ref = visual_detector_config_ref_v1(detector_config)
+    visual_quality_profile = build_visual_quality_profile_v2(
+        producer_id=VISUAL_TARGET_EPISODE_PRODUCER_ID,
+        producer_version=VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+        annotation_set_ref=(
+            "annotation-set:beants-larger-switching@0bc0a1ba-169851f6"
+        ),
+        annotation_protocol_version="visual_annotation_protocol.v2",
+        coordinate_space="capture_pixels",
+        calibration_context={
+            "detector_config_ref": detector_config_ref,
+            "hud_mask_version": "visual_hud_mask.beants_larger.v1",
+            "annotated_map_or_background_labels": ["thecube-light-arena"],
+            "annotated_target_appearance_labels": [
+                "black-round-target-with-healthbar",
+            ],
+        },
+        validated_selectors=[{
+            "schema_version": "visual_runtime_selector.v1",
+            "scenario_hash": _REVIEWED_SWITCHING_SCENARIO_HASH,
+            "resolution": [1920, 1080],
+            "canonical_video_mapping_version": "visual_video_time_mapping.v1",
+            "fov": None,
+        }],
+        required_selector_keys_by_metric_family={
+            "switching": [
+                "scenario_hash",
+                "resolution",
+                "canonical_video_mapping_version",
+            ],
+        },
+        required_quality_fields_by_metric_family={
+            "switching": ["false_positive_rate", "minimum_coverage"],
+        },
+        compatibility_predicate_version="visual_runtime_compatibility.v2",
+        acceptance_thresholds={
+            "center_error_median_px": 4.0,
+            "center_error_p95_px": 7.0,
+            "radius_or_hitbox_error_px": 4.0,
+            "false_positive_rate": 0.0,
+            "identity_switch_rate": 0.01,
+            "occlusion_reentry_accuracy": 0.95,
+            "minimum_coverage": 0.6597938144329897,
+        },
+        validation_results={
+            "center_error_median_px": None,
+            "center_error_p95_px": None,
+            "radius_or_hitbox_error_px": None,
+            "false_positive_rate": 0.0,
+            "identity_switch_rate": None,
+            "occlusion_reentry_accuracy": None,
+            "minimum_coverage": 0.6597938144329897,
+        },
+        validated_metric_families=["switching"],
+        status="accepted",
+        limitations=[
+            "exact_scenario_hash_resolution_and_video_mapping_only",
+            "stats_kill_boundaries_required",
+            "local_ambiguity_rejects_only_affected_kill_chain",
+            "selection_first_shot_first_damage_identity_and_reentry_unavailable",
+            "outcome_association_optional_and_unavailable",
+        ],
+    )
+    return {
+        "detector_config_ref": detector_config_ref,
+        "visual_quality_profile": visual_quality_profile,
+        "detector_config": detector_config,
+    }
+
+
 # Runtime selector facts come from frozen Run facts and the local decoder; they
 # are never copied from the profile being evaluated.
 _REVIEWED_VISUAL_PRODUCERS: dict[str, dict] = {
     _REVIEWED_TRACKING_SCENARIO_PROFILE_REF: (
         _build_reviewed_single_target_tracking_producer()
+    ),
+    _REVIEWED_DYNAMIC_SCENARIO_PROFILE_REF: (
+        _build_reviewed_dynamic_clicking_producer()
+    ),
+    _REVIEWED_SWITCHING_SCENARIO_PROFILE_REF: (
+        _build_reviewed_target_switching_producer()
     ),
 }
 
@@ -151,6 +366,8 @@ def _resolve_reviewed_visual_producer(job: dict) -> dict:
         VISUAL_PRODUCER_VERSION,
         VISUAL_SINGLE_TARGET_CSRT_PRODUCER_ID,
         VISUAL_SINGLE_TARGET_CSRT_PRODUCER_VERSION,
+        VISUAL_TARGET_EPISODE_PRODUCER_ID,
+        VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
         VISUAL_TEMPORAL_PRODUCER_ID,
         VISUAL_TEMPORAL_PRODUCER_VERSION,
         visual_detector_config_ref_v1,
@@ -190,6 +407,10 @@ def _resolve_reviewed_visual_producer(job: dict) -> dict:
             (
                 VISUAL_SINGLE_TARGET_CSRT_PRODUCER_ID,
                 VISUAL_SINGLE_TARGET_CSRT_PRODUCER_VERSION,
+            ),
+            (
+                VISUAL_TARGET_EPISODE_PRODUCER_ID,
+                VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
             ),
             (VISUAL_TEMPORAL_PRODUCER_ID, VISUAL_TEMPORAL_PRODUCER_VERSION),
         }
@@ -335,6 +556,142 @@ def run_visual_preprocessing(job: dict, *, parsed_stats=None) -> dict:
         raise
     except (KeyError, TypeError, ValueError):
         raise VisualPreprocessingUnavailable("visual_quality_profile_unavailable") from None
+
+
+async def _stop_visual_worker_process(process) -> None:
+    if process.returncode is not None:
+        return
+    process.terminate()
+    try:
+        await asyncio.wait_for(
+            process.wait(), timeout=VISUAL_WORKER_SHUTDOWN_GRACE_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+
+
+class ContinuousTrackingAnalysisProcessError(RuntimeError):
+    """The isolated Tracking postprocessor failed after visual preprocessing."""
+
+    def __init__(self, code: str, visual_result: dict) -> None:
+        super().__init__(code)
+        self.code = code
+        self.visual_result = visual_result
+
+
+async def _run_isolated_analysis_request(payload: dict) -> dict:
+    from .visual_worker_process import build_child_environment
+    from kovaak_tracker.visual_signals import VisualPreprocessingUnavailable
+
+    request = json.dumps(
+        payload, ensure_ascii=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "webapp.backend.visual_worker_process",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=None,
+        env=build_child_environment(),
+    )
+    try:
+        stdout, _ = await process.communicate(request)
+    except asyncio.CancelledError:
+        await _stop_visual_worker_process(process)
+        raise
+    if process.returncode != 0 or len(stdout) > VISUAL_WORKER_RESPONSE_LIMIT_BYTES:
+        raise RuntimeError("visual_preprocessing_failed")
+    try:
+        response = json.loads(stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("visual_preprocessing_failed") from error
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        failure = response.get("error") if isinstance(response, dict) else None
+        kind = failure.get("kind") if isinstance(failure, dict) else None
+        code = failure.get("code") if isinstance(failure, dict) else None
+        if kind == "source_snapshot_changed" and isinstance(code, str):
+            raise SourceSnapshotChangedError(code)
+        if kind == "visual_preprocessing_unavailable" and isinstance(code, str):
+            raise VisualPreprocessingUnavailable(code)
+        if kind == "family_analysis_failed" and isinstance(code, str):
+            visual_result = response.get("visual_result")
+            if isinstance(visual_result, dict):
+                raise ContinuousTrackingAnalysisProcessError(code, visual_result)
+        raise RuntimeError("visual_preprocessing_failed")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("visual_preprocessing_failed")
+    return result
+
+
+async def _run_visual_worker_request(
+    job: dict,
+    *,
+    postprocess: str | None = None,
+) -> dict:
+    child_job = {
+        field: job[field]
+        for field in VISUAL_WORKER_JOB_FIELDS
+        if field in job
+    }
+    payload = {"job": child_job}
+    if postprocess is not None:
+        payload["postprocess"] = postprocess
+    return await _run_isolated_analysis_request(payload)
+
+
+async def run_visual_preprocessing_isolated(job: dict) -> dict:
+    """Run reviewed CV outside the API/heartbeat process without changing output."""
+    return await _run_visual_worker_request(job)
+
+
+async def run_continuous_tracking_pipeline_isolated(job: dict) -> tuple[dict, dict | None]:
+    """Keep reviewed Tracking CV and its numeric postprocessor in one child process."""
+    result = await _run_visual_worker_request(job, postprocess="continuous_tracking")
+    if set(result) != {"visual_result", "family_result"}:
+        raise RuntimeError("visual_preprocessing_failed")
+    visual_result = result["visual_result"]
+    family_result = result["family_result"]
+    if not isinstance(visual_result, dict) or (
+        family_result is not None and not isinstance(family_result, dict)
+    ):
+        raise RuntimeError("visual_preprocessing_failed")
+    return visual_result, family_result
+
+
+async def run_target_switching_pipeline_isolated(job: dict) -> tuple[dict, dict]:
+    """Keep reviewed Switching CV and local episode projection in one child."""
+    result = await _run_visual_worker_request(job, postprocess="target_switching")
+    if set(result) != {"visual_result", "family_result"}:
+        raise RuntimeError("visual_preprocessing_failed")
+    visual_result = result["visual_result"]
+    episode_result = result["family_result"]
+    if not isinstance(visual_result, dict) or not isinstance(episode_result, dict):
+        raise RuntimeError("visual_preprocessing_failed")
+    return visual_result, episode_result
+
+
+async def commit_continuous_tracking_evidence_isolated(
+    job: dict,
+    result: dict,
+    visual_result: dict,
+    tracking_result: dict,
+) -> dict:
+    """Build and commit Tracking evidence without occupying the desktop runtime."""
+    child_job = {
+        field: job[field]
+        for field in VISUAL_WORKER_EVIDENCE_JOB_FIELDS
+        if field in job
+    }
+    return await _run_isolated_analysis_request({
+        "operation": "commit_continuous_tracking_evidence",
+        "job": child_job,
+        "result": result,
+        "visual_result": visual_result,
+        "tracking_result": tracking_result,
+    })
 
 
 def _unavailable_visual_summary(limitation: str) -> dict:
@@ -962,16 +1319,11 @@ def _build_timeline(extras: dict) -> list[dict]:
     return events
 
 
-def run_report(summary: dict, backend) -> dict:
-    """调 coach.build_report(传 backend 拿 narration),返回 CoachReport dict。
-
-    build_report 内部 best-effort 调 generate_narration:LLM 失败时 narration=None
-    + notes 记错,**不崩**。所以 worker 不用单独 try LLM。
-    figures(plotly Figure)转 to_dict() 使其 JSON 可序列化(mark_done 要 json.dumps)。
-    """
+def run_report(summary: dict) -> dict:
+    """Build the deterministic local report without invoking a Provider."""
     from dataclasses import asdict, is_dataclass
     from kovaak_tracker.coach.report import build_report
-    report = build_report(summary, backend=backend)
+    report = build_report(summary, backend=None)
     d = asdict(report) if is_dataclass(report) else {"_raw": str(report)}
     # plotly Figure 不可 JSON 序列化 → 转 dict
     figures = d.get("figures")
@@ -981,13 +1333,6 @@ def run_report(summary: dict, backend) -> dict:
             for k, f in figures.items()
         }
     return d
-
-
-def _load_backend(profile: dict | None):
-    """Build narration fallback only from the owner's selected local profile."""
-    from .coach_engine import load_backend_for_profile
-
-    return load_backend_for_profile(profile)
 
 
 def _sqlite_created_at_to_iso_z(created_at: str | None) -> str:
@@ -1165,6 +1510,109 @@ def _raw_left_button_rising_edges(
             })
         previous_pressed = pressed
     return click_events
+
+
+def _target_switching_episode_tracks(
+    visual_result: Mapping[str, object],
+    episode_result: Mapping[str, object],
+    *,
+    analysis_ref: str,
+) -> list[dict]:
+    """Expose only child-projected local target episodes to the composer."""
+    if (
+        episode_result.get("schema_version") != "visual_target_episode_artifact.v1"
+        or episode_result.get("status") not in {"available", "partial"}
+    ):
+        raise ValueError("target switching episodes are unavailable")
+    summaries = visual_result.get("track_summaries")
+    local_samples = visual_result.get("local_samples")
+    if not isinstance(summaries, list) or not isinstance(local_samples, Mapping):
+        raise ValueError("target switching episode samples are unavailable")
+    tracks = []
+    for summary in summaries:
+        if not isinstance(summary, Mapping):
+            raise ValueError("target switching episode summary is invalid")
+        track_ref = summary.get("track_ref")
+        match = re.fullmatch(
+            re.escape(f"{analysis_ref}:target-track:") + r"([1-9][0-9]*)",
+            track_ref,
+        ) if isinstance(track_ref, str) else None
+        samples = local_samples.get(f"target.{match.group(1)}.position") if match else None
+        if (
+            match is None
+            or not isinstance(samples, list)
+            or not samples
+            or summary.get("observation_source") != "event_local_target_episode"
+        ):
+            raise ValueError("target switching episode is invalid")
+        normalized_samples = []
+        for sample in samples:
+            if not isinstance(sample, Mapping):
+                raise ValueError("target switching episode sample is invalid")
+            canonical_time = sample.get("canonical_time_ms")
+            if (
+                isinstance(canonical_time, bool)
+                or not isinstance(canonical_time, int)
+            ):
+                raise ValueError("target switching episode sample time is invalid")
+            normalized_samples.append({
+                "canonical_time_ms": canonical_time,
+                "x": sample.get("x"),
+                "y": sample.get("y"),
+                "visible_radius": sample.get("visible_radius"),
+                "confidence": sample.get("confidence"),
+            })
+        tracks.append({
+            "track_ref": f"{analysis_ref}:target-track:{match.group(1)}",
+            "episode_observable": True,
+            "samples": normalized_samples,
+        })
+    return tracks
+
+
+def _target_switching_stats_kills(
+    *,
+    analysis_ref: str,
+    snapshot: Mapping[str, object],
+    parsed_stats: object,
+) -> list[dict]:
+    """Project parsed Stats kills without any target association."""
+    window = snapshot.get("canonical_time_window")
+    sources = snapshot.get("sources")
+    stats_source = sources.get("stats") if isinstance(sources, Mapping) else None
+    if not isinstance(window, Mapping) or not isinstance(stats_source, Mapping):
+        raise ValueError("target switching Stats source context is unavailable")
+    start_ms = window.get("start_ms")
+    end_ms = window.get("end_ms")
+    source_ref = stats_source.get("artifact_ref")
+    if (
+        isinstance(start_ms, bool)
+        or not isinstance(start_ms, int)
+        or isinstance(end_ms, bool)
+        or not isinstance(end_ms, int)
+        or end_ms <= start_ms
+        or not isinstance(source_ref, str)
+        or not source_ref
+    ):
+        raise ValueError("target switching Stats source context is invalid")
+    kills = getattr(parsed_stats, "kills", None)
+    if kills is None or not hasattr(kills, "iterrows"):
+        raise ValueError("target switching Stats kill rows are unavailable")
+    projected = []
+    for row_index, (_, row) in enumerate(kills.iterrows(), 1):
+        try:
+            time_ms = start_ms + int(round(float(row["time_s"]) * 1000))
+            kill_index = int(row["Kill #"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if start_ms <= time_ms < end_ms and kill_index > 0:
+            projected.append({
+                "event_ref": f"{analysis_ref}:event:stats-kill:{row_index}",
+                "time_ms": time_ms,
+                "kill_index": kill_index,
+                "source_ref": source_ref,
+            })
+    return projected
 
 
 def _build_validated_outcome_association(
@@ -1524,12 +1972,13 @@ def run_continuous_tracking_analysis(
 def run_target_switching_analysis(
     job: dict,
     visual_result: Mapping[str, object],
-    outcome_event_bundle: Mapping[str, object] | None = None,
+    episode_result: Mapping[str, object],
+    parsed_stats: object,
 ) -> dict:
-    """Adapt reviewed visual outcomes into a target-switching chain analysis."""
+    """Adapt reviewed local episodes into a target-switching analysis."""
     from kovaak_tracker.target_switching_analysis import (
         analyze_target_switching_v1,
-        build_switching_chains_from_visual_outcomes_v1,
+        build_switching_chains_from_stats_kills_v1,
     )
 
     snapshot = job.get("input_snapshot")
@@ -1551,41 +2000,23 @@ def run_target_switching_analysis(
     crosshair_samples = local_samples.get("crosshair.position")
     if not isinstance(crosshair_samples, list) or not crosshair_samples:
         raise ValueError("target switching crosshair samples are unavailable")
-    summaries = {
-        summary.get("track_ref"): summary
-        for summary in visual_result.get("track_summaries") or []
-        if isinstance(summary, Mapping) and isinstance(summary.get("track_ref"), str)
-    }
-    target_tracks = []
-    for sample_key, samples in sorted(local_samples.items()):
-        match = re.fullmatch(r"target\.([A-Za-z0-9_-]+)\.position", str(sample_key))
-        if match is None or not isinstance(samples, list) or not samples:
-            continue
-        track_ref = f"{analysis_ref}:target-track:{match.group(1)}"
-        summary = summaries.get(track_ref)
-        if (
-            not isinstance(summary, Mapping)
-            or summary.get("identity_source") != "detector_ref"
-            or list(summary.get("limitations") or [])
-        ):
-            raise ValueError("target switching target identity is ambiguous")
-        target_tracks.append({
-            "track_ref": track_ref,
-            "samples": [dict(sample) for sample in samples if isinstance(sample, Mapping)],
-            "identity_observable": True,
-        })
-    if len(target_tracks) < 2:
-        raise ValueError("target switching requires multiple stable target tracks")
-    event_bundle = outcome_event_bundle or visual_result.get("event_bundle")
-    chains = build_switching_chains_from_visual_outcomes_v1(
+    target_tracks = _target_switching_episode_tracks(
+        visual_result,
+        episode_result,
+        analysis_ref=analysis_ref,
+    )
+    stats_kills = _target_switching_stats_kills(
+        analysis_ref=analysis_ref,
+        snapshot=snapshot,
+        parsed_stats=parsed_stats,
+    )
+    episodes = build_switching_chains_from_stats_kills_v1(
         analysis_ref=analysis_ref,
         canonical_time_window=window,
         crosshair_samples=crosshair_samples,
         target_tracks=target_tracks,
-        source_event_bundle=event_bundle,
+        stats_kills=stats_kills,
     )
-    if not chains:
-        raise ValueError("target switching outcome chain is unavailable")
     quality = dict(visual_result.get("quality") or {})
     enabled_families = [
         "target_switching" if family == "switching" else family
@@ -1602,8 +2033,8 @@ def run_target_switching_analysis(
         "crosshair_samples": crosshair_samples,
         "source_signal_bundle": visual_result.get("signal_bundle"),
         "source_sample_sets": visual_result.get("sample_sets"),
-        "source_event_bundle": event_bundle,
-        "chains": chains,
+        "stats_kills": stats_kills,
+        "episodes": episodes,
         "comparison": None,
     })
 
@@ -1803,7 +2234,19 @@ def _native_diagnosis(
             "quality_limitations": list((quality or {}).get("limitations") or []),
         },
     )
-    return asdict(diagnosis)
+    projection = asdict(diagnosis)
+    for issue in projection.get("issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        issue.pop("root_causes", None)
+        issue.pop("prescriptions", None)
+        if issue.get("observation_ref") is None:
+            issue.pop("observation_ref", None)
+        if issue.get("knowledge_registry_version") is None:
+            issue.pop("knowledge_registry_version", None)
+        if not issue.get("knowledge_entry_refs"):
+            issue.pop("knowledge_entry_refs", None)
+    return projection
 
 
 def _result_owner(job: dict) -> tuple[str, str | None]:
@@ -1994,6 +2437,54 @@ def _native_artifact_manifest_v2(
     )
 
 
+def _target_switching_production_gate(
+    resolution: Mapping[str, object],
+) -> bool:
+    """Require only the exact reviewed visual episode producer."""
+    from kovaak_tracker.visual_signals import (
+        VISUAL_TARGET_EPISODE_PRODUCER_ID,
+        VISUAL_TARGET_EPISODE_PRODUCER_VERSION,
+        visual_detector_config_ref_v1,
+    )
+
+    profile_ref = resolution.get("scenario_profile_ref")
+    if not isinstance(profile_ref, str):
+        return False
+    producer = _REVIEWED_VISUAL_PRODUCERS.get(profile_ref)
+    if not isinstance(producer, Mapping):
+        return False
+    quality = producer.get("visual_quality_profile")
+    if not isinstance(quality, Mapping):
+        return False
+    detector_config = producer.get("detector_config")
+    calibration_context = quality.get("calibration_context")
+    expected_profile_ref = (
+        f"visual-quality:{VISUAL_TARGET_EPISODE_PRODUCER_ID}@"
+        f"{VISUAL_TARGET_EPISODE_PRODUCER_VERSION}"
+    )
+    if not (
+        quality.get("status") == "accepted"
+        and quality.get("producer_id") == VISUAL_TARGET_EPISODE_PRODUCER_ID
+        and quality.get("producer_version")
+        == VISUAL_TARGET_EPISODE_PRODUCER_VERSION
+        and quality.get("profile_ref") == expected_profile_ref
+        and "switching" in (quality.get("validated_metric_families") or [])
+        and (
+            quality.get("quality_status_by_metric_family") or {}
+        ).get("switching") == "accepted"
+        and producer.get("detector_config_ref")
+        == _REVIEWED_SWITCHING_DETECTOR_CONFIG_REF
+        and isinstance(detector_config, Mapping)
+        and visual_detector_config_ref_v1(detector_config)
+        == _REVIEWED_SWITCHING_DETECTOR_CONFIG_REF
+        and isinstance(calibration_context, Mapping)
+        and calibration_context.get("detector_config_ref")
+        == _REVIEWED_SWITCHING_DETECTOR_CONFIG_REF
+    ):
+        return False
+    return True
+
+
 def _scenario_dispatch(job: dict, input_mode: str) -> str:
     snapshot = job.get("input_snapshot") or {}
     resolution = snapshot.get("scenario_resolution")
@@ -2027,6 +2518,7 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
         and resolution.get("aim_family") == "static_clicking"
         and input_mode in {"input_native", "multimodal"}
         and NATIVE_ANALYSIS_VERSION in (resolution.get("allowed_analyzers") or [])
+        and "static_clicking" in (resolution.get("allowed_metric_families") or [])
     ):
         return NATIVE_ANALYSIS_VERSION
     if (
@@ -2059,6 +2551,7 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
         in (resolution.get("allowed_analyzers") or [])
         and "target_switching"
         in (resolution.get("allowed_metric_families") or [])
+        and _target_switching_production_gate(resolution)
     ):
         return TARGET_SWITCHING_ANALYSIS_VERSION
     return "outcome_only"
@@ -2264,6 +2757,9 @@ def _build_dynamic_result_v2(
             ),
             "claim_level": candidate["claim_level"],
             "metric_refs": list(candidate["metric_refs"]),
+            "observation_ref": candidate["observation_ref"],
+            "knowledge_registry_version": candidate["knowledge_registry_version"],
+            "knowledge_entry_refs": list(candidate["knowledge_entry_refs"]),
             "event_refs": [
                 *candidate["supporting_row_refs"],
                 *candidate["counterexample_row_refs"],
@@ -2347,7 +2843,7 @@ def _build_dynamic_result_v2(
     if "raw_input" in evidence["sources"]:
         evidence["sources"]["raw_input"]["role"] = "click_anchor_source"
         evidence["sources"]["raw_input"]["alignment"] = "aligned"
-    return build_analysis_result_v2(
+    result = build_analysis_result_v2(
         analysis_version=DYNAMIC_CLICKING_ANALYSIS_VERSION,
         analysis_id=analysis_id,
         analysis_type="dynamic_clicking",
@@ -2366,6 +2862,17 @@ def _build_dynamic_result_v2(
         warnings=[],
         errors=[],
     )
+    resolution = snapshot.get("scenario_resolution") or {}
+    result["scenario"] = {
+        "scenario_profile_ref": resolution.get("scenario_profile_ref"),
+        "aim_family": "dynamic_clicking",
+        "analyzer_refs": [DYNAMIC_CLICKING_ANALYSIS_VERSION],
+        "support_status": dynamic_result.get("support_status", "unavailable"),
+        "limitations": list(dynamic_result.get("limitations") or []),
+    }
+    return result
+
+
 def _build_continuous_tracking_result_v2(
     job: dict,
     tracking_result: Mapping[str, object],
@@ -2421,6 +2928,9 @@ def _build_continuous_tracking_result_v2(
             ),
             "claim_level": candidate["claim_level"],
             "metric_refs": list(candidate["metric_refs"]),
+            "observation_ref": candidate["observation_ref"],
+            "knowledge_registry_version": candidate["knowledge_registry_version"],
+            "knowledge_entry_refs": list(candidate["knowledge_entry_refs"]),
             "event_refs": [
                 *candidate["supporting_row_refs"],
                 *candidate["counterexample_row_refs"],
@@ -2571,6 +3081,9 @@ def _build_target_switching_result_v2(
             ),
             "claim_level": candidate["claim_level"],
             "metric_refs": list(candidate["metric_refs"]),
+            "observation_ref": candidate["observation_ref"],
+            "knowledge_registry_version": candidate["knowledge_registry_version"],
+            "knowledge_entry_refs": list(candidate["knowledge_entry_refs"]),
             "event_refs": [
                 *candidate["supporting_row_refs"],
                 *candidate["counterexample_row_refs"],
@@ -2704,6 +3217,21 @@ def _build_native_result_v2(
     run_ref = f"run:{run_id}"
     input_mode = job.get("input_mode") or "input_native"
     deterministic = _native_deterministic_v2(native_result, input_mode=input_mode)
+    resolution = snapshot.get("scenario_resolution")
+    active_static = (
+        isinstance(resolution, Mapping)
+        and resolution.get("manifest_status") == "active"
+        and resolution.get("family_analyzer_dispatch") == "allowed"
+        and resolution.get("aim_family") == "static_clicking"
+        and NATIVE_ANALYSIS_VERSION in (resolution.get("allowed_analyzers") or [])
+        and "static_clicking" in (resolution.get("allowed_metric_families") or [])
+    )
+    if active_static:
+        deterministic["support_status"] = {
+            "available": "supported",
+            "partial": "partial",
+            "limited": "partial",
+        }.get(str(deterministic.get("status")), "unavailable")
     result_warnings = list(warnings or [])
     if not isinstance(snapshot.get("scenario_resolution"), dict):
         deterministic.setdefault("limitations", []).append(
@@ -2725,7 +3253,7 @@ def _build_native_result_v2(
             "availability": "available" if job.get("video_path") else "missing",
         })
         public_snapshot.setdefault("sources", {})["video"] = video_source
-    return build_analysis_result_v2(
+    result = build_analysis_result_v2(
         analysis_version=NATIVE_ANALYSIS_VERSION,
         analysis_id=analysis_id,
         analysis_type=native_result.get("analysis_type", "flicking"),
@@ -2752,6 +3280,15 @@ def _build_native_result_v2(
         warnings=result_warnings,
         errors=[],
     )
+    if active_static:
+        result["scenario"] = {
+            "scenario_profile_ref": resolution.get("scenario_profile_ref"),
+            "aim_family": "static_clicking",
+            "analyzer_refs": [NATIVE_ANALYSIS_VERSION],
+            "support_status": deterministic["support_status"],
+            "limitations": list(deterministic.get("limitations") or []),
+        }
+    return result
 
 
 _VIDEO_FALLBACK_SPARC_METRIC_VERSION = "flicking_fair_summary.sparc.v2"
@@ -3054,11 +3591,7 @@ async def process_one() -> bool:
             )
             _freeze_job_calibration(job, frozen_stats)
             try:
-                visual_result = await asyncio.to_thread(
-                    run_visual_preprocessing,
-                    job,
-                    parsed_stats=frozen_stats,
-                )
+                visual_result = await run_visual_preprocessing_isolated(job)
             except SourceSnapshotChangedError:
                 raise
             except Exception as error:
@@ -3185,13 +3718,33 @@ async def process_one() -> bool:
             )
             _freeze_job_calibration(job, frozen_stats)
             try:
-                visual_result = await asyncio.to_thread(
-                    run_visual_preprocessing,
-                    job,
-                    parsed_stats=frozen_stats,
+                visual_result, tracking_result = (
+                    await run_continuous_tracking_pipeline_isolated(job)
                 )
             except SourceSnapshotChangedError:
                 raise
+            except ContinuousTrackingAnalysisProcessError as error:
+                await asyncio.to_thread(
+                    _assert_managed_video_matches_snapshot,
+                    job,
+                    input_mode,
+                )
+                visual_result = error.visual_result
+                visual_validation = dict(visual_result.get("safe_summary") or {})
+                log.warning(
+                    "continuous tracking analysis unavailable session=%s error=%s",
+                    sid,
+                    error.code,
+                )
+                result = _build_outcome_only_result_v2(
+                    job,
+                    created_at=created_at_iso,
+                    completed_at=completed_at_iso,
+                    limitations_override=["continuous_tracking_analysis_unavailable"],
+                    visual_validation=visual_validation,
+                    extra_warnings=[{"code": "continuous_tracking_analyzer_unavailable"}],
+                    analysis_type_override="continuous_tracking",
+                )
             except Exception as error:
                 from kovaak_tracker.visual_signals import (
                     VisualPreprocessingUnavailable,
@@ -3234,63 +3787,49 @@ async def process_one() -> bool:
                         extra_warnings=[{"code": "continuous_tracking_analyzer_unavailable"}],
                         analysis_type_override="continuous_tracking",
                     )
+                elif tracking_result is None:
+                    result = _build_outcome_only_result_v2(
+                        job,
+                        created_at=created_at_iso,
+                        completed_at=completed_at_iso,
+                        limitations_override=["continuous_tracking_analysis_unavailable"],
+                        visual_validation=visual_validation,
+                        extra_warnings=[{"code": "continuous_tracking_analyzer_unavailable"}],
+                        analysis_type_override="continuous_tracking",
+                    )
                 else:
+                    result = _build_continuous_tracking_result_v2(
+                        job,
+                        tracking_result,
+                        visual_result,
+                        created_at=created_at_iso,
+                        completed_at=completed_at_iso,
+                    )
                     try:
-                        tracking_result = await asyncio.to_thread(
-                            run_continuous_tracking_analysis,
-                            job,
-                            visual_result,
+                        from .history_trends import matched_tracking_baseline_for_user
+
+                        comparison = await matched_tracking_baseline_for_user(
+                            str(job["user_id"]),
+                            result,
+                            list(tracking_result.get("metrics") or {}),
                         )
-                    except SourceSnapshotChangedError:
-                        raise
                     except Exception as error:
                         log.warning(
-                            "continuous tracking analysis unavailable session=%s error=%s",
+                            "continuous tracking baseline unavailable session=%s error=%s",
                             sid,
                             type(error).__name__,
                         )
-                        result = _build_outcome_only_result_v2(
-                            job,
-                            created_at=created_at_iso,
-                            completed_at=completed_at_iso,
-                            limitations_override=["continuous_tracking_analysis_unavailable"],
-                            visual_validation=visual_validation,
-                            extra_warnings=[{"code": "continuous_tracking_analyzer_unavailable"}],
-                            analysis_type_override="continuous_tracking",
-                        )
                     else:
-                        result = _build_continuous_tracking_result_v2(
-                            job,
-                            tracking_result,
-                            visual_result,
-                            created_at=created_at_iso,
-                            completed_at=completed_at_iso,
-                        )
-                        try:
-                            from .history_trends import matched_tracking_baseline_for_user
-
-                            comparison = await matched_tracking_baseline_for_user(
-                                str(job["user_id"]),
-                                result,
-                                list(tracking_result.get("metrics") or {}),
+                        if comparison.get("comparable") is True:
+                            tracking_result = copy.deepcopy(tracking_result)
+                            tracking_result["comparison"] = comparison
+                            result = _build_continuous_tracking_result_v2(
+                                job,
+                                tracking_result,
+                                visual_result,
+                                created_at=created_at_iso,
+                                completed_at=completed_at_iso,
                             )
-                        except Exception as error:
-                            log.warning(
-                                "continuous tracking baseline unavailable session=%s error=%s",
-                                sid,
-                                type(error).__name__,
-                            )
-                        else:
-                            if comparison.get("comparable") is True:
-                                tracking_result = copy.deepcopy(tracking_result)
-                                tracking_result["comparison"] = comparison
-                                result = _build_continuous_tracking_result_v2(
-                                    job,
-                                    tracking_result,
-                                    visual_result,
-                                    created_at=created_at_iso,
-                                    completed_at=completed_at_iso,
-                                )
             cost = 0.0
         elif scenario_dispatch == TARGET_SWITCHING_ANALYSIS_VERSION:
             await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
@@ -3301,10 +3840,8 @@ async def process_one() -> bool:
             )
             _freeze_job_calibration(job, frozen_stats)
             try:
-                visual_result = await asyncio.to_thread(
-                    run_visual_preprocessing,
-                    job,
-                    parsed_stats=frozen_stats,
+                visual_result, episode_result = (
+                    await run_target_switching_pipeline_isolated(job)
                 )
             except SourceSnapshotChangedError:
                 raise
@@ -3343,7 +3880,7 @@ async def process_one() -> bool:
                 quality_enabled = (
                     isinstance(quality, Mapping)
                     and quality.get("status") in {"accepted", "limited"}
-                    and bool({"switching", "target_switching"}.intersection(enabled_families))
+                    and "target_switching" in enabled_families
                 )
                 if not quality_enabled:
                     result = _build_outcome_only_result_v2(
@@ -3357,24 +3894,12 @@ async def process_one() -> bool:
                     )
                 else:
                     try:
-                        outcome_event_bundle = await asyncio.to_thread(
-                            _build_validated_outcome_association,
-                            job,
-                            frozen_stats,
-                            visual_result,
-                        )
-                    except Exception as error:
-                        log.warning(
-                            "target switching outcome association unavailable session=%s error=%s",
-                            sid,
-                            type(error).__name__,
-                        )
-                    try:
                         switching_result = await asyncio.to_thread(
                             run_target_switching_analysis,
                             job,
                             visual_result,
-                            outcome_event_bundle,
+                            episode_result,
+                            frozen_stats,
                         )
                     except SourceSnapshotChangedError:
                         raise
@@ -3469,11 +3994,7 @@ async def process_one() -> bool:
                 }:
                     video_availability = "available"
                     try:
-                        visual_result = await asyncio.to_thread(
-                            run_visual_preprocessing,
-                            job,
-                            parsed_stats=frozen_stats,
-                        )
+                        visual_result = await run_visual_preprocessing_isolated(job)
                         visual_validation = visual_result["safe_summary"]
                     except Exception as error:
                         from kovaak_tracker.visual_signals import (
@@ -3591,43 +4112,8 @@ async def process_one() -> bool:
                     "metric_version": _VIDEO_FALLBACK_SPARC_METRIC_VERSION,
                 }
             timeline_events = _build_timeline(extras)
-            from . import provider_store
-
-            profile = None
-            try:
-                candidate = await provider_store.get_default_runtime_profile(job["user_id"])
-                if (
-                    provider_store.runtime_profile_configured(candidate)
-                    and not bool(candidate and candidate.get("credential_needs_reauth"))
-                ):
-                    profile = candidate
-            except Exception as error:
-                log.warning(
-                    "selected narration profile unavailable user=%s error=%s",
-                    job["user_id"],
-                    type(error).__name__,
-                )
-            backend_failed = False
-            try:
-                backend = _load_backend(profile)
-            except Exception as error:
-                log.warning(
-                    "selected narration backend unavailable user=%s error=%s",
-                    job["user_id"],
-                    type(error).__name__,
-                )
-                backend = None
-                backend_failed = True
-            provider_requested = profile is not None or backend is not None or backend_failed
-            report_dict = await asyncio.to_thread(run_report, summary, backend)
+            report_dict = await asyncio.to_thread(run_report, summary)
             cost = 0.0
-            narration = report_dict.get("narration")
-            if isinstance(narration, str) and narration.strip() and backend is not None:
-                narration_status = "available"
-            elif provider_requested:
-                narration_status = "unavailable"
-            else:
-                narration_status = "not_requested"
 
             result = _build_video_fallback_result_v2(
                 job,
@@ -3636,7 +4122,7 @@ async def process_one() -> bool:
                 timeline_events,
                 created_at=created_at_iso,
                 completed_at=completed_at_iso,
-                narration_status=narration_status,
+                narration_status="not_requested",
             )
         await asyncio.to_thread(
             _assert_managed_video_matches_snapshot,
@@ -3644,18 +4130,30 @@ async def process_one() -> bool:
             input_mode,
         )
         await queue.set_task_phase(sid, "generating_diagnostics", worker_id=WORKER_ID)
-        result = await asyncio.to_thread(
-            _maybe_commit_analysis_evidence,
-            job,
-            result,
-            parsed_stats=frozen_stats,
-            native_result=(native_result if "native_result" in locals() else None),
-            visual_result=visual_result,
-            dynamic_result=dynamic_result,
-            tracking_result=tracking_result,
-            switching_result=switching_result,
-            outcome_event_bundle=outcome_event_bundle,
-        )
+        if (
+            scenario_dispatch == CONTINUOUS_TRACKING_ANALYSIS_VERSION
+            and isinstance(visual_result, dict)
+            and isinstance(tracking_result, dict)
+        ):
+            result = await commit_continuous_tracking_evidence_isolated(
+                job,
+                result,
+                visual_result,
+                tracking_result,
+            )
+        else:
+            result = await asyncio.to_thread(
+                _maybe_commit_analysis_evidence,
+                job,
+                result,
+                parsed_stats=frozen_stats,
+                native_result=(native_result if "native_result" in locals() else None),
+                visual_result=visual_result,
+                dynamic_result=dynamic_result,
+                tracking_result=tracking_result,
+                switching_result=switching_result,
+                outcome_event_bundle=outcome_event_bundle,
+            )
         marked_done = await queue.mark_done(sid, result, cost, worker_id=WORKER_ID)
         if not marked_done:
             log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)

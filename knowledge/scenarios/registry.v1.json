@@ -1,6 +1,6 @@
 {
   "schema_version": "scenario_profile_registry.v1",
-  "registry_version": "2026-07-23.v1",
+  "registry_version": "2026-07-28.v1",
   "entries": [
     {
       "entry_id": "tracking.whj_smooth_strafe_sphere_easy",
@@ -26,6 +26,86 @@
       "limitations": [
         "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.",
         "Unknown hashes and concurrent target layouts are not classified by this entry."
+      ]
+    },
+    {
+      "entry_id": "static.1wall_6targets_small",
+      "entry_version": 1,
+      "status": "active",
+      "scenario_hash": "7378a811f430b6072d052a75896afb98",
+      "display_name": "1wall 6targets small",
+      "taxonomy_source": "reviewed_registry",
+      "reviewed_at": "2026-07-27T00:00:00Z",
+      "source_refs": [
+        "review:1wall-6targets-small-static-input-native"
+      ],
+      "supersedes": [],
+      "aim_family": "static_clicking",
+      "subdomains": ["precision"],
+      "target_motion": {
+        "model": "static",
+        "target_count_model": "concurrent"
+      },
+      "allowed_analyzers": ["native_flicking.v1"],
+      "allowed_metric_families": ["input_kinematics", "static_clicking"],
+      "classification_confidence": "confirmed",
+      "limitations": [
+        "Exact reviewed scenario hash only; other hashes with the same display name remain unclassified.",
+        "Input-native metrics do not establish target-relative error, overshoot, or undershoot."
+      ]
+    },
+    {
+      "entry_id": "dynamic.pasu_small_reload",
+      "entry_version": 1,
+      "status": "active",
+      "scenario_hash": "a37d2ba4f3f33d59ae7018e37445a5e9",
+      "display_name": "pasu small reload",
+      "taxonomy_source": "reviewed_registry",
+      "reviewed_at": "2026-07-27T00:00:00Z",
+      "source_refs": [
+        "review:pasu-small-reload-dynamic-split"
+      ],
+      "supersedes": [],
+      "aim_family": "dynamic_clicking",
+      "subdomains": ["reactive"],
+      "target_motion": {
+        "model": "reactive",
+        "target_count_model": "concurrent"
+      },
+      "allowed_analyzers": ["dynamic_clicking.v1"],
+      "allowed_metric_families": ["dynamic_clicking"],
+      "classification_confidence": "confirmed",
+      "limitations": [
+        "Exact reviewed scenario hash and accepted visual selector only.",
+        "Outcome association remains unavailable without a production-safe target identity rule."
+      ]
+    },
+    {
+      "entry_id": "switching.beants_larger",
+      "entry_version": 1,
+      "status": "active",
+      "scenario_hash": "3b42bdfd38a6b194737d650f3f53e8c1",
+      "display_name": "beanTS Larger",
+      "taxonomy_source": "reviewed_registry",
+      "reviewed_at": "2026-07-28T00:00:00Z",
+      "source_refs": [
+        "review:beants-larger-switching-calibration-holdout"
+      ],
+      "supersedes": [],
+      "aim_family": "target_switching",
+      "subdomains": ["reactive", "control"],
+      "target_motion": {
+        "model": "mixed",
+        "target_count_model": "concurrent"
+      },
+      "allowed_analyzers": ["target_switching.v1"],
+      "allowed_metric_families": ["target_switching"],
+      "classification_confidence": "confirmed",
+      "limitations": [
+        "Exact reviewed scenario hash only; display name never activates this profile.",
+        "Continuous hold and discrete clicks are input provenance, not aim-family definitions.",
+        "Only Stats-bounded, locally unambiguous post-kill episodes may produce formal Switching rows.",
+        "Selection, first-shot, first-damage, persistent identity and re-entry remain unavailable."
       ]
     }
   ]

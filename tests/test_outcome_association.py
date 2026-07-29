@@ -10,6 +10,7 @@ import pytest
 
 from kovaak_tracker.outcome_association import (
     associate_one_shot_kills_v1,
+    load_outcome_association_rule_registry_v1,
     validate_outcome_association_rule_registry_v1,
 )
 
@@ -229,6 +230,35 @@ def test_available_bundle_preserves_unmatched_raw_click_as_unavailable():
     ]
     assert len(unavailable) == 1
     assert unavailable[0]["shot_event_ref"].endswith("raw-shot:2")
+
+
+def test_rule_registry_loader_accepts_one_shot_binding(
+    tmp_path: Path,
+) -> None:
+    registry = {
+        "schema_version": "outcome_association_rule_registry.v1",
+        "registry_version": "fixture.mixed.v1",
+        "entries": [{"status": "active", "binding": _binding()}],
+    }
+    path = tmp_path / "outcome-association-rules.v1.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+
+    assert load_outcome_association_rule_registry_v1(path) == registry
+
+
+def test_rule_registry_rejects_unknown_binding_schema(tmp_path: Path) -> None:
+    binding = _binding()
+    binding["schema_version"] = "outcome_association_rule_binding.v2"
+    registry = {
+        "schema_version": "outcome_association_rule_registry.v1",
+        "registry_version": "fixture.unknown.v1",
+        "entries": [{"status": "active", "binding": binding}],
+    }
+    path = tmp_path / "outcome-association-rules.v1.json"
+    path.write_text(json.dumps(registry), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="binding schema version"):
+        load_outcome_association_rule_registry_v1(path)
 
 
 def test_real_reviewed_association_replay_uses_only_stable_inner_hit_evidence():
