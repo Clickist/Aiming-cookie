@@ -3,7 +3,7 @@
 > **状态：complete，本地分批 commit 已收口，尚未 push。** 点点于 2026-07-24 批准 backend full review 的推荐决策，并明确授权按三路 `gpt-5.6-terra high` 并行修复、主审验收、最终分批 commit；需要新产品面、发布系统或新 caller context 的项目保留为 Gate。
 > **For executor:** 每个 agent 每次只执行一个明确 Task；只修改 Allowed files；tests first；不得启动 KovaaK、读取真实产品 DB、修改 PRD、提交或推送。
 > **2026-07-24 size audit：** 不再把全部 27 个 finding 等同于立即增加代码。只实施当前正确性缺陷、已冻结的 Knowledge 边界和能用 benchmark/golden 证明的删除型优化；frontend、packaging、release、长期规模与低价值 P3 保留为 Gate。
-> **Assessment:** [`../assessments/2026-07-24-backend-full-review-ledger.md`](../assessments/2026-07-24-backend-full-review-ledger.md)
+> **Assessment:** [`2026-07-24-backend-full-review-ledger.md`](../../../superpowers/assessments/2026-07-24-backend-full-review-ledger.md)
 
 **Goal:** 收敛 assessment 的 27 个 confirmed findings，并把无法在仓库内自动闭合的真实硬件、签名、法律和未来来源工作保留为明确 No-Go Gate。
 
