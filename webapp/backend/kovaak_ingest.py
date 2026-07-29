@@ -23,6 +23,10 @@ class NonRetryableIngestionError(RuntimeError):
     """An ingestion failure that should remain observable without hot-loop retries."""
 
 
+class ExpectedIngestionState(NonRetryableIngestionError):
+    """An expected non-retryable state that does not need an error traceback."""
+
+
 class RetryableIngestionError(RuntimeError):
     """A transient ingestion failure that should return to the ready state."""
 
@@ -172,7 +176,14 @@ class KovaaKDirectoryWatcher:
                     self._release(key)
                 else:
                     self._mark_emitted(key)
-                log.exception("KovaaK ingestion callback failed for %s", discovery.stem)
+                if isinstance(error, ExpectedIngestionState):
+                    log.info(
+                        "KovaaK ingestion awaiting state for %s: %s",
+                        discovery.stem,
+                        error,
+                    )
+                else:
+                    log.exception("KovaaK ingestion callback failed for %s", discovery.stem)
                 continue
             self._complete_when_ready(key, discovery, result)
             discoveries.append(discovery)
@@ -213,7 +224,14 @@ class KovaaKDirectoryWatcher:
                     self._release(key)
                 else:
                     self._mark_emitted(key)
-                log.exception("KovaaK ingestion future failed for %s", discovery.stem)
+                if isinstance(error, ExpectedIngestionState):
+                    log.info(
+                        "KovaaK ingestion awaiting state for %s: %s",
+                        discovery.stem,
+                        error,
+                    )
+                else:
+                    log.exception("KovaaK ingestion future failed for %s", discovery.stem)
             else:
                 self._mark_emitted(key)
 
@@ -248,6 +266,7 @@ __all__ = [
     "KovaaKDirectoryWatcher",
     "KovaaKFileDiscovery",
     "KovaaKIngestionService",
+    "ExpectedIngestionState",
     "NonRetryableIngestionError",
     "RetryableIngestionError",
     "is_performance_path",

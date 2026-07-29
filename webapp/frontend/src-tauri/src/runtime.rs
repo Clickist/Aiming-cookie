@@ -64,6 +64,7 @@ impl RuntimeProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        configure_python_io(&mut command);
         configure_process_group(&mut command);
 
         let mut child = command
@@ -191,6 +192,12 @@ fn python_executable() -> OsString {
             OsString::from("python3")
         }
     })
+}
+
+fn configure_python_io(command: &mut Command) {
+    command
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8");
 }
 
 fn create_launch_token() -> String {
@@ -334,7 +341,7 @@ fn terminate_process_tree(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_launch_token, parse_readiness_line, redact_secrets};
+    use super::{configure_python_io, create_launch_token, parse_readiness_line, redact_secrets};
 
     #[cfg(unix)]
     use super::{configure_process_group, terminate_process_tree};
@@ -439,6 +446,20 @@ mod tests {
             ),
             "token=[REDACTED];capture=[REDACTED]"
         );
+    }
+
+    #[test]
+    fn runtime_forces_utf8_python_stdio() {
+        let mut command = std::process::Command::new("python");
+        configure_python_io(&mut command);
+        let envs = command.get_envs().collect::<Vec<_>>();
+
+        assert!(envs.iter().any(|(key, value)| {
+            *key == "PYTHONUTF8" && value.is_some_and(|value| value == "1")
+        }));
+        assert!(envs.iter().any(|(key, value)| {
+            *key == "PYTHONIOENCODING" && value.is_some_and(|value| value == "utf-8")
+        }));
     }
 
     #[cfg(windows)]
