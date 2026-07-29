@@ -50,6 +50,15 @@ def _unavailable(*limitations: str) -> dict:
     }
 
 
+def _validate_rule_registry_binding(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("outcome association rule binding must be a dict")
+    schema_version = value.get("schema_version")
+    if schema_version == "outcome_association_rule_binding.v1":
+        return validate_outcome_association_rule_binding_v1(value)
+    raise ValueError("outcome association rule binding schema version is unsupported")
+
+
 def validate_outcome_association_rule_registry_v1(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != {
         "schema_version", "registry_version", "entries",
@@ -74,7 +83,7 @@ def validate_outcome_association_rule_registry_v1(value: object) -> dict:
             raise ValueError(f"outcome association rule registry entry {index} is invalid")
         if entry["status"] not in {"active", "retired"}:
             raise ValueError("outcome association rule registry status is invalid")
-        binding = validate_outcome_association_rule_binding_v1(entry["binding"])
+        binding = _validate_rule_registry_binding(entry["binding"])
         if binding["rule_ref"] in rule_refs:
             raise ValueError("outcome association rule registry refs must be unique")
         rule_refs.add(binding["rule_ref"])

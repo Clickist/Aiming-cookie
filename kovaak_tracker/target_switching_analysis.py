@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 ANALYSIS_VERSION = "target_switching.v1"
 SCHEMA_VERSION = "target_switching_analysis.v1"
 INPUT_SCHEMA_VERSION = "target_switching_input.v1"
+_MAX_CANONICAL_TIME_MS = 10**15
 _REF_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:._@+-")
 
 
@@ -145,6 +146,7 @@ def _associations(
         limitations = raw.get("limitations", [])
         if isinstance(limitations, (str, bytes)) or not isinstance(limitations, Sequence):
             raise TargetSwitchingAnalysisError("outcome association limitations must be a list")
+        continuous_lg = source_bundle["schema_version"] == "continuous_lg_event_bundle.v1"
         normalized = {
             "association_id": association_id,
             "association_kind": raw.get("association_kind"),
@@ -159,6 +161,10 @@ def _associations(
                 _ref(raw.get("shot_event_ref"), "outcome association shot_event_ref")
                 if raw.get("shot_event_ref") is not None else None
             ),
+            "held_interval_ref": (
+                _ref(raw.get("held_interval_ref"), "outcome association held_interval_ref")
+                if raw.get("held_interval_ref") is not None else None
+            ),
             "outcome_event_ref": (
                 _ref(raw.get("outcome_event_ref"), "outcome association outcome_event_ref")
                 if raw.get("outcome_event_ref") is not None else None
@@ -166,6 +172,7 @@ def _associations(
             "canonical": deepcopy(raw),
         }
         shot_event = events_by_id.get(normalized["shot_event_ref"])
+        held_event = events_by_id.get(normalized["held_interval_ref"])
         outcome_event = events_by_id.get(normalized["outcome_event_ref"])
         normalized["shot_time_ms"] = (
             int(shot_event["start_ms"])
@@ -180,16 +187,44 @@ def _associations(
         normalized["outcome_event_kind"] = (
             outcome_event.get("event_kind") if outcome_event is not None else None
         )
+        outcome_attributes = (
+            outcome_event.get("attributes")
+            if isinstance(outcome_event, Mapping)
+            else None
+        )
+        normalized["kill_index"] = (
+            int(outcome_attributes["kill_index"])
+            if isinstance(outcome_attributes, Mapping)
+            and isinstance(outcome_attributes.get("kill_index"), int)
+            and not isinstance(outcome_attributes.get("kill_index"), bool)
+            else None
+        )
+        normalized["temporal_semantics"] = (
+            "continuous_lg" if continuous_lg else "discrete_shot"
+        )
         normalized["trusted"] = (
-            normalized["association_kind"] in {"directly_observed", "validated_aligned"}
+            normalized["association_kind"] in {
+                "directly_observed", "validated_aligned", "validated_continuous_lg",
+            }
             and normalized["availability"] == "available"
             and normalized["confidence"] == 1.0
             and not normalized["limitations"]
             and normalized["target_track_ref"] is not None
-            and normalized["shot_event_ref"] is not None
             and normalized["outcome_event_ref"] is not None
-            and normalized["shot_time_ms"] is not None
             and normalized["outcome_time_ms"] is not None
+            and (
+                continuous_lg
+                and normalized["association_kind"] == "validated_continuous_lg"
+                and held_event is not None
+                and held_event.get("event_kind") == "input_hold"
+                and normalized["shot_event_ref"] is None
+                or not continuous_lg
+                and normalized["association_kind"] in {
+                    "directly_observed", "validated_aligned",
+                }
+                and normalized["shot_event_ref"] is not None
+                and normalized["shot_time_ms"] is not None
+            )
         )
         result[association_id] = normalized
     return source_bundle, result
@@ -396,9 +431,11 @@ def build_switching_chains_from_visual_outcomes_v1(
             association for association in associations.values()
             if association["trusted"]
             and association["target_track_ref"] in stable_tracks
-            and start_ms <= association["shot_time_ms"] < end_ms
             and start_ms <= association["outcome_time_ms"] < end_ms
-            and association["shot_time_ms"] <= association["outcome_time_ms"]
+            and (
+                association["shot_time_ms"] is None
+                or start_ms <= association["shot_time_ms"] <= association["outcome_time_ms"]
+            )
         ),
         key=lambda association: (
             association["outcome_time_ms"], association["association_id"],
@@ -406,12 +443,25 @@ def build_switching_chains_from_visual_outcomes_v1(
     )
     chains: list[dict[str, Any]] = []
     for previous, current in zip(trusted, trusted[1:]):
+        if (
+            previous["temporal_semantics"] == "continuous_lg"
+            and current["temporal_semantics"] == "continuous_lg"
+            and (
+                previous["kill_index"] is None
+                or current["kill_index"] != previous["kill_index"] + 1
+            )
+        ):
+            continue
         previous_track = previous["target_track_ref"]
         next_track = current["target_track_ref"]
         if previous_track == next_track:
             continue
         leave_time = int(previous["outcome_time_ms"])
-        shot_time = int(current["shot_time_ms"])
+        shot_time = (
+            int(current["shot_time_ms"])
+            if current["shot_time_ms"] is not None
+            else int(current["outcome_time_ms"])
+        )
         outcome_time = int(current["outcome_time_ms"])
         if shot_time < leave_time:
             continue
@@ -464,7 +514,9 @@ def build_switching_chains_from_visual_outcomes_v1(
             "next_target_track_ref": next_track,
             "acquire_time_ms": acquire_time,
             "settle_time_ms": settle_time,
-            "first_shot_time_ms": shot_time,
+            "first_shot_time_ms": (
+                shot_time if current["temporal_semantics"] == "discrete_shot" else None
+            ),
             "next_outcome_association_ref": current["association_id"],
             "next_outcome_time_ms": outcome_time,
             "first_damage_association_ref": (
@@ -479,6 +531,272 @@ def build_switching_chains_from_visual_outcomes_v1(
             ),
             "carry_over_overshoot": None,
             "terminal_correction": None,
+        })
+    return chains
+
+
+_MIN_LOCAL_CONTACT_DURATION_MS = 50
+_MAX_LOCAL_CONTACT_GAP_MS = 50
+_MIN_LOCAL_TARGET_CONFIDENCE = 0.45
+
+
+def _episode_track_samples(
+    value: Any,
+    field: str,
+) -> list[dict[str, float | int]]:
+    return _visual_chain_samples(value, field, require_radius=True)
+
+
+def _contact_groups(
+    *,
+    track_ref: str,
+    samples: Sequence[Mapping[str, float | int]],
+    crosshair_by_time: Mapping[int, Mapping[str, float | int]],
+    inside_count_by_time: Mapping[int, int],
+) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    current: list[int] = []
+    for sample in samples:
+        time_ms = int(sample["canonical_time_ms"])
+        crosshair = crosshair_by_time.get(time_ms)
+        inside = (
+            crosshair is not None
+            and float(sample["confidence"]) >= _MIN_LOCAL_TARGET_CONFIDENCE
+            and float(crosshair["confidence"]) == 1.0
+            and inside_count_by_time.get(time_ms) == 1
+            and hypot(
+                float(sample["x"]) - float(crosshair["x"]),
+                float(sample["y"]) - float(crosshair["y"]),
+            ) <= float(sample["visible_radius"])
+        )
+        if inside and (
+            not current or time_ms - current[-1] <= _MAX_LOCAL_CONTACT_GAP_MS
+        ):
+            current.append(time_ms)
+            continue
+        if current:
+            groups.append({
+                "track_ref": track_ref,
+                "start_ms": current[0],
+                "end_ms": current[-1],
+                "duration_ms": current[-1] - current[0],
+            })
+            current = []
+        if inside:
+            current = [time_ms]
+    if current:
+        groups.append({
+            "track_ref": track_ref,
+            "start_ms": current[0],
+            "end_ms": current[-1],
+            "duration_ms": current[-1] - current[0],
+        })
+    return groups
+
+
+def _stats_kills(
+    value: Any,
+    *,
+    analysis_ref: str,
+    start_ms: int,
+    end_ms: int,
+) -> list[dict[str, Any]]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise TargetSwitchingAnalysisError("stats_kills must be a list")
+    kills: list[dict[str, Any]] = []
+    seen_refs: set[str] = set()
+    seen_indexes: set[int] = set()
+    for index, raw in enumerate(value):
+        if not isinstance(raw, Mapping) or set(raw) != {
+            "event_ref", "time_ms", "kill_index", "source_ref",
+        }:
+            raise TargetSwitchingAnalysisError(f"stats_kills[{index}] is invalid")
+        event_ref = _ref(raw["event_ref"], f"stats_kills[{index}].event_ref")
+        time_ms = _time(
+            raw["time_ms"], f"stats_kills[{index}].time_ms",
+            minimum=start_ms, maximum=end_ms,
+        )
+        kill_index = _time(
+            raw["kill_index"], f"stats_kills[{index}].kill_index",
+            minimum=1, maximum=1_000_000,
+        )
+        if event_ref in seen_refs or kill_index in seen_indexes:
+            raise TargetSwitchingAnalysisError("stats kill is duplicated")
+        seen_refs.add(event_ref)
+        seen_indexes.add(kill_index)
+        kills.append({
+            "event_ref": event_ref,
+            "time_ms": time_ms,
+            "kill_index": kill_index,
+            "source_ref": _ref(raw["source_ref"], f"stats_kills[{index}].source_ref"),
+        })
+    kills.sort(key=lambda item: (item["kill_index"], item["time_ms"], item["event_ref"]))
+    return kills
+
+
+def build_switching_chains_from_stats_kills_v1(
+    *,
+    analysis_ref: str,
+    canonical_time_window: Mapping[str, Any],
+    crosshair_samples: Sequence[Mapping[str, Any]],
+    target_tracks: Sequence[Mapping[str, Any]],
+    stats_kills: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build only kill-bounded local switching chains.
+
+    The first Stats kill opens a candidate window and the next consecutive kill
+    closes it. The visual proof is limited to the next acquired target within
+    that window; the dead target is deliberately never identified.
+    """
+    analysis_ref = _ref(analysis_ref, "analysis_ref")
+    if not isinstance(canonical_time_window, Mapping):
+        raise TargetSwitchingAnalysisError("canonical_time_window is required")
+    start_ms = _time(
+        canonical_time_window.get("start_ms"),
+        "canonical_time_window.start_ms",
+        minimum=0,
+        maximum=_MAX_CANONICAL_TIME_MS,
+    )
+    end_ms = _time(
+        canonical_time_window.get("end_ms"),
+        "canonical_time_window.end_ms",
+        minimum=start_ms + 1,
+        maximum=_MAX_CANONICAL_TIME_MS,
+    )
+    if end_ms <= start_ms:
+        raise TargetSwitchingAnalysisError("canonical_time_window is invalid")
+    crosshair = _visual_chain_samples(crosshair_samples, "crosshair_samples", require_radius=False)
+    crosshair_by_time = {int(sample["canonical_time_ms"]): sample for sample in crosshair}
+    if isinstance(target_tracks, (str, bytes)) or not isinstance(target_tracks, Sequence):
+        raise TargetSwitchingAnalysisError("target_tracks must be a list")
+    tracks: dict[str, list[dict[str, float | int]]] = {}
+    for index, raw in enumerate(target_tracks):
+        if not isinstance(raw, Mapping) or raw.get("episode_observable") is not True:
+            raise TargetSwitchingAnalysisError(f"target_tracks[{index}] is not an observable episode")
+        track_ref = _ref(raw.get("track_ref"), f"target_tracks[{index}].track_ref")
+        if track_ref in tracks or not track_ref.startswith(f"{analysis_ref}:target-track:"):
+            raise TargetSwitchingAnalysisError("target episode is invalid")
+        tracks[track_ref] = _episode_track_samples(raw.get("samples"), f"target_tracks[{index}].samples")
+    kills = _stats_kills(stats_kills, analysis_ref=analysis_ref, start_ms=start_ms, end_ms=end_ms)
+    if not kills:
+        return []
+    inside_count_by_time: dict[int, int] = {}
+    for samples in tracks.values():
+        for sample in samples:
+            time_ms = int(sample["canonical_time_ms"])
+            crosshair_sample = crosshair_by_time.get(time_ms)
+            if (
+                crosshair_sample is not None
+                and float(sample["confidence"]) >= _MIN_LOCAL_TARGET_CONFIDENCE
+                and float(crosshair_sample["confidence"]) == 1.0
+                and hypot(
+                    float(sample["x"]) - float(crosshair_sample["x"]),
+                    float(sample["y"]) - float(crosshair_sample["y"]),
+                ) <= float(sample["visible_radius"])
+            ):
+                inside_count_by_time[time_ms] = inside_count_by_time.get(time_ms, 0) + 1
+    contacts_by_track = {
+        track_ref: _contact_groups(
+            track_ref=track_ref,
+            samples=samples,
+            crosshair_by_time=crosshair_by_time,
+            inside_count_by_time=inside_count_by_time,
+        )
+        for track_ref, samples in tracks.items()
+    }
+    chains: list[dict[str, Any]] = []
+    for kill_index, left_kill in enumerate(kills):
+        right_kill = kills[kill_index + 1] if kill_index + 1 < len(kills) else None
+        window_end_ms = right_kill["time_ms"] if right_kill else end_ms
+        if window_end_ms <= left_kill["time_ms"]:
+            continue
+        candidates: list[dict[str, Any]] = []
+        for track_ref, groups in contacts_by_track.items():
+            qualifying_groups = [
+                group for group in groups
+                if (
+                    left_kill["time_ms"] < group["start_ms"] < window_end_ms
+                    and group["duration_ms"] >= _MIN_LOCAL_CONTACT_DURATION_MS
+                )
+            ]
+            if not qualifying_groups:
+                continue
+            acquire = qualifying_groups[0]
+            crosshair_at_kill = _point_at(crosshair, left_kill["time_ms"])
+            crosshair_at_acquire = _point_at(crosshair, acquire["start_ms"])
+            target_at_kill = _point_at(tracks[track_ref], left_kill["time_ms"])
+            target_at_acquire = _point_at(tracks[track_ref], acquire["start_ms"])
+            if (
+                crosshair_at_acquire is None
+                or target_at_acquire is None
+            ):
+                continue
+            transition_distance = None
+            transition_direction = None
+            path_length = None
+            path_efficiency = None
+            if crosshair_at_kill is not None and target_at_kill is not None:
+                departure_error = (
+                    target_at_kill[0] - crosshair_at_kill[0],
+                    target_at_kill[1] - crosshair_at_kill[1],
+                )
+                arrival_error = (
+                    target_at_acquire[0] - crosshair_at_acquire[0],
+                    target_at_acquire[1] - crosshair_at_acquire[1],
+                )
+                transition_distance = hypot(
+                    arrival_error[0] - departure_error[0],
+                    arrival_error[1] - departure_error[1],
+                )
+                path_length = _relative_path_between(
+                    crosshair, tracks[track_ref], left_kill["time_ms"], acquire["start_ms"],
+                )
+                transition_direction = (
+                    degrees(atan2(departure_error[1], departure_error[0]))
+                    if transition_distance > 0 else None
+                )
+                path_efficiency = (
+                    transition_distance / path_length
+                    if path_length is not None and path_length > 0 else None
+                )
+            candidates.append({
+                "track_ref": track_ref,
+                "acquire_time_ms": acquire["start_ms"],
+                "settle_time_ms": (
+                    acquire["start_ms"] + _MIN_LOCAL_CONTACT_DURATION_MS
+                ),
+                "transition_distance_px": transition_distance,
+                "transition_direction_deg": transition_direction,
+                "transition_path_length_px": path_length,
+                "path_efficiency": path_efficiency,
+            })
+        candidates.sort(key=lambda item: (item["acquire_time_ms"], item["track_ref"]))
+        if not candidates or (
+            len(candidates) > 1
+            and candidates[0]["acquire_time_ms"] == candidates[1]["acquire_time_ms"]
+        ):
+            continue
+        candidate = candidates[0]
+        chains.append({
+            "episode_ref": f"{analysis_ref}:stats-kill-chain:{left_kill['kill_index']}",
+            "source_refs": [
+                left_kill["event_ref"], candidate["track_ref"],
+            ],
+            "kill_event_ref": left_kill["event_ref"],
+            "kill_time_ms": left_kill["time_ms"],
+            "window_end_event_ref": right_kill["event_ref"] if right_kill else None,
+            "window_end_ms": window_end_ms,
+            "next_target_track_ref": candidate["track_ref"],
+            "acquire_time_ms": candidate["acquire_time_ms"],
+            "settle_time_ms": candidate["settle_time_ms"],
+            "transition_distance_px": candidate["transition_distance_px"],
+            "transition_direction_deg": candidate["transition_direction_deg"],
+            "transition_path_length_px": candidate["transition_path_length_px"],
+            "path_efficiency": candidate["path_efficiency"],
+            "candidate_count": len(candidates),
+            "terminal_correction_observed": None,
+            "episode_observable": True,
+            "limitations": [],
         })
     return chains
 
@@ -607,9 +925,331 @@ def _segment(
     }, canonical_window=dict(window))
 
 
+def _analyze_stats_bounded_switching_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
+    analysis_ref = _ref(payload.get("analysis_ref"), "analysis_ref")
+    window = payload.get("canonical_time_window")
+    if not isinstance(window, Mapping):
+        raise TargetSwitchingAnalysisError("canonical_time_window is required")
+    start_ms = _time(
+        window.get("start_ms"),
+        "canonical_time_window.start_ms",
+        minimum=0,
+        maximum=_MAX_CANONICAL_TIME_MS,
+    )
+    end_ms = _time(
+        window.get("end_ms"),
+        "canonical_time_window.end_ms",
+        minimum=start_ms + 1,
+        maximum=_MAX_CANONICAL_TIME_MS,
+    )
+    quality = payload.get("visual_quality")
+    if not (
+        isinstance(quality, Mapping)
+        and quality.get("status") in {"accepted", "limited"}
+        and "target_switching" in (quality.get("enabled_metric_families") or [])
+    ):
+        return _outcome_only_switching_result(analysis_ref, window, payload.get("comparison"), "target_switching_visual_quality_unavailable")
+    tracks_raw = payload.get("target_tracks")
+    if isinstance(tracks_raw, (str, bytes)) or not isinstance(tracks_raw, Sequence):
+        raise TargetSwitchingAnalysisError("target_tracks must be a list")
+    tracks: dict[str, list[dict[str, float | int]]] = {}
+    normalized_tracks: list[dict[str, Any]] = []
+    for index, raw in enumerate(tracks_raw):
+        if not isinstance(raw, Mapping) or raw.get("episode_observable") is not True:
+            raise TargetSwitchingAnalysisError(f"target_tracks[{index}] is not an observable episode")
+        track_ref = _ref(raw.get("track_ref"), f"target_tracks[{index}].track_ref")
+        if track_ref in tracks or not track_ref.startswith(f"{analysis_ref}:target-track:"):
+            raise TargetSwitchingAnalysisError("target episode is invalid")
+        samples = _episode_track_samples(raw.get("samples"), f"target_tracks[{index}].samples")
+        tracks[track_ref] = samples
+        normalized_tracks.append({
+            "track_ref": track_ref,
+            "episode_observable": True,
+            "samples": samples,
+        })
+    crosshair = _visual_chain_samples(payload.get("crosshair_samples"), "crosshair_samples", require_radius=False)
+    source_signal_bundle, source_sample_sets, source_channel_points = _source_signals(
+        payload.get("source_signal_bundle"), payload.get("source_sample_sets"), analysis_ref,
+    )
+    if [
+        {key: sample[key] for key in ("canonical_time_ms", "x", "y")}
+        for sample in crosshair
+    ] != _xy_samples_from_channels(
+        source_channel_points, "crosshair.position_x", "crosshair.position_y",
+    ):
+        raise TargetSwitchingAnalysisError("crosshair samples do not match source signals")
+    for track_ref, track_samples in tracks.items():
+        track_id = track_ref[len(f"{analysis_ref}:target-track:"):]
+        if [
+            {key: sample[key] for key in ("canonical_time_ms", "x", "y")}
+            for sample in track_samples
+        ] != _xy_samples_from_channels(
+            source_channel_points, f"target.{track_id}.position_x", f"target.{track_id}.position_y",
+        ):
+            raise TargetSwitchingAnalysisError("target samples do not match source signals")
+    kills = _stats_kills(
+        payload.get("stats_kills"), analysis_ref=analysis_ref,
+        start_ms=start_ms, end_ms=end_ms,
+    )
+    if not kills:
+        return _outcome_only_switching_result(analysis_ref, window, payload.get("comparison"), "stats_kill_boundary_unavailable")
+    expected_episodes = build_switching_chains_from_stats_kills_v1(
+        analysis_ref=analysis_ref,
+        canonical_time_window=window,
+        crosshair_samples=crosshair,
+        target_tracks=normalized_tracks,
+        stats_kills=kills,
+    )
+    supplied_episodes = payload.get("episodes")
+    if isinstance(supplied_episodes, (str, bytes)) or not isinstance(supplied_episodes, Sequence):
+        raise TargetSwitchingAnalysisError("episodes must be a list")
+    if list(supplied_episodes) != expected_episodes:
+        raise TargetSwitchingAnalysisError("stats-bounded episodes do not match visual evidence")
+    if not expected_episodes:
+        return _outcome_only_switching_result(analysis_ref, window, payload.get("comparison"), "target_switching_no_safe_stats_kill_chain")
+    kills_by_ref = {kill["event_ref"]: kill for kill in kills}
+    visual_source_refs = sorted({
+        source_ref
+        for channel in source_signal_bundle["channels"]
+        for source_ref in channel["source_refs"]
+    })
+    rows: list[dict[str, Any]] = []
+    state_events: list[dict[str, Any]] = []
+    stats_events: dict[str, dict[str, Any]] = {}
+    segment_specs: list[dict[str, Any]] = []
+    for index, episode in enumerate(expected_episodes, 1):
+        start_kill = kills_by_ref[episode["kill_event_ref"]]
+        stats_events.setdefault(start_kill["event_ref"], {
+            "event_id": start_kill["event_ref"],
+            "event_kind": "kill",
+            "start_ms": start_kill["time_ms"],
+            "end_ms": start_kill["time_ms"],
+            "actor_refs": [],
+            "source_refs": [start_kill["source_ref"]],
+            "confidence": 1.0,
+            "attributes": {"kill_index": start_kill["kill_index"]},
+            "limitations": [],
+        })
+        event_ref = f"{analysis_ref}:switch-chain:{start_kill['kill_index']}"
+        row = {
+            "event_ref": event_ref,
+            "row_kind": "switch_chain",
+            "start_ms": start_kill["time_ms"],
+            "end_ms": episode["settle_time_ms"],
+            "chain_ref": episode["episode_ref"],
+            "classification": "stats_bounded_switch_chain",
+            "previous_outcome_association_ref": None,
+            "previous_target_track_ref": None,
+            "previous_outcome_time_ms": None,
+            "leave_time_ms": start_kill["time_ms"],
+            "candidate_count": episode["candidate_count"],
+            "selection_observation_ref": None,
+            "selected_target_track_ref": None,
+            "next_target_track_ref": episode["next_target_track_ref"],
+            "acquire_time_ms": episode["acquire_time_ms"],
+            "settle_time_ms": episode["settle_time_ms"],
+            "transition_time_ms": episode["acquire_time_ms"] - start_kill["time_ms"],
+            "transition_distance_px": episode["transition_distance_px"],
+            "transition_direction_deg": episode["transition_direction_deg"],
+            "transition_path_length_px": episode["transition_path_length_px"],
+            "path_efficiency": episode["path_efficiency"],
+            "settle_duration_ms": episode["settle_time_ms"] - episode["acquire_time_ms"],
+            "first_shot_event_ref": None,
+            "first_shot_latency_ms": None,
+            "first_damage_event_ref": None,
+            "first_damage_latency_ms": None,
+            "carry_over_overshoot": None,
+            "carry_over_overshoot_observation_ref": None,
+            "terminal_correction_observed": None,
+            "terminal_correction_observation_ref": None,
+            "limitations": [],
+        }
+        rows.append(row)
+        event_sources = sorted({
+            *visual_source_refs, start_kill["source_ref"],
+        })
+        def state(kind: str, time_ms: int, actor_refs: Sequence[str]) -> str:
+            state_ref = f"{event_ref}:{kind}"
+            state_events.append({
+                "event_id": state_ref,
+                "event_kind": kind,
+                "start_ms": time_ms,
+                "end_ms": time_ms,
+                "actor_refs": list(actor_refs),
+                "source_refs": event_sources,
+                "confidence": 1.0,
+                "attributes": {"row_ref": event_ref},
+                "limitations": [],
+            })
+            return state_ref
+        transition_ref = state("transition", start_kill["time_ms"], [episode["next_target_track_ref"]])
+        acquire_ref = state("next_target_acquired", episode["acquire_time_ms"], [episode["next_target_track_ref"]])
+        settle_ref = state("settle", episode["settle_time_ms"], [episode["next_target_track_ref"]])
+        segment_specs.extend([
+            {
+                "id": f"{event_ref}:segment:transition",
+                "title": "target_switching.transition",
+                "focus": start_kill["time_ms"],
+                "events": [event_ref, start_kill["event_ref"], transition_ref],
+                "metrics": [
+                    "metric:target_switching.transition_time_ms@target_switching.transition_time_ms.v1",
+                    "metric:target_switching.path_efficiency@target_switching.path_efficiency.v1",
+                ],
+                "row": row,
+            },
+            {
+                "id": f"{event_ref}:segment:acquisition",
+                "title": "target_switching.acquisition",
+                "focus": episode["acquire_time_ms"],
+                "events": [event_ref, acquire_ref],
+                "metrics": ["metric:target_switching.transition_time_ms@target_switching.transition_time_ms.v1"],
+                "row": row,
+            },
+            {
+                "id": f"{event_ref}:segment:terminal",
+                "title": "target_switching.terminal_control",
+                "focus": episode["settle_time_ms"],
+                "events": [event_ref, settle_ref],
+                "metrics": ["metric:target_switching.settle_duration_ms@target_switching.settle_duration_ms.v1"],
+                "row": row,
+            },
+        ])
+    rows.sort(key=lambda row: (row["start_ms"], row["event_ref"]))
+    row_event_refs = [row["event_ref"] for row in rows]
+    segment_refs = [spec["id"] for spec in segment_specs]
+    metric_specs = {
+        "target_switching.transition_time_ms": ("ms", "transition_time_ms"),
+        "target_switching.transition_distance_px": ("px", "transition_distance_px"),
+        "target_switching.path_efficiency": ("ratio", "path_efficiency"),
+        "target_switching.settle_duration_ms": ("ms", "settle_duration_ms"),
+    }
+    metrics = {
+        key: _metric_record(
+            key,
+            [1.0 if row[field] is True else 0.0 if row[field] is False else row[field] for row in rows],
+            unit=unit,
+            analysis_ref=analysis_ref,
+            event_refs=row_event_refs,
+            segment_refs=segment_refs,
+            condition_refs=["condition:target_switching:stats_kill_bounded_chain"],
+            limitations=["comparison_only_no_static_threshold"],
+        )
+        for key, (unit, field) in metric_specs.items()
+    }
+    row_events = [{
+        "event_id": row["event_ref"],
+        "event_kind": row["row_kind"],
+        "start_ms": row["start_ms"],
+        "end_ms": row["end_ms"],
+        "actor_refs": [row["next_target_track_ref"]],
+        "source_refs": sorted({
+            *visual_source_refs,
+            kills_by_ref[episode["kill_event_ref"]]["source_ref"],
+        }),
+        "confidence": 1.0,
+        "attributes": {
+            key: value for key, value in row.items()
+            if key not in {"event_ref", "row_kind", "start_ms", "end_ms", "limitations"}
+            and value is not None
+        },
+        "limitations": [],
+    } for row, episode in zip(rows, expected_episodes)]
+    event_bundle = {
+        "schema_version": "event_bundle.v1",
+        "analysis_ref": analysis_ref,
+        "events": sorted(
+            [*stats_events.values(), *row_events, *state_events],
+            key=lambda event: (event["start_ms"], event["event_kind"], event["event_id"]),
+        ),
+        "outcome_associations": [],
+    }
+    from .analysis_evidence import validate_event_bundle_v1, validate_metric_record_v1
+    event_bundle = validate_event_bundle_v1(event_bundle)
+    for metric in metrics.values():
+        validate_metric_record_v1(metric)
+    evidence_segments = [
+        _segment(
+            analysis_ref=analysis_ref,
+            window=window,
+            segment_id=spec["id"],
+            title_key=spec["title"],
+            start_ms=spec["row"]["start_ms"],
+            end_ms=spec["row"]["end_ms"],
+            focus_ms=spec["focus"],
+            metric_refs=spec["metrics"],
+            event_refs=spec["events"],
+            limitations=[],
+        )
+        for spec in segment_specs
+    ]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "analysis_version": ANALYSIS_VERSION,
+        "analysis_ref": analysis_ref,
+        "analysis_type": "target_switching",
+        "support_status": "supported" if quality.get("status") == "accepted" else "partial",
+        "processed_rows": rows,
+        "processed_event_tables": _processed_tables(analysis_ref, rows),
+        "metrics": metrics,
+        "evidence_segments": evidence_segments,
+        "comparison": payload.get("comparison"),
+        "limitations": [],
+        "evidence_extension": {
+            "event_bundle": event_bundle,
+            "metric_records": list(metrics.values()),
+            "evidence_segments": evidence_segments,
+            "processed_event_tables": _processed_tables(analysis_ref, rows),
+            "required_outcome_associations": [],
+            "required_signal_bundle": source_signal_bundle,
+            "required_sample_sets": source_sample_sets,
+            "required_canonical_time_window": dict(window),
+        },
+    }
+
+
+def _outcome_only_switching_result(
+    analysis_ref: str,
+    window: Mapping[str, Any],
+    comparison: object,
+    limitation: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "analysis_version": ANALYSIS_VERSION,
+        "analysis_ref": analysis_ref,
+        "analysis_type": "target_switching",
+        "support_status": "outcome_only",
+        "processed_rows": [],
+        "processed_event_tables": [],
+        "metrics": {},
+        "evidence_segments": [],
+        "comparison": comparison,
+        "limitations": [limitation],
+        "evidence_extension": {
+            "event_bundle": {
+                "schema_version": "event_bundle.v1",
+                "analysis_ref": analysis_ref,
+                "events": [],
+                "outcome_associations": [],
+            },
+            "metric_records": [],
+            "evidence_segments": [],
+            "processed_event_tables": [],
+            "required_outcome_associations": [],
+            "required_signal_bundle": None,
+            "required_sample_sets": [],
+            "required_canonical_time_window": dict(window),
+        },
+    }
+
+
 def analyze_target_switching_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, Mapping) or payload.get("schema_version") != INPUT_SCHEMA_VERSION:
         raise TargetSwitchingAnalysisError("target switching input schema is unsupported")
+    return _analyze_stats_bounded_switching_v1(payload)
+
+
+def _legacy_analyze_target_switching_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
     analysis_ref = _ref(payload.get("analysis_ref"), "analysis_ref")
     window = payload.get("canonical_time_window")
     if not isinstance(window, Mapping):
@@ -817,6 +1457,36 @@ def analyze_target_switching_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
         next_association = associations.get(next_outcome_ref)
         first_damage_time = None
         if (
+            next_association is not None
+            and next_association["trusted"]
+            and next_association["target_track_ref"] == next_track
+            and next_association["temporal_semantics"] == "continuous_lg"
+        ):
+            if raw.get("first_shot_time_ms") is not None or raw.get("first_damage_time_ms") is not None:
+                raise TargetSwitchingAnalysisError(
+                    "continuous LG chain cannot claim first shot or first damage"
+                )
+            requested_outcome_time = raw.get("next_outcome_time_ms")
+            if (
+                requested_outcome_time is not None
+                and _time(
+                    requested_outcome_time,
+                    "next_outcome_time_ms",
+                    minimum=acquire_time,
+                    maximum=end_ms,
+                ) != next_association["outcome_time_ms"]
+            ):
+                raise TargetSwitchingAnalysisError(
+                    "continuous LG outcome time does not match source evidence"
+                )
+            first_shot_time = None
+            required_associations[next_association["association_id"]] = (
+                next_association["canonical"]
+            )
+            limitations.extend([
+                "first_shot_unobservable", "first_damage_unobservable",
+            ])
+        elif (
             next_association is not None
             and next_association["trusted"]
             and next_association["target_track_ref"] == next_track
@@ -1180,7 +1850,9 @@ def extend_analysis_evidence_with_target_switching_v1(
         for bundle in projected["event_bundles"]
         for association in bundle["outcome_associations"]
         if association["availability"] == "available"
-        and association["association_kind"] in {"directly_observed", "validated_aligned"}
+        and association["association_kind"] in {
+            "directly_observed", "validated_aligned", "validated_continuous_lg",
+        }
     }
     for required in required_associations:
         if not isinstance(required, Mapping):
