@@ -844,7 +844,62 @@ class FrontendAnalysisDataResponse(BaseModel):
     event_distribution: list[FrontendAnalysisDataDistribution]
     target_relative_error_radius: TargetRelativeErrorRadius
 
-PROVIDER_KINDS = Literal["builtin", "custom_openai_compatible"]
+
+class FrontendAnalysisFamilyDataRow(BaseModel):
+    kind: Literal[
+        "switch_chain",
+        "tracking_fixed_window",
+        "tracking_loss",
+        "tracking_reacquisition",
+        "tracking_change_response",
+        "static_flick",
+    ]
+    timing: dict[str, int]
+    metrics: dict[str, float]
+    limitations: list[str] = Field(default_factory=list)
+
+
+class FrontendAnalysisFamilyDataResponse(BaseModel):
+    schema_version: Literal["frontend_analysis_family_data.v1"]
+    analysis_ref: str
+    family: Literal["switching", "tracking", "flicking", "unsupported"]
+    availability: Literal["available", "unavailable"]
+    reason: Optional[str] = None
+    limitations: list[str] = Field(default_factory=list)
+    total_count: int = 0
+    next_offset: Optional[int] = None
+    rows: list[FrontendAnalysisFamilyDataRow] = Field(default_factory=list)
+
+
+class CurrentTrainingItem(BaseModel):
+    display_name: Optional[str] = None
+    scenario_profile_ref: Optional[str] = None
+    scenario_availability: Literal["available", "unavailable"]
+    status: Literal["planned", "active", "completed", "cancelled"]
+    practice_condition: Optional[str] = None
+    cue: Optional[str] = None
+    dose_guardrail: Optional[str] = None
+    observation: Optional[str] = None
+    retest: Optional[str] = None
+
+
+class CurrentTrainingResponse(BaseModel):
+    schema_version: Literal["current_training.v1"]
+    availability: Literal["available", "unavailable"]
+    reason: Optional[Literal["no_current_plan"]] = None
+    plan_status: Optional[Literal["active", "paused"]] = None
+    total_item_count: int
+    visible_item_count: int
+    limitations: list[str] = Field(default_factory=list)
+    items: list[CurrentTrainingItem] = Field(default_factory=list)
+
+
+PROVIDER_KINDS = Literal[
+    "builtin",
+    "custom_openai_compatible",
+    "custom_anthropic_compatible",
+]
+CUSTOM_PROVIDER_KINDS = {"custom_openai_compatible", "custom_anthropic_compatible"}
 PROVIDER_STATUSES = Literal[
     "unconfigured",
     "auth_expired",
@@ -890,7 +945,7 @@ class ProviderProfileCreate(BaseModel):
     ) -> Optional[str]:
         if value is not None:
             value = value.strip() or None
-        if info.data.get("kind") == "custom_openai_compatible" and not value:
+        if info.data.get("kind") in CUSTOM_PROVIDER_KINDS and not value:
             raise ValueError("base_url is required for custom providers")
         if value:
             parsed = urlsplit(value)
@@ -906,7 +961,7 @@ class ProviderProfileCreate(BaseModel):
     ) -> Optional[str]:
         if value is not None:
             value = value.strip() or None
-        if info.data.get("kind") == "custom_openai_compatible" and not value:
+        if info.data.get("kind") in CUSTOM_PROVIDER_KINDS and not value:
             raise ValueError("api_key is required for custom providers")
         return value
 
@@ -982,6 +1037,35 @@ class ProviderProfileStatusResponse(BaseModel):
     configured: bool
     status: PROVIDER_STATUSES
     message: str
+
+
+class CustomProviderModelListRequest(BaseModel):
+    protocol: Literal["openai-completions", "anthropic-messages"]
+    base_url: str
+    api_key: str = Field(repr=False)
+
+    @field_validator("base_url")
+    @classmethod
+    def _custom_provider_url(cls, value: str) -> str:
+        value = value.strip()
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("base_url must be a valid HTTP(S) URL")
+        if parsed.username or parsed.password:
+            raise ValueError("base_url must not contain credentials")
+        return value.rstrip("/")
+
+    @field_validator("api_key")
+    @classmethod
+    def _custom_provider_api_key(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("api_key must not be blank")
+        return value
+
+
+class CustomProviderModelListResponse(BaseModel):
+    models: list[str]
 
 
 class ProviderApiKeyRequest(BaseModel):

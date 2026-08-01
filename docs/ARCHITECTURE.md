@@ -297,13 +297,13 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 稳定边界：
 
 - pinned Pi 的 built-in provider/model catalog 是产品 catalog；Aiming Cookie 不维护第二份 provider/model allow-list，所有 Pi 支持的 built-in 必须被动态暴露并接通为可选项；
-- 自定义 OpenAI-compatible profile 至少保存 provider name、base URL、API key 配置状态和 model ID；当前 owner/profile 的 selected provider/model 是本地 canonical selection；
+- 自定义 profile 使用显式 `OpenAI-compatible` 或 `Anthropic-compatible` 协议，至少保存 provider name、base URL、API key 配置状态和 model ID；协议不得从 URL 文本猜测。Anthropic-compatible 的 base URL 是服务根地址，Pi 负责附加 `/v1` 路径；历史输入末尾的 `/v1` 在保存和运行时规范化为根地址。连接前可以用对应协议短暂读取模型列表，但 API key 不得进入公开响应、日志或浏览器存储；当前 owner/profile 的 selected provider/model 是本地 canonical selection；
 - API key 可以作为 local-first 权衡明文持久化在 app-owned 本地 SQLite/config；OS secure store 可以作为后续增强，但不是实现或发布前置条件；
 - UI/API 只允许 set/replace/delete credential，并返回 `configured`、`auth_mode`、`credential_source`、`needs_reauth`、`last_test` 等状态，不得读回 secret；
 - auth/refresh operation 对 credential 状态的完成写入必须绑定其启动时 revision；旧 operation 的成功 credential 或失败 `needs_reauth` 标记都不得覆盖、污染用户随后替换的新 credential；
 - `LLM_PROVIDER` 与 `kovaak_tracker/coach/providers.json` 只保留为旧环境/配置兼容入口，不得继续充当 provider/model 事实源；迁移必须保留显式选择，不能把 obsolete `deepseek-chat` 静默改写为其它 model；
 - active Coach turn 只能使用 owner 当前 selected local profile；Analysis worker 不得加载 Provider 或生成 narration，新 `analysis_result.v2` 只保留 `not_requested` / `null` 兼容 envelope，旧 v1/unversioned narration 继续可读；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；
-- provider/model 目录、API key/ambient auth、OAuth/device-code 和 OpenAI-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
+- provider/model 目录、API key/ambient auth、OAuth/device-code 以及 OpenAI-compatible / Anthropic-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
 - Provider/model/credential/sidecar 失败只影响 Coach readiness，不得阻塞 Analysis、History 或 deterministic report/prescription；
 - Pi coding-agent、shell、filesystem 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；
 - 首次启动以 Provider onboarding 为主路径，但允许用户明确跳过并进入本地分析；未配置 Provider 时没有 Coach 对话、AI 解释、长期档案维护、训练计划或 Coach 产品命令，只有本地指标、确定性诊断、规则化提示、History 和可恢复的 Provider 配置入口。

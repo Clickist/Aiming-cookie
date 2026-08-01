@@ -31,7 +31,7 @@ function requiredString(raw: Record<string, unknown>, field: string): string {
   return value.trim();
 }
 
-function normalizeHttpBaseUrl(value: string): string {
+function normalizeHttpBaseUrl(value: string, kind?: unknown): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -41,7 +41,10 @@ function normalizeHttpBaseUrl(value: string): string {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new ProviderProfileError("invalid_profile", "model.base_url must be a valid HTTP(S) URL");
   }
-  return value.replace(/\/+$/, "");
+  const normalized = value.replace(/\/+$/, "");
+  return kind === "custom_anthropic_compatible" && normalized.endsWith("/v1")
+    ? normalized.slice(0, -3)
+    : normalized;
 }
 
 function parseRuntimeCredential(
@@ -100,7 +103,7 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
     };
   }
 
-  if (raw.kind === "custom_openai_compatible") {
+  if (raw.kind === "custom_openai_compatible" || raw.kind === "custom_anthropic_compatible") {
     const credential = parseRuntimeCredential(raw, "api_key");
     if (!credential || credential.type !== "api_key" || !credential.key) {
       throw new ProviderProfileError(
@@ -112,10 +115,10 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
     const providerId =
       raw.provider_id === undefined ? providerName : requiredString(raw, "provider_id");
     return {
-      kind: "custom_openai_compatible",
+      kind: raw.kind,
       provider_id: providerId,
       provider_name: providerName,
-      base_url: normalizeHttpBaseUrl(requiredString(raw, "base_url")),
+      base_url: normalizeHttpBaseUrl(requiredString(raw, "base_url"), raw.kind),
       credential,
       model_id: requiredString(raw, "model_id"),
     };

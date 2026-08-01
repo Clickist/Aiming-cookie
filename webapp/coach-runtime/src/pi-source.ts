@@ -32,6 +32,13 @@ export async function loadPiOpenAiCompletions(): Promise<Record<string, unknown>
   >;
 }
 
+export async function loadPiAnthropicMessages(): Promise<Record<string, unknown>> {
+  return (await import(sourceModule("packages", "ai", "src", "api", "anthropic-messages.lazy.ts"))) as Record<
+    string,
+    unknown
+  >;
+}
+
 export async function loadPiAgent(): Promise<Record<string, unknown>> {
   return (await import(sourceModule("packages", "agent", "src", "index.ts"))) as Record<string, unknown>;
 }

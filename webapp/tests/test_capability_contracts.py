@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from webapp.backend.read_models import (
+    build_frontend_analysis_family_data_v1,
     build_frontend_analysis_data_v1,
     build_capture_status_v1,
     build_product_state_v1,
@@ -63,6 +64,85 @@ def _tracking_artifact_for_data_projection(analysis_ref: str, *, sample_count: i
     }
 
 
+def _family_artifact(analysis_ref: str) -> dict:
+    return {
+        "analysis_ref": analysis_ref,
+        "canonical_time_window": {"start_ms": 1_000, "end_ms": 2_000},
+        "limitations": ["visual_quality_limited"],
+        "event_bundles": [{
+            "events": [
+                {
+                    "event_id": f"{analysis_ref}:switch:1",
+                    "event_kind": "switch_chain",
+                    "start_ms": 1_100,
+                    "end_ms": 1_260,
+                    "attributes": {
+                        "leave_time_ms": 1_100,
+                        "acquire_time_ms": 1_180,
+                        "settle_time_ms": 1_260,
+                        "transition_time_ms": 80,
+                        "transition_distance_px": 200,
+                        "path_efficiency": 0.8,
+                        "settle_duration_ms": 80,
+                        "first_shot_latency_ms": 50,
+                        "selected_target_track_ref": "target:private",
+                    },
+                    "limitations": ["chain_limited"],
+                },
+                {
+                    "event_id": f"{analysis_ref}:switch:2",
+                    "event_kind": "switch_chain",
+                    "start_ms": 1_600,
+                    "end_ms": 1_760,
+                    "attributes": {
+                        "leave_time_ms": 1_600,
+                        "acquire_time_ms": 1_680,
+                        "settle_time_ms": 1_760,
+                        "transition_time_ms": 80,
+                        "transition_distance_px": 180,
+                        "path_efficiency": 0.9,
+                        "settle_duration_ms": 80,
+                    },
+                    "limitations": [],
+                },
+                {
+                    "event_id": f"{analysis_ref}:tracking:1",
+                    "event_kind": "tracking_change_response",
+                    "start_ms": 1_300,
+                    "end_ms": 1_360,
+                    "attributes": {
+                        "observed_change_response_ms": 60,
+                        "alignment_latency_ms": 20,
+                        "post_change_error_px": 3.5,
+                        "target_track_ref": "target:private",
+                    },
+                    "limitations": [],
+                },
+                {
+                    "event_id": f"{analysis_ref}:flick:1",
+                    "event_kind": "static_flick",
+                    "start_ms": 1_400,
+                    "end_ms": 1_500,
+                    "attributes": {
+                        "peak_ms": 1_430,
+                        "settle_end_ms": 1_500,
+                        "movement_duration_ms": 80,
+                        "accel_duration_ms": 30,
+                        "decel_duration_ms": 50,
+                        "settle_duration_ms": 20,
+                        "peak_speed": 42.0,
+                        "path_efficiency": 0.9,
+                        "corrective_count": 1,
+                        "legacy_event_ref": "flick:private",
+                    },
+                    "limitations": [],
+                },
+            ],
+        }],
+        "raw_trace": [{"x": 0, "y": 0}],
+    }
+
+
 def test_frontend_analysis_data_projection_is_bounded_and_irreversible():
     projection = build_frontend_analysis_data_v1(
         analysis_ref="analysis:71",
@@ -107,6 +187,138 @@ def test_frontend_analysis_data_projection_is_bounded_and_irreversible():
     }
 
 
+def test_frontend_analysis_family_data_is_version_dispatched_paginated_and_irreversible():
+    artifact = _family_artifact("analysis:72")
+    switching = build_frontend_analysis_family_data_v1(
+        analysis_ref="analysis:72",
+        analysis_type="target_switching",
+        analysis_version="target_switching.v1",
+        input_mode="multimodal",
+        artifact=artifact,
+        limit=1,
+        offset=0,
+    )
+
+    assert switching == {
+        "schema_version": "frontend_analysis_family_data.v1",
+        "analysis_ref": "analysis:72",
+        "family": "switching",
+        "availability": "available",
+        "reason": None,
+        "limitations": ["visual_quality_limited"],
+        "total_count": 2,
+        "next_offset": 1,
+        "rows": [{
+            "kind": "switch_chain",
+            "timing": {
+                "kill_ms": 100,
+                "transition_ms": 100,
+                "acquire_ms": 180,
+                "settle_ms": 260,
+            },
+            "metrics": {
+                "transition_time_ms": 80.0,
+                "transition_distance_px": 200.0,
+                "path_efficiency": 0.8,
+                "settle_duration_ms": 80.0,
+            },
+            "limitations": ["chain_limited"],
+        }],
+    }
+    serialized = json.dumps(switching)
+    assert "selected_target" not in serialized
+    assert "first_shot" not in serialized
+    assert "raw_trace" not in serialized
+    assert "event_id" not in serialized
+    assert "actor_refs" not in serialized
+    assert "source_refs" not in serialized
+    assert "attributes" not in serialized
+
+    tracking = build_frontend_analysis_family_data_v1(
+        analysis_ref="analysis:72",
+        analysis_type="continuous_tracking",
+        analysis_version="continuous_tracking.v1",
+        input_mode="multimodal",
+        artifact=artifact,
+        limit=1,
+        offset=0,
+    )
+    assert tracking["family"] == "tracking"
+    assert tracking["rows"] == [{
+        "kind": "tracking_change_response",
+        "timing": {"start_ms": 300, "end_ms": 360},
+        "metrics": {
+            "observed_change_response_ms": 60.0,
+            "alignment_latency_ms": 20.0,
+            "post_change_error_px": 3.5,
+        },
+        "limitations": [],
+    }]
+
+    native_flicking = build_frontend_analysis_family_data_v1(
+        analysis_ref="analysis:72",
+        analysis_type="flicking",
+        analysis_version="native_flicking.v1",
+        input_mode="input_native",
+        artifact=artifact,
+        limit=1,
+        offset=0,
+    )
+    assert native_flicking["family"] == "flicking"
+    assert native_flicking["rows"][0]["timing"] == {
+        "start_ms": 400,
+        "peak_ms": 430,
+        "movement_end_ms": 480,
+        "settle_end_ms": 500,
+    }
+    assert native_flicking["rows"][0]["metrics"] == {
+        "accel_duration_ms": 30.0,
+        "decel_duration_ms": 50.0,
+        "settle_duration_ms": 20.0,
+        "peak_speed": 42.0,
+        "path_efficiency": 0.9,
+        "corrective_count": 1.0,
+    }
+
+    multimodal_flicking = build_frontend_analysis_family_data_v1(
+        analysis_ref="analysis:72",
+        analysis_type="flicking",
+        analysis_version="native_flicking.v1",
+        input_mode="multimodal",
+        artifact=artifact,
+        limit=1,
+        offset=0,
+    )
+    assert multimodal_flicking["availability"] == "available"
+
+    legacy = build_frontend_analysis_family_data_v1(
+        analysis_ref="analysis:72",
+        analysis_type="flicking",
+        analysis_version="analysis_result.v1",
+        input_mode="video_fallback",
+        artifact=artifact,
+        limit=1,
+        offset=0,
+    )
+    assert legacy["availability"] == "unavailable"
+    assert legacy["family"] == "flicking"
+    assert legacy["reason"] == "family_detail_requires_input_native_flicking"
+    assert legacy["rows"] == []
+
+    fallback = build_frontend_analysis_family_data_v1(
+        analysis_ref="analysis:72",
+        analysis_type="flicking",
+        analysis_version="native_flicking.v1",
+        input_mode="video_fallback",
+        artifact=artifact,
+        limit=1,
+        offset=0,
+    )
+    assert fallback["availability"] == "unavailable"
+    assert fallback["family"] == "flicking"
+    assert fallback["reason"] == "family_detail_requires_input_native_flicking"
+
+
 @pytest.mark.asyncio
 async def test_frontend_analysis_data_route_reads_only_the_owned_committed_revision(monkeypatch):
     session_id = await queue.enqueue("data-owner", "", "")
@@ -145,6 +357,54 @@ async def test_frontend_analysis_data_route_reads_only_the_owned_committed_revis
     assert allowed.status_code == 200, allowed.text
     assert allowed.json()["analysis_ref"] == f"analysis:{session_id}"
     assert "artifact_ref" not in allowed.text
+    assert forbidden.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_frontend_analysis_family_data_route_reads_owned_revision_and_uses_persisted_dispatch(monkeypatch):
+    session_id = await queue.enqueue("family-owner", "", "")
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (json.dumps({
+            "analysis_type": "target_switching",
+            "analysis_version": "target_switching.v1",
+            "input_mode": "multimodal",
+            "evidence": {"derived_artifact": {
+                "artifact_ref": f"analysis:{session_id}:evidence:family",
+                "evidence_revision": "sha256:family",
+            }},
+        }), session_id),
+    )
+    await conn.commit()
+
+    async def read_artifact(**kwargs):
+        assert kwargs == {
+            "owner_id": "family-owner",
+            "analysis_ref": f"analysis:{session_id}",
+            "artifact_ref": f"analysis:{session_id}:evidence:family",
+            "evidence_revision": "sha256:family",
+        }
+        return _family_artifact(f"analysis:{session_id}")
+
+    monkeypatch.setattr(routes_mod.evidence_store, "read_analysis_evidence_artifact", read_artifact)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        allowed = await client.get(
+            f"/api/sessions/{session_id}/analysis-data/family?limit=1",
+            headers={"X-User-Id": "family-owner"},
+        )
+        forbidden = await client.get(
+            f"/api/sessions/{session_id}/analysis-data/family",
+            headers={"X-User-Id": "other-owner"},
+        )
+
+    assert allowed.status_code == 200, allowed.text
+    payload = allowed.json()
+    assert payload["schema_version"] == "frontend_analysis_family_data.v1"
+    assert payload["family"] == "switching"
+    assert payload["rows"][0]["kind"] == "switch_chain"
+    assert "artifact_ref" not in allowed.text
+    assert "selected_target" not in allowed.text
     assert forbidden.status_code == 403
 
 

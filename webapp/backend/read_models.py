@@ -18,6 +18,8 @@ CAPTURE_STATUS_SCHEMA_VERSION = "capture_status.v1"
 TASK_LIST_SCHEMA_VERSION = "task_list.v1"
 TASK_DETAIL_SCHEMA_VERSION = "task_detail.v1"
 ANALYSIS_DATA_SCHEMA_VERSION = "frontend_analysis_data.v1"
+ANALYSIS_FAMILY_DATA_SCHEMA_VERSION = "frontend_analysis_family_data.v1"
+CURRENT_TRAINING_SCHEMA_VERSION = "current_training.v1"
 
 _TASK_PHASE_LABELS = {
     "preparing_training_record": "Preparing training record",
@@ -45,6 +47,11 @@ _FAILURE_DOMAINS = {
 }
 _FORBIDDEN_TEXT = re.compile(
     r"(?:[A-Za-z]:[\\/]|/(?:Users|home|private|tmp|var)/|Traceback|secret|token|password)",
+    re.IGNORECASE,
+)
+_INTERNAL_REF_TEXT = re.compile(
+    r"\b(?:analysis|diagnosis|knowledge|metric|scenario|retest-spec|plan(?:-item)?):"
+    r"[A-Za-z0-9:._@+-]+",
     re.IGNORECASE,
 )
 _PUBLIC_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._@+-]{0,239}$")
@@ -280,6 +287,311 @@ def build_frontend_analysis_data_v1(
             window_start_ms=window_start_ms,
             window_end_ms=window_end_ms,
         ),
+    }
+
+
+def _family_unavailable(
+    *, analysis_ref: str, family: str, reason: str, limitations: list[str],
+) -> dict[str, object]:
+    return {
+        "schema_version": ANALYSIS_FAMILY_DATA_SCHEMA_VERSION,
+        "analysis_ref": analysis_ref,
+        "family": family,
+        "availability": "unavailable",
+        "reason": reason,
+        "limitations": limitations,
+        "total_count": 0,
+        "next_offset": None,
+        "rows": [],
+    }
+
+
+def _family_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    return numeric if math.isfinite(numeric) else None
+
+
+def _family_timestamp(
+    value: object, *, window_start_ms: int, window_end_ms: int,
+) -> int | None:
+    timestamp = _finite_int(value)
+    if timestamp is None or not window_start_ms <= timestamp <= window_end_ms:
+        return None
+    return timestamp - window_start_ms
+
+
+def _family_metrics(attributes: Mapping[str, object], keys: Sequence[str]) -> dict[str, float]:
+    return {
+        key: value
+        for key in keys
+        if (value := _family_number(attributes.get(key))) is not None
+    }
+
+
+def _family_events(artifact: Mapping[str, object]) -> list[Mapping[str, object]]:
+    events = []
+    bundles = artifact.get("event_bundles")
+    for bundle in bundles if isinstance(bundles, list) else []:
+        if not isinstance(bundle, Mapping):
+            continue
+        raw_events = bundle.get("events")
+        for event in raw_events if isinstance(raw_events, list) else []:
+            if isinstance(event, Mapping):
+                events.append(event)
+    return events
+
+
+def _family_row_limitations(event: Mapping[str, object]) -> list[str]:
+    return _safe_analysis_limitations(event.get("limitations"))
+
+
+def _project_switching_rows(
+    events: Sequence[Mapping[str, object]], *, window_start_ms: int, window_end_ms: int,
+) -> list[dict[str, object]]:
+    rows = []
+    metric_keys = (
+        "transition_time_ms", "transition_distance_px", "path_efficiency", "settle_duration_ms",
+    )
+    for event in events:
+        if event.get("event_kind") != "switch_chain":
+            continue
+        attributes = event.get("attributes")
+        kill_ms = _family_timestamp(
+            event.get("start_ms"), window_start_ms=window_start_ms, window_end_ms=window_end_ms,
+        )
+        transition_ms = _family_timestamp(
+            attributes.get("leave_time_ms") if isinstance(attributes, Mapping) else None,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+        )
+        acquire_ms = _family_timestamp(
+            attributes.get("acquire_time_ms") if isinstance(attributes, Mapping) else None,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+        )
+        settle_ms = _family_timestamp(
+            attributes.get("settle_time_ms") if isinstance(attributes, Mapping) else None,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+        )
+        if (
+            not isinstance(attributes, Mapping)
+            or None in {kill_ms, transition_ms, acquire_ms, settle_ms}
+            or not kill_ms <= transition_ms <= acquire_ms <= settle_ms
+        ):
+            continue
+        metrics = _family_metrics(attributes, metric_keys)
+        if len(metrics) != len(metric_keys):
+            continue
+        rows.append({
+            "kind": "switch_chain",
+            "timing": {
+                "kill_ms": kill_ms,
+                "transition_ms": transition_ms,
+                "acquire_ms": acquire_ms,
+                "settle_ms": settle_ms,
+            },
+            "metrics": metrics,
+            "limitations": _family_row_limitations(event),
+        })
+    return rows
+
+
+def _project_tracking_rows(
+    events: Sequence[Mapping[str, object]], *, window_start_ms: int, window_end_ms: int,
+) -> list[dict[str, object]]:
+    metric_keys_by_kind = {
+        "tracking_fixed_window": (
+            "target_relative_error_px", "time_in_radius_ratio", "correction_burden", "sparc",
+        ),
+        "tracking_loss": ("duration_ms",),
+        "tracking_reacquisition": ("reacquisition_latency_ms",),
+        "tracking_change_response": (
+            "observed_change_response_ms", "alignment_latency_ms", "post_change_error_px",
+        ),
+    }
+    rows = []
+    for event in events:
+        kind = event.get("event_kind")
+        metric_keys = metric_keys_by_kind.get(kind) if isinstance(kind, str) else None
+        attributes = event.get("attributes")
+        start_ms = _family_timestamp(
+            event.get("start_ms"), window_start_ms=window_start_ms, window_end_ms=window_end_ms,
+        )
+        end_ms = _family_timestamp(
+            event.get("end_ms"), window_start_ms=window_start_ms, window_end_ms=window_end_ms,
+        )
+        if (
+            metric_keys is None
+            or not isinstance(attributes, Mapping)
+            or start_ms is None
+            or end_ms is None
+            or end_ms < start_ms
+        ):
+            continue
+        metrics = _family_metrics(attributes, metric_keys)
+        if not metrics:
+            continue
+        rows.append({
+            "kind": kind,
+            "timing": {"start_ms": start_ms, "end_ms": end_ms},
+            "metrics": metrics,
+            "limitations": _family_row_limitations(event),
+        })
+    return rows
+
+
+def _project_flicking_rows(
+    events: Sequence[Mapping[str, object]], *, window_start_ms: int, window_end_ms: int,
+) -> list[dict[str, object]]:
+    metric_keys = (
+        "accel_duration_ms", "decel_duration_ms", "settle_duration_ms", "peak_speed",
+        "path_efficiency", "corrective_count",
+    )
+    rows = []
+    for event in events:
+        if event.get("event_kind") != "static_flick":
+            continue
+        attributes = event.get("attributes")
+        start_ms = _family_timestamp(
+            event.get("start_ms"), window_start_ms=window_start_ms, window_end_ms=window_end_ms,
+        )
+        start_absolute_ms = _finite_int(event.get("start_ms"))
+        peak_ms = _family_timestamp(
+            attributes.get("peak_ms") if isinstance(attributes, Mapping) else None,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+        )
+        movement_duration_ms = _finite_int(
+            attributes.get("movement_duration_ms") if isinstance(attributes, Mapping) else None,
+        )
+        movement_end_ms = _family_timestamp(
+            start_absolute_ms + movement_duration_ms
+            if start_absolute_ms is not None and movement_duration_ms is not None else None,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+        )
+        settle_end_ms = _family_timestamp(
+            attributes.get("settle_end_ms") if isinstance(attributes, Mapping) else None,
+            window_start_ms=window_start_ms,
+            window_end_ms=window_end_ms,
+        )
+        if (
+            not isinstance(attributes, Mapping)
+            or None in {start_ms, peak_ms, movement_end_ms, settle_end_ms}
+            or movement_duration_ms is None
+            or movement_duration_ms < 0
+            or not start_ms <= peak_ms <= movement_end_ms <= settle_end_ms
+        ):
+            continue
+        metrics = _family_metrics(attributes, metric_keys)
+        if not metrics:
+            continue
+        rows.append({
+            "kind": "static_flick",
+            "timing": {
+                "start_ms": start_ms,
+                "peak_ms": peak_ms,
+                "movement_end_ms": movement_end_ms,
+                "settle_end_ms": settle_end_ms,
+            },
+            "metrics": metrics,
+            "limitations": _family_row_limitations(event),
+        })
+    return rows
+
+
+def build_frontend_analysis_family_data_v1(
+    *,
+    analysis_ref: str,
+    analysis_type: str,
+    analysis_version: str,
+    input_mode: str,
+    artifact: Mapping[str, object] | None,
+    limit: int,
+    offset: int,
+) -> dict[str, object]:
+    """Return the bounded family detail projection for one persisted analysis version."""
+    if not _PUBLIC_REF.fullmatch(analysis_ref):
+        raise ValueError("analysis family data reference is invalid")
+    dispatch = {
+        ("target_switching", "target_switching.v1"): ("switching", _project_switching_rows),
+        ("continuous_tracking", "continuous_tracking.v1"): ("tracking", _project_tracking_rows),
+        ("flicking", "native_flicking.v1"): ("flicking", _project_flicking_rows),
+    }
+    family_and_projector = dispatch.get((analysis_type, analysis_version))
+    if family_and_projector is None or (
+        analysis_type == "flicking" and input_mode not in {"input_native", "multimodal"}
+    ):
+        reason = (
+            "family_detail_requires_input_native_flicking"
+            if analysis_type == "flicking"
+            else "analysis_family_detail_unavailable"
+        )
+        return _family_unavailable(
+            analysis_ref=analysis_ref,
+            family="flicking" if analysis_type == "flicking" else "unsupported",
+            reason=reason,
+            limitations=[],
+        )
+    family, projector = family_and_projector
+    if artifact is None:
+        return _family_unavailable(
+            analysis_ref=analysis_ref,
+            family=family,
+            reason="family_detail_artifact_unavailable",
+            limitations=[],
+        )
+    if artifact.get("analysis_ref") != analysis_ref:
+        raise ValueError("analysis family data artifact is bound to another analysis")
+    window = artifact.get("canonical_time_window")
+    if not isinstance(window, Mapping):
+        return _family_unavailable(
+            analysis_ref=analysis_ref,
+            family=family,
+            reason="family_detail_window_unavailable",
+            limitations=_safe_analysis_limitations(artifact.get("limitations")),
+        )
+    window_start_ms = _finite_int(window.get("start_ms"))
+    window_end_ms = _finite_int(window.get("end_ms"))
+    if window_start_ms is None or window_end_ms is None or window_end_ms <= window_start_ms:
+        return _family_unavailable(
+            analysis_ref=analysis_ref,
+            family=family,
+            reason="family_detail_window_unavailable",
+            limitations=_safe_analysis_limitations(artifact.get("limitations")),
+        )
+    if limit < 1 or limit > 100 or offset < 0:
+        raise ValueError("analysis family data pagination is invalid")
+    rows = projector(
+        _family_events(artifact),
+        window_start_ms=window_start_ms,
+        window_end_ms=window_end_ms,
+    )
+    rows.sort(key=lambda row: min(row["timing"].values()))
+    limitations = _safe_analysis_limitations(artifact.get("limitations"))
+    if not rows:
+        return _family_unavailable(
+            analysis_ref=analysis_ref,
+            family=family,
+            reason="family_detail_rows_unavailable",
+            limitations=limitations,
+        )
+    total_count = len(rows)
+    page = rows[offset:offset + limit]
+    next_offset = offset + len(page)
+    return {
+        "schema_version": ANALYSIS_FAMILY_DATA_SCHEMA_VERSION,
+        "analysis_ref": analysis_ref,
+        "family": family,
+        "availability": "available",
+        "reason": None,
+        "limitations": limitations,
+        "total_count": total_count,
+        "next_offset": next_offset if next_offset < total_count else None,
+        "rows": page,
     }
 
 
@@ -638,14 +950,123 @@ def resolve_calibration_v1(
     return selected
 
 
+def _safe_current_training_text(value: object, *, maximum: int = 240) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if (
+        not text
+        or len(text) > maximum
+        or _FORBIDDEN_TEXT.search(text)
+        or _INTERNAL_REF_TEXT.search(text)
+    ):
+        return None
+    return text
+
+
+def _reviewed_scenario(scenario_profile_ref_value: object) -> tuple[str | None, str | None]:
+    """Return the safe display name and launch ref for an exact reviewed scenario."""
+    if not isinstance(scenario_profile_ref_value, str) or not _PUBLIC_REF.fullmatch(scenario_profile_ref_value):
+        return None, None
+    try:
+        from kovaak_tracker.scenario_profiles import (
+            load_launch_manifest,
+            load_registry,
+            scenario_profile_ref,
+        )
+
+        registry = load_registry()
+        manifest = load_launch_manifest(registry=registry)
+        active_launch_refs = {
+            entry["scenario_profile_ref"]
+            for entry in manifest["entries"]
+            if entry["status"] == "active"
+        }
+        for profile in registry["entries"]:
+            profile_ref = scenario_profile_ref(profile)
+            if profile["status"] == "active" and profile_ref == scenario_profile_ref_value:
+                display_name = _safe_current_training_text(profile["display_name"])
+                return (
+                    display_name,
+                    profile_ref if profile_ref in active_launch_refs else None,
+                )
+    except (KeyError, OSError, TypeError, ValueError):
+        return None, None
+    return None, None
+
+
+def build_current_training_v1(
+    *,
+    plan: Mapping[str, object] | None,
+    items: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Project the current owner plan with only reviewed public scenario refs."""
+    if plan is None:
+        return {
+            "schema_version": CURRENT_TRAINING_SCHEMA_VERSION,
+            "availability": "unavailable",
+            "reason": "no_current_plan",
+            "plan_status": None,
+            "total_item_count": 0,
+            "visible_item_count": 0,
+            "limitations": [],
+            "items": [],
+        }
+
+    plan_status = plan.get("status")
+    if plan_status not in {"active", "paused"}:
+        raise ValueError("current Training Plan must be active or paused")
+
+    status_order = {"active": 0, "planned": 1, "completed": 2, "cancelled": 3}
+    ordered_items = sorted(
+        (
+            item for item in items
+            if item.get("status") in status_order
+        ),
+        key=lambda item: status_order[str(item["status"])],
+    )
+    projected = []
+    for item in ordered_items[:3]:
+        display_name, launch_ref = _reviewed_scenario(item.get("scenario_profile_ref"))
+        projected.append({
+            "display_name": display_name,
+            "scenario_profile_ref": launch_ref,
+            "scenario_availability": "available" if display_name is not None else "unavailable",
+            "status": item["status"],
+            "practice_condition": _safe_current_training_text(item.get("practice_condition")),
+            "cue": _safe_current_training_text(item.get("cue")),
+            "dose_guardrail": _safe_current_training_text(item.get("dose_guardrail")),
+            "observation": None,
+            "retest": _safe_current_training_text(item.get("review_date")),
+        })
+    limitations = []
+    if plan_status == "paused":
+        limitations.append("plan_paused")
+    if len(ordered_items) > len(projected):
+        limitations.append("items_limited_to_three")
+    return {
+        "schema_version": CURRENT_TRAINING_SCHEMA_VERSION,
+        "availability": "available",
+        "reason": None,
+        "plan_status": plan_status,
+        "total_item_count": len(ordered_items),
+        "visible_item_count": len(projected),
+        "limitations": limitations,
+        "items": projected,
+    }
+
+
 __all__ = [
     "ANALYSIS_DATA_SCHEMA_VERSION",
+    "CURRENT_TRAINING_SCHEMA_VERSION",
     "CAPTURE_STATUS_SCHEMA_VERSION",
     "PRODUCT_STATE_SCHEMA_VERSION",
     "TASK_DETAIL_SCHEMA_VERSION",
     "TASK_LIST_SCHEMA_VERSION",
+    "build_frontend_analysis_family_data_v1",
     "build_capture_status_v1",
     "build_frontend_analysis_data_v1",
+    "build_current_training_v1",
     "build_product_state_v1",
     "build_task_detail_v1",
     "build_task_list_v1",
