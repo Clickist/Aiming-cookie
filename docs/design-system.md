@@ -11,7 +11,7 @@
 3. 本文：token/theme/component 的实现规则；
 4. 当前前端代码：实际可执行状态。
 
-原 `webapp/frontend/app/globals.css` 与 History / Run / Evidence prototype 已在 frontend reconstruction Task 1 删除。当前尚无被批准的 executable token 入口，也不得恢复旧样式作为新前端视觉基础。重建计划建立新的 token 模块后，应把实际路径补到本节，并以代码、主题测试与截图验证。
+原 `webapp/frontend/app/globals.css` 与 History / Run / Evidence prototype 已在 frontend reconstruction Task 1 删除。`webapp/frontend/ui/tokens.ts` 是唯一被批准的 executable token 入口；它必须与 `DESIGN-cursor.md` 的 palette 一致，并由主题合同测试和截图验证。不得恢复旧样式作为新的视觉基础。
 
 Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是参考，不是 token 或组件事实源。
 
@@ -42,7 +42,7 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 - preference 只保存在本地 UI 存储，不进入 Analysis、Provider auth 或 Coach payload；
 - 首屏在 hydration 前解析主题，避免闪烁；
 - 根级 controller 负责系统同步，设置页只修改 preference；
-- 新实现选择 storage key 和模块路径时，应通过测试冻结，不能从已删除代码默认为长期合同。
+- `webapp/frontend/ui/tokens.ts`、`webapp/frontend/ui/theme-core.ts` 和 `webapp/frontend/ui/theme.tsx` 的模块路径、storage key 与 hydration 行为均由主题合同测试冻结；不能从已删除代码默认为长期合同。
 
 ## 4. Shared foundations
 
@@ -62,11 +62,11 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 - input-native、multimodal、video-fallback 是能力/证据状态，不是装饰性标签；组件应使用一致的 badge、notice、warning 和 disabled 语义；
 - 营销页面不自动继承 Desktop app 的信息密度和组件合同；
 - 旧组件、当前 prototype 或截图只能帮助识别 capability 和状态，不能因为“已有实现”就覆盖新合同；
-- frontend reconstruction 的第一项视觉任务必须建立唯一 executable token 入口，再允许页面拼装。
+- 页面只能消费 `webapp/frontend/ui/tokens.ts` 定义的唯一 executable token 入口。
 
 ## 6. Review gate
 
-新 executable token 层建立后，至少验证：
+每次修改 executable token 层，至少验证：
 
 1. token 集在 light/dark 完整且无 raw color 泄漏；
 2. System 首次启动、系统实时变化、显式 Light/Dark 固定三条路径；

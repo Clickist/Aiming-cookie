@@ -1,6 +1,9 @@
 :root {
   color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: Outfit, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  font-family: var(--font-ui);
 }
 
 :root[data-theme="dark"] {
@@ -23,6 +26,7 @@ body {
   font-size: 14px;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -59,19 +63,23 @@ a {
   border-radius: 6px;
   cursor: pointer;
   text-decoration: none;
-  transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out, transform 160ms ease-out;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
 .ac-button {
-  min-height: 40px;
-  gap: 8px;
-  padding: 8px 16px;
-  font-weight: 650;
+  height: 40px;
+  gap: 7px;
+  padding: 0 16px;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .ac-button[data-size="compact"] {
-  min-height: 36px;
-  padding: 6px 12px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12.5px;
 }
 
 .ac-button[data-variant="primary"] {
@@ -80,12 +88,14 @@ a {
 }
 
 .ac-button[data-variant="secondary"] {
-  border-color: var(--outline);
-  background: var(--surface-container);
+  background: var(--surface-container-high);
+  border-color: var(--outline-variant);
   color: var(--on-surface);
 }
 
 .ac-button[data-variant="ghost"] {
+  background: transparent;
+  border-color: var(--outline-variant);
   color: var(--on-surface-variant);
 }
 
@@ -94,28 +104,37 @@ a {
   color: var(--on-error);
 }
 
-.ac-button:hover:not(:disabled) {
-  filter: brightness(0.96);
+.ac-button:hover:not(:disabled):not([aria-disabled="true"]) {
+  filter: brightness(0.98);
 }
 
-.ac-button[data-variant="primary"]:active:not(:disabled),
-.ac-button[data-variant="secondary"]:active:not(:disabled) {
-  transform: translateY(0.5px);
+.ac-button[data-variant="primary"]:hover:not(:disabled):not([aria-disabled="true"]) {
+  filter: brightness(1.05);
+}
+
+.ac-button[data-variant="ghost"]:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--surface-container-low);
+  color: var(--on-surface);
 }
 
 .ac-button:disabled,
-.ac-icon-button:disabled,
 .ac-button[aria-disabled="true"],
+.ac-icon-button:disabled,
 .ac-icon-button[aria-disabled="true"] {
   cursor: not-allowed;
-  opacity: 0.55;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  border-color: var(--outline-variant);
+  opacity: 1;
 }
 
 .ac-icon-button {
   width: 36px;
   height: 36px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--on-surface);
+  color: var(--on-surface-variant);
+  font-size: 15px;
 }
 
 .ac-icon-button[data-size="compact"] {
@@ -136,18 +155,21 @@ a {
 .ac-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  width: fit-content;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
   border-radius: 4px;
-  padding: 3px 8px;
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.35;
+  border: 1px solid transparent;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .ac-badge[data-tone="neutral"],
 .ac-status[data-tone="neutral"] {
-  background: var(--surface-container-high);
+  background: var(--surface-container);
   color: var(--on-surface-variant);
 }
 
@@ -159,14 +181,16 @@ a {
 
 .ac-badge[data-tone="success"],
 .ac-status[data-tone="success"] {
-  background: var(--event-kill);
-  color: var(--on-primary);
+  background: transparent;
+  color: var(--event-kill);
+  border-color: var(--outline-variant);
 }
 
 .ac-badge[data-tone="warning"],
 .ac-status[data-tone="warning"] {
-  background: var(--primary-container);
-  color: var(--on-primary-container);
+  background: transparent;
+  color: var(--event-peak);
+  border-color: var(--outline-variant);
 }
 
 .ac-badge[data-tone="error"],
@@ -176,40 +200,62 @@ a {
 }
 
 .ac-notice {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
   border: 1px solid var(--outline-variant);
-  border-inline-start: 3px solid var(--tertiary);
   border-radius: 6px;
-  padding: 12px 14px;
+  padding: 10px 14px;
   background: var(--surface-container-low);
   color: var(--on-surface);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ac-notice[data-tone="info"] {
+  background: var(--tertiary-container);
+  border-color: transparent;
+  color: var(--on-tertiary-container);
 }
 
 .ac-notice[data-tone="warning"] {
-  border-inline-start-color: var(--primary);
+  background: var(--primary-container);
+  border-color: transparent;
+  color: var(--on-primary-container);
 }
 
 .ac-notice[data-tone="error"] {
-  border-inline-start-color: var(--error);
+  background: var(--error-container);
+  border-color: transparent;
+  color: var(--on-error-container);
 }
 
 .ac-notice__title {
-  font-weight: 700;
+  font-weight: 600;
+  margin-bottom: 2px;
 }
 
 .ac-notice__body {
   color: var(--on-surface-variant);
 }
 
+.ac-notice[data-tone="info"] .ac-notice__body,
+.ac-notice[data-tone="warning"] .ac-notice__body,
+.ac-notice[data-tone="error"] .ac-notice__body {
+  color: inherit;
+  opacity: 0.9;
+}
+
 .ac-field {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .ac-field__label {
-  color: var(--on-surface);
-  font-weight: 650;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  font-weight: 500;
 }
 
 .ac-field__hint {
@@ -224,17 +270,18 @@ a {
 
 .ac-field__control {
   width: 100%;
-  min-height: 40px;
-  border: 1px solid var(--outline);
+  height: 38px;
+  border: 1px solid var(--outline-variant);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 0 11px;
   background: var(--surface);
   color: var(--on-surface);
+  font-size: 13px;
 }
 
 .ac-field__control:disabled {
   cursor: not-allowed;
-  background: var(--surface-dim);
+  background: var(--surface-container);
   color: var(--on-surface-variant);
   opacity: 0.7;
 }
@@ -260,31 +307,55 @@ a {
 }
 
 .ac-tabs {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border-bottom: 1px solid var(--outline-variant);
+  background: var(--surface-container);
+  border-radius: 6px;
+  padding: 3px;
+  gap: 2px;
 }
 
 .ac-tab {
-  min-height: 40px;
+  height: 30px;
+  padding: 0 14px;
   border: 0;
-  border-bottom: 2px solid transparent;
-  padding: 8px 12px;
+  border-radius: 4px;
   background: transparent;
   color: var(--on-surface-variant);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 150ms ease-out, color 150ms ease-out, box-shadow 150ms ease-out;
 }
 
 .ac-tab[aria-selected="true"] {
-  border-bottom-color: var(--primary);
+  background: var(--surface);
   color: var(--on-surface);
-  font-weight: 700;
+  box-shadow: 0 0 0 1px var(--outline-variant);
 }
 
 .ac-tab:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.ac-state {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 24px;
+  color: var(--on-surface-variant);
+}
+
+.ac-state__title {
+  color: var(--on-surface);
+  font-weight: 700;
+}
+
+.ac-state[data-tone="error"] .ac-state__title {
+  color: var(--error);
 }
 
 .ac-drawer-backdrop,
@@ -330,7 +401,7 @@ a {
 
 .ac-drawer[data-side="left"] {
   inset-block: 0;
-  inset-inline-start: 0;
+  inset-inline-end: 0;
 }
 
 .ac-drawer[data-side="left"][data-state="closed"] {
@@ -378,23 +449,6 @@ a {
 .ac-toast__close {
   flex: 0 0 auto;
   color: var(--inverse-on-surface);
-}
-
-.ac-state {
-  display: grid;
-  justify-items: start;
-  gap: 8px;
-  padding: 24px;
-  color: var(--on-surface-variant);
-}
-
-.ac-state__title {
-  color: var(--on-surface);
-  font-weight: 700;
-}
-
-.ac-state[data-tone="error"] .ac-state__title {
-  color: var(--error);
 }
 
 .ac-dialog {
