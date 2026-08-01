@@ -4,6 +4,11 @@
 
 ## Active
 
+- [`2026-08-01-web-mock-review-cli-gates-v1.md`](2026-08-01-web-mock-review-cli-gates-v1.md): 点点已确认 Web Mock 审核 -> Web 真实联调 -> Tauri 命令式验收的施工顺序；当前只授权 Mock 审核底座，复用真实 `/api` DTO，不伪装 FastAPI、Provider、worker 或 Tauri runtime。
+
+- [`2026-08-01-custom-provider-protocol-onboarding-v1.md`](2026-08-01-custom-provider-protocol-onboarding-v1.md): 点点已明确将 custom Provider 扩展为 OpenAI-compatible / Anthropic-compatible 两个显式协议，并固定 Onboarding 的 Provider/URL -> API key -> 模型发现 -> 手填 model-ID fallback 流程；内置 Provider 的 catalog 与认证行为保持不变。
+
+- [`2026-07-31-opendesign-frontend-realization-v1.md`](2026-07-31-opendesign-frontend-realization-v1.md)：将已确认的 dark token、KovaaK 连接与无分类 Tab 成绩列表、Switching/Tracking/Flicking 有界 Data 呈现和 Coach 当前训练落实到正式前端；只复用现有 owner/privacy/evidence/Training Plan/confirmation 合同，最终由 Browser、真实 Tauri 与文档归档闭环。
 - [`2026-07-27-launch-family-production-activation.md`](2026-07-27-launch-family-production-activation.md)：使用真实 `Run 1030 / 1032 / 1036` 逐 family 激活 Static、Dynamic 与连续 LG Switching exact hash；Static 复用 input-native analyzer，Dynamic 独立 calibration/holdout，Switching 使用 `Stats kill boundary -> event-local episode`，不建立 persistent identity。四 family 资源矩阵、全量自动化与对话循环已收敛；没有 grounded issue/active plan 的 family 仍不伪造 knowledge/plan ref。不改 PRD / Architecture，不提交私人媒体或 Raw/source payload。
 - [`2026-07-20-complete-coach-analysis-context-v1.md`](2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的规范化 Run facts、数据后处理、专项 analyzer、有界 evidence tools、知识、画像、计划与复测实施顺序；pre-activation 治理已完成，点点已授权从 Task 1 起继续推进，每次只执行一个 Task。
 
