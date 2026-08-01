@@ -27,6 +27,44 @@ test("light and dark themes expose the same semantic token keys", () => {
   }
 });
 
+test("dark tokens match the approved OpenDesign core palette", () => {
+  const approvedDarkRoles = {
+    background: "#141413",
+    surface: "#1c1c1a",
+    "surface-dim": "#181816",
+    "surface-bright": "#2a2a27",
+    "surface-variant": "#33332f",
+    "surface-container-lowest": "#181816",
+    "surface-container-low": "#181816",
+    "surface-container": "#222220",
+    "surface-container-high": "#2a2a27",
+    "surface-container-highest": "#33332f",
+    "on-background": "#eae8e3",
+    "on-surface": "#eae8e3",
+    "on-surface-variant": "#9e9a92",
+    primary: "#ff8a5c",
+    "on-primary": "#1f0a00",
+    "primary-container": "#4a220f",
+    "on-primary-container": "#ffd9c7",
+    tertiary: "#8ab4f2",
+    "tertiary-container": "#1c3a5c",
+    "on-tertiary-container": "#d2e4ff",
+    error: "#ff9aa2",
+    "error-container": "#5c1a20",
+    "on-error-container": "#ffdce0",
+    outline: "#6b6660",
+    "outline-variant": "#3a3833",
+    "event-kill": "#4fdca0",
+    "event-miss": "#ff8792",
+    "event-corrective": "#85c2ff",
+    "event-peak": "#ff8a5c",
+  } as const;
+
+  for (const [role, value] of Object.entries(approvedDarkRoles)) {
+    assert.equal(DARK_TOKENS[role as keyof typeof DARK_TOKENS], value, role);
+  }
+});
+
 test("executable token names match the approved visual contract", () => {
   const visualContract = readFileSync(resolve(frontendRoot, "..", "..", "DESIGN-cursor.md"), "utf8");
   const documentedNames = Array.from(
