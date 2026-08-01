@@ -1,30 +1,58 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   authorizeProviderProfile,
   completeOnboarding,
   createProviderProfile,
+  discoverCustomProviderModels,
   getCaptureStatus,
   getDefaultProviderStatus,
   getProviderAuthCapabilities,
   getProviderAuthOperation,
   getProviderCatalog,
+  listProviderProfiles,
   submitProviderAuthInput,
   testProviderProfile,
 } from "@/lib/api";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import type {
   CaptureStatusV1,
+  CustomProviderKind,
+  CustomProviderProtocol,
   ProviderAuthMode,
   ProviderAuthOperation,
   ProviderCatalogEntry,
+  ProviderProfile,
 } from "@/lib/types";
-import { Button, Field, FieldControl, Notice, Status } from "@/ui/primitives";
+import { Button, Field, FieldControl, Notice } from "@/ui/primitives";
+import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 
 type ConnectionState = "idle" | "loading" | "authorizing" | "testing" | "ready" | "failed";
+type OpenMenu = "provider" | "protocol" | "model" | null;
+type CustomModelState = "idle" | "loading" | "loaded" | "manual";
+
+const CUSTOM_PROVIDER_ID = "custom";
+const CUSTOM_PROTOCOLS: Record<CustomProviderKind, { label: string; discovery: CustomProviderProtocol }> = {
+  custom_openai_compatible: {
+    label: "OpenAI-compatible",
+    discovery: "openai-completions",
+  },
+  custom_anthropic_compatible: {
+    label: "Anthropic-compatible",
+    discovery: "anthropic-messages",
+  },
+};
+
+function customKindForProtocol(protocol: CustomProviderProtocol): CustomProviderKind {
+  return protocol === "anthropic-messages" ? "custom_anthropic_compatible" : "custom_openai_compatible";
+}
+
+function isCustomProviderKind(kind: string): kind is CustomProviderKind {
+  return kind === "custom_openai_compatible" || kind === "custom_anthropic_compatible";
+}
 
 function firstAuthMode(provider: ProviderCatalogEntry | undefined): ProviderAuthMode {
   if (provider?.auth_modes.includes("api_key")) return "api_key";
@@ -36,27 +64,45 @@ function isAuthTerminal(operation: ProviderAuthOperation): boolean {
   return ["succeeded", "failed", "cancelled", "timed_out", "interrupted"].includes(operation.status);
 }
 
+function authModeLabel(mode: ProviderAuthMode): string {
+  if (mode === "api_key") return "API Key";
+  if (mode === "oauth") return "OAuth / 设备码";
+  return "环境凭据";
+}
+
 export function OnboardingFlow() {
   const router = useRouter();
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [providers, setProviders] = useState<ProviderCatalogEntry[]>([]);
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
   const [authMode, setAuthMode] = useState<ProviderAuthMode>("api_key");
   const [apiKey, setApiKey] = useState("");
   const [custom, setCustom] = useState(false);
-  const [customName, setCustomName] = useState("本地 OpenAI-compatible");
-  const [customBaseUrl, setCustomBaseUrl] = useState("http://127.0.0.1:11434/v1");
+  const [customKind, setCustomKind] = useState<CustomProviderKind>("custom_openai_compatible");
+  const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [customModel, setCustomModel] = useState("");
+  const [customModels, setCustomModels] = useState<string[]>([]);
+  const [customModelState, setCustomModelState] = useState<CustomModelState>("idle");
+  const [customModelMessage, setCustomModelMessage] = useState("");
+  const [customModelError, setCustomModelError] = useState(false);
+  const [customProtocolNeedsChoice, setCustomProtocolNeedsChoice] = useState(false);
+  const [customProtocolConfirmed, setCustomProtocolConfirmed] = useState(false);
+  const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("loading");
   const [profileId, setProfileId] = useState<number | null>(null);
+  const [savedProfile, setSavedProfile] = useState<ProviderProfile | null>(null);
   const [operation, setOperation] = useState<ProviderAuthOperation | null>(null);
   const [promptValue, setPromptValue] = useState("");
   const [message, setMessage] = useState("");
+  const [catalogUnavailable, setCatalogUnavailable] = useState(false);
   const [captureOptIn, setCaptureOptIn] = useState(false);
   const [captureStatus, setCaptureStatus] = useState<CaptureStatusV1 | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [desktop, setDesktop] = useState(false);
+  const providerMenuRef = useRef<HTMLDivElement>(null);
+  const protocolMenuRef = useRef<HTMLDivElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
 
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.provider_id === providerId),
@@ -73,9 +119,11 @@ export function OnboardingFlow() {
       getProviderCatalog({ signal: controller.signal }),
       getProviderAuthCapabilities({ signal: controller.signal }),
       getDefaultProviderStatus({ signal: controller.signal }),
-    ]).then(([catalogResult, capabilityResult, statusResult]) => {
+      listProviderProfiles({ signal: controller.signal }),
+    ]).then(([catalogResult, capabilityResult, statusResult, profilesResult]) => {
       if (controller.signal.aborted) return;
       if (catalogResult.status === "fulfilled") {
+        setCatalogUnavailable(false);
         const catalogProviders = catalogResult.value.providers;
         if (capabilityResult.status === "fulfilled") {
           const modes = new Map(capabilityResult.value.providers.map((item) => [item.provider_id, item.auth_modes]));
@@ -86,19 +134,29 @@ export function OnboardingFlow() {
         } else {
           setProviders(catalogProviders);
         }
-        const first = catalogProviders[0];
-        if (first) {
-          setProviderId(first.provider_id);
-          setModelId(first.models[0]?.model_id ?? "");
-          setAuthMode(firstAuthMode(first));
-        }
       } else {
+        setCatalogUnavailable(true);
         setMessage("Provider 目录暂时不可用，请稍后重试。");
       }
       if (statusResult.status === "fulfilled" && statusResult.value.status === "ready") {
         setProfileId(statusResult.value.profile_id);
         setConnectionState("ready");
-        setMessage("现有 Provider 已连接，可以继续。");
+        setCatalogUnavailable(false);
+        setMessage("连接成功 · 已保存的 Provider");
+        if (profilesResult.status === "fulfilled") {
+          const profile = profilesResult.value.profiles.find((item) => item.id === statusResult.value.profile_id) ?? null;
+          setSavedProfile(profile);
+          if (profile && isCustomProviderKind(profile.kind)) {
+            setCustom(true);
+            setCustomKind(profile.kind);
+            setCustomProtocolConfirmed(true);
+            setCustomBaseUrl(profile.base_url ?? "");
+            setCustomModel(profile.model_id);
+          } else if (profile) {
+            setProviderId(profile.provider_id);
+            setModelId(profile.model_id);
+          }
+        }
       } else {
         setConnectionState("idle");
       }
@@ -108,9 +166,62 @@ export function OnboardingFlow() {
 
   useEffect(() => {
     if (!selectedProvider) return;
-    setModelId(selectedProvider.models[0]?.model_id ?? "");
     setAuthMode(firstAuthMode(selectedProvider));
   }, [selectedProvider]);
+
+  useEffect(() => {
+    if (!custom || customProtocolNeedsChoice || !customBaseUrl.trim() || !apiKey.trim()) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setCustomModelState("loading");
+      setCustomModel("");
+      setCustomModelMessage("");
+      setCustomModelError(false);
+      void discoverCustomProviderModels({
+        base_url: customBaseUrl.trim(),
+        api_key: apiKey,
+      }, { signal: controller.signal })
+        .then((response) => {
+          if (controller.signal.aborted) return;
+          setCustomKind(customKindForProtocol(response.protocol));
+          setCustomProtocolConfirmed(true);
+          setCustomModels(response.models);
+          if (response.models.length) {
+            setCustomModelState("loaded");
+          } else {
+            setCustomModelState("manual");
+            setCustomModelMessage("这个 Provider 没有返回可选 Model ID，请手动填写。");
+          }
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setCustomModels([]);
+          setCustomProtocolNeedsChoice(true);
+          setCustomProtocolConfirmed(false);
+          setCustomModelState("manual");
+          setCustomModelMessage("无法自动识别接口协议或读取模型列表，请选择协议后手动填写 Model ID。");
+          setCustomModelError(true);
+        });
+    }, 500);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [apiKey, custom, customBaseUrl, customProtocolNeedsChoice]);
+
+  useEffect(() => {
+    const closeMenus = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (
+        providerMenuRef.current?.contains(target)
+        || protocolMenuRef.current?.contains(target)
+        || modelMenuRef.current?.contains(target)
+      ) return;
+      setOpenMenu(null);
+    };
+    document.addEventListener("mousedown", closeMenus);
+    return () => document.removeEventListener("mousedown", closeMenus);
+  }, []);
 
   useEffect(() => {
     if (!operation || isAuthTerminal(operation)) return;
@@ -122,7 +233,7 @@ export function OnboardingFlow() {
             setConnectionState("testing");
             const status = await testProviderProfile(profileId);
             setConnectionState(status.status === "ready" ? "ready" : "failed");
-            setMessage(status.status === "ready" ? "Provider 已连接并通过测试。" : status.message);
+            setMessage(status.status === "ready" ? `连接成功 · ${custom ? customModel : selectedModelLabel}` : status.message);
           } else if (["failed", "cancelled", "timed_out", "interrupted"].includes(next.status)) {
             setConnectionState("failed");
             setMessage("Provider 认证未完成，可重新尝试。");
@@ -137,7 +248,7 @@ export function OnboardingFlow() {
   }, [operation, profileId]);
 
   useEffect(() => {
-    if (step !== 2 || !desktop) return;
+    if (step !== 3 || !desktop) return;
     void getCaptureStatus()
       .then(setCaptureStatus)
       .catch(() => setCaptureStatus(null));
@@ -150,8 +261,8 @@ export function OnboardingFlow() {
     try {
       const profile = custom
         ? await createProviderProfile({
-            name: customName,
-            kind: "custom_openai_compatible",
+            name: "自定义 Provider",
+            kind: customKind,
             base_url: customBaseUrl,
             model_id: customModel,
             api_key: apiKey,
@@ -175,7 +286,7 @@ export function OnboardingFlow() {
       }
       const status = await testProviderProfile(profile.id);
       setConnectionState(status.status === "ready" ? "ready" : "failed");
-      setMessage(status.status === "ready" ? "Provider 已连接并通过测试。" : status.message);
+      setMessage(status.status === "ready" ? `连接成功 · ${custom ? customModel : selectedModelLabel}` : status.message);
       setApiKey("");
     } catch {
       setConnectionState("failed");
@@ -223,109 +334,400 @@ export function OnboardingFlow() {
     }
   };
 
+  const selectedModel = selectedProvider?.models.find((model) => model.model_id === modelId);
+  const selectedModelLabel = selectedModel?.model_name ?? selectedModel?.model_id ?? modelId;
+  const connectionReady = connectionState === "ready";
+  const builtinModelSelectable = Boolean(
+    selectedProvider
+    && (authMode !== "api_key" || apiKey.trim() || (connectionReady && savedProfile?.has_api_key)),
+  );
+  const menuOpen = openMenu !== null;
+  const formComplete = custom
+    ? Boolean(customBaseUrl && customModel && apiKey && customProtocolConfirmed)
+    : Boolean(providerId && modelId && (authMode !== "api_key" || apiKey));
+  const testDisabled = connectionState === "testing"
+    || connectionState === "authorizing"
+    || (custom && customModelState === "loading")
+    || (catalogUnavailable && !custom)
+    || menuOpen
+    || !formComplete;
+  const statusMessage = connectionState === "testing"
+    ? "测试中…"
+    : connectionState === "authorizing"
+      ? "等待授权…"
+      : message;
+  const statusTone = connectionState === "testing" || connectionState === "authorizing"
+    ? "loading"
+    : connectionState === "failed" || (catalogUnavailable && !custom)
+      ? "error"
+      : connectionReady
+        ? "success"
+        : null;
+
+  const selectProvider = (nextProviderId: string) => {
+    setOpenMenu(null);
+    setModelId("");
+    setApiKey("");
+    setMessage("");
+    setConnectionState("idle");
+    if (nextProviderId === CUSTOM_PROVIDER_ID) {
+      setCustom(true);
+      setProviderId("");
+      setAuthMode("api_key");
+      setCustomModel("");
+      setCustomModels([]);
+      setCustomModelState("idle");
+      setCustomModelMessage("");
+      setCustomModelError(false);
+      setCustomProtocolNeedsChoice(false);
+      setCustomProtocolConfirmed(false);
+      return;
+    }
+    const nextProvider = providers.find((provider) => provider.provider_id === nextProviderId);
+    setCustom(false);
+    setProviderId(nextProviderId);
+    setAuthMode(firstAuthMode(nextProvider));
+  };
+
+  const selectModel = (nextModelId: string) => {
+    setModelId(nextModelId);
+    setCustomModel(nextModelId);
+    setOpenMenu(null);
+    if (!custom) setApiKey("");
+    setMessage("");
+    setConnectionState("idle");
+  };
+
+  const updateCustomConnection = (field: "baseUrl" | "apiKey", value: string) => {
+    if (field === "baseUrl") setCustomBaseUrl(value);
+    else setApiKey(value);
+    setCustomModel("");
+    setCustomModels([]);
+    setCustomModelState("idle");
+    setCustomModelMessage("");
+    setCustomModelError(false);
+    setCustomProtocolNeedsChoice(false);
+    setCustomProtocolConfirmed(false);
+  };
+
+  const selectCustomProtocol = (nextKind: CustomProviderKind) => {
+    setCustomKind(nextKind);
+    setOpenMenu(null);
+    setCustomProtocolNeedsChoice(true);
+    setCustomProtocolConfirmed(true);
+  };
+
+  const useManualCustomModel = () => {
+    setOpenMenu(null);
+    setCustomModel("");
+    setCustomModelState("manual");
+    setCustomModelMessage("");
+  };
+
   return (
     <main className="task3-onboarding" id="main-content">
       <div className="task3-onboarding-brand">Aiming Cookie</div>
-      <div className="task3-onboarding-progress" aria-label={`第 ${step} 步，共 2 步`}>
+      <div className="task3-onboarding-progress" aria-label={`第 ${step} 步，共 3 步`}>
         <span data-active={step === 1 || undefined}>1</span>
         <i />
         <span data-active={step === 2 || undefined}>2</span>
+        <i />
+        <span data-active={step === 3 || undefined}>3</span>
       </div>
 
       {step === 1 ? (
         <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="provider-title" key="provider">
-          <div className="task3-eyebrow">第一步 · Coach Provider</div>
-          <h1 id="provider-title">连接你自己的 AI Provider</h1>
-          <p className="task3-lead">Aiming Cookie 本身开源免费。第三方 Provider 可能按其规则收费；未连接时，本地指标、确定性诊断和历史记录仍可正常使用。</p>
-          <Notice title="默认数据边界">
-            Provider 只接收产品合同允许的分析摘要与证据引用；本地视频、Raw Input、文件路径和密钥不会进入 Coach 对话。
-          </Notice>
+          <h1 id="provider-title">连接模型服务</h1>
 
-          {connectionState === "ready" ? (
-            <div className="task3-connected-row">
-              <Status tone="success">已连接</Status>
-              <span>{message}</span>
-              <Button onClick={() => setStep(2)}>继续</Button>
-            </div>
-          ) : (
-            <>
-              <div className="task3-provider-tabs" role="tablist" aria-label="Provider 类型">
-                <button aria-selected={!custom} onClick={() => setCustom(false)} role="tab" type="button">Provider 目录</button>
-                <button aria-selected={custom} onClick={() => setCustom(true)} role="tab" type="button">自定义 / 本地</button>
-              </div>
-
-              <div className="task3-form-grid">
-                {custom ? (
-                  <>
-                    <Field label="名称"><FieldControl onChange={(event) => setCustomName(event.target.value)} value={customName} /></Field>
-                    <Field label="Base URL"><FieldControl onChange={(event) => setCustomBaseUrl(event.target.value)} value={customBaseUrl} /></Field>
-                    <Field label="模型 ID"><FieldControl onChange={(event) => setCustomModel(event.target.value)} value={customModel} /></Field>
-                  </>
-                ) : (
-                  <>
-                    <Field label="Provider">
-                      <select className="ac-field__control" onChange={(event) => setProviderId(event.target.value)} value={providerId}>
-                        {providers.map((provider) => <option key={provider.provider_id} value={provider.provider_id}>{provider.provider_name}</option>)}
-                      </select>
-                    </Field>
-                    <Field label="模型">
-                      <select className="ac-field__control" onChange={(event) => setModelId(event.target.value)} value={modelId}>
-                        {selectedProvider?.models.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_name ?? model.model_id}</option>)}
-                      </select>
-                    </Field>
-                    <div className="task3-auth-modes" role="radiogroup" aria-label="认证方式">
-                      {selectedProvider?.auth_modes.map((mode) => (
-                        <label key={mode}>
-                          <input checked={authMode === mode} name="auth-mode" onChange={() => setAuthMode(mode)} type="radio" />
-                          <span>{mode === "api_key" ? "API Key" : mode === "oauth" ? "OAuth / 设备码" : "环境凭据"}</span>
-                        </label>
+          <div className="task3-onboarding-wizard-fields">
+              <Field label="Provider">
+                <div className="task3-onboarding-dropdown" ref={providerMenuRef}>
+                  <button
+                    aria-controls="onboarding-provider-listbox"
+                    aria-expanded={openMenu === "provider"}
+                    aria-haspopup="listbox"
+                    className="task3-onboarding-dropdown-trigger"
+                    disabled={connectionReady}
+                    onClick={() => setOpenMenu((current) => current === "provider" ? null : "provider")}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault();
+                        setOpenMenu("provider");
+                      }
+                      if (event.key === "Escape") setOpenMenu(null);
+                    }}
+                    type="button"
+                  >
+                    <span aria-live="polite">{custom ? "自定义 Provider" : selectedProvider?.provider_name ?? "选择 Provider"}</span>
+                  </button>
+                  {openMenu === "provider" ? (
+                    <div aria-label="Provider 选项" className="task3-onboarding-dropdown-menu" id="onboarding-provider-listbox" role="listbox">
+                      {providers.map((provider) => (
+                        <button
+                          aria-selected={!custom && provider.provider_id === providerId}
+                          className="task3-onboarding-dropdown-option"
+                          key={provider.provider_id}
+                          onClick={() => selectProvider(provider.provider_id)}
+                          role="option"
+                          type="button"
+                        >
+                          <span>{provider.provider_name}</span>
+                          <small>{provider.auth_modes.map(authModeLabel).join(" / ")}</small>
+                        </button>
                       ))}
+                      <button
+                        aria-selected={custom}
+                        className="task3-onboarding-dropdown-option"
+                        onClick={() => selectProvider(CUSTOM_PROVIDER_ID)}
+                        role="option"
+                        type="button"
+                      >
+                        <span>自定义 Provider</span>
+                        <small>填写 URL 和 API key 后自动识别接口</small>
+                      </button>
                     </div>
-                  </>
-                )}
-                {(custom || authMode === "api_key") ? (
-                  <Field hint="只随本次 HTTPS/本地回环请求提交；保存后不会回显。" label="API Key">
-                    <FieldControl autoComplete="off" onChange={(event) => setApiKey(event.target.value)} type="password" value={apiKey} />
-                  </Field>
-                ) : null}
-              </div>
+                  ) : null}
+                </div>
+              </Field>
 
-              {operation ? (
-                <div className="task3-auth-operation" aria-live="polite">
-                  {operation.events.map((event, index) => (
-                    <div key={`${event.type}-${index}`}>
-                      {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank">打开 Provider 授权页</a> : null}
-                      {event.type === "device_code" ? <p>设备码：<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank">前往验证</a></p> : null}
-                      {event.type === "progress" ? <p>{event.message}</p> : null}
+              {custom ? (
+                <div className="task3-onboarding-custom-fields">
+                  <Field label="Base URL">
+                    <FieldControl autoComplete="url" disabled={connectionReady} onChange={(event) => updateCustomConnection("baseUrl", event.target.value)} placeholder={customKind === "custom_anthropic_compatible" ? "https://provider.example" : "https://provider.example/v1"} value={customBaseUrl} />
+                  </Field>
+                  <Field label="API key">
+                    <FieldControl
+                      autoComplete="off"
+                      disabled={connectionReady}
+                      onChange={(event) => updateCustomConnection("apiKey", event.target.value)}
+                      type="password"
+                      value={apiKey}
+                    />
+                  </Field>
+                  {customProtocolNeedsChoice ? <Field label="接口协议">
+                    <div className="task3-onboarding-dropdown" ref={protocolMenuRef}>
+                      <button
+                        aria-controls="onboarding-protocol-listbox"
+                        aria-expanded={openMenu === "protocol"}
+                        aria-haspopup="listbox"
+                        className="task3-onboarding-dropdown-trigger"
+                        disabled={connectionReady}
+                        onClick={() => setOpenMenu((current) => current === "protocol" ? null : "protocol")}
+                        onKeyDown={(event) => {
+                          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            setOpenMenu("protocol");
+                          }
+                          if (event.key === "Escape") setOpenMenu(null);
+                        }}
+                        type="button"
+                      >
+                        <span aria-live="polite">{CUSTOM_PROTOCOLS[customKind].label}</span>
+                      </button>
+                      {openMenu === "protocol" ? (
+                        <div aria-label="接口协议选项" className="task3-onboarding-dropdown-menu" id="onboarding-protocol-listbox" role="listbox">
+                          {(Object.entries(CUSTOM_PROTOCOLS) as Array<[CustomProviderKind, typeof CUSTOM_PROTOCOLS[CustomProviderKind]]>).map(([kind, protocol]) => (
+                            <button
+                              aria-selected={kind === customKind}
+                              className="task3-onboarding-dropdown-option"
+                              key={kind}
+                              onClick={() => selectCustomProtocol(kind)}
+                              role="option"
+                              type="button"
+                            >
+                              <span>{protocol.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
-                  ))}
-                  {operation.prompts[0] ? (
-                    <Field label={operation.prompts[0].message}>
-                      <div className="task3-inline-field">
-                        <FieldControl autoComplete="off" onChange={(event) => setPromptValue(event.target.value)} type={operation.prompts[0].type === "secret" ? "password" : "text"} value={promptValue} />
-                        <Button onClick={() => void submitPrompt()} variant="secondary">提交</Button>
+                  </Field> : null}
+                  {customModelState === "loading" || customModelMessage ? (
+                    <div className="task3-custom-model-discovery" aria-live="polite">
+                      {customModelState === "loading" ? <p data-tone="loading">正在读取可用模型…</p> : null}
+                      {customModelMessage ? <p data-tone={customModelError ? "error" : undefined}>{customModelMessage}</p> : null}
+                    </div>
+                  ) : null}
+                  {customModelState === "loaded" ? (
+                    <Field label="Model">
+                      <div className="task3-onboarding-dropdown" ref={modelMenuRef}>
+                        <button
+                          aria-controls="onboarding-model-listbox"
+                          aria-expanded={openMenu === "model"}
+                          aria-haspopup="listbox"
+                          className="task3-onboarding-dropdown-trigger"
+                          disabled={connectionReady}
+                          onClick={() => setOpenMenu((current) => current === "model" ? null : "model")}
+                          onKeyDown={(event) => {
+                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                              event.preventDefault();
+                              setOpenMenu("model");
+                            }
+                            if (event.key === "Escape") setOpenMenu(null);
+                          }}
+                          type="button"
+                        >
+                          <span aria-live="polite">{customModel || "选择 Model"}</span>
+                        </button>
+                        {openMenu === "model" ? (
+                          <div aria-label="Model 选项" className="task3-onboarding-dropdown-menu" id="onboarding-model-listbox" role="listbox">
+                            <div className="task3-onboarding-dropdown-group" role="group" aria-label="可用 Model">
+                              <div className="task3-onboarding-dropdown-label">可用 Model</div>
+                              {customModels.map((candidate) => (
+                                <button
+                                  aria-selected={candidate === customModel}
+                                  className="task3-onboarding-dropdown-option"
+                                  key={candidate}
+                                  onClick={() => selectModel(candidate)}
+                                  role="option"
+                                  type="button"
+                                >
+                                  <span>{candidate}</span>
+                                </button>
+                              ))}
+                            </div>
+                            <div className="task3-onboarding-dropdown-group">
+                              <button className="task3-onboarding-dropdown-option" onClick={useManualCustomModel} type="button">
+                                <span>列表中没有需要的 Model ID</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
+                    </Field>
+                  ) : null}
+                  {customModelState === "manual" ? (
+                    <Field label="Model ID">
+                      <FieldControl autoComplete="off" disabled={connectionReady} onChange={(event) => setCustomModel(event.target.value)} value={customModel} />
                     </Field>
                   ) : null}
                 </div>
               ) : null}
 
-              {message ? <Notice tone={connectionState === "failed" ? "error" : "info"}>{message}</Notice> : null}
-              <div className="task3-onboarding-actions">
-                <Button disabled={connectionState === "testing" || connectionState === "authorizing" || (custom ? !customModel || !customBaseUrl || !apiKey : !providerId || !modelId || (authMode === "api_key" && !apiKey))} onClick={() => void connect()}>
-                  {connectionState === "testing" ? "正在测试连接" : connectionState === "authorizing" ? "等待授权" : "连接并测试"}
-                </Button>
-              </div>
-            </>
-          )}
+              {!custom && selectedProvider && selectedProvider.auth_modes.length > 1 ? (
+                <div className="task3-auth-modes" role="radiogroup" aria-label="认证方式">
+                  {selectedProvider.auth_modes.map((mode) => (
+                    <label key={mode}>
+                      <input checked={authMode === mode} disabled={connectionReady} name="auth-mode" onChange={() => setAuthMode(mode)} type="radio" />
+                      <span>{authModeLabel(mode)}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : null}
 
-          <button className="task3-skip-action" disabled={finishing} onClick={() => void skip()} title="跳过后没有任何 Coach 功能；本地分析、确定性诊断和 History 仍可使用。" type="button">
-            暂不连接，使用本地模式
-          </button>
+              {!custom && authMode === "api_key" ? (
+                <Field label="API key">
+                  <FieldControl
+                    autoComplete="off"
+                    disabled={connectionReady}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={connectionReady && savedProfile?.has_api_key ? "已保存的凭据" : undefined}
+                    type="password"
+                    value={apiKey}
+                  />
+                </Field>
+              ) : null}
+
+              {!custom && builtinModelSelectable ? (
+                <Field label="Model">
+                  <div className="task3-onboarding-dropdown" ref={modelMenuRef}>
+                    <button
+                      aria-controls="onboarding-model-listbox"
+                      aria-expanded={openMenu === "model"}
+                      aria-haspopup="listbox"
+                      className="task3-onboarding-dropdown-trigger"
+                      disabled={connectionReady}
+                      onClick={() => setOpenMenu((current) => current === "model" ? null : "model")}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                          event.preventDefault();
+                          setOpenMenu("model");
+                        }
+                        if (event.key === "Escape") setOpenMenu(null);
+                      }}
+                      type="button"
+                    >
+                      <span aria-live="polite">{selectedModelLabel || "选择 Model"}</span>
+                    </button>
+                    {openMenu === "model" && selectedProvider ? (
+                      <div aria-label="Model 选项" className="task3-onboarding-dropdown-menu" id="onboarding-model-listbox" role="listbox">
+                        <div className="task3-onboarding-dropdown-group" role="group" aria-label={selectedProvider.provider_name}>
+                          <div className="task3-onboarding-dropdown-label">{selectedProvider.provider_name}</div>
+                          {selectedProvider.models.map((model) => (
+                            <button
+                              aria-selected={model.model_id === modelId}
+                              className="task3-onboarding-dropdown-option"
+                              key={model.model_id}
+                              onClick={() => selectModel(model.model_id)}
+                              role="option"
+                              type="button"
+                            >
+                              <span>{model.model_name ?? model.model_id}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </Field>
+              ) : null}
+            </div>
+
+          {operation ? (
+            <div className="task3-auth-operation" aria-live="polite">
+              {operation.events.map((event, index) => (
+                <div key={`${event.type}-${index}`}>
+                  {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank">打开 Provider 授权页</a> : null}
+                  {event.type === "device_code" ? <p>设备码：<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank">前往验证</a></p> : null}
+                  {event.type === "progress" ? <p>{event.message}</p> : null}
+                </div>
+              ))}
+              {operation.prompts[0] ? (
+                <Field label={operation.prompts[0].message}>
+                  <div className="task3-inline-field">
+                    <FieldControl autoComplete="off" onChange={(event) => setPromptValue(event.target.value)} type={operation.prompts[0].type === "secret" ? "password" : "text"} value={promptValue} />
+                    <Button onClick={() => void submitPrompt()} variant="secondary">提交</Button>
+                  </div>
+                </Field>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="task3-onboarding-wizard-actions">
+            <div className="task3-onboarding-skip-wrap">
+              <button className="task3-skip-action" disabled={finishing} onClick={() => void skip()} type="button">
+                暂时不连接
+              </button>
+              <div className="task3-onboarding-skip-tooltip" role="tooltip">
+                跳过后将没有 Coach 对话、AI 解释、长期档案与训练计划；只保留本地指标、确定性诊断、规则化提示和历史。之后可随时在设置中激活。
+              </div>
+            </div>
+            <div aria-atomic="true" aria-live="polite" className="task3-onboarding-status">
+              {statusMessage && statusTone ? <span data-tone={statusTone}>{statusMessage}</span> : null}
+            </div>
+            {connectionReady ? (
+              <Button className="task3-onboarding-primary" onClick={() => setStep(2)}>继续</Button>
+            ) : (
+              <Button className="task3-onboarding-primary" disabled={testDisabled} onClick={() => void connect()}>
+                测试连接
+              </Button>
+            )}
+          </div>
+        </section>
+      ) : step === 2 ? (
+        <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="kovaak-title" key="kovaak">
+          <div className="task3-eyebrow">第二步 · 可选</div>
+          <h1 id="kovaak-title">连接 KovaaK 成绩</h1>
+          <p className="task3-lead">可选读取一组训练项目成绩，之后也能在设置中连接、刷新或移除。</p>
+          <KovaaKConnectionPanel
+            context="onboarding"
+            onContinue={() => { setMessage(""); setStep(3); }}
+            onSkip={() => { setMessage(""); setStep(3); }}
+          />
         </section>
       ) : (
         <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="capture-title" key="capture">
-          <div className="task3-eyebrow">第二步 · 自动采集</div>
+          <div className="task3-eyebrow">第三步 · 自动采集</div>
           <h1 id="capture-title">训练后自动整理证据</h1>
           <p className="task3-lead">桌面版可在 KovaaK 运行时准备 300 秒硬件编码回放缓冲，并优先保留 Raw Input。每一局完成后仍由你确认要分析哪一条 Run。</p>
           {desktop ? (
@@ -345,7 +747,7 @@ export function OnboardingFlow() {
           ) : null}
           {message ? <Notice tone="error">{message}</Notice> : null}
           <div className="task3-onboarding-actions">
-            <Button onClick={() => setStep(1)} variant="secondary">返回</Button>
+            <Button onClick={() => setStep(2)} variant="secondary">返回</Button>
             <Button disabled={finishing || (captureOptIn && !desktop)} onClick={() => void finish()}>{finishing ? "正在保存" : "进入工作台"}</Button>
           </div>
         </section>

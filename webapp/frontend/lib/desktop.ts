@@ -1,7 +1,7 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
-import type { DesktopCaptureCoordinatorStatus } from "./types";
+import type { DesktopCaptureCoordinatorStatus, ScenarioOpenResultV1 } from "./types";
 
 export interface DesktopRuntimeConnection {
   baseUrl: string;
@@ -39,6 +39,30 @@ export async function setDesktopCaptureEnabled(
     "desktop_capture_coordinator_set_enabled",
     { enabled },
   );
+}
+
+export async function openKovaakScenario(
+  scenarioProfileRef: string,
+): Promise<ScenarioOpenResultV1> {
+  if (!/^scenario:[a-z0-9._-]+@[1-9][0-9]*$/.test(scenarioProfileRef)) {
+    return {
+      status: "scenario_unmapped",
+      scenario_profile_ref: null,
+      display_name: null,
+      message: "该训练项目没有可验证的 KovaaK 场景",
+    };
+  }
+  if (!isDesktopRuntime()) {
+    return {
+      status: "desktop_unavailable",
+      scenario_profile_ref: scenarioProfileRef,
+      display_name: null,
+      message: "当前网页预览不能启动 KovaaK，请在桌面版中操作",
+    };
+  }
+  return invoke<ScenarioOpenResultV1>("scenario_open", {
+    scenarioProfileRef,
+  });
 }
 
 async function pickSinglePath(
