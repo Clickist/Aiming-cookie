@@ -37,22 +37,39 @@ const EVIDENCE_TEXT: Record<string, string> = {
   failed: "失败",
 };
 
-export function EvidenceChip({ label, state }: { label: string; state: string | undefined }) {
+export function EvidenceChip({
+  label,
+  state,
+  text,
+}: {
+  label: string;
+  state: string | undefined;
+  text?: string;
+}) {
   const normalized = state ?? "missing";
-  const tone = normalized === "available" || normalized === "attached" || normalized === "aligned"
-    ? "success"
-    : normalized === "partial"
-      ? "warning"
-      : "neutral";
+  const ok = normalized === "available" || normalized === "attached" || normalized === "aligned";
+  const part = normalized === "partial";
+  const tone = ok ? "ok" : part ? "part" : "bad";
+  const icon = ok ? "✓" : part ? "!" : "✕";
+  const displayText = text ? text : ok ? label : EVIDENCE_TEXT[normalized] ?? normalized;
   return (
-    <span className="task3-evidence-chip">
-      <span aria-hidden="true">{tone === "success" ? "✓" : tone === "warning" ? "!" : "−"}</span>
-      <span>{label}</span>
-      <span>{EVIDENCE_TEXT[normalized] ?? normalized}</span>
+    <span className={`task3-evidence-chip task3-evidence-chip--${tone}`}>
+      <i aria-hidden="true">{icon}</i>
+      <span>{displayText}</span>
     </span>
   );
 }
 
 export function PreviewBadge() {
-  return <Badge tone="warning">预览 / 实验</Badge>;
+  return <Badge className="task3-preview-badge">预览 / 实验</Badge>;
+}
+
+const MODE_LABELS: Record<string, string> = {
+  multimodal: "多源模式",
+  input_native: "输入原生",
+  video_fallback: "视频兼容",
+};
+
+export function ModeBadge({ mode }: { mode: string | null | undefined }) {
+  return <Badge className="task3-mode-badge">{MODE_LABELS[mode ?? ""] ?? mode ?? "未知模式"}</Badge>;
 }

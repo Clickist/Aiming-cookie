@@ -11,8 +11,6 @@ import {
   COACH_WIDTH_STEP,
 } from "@/lib/contracts";
 import type { ProviderProfileState } from "@/lib/types";
-import { Drawer } from "@/ui/primitives";
-
 import { CoachPanel } from "./CoachPanel";
 
 const SIDE_BY_SIDE_BREAKPOINT = 1160;
@@ -86,56 +84,55 @@ export function CoachSidebar({
     <CoachPanel
       capability={capability}
       currentAnalysisRef={currentAnalysisRef}
+      layoutMode={layout.mode !== "side-by-side" ? (layout.mode === "full" || availableWidth < OVERLAY_BREAKPOINT ? "full" : "overlay") : "side-by-side"}
       onRequestContext={attachCurrent}
+      pathname={pathname}
     />
   );
 
+  if (!open) return null;
+
   if (layout.mode !== "side-by-side") {
+    const mode = layout.mode === "full" || availableWidth < OVERLAY_BREAKPOINT ? "full" : "overlay";
     return (
-      <div className="task6-coach-drawer" data-mode={layout.mode === "full" || availableWidth < OVERLAY_BREAKPOINT ? "full" : "overlay"}>
-        <Drawer onClose={onClose} open={open} title="Coach">
-          {layout.mode === "full" ? <button className="task6-back-workspace" onClick={onClose} type="button">← 返回主工作区</button> : null}
+      <div
+        className="task6-coach-sidebar-wrap"
+        data-mode={mode}
+        style={{ "--task6-coach-width": `${layout.width}px` } as CSSProperties}
+      >
+        <div aria-hidden="true" className="task6-coach-scrim" onClick={onClose} />
+        <aside aria-label="Coach" className="task6-coach-sidebar" role="dialog">
           {panel}
-        </Drawer>
+        </aside>
       </div>
     );
   }
 
-  if (!open) return null;
-
   return (
-    <aside
-      aria-label="Coach"
-      className="task6-coach-sidebar"
+    <div
+      className="task6-coach-sidebar-wrap"
       data-mode="side-by-side"
       style={{ "--task6-coach-width": `${layout.width}px` } as CSSProperties}
     >
-      <div
-        aria-label="调整 Coach 宽度"
-        aria-orientation="vertical"
-        aria-valuemax={COACH_MAX_WIDTH}
-        aria-valuemin={COACH_MIN_WIDTH}
-        aria-valuenow={layout.width}
-        className="task6-resizer"
-        onKeyDown={resizeKeys}
-        onLostPointerCapture={() => { dragRef.current = null; }}
-        onPointerCancel={finishResize}
-        onPointerDown={startResize}
-        onPointerMove={moveResize}
-        onPointerUp={finishResize}
-        role="separator"
-        tabIndex={0}
-      />
-      <header className="task6-coach-header">
-        <div><strong>Coach</strong><small>长期训练关系</small></div>
-        <div className="task6-width-presets" aria-label="Coach 宽度预设">
-          <button onClick={() => onWidthChange(COACH_MIN_WIDTH)} type="button">窄</button>
-          <button onClick={() => onWidthChange(COACH_DEFAULT_WIDTH)} type="button">默认</button>
-          <button onClick={() => onWidthChange(COACH_MAX_WIDTH)} type="button">宽</button>
-        </div>
-        <button aria-label="收起 Coach" onClick={onClose} type="button">×</button>
-      </header>
-      {panel}
-    </aside>
+      <aside aria-label="Coach" className="task6-coach-sidebar">
+        <div
+          aria-label="调整 Coach 宽度"
+          aria-orientation="vertical"
+          aria-valuemax={COACH_MAX_WIDTH}
+          aria-valuemin={COACH_MIN_WIDTH}
+          aria-valuenow={layout.width}
+          className="task6-resizer"
+          onKeyDown={resizeKeys}
+          onLostPointerCapture={() => { dragRef.current = null; }}
+          onPointerCancel={finishResize}
+          onPointerDown={startResize}
+          onPointerMove={moveResize}
+          onPointerUp={finishResize}
+          role="separator"
+          tabIndex={0}
+        />
+        {panel}
+      </aside>
+    </div>
   );
 }

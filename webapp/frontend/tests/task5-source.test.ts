@@ -86,10 +86,10 @@ test("data view consumes the bounded analysis-data projection without a pseudo t
   assert.match(data, /no_target_visible: "个别帧未检测到目标"/);
   assert.match(data, /metricLabel\(metricReference\(metric\)\)/);
   assert.match(data, /item\.dataset\.metricLabel === selectedMetric/);
-  assert.match(data, /"target_switching\.transition_time_ms": "切换耗时"/);
-  assert.match(data, /"target_switching\.transition_distance_px": "切换距离"/);
+  assert.match(data, /"target_switching\.transition_time_ms": "切换到新目标耗时"/);
+  assert.match(data, /"target_switching\.transition_distance_px": "切换位移"/);
   assert.match(data, /"target_switching\.path_efficiency": "路径效率"/);
-  assert.match(data, /"target_switching\.settle_duration_ms": "稳定耗时"/);
+  assert.match(data, /"target_switching\.settle_duration_ms": "到达后稳定耗时"/);
   assert.match(data, /referenceKey === "target_switching\.path_efficiency"/);
   assert.match(data, /kill: "击杀"/);
   assert.match(data, /switch_chain: "目标切换链"/);
@@ -103,6 +103,27 @@ test("data view consumes the bounded analysis-data projection without a pseudo t
   assert.doesNotMatch(data, /metric\.sources\.join\(" \+ "\)/);
   assert.doesNotMatch(data, /radiusPoints\.map\(\(point\) => <button/);
   assert.doesNotMatch(data, /跨记录趋势|<p className={styles\.sectionKicker}>Trend/);
+});
+
+test("data view renders bounded family rows without adding a family tab", async () => {
+  const data = await source("components/task5/DataView.tsx");
+  const workspace = await source("components/task5/AnalysisWorkspace.tsx");
+  assert.match(data, /getAnalysisFamilyData/);
+  assert.match(data, /frontend_analysis_family_data\.v1/);
+  assert.match(data, /switch_chain/);
+  assert.match(data, /tracking_fixed_window/);
+  assert.match(data, /tracking_change_response/);
+  assert.match(data, /static_flick/);
+  assert.match(data, /切换到新目标耗时/);
+  assert.match(data, /到达后稳定耗时/);
+  assert.match(data, /观测到的变向响应/);
+  assert.match(data, /加速阶段|减速阶段|稳定阶段/);
+  assert.match(data, /peak: "速度峰值"/);
+  assert.match(data, /corrective: "修正动作"/);
+  assert.match(data, /presentation\.video\.kind === "seekable"/);
+  assert.match(data, /加载更多/);
+  assert.doesNotMatch(data, /人的反应(?:时间|延迟)/);
+  assert.doesNotMatch(workspace, /Switching.*Tracking.*Flicking|family-tab/i);
 });
 
 test("analysis components use frozen tokens and no raw colors", async () => {

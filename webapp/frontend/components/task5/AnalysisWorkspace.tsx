@@ -11,7 +11,7 @@ import {
   type AnalysisViewState,
 } from "@/lib/contracts";
 import type { SessionStatus } from "@/lib/types";
-import { Badge, Button, ErrorState, Loading, Notice, Status, Tabs } from "@/ui/primitives";
+import { Badge, Button, ErrorState, Loading, Notice, Tabs } from "@/ui/primitives";
 
 import { DataView } from "./DataView";
 import { DiagnosisView } from "./DiagnosisView";
@@ -22,11 +22,6 @@ type WorkspaceTab = "diagnosis" | "video" | "data";
 const ANALYSIS_TABS_ID = "analysis-view-tabs";
 const ANALYSIS_PANEL_ID = "analysis-view-panel";
 
-type CoachLocator = {
-  view: WorkspaceTab;
-  relative_start_ms?: number;
-};
-
 const FAMILY_STATUS_LABEL = {
   supported: "正式支持",
   descriptive: "描述性结果",
@@ -34,18 +29,19 @@ const FAMILY_STATUS_LABEL = {
   "outcome-only": "仅结果层",
 } as const;
 
+const EVIDENCE_SOURCE_LABELS: Record<string, string | undefined> = {
+  raw: "Raw Input",
+  performance: "Performance",
+  stats: "Stats",
+  video: "视频",
+  mp4: "视频",
+  visual: "视觉",
+};
+
 function errorStatus(error: unknown): number | null {
   if (!(error instanceof Error)) return null;
   const match = /^ApiError_(\d{3})$/.exec(error.name);
   return match ? Number(match[1]) : null;
-}
-
-function isCoachLocator(value: unknown): value is CoachLocator {
-  if (!value || typeof value !== "object") return false;
-  const locator = value as { view?: unknown; relative_start_ms?: unknown };
-  if (locator.view !== "diagnosis" && locator.view !== "video" && locator.view !== "data") return false;
-  return locator.relative_start_ms === undefined
-    || (typeof locator.relative_start_ms === "number" && Number.isFinite(locator.relative_start_ms) && locator.relative_start_ms >= 0);
 }
 
 function stateLabel(state: AnalysisViewState): string {
@@ -71,7 +67,46 @@ function stateTone(state: AnalysisViewState): "neutral" | "info" | "success" | "
 
 function formatDate(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN");
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function evidenceSourceLabel(source: string): string {
+  const normalized = source.toLowerCase();
+  return EVIDENCE_SOURCE_LABELS[normalized]
+    ?? (normalized.includes("raw") ? "Raw Input"
+      : normalized.includes("performance") ? "Performance"
+        : normalized.includes("stats") ? "Stats"
+          : normalized.includes("video") || normalized.includes("mp4") || normalized.includes("visual") ? "视频"
+            : source);
+}
+
+function evidenceChipState(availability: string): "ok" | "part" | "miss" {
+  if (availability === "available") return "ok";
+  if (availability === "limited") return "part";
+  return "miss";
+}
+
+function formatDuration(session: SessionStatus): string | null {
+  const start = session.started_at ?? session.created_at;
+  const end = session.finished_at;
+  if (!start || !end) return null;
+  const diff = new Date(end).valueOf() - new Date(start).valueOf();
+  if (!Number.isFinite(diff) || diff < 0) return null;
+  const seconds = Math.round(diff / 1000);
+  return `${seconds} 秒`;
+}
+
+function isCoachLocator(value: unknown): value is { view: WorkspaceTab; relative_start_ms?: number } {
+  if (!value || typeof value !== "object") return false;
+  const locator = value as { view?: unknown; relative_start_ms?: unknown };
+  if (locator.view !== "diagnosis" && locator.view !== "video" && locator.view !== "data") return false;
+  return locator.relative_start_ms === undefined
+    || (typeof locator.relative_start_ms === "number" && Number.isFinite(locator.relative_start_ms) && locator.relative_start_ms >= 0);
 }
 
 export function AnalysisWorkspace() {
@@ -196,10 +231,10 @@ export function AnalysisWorkspace() {
       <div className={styles.page}>
         <header className={styles.pendingHeader}>
           <Link href="/history">← 返回历史</Link>
-          <Status tone="info">{stateLabel(viewState)}</Status>
+          <Badge tone={stateTone(viewState)}>{stateLabel(viewState)}</Badge>
         </header>
         <Loading>{viewState === "queued" ? "Analysis 正在等待处理" : "Analysis 正在生成确定性结果"}</Loading>
-        <Notice title="进度来自真实任务状态">这里不显示推测百分比。可前往任务中心查看当前真实阶段，离开页面不会中断任务。</Notice>
+        <Notice tone="info" title="进度来自真实任务状态">这里不显示推测百分比。可前往任务中心查看当前真实阶段，离开页面不会中断任务。</Notice>
         <Button href="/tasks" variant="secondary">查看任务中心</Button>
       </div>
     );
@@ -210,7 +245,7 @@ export function AnalysisWorkspace() {
       <div className={styles.page}>
         <header className={styles.pendingHeader}>
           <Link href="/history">← 返回历史</Link>
-          <Status tone={stateTone(viewState)}>{stateLabel(viewState)}</Status>
+          <Badge tone={stateTone(viewState)}>{stateLabel(viewState)}</Badge>
         </header>
         <ErrorState title="Analysis 没有完成">
           <p>{session?.error?.message ?? "后端未提供可公开的失败说明。"}</p>
@@ -233,30 +268,58 @@ export function AnalysisWorkspace() {
     );
   }
 
+  const durationText = session ? formatDuration(session) : null;
+  const evidenceItems = presentation.evidence.map((item) => ({
+    ...item,
+    label: evidenceSourceLabel(item.source),
+    state: evidenceChipState(item.availability),
+  }));
+  const evidenceChips = evidenceItems.map((item) => (
+    <span className={styles.evidenceChip} data-state={item.state} key={item.source}>
+      <i>{item.state === "ok" ? "✓" : item.state === "part" ? "～" : "×"}</i>
+      {item.label}
+    </span>
+  ));
+  const videoVerified = presentation.video.kind === "seekable";
+  const videoNote = videoVerified
+    ? "视觉证据已校验"
+    : presentation.video.kind === "unavailable"
+      ? "视觉证据不可用"
+      : null;
+
   return (
     <div className={styles.workspace}>
       <header className={styles.analysisHeader}>
-        <div className={styles.headerTopline}>
-          <Link className={styles.backLink} href="/history">← 返回历史</Link>
-          <Status tone={stateTone(viewState)}>{stateLabel(viewState)}</Status>
-        </div>
-        <div className={styles.titleRow}>
-          <div>
-            <p className={styles.eyebrow}>Analysis #{presentation.analysisId}</p>
-            <h1>{presentation.scenario}</h1>
-            <p className={styles.timestamp}>{formatDate(presentation.createdAt)}</p>
+        <div className={styles.headerRow}>
+          <Link className={styles.backLink} href="/history">← 历史</Link>
+          <div className={styles.headerTitleWrap}>
+            <div className={styles.titleLine}>
+              <h1>{presentation.scenario}</h1>
+              <div className={styles.headerBadges} aria-label="分析合同摘要">
+                <Badge tone="success"><span className={styles.statusDot} />{stateLabel(viewState)}</Badge>
+                <Badge tone="info">{presentation.input.label}</Badge>
+                {presentation.input.preview ? <Badge tone="warning">预览 / 实验</Badge> : null}
+                <Badge tone="neutral">{presentation.family.label} · {FAMILY_STATUS_LABEL[presentation.family.status]}</Badge>
+              </div>
+            </div>
+            <div className={styles.headerSubline}>
+              {formatDate(presentation.createdAt)}
+              {durationText ? ` · ${durationText}` : null}
+              {presentation.calibration.cmPer360 ? ` · ${presentation.calibration.cmPer360} cm/360` : null}
+              {presentation.calibration.fov ? ` · FOV ${presentation.calibration.fov}` : null}
+            </div>
           </div>
-          <div className={styles.titleBadges} aria-label="分析合同摘要">
-            <Badge tone={presentation.input.preview ? "warning" : "neutral"}>{presentation.input.label}</Badge>
-            {presentation.input.preview ? <Badge tone="warning">预览 / 实验</Badge> : null}
-            <Badge tone={presentation.family.status === "supported" ? "success" : "warning"}>
-              {presentation.family.label} · {FAMILY_STATUS_LABEL[presentation.family.status]}
-            </Badge>
-            <Badge tone={presentation.partial ? "warning" : "neutral"}>
-              {presentation.evidence.filter((item) => item.availability === "available").length}/{presentation.evidence.length} 来源可用
-            </Badge>
-          </div>
         </div>
+
+        <div className={styles.evidenceRow}>
+          {evidenceChips}
+          {videoNote ? (
+            <span className={styles.evidenceNote}>
+              结论依赖：{evidenceItems.map((item) => item.label).join("、")}；{videoNote}
+            </span>
+          ) : null}
+        </div>
+
         <Tabs
           aria-label="Analysis 视图"
           className={styles.titleTabs}
@@ -273,7 +336,7 @@ export function AnalysisWorkspace() {
       </header>
 
       {presentation.partial ? (
-        <Notice tone="warning" title="视觉结果部分不可用">
+        <Notice className={styles.partialNotice} tone="warning" title="视觉结果部分不可用">
           输入原生结果仍然保留；页面不会用视觉失败覆盖已经成立的 native 事实。
         </Notice>
       ) : null}
@@ -312,6 +375,10 @@ export function AnalysisWorkspace() {
         ) : null}
         {tab === "data" ? (
           <DataView
+            onSelectMetric={(metric) => {
+              setSelectedMetric(metric);
+              setTab("data");
+            }}
             onSelectTime={(timeMs) => {
               setPlayheadMs(timeMs);
               setTab("video");

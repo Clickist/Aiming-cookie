@@ -28,12 +28,21 @@ import type {
   CoachContextListV1,
   CoachContextMutationV1,
   CoachContextRefV1,
+  CustomProviderModelDiscoveryResponse,
+  CustomProviderModelListRequest,
+  CustomProviderModelListResponse,
+  CustomProviderProtocol,
+  CurrentTrainingV1,
   DeleteSessionResponse,
   FrontendAnalysisDataV1,
+  FrontendAnalysisFamilyDataV1,
   HistoryTrend,
   IncompleteCaptureListV1,
   IncompleteCaptureRemovalV1,
   KovaaKAnalysisRequest,
+  KovaaKConnectionDeleteResponseV1,
+  KovaaKConnectionSaveRequestV1,
+  KovaaKConnectionStatusV1,
   KovaaKScoreSyncRequestV1,
   KovaaKScoreSyncResultV1,
   KovaaKScoresV1,
@@ -63,6 +72,7 @@ export const API_BASE = "";
 /** Default X-User-Id placeholder (slice 1 dev shim; Clerk lands in slice 3). */
 const DEFAULT_USER_ID = process.env.NEXT_PUBLIC_USER_ID ?? "dev";
 const DESKTOP_USER_ID = "desktop-local";
+const MOCK_API_MODE = process.env.NEXT_PUBLIC_AIMING_COOKIE_API_MODE === "mock";
 
 type RequestOptions = {
   desktopToken?: boolean;
@@ -85,7 +95,7 @@ async function apiFetch(
   );
   if (desktop && connection) {
     headers.set("X-Aiming-Cookie-Desktop-Token", connection.token);
-  } else if (opts.desktopToken) {
+  } else if (opts.desktopToken && !MOCK_API_MODE) {
     throw new Error("Desktop-only API is unavailable in this browser session");
   }
 
@@ -452,6 +462,32 @@ export async function getAnalysisData(
   return (await res.json()) as FrontendAnalysisDataV1;
 }
 
+export async function getAnalysisFamilyData(
+  sessionId: number,
+  pagination: { limit?: number; offset?: number } = {},
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<FrontendAnalysisFamilyDataV1> {
+  const params = new URLSearchParams({
+    limit: String(pagination.limit ?? 50),
+    offset: String(pagination.offset ?? 0),
+  });
+  const res = await apiFetch(
+    `/api/sessions/${sessionId}/analysis-data/family?${params.toString()}`,
+    { method: "GET" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as FrontendAnalysisFamilyDataV1;
+}
+
+export async function getCurrentTraining(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CurrentTrainingV1> {
+  const res = await apiFetch("/api/current-training", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CurrentTrainingV1;
+}
+
 export async function syncKovaaKScores(
   body: KovaaKScoreSyncRequestV1,
   opts: { signal?: AbortSignal; userId?: string } = {},
@@ -475,6 +511,51 @@ export async function getKovaaKScores(
   const res = await apiFetch("/api/kovaak-scores", { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as KovaaKScoresV1;
+}
+
+export async function getKovaaKConnection(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<KovaaKConnectionStatusV1> {
+  const res = await apiFetch("/api/kovaak-connection", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKConnectionStatusV1;
+}
+
+export async function saveKovaaKConnection(
+  body: KovaaKConnectionSaveRequestV1,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<KovaaKConnectionStatusV1> {
+  const res = await apiFetch(
+    "/api/kovaak-connection",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKConnectionStatusV1;
+}
+
+export async function deleteKovaaKConnection(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<KovaaKConnectionDeleteResponseV1> {
+  const res = await apiFetch("/api/kovaak-connection", { method: "DELETE" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKConnectionDeleteResponseV1;
+}
+
+export async function refreshKovaaKConnection(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<KovaaKScoreSyncResultV1> {
+  const res = await apiFetch(
+    "/api/kovaak-connection/refresh",
+    { method: "POST" },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKScoreSyncResultV1;
 }
 
 export async function getHistorySessions(
@@ -585,6 +666,40 @@ export async function getDefaultProviderStatus(
   const res = await apiFetch("/api/provider-profiles/status", { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as ProviderProfileStatus;
+}
+
+export async function listCustomProviderModels(
+  input: CustomProviderModelListRequest,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CustomProviderModelListResponse> {
+  const res = await apiFetch(
+    "/api/provider-profiles/custom/models",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CustomProviderModelListResponse;
+}
+
+export async function discoverCustomProviderModels(
+  input: Omit<CustomProviderModelListRequest, "protocol">,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CustomProviderModelDiscoveryResponse> {
+  const protocols: CustomProviderProtocol[] = ["openai-completions", "anthropic-messages"];
+  const attempts = await Promise.allSettled(
+    protocols.map((protocol) => listCustomProviderModels({ ...input, protocol }, opts)),
+  );
+  const successful = attempts.flatMap((attempt, index) => (
+    attempt.status === "fulfilled"
+      ? [{ ...attempt.value, protocol: protocols[index] }]
+      : []
+  ));
+  if (!successful.length) throw new Error("Custom Provider protocol discovery failed");
+  return successful.find((attempt) => attempt.models.length > 0) ?? successful[0];
 }
 
 export async function createProviderProfile(

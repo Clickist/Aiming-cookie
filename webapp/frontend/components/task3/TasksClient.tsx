@@ -8,7 +8,7 @@ import { presentTask } from "@/lib/contracts";
 import type { TaskDetailV1, TaskPhase } from "@/lib/types";
 import { Button, Dialog, Empty, ErrorState, Loading, Notice, Status } from "@/ui/primitives";
 
-import { PageHeading, PreviewBadge } from "./Task3Shared";
+import { ModeBadge, PageHeading, PreviewBadge } from "./Task3Shared";
 
 const ALL_PHASES: Array<{ code: TaskPhase; label: string }> = [
   { code: "preparing_training_record", label: "准备训练记录" },
@@ -23,11 +23,13 @@ function analysisId(task: TaskDetailV1): number | null {
   return value ? Number(value) : null;
 }
 
-function taskTone(task: TaskDetailV1): "neutral" | "info" | "success" | "warning" | "error" {
-  if (task.state === "done") return task.partial_outcome ? "warning" : "success";
-  if (task.state === "failed") return "error";
-  if (task.state === "running" || task.state === "retrying") return "info";
-  return "neutral";
+function modeLabel(mode: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    multimodal: "多源模式",
+    input_native: "输入原生",
+    video_fallback: "视频兼容",
+  };
+  return labels[mode ?? ""] ?? mode ?? "未知模式";
 }
 
 function StageStepper({ task }: { task: TaskDetailV1 }) {
@@ -38,17 +40,78 @@ function StageStepper({ task }: { task: TaskDetailV1 }) {
   return (
     <ol className="task3-stage-stepper" aria-label="真实分析阶段">
       {phases.map((phase, index) => {
-        const complete = task.state === "done" || (currentIndex >= 0 && index < currentIndex);
+        const done = task.state === "done" || (currentIndex >= 0 && index < currentIndex);
         const current = task.state === "running" && index === currentIndex;
+        const symbol = done ? "✓" : current ? "●" : "";
         return (
-          <li aria-current={current ? "step" : undefined} data-complete={complete || undefined} data-current={current || undefined} key={phase.code}>
-            <span aria-hidden="true">{complete ? "✓" : index + 1}</span>
-            <small>{phase.label}</small>
+          <li className="task3-step" aria-current={current ? "step" : undefined} data-current={current || undefined} data-done={done || undefined} key={phase.code}>
+            <span aria-hidden="true" className="task3-step-dot">{symbol}</span>
+            <span>{phase.label}</span>
+            {index < phases.length - 1 ? <span aria-hidden="true" className="task3-step-line" /> : null}
           </li>
         );
       })}
     </ol>
   );
+}
+
+function TaskStatusBadge({ task, copy }: { task: TaskDetailV1; copy: { state: string; failureDomain: string | null } }) {
+  let tone: "neutral" | "info" | "success" | "warning" | "error" = "neutral";
+  let text = copy.state;
+  let dot = false;
+
+  if (task.state === "done") {
+    tone = "success";
+    text = task.partial_outcome ? "部分可用" : "已完成";
+    dot = true;
+  } else if (task.state === "failed") {
+    tone = "error";
+    text = copy.failureDomain ? `失败 · ${copy.failureDomain}` : "失败";
+  } else if (task.partial_outcome) {
+    tone = "warning";
+    text = "部分可用";
+  } else if (task.state === "running") {
+    tone = "warning";
+    text = "运行中";
+    dot = true;
+  } else if (task.state === "retrying") {
+    tone = "warning";
+    text = "正在重试";
+    dot = true;
+  } else if (task.state === "importing") {
+    tone = "info";
+    text = "正在导入";
+  } else if (task.state === "queued") {
+    tone = "neutral";
+    text = "排队中";
+  }
+
+  return (
+    <Status tone={tone}>
+      {dot ? <span aria-hidden="true" className="task3-status-dot" /> : null}
+      {text}
+    </Status>
+  );
+}
+
+function taskNote(task: TaskDetailV1): string | null {
+  if (task.state === "done") {
+    const time = task.finished_at ? new Date(task.finished_at).toLocaleString("zh-CN") : null;
+    return time ? `完成于 ${time} · 已通过全局通知提醒，不强制跳转。` : "已完成。";
+  }
+  if (task.state === "running") {
+    return task.input_mode === "input_native"
+      ? "本地分析通常需要几分钟，不显示进度百分比；input-native 无视频阶段。"
+      : "本地分析通常需要几分钟，不显示进度百分比。";
+  }
+  if (task.state === "queued") return "将在运行中的任务完成后开始。";
+  if (task.state === "importing") return "正在导入训练记录。";
+  if (task.state === "retrying") return "正在重试失败阶段。";
+  if (task.partial_outcome) return "输入原生结果完整保留；只有视频视觉证据不可用，不视为整体失败。";
+  if (task.failure) {
+    return `${task.failure.message} 重试会产生新的尝试，不覆盖这条失败记录。`;
+  }
+  return null;
 }
 
 export function TasksClient() {
@@ -124,12 +187,11 @@ export function TasksClient() {
   };
 
   return (
-    <div className="task3-page task3-tasks-page">
+    <div className="task3-page task3-page--narrow task3-tasks-page">
       <PageHeading
-        actions={<Button onClick={() => void load(true)} variant="secondary">刷新</Button>}
-        description="任务在后台继续运行；离开页面后仍可在这里找回结果、失败原因和重试历史。"
+        description="分析在后台继续运行；完成后用通知和角标提醒你，不会强制跳转。"
         eyebrow="Tasks"
-        title="任务中心"
+        title="任务状态"
       />
 
       {actionError ? <Notice tone="error">{actionError}</Notice> : null}
@@ -143,63 +205,63 @@ export function TasksClient() {
       ) : tasks.length === 0 ? (
         <Empty title="还没有分析任务"><Button href="/analyze">新建分析</Button></Empty>
       ) : (
-        <div className="task3-task-list" aria-live="polite">
-          {tasks.map((task) => {
-            const copy = presentTask(task);
-            const id = analysisId(task);
-            const busy = busyRef === task.task_ref;
-            return (
-              <article className="task3-task-row" key={task.task_ref ?? task.analysis_ref}>
-                <header>
-                  <div>
-                    <span className="task3-task-ref">{task.run_ref ?? task.analysis_ref ?? "本地导入"}</span>
-                    <h2>{task.analysis_type === "flicking" ? "Flicking 分析" : task.analysis_type ?? "分析任务"}</h2>
-                  </div>
-                  <div className="task3-task-statuses">
+        <>
+          <div className="task3-tasks-panel" aria-live="polite">
+            {tasks.map((task) => {
+              const copy = presentTask(task);
+              const id = analysisId(task);
+              const busy = busyRef === task.task_ref;
+              const note = taskNote(task);
+              return (
+                <article className="task3-task-item" key={task.task_ref ?? task.analysis_ref}>
+                  <div className="task3-task-head">
+                    <span className="task3-task-name" title={task.run_ref ?? task.analysis_ref ?? "本地导入"}>
+                      {task.run_ref ?? task.analysis_ref ?? "本地导入"}
+                    </span>
+                    <ModeBadge mode={task.input_mode} />
                     {task.input_mode === "input_native" ? <PreviewBadge /> : null}
-                    <Status tone={taskTone(task)}>{copy.state}</Status>
+                    <TaskStatusBadge copy={copy} task={task} />
+                    <span className="task3-task-meta">
+                      {task.state === "running" || task.state === "retrying"
+                        ? "可离开本页"
+                        : task.created_at
+                          ? new Date(task.created_at).toLocaleString("zh-CN")
+                          : "时间不可用"}
+                    </span>
+                    <span className="task3-task-actions">
+                      {task.state === "done" && id !== null ? (
+                        <>
+                          <Button href={`/analysis/${id}`} size="compact" variant="secondary">查看诊断</Button>
+                          <Link className="ac-button" data-size="compact" data-variant="ghost" href="/history">返回历史</Link>
+                        </>
+                      ) : null}
+                      {task.retryable ? (
+                        <Button disabled={busy} onClick={() => void retry(task)} size="compact" variant="primary">{busy ? "正在重试" : "重试"}</Button>
+                      ) : null}
+                      {task.can_delete ? (
+                        <Button disabled={busy} onClick={() => setDeleteTarget(task)} size="compact" variant="ghost">删除</Button>
+                      ) : null}
+                    </span>
                   </div>
-                </header>
 
-                {task.state === "running" || task.state === "done" ? <StageStepper task={task} /> : null}
-                {task.state === "queued" || task.state === "importing" || task.state === "retrying" ? (
-                  <div className="task3-current-phase">当前阶段：{copy.phase ?? "准备训练记录"}</div>
-                ) : null}
+                  {task.state === "running" || task.state === "done" ? <StageStepper task={task} /> : null}
+                  {task.state === "queued" || task.state === "importing" || task.state === "retrying" ? (
+                    <p className="task3-task-note">当前阶段：{copy.phase ?? "准备训练记录"}</p>
+                  ) : null}
 
-                {task.partial_outcome ? (
-                  <Notice tone="warning" title="部分结果可用">
-                    视觉阶段不可用，但 native deterministic 结果已保留；不会把整条分析显示为失败。
-                  </Notice>
-                ) : null}
-                {task.failure ? (
-                  <Notice tone="error" title={`${copy.failureDomain ?? "分析"}失败`}>
-                    {task.failure.message} {task.failure.retryable ? "可以创建新的重试 attempt。" : "当前合同不允许重试。"}
-                  </Notice>
-                ) : null}
-
-                {task.attempt_history && task.attempt_history.length > 1 ? (
-                  <details className="task3-attempts">
-                    <summary>{task.attempt_history.length} 次 attempt</summary>
-                    <ol>{task.attempt_history.map((attempt) => <li key={attempt.attempt_ref}>第 {attempt.attempt_number} 次 · {presentTask({ ...task, state: attempt.state, phase: attempt.phase, failure: attempt.failure }).state}</li>)}</ol>
-                  </details>
-                ) : null}
-
-                <footer>
-                  <span>{task.created_at ? new Date(task.created_at).toLocaleString("zh-CN") : "时间不可用"}</span>
-                  <div>
-                    {task.state === "done" && id !== null ? <Button href={`/analysis/${id}`} variant="secondary">查看结果</Button> : null}
-                    {task.retryable ? <Button disabled={busy} onClick={() => void retry(task)} variant="secondary">{busy ? "正在重试" : "重试"}</Button> : null}
-                    {task.can_delete ? <Button disabled={busy} onClick={() => setDeleteTarget(task)} variant="ghost">删除</Button> : null}
-                  </div>
-                </footer>
-              </article>
-            );
-          })}
-        </div>
+                  {note ? <p className="task3-task-note">{note}</p> : null}
+                </article>
+              );
+            })}
+          </div>
+          <Notice className="task3-tasks-global-note" tone="info">
+            运行中与排队中的任务不可删除；应用重启后仍在这里恢复显示。失败域分开：源文件、输入对齐、本地运动学、视频分析、Provider、Coach、网络。
+          </Notice>
+        </>
       )}
 
       <Dialog
-        footer={<><Button onClick={() => setDeleteTarget(null)} variant="secondary">取消</Button><Button onClick={() => void remove()} variant="danger">删除任务记录</Button></>}
+        footer={<><Button onClick={() => setDeleteTarget(null)} size="compact" variant="secondary">取消</Button><Button onClick={() => void remove()} size="compact" variant="danger">删除任务记录</Button></>}
         onClose={() => setDeleteTarget(null)}
         open={deleteTarget !== null}
         title="确认删除"
