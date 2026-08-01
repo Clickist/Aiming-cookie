@@ -2,11 +2,13 @@ mod capture_coordinator;
 mod media_protocol;
 mod raw_input;
 mod runtime;
+mod scenario_launch;
 mod window_capture;
 
 use capture_coordinator::{CaptureCoordinatorState, CaptureCoordinatorStatus};
 use raw_input::{RawInputState, RawInputStatus};
 use runtime::{project_root, RuntimeConnection, RuntimeProcess, RuntimeState};
+use scenario_launch::scenario_open;
 use std::io;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
@@ -99,6 +101,7 @@ pub fn run() {
             desktop_window_capture_status,
             desktop_capture_coordinator_status,
             desktop_capture_coordinator_set_enabled,
+            scenario_open,
         ])
         .on_window_event(|window, event| {
             if matches!(
