@@ -84,6 +84,29 @@ async def test_v9_to_v10_backfills_api_key_once_and_clears_legacy_column():
     assert json.loads(row[1]) == {"type": "api_key", "key": "legacy-secret"}
     assert row[2:] == (1, 0)
     assert legacy[0] is None
+    await conn.execute(
+        "INSERT INTO provider_profiles("
+        "owner_id, name, provider_id, kind, base_url, model_id, is_default"
+        ") VALUES(?, ?, ?, ?, ?, ?, ?)",
+        (
+            "owner-a",
+            "Custom Anthropic",
+            "custom-anthropic",
+            "custom_anthropic_compatible",
+            "https://provider.example/v1",
+            "claude-custom",
+            0,
+        ),
+    )
+    await conn.commit()
+    kinds = await (
+        await conn.execute("SELECT kind FROM provider_profiles ORDER BY id")
+    ).fetchall()
+    foreign_keys = await (
+        await conn.execute("PRAGMA foreign_key_list(provider_credentials)")
+    ).fetchall()
+    assert [item[0] for item in kinds] == ["builtin", "custom_anthropic_compatible"]
+    assert foreign_keys[0][2] == "provider_profiles"
 
     await db.close_conn()
     await db.init_schema()
@@ -92,6 +115,84 @@ async def test_v9_to_v10_backfills_api_key_once_and_clears_legacy_column():
         await conn.execute("SELECT COUNT(*) FROM provider_credentials WHERE profile_id=1")
     ).fetchone()
     assert count[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_v21_to_v22_accepts_anthropic_profiles_without_losing_credentials():
+    await db.close_conn()
+    db_path = os.path.abspath(db.DB_PATH)
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    conn = await aiosqlite.connect(db_path)
+    await conn.execute("PRAGMA foreign_keys = ON")
+    await conn.executescript(
+        """
+        CREATE TABLE provider_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('builtin', 'custom_openai_compatible')),
+            base_url TEXT,
+            model_id TEXT NOT NULL,
+            api_key TEXT,
+            is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX idx_provider_profiles_owner_default
+            ON provider_profiles(owner_id) WHERE is_default = 1;
+        CREATE TABLE provider_credentials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            profile_id INTEGER NOT NULL UNIQUE,
+            credential_type TEXT NOT NULL,
+            credential_json TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1,
+            needs_reauth INTEGER NOT NULL DEFAULT 0 CHECK(needs_reauth IN (0, 1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (profile_id) REFERENCES provider_profiles(id) ON DELETE CASCADE
+        );
+        INSERT INTO provider_profiles(
+            owner_id, name, provider_id, kind, base_url, model_id, is_default
+        ) VALUES(
+            'owner-a', 'Existing OpenAI', 'custom-openai', 'custom_openai_compatible',
+            'https://provider.example/v1', 'existing-model', 1
+        );
+        INSERT INTO provider_credentials(
+            owner_id, profile_id, credential_type, credential_json
+        ) VALUES('owner-a', 1, 'api_key', '{"type":"api_key","key":"existing-secret"}');
+        PRAGMA user_version = 21;
+        """
+    )
+    await conn.commit()
+    await conn.close()
+
+    await db.init_schema()
+    conn = await db.get_conn()
+    credential = await (
+        await conn.execute(
+            "SELECT credential_json FROM provider_credentials WHERE profile_id=1"
+        )
+    ).fetchone()
+    assert json.loads(credential[0]) == {"type": "api_key", "key": "existing-secret"}
+    await conn.execute(
+        "INSERT INTO provider_profiles("
+        "owner_id, name, provider_id, kind, base_url, model_id, is_default"
+        ") VALUES(?, ?, ?, ?, ?, ?, ?)",
+        (
+            "owner-a",
+            "Custom Anthropic",
+            "custom-anthropic",
+            "custom_anthropic_compatible",
+            "https://provider.example/v1",
+            "claude-custom",
+            0,
+        ),
+    )
+    await conn.commit()
+    assert (await (await conn.execute("PRAGMA foreign_keys")).fetchone())[0] == 1
 
 
 @pytest.mark.asyncio

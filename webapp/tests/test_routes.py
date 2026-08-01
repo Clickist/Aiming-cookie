@@ -8,7 +8,14 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import coach_commands, config, db, kovaak_run_store, queue
+from webapp.backend import (
+    coach_commands,
+    config,
+    db,
+    kovaak_run_store,
+    queue,
+    training_plan_store,
+)
 import webapp.backend.routes as routes_mod
 from webapp.backend.app import app
 from webapp.backend.contracts import (
@@ -25,6 +32,47 @@ from webapp.backend.contracts import (
 from webapp.backend.workspace import session_dir
 
 TEST_WORKER = "test-worker:routes"
+
+_CURRENT_TRAINING_PLAN_PAYLOAD = {
+    "title": "Current training projection fixture",
+    "diagnostic_context": {
+        "analysis_refs": ["analysis:current-training"],
+        "metric_refs": ["metric:terminal_control"],
+        "diagnosis_refs": ["diagnosis:current-training"],
+    },
+    "prescriptions": [{
+        "scenario": "Reviewed scenario",
+        "cue": "Keep one clear cue.",
+        "purpose": "Route projection coverage.",
+        "target_metric_refs": ["metric:terminal_control"],
+        "expected_direction": "decrease",
+        "source_level": "deterministic_rule",
+    }],
+}
+
+_CURRENT_TRAINING_VERIFICATION_TARGETS = [{
+    "target_metric": "metric:terminal_control",
+    "expected_direction": "decrease",
+    "comparable_requirements": ["same scenario"],
+    "retest_after": "after the planned practice",
+    "insufficient_evidence_behavior": "keep the plan unchanged",
+}]
+
+
+def _current_training_item(*, scenario_profile_ref: str) -> dict[str, str]:
+    return {
+        "diagnosis_ref": "diagnosis:internal-only@1",
+        "knowledge_ref": "knowledge:internal-only@1",
+        "scenario_profile_ref": scenario_profile_ref,
+        "baseline_metric_ref": "metric:internal-only",
+        "expected_direction": "lower_better",
+        "practice_condition": "Use the same reviewed setup.",
+        "cue": "Commit once, then observe.",
+        "dose_guardrail": "Stop after two short sets.",
+        "matched_retest_ref": "retest-spec:internal-matched@1",
+        "near_transfer_retest_ref": "retest-spec:internal-transfer@1",
+        "review_date": "Review after the next confirmed practice.",
+    }
 
 
 def _minimal_manifest() -> dict:
@@ -1107,6 +1155,112 @@ async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
 
     assert invalid.status_code == 404
     assert str(tmp_path) not in invalid.text
+
+
+@pytest.mark.asyncio
+async def test_current_training_projection_is_owner_scoped_bounded_and_launch_ref_safe():
+    plan = await training_plan_store.create_draft(
+        "current-training-owner",
+        _CURRENT_TRAINING_PLAN_PAYLOAD,
+        verification_targets=_CURRENT_TRAINING_VERIFICATION_TARGETS,
+    )
+    real_ref = "scenario:static.1wall_6targets_small@1"
+    planned = await training_plan_store.add_plan_item(
+        "current-training-owner", plan["plan_id"],
+        _current_training_item(scenario_profile_ref=real_ref),
+    )
+    active = await training_plan_store.add_plan_item(
+        "current-training-owner", plan["plan_id"],
+        _current_training_item(scenario_profile_ref=real_ref),
+    )
+    completed_payload = _current_training_item(scenario_profile_ref="scenario:missing@1")
+    completed_payload["review_date"] = "Review metric:internal-only after practice."
+    completed = await training_plan_store.add_plan_item(
+        "current-training-owner", plan["plan_id"],
+        completed_payload,
+    )
+    cancelled = await training_plan_store.add_plan_item(
+        "current-training-owner", plan["plan_id"],
+        _current_training_item(scenario_profile_ref=real_ref),
+    )
+    await training_plan_store.set_plan_item_status(
+        "current-training-owner", active["item_ref"], "active",
+        reason="test:current-training-active",
+    )
+    await training_plan_store.set_plan_item_status(
+        "current-training-owner", completed["item_ref"], "completed",
+        reason="test:current-training-completed",
+    )
+    await training_plan_store.set_plan_item_status(
+        "current-training-owner", cancelled["item_ref"], "cancelled",
+        reason="test:current-training-cancelled",
+    )
+    await training_plan_store.save_plan("current-training-owner", plan["plan_id"])
+    await training_plan_store.activate_plan("current-training-owner", plan["plan_id"])
+    transitions_before = await training_plan_store.list_transitions(
+        "current-training-owner", plan["plan_id"],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.get(
+            "/api/current-training", headers={"X-User-Id": "no-current-training"},
+        )
+        current = await client.get(
+            "/api/current-training", headers={"X-User-Id": "current-training-owner"},
+        )
+        forbidden_owner = await client.get(
+            "/api/current-training", headers={"X-User-Id": "another-owner"},
+        )
+
+    assert missing.status_code == forbidden_owner.status_code == 200
+    assert missing.json() == {
+        "schema_version": "current_training.v1",
+        "availability": "unavailable",
+        "reason": "no_current_plan",
+        "plan_status": None,
+        "total_item_count": 0,
+        "visible_item_count": 0,
+        "limitations": [],
+        "items": [],
+    }
+    body = current.json()
+    assert current.status_code == 200, current.text
+    assert body["schema_version"] == "current_training.v1"
+    assert body["availability"] == "available"
+    assert body["plan_status"] == "active"
+    assert body["total_item_count"] == 4
+    assert body["visible_item_count"] == len(body["items"]) == 3
+    assert "items_limited_to_three" in body["limitations"]
+    assert {item["status"] for item in body["items"]} == {
+        "planned", "active", "completed",
+    }
+    assert body["items"][0]["display_name"] == "1wall 6targets small"
+    assert body["items"][0]["scenario_profile_ref"] == real_ref
+    unavailable = next(item for item in body["items"] if item["status"] == "completed")
+    assert unavailable["display_name"] is None
+    assert unavailable["scenario_availability"] == "unavailable"
+    assert unavailable["observation"] is None
+    assert unavailable["retest"] is None
+    active_item = next(item for item in body["items"] if item["status"] == "active")
+    assert active_item["retest"] == "Review after the next confirmed practice."
+    serialized = current.text
+    for forbidden in (
+        "diagnosis_ref", "knowledge_ref", "baseline_metric_ref",
+        "matched_retest_ref", "near_transfer_retest_ref", "internal-only",
+    ):
+        assert forbidden not in serialized
+    assert await training_plan_store.list_transitions(
+        "current-training-owner", plan["plan_id"],
+    ) == transitions_before
+
+    await training_plan_store.pause_plan("current-training-owner", plan["plan_id"])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        paused = await client.get(
+            "/api/current-training", headers={"X-User-Id": "current-training-owner"},
+        )
+    assert paused.status_code == 200
+    assert paused.json()["plan_status"] == "paused"
+    assert "plan_paused" in paused.json()["limitations"]
 
 
 @pytest.mark.asyncio

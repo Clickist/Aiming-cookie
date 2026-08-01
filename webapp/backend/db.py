@@ -115,7 +115,7 @@ class _GatedConnection:
 
 _conn: Optional[_GatedConnection] = None
 
-TARGET_USER_VERSION = 21
+TARGET_USER_VERSION = 22
 
 
 async def get_conn() -> _GatedConnection:
@@ -637,7 +637,9 @@ CREATE TABLE IF NOT EXISTS provider_profiles (
     owner_id TEXT NOT NULL,
     name TEXT NOT NULL,
     provider_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK(kind IN ('builtin', 'custom_openai_compatible')),
+    kind TEXT NOT NULL CHECK(kind IN (
+        'builtin', 'custom_openai_compatible', 'custom_anthropic_compatible'
+    )),
     base_url TEXT,
     model_id TEXT NOT NULL,
     api_key TEXT,
@@ -847,9 +849,16 @@ async def init_schema() -> None:
         await _migrate_v19_stale_failure_timestamps(conn)
         await _migrate_v20_teaching_sessions(conn)
         await _migrate_v21_kovaak_connections(conn)
+        await _migrate_v22_provider_profile_kinds(conn)
         await conn.commit()
         return
 
+    foreign_keys_disabled = False
+    if user_version < 22:
+        foreign_keys = await (await conn.execute("PRAGMA foreign_keys")).fetchone()
+        if foreign_keys and foreign_keys[0]:
+            await conn.execute("PRAGMA foreign_keys = OFF")
+            foreign_keys_disabled = True
     await conn.execute("BEGIN IMMEDIATE")
     try:
         if user_version == 0:
@@ -892,11 +901,16 @@ async def init_schema() -> None:
             await _migrate_v20_teaching_sessions(conn)
         if user_version < 21:
             await _migrate_v21_kovaak_connections(conn)
+        if user_version < 22:
+            await _migrate_v22_provider_profile_kinds(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
         await conn.execute("ROLLBACK")
         raise
+    finally:
+        if foreign_keys_disabled:
+            await conn.execute("PRAGMA foreign_keys = ON")
 
 
 async def _migrate_v9_provider_profiles(conn: aiosqlite.Connection) -> None:
@@ -1209,6 +1223,44 @@ async def _migrate_v21_kovaak_connections(conn: aiosqlite.Connection) -> None:
             connected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+    """)
+
+
+async def _migrate_v22_provider_profile_kinds(conn: aiosqlite.Connection) -> None:
+    """v21 -> v22: allow custom Anthropic-compatible Provider profiles."""
+    cur = await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='provider_profiles'"
+    )
+    row = await cur.fetchone()
+    if row is None or "custom_anthropic_compatible" in (row[0] or ""):
+        return
+    await _execute_transactional_script(conn, """
+        CREATE TABLE provider_profiles_v22 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN (
+                'builtin', 'custom_openai_compatible', 'custom_anthropic_compatible'
+            )),
+            base_url TEXT,
+            model_id TEXT NOT NULL,
+            api_key TEXT,
+            is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO provider_profiles_v22(
+            id, owner_id, name, provider_id, kind, base_url, model_id, api_key,
+            is_default, created_at, updated_at
+        ) SELECT
+            id, owner_id, name, provider_id, kind, base_url, model_id, api_key,
+            is_default, created_at, updated_at
+        FROM provider_profiles;
+        DROP TABLE provider_profiles;
+        ALTER TABLE provider_profiles_v22 RENAME TO provider_profiles;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_profiles_owner_default
+            ON provider_profiles(owner_id) WHERE is_default = 1;
     """)
 
 

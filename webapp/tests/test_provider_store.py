@@ -49,6 +49,34 @@ async def test_provider_profile_public_reads_redact_api_key_runtime_read_include
 
 
 @pytest.mark.asyncio
+async def test_anthropic_compatible_profile_is_configured_and_keeps_credential_private():
+    created = await provider_store.create_profile(
+        "owner-a",
+        _profile(
+            name="Custom Anthropic",
+            provider_id="custom-anthropic",
+            kind="custom_anthropic_compatible",
+            base_url="https://provider.example/v1",
+            model_id="claude-custom",
+            is_default=True,
+        ),
+    )
+
+    assert created["kind"] == "custom_anthropic_compatible"
+    assert created["configured"] is True
+    assert "secret-provider-key" not in repr(created)
+    runtime = await provider_store.get_default_runtime_profile("owner-a")
+    assert runtime is not None
+    assert runtime["kind"] == "custom_anthropic_compatible"
+    assert runtime["base_url"] == "https://provider.example"
+    assert runtime["credential"] == {
+        "type": "api_key",
+        "key": "secret-provider-key",
+    }
+    assert provider_store.runtime_profile_configured(runtime) is True
+
+
+@pytest.mark.asyncio
 async def test_provider_profiles_are_owner_scoped_for_read_update_delete_and_default():
     created = await provider_store.create_profile("owner-a", _profile())
     profile_id = created["id"]

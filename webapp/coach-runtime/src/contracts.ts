@@ -186,7 +186,22 @@ export type CustomOpenAiCompatibleProfile = {
   api_key?: string;
 };
 
-export type CoachRuntimeProviderProfile = BuiltinProviderProfile | CustomOpenAiCompatibleProfile;
+export type CustomAnthropicCompatibleProfile = {
+  kind: "custom_anthropic_compatible";
+  provider_id: string;
+  provider_name: string;
+  base_url: string;
+  model_id: string;
+  /** Custom providers require an api_key credential. */
+  credential?: ApiKeyCredential;
+  /** Migration compatibility; normalized to an api_key credential during parsing. */
+  api_key?: string;
+};
+
+export type CoachRuntimeProviderProfile =
+  | BuiltinProviderProfile
+  | CustomOpenAiCompatibleProfile
+  | CustomAnthropicCompatibleProfile;
 
 export type CoachRuntimeTurnRequest = {
   schema_version: typeof COACH_RUNTIME_TURN_SCHEMA_V1;

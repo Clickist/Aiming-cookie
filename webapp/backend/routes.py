@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path as FilePath
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, Header, HTTPException, Path, Request
+from fastapi import APIRouter, Body, Depends, Form, UploadFile, File, Header, HTTPException, Path, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import (
@@ -25,6 +25,7 @@ from . import (
     provider_auth,
     provider_commands,
     provider_store,
+    training_plan_store,
     db,
     evidence_store,
     history_trends,
@@ -42,7 +43,9 @@ from .coach_context import (
 )
 from .health import build_coach_runtime_status
 from .read_models import (
+    build_frontend_analysis_family_data_v1,
     build_frontend_analysis_data_v1,
+    build_current_training_v1,
     build_capture_status_v1,
     build_product_state_v1,
     build_task_detail_v1,
@@ -96,6 +99,8 @@ from .schemas import (
     IncompleteCaptureListResponse,
     IncompleteCaptureRemovalResponse,
     CoachRuntimeStatusResponse,
+    CustomProviderModelListRequest,
+    CustomProviderModelListResponse,
     ProviderProfileCreate,
     ProviderApiKeyRequest,
     ProviderAuthorizeRequest,
@@ -127,7 +132,9 @@ from .schemas import (
     TrainingPlanRetestCreateRequest,
     FrontendEvidenceSegment,
     FrontendEvidenceSegmentsResponse,
+    FrontendAnalysisFamilyDataResponse,
     FrontendAnalysisDataResponse,
+    CurrentTrainingResponse,
     EvidenceSegmentPlayback,
     ManagedVideoUnavailableResponse,
     TimelineEvent,
@@ -659,6 +666,23 @@ async def _execute_explicit_training_plan_fact(
     )
     _raise_product_command_error(result)
     return CoachProductCommandResult(**result)
+
+
+@router.get("/current-training", response_model=CurrentTrainingResponse)
+async def get_current_training(
+    x_user_id: str = Depends(get_request_user_id),
+):
+    """Return the bounded read-only current Training Plan for one owner."""
+    plans = await training_plan_store.list_plans(x_user_id)
+    current = next((plan for plan in plans if plan["status"] == "active"), None)
+    if current is None:
+        current = next((plan for plan in plans if plan["status"] == "paused"), None)
+    if current is None:
+        projection = build_current_training_v1(plan=None, items=[])
+    else:
+        items = await training_plan_store.list_plan_items(x_user_id, current["plan_id"])
+        projection = build_current_training_v1(plan=current, items=items)
+    return CurrentTrainingResponse(**projection)
 
 
 @router.post(
@@ -1194,6 +1218,25 @@ async def get_default_provider_status(
         return _provider_status_response(None, None)
     result = await coach_runtime.get_provider_profile_status(runtime_profile or {})
     return _provider_status_response(profile["id"], runtime_profile, result)
+
+
+@router.post(
+    "/provider-profiles/custom/models",
+    response_model=CustomProviderModelListResponse,
+)
+async def list_custom_provider_models(
+    body: CustomProviderModelListRequest = Body(...),
+    _x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        models = await coach_runtime.fetch_custom_provider_models(
+            body.protocol,
+            body.base_url,
+            body.api_key,
+        )
+    except coach_runtime.CustomProviderModelDiscoveryError as error:
+        raise HTTPException(502, "无法读取这个 Provider 的模型列表") from error
+    return CustomProviderModelListResponse(models=models)
 
 
 @router.get("/provider-profiles/{profile_id}/status", response_model=ProviderProfileStatusResponse)
@@ -1846,6 +1889,55 @@ async def get_session_analysis_data(
     except (ValueError, OSError):
         raise HTTPException(404, "Analysis Data 不可用") from None
     return FrontendAnalysisDataResponse(**projection)
+
+
+@router.get(
+    "/sessions/{session_id}/analysis-data/family",
+    response_model=FrontendAnalysisFamilyDataResponse,
+)
+async def get_session_analysis_family_data(
+    session_id: int = Path(...),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    """Return a version-dispatched, paginated family detail projection."""
+    s = await _get_owned_session(session_id, x_user_id)
+    if s["status"] != "done":
+        raise HTTPException(409, "分析未完成")
+    result = s.get("result") or {}
+    analysis_ref = f"analysis:{session_id}"
+    analysis_type = result.get("analysis_type")
+    analysis_version = result.get("analysis_version")
+    input_mode = result.get("input_mode")
+    if (
+        not isinstance(analysis_type, str)
+        or not isinstance(analysis_version, str)
+        or not isinstance(input_mode, str)
+    ):
+        raise HTTPException(404, "Analysis Data 不可用")
+    safe_ref = (result.get("evidence") or {}).get("derived_artifact")
+    artifact = None
+    if isinstance(safe_ref, dict):
+        try:
+            artifact = await evidence_store.read_analysis_evidence_artifact(
+                owner_id=x_user_id,
+                analysis_ref=analysis_ref,
+                artifact_ref=safe_ref.get("artifact_ref"),
+                evidence_revision=safe_ref.get("evidence_revision"),
+            )
+        except (ValueError, OSError):
+            raise HTTPException(404, "Analysis Data 不可用") from None
+    projection = build_frontend_analysis_family_data_v1(
+        analysis_ref=analysis_ref,
+        analysis_type=analysis_type,
+        analysis_version=analysis_version,
+        input_mode=input_mode,
+        artifact=artifact,
+        limit=limit,
+        offset=offset,
+    )
+    return FrontendAnalysisFamilyDataResponse(**projection)
 
 
 @router.get("/sessions/{session_id}/video")
