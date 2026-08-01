@@ -448,6 +448,69 @@ export interface FrontendAnalysisDataV1 {
   target_relative_error_radius: TargetRelativeErrorRadiusV1;
 }
 
+export type FrontendAnalysisFamilyRowKindV1 =
+  | "switch_chain"
+  | "tracking_fixed_window"
+  | "tracking_loss"
+  | "tracking_reacquisition"
+  | "tracking_change_response"
+  | "static_flick";
+
+export interface FrontendAnalysisFamilyDataRowV1 {
+  kind: FrontendAnalysisFamilyRowKindV1;
+  timing: Record<string, number>;
+  metrics: Record<string, number>;
+  limitations: string[];
+}
+
+export interface FrontendAnalysisFamilyDataV1 {
+  schema_version: "frontend_analysis_family_data.v1";
+  analysis_ref: string;
+  family: "switching" | "tracking" | "flicking" | "unsupported";
+  availability: "available" | "unavailable";
+  reason: string | null;
+  limitations: string[];
+  total_count: number;
+  next_offset: number | null;
+  rows: FrontendAnalysisFamilyDataRowV1[];
+}
+
+export interface CurrentTrainingItemV1 {
+  display_name: string | null;
+  scenario_profile_ref: string | null;
+  scenario_availability: "available" | "unavailable";
+  status: "planned" | "active" | "completed" | "cancelled";
+  practice_condition: string | null;
+  cue: string | null;
+  dose_guardrail: string | null;
+  observation: string | null;
+  retest: string | null;
+}
+
+export interface CurrentTrainingV1 {
+  schema_version: "current_training.v1";
+  availability: "available" | "unavailable";
+  reason: "no_current_plan" | null;
+  plan_status: "active" | "paused" | null;
+  total_item_count: number;
+  visible_item_count: number;
+  limitations: string[];
+  items: CurrentTrainingItemV1[];
+}
+
+export type ScenarioOpenStatus =
+  | "scenario_dispatched"
+  | "desktop_unavailable"
+  | "scenario_unmapped"
+  | "deep_link_dispatch_failed";
+
+export interface ScenarioOpenResultV1 {
+  status: ScenarioOpenStatus;
+  scenario_profile_ref: string | null;
+  display_name: string | null;
+  message: string;
+}
+
 export interface KovaaKScoreSyncRequestV1 {
   schema_version: "kovaak_benchmark_sync_request.v1";
   steam_id: string;
@@ -459,6 +522,19 @@ export interface KovaaKScoreSyncResultV1 {
   imported_score_count: number;
   difficulty_counts: Record<"easier" | "medium", number>;
   observed_at: string;
+}
+
+export interface KovaaKConnectionSaveRequestV1 {
+  steam_profile: string;
+  identity_consent: boolean;
+}
+
+export interface KovaaKConnectionStatusV1 {
+  connected: boolean;
+}
+
+export interface KovaaKConnectionDeleteResponseV1 {
+  deleted: boolean;
 }
 
 export interface KovaaKScoreStageV1 {
@@ -718,7 +794,9 @@ export interface ProviderAuthCapabilitiesV1 {
   providers: ProviderAuthCapability[];
 }
 
-export type ProviderKind = "builtin" | "custom_openai_compatible";
+export type CustomProviderKind = "custom_openai_compatible" | "custom_anthropic_compatible";
+export type CustomProviderProtocol = "openai-completions" | "anthropic-messages";
+export type ProviderKind = "builtin" | CustomProviderKind;
 export type ProviderProfileState =
   | "unconfigured"
   | "auth_expired"
@@ -762,6 +840,20 @@ export interface ProviderProfileStatus {
   configured: boolean;
   status: ProviderProfileState;
   message: string;
+}
+
+export interface CustomProviderModelListResponse {
+  models: string[];
+}
+
+export interface CustomProviderModelDiscoveryResponse extends CustomProviderModelListResponse {
+  protocol: CustomProviderProtocol;
+}
+
+export interface CustomProviderModelListRequest {
+  protocol: CustomProviderProtocol;
+  base_url: string;
+  api_key: string;
 }
 
 export interface ProviderAuthPrompt {

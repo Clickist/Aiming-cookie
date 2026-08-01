@@ -1,12 +1,27 @@
-import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
+import type { AnalysisMetricPresentation, AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { Badge, Button, Empty, Notice, Status } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
 
 const LEGACY_CANDIDATE_LEVEL_LABEL: Record<string, string> = {
-  symptom: "观察到的表现",
-  physical: "动作机制候选",
-  training: "历史训练方向",
+  symptom: "表现",
+  physical: "物理原因",
+  training: "训练方向",
+};
+
+const METRIC_DESCRIPTIONS: Record<string, string> = {
+  sparc: "运动平滑度；越接近 0 越平滑",
+  "continuous_tracking.target_relative_error_px": "鼠标与目标中心的距离",
+  "continuous_tracking.time_in_radius_ratio": "鼠标在目标半径内的时间比例",
+  "continuous_tracking.loss_count": "鼠标离开目标半径的次数",
+  "continuous_tracking.loss_duration_ms": "每次偏离的典型持续时间",
+  "continuous_tracking.reacquisition_latency_ms": "偏离后重新进入目标范围的耗时",
+  "continuous_tracking.correction_direction_reversal_count": "修正方向反转次数",
+  "continuous_tracking.smoothness_acceleration_rms": "加速度波动",
+  "target_switching.transition_time_ms": "切换到新目标耗时",
+  "target_switching.transition_distance_px": "切换位移",
+  "target_switching.path_efficiency": "路径效率；越接近 1 越直",
+  "target_switching.settle_duration_ms": "到达后稳定耗时",
 };
 
 function severityTone(severity: "info" | "watch" | "fix"): "neutral" | "warning" | "error" {
@@ -19,6 +34,61 @@ function formatMetricValue(value: number | string | null, unit: string | null): 
   if (value === null) return "不可用";
   const shown = typeof value === "number" ? Number(value.toFixed(3)) : value;
   return `${shown}${unit ? ` ${unit}` : ""}`;
+}
+
+function metricReference(metric: AnalysisMetricPresentation): string {
+  return metric.referenceKey ?? metric.key;
+}
+
+function metricLabel(key: string): string {
+  return METRIC_DESCRIPTIONS[key] ? key.split(".").pop() ?? key : key;
+}
+
+function metricDescription(key: string): string | null {
+  return METRIC_DESCRIPTIONS[key] ?? null;
+}
+
+function IssueBody({
+  issue,
+}: {
+  issue: AnalysisWorkspacePresentation["issues"][number];
+}) {
+  if (issue.presentationKind === "registry-backed") {
+    return (
+      <div className={styles.issueBody}>
+        <p>{issue.priorityReason}</p>
+        <dl className={styles.issueCause}>
+          <div>
+            <dt>候选解释</dt>
+            <dd>{issue.candidateExplanation ?? "当前 Analysis 未提供额外解释。"}</dd>
+          </div>
+          <div>
+            <dt>可验证预期</dt>
+            <dd>{issue.expectedResult ?? "当前 Analysis 未给出可验证预期。"}</dd>
+          </div>
+        </dl>
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.issueBody}>
+      <p>{issue.priorityReason}</p>
+      {issue.rootCauses.length ? (
+        <dl className={styles.issueCause}>
+          {issue.rootCauses.map((cause) => (
+            <div key={`${cause.level}-${cause.text}`}>
+              <dt>{LEGACY_CANDIDATE_LEVEL_LABEL[cause.level] ?? cause.level}</dt>
+              <dd>{cause.text}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {issue.hasHistoricalCandidateDetails ? (
+        <p className={styles.issueLegacyNote}>以上根因与建议来自历史候选说明，结论以当前证据为准。</p>
+      ) : null}
+    </div>
+  );
 }
 
 export function DiagnosisView({
@@ -34,22 +104,31 @@ export function DiagnosisView({
   presentation: AnalysisWorkspacePresentation;
   selectedIssue: number | null;
 }) {
+  const severityByMetric = presentation.issues.reduce<Record<string, "info" | "watch" | "fix">>(
+    (acc, issue) => {
+      for (const ref of issue.metricRefs) {
+        if (!acc[ref] || issue.severity === "fix" || (issue.severity === "watch" && acc[ref] === "info")) {
+          acc[ref] = issue.severity;
+        }
+      }
+      return acc;
+    },
+    {},
+  );
+
+  const prescription = presentation.issues.map((issue) => issue.prescriptions[0]).find(Boolean) ?? null;
+  const expected = presentation.issues.map((issue) => issue.expectedResult).find(Boolean) ?? null;
+
   return (
-    <div className={styles.diagnosisTrack}>
-      <section className={styles.diagnosisLead} aria-labelledby="diagnosis-title">
-        <p className={styles.sectionKicker}>重点观察</p>
-        <h2 id="diagnosis-title">{presentation.headline}</h2>
+    <div className={styles.diagnosisView}>
+      <section className={styles.diagnosisLead} aria-labelledby="diagnosis-conclusion">
+        <div className={styles.conclusion} id="diagnosis-conclusion">{presentation.headline}</div>
         {presentation.profile ? (
-          <div className={styles.profileLine}>
-            <Badge>{presentation.profile.label}</Badge>
-            <span>
-              可信度 {presentation.profile.confidence === null ? "未提供" : `${Math.round(presentation.profile.confidence * 100)}%`}
-            </span>
-            {presentation.profile.tags.map((tag) => <span key={tag}>{tag}</span>)}
+          <div className={styles.profileTag}>
+            <Badge tone="warning">{presentation.profile.label}</Badge>
+            <span>基于规则匹配，非概率结论</span>
           </div>
-        ) : (
-          <p className={styles.muted}>证据不足时不补写“正常”画像。</p>
-        )}
+        ) : null}
       </section>
 
       {presentation.issues.length === 0 ? (
@@ -57,101 +136,99 @@ export function DiagnosisView({
           查看数据来源和限制，或在后续收集更完整的证据。
         </Empty>
       ) : (
-        <section className={styles.issueList} aria-label="观察项">
-          {presentation.issues.map((issue, index) => (
-            <article className={styles.issue} data-selected={selectedIssue === index || undefined} key={`${issue.priority}-${issue.signal}`}>
-              <header className={styles.issueHeader}>
-                <div>
-                  <p className={styles.sectionKicker}>观察项 {index + 1}</p>
-                  <h3>{issue.signal}</h3>
-                </div>
-                <div className={styles.profileLine}>
-                  {issue.presentationKind === "registry-backed" ? <Badge>证据等级：{issue.claimLabel}</Badge> : null}
-                  <Status tone={severityTone(issue.severity)}>{issue.severity === "fix" ? "优先观察" : issue.severity === "watch" ? "持续观察" : "信息"}</Status>
-                </div>
-              </header>
-              <p className={styles.priorityReason}>{issue.priorityReason}</p>
-
-              {issue.presentationKind === "registry-backed" ? (
-                <>
-                  <div className={styles.prescriptionBlock} aria-label="候选解释">
-                    <h4>候选解释</h4>
-                    <span>{issue.candidateExplanation ?? "当前 Analysis 未提供额外候选解释。"}</span>
+        <section className={styles.issueSection} aria-labelledby="issues-title">
+          <div className={styles.sectionHead}>
+            <span className={styles.sectionTitle} id="issues-title">重点观察</span>
+            <span className={styles.sectionHint}>按优先级排序 · 最多展开 {presentation.issues.length} 个</span>
+          </div>
+          <div className={styles.issueList}>
+            {presentation.issues.map((issue, index) => (
+              <article
+                className={styles.issueCard}
+                data-selected={selectedIssue === index || undefined}
+                key={`${issue.priority}-${issue.signal}`}
+              >
+                <div className={styles.issueHead}>
+                  <Status className={styles.issueSeverity} tone={severityTone(issue.severity)}>
+                    {issue.severity === "fix" ? "优先处理" : issue.severity === "watch" ? "关注" : "观察"}
+                  </Status>
+                  {issue.claimLabel ? <Status tone="neutral">{issue.claimLabel}</Status> : null}
+                  <span className={styles.issueName}>{issue.signal}</span>
+                  <div className={styles.issueActions}>
+                    <Button onClick={() => onSelectEvidence(index)} size="compact" variant="ghost">查看证据</Button>
+                    {issue.metricRefs[0] ? (
+                      <Button onClick={() => onSelectMetric(issue.metricRefs[0])} size="compact" variant="ghost">
+                        查看指标
+                      </Button>
+                    ) : null}
+                    <Button onClick={onAskCoach} size="compact" variant="secondary">问 Coach</Button>
                   </div>
-                  <div className={styles.prescriptionBlock} aria-label="规则化练习建议">
-                    <h4>规则化练习建议</h4>
-                    <span>{issue.expectedResult
-                      ? `一次只围绕该观察练习，并在可比条件下复测：${issue.expectedResult}`
-                      : "一次只围绕该观察调整练习；具体场景、动作提示和剂量不由当前 Analysis 推断。"}</span>
-                  </div>
-                </>
-              ) : issue.hasHistoricalCandidateDetails ? (
-                <div className={styles.prescriptionBlock} aria-label="历史候选说明">
-                  <h4>历史候选说明</h4>
-                  <div className={styles.rootCauseGrid}>
-                    {issue.rootCauses.length ? issue.rootCauses.map((cause) => (
-                      <div className={styles.rootCause} key={`${cause.level}-${cause.text}`}>
-                        <span>{LEGACY_CANDIDATE_LEVEL_LABEL[cause.level] ?? cause.level}</span>
-                        <p>{cause.text}</p>
-                      </div>
-                    )) : <p className={styles.muted}>历史记录未提供候选解释。</p>}
-                  </div>
-                  {issue.prescriptions.length ? issue.prescriptions.map((prescription) => (
-                    <div key={`${prescription.scenario}-${prescription.reason}`}>
-                      <strong>{prescription.scenario}</strong>
-                      <span>{prescription.reason}</span>
-                      {prescription.cue ? <span>提示：{prescription.cue}</span> : null}
-                    </div>
-                  )) : null}
                 </div>
-              ) : (
-                <p className={styles.muted}>当前观察未关联版本化知识，且没有历史候选说明可展示。</p>
-              )}
-
-              {issue.limitations.length ? <Notice tone="warning">{issue.limitations.join(" · ")}</Notice> : null}
-              <footer className={styles.issueActions}>
-                <Button onClick={() => onSelectEvidence(index)} variant="secondary">查看证据</Button>
-                {issue.metricRefs[0] ? <Button onClick={() => onSelectMetric(issue.metricRefs[0])} variant="ghost">查看指标</Button> : null}
-                <Button onClick={onAskCoach} variant="ghost">问 Coach</Button>
-              </footer>
-            </article>
-          ))}
+                <IssueBody issue={issue} />
+              </article>
+            ))}
+          </div>
         </section>
       )}
 
+      {prescription || expected ? (
+        <section className={styles.prescriptionSection} aria-labelledby="prescription-title">
+          <div className={styles.sectionHead}>
+            <span className={styles.sectionTitle} id="prescription-title">规则化练习建议</span>
+          </div>
+          <div className={styles.prescriptionPanel}>
+            {prescription ? (
+              <>
+                <div className={styles.prescriptionTitle}>{prescription.scenario}</div>
+                <p className={styles.prescriptionReason}>{prescription.reason}</p>
+                {prescription.cue ? <Badge tone="info">训练 cue：{prescription.cue}</Badge> : null}
+              </>
+            ) : (
+              <p className={styles.prescriptionReason}>{expected}</p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       <section className={styles.metricSummary} aria-labelledby="core-metrics-title">
-        <div className={styles.sectionHeading}>
-          <div><p className={styles.sectionKicker}>Core metrics</p><h2 id="core-metrics-title">核心指标摘要</h2></div>
-          <span>{presentation.metrics.formal.length} 项正式指标</span>
+        <div className={styles.sectionHead}>
+          <span className={styles.sectionTitle} id="core-metrics-title">核心指标摘要</span>
+          <span className={styles.sectionHint}>完整数据在「数据」视图</span>
         </div>
         {presentation.metrics.formal.length ? (
-          <div className={styles.metricSummaryRows}>
-            {presentation.metrics.formal.slice(0, 4).map((metric) => (
-              <button className={styles.metricSummaryRow} key={metric.key} onClick={() => onSelectMetric(metric.key)} type="button">
-                <strong>{metric.key}</strong>
-                <span>{formatMetricValue(metric.value, metric.unit)}</span>
-                <small>{metric.coverage === null ? "覆盖未知" : `覆盖 ${Math.round(metric.coverage * 100)}%`} · {metric.availability}</small>
-              </button>
-            ))}
+          <div className={styles.metricSummaryPanel}>
+            {presentation.metrics.formal.slice(0, 4).map((metric) => {
+              const ref = metricReference(metric);
+              const severity = severityByMetric[ref] ?? "info";
+              return (
+                <button
+                  className={styles.metricRow}
+                  data-metric={ref}
+                  key={ref}
+                  onClick={() => onSelectMetric(ref)}
+                  type="button"
+                >
+                  <span className={styles.metricKey}>{metricLabel(ref)}</span>
+                  <span className={styles.metricValue}>{formatMetricValue(metric.value, metric.unit)}</span>
+                  <span className={styles.metricPlain}>
+                    {metricDescription(ref)
+                      ?? (metric.coverage === null ? "覆盖未知" : `覆盖 ${Math.round(metric.coverage * 100)}%`)}
+                  </span>
+                  <Status tone={severityTone(severity)}>
+                    {severity === "fix" ? "优先处理" : severity === "watch" ? "关注" : "观察"}
+                  </Status>
+                </button>
+              );
+            })}
           </div>
-        ) : <Empty title="没有可正式展示的指标">实验性或不可用指标不会混入核心摘要。</Empty>}
+        ) : (
+          <Empty title="没有可正式展示的指标">实验性或不可用指标不会混入核心摘要。</Empty>
+        )}
       </section>
 
-      <section className={styles.evidenceSourceSection} aria-labelledby="evidence-source-title">
-        <div className={styles.sectionHeading}>
-          <div><p className={styles.sectionKicker}>Evidence</p><h2 id="evidence-source-title">证据来源</h2></div>
-        </div>
-        <div className={styles.evidenceRows}>
-          {presentation.evidence.map((item) => (
-            <div className={styles.evidenceRow} key={item.source}>
-              <strong>{item.source}</strong>
-              <span>{item.availability}</span>
-              <span>{item.alignment ?? "未提供对齐状态"}</span>
-            </div>
-          ))}
-        </div>
-        {presentation.limitations.length ? <Notice tone="warning" title="当前限制">{presentation.limitations.join(" · ")}</Notice> : null}
-      </section>
+      {presentation.limitations.length ? (
+        <Notice tone="warning">{presentation.limitations.join(" · ")}</Notice>
+      ) : null}
     </div>
   );
 }

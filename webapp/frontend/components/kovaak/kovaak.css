@@ -1,0 +1,519 @@
+/* KovaaK connection panel + score list — OpenDesign board styling */
+
+.kovaak-panel {
+  --bg: var(--background);
+  --surface: var(--surface);
+  --s-low: var(--surface-container-low);
+  --s-cont: var(--surface-container);
+  --s-high: var(--surface-container-high);
+  --fg: var(--on-surface);
+  --fg2: var(--on-surface-variant);
+  --primary: var(--primary);
+  --on-primary: var(--on-primary);
+  --p-cont: var(--primary-container);
+  --on-p-cont: var(--on-primary-container);
+  --tertiary: var(--tertiary);
+  --t-cont: var(--tertiary-container);
+  --on-t-cont: var(--on-tertiary-container);
+  --error: var(--error);
+  --e-cont: var(--error-container);
+  --on-e-cont: var(--on-error-container);
+  --outline: var(--outline);
+  --outline-v: var(--outline-variant);
+  --ok: var(--event-kill);
+  display: grid;
+  gap: 16px;
+  color: var(--fg);
+  container-type: inline-size;
+  container-name: kovaak;
+}
+
+.kovaak-panel__header,
+.kovaak-connected,
+.kovaak-actions,
+.kovaak-stage-summary,
+.kovaak-onboarding-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.kovaak-panel__header,
+.kovaak-connected {
+  justify-content: space-between;
+}
+
+.kovaak-panel__header > div {
+  min-width: 0;
+}
+
+.kovaak-panel__header h2,
+.kovaak-panel__header p,
+.kovaak-score-group h3,
+.kovaak-score-group h4 {
+  margin: 0;
+}
+
+.kovaak-panel__header h2 {
+  font: 600 15px/1.25 var(--font-display);
+}
+
+.kovaak-panel__header p,
+.kovaak-connect-form > .ac-field__hint,
+.kovaak-connection-status span,
+.kovaak-score-name small,
+.kovaak-score-note,
+.kovaak-disclaimer,
+.kovaak-kv-note,
+.kovaak-module-note {
+  color: var(--fg2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.kovaak-connect-form {
+  display: grid;
+  gap: 12px;
+}
+
+.kovaak-connect-form .ac-field__control {
+  min-height: 38px;
+}
+
+.kovaak-connect-form .ac-field__control[data-invalid="true"] {
+  border-color: var(--error);
+}
+
+.kovaak-consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--outline-v);
+  border-radius: 6px;
+  background: var(--s-low);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.kovaak-consent input {
+  width: 15px;
+  height: 15px;
+  margin: 3px 0 0;
+  accent-color: var(--primary);
+  flex: none;
+}
+
+.kovaak-consent-error {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  margin: 0;
+  color: var(--error);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.kovaak-connection-status {
+  display: grid;
+  gap: 2px;
+}
+
+.kovaak-connection-status strong {
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.kovaak-stage-summary {
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-block: 1px solid var(--outline-v);
+}
+
+.kovaak-stage-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg2);
+  font-size: 12px;
+}
+
+.kovaak-stage-summary strong {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.kovaak-score-list {
+  display: grid;
+  gap: 12px;
+}
+
+.kovaak-score-group {
+  border: 1px solid var(--outline-v);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.kovaak-score-group h3,
+.kovaak-score-group h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 16px;
+  background: var(--s-low);
+  border-top: 1px solid var(--outline-v);
+  border-bottom: 1px solid var(--outline-v);
+  font: 600 12px var(--font-ui);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.kovaak-score-group h3:first-child {
+  border-top: 0;
+}
+
+.kovaak-score-group h3 span,
+.kovaak-score-group h4 span {
+  color: var(--fg2);
+  font: 500 11px var(--font-mono);
+  letter-spacing: 0;
+}
+
+.kovaak-score-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--outline-v);
+}
+
+.kovaak-score-row:first-of-type {
+  border-top: 0;
+}
+
+.kovaak-score-row[data-completed="false"] {
+  opacity: 0.72;
+}
+
+.kovaak-score-name {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.kovaak-score-name strong,
+.kovaak-score-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kovaak-score-name small {
+  font-size: 11px;
+}
+
+.kovaak-score-value {
+  width: 72px;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  text-align: right;
+  color: var(--fg);
+}
+
+.kovaak-score-row[data-completed="false"] .kovaak-score-value {
+  color: var(--fg2);
+}
+
+.kovaak-score-tier {
+  width: 64px;
+  flex: none;
+  text-align: right;
+}
+
+.kovaak-score-coach {
+  width: 132px;
+  flex: none;
+  text-align: right;
+}
+
+.kovaak-score-coach .ac-button {
+  white-space: nowrap;
+}
+
+.kovaak-score-note {
+  margin: 4px 0 0;
+}
+
+.kovaak-empty,
+.kovaak-loading {
+  padding: 18px 16px;
+  text-align: center;
+}
+
+.kovaak-empty-title {
+  font: 600 13px var(--font-display);
+  margin: 0 0 6px;
+}
+
+.kovaak-empty p {
+  margin: 0;
+  color: var(--fg2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Scores layout: list + side cards (s2-scores-1280) */
+
+.kovaak-scores-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.kovaak-module h4 {
+  margin: 0 0 6px;
+  font: 600 13px var(--font-display);
+}
+
+.kovaak-rank {
+  font: 600 22px var(--font-display);
+}
+
+.kovaak-skeleton-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: kovaak-pulse 1.2s ease-in-out infinite;
+}
+
+.kovaak-score-name strong {
+  display: block;
+  font-weight: 500;
+}
+
+.kovaak-panel[data-context="onboarding"] {
+  gap: 12px;
+}
+
+/* Skeleton for loading state */
+
+.kovaak-skeleton {
+  height: 12px;
+  border-radius: 3px;
+  background: var(--s-high);
+  animation: kovaak-pulse 1.2s ease-in-out infinite;
+}
+
+.kovaak-skeleton + .kovaak-skeleton {
+  margin-top: 8px;
+}
+
+@keyframes kovaak-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.85; }
+}
+
+/* Compact score list for narrow contexts / onboarding */
+
+.kovaak-score-list--compact .kovaak-score-row {
+  flex-wrap: wrap;
+}
+
+.kovaak-score-list--compact .kovaak-score-name {
+  width: 100%;
+  flex: none;
+}
+
+.kovaak-score-list--compact .kovaak-score-tier,
+.kovaak-score-list--compact .kovaak-score-value {
+  width: auto;
+  flex: none;
+}
+
+.kovaak-score-list--compact .kovaak-score-coach {
+  width: 100%;
+  text-align: left;
+  margin-top: 4px;
+}
+
+.kovaak-score-list--compact .kovaak-score-coach .ac-button {
+  width: 100%;
+  justify-content: center;
+}
+
+/* Side info cards (used in score page mockup, not in panel) */
+
+.kovaak-side-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kovaak-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 14px;
+  font-size: 12.5px;
+}
+
+.kovaak-kv dt {
+  color: var(--fg2);
+  white-space: nowrap;
+}
+
+.kovaak-kv dd {
+  margin: 0;
+  color: var(--fg);
+  font-family: var(--font-mono);
+}
+
+.kovaak-kv-note {
+  margin: 8px 0 0;
+}
+
+.kovaak-disclaimer {
+  margin: 0;
+}
+
+.kovaak-onboarding-actions {
+  justify-content: flex-end;
+}
+
+/* Module (form card) for connect states */
+
+.kovaak-module {
+  border: 1px solid var(--outline-v);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 14px 16px;
+}
+
+.kovaak-module .ac-field__control {
+  height: 36px;
+  font-size: 12px;
+}
+
+.kovaak-module-note {
+  margin: 8px 0 0;
+}
+
+.kovaak-module-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.kovaak-module-actions .ac-button {
+  flex: none;
+}
+
+.kovaak-module-actions .ac-button[data-wide="true"] {
+  flex: 1;
+}
+
+.kovaak-module-read-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.kovaak-module-read-state + .kovaak-kv {
+  margin-top: 10px;
+}
+
+/* Responsive — panel-width driven: 窄面板（960 窗口的设置页 / onboarding）堆叠为单列，
+   行内保持 名称/分数/档位 三段，Coach 行操作收为整行次级按钮 */
+
+@container kovaak (max-width: 800px) {
+  .kovaak-scores-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kovaak-score-row {
+    flex-wrap: wrap;
+  }
+
+  .kovaak-score-value,
+  .kovaak-score-tier {
+    width: auto;
+    flex: none;
+  }
+
+  .kovaak-score-coach {
+    width: 100%;
+    flex: none;
+    text-align: left;
+  }
+
+  .kovaak-score-coach .ac-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 720px) {
+  .kovaak-panel__header,
+  .kovaak-connected {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .kovaak-scores-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kovaak-score-row {
+    flex-wrap: wrap;
+  }
+
+  .kovaak-score-name {
+    width: 100%;
+    flex: none;
+  }
+
+  .kovaak-score-tier,
+  .kovaak-score-value {
+    width: auto;
+    flex: none;
+  }
+
+  .kovaak-score-coach {
+    width: 100%;
+    text-align: left;
+    margin-top: 4px;
+  }
+
+  .kovaak-score-coach .ac-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .kovaak-module-actions .ac-button {
+    flex: 1;
+  }
+
+  .kovaak-consent {
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kovaak-skeleton {
+    animation: none;
+    opacity: 0.55;
+  }
+}

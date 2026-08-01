@@ -114,6 +114,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     { href: "/analyze", label: "＋ 新建分析" },
   ], []);
 
+  const tasksActive = pathname.startsWith("/tasks");
+  const coachActive = coachOpen && coachSupported;
+
   if (shellHidden) return <>{children}</>;
 
   const showCoach = coachSupported && coachOpen && preferenceLoaded;
@@ -121,39 +124,58 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="task3-app">
       <a className="task3-skip-link" href="#main-content">跳到主要内容</a>
       <header className="task3-toolbar">
-        <span className="task3-logo" aria-label="Aiming Cookie">Aiming Cookie</span>
+        <span className="task3-logo" aria-label="Aiming Cookie">Aiming&nbsp;Cookie</span>
         <nav aria-label="主要导航" className="task3-primary-nav">
-          {navItems.map((item) => (
-            <Link
-              aria-current={(item.href === "/analyze"
-                ? pathname === "/analyze" || pathname.startsWith("/analysis/")
-                : pathname.startsWith(item.href)) ? "page" : undefined}
-              href={item.href}
-              key={item.href}
-            >
-              {item.label}
-            </Link>
-          ))}
+          {navItems.map((item) => {
+            const active = item.href === "/analyze"
+              ? pathname === "/analyze" || pathname.startsWith("/analysis/")
+              : pathname.startsWith(item.href);
+            return (
+              <Link
+                aria-current={active ? "page" : undefined}
+                className={["t-btn", active ? "active" : ""].filter(Boolean).join(" ")}
+                href={item.href}
+                key={item.href}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
+        <div className="task3-toolbar-spacer" />
         <nav aria-label="工具导航" className="task3-tool-nav">
-          <Link aria-current={pathname.startsWith("/tasks") ? "page" : undefined} href="/tasks">
-            <span className="task3-task-nav-label">任务{activeTaskCount ? <span aria-label={`${activeTaskCount} 个活动任务`} className="task3-task-nav-dot" title={`${activeTaskCount} 个活动任务`} /> : null}</span>
-          </Link>
-          <span
-            className="task3-toolbar-tooltip"
-            title={coachSupported ? undefined : "当前页面不支持 Coach"}
+          <Link
+            aria-current={tasksActive ? "page" : undefined}
+            className={["t-btn", tasksActive ? "active" : ""].filter(Boolean).join(" ")}
+            href="/tasks"
           >
-            <button
-              aria-expanded={coachOpen}
-              className="task3-toolbar-action"
-              disabled={!coachSupported}
-              onClick={toggleCoach}
-              type="button"
-            >
-              Coach
-            </button>
-          </span>
-          <Link aria-current={pathname.startsWith("/settings") ? "page" : undefined} href="/settings">设置</Link>
+            <span className="task3-task-nav-label">
+              {activeTaskCount ? <span aria-hidden="true" className="task3-task-nav-dot" /> : null}
+              任务状态
+              {activeTaskCount ? <span className="task3-toolbar-badge">{activeTaskCount}</span> : null}
+            </span>
+          </Link>
+          {coachSupported ? (
+            <span className="task3-toolbar-tooltip">
+              <button
+                aria-expanded={coachOpen}
+                aria-label="Coach"
+                className={["t-icon", coachActive ? "active" : ""].filter(Boolean).join(" ")}
+                onClick={toggleCoach}
+                type="button"
+              >
+                <span aria-hidden="true">◧</span>
+              </button>
+            </span>
+          ) : null}
+          <Link
+            aria-current={pathname.startsWith("/settings") ? "page" : undefined}
+            aria-label="设置"
+            className={["t-icon", pathname.startsWith("/settings") ? "active" : ""].filter(Boolean).join(" ")}
+            href="/settings"
+          >
+            <span aria-hidden="true">⚙</span>
+          </Link>
         </nav>
       </header>
       <div

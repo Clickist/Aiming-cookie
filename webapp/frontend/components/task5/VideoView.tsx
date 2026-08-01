@@ -6,7 +6,7 @@ import { getAnalysisEvidenceSegments, getVideoUrl } from "@/lib/api";
 import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { getManagedVideoUrl, isDesktopRuntime } from "@/lib/desktop";
 import type { FrontendEvidenceSegmentV1, FrontendEvidenceSegmentsV1, TimelineEvent } from "@/lib/types";
-import { Button, Empty, Loading, Notice } from "@/ui/primitives";
+import { Badge, Button, Empty, Loading, Notice } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
 
@@ -22,11 +22,19 @@ function clamp(value: number, min: number, max: number): number {
 
 function eventLabel(type: string): string {
   return {
-    kill: "命中",
+    kill: "击杀",
     miss: "未命中",
     peak: "速度峰值",
     corrective: "修正",
   }[type] ?? type;
+}
+
+function eventColorVar(type: string): string {
+  if (type === "kill") return "var(--event-kill)";
+  if (type === "miss") return "var(--event-miss)";
+  if (type === "corrective") return "var(--event-corrective)";
+  if (type === "peak") return "var(--event-peak)";
+  return "var(--on-surface-variant)";
 }
 
 export function VideoView({
@@ -47,8 +55,7 @@ export function VideoView({
   selectedSegment: string | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const overlayTriggerRef = useRef<HTMLElement | null>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
   const [segments, setSegments] = useState<FrontendEvidenceSegmentsV1 | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(presentation.video.kind === "seekable");
@@ -58,6 +65,9 @@ export function VideoView({
   const [durationMs, setDurationMs] = useState(0);
   const [selectedEvent, setSelectedEvent] = useState<number | null>(null);
   const [activeTypes, setActiveTypes] = useState<string[]>(() => Array.from(new Set(presentation.timeline.map((event) => event.type))));
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const loadSegments = useCallback(async () => {
     setSegmentsLoading(true);
@@ -102,6 +112,11 @@ export function VideoView({
     void loadEvidence();
   }, [loadEvidence]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.playbackRate = speed;
+  }, [speed, videoUrl]);
+
   const segmentRows = segments?.segments ?? [];
   const issueEventRefs = selectedIssue === null ? [] : presentation.issues[selectedIssue]?.eventRefs ?? [];
   const visibleEvents = useMemo(() => presentation.timeline.filter((event) => activeTypes.includes(event.type)), [activeTypes, presentation.timeline]);
@@ -120,36 +135,50 @@ export function VideoView({
     if (videoRef.current) videoRef.current.currentTime = next / 1000;
   };
 
-  const openSegment = (segment: FrontendEvidenceSegmentV1, trigger: HTMLElement) => {
-    overlayTriggerRef.current = trigger;
+  const togglePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      void video.play();
+    } else {
+      video.pause();
+    }
+  };
+
+  const step = (direction: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    seek((video.currentTime * 1000) + direction * 5000);
+  };
+
+  const openSegment = (segment: FrontendEvidenceSegmentV1) => {
     onSelectSegment(segment.segment_id);
     setSelectedEvent(null);
+    setDrawerOpen(true);
     if (typeof segment.playback.relative_start_ms === "number") seek(segment.playback.relative_start_ms);
   };
 
-  const openEvent = (event: TimelineEvent, index: number, trigger: HTMLElement) => {
-    overlayTriggerRef.current = trigger;
+  const openEvent = (index: number) => {
     setSelectedEvent(index);
     onSelectSegment(null);
-    const time = eventTimeMs(event);
+    const time = eventTimeMs(presentation.timeline[index]);
     if (time !== null) seek(time);
   };
 
   const closeOverlay = useCallback(() => {
     onSelectSegment(null);
     setSelectedEvent(null);
-    window.requestAnimationFrame(() => overlayTriggerRef.current?.focus());
+    setDrawerOpen(false);
   }, [onSelectSegment]);
 
   useEffect(() => {
-    if (!activeSegment && !activeEvent) return undefined;
-    overlayRef.current?.focus();
+    if (!activeSegment && !activeEvent && !drawerOpen) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeOverlay();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [activeEvent, activeSegment, closeOverlay]);
+  }, [activeEvent, activeSegment, drawerOpen, closeOverlay]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -157,9 +186,22 @@ export function VideoView({
     video.currentTime = currentTimeMs / 1000;
   }, [currentTimeMs, videoUrl]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onPause);
+    return () => {
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onPause);
+    };
+  }, [videoUrl]);
+
   if (presentation.video.kind === "native-only") {
     return (
-      <div className={styles.videoColumn}>
+      <div className={styles.videoView}>
         <Empty title="没有可用视觉证据">
           这条 input-native Analysis 只包含输入运动学与事件对齐，不显示空播放器，也不推断视觉结论。
         </Empty>
@@ -171,7 +213,7 @@ export function VideoView({
 
   if (loadFailed || !videoUrl) {
     return (
-      <div className={styles.videoColumn}>
+      <div className={styles.videoView}>
         <Notice tone="warning" title="视觉证据当前不可用">
           原生分析结果仍然保留。视频可能已被手动移除，或本地媒体服务暂时不可用。
         </Notice>
@@ -180,13 +222,15 @@ export function VideoView({
     );
   }
 
-  const overlayTitle = activeSegment?.title_key ?? activeEvent?.label ?? null;
+  const progress = timelineMax > 0 ? (currentTimeMs / timelineMax) * 100 : 0;
+  const cursorLeft = timelineMax > 0 ? (currentTimeMs / timelineMax) * 100 : 0;
+  const timeText = `${formatRelativeTime(currentTimeMs)} / ${formatRelativeTime(timelineMax)}`;
+
   return (
-    <div className={styles.videoColumn}>
+    <div className={styles.videoView}>
       <section className={styles.playerStage} aria-label="视频证据播放器">
         <video
           className={styles.video}
-          controls
           onDurationChange={(event) => setDurationMs(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration * 1000 : 0)}
           onError={() => {
             setVideoUrl(null);
@@ -197,58 +241,110 @@ export function VideoView({
           ref={videoRef}
           src={videoUrl}
         />
-        {overlayTitle ? (
-          <div className={styles.playerOverlay} ref={overlayRef} tabIndex={-1}>
+        <span className={styles.playerBadge}>{timeText}{activeSegment ? ` · ${activeSegment.title_key ?? activeSegment.segment_id}` : ""}</span>
+        {drawerOpen ? (
+          <div className={styles.segmentDrawer} ref={drawerRef} tabIndex={-1}>
             <header>
-              <div><p className={styles.sectionKicker}>{activeSegment ? "EvidenceSegment" : "当前事件"}</p><h2>{overlayTitle}</h2></div>
-              <Button onClick={closeOverlay} variant="ghost">关闭</Button>
+              <span>证据片段</span>
+              <Badge tone="neutral">{segmentRows.length}</Badge>
+              <button className={styles.drawerClose} onClick={() => setDrawerOpen(false)} type="button">✕</button>
             </header>
-            {activeSegment ? (
-              <dl>
-                <div><dt>相对片段</dt><dd>{activeSegment.playback.relative_start_ms ?? "?"}–{activeSegment.playback.relative_end_ms ?? "?"} ms</dd></div>
-                <div><dt>可信度</dt><dd>{activeSegment.confidence === null ? "未提供" : `${Math.round(activeSegment.confidence * 100)}%`}</dd></div>
-                <div><dt>覆盖</dt><dd>{activeSegment.source_coverage === null ? "未提供" : `${Math.round(activeSegment.source_coverage * 100)}%`}</dd></div>
-              </dl>
-            ) : activeEvent ? <p>{eventLabel(activeEvent.type)} · {activeEvent.source ?? "来源未提供"}</p> : null}
+            <div className={styles.segmentDrawerBody}>
+              {segmentsLoading ? <Loading>正在读取证据片段</Loading> : null}
+              {segmentsFailed ? (
+                <Notice tone="warning" title="证据片段暂时不可用">
+                  视频仍可播放；片段恢复后可以重试读取。
+                  <Button onClick={() => void loadSegments()} size="compact" variant="secondary">重试证据片段</Button>
+                </Notice>
+              ) : null}
+              {!segmentsLoading && !segmentsFailed && segmentRows.length === 0 ? (
+                <Empty title="没有可用证据片段">此 Analysis 没有返回可定位的片段。</Empty>
+              ) : null}
+              {segmentRows.map((segment) => {
+                const selected = segment.segment_id === selectedSegment;
+                const related = issueEventRefs.some((ref) => segment.event_refs.includes(ref));
+                return (
+                  <button
+                    className={styles.segmentCard}
+                    data-related={related || undefined}
+                    data-selected={selected || undefined}
+                    key={segment.segment_id}
+                    onClick={() => openSegment(segment)}
+                    type="button"
+                  >
+                    <div className={styles.segmentTop}>
+                      <span style={{ color: "var(--event-peak)" }}>●</span>
+                      <span>{segment.title_key ?? segment.segment_id}</span>
+                      {selected ? <Badge tone="neutral">正在播放</Badge> : null}
+                    </div>
+                    <div className={styles.segmentMeta}>
+                      <span>{formatRelativeTime(segment.playback.relative_start_ms ?? 0)} – {formatRelativeTime(segment.playback.relative_end_ms ?? timelineMax)}</span>
+                      {segment.source_coverage !== null ? <span>覆盖 {Math.round(segment.source_coverage * 100)}%</span> : null}
+                      {segment.confidence !== null ? <span>置信度 {Math.round(segment.confidence * 100)}%</span> : null}
+                    </div>
+                    {segment.rank_reason ? <div className={styles.segmentMeta}>{segment.rank_reason}</div> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <div className={styles.segmentDrawerFoot}>本地回放，不上传；Coach 可引用但不读取视频内容</div>
           </div>
         ) : null}
       </section>
 
+      <div className={styles.playerBar}>
+        <button className={styles.playerBarBtn} onClick={() => step(-1)} type="button">⏮</button>
+        <button className={styles.playerBarBtn} onClick={togglePlay} type="button">{isPlaying ? "⏸" : "▶"}</button>
+        <button className={styles.playerBarBtn} onClick={() => step(1)} type="button">⏭</button>
+        <span className={styles.playerBarTime}>{timeText}</span>
+        <div className={styles.playerBarSpacer} />
+        <button
+          className={styles.playerBarBtn}
+          onClick={() => setSpeed((current) => current === 1 ? 0.5 : 1)}
+          type="button"
+        >
+          {speed}×
+        </button>
+        <button
+          className={styles.playerBarBtn}
+          onClick={() => setDrawerOpen((current) => !current)}
+          type="button"
+        >
+          证据片段 {segmentRows.length}
+        </button>
+        <button className={styles.playerBarBtn} onClick={() => {
+          const video = videoRef.current;
+          if (video) video.muted = !video.muted;
+        }} type="button">🔊</button>
+        <button className={styles.playerBarBtn} onClick={() => {
+          const video = videoRef.current;
+          if (video) {
+            if (document.fullscreenElement) {
+              void document.exitFullscreen();
+            } else {
+              void video.requestFullscreen();
+            }
+          }
+        }} type="button">⛶</button>
+      </div>
+
       <section className={styles.timelineSection} aria-label="分析时间轴">
-        <div className={styles.timelineFilters} aria-label="事件类型筛选">
-          <span>事件</span>
-          {Array.from(new Set(presentation.timeline.map((event) => event.type))).map((type) => {
-            const active = activeTypes.includes(type);
-            return (
-              <button aria-pressed={active} data-event={type} key={type} onClick={() => setActiveTypes((current) => active ? current.filter((item) => item !== type) : [...current, type])} type="button">
-                {eventLabel(type)}
-              </button>
-            );
-          })}
-        </div>
-        {segmentsLoading ? <Loading>正在读取证据片段</Loading> : null}
-        {segmentsFailed ? (
-          <Notice tone="warning" title="证据片段暂时不可用">
-            视频仍可播放；片段恢复后可以重试读取。
-            <Button onClick={() => void loadSegments()} size="compact" variant="secondary">重试证据片段</Button>
-          </Notice>
-        ) : null}
-        {!segmentsLoading && !segmentsFailed && segmentRows.length === 0 ? (
-          <Empty title="没有可用证据片段">此 Analysis 没有返回可定位的片段。</Empty>
-        ) : null}
-        <div className={styles.timelineTrack}>
+        <div className={styles.timeline}>
+          <div className={styles.timelineTrack} />
+          <div className={styles.timelineProgress} style={{ width: `${progress}%` }} />
           {!segmentsLoading && !segmentsFailed ? segmentRows.map((segment) => {
             const start = segment.playback.relative_start_ms;
             const end = segment.playback.relative_end_ms;
             if (start === null || end === null) return null;
+            const related = issueEventRefs.some((ref) => segment.event_refs.includes(ref));
             return (
               <button
                 aria-label={`证据片段 ${segment.title_key ?? segment.segment_id}`}
-                className={styles.segmentRange}
-                data-related={issueEventRefs.some((ref) => segment.event_refs.includes(ref)) || undefined}
+                className={styles.timelineSegment}
+                data-related={related || undefined}
                 key={segment.segment_id}
-                onClick={(event) => openSegment(segment, event.currentTarget)}
-                style={{ insetInlineStart: `${(start / timelineMax) * 100}%`, width: `${Math.max(0.8, ((end - start) / timelineMax) * 100)}%` }}
+                onClick={() => openSegment(segment)}
+                style={{ insetInlineStart: `${(start / timelineMax) * 100}%`, width: `${Math.max(0.4, ((end - start) / timelineMax) * 100)}%` }}
                 type="button"
               />
             );
@@ -260,15 +356,29 @@ export function VideoView({
             return (
               <button
                 aria-label={`${eventLabel(event.type)} ${Math.round(time)} 毫秒`}
-                className={styles.eventMarker}
+                className={styles.timelineEvent}
                 data-event={event.type}
                 key={`${event.type}-${time}-${index}`}
-                onClick={(trigger) => openEvent(event, index, trigger.currentTarget)}
-                style={{ insetInlineStart: `${(time / timelineMax) * 100}%` }}
+                onClick={() => openEvent(index)}
+                style={{ insetInlineStart: `${(time / timelineMax) * 100}%`, background: eventColorVar(event.type) }}
                 type="button"
               />
             );
           })}
+          <div className={styles.timelineCursor} style={{ insetInlineStart: `${cursorLeft}%` }} />
+          {activeEvent ? (
+            <div className={styles.eventPopover} style={{ insetInlineStart: `${cursorLeft}%` }}>
+              <header>
+                <span>当前事件 · {eventLabel(activeEvent.type)}</span>
+                <button className={styles.drawerClose} onClick={() => setSelectedEvent(null)} type="button">✕</button>
+              </header>
+              <div className={styles.eventPopoverTime}>{formatRelativeTime(eventTimeMs(activeEvent) ?? 0)}</div>
+              <div className={styles.eventPopoverBody}>
+                {activeEvent.label ? <p>{activeEvent.label}</p> : null}
+                <p>来源：{activeEvent.source ?? "未提供"}</p>
+              </div>
+            </div>
+          ) : null}
           <input
             aria-label="分析时间轴"
             className={styles.timelineInput}
@@ -279,10 +389,37 @@ export function VideoView({
             type="range"
             value={clamp(currentTimeMs, 0, timelineMax)}
           />
+          <span className={styles.timelineTimeLeft}>{formatRelativeTime(0)}</span>
+          <span className={styles.timelineTimeRight}>{formatRelativeTime(timelineMax)}</span>
         </div>
-        <div className={styles.timelineMeta}><span>{Math.round(currentTimeMs)} ms</span><span>{Math.round(timelineMax)} ms</span></div>
-      </section>
 
+        <div className={styles.timelineLegend}>
+          {Array.from(new Set(presentation.timeline.map((event) => event.type))).map((type) => {
+            const active = activeTypes.includes(type);
+            return (
+              <button
+                aria-pressed={active}
+                className={styles.legendChip}
+                data-event={type}
+                key={type}
+                onClick={() => setActiveTypes((current) => active ? current.filter((item) => item !== type) : [...current, type])}
+                type="button"
+              >
+                <i style={{ background: eventColorVar(type) }} />
+                {eventLabel(type)}
+              </button>
+            );
+          })}
+          {activeTypes.length === 0 ? <span className={styles.legendChipOff}>全部（已关闭，避免噪声）</span> : null}
+        </div>
+      </section>
     </div>
   );
+}
+
+function formatRelativeTime(value: number): string {
+  const totalSeconds = Math.max(0, value) / 1000;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds - minutes * 60;
+  return `${String(minutes).padStart(2, "0")}:${seconds.toFixed(1).padStart(4, "0")}`;
 }

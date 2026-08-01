@@ -47,3 +47,15 @@ test("Storage maps exactly four categories without inventing cleanup", () => {
     ["未完成采集", 4],
   ]);
 });
+
+test("current training fixture contract stays read-only, bounded, and status-explicit", async () => {
+  const fixtures = await import("../fixtures/task7-fixtures");
+  const training = fixtures.CURRENT_TRAINING_ACTIVE;
+  assert.equal(training.schema_version, "current_training.v1");
+  assert.equal(training.plan_status, "active");
+  assert.equal(training.visible_item_count, 3);
+  assert.equal(training.items.length, 3);
+  assert.deepEqual(training.items.map((item) => item.status), ["active", "planned", "completed"]);
+  assert.equal(training.items[0]?.scenario_profile_ref, "scenario:static.1wall_6targets_small@1");
+  assert.doesNotMatch(JSON.stringify(training), /diagnosis_ref|metric_ref|execution_ref/);
+});

@@ -9,12 +9,15 @@ import type {
   CaptureStatusV1,
   CoachContextListV1,
   CoachPrimaryResponse,
+  CurrentTrainingV1,
   FrontendAnalysisDataV1,
+  FrontendAnalysisFamilyDataV1,
   FrontendEvidenceSegmentsV1,
   HistoryTrend,
   IncompleteCaptureListV1,
   KovaaKRunItem,
   KovaaKRunListItem,
+  KovaaKScoresV1,
   ProductStateV1,
   ProviderAuthCapabilitiesV1,
   ProviderCatalogV1,
@@ -30,7 +33,7 @@ import type {
 } from "../lib/types";
 
 const NOW = "2026-07-25T06:32:00Z";
-const TASK7_VIDEO = readFile(path.join(__dirname, "task7-video.mp4"));
+const TASK7_VIDEO = () => readFile(path.join(process.cwd(), "fixtures", "task7-video.mp4"));
 
 export const PRODUCT_STATE: ProductStateV1 = {
   schema_version: "product_state.v1",
@@ -55,8 +58,8 @@ export const RUN_MULTIMODAL: KovaaKRunListItem = {
   video_artifact_ref: "run:7:video",
   finalization_state: "completed",
   finalization_error: null,
-  readiness_state: "pending_analysis",
-  analysis_count: 0,
+  readiness_state: "analyzed",
+  analysis_count: 1,
   supported_input_modes: ["input_native", "multimodal", "video_fallback"],
   evidence_availability: { stats: "available", performance: "available", raw: "available", mp4: "available" },
   alignment: { status: "aligned" },
@@ -465,6 +468,62 @@ export const ANALYSIS_DATA: FrontendAnalysisDataV1 = {
   },
 };
 
+export const ANALYSIS_FAMILY_TRACKING: FrontendAnalysisFamilyDataV1 = {
+  schema_version: "frontend_analysis_family_data.v1",
+  analysis_ref: "analysis:42",
+  family: "tracking",
+  availability: "available",
+  reason: null,
+  limitations: [],
+  total_count: 4,
+  next_offset: null,
+  rows: [
+    { kind: "tracking_fixed_window", timing: { start_ms: 400, end_ms: 900 }, metrics: { target_relative_error_px: 18.4, time_in_radius_ratio: 0.87, correction_burden: 0.42, sparc: -2.14 }, limitations: [] },
+    { kind: "tracking_loss", timing: { start_ms: 1200, end_ms: 1324 }, metrics: { duration_ms: 124 }, limitations: [] },
+    { kind: "tracking_reacquisition", timing: { start_ms: 1324, end_ms: 1480 }, metrics: { reacquisition_latency_ms: 156 }, limitations: [] },
+    { kind: "tracking_change_response", timing: { start_ms: 1800, end_ms: 1930 }, metrics: { observed_change_response_ms: 130, alignment_latency_ms: 22, post_change_error_px: 21.5 }, limitations: ["capture_alignment_descriptor_not_human_response"] },
+  ],
+};
+
+export const ANALYSIS_FAMILY_SWITCHING: FrontendAnalysisFamilyDataV1 = {
+  schema_version: "frontend_analysis_family_data.v1",
+  analysis_ref: "analysis:42",
+  family: "switching",
+  availability: "available",
+  reason: null,
+  limitations: [],
+  total_count: 2,
+  next_offset: null,
+  rows: [
+    { kind: "switch_chain", timing: { kill_ms: 1200, transition_ms: 1220, acquire_ms: 1388, settle_ms: 1430 }, metrics: { transition_time_ms: 168, transition_distance_px: 512, path_efficiency: 0.91, settle_duration_ms: 42 }, limitations: [] },
+    { kind: "switch_chain", timing: { kill_ms: 4100, transition_ms: 4140, acquire_ms: 4552, settle_ms: 4638 }, metrics: { transition_time_ms: 412, transition_distance_px: 964, path_efficiency: 0.52, settle_duration_ms: 86 }, limitations: [] },
+  ],
+};
+
+export const ANALYSIS_FAMILY_FLICKING: FrontendAnalysisFamilyDataV1 = {
+  schema_version: "frontend_analysis_family_data.v1",
+  analysis_ref: "analysis:42",
+  family: "flicking",
+  availability: "available",
+  reason: null,
+  limitations: [],
+  total_count: 1,
+  next_offset: null,
+  rows: [{ kind: "static_flick", timing: { start_ms: 2400, peak_ms: 2478, movement_end_ms: 2582, settle_end_ms: 2616 }, metrics: { accel_duration_ms: 78, decel_duration_ms: 104, settle_duration_ms: 34, peak_speed: 4.2, path_efficiency: 0.89, corrective_count: 2 }, limitations: [] }],
+};
+
+export const ANALYSIS_FAMILY_FLICKING_UNAVAILABLE: FrontendAnalysisFamilyDataV1 = {
+  schema_version: "frontend_analysis_family_data.v1",
+  analysis_ref: "analysis:42",
+  family: "flicking",
+  availability: "unavailable",
+  reason: "family_detail_requires_input_native_flicking",
+  limitations: [],
+  total_count: 0,
+  next_offset: null,
+  rows: [],
+};
+
 export const PROVIDER_CATALOG: ProviderCatalogV1 = {
   schema_version: "coach_provider_catalog.v1",
   providers: [{
@@ -572,6 +631,94 @@ export const COACH_PRIMARY: CoachPrimaryResponse = {
   refs: [{ id: 1, analysis_session_id: 42, status: "active", attached_at: NOW, deleted_at: null }],
 };
 
+export const CURRENT_TRAINING_ACTIVE: CurrentTrainingV1 = {
+  schema_version: "current_training.v1",
+  availability: "available",
+  reason: null,
+  plan_status: "active",
+  total_item_count: 3,
+  visible_item_count: 3,
+  limitations: [],
+  items: [
+    {
+      display_name: "1wall 6targets small",
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      scenario_availability: "available",
+      status: "active",
+      practice_condition: "先完成短距离切换，再追求速度。",
+      cue: "接近目标时提前减速。",
+      dose_guardrail: "本次最多 3 轮，每轮之间短暂停顿。",
+      observation: "记录最后一次修正是否更少。",
+      retest: "完成后在相同场景复测一次。",
+    },
+    {
+      display_name: "controlsphere",
+      scenario_profile_ref: null,
+      scenario_availability: "available",
+      status: "planned",
+      practice_condition: "保持稳定跟随，不追求最高分。",
+      cue: "让准星跟随而不是追赶。",
+      dose_guardrail: "开始前确认手臂和握鼠标舒适。",
+      observation: "观察脱靶后是否更快回到目标。",
+      retest: "下次训练前检查同一观察项。",
+    },
+    {
+      display_name: "microshot speed",
+      scenario_profile_ref: null,
+      scenario_availability: "unavailable",
+      status: "completed",
+      practice_condition: "本轮已完成。",
+      cue: "保持已验证的节奏。",
+      dose_guardrail: "无需追加练习。",
+      observation: "保留本轮观察，避免从单次成绩下结论。",
+      retest: "在后续安排的复测中比较。",
+    },
+  ],
+};
+
+export const CURRENT_TRAINING_NO_PLAN: CurrentTrainingV1 = {
+  schema_version: "current_training.v1",
+  availability: "available",
+  reason: "no_current_plan",
+  plan_status: null,
+  total_item_count: 0,
+  visible_item_count: 0,
+  limitations: [],
+  items: [],
+};
+
+export const CURRENT_TRAINING_PAUSED: CurrentTrainingV1 = {
+  ...CURRENT_TRAINING_ACTIVE,
+  plan_status: "paused",
+};
+
+export const CURRENT_TRAINING_UNAVAILABLE: CurrentTrainingV1 = {
+  schema_version: "current_training.v1",
+  availability: "unavailable",
+  reason: null,
+  plan_status: null,
+  total_item_count: 0,
+  visible_item_count: 0,
+  limitations: ["current_training_projection_unavailable"],
+  items: [],
+};
+
+export const KOVAAK_SCORES: KovaaKScoresV1 = {
+  schema_version: "kovaak_scores.v1",
+  availability: "available",
+  observed_at: NOW,
+  stages: [
+    { stage: "easier", completed: 18, required: 39, rank: 5, rank_name: "黄金 III" },
+    { stage: "medium", completed: 0, required: 39, rank: 0, rank_name: "未完成" },
+  ],
+  items: [
+    { stage: "easier", name: "controlsphere", category: "Control Tracking", subcategory: "稳定跟随", score: 8214, item_rank: 4, item_rank_name: "黄金 I", completed: true },
+    { stage: "easier", name: "air", category: "Reactive Tracking", subcategory: "变化跟随", score: 5141, item_rank: 2, item_rank_name: "白银 I", completed: true },
+    { stage: "easier", name: "1wall 6targets small", category: "Flick Tech", subcategory: "快速点击", score: 1022, item_rank: 5, item_rank_name: "黄金 III", completed: true },
+    { stage: "medium", name: "microshot speed", category: "Click Timing", subcategory: "点击时机", score: 0, item_rank: 0, item_rank_name: "未完成", completed: false },
+  ],
+};
+
 export interface ApiScenario {
   productState: ProductStateV1;
   runs: KovaaKRunListItem[];
@@ -579,10 +726,14 @@ export interface ApiScenario {
   sessions: SessionListItem[];
   analysis: SessionStatus;
   analysisData: FrontendAnalysisDataV1;
+  analysisFamilyData: FrontendAnalysisFamilyDataV1;
   evidenceSegments: FrontendEvidenceSegmentsV1;
   capture: CaptureStatusV1;
   providerStatus: ProviderProfileStatus;
+  currentTraining: CurrentTrainingV1;
   profiles: ProviderProfileListResponse;
+  kovaakConnected: boolean;
+  kovaakScores: KovaaKScoresV1;
   failures: Record<string, number>;
 }
 
@@ -594,10 +745,14 @@ export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
     sessions: SESSION_LIST,
     analysis: analysisSession(),
     analysisData: ANALYSIS_DATA,
+    analysisFamilyData: ANALYSIS_FAMILY_TRACKING,
     evidenceSegments: EVIDENCE_SEGMENTS,
     capture: CAPTURE_STATUS,
     providerStatus: READY_PROVIDER_STATUS,
+    currentTraining: CURRENT_TRAINING_ACTIVE,
     profiles: { profiles: [PROVIDER_PROFILE] },
+    kovaakConnected: true,
+    kovaakScores: KOVAAK_SCORES,
     failures: {},
     ...overrides,
   };
@@ -607,12 +762,97 @@ function runDetail(run: KovaaKRunListItem): KovaaKRunItem {
   return { ...run, stats_source_ref: null, performance_source_ref: null, trace_artifact_ref: null, stats_summary: null, performance_summary: null };
 }
 
+export interface ReviewApiRequest {
+  method: string;
+  path: string;
+  body?: unknown;
+}
+
+export interface ReviewApiResponse {
+  status: number;
+  body: unknown;
+  video?: boolean;
+}
+
+const response = (body: unknown, status = 200): ReviewApiResponse => ({ status, body });
+const requestBody = (body: unknown): Record<string, unknown> => body && typeof body === "object" ? body as Record<string, unknown> : {};
+
+/** Shared by Playwright's adapter and the local Next.js review route. */
+export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApiRequest): ReviewApiResponse {
+  const { method, path } = request;
+  const failureStatus = scenario.failures[`${method} ${path}`] ?? scenario.failures[path];
+  if (failureStatus) return response({ detail: { code: "fixture_unavailable", message: "Fixture service unavailable" } }, failureStatus);
+  if (path === "/api/product-state" && method === "GET") return response(scenario.productState);
+  if (path === "/api/product-state/onboarding" && method === "POST") {
+    const body = requestBody(request.body);
+    scenario.productState = { ...scenario.productState, onboarding_completed: true, onboarding_completion_kind: body.completion_kind === "skipped" ? "skipped" : "connected" };
+    return response(scenario.productState);
+  }
+  if (path === "/api/providers/catalog") return response(PROVIDER_CATALOG);
+  if (path === "/api/provider-auth/capabilities") return response(PROVIDER_CAPABILITIES);
+  if (path === "/api/provider-profiles/status") return response(scenario.providerStatus);
+  if (path === "/api/provider-profiles" && method === "GET") return response(scenario.profiles);
+  if (path === "/api/provider-profiles" && method === "POST") {
+    const body = requestBody(request.body);
+    const id = Math.max(0, ...scenario.profiles.profiles.map((profile) => profile.id)) + 1;
+    const profile: ProviderProfile = { id, name: String(body.name ?? "Custom provider"), provider_id: String(body.provider_id ?? "custom"), kind: body.kind as ProviderProfile["kind"], base_url: typeof body.base_url === "string" ? body.base_url : null, model_id: String(body.model_id ?? "review-model"), is_default: Boolean(body.is_default), configured: Boolean(body.api_key), credential_configured: Boolean(body.api_key), has_api_key: Boolean(body.api_key), status: "unconfigured", created_at: NOW, updated_at: NOW };
+    if (profile.is_default) scenario.profiles.profiles.forEach((item) => { item.is_default = false; });
+    scenario.profiles.profiles.push(profile);
+    return response(profile);
+  }
+  if (path === "/api/provider-profiles/custom/models" && method === "POST") {
+    const body = requestBody(request.body);
+    return typeof body.base_url === "string" && body.base_url.includes("unavailable") ? response({ detail: { code: "model_discovery_failed", message: "Mock provider unavailable" } }, 503) : response({ models: ["custom-model-a", "custom-model-b"], protocol: body.protocol ?? "openai-completions" });
+  }
+  const providerAction = /^\/api\/provider-profiles\/(\d+)(?:\/(test|default)|\/auth\/api-key)?$/.exec(path);
+  if (providerAction) {
+    const profile = scenario.profiles.profiles.find((item) => item.id === Number(providerAction[1]));
+    if (!profile) return response({ detail: "Not found" }, 404);
+    if (providerAction[2] === "test" && method === "POST") { profile.status = "ready"; scenario.providerStatus = { profile_id: profile.id, configured: true, status: "ready", message: "Provider ready" }; return response(scenario.providerStatus); }
+    if (providerAction[2] === "default" && method === "POST") { scenario.profiles.profiles.forEach((item) => { item.is_default = item.id === profile.id; }); return response(profile); }
+    if (path.endsWith("/auth/api-key") && method === "PUT") { profile.configured = true; profile.credential_configured = true; profile.has_api_key = true; return response(profile); }
+    if (method === "DELETE") { scenario.profiles.profiles = scenario.profiles.profiles.filter((item) => item.id !== profile.id); return response({ deleted: true }); }
+  }
+  if (path === "/api/kovaak-connection" && method === "GET") return response({ connected: scenario.kovaakConnected });
+  if (path === "/api/kovaak-connection" && method === "PUT") { scenario.kovaakConnected = true; return response({ connected: true }); }
+  if (path === "/api/kovaak-connection" && method === "DELETE") { scenario.kovaakConnected = false; return response({ deleted: true }); }
+  if (path === "/api/kovaak-connection/refresh" && method === "POST") return response({ schema_version: "kovaak_benchmark_sync_result.v1", imported_score_count: scenario.kovaakScores.items.length, difficulty_counts: { easier: 18, medium: 0 }, observed_at: NOW });
+  if (path === "/api/kovaak-scores") return response(scenario.kovaakScores);
+  if (path === "/api/calibration-profile" && method === "GET") return response(CALIBRATION_PROFILE);
+  if (path === "/api/capture-status") return response(scenario.capture);
+  if (path === "/api/storage") return response(STORAGE);
+  if (path === "/api/storage/incomplete") return response(INCOMPLETE_CAPTURES);
+  if (path === "/api/tasks") return response({ schema_version: "task_list.v1", availability: "available", tasks: scenario.tasks, error: null } satisfies TaskListV1);
+  if (path === "/api/kovaak-runs") return response({ runs: scenario.runs });
+  const runMatch = /^\/api\/kovaak-runs\/(\d+)$/.exec(path);
+  if (runMatch) { const run = scenario.runs.find((candidate) => candidate.id === Number(runMatch[1])); return run ? response(runDetail(run)) : response({ detail: "Not found" }, 404); }
+  if (/^\/api\/kovaak-runs\/\d+\/analyze$/.test(path)) return response({ session_id: 42 });
+  if (path === "/api/sessions") return response({ sessions: scenario.sessions });
+  if (path === "/api/sessions/42/analysis-data") return response(scenario.analysisData);
+  if (path === "/api/sessions/42/analysis-data/family") return response(scenario.analysisFamilyData);
+  if (path === "/api/sessions/42/evidence-segments") return response(scenario.evidenceSegments);
+  if (path === "/api/sessions/42/video") return { status: 200, body: null, video: true };
+  if (path === "/api/sessions/42/retry" && method === "POST") return response({ ...scenario.analysis, id: 43, status: "queued" });
+  if (path === "/api/sessions/42") return response(scenario.analysis);
+  if (path.startsWith("/api/history/trends/")) return response({ comparable: false, reason: "insufficient_records" } satisfies HistoryTrend);
+  if (path === "/api/coach/context") return response(COACH_CONTEXTS);
+  if (path === "/api/coach/primary") return response(COACH_PRIMARY);
+  if (path === "/api/current-training" && method === "GET") return response(scenario.currentTraining);
+  if (path === "/api/coach/agent-runs" && method === "POST") return response({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:1", parent_run_ref: null, attempt: 1, status: "running", phase: "text_generation", partial_text: "正在整理证据", error: null, contexts: COACH_CONTEXTS.contexts, events: [], created_at: NOW, started_at: NOW, finished_at: null });
+  if (path === "/api/analyze" || path === "/api/desktop/analyze-paths") return response({ session_id: 42 });
+  return response({ detail: { code: "fixture_route_missing", message: `${method} ${path}` } }, 501);
+}
+
+export async function readReviewVideo(): Promise<Buffer> {
+  return TASK7_VIDEO();
+}
+
 async function fulfillJson(route: Route, body: unknown, status = 200): Promise<void> {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
 async function fulfillVideo(route: Route): Promise<void> {
-  const body = await TASK7_VIDEO;
+  const body = await TASK7_VIDEO();
   const range = route.request().headers().range;
   if (!range) {
     await route.fulfill({
@@ -651,6 +891,11 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const method = request.method();
+    const shared = handleReviewApiRequest(scenario, { method, path });
+    if (shared.video) return fulfillVideo(route);
+    return fulfillJson(route, shared.body, shared.status);
+    /*
+    // Legacy explicit map retained below only until its static cases are removed.
     const failureStatus = scenario.failures[`${method} ${path}`] ?? scenario.failures[path];
     if (failureStatus) return fulfillJson(route, { detail: { code: "fixture_unavailable", message: "Fixture service unavailable" } }, failureStatus);
 
@@ -660,6 +905,14 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     if (path === "/api/provider-auth/capabilities") return fulfillJson(route, PROVIDER_CAPABILITIES);
     if (path === "/api/provider-profiles/status") return fulfillJson(route, scenario.providerStatus);
     if (path === "/api/provider-profiles" && method === "GET") return fulfillJson(route, scenario.profiles);
+    if (path === "/api/provider-profiles/custom/models" && method === "POST") return fulfillJson(route, { models: ["custom-model-a", "custom-model-b"] });
+    if (path === "/api/kovaak-connection" && method === "GET") return fulfillJson(route, { connected: scenario.kovaakConnected });
+    if (path === "/api/kovaak-connection" && method === "PUT") return fulfillJson(route, { connected: true });
+    if (path === "/api/kovaak-connection" && method === "DELETE") return fulfillJson(route, { deleted: true });
+    if (path === "/api/kovaak-connection/refresh" && method === "POST") {
+      return fulfillJson(route, { schema_version: "kovaak_benchmark_sync_result.v1", imported_score_count: scenario.kovaakScores.items.length, difficulty_counts: { easier: 18, medium: 0 }, observed_at: NOW });
+    }
+    if (path === "/api/kovaak-scores" && method === "GET") return fulfillJson(route, scenario.kovaakScores);
     if (path === "/api/calibration-profile") return fulfillJson(route, CALIBRATION_PROFILE);
     if (path === "/api/capture-status") return fulfillJson(route, scenario.capture);
     if (path === "/api/storage") return fulfillJson(route, STORAGE);
@@ -670,13 +923,14 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     }
     if (path === "/api/kovaak-runs") return fulfillJson(route, { runs: scenario.runs });
     const runMatch = /^\/api\/kovaak-runs\/(\d+)$/.exec(path);
-    if (runMatch) {
-      const run = scenario.runs.find((candidate) => candidate.id === Number(runMatch[1]));
+    if (runMatch !== null) {
+      const run = scenario.runs.find((candidate) => candidate.id === Number(runMatch[1]!));
       return run ? fulfillJson(route, runDetail(run)) : fulfillJson(route, { detail: "Not found" }, 404);
     }
     if (/^\/api\/kovaak-runs\/\d+\/analyze$/.test(path)) return fulfillJson(route, { session_id: 42 });
     if (path === "/api/sessions") return fulfillJson(route, { sessions: scenario.sessions });
     if (path === "/api/sessions/42/analysis-data") return fulfillJson(route, scenario.analysisData);
+    if (path === "/api/sessions/42/analysis-data/family") return fulfillJson(route, scenario.analysisFamilyData);
     if (path === "/api/sessions/42/evidence-segments") return fulfillJson(route, scenario.evidenceSegments);
     if (path === "/api/sessions/42/video") {
       await fulfillVideo(route);
@@ -690,6 +944,7 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     }
     if (path === "/api/coach/context") return fulfillJson(route, COACH_CONTEXTS);
     if (path === "/api/coach/primary") return fulfillJson(route, COACH_PRIMARY);
+    if (path === "/api/current-training" && method === "GET") return fulfillJson(route, scenario.currentTraining);
     if (path === "/api/coach/agent-runs" && method === "POST") {
       return fulfillJson(route, {
         schema_version: "coach_agent_run.v1",
@@ -709,6 +964,7 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     }
     if (path === "/api/analyze" || path === "/api/desktop/analyze-paths") return fulfillJson(route, { session_id: 42 });
     await fulfillJson(route, { detail: { code: "fixture_route_missing", message: `${method} ${path}` } }, 501);
+    */
   });
 }
 
@@ -724,7 +980,7 @@ export async function installDesktopBridge(page: Page): Promise<void> {
     const fixtureWindow = window as unknown as TauriFixtureWindow;
     fixtureWindow.isTauri = true;
     fixtureWindow.__TAURI_INTERNALS__ = {
-      invoke: async (command) => {
+      invoke: async (command, args) => {
         if (command === "desktop_runtime_connection") return { baseUrl: origin, token: "task7-fixture-token" };
         if (command === "desktop_capture_coordinator_status" || command === "desktop_capture_coordinator_set_enabled") {
           return {
@@ -736,6 +992,23 @@ export async function installDesktopBridge(page: Page): Promise<void> {
             reason: null,
             raw: { state: "recording", reason: null },
             video: { state: "buffering", reason: null },
+          };
+        }
+        if (command === "scenario_open") {
+          const scenarioProfileRef = args?.scenarioProfileRef;
+          if (scenarioProfileRef !== "scenario:static.1wall_6targets_small@1") {
+            return {
+              status: "scenario_unmapped",
+              scenario_profile_ref: null,
+              display_name: null,
+              message: "该训练项目没有可验证的 KovaaK 场景",
+            };
+          }
+          return {
+            status: "scenario_dispatched",
+            scenario_profile_ref: scenarioProfileRef,
+            display_name: "1wall 6targets small",
+            message: "已请求打开 KovaaK，请确认目标场景已加载",
           };
         }
         if (command === "plugin:dialog|open") return "C:\\Task7Fixture\\selected.file";
