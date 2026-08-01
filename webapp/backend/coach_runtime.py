@@ -62,6 +62,10 @@ class ProviderUnconfiguredError(CoachRuntimeError):
     """The owner has no usable selected Provider profile."""
 
 
+class CustomProviderModelDiscoveryError(RuntimeError):
+    """A custom Provider could not return its model list."""
+
+
 @dataclass(frozen=True)
 class PiCoachTurnResult:
     reply: str
@@ -185,7 +189,7 @@ def _normalize_runtime_profile(profile: Mapping[str, Any] | None) -> dict[str, A
         for value in (provider_id, provider_name, kind, model_id)
     ):
         raise ProviderUnconfiguredError("Coach Provider 未配置完整元数据")
-    if kind not in {"builtin", "custom_openai_compatible"}:
+    if kind not in {"builtin", "custom_openai_compatible", "custom_anthropic_compatible"}:
         raise ProviderUnconfiguredError("Coach Provider 类型不受支持")
     if credential is None and isinstance(api_key, str) and api_key:
         credential = {"type": "api_key", "key": api_key}
@@ -198,13 +202,16 @@ def _normalize_runtime_profile(profile: Mapping[str, Any] | None) -> dict[str, A
     if profile.get("credential_needs_reauth"):
         raise ProviderUnconfiguredError("Coach Provider credential 需要重新认证")
     has_credential_secret = bool(credential_secret_values({"credential": credential}))
-    if kind == "custom_openai_compatible" and (
+    if kind in {"custom_openai_compatible", "custom_anthropic_compatible"} and (
         not isinstance(base_url, str) or not base_url.strip()
         or not has_credential_secret
     ):
         raise ProviderUnconfiguredError("Coach Provider 未配置完整凭据")
     if api_key is not None and not isinstance(api_key, str):
         raise ProviderUnconfiguredError("Coach Provider API key 无效")
+    if isinstance(base_url, str) and kind in {"custom_openai_compatible", "custom_anthropic_compatible"}:
+        from .provider_store import normalize_custom_provider_base_url
+        base_url = normalize_custom_provider_base_url(kind, base_url)
     normalized = {
         "provider_id": provider_id.strip(),
         "provider_name": provider_name.strip(),
@@ -1167,6 +1174,59 @@ async def fetch_provider_catalog(timeout_s: float = 5.0) -> Any:
         return resp.json()
     except ValueError as error:
         raise CoachRuntimeError("Pi provider catalog response is not JSON") from error
+
+
+async def fetch_custom_provider_models(
+    protocol: str,
+    base_url: str,
+    api_key: str,
+    timeout_s: float = 10.0,
+) -> list[str]:
+    """Read a custom Provider /models list without persisting its key."""
+    timeout_s = max(0.001, min(float(timeout_s), 30.0))
+    if protocol == "openai-completions":
+        headers = {"Authorization": f"Bearer {api_key}"}
+        model_list_path = "/models"
+    elif protocol == "anthropic-messages":
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        model_list_path = "/v1/models"
+    else:
+        raise CustomProviderModelDiscoveryError("custom Provider protocol is unsupported")
+    if protocol == "anthropic-messages":
+        from .provider_store import normalize_custom_provider_base_url
+        base_url = normalize_custom_provider_base_url("custom_anthropic_compatible", base_url)
+    try:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
+            response = await client.get(
+                f"{base_url.rstrip('/')}{model_list_path}",
+                headers=headers,
+            )
+    except httpx.HTTPError as error:
+        raise CustomProviderModelDiscoveryError("custom Provider models unavailable") from error
+
+    if response.status_code != 200:
+        raise CustomProviderModelDiscoveryError("custom Provider models unavailable")
+    try:
+        body = response.json()
+    except ValueError as error:
+        raise CustomProviderModelDiscoveryError("custom Provider models response is not JSON") from error
+    if not isinstance(body, Mapping) or not isinstance(body.get("data"), list):
+        raise CustomProviderModelDiscoveryError("custom Provider models response is invalid")
+
+    models: list[str] = []
+    for item in body["data"]:
+        model_id = item.get("id") if isinstance(item, Mapping) else item
+        if not isinstance(model_id, str):
+            continue
+        model_id = model_id.strip()
+        if model_id and model_id not in models:
+            models.append(model_id)
+        if len(models) == 200:
+            break
+    return models
 
 
 def _provider_status_result(

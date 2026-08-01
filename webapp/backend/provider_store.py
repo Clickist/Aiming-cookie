@@ -15,7 +15,8 @@ from urllib.parse import urlsplit
 
 from .db import get_conn
 
-_KINDS = {"builtin", "custom_openai_compatible"}
+_CUSTOM_KINDS = {"custom_openai_compatible", "custom_anthropic_compatible"}
+_KINDS = {"builtin", *_CUSTOM_KINDS}
 _WRITE_LOCK = asyncio.Lock()
 _PROFILE_COLUMNS = (
     "id, owner_id, name, provider_id, kind, base_url, model_id, api_key, "
@@ -33,6 +34,14 @@ def _required_text(value: Any, field: str) -> str:
     return value.strip()
 
 
+def normalize_custom_provider_base_url(kind: str, base_url: str) -> str:
+    """Store Anthropic-compatible custom endpoints as service roots for Pi."""
+    normalized = base_url.strip().rstrip("/")
+    if kind == "custom_anthropic_compatible" and normalized.endswith("/v1"):
+        return normalized[:-3]
+    return normalized
+
+
 def _normalize_profile(
     value: Mapping[str, Any],
     *,
@@ -46,7 +55,7 @@ def _normalize_profile(
         base_url = base_url.strip() or None
     elif base_url is not None:
         raise ValueError("base_url must be a string or null")
-    if kind == "custom_openai_compatible":
+    if kind in _CUSTOM_KINDS:
         if not base_url:
             raise ValueError("base_url is required for custom providers")
         parsed_url = urlsplit(base_url)
@@ -54,12 +63,13 @@ def _normalize_profile(
             raise ValueError("base_url must be a valid HTTP(S) URL")
         if parsed_url.username is not None or parsed_url.password is not None:
             raise ValueError("base_url must not include credentials")
+        base_url = normalize_custom_provider_base_url(kind, base_url)
     api_key = value.get("api_key")
     if isinstance(api_key, str):
         api_key = api_key.strip() or None
     elif api_key is not None:
         raise ValueError("api_key must be a string or null")
-    if kind == "custom_openai_compatible" and require_custom_api_key and not api_key:
+    if kind in _CUSTOM_KINDS and require_custom_api_key and not api_key:
         raise ValueError("api_key is required for custom providers")
     provider_id = value.get("provider_id")
     if isinstance(provider_id, str):
@@ -68,7 +78,7 @@ def _normalize_profile(
         raise ValueError("provider_id must be a string or null")
     if kind == "builtin" and not provider_id:
         raise ValueError("provider_id is required for builtin providers")
-    if kind == "custom_openai_compatible" and not provider_id:
+    if kind in _CUSTOM_KINDS and not provider_id:
         provider_id = f"custom:{uuid.uuid4().hex}"
 
     return {
@@ -135,7 +145,7 @@ def runtime_profile_configured(profile: Mapping[str, Any] | None) -> bool:
     credential = profile.get("credential")
     if credential is None and isinstance(profile.get("api_key"), str):
         credential = {"type": "api_key", "key": profile["api_key"]}
-    if profile.get("kind") == "custom_openai_compatible":
+    if profile.get("kind") in _CUSTOM_KINDS:
         if not isinstance(profile.get("base_url"), str) or not profile["base_url"].strip():
             return False
         return isinstance(credential, Mapping) and any(

@@ -10,7 +10,12 @@ import {
   projectProviderAuthCapability,
   type PiAuthProvider,
 } from "./provider-auth.ts";
-import { loadPiAi, loadPiOpenAiCompletions, loadPiProvidersAll } from "./pi-source.ts";
+import {
+  loadPiAi,
+  loadPiAnthropicMessages,
+  loadPiOpenAiCompletions,
+  loadPiProvidersAll,
+} from "./pi-source.ts";
 import { parseProviderProfile, ProviderProfileError } from "./provider-profile.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 
@@ -116,7 +121,10 @@ async function resolveBuiltinProfile(
 }
 
 async function resolveCustomProfile(
-  profile: Extract<CoachRuntimeProviderProfile, { kind: "custom_openai_compatible" }>,
+  profile: Extract<
+    CoachRuntimeProviderProfile,
+    { kind: "custom_openai_compatible" | "custom_anthropic_compatible" }
+  >,
 ): Promise<ResolvedProviderModel> {
   const credential = profileCredential(profile);
   if (!credential || credential.type !== "api_key" || !credential.key) {
@@ -131,10 +139,19 @@ async function resolveCustomProfile(
     stream: (...args: unknown[]) => unknown;
     streamSimple: (...args: unknown[]) => unknown;
   };
+  const anthropicMessages = (await loadPiAnthropicMessages()) as {
+    anthropicMessagesApi: () => {
+      stream: (...args: unknown[]) => unknown;
+      streamSimple: (...args: unknown[]) => unknown;
+    };
+  };
+  const api = profile.kind === "custom_anthropic_compatible"
+    ? "anthropic-messages"
+    : "openai-completions";
   const model: PiModel & { cost: Record<string, number> } = {
     id: profile.model_id,
     name: profile.model_id,
-    api: "openai-completions",
+    api,
     provider: profile.provider_id,
     baseUrl: profile.base_url,
     reasoning: false,
@@ -157,10 +174,12 @@ async function resolveCustomProfile(
       },
     },
     models: [model],
-    api: {
-      stream: openAiCompletions.stream,
-      streamSimple: openAiCompletions.streamSimple,
-    },
+    api: profile.kind === "custom_anthropic_compatible"
+      ? anthropicMessages.anthropicMessagesApi()
+      : {
+          stream: openAiCompletions.stream,
+          streamSimple: openAiCompletions.streamSimple,
+        },
   });
   const models = ai.createModels({ credentials: credentialStore });
   models.setProvider(provider);

@@ -107,6 +107,31 @@ test("custom OpenAI-compatible profile validates and constructs a Pi provider/mo
   assert.equal(typeof provider.streamSimple, "function");
 });
 
+test("custom Anthropic-compatible profile uses Pi's Anthropic Messages adapter without exposing its key", async () => {
+  const profile = parseProviderProfile({
+    kind: "custom_anthropic_compatible",
+    provider_id: "anthropic-gateway",
+    provider_name: "Anthropic Gateway",
+    base_url: "https://example.invalid/anthropic/v1/",
+    credential: { type: "api_key", key: SECRET },
+    model_id: "claude-compatible-model",
+  });
+  const resolved = await resolveProviderModel(profile);
+  const provider = resolved.models.getProvider("anthropic-gateway");
+  const status = await getProviderProfileStatus(profile);
+
+  assert.ok(provider);
+  assert.equal(provider.name, "Anthropic Gateway");
+  assert.equal(resolved.models.getModel("anthropic-gateway", "claude-compatible-model"), resolved.model);
+  assert.equal(resolved.model.api, "anthropic-messages");
+  assert.equal(resolved.model.provider, "anthropic-gateway");
+  assert.equal(resolved.model.baseUrl, "https://example.invalid/anthropic");
+  assert.equal((await resolved.models.getAuth(resolved.model))?.auth.apiKey, SECRET);
+  assert.equal(status.status, "ready");
+  assert.ok(!JSON.stringify(status).includes(SECRET));
+  assert.ok(!JSON.stringify(status).includes('"credential"'));
+});
+
 test("invalid custom profiles and client-controlled api_key_env fail closed", () => {
   assert.throws(
     () =>

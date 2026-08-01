@@ -160,3 +160,91 @@ async def test_status_uses_readiness_only_and_explicit_test_is_separate(monkeypa
     assert status.json()["status"] == "auth_expired"
     assert tested.status_code == 200
     assert calls == {"status": 1, "test": 1}
+
+
+@pytest.mark.asyncio
+async def test_custom_provider_model_discovery_is_temporary_and_never_echoes_key(monkeypatch):
+    calls: list[tuple[str, str, str]] = []
+
+    async def fetch_models(protocol: str, base_url: str, api_key: str):
+        calls.append((protocol, base_url, api_key))
+        return ["provider-model-a", "provider-model-b"]
+
+    monkeypatch.setattr(coach_runtime, "fetch_custom_provider_models", fetch_models)
+    secret = "custom-model-list-secret"
+    async with await _client("owner-a") as client:
+        response = await client.post(
+            "/api/provider-profiles/custom/models",
+            json={
+                "protocol": "openai-completions",
+                "base_url": "https://provider.example/v1",
+                "api_key": secret,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"models": ["provider-model-a", "provider-model-b"]}
+    assert calls == [("openai-completions", "https://provider.example/v1", secret)]
+    assert secret not in response.text
+
+
+@pytest.mark.asyncio
+async def test_custom_provider_model_discovery_falls_back_without_echoing_key(monkeypatch):
+    async def unavailable(protocol: str, base_url: str, api_key: str):
+        raise coach_runtime.CustomProviderModelDiscoveryError("unavailable")
+
+    monkeypatch.setattr(coach_runtime, "fetch_custom_provider_models", unavailable)
+    secret = "custom-model-list-secret"
+    async with await _client("owner-a") as client:
+        response = await client.post(
+            "/api/provider-profiles/custom/models",
+            json={
+                "protocol": "anthropic-messages",
+                "base_url": "https://provider.example/v1",
+                "api_key": secret,
+            },
+        )
+
+    assert response.status_code == 502
+    assert secret not in response.text
+
+
+@pytest.mark.asyncio
+async def test_anthropic_model_discovery_uses_anthropic_endpoint_and_headers(monkeypatch):
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": [{"id": "claude-custom"}]}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url: str, *, headers: dict[str, str]):
+            calls.append((url, headers))
+            return FakeResponse()
+
+    monkeypatch.setattr(coach_runtime.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    secret = "custom-model-list-secret"
+
+    models = await coach_runtime.fetch_custom_provider_models(
+        "anthropic-messages",
+        "https://provider.example",
+        secret,
+    )
+
+    assert models == ["claude-custom"]
+    assert calls == [(
+        "https://provider.example/v1/models",
+        {
+            "x-api-key": secret,
+            "anthropic-version": "2023-06-01",
+        },
+    )]

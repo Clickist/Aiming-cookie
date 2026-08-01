@@ -153,6 +153,23 @@ async def test_custom_provider_requires_http_url_and_model_fields():
         assert missing_key.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_anthropic_compatible_custom_provider_profile_is_accepted():
+    async with await _client("owner-a") as client:
+        response = await client.post(
+            "/api/provider-profiles",
+            json=_create_body(
+                kind="custom_anthropic_compatible",
+                base_url="https://provider.example/v1",
+                model_id="claude-custom",
+            ),
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["kind"] == "custom_anthropic_compatible"
+    assert "route-secret-key" not in response.text
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
