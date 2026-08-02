@@ -197,7 +197,7 @@ export function Tabs({ id, items, panelId, value, onValueChange, className, ...p
   );
 }
 
-function useAnimatedPresence(open: boolean, exitMs: number): { present: boolean; state: "open" | "closed" } {
+export function useAnimatedPresence(open: boolean, exitMs: number): { present: boolean; state: "open" | "closed" } {
   const [present, setPresent] = useState(open);
   const [state, setState] = useState<"open" | "closed">(open ? "open" : "closed");
 
@@ -207,7 +207,9 @@ function useAnimatedPresence(open: boolean, exitMs: number): { present: boolean;
     if (open) {
       setPresent(true);
       setState("closed");
-      frame = window.requestAnimationFrame(() => setState("open"));
+      frame = window.requestAnimationFrame(() => {
+        frame = window.requestAnimationFrame(() => setState("open"));
+      });
     } else {
       setState("closed");
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
