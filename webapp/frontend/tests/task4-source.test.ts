@@ -23,6 +23,13 @@ test("history preserves stale rows when refresh fails", async () => {
   assert.match(value, /refreshing|unavailable|旧内容|保留/);
 });
 
+test("history renders unavailable Run sources as semantic notices", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  assert.match(value, /function RunSectionState/);
+  assert.match(value, /<Notice tone="warning" title={title}>/);
+  assert.match(value, /runDiscovery === "browser_unavailable" \|\| runDiscovery === "service_unavailable"/);
+});
+
 test("history and run inspector do not expose path or raw trace fields", async () => {
   const value = await source("components/task4/RunInspector.tsx");
   assert.doesNotMatch(value, /stats_source_ref|performance_source_ref|trace_artifact_ref|trace_error/);
