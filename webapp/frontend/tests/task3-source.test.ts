@@ -34,6 +34,16 @@ test("app shell styles encode active navigation and reduced-motion route transit
   assert.match(value, /prefers-reduced-motion: reduce[\s\S]*task3-route-content/);
 });
 
+test("responsive shell entries fade without animating layout properties", async () => {
+  const value = await source("components/task3/task3.css");
+  assert.match(value, /\.task3-primary-nav\s*\{[\s\S]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[\s\S]*display 160ms allow-discrete/);
+  assert.match(value, /\.task3-primary-nav a:first-child\s*\{[\s\S]*background-color 150ms ease-out[\s\S]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[\s\S]*display 160ms allow-discrete/);
+  assert.match(value, /@media \(max-width: 720px\)[\s\S]*\.task3-primary-nav a:first-child\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-2px\)[\s\S]*display 120ms allow-discrete/);
+  assert.match(value, /@media \(max-width: 560px\)[\s\S]*\.task3-primary-nav\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-2px\)[\s\S]*display 120ms allow-discrete/);
+  assert.match(value, /prefers-reduced-motion: reduce[\s\S]*\.task3-primary-nav[\s\S]*transform:\s*none/);
+  assert.doesNotMatch(value, /\.task3-primary-nav[^{}]*\{[^}]*transition:[^;}]*(?:width|height|padding|margin|gap|flex|grid|top|left)/);
+});
+
 test("onboarding never persists credentials in browser storage", async () => {
   const value = await source("components/task3/OnboardingFlow.tsx");
   assert.doesNotMatch(value, /localStorage|sessionStorage|indexedDB/);
