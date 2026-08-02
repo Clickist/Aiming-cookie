@@ -516,7 +516,7 @@ export function CoachPanel({
     <header className={["task6-coach-header", layoutMode === "full" ? "task6-coach-full-header" : ""].filter(Boolean).join(" ")}>
       <div className="task6-coach-header-row">
         <span className="task6-coach-title">Aiming Coach</span>
-        <span className="task6-coach-state" data-state={headerState.state}>{headerState.label}</span>
+        <span className="task6-coach-availability" data-state={headerState.state}>{headerState.label}</span>
         <div className="task6-coach-header-actions">
           {capability === "ready" ? (
             <IconButton label="开始新话题" onClick={() => void newTopic()} title="开始新话题">＋</IconButton>

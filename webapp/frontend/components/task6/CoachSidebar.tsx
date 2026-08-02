@@ -22,6 +22,7 @@ export function CoachSidebar({
   onClose,
   onWidthChange,
   pathname,
+  state,
   width,
 }: {
   capability: "loading" | ProviderProfileState | "unavailable";
@@ -29,9 +30,12 @@ export function CoachSidebar({
   onClose: () => void;
   onWidthChange: (width: number) => void;
   pathname: string;
+  state: "open" | "closed";
   width: number;
 }) {
-  const [availableWidth, setAvailableWidth] = useState(0);
+  const [availableWidth, setAvailableWidth] = useState(
+    () => typeof document === "undefined" ? 0 : document.documentElement.clientWidth,
+  );
   const dragRef = useRef<{ pointerId: number; startWidth: number; startX: number } | null>(null);
 
   useEffect(() => {
@@ -90,18 +94,17 @@ export function CoachSidebar({
     />
   );
 
-  if (!open) return null;
-
   if (layout.mode !== "side-by-side") {
     const mode = layout.mode === "full" || availableWidth < OVERLAY_BREAKPOINT ? "full" : "overlay";
     return (
       <div
         className="task6-coach-sidebar-wrap"
         data-mode={mode}
+        data-state={state}
         style={{ "--task6-coach-width": `${layout.width}px` } as CSSProperties}
       >
-        <div aria-hidden="true" className="task6-coach-scrim" onClick={onClose} />
-        <aside aria-label="Coach" className="task6-coach-sidebar" role="dialog">
+        <div aria-hidden="true" className="task6-coach-scrim" onClick={open ? onClose : undefined} />
+        <aside aria-hidden={!open || undefined} aria-label="Coach" className="task6-coach-sidebar" role="dialog">
           {panel}
         </aside>
       </div>
@@ -112,9 +115,10 @@ export function CoachSidebar({
     <div
       className="task6-coach-sidebar-wrap"
       data-mode="side-by-side"
+      data-state={state}
       style={{ "--task6-coach-width": `${layout.width}px` } as CSSProperties}
     >
-      <aside aria-label="Coach" className="task6-coach-sidebar">
+      <aside aria-hidden={!open || undefined} aria-label="Coach" className="task6-coach-sidebar">
         <div
           aria-label="调整 Coach 宽度"
           aria-orientation="vertical"

@@ -187,6 +187,7 @@ export function SettingsWorkspace() {
   const [cmPer360, setCmPer360] = useState("");
   const [fov, setFov] = useState("");
   const [expandedProviders, setExpandedProviders] = useState<Record<number, boolean>>({});
+  const [activeNav, setActiveNav] = useState(NAV_ITEMS[0].id);
 
   const desktop = isDesktopRuntime();
 
@@ -225,6 +226,17 @@ export function SettingsWorkspace() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const syncActiveNav = () => {
+      const hash = window.location.hash.slice(1);
+      setActiveNav(NAV_ITEMS.some((item) => item.id === hash) ? hash : NAV_ITEMS[0].id);
+    };
+
+    syncActiveNav();
+    window.addEventListener("hashchange", syncActiveNav);
+    return () => window.removeEventListener("hashchange", syncActiveNav);
+  }, []);
 
   const selectedCatalogProvider = useMemo(
     () => catalog?.providers.find((provider) => provider.provider_id === providerId)
@@ -389,8 +401,6 @@ export function SettingsWorkspace() {
     { value: "light", label: "浅色" },
     { value: "dark", label: "深色" },
   ] as const;
-
-  const activeNav = "llm-provider";
 
   if (loading) return <div className="task6-settings-page"><Loading>正在读取设置</Loading></div>;
   if (loadError && !catalog && profiles.length === 0) {
@@ -557,7 +567,7 @@ export function SettingsWorkspace() {
               <div className="task6-provider-form">
                 <h3 className="task6-provider-form-title">添加 Provider</h3>
                 <Field label="类型">
-                  <select onChange={(event) => {
+                  <select className="ac-field__control" onChange={(event) => {
                     const nextProviderId = event.target.value;
                     setProviderId(nextProviderId);
                     if (nextProviderId === "custom") resetCustomModels();
@@ -597,7 +607,7 @@ export function SettingsWorkspace() {
                 ) : null}
                 {!customProvider && selectedCatalogProvider ? (
                   <Field label="认证方式">
-                    <select onChange={(event) => setNewAuthMode(event.target.value as ProviderAuthMode)} value={newAuthMode}>
+                    <select className="ac-field__control" onChange={(event) => setNewAuthMode(event.target.value as ProviderAuthMode)} value={newAuthMode}>
                       {selectedCatalogProvider.auth_modes.map((mode) => <option key={mode} value={mode}>{mode === "api_key" ? "API Key" : mode === "oauth" ? "OAuth / 设备码" : "环境凭据"}</option>)}
                     </select>
                   </Field>
