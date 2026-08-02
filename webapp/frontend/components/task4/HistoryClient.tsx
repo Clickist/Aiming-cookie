@@ -213,6 +213,34 @@ function TrendChart() {
   );
 }
 
+function RunSectionState({
+  kind,
+  runDiscovery,
+}: {
+  kind: "pending" | "records";
+  runDiscovery: RunDiscoveryState;
+}) {
+  const pending = kind === "pending";
+  if (runDiscovery === "browser_unavailable" || runDiscovery === "service_unavailable") {
+    const browserUnavailable = runDiscovery === "browser_unavailable";
+    const title = pending
+      ? browserUnavailable ? "当前无法发现待分析 Run" : "待分析 Run 暂时不可用"
+      : browserUnavailable ? "当前无法发现训练 Run" : "训练 Run 暂时不可用";
+    const detail = browserUnavailable
+      ? pending
+        ? "Run 发现需要桌面应用能力；这里不会把不可读取误报成没有记录。"
+        : "Run 发现需要桌面应用能力；恢复后可以重新读取。"
+      : "恢复桌面服务后可以重新读取。";
+    return <Notice tone="warning" title={title}>{detail}</Notice>;
+  }
+
+  return (
+    <Empty title={runDiscovery === "loading" ? pending ? "正在读取待分析 Run" : "正在读取训练 Run" : pending ? "没有待确认训练" : "还没有其它训练记录"}>
+      {pending ? "完成新的 Challenge 后，满足 readiness 的 Run 会出现在这里。" : "已确认或已分析的 Run 会保留在这里。"}
+    </Empty>
+  );
+}
+
 export function HistoryClient() {
   const [runs, setRuns] = useState<KovaaKRunListItem[]>([]);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
@@ -329,13 +357,7 @@ export function HistoryClient() {
           <span className="task4-sec-hint">自动采集已整理完成 · 选择一条开始分析</span>
         </div>
         {sections.pendingRuns.length === 0 ? (
-          <Empty title={runDiscovery === "loading" ? "正在读取待分析 Run" : runDiscovery === "browser_unavailable" ? "当前无法发现待分析 Run" : runDiscovery === "service_unavailable" ? "待分析 Run 暂时不可用" : "没有待确认训练"}>
-            {runDiscovery === "browser_unavailable"
-              ? "Run 发现需要桌面应用能力；这里不会把不可读取误报成没有记录。"
-              : runDiscovery === "service_unavailable"
-                ? "恢复桌面服务后可以重新读取。"
-                : "完成新的 Challenge 后，满足 readiness 的 Run 会出现在这里。"}
-          </Empty>
+          <RunSectionState kind="pending" runDiscovery={runDiscovery} />
         ) : (
           <div className="task4-panel">
             {sections.pendingRuns.map((run) => (
@@ -358,13 +380,7 @@ export function HistoryClient() {
           <span className="task4-sec-count">{sections.runRecords.length}</span>
         </div>
         {sections.runRecords.length === 0 ? (
-          <Empty title={runDiscovery === "loading" ? "正在读取训练 Run" : runDiscovery === "browser_unavailable" ? "当前无法发现训练 Run" : runDiscovery === "service_unavailable" ? "训练 Run 暂时不可用" : "还没有其它训练记录"}>
-            {runDiscovery === "browser_unavailable"
-              ? "Run 发现需要桌面应用能力；恢复后可以重新读取。"
-              : runDiscovery === "service_unavailable"
-                ? "恢复桌面服务后可以重新读取。"
-                : "已确认或已分析的 Run 会保留在这里。"}
-          </Empty>
+          <RunSectionState kind="records" runDiscovery={runDiscovery} />
         ) : (
           <div className="task4-panel">
             {sections.runRecords.map((run) => (
