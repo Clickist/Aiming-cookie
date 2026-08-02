@@ -718,7 +718,7 @@ export function AnalyzeClient() {
         ) : null}
       </Notice>
 
-      <div className="task3-analyze-grid">
+      <div className="task3-analyze-grid" data-layout={selectedRun ? "split" : "single"}>
         {runListContent}
         {rightColumn}
         {manualSection}
