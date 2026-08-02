@@ -8,6 +8,7 @@ import { getDefaultProviderStatus, getSession, listTasks } from "@/lib/api";
 import { clampCoachWidth, COACH_DEFAULT_WIDTH } from "@/lib/contracts";
 import type { ProviderProfileState } from "@/lib/types";
 import { CoachSidebar } from "@/components/task6/CoachSidebar";
+import { useAnimatedPresence } from "@/ui/primitives";
 
 const COACH_OPEN_KEY = "aiming-cookie.ui.coach-open";
 const COACH_FIRST_ANALYSIS_KEY = "aiming-cookie.ui.coach-first-analysis-opened";
@@ -116,10 +117,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const tasksActive = pathname.startsWith("/tasks");
   const coachActive = coachOpen && coachSupported;
+  const showCoach = coachSupported && coachOpen && preferenceLoaded;
+  const coachPresence = useAnimatedPresence(showCoach, 160);
 
   if (shellHidden) return <>{children}</>;
 
-  const showCoach = coachSupported && coachOpen && preferenceLoaded;
   return (
     <div className="task3-app">
       <a className="task3-skip-link" href="#main-content">跳到主要内容</a>
@@ -180,17 +182,18 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
       <div
         className="task3-workspace"
-        data-coach-open={showCoach || undefined}
+        data-coach-open={coachPresence.state === "open" || undefined}
         style={{ "--task3-coach-width": `${coachWidth}px` } as CSSProperties}
       >
         <main className="task3-route-content" id="main-content" key={pathname} tabIndex={-1}>{children}</main>
-        {coachSupported ? (
+        {coachPresence.present ? (
           <CoachSidebar
             capability={capability}
             onClose={closeCoach}
             onWidthChange={updateCoachWidth}
             open={showCoach}
             pathname={pathname}
+            state={coachPresence.state}
             width={coachWidth}
           />
         ) : null}
