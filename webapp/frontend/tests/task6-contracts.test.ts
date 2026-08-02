@@ -53,9 +53,12 @@ test("current training fixture contract stays read-only, bounded, and status-exp
   const training = fixtures.CURRENT_TRAINING_ACTIVE;
   assert.equal(training.schema_version, "current_training.v1");
   assert.equal(training.plan_status, "active");
-  assert.equal(training.visible_item_count, 3);
-  assert.equal(training.items.length, 3);
-  assert.deepEqual(training.items.map((item) => item.status), ["active", "planned", "completed"]);
+  assert.equal(training.visible_item_count, 1);
+  assert.equal(training.items.length, 1);
+  assert.deepEqual(training.items.map((item) => item.status), ["planned"]);
   assert.equal(training.items[0]?.scenario_profile_ref, "scenario:static.1wall_6targets_small@1");
+  assert.equal(training.items[0]?.practice_condition, "保持完全相同的静态场景条件，只测试一个终点控制提示。");
+  assert.equal(training.items[0]?.cue, "只使用一个动作效果提示：先受控地到达目标，再让点击跟随已经稳定的瞄点。");
+  assert.equal(training.items[0]?.observation, null);
   assert.doesNotMatch(JSON.stringify(training), /diagnosis_ref|metric_ref|execution_ref/);
 });
