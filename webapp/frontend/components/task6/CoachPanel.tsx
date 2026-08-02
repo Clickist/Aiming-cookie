@@ -366,7 +366,7 @@ export function CoachPanel({
       {currentTraining?.reason === "no_current_plan" ? (
         <div className="task6-training-empty">
           <div className="task6-training-empty-title">还没有当前训练安排</div>
-          <p>创建训练安排后，这里会显示练什么、练多少和复测条件。</p>
+          <p>创建训练安排后，这里会显示练什么、练多少和本轮注意点。</p>
         </div>
       ) : null}
       {summaryItem ? (
@@ -379,8 +379,6 @@ export function CoachPanel({
             <dt>练什么</dt><dd>{summaryItem.practice_condition ?? "暂未说明"}</dd>
             <dt>练多少</dt><dd>{summaryItem.dose_guardrail ?? "暂未说明"}</dd>
             <dt>注意</dt><dd>{summaryItem.cue ?? "暂未说明"}</dd>
-            <dt>观察</dt><dd>{summaryItem.observation ?? "暂未说明"}</dd>
-            <dt>复测</dt><dd>{summaryItem.retest ?? "暂未说明"}</dd>
           </dl>
           <div className="task6-training-actions">
             {renderTrainingLaunch(summaryItem)}

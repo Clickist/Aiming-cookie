@@ -21,6 +21,72 @@ ANALYSIS_DATA_SCHEMA_VERSION = "frontend_analysis_data.v1"
 ANALYSIS_FAMILY_DATA_SCHEMA_VERSION = "frontend_analysis_family_data.v1"
 CURRENT_TRAINING_SCHEMA_VERSION = "current_training.v1"
 
+# Registry entries and stored plan revisions are immutable. Localize only the
+# reviewed public projection, keyed by the stable knowledge and scenario refs.
+_CURRENT_TRAINING_ZH_CN = {
+    "knowledge:static.flicking-terminal-control@2": {
+        "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
+        "practice_condition": "保持完全相同的静态场景条件，只测试一个终点控制提示。",
+        "cue": "只使用一个动作效果提示：先受控地到达目标，再让点击跟随已经稳定的瞄点。",
+        "dose_guardrail": (
+            "使用能够清楚判断表现的难度版本，每次只改变一个任务变量；"
+            "如果出现不适，或与提示无关的表现质量明显下降，就停止或降低难度。"
+        ),
+        "review_date": "下一次可比训练后复查。",
+    },
+    "knowledge:dynamic.click-error-and-acquisition@2": {
+        "scenario_profile_ref": "scenario:dynamic.pasu_small_reload@1",
+        "practice_condition": "保持完全相同的动态场景条件，每次只改变一个易于辨认的运动变量。",
+        "cue": (
+            "选择运动清晰可读的目标；先判断它当前的运动并完成捕获，"
+            "再进行一次有意识的点击，不要追着分数打。"
+        ),
+        "dose_guardrail": (
+            "先降低一个运动变量并保持结果质量；不要规定统一的训练时长或命中率目标。"
+        ),
+        "review_date": "下一次可比训练后复查。",
+    },
+    "knowledge:dynamic.speed-matching-and-reading@2": {
+        "scenario_profile_ref": "scenario:dynamic.pasu_small_reload@1",
+        "practice_condition": "保持相同的动态场景条件，每次只改变一个运动特征。",
+        "cue": (
+            "在一段运动清晰可读的长距离横移中，先匹配方向和速度再点击；"
+            "确认目标改变运动后，先重新判断新的运动。"
+        ),
+        "dose_guardrail": (
+            "每个训练组只改变速度、变向密度或目标大小中的一项，"
+            "并把高难变体保留为压力测试。"
+        ),
+        "review_date": "下一次可比训练后复查。",
+    },
+    "knowledge:tracking.predictable-speed-matching@2": {
+        "scenario_profile_ref": "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
+        "practice_condition": "保持完全相同的可预测运动条件，只测试稳定的速度匹配。",
+        "cue": (
+            "在运动清晰可读的阶段保持相对速度稳定，使用小幅修正，避免反复大幅追回。"
+        ),
+        "dose_guardrail": (
+            "先使用运动清晰可读的脚本；测试迁移时，只改变速度或运动阶段中的一项。"
+        ),
+        "review_date": "下一次可比训练后复查。",
+    },
+    "knowledge:switching.transition-and-arrival@2": {
+        "scenario_profile_ref": "scenario:switching.beants_larger@1",
+        "practice_condition": (
+            "保持完全相同的 beanTS Larger 场景条件；"
+            "每个训练组只关注切换移动或到达稳定中的一项。"
+        ),
+        "cue": (
+            "分别练习切换移动和到达：确认上一个目标后离开，直接移动到下一个目标，"
+            "并在第一枪前完成稳定。"
+        ),
+        "dose_guardrail": (
+            "每个训练组只改变布局距离、方向或目标数量中的一项，并持续关注结果质量。"
+        ),
+        "review_date": "下一次可比训练后复查。",
+    },
+}
+
 _TASK_PHASE_LABELS = {
     "preparing_training_record": "Preparing training record",
     "aligning_input_events": "Aligning input events",
@@ -964,6 +1030,16 @@ def _safe_current_training_text(value: object, *, maximum: int = 240) -> str | N
     return text
 
 
+def _current_training_text(item: Mapping[str, object], field: str) -> str | None:
+    presentation = _CURRENT_TRAINING_ZH_CN.get(item.get("knowledge_ref"))
+    if (
+        presentation is not None
+        and presentation["scenario_profile_ref"] == item.get("scenario_profile_ref")
+    ):
+        return _safe_current_training_text(presentation.get(field))
+    return _safe_current_training_text(item.get(field))
+
+
 def _reviewed_scenario(scenario_profile_ref_value: object) -> tuple[str | None, str | None]:
     """Return the safe display name and launch ref for an exact reviewed scenario."""
     if not isinstance(scenario_profile_ref_value, str) or not _PUBLIC_REF.fullmatch(scenario_profile_ref_value):
@@ -1033,11 +1109,11 @@ def build_current_training_v1(
             "scenario_profile_ref": launch_ref,
             "scenario_availability": "available" if display_name is not None else "unavailable",
             "status": item["status"],
-            "practice_condition": _safe_current_training_text(item.get("practice_condition")),
-            "cue": _safe_current_training_text(item.get("cue")),
-            "dose_guardrail": _safe_current_training_text(item.get("dose_guardrail")),
+            "practice_condition": _current_training_text(item, "practice_condition"),
+            "cue": _current_training_text(item, "cue"),
+            "dose_guardrail": _current_training_text(item, "dose_guardrail"),
             "observation": None,
-            "retest": _safe_current_training_text(item.get("review_date")),
+            "retest": _current_training_text(item, "review_date"),
         })
     limitations = []
     if plan_status == "paused":

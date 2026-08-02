@@ -14,6 +14,7 @@ from webapp.backend import (
     db,
     kovaak_run_store,
     queue,
+    read_models,
     training_plan_store,
 )
 import webapp.backend.routes as routes_mod
@@ -1157,6 +1158,55 @@ async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
     assert str(tmp_path) not in invalid.text
 
 
+@pytest.mark.parametrize(
+    ("knowledge_ref", "scenario_profile_ref", "practice_condition"),
+    [
+        (
+            "knowledge:static.flicking-terminal-control@2",
+            "scenario:static.1wall_6targets_small@1",
+            "保持完全相同的静态场景条件，只测试一个终点控制提示。",
+        ),
+        (
+            "knowledge:dynamic.click-error-and-acquisition@2",
+            "scenario:dynamic.pasu_small_reload@1",
+            "保持完全相同的动态场景条件，每次只改变一个易于辨认的运动变量。",
+        ),
+        (
+            "knowledge:dynamic.speed-matching-and-reading@2",
+            "scenario:dynamic.pasu_small_reload@1",
+            "保持相同的动态场景条件，每次只改变一个运动特征。",
+        ),
+        (
+            "knowledge:tracking.predictable-speed-matching@2",
+            "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
+            "保持完全相同的可预测运动条件，只测试稳定的速度匹配。",
+        ),
+        (
+            "knowledge:switching.transition-and-arrival@2",
+            "scenario:switching.beants_larger@1",
+            "保持完全相同的 beanTS Larger 场景条件；每个训练组只关注切换移动或到达稳定中的一项。",
+        ),
+    ],
+)
+def test_current_training_projection_localizes_all_reviewed_plan_items(
+    knowledge_ref: str,
+    scenario_profile_ref: str,
+    practice_condition: str,
+):
+    item = _current_training_item(scenario_profile_ref=scenario_profile_ref)
+    item.update({"knowledge_ref": knowledge_ref, "status": "planned"})
+
+    body = read_models.build_current_training_v1(
+        plan={"status": "active"},
+        items=[item],
+    )
+
+    projected = body["items"][0]
+    assert projected["practice_condition"] == practice_condition
+    for field in ("practice_condition", "cue", "dose_guardrail", "retest"):
+        assert any("\u4e00" <= char <= "\u9fff" for char in projected[field])
+
+
 @pytest.mark.asyncio
 async def test_current_training_projection_is_owner_scoped_bounded_and_launch_ref_safe():
     plan = await training_plan_store.create_draft(
@@ -1165,9 +1215,11 @@ async def test_current_training_projection_is_owner_scoped_bounded_and_launch_re
         verification_targets=_CURRENT_TRAINING_VERIFICATION_TARGETS,
     )
     real_ref = "scenario:static.1wall_6targets_small@1"
+    planned_payload = _current_training_item(scenario_profile_ref=real_ref)
+    planned_payload["knowledge_ref"] = "knowledge:static.flicking-terminal-control@2"
     planned = await training_plan_store.add_plan_item(
         "current-training-owner", plan["plan_id"],
-        _current_training_item(scenario_profile_ref=real_ref),
+        planned_payload,
     )
     active = await training_plan_store.add_plan_item(
         "current-training-owner", plan["plan_id"],
@@ -1236,6 +1288,18 @@ async def test_current_training_projection_is_owner_scoped_bounded_and_launch_re
     }
     assert body["items"][0]["display_name"] == "1wall 6targets small"
     assert body["items"][0]["scenario_profile_ref"] == real_ref
+    planned_item = next(item for item in body["items"] if item["status"] == "planned")
+    assert planned_item["practice_condition"] == (
+        "保持完全相同的静态场景条件，只测试一个终点控制提示。"
+    )
+    assert planned_item["cue"] == (
+        "只使用一个动作效果提示：先受控地到达目标，再让点击跟随已经稳定的瞄点。"
+    )
+    assert planned_item["dose_guardrail"] == (
+        "使用能够清楚判断表现的难度版本，每次只改变一个任务变量；"
+        "如果出现不适，或与提示无关的表现质量明显下降，就停止或降低难度。"
+    )
+    assert planned_item["retest"] == "下一次可比训练后复查。"
     unavailable = next(item for item in body["items"] if item["status"] == "completed")
     assert unavailable["display_name"] is None
     assert unavailable["scenario_availability"] == "unavailable"
