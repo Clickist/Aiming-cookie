@@ -109,6 +109,14 @@ test("Settings section navigation stays below the sticky app toolbar", async () 
   assert.match(styles, /\.task6-settings-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*top:\s*68px;/);
 });
 
+test("Settings title fades at the narrow breakpoint without animating layout", async () => {
+  const styles = await source("components/task6/task6.css");
+  assert.match(styles, /\.task6-settings-nav-title\s*\{[\s\S]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[\s\S]*display 160ms allow-discrete/);
+  assert.match(styles, /@media \(max-width: 839px\)[\s\S]*\.task6-settings-nav-title\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-2px\)[\s\S]*display 120ms allow-discrete/);
+  assert.match(styles, /prefers-reduced-motion: reduce[\s\S]*\.task6-settings-nav-title[\s\S]*transform:\s*none/);
+  assert.doesNotMatch(styles, /\.task6-settings-nav-title[^{}]*\{[^}]*transition:[^;}]*(?:width|height|padding|margin|gap|flex|grid|top|left)/);
+});
+
 test("Settings Provider type and auth selects match the shared field height", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   const theme = await source("ui/theme.css");
