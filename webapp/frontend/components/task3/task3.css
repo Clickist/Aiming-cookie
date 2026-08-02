@@ -61,6 +61,15 @@
   margin-left: auto;
 }
 
+.task3-primary-nav {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    display 160ms allow-discrete;
+}
+
 .task3-primary-nav a,
 .task3-tool-nav a,
 .task3-toolbar-action {
@@ -80,6 +89,25 @@
   text-decoration: none;
   white-space: nowrap;
   transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.task3-primary-nav a:first-child {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    background-color 150ms ease-out,
+    color 150ms ease-out,
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    display 160ms allow-discrete;
+}
+
+@starting-style {
+  .task3-primary-nav,
+  .task3-primary-nav a:first-child {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
 }
 
 .task3-primary-nav a[aria-current="page"],
@@ -868,6 +896,14 @@
 
   .task3-primary-nav a:first-child {
     display: none;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition:
+      background-color 150ms ease-out,
+      color 150ms ease-out,
+      opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
+      transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+      display 120ms allow-discrete;
   }
 
   .task3-primary-nav a,
@@ -891,6 +927,12 @@
 
   .task3-primary-nav {
     display: none;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition:
+      opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
+      transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+      display 120ms allow-discrete;
   }
 
   .task3-tool-nav a,
@@ -1652,5 +1694,13 @@
   .task3-route-content {
     transition: none;
     animation: none !important;
+  }
+
+  .task3-primary-nav,
+  .task3-primary-nav a:first-child {
+    transform: none;
+    transition:
+      opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
+      display 120ms allow-discrete;
   }
 }
