@@ -993,6 +993,26 @@
   align-self: end;
 }
 
+.task3-analyze-grid[data-layout="single"],
+.task3-workspace[data-coach-open="true"] .task3-analyze-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.task3-analyze-grid[data-layout="single"] > .task3-analyze-section,
+.task3-workspace[data-coach-open="true"] .task3-analyze-grid > .task3-analyze-section {
+  grid-column: auto;
+  grid-row: auto;
+  align-self: auto;
+}
+
+@media (min-width: 960px) {
+  .task3-analyze-grid[data-layout="single"] .task3-analyze-manual-cards,
+  .task3-workspace[data-coach-open="true"] .task3-analyze-manual-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 959px) {
   .task3-analyze-grid {
     grid-template-columns: 1fr;

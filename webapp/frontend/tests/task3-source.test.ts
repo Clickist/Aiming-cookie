@@ -122,3 +122,12 @@ test("Analyze applies a query Run ref only after the pending Run list is loaded"
   assert.match(value, /pending\.find\(\(run\) => run\.run_ref === requestedRunRef\)/);
   assert.match(value, /requestedRun\?\.id \?\? \(pending\.length === 1 \? pending\[0\]\.id : null\)/);
 });
+
+test("Analyze uses the available workspace width when details are absent or Coach is open", async () => {
+  const client = await source("components/task3/AnalyzeClient.tsx");
+  const styles = await source("components/task3/task3.css");
+  assert.match(client, /data-layout=\{selectedRun \? "split" : "single"\}/);
+  assert.match(styles, /\.task3-analyze-grid\[data-layout="single"\][\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(styles, /\.task3-workspace\[data-coach-open="true"\] \.task3-analyze-grid[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(styles, /\.task3-analyze-grid\[data-layout="single"\] \.task3-analyze-manual-cards[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+});
