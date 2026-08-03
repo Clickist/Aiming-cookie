@@ -632,18 +632,26 @@ export function SettingsWorkspace() {
             <section className="task6-settings-section" id="profile">
               <div className="task6-settings-section-header">
                 <span className="task6-settings-section-title">Profile</span>
-                <span className="task6-settings-section-hint">配置档默认值</span>
               </div>
               <Panel>
-                <div className="task6-field-grid">
-                  <Field label="cm/360" hint="仅作为 profile_default"><FieldControl inputMode="decimal" min="0.01" onChange={(event) => setCmPer360(event.target.value)} step="any" type="number" value={cmPer360} /></Field>
-                  <Field label="FOV" hint="仅作为 profile_default"><FieldControl inputMode="decimal" max="180" min="0.01" onChange={(event) => setFov(event.target.value)} step="any" type="number" value={fov} /></Field>
-                  <Button disabled={!cmPer360 && !fov} onClick={() => void saveProfileCalibration().catch(() => setFeedback("配置档未能保存，请检查数值。"))} size="compact" variant="secondary">保存</Button>
+                <div className="task6-profile-fields">
+                  <Field label="cm/360"><FieldControl inputMode="decimal" min="0.01" onChange={(event) => setCmPer360(event.target.value)} step="any" type="number" value={cmPer360} /></Field>
+                  <Field label="FOV"><FieldControl inputMode="decimal" max="180" min="0.01" onChange={(event) => setFov(event.target.value)} step="any" type="number" value={fov} /></Field>
                 </div>
-                <p className="task6-muted">Stats 自动读取优先，此处仅在读取失败时使用。已完成分析冻结当时数值，改这里不影响历史；无法推导时显示「无法确定」，不猜值。</p>
-                <p className="task6-muted">DPI：{calibration?.dpi ?? "待读取"} · Sensitivity：{calibration?.sensitivity ?? "待读取"}</p>
-                <div className="task6-inline-actions">
-                  <Button onClick={() => ask("删除配置档默认值", "之后仍会优先使用 Stats 或本局手动覆盖。", async () => { await deleteCalibrationProfile(); })} variant="ghost">删除</Button>
+                <div className="task6-profile-footer">
+                  <div className="task6-profile-summary">
+                    <span>DPI：{calibration?.dpi ?? "待读取"} · Sensitivity：{calibration?.sensitivity ?? "待读取"}</span>
+                    <span className="task6-info">
+                      <button aria-describedby="task6-profile-help" aria-label="配置档默认值说明" className="task6-info-trigger" type="button">!</button>
+                      <span className="task6-info-tooltip" id="task6-profile-help" role="tooltip">
+                        Stats 自动读取优先，此处仅在读取失败时使用。已完成分析冻结当时数值，改这里不影响历史；无法推导时显示「无法确定」，不猜值。
+                      </span>
+                    </span>
+                  </div>
+                  <div className="task6-profile-actions">
+                    <Button disabled={!cmPer360 && !fov} onClick={() => void saveProfileCalibration().catch(() => setFeedback("配置档未能保存，请检查数值。"))} size="compact" variant="secondary">保存</Button>
+                    <Button onClick={() => ask("删除配置档默认值", "之后仍会优先使用 Stats 或本局手动覆盖。", async () => { await deleteCalibrationProfile(); })} size="compact" variant="danger">删除</Button>
+                  </div>
                 </div>
               </Panel>
             </section>
@@ -651,7 +659,6 @@ export function SettingsWorkspace() {
             <section className="task6-settings-section" id="theme">
               <div className="task6-settings-section-header">
                 <span className="task6-settings-section-title">主题</span>
-                <span className="task6-settings-section-hint">偏好只保存在本机</span>
               </div>
               <div className="task6-theme-options">
                 {themeOptions.map((mode) => (
