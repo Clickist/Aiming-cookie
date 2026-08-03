@@ -181,6 +181,11 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
   };
 
   const busy = operation !== "idle";
+  const feedbackMessage = feedback
+    ? feedback.tone === "success"
+      ? <Status tone="success">{feedback.message}</Status>
+      : <Notice tone={feedback.tone}>{feedback.message}</Notice>
+    : null;
   const easierStage = stages.get("easier");
   const mediumStage = stages.get("medium");
   const overallRank = easierStage?.rank_name ?? mediumStage?.rank_name ?? null;
@@ -236,7 +241,7 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
             onChange={(event) => setIdentityConsent(event.target.checked)}
             type="checkbox"
           />
-          <span>我同意本次使用这个 Steam ID 读取 KovaaK 中的 Viscose S2 成绩。Aiming Cookie 不会保存或展示我的 Steam ID。</span>
+          <span>我同意使用这个 Steam ID 读取 KovaaK 中的 S2 训练单成绩。该 ID 会保存在本机，方便以后手动刷新；不会在界面中回显，也不会发送给 Coach Provider。</span>
         </label>
         <div className="kovaak-module-actions">
           <Button disabled={!identityConsent || busy} onClick={() => void save()}>
@@ -275,8 +280,8 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
   /* ── 状态 7：完全没有成绩 ──────────────────────────────────── */
   const emptyScores = (
     <div className="kovaak-module kovaak-empty">
-      <div className="kovaak-empty-title">这个来源还没有可读取的 S2 成绩</div>
-      <p>可能是还没有打过 Viscose S2 的项目，或资料未公开。不影响本地分析与 Coach 训练。</p>
+      <div className="kovaak-empty-title">这个来源还没有可读取的 S2 训练单成绩</div>
+      <p>可能是还没有完成训练单项目，或资料未公开。不影响本地分析与 Coach 训练。</p>
       <div style={{ marginTop: "10px" }}>
         <Button disabled={busy} onClick={() => void refresh()} size="compact" variant="ghost">稍后重新读取</Button>
       </div>
@@ -299,15 +304,13 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
         </div>
       </div>
 
-      {feedback ? (
-        <Notice tone={feedback.tone === "success" ? "info" : feedback.tone}>{feedback.message}</Notice>
-      ) : null}
+      {feedbackMessage}
 
       {!hasScores ? emptyScores : (
         <>
           <div className="kovaak-connected">
             <span className="kovaak-connection-status">
-              <strong>Viscose S2</strong>
+              <strong>S2 训练单</strong>
             </span>
             <span className="kovaak-module-read-state">
               <Status tone="success"><span aria-hidden="true">●</span>成绩可用</Status>
@@ -320,7 +323,7 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
             <dt>Medium 完成度</dt>
             <dd>{mediumStage ? `${mediumStage.completed} / ${mediumStage.required}` : "0 / 0"}</dd>
             <dt>Steam ID</dt>
-            <dd>不展示（按你的同意，仅读取时本次使用）</dd>
+            <dd>保存在本机，不回显</dd>
           </dl>
           <p className="kovaak-disclaimer">成绩只是 Coach 的参考之一，不会替代本地分析结论；不提供排行榜、社交比较或历史曲线。</p>
 
@@ -361,7 +364,7 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
                 <h4>和 Coach 一起用</h4>
                 <p className="kovaak-module-note">「让 Coach 看看」只是让 Coach 优先检查——低分本身不能推出阅读、张力、握法、外设或动作问题，结论仍以本地分析为准。</p>
                 <div className="kovaak-module-actions">
-                  <Button onClick={() => askCoachAbout("Viscose S2 成绩")} size="compact" variant="secondary" data-wide="true">让 Coach 看看整体成绩</Button>
+                  <Button onClick={() => askCoachAbout("S2 训练单成绩")} size="compact" variant="secondary" data-wide="true">让 Coach 看看整体成绩</Button>
                 </div>
               </div>
             </div>
@@ -382,9 +385,7 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
   return (
     <div className="kovaak-panel" data-context={context}>
       {connected ? scoresView : connectModule}
-      {!connected && feedback ? (
-        <Notice tone={feedback.tone === "success" ? "info" : feedback.tone}>{feedback.message}</Notice>
-      ) : null}
+      {!connected ? feedbackMessage : null}
       {context === "onboarding" ? (
         <div className="kovaak-onboarding-actions">
           {onSkip ? <Button onClick={onSkip} size="compact" variant="ghost">跳过这一步</Button> : null}

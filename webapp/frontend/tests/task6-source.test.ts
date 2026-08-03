@@ -107,14 +107,26 @@ test("Settings section navigation follows the current URL hash", async () => {
 test("Settings section navigation stays below the sticky app toolbar", async () => {
   const styles = await source("components/task6/task6.css");
   assert.match(styles, /\.task6-settings-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*top:\s*68px;/);
+  assert.match(styles, /\.task6-settings-section\s*\{[\s\S]*scroll-margin-top:\s*68px;/);
 });
 
-test("Settings title fades at the narrow breakpoint without animating layout", async () => {
+test("Settings hides section navigation at the narrow breakpoint", async () => {
   const styles = await source("components/task6/task6.css");
-  assert.match(styles, /\.task6-settings-nav-title\s*\{[\s\S]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[\s\S]*display 160ms allow-discrete/);
-  assert.match(styles, /@media \(max-width: 839px\)[\s\S]*\.task6-settings-nav-title\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-2px\)[\s\S]*display 120ms allow-discrete/);
-  assert.match(styles, /prefers-reduced-motion: reduce[\s\S]*\.task6-settings-nav-title[\s\S]*transform:\s*none/);
-  assert.doesNotMatch(styles, /\.task6-settings-nav-title[^{}]*\{[^}]*transition:[^;}]*(?:width|height|padding|margin|gap|flex|grid|top|left)/);
+  assert.match(styles, /@media \(max-width: 839px\)[\s\S]*\.task6-settings-nav\s*\{[\s\S]*display:\s*none;/);
+});
+
+test("Settings keeps Profile actions together and moves boundary copy into an accessible tooltip", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  const styles = await source("components/task6/task6.css");
+  assert.match(settings, /className="task6-profile-actions"/);
+  assert.match(settings, /variant="danger">删除<\/Button>/);
+  assert.match(settings, /aria-describedby="task6-profile-help"/);
+  assert.match(settings, /id="task6-profile-help" role="tooltip"/);
+  assert.doesNotMatch(settings, /<p className="task6-muted">Stats 自动读取优先/);
+  assert.doesNotMatch(settings, /profile_default/);
+  assert.doesNotMatch(settings, /偏好只保存在本机/);
+  assert.match(styles, /\.task6-profile-summary\s*\{[\s\S]*position:\s*relative;[\s\S]*flex:\s*1;/);
+  assert.match(styles, /\.task6-info\s*\{[\s\S]*position:\s*static;/);
 });
 
 test("Settings Provider type and auth selects match the shared field height", async () => {
@@ -157,17 +169,58 @@ test("Settings and Coach use primitives and expose focus-safe dialogs", async ()
   assert.doesNotMatch(combined, /style=\{\{[^}]*color|#[0-9a-fA-F]{3,8}\b/);
 });
 
+test("KovaaK and Coach status colors follow their semantic state", async () => {
+  const panel = await source("components/kovaak/KovaaKConnectionPanel.tsx");
+  const coach = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /feedback\.tone === "success"\s*\? <Status tone="success">/);
+  assert.doesNotMatch(panel, /feedback\.tone === "success" \? "info"/);
+  assert.match(coach, /item\.status === "completed" \? "success"/);
+});
+
 test("Settings hosts the KovaaK connection surface without adding a Benchmark route or score-only Coach command", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   const panel = await source("components/kovaak/KovaaKConnectionPanel.tsx");
+  const fixtures = await source("fixtures/task7-fixtures.ts");
   assert.match(settings, /KovaaKConnectionPanel/);
   assert.match(panel, /KovaaK 成绩/);
+  assert.match(panel, /S2 训练单/);
+  assert.doesNotMatch(panel, /Viscose S2/);
   assert.match(panel, /aiming-cookie:coach-kovaak-intent/);
   assert.match(panel, /sessionStorage\.setItem/);
   assert.match(panel, /window\.location\.assign\("\/history"\)/);
   assert.match(panel, /Control Tracking|Reactive Tracking|Flick Tech|Click Timing/);
+  assert.match(panel, /该 ID 会保存在本机/);
+  assert.match(panel, /不会发送给 Coach Provider/);
+  assert.match(panel, /保存在本机，不回显/);
+  assert.doesNotMatch(panel, /不会保存或展示|仅读取时本次使用/);
   assert.doesNotMatch(panel, /createCoachAgentRun|training-plan|execution|retest/);
   assert.doesNotMatch(settings, /Benchmark/);
+  assert.match(fixtures, /export const KOVAAK_SCORES[\s\S]*availability: "unavailable"/);
+  assert.doesNotMatch(fixtures, /黄金 III|黄金 I|白银 I/);
+});
+
+test("Settings keeps its narrow tooltip inside the viewport and removes unreachable mobile nav animation", async () => {
+  const styles = await source("components/task6/task6.css");
+  assert.match(styles, /\.task6-info-tooltip\s*{[^}]*left:\s*0;[^}]*right:\s*auto;/s);
+  const narrow = styles.slice(
+    styles.indexOf("@media (max-width: 839px)"),
+    styles.indexOf("@media (prefers-reduced-motion: reduce)"),
+  );
+  assert.match(narrow, /\.task6-settings-nav\s*{\s*display:\s*none;/);
+  assert.doesNotMatch(narrow, /\.task6-settings-nav-title/);
+});
+
+test("review KovaaK refresh reports zero completion for an empty score corpus", async () => {
+  const { apiScenario, handleReviewApiRequest } = await import("../fixtures/task7-fixtures");
+  const result = handleReviewApiRequest(apiScenario(), {
+    method: "POST",
+    path: "/api/kovaak-connection/refresh",
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    (result.body as { difficulty_counts: { easier: number; medium: number } }).difficulty_counts,
+    { easier: 0, medium: 0 },
+  );
 });
 
 test("Coach reads current training locally and turns shortcut intents into drafts only", async () => {
