@@ -4,6 +4,8 @@
 
 ## Active
 
+- [`2026-08-03-release-blocker-closeout-v1.md`](2026-08-03-release-blocker-closeout-v1.md): 点点已授权自主修复 Tauri 编译与 Coach primary thread 并发创建、整理已验证前端提交，并运行不依赖 Mock 的真实 Web 联调 Gate；实机性能与安装包发布链仍单独保留。
+
 - [`2026-08-01-web-mock-review-cli-gates-v1.md`](2026-08-01-web-mock-review-cli-gates-v1.md): 点点已确认 Web Mock 审核 -> Web 真实联调 -> Tauri 命令式验收的施工顺序；当前只授权 Mock 审核底座，复用真实 `/api` DTO，不伪装 FastAPI、Provider、worker 或 Tauri runtime。
 
 - [`2026-08-01-custom-provider-protocol-onboarding-v1.md`](2026-08-01-custom-provider-protocol-onboarding-v1.md): 点点已明确将 custom Provider 扩展为 OpenAI-compatible / Anthropic-compatible 两个显式协议，并固定 Onboarding 的 Provider/URL -> API key -> 模型发现 -> 手填 model-ID fallback 流程；内置 Provider 的 catalog 与认证行为保持不变。
