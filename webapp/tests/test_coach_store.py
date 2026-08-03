@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 
 import pytest
@@ -107,6 +108,26 @@ def _v3_context() -> dict:
         "limitations": [],
     }
     return context
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_primary_thread_is_atomic_across_eight_callers():
+    from webapp.backend import coach_store, db
+
+    threads = await asyncio.gather(
+        *(coach_store.get_or_create_primary_thread("concurrent-owner") for _ in range(8))
+    )
+
+    assert len(threads) == 8
+    assert {thread["id"] for thread in threads} == {threads[0]["id"]}
+    row = await (
+        await (await db.get_conn()).execute(
+            "SELECT COUNT(*) AS count FROM coach_threads "
+            "WHERE user_id=? AND kind='primary'",
+            ("concurrent-owner",),
+        )
+    ).fetchone()
+    assert row["count"] == 1
 
 
 @pytest.mark.asyncio

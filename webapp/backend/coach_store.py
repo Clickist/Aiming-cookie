@@ -350,21 +350,19 @@ async def get_or_create_primary_thread(
     owns_commit = conn is None
     if conn is None:
         conn = await get_conn()
+    await conn.execute(
+        "INSERT INTO coach_threads(user_id, kind) VALUES(?, 'primary') "
+        "ON CONFLICT(user_id, kind) DO NOTHING",
+        (user_id,),
+    )
     cur = await conn.execute(
         "SELECT id, user_id, kind, created_at, updated_at "
         "FROM coach_threads WHERE user_id=? AND kind='primary'",
         (user_id,),
     )
     row = await cur.fetchone()
-    if row is not None:
-        return dict(row)
-
-    cur = await conn.execute(
-        "INSERT INTO coach_threads(user_id, kind) VALUES(?, 'primary') "
-        "RETURNING id, user_id, kind, created_at, updated_at",
-        (user_id,),
-    )
-    row = await cur.fetchone()
+    if row is None:
+        raise RuntimeError("primary Coach thread is missing after insert")
     if owns_commit:
         await conn.commit()
     return dict(row)
