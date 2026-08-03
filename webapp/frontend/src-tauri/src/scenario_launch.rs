@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 const REGISTRY_JSON: &str = include_str!("../../../../knowledge/scenarios/registry.v1.json");
-const LAUNCH_MANIFEST_JSON: &str = include_str!("../../../../knowledge/scenarios/launch-manifest.v1.json");
+const LAUNCH_MANIFEST_JSON: &str =
+    include_str!("../../../../knowledge/scenarios/launch-manifest.v1.json");
 const STEAM_APP_ID: &str = "824270";
 
 #[derive(Debug, Deserialize)]
@@ -45,7 +46,9 @@ fn profile_ref(entry: &RegistryEntry) -> String {
 fn resolve_scenario(scenario_profile_ref: &str) -> Option<String> {
     if scenario_profile_ref.len() > 240
         || !scenario_profile_ref.starts_with("scenario:")
-        || scenario_profile_ref.chars().any(|character| character.is_control())
+        || scenario_profile_ref
+            .chars()
+            .any(|character| character.is_control())
     {
         return None;
     }
@@ -100,6 +103,7 @@ fn dispatch_uri(_uri: &str) -> Result<(), String> {
     Err("desktop_unavailable".to_string())
 }
 
+#[tauri::command]
 pub fn scenario_open(scenario_profile_ref: String) -> ScenarioOpenResult {
     let Some(display_name) = resolve_scenario(&scenario_profile_ref) else {
         return ScenarioOpenResult {
