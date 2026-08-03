@@ -4,8 +4,6 @@
 
 ## Active
 
-- [`2026-08-03-release-blocker-closeout-v1.md`](2026-08-03-release-blocker-closeout-v1.md): 点点已授权自主修复 Tauri 编译与 Coach primary thread 并发创建、整理已验证前端提交，并运行不依赖 Mock 的真实 Web 联调 Gate；实机性能与安装包发布链仍单独保留。
-
 - [`2026-08-01-web-mock-review-cli-gates-v1.md`](2026-08-01-web-mock-review-cli-gates-v1.md): 点点已确认 Web Mock 审核 -> Web 真实联调 -> Tauri 命令式验收的施工顺序；当前只授权 Mock 审核底座，复用真实 `/api` DTO，不伪装 FastAPI、Provider、worker 或 Tauri runtime。
 
 - [`2026-08-01-custom-provider-protocol-onboarding-v1.md`](2026-08-01-custom-provider-protocol-onboarding-v1.md): 点点已明确将 custom Provider 扩展为 OpenAI-compatible / Anthropic-compatible 两个显式协议，并固定 Onboarding 的 Provider/URL -> API key -> 模型发现 -> 手填 model-ID fallback 流程；内置 Provider 的 catalog 与认证行为保持不变。
@@ -45,6 +43,7 @@ Frozen plan 不得执行，也不得仅通过口头指令跳过其冻结条件�
 
 ## Completed
 
+- [`../../archive/completed/plans/2026-08-03-release-blocker-closeout-v1.md`](../../archive/completed/plans/2026-08-03-release-blocker-closeout-v1.md)：Tauri command 注册、Coach primary thread 原子创建、Settings/KovaaK 前端收尾和不依赖 Mock 的真实 Web Gate 已完成；真实 KovaaK、高 polling-rate、Tracking `<=130s` 与分发 Gate 继续保持 No-Go。
 - [`../../archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md`](../../archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md)：四波全工作区审计确认的 AN/UX/Coach/Capture/Security/Extensibility/Tooling/Governance finding 已按最小 Task 修复并完成根会话 aggregate 验证；release 与真实 field Gate 保持 No-Go。
 - [`../../archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md`](../../archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md)：本地已连接 KovaaK 账号、turn-scoped 临时 Profile 查询、去身份成绩摘要和 latest available snapshot 修复已完成；不包含 OAuth、排行榜、后台刷新或第二套成绩系统。
 - [`../../archive/completed/plans/2026-07-29-analysis-coach-knowledge-boundary-remediation-v1.md`](../../archive/completed/plans/2026-07-29-analysis-coach-knowledge-boundary-remediation-v1.md)：Task 1-5 已完成。Analysis Provider narration 已退役，Registry v4 / stable refs / neutral UI 已闭合；无 calibration 的 meaningful-change 继续 fail closed，Profile 不再把任意非零差异写成趋势。metric-ref canonical version 仍是明确 blocker，须由新的合同迁移 Task 承接。
