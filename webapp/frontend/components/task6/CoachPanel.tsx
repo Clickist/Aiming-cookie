@@ -390,7 +390,7 @@ export function CoachPanel({
                 <article className="task6-training-item" data-status={item.status} key={`${item.display_name ?? "item"}-${index}`}>
                   <div className="task6-training-item-title">
                     <strong>{item.display_name ?? "当前训练项目"}</strong>
-                    <Status tone={item.status === "completed" ? "info" : item.status === "cancelled" ? "warning" : "neutral"}>{trainingStatusLabel(item.status)}</Status>
+                    <Status tone={item.status === "completed" ? "success" : item.status === "cancelled" ? "warning" : "neutral"}>{trainingStatusLabel(item.status)}</Status>
                   </div>
                   <p>{item.cue ?? item.practice_condition ?? "暂无可展示的训练说明。"}</p>
                   {item.scenario_availability === "unavailable" ? <small className="task6-training-unavailable">项目暂不可用</small> : null}

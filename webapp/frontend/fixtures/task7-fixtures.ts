@@ -684,18 +684,10 @@ export const CURRENT_TRAINING_UNAVAILABLE: CurrentTrainingV1 = {
 
 export const KOVAAK_SCORES: KovaaKScoresV1 = {
   schema_version: "kovaak_scores.v1",
-  availability: "available",
-  observed_at: NOW,
-  stages: [
-    { stage: "easier", completed: 18, required: 39, rank: 5, rank_name: "黄金 III" },
-    { stage: "medium", completed: 0, required: 39, rank: 0, rank_name: "未完成" },
-  ],
-  items: [
-    { stage: "easier", name: "controlsphere", category: "Control Tracking", subcategory: "稳定跟随", score: 8214, item_rank: 4, item_rank_name: "黄金 I", completed: true },
-    { stage: "easier", name: "air", category: "Reactive Tracking", subcategory: "变化跟随", score: 5141, item_rank: 2, item_rank_name: "白银 I", completed: true },
-    { stage: "easier", name: "1wall 6targets small", category: "Flick Tech", subcategory: "快速点击", score: 1022, item_rank: 5, item_rank_name: "黄金 III", completed: true },
-    { stage: "medium", name: "microshot speed", category: "Click Timing", subcategory: "点击时机", score: 0, item_rank: 0, item_rank_name: "未完成", completed: false },
-  ],
+  availability: "unavailable",
+  observed_at: null,
+  stages: [],
+  items: [],
 };
 
 export interface ApiScenario {
@@ -795,7 +787,7 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
   if (path === "/api/kovaak-connection" && method === "GET") return response({ connected: scenario.kovaakConnected });
   if (path === "/api/kovaak-connection" && method === "PUT") { scenario.kovaakConnected = true; return response({ connected: true }); }
   if (path === "/api/kovaak-connection" && method === "DELETE") { scenario.kovaakConnected = false; return response({ deleted: true }); }
-  if (path === "/api/kovaak-connection/refresh" && method === "POST") return response({ schema_version: "kovaak_benchmark_sync_result.v1", imported_score_count: scenario.kovaakScores.items.length, difficulty_counts: { easier: 18, medium: 0 }, observed_at: NOW });
+  if (path === "/api/kovaak-connection/refresh" && method === "POST") return response({ schema_version: "kovaak_benchmark_sync_result.v1", imported_score_count: scenario.kovaakScores.items.length, difficulty_counts: { easier: 0, medium: 0 }, observed_at: NOW });
   if (path === "/api/kovaak-scores") return response(scenario.kovaakScores);
   if (path === "/api/calibration-profile" && method === "GET") return response(CALIBRATION_PROFILE);
   if (path === "/api/capture-status") return response(scenario.capture);
