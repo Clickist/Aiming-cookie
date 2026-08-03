@@ -1,6 +1,6 @@
 # Release Blocker Closeout v1 Implementation Plan
 
-> **Status: active.** 点点于 2026-08-03 明确授权 Codex 自主推进当前发布审计中的第 1-4 项：修复 Tauri 编译、修复 Coach primary thread 并发创建、整理并分批提交已验证的前端收尾，以及运行真实 Web 联调 Gate。真实 KovaaK、高 polling-rate、Tracking `<=130s`、installer/signing/updater/download 不在本计划内。
+> **Status: completed (2026-08-03).** Task 1-4 已按独立提交和隔离联调完成。真实 KovaaK、高 polling-rate、Tracking `<=130s`、installer/signing/updater/download 仍不在本计划内。
 
 **Goal:** 让当前提交重新具备可编译的 Tauri 壳、并发安全的 Coach 启动路径、可追溯的前端收尾提交和不依赖 Mock 的 Web 联调证据。
 
@@ -117,3 +117,10 @@ git diff --check -- webapp/frontend
 ## Closeout
 
 完成 Task 1-4 后，更新本计划状态和 `docs/PROGRESS.md`，报告每个提交、当前验证结果、未闭合的 field/release Gate 与最终 `git status`。正式 release 继续保持 No-Go，直到 Roadmap 的真实 KovaaK、高 polling-rate、Tracking 时延和分发 Gate 分别闭合。
+
+### Completion evidence
+
+- `20f1b13` 恢复受信任 `scenario_open` 的 Tauri command 注册；Rust fmt/check/test/clippy 通过，测试为 `75 passed, 7 ignored`。
+- `e807bd5` 将 Coach primary thread 创建改为 SQLite 原子 insert-or-read；8 路并发回归与全仓 Python `1570 passed, 5 skipped` 通过。
+- `d466712` 收敛 Settings/KovaaK/Coach 前端语义与窄屏布局；frontend unit/contracts `94 passed`、type-check、production build、704px 窄屏人工检查通过。
+- 真实 Web Gate 使用隔离 SQLite/Data Root 和不存在的 KovaaK 路径运行 Pi sidecar、FastAPI、worker 与 production Next；health/ready、Onboarding、Provider catalog、Tasks、History、Settings、Coach primary 通过，Desktop-only API 正确拒绝，浏览器控制台无 error，所有进程和端口干净退出。

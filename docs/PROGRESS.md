@@ -1,6 +1,6 @@
 # Aiming Cookie 当前进度
 
-> **最后整理：2026-07-30。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
+> **最后整理：2026-08-03。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
 
 ## 当前摘要
 
@@ -8,4 +8,7 @@
 - 当前实现已覆盖 Run/Analysis recovery、正式 Browser/Desktop 产品界面、History/Run inspector、Analysis workspace、Coach sidebar/Provider Settings、有限 KovaaK 成绩同步、去身份 Coach 成绩摘要、版本化 Knowledge Registry 与 Training Plan 命令流。所有未校准的比较、诊断和处方继续 fail closed。
 - 当前范围只对已有 NVIDIA 实机证据的路径作支持声明；AMD/Intel 与 OAuth/device-code 不在当前范围内。Tracking exact-parity 中位数为 `148.039s`，尚未达到 `<=130s` 目标；真实 Tauri product-path、高 polling-rate correctness/性能，以及 installer、签名、updater 和下载验证仍为 release No-Go Gate。
 - 2026-07-30 full-worktree review 的已确认代码与文档问题已按独立复证、最小修复、根会话复核和逻辑分批提交收敛。最终自动化为 Python `1555 passed, 5 skipped`、Coach runtime `172 passed`、Pi AI `473 passed, 733 skipped`、frontend 默认 `58 passed`、production Playwright `55 passed, 3 skipped`、MSVC Rust `73 passed, 7 ignored`；compileall、type-check/build、Rust fmt/check/clippy、diff check、Agent contract parity 与相关文档链接检查通过。skip/ignored 与未执行实机项不改变上方 release No-Go。
+- 2026-07-31 已将 OpenDesign 交付的 dark token、可选 KovaaK 连接与无分类 Tab 成绩列表、Switching/Tracking/Flicking 有界 Data 呈现和 Coach 当前训练落实到正式前端；Easier/Medium 仅作行内进度，Analysis 仍只有诊断/视频/数据三个视图。自动化为 Python `1558 passed, 5 skipped`、frontend unit/contracts `68 passed`、production Playwright `65 passed, 4 skipped`，type-check、production build、18 张截图基线、diff check、Agent contract parity 与 119 份 docs 相对链接检查通过。
+- 2026-08-03 release blocker closeout 已恢复 Tauri `scenario_open` command 注册，并将 Coach primary thread 创建改为 SQLite 原子 insert-or-read；Rust fmt/check/test/clippy、全仓 Python `1570 passed, 5 skipped`、frontend unit/contracts `94 passed`、type-check 和 production build 通过。Settings/KovaaK 的隐私语义、状态色、窄屏布局和空成绩 fixture 已作为独立前端提交收敛。
+- 同日使用隔离 SQLite/Data Root、不存在的 KovaaK 路径和零 Provider secret 运行真实 Pi sidecar、FastAPI、worker 与 production Next：health/ready、Onboarding、Provider catalog、Tasks、History、Settings、Coach primary 与 Desktop-only 拒绝语义通过，浏览器控制台无 error，进程和端口干净退出。真实 Tauri product-path 尚未在本轮复跑；真实 KovaaK、高 polling-rate、Tracking `<=130s`、installer/signing/updater/download 仍是 release No-Go Gate。
 - 被本快照覆盖的原始日期化状态、blocker 和验证记录见 [`archive/history/2026-07-30-progress-superseded-history.md`](archive/history/2026-07-30-progress-superseded-history.md)。
