@@ -67,7 +67,10 @@ export function VideoView({
   const [activeTypes, setActiveTypes] = useState<string[]>(() => Array.from(new Set(presentation.timeline.map((event) => event.type))));
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const lastAudibleVolumeRef = useRef(1);
 
   const loadSegments = useCallback(async () => {
     setSegmentsLoading(true);
@@ -117,6 +120,13 @@ export function VideoView({
     if (video) video.playbackRate = speed;
   }, [speed, videoUrl]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.volume = volume;
+    video.muted = muted;
+  }, [muted, volume, videoUrl]);
+
   const segmentRows = segments?.segments ?? [];
   const issueEventRefs = selectedIssue === null ? [] : presentation.issues[selectedIssue]?.eventRefs ?? [];
   const visibleEvents = useMemo(() => presentation.timeline.filter((event) => activeTypes.includes(event.type)), [activeTypes, presentation.timeline]);
@@ -149,6 +159,27 @@ export function VideoView({
     const video = videoRef.current;
     if (!video) return;
     seek((video.currentTime * 1000) + direction * 5000);
+  };
+
+  const setPlayerVolume = (nextVolume: number) => {
+    const next = clamp(nextVolume, 0, 1);
+    setVolume(next);
+    if (next > 0) {
+      lastAudibleVolumeRef.current = next;
+      setMuted(false);
+    } else {
+      setMuted(true);
+    }
+  };
+
+  const toggleMute = () => {
+    if (muted || volume === 0) {
+      setVolume(lastAudibleVolumeRef.current);
+      setMuted(false);
+      return;
+    }
+    lastAudibleVolumeRef.current = volume;
+    setMuted(true);
   };
 
   const openSegment = (segment: FrontendEvidenceSegmentV1) => {
@@ -225,6 +256,9 @@ export function VideoView({
   const progress = timelineMax > 0 ? (currentTimeMs / timelineMax) * 100 : 0;
   const cursorLeft = timelineMax > 0 ? (currentTimeMs / timelineMax) * 100 : 0;
   const timeText = `${formatRelativeTime(currentTimeMs)} / ${formatRelativeTime(timelineMax)}`;
+  const audibleVolume = muted ? 0 : volume;
+  const volumePercent = Math.round(audibleVolume * 100);
+  const volumeIcon = volumePercent === 0 ? "\u{1F507}\uFE0E" : volumePercent < 50 ? "\u{1F509}\uFE0E" : "\u{1F50A}\uFE0E";
 
   return (
     <div className={styles.videoView}>
@@ -306,16 +340,38 @@ export function VideoView({
           {speed}×
         </button>
         <button
-          className={styles.playerBarBtn}
+          className={`${styles.playerBarBtn} ${styles.playerBarEvidence}`}
           onClick={() => setDrawerOpen((current) => !current)}
           type="button"
         >
           证据片段 {segmentRows.length}
         </button>
-        <button className={styles.playerBarBtn} onClick={() => {
-          const video = videoRef.current;
-          if (video) video.muted = !video.muted;
-        }} type="button">🔊</button>
+        <div className={styles.volumeControl}>
+          <button
+            aria-label={muted ? "取消静音" : "静音"}
+            aria-pressed={muted}
+            className={styles.playerBarBtn}
+            onClick={toggleMute}
+            title={muted ? "取消静音" : "静音"}
+            type="button"
+          >
+            <span aria-hidden="true" className={styles.volumeIcon}>{volumeIcon}</span>
+          </button>
+          <div className={styles.volumePopover}>
+            <input
+              aria-label="音量"
+              aria-orientation="vertical"
+              className={styles.volumeSlider}
+              max="100"
+              min="0"
+              onChange={(event) => setPlayerVolume(Number(event.currentTarget.value) / 100)}
+              step="1"
+              type="range"
+              value={volumePercent}
+            />
+            <output className={styles.volumeValue}>{volumePercent}%</output>
+          </div>
+        </div>
         <button className={styles.playerBarBtn} onClick={() => {
           const video = videoRef.current;
           if (video) {

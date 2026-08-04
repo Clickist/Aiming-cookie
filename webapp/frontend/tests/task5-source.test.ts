@@ -50,6 +50,42 @@ test("video view keeps EvidenceSegment failure and retry local to the timeline",
   assert.match(video, /没有可用证据片段/);
 });
 
+test("video player keeps the evidence segment control on one line", async () => {
+  const video = await source("components/task5/VideoView.tsx");
+  const styles = await source("components/task5/task5.module.css");
+  assert.match(video, /className=\{`\$\{styles\.playerBarBtn\} \$\{styles\.playerBarEvidence\}`\}[\s\S]*证据片段 \{segmentRows\.length\}/);
+  assert.match(styles, /\.playerBarBtn[^{]*\{[\s\S]*flex:\s*0 0 32px;/);
+  assert.match(styles, /\.playerBarEvidence[^{]*\{[\s\S]*width:\s*auto;[\s\S]*white-space:\s*nowrap;/);
+});
+
+test("analysis header does not repeat the evidence summary", async () => {
+  const workspace = await source("components/task5/AnalysisWorkspace.tsx");
+  const styles = await source("components/task5/task5.module.css");
+  assert.doesNotMatch(workspace, /结论依赖|视觉证据已校验/);
+  assert.doesNotMatch(workspace, /<div className=\{styles\.evidenceRow\}>/);
+  assert.match(workspace, /aria-describedby="analysis-evidence-summary"/);
+  assert.match(workspace, /aria-label="查看本次分析证据"/);
+  assert.match(workspace, /id="analysis-evidence-summary" role="tooltip"/);
+  assert.match(styles, /\.evidenceSummary:hover \.evidenceTooltip,[\s\S]*\.evidenceSummary:focus-within \.evidenceTooltip/);
+  assert.match(styles, /\.evidenceTrigger:focus-visible/);
+});
+
+test("video volume follows familiar mute, hover, focus, and slider behavior", async () => {
+  const video = await source("components/task5/VideoView.tsx");
+  const styles = await source("components/task5/task5.module.css");
+  assert.match(video, /const \[volume, setVolume\] = useState\(1\)/);
+  assert.match(video, /const \[muted, setMuted\] = useState\(false\)/);
+  assert.match(video, /aria-pressed=\{muted\}/);
+  assert.match(video, /aria-label="音量"/);
+  assert.match(video, /aria-orientation="vertical"/);
+  assert.match(video, /\\uFE0E/);
+  assert.match(video, /className=\{styles\.volumeIcon\}/);
+  assert.match(video, /type="range"/);
+  assert.match(styles, /\.volumeControl:hover \.volumePopover,[\s\S]*\.volumeControl:focus-within \.volumePopover/);
+  assert.match(styles, /\.volumePopover[^{]*\{[\s\S]*position:\s*absolute[\s\S]*inset-inline-start:\s*50%;[\s\S]*flex-direction:\s*column/);
+  assert.match(styles, /\.volumeSlider[^{]*\{[\s\S]*writing-mode:\s*vertical-lr;[\s\S]*direction:\s*rtl;/);
+});
+
 test("diagnosis distinguishes current observations from legacy candidate explanations", async () => {
   const diagnosis = await source("components/task5/DiagnosisView.tsx");
   const data = await source("components/task5/DataView.tsx");
@@ -60,7 +96,7 @@ test("diagnosis distinguishes current observations from legacy candidate explana
   assert.match(diagnosis, /重点观察/);
   assert.match(diagnosis, /候选解释/);
   assert.match(diagnosis, /规则化练习建议/);
-  assert.match(diagnosis, /历史候选说明/);
+  assert.doesNotMatch(diagnosis, /历史候选说明/);
   assert.match(diagnosis, /查看证据/);
   assert.match(diagnosis, /查看指标/);
   assert.match(diagnosis, /问 Coach/);
@@ -71,8 +107,33 @@ test("diagnosis distinguishes current observations from legacy candidate explana
   assert.doesNotMatch(`${diagnosis}${data}`, /raw_trace|stats_source_ref|performance_source_ref|absolute_path/);
 });
 
+test("diagnosis keeps descriptive metrics and true empty states inside consistent cards", async () => {
+  const diagnosis = await source("components/task5/DiagnosisView.tsx");
+  const styles = await source("components/task5/task5.module.css");
+
+  assert.match(diagnosis, /summaryMode === "descriptive"/);
+  assert.match(diagnosis, /仅描述本局，不用于通用阈值判断/);
+  assert.match(diagnosis, /unit === "percent"/);
+  assert.match(diagnosis, /unit === "dimensionless" \|\| unit === "ratio"/);
+  assert.match(diagnosis, /className=\{styles\.metricSummaryEmpty\}/);
+  assert.match(styles, /\.metricSummaryEmpty[^{]*\{[\s\S]*border:\s*1px solid var\(--outline-variant\);[\s\S]*background:\s*var\(--surface\);/);
+  assert.match(styles, /\.metricSummaryPanel \.metricRow > :global\(\.ac-status\)[^{]*\{[\s\S]*grid-column:\s*2;[\s\S]*justify-self:\s*end;/);
+});
+
+test("diagnosis profile explanation is available on hover and keyboard focus", async () => {
+  const diagnosis = await source("components/task5/DiagnosisView.tsx");
+  const styles = await source("components/task5/task5.module.css");
+
+  assert.match(diagnosis, /className=\{styles\.profileLabel\}/);
+  assert.match(diagnosis, /aria-describedby="analysis-profile-explanation"/);
+  assert.match(diagnosis, /id="analysis-profile-explanation" role="tooltip"/);
+  assert.match(styles, /\.profileLabel:hover \.profileTooltip,[\s\S]*\.profileLabel:focus-within \.profileTooltip/);
+  assert.match(styles, /\.profileLabel:focus-visible/);
+});
+
 test("data view consumes the bounded analysis-data projection without a pseudo trend", async () => {
   const data = await source("components/task5/DataView.tsx");
+  const styles = await source("components/task5/task5.module.css");
   assert.match(data, /getAnalysisData/);
   assert.match(data, /event_distribution/);
   assert.match(data, /target_relative_error_radius/);
@@ -103,6 +164,10 @@ test("data view consumes the bounded analysis-data projection without a pseudo t
   assert.doesNotMatch(data, /metric\.sources\.join\(" \+ "\)/);
   assert.doesNotMatch(data, /radiusPoints\.map\(\(point\) => <button/);
   assert.doesNotMatch(data, /跨记录趋势|<p className={styles\.sectionKicker}>Trend/);
+  assert.doesNotMatch(data, /preserveAspectRatio="none"/);
+  assert.match(data, /data-metrics=\{hasFormalMetrics \? "available" : "empty"\}/);
+  assert.match(styles, /\.chartGrid[\s\S]*repeat\(auto-fit, minmax\(min\(100%, 340px\), 1fr\)\)/);
+  assert.match(styles, /\.familyDataLayout\[data-metrics="empty"\][\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
 });
 
 test("data view renders bounded family rows without adding a family tab", async () => {

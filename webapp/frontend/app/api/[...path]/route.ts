@@ -13,7 +13,12 @@ async function route(request: NextRequest, context: { params: Promise<{ path: st
   scenarios.set(owner, scenario);
   const contentType = request.headers.get("content-type") ?? "";
   const body = contentType.includes("application/json") ? await request.json().catch(() => null) : null;
-  const result = handleReviewApiRequest(scenario, { method: request.method, path: `/api/${path.join("/")}`, body });
+  const result = handleReviewApiRequest(scenario, {
+    method: request.method,
+    path: `/api/${path.join("/")}`,
+    body,
+    query: Object.fromEntries(request.nextUrl.searchParams),
+  });
   if (result.video) {
     const video = await readReviewVideo();
     return new Response(new Uint8Array(video).buffer as ArrayBuffer, { headers: { "Content-Type": "video/mp4", "Accept-Ranges": "bytes" } });

@@ -9,8 +9,22 @@ const LEGACY_CANDIDATE_LEVEL_LABEL: Record<string, string> = {
   training: "训练方向",
 };
 
+const METRIC_LABELS: Record<string, string> = {
+  sparc: "运动平滑度（SPARC）",
+  decel_frac: "减速占比",
+  reverse_ratio: "反向修正比例",
+  submovement_overlap: "动作分段特征",
+  path_efficiency: "路径效率",
+  peak_position_pct: "速度峰值位置",
+};
+
 const METRIC_DESCRIPTIONS: Record<string, string> = {
   sparc: "运动平滑度；越接近 0 越平滑",
+  decel_frac: "减速阶段占整次移动的时间比例",
+  reverse_ratio: "减速阶段出现反向调整的比例",
+  submovement_overlap: "主要移动与后续修正之间的分离特征",
+  path_efficiency: "移动路径接近直线的程度",
+  peak_position_pct: "速度峰值出现在整次移动中的相对位置",
   "continuous_tracking.target_relative_error_px": "鼠标与目标中心的距离",
   "continuous_tracking.time_in_radius_ratio": "鼠标在目标半径内的时间比例",
   "continuous_tracking.loss_count": "鼠标离开目标半径的次数",
@@ -33,6 +47,8 @@ function severityTone(severity: "info" | "watch" | "fix"): "neutral" | "warning"
 function formatMetricValue(value: number | string | null, unit: string | null): string {
   if (value === null) return "不可用";
   const shown = typeof value === "number" ? Number(value.toFixed(3)) : value;
+  if (unit === "percent") return `${shown}%`;
+  if (unit === "dimensionless" || unit === "ratio") return String(shown);
   return `${shown}${unit ? ` ${unit}` : ""}`;
 }
 
@@ -41,7 +57,7 @@ function metricReference(metric: AnalysisMetricPresentation): string {
 }
 
 function metricLabel(key: string): string {
-  return METRIC_DESCRIPTIONS[key] ? key.split(".").pop() ?? key : key;
+  return METRIC_LABELS[key] ?? key.split(".").pop() ?? key;
 }
 
 function metricDescription(key: string): string | null {
@@ -56,7 +72,7 @@ function IssueBody({
   if (issue.presentationKind === "registry-backed") {
     return (
       <div className={styles.issueBody}>
-        <p>{issue.priorityReason}</p>
+        {issue.priorityReason ? <p>{issue.priorityReason}</p> : null}
         <dl className={styles.issueCause}>
           <div>
             <dt>候选解释</dt>
@@ -73,7 +89,7 @@ function IssueBody({
 
   return (
     <div className={styles.issueBody}>
-      <p>{issue.priorityReason}</p>
+      {issue.priorityReason ? <p>{issue.priorityReason}</p> : null}
       {issue.rootCauses.length ? (
         <dl className={styles.issueCause}>
           {issue.rootCauses.map((cause) => (
@@ -83,9 +99,6 @@ function IssueBody({
             </div>
           ))}
         </dl>
-      ) : null}
-      {issue.hasHistoricalCandidateDetails ? (
-        <p className={styles.issueLegacyNote}>以上根因与建议来自历史候选说明，结论以当前证据为准。</p>
       ) : null}
     </div>
   );
@@ -118,6 +131,7 @@ export function DiagnosisView({
 
   const prescription = presentation.issues.map((issue) => issue.prescriptions[0]).find(Boolean) ?? null;
   const expected = presentation.issues.map((issue) => issue.expectedResult).find(Boolean) ?? null;
+  const { summary, summaryMode } = presentation.metrics;
 
   return (
     <div className={styles.diagnosisView}>
@@ -125,14 +139,26 @@ export function DiagnosisView({
         <div className={styles.conclusion} id="diagnosis-conclusion">{presentation.headline}</div>
         {presentation.profile ? (
           <div className={styles.profileTag}>
-            <Badge tone="warning">{presentation.profile.label}</Badge>
-            <span>基于规则匹配，非概率结论</span>
+            {presentation.profile.description ? (
+              <span
+                aria-describedby="analysis-profile-explanation"
+                className={styles.profileLabel}
+                tabIndex={0}
+              >
+                <Badge tone="neutral">{presentation.profile.label}</Badge>
+                <span className={styles.profileTooltip} id="analysis-profile-explanation" role="tooltip">
+                  {presentation.profile.description}
+                </span>
+              </span>
+            ) : (
+              <Badge tone="neutral">{presentation.profile.label}</Badge>
+            )}
           </div>
         ) : null}
       </section>
 
       {presentation.issues.length === 0 ? (
-        <Empty title="当前证据不足以形成重点观察">
+        <Empty className={styles.metricSummaryEmpty} title="当前证据不足以形成重点观察">
           查看数据来源和限制，或在后续收集更完整的证据。
         </Empty>
       ) : (
@@ -192,12 +218,16 @@ export function DiagnosisView({
 
       <section className={styles.metricSummary} aria-labelledby="core-metrics-title">
         <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle} id="core-metrics-title">核心指标摘要</span>
-          <span className={styles.sectionHint}>完整数据在「数据」视图</span>
+          <span className={styles.sectionTitle} id="core-metrics-title">
+            {summaryMode === "descriptive" ? "描述性指标摘要" : "核心指标摘要"}
+          </span>
+          <span className={styles.sectionHint}>
+            {summaryMode === "descriptive" ? "仅描述本局，不用于通用阈值判断" : "完整数据在「数据」视图"}
+          </span>
         </div>
-        {presentation.metrics.formal.length ? (
+        {summary.length ? (
           <div className={styles.metricSummaryPanel}>
-            {presentation.metrics.formal.slice(0, 4).map((metric) => {
+            {summary.slice(0, 4).map((metric) => {
               const ref = metricReference(metric);
               const severity = severityByMetric[ref] ?? "info";
               return (
@@ -214,20 +244,30 @@ export function DiagnosisView({
                     {metricDescription(ref)
                       ?? (metric.coverage === null ? "覆盖未知" : `覆盖 ${Math.round(metric.coverage * 100)}%`)}
                   </span>
-                  <Status tone={severityTone(severity)}>
-                    {severity === "fix" ? "优先处理" : severity === "watch" ? "关注" : "观察"}
+                  <Status tone={summaryMode === "descriptive" ? "neutral" : severityTone(severity)}>
+                    {summaryMode === "descriptive"
+                      ? "描述性"
+                      : severity === "fix"
+                        ? "优先处理"
+                        : severity === "watch"
+                          ? "关注"
+                          : "观察"}
                   </Status>
                 </button>
               );
             })}
           </div>
         ) : (
-          <Empty title="没有可正式展示的指标">实验性或不可用指标不会混入核心摘要。</Empty>
+          <Empty className={styles.metricSummaryEmpty} title="暂无可展示指标">
+            本次分析没有产生可解释的指标；完整状态仍保留在数据视图中。
+          </Empty>
         )}
       </section>
 
       {presentation.limitations.length ? (
-        <Notice tone="warning">{presentation.limitations.join(" · ")}</Notice>
+        <Notice title="本次分析的适用范围" tone="warning">
+          {presentation.limitations.join(" ")}
+        </Notice>
       ) : null}
     </div>
   );
