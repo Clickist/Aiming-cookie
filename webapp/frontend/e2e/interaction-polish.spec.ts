@@ -1,11 +1,18 @@
 import { chromium, expect, test, type Page } from "@playwright/test";
 
 import {
+  ANALYSIS_DATA,
+  ANALYSIS_FAMILY_FLICKING,
+  ANALYSIS_FAMILY_SWITCHING,
+  ANALYSIS_FAMILY_TRACKING,
+  CURRENT_TRAINING_NO_PLAN,
+  CURRENT_TRAINING_PAUSED,
   COACH_CONTEXTS,
   RUN_MULTIMODAL,
   RUN_NATIVE,
   TASKS,
   apiScenario,
+  analysisSession,
   installApiFixtures,
   installDesktopBridge,
 } from "../fixtures/task7-fixtures";
@@ -16,13 +23,57 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   )).toBe(true);
 }
 
+function familyAnalysis(
+  family: "static_clicking" | "target_switching",
+  inputMode: "input_native" | "multimodal",
+) {
+  const base = analysisSession();
+  if (!base.result || base.result.schema_version !== "analysis_result.v2") {
+    throw new Error("family WebView fixture requires v2");
+  }
+  return analysisSession({
+    result: {
+      ...base.result,
+      analysis_type: family === "target_switching" ? "target_switching" : "flicking",
+      input_mode: inputMode,
+      input_snapshot: {
+        ...base.result.input_snapshot,
+        scenario_resolution: {
+          ...base.result.input_snapshot.scenario_resolution!,
+          aim_family: family,
+        },
+      },
+    },
+  });
+}
+
+function familySummaryData(family: "switching" | "flicking") {
+  const kinds = family === "switching"
+    ? [{ kind: "switch_chain", count: 2 }, { kind: "settle", count: 2 }]
+    : [{ kind: "peak", count: 1 }, { kind: "corrective", count: 2 }];
+  return {
+    ...ANALYSIS_DATA,
+    event_markers: kinds.map(({ kind }, index) => ({
+      event_ref: `event:${family}:${index + 1}`,
+      kind,
+      relative_ms: family === "switching" ? 1200 + index * 230 : 2478 + index * 42,
+    })),
+    event_distribution: kinds,
+    target_relative_error_radius: {
+      availability: "unavailable" as const,
+      reason: "target_relative_samples_unavailable",
+      points: [],
+    },
+  };
+}
+
 test.describe("release interaction polish", () => {
   test("navigation active state, disabled Coach tooltip, and task dot preserve toolbar geometry", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
     await installApiFixtures(page, apiScenario({ tasks: [TASKS[2]] }));
     await page.goto("/settings");
 
-    const coach = page.getByRole("button", { name: "Coach" });
+    const coach = page.locator(".task3-toolbar-action");
     await expect(coach).toBeDisabled();
     await expect(coach.locator("..")).toHaveAttribute("title", "当前页面不支持 Coach");
     await expect(page.getByRole("link", { name: "设置" })).toHaveAttribute("aria-current", "page");
@@ -194,6 +245,76 @@ test.describe("release interaction polish", () => {
     expect(afterUnmount).toBe(true);
   });
 
+  test("Coach keeps current training readable and turns safe shortcuts into drafts", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
+    await installApiFixtures(page);
+    await page.goto("/history");
+
+    const training = page.getByRole("region", { name: "当前训练" });
+    await expect(training).toContainText("1wall 6targets small");
+    await expect(training).toContainText("练什么");
+    await expect(training).toContainText("复测");
+    await training.getByRole("button", { name: /查看训练项目/ }).click();
+    await expect(training.locator(".task6-training-item")).toHaveCount(3);
+
+    await training.getByRole("button", { name: "问 Coach" }).first().click();
+    const draft = page.locator("#coach-draft");
+    await expect(draft).toHaveValue(/1wall 6targets small/);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("aiming-cookie:coach-kovaak-intent", {
+      detail: { kind: "kovaak_score_item", item_name: "controlsphere" },
+    })));
+    await expect(draft).toHaveValue(/controlsphere/);
+
+    await page.unrouteAll({ behavior: "wait" });
+    await installApiFixtures(page, apiScenario({ currentTraining: CURRENT_TRAINING_PAUSED }));
+    await page.reload();
+    await expect(page.getByRole("region", { name: "当前训练" })).toContainText("已暂停");
+
+    await page.unrouteAll({ behavior: "wait" });
+    await installApiFixtures(page, apiScenario({ currentTraining: CURRENT_TRAINING_NO_PLAN }));
+    await page.reload();
+    await expect(page.getByRole("region", { name: "当前训练" })).toContainText("还没有当前训练安排");
+
+    await page.unrouteAll({ behavior: "wait" });
+    await installApiFixtures(page, apiScenario({
+      providerStatus: { profile_id: 1, configured: true, status: "connection_failed", message: "Provider unavailable" },
+    }));
+    await page.reload();
+    await expect(page.getByRole("complementary", { name: "Coach" })).toBeHidden();
+    await page.getByRole("button", { name: "Coach" }).click();
+    await expect(page.getByRole("complementary", { name: "Coach" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "当前训练" })).toContainText("1wall 6targets small");
+    await page.getByRole("region", { name: "当前训练" }).getByRole("button", { name: /查看训练项目/ }).click();
+    await expect(page.getByRole("region", { name: "当前训练" }).getByRole("button", { name: "问 Coach" }).first()).toBeDisabled();
+
+    await page.setViewportSize({ width: 960, height: 640 });
+    await expect(page.getByRole("dialog", { name: "Coach" })).toBeHidden();
+    await page.getByRole("button", { name: "Coach" }).click();
+    await expect(page.getByRole("dialog", { name: "Coach" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Coach" }).getByRole("region", { name: "当前训练" })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("KovaaK score actions carry a safe item name into a Coach draft", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await installApiFixtures(page);
+    let coachRunPosts = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/coach/agent-runs") {
+        coachRunPosts += 1;
+      }
+    });
+    await page.goto("/settings");
+
+    const scoreRow = page.locator(".kovaak-score-row").filter({ hasText: "controlsphere" }).first();
+    await scoreRow.getByRole("button", { name: "让 Coach 看看" }).click();
+    await expect(page).toHaveURL(/\/history$/);
+    await expect(page.getByRole("complementary", { name: "Coach" })).toBeVisible();
+    await expect(page.locator("#coach-draft")).toHaveValue(/controlsphere/);
+    expect(coachRunPosts).toBe(0);
+  });
+
   test("Toast has a keyboard close action, auto-dismisses, and reduced motion is immediate", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
     await installApiFixtures(page);
@@ -287,4 +408,91 @@ test("real Tauri WebView preserves Coach resizing and all three responsive modes
   await expect(responsiveDrawer.locator(".ac-drawer")).toHaveCSS("transition-duration", "0s");
   const screenshotPath = process.env.AIMING_COOKIE_TAURI_SMOKE_SCREENSHOT;
   if (screenshotPath) await page!.screenshot({ path: screenshotPath });
+});
+
+test("real Tauri WebView renders the approved frontend realization matrix", async () => {
+  const cdpUrl = process.env.AIMING_COOKIE_TAURI_CDP_URL;
+  const appUrl = process.env.AIMING_COOKIE_TAURI_APP_URL ?? "http://localhost:3000";
+  test.skip(!cdpUrl, "requires an isolated Tauri smoke instance and its CDP endpoint");
+
+  const browser = await chromium.connectOverCDP(cdpUrl!);
+  const pages = browser.contexts().flatMap((context) => context.pages());
+  const page = pages.find((candidate) => candidate.url().startsWith("http://localhost:")) ?? pages[0];
+  expect(page, "Tauri WebView page").toBeDefined();
+
+  const useScenario = async (scenario = apiScenario()) => {
+    await page!.unrouteAll({ behavior: "wait" });
+    await installApiFixtures(page!, scenario);
+  };
+  const setTheme = async (theme: "light" | "dark") => {
+    await page!.evaluate((value) => localStorage.setItem("aiming-cookie.ui.theme", value), theme);
+  };
+  const closeCoach = async () => {
+    await page!.evaluate(() => localStorage.setItem("aiming-cookie.ui.coach-open", "closed"));
+  };
+
+  await page!.setViewportSize({ width: 1280, height: 820 });
+  await useScenario();
+  await setTheme("light");
+  await page!.goto(new URL("/onboarding", appUrl).toString());
+  await expect(page!.getByRole("heading", { name: "连接模型服务" })).toBeVisible();
+  await page!.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(page!.getByRole("heading", { name: "连接 KovaaK 成绩" })).toBeVisible();
+  await expect(page!.getByRole("region", { name: "KovaaK 成绩连接" })).toBeVisible();
+  await expectNoHorizontalOverflow(page!);
+
+  await setTheme("dark");
+  await page!.goto(new URL("/settings", appUrl).toString());
+  await expect(page!.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page!.getByRole("heading", { name: "KovaaK 成绩" })).toBeVisible();
+  await expect(page!.locator(".kovaak-stage-summary")).toContainText("Easier");
+  await expect(page!.locator(".kovaak-stage-summary")).toContainText("Medium");
+  await expectNoHorizontalOverflow(page!);
+
+  await closeCoach();
+  await useScenario(apiScenario({ analysisFamilyData: ANALYSIS_FAMILY_TRACKING }));
+  await page!.goto(new URL("/analysis/42", appUrl).toString());
+  const analysisTabs = page!.getByRole("tab");
+  await expect(analysisTabs).toHaveCount(3);
+  await expect(analysisTabs.nth(0)).toHaveText("诊断");
+  await expect(analysisTabs.nth(1)).toHaveText("视频");
+  await expect(analysisTabs.nth(2)).toHaveText("数据");
+  await analysisTabs.nth(2).click();
+  await expect(page!.getByRole("heading", { name: "跟踪分段" })).toBeVisible();
+  await expectNoHorizontalOverflow(page!);
+
+  await page!.evaluate(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
+  await useScenario();
+  await page!.goto(new URL("/history", appUrl).toString());
+  const currentTraining = page!.getByRole("region", { name: "当前训练" });
+  await expect(currentTraining).toBeVisible();
+  for (const label of ["练什么", "练多少", "注意", "观察", "复测"]) {
+    await expect(currentTraining.getByText(label, { exact: true })).toBeVisible();
+  }
+
+  await page!.setViewportSize({ width: 960, height: 640 });
+  await setTheme("light");
+  await closeCoach();
+  await useScenario(apiScenario({
+    analysis: familyAnalysis("target_switching", "multimodal"),
+    analysisData: familySummaryData("switching"),
+    analysisFamilyData: ANALYSIS_FAMILY_SWITCHING,
+  }));
+  await page!.goto(new URL("/analysis/42", appUrl).toString());
+  await page!.getByRole("tab", { name: "数据" }).click();
+  await expect(page!.getByRole("heading", { name: "切换链" })).toBeVisible();
+  await expectNoHorizontalOverflow(page!);
+
+  await useScenario(apiScenario({
+    analysis: familyAnalysis("static_clicking", "input_native"),
+    analysisData: familySummaryData("flicking"),
+    analysisFamilyData: ANALYSIS_FAMILY_FLICKING,
+  }));
+  await page!.goto(new URL("/analysis/42", appUrl).toString());
+  await page!.getByRole("tab", { name: "数据" }).click();
+  await expect(page!.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page!.getByRole("heading", { name: "逐次 Flick" })).toBeVisible();
+  await expect(page!.getByText("速度峰值", { exact: true })).toBeVisible();
+  await expect(page!.getByText("修正动作", { exact: true })).toBeVisible();
+  await expectNoHorizontalOverflow(page!);
 });
