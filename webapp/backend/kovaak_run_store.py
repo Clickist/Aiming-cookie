@@ -35,7 +35,9 @@ from .workspace import session_dir
 
 
 SNAPSHOT_MAGIC = b"ACRI"
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
+LEGACY_SNAPSHOT_VERSION = 1
+SUPPORTED_SNAPSHOT_VERSIONS = frozenset({LEGACY_SNAPSHOT_VERSION, SNAPSHOT_VERSION})
 SNAPSHOT_HEADER_SIZE = 12
 SNAPSHOT_RECORD_SIZE = 20
 MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024
@@ -177,13 +179,15 @@ def _validate_snapshot_points(points: list[dict[str, int]]) -> list[dict[str, in
     return normalized
 
 
-def decode_mouse_snapshot_bytes(data: bytes) -> list[dict[str, int]]:
-    """Decode exact Raw Input bytes after their source fingerprint is accepted."""
+def _decode_mouse_snapshot_bytes_with_version(
+    data: bytes,
+) -> tuple[int, list[dict[str, int]]]:
     if len(data) > MAX_SNAPSHOT_BYTES:
         raise ValueError("raw input snapshot exceeds byte limit")
     if len(data) < SNAPSHOT_HEADER_SIZE or data[:4] != SNAPSHOT_MAGIC:
         raise ValueError("invalid raw input snapshot")
-    if data[4] != SNAPSHOT_VERSION:
+    version = data[4]
+    if version not in SUPPORTED_SNAPSHOT_VERSIONS:
         raise ValueError("unsupported raw input snapshot version")
     if data[5:8] != b"\0\0\0":
         raise ValueError("unsupported raw input snapshot header")
@@ -199,7 +203,64 @@ def decode_mouse_snapshot_bytes(data: bytes) -> list[dict[str, int]]:
         timestamp_ms, dx, dy, buttons = struct.unpack_from("<qiiI", data, offset)
         points.append({"timestamp_ms": timestamp_ms, "dx": dx, "dy": dy, "buttons": buttons})
         offset += SNAPSHOT_RECORD_SIZE
-    return _validate_snapshot_points(points)
+    return version, _validate_snapshot_points(points)
+
+
+def decode_mouse_snapshot_bytes(data: bytes) -> list[dict[str, int]]:
+    """Decode exact Raw Input bytes after their source fingerprint is accepted."""
+    return _decode_mouse_snapshot_bytes_with_version(data)[1]
+
+
+def _canonicalize_mouse_points(points: list[dict[str, int]]) -> list[dict[str, int]]:
+    source = _validate_snapshot_points(points)
+    normalized: list[dict[str, int]] = []
+    bucket: dict[str, int] | None = None
+    buttons = 0
+
+    def flush() -> None:
+        nonlocal bucket
+        if bucket is not None and (bucket["dx"] != 0 or bucket["dy"] != 0):
+            normalized.append(bucket)
+        bucket = None
+
+    for point in source:
+        timestamp_ms = point["timestamp_ms"]
+        if bucket is not None and timestamp_ms > bucket["timestamp_ms"]:
+            flush()
+        if point["dx"] != 0 or point["dy"] != 0:
+            if bucket is None:
+                bucket = {
+                    "timestamp_ms": timestamp_ms,
+                    "dx": point["dx"],
+                    "dy": point["dy"],
+                    "buttons": buttons,
+                }
+            else:
+                next_dx = bucket["dx"] + point["dx"]
+                next_dy = bucket["dy"] + point["dy"]
+                if not -(2**31) <= next_dx < 2**31 or not -(2**31) <= next_dy < 2**31:
+                    raise ValueError("raw input aggregate is outside i32 range")
+                bucket["dx"] = next_dx
+                bucket["dy"] = next_dy
+
+        changed = buttons ^ point["buttons"]
+        for mask in (1, 2, 4):
+            if not changed & mask:
+                continue
+            if point["buttons"] & mask:
+                buttons |= mask
+            else:
+                buttons &= ~mask
+            if bucket is not None:
+                bucket["buttons"] = buttons
+            normalized.append({
+                "timestamp_ms": timestamp_ms,
+                "dx": 0,
+                "dy": 0,
+                "buttons": buttons,
+            })
+    flush()
+    return _validate_snapshot_points(normalized)
 
 
 def read_mouse_snapshot(path: str | Path) -> list[dict[str, int]]:
@@ -208,6 +269,16 @@ def read_mouse_snapshot(path: str | Path) -> list[dict[str, int]]:
     with source.open("rb") as stream:
         data = stream.read(MAX_SNAPSHOT_BYTES + 1)
     return decode_mouse_snapshot_bytes(data)
+
+
+def read_mouse_snapshot_with_version(
+    path: str | Path,
+) -> tuple[int, list[dict[str, int]]]:
+    """Read a Raw Input snapshot while retaining its actual on-disk version."""
+    source = Path(path)
+    with source.open("rb") as stream:
+        data = stream.read(MAX_SNAPSHOT_BYTES + 1)
+    return _decode_mouse_snapshot_bytes_with_version(data)
 
 
 def _has_valid_mouse_snapshot_header(path: str | Path) -> bool:
@@ -220,7 +291,7 @@ def _has_valid_mouse_snapshot_header(path: str | Path) -> bool:
         header = stream.read(SNAPSHOT_HEADER_SIZE)
     if len(header) != SNAPSHOT_HEADER_SIZE or header[:4] != SNAPSHOT_MAGIC:
         return False
-    if header[4] != SNAPSHOT_VERSION or header[5:8] != b"\0\0\0":
+    if header[4] not in SUPPORTED_SNAPSHOT_VERSIONS or header[5:8] != b"\0\0\0":
         return False
     count = struct.unpack_from("<I", header, 8)[0]
     return (
@@ -231,7 +302,7 @@ def _has_valid_mouse_snapshot_header(path: str | Path) -> bool:
 
 def write_mouse_snapshot(path: str | Path, points: list[dict[str, int]]) -> None:
     """Write a validated trace snapshot atomically in the Rust-compatible format."""
-    normalized = _validate_snapshot_points(points)
+    normalized = _canonicalize_mouse_points(points)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = bytearray(SNAPSHOT_MAGIC + bytes([SNAPSHOT_VERSION, 0, 0, 0]))
@@ -771,15 +842,15 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
     trace: dict[str, object] | None = None
     trace_path = run.get("mouse_trace_path")
     if run.get("trace_state") == "attached" and trace_path and Path(trace_path).is_file():
-        read_mouse_snapshot(trace_path)
+        trace_version, _ = read_mouse_snapshot_with_version(trace_path)
         trace_revision = _source_metadata(
-            trace_path, f"raw_input_snapshot.v{SNAPSHOT_VERSION}",
+            trace_path, f"raw_input_snapshot.v{trace_version}",
         )
         trace = {
             "artifact_ref": f"run:{run_id}:trace",
             "path": str(Path(trace_path).resolve()),
             "availability": "available",
-            "format_version": SNAPSHOT_VERSION,
+            "format_version": trace_version,
             "fingerprint": {
                 "sha256": trace_revision["sha256"],
                 "size": trace_revision["size"],

@@ -624,6 +624,12 @@ async def test_complete_pair_waits_for_native_raw_snapshot_barrier_without_reexp
 @pytest.mark.parametrize(
     ("quality", "expected_trace_state", "expected_error"),
     [
+        pytest.param(
+            {},
+            "attached",
+            None,
+            id="canonical-normalization-is-not-loss",
+        ),
         (
             {
                 "raw_snapshot_queue_dropped_points": 1,
