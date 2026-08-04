@@ -24,6 +24,10 @@ skills-lock.json
 # superpowers brainstorm mockups (design exploration, not project code)
 .superpowers/
 
+# local research evidence and generated snapshots (kept outside product commits)
+.firecrawl/
+artifacts/
+
 # secrets (LLM API keys etc.)
 .env
 .env.*
