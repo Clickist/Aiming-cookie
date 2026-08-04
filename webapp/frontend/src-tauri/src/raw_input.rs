@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const SNAPSHOT_MAGIC: &[u8; 4] = b"ACRI";
-pub const SNAPSHOT_VERSION: u8 = 1;
+pub const SNAPSHOT_VERSION: u8 = 2;
+const LEGACY_SNAPSHOT_VERSION: u8 = 1;
 const DEFAULT_BUFFER_MINUTES: u64 = 10;
 const MAX_SNAPSHOT_POINTS: usize = 1_000_000;
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
@@ -66,6 +67,177 @@ pub struct SnapshotBarrierReceipt {
     pub ring_expired_through_epoch_ms: Option<i64>,
     pub clock_source: &'static str,
     pub timebase_version: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ButtonTransition {
+    Press(u32),
+    Release(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MotionNormalizationError {
+    AggregateOverflow,
+    TimestampRegression,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MotionBucket {
+    timestamp_ms: i64,
+    dx: i32,
+    dy: i32,
+    buttons: u32,
+}
+
+#[derive(Default)]
+struct MotionNormalizer {
+    bucket: Option<MotionBucket>,
+    invalid_bucket_ms: Option<i64>,
+    last_timestamp_ms: Option<i64>,
+    buttons: u32,
+}
+
+impl MotionNormalizer {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn ingest_report<I, F>(
+        &mut self,
+        timestamp_ms: i64,
+        dx: i32,
+        dy: i32,
+        transitions: I,
+        mut emit: F,
+    ) -> Result<(), MotionNormalizationError>
+    where
+        I: IntoIterator<Item = ButtonTransition>,
+        F: FnMut(MousePoint),
+    {
+        if self
+            .last_timestamp_ms
+            .is_some_and(|previous| timestamp_ms < previous)
+        {
+            return Err(MotionNormalizationError::TimestampRegression);
+        }
+        if self
+            .last_timestamp_ms
+            .is_some_and(|previous| timestamp_ms > previous)
+        {
+            self.flush(&mut emit);
+            self.invalid_bucket_ms = None;
+        }
+        self.last_timestamp_ms = Some(timestamp_ms);
+
+        let has_motion = dx != 0 || dy != 0;
+        let mut aggregate_error = None;
+        if has_motion && self.invalid_bucket_ms != Some(timestamp_ms) {
+            if let Some(bucket) = self.bucket.as_mut() {
+                let next_dx = bucket.dx.checked_add(dx);
+                let next_dy = bucket.dy.checked_add(dy);
+                if let (Some(next_dx), Some(next_dy)) = (next_dx, next_dy) {
+                    bucket.dx = next_dx;
+                    bucket.dy = next_dy;
+                } else {
+                    self.bucket = None;
+                    self.invalid_bucket_ms = Some(timestamp_ms);
+                    aggregate_error = Some(MotionNormalizationError::AggregateOverflow);
+                }
+            } else {
+                self.bucket = Some(MotionBucket {
+                    timestamp_ms,
+                    dx,
+                    dy,
+                    buttons: self.buttons,
+                });
+            }
+        } else if has_motion {
+            aggregate_error = Some(MotionNormalizationError::AggregateOverflow);
+        }
+
+        for transition in transitions {
+            let (mask, pressed) = match transition {
+                ButtonTransition::Press(mask) => (mask, true),
+                ButtonTransition::Release(mask) => (mask, false),
+            };
+            let next_buttons = if pressed {
+                self.buttons | mask
+            } else {
+                self.buttons & !mask
+            };
+            if next_buttons == self.buttons {
+                continue;
+            }
+            self.buttons = next_buttons;
+            if let Some(bucket) = self.bucket.as_mut() {
+                bucket.buttons = self.buttons;
+            }
+            emit(MousePoint {
+                timestamp_ms,
+                dx: 0,
+                dy: 0,
+                buttons: self.buttons,
+            });
+        }
+
+        aggregate_error.map_or(Ok(()), Err)
+    }
+
+    fn flush<F>(&mut self, mut emit: F)
+    where
+        F: FnMut(MousePoint),
+    {
+        if let Some(bucket) = self.bucket.take() {
+            if bucket.dx != 0 || bucket.dy != 0 {
+                emit(MousePoint {
+                    timestamp_ms: bucket.timestamp_ms,
+                    dx: bucket.dx,
+                    dy: bucket.dy,
+                    buttons: bucket.buttons,
+                });
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.bucket = None;
+        self.invalid_bucket_ms = None;
+        self.last_timestamp_ms = None;
+        self.buttons = 0;
+    }
+}
+
+fn normalize_snapshot_points(points: &[MousePoint]) -> io::Result<Vec<MousePoint>> {
+    validate_snapshot_points(points)?;
+    let mut normalizer = MotionNormalizer::new();
+    let mut normalized = Vec::with_capacity(points.len());
+    for point in points {
+        let changed = normalizer.buttons ^ point.buttons;
+        let transitions = [1, 2, 4].into_iter().filter_map(|mask| {
+            (changed & mask != 0).then_some(if point.buttons & mask != 0 {
+                ButtonTransition::Press(mask)
+            } else {
+                ButtonTransition::Release(mask)
+            })
+        });
+        normalizer
+            .ingest_report(
+                point.timestamp_ms,
+                point.dx,
+                point.dy,
+                transitions,
+                |normalized_point| normalized.push(normalized_point),
+            )
+            .map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("raw input normalization failed: {error:?}"),
+                )
+            })?;
+    }
+    normalizer.flush(|point| normalized.push(point));
+    validate_snapshot_points(&normalized)?;
+    Ok(normalized)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -228,6 +400,12 @@ pub fn encode_snapshot(points: &[MousePoint]) -> Vec<u8> {
     out
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct DecodedSnapshot {
+    version: u8,
+    points: Vec<MousePoint>,
+}
+
 fn validate_snapshot_points(points: &[MousePoint]) -> io::Result<()> {
     if points.len() > MAX_SNAPSHOT_POINTS {
         return Err(io::Error::new(
@@ -265,14 +443,15 @@ fn validate_snapshot_points(points: &[MousePoint]) -> io::Result<()> {
     Ok(())
 }
 
-pub fn decode_snapshot(mut bytes: &[u8]) -> io::Result<Vec<MousePoint>> {
+fn decode_snapshot_with_version(mut bytes: &[u8]) -> io::Result<DecodedSnapshot> {
     if bytes.len() < 12 || &bytes[..4] != SNAPSHOT_MAGIC {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid raw input snapshot",
         ));
     }
-    if bytes[4] != SNAPSHOT_VERSION {
+    let version = bytes[4];
+    if !matches!(version, LEGACY_SNAPSHOT_VERSION | SNAPSHOT_VERSION) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "unsupported raw input snapshot version",
@@ -311,10 +490,14 @@ pub fn decode_snapshot(mut bytes: &[u8]) -> io::Result<Vec<MousePoint>> {
         });
     }
     validate_snapshot_points(&points)?;
-    Ok(points)
+    Ok(DecodedSnapshot { version, points })
 }
 
-fn read_snapshot_file(path: &std::path::Path) -> io::Result<Vec<MousePoint>> {
+pub fn decode_snapshot(bytes: &[u8]) -> io::Result<Vec<MousePoint>> {
+    Ok(decode_snapshot_with_version(bytes)?.points)
+}
+
+fn read_snapshot_file(path: &std::path::Path) -> io::Result<DecodedSnapshot> {
     let metadata = fs::metadata(path)?;
     if metadata.len() > MAX_SNAPSHOT_BYTES as u64 {
         return Err(io::Error::new(
@@ -322,7 +505,7 @@ fn read_snapshot_file(path: &std::path::Path) -> io::Result<Vec<MousePoint>> {
             "raw input snapshot exceeds byte limit",
         ));
     }
-    decode_snapshot(&fs::read(path)?)
+    decode_snapshot_with_version(&fs::read(path)?)
 }
 
 #[cfg(windows)]
@@ -716,6 +899,7 @@ enum RawInputFailure {
     ProcessProbe,
     DataRead,
     Registration,
+    Normalization,
 }
 
 #[cfg(windows)]
@@ -725,6 +909,7 @@ impl RawInputFailure {
             Self::ProcessProbe => "kovaak_process_probe_failed",
             Self::DataRead => "raw_input_data_failed",
             Self::Registration => "raw_input_registration_failed",
+            Self::Normalization => "raw_input_normalization_failed",
         }
     }
 }
@@ -915,8 +1100,23 @@ fn snapshot_worker(
 ) {
     use std::sync::mpsc::RecvTimeoutError;
 
-    let mut ring = match read_snapshot_file(&snapshot_path) {
-        Ok(points) => {
+    let (mut ring, migrated_v1) = match read_snapshot_file(&snapshot_path) {
+        Ok(snapshot) => {
+            let migrated_v1 = snapshot.version == LEGACY_SNAPSHOT_VERSION;
+            let points = if migrated_v1 {
+                match normalize_snapshot_points(&snapshot.points) {
+                    Ok(points) => points,
+                    Err(error) => {
+                        diagnostics.record_snapshot_failure(
+                            "trace_snapshot_invalid",
+                            format!("failed to migrate raw input snapshot: {error}"),
+                        );
+                        return;
+                    }
+                }
+            } else {
+                snapshot.points
+            };
             let mut ring = RingBuffer::new(Duration::from_secs(DEFAULT_BUFFER_MINUTES * 60));
             for point in points {
                 match ring.push(point) {
@@ -927,11 +1127,12 @@ fn snapshot_worker(
                     }
                 }
             }
-            ring
+            (ring, migrated_v1)
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            RingBuffer::new(Duration::from_secs(DEFAULT_BUFFER_MINUTES * 60))
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (
+            RingBuffer::new(Duration::from_secs(DEFAULT_BUFFER_MINUTES * 60)),
+            false,
+        ),
         Err(error) => {
             diagnostics.record_snapshot_failure(
                 if error.kind() == io::ErrorKind::InvalidData {
@@ -941,14 +1142,20 @@ fn snapshot_worker(
                 },
                 format!("failed to read raw input snapshot: {error}"),
             );
-            RingBuffer::new(Duration::from_secs(DEFAULT_BUFFER_MINUTES * 60))
+            return;
         }
     };
     let expired = ring.prune_before(now_ms() - MAX_SNAPSHOT_SPAN_MS);
     if expired > 0 {
         diagnostics.record_expired(expired, now_ms() - MAX_SNAPSHOT_SPAN_MS);
         diagnostics.record_buffered_points(ring.len());
-        let _ = write_worker_snapshot(&snapshot_path, &ring, &diagnostics);
+    }
+    if migrated_v1 {
+        if write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics).is_err() {
+            return;
+        }
+    } else if expired > 0 {
+        let _ = write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics);
     }
     diagnostics.record_buffered_points(ring.len());
 
@@ -982,7 +1189,7 @@ fn snapshot_worker(
                 }
                 if expired > 0 || cadence.should_flush(now, true) {
                     let succeeded =
-                        write_worker_snapshot(&snapshot_path, &ring, &diagnostics).is_ok();
+                        write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics).is_ok();
                     cadence.record_attempt(now, succeeded);
                 }
             }
@@ -991,8 +1198,8 @@ fn snapshot_worker(
                 ack,
             }) => {
                 let now = Instant::now();
-                let result =
-                    write_worker_snapshot(&snapshot_path, &ring, &diagnostics).map(|snapshot| {
+                let result = write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics).map(
+                    |snapshot| {
                         let queue_dropped_points = diagnostics
                             .dropped_points
                             .load(std::sync::atomic::Ordering::Acquire);
@@ -1025,7 +1232,8 @@ fn snapshot_worker(
                             clock_source: diagnostics.clock_anchor.clock_source,
                             timebase_version: diagnostics.clock_anchor.timebase_version,
                         }
-                    });
+                    },
+                );
                 let succeeded = result.is_ok();
                 let _ = ack.send(result);
                 cadence.record_attempt(now, succeeded);
@@ -1039,7 +1247,7 @@ fn snapshot_worker(
                 }
                 if expired > 0 || cadence.should_flush(now, false) {
                     let succeeded =
-                        write_worker_snapshot(&snapshot_path, &ring, &diagnostics).is_ok();
+                        write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics).is_ok();
                     cadence.record_attempt(now, succeeded);
                 }
             }
@@ -1052,7 +1260,7 @@ fn snapshot_worker(
                 }
                 if expired > 0 || cadence.should_flush(now, true) {
                     let succeeded =
-                        write_worker_snapshot(&snapshot_path, &ring, &diagnostics).is_ok();
+                        write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics).is_ok();
                     cadence.record_attempt(now, succeeded);
                 }
                 break;
@@ -1060,7 +1268,7 @@ fn snapshot_worker(
         }
         let now = Instant::now();
         if cadence.should_flush(now, false) {
-            let succeeded = write_worker_snapshot(&snapshot_path, &ring, &diagnostics).is_ok();
+            let succeeded = write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics).is_ok();
             cadence.record_attempt(now, succeeded);
         }
     }
@@ -1074,12 +1282,19 @@ struct SnapshotWriteReceipt {
 #[cfg(windows)]
 fn write_worker_snapshot(
     snapshot_path: &Path,
-    ring: &RingBuffer,
+    ring: &mut RingBuffer,
     diagnostics: &CaptureDiagnostics,
 ) -> Result<SnapshotWriteReceipt, String> {
-    let points = ring.snapshot();
+    let points = normalize_snapshot_points(&ring.snapshot()).map_err(|error| {
+        diagnostics.record_snapshot_failure(
+            "trace_snapshot_invalid",
+            format!("failed to normalize raw input snapshot: {error}"),
+        );
+        "raw_snapshot_failed".to_string()
+    })?;
     match write_snapshot_atomic(snapshot_path, &points) {
         Ok(()) => {
+            ring.points = points.iter().copied().collect();
             let snapshot_at_ms = diagnostics.capture_timestamp_ms();
             diagnostics.record_snapshot_success(snapshot_at_ms, points.len());
             Ok(SnapshotWriteReceipt {
@@ -1115,6 +1330,31 @@ fn now_ms() -> i64 {
 }
 
 #[cfg(windows)]
+fn enqueue_normalized_point(
+    points: &std::sync::mpsc::SyncSender<CaptureMessage>,
+    diagnostics: &CaptureDiagnostics,
+    point: MousePoint,
+) {
+    match points.try_send(CaptureMessage::Point(point)) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::TrySendError::Full(CaptureMessage::Point(point)))
+        | Err(std::sync::mpsc::TrySendError::Disconnected(CaptureMessage::Point(point))) => {
+            diagnostics.record_drop(point.timestamp_ms)
+        }
+        Err(_) => unreachable!("point enqueue returns the original point message"),
+    }
+}
+
+#[cfg(windows)]
+fn flush_pending_motion(
+    normalizer: &mut MotionNormalizer,
+    points: &std::sync::mpsc::SyncSender<CaptureMessage>,
+    diagnostics: &CaptureDiagnostics,
+) {
+    normalizer.flush(|point| enqueue_normalized_point(points, diagnostics, point));
+}
+
+#[cfg(windows)]
 unsafe fn raw_input_thread(
     stop: Arc<std::sync::atomic::AtomicBool>,
     points: std::sync::mpsc::SyncSender<CaptureMessage>,
@@ -1137,7 +1377,7 @@ unsafe fn raw_input_thread(
         diagnostics: Arc<CaptureDiagnostics>,
         process_running: bool,
         process_probe_failed: bool,
-        buttons: u32,
+        normalizer: MotionNormalizer,
     }
 
     static STATE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -1156,7 +1396,7 @@ unsafe fn raw_input_thread(
                     lparam,
                     &state.points,
                     &state.diagnostics,
-                    &mut state.buttons,
+                    &mut state.normalizer,
                 ) {
                     state.diagnostics.record_runtime_failure(error);
                 }
@@ -1227,7 +1467,7 @@ unsafe fn raw_input_thread(
         diagnostics,
         process_running: false,
         process_probe_failed: false,
-        buttons: 0,
+        normalizer: MotionNormalizer::new(),
     });
     STATE.store(
         (&mut *thread_state) as *mut ThreadState as usize,
@@ -1254,6 +1494,11 @@ unsafe fn raw_input_thread(
             DispatchMessageW(&message);
         }
         if let Some((covered_through_ms, ack)) = pending_barrier {
+            flush_pending_motion(
+                &mut thread_state.normalizer,
+                &thread_state.points,
+                &thread_state.diagnostics,
+            );
             let _ = try_send_snapshot_barrier(&thread_state.points, covered_through_ms, ack);
         }
         if last_process_check.elapsed() >= Duration::from_millis(500) {
@@ -1268,12 +1513,6 @@ unsafe fn raw_input_thread(
                     thread_state
                         .diagnostics
                         .record_kovaak_process_present(process_running);
-                    if !process_running {
-                        thread_state.buttons = 0;
-                    }
-                    if was_running && !process_running {
-                        let _ = thread_state.points.send(CaptureMessage::Flush);
-                    }
                 }
                 Err(error) => {
                     thread_state.process_running = false;
@@ -1286,9 +1525,27 @@ unsafe fn raw_input_thread(
                     }
                 }
             }
+            if was_running && !thread_state.process_running {
+                flush_pending_motion(
+                    &mut thread_state.normalizer,
+                    &thread_state.points,
+                    &thread_state.diagnostics,
+                );
+                let _ = thread_state.points.send(CaptureMessage::Flush);
+            }
+            if !thread_state.process_running {
+                thread_state.normalizer.reset();
+            }
         }
         thread::sleep(std::time::Duration::from_millis(5));
     }
+
+    flush_pending_motion(
+        &mut thread_state.normalizer,
+        &thread_state.points,
+        &thread_state.diagnostics,
+    );
+    let _ = thread_state.points.send(CaptureMessage::Flush);
 
     let remove_device = RAWINPUTDEVICE {
         usUsagePage: 0x01,
@@ -1309,7 +1566,7 @@ unsafe fn capture_raw_mouse(
     lparam: isize,
     points: &std::sync::mpsc::SyncSender<CaptureMessage>,
     diagnostics: &CaptureDiagnostics,
-    buttons: &mut u32,
+    normalizer: &mut MotionNormalizer,
 ) -> Result<(), RawInputFailure> {
     use std::mem::size_of;
     use std::ptr::null_mut;
@@ -1353,39 +1610,27 @@ unsafe fn capture_raw_mouse(
     }
     let mouse = bytes.as_ptr().add(size_of::<RAWINPUTHEADER>());
     let flags = std::ptr::read_unaligned(mouse.add(4) as *const u16);
-    if flags & RI_MOUSE_LEFT_BUTTON_DOWN != 0 {
-        *buttons |= 1;
-    }
-    if flags & RI_MOUSE_LEFT_BUTTON_UP != 0 {
-        *buttons &= !1;
-    }
-    if flags & RI_MOUSE_RIGHT_BUTTON_DOWN != 0 {
-        *buttons |= 2;
-    }
-    if flags & RI_MOUSE_RIGHT_BUTTON_UP != 0 {
-        *buttons &= !2;
-    }
-    if flags & RI_MOUSE_MIDDLE_BUTTON_DOWN != 0 {
-        *buttons |= 4;
-    }
-    if flags & RI_MOUSE_MIDDLE_BUTTON_UP != 0 {
-        *buttons &= !4;
-    }
     let dx = std::ptr::read_unaligned(mouse.add(12) as *const i32);
     let dy = std::ptr::read_unaligned(mouse.add(16) as *const i32);
-    let point = MousePoint {
-        timestamp_ms: diagnostics.capture_timestamp_ms(),
-        dx,
-        dy,
-        buttons: *buttons,
-    };
-    match points.try_send(CaptureMessage::Point(point)) {
-        Ok(()) => {}
-        Err(std::sync::mpsc::TrySendError::Full(CaptureMessage::Point(point)))
-        | Err(std::sync::mpsc::TrySendError::Disconnected(CaptureMessage::Point(point))) => {
-            diagnostics.record_drop(point.timestamp_ms)
-        }
-        Err(_) => unreachable!("point enqueue returns the original point message"),
+    let timestamp_ms = diagnostics.capture_timestamp_ms();
+    let transitions = [
+        (flags & RI_MOUSE_LEFT_BUTTON_DOWN != 0).then_some(ButtonTransition::Press(1)),
+        (flags & RI_MOUSE_LEFT_BUTTON_UP != 0).then_some(ButtonTransition::Release(1)),
+        (flags & RI_MOUSE_RIGHT_BUTTON_DOWN != 0).then_some(ButtonTransition::Press(2)),
+        (flags & RI_MOUSE_RIGHT_BUTTON_UP != 0).then_some(ButtonTransition::Release(2)),
+        (flags & RI_MOUSE_MIDDLE_BUTTON_DOWN != 0).then_some(ButtonTransition::Press(4)),
+        (flags & RI_MOUSE_MIDDLE_BUTTON_UP != 0).then_some(ButtonTransition::Release(4)),
+    ]
+    .into_iter()
+    .flatten();
+    if normalizer
+        .ingest_report(timestamp_ms, dx, dy, transitions, |point| {
+            enqueue_normalized_point(points, diagnostics, point)
+        })
+        .is_err()
+    {
+        diagnostics.record_drop(timestamp_ms);
+        return Err(RawInputFailure::Normalization);
     }
     Ok(())
 }
@@ -1501,6 +1746,10 @@ mod tests {
         assert_eq!(
             RawInputFailure::Registration.code(),
             "raw_input_registration_failed"
+        );
+        assert_eq!(
+            RawInputFailure::Normalization.code(),
+            "raw_input_normalization_failed"
         );
 
         let diagnostics = CaptureDiagnostics::new();
@@ -1627,6 +1876,266 @@ mod tests {
         assert_eq!(ring.snapshot()[0].timestamp_ms, 2_000);
     }
 
+    fn normalize_motion_reports(
+        reports: &[(i64, i32, i32)],
+    ) -> Result<Vec<MousePoint>, MotionNormalizationError> {
+        let mut normalizer = MotionNormalizer::new();
+        let mut points = Vec::new();
+        for &(timestamp_ms, dx, dy) in reports {
+            normalizer.ingest_report(timestamp_ms, dx, dy, std::iter::empty(), |point| {
+                points.push(point)
+            })?;
+        }
+        normalizer.flush(|point| points.push(point));
+        Ok(points)
+    }
+
+    #[test]
+    fn canonical_normalizer_preserves_125_500_and_1000_hz_equivalent_streams() {
+        for interval_ms in [8, 2, 1] {
+            let reports: Vec<_> = (0..8)
+                .map(|index| (1_000 + index * interval_ms, index as i32 + 1, -2))
+                .collect();
+            let expected: Vec<_> = reports
+                .iter()
+                .map(|&(timestamp_ms, dx, dy)| MousePoint {
+                    timestamp_ms,
+                    dx,
+                    dy,
+                    buttons: 0,
+                })
+                .collect();
+
+            assert_eq!(normalize_motion_reports(&reports).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn canonical_normalizer_bounds_8k_bursts_to_one_motion_record_per_millisecond() {
+        let reports: Vec<_> = (0..24)
+            .map(|index| (2_000 + index / 8, 1, if index % 2 == 0 { 2 } else { -1 }))
+            .collect();
+
+        let points = normalize_motion_reports(&reports).unwrap();
+
+        assert_eq!(points.len(), 3);
+        assert_eq!(
+            points,
+            [
+                MousePoint {
+                    timestamp_ms: 2_000,
+                    dx: 8,
+                    dy: 4,
+                    buttons: 0
+                },
+                MousePoint {
+                    timestamp_ms: 2_001,
+                    dx: 8,
+                    dy: 4,
+                    buttons: 0
+                },
+                MousePoint {
+                    timestamp_ms: 2_002,
+                    dx: 8,
+                    dy: 4,
+                    buttons: 0
+                },
+            ]
+        );
+        assert!(points
+            .windows(2)
+            .all(|pair| pair[0].timestamp_ms < pair[1].timestamp_ms));
+        assert!(points.iter().all(|point| point.dx != 0 || point.dy != 0));
+    }
+
+    #[test]
+    fn canonical_normalizer_retains_same_millisecond_axis_net_displacement() {
+        let points = normalize_motion_reports(&[
+            (3_000, 7, -4),
+            (3_000, -5, 3),
+            (3_001, 9, 0),
+            (3_001, -9, 0),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            points,
+            [MousePoint {
+                timestamp_ms: 3_000,
+                dx: 2,
+                dy: -1,
+                buttons: 0
+            }]
+        );
+    }
+
+    #[test]
+    fn canonical_normalizer_preserves_ordered_button_edges_independently_of_motion() {
+        let mut normalizer = MotionNormalizer::new();
+        let mut points = Vec::new();
+
+        normalizer
+            .ingest_report(4_000, 1, 2, [ButtonTransition::Press(1)], |point| {
+                points.push(point)
+            })
+            .unwrap();
+        normalizer
+            .ingest_report(
+                4_000,
+                2,
+                3,
+                [ButtonTransition::Press(2), ButtonTransition::Release(1)],
+                |point| points.push(point),
+            )
+            .unwrap();
+        normalizer
+            .ingest_report(
+                4_000,
+                0,
+                0,
+                [ButtonTransition::Press(4), ButtonTransition::Release(4)],
+                |point| points.push(point),
+            )
+            .unwrap();
+        normalizer.flush(|point| points.push(point));
+
+        assert_eq!(
+            points,
+            [
+                MousePoint {
+                    timestamp_ms: 4_000,
+                    dx: 0,
+                    dy: 0,
+                    buttons: 1
+                },
+                MousePoint {
+                    timestamp_ms: 4_000,
+                    dx: 0,
+                    dy: 0,
+                    buttons: 3
+                },
+                MousePoint {
+                    timestamp_ms: 4_000,
+                    dx: 0,
+                    dy: 0,
+                    buttons: 2
+                },
+                MousePoint {
+                    timestamp_ms: 4_000,
+                    dx: 0,
+                    dy: 0,
+                    buttons: 6
+                },
+                MousePoint {
+                    timestamp_ms: 4_000,
+                    dx: 0,
+                    dy: 0,
+                    buttons: 2
+                },
+                MousePoint {
+                    timestamp_ms: 4_000,
+                    dx: 3,
+                    dy: 5,
+                    buttons: 2
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn canonical_normalizer_flushes_pending_motion_for_every_capture_boundary() {
+        for boundary in ["barrier", "process-gate-close", "capture-stop", "shutdown"] {
+            let mut normalizer = MotionNormalizer::new();
+            let mut points = Vec::new();
+            normalizer
+                .ingest_report(5_000, 4, -3, std::iter::empty(), |_| {})
+                .unwrap();
+
+            normalizer.flush(|point| points.push(point));
+
+            assert_eq!(points.len(), 1, "pending bucket missing at {boundary}");
+            assert_eq!(points[0].dx, 4);
+            assert_eq!(points[0].dy, -3);
+        }
+    }
+
+    #[test]
+    fn canonical_normalizer_fails_closed_on_unrepresentable_aggregate() {
+        let mut normalizer = MotionNormalizer::new();
+        let mut points = Vec::new();
+        normalizer
+            .ingest_report(6_000, i32::MAX, 0, std::iter::empty(), |_| {})
+            .unwrap();
+
+        let error = normalizer
+            .ingest_report(6_000, 1, 0, std::iter::empty(), |_| {})
+            .unwrap_err();
+        normalizer.flush(|point| points.push(point));
+
+        assert_eq!(error, MotionNormalizationError::AggregateOverflow);
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn legacy_snapshot_normalization_is_deterministic_and_idempotent() {
+        let legacy = [
+            MousePoint {
+                timestamp_ms: 7_000,
+                dx: 1,
+                dy: 2,
+                buttons: 0,
+            },
+            MousePoint {
+                timestamp_ms: 7_000,
+                dx: 2,
+                dy: 3,
+                buttons: 1,
+            },
+            MousePoint {
+                timestamp_ms: 7_000,
+                dx: -1,
+                dy: -1,
+                buttons: 0,
+            },
+            MousePoint {
+                timestamp_ms: 7_001,
+                dx: 5,
+                dy: 6,
+                buttons: 0,
+            },
+        ];
+        let expected = [
+            MousePoint {
+                timestamp_ms: 7_000,
+                dx: 0,
+                dy: 0,
+                buttons: 1,
+            },
+            MousePoint {
+                timestamp_ms: 7_000,
+                dx: 0,
+                dy: 0,
+                buttons: 0,
+            },
+            MousePoint {
+                timestamp_ms: 7_000,
+                dx: 2,
+                dy: 4,
+                buttons: 0,
+            },
+            MousePoint {
+                timestamp_ms: 7_001,
+                dx: 5,
+                dy: 6,
+                buttons: 0,
+            },
+        ];
+
+        let normalized = normalize_snapshot_points(&legacy).unwrap();
+        assert_eq!(normalized, expected);
+        assert_eq!(normalize_snapshot_points(&normalized).unwrap(), expected);
+    }
+
     #[test]
     fn snapshot_codec_round_trips_points() {
         let points = vec![
@@ -1643,11 +2152,13 @@ mod tests {
                 buttons: 0,
             },
         ];
-        assert_eq!(decode_snapshot(&encode_snapshot(&points)).unwrap(), points);
+        let encoded = encode_snapshot(&points);
+        assert_eq!(encoded[4], 2);
+        assert_eq!(decode_snapshot(&encoded).unwrap(), points);
     }
 
     #[test]
-    fn snapshot_codec_matches_python_v1_golden_fixture() {
+    fn snapshot_codec_reads_python_v1_golden_fixture_and_writes_v2() {
         let fixture = include_bytes!("../../../tests/fixtures/acri-v1-golden.bin");
         let points = vec![
             MousePoint {
@@ -1664,8 +2175,10 @@ mod tests {
             },
         ];
 
-        assert_eq!(decode_snapshot(fixture).unwrap(), points);
-        assert_eq!(encode_snapshot(&points), fixture.as_slice());
+        let decoded = decode_snapshot_with_version(fixture).unwrap();
+        assert_eq!(decoded.version, 1);
+        assert_eq!(decoded.points, points);
+        assert_eq!(encode_snapshot(&points)[4], 2);
     }
 
     #[test]
@@ -1907,11 +2420,143 @@ mod tests {
             .expect("barrier ack")
             .expect("barrier snapshot succeeds");
 
-        assert_eq!(receipt.point_count, 1);
-        assert_eq!(decode_snapshot(&fs::read(&path).unwrap()).unwrap(), [point]);
+        let expected = normalize_snapshot_points(&[point]).unwrap();
+        assert_eq!(receipt.point_count, expected.len());
+        assert_eq!(
+            decode_snapshot(&fs::read(&path).unwrap()).unwrap(),
+            expected
+        );
 
         drop(sender);
         worker.join().expect("snapshot worker exits");
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pending_motion_is_enqueued_before_a_snapshot_barrier_without_counting_as_drop() {
+        use std::sync::mpsc::sync_channel;
+
+        let diagnostics = CaptureDiagnostics::new();
+        let (sender, receiver) = sync_channel(2);
+        let mut normalizer = MotionNormalizer::new();
+        normalizer
+            .ingest_report(8_000, 7, -3, std::iter::empty(), |_| {})
+            .unwrap();
+
+        flush_pending_motion(&mut normalizer, &sender, &diagnostics);
+        let (ack, _ack_receiver) = sync_channel(1);
+        try_send_snapshot_barrier(&sender, 8_000, ack).unwrap();
+
+        assert!(matches!(receiver.recv().unwrap(), CaptureMessage::Point(_)));
+        assert!(matches!(
+            receiver.recv().unwrap(),
+            CaptureMessage::Barrier { .. }
+        ));
+        assert_eq!(diagnostics.status().dropped_points, 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_worker_migrates_a_rolling_v1_file_to_canonical_v2() {
+        use std::sync::mpsc::sync_channel;
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!(
+            "aiming-cookie-v1-migration-{}-{}.bin",
+            std::process::id(),
+            now_ms()
+        ));
+        let timestamp_ms = now_ms() - 10;
+        let legacy = [
+            MousePoint {
+                timestamp_ms,
+                dx: 2,
+                dy: 3,
+                buttons: 0,
+            },
+            MousePoint {
+                timestamp_ms,
+                dx: 4,
+                dy: -1,
+                buttons: 1,
+            },
+        ];
+        let expected = normalize_snapshot_points(&legacy).unwrap();
+        let mut legacy_bytes = encode_snapshot(&legacy);
+        legacy_bytes[4] = LEGACY_SNAPSHOT_VERSION;
+        fs::write(&path, legacy_bytes).unwrap();
+        let diagnostics = Arc::new(CaptureDiagnostics::new());
+        let (sender, receiver) = sync_channel(1);
+        let worker_path = path.clone();
+        let worker_diagnostics = Arc::clone(&diagnostics);
+        let worker = thread::spawn(move || {
+            snapshot_worker(worker_path, receiver, worker_diagnostics);
+        });
+        let (ack, ack_receiver) = sync_channel(1);
+        sender
+            .send(CaptureMessage::Barrier {
+                covered_through_ms: timestamp_ms,
+                ack,
+            })
+            .unwrap();
+        ack_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+
+        let migrated = decode_snapshot_with_version(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(migrated.version, SNAPSHOT_VERSION);
+        assert_eq!(migrated.points, expected);
+
+        drop(sender);
+        worker.join().unwrap();
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_worker_preserves_v1_file_when_migration_overflows() {
+        use std::sync::mpsc::sync_channel;
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!(
+            "aiming-cookie-v1-overflow-{}-{}.bin",
+            std::process::id(),
+            now_ms()
+        ));
+        let timestamp_ms = now_ms() - 10;
+        let legacy = [
+            MousePoint {
+                timestamp_ms,
+                dx: i32::MAX,
+                dy: 0,
+                buttons: 0,
+            },
+            MousePoint {
+                timestamp_ms,
+                dx: 1,
+                dy: 0,
+                buttons: 0,
+            },
+        ];
+        let mut legacy_bytes = encode_snapshot(&legacy);
+        legacy_bytes[4] = LEGACY_SNAPSHOT_VERSION;
+        fs::write(&path, &legacy_bytes).unwrap();
+        let diagnostics = Arc::new(CaptureDiagnostics::new());
+        let (_sender, receiver) = sync_channel(1);
+        let worker_path = path.clone();
+        let worker_diagnostics = Arc::clone(&diagnostics);
+
+        thread::spawn(move || snapshot_worker(worker_path, receiver, worker_diagnostics))
+            .join()
+            .unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), legacy_bytes);
+        assert_eq!(
+            diagnostics.status().snapshot_error_code.as_deref(),
+            Some("trace_snapshot_invalid")
+        );
         let _ = fs::remove_file(path);
     }
 

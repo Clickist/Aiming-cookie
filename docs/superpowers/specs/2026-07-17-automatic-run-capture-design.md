@@ -71,6 +71,16 @@ v1 自动采集只保证 `challenge_wall_elapsed_ms <= 300_000` 的完整 eviden
 
 每个自动采集 source 必须在 session start 保存自己的 `capture_clock` sidecar metadata：`utc_epoch_ms`、`monotonic_elapsed_ns`、`clock_source` 和 `timebase_version`。Raw Input status 的新增 `captureClock` 提供 Raw source 的该 metadata；后续 WGC/MP4 boundary 必须保存对应的 capture clock 与 MP4 PTS。Raw/WGC/MP4 的 validation bundle 必须同时保留这些 metadata，才能计算 offset、drift、单调性和丢帧影响；没有 bundle 证据时不得宣称跨来源已经对齐。
 
+### 2.1 Raw Input 1000 Hz canonical 归一化
+
+- Aiming Cookie 不改变或配置鼠标硬件 polling rate；Windows native layer 仍接收设备实际产生的 Raw Input 报告；
+- canonical 运动时间粒度固定为整数毫秒。同一 `timestamp_ms` 内所有运动报告的 `dx` 与 `dy` 分别求和，只在净增量非零时输出至多一条运动记录，因此运动序列最高 1000 Hz 且不生成补零样本；
+- 左/右/中键的按下和抬起边沿不受运动上限约束。边沿以 `dx = 0, dy = 0` 的状态记录按接收顺序保留；同毫秒运动记录与按钮记录共同只承诺毫秒级时间，不声明亚毫秒先后；
+- 归一化保留每毫秒 X/Y 净位移与按钮边沿，但有意舍弃亚毫秒路径形状；因此不允许把归一化 trace 用作硬件 polling rate、亚毫秒抖动或亚毫秒方向反转的证据；
+- 新 snapshot 使用 `ACRI v2`；`ACRI v1` 继续只读兼容。继续使用现存滚动 v1 snapshot 前必须按相同规则确定性迁移并原子写为 v2，保持每毫秒 X/Y 净位移、按钮边沿和边沿顺序，禁止混装未标语义；
+- 1 ms 聚合必须位于有界队列之前，barrier、KovaaK process gate 关闭和 orderly shutdown 必须先 flush 当前未完成时间桶。真实队列 overflow 仍记录为 coverage loss 并由 finalizer fail closed，不能把有意的 1 ms 归一化计为 dropped points；
+- 位移求和必须使用受检中间整数并在超出 ACRI `i32` 范围时 fail closed，不得 wrap 或 saturate 后伪装完整记录。
+
 ## 3. Capture Coordinator
 
 Capture Coordinator 是 Desktop 本地能力，不是 Analysis job。它至少表达以下状态：
