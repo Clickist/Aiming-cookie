@@ -1,10 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import {
+  ANALYSIS_FAMILY_FLICKING,
+  ANALYSIS_FAMILY_SWITCHING,
+  ANALYSIS_DATA,
   PRODUCT_STATE,
   RUN_MULTIMODAL,
   TASKS,
   apiScenario,
+  analysisSession,
   installApiFixtures,
   installDesktopBridge,
   partialAnalysisSession,
@@ -12,6 +16,62 @@ import {
   setThemePreference,
   UNAVAILABLE_EVIDENCE_SEGMENTS,
 } from "../fixtures/task7-fixtures";
+
+function familyAnalysis(
+  family: "static_clicking" | "target_switching",
+  inputMode: "input_native" | "multimodal",
+) {
+  const base = analysisSession();
+  if (!base.result || base.result.schema_version !== "analysis_result.v2") {
+    throw new Error("family screenshot fixture requires v2");
+  }
+  return analysisSession({
+    result: {
+      ...base.result,
+      analysis_type: family === "target_switching" ? "target_switching" : "flicking",
+      input_mode: inputMode,
+      input_snapshot: {
+        ...base.result.input_snapshot,
+        scenario_resolution: {
+          ...base.result.input_snapshot.scenario_resolution!,
+          aim_family: family,
+        },
+      },
+    },
+  });
+}
+
+function familySummaryData(family: "switching" | "flicking") {
+  if (family === "switching") {
+    return {
+      ...ANALYSIS_DATA,
+      event_markers: [
+        { event_ref: "event:switch:1", kind: "switch_chain", relative_ms: 1200 },
+        { event_ref: "event:switch:2", kind: "settle", relative_ms: 1430 },
+      ],
+      event_distribution: [
+        { kind: "switch_chain", count: 2 },
+        { kind: "settle", count: 2 },
+      ],
+    };
+  }
+  return {
+    ...ANALYSIS_DATA,
+    event_markers: [
+      { event_ref: "event:flick:1", kind: "peak", relative_ms: 2478 },
+      { event_ref: "event:flick:2", kind: "corrective", relative_ms: 2520 },
+    ],
+    event_distribution: [
+      { kind: "peak", count: 1 },
+      { kind: "corrective", count: 2 },
+    ],
+    target_relative_error_radius: {
+      availability: "unavailable" as const,
+      reason: "target_relative_samples_unavailable",
+      points: [],
+    },
+  };
+}
 
 async function prepare(
   page: Page,
@@ -30,12 +90,28 @@ async function prepare(
   await installApiFixtures(page, options.scenario ?? apiScenario());
 }
 
+async function closeCoachOverlay(page: Page): Promise<void> {
+  const backdrop = page.locator(".task6-coach-drawer .ac-drawer-backdrop[data-state='open']");
+  await backdrop.waitFor({ state: "visible", timeout: 1_500 }).catch(() => undefined);
+  if (await backdrop.isVisible()) {
+    await backdrop.click({ position: { x: 4, y: 4 } });
+    await expect(backdrop).toBeHidden();
+  }
+}
+
 test.describe("Task 7 screenshot baselines", () => {
   test("onboarding 1280 light", async ({ page }) => {
     await prepare(page, { theme: "light", width: 1280, height: 820 });
     await page.goto("/onboarding");
-    await expect(page.getByRole("heading", { name: "连接你自己的 AI Provider" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "连接模型服务" })).toBeVisible();
     await expect(page).toHaveScreenshot("onboarding-1280-light.png", { animations: "disabled" });
+  });
+
+  test("onboarding 1280 dark", async ({ page }) => {
+    await prepare(page, { theme: "dark", width: 1280, height: 820 });
+    await page.goto("/onboarding");
+    await expect(page.getByRole("heading", { name: "连接模型服务" })).toBeVisible();
+    await expect(page).toHaveScreenshot("onboarding-1280-dark.png", { animations: "disabled" });
   });
 
   test("analyze 1280 dark desktop", async ({ page }) => {
@@ -77,6 +153,45 @@ test.describe("Task 7 screenshot baselines", () => {
       await expect(page).toHaveScreenshot(fileName, { animations: "disabled", fullPage: true });
     });
   }
+
+  test("analysis Switching data 1280 dark", async ({ page }) => {
+    await prepare(page, {
+      theme: "dark",
+      width: 1280,
+      height: 820,
+      scenario: apiScenario({
+        analysis: familyAnalysis("target_switching", "multimodal"),
+        analysisData: familySummaryData("switching"),
+        analysisFamilyData: ANALYSIS_FAMILY_SWITCHING,
+      }),
+    });
+    await page.goto("/analysis/42");
+    await closeCoachOverlay(page);
+    await page.getByRole("tab", { name: "数据" }).click();
+    await expect(page.locator("#family-detail-title")).toBeVisible();
+    await expect(page).toHaveScreenshot("analysis-data-switching-1280-dark.png", { animations: "disabled", fullPage: true });
+  });
+
+  test("analysis Flicking data 960 light has no horizontal overflow", async ({ page }) => {
+    await prepare(page, {
+      theme: "light",
+      width: 960,
+      height: 640,
+      scenario: apiScenario({
+        analysis: familyAnalysis("static_clicking", "input_native"),
+        analysisData: familySummaryData("flicking"),
+        analysisFamilyData: ANALYSIS_FAMILY_FLICKING,
+      }),
+    });
+    await page.goto("/analysis/42");
+    await closeCoachOverlay(page);
+    await page.getByRole("tab", { name: "数据" }).click();
+    await expect(page.locator("#family-detail-title")).toBeVisible();
+    await expect(page.getByText("速度峰值", { exact: true })).toBeVisible();
+    await expect(page.getByText("修正动作", { exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(960);
+    await expect(page).toHaveScreenshot("analysis-data-flicking-960-light.png", { animations: "disabled", fullPage: true });
+  });
 
   test("settings 1280 dark desktop", async ({ page }) => {
     await prepare(page, { desktop: true, theme: "dark", width: 1280, height: 820 });
