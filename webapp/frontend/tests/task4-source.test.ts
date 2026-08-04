@@ -30,6 +30,21 @@ test("history renders unavailable Run sources as semantic notices", async () => 
   assert.match(value, /runDiscovery === "browser_unavailable" \|\| runDiscovery === "service_unavailable"/);
 });
 
+test("history loading and empty states use the local panel treatment", async () => {
+  const client = await source("components/task4/HistoryClient.tsx");
+  const styles = await source("components/task4/task4.css");
+  assert.equal(client.match(/className="task4-panel task4-state-panel"/g)?.length, 2);
+  assert.match(styles, /\.task4-state-panel\s*{[\s\S]*min-height:\s*88px;[\s\S]*padding:\s*18px 20px;/);
+});
+
+test("history header actions share one compact size and stay clear of the Coach overlay", async () => {
+  const client = await source("components/task4/HistoryClient.tsx");
+  const styles = await source("components/task4/task4.css");
+  assert.match(client, /<Button onClick=\{\(\) => void loadHistory\(\)\} size="compact" variant="ghost">刷新<\/Button>/);
+  assert.match(client, /<Button href="\/analyze" size="compact">＋ 新建分析<\/Button>/);
+  assert.match(styles, /@media \(min-width: 840px\) and \(max-width: 1159px\)[\s\S]*\.task3-workspace\[data-coach-open="true"\] \.task4-page-head[\s\S]*width:\s*calc\(100% - var\(--task3-coach-width, 360px\)\);[\s\S]*flex-wrap:\s*wrap;/);
+});
+
 test("history and run inspector do not expose path or raw trace fields", async () => {
   const value = await source("components/task4/RunInspector.tsx");
   assert.doesNotMatch(value, /stats_source_ref|performance_source_ref|trace_artifact_ref|trace_error/);

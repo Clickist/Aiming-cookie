@@ -37,6 +37,8 @@ export function CoachSidebar({
     () => typeof document === "undefined" ? 0 : document.documentElement.clientWidth,
   );
   const dragRef = useRef<{ pointerId: number; startWidth: number; startX: number } | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const update = () => setAvailableWidth(document.documentElement.clientWidth);
@@ -52,6 +54,42 @@ export function CoachSidebar({
   const currentAnalysisRef = pathname.startsWith("/analysis/")
     ? `analysis:${pathname.split("/")[2]}`
     : null;
+
+  const closeAndRestoreFocus = () => {
+    onClose();
+    window.requestAnimationFrame(() => returnFocusRef.current?.focus());
+  };
+
+  useEffect(() => {
+    if (!open || layout.mode === "side-by-side") return;
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => {
+      dialogRef.current?.querySelector<HTMLElement>("button:not(:disabled), [href], [tabindex]:not([tabindex='-1'])")?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [layout.mode, open]);
+
+  const keepOverlayFocus = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeAndRestoreFocus();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+      "button:not(:disabled), [href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])",
+    )).filter((element) => element.getClientRects().length > 0);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   const resizeKeys = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -89,6 +127,7 @@ export function CoachSidebar({
       capability={capability}
       currentAnalysisRef={currentAnalysisRef}
       layoutMode={layout.mode !== "side-by-side" ? (layout.mode === "full" || availableWidth < OVERLAY_BREAKPOINT ? "full" : "overlay") : "side-by-side"}
+      onClose={layout.mode !== "side-by-side" ? closeAndRestoreFocus : undefined}
       onRequestContext={attachCurrent}
       pathname={pathname}
     />
@@ -103,8 +142,8 @@ export function CoachSidebar({
         data-state={state}
         style={{ "--task6-coach-width": `${layout.width}px` } as CSSProperties}
       >
-        <div aria-hidden="true" className="task6-coach-scrim" onClick={open ? onClose : undefined} />
-        <aside aria-hidden={!open || undefined} aria-label="Coach" className="task6-coach-sidebar" role="dialog">
+        <div aria-hidden="true" className="task6-coach-scrim" onClick={open ? closeAndRestoreFocus : undefined} />
+        <aside aria-hidden={!open || undefined} aria-label="Coach" className="task6-coach-sidebar" onKeyDown={keepOverlayFocus} ref={dialogRef} role="dialog">
           {panel}
         </aside>
       </div>

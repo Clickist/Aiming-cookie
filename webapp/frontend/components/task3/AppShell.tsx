@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type AnimationEvent as ReactAnimationEvent, type CSSProperties, type ReactNode } from "react";
 
 import { getDefaultProviderStatus, getSession, listTasks } from "@/lib/api";
 import { clampCoachWidth, COACH_DEFAULT_WIDTH } from "@/lib/contracts";
@@ -13,8 +13,10 @@ import { useAnimatedPresence } from "@/ui/primitives";
 const COACH_OPEN_KEY = "aiming-cookie.ui.coach-open";
 const COACH_FIRST_ANALYSIS_KEY = "aiming-cookie.ui.coach-first-analysis-opened";
 const COACH_WIDTH_KEY = "aiming-cookie.ui.coach-width";
+const SETTINGS_RETURN_KEY = "aiming-cookie.ui.settings-return";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
+type SettingsMotion = "idle" | "closing";
 
 function useWideLayout(): boolean {
   const [wide, setWide] = useState(false);
@@ -28,16 +30,48 @@ function useWideLayout(): boolean {
   return wide;
 }
 
+function currentLocation(): string {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function settingsReturnPath(): string {
+  const stored = window.sessionStorage.getItem(SETTINGS_RETURN_KEY);
+  if (!stored || !stored.startsWith("/") || stored.startsWith("//") || stored.startsWith("/settings")) {
+    return "/history";
+  }
+  return stored;
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const previousPathnameRef = useRef(pathname);
   const wide = useWideLayout();
   const [capability, setCapability] = useState<CoachCapability>("loading");
   const [activeTaskCount, setActiveTaskCount] = useState<number | null>(null);
   const [coachOpen, setCoachOpen] = useState(false);
   const [coachWidth, setCoachWidth] = useState(COACH_DEFAULT_WIDTH);
   const [preferenceLoaded, setPreferenceLoaded] = useState(false);
+  const [settingsMotion, setSettingsMotion] = useState<SettingsMotion>("idle");
   const shellHidden = pathname === "/" || pathname.startsWith("/onboarding");
+  const settingsActive = pathname.startsWith("/settings");
   const coachSupported = !shellHidden && !pathname.startsWith("/settings");
+
+  useEffect(() => {
+    if (!shellHidden && !settingsActive) {
+      window.sessionStorage.setItem(SETTINGS_RETURN_KEY, currentLocation());
+    }
+  }, [pathname, settingsActive, shellHidden]);
+
+  useEffect(() => {
+    if (previousPathnameRef.current === pathname) return;
+    previousPathnameRef.current = pathname;
+    if (!settingsActive) setSettingsMotion("idle");
+  }, [pathname, settingsActive]);
 
   useEffect(() => {
     const stored = Number(window.localStorage.getItem(COACH_WIDTH_KEY));
@@ -110,6 +144,24 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.localStorage.setItem(COACH_WIDTH_KEY, String(nextWidth));
   };
 
+  const rememberSettingsReturn = () => {
+    window.sessionStorage.setItem(SETTINGS_RETURN_KEY, currentLocation());
+  };
+
+  const closeSettings = () => {
+    if (settingsMotion === "closing") return;
+    if (prefersReducedMotion()) {
+      router.replace(settingsReturnPath());
+      return;
+    }
+    setSettingsMotion("closing");
+  };
+
+  const finishSettingsMotion = (event: ReactAnimationEvent<HTMLElement>) => {
+    if (event.currentTarget !== event.target) return;
+    if (settingsMotion === "closing") router.replace(settingsReturnPath());
+  };
+
   const navItems = useMemo(() => [
     { href: "/history", label: "历史" },
     { href: "/analyze", label: "＋ 新建分析" },
@@ -170,14 +222,26 @@ export function AppShell({ children }: { children: ReactNode }) {
               </button>
             </span>
           ) : null}
-          <Link
-            aria-current={pathname.startsWith("/settings") ? "page" : undefined}
-            aria-label="设置"
-            className={["t-icon", pathname.startsWith("/settings") ? "active" : ""].filter(Boolean).join(" ")}
-            href="/settings"
-          >
-            <span aria-hidden="true">⚙</span>
-          </Link>
+          {settingsActive ? (
+            <button
+              aria-label="关闭设置"
+              className="t-icon active"
+              onClick={closeSettings}
+              title="关闭设置"
+              type="button"
+            >
+              <span aria-hidden="true">⚙</span>
+            </button>
+          ) : (
+            <Link
+              aria-label="设置"
+              className="t-icon"
+              href="/settings"
+              onClick={rememberSettingsReturn}
+            >
+              <span aria-hidden="true">⚙</span>
+            </Link>
+          )}
         </nav>
       </header>
       <div
@@ -185,7 +249,17 @@ export function AppShell({ children }: { children: ReactNode }) {
         data-coach-open={coachPresence.state === "open" || undefined}
         style={{ "--task3-coach-width": `${coachWidth}px` } as CSSProperties}
       >
-        <main className="task3-route-content" id="main-content" key={pathname} tabIndex={-1}>{children}</main>
+        <main
+          className="task3-route-content"
+          data-settings-page={settingsActive || undefined}
+          data-settings-motion={settingsActive && settingsMotion === "closing" ? settingsMotion : undefined}
+          id="main-content"
+          key={pathname}
+          onAnimationEnd={finishSettingsMotion}
+          tabIndex={-1}
+        >
+          {children}
+        </main>
         {coachPresence.present ? (
           <CoachSidebar
             capability={capability}

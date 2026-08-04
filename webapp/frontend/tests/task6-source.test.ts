@@ -242,6 +242,8 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   const desktop = await source("lib/desktop.ts");
   assert.match(coach, /当前训练计划/);
   assert.match(coach, /当前训练项目/);
+  assert.match(coach, /task6-training-item-actions/);
+  assert.doesNotMatch(coach, /task6-training-actions/);
   assert.match(coach, /在 KovaaK 中开始/);
   assert.match(coach, /scenario_profile_ref/);
   assert.match(coach, /正在查看的分析/);
@@ -251,4 +253,17 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.match(desktop, /scenario_open/);
   assert.match(desktop, /当前网页预览不能启动 KovaaK/);
   assert.doesNotMatch(coach, /steam:\/\//);
+});
+
+test("Coach current training animates expand and collapse without leaving interactive hidden content", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  const styles = await source("components/task6/task6.css");
+  assert.match(coach, /useAnimatedPresence\(trainingExpanded,\s*180\)/);
+  assert.match(coach, /className="task6-training-reveal"/);
+  assert.match(coach, /data-state=\{trainingPresence\.state\}/);
+  assert.match(coach, /aria-hidden=\{!trainingExpanded \|\| undefined\}/);
+  assert.match(coach, /inert=\{!trainingExpanded \|\| undefined\}/);
+  assert.match(styles, /\.task6-training-reveal\s*\{[\s\S]*grid-template-rows:\s*0fr;[\s\S]*opacity:\s*0;[\s\S]*translateY\(-4px\)/);
+  assert.match(styles, /\.task6-training-reveal\[data-state="open"\]\s*\{[\s\S]*grid-template-rows:\s*1fr;[\s\S]*opacity:\s*1;[\s\S]*translateY\(0\)/);
+  assert.match(styles, /prefers-reduced-motion:\s*reduce[\s\S]*\.task6-training-reveal/);
 });

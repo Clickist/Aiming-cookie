@@ -213,7 +213,7 @@ export function TasksClient() {
               const busy = busyRef === task.task_ref;
               const note = taskNote(task);
               return (
-                <article className="task3-task-item" key={task.task_ref ?? task.analysis_ref}>
+                <article className="task3-task-item" data-state={task.state} key={task.task_ref ?? task.analysis_ref}>
                   <div className="task3-task-head">
                     <span className="task3-task-name" title={task.run_ref ?? task.analysis_ref ?? "本地导入"}>
                       {task.run_ref ?? task.analysis_ref ?? "本地导入"}
@@ -239,7 +239,7 @@ export function TasksClient() {
                         <Button disabled={busy} onClick={() => void retry(task)} size="compact" variant="primary">{busy ? "正在重试" : "重试"}</Button>
                       ) : null}
                       {task.can_delete ? (
-                        <Button disabled={busy} onClick={() => setDeleteTarget(task)} size="compact" variant="ghost">删除</Button>
+                        <Button disabled={busy} onClick={() => setDeleteTarget(task)} size="compact" variant="danger">删除</Button>
                       ) : null}
                     </span>
                   </div>

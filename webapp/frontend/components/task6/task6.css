@@ -37,6 +37,18 @@
   gap: 28px;
   max-width: 1160px;
   margin: 0 auto;
+  animation: task6-settings-open 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes task6-settings-open {
+  from {
+    opacity: 0.96;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .task6-settings-nav {
@@ -815,13 +827,6 @@
   color: var(--fg);
 }
 
-.task6-training-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
 .task6-training-empty {
   padding: 16px 14px;
   text-align: center;
@@ -829,6 +834,28 @@
 
 .task6-training-empty-title {
   font: 600 13px var(--font-display);
+}
+
+.task6-training-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    grid-template-rows 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 140ms ease-out,
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.task6-training-reveal[data-state="open"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.task6-training-reveal-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .task6-training-list {
@@ -1577,13 +1604,19 @@
       display 120ms allow-discrete;
   }
 
+  .task6-settings-layout,
   .task6-coach-sidebar,
   .task6-coach-sidebar-wrap[data-mode="overlay"] .task6-coach-sidebar,
   .task6-coach-sidebar-wrap[data-mode="full"] .task6-coach-sidebar,
+  .task6-training-reveal,
   .task6-message,
   .task6-streaming-cursor,
   .task6-tool-step[data-state="active"] .task6-tool-dot::after {
     transition: none;
     animation: none;
+  }
+
+  .task6-training-reveal {
+    transform: none;
   }
 }
