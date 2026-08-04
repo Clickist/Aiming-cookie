@@ -4,6 +4,8 @@
 
 ## Active
 
+- [`2026-08-04-raw-input-1000hz-normalization-v1.md`](2026-08-04-raw-input-1000hz-normalization-v1.md): 点点已确认不修改鼠标硬件 polling rate，而是在 native bounded queue 前把 canonical 运动固定为 1 ms / 最高 1000 Hz；同毫秒 `dx/dy` 分别累加，按钮边沿独立保留，`ACRI v2` 与旧 v1 只读兼容。Task 1 实现与自动化验证已完成，真实 Tauri/KovaaK 1K/4K/8K field Gate 尚未关闭，因此 plan 保持 active。
+
 - [`2026-08-01-web-mock-review-cli-gates-v1.md`](2026-08-01-web-mock-review-cli-gates-v1.md): 点点已确认 Web Mock 审核 -> Web 真实联调 -> Tauri 命令式验收的施工顺序；当前只授权 Mock 审核底座，复用真实 `/api` DTO，不伪装 FastAPI、Provider、worker 或 Tauri runtime。
 
 - [`2026-08-01-custom-provider-protocol-onboarding-v1.md`](2026-08-01-custom-provider-protocol-onboarding-v1.md): 点点已明确将 custom Provider 扩展为 OpenAI-compatible / Anthropic-compatible 两个显式协议，并固定 Onboarding 的 Provider/URL -> API key -> 模型发现 -> 手填 model-ID fallback 流程；内置 Provider 的 catalog 与认证行为保持不变。

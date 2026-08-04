@@ -47,6 +47,7 @@ Desktop Client (Next.js UI in Tauri)
 - 本地路径导入由 native picker 发起；源文件不被修改，运行时复制到 managed workspace；
 - Desktop 可自动发现 KovaaK Stats / Performance，并将解析后的 `KovaaKRun` metadata 保存在本地 SQLite；源文件仍由用户拥有；
 - Windows Raw Input 由 Tauri native layer opt-in 启用，只在检测到 KovaaK 进程时采集相对 `dx/dy`、时间戳和鼠标按钮；非 Windows 明确返回 unsupported；
+- native layer 不改变鼠标设备 polling rate。Windows 上报进入 canonical trace 前按整数毫秒归一化：同一毫秒内所有运动报告的 `dx/dy` 分别求和为至多一条运动记录，按钮状态边沿按接收顺序作为例外单独保留，因此 canonical 运动序列最高 1000 Hz；不补零、不做 deadzone/低通滤波，也不把亚毫秒路径形状写成产品事实；
 - 自动采集启用后，Capture Coordinator 在 KovaaK 进程 gate 内持续采集 Raw，并将 WGC 的 KovaaK 窗口 GPU surface 交给同适配器的硬件编码器；压缩码流只保留最近 300 秒的有界瞬态回放缓冲。系统不假装拥有实时 Challenge start/end 事件，而是在稳定 Stats / Performance 到达后按 canonical Challenge wall window 事后生成 Run-owned evidence；仅 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4，`Pause Count > 0` 的暂停局 fail closed，只保留 partial/unavailable evidence，不把 Raw/Performance 声明为 canonical aligned；
 - L0 Raw Input trace 与私有 parser payload 不上传云端或进入 Coach 请求；run metadata 与本地解析结果只能通过版本化、字段白名单化且有预算上限的 L1-L3 投影进入用户已选择的 Provider；
 - Desktop 模式的本地 API 只监听 loopback，并要求本次启动 token；
@@ -73,6 +74,8 @@ Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享
 暂停局是 v1 的明确 fail-closed 分支：当 Stats 表示 `Pause Count > 0` 时，不生成永久 MP4，不把暂停期间的 Raw/Performance 强行标为 canonical aligned，也不把该 Run 宣称为 ready；证据可以保留为 partial/unavailable 供诊断。normal 与 timescale-only（`Pause Count = 0`）继续使用当前永久 MP4 路径。
 
 Raw Input 解决的是输入运动学事实源；目标/准星相对误差、视觉反应时刻和场景证据仍需经过本地 MP4 预处理、统一时间窗口和质量 Gate。首发目标覆盖 static/dynamic clicking、continuous tracking 与 target switching；各 family 只能消费其已验证的事实与指标。没有玩家移动遥测的 movement aiming 保持 outcome-only，不能由输入或结果反推移动机制。
+
+Raw Input snapshot 的采样语义必须随格式版本识别。`ACRI v1` 保持历史逐报告 trace 的只读兼容；新的 1 ms canonical 运动归一化使用 `ACRI v2`。现存滚动 v1 snapshot 在继续采集前必须确定性迁移为 v2，迁移需保持每毫秒 X/Y 净位移、按钮边沿及其顺序；不得把 v1 与 v2 记录混装后标为单一语义。Analysis 可继续消费相同的 `timestamp_ms/dx/dy/buttons` 记录形状，但 provenance 必须保留实际 snapshot format version。
 
 ## 3. 稳定数据合同
 

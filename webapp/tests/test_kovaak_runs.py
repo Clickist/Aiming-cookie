@@ -1101,6 +1101,9 @@ async def test_analysis_input_snapshot_freezes_raw_trace_fingerprint(tmp_path: P
     kovaak_run_store.write_mouse_snapshot(trace, [
         {"timestamp_ms": 1000, "dx": 1, "dy": 2, "buttons": 0},
     ])
+    legacy_bytes = bytearray(trace.read_bytes())
+    legacy_bytes[4] = 1
+    trace.write_bytes(legacy_bytes)
     run = await kovaak_run_store.upsert_kovaak_run(
         user_id="u1",
         source_key="fingerprinted-run",
@@ -1166,6 +1169,7 @@ async def test_analysis_input_snapshot_freezes_raw_trace_fingerprint(tmp_path: P
         "warnings": [],
         "window_semantics": "half_open",
     }
+    assert snapshot["trace"]["format_version"] == 1
     assert public["canonical_time_window"] == snapshot["canonical_time_window"]
 
 
@@ -1295,7 +1299,7 @@ def test_raw_input_snapshot_codec_and_window_extraction(tmp_path: Path):
     destination = tmp_path / "runs" / "1" / "mouse_trace.bin"
     points = [
         {"timestamp_ms": 100, "dx": 1, "dy": 2, "buttons": 0},
-        {"timestamp_ms": 200, "dx": -3, "dy": 4, "buttons": 1},
+        {"timestamp_ms": 200, "dx": -3, "dy": 4, "buttons": 0},
         {"timestamp_ms": 400, "dx": 5, "dy": 6, "buttons": 0},
     ]
     kovaak_run_store.write_mouse_snapshot(snapshot, points)
@@ -1505,7 +1509,7 @@ async def test_stale_snapshot_coverage_becomes_unavailable_after_retention(
 
 
 
-def test_python_reads_shared_acri_v1_golden_fixture(tmp_path: Path):
+def test_python_reads_shared_acri_v1_golden_fixture_and_writes_v2(tmp_path: Path):
     fixture = Path(__file__).with_name("fixtures") / "acri-v1-golden.bin"
 
     expected = [
@@ -1514,9 +1518,30 @@ def test_python_reads_shared_acri_v1_golden_fixture(tmp_path: Path):
     ]
     assert kovaak_run_store.read_mouse_snapshot(fixture) == expected
 
-    python_output = tmp_path / "python-v1.bin"
+    version, decoded = kovaak_run_store.read_mouse_snapshot_with_version(fixture)
+    assert version == 1
+    assert decoded == expected
+
+    python_output = tmp_path / "python-v2.bin"
     kovaak_run_store.write_mouse_snapshot(python_output, expected)
-    assert python_output.read_bytes() == fixture.read_bytes()
+    assert python_output.read_bytes()[4] == 2
+    assert kovaak_run_store.read_mouse_snapshot(python_output) == [
+        {"timestamp_ms": 1_700_000_000_000, "dx": 0, "dy": 0, "buttons": 1},
+        expected[0],
+        {"timestamp_ms": 1_700_000_000_016, "dx": 0, "dy": 0, "buttons": 0},
+        expected[1],
+    ]
+
+
+def test_acri_reader_rejects_unknown_version(tmp_path: Path):
+    fixture = Path(__file__).with_name("fixtures") / "acri-v1-golden.bin"
+    unknown = bytearray(fixture.read_bytes())
+    unknown[4] = 99
+    path = tmp_path / "acri-unknown.bin"
+    path.write_bytes(unknown)
+
+    with pytest.raises(ValueError, match="unsupported raw input snapshot version"):
+        kovaak_run_store.read_mouse_snapshot(path)
 
 
 def test_acri_v1_reader_rejects_invalid_resource_and_event_semantics(tmp_path: Path):
