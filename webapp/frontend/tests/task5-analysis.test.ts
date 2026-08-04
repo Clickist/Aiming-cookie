@@ -197,13 +197,12 @@ test("family status uses only frozen resolution and analyzer support", () => {
 
 test("workspace separates formal metrics from experimental or unavailable metrics", () => {
   const presentation = presentAnalysisWorkspace(session());
-  assert.deepEqual(presentation?.metrics.formal.map((metric) => metric.key), ["sparc"]);
-  assert.deepEqual(presentation?.metrics.limited.map((metric) => metric.key), ["visual_guess"]);
+  assert.deepEqual(presentation?.metrics.formal.map((metric) => metric.key), ["运动平滑度（SPARC）"]);
+  assert.deepEqual(presentation?.metrics.limited.map((metric) => metric.key), ["指标名称暂不可展示"]);
   assert.equal(presentation?.issues.length, 1);
   assert.equal(presentation?.issues[0]?.rootCauses.length, 3);
   assert.equal(presentation?.issues[0]?.prescriptions.length, 1);
   assert.equal(presentation?.issues[0]?.presentationKind, "legacy");
-  assert.equal(presentation?.issues[0]?.hasHistoricalCandidateDetails, true);
 });
 
 test("workspace keeps deterministic metrics descriptive when family trust is not formal", () => {
@@ -240,7 +239,7 @@ test("workspace keeps deterministic metrics descriptive when family trust is not
     assert.deepEqual(presentation?.metrics.formal, []);
     assert.deepEqual(
       presentation?.metrics.limited.map((metric) => metric.key),
-      ["sparc", "visual_guess"],
+        ["运动平滑度（SPARC）", "指标名称暂不可展示"],
     );
   }
 });
@@ -263,7 +262,6 @@ test("workspace preserves only safe optional issue knowledge refs", () => {
   assert.equal(projected?.claimLevel, "deterministic_rule");
   assert.equal(projected?.claimLabel, "规则化观察");
   assert.equal(projected?.presentationKind, "registry-backed");
-  assert.equal(projected?.hasHistoricalCandidateDetails, false);
 
   const malformed = result();
   const malformedIssue = malformed.deterministic.diagnosis?.issues[0];
@@ -369,7 +367,7 @@ test("workspace presents only known Switching identifiers as natural user text",
       ["切换距离", "target_switching.transition_distance_px"],
       ["路径效率", "target_switching.path_efficiency"],
       ["稳定耗时", "target_switching.settle_duration_ms"],
-      ["unknown.safe_metric", "unknown.safe_metric"],
+      ["指标名称暂不可展示", "unknown.safe_metric"],
     ],
   );
   assert.equal(presentation?.issues[0]?.signal, "切换耗时高于可比基线");
@@ -377,7 +375,7 @@ test("workspace presents only known Switching identifiers as natural user text",
   assert.deepEqual(presentation?.issues[0]?.metricRefs, ["target_switching.transition_time_ms"]);
   assert.deepEqual(presentation?.issues[0]?.eventRefs, ["event.switch_chain"]);
   assert.equal(presentation?.issues[1]?.signal, "到达后稳定耗时高于可比基线");
-  assert.equal(presentation?.issues[1]?.priorityReason, "unknown.safe_reason");
+  assert.equal(presentation?.issues[1]?.priorityReason, "当前合同未提供可展示的优先级理由");
   assert.deepEqual(presentation?.issues[1]?.metricRefs, ["target_switching.settle_duration_ms"]);
   assert.deepEqual(presentation?.issues[1]?.eventRefs, ["event.settle"]);
   assert.doesNotMatch(presentation?.headline ?? "", /target_switching\./);
@@ -399,7 +397,7 @@ test("native-only and multimodal visual failure remain honest without erasing na
   };
   const presentation = presentAnalysisWorkspace(visualUnavailable);
   assert.equal(presentation?.partial, true);
-  assert.deepEqual(presentation?.metrics.formal.map((metric) => metric.key), ["sparc"]);
+  assert.deepEqual(presentation?.metrics.formal.map((metric) => metric.key), ["运动平滑度（SPARC）"]);
 });
 
 test("public presentation drops path, raw trace, secret, and internal stack fields", () => {
@@ -412,4 +410,130 @@ test("public presentation drops path, raw trace, secret, and internal stack fiel
   });
   const serialized = JSON.stringify(presentAnalysisWorkspace(session({ result: unsafe })));
   assert.doesNotMatch(serialized, /C:\\|Users|raw_trace|provider-secret|traceback|video\.mp4/);
+});
+
+test("workspace projects partial Session 22 findings as descriptive Chinese observations", () => {
+  const partial = result({
+    deterministic: {
+      ...result().deterministic,
+      support_status: "partial",
+      limitations: [
+        "target_relative_facts_unavailable",
+        "alignment_partial",
+        "alignment_partial",
+        "Exact reviewed scenario hash only; other hashes with the same display name remain unclassified.",
+        "Input-native metrics do not establish target-relative error, overshoot, or undershoot.",
+        "unknown_internal_limitation",
+      ],
+      diagnosis: {
+        profile: { archetype_id: "two_stage", label: "两段式型", confidence: 1, secondary_tags: [] },
+        issues: [
+          {
+            signal: "decel_frac high",
+            severity: "info",
+            priority: 1,
+            priority_reason: "[experimental] 观察项排序第 1",
+            claim_level: "experimental",
+            metric_refs: ["decel_frac"],
+            root_causes: [
+              { level: "symptom", text: "减速段占比过高，在「蹭」" },
+              { level: "physical", text: "输入数据能观察到减速段偏长，但不能单独证明是制动释放不果断" },
+              { level: "training", text: "减速一次到位的意识" },
+            ],
+            prescriptions: [{ scenario: "pasu", reason: "练完整的加速→减速，减速果断一次到位" }],
+          },
+          {
+            signal: "reverse_ratio high",
+            severity: "info",
+            priority: 2,
+            priority_reason: "[experimental] 观察项排序第 2",
+            claim_level: "experimental",
+            metric_refs: ["reverse_ratio"],
+            root_causes: [
+              { level: "symptom", text: "减速段反复修正" },
+              { level: "physical", text: "输入数据能观察到反向修正偏多，但不能单独证明制动方向不稳的身体原因" },
+              { level: "training", text: "单次制动 + 流体修正" },
+            ],
+            prescriptions: [{ scenario: "pasu", reason: "转流体派：减速段即微调，别 readjust" }],
+          },
+          {
+            signal: "submovement two-stage",
+            severity: "info",
+            priority: 3,
+            priority_reason: "[experimental] 观察项排序第 3",
+            claim_level: "experimental",
+            metric_refs: ["submovement_overlap"],
+            root_causes: [
+              { level: "symptom", text: "flick→急停→独立 micro" },
+              { level: "physical", text: "输入数据能观察到 corrective 与 primary 分离，但不能单独证明其由某种身体原因造成" },
+              { level: "training", text: "转流体派（overlapping submovements）" },
+            ],
+            prescriptions: [{ scenario: "pasu", reason: "转流体派：corrective 与 primary 重叠，减速段即微调" }],
+          },
+        ],
+        summary: {},
+        comparison: null,
+        meta: {},
+      },
+      metrics: {
+        decel_frac: { key: "decel_frac", value: 0.66, unit: "ratio", availability: "available", coverage: 1, classification: "deterministic", metric_version: "native.v1", limitations: [], provenance: { kind: "derived", sources: ["raw_input"] } },
+        reverse_ratio: { key: "reverse_ratio", value: 0.36, unit: "ratio", availability: "available", coverage: 1, classification: "deterministic", metric_version: "native.v1", limitations: [], provenance: { kind: "derived", sources: ["raw_input"] } },
+        submovement_overlap: { key: "submovement_overlap", value: 0.01, unit: "ratio", availability: "available", coverage: 1, classification: "deterministic", metric_version: "native.v1", limitations: [], provenance: { kind: "derived", sources: ["raw_input"] } },
+        unavailable: { key: "unavailable", value: 0, availability: "unavailable", classification: "deterministic", metric_version: "native.v1", limitations: [], provenance: { kind: "derived", sources: ["raw_input"] } },
+      },
+    },
+  });
+
+  const presentation = presentAnalysisWorkspace(session({ result: partial }));
+  assert.equal(presentation?.family.status, "descriptive");
+  assert.equal(presentation?.metrics.summaryMode, "descriptive");
+  assert.deepEqual(presentation?.metrics.summary.map((metric) => metric.referenceKey), ["decel_frac", "reverse_ratio", "submovement_overlap"]);
+  assert.deepEqual(presentation?.metrics.formal, []);
+  assert.equal(presentation?.profile?.description, "主要移动和后续修正看起来分为两段。");
+  assert.deepEqual(presentation?.issues.map((issue) => issue.signal), ["减速阶段偏长", "反向修正偏多", "主要移动与后续修正较分离"]);
+  assert.deepEqual(presentation?.issues.map((issue) => issue.priorityReason), [
+    null,
+    null,
+    null,
+  ]);
+  assert.deepEqual(presentation?.issues.map((issue) => issue.claimLabel), ["探索性观察", "探索性观察", "探索性观察"]);
+  assert.deepEqual(presentation?.issues[0]?.metricRefs, ["decel_frac"]);
+  assert.deepEqual(presentation?.issues[0]?.rootCauses.map((cause) => cause.text), [
+    "速度达到峰值后，减速阶段持续得较久。",
+    "证据只能说明减速阶段偏长。",
+    "减速尽量一次完成。",
+  ]);
+  assert.equal(presentation?.issues[0]?.prescriptions[0]?.reason, "练习完整的加速和减速，减速尽量一次完成。");
+  assert.deepEqual(presentation?.issues[1]?.rootCauses.map((cause) => cause.text), [
+    "减速阶段出现较多反向修正。",
+    "证据只能说明反向修正偏多。",
+    "单次制动后做连续微调。",
+  ]);
+  assert.equal(presentation?.issues[1]?.prescriptions[0]?.reason, "在减速阶段微调，减少来回修正。");
+  assert.deepEqual(presentation?.issues[2]?.rootCauses.map((cause) => cause.text), [
+    "主要移动后出现一次相对独立的微调。",
+    "证据只能说明主要移动和后续修正较分离。",
+    "主要移动和后续微调重叠衔接。",
+  ]);
+  assert.equal(presentation?.issues[2]?.prescriptions[0]?.reason, "让修正与主动作更连贯地衔接，在减速阶段微调。");
+  assert.deepEqual(presentation?.limitations, [
+    "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
+    "输入与事件为部分对齐；指标可描述本局，但不应用通用好坏阈值。",
+    "仅适用于已审核的精确场景；同名其他场景不在此分类中。",
+    "当前合同未提供可展示的限制说明",
+  ]);
+  assert.doesNotMatch(JSON.stringify(presentation), /\[experimental\]|decel_frac high|reverse_ratio high|submovement two-stage|unknown_internal_limitation|Input-native metrics|不能据此判断|这只描述动作模式|不代表好坏/);
+});
+
+test("diagnosis summary follows explicit keys and remains empty without formal family support", () => {
+  const supported = result();
+  supported.deterministic.diagnosis!.summary = { sparc: { value: -4.21, classification: "deterministic" } };
+  const formal = presentAnalysisWorkspace(session({ result: supported }));
+  assert.equal(formal?.metrics.summaryMode, "formal");
+  assert.deepEqual(formal?.metrics.summary.map((metric) => metric.referenceKey), ["sparc"]);
+
+  const outcome = result({ deterministic: { ...result().deterministic, support_status: "outcome_only" } });
+  const outcomePresentation = presentAnalysisWorkspace(session({ result: outcome }));
+  assert.equal(outcomePresentation?.metrics.summaryMode, "empty");
+  assert.deepEqual(outcomePresentation?.metrics.summary, []);
 });

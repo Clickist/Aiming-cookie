@@ -85,6 +85,43 @@ const SWITCHING_PRESENTATION_TEXT: Record<string, string> = {
   "switch arrival error high": "到达后稳定耗时高于可比基线",
 };
 
+const DIAGNOSIS_PRESENTATION_TEXT: Record<string, string> = {
+  "decel_frac high": "减速阶段偏长",
+  "reverse_ratio high": "反向修正偏多",
+  "submovement two-stage": "主要移动与后续修正较分离",
+  sparc: "运动平滑度（SPARC）",
+  decel_frac: "减速占比",
+  reverse_ratio: "反向修正比例",
+  submovement_overlap: "主动作与修正重叠程度",
+  target_relative_facts_unavailable: "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
+  alignment_partial: "输入与事件为部分对齐；指标可描述本局，但不应用通用好坏阈值。",
+  "Exact reviewed scenario hash only; other hashes with the same display name remain unclassified.": "仅适用于已审核的精确场景；同名其他场景不在此分类中。",
+  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于已审核的精确场景、1920x1080 分辨率和单个目标。",
+  "Input-native metrics do not establish target-relative error, overshoot, or undershoot.": "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
+  "减速段占比过高，在「蹭」": "速度达到峰值后，减速阶段持续得较久。",
+  "输入数据能观察到减速段偏长，但不能单独证明是制动释放不果断": "证据只能说明减速阶段偏长。",
+  "减速一次到位的意识": "减速尽量一次完成。",
+  "练完整的加速→减速，减速果断一次到位": "练习完整的加速和减速，减速尽量一次完成。",
+  "acc 90%+，逼你把单次 flick 加减速打完整": "完成单次 Flick 的加速和减速。",
+  "减速段反复修正": "减速阶段出现较多反向修正。",
+  "输入数据能观察到反向修正偏多，但不能单独证明制动方向不稳的身体原因": "证据只能说明反向修正偏多。",
+  "单次制动 + 流体修正": "单次制动后做连续微调。",
+  "转流体派：减速段即微调，别 readjust": "在减速阶段微调，减少来回修正。",
+  "落点精度，减少二次修正": "练习落点控制，减少二次修正。",
+  "flick→急停→独立 micro": "主要移动后出现一次相对独立的微调。",
+  "输入数据能观察到 corrective 与 primary 分离，但不能单独证明其由某种身体原因造成": "证据只能说明主要移动和后续修正较分离。",
+  "转流体派（overlapping submovements）": "主要移动和后续微调重叠衔接。",
+  "转流体派：corrective 与 primary 重叠，减速段即微调": "让修正与主动作更连贯地衔接，在减速阶段微调。",
+};
+
+const LIMITATION_PRESENTATION_TEXT: Record<string, string> = {
+  "Exact scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于当前已审核场景、1920×1080 分辨率和单目标布局。",
+  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于当前已审核场景、1920×1080 分辨率和单目标布局。",
+  "Unknown or multi-target scenarios remain fail-closed.": "未知场景或多目标布局不生成此类结论。",
+  "Unknown hashes and concurrent target layouts are not classified by this entry.": "未知场景或多目标布局不生成此类结论。",
+  alignment_latency_reported_separately: "对齐延迟单独报告，不等同于跟随滞后。",
+};
+
 const OBSERVATION_REF_RE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 const KNOWLEDGE_REGISTRY_VERSION_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.v[1-9][0-9]*$/;
 const KNOWLEDGE_ENTRY_REF_RE = /^knowledge:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+@[1-9][0-9]*$/;
@@ -131,8 +168,34 @@ function safeNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function presentSwitchingText(value: string): string {
-  return SWITCHING_PRESENTATION_TEXT[value] ?? value;
+function hasChineseDisplayText(value: string): boolean {
+  return /[\u3400-\u9fff]/.test(value);
+}
+
+function presentDisplayText(value: string, fallback: string): string {
+  return SWITCHING_PRESENTATION_TEXT[value]
+    ?? DIAGNOSIS_PRESENTATION_TEXT[value]
+    ?? (hasChineseDisplayText(value) ? value : fallback);
+}
+
+function presentPriorityReason(value: string): string | null {
+  const withoutClaimLevel = value.replace(/^\[experimental\]\s*/i, "");
+  if (
+    /^观察项排序第\s*\d+$/.test(withoutClaimLevel)
+    || withoutClaimLevel === "本次优先观察项"
+    || withoutClaimLevel === "本次优先处理项"
+  ) {
+    return null;
+  }
+  return presentDisplayText(
+    withoutClaimLevel,
+    "当前合同未提供可展示的优先级理由",
+  );
+}
+
+function presentLimitation(value: string): string {
+  return LIMITATION_PRESENTATION_TEXT[value]
+    ?? presentDisplayText(value, "当前合同未提供可展示的限制说明");
 }
 
 function familyStatus(result: AnalysisResultV2): AnalysisFamilySupportState {
@@ -171,13 +234,12 @@ export interface AnalysisIssuePresentation {
   signal: string;
   severity: "info" | "watch" | "fix";
   priority: number;
-  priorityReason: string;
+  priorityReason: string | null;
   presentationKind: "registry-backed" | "legacy";
   claimLevel: string | null;
   claimLabel: string | null;
   candidateExplanation: string | null;
   expectedResult: string | null;
-  hasHistoricalCandidateDetails: boolean;
   observationRef: string | null;
   knowledgeRegistryVersion: string | null;
   knowledgeEntryRefs: string[];
@@ -213,9 +275,14 @@ export interface AnalysisWorkspacePresentation {
   };
   partial: boolean;
   headline: string;
-  profile: { label: string; confidence: number | null; tags: string[] } | null;
+  profile: { label: string; description?: string; confidence: number | null; tags: string[] } | null;
   issues: AnalysisIssuePresentation[];
-  metrics: { formal: AnalysisMetricPresentation[]; limited: AnalysisMetricPresentation[] };
+  metrics: {
+    formal: AnalysisMetricPresentation[];
+    limited: AnalysisMetricPresentation[];
+    summary: AnalysisMetricPresentation[];
+    summaryMode: "formal" | "descriptive" | "empty";
+  };
   timeline: TimelineEvent[];
   video: { kind: "seekable" | "native-only" | "unavailable"; reason: string | null };
 }
@@ -223,7 +290,7 @@ export interface AnalysisWorkspacePresentation {
 function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisMetricPresentation {
   if (typeof value === "number") {
     return {
-      key: presentSwitchingText(key),
+      key: presentDisplayText(key, "指标名称暂不可展示"),
       referenceKey: key,
       value: safeNumber(value),
       unit: null,
@@ -231,12 +298,12 @@ function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisM
       classification: "legacy",
       coverage: null,
       sources: [],
-      limitations: ["legacy_metric_metadata_unavailable"],
+      limitations: ["历史指标缺少完整元数据"],
     };
   }
   const referenceKey = safeString(value.key) ?? key;
   return {
-    key: presentSwitchingText(referenceKey),
+    key: presentDisplayText(referenceKey, "指标名称暂不可展示"),
     referenceKey,
     value: typeof value.value === "string" ? safeString(value.value) : safeNumber(value.value),
     unit: safeString(value.unit),
@@ -244,7 +311,7 @@ function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisM
     classification: safeString(value.classification) ?? "unclassified",
     coverage: safeNumber(value.coverage),
     sources: safeStrings(value.provenance?.sources),
-    limitations: safeStrings(value.limitations),
+    limitations: Array.from(new Set(safeStrings(value.limitations).map(presentLimitation))),
   };
 }
 
@@ -254,7 +321,7 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
     const issue = record(raw);
     const signalRaw = safeString(issue.signal);
     if (!signalRaw) return [];
-    const signal = presentSwitchingText(signalRaw);
+    const signal = presentDisplayText(signalRaw, "当前合同未提供可展示的观察");
     const severity: AnalysisIssuePresentation["severity"] = issue.severity === "fix" || issue.severity === "watch"
       ? issue.severity
       : "info";
@@ -262,14 +329,18 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
       const cause = record(item);
       const level = safeString(cause.level);
       const text = safeString(cause.text);
-      return level && text ? [{ level, text }] : [];
+      return level && text ? [{ level, text: presentDisplayText(text, "当前合同未提供可展示的候选说明") }] : [];
     });
     const prescriptions = (Array.isArray(issue.prescriptions) ? issue.prescriptions : []).flatMap((item) => {
       const prescription = record(item);
       const scenario = safeString(prescription.scenario);
       const reason = safeString(prescription.reason) ?? safeString(prescription.purpose);
       if (!scenario || !reason) return [];
-      return [{ scenario, reason, cue: safeString(prescription.cue) }];
+      return [{
+        scenario,
+        reason: presentDisplayText(reason, "当前合同未提供可展示的训练说明"),
+        cue: safeString(prescription.cue),
+      }];
     });
     const observationRef = safeStableRef(issue.observation_ref, OBSERVATION_REF_RE, 160);
     const knowledgeRegistryVersion = safeStableRef(
@@ -287,22 +358,19 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
       signal,
       severity,
       priority: safeNumber(issue.priority) ?? 999,
-      priorityReason: presentSwitchingText(
+      priorityReason: presentPriorityReason(
         safeString(issue.priority_reason) ?? "当前合同未提供优先级理由",
       ),
       presentationKind,
       claimLevel,
-      claimLabel: presentationKind === "registry-backed"
-        ? CLAIM_LEVEL_LABELS[claimLevel ?? ""] ?? "未标注"
-        : null,
+      claimLabel: CLAIM_LEVEL_LABELS[claimLevel ?? ""]
+        ?? (presentationKind === "registry-backed" ? "未标注" : null),
       candidateExplanation: presentationKind === "registry-backed"
         ? safeString(issue.plain_language_meaning)
         : null,
       expectedResult: presentationKind === "registry-backed"
         ? safeString(issue.expected_result)
         : null,
-      hasHistoricalCandidateDetails: presentationKind === "legacy"
-        && (rootCauses.length > 0 || prescriptions.length > 0),
       observationRef,
       knowledgeRegistryVersion: hasKnowledgePair ? knowledgeRegistryVersion : null,
       knowledgeEntryRefs: hasKnowledgePair ? knowledgeEntryRefs : [],
@@ -310,9 +378,24 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
       prescriptions,
       metricRefs: safeStrings(issue.metric_refs),
       eventRefs: safeStrings(issue.event_refs),
-      limitations: safeStrings(issue.limitations),
+      limitations: Array.from(new Set(safeStrings(issue.limitations).map(presentLimitation))),
     }];
   }).sort((left, right) => left.priority - right.priority).slice(0, 3);
+}
+
+function summaryMetricReferences(
+  diagnosis: Record<string, unknown>,
+  issues: AnalysisIssuePresentation[],
+  metrics: AnalysisMetricPresentation[],
+): string[] {
+  const explicit = Object.keys(record(diagnosis.summary));
+  const fallback = issues.flatMap((issue) => issue.metricRefs);
+  const references = explicit.length > 0
+    ? explicit
+    : fallback.length > 0
+      ? fallback
+      : metrics.map((metric) => metric.referenceKey ?? metric.key);
+  return Array.from(new Set(references));
 }
 
 export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorkspacePresentation | null {
@@ -333,6 +416,18 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     && metric.availability === "available"
     && metric.classification === "deterministic"
   );
+  const eligibleSummaryMetrics = metrics.filter((metric) =>
+    metric.availability === "available" && metric.classification === "deterministic"
+  );
+  const summary = (familySupport === "supported" || familySupport === "descriptive")
+    ? summaryMetricReferences(diagnosis, issues, eligibleSummaryMetrics)
+      .flatMap((reference) => eligibleSummaryMetrics.filter((metric) => metric.referenceKey === reference))
+    : [];
+  const summaryMode: AnalysisWorkspacePresentation["metrics"]["summaryMode"] = summary.length === 0
+    ? "empty"
+    : familySupport === "supported"
+      ? "formal"
+      : "descriptive";
   const evidenceSources = Array.isArray(result.evidence.sources)
     ? result.evidence.sources
     : Object.values(result.evidence.sources);
@@ -356,7 +451,7 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     ...safeStrings(result.deterministic.limitations),
     ...safeStrings(result.scenario?.limitations),
     ...safeStrings(resolution?.limitations),
-  ]));
+  ].map(presentLimitation)));
   const partial = result.input_mode === "multimodal" && videoKind === "unavailable";
   const inputLabels = {
     input_native: "输入原生",
@@ -394,11 +489,14 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
       : "当前证据不足以形成重点观察",
     profile: profileLabel ? {
       label: profileLabel,
+      ...(profileLabel === "两段式型" ? {
+        description: "主要移动和后续修正看起来分为两段。",
+      } : {}),
       confidence: safeNumber(profileRaw.confidence),
       tags: safeStrings(profileRaw.secondary_tags),
     } : null,
     issues,
-    metrics: { formal, limited: metrics.filter((metric) => !formal.includes(metric)) },
+    metrics: { formal, limited: metrics.filter((metric) => !formal.includes(metric)), summary, summaryMode },
     timeline: Array.isArray(result.deterministic.timeline)
       ? result.deterministic.timeline.slice(0, 500)
       : [],

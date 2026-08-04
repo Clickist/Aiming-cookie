@@ -103,6 +103,10 @@ const FAMILY_GROUPS: Record<string, { title: string; keys: string[] }[]> = {
 };
 
 const LIMITATION_LABELS: Record<string, string> = {
+  "Exact scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于当前已审核场景、1920×1080 分辨率和单目标布局。",
+  "Exact reviewed scenario hash, 1920x1080 resolution and one target bot only.": "仅适用于当前已审核场景、1920×1080 分辨率和单目标布局。",
+  "Unknown or multi-target scenarios remain fail-closed.": "未知场景或多目标布局不生成此类结论。",
+  "Unknown hashes and concurrent target layouts are not classified by this entry.": "未知场景或多目标布局不生成此类结论。",
   alignment_latency_reported_separately: "对齐延迟单独报告，不等同于跟随滞后。",
   capture_alignment_descriptor_not_human_response: "这是采集对齐描述，不能分离具体响应来源。",
   descriptive_correction_burden: "仅描述修正负担，不作为机制结论。",
@@ -273,9 +277,17 @@ function SwitchChainRow({
   const hasAll = [kill, transition, acquire].every(Number.isFinite);
   const total = settle ?? acquire ?? transition ?? 1;
   const slow = typeof row.metrics.path_efficiency === "number" && row.metrics.path_efficiency < 0.6;
+  const accessibleLabel = [
+    `完整切换 #${index + 1}`,
+    `切换到新目标耗时 ${familyMetricText("transition_time_ms", row.metrics.transition_time_ms)}`,
+    `切换位移 ${familyMetricText("transition_distance_px", row.metrics.transition_distance_px)}`,
+    `路径效率 ${familyMetricText("path_efficiency", row.metrics.path_efficiency)}`,
+    `到达后稳定耗时 ${familyMetricText("settle_duration_ms", row.metrics.settle_duration_ms)}`,
+  ].join("，");
 
   return (
     <button
+      aria-label={accessibleLabel}
       className={styles.switchRow}
       data-slow={slow || undefined}
       disabled={!bounds}
@@ -381,7 +393,7 @@ function SwitchingDataView({
       </div>
       <div className={styles.detailColumn}>
         <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle} id="family-detail-title">切换链</span>
+          <h2 className={styles.sectionTitle} id="family-detail-title">切换链</h2>
           <span className={styles.sectionCount}>{familyData?.total_count ?? rows.length} 次完整切换</span>
           <span className={styles.sectionHint}>点击行跳到视频对应时间</span>
         </div>
@@ -446,6 +458,7 @@ function TrackingDataView({
   const lossRows = familyData?.rows.filter((row) => row.kind === "tracking_loss") ?? [];
   const reacqRows = familyData?.rows.filter((row) => row.kind === "tracking_reacquisition") ?? [];
   const timelineMax = Math.max(1, ...lossRows.concat(reacqRows).flatMap((row) => Object.values(row.timing)));
+  const hasFormalMetrics = presentation.metrics.formal.length > 0;
 
   const longestLoss = lossRows.reduce<{ row: FrontendAnalysisFamilyDataRowV1 | null; duration: number }>(
     (acc, row) => {
@@ -475,71 +488,83 @@ function TrackingDataView({
   }
 
   return (
-    <div className={styles.familyDataLayout} data-family="tracking">
-      <div className={styles.metricsColumn}>
-        <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle}>指标总览</span>
-          <span className={styles.sectionHint}>按理解目的分组</span>
-        </div>
-        <MetricOverviewPanel familyCode="continuous_tracking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
-      </div>
-      <div className={styles.detailColumn}>
-        <div className={styles.chartCard}>
-          <div className={styles.chartTitle} id="family-detail-title">
-            目标相对误差半径分布
-            <Badge tone="neutral" style={{ marginInlineStart: "auto" }}>已归一化</Badge>
+    <div className={styles.familyDataLayout} data-family="tracking" data-metrics={hasFormalMetrics ? "available" : "empty"}>
+      {hasFormalMetrics ? (
+        <div className={styles.metricsColumn}>
+          <div className={styles.sectionHead}>
+            <span className={styles.sectionTitle}>指标总览</span>
+            <span className={styles.sectionHint}>按理解目的分组</span>
           </div>
-          {radiusPoints.length ? (
-            <>
-              <div aria-hidden="true" className={styles.errorSeries} role="presentation">
-                {Array.from({ length: 20 }).map((_, index) => {
-                  const binMin = (index / 20) * peakRadius * 1.1;
-                  const binMax = ((index + 1) / 20) * peakRadius * 1.1;
-                  const count = radiusPoints.filter((p) => p.normalized_error_radius >= binMin && p.normalized_error_radius < binMax).length;
-                  const height = Math.max(2, (count / Math.max(1, radiusPoints.length / 8)) * 100);
-                  return <i key={index} style={{ height: `${Math.min(100, height)}%` }} />;
-                })}
-              </div>
-              <div className={styles.errorSeriesAxis}><span>0.0</span><span>{Number(peakRadius.toFixed(2))}</span></div>
-            </>
-          ) : (
-            <p className={styles.chartCap}>目标相对误差样本不可用。</p>
-          )}
-          <p className={styles.chartCap}>
-            {`按目标半径归一化后的偏差分布。共 ${radiusPoints.length} 个样本，峰值 ${Number(peakRadius.toFixed(2))}。数值已在本地按目标半径归一化并量化；页面不接收位置或半径坐标。`}
-          </p>
+          <MetricOverviewPanel familyCode="continuous_tracking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
         </div>
+      ) : null}
+      <div className={styles.detailColumn}>
+        <div className={styles.sectionHead}>
+          <h2 className={styles.sectionTitle} id="family-detail-title">跟踪分段</h2>
+          <span className={styles.sectionCount}>{familyData?.total_count ?? familyData?.rows.length ?? 0} 条记录</span>
+        </div>
+        <div className={styles.chartGrid}>
+          <div
+            aria-label={`目标相对误差半径分布，共 ${radiusPoints.length} 个样本，峰值 ${Number(peakRadius.toFixed(2))}`}
+            className={styles.chartCard}
+            role="img"
+          >
+            <div className={styles.chartTitle}>
+              目标相对误差半径分布
+              <Badge tone="neutral" style={{ marginInlineStart: "auto" }}>已归一化</Badge>
+            </div>
+            {radiusPoints.length ? (
+              <>
+                <div aria-hidden="true" className={styles.errorSeries} role="presentation">
+                  {Array.from({ length: 20 }).map((_, index) => {
+                    const binMin = (index / 20) * peakRadius * 1.1;
+                    const binMax = ((index + 1) / 20) * peakRadius * 1.1;
+                    const count = radiusPoints.filter((p) => p.normalized_error_radius >= binMin && p.normalized_error_radius < binMax).length;
+                    const height = Math.max(2, (count / Math.max(1, radiusPoints.length / 8)) * 100);
+                    return <i key={index} style={{ height: `${Math.min(100, height)}%` }} />;
+                  })}
+                </div>
+                <div className={styles.errorSeriesAxis}><span>0.0</span><span>{Number(peakRadius.toFixed(2))}</span></div>
+              </>
+            ) : (
+              <p className={styles.chartCap}>目标相对误差样本不可用。</p>
+            )}
+            <p className={styles.chartCap}>
+              {`按目标半径归一化后的偏差分布。共 ${radiusPoints.length} 个样本，峰值 ${Number(peakRadius.toFixed(2))}。数值已在本地按目标半径归一化并量化；页面不接收位置或半径坐标。`}
+            </p>
+          </div>
 
-        <div className={styles.chartCard}>
-          <div className={styles.chartTitle}>偏离与重新捕获时序</div>
-          {lossRows.length || reacqRows.length ? (
-            <svg className={styles.chartSvg} height="100" preserveAspectRatio="none" viewBox="0 0 360 100" width="100%">
-              <line opacity="0.3" stroke="var(--outline-variant)" strokeWidth="1" x1="20" x2="340" y1="50" y2="50" />
-              {lossRows.map((row, index) => {
-                const bounds = rowBounds(row);
-                if (!bounds) return null;
-                const left = 20 + (bounds[0] / timelineMax) * 320;
-                const width = Math.max(4, ((bounds[1] - bounds[0]) / timelineMax) * 320);
-                return <rect key={`loss-${index}`} fill="var(--primary)" height="16" opacity="0.6" width={width} x={left} y="42" />;
-              })}
-              {reacqRows.map((row, index) => {
-                const bounds = rowBounds(row);
-                if (!bounds) return null;
-                const left = 20 + (bounds[0] / timelineMax) * 320;
-                const width = Math.max(4, ((bounds[1] - bounds[0]) / timelineMax) * 320);
-                return <line key={`reacq-${index}`} stroke="var(--tertiary)" strokeWidth="2" x1={left} x2={left + width} y1="70" y2="70" />;
-              })}
-              <rect fill="var(--primary)" height="10" opacity="0.6" width="10" x="20" y="84" />
-              <text fill="var(--on-surface)" fontSize="10" x="34" y="93">偏离（宽度=持续时间）</text>
-              <line stroke="var(--tertiary)" strokeWidth="2" x1="160" x2="175" y1="89" y2="89" />
-              <text fill="var(--on-surface)" fontSize="10" x="180" y="93">重新捕获延迟</text>
-            </svg>
-          ) : (
-            <p className={styles.chartCap}>本次没有可定位的偏离/重新捕获事件。</p>
-          )}
-          <p className={styles.chartCap}>
-            {lossRows.length} 次偏离事件，{reacqRows.length} 次重新捕获记录。
-          </p>
+          <div className={styles.chartCard}>
+            <div className={styles.chartTitle}>偏离与重新捕获时序</div>
+            {lossRows.length || reacqRows.length ? (
+              <svg className={styles.chartSvg} preserveAspectRatio="xMidYMid meet" viewBox="0 0 360 100">
+                <line opacity="0.3" stroke="var(--outline-variant)" strokeWidth="1" x1="20" x2="340" y1="50" y2="50" />
+                {lossRows.map((row, index) => {
+                  const bounds = rowBounds(row);
+                  if (!bounds) return null;
+                  const left = 20 + (bounds[0] / timelineMax) * 320;
+                  const width = Math.max(4, ((bounds[1] - bounds[0]) / timelineMax) * 320);
+                  return <rect key={`loss-${index}`} fill="var(--primary)" height="16" opacity="0.6" width={width} x={left} y="42" />;
+                })}
+                {reacqRows.map((row, index) => {
+                  const bounds = rowBounds(row);
+                  if (!bounds) return null;
+                  const left = 20 + (bounds[0] / timelineMax) * 320;
+                  const width = Math.max(4, ((bounds[1] - bounds[0]) / timelineMax) * 320);
+                  return <line key={`reacq-${index}`} stroke="var(--tertiary)" strokeWidth="2" x1={left} x2={left + width} y1="70" y2="70" />;
+                })}
+                <rect fill="var(--primary)" height="10" opacity="0.6" width="10" x="20" y="84" />
+                <text fill="var(--on-surface)" fontSize="10" x="34" y="93">偏离（宽度=持续时间）</text>
+                <line stroke="var(--tertiary)" strokeWidth="2" x1="160" x2="175" y1="89" y2="89" />
+                <text fill="var(--on-surface)" fontSize="10" x="180" y="93">重新捕获延迟</text>
+              </svg>
+            ) : (
+              <p className={styles.chartCap}>本次没有可定位的偏离/重新捕获事件。</p>
+            )}
+            <p className={styles.chartCap}>
+              {lossRows.length} 次偏离事件，{reacqRows.length} 次重新捕获记录。
+            </p>
+          </div>
         </div>
 
         {links.length && presentation.video.kind === "seekable" ? (
@@ -630,65 +655,74 @@ function FlickingDataView({
 
   const phases = phaseDurations(rows);
   const totalPhase = phases ? phases.accel + phases.decel + phases.settle : 0;
+  const hasFormalMetrics = presentation.metrics.formal.length > 0;
 
   return (
-    <div className={styles.familyDataLayout} data-family="flicking">
-      <div className={styles.metricsColumn}>
-        <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle}>指标总览</span>
-          <span className={styles.sectionHint}>按理解目的分组</span>
+    <div className={styles.familyDataLayout} data-family="flicking" data-metrics={hasFormalMetrics ? "available" : "empty"}>
+      {hasFormalMetrics ? (
+        <div className={styles.metricsColumn}>
+          <div className={styles.sectionHead}>
+            <span className={styles.sectionTitle}>指标总览</span>
+            <span className={styles.sectionHint}>按理解目的分组</span>
+          </div>
+          <MetricOverviewPanel familyCode="static_clicking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
         </div>
-        <MetricOverviewPanel familyCode="static_clicking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
-      </div>
+      ) : null}
       <div className={styles.detailColumn}>
-        <div className={styles.chartCard}>
-          <div className={styles.chartTitle} id="family-detail-title">时序分布</div>
-          {phases && totalPhase > 0 ? (
-            <svg className={styles.chartSvg} height="90" preserveAspectRatio="none" viewBox="0 0 360 90" width="100%">
-              <rect fill="var(--tertiary)" height="40" opacity="0.75" width={(phases.accel / totalPhase) * 320} x="20" y="20" />
-              <rect fill="var(--primary)" height="40" opacity="0.75" width={(phases.decel / totalPhase) * 320} x={20 + (phases.accel / totalPhase) * 320} y="20" />
-              <rect fill="var(--on-surface-variant)" height="40" opacity="0.75" width={(phases.settle / totalPhase) * 320} x={20 + ((phases.accel + phases.decel) / totalPhase) * 320} y="20" />
-              <text fill="var(--on-tertiary)" fontSize="12" fontWeight="600" textAnchor="middle" x={20 + (phases.accel / totalPhase) * 160} y="45">{Math.round((phases.accel / totalPhase) * 100)}%</text>
-              <text fill="var(--on-primary)" fontSize="12" fontWeight="600" textAnchor="middle" x={20 + (phases.accel / totalPhase) * 320 + (phases.decel / totalPhase) * 160} y="45">{Math.round((phases.decel / totalPhase) * 100)}%</text>
-              <rect fill="var(--tertiary)" height="8" opacity="0.75" width="8" x="20" y="72" />
-              <text fill="var(--on-surface)" fontSize="10" x="32" y="79">加速 {familyMetricText("accel_duration_ms", phases.accel)}</text>
-              <rect fill="var(--primary)" height="8" opacity="0.75" width="8" x="110" y="72" />
-              <text fill="var(--on-surface)" fontSize="10" x="122" y="79">减速 {familyMetricText("decel_duration_ms", phases.decel)}</text>
-              <rect fill="var(--on-surface-variant)" height="8" opacity="0.75" width="8" x="220" y="72" />
-              <text fill="var(--on-surface)" fontSize="10" x="232" y="79">稳定 {familyMetricText("settle_duration_ms", phases.settle)}</text>
-            </svg>
-          ) : (
-            <p className={styles.chartCap}>阶段时序样本不足。</p>
-          )}
-          <p className={styles.chartCap}>移动持续时间的阶段分解（中位数）。减速阶段占比超过一半表示减速控制是关键。</p>
+        <div className={styles.sectionHead}>
+          <h2 className={styles.sectionTitle} id="family-detail-title">逐次 Flick</h2>
+          <span className={styles.sectionCount}>{familyData?.total_count ?? rows.length} 次记录</span>
         </div>
+        <div className={styles.chartGrid}>
+          <div className={styles.chartCard}>
+            <div className={styles.chartTitle}>时序分布</div>
+            {phases && totalPhase > 0 ? (
+              <svg className={styles.chartSvg} preserveAspectRatio="xMidYMid meet" viewBox="0 0 360 90">
+                <rect fill="var(--tertiary)" height="40" opacity="0.75" width={(phases.accel / totalPhase) * 320} x="20" y="20" />
+                <rect fill="var(--primary)" height="40" opacity="0.75" width={(phases.decel / totalPhase) * 320} x={20 + (phases.accel / totalPhase) * 320} y="20" />
+                <rect fill="var(--on-surface-variant)" height="40" opacity="0.75" width={(phases.settle / totalPhase) * 320} x={20 + ((phases.accel + phases.decel) / totalPhase) * 320} y="20" />
+                <text fill="var(--on-tertiary)" fontSize="12" fontWeight="600" textAnchor="middle" x={20 + (phases.accel / totalPhase) * 160} y="45">{Math.round((phases.accel / totalPhase) * 100)}%</text>
+                <text fill="var(--on-primary)" fontSize="12" fontWeight="600" textAnchor="middle" x={20 + (phases.accel / totalPhase) * 320 + (phases.decel / totalPhase) * 160} y="45">{Math.round((phases.decel / totalPhase) * 100)}%</text>
+                <rect fill="var(--tertiary)" height="8" opacity="0.75" width="8" x="20" y="72" />
+                <text fill="var(--on-surface)" fontSize="10" x="32" y="79">加速 {familyMetricText("accel_duration_ms", phases.accel)}</text>
+                <rect fill="var(--primary)" height="8" opacity="0.75" width="8" x="110" y="72" />
+                <text fill="var(--on-surface)" fontSize="10" x="122" y="79">减速 {familyMetricText("decel_duration_ms", phases.decel)}</text>
+                <rect fill="var(--on-surface-variant)" height="8" opacity="0.75" width="8" x="220" y="72" />
+                <text fill="var(--on-surface)" fontSize="10" x="232" y="79">稳定 {familyMetricText("settle_duration_ms", phases.settle)}</text>
+              </svg>
+            ) : (
+              <p className={styles.chartCap}>阶段时序样本不足。</p>
+            )}
+            <p className={styles.chartCap}>移动持续时间的阶段分解（中位数）。减速阶段占比超过一半表示减速控制是关键。</p>
+          </div>
 
-        <div className={styles.chartCard}>
-          <div className={styles.chartTitle}>路径质量分布</div>
-          {efficiencies.length ? (
-            <svg className={styles.chartSvg} height="110" preserveAspectRatio="none" viewBox="0 0 360 110" width="100%">
-              {Array.from({ length: 10 }).map((_, index) => {
-                const binMin = 0.6 + index * 0.04;
-                const binMax = 0.6 + (index + 1) * 0.04;
-                const count = efficiencies.filter((value) => value >= binMin && value < binMax).length;
-                const height = Math.max(4, (count / Math.max(1, efficiencies.length / 5)) * 90);
-                return <rect key={index} x={20 + index * 32} y={100 - height} width="26" height={height} fill="var(--tertiary)" opacity="0.7" />;
-              })}
-              <text fill="var(--on-surface-variant)" fontSize="9" textAnchor="start" x="20" y="108">60%</text>
-              <text fill="var(--on-surface-variant)" fontSize="9" textAnchor="end" x="340" y="108">100%</text>
-              {medianEff !== null ? (
-                <>
-                  <line stroke="var(--primary)" strokeDasharray="3 2" strokeWidth="1.5" x1={20 + ((medianEff - 0.6) / 0.4) * 320} x2={20 + ((medianEff - 0.6) / 0.4) * 320} y1="10" y2="100" />
-                  <text fill="var(--primary)" fontSize="10" x={24 + ((medianEff - 0.6) / 0.4) * 320} y="16">{Number((medianEff * 100).toFixed(0))}%</text>
-                </>
-              ) : null}
-            </svg>
-          ) : (
-            <p className={styles.chartCap}>路径效率样本不足。</p>
-          )}
-          <p className={styles.chartCap}>
-            {rows.length} 次 Flick 的路径效率分布。{medianEff !== null ? `中位数 ${Number((medianEff * 100).toFixed(0))}%（橙色虚线）。` : ""}
-          </p>
+          <div className={styles.chartCard}>
+            <div className={styles.chartTitle}>路径质量分布</div>
+            {efficiencies.length ? (
+              <svg className={styles.chartSvg} preserveAspectRatio="xMidYMid meet" viewBox="0 0 360 110">
+                {Array.from({ length: 10 }).map((_, index) => {
+                  const binMin = 0.6 + index * 0.04;
+                  const binMax = 0.6 + (index + 1) * 0.04;
+                  const count = efficiencies.filter((value) => value >= binMin && value < binMax).length;
+                  const height = Math.max(4, (count / Math.max(1, efficiencies.length / 5)) * 90);
+                  return <rect key={index} x={20 + index * 32} y={100 - height} width="26" height={height} fill="var(--tertiary)" opacity="0.7" />;
+                })}
+                <text fill="var(--on-surface-variant)" fontSize="9" textAnchor="start" x="20" y="108">60%</text>
+                <text fill="var(--on-surface-variant)" fontSize="9" textAnchor="end" x="340" y="108">100%</text>
+                {medianEff !== null ? (
+                  <>
+                    <line stroke="var(--primary)" strokeDasharray="3 2" strokeWidth="1.5" x1={20 + ((medianEff - 0.6) / 0.4) * 320} x2={20 + ((medianEff - 0.6) / 0.4) * 320} y1="10" y2="100" />
+                    <text fill="var(--primary)" fontSize="10" x={24 + ((medianEff - 0.6) / 0.4) * 320} y="16">{Number((medianEff * 100).toFixed(0))}%</text>
+                  </>
+                ) : null}
+              </svg>
+            ) : (
+              <p className={styles.chartCap}>路径效率样本不足。</p>
+            )}
+            <p className={styles.chartCap}>
+              {rows.length} 次 Flick 的路径效率分布。{medianEff !== null ? `中位数 ${Number((medianEff * 100).toFixed(0))}%（橙色虚线）。` : ""}
+            </p>
+          </div>
         </div>
 
         {flickLinks.length && presentation.video.kind === "seekable" ? (
@@ -749,62 +783,67 @@ function GenericDataView({
     for (const marker of data?.event_markers ?? []) markers.set(marker.kind, marker.relative_ms);
     return markers;
   }, [data?.event_markers]);
+  const hasFormalMetrics = presentation.metrics.formal.length > 0;
 
   return (
-    <div className={styles.familyDataLayout} data-family="generic">
-      <div className={styles.metricsColumn}>
-        <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle}>指标总览</span>
-          <span className={styles.sectionHint}>按理解目的分组</span>
+    <div className={styles.familyDataLayout} data-family="generic" data-metrics={hasFormalMetrics ? "available" : "empty"}>
+      {hasFormalMetrics ? (
+        <div className={styles.metricsColumn}>
+          <div className={styles.sectionHead}>
+            <span className={styles.sectionTitle}>指标总览</span>
+            <span className={styles.sectionHint}>按理解目的分组</span>
+          </div>
+          <MetricOverviewPanel familyCode="static_clicking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
         </div>
-        <MetricOverviewPanel familyCode="static_clicking" metrics={presentation.metrics.formal} onSelectMetric={onSelectMetric} />
-      </div>
+      ) : null}
       <div className={styles.detailColumn}>
-        <div className={styles.chartCard}>
-          <div className={styles.chartTitle} id="family-detail-title">事件分布</div>
-          {data?.event_distribution.length ? (
-            <div className={styles.distributionPlot} role="group">
-              {data.event_distribution.map(({ kind, count }) => {
-                const relativeMs = markersByKind.get(kind);
-                return (
-                  <button
-                    className={styles.distributionBar}
-                    disabled={relativeMs === undefined}
-                    key={kind}
-                    onClick={() => relativeMs !== undefined && onSelectTime(relativeMs)}
-                    type="button"
-                  >
-                    <span>{EVENT_KIND_LABELS[kind] ?? kind}</span>
-                    <i style={{ width: `${(count / maxEventCount) * 100}%` }} />
-                    <strong>{count}</strong>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <p className={styles.chartCap}>当前没有可安全公开的事件 marker。</p>
-          )}
-          <p className={styles.chartCap}>
-            {data?.event_distribution.length ? `已验证事件共 ${data.event_distribution.reduce((sum, item) => sum + item.count, 0)} 个。` : "没有足够事件生成分布摘要。"}
-          </p>
-        </div>
+        <div className={styles.chartGrid}>
+          <div className={styles.chartCard}>
+            <div className={styles.chartTitle} id="family-detail-title">事件分布</div>
+            {data?.event_distribution.length ? (
+              <div className={styles.distributionPlot} role="group">
+                {data.event_distribution.map(({ kind, count }) => {
+                  const relativeMs = markersByKind.get(kind);
+                  return (
+                    <button
+                      className={styles.distributionBar}
+                      disabled={relativeMs === undefined}
+                      key={kind}
+                      onClick={() => relativeMs !== undefined && onSelectTime(relativeMs)}
+                      type="button"
+                    >
+                      <span>{EVENT_KIND_LABELS[kind] ?? kind}</span>
+                      <i style={{ width: `${(count / maxEventCount) * 100}%` }} />
+                      <strong>{count}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className={styles.chartCap}>当前没有可安全公开的事件 marker。</p>
+            )}
+            <p className={styles.chartCap}>
+              {data?.event_distribution.length ? `已验证事件共 ${data.event_distribution.reduce((sum, item) => sum + item.count, 0)} 个。` : "没有足够事件生成分布摘要。"}
+            </p>
+          </div>
 
-        <div className={styles.chartCard}>
-          <div className={styles.chartTitle}>目标相对误差半径分布</div>
-          {radiusPoints.length ? (
-            <div aria-hidden="true" className={styles.errorSeries} role="presentation">
-              {Array.from({ length: 20 }).map((_, index) => {
-                const binMin = (index / 20) * peakRadius * 1.1;
-                const binMax = ((index + 1) / 20) * peakRadius * 1.1;
-                const count = radiusPoints.filter((p) => p.normalized_error_radius >= binMin && p.normalized_error_radius < binMax).length;
-                const height = Math.max(2, (count / Math.max(1, radiusPoints.length / 8)) * 100);
-                return <i key={index} style={{ height: `${Math.min(100, height)}%` }} />;
-              })}
-            </div>
-          ) : (
-            <p className={styles.chartCap}>目标相对误差样本不可用。</p>
-          )}
-          <p className={styles.chartCap}>按目标半径归一化后的偏差分布；页面不接收位置或半径坐标。</p>
+          <div className={styles.chartCard}>
+            <div className={styles.chartTitle}>目标相对误差半径分布</div>
+            {radiusPoints.length ? (
+              <div aria-hidden="true" className={styles.errorSeries} role="presentation">
+                {Array.from({ length: 20 }).map((_, index) => {
+                  const binMin = (index / 20) * peakRadius * 1.1;
+                  const binMax = ((index + 1) / 20) * peakRadius * 1.1;
+                  const count = radiusPoints.filter((p) => p.normalized_error_radius >= binMin && p.normalized_error_radius < binMax).length;
+                  const height = Math.max(2, (count / Math.max(1, radiusPoints.length / 8)) * 100);
+                  return <i key={index} style={{ height: `${Math.min(100, height)}%` }} />;
+                })}
+              </div>
+            ) : (
+              <p className={styles.chartCap}>目标相对误差样本不可用。</p>
+            )}
+            <p className={styles.chartCap}>按目标半径归一化后的偏差分布；页面不接收位置或半径坐标。</p>
+          </div>
         </div>
 
         {loadingFamily ? <Loading>正在读取逐行动作数据</Loading> : null}
@@ -900,8 +939,13 @@ export function DataView({
   };
 
   const sharedLimitations = useMemo(
-    () => unique([...presentation.limitations, ...(data?.limitations ?? [])]),
-    [data?.limitations, presentation.limitations],
+    () => unique([
+      ...presentation.limitations,
+      ...(data?.limitations ?? []),
+      ...presentation.metrics.formal.flatMap((metric) => metric.limitations),
+      ...presentation.metrics.limited.flatMap((metric) => metric.limitations),
+    ]),
+    [data?.limitations, presentation.limitations, presentation.metrics.formal, presentation.metrics.limited],
   );
   const sharedLimitationLabels = useMemo(
     () => sharedLimitations.map(limitationLabel),
@@ -956,7 +1000,7 @@ export function DataView({
       {availableLimited.length ? (
         <section className={styles.limitedMetrics} aria-labelledby="limited-metrics-title">
           <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle} id="limited-metrics-title">实验性或受限指标</span>
+            <h2 className={styles.sectionTitle} id="limited-metrics-title">实验性或受限指标</h2>
             <Badge tone="warning">不用于正式结论</Badge>
           </div>
           <div className={styles.metricOverviewPanel}>
@@ -993,7 +1037,7 @@ export function DataView({
       {sharedLimitationLabels.length ? (
         <section className={styles.analysisLimitations}>
           <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle}>Analysis 范围限制</span>
+            <h2 className={styles.sectionTitle}>Analysis 范围限制</h2>
           </div>
           <ul>{sharedLimitationLabels.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul>
         </section>

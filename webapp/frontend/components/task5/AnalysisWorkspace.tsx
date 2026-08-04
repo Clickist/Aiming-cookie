@@ -280,12 +280,6 @@ export function AnalysisWorkspace() {
       {item.label}
     </span>
   ));
-  const videoVerified = presentation.video.kind === "seekable";
-  const videoNote = videoVerified
-    ? "视觉证据已校验"
-    : presentation.video.kind === "unavailable"
-      ? "视觉证据不可用"
-      : null;
 
   return (
     <div className={styles.workspace}>
@@ -296,7 +290,19 @@ export function AnalysisWorkspace() {
             <div className={styles.titleLine}>
               <h1>{presentation.scenario}</h1>
               <div className={styles.headerBadges} aria-label="分析合同摘要">
-                <Badge tone="success"><span className={styles.statusDot} />{stateLabel(viewState)}</Badge>
+                <span className={styles.evidenceSummary}>
+                  <button
+                    aria-describedby="analysis-evidence-summary"
+                    aria-label="查看本次分析证据"
+                    className={styles.evidenceTrigger}
+                    type="button"
+                  >
+                    <Badge tone="success"><span className={styles.statusDot} />{stateLabel(viewState)}</Badge>
+                  </button>
+                  <span className={styles.evidenceTooltip} id="analysis-evidence-summary" role="tooltip">
+                    {evidenceChips}
+                  </span>
+                </span>
                 <Badge tone="info">{presentation.input.label}</Badge>
                 {presentation.input.preview ? <Badge tone="warning">预览 / 实验</Badge> : null}
                 <Badge tone="neutral">{presentation.family.label} · {FAMILY_STATUS_LABEL[presentation.family.status]}</Badge>
@@ -309,15 +315,6 @@ export function AnalysisWorkspace() {
               {presentation.calibration.fov ? ` · FOV ${presentation.calibration.fov}` : null}
             </div>
           </div>
-        </div>
-
-        <div className={styles.evidenceRow}>
-          {evidenceChips}
-          {videoNote ? (
-            <span className={styles.evidenceNote}>
-              结论依赖：{evidenceItems.map((item) => item.label).join("、")}；{videoNote}
-            </span>
-          ) : null}
         </div>
 
         <Tabs
