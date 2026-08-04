@@ -235,7 +235,7 @@ function RunSectionState({
   }
 
   return (
-    <Empty title={runDiscovery === "loading" ? pending ? "正在读取待分析 Run" : "正在读取训练 Run" : pending ? "没有待确认训练" : "还没有其它训练记录"}>
+    <Empty className="task4-panel task4-state-panel" title={runDiscovery === "loading" ? pending ? "正在读取待分析 Run" : "正在读取训练 Run" : pending ? "没有待确认训练" : "还没有其它训练记录"}>
       {pending ? "完成新的 Challenge 后，满足 readiness 的 Run 会出现在这里。" : "已确认或已分析的 Run 会保留在这里。"}
     </Empty>
   );
@@ -342,7 +342,7 @@ export function HistoryClient() {
         </div>
         <div className="task4-page-actions">
           <Button onClick={() => void loadHistory()} size="compact" variant="ghost">刷新</Button>
-          <Button href="/analyze">＋ 新建分析</Button>
+          <Button href="/analyze" size="compact">＋ 新建分析</Button>
         </div>
       </div>
 
@@ -352,7 +352,7 @@ export function HistoryClient() {
 
       <section className="task4-sec" aria-labelledby="pending-title">
         <div className="task4-sec-head">
-          <span id="pending-title" className="task4-sec-title">待分析训练</span>
+          <h2 id="pending-title" className="task4-sec-title">待分析训练</h2>
           <span className="task4-sec-count">{sections.pendingRuns.length}</span>
           <span className="task4-sec-hint">自动采集已整理完成 · 选择一条开始分析</span>
         </div>
@@ -376,7 +376,7 @@ export function HistoryClient() {
 
       <section className="task4-sec" aria-labelledby="runs-title">
         <div className="task4-sec-head">
-          <span id="runs-title" className="task4-sec-title">训练记录</span>
+          <h2 id="runs-title" className="task4-sec-title">训练记录</h2>
           <span className="task4-sec-count">{sections.runRecords.length}</span>
         </div>
         {sections.runRecords.length === 0 ? (
@@ -399,11 +399,11 @@ export function HistoryClient() {
 
       <section className="task4-sec" aria-labelledby="analysis-title">
         <div className="task4-sec-head">
-          <span id="analysis-title" className="task4-sec-title">分析记录</span>
+          <h2 id="analysis-title" className="task4-sec-title">分析记录</h2>
           <span className="task4-sec-count">{sections.analysisRecords.length}</span>
         </div>
         {sections.analysisRecords.length === 0 ? (
-          <Empty title="还没有分析记录">
+          <Empty className="task4-panel task4-state-panel" title="还没有分析记录">
             <Link className="ac-button" data-variant="primary" href="/analyze">新建分析</Link>
           </Empty>
         ) : (
@@ -417,7 +417,7 @@ export function HistoryClient() {
 
       <section className="task4-sec" aria-labelledby="trend-title">
         <div className="task4-sec-head">
-          <span id="trend-title" className="task4-sec-title">长期趋势</span>
+          <h2 id="trend-title" className="task4-sec-title">长期趋势</h2>
           <span className="task4-sec-hint">仅比较同场景、同模式、同校准的记录</span>
         </div>
         {trendLoading ? (

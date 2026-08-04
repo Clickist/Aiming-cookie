@@ -24,7 +24,7 @@ import type {
   CurrentTrainingV1,
   ProviderProfileState,
 } from "@/lib/types";
-import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast } from "@/ui/primitives";
+import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachLayoutMode = "side-by-side" | "overlay" | "full";
@@ -150,12 +150,14 @@ export function CoachPanel({
   capability,
   currentAnalysisRef,
   layoutMode = "side-by-side",
+  onClose,
   onRequestContext,
   pathname = "/history",
 }: {
   capability: CoachCapability;
   currentAnalysisRef: string | null;
   layoutMode?: CoachLayoutMode;
+  onClose?: () => void;
   onRequestContext: (analysisRef: string) => Promise<void>;
   pathname?: string;
 }) {
@@ -169,6 +171,7 @@ export function CoachPanel({
   const [currentTraining, setCurrentTraining] = useState<CurrentTrainingV1 | null>(null);
   const [currentTrainingError, setCurrentTrainingError] = useState(false);
   const [trainingExpanded, setTrainingExpanded] = useState(false);
+  const trainingPresence = useAnimatedPresence(trainingExpanded, 180);
   const [launchingScenarioRef, setLaunchingScenarioRef] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
@@ -380,26 +383,31 @@ export function CoachPanel({
             <dt>练多少</dt><dd>{summaryItem.dose_guardrail ?? "暂未说明"}</dd>
             <dt>注意</dt><dd>{summaryItem.cue ?? "暂未说明"}</dd>
           </dl>
-          <div className="task6-training-actions">
-            {renderTrainingLaunch(summaryItem)}
-            <Button disabled={capability !== "ready"} onClick={() => writeTrainingQuestion(summaryItem)} size="compact" variant="secondary">问 Coach</Button>
-          </div>
-          {trainingExpanded ? (
-            <div className="task6-training-list">
-              {visibleTrainingItems.map((item, index) => (
-                <article className="task6-training-item" data-status={item.status} key={`${item.display_name ?? "item"}-${index}`}>
-                  <div className="task6-training-item-title">
-                    <strong>{item.display_name ?? "当前训练项目"}</strong>
-                    <Status tone={item.status === "completed" ? "success" : item.status === "cancelled" ? "warning" : "neutral"}>{trainingStatusLabel(item.status)}</Status>
-                  </div>
-                  <p>{item.cue ?? item.practice_condition ?? "暂无可展示的训练说明。"}</p>
-                  {item.scenario_availability === "unavailable" ? <small className="task6-training-unavailable">项目暂不可用</small> : null}
-                  <div className="task6-training-item-actions">
-                    {renderTrainingLaunch(item)}
-                    <Button disabled={capability !== "ready" || !item.display_name} onClick={() => writeTrainingQuestion(item)} size="compact" variant="secondary">问 Coach</Button>
-                  </div>
-                </article>
-              ))}
+          {trainingPresence.present ? (
+            <div
+              aria-hidden={!trainingExpanded || undefined}
+              className="task6-training-reveal"
+              data-state={trainingPresence.state}
+              inert={!trainingExpanded || undefined}
+            >
+              <div className="task6-training-reveal-inner">
+                <div className="task6-training-list">
+                  {visibleTrainingItems.map((item, index) => (
+                    <article className="task6-training-item" data-status={item.status} key={`${item.display_name ?? "item"}-${index}`}>
+                      <div className="task6-training-item-title">
+                        <strong>{item.display_name ?? "当前训练项目"}</strong>
+                        <Status tone={item.status === "completed" ? "success" : item.status === "cancelled" ? "warning" : "neutral"}>{trainingStatusLabel(item.status)}</Status>
+                      </div>
+                      <p>{item.cue ?? item.practice_condition ?? "暂无可展示的训练说明。"}</p>
+                      {item.scenario_availability === "unavailable" ? <small className="task6-training-unavailable">项目暂不可用</small> : null}
+                      <div className="task6-training-item-actions">
+                        {renderTrainingLaunch(item)}
+                        <Button disabled={capability !== "ready" || !item.display_name} onClick={() => writeTrainingQuestion(item)} size="compact" variant="secondary">问 Coach</Button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
             </div>
           ) : null}
         </>
@@ -516,6 +524,7 @@ export function CoachPanel({
         <span className="task6-coach-title">Aiming Coach</span>
         <span className="task6-coach-availability" data-state={headerState.state}>{headerState.label}</span>
         <div className="task6-coach-header-actions">
+          {onClose ? <IconButton label="关闭 Coach" onClick={onClose} title="关闭 Coach">×</IconButton> : null}
           {capability === "ready" ? (
             <IconButton label="开始新话题" onClick={() => void newTopic()} title="开始新话题">＋</IconButton>
           ) : null}
