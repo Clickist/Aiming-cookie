@@ -154,7 +154,8 @@ def test_issue_exposes_explanation_and_training_verification_contract():
     issue = diagnosis.issues[0]
 
     assert issue.claim_level == "experimental"
-    assert issue.priority_reason == "[experimental] 观察项排序第 1"
+    assert issue.priority_reason == "本次优先观察项"
+    assert "experimental" not in issue.priority_reason
     assert issue.metric_refs == ["sparc", "reverse_ratio"]
     assert issue.plain_language_meaning == "你的减速过程不够连续"
     assert issue.expected_result == "减速更连续，反向修正减少"
@@ -232,3 +233,28 @@ def test_static_issue_without_registry_coverage_stays_visible_without_refs():
     assert issue.observation_ref is None
     assert issue.knowledge_registry_version is None
     assert issue.knowledge_entry_refs == []
+
+
+def test_static_clicking_copy_separates_observation_boundary_and_training_direction():
+    from kovaak_tracker.advice import advise
+
+    findings = advise({
+        "decel_frac": {"med": 0.8},
+        "reverse_ratio": {"med": 0.3},
+        "submovement_overlap": {"med": 0.2},
+    })
+    diagnosis = build_diagnosis(findings, {}, None, {})
+    issues = {issue.signal: issue for issue in diagnosis.issues}
+
+    assert {issue.claim_level for issue in issues.values()} == {"experimental"}
+    assert all(issue.priority_reason == "本次优先观察项" for issue in issues.values())
+
+    reverse = issues["reverse_ratio high"].root_causes
+    assert reverse[0].text == "减速段反复修正"
+    assert reverse[1].text == "证据只能说明反向修正偏多"
+    assert reverse[2].text == "把修正并入减速过程，避免停住后再二次修正"
+
+    two_stage = issues["submovement two-stage"].root_causes
+    assert two_stage[0].text == "主要移动和后续修正呈较分离的两个阶段"
+    assert two_stage[1].text == "证据只能说明主要移动和后续修正较分离"
+    assert two_stage[2].text == "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正"

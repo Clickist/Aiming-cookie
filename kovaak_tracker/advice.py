@@ -194,8 +194,8 @@ def advise(
                 "decel_frac high", "fix",
                 f"减速段占整个 flick 的 {decfrac*100:.0f}%——"
                 "速度峰值后用了较长时间完成减速；该阈值仍需真实产品数据校准。",
-                [Prescription("pasu", "练完整的加速→减速，减速果断一次到位"),
-                 Prescription("1w4ts Voltaic", "acc 90%+，逼你把单次 flick 加减速打完整")],
+                [Prescription("pasu", "练完整的加速→减速，接近目标时果断完成制动"),
+                 Prescription("1w4ts Voltaic", "保持 90%+ 准确率，练完整 flick 的加减速")],
             ))
         elif decfrac < THRESHOLDS["decel_frac_low"]:
             f.append(Finding(
@@ -212,7 +212,7 @@ def advise(
             f"减速段速度曲线偏离匀减速直线 {linearity:.2f}——"
             "速度下降节奏不够均匀。注：这度量的是制动节奏，不是抖动；"
             "抖动看 SPARC。",
-            [Prescription("pasu", "clean lines，减速段匀速制动一次到位"),
+             [Prescription("pasu", "把减速段练成干净、连贯的制动"),
              Prescription("1w4ts 30% larger", "减速段精度专项")],
         ))
 
@@ -235,9 +235,8 @@ def advise(
     if reverse is not None and reverse > THRESHOLDS["reverse_high"]:
         f.append(Finding(
             "reverse_ratio high", "fix",
-            f"减速段有 {reverse*100:.0f}% 的帧在反向加速（锯齿 / 反复修正），"
-            "不是单调制动。",
-            [Prescription("pasu", "转流体派：减速段即微调，别 readjust"),
+            f"减速段有 {reverse*100:.0f}% 的帧在反向加速，表现为反复修正。",
+            [Prescription("pasu", "把修正并入减速过程，避免停住后再二次修正"),
              Prescription("Multiclick", "落点精度，减少二次修正")],
         ))
 
@@ -245,9 +244,8 @@ def advise(
     if overlap is not None and overlap < THRESHOLDS["two_stage_overlap"]:
         f.append(Finding(
             "submovement two-stage", "watch",
-            f"corrective 与 primary submovement 重叠度 {overlap:.2f}（低=离散两段式）——"
-            "主要移动与独立 micro 修正形成两个更分离的阶段；是否影响成绩需结合可比复测。",
-            [Prescription("pasu", "转流体派：corrective 与 primary 重叠（overlapping submovements），减速段即微调"),
+            "主要移动和后续修正呈较分离的两个阶段。",
+            [Prescription("pasu", "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正"),
              Prescription("Multiclick", "落点精度，减少二次修正")],
         ))
 
