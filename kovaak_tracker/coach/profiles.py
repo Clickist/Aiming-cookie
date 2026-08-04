@@ -75,11 +75,11 @@ ARCHETYPES = [
 # signal -> (symptom, physical, training) three-layer root cause.
 # Covers every signal advice.advise can emit.
 ROOT_CAUSES = {
-    "decel_frac high": ("减速段占比过高，在「蹭」", "输入数据能观察到减速段偏长，但不能单独证明是制动释放不果断", "减速一次到位的意识"),
+    "decel_frac high": ("减速阶段偏长", "证据只能说明减速阶段偏长", "练完整加减速，在接近目标时果断完成制动"),
     "decel_frac low": ("减速段占比过低，撞墙式制动", "输入数据能观察到减速段被压缩，但不能单独证明减速不足或制动粗暴", "练匀减速，把减速段当独立动作"),
     "sparc low": ("减速速度轮廓有较多快速波动", "输入数据支持减速轮廓不够连续，但不能单独证明握持张力或其他身体原因", "减速段控制稳定性"),
-    "reverse_ratio high": ("减速段反复修正", "输入数据能观察到反向修正偏多，但不能单独证明制动方向不稳的身体原因", "单次制动 + 流体修正"),
-    "submovement two-stage": ("flick→急停→独立 micro", "输入数据能观察到 corrective 与 primary 分离，但不能单独证明其由某种身体原因造成", "转流体派（overlapping submovements）"),
+    "reverse_ratio high": ("减速段反复修正", "证据只能说明反向修正偏多", "把修正并入减速过程，避免停住后再二次修正"),
+    "submovement two-stage": ("主要移动和后续修正呈较分离的两个阶段", "证据只能说明主要移动和后续修正较分离", "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正"),
     "peak_speed below reference": ("峰值速度低于当前参考", "具体动作原因未被输入数据直接测量", "在可控精度下逐步提高速度"),
     "throughput below reference": ("速度-精度综合效率低于当前参考", "输入数据能观察到参考效率偏低，但不能单独证明具体动作原因", "在可比场景中练速度-精度转换"),
     "linearity high": ("制动不匀", "输入数据能观察到减速节奏不匀，但不能单独证明具体的身体控制原因", "匀速制动练习"),
