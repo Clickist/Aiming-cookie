@@ -52,6 +52,8 @@
   - [`superpowers/assessments/2026-07-22-real-run-analysis-capability-audit.md`](superpowers/assessments/2026-07-22-real-run-analysis-capability-audit.md)：现存 normal/timescale/restart/pause 实机四件套、已产品化采集规则、Task 6-9 可用与禁止用途，以及 visual input 合同纠偏。
   - [`superpowers/assessments/2026-07-22-task10-cross-family-coach-knowledge-research.md`](superpowers/assessments/2026-07-22-task10-cross-family-coach-knowledge-research.md)：Task 10R 的真人教练/社区 cue、运动控制证据边界、跨 family observation-to-coaching 矩阵与 Registry v2 输入。
   - [`superpowers/assessments/2026-07-28-coach-scenario-prescription-research.md`](superpowers/assessments/2026-07-28-coach-scenario-prescription-research.md)：真人教练、Viscose、Voltaic 与运动学习证据如何约束问题到场景、剂量、matched/near-transfer 与实战迁移；同时定义当前三个 exact 场景的可执行边界。
+  - [`superpowers/assessments/2026-07-30-coach-action-streaming-kovaak-launch-feasibility.md`](superpowers/assessments/2026-07-30-coach-action-streaming-kovaak-launch-feasibility.md)：Coach 可点击 Product Action、真流式工具事件与 KovaaK 启动/聚焦/指定场景切换的现状、拟议合同、降级和实机 Gate。
+  - [`superpowers/assessments/2026-08-01-peripheral-recommendation-capability-map.md`](superpowers/assessments/2026-08-01-peripheral-recommendation-capability-map.md)：外设推荐当前可见事实、用户补充事实、可逆验证边界与逐轮知识访谈格式。
   - [`superpowers/assessments/2026-07-24-backend-full-review-ledger.md`](superpowers/assessments/2026-07-24-backend-full-review-ledger.md)：当前 dirty worktree 的 12 路后端、原生采集、性能、数据、Coach、安全、扩展性、文档与 UI/UX 全量审计；包含 confirmed findings、待实测边界、驳回项和修复顺序。
 
 ## 归档边界
