@@ -31,6 +31,12 @@ import type {
   TaskListV1,
   TaskState,
 } from "../lib/types";
+import {
+  REAL_STATIC_ANALYSIS_DATA,
+  REAL_STATIC_FAMILY_DATA,
+  REAL_STATIC_METRICS,
+  REAL_STATIC_TIMELINE,
+} from "./task7-real-static-fixture";
 
 const NOW = "2026-07-25T06:32:00Z";
 const TASK7_VIDEO = () => readFile(path.join(process.cwd(), "fixtures", "task7-video.mp4"));
@@ -181,73 +187,109 @@ const ANALYSIS_RESULT: AnalysisResultV2 = {
   schema_version: "analysis_result.v2",
   analysis_id: "analysis:42",
   analysis_type: "flicking",
-  input_mode: "multimodal",
-  kovaak_run_ref: "run:7",
+  input_mode: "input_native",
+  kovaak_run_ref: "run:1030",
   evidence: {
     sources: {
-      stats: { source: "stats", availability: "available", alignment: "aligned" },
-      performance: { source: "performance", availability: "available", alignment: "aligned" },
-      raw_input: { source: "raw_input", availability: "available", alignment: "aligned" },
-      mp4: { source: "mp4", availability: "available", alignment: "aligned" },
+      stats: { source: "stats", role: "scenario_config", availability: "available", alignment: "not_required" },
+      performance: { source: "performance", role: "event_anchor", availability: "available", alignment: "partial" },
+      raw_input: { source: "raw_input", role: "kinematics", availability: "available", alignment: "partial" },
     },
-    provenance: {},
-    availability: { stats: "available", performance: "available", raw_input: "available", mp4: "available" },
-    alignment: { status: "aligned" },
-    warnings: [],
+    provenance: { adapter: "native_flicking_analysis", adapter_version: "native_flicking.v1", kovaak_run_ref: "run:1030" },
+    availability: { stats: "available", performance: "available", raw_input: "available" },
+    alignment: { status: "partial", coverage_ratio: 0.9998666666666667 },
+    warnings: ["trace_coverage_partial"],
   },
   deterministic: {
-    support_status: "supported",
+    status: "partial",
+    support_status: "partial",
     diagnosis: {
-      profile: { archetype_id: "decel-wave", label: "减速波动型", confidence: 0.78, secondary_tags: ["远距离过冲"] },
+      profile: { archetype_id: "two_stage", label: "两段式型", confidence: 1, secondary_tags: ["急加速-长减速型", "减速抖动型"] },
       issues: [
         {
-          signal: "停枪控制不稳",
-          severity: "fix",
+          signal: "decel_frac high",
+          severity: "info",
           root_causes: [
-            { level: "symptom", text: "接近目标时减速不足" },
-            { level: "physical", text: "反向修正出现较晚" },
-            { level: "training", text: "需要稳定停枪节奏" },
+            { level: "symptom", text: "减速段占比过高，在「蹭」" },
+            { level: "physical", text: "输入数据能观察到减速段偏长，但不能单独证明是制动释放不果断" },
+            { level: "training", text: "减速一次到位的意识" },
           ],
-          prescriptions: [{ scenario: "1wall5targets_pasu", reason: "练习减速" }],
+          prescriptions: [
+            { scenario: "pasu", reason: "练完整的加速→减速，减速果断一次到位" },
+            { scenario: "1w4ts Voltaic", reason: "acc 90%+，逼你把单次 flick 加减速打完整" },
+          ],
           priority: 1,
-          priority_reason: "远距离目标持续出现",
-          metric_refs: ["sparc"],
-          event_refs: ["event:corrective:800"],
+          priority_reason: "[experimental] 观察项排序第 1",
+          claim_level: "experimental",
+          plain_language_meaning: "速度峰值后用了较长时间完成减速",
+          expected_result: "decel_frac toward individually calibrated target",
+          metric_refs: ["decel_frac"],
+          event_refs: ["analysis:42:event:static-flick:32", "analysis:42:event:static-flick:112"],
+          limitations: ["threshold_requires_product_calibration"],
+        },
+        {
+          signal: "reverse_ratio high",
+          severity: "info",
+          root_causes: [
+            { level: "symptom", text: "减速段反复修正" },
+            { level: "physical", text: "输入数据能观察到反向修正偏多，但不能单独证明制动方向不稳的身体原因" },
+            { level: "training", text: "单次制动 + 流体修正" },
+          ],
+          prescriptions: [
+            { scenario: "pasu", reason: "转流体派：减速段即微调，别 readjust" },
+            { scenario: "Multiclick", reason: "落点精度，减少二次修正" },
+          ],
+          priority: 2,
+          priority_reason: "[experimental] 观察项排序第 2",
+          claim_level: "experimental",
+          plain_language_meaning: "接近落点后出现了较多反向修正",
+          expected_result: "reverse_ratio ↓",
+          metric_refs: ["reverse_ratio"],
+          event_refs: ["analysis:42:event:static-flick:57", "analysis:42:event:static-flick:109"],
+          limitations: ["threshold_requires_product_calibration"],
+        },
+        {
+          signal: "submovement two-stage",
+          severity: "info",
+          root_causes: [
+            { level: "symptom", text: "flick→急停→独立 micro" },
+            { level: "physical", text: "输入数据能观察到 corrective 与 primary 分离，但不能单独证明其由某种身体原因造成" },
+            { level: "training", text: "转流体派（overlapping submovements）" },
+          ],
+          prescriptions: [
+            { scenario: "pasu", reason: "转流体派：corrective 与 primary 重叠，减速段即微调" },
+            { scenario: "Multiclick", reason: "落点精度，减少二次修正" },
+          ],
+          priority: 3,
+          priority_reason: "[experimental] 观察项排序第 3",
+          claim_level: "experimental",
+          plain_language_meaning: "主要移动与后续修正更像两个分离动作",
+          expected_result: "submovement_overlap toward chosen technique",
+          metric_refs: ["submovement_overlap"],
+          event_refs: ["analysis:42:event:static-flick:10", "analysis:42:event:static-flick:26", "analysis:42:event:static-flick:47"],
+          limitations: ["threshold_requires_product_calibration"],
         },
       ],
-      summary: {},
+      summary: {
+        path_efficiency: { med: 0.9621542770432387, metric_version: "native_flicking.v1" },
+        sparc: { med: -4.177432518826556, metric_version: "native_flicking.sparc.v2" },
+        peak_position_pct: { med: 33.53413654618474, metric_version: "native_flicking.v1" },
+        submovement_overlap: { med: 0.0019551209388482173, metric_version: "native_flicking.v1" },
+        reverse_ratio: { med: 0.3563218390804598, metric_version: "native_flicking.v1" },
+        decel_frac: { med: 0.6646586345381527, metric_version: "native_flicking.v1" },
+      },
       comparison: null,
-      meta: {},
+      meta: { input_mode: "input_native", quality_status: "limited", summary_type: "flicking" },
     },
-    metrics: {
-      sparc: {
-        key: "sparc",
-        value: -4.21,
-        unit: "score",
-        availability: "available",
-        coverage: 1,
-        classification: "deterministic",
-        metric_version: "sparc.v1",
-        limitations: [],
-        provenance: { kind: "derived", sources: ["raw_input"] },
-      },
-      visual_validation: {
-        key: "visual_validation",
-        value: null,
-        unit: "status",
-        availability: "unavailable",
-        coverage: 0,
-        classification: "experimental",
-        metric_version: "visual_validation.v1",
-        limitations: ["visual_quality_limited"],
-        provenance: { kind: "derived", sources: ["mp4"] },
-      },
-    },
-    timeline: [
-      { frame: null, time_s: 0.8, relative_ms: 800, type: "corrective", label: "反向修正", source: "raw_input" },
-      { frame: null, time_s: 1.4, relative_ms: 1400, type: "kill", label: "命中", source: "performance" },
-    ],
-    limitations: [],
+    metrics: REAL_STATIC_METRICS,
+    timeline: REAL_STATIC_TIMELINE,
+    limitations: ["target_relative_facts_unavailable", "alignment_partial"],
+  },
+  scenario: {
+    scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+    analyzer_refs: ["native_flicking.v1"],
+    support_status: "partial",
+    limitations: ["target_relative_facts_unavailable", "alignment_partial"],
   },
   artifact_manifest: { schema_version: "artifact_manifest.v2", external_inputs: [], owned_outputs: [] },
   input_snapshot: {
@@ -257,17 +299,22 @@ const ANALYSIS_RESULT: AnalysisResultV2 = {
       aim_family: "static_clicking",
       claim_ceiling: "family_specific",
       family_analyzer_dispatch: "allowed",
-      limitations: [],
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      classification_source: "reviewed_registry",
+      limitations: [
+        "Exact reviewed scenario hash only; other hashes with the same display name remain unclassified.",
+        "Input-native metrics do not establish target-relative error, overshoot, or undershoot.",
+      ],
     },
     calibration: {
-      cm_per_360: { value: 42, source: "stats" },
+      cm_per_360: { value: 54.43, source: "stats" },
       fov: { value: 103, source: "stats" },
     },
     sources: {},
     trace: null,
   },
-  created_at: NOW,
-  completed_at: "2026-07-25T06:33:00Z",
+  created_at: "2026-07-28T15:22:42Z",
+  completed_at: "2026-07-28T15:22:55Z",
   warnings: [],
   errors: [],
   normalization_issues: [],
@@ -280,29 +327,29 @@ export function analysisSession(overrides: Partial<SessionStatus> = {}): Session
     result: ANALYSIS_RESULT,
     error: null,
     llm_cost_cny: null,
-    created_at: NOW,
+    created_at: "2026-07-28T15:22:42Z",
     attempts: 1,
     max_attempts: 2,
     worker_id: null,
-    started_at: NOW,
-    finished_at: "2026-07-25T06:33:00Z",
+    started_at: "2026-07-28T15:22:42Z",
+    finished_at: "2026-07-28T15:22:55Z",
     analysis_type: "flicking",
-    input_mode: "multimodal",
-    kovaak_run_id: 7,
+    input_mode: "input_native",
+    kovaak_run_id: 1030,
     history: {
       analysis_ref: "analysis:42",
-      run_ref: "run:7",
+      run_ref: "run:1030",
       scenario: "1wall 6targets small",
-      input_mode: "multimodal",
-      source_availability: { stats: "available", performance: "available", raw: "available", mp4: "available" },
-      trace_quality: RUN_MULTIMODAL.trace_quality,
+      input_mode: "input_native",
+      source_availability: { stats: "available", performance: "available", raw: "available", mp4: "unavailable" },
+      trace_quality: { state: "attached", availability: "available", alignment_status: "partial", coverage: 0.9998666666666667 },
       visual_replay: {
-        kind: "seekable_mp4",
-        available: true,
-        seekable: true,
-        endpoint: "/api/sessions/42/video",
-        artifact_ref: "analysis:42:video",
-        reason: null,
+        kind: "native_only",
+        available: false,
+        seekable: false,
+        endpoint: null,
+        artifact_ref: null,
+        reason: "input_native_without_managed_video",
       },
       diagnosis_locator: { analysis_ref: "analysis:42", section: "diagnosis" },
       evidence_refs: [],
@@ -350,6 +397,7 @@ export function registryBackedAnalysisSession(): SessionStatus {
 export function partialAnalysisSession(): SessionStatus {
   const result: AnalysisResultV2 = {
     ...ANALYSIS_RESULT,
+    input_mode: "multimodal",
     evidence: {
       ...ANALYSIS_RESULT.evidence,
       sources: {
@@ -363,8 +411,10 @@ export function partialAnalysisSession(): SessionStatus {
   const base = analysisSession();
   return analysisSession({
     result,
+    input_mode: "multimodal",
     history: {
       ...base.history!,
+      input_mode: "multimodal",
       source_availability: { ...base.history!.source_availability, mp4: "unavailable" },
       visual_replay: {
         kind: "unavailable",
@@ -382,55 +432,109 @@ export const SESSION_LIST: SessionListItem[] = [
   {
     id: 42,
     analysis_ref: "analysis:42",
-    run_ref: "run:7",
+    run_ref: "run:1030",
     status: "done",
-    created_at: NOW,
-    finished_at: "2026-07-25T06:33:00Z",
+    created_at: "2026-07-28T15:22:42Z",
+    finished_at: "2026-07-28T15:22:55Z",
     attempts: 1,
     max_attempts: 2,
     llm_cost_cny: null,
     summary_label: "diagnosis",
     analysis_type: "flicking",
-    input_mode: "multimodal",
-    kovaak_run_id: 7,
+    input_mode: "input_native",
+    kovaak_run_id: 1030,
     scenario: "1wall 6targets small",
-    source_availability: { stats: "available", performance: "available", raw: "available", mp4: "available" },
-    trace_quality: RUN_MULTIMODAL.trace_quality,
+    source_availability: { stats: "available", performance: "available", raw: "available", mp4: "unavailable" },
+    trace_quality: { state: "attached", availability: "available", alignment_status: "partial", coverage: 0.9998666666666667 },
   },
 ];
 
 export const EVIDENCE_SEGMENTS: FrontendEvidenceSegmentsV1 = {
   schema_version: "frontend_evidence_segments.v1",
   analysis_ref: "analysis:42",
-  video_availability: "available",
-  video_route: "/api/sessions/42/video",
-  canonical_window_start_ms: 0,
+  video_availability: "unavailable",
+  video_route: null,
+  canonical_window_start_ms: 1785151583880,
   segments: [
     {
-      segment_id: "segment:42:1",
+      segment_id: "analysis:42:segment:worst:20",
       analysis_ref: "analysis:42",
-      analyzer_ref: "flicking.v1",
-      segment_kind: "corrective_window",
-      start_ms: 500,
-      end_ms: 1100,
-      focus_start_ms: 760,
-      focus_end_ms: 860,
-      title_key: "反向修正窗口",
-      rank_reason: "primary_issue",
-      issue_refs: ["issue:0"],
-      metric_refs: ["sparc"],
-      event_refs: ["event:corrective:800"],
-      available_channels: ["raw_input", "mp4"],
-      source_coverage: 1,
-      confidence: 0.82,
-      limitations: [],
+      analyzer_ref: "native_flicking.v1",
+      segment_kind: "worst",
+      start_ms: 1785151593273,
+      end_ms: 1785151593750,
+      focus_start_ms: 1785151593273,
+      focus_end_ms: 1785151593750,
+      title_key: "static_clicking.worst",
+      rank_reason: "worst",
+      issue_refs: [],
+      metric_refs: ["metric:static_clicking.corrective_count@native_flicking.v1"],
+      event_refs: ["analysis:42:event:static-flick:20"],
+      available_channels: ["mouse.position_x", "mouse.position_y", "mouse.speed", "mouse.acceleration"],
+      source_coverage: 0.9998666666666667,
+      confidence: 0.9998666666666667,
+      limitations: ["within_run_rank_not_learning_effect", "descriptive_rank_not_health_threshold"],
       playback: {
         schema_version: "evidence_segment_playback.v1",
-        availability: "available",
-        video_route: "/api/sessions/42/video",
-        relative_start_ms: 500,
-        relative_end_ms: 1100,
-        limitations: [],
+        availability: "unavailable",
+        video_route: null,
+        relative_start_ms: null,
+        relative_end_ms: null,
+        limitations: ["within_run_rank_not_learning_effect", "descriptive_rank_not_health_threshold", "local_video_seek_unavailable"],
+      },
+    },
+    {
+      segment_id: "analysis:42:segment:improved:65",
+      analysis_ref: "analysis:42",
+      analyzer_ref: "native_flicking.v1",
+      segment_kind: "improved",
+      start_ms: 1785151614731,
+      end_ms: 1785151615203,
+      focus_start_ms: 1785151614731,
+      focus_end_ms: 1785151615176,
+      title_key: "static_clicking.improved",
+      rank_reason: "improved",
+      issue_refs: [],
+      metric_refs: ["metric:static_clicking.corrective_count@native_flicking.v1"],
+      event_refs: ["analysis:42:event:static-flick:65"],
+      available_channels: ["mouse.position_x", "mouse.position_y", "mouse.speed", "mouse.acceleration"],
+      source_coverage: 0.9998666666666667,
+      confidence: 0.9998666666666667,
+      limitations: ["within_run_late_relative_improvement_not_learning_effect", "descriptive_rank_not_health_threshold"],
+      playback: {
+        schema_version: "evidence_segment_playback.v1",
+        availability: "unavailable",
+        video_route: null,
+        relative_start_ms: null,
+        relative_end_ms: null,
+        limitations: ["within_run_late_relative_improvement_not_learning_effect", "descriptive_rank_not_health_threshold", "local_video_seek_unavailable"],
+      },
+    },
+    {
+      segment_id: "analysis:42:segment:typical:1",
+      analysis_ref: "analysis:42",
+      analyzer_ref: "native_flicking.v1",
+      segment_kind: "typical",
+      start_ms: 1785151583884,
+      end_ms: 1785151584676,
+      focus_start_ms: 1785151583884,
+      focus_end_ms: 1785151584638,
+      title_key: "static_clicking.typical",
+      rank_reason: "typical",
+      issue_refs: [],
+      metric_refs: ["metric:static_clicking.corrective_count@native_flicking.v1"],
+      event_refs: ["analysis:42:event:static-flick:1"],
+      available_channels: ["mouse.position_x", "mouse.position_y", "mouse.speed", "mouse.acceleration"],
+      source_coverage: 0.9998666666666667,
+      confidence: 0.9998666666666667,
+      limitations: ["within_run_rank_not_learning_effect", "descriptive_rank_not_health_threshold"],
+      playback: {
+        schema_version: "evidence_segment_playback.v1",
+        availability: "unavailable",
+        video_route: null,
+        relative_start_ms: null,
+        relative_end_ms: null,
+        limitations: ["within_run_rank_not_learning_effect", "descriptive_rank_not_health_threshold", "local_video_seek_unavailable"],
       },
     },
   ],
@@ -445,7 +549,7 @@ export const UNAVAILABLE_EVIDENCE_SEGMENTS: FrontendEvidenceSegmentsV1 = {
   segments: [],
 };
 
-export const ANALYSIS_DATA: FrontendAnalysisDataV1 = {
+export const ANALYSIS_DATA_TRACKING: FrontendAnalysisDataV1 = {
   schema_version: "frontend_analysis_data.v1",
   analysis_ref: "analysis:42",
   limitations: ["visual_quality_limited"],
@@ -467,6 +571,8 @@ export const ANALYSIS_DATA: FrontendAnalysisDataV1 = {
     ],
   },
 };
+
+export const ANALYSIS_DATA = REAL_STATIC_ANALYSIS_DATA;
 
 export const ANALYSIS_FAMILY_TRACKING: FrontendAnalysisFamilyDataV1 = {
   schema_version: "frontend_analysis_family_data.v1",
@@ -500,17 +606,7 @@ export const ANALYSIS_FAMILY_SWITCHING: FrontendAnalysisFamilyDataV1 = {
   ],
 };
 
-export const ANALYSIS_FAMILY_FLICKING: FrontendAnalysisFamilyDataV1 = {
-  schema_version: "frontend_analysis_family_data.v1",
-  analysis_ref: "analysis:42",
-  family: "flicking",
-  availability: "available",
-  reason: null,
-  limitations: [],
-  total_count: 1,
-  next_offset: null,
-  rows: [{ kind: "static_flick", timing: { start_ms: 2400, peak_ms: 2478, movement_end_ms: 2582, settle_end_ms: 2616 }, metrics: { accel_duration_ms: 78, decel_duration_ms: 104, settle_duration_ms: 34, peak_speed: 4.2, path_efficiency: 0.89, corrective_count: 2 }, limitations: [] }],
-};
+export const ANALYSIS_FAMILY_FLICKING = REAL_STATIC_FAMILY_DATA;
 
 export const ANALYSIS_FAMILY_FLICKING_UNAVAILABLE: FrontendAnalysisFamilyDataV1 = {
   schema_version: "frontend_analysis_family_data.v1",
@@ -606,7 +702,7 @@ export const COACH_CONTEXTS: CoachContextListV1 = {
     context_ref: "context:analysis:42",
     kind: "analysis",
     status: "active",
-    label: "1wall 6targets small · 7月25日",
+    label: "1wall 6targets small · 7月28日",
     analysis_ref: "analysis:42",
     comparison_analysis_ref: null,
     target_ref: null,
@@ -716,7 +812,7 @@ export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
     sessions: SESSION_LIST,
     analysis: analysisSession(),
     analysisData: ANALYSIS_DATA,
-    analysisFamilyData: ANALYSIS_FAMILY_TRACKING,
+    analysisFamilyData: ANALYSIS_FAMILY_FLICKING,
     evidenceSegments: EVIDENCE_SEGMENTS,
     capture: CAPTURE_STATUS,
     providerStatus: READY_PROVIDER_STATUS,
@@ -737,6 +833,7 @@ export interface ReviewApiRequest {
   method: string;
   path: string;
   body?: unknown;
+  query?: Record<string, string>;
 }
 
 export interface ReviewApiResponse {
@@ -747,6 +844,25 @@ export interface ReviewApiResponse {
 
 const response = (body: unknown, status = 200): ReviewApiResponse => ({ status, body });
 const requestBody = (body: unknown): Record<string, unknown> => body && typeof body === "object" ? body as Record<string, unknown> : {};
+
+function analysisFamilyPage(
+  data: FrontendAnalysisFamilyDataV1,
+  query: Record<string, string> | undefined,
+): FrontendAnalysisFamilyDataV1 {
+  if (data.availability === "unavailable") return data;
+  const rawLimit = Number(query?.limit ?? 50);
+  const rawOffset = Number(query?.offset ?? 0);
+  const limit = Number.isInteger(rawLimit) ? Math.min(100, Math.max(1, rawLimit)) : 50;
+  const offset = Number.isInteger(rawOffset) ? Math.max(0, rawOffset) : 0;
+  const rows = data.rows.slice(offset, offset + limit);
+  const nextOffset = offset + rows.length;
+  return {
+    ...data,
+    total_count: data.rows.length,
+    next_offset: nextOffset < data.rows.length ? nextOffset : null,
+    rows,
+  };
+}
 
 /** Shared by Playwright's adapter and the local Next.js review route. */
 export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApiRequest): ReviewApiResponse {
@@ -800,9 +916,13 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
   if (/^\/api\/kovaak-runs\/\d+\/analyze$/.test(path)) return response({ session_id: 42 });
   if (path === "/api/sessions") return response({ sessions: scenario.sessions });
   if (path === "/api/sessions/42/analysis-data") return response(scenario.analysisData);
-  if (path === "/api/sessions/42/analysis-data/family") return response(scenario.analysisFamilyData);
+  if (path === "/api/sessions/42/analysis-data/family") return response(analysisFamilyPage(scenario.analysisFamilyData, request.query));
   if (path === "/api/sessions/42/evidence-segments") return response(scenario.evidenceSegments);
-  if (path === "/api/sessions/42/video") return { status: 200, body: null, video: true };
+  if (path === "/api/sessions/42/video") {
+    return scenario.analysis.history?.visual_replay.kind === "seekable_mp4"
+      ? { status: 200, body: null, video: true }
+      : response({ detail: { code: "managed_video_unavailable", message: "Managed video is unavailable for this Analysis" } }, 410);
+  }
   if (path === "/api/sessions/42/retry" && method === "POST") return response({ ...scenario.analysis, id: 43, status: "queued" });
   if (path === "/api/sessions/42") return response(scenario.analysis);
   if (path.startsWith("/api/history/trends/")) return response({ comparable: false, reason: "insufficient_records" } satisfies HistoryTrend);
@@ -860,9 +980,10 @@ async function fulfillVideo(route: Route): Promise<void> {
 export async function installApiFixtures(page: Page, scenario = apiScenario()): Promise<void> {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
+    const url = new URL(request.url());
+    const path = url.pathname;
     const method = request.method();
-    const shared = handleReviewApiRequest(scenario, { method, path });
+    const shared = handleReviewApiRequest(scenario, { method, path, query: Object.fromEntries(url.searchParams) });
     if (shared.video) return fulfillVideo(route);
     return fulfillJson(route, shared.body, shared.status);
     /*

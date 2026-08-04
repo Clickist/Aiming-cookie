@@ -94,13 +94,53 @@
   font-size: 12px;
 }
 
-.evidenceRow {
+.evidenceSummary {
+  position: relative;
+  display: inline-flex;
+}
+
+.evidenceTrigger {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: help;
+}
+
+.evidenceTrigger:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.evidenceTooltip {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 6px);
+  inset-inline-start: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
-  min-height: 26px;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 48px));
+  padding: 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container-high);
+  box-shadow: 0 6px 18px color-mix(in srgb, black 18%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+
+.evidenceSummary:hover .evidenceTooltip,
+.evidenceSummary:focus-within .evidenceTooltip {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .evidenceChip {
@@ -138,12 +178,6 @@
   color: var(--on-surface-variant);
   font-style: normal;
   font-weight: 600;
-}
-
-.evidenceNote {
-  margin-inline-start: auto;
-  font-size: 11.5px;
-  color: var(--on-surface-variant);
 }
 
 .titleTabs {
@@ -189,6 +223,47 @@
   color: var(--on-surface-variant);
 }
 
+.profileLabel {
+  position: relative;
+  display: inline-flex;
+  border-radius: 4px;
+  cursor: help;
+}
+
+.profileLabel:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.profileTooltip {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 7px);
+  inset-inline-start: 0;
+  width: max-content;
+  max-width: min(340px, calc(100vw - 48px));
+  padding: 8px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container-high);
+  box-shadow: 0 6px 18px color-mix(in srgb, black 18%, transparent);
+  color: var(--on-surface);
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+
+.profileLabel:hover .profileTooltip,
+.profileLabel:focus-within .profileTooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
 .issueSection,
 .metricSummary,
 .prescriptionSection {
@@ -204,6 +279,7 @@
 }
 
 .sectionTitle {
+  margin: 0;
   font: 600 15px/1.2 var(--font-display);
   color: var(--on-surface);
 }
@@ -273,11 +349,6 @@
   color: var(--on-surface);
 }
 
-.issueBody > .issueLegacyNote {
-  color: var(--on-surface-variant);
-  font-size: 11.5px;
-}
-
 .issueCause {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -319,6 +390,14 @@
   border-radius: 6px;
   background: var(--surface);
   padding: 2px 16px;
+}
+
+.metricSummaryEmpty {
+  min-height: 112px;
+  box-sizing: border-box;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface);
 }
 
 .metricRow {
@@ -407,6 +486,10 @@
   grid-template-columns: minmax(0, 7fr) minmax(0, 3fr);
 }
 
+.familyDataLayout[data-metrics="empty"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .metricsColumn,
 .detailColumn {
   display: flex;
@@ -484,6 +567,7 @@
 }
 
 .chartCard {
+  container: chart-card / inline-size;
   border: 1px solid var(--outline-variant);
   border-radius: 6px;
   background: var(--surface);
@@ -491,6 +575,14 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+}
+
+.chartGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 14px;
+  min-width: 0;
 }
 
 .chartTitle {
@@ -504,6 +596,8 @@
 .chartSvg {
   display: block;
   width: 100%;
+  height: auto;
+  max-width: 100%;
 }
 
 .chartCap {
@@ -564,7 +658,7 @@
   display: flex;
   align-items: flex-end;
   gap: 1px;
-  height: 110px;
+  height: clamp(110px, 30cqi, 180px);
 }
 
 .errorSeries i {
@@ -956,6 +1050,7 @@
 }
 
 .playerBarBtn {
+  flex: 0 0 32px;
   width: 32px;
   height: 32px;
   border: 0;
@@ -974,12 +1069,77 @@
   color: var(--on-surface);
 }
 
-.playerBarBtn:last-child {
+.playerBarEvidence {
+  flex: 0 0 auto;
   width: auto;
   padding: 0 12px;
   font-size: 11.5px;
   border: 1px solid var(--outline-variant);
   color: var(--on-surface);
+  white-space: nowrap;
+}
+
+.volumeControl {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.volumePopover {
+  position: absolute;
+  z-index: 4;
+  inset-inline-start: 50%;
+  inset-inline-end: auto;
+  bottom: calc(100% - 1px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 44px;
+  height: 148px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 8px 20px color-mix(in srgb, black 24%, transparent);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+
+.volumeControl:hover .volumePopover,
+.volumeControl:focus-within .volumePopover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+.volumeIcon {
+  font-family: "Segoe UI Symbol", var(--font-ui);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.volumeSlider {
+  width: 20px;
+  height: 100px;
+  min-width: 0;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.volumeValue {
+  min-width: 0;
+  color: var(--on-surface-variant);
+  font: 500 11px var(--font-mono);
+  text-align: center;
 }
 
 .playerBarTime {
@@ -1254,13 +1414,19 @@
   }
 
   .metricSummaryPanel .metricRow .metricPlain {
-    grid-column: 1 / -1;
+    grid-column: 1;
+  }
+
+  .metricSummaryPanel .metricRow > :global(.ac-status) {
+    grid-column: 2;
+    justify-self: end;
   }
 }
 
 @container view (max-width: 900px) {
   .familyDataLayout,
   .familyDataLayout[data-family="switching"],
+  .familyDataLayout[data-family="tracking"],
   .familyDataLayout[data-family="flicking"] {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
@@ -1287,10 +1453,9 @@
   }
 }
 
-@container view (max-width: 760px) {
-  .familyDataLayout[data-family="tracking"] {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
+@container chart-card (max-width: 380px) {
+  .distributionBar {
+    grid-template-columns: minmax(88px, 1fr) minmax(56px, 1fr) 28px;
   }
 }
 
@@ -1323,7 +1488,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .evidenceTooltip,
+  .profileTooltip,
   .playerBarBtn,
+  .volumePopover,
   .switchRow,
   .distributionBar,
   .legendChip,
