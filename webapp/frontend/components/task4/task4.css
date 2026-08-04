@@ -70,6 +70,11 @@
   background: var(--surface);
 }
 
+.task4-state-panel {
+  min-height: 88px;
+  padding: 18px 20px;
+}
+
 .task4-rowline {
   display: flex;
   align-items: center;
@@ -370,6 +375,13 @@
   font-size: 12px;
 }
 
+@media (min-width: 840px) and (max-width: 1159px) {
+  .task3-workspace[data-coach-open="true"] .task4-page-head {
+    width: calc(100% - var(--task3-coach-width, 360px));
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 960px) {
   .task4-page {
     padding: 16px 16px 24px;
@@ -402,7 +414,6 @@
     height: 40px;
   }
 
-  .task4-page-actions .ac-button:not([data-size="compact"]),
   .task4-row-actions .ac-button:not([data-size="compact"]) {
     height: 32px;
     padding: 0 12px;

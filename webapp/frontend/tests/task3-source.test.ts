@@ -34,6 +34,35 @@ test("app shell styles encode active navigation and reduced-motion route transit
   assert.match(value, /prefers-reduced-motion: reduce[\s\S]*task3-route-content/);
 });
 
+test("settings toolbar entry closes back to the last non-settings page", async () => {
+  const value = await source("components/task3/AppShell.tsx");
+  assert.match(value, /const SETTINGS_RETURN_KEY = "aiming-cookie\.ui\.settings-return"/);
+  assert.match(value, /window\.sessionStorage\.setItem\(SETTINGS_RETURN_KEY, currentLocation\(\)\)/);
+  assert.match(value, /router\.replace\(settingsReturnPath\(\)\)/);
+  assert.match(value, /settingsActive \? \([\s\S]*aria-label="关闭设置"[\s\S]*onClick=\{closeSettings\}/);
+  assert.match(value, /<Link[\s\S]*aria-label="设置"[\s\S]*onClick=\{rememberSettingsReturn\}/);
+});
+
+test("settings open and close use matching reduced-motion-safe transitions", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  const styles = await source("components/task3/task3.css");
+  const settingsStyles = await source("components/task6/task6.css");
+  assert.match(shell, /useState<SettingsMotion>\("idle"\)/);
+  assert.doesNotMatch(shell, /setSettingsMotion\("opening"\)/);
+  assert.match(shell, /setSettingsMotion\("closing"\)/);
+  assert.match(shell, /onAnimationEnd=\{finishSettingsMotion\}/);
+  assert.match(shell, /data-settings-page=\{settingsActive \|\| undefined\}/);
+  assert.match(shell, /data-settings-motion=\{settingsActive && settingsMotion === "closing" \? settingsMotion : undefined\}/);
+  assert.match(shell, /prefers-reduced-motion: reduce/);
+  assert.match(styles, /data-settings-page="true"[^{]*\{[\s\S]*animation:\s*none/);
+  assert.match(styles, /data-settings-motion="closing"[^{]*\{[\s\S]*task3-settings-close 140ms/);
+  assert.match(settingsStyles, /\.task6-settings-layout[^{]*\{[\s\S]*task6-settings-open 160ms/);
+  assert.match(settingsStyles, /@keyframes task6-settings-open[\s\S]*opacity:\s*0\.96;[\s\S]*translateX\(8px\)/);
+  assert.match(styles, /\.task3-app[^{]*\{[\s\S]*overflow-x:\s*clip/);
+  assert.match(styles, /prefers-reduced-motion: reduce[\s\S]*task3-route-content/);
+  assert.match(settingsStyles, /prefers-reduced-motion: reduce[\s\S]*task6-settings-layout[\s\S]*animation:\s*none/);
+});
+
 test("responsive shell entries fade without animating layout properties", async () => {
   const value = await source("components/task3/task3.css");
   assert.match(value, /\.task3-primary-nav\s*\{[\s\S]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[\s\S]*display 160ms allow-discrete/);
@@ -115,6 +144,21 @@ test("tasks render translated machine codes instead of DTO labels", async () => 
   const value = await source("components/task3/TasksClient.tsx");
   assert.doesNotMatch(value, /\.state_label|\.phase_label/);
   assert.match(value, /presentTask/);
+});
+
+test("the running task gets breathing room while the continuous task panel stays intact", async () => {
+  const client = await source("components/task3/TasksClient.tsx");
+  const styles = await source("components/task3/task3.css");
+  assert.match(client, /<article className="task3-task-item" data-state=\{task\.state\}/);
+  assert.match(styles, /\.task3-task-item\[data-state="running"\][^{]*\{[\s\S]*padding:\s*18px 16px;/);
+  assert.match(styles, /\.task3-stage-stepper[^{]*\{[\s\S]*row-gap:\s*10px;/);
+  assert.match(styles, /\.task3-task-item \+ \.task3-task-item[^{]*\{[\s\S]*border-top:/);
+});
+
+test("task deletion uses the shared danger semantics before and after confirmation", async () => {
+  const value = await source("components/task3/TasksClient.tsx");
+  assert.match(value, /onClick=\{\(\) => setDeleteTarget\(task\)\} size="compact" variant="danger">删除<\/Button>/);
+  assert.match(value, /onClick=\{\(\) => void remove\(\)\} size="compact" variant="danger">删除任务记录<\/Button>/);
 });
 
 test("Task 3 styles consume semantic tokens and contain no raw color literals", async () => {
