@@ -66,6 +66,29 @@ def test_uncalibrated_threshold_finding_is_not_formal_severity():
     ]
 
 
+def test_static_clicking_prescriptions_keep_the_training_direction_without_faction_labels():
+    from kovaak_tracker.advice import advise
+
+    findings = advise({
+        "decel_frac": {"med": 0.8},
+        "reverse_ratio": {"med": 0.3},
+        "submovement_overlap": {"med": 0.2},
+    })
+    reasons = [
+        prescription.reason
+        for finding in findings
+        for prescription in finding.prescriptions
+    ]
+
+    assert all(finding.claim_level == "experimental" for finding in findings)
+    assert all("流体派" not in reason for reason in reasons)
+    assert all("overlapping submovements" not in reason for reason in reasons)
+    assert "练完整的加速→减速，接近目标时果断完成制动" in reasons
+    assert "把修正并入减速过程，避免停住后再二次修正" in reasons
+    assert "尝试让主要移动和收尾修正保持衔接，减少停住后再单独修正" in reasons
+    assert all("可比条件下复测" not in reason for reason in reasons)
+
+
 def test_reference_comparison_does_not_claim_measured_physical_cause():
     """Relative performance gaps must not be narrated as measured body causes."""
     from kovaak_tracker.advice import advise

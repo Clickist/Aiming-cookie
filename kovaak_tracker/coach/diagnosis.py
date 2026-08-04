@@ -185,9 +185,9 @@ def _build_issues(findings):
             else:
                 observation_ref = None
         if f.claim_level == "experimental" or f.severity == "info":
-            priority_reason = f"[{f.claim_level}] 观察项排序第 {rank}"
+            priority_reason = "本次优先观察项"
         else:
-            priority_reason = f"[{f.severity}] 严重度排序第 {rank}"
+            priority_reason = "本次优先处理项"
         issues.append(DiagnosisIssue(
             signal=f.signal,
             severity=f.severity,
