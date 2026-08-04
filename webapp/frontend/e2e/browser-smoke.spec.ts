@@ -13,6 +13,8 @@ import {
   registryBackedAnalysisSession,
 } from "../fixtures/task7-fixtures";
 
+const CUSTOM_PROVIDER_OPTION = "自定义 Provider 填写 URL 和 API key 后自动识别接口";
+
 test.describe("Task 7 browser smoke", () => {
   test("conditional startup routes to onboarding", async ({ page }) => {
     await installApiFixtures(page, apiScenario({
@@ -20,19 +22,115 @@ test.describe("Task 7 browser smoke", () => {
     }));
     await page.goto("/");
     await expect(page).toHaveURL(/\/onboarding$/);
-    await expect(page.getByRole("heading", { name: "连接你自己的 AI Provider" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "连接模型服务" })).toBeVisible();
   });
 
-  test("onboarding explains provider cost, data boundary, skip, and capture opt-in", async ({ page }) => {
+  test("onboarding exposes accessible dropdowns, custom Provider fields, and a skip explanation", async ({ page }) => {
     await installApiFixtures(page, apiScenario({
       providerStatus: { ...READY_PROVIDER_STATUS, configured: false, profile_id: null, status: "unconfigured" },
     }));
     await page.goto("/onboarding");
-    await expect(page.getByText("Aiming Cookie 本身开源免费。", { exact: false })).toBeVisible();
-    await expect(page.getByText("本地视频、Raw Input、文件路径和密钥不会进入 Coach 对话。", { exact: false })).toBeVisible();
-    const skip = page.getByRole("button", { name: "暂不连接，使用本地模式" });
-    await expect(skip).toHaveAttribute("title", /没有任何 Coach 功能/);
-    await expect(page.getByRole("tab", { name: "Provider 目录" })).toBeVisible();
+    const provider = page.getByRole("button", { name: "选择 Provider" });
+    await expect(provider).toHaveAttribute("aria-haspopup", "listbox");
+    await expect(provider).toHaveAttribute("aria-expanded", "false");
+    await provider.click();
+    await expect(provider).toHaveAttribute("aria-expanded", "true");
+    await page.getByRole("option", { name: CUSTOM_PROVIDER_OPTION }).click();
+    await expect(page.getByText("Base URL", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "读取可用模型" })).toHaveCount(0);
+
+    const skip = page.getByRole("button", { name: "暂时不连接" });
+    await skip.hover();
+    await expect(page.getByRole("tooltip")).toBeVisible();
+    await expect(page.getByRole("button", { name: "测试连接" })).toBeDisabled();
+  });
+
+  test("custom Provider remains available when the built-in catalog is unavailable", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({
+      providerStatus: { ...READY_PROVIDER_STATUS, configured: false, profile_id: null, status: "unconfigured" },
+      failures: { "GET /api/providers/catalog": 503 },
+    }));
+    await page.goto("/onboarding");
+
+    const provider = page.getByRole("button", { name: "选择 Provider" });
+    await expect(provider).toBeEnabled();
+    await provider.click();
+    await page.getByRole("option", { name: CUSTOM_PROVIDER_OPTION }).click();
+    await expect(page.getByText("Provider 目录暂时不可用，请稍后重试。", { exact: true })).toBeHidden();
+
+    await page.getByPlaceholder("https://provider.example/v1").fill("https://provider.example/v1");
+    await page.locator('input[type="password"]').fill("custom-secret");
+    const model = page.getByRole("button", { name: "选择 Model" });
+    await expect(model).toBeVisible();
+    await expect(page.getByText("接口协议", { exact: true })).toHaveCount(0);
+    await model.click();
+    await page.getByRole("option", { name: "custom-model-a" }).click();
+    await expect(page.getByRole("button", { name: "测试连接" })).toBeEnabled();
+  });
+
+  test("custom Provider exposes Model ID only when its model list is unavailable", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({
+      providerStatus: { ...READY_PROVIDER_STATUS, configured: false, profile_id: null, status: "unconfigured" },
+      failures: { "POST /api/provider-profiles/custom/models": 503 },
+    }));
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: "选择 Provider" }).click();
+    await page.getByRole("option", { name: CUSTOM_PROVIDER_OPTION }).click();
+
+    await page.getByPlaceholder("https://provider.example/v1").fill("https://provider.example/v1");
+    await page.locator('input[type="password"]').fill("custom-secret");
+
+    await expect(page.getByText("无法自动识别接口协议或读取模型列表，请选择协议后手动填写 Model ID。", { exact: true })).toBeVisible();
+    await expect(page.getByText("接口协议", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "测试连接" })).toBeDisabled();
+    await expect(page.getByText("Model ID", { exact: true })).toBeVisible();
+  });
+
+  test("built-in Provider reveals catalog models after its API key is supplied", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({
+      providerStatus: { ...READY_PROVIDER_STATUS, configured: false, profile_id: null, status: "unconfigured" },
+    }));
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: "选择 Provider" }).click();
+    await page.getByRole("option", { name: "OpenAI API Key / OAuth / 设备码" }).click();
+
+    await expect(page.getByText("Model", { exact: true })).toHaveCount(0);
+    await page.locator('input[type="password"]').fill("builtin-secret");
+    await expect(page.getByText("Model", { exact: true })).toBeVisible();
+  });
+
+  test("Settings keeps custom Provider available when the built-in catalog is unavailable", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({ failures: { "GET /api/providers/catalog": 503 } }));
+    await page.goto("/settings");
+
+    await expect(page.getByRole("heading", { name: "添加 Provider" })).toBeVisible();
+    const providerSelects = page.locator(".task6-provider-form select");
+    await expect(providerSelects).toHaveCount(1);
+    await providerSelects.nth(0).selectOption("custom");
+    await expect(page.getByText("Base URL", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "读取可用模型" })).toHaveCount(0);
+  });
+
+  test("KovaaK scores are optional in onboarding and grouped in Settings without a stage tab", async ({ page }) => {
+    await installApiFixtures(page);
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: "继续" }).click();
+    await expect(page.getByRole("heading", { name: "连接 KovaaK 成绩" })).toBeVisible();
+    await page.getByRole("button", { name: "稍后再说" }).click();
+    await expect(page.getByRole("heading", { name: "训练后自动整理证据" })).toBeVisible();
+
+    await page.goto("/settings");
+    await expect(page.getByText("KovaaK 成绩", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^Control Tracking/ })).toBeVisible();
+    await expect(page.getByRole("tab")).toHaveCount(0);
+  });
+
+  test("KovaaK connection remains manageable when only the score read fails", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({ failures: { "GET /api/kovaak-scores": 503 } }));
+    await page.goto("/settings");
+    await expect(page.getByText("已连接", { exact: true })).toBeVisible();
+    await expect(page.getByText("KovaaK 成绩暂时无法读取，请稍后重试。")).toBeVisible();
+    await expect(page.getByRole("button", { name: "刷新成绩" })).toBeEnabled();
   });
 
   test("desktop Run discovery selects one Run and requires a choice for multiple Runs", async ({ page }) => {
@@ -85,6 +183,31 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByRole("heading", { name: "训练记录" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "分析记录" })).toBeVisible();
     await expect(page.getByText("1 条", { exact: true })).toHaveCount(3);
+  });
+
+  test("History empty states remain framed and responsive", async ({ page }) => {
+    await page.setViewportSize({ width: 899, height: 920 });
+    await installDesktopBridge(page);
+    await installApiFixtures(page, apiScenario({ runs: [], sessions: [] }));
+    await page.goto("/history");
+
+    const statePanels = page.locator(".task4-sec > .ac-state.task4-panel.task4-state-panel");
+    await expect(statePanels).toHaveCount(3);
+    await expect(statePanels.nth(2).getByText("还没有分析记录", { exact: true })).toBeVisible();
+
+    const layout = await statePanels.evaluateAll((panels) => panels.map((panel) => {
+      const element = panel as HTMLElement;
+      const section = element.parentElement as HTMLElement;
+      const style = getComputedStyle(element);
+      return {
+        borderTopWidth: style.borderTopWidth,
+        panelWidth: element.getBoundingClientRect().width,
+        sectionWidth: section.getBoundingClientRect().width,
+      };
+    }));
+    expect(layout.every(({ borderTopWidth }) => borderTopWidth === "1px")).toBe(true);
+    expect(layout.every(({ panelWidth, sectionWidth }) => panelWidth <= sectionWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 
   test("Analysis workspace keeps Diagnosis, Video, and Data in one workspace", async ({ page }) => {
