@@ -4,6 +4,7 @@ import {
   CAPTURE_STATUS,
   EVIDENCE_SEGMENTS,
   RUN_MULTIMODAL,
+  RUN_PENDING_MULTIMODAL,
   analysisSession,
   apiScenario,
   installApiFixtures,
@@ -11,6 +12,31 @@ import {
   partialAnalysisSession,
   UNAVAILABLE_EVIDENCE_SEGMENTS,
 } from "../fixtures/task7-fixtures";
+
+function seekableMp4Analysis() {
+  const base = analysisSession();
+  const result = base.result;
+  if (!result || result.schema_version !== "analysis_result.v2") {
+    throw new Error("seekable MP4 fixture requires AnalysisResultV2");
+  }
+  return analysisSession({
+    input_mode: "video_fallback",
+    result: { ...result, input_mode: "video_fallback" },
+    history: {
+      ...base.history!,
+      input_mode: "video_fallback",
+      source_availability: { ...base.history!.source_availability, mp4: "available" },
+      visual_replay: {
+        kind: "seekable_mp4",
+        available: true,
+        seekable: true,
+        endpoint: "/api/sessions/42/video",
+        artifact_ref: "analysis:42:video",
+        reason: null,
+      },
+    },
+  });
+}
 
 test.describe("Task 7 failure matrix", () => {
   test("product state service failure is not rendered as first-use empty state", async ({ page }) => {
@@ -39,7 +65,7 @@ test.describe("Task 7 failure matrix", () => {
     await installApiFixtures(page, apiScenario({
       capture: { ...CAPTURE_STATUS, raw_input_permission: "denied", runtime_health: "degraded" },
       runs: [{
-        ...RUN_MULTIMODAL,
+        ...RUN_PENDING_MULTIMODAL,
         supported_input_modes: ["video_fallback"],
         evidence_availability: { ...RUN_MULTIMODAL.evidence_availability, raw: "permission_denied" },
         alignment: { status: "failed" },
@@ -47,8 +73,9 @@ test.describe("Task 7 failure matrix", () => {
       }],
     }));
     await page.goto("/analyze");
-    await expect(page.locator(".task3-run-issue")).toContainText("permission_denied、alignment_failed");
-    await expect(page.locator(".task3-mode-card").filter({ hasText: "Input-native" }).locator("input")).toBeDisabled();
+    await expect(page.getByText("权限被拒绝 · 覆盖率 100%", { exact: true })).toBeVisible();
+    await expect(page.getByText("对齐失败", { exact: true })).toBeVisible();
+    await expect(page.getByRole("radio", { name: /^输入原生/ })).toBeDisabled();
   });
 
   for (const [status, copy] of [
@@ -97,33 +124,27 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("video fallback requests managed playback when EvidenceSegment overlays are unavailable", async ({ page }) => {
-    const base = analysisSession();
-    const baseResult = base.result;
-    if (!baseResult || baseResult.schema_version !== "analysis_result.v2") {
-      throw new Error("video fallback fixture requires AnalysisResultV2");
-    }
     await installApiFixtures(page, apiScenario({
-      analysis: analysisSession({
-        input_mode: "video_fallback",
-        result: { ...baseResult, input_mode: "video_fallback" },
-        history: { ...base.history!, input_mode: "video_fallback" },
-      }),
+      analysis: seekableMp4Analysis(),
       failures: { "/api/sessions/42/evidence-segments": 404 },
     }));
     let requestedUrl = "";
-    await page.route("**/api/sessions/42/video", async (route) => {
-      requestedUrl = route.request().url();
-      await route.fallback();
+    let requestedOwner = "";
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname !== "/api/sessions/42/video") return;
+      requestedUrl = request.url();
+      requestedOwner = request.headers()["x-user-id"] ?? "";
     });
 
     await page.goto("/analysis/42");
     await page.getByRole("tab", { name: "视频" }).click();
     await expect.poll(() => requestedUrl).not.toBe("");
     expect(new URL(requestedUrl).pathname).toBe("/api/sessions/42/video");
+    expect(requestedOwner).toBe(process.env.NEXT_PUBLIC_USER_ID ?? "dev");
   });
 
   test("EvidenceSegment failure stays local to the timeline and retry preserves the player", async ({ page }) => {
-    await installApiFixtures(page, apiScenario());
+    await installApiFixtures(page, apiScenario({ analysis: seekableMp4Analysis() }));
     let segmentRequests = 0;
     await page.route("**/api/sessions/42/evidence-segments", async (route) => {
       segmentRequests += 1;
@@ -138,6 +159,7 @@ test.describe("Task 7 failure matrix", () => {
     await page.getByRole("tab", { name: "视频" }).click();
     const player = page.locator("video");
     await expect(player).toBeVisible();
+    await page.getByRole("button", { name: /^证据片段 \d+$/ }).click();
     await expect(page.getByText("证据片段暂时不可用")).toBeVisible();
     await player.evaluate((element) => element.dataset.testPlayer = "retained");
 
@@ -149,7 +171,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("an empty EvidenceSegment response remains an empty timeline state", async ({ page }) => {
-    await installApiFixtures(page, apiScenario());
+    await installApiFixtures(page, apiScenario({ analysis: seekableMp4Analysis() }));
     await page.route("**/api/sessions/42/evidence-segments", async (route) => {
       await route.fulfill({
         status: 200,
@@ -161,13 +183,14 @@ test.describe("Task 7 failure matrix", () => {
     await page.goto("/analysis/42");
     await page.getByRole("tab", { name: "视频" }).click();
     await expect(page.locator("video")).toBeVisible();
+    await page.getByRole("button", { name: /^证据片段 \d+$/ }).click();
     await expect(page.getByText("没有可用证据片段")).toBeVisible();
     await expect(page.getByText("证据片段暂时不可用")).toHaveCount(0);
   });
 
   test("Desktop managed video preserves the handler route segments", async ({ page }) => {
     await installDesktopBridge(page);
-    await installApiFixtures(page, apiScenario({ analysis: analysisSession() }));
+    await installApiFixtures(page, apiScenario({ analysis: seekableMp4Analysis() }));
     let requestedUrl = "";
     await page.route("http://aiming-cookie-media.localhost/**", async (route) => {
       requestedUrl = route.request().url();
