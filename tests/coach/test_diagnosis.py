@@ -187,7 +187,7 @@ def test_candidate_knowledge_refs_only_annotate_an_existing_analyzer_fact():
         metric_refs=["metric:post_change_error"],
     )
 
-    assert refs.registry_version == "2026-07-29.v4"
+    assert refs.registry_version == "2026-08-06.v6"
     assert 1 <= len(refs.entry_refs) <= 3
     assert all(ref.startswith("knowledge:") for ref in refs.entry_refs)
     assert not hasattr(refs, "severity")
@@ -212,7 +212,7 @@ def test_static_registry_backed_issue_carries_exact_observation_and_knowledge_re
 
     issue = diagnosis.issues[0]
     assert issue.observation_ref == "metric.terminal_control"
-    assert issue.knowledge_registry_version == "2026-07-29.v4"
+    assert issue.knowledge_registry_version == "2026-08-06.v6"
     assert issue.knowledge_entry_refs == [
         "knowledge:static.flicking-terminal-control@2"
     ]
@@ -249,6 +249,7 @@ def test_static_clicking_copy_separates_observation_boundary_and_training_direct
     assert {issue.claim_level for issue in issues.values()} == {"experimental"}
     assert all(issue.priority_reason == "本次优先观察项" for issue in issues.values())
 
+    assert issues["reverse_ratio high"].plain_language_meaning == "移动收尾时出现了较多反向修正"
     reverse = issues["reverse_ratio high"].root_causes
     assert reverse[0].text == "减速段反复修正"
     assert reverse[1].text == "证据只能说明反向修正偏多"

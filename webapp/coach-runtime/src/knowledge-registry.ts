@@ -21,6 +21,8 @@ const REGISTRY_FILES = new Map([
   ["2026-07-22.v2", join(REGISTRY_ROOT, "registry.v2.json")],
   ["2026-07-28.v3", join(REGISTRY_ROOT, "registry.v3.json")],
   ["2026-07-29.v4", join(REGISTRY_ROOT, "registry.v4.json")],
+  ["2026-08-06.v5", join(REGISTRY_ROOT, "registry.v5.json")],
+  ["2026-08-06.v6", join(REGISTRY_ROOT, "registry.v6.json")],
 ]);
 const MAX_REGISTRY_BYTES = 512 * 1024;
 const MAX_ENTRIES = 512;
@@ -213,6 +215,8 @@ export type KnowledgeRegistry = {
   entries: KnowledgeEntry[];
 };
 export type KnowledgeQuery = {
+  registry_version?: string;
+  entry_ref?: string;
   topic?: string;
   issue_signal?: string;
   metric_refs?: string[];
@@ -782,7 +786,7 @@ export function validateKnowledgeRegistry(raw: unknown): KnowledgeRegistry {
 }
 
 const cached = new Map<string, KnowledgeRegistry>();
-export function loadKnowledgeRegistry(registryVersion = "2026-07-29.v4"): KnowledgeRegistry {
+export function loadKnowledgeRegistry(registryVersion = "2026-08-06.v6"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
   const registryFile = REGISTRY_FILES.get(registryVersion);
@@ -820,11 +824,22 @@ function clean(value: unknown): string | undefined {
 }
 
 export function queryKnowledgeRegistry(registry: KnowledgeRegistry, query: KnowledgeQuery): KnowledgeEntry[] {
+  const requestedRegistryVersion = clean(query.registry_version);
+  if (requestedRegistryVersion && requestedRegistryVersion !== registry.registry_version) {
+    throw new KnowledgeRegistryError("registry version does not match loaded registry");
+  }
+  const reference = clean(query.entry_ref);
+  if (reference) {
+    const entry = registry.entries.find((item) => entryRef(item) === reference);
+    if (!entry) throw new KnowledgeRegistryError("unknown knowledge entry");
+    return [structuredClone(entry)];
+  }
   const topic = clean(query.topic);
   const signal = clean(query.issue_signal);
   const metrics = new Set((query.metric_refs ?? []).filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()));
   const supportedUse = clean(query.supported_use);
   if (!topic && !signal && metrics.size === 0 && !supportedUse) throw new KnowledgeRegistryError("at least one query condition is required");
+  if (!topic && !signal && metrics.size === 0) return [];
   const canonical = signal ? registry.signal_aliases[signal] ?? signal : undefined;
   return registry.entries
     .filter((entry) => entry.status === "active")
