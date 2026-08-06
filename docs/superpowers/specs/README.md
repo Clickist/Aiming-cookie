@@ -4,6 +4,9 @@
 
 ## Active
 
+- [`2026-08-06-coach-goal-feedback-learning-loop-design.md`](2026-08-06-coach-goal-feedback-learning-loop-design.md)：在现有 TeachingSession 与 Training Plan 中保存用户目标、区分证据来源、记录训练感受并版本化调整计划；Viscose 内容只作为有来源的社区经验，Analysis 数据与显化保持不变。
+- [`2026-08-06-coach-problem-hypothesis-diagnosis-design.md`](2026-08-06-coach-problem-hypothesis-diagnosis-design.md)：Coach 将单个或多个 grounded 观察编译为一个功能性主问题，并通过证据强度、反例、候选原因、区分问题、单变量实验和复测改口完成“望闻问切”；Analysis/Data 页面不承载原因假设。
+
 - [`2026-07-30-kovaak-connected-account-and-coach-lookup-design.md`](2026-07-30-kovaak-connected-account-and-coach-lookup-design.md): 本地已连接 KovaaK 账号与 Coach turn-scoped 临时 Profile 查询的身份、存储、工具和隐私合同。
 
 - [`2026-07-13-kovaak-run-trace-lifecycle-design.md`](2026-07-13-kovaak-run-trace-lifecycle-design.md)：KovaaK source pairing、Raw Input buffer、trace attach、reconciliation 与稳定引用合同。

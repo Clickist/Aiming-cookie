@@ -4,7 +4,10 @@
 
 ## Active
 
-- [`2026-08-04-raw-input-1000hz-normalization-v1.md`](2026-08-04-raw-input-1000hz-normalization-v1.md): 点点已确认不修改鼠标硬件 polling rate，而是在 native bounded queue 前把 canonical 运动固定为 1 ms / 最高 1000 Hz；同毫秒 `dx/dy` 分别累加，按钮边沿独立保留，`ACRI v2` 与旧 v1 只读兼容。Task 1 实现与自动化验证已完成，真实 Tauri/KovaaK 1K/4K/8K field Gate 尚未关闭，因此 plan 保持 active。
+- [`2026-08-06-coach-goal-feedback-learning-loop-v1.md`](2026-08-06-coach-goal-feedback-learning-loop-v1.md)：Task 1 已获授权；复用现有 TeachingSession、Training Plan、confirmation、Registry 与鼠标数据，补用户目标、证据类型、训练反馈、计划调整和 Viscose 社区经验，同时冻结 Analysis/History/current-training DTO。
+- [`2026-08-06-coach-problem-hypothesis-diagnosis-v1.md`](2026-08-06-coach-problem-hypothesis-diagnosis-v1.md)：Tasks 1-5 的代码与自动化验证已完成；复用现有 Registry、context、TeachingSession、Training Plan、确认与 agent run，补齐多信号问题编译、可解释问诊、设备差分和首次 Analysis 幂等软启动。当前仅等待真实 Provider 连续问诊 field Gate，当前端点返回 `HTTP 502`，因此 plan 保持 active。
+
+- [`2026-08-05-coach-streaming-latency-web-search-v1.md`](2026-08-05-coach-streaming-latency-web-search-v1.md)：点点已于 2026-08-05 明确批准 Task 1，使用 sidecar -> Python NDJSON、原子 `partial_text` revision 和无敏感信息的分段时序修复普通 Coach 首字等待并定位耗时。Task 2 TeachingSession 渐进文本与 Task 3 DeepSeek Web Search 未授权。
 
 - [`2026-08-01-web-mock-review-cli-gates-v1.md`](2026-08-01-web-mock-review-cli-gates-v1.md): 点点已确认 Web Mock 审核 -> Web 真实联调 -> Tauri 命令式验收的施工顺序；当前只授权 Mock 审核底座，复用真实 `/api` DTO，不伪装 FastAPI、Provider、worker 或 Tauri runtime。
 
@@ -45,6 +48,7 @@ Frozen plan 不得执行，也不得仅通过口头指令跳过其冻结条件�
 
 ## Completed
 
+- [`../../archive/completed/plans/2026-08-04-raw-input-1000hz-normalization-v1.md`](../../archive/completed/plans/2026-08-04-raw-input-1000hz-normalization-v1.md)：Task 1、自动化验证和 Raw Input 实测均已完成；后续数据采集核心通路未改动，不再作为当前发布阻塞项。
 - [`../../archive/completed/plans/2026-08-03-release-blocker-closeout-v1.md`](../../archive/completed/plans/2026-08-03-release-blocker-closeout-v1.md)：Tauri command 注册、Coach primary thread 原子创建、Settings/KovaaK 前端收尾和不依赖 Mock 的真实 Web Gate 已完成；真实 KovaaK、高 polling-rate、Tracking `<=130s` 与分发 Gate 继续保持 No-Go。
 - [`../../archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md`](../../archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md)：四波全工作区审计确认的 AN/UX/Coach/Capture/Security/Extensibility/Tooling/Governance finding 已按最小 Task 修复并完成根会话 aggregate 验证；release 与真实 field Gate 保持 No-Go。
 - [`../../archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md`](../../archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md)：本地已连接 KovaaK 账号、turn-scoped 临时 Profile 查询、去身份成绩摘要和 latest available snapshot 修复已完成；不包含 OAuth、排行榜、后台刷新或第二套成绩系统。
