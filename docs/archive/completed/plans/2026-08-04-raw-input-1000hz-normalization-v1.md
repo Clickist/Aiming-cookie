@@ -2,7 +2,7 @@
 
 > **For executor:** REQUIRED SUB-SKILL: use `executing-plans` task-by-task and preserve the existing dirty worktree.
 
-> **Status:** Task 1 implementation and automated verification completed on 2026-08-04; real Tauri/KovaaK 1K/4K/8K field verification remains open, so this plan stays active.
+> **Status:** Completed. Task 1 implementation and automated verification completed on 2026-08-04; 点点于 2026-08-07 确认 Raw Input 已完成实测，且后续数据采集核心通路未改动。
 
 **Goal:** Keep mouse hardware untouched while bounding Aiming Cookie canonical Raw Input motion to 1000 Hz without losing per-millisecond X/Y net displacement or mouse-button edges.
 

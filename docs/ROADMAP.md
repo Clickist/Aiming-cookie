@@ -12,7 +12,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 → bounded evidence-backed Coach → local history, plan, and retest
 ```
 
-现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；当前发布仍受真实 Tauri product-path、Raw Input 1000 Hz canonical 归一化及真实高 polling-rate 输入验证、Tracking 时延和发布工程约束。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 仍只能作为 Preview / Experimental。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺；v1 不把未具备条件的 AMD/Intel 物理验证设为发布阻塞。
+现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测，后续数据采集核心通路未改动。当前发布仍受真实 Tauri product-path、Tracking 时延和发布工程约束。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 仍只能作为 Preview / Experimental。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺；v1 不把未具备条件的 AMD/Intel 物理验证设为发布阻塞。
 
 完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留 Provider-first onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化，不包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
 
@@ -20,7 +20,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 
 ### P0 — 完整 Coach launch 闭环
 
-1. 保持已合入的自动采集、Run finalization、pending Run 与 Run-owned evidence 生命周期；完成 Raw Input 1000 Hz canonical 归一化，并以真实 product-path、4K/8K 输入下的 1000 Hz 输出正确性/负载和当前声明支持的 NVIDIA 路径决定发布放行；AMD/Intel 保持未验证且不承诺支持；
+1. 保持已合入且已实测的自动采集、Run finalization、pending Run、Run-owned evidence 生命周期与 Raw Input 1000 Hz canonical 归一化；继续以真实 product-path 和当前声明支持的 NVIDIA 路径决定发布放行；AMD/Intel 保持未验证且不承诺支持；
 2. 冻结并实现 canonical time、ScenarioProfile、私有 signal/evidence artifact、完整动作级 processed event table 与 bounded Coach evidence broker；broker 必须支持固定的精确读取、排序、筛选、聚合、共同出现、时序和反例比较，不能只暴露代表片段；
 3. 建立 input-native / multimodal / video-fallback 的 versioned AnalysisResult 和 evidence provenance，并让 MP4 只在本地确定性预处理为数值证据；
 4. 分别完成 static clicking、dynamic clicking、continuous tracking 与 target switching 的专项 analyzer、质量 Gate、知识/处方、画像、计划和复测；movement aiming 无移动遥测时只保留 outcome-only；
@@ -53,11 +53,11 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 
 Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows developer/runtime compatibility、Steam 多库 KovaaK bounded discovery 与 launch-token descendant isolation 已完成。自 2026-07-16 起，只有以下四类问题可中断正式前端施工：启动或构建阻断、核心路径不可用、数据损坏、安全泄漏。2026-07-17 新确认的统一自动采集属于“核心路径变更”，因此 Capture Coordinator / Run Finalizer 是明确例外，不代表重新开放无边界后端审计。
 
-其他已知缺口统一记录为 deferred，不再通过新增后端审计扩大正式前端前置范围。runtime restart/fatal-state、真实 4K/8K 设备输入下的 1000 Hz canonical 输出与负载、Raw Input 前台约束和更完整的跨进程真实数据 E2E 仍是发布或对应用户路径启用前 Gate，但不阻止 Frontend Task 2 建立 token、theme 与 primitives。
+其他已知缺口统一记录为 deferred，不再通过新增后端审计扩大正式前端前置范围。runtime restart/fatal-state、Raw Input 前台约束和更完整的跨进程真实数据 E2E 仍是发布或对应用户路径启用前 Gate，但不阻止 Frontend Task 2 建立 token、theme 与 primitives。Raw Input 1000 Hz canonical 输出与负载已完成实测，不再列为当前缺口。
 
 ### P1 — 预览与发布工程
 
-OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成。发布工程继续按以下顺序推进：先完成真实 KovaaK 三模式、Raw Input 1000 Hz canonical 归一化及 4K/8K 输入验证、当前 NVIDIA 支持路径与 Tracking 时延 Gate；再生成真实产品截图与演示 MP4，设计和实现 Landing；最后完成 installer、版本、校验值、真实下载链接与发布验证。Worker/stale-job 恢复、Coach 对话继续/停止/失败轮次隔离均按已完成能力回归保护；OAuth/device-code 和 AMD/Intel 支持延后，不阻塞当前发布范围。Browser 通过不替代 Tauri 或 Windows release Gate。
+OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成，Raw Input 1000 Hz canonical 归一化及高 polling-rate 实测也已完成。发布工程继续按以下顺序推进：先完成真实 Tauri product-path、当前 NVIDIA 支持路径与 Tracking 时延 Gate；再生成真实产品截图与演示 MP4，设计和实现 Landing；最后完成 installer、版本、校验值、真实下载链接与发布验证。Worker/stale-job 恢复、Coach 对话继续/停止/失败轮次隔离均按已完成能力回归保护；OAuth/device-code 和 AMD/Intel 支持延后，不阻塞当前发布范围。Browser 通过不替代 Tauri 或 Windows release Gate。
 
 - frontend static/bundle 策略；
 - Python runtime distribution；
