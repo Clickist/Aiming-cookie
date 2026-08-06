@@ -34,10 +34,19 @@ _RETEST_INTENTS = {"none", "immediate_matched", "delayed_matched", "near_transfe
 _COMPARABILITY = {"unresolved", "comparable", "not_comparable", "not_requested"}
 _REVISION_DECISIONS = {None, "retain", "lower", "reject"}
 _PAUSE_REASONS = {None, "user_refused", "discomfort", "awaiting_confirmation"}
+_EVIDENCE_STRENGTHS = {"limited", "supported", "repeated"}
+_COUNTEREVIDENCE_STATUSES = {"not_observed", "observed"}
+_EVIDENCE_KINDS = {"measured", "self_reported", "observed", "inferred", "external"}
+_PRACTICE_INTENTS = {"warm_up", "practice", "benchmark", "main_game_transfer", "unspecified"}
 _REF_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}:[A-Za-z0-9._:@-]{1,159}$")
 _SESSION_REF_RE = re.compile(r"^teaching_session:[a-f0-9]{32}$")
 _RUN_REF_RE = re.compile(r"^agent_run:[A-Za-z0-9_-]{1,64}$")
 _ITEM_REF_RE = re.compile(r"^plan-item:[A-Za-z0-9._:@-]{1,159}$")
+_PROBLEM_ID_RE = re.compile(r"^[a-z][a-z0-9._-]{0,95}$")
+_CANDIDATE_LANGUAGE = re.compile(
+    r"(?:可能|也许|候选|假设|待验证|先验证|值得先验证|may|might|possible|likely)",
+    re.IGNORECASE,
+)
 _FORBIDDEN_TEXT = re.compile(
     r"(?:[A-Za-z]:[\\/]|\\\\|file:|https?://|"
     r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[:=])",
@@ -74,6 +83,96 @@ def _contract_text(value: object, field: str) -> str | None:
     if text is not None and _RAW_REFERENCE.search(text):
         raise ValueError(f"{field} must not contain raw references")
     return text
+
+
+def _diagnostic_text(value: object, field: str) -> str | None:
+    text = _contract_text(value, field)
+    if text is not None and len(text) > 240:
+        raise ValueError(f"{field} is invalid")
+    return text
+
+
+def _problem_id(value: object) -> str | None:
+    if value is None:
+        return None
+    problem_id = _text(value, "contract.problem_id", maximum=96)
+    if _PROBLEM_ID_RE.fullmatch(problem_id) is None:
+        raise ValueError("contract.problem_id is invalid")
+    return problem_id
+
+
+def _diagnostic_list(value: object, field: str, *, maximum: int) -> list[str]:
+    if not isinstance(value, list) or len(value) > maximum:
+        raise ValueError(f"{field} is invalid")
+    result: list[str] = []
+    for item in value:
+        text = _diagnostic_text(item, field)
+        if text is None:
+            raise ValueError(f"{field} is invalid")
+        result.append(text)
+    return result
+
+
+def _typed_evidence_list(value: object, field: str, *, maximum: int) -> list[Any]:
+    if not isinstance(value, list) or len(value) > maximum:
+        raise ValueError(f"{field} is invalid")
+    result: list[Any] = []
+    for item in value:
+        if isinstance(item, str):
+            text = _diagnostic_text(item, field)
+            if text is None:
+                raise ValueError(f"{field} is invalid")
+            result.append(text)
+            continue
+        if not isinstance(item, Mapping) or set(item) != {"kind", "text", "refs"}:
+            raise ValueError(f"{field} is invalid")
+        kind = item.get("kind")
+        text = _diagnostic_text(item.get("text"), f"{field}.text")
+        refs = _source_refs(item.get("refs"), f"{field}.refs")
+        if kind not in _EVIDENCE_KINDS or text is None:
+            raise ValueError(f"{field} is invalid")
+        result.append({"kind": kind, "text": text, "refs": refs})
+    return result
+
+
+def _learner_context(value: object) -> dict[str, Any]:
+    if value is None:
+        return {
+            "player_problem": None,
+            "desired_outcome": None,
+            "practice_intent": "unspecified",
+            "constraints": [],
+        }
+    if not isinstance(value, Mapping) or set(value) != {
+        "player_problem", "desired_outcome", "practice_intent", "constraints",
+    }:
+        raise ValueError("learner_context is invalid")
+    if value.get("practice_intent") not in _PRACTICE_INTENTS:
+        raise ValueError("learner_context.practice_intent is invalid")
+    constraints = value.get("constraints")
+    if not isinstance(constraints, list) or len(constraints) > 6:
+        raise ValueError("learner_context.constraints is invalid")
+    return {
+        "player_problem": _optional_text(value.get("player_problem"), "learner_context.player_problem", maximum=480),
+        "desired_outcome": _optional_text(value.get("desired_outcome"), "learner_context.desired_outcome", maximum=480),
+        "practice_intent": value.get("practice_intent"),
+        "constraints": [_text(item, "learner_context.constraints", maximum=240) for item in constraints],
+    }
+
+
+def _discriminator(value: object) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != {"kind", "prompt"}:
+        raise ValueError("contract.discriminator is invalid")
+    kind = value.get("kind")
+    prompt = _diagnostic_text(value.get("prompt"), "contract.discriminator.prompt")
+    if kind not in {"question", "experiment"} or prompt is None:
+        raise ValueError("contract.discriminator is invalid")
+    question_count = len(re.findall(r"[?？]", prompt))
+    if (kind == "question" and question_count != 1) or (kind == "experiment" and question_count != 0):
+        raise ValueError("contract.discriminator is invalid")
+    return {"kind": kind, "prompt": prompt}
 
 
 def _source_refs(value: object, field: str) -> list[str]:
@@ -151,7 +250,12 @@ def validate_state(value: object) -> dict[str, Any]:
         "retest_comparability", "revision_decision", "pause_reason", "next_recommendation",
     }
     legacy_required = required - {"next_recommendation"}
-    if set(value) not in {frozenset(required), frozenset(legacy_required)} or value.get("schema_version") != _SESSION_SCHEMA:
+    extended_required = required | {"learner_context"}
+    extended_legacy_required = legacy_required | {"learner_context"}
+    if set(value) not in {
+        frozenset(required), frozenset(legacy_required),
+        frozenset(extended_required), frozenset(extended_legacy_required),
+    } or value.get("schema_version") != _SESSION_SCHEMA:
         raise ValueError("TeachingSession state is invalid")
     phase = value.get("phase")
     if phase not in _PHASES:
@@ -169,7 +273,7 @@ def validate_state(value: object) -> dict[str, Any]:
         raise ValueError("TeachingSession state is invalid")
     if value.get("retest_comparability") != "comparable" and value.get("revision_decision") is not None:
         raise ValueError("TeachingSession state is invalid")
-    return {
+    normalized = {
         "schema_version": _SESSION_SCHEMA,
         "phase": phase,
         "observation": {
@@ -188,19 +292,28 @@ def validate_state(value: object) -> dict[str, Any]:
         "pause_reason": value.get("pause_reason"),
         "next_recommendation": _next_recommendation(value.get("next_recommendation")),
     }
+    if "learner_context" in value:
+        normalized["learner_context"] = _learner_context(value.get("learner_context"))
+    return normalized
 
 
 def validate_contract(value: object, *, session_ref: str, session_version: int) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("TeachingTurnContract is invalid")
-    required = {
+    legacy_required = {
         "schema_version", "session_ref", "session_version", "phase", "observation",
         "primary_candidate", "alternatives", "cue", "changed_variable", "active_item_ref", "question_kind",
         "question", "allowed_command", "confirmation_intent", "retest", "ratio_sources",
         "approved_dose", "prepared_plan_ref", "prepared_item", "next_recommendation",
     }
-    if set(value) != required or value.get("schema_version") != _CONTRACT_SCHEMA:
+    diagnostic_fields = {
+        "problem_id", "problem_label", "evidence_strength", "supporting_evidence",
+        "counterevidence_status", "counterevidence", "discriminator", "soft_start",
+    }
+    required = legacy_required | diagnostic_fields
+    if frozenset(value) not in {frozenset(legacy_required), frozenset(required)} or value.get("schema_version") != _CONTRACT_SCHEMA:
         raise ValueError("TeachingTurnContract is invalid")
+    has_diagnostic_fields = frozenset(value) == frozenset(required)
     _session_ref(session_ref)
     if value.get("session_ref") != session_ref or value.get("session_version") != session_version:
         raise ValueError("TeachingTurnContract is invalid")
@@ -219,6 +332,34 @@ def validate_contract(value: object, *, session_ref: str, session_version: int) 
     if (expected_question_kind != "none") != (question is not None):
         raise ValueError("TeachingTurnContract is invalid")
     if question is not None and len(re.findall(r"[?？]", question)) != 1:
+        raise ValueError("TeachingTurnContract is invalid")
+    problem_id = _problem_id(value.get("problem_id")) if has_diagnostic_fields else None
+    problem_label = _diagnostic_text(value.get("problem_label"), "contract.problem_label") if has_diagnostic_fields else None
+    if (problem_id is None) != (problem_label is None):
+        raise ValueError("TeachingTurnContract is invalid")
+    evidence_strength = value.get("evidence_strength") if has_diagnostic_fields else "limited"
+    supporting_evidence = (
+        _typed_evidence_list(value.get("supporting_evidence"), "contract.supporting_evidence", maximum=4)
+        if has_diagnostic_fields else []
+    )
+    counterevidence_status = value.get("counterevidence_status") if has_diagnostic_fields else "not_observed"
+    counterevidence = (
+        _diagnostic_list(value.get("counterevidence"), "contract.counterevidence", maximum=2)
+        if has_diagnostic_fields else []
+    )
+    discriminator = _discriminator(value.get("discriminator")) if has_diagnostic_fields else None
+    soft_start = value.get("soft_start") if has_diagnostic_fields else False
+    if (
+        evidence_strength not in _EVIDENCE_STRENGTHS
+        or (problem_id is not None and not supporting_evidence)
+        or counterevidence_status not in _COUNTEREVIDENCE_STATUSES
+        or (counterevidence_status == "observed") != bool(counterevidence)
+        or not isinstance(soft_start, bool)
+    ):
+        raise ValueError("TeachingTurnContract is invalid")
+    if discriminator is not None and discriminator["kind"] == "question" and (
+        phase != "intake" or question != discriminator["prompt"]
+    ):
         raise ValueError("TeachingTurnContract is invalid")
     command = value.get("allowed_command")
     if command is not None and command not in _COMMANDS:
@@ -249,6 +390,10 @@ def validate_contract(value: object, *, session_ref: str, session_version: int) 
         else "retest" if phase == "await_retest_confirmation" else "none"
     )
     if value.get("confirmation_intent") != expected_confirmation:
+        raise ValueError("TeachingTurnContract is invalid")
+    if soft_start and (
+        phase != "intake" or command is not None or expected_confirmation != "none"
+    ):
         raise ValueError("TeachingTurnContract is invalid")
     alternatives = value.get("alternatives")
     retest = value.get("retest")
@@ -289,6 +434,11 @@ def validate_contract(value: object, *, session_ref: str, session_version: int) 
         if alternative is None:
             raise ValueError("TeachingTurnContract is invalid")
         normalized_alternatives.append(alternative)
+    primary_candidate = _contract_text(value.get("primary_candidate"), "contract.primary_candidate")
+    if problem_id is not None and primary_candidate is not None and _CANDIDATE_LANGUAGE.search(primary_candidate) is None:
+        raise ValueError("TeachingTurnContract is invalid")
+    if problem_id is not None and any(_CANDIDATE_LANGUAGE.search(item) is None for item in normalized_alternatives):
+        raise ValueError("TeachingTurnContract is invalid")
     normalized_ratios: list[dict[str, Any]] = []
     for ratio in ratios:
         if not isinstance(ratio, Mapping) or set(ratio) != {"label", "value"}:
@@ -305,8 +455,14 @@ def validate_contract(value: object, *, session_ref: str, session_version: int) 
         "session_ref": session_ref,
         "session_version": session_version,
         "phase": phase,
+        "problem_id": problem_id,
+        "problem_label": problem_label,
+        "evidence_strength": evidence_strength,
+        "supporting_evidence": supporting_evidence,
+        "counterevidence_status": counterevidence_status,
+        "counterevidence": counterevidence,
         "observation": _contract_text(value.get("observation"), "contract.observation"),
-        "primary_candidate": _contract_text(value.get("primary_candidate"), "contract.primary_candidate"),
+        "primary_candidate": primary_candidate,
         "alternatives": normalized_alternatives,
         "cue": _contract_text(value.get("cue"), "contract.cue"),
         "changed_variable": _contract_text(value.get("changed_variable"), "contract.changed_variable"),
@@ -326,6 +482,8 @@ def validate_contract(value: object, *, session_ref: str, session_version: int) 
         "ratio_sources": normalized_ratios,
         "approved_dose": _contract_text(value.get("approved_dose"), "contract.approved_dose"),
         "next_recommendation": next_recommendation,
+        "discriminator": discriminator,
+        "soft_start": soft_start,
     }
 
 
@@ -345,6 +503,7 @@ def _initial_state() -> dict[str, Any]:
         "revision_decision": None,
         "pause_reason": None,
         "next_recommendation": None,
+        "learner_context": _learner_context(None),
     }
 
 

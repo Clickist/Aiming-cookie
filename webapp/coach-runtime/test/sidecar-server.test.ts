@@ -10,6 +10,7 @@ function request(
   method: string,
   path: string,
   body?: string,
+  headers?: http.OutgoingHttpHeaders,
 ): Promise<{ statusCode: number; json: unknown }> {
   return new Promise((resolve, reject) => {
     const address = server.address();
@@ -27,8 +28,9 @@ function request(
           ? {
               "Content-Type": "application/json",
               "Content-Length": Buffer.byteLength(body),
+              ...headers,
             }
-          : undefined,
+          : headers,
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -69,6 +71,209 @@ test("POST /v0/turn with invalid JSON returns 400", async () => {
     const res = await request(server, "POST", "/v0/turn", "{not-json");
     assert.equal(res.statusCode, 400);
     assert.equal((res.json as { ok: boolean }).ok, false);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("POST /v1/turn sends a partial NDJSON frame before the final frame when explicitly accepted", async () => {
+  let releaseFinal!: () => void;
+  const finalAllowed = new Promise<void>((resolve) => { releaseFinal = resolve; });
+  const server = createSidecarServer({
+    turnRunner: async (_request, options) => {
+      await options?.onPartial?.({
+        revision: 1,
+        text: "先显示这段。",
+        elapsed_ms: 18,
+        provider_rounds: 1,
+      });
+      await finalAllowed;
+      await options?.onComplete?.({
+        total_ms: 30,
+        first_provider_event_ms: 5,
+        first_text_delta_ms: 10,
+        first_safe_text_ms: 18,
+        provider_rounds: 1,
+        provider_ms: 25,
+        provider_round_ms: [25],
+        tool_ms: 0,
+        repair_ms: 0,
+      });
+      return {
+        schema_version: "coach_runtime_turn.v1",
+        run_id: "agent_run:stream-test",
+        ok: true,
+        reply: "先显示这段。最后完成。",
+        partial_reply: null,
+        error: null,
+        notes: [],
+        tool_events: [],
+      };
+    },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    let firstFrame!: (value: Record<string, unknown>) => void;
+    const first = new Promise<Record<string, unknown>>((resolve) => { firstFrame = resolve; });
+    const frames: Array<Record<string, unknown>> = [];
+    let buffer = "";
+    const completed = new Promise<void>((resolve, reject) => {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: address.port,
+        method: "POST",
+        path: "/v1/turn",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
+      }, (res) => {
+        assert.match(String(res.headers["content-type"]), /application\/x-ndjson/);
+        res.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString("utf8");
+          for (;;) {
+            const newline = buffer.indexOf("\n");
+            if (newline < 0) break;
+            const frame = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>;
+            buffer = buffer.slice(newline + 1);
+            frames.push(frame);
+            if (frames.length === 1) firstFrame(frame);
+          }
+        });
+        res.on("end", resolve);
+      });
+      req.on("error", reject);
+      req.end("{}");
+    });
+
+    const partial = await first;
+    assert.equal(partial.type, "partial");
+    assert.equal(partial.text, "先显示这段。");
+    assert.equal(frames.length, 1);
+    releaseFinal();
+    await completed;
+    assert.deepEqual(frames.map((frame) => frame.type), ["partial", "final"]);
+    assert.equal((frames[1].response as { ok: boolean }).ok, true);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("POST /v1/turn without NDJSON acceptance keeps the JSON response contract", async () => {
+  const response = {
+    schema_version: "coach_runtime_turn.v1" as const,
+    run_id: "agent_run:json-test",
+    ok: true,
+    reply: "完整 JSON 回复。",
+    partial_reply: null,
+    error: null,
+    notes: [],
+    tool_events: [],
+  };
+  const server = createSidecarServer({
+    turnRunner: async (_request, options) => {
+      assert.equal(options, undefined);
+      return response;
+    },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "POST", "/v1/turn", "{}");
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, response);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("POST /v1/turn reports missing custom model capabilities as a client error", async () => {
+  const response = {
+    schema_version: "coach_runtime_turn.v1" as const,
+    run_id: null,
+    ok: false,
+    reply: null,
+    partial_reply: null,
+    error: {
+      category: "provider_profile",
+      code: "unknown_model_capabilities",
+      message: "Provider 配置不可用，请在设置中检查后重试。",
+      retryable: false,
+    },
+    notes: [],
+    tool_events: [],
+  };
+  const server = createSidecarServer({ turnRunner: async () => response });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "POST", "/v1/turn", "{}");
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(res.json, response);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("POST /v1/turn fail-closes an invalid partial after a valid NDJSON frame", async () => {
+  const server = createSidecarServer({
+    turnRunner: async (_request, options) => {
+      await options?.onPartial?.({
+        revision: 1,
+        text: "有效片段。",
+        elapsed_ms: 10,
+        provider_rounds: 1,
+      });
+      await options?.onPartial?.({
+        revision: 3,
+        text: "乱序片段。",
+        elapsed_ms: 11,
+        provider_rounds: 1,
+      });
+      throw new Error("the invalid partial must reject before this runner error");
+    },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const frames = await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: address.port,
+        method: "POST",
+        path: "/v1/turn",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
+      }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          try {
+            resolve(Buffer.concat(chunks).toString("utf8").trim().split("\n")
+              .map((line) => JSON.parse(line) as Record<string, unknown>));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      req.on("error", reject);
+      req.end("{}");
+    });
+
+    assert.deepEqual(frames.map((frame) => frame.type), ["partial", "final"]);
+    assert.equal((frames[1].response as { ok: boolean }).ok, false);
+    assert.equal(((frames[1].response as { error: { code: string } }).error).code, "unhandled");
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
@@ -126,6 +331,8 @@ test("POST /v1/profile/status never returns the runtime api key", async () => {
           base_url: "https://example.invalid/v1",
           api_key: secret,
           model_id: "sidecar-model",
+          context_window: 32768,
+          max_tokens: 4096,
         },
       }),
     );
@@ -203,6 +410,8 @@ test("v0 Python provider catalog and connection-test aliases remain compatible",
           base_url: `http://127.0.0.1:${providerAddress.port}/v1`,
           model_id: "qwen2.5",
           api_key: secret,
+          context_window: 32768,
+          max_tokens: 4096,
         },
       }),
     );
@@ -225,6 +434,8 @@ test("v0 Python provider catalog and connection-test aliases remain compatible",
           base_url: `http://127.0.0.1:${providerAddress.port}/fail`,
           model_id: "failing-model",
           api_key: failureSecret,
+          context_window: 32768,
+          max_tokens: 4096,
         },
       }),
     );

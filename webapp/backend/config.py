@@ -331,12 +331,10 @@ LEASE_TTL_SECONDS = int(os.environ.get("LEASE_TTL_SECONDS", "300"))
 HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("HEARTBEAT_INTERVAL_SECONDS", "30"))
 DEFAULT_MAX_ATTEMPTS = int(os.environ.get("DEFAULT_MAX_ATTEMPTS", "3"))
 
-# Pi coach runtime (subprocess); Task 4 wires routes to COACH_RUNTIME.
+# Product Coach has one runtime and one policy stack. Provider/runtime failures
+# stay retryable; they never switch to the legacy Python coach.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-COACH_RUNTIME = os.environ.get("COACH_RUNTIME", "pi").strip().lower()
-if COACH_RUNTIME not in ("pi", "python"):
-    COACH_RUNTIME = "pi"
-COACH_RUNTIME_FALLBACK_PYTHON = os.environ.get("COACH_RUNTIME_FALLBACK_PYTHON", "1").strip()
+COACH_RUNTIME = "pi"
 PI_SOURCE_DIR = Path(
     os.environ.get("PI_SOURCE_DIR", str(_REPO_ROOT / "third_party" / "pi"))
 ).resolve()

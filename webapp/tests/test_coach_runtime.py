@@ -4,7 +4,7 @@ import importlib
 import json
 import os
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -29,6 +29,8 @@ _RUNTIME_PROFILE = {
     "kind": "custom_openai_compatible",
     "base_url": "https://provider.test/v1",
     "model_id": "test-model",
+    "context_window": 32768,
+    "max_tokens": 4096,
     "api_key": "runtime-secret-key",
 }
 
@@ -168,6 +170,12 @@ def _teaching_turn() -> dict:
         "session_ref": "teaching_session:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "session_version": 3,
         "phase": "await_teach_back",
+        "problem_id": "tracking_correction_burden",
+        "problem_label": "continuous tracking correction burden",
+        "evidence_strength": "supported",
+        "supporting_evidence": ["repeated corrections during deceleration"],
+        "counterevidence_status": "not_observed",
+        "counterevidence": [],
         "observation": "减速段有重复修正。",
         "primary_candidate": "reading",
         "alternatives": [],
@@ -189,6 +197,11 @@ def _teaching_turn() -> dict:
         },
         "ratio_sources": [],
         "approved_dose": None,
+        "discriminator": {
+            "kind": "question",
+            "prompt": "Does this happen more often when the target decelerates?",
+        },
+        "soft_start": False,
     }
 
 
@@ -261,6 +274,8 @@ def test_build_turn_request_accepts_complete_prepared_training_item():
         {**_teaching_turn(), "cue": {"api_key": "runtime-secret-key"}},
         {**_teaching_turn(), "cue": {"text": r"C:\\Users\\point\\private.txt"}},
         {**_teaching_turn(), "cue": {"text": "x" * 4_001}},
+        {**_teaching_turn(), "supporting_evidence": [{"raw_trace": "mouse deltas"}]},
+        {**_teaching_turn(), "discriminator": {"kind": "question", "prompt": "https://unsafe.invalid"}},
     ],
 )
 def test_build_turn_request_rejects_unsafe_teaching_turn(teaching_turn):
@@ -738,8 +753,7 @@ def test_runtime_engine_preserves_tool_events_and_skips_python_fallback(monkeypa
             return "unsafe fallback", []
 
     monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
-    monkeypatch.setattr(config, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
-    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi(), python=Python())
+    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi())
     result = engine.complete_with_notes(coach_engine.CoachTurn(
         prior_messages=[],
         user_message="执行并解释",
@@ -771,8 +785,7 @@ def test_runtime_engine_uncertain_turn_without_events_skips_python_fallback(monk
             return "unsafe fallback", []
 
     monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
-    monkeypatch.setattr(config, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
-    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi(), python=Python())
+    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi())
     result = engine.complete_with_notes(coach_engine.CoachTurn(
         prior_messages=[],
         user_message="解释知识",
@@ -783,7 +796,7 @@ def test_runtime_engine_uncertain_turn_without_events_skips_python_fallback(monk
     assert python_calls == 0
 
 
-def test_sync_pi_runtime_safe_python_fallback_reports_success(monkeypatch):
+def test_sync_pi_runtime_failure_never_uses_python_fallback(monkeypatch):
     from webapp.backend import coach_engine
 
     error = CoachRuntimeError("pi unavailable")
@@ -794,20 +807,20 @@ def test_sync_pi_runtime_safe_python_fallback_reports_success(monkeypatch):
 
     class Python:
         def complete_with_notes(self, turn):
-            return "fallback reply", ["python note"]
+            raise AssertionError("product Coach must not use the legacy Python coach")
 
     monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
-    monkeypatch.setattr(config, "COACH_RUNTIME_FALLBACK_PYTHON", "1")
-    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi(), python=Python())
+    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi())
     result = engine.complete_with_notes(coach_engine.CoachTurn(
         prior_messages=[],
-        user_message="safe fallback",
+        user_message="provider failure",
     ))
 
-    assert result.reply == "fallback reply"
-    assert result.status == "succeeded"
-    assert result.error is None
-    assert "python note" in result.notes
+    assert result.reply is None
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error["retryable"] is True
+    assert not any("回退" in note for note in result.notes)
 
 
 def test_run_pi_coach_turn_http_success_skips_subprocess():
@@ -957,7 +970,7 @@ def test_diagnosis_to_analysis_summary_invalid_returns_none():
 
 
 def test_config_paths_exist():
-    assert config.COACH_RUNTIME in ("pi", "python")
+    assert config.COACH_RUNTIME == "pi"
     assert config.PI_SOURCE_DIR.is_dir()
     assert config.COACH_RUNTIME_RUN_TURN.is_file()
     assert "run-turn" in config.COACH_RUNTIME_RUN_TURN.name
@@ -1035,3 +1048,301 @@ def test_v4_knowledge_event_uses_the_existing_bounded_event_shape():
     }
 
     assert coach_runtime._validate_knowledge_event(event) == event
+
+
+def test_v6_knowledge_event_accepts_only_the_projected_canonical_sections_and_sources():
+    from kovaak_tracker.coach.knowledge_registry import (
+        claim_ref,
+        entry_ref,
+        load_registry,
+    )
+
+    registry = load_registry(registry_version="2026-08-06.v6")
+    entry = next(
+        item for item in registry["entries"]
+        if item["entry_id"] == "community.aim-efficiency-framework"
+    )
+    sections = [entry["definition"], entry["scope"], entry["expected_direction"]]
+    sections.extend(entry["mechanisms"])
+    source_refs = list(dict.fromkeys(
+        source_ref
+        for section in sections
+        for source_ref in section["source_refs"]
+    ))[:8]
+    sources = {source["source_ref"]: source for source in registry["sources"]}
+    claim_rank = {
+        "experimental": 0,
+        "community_practice": 1,
+        "community_consensus": 2,
+        "research_supported": 3,
+        "deterministic_rule": 4,
+    }
+    all_sections = [entry["definition"], entry["scope"], entry["expected_direction"]]
+    all_sections.extend(entry["mechanisms"])
+    event = {
+        "type": "knowledge",
+        "registry_version": registry["registry_version"],
+        "topic": None,
+        "issue_signal": None,
+        "entry_refs": [entry_ref(entry)],
+        "entry_versions": [entry["entry_version"]],
+        "source_refs": source_refs,
+        "source_levels": [sources[ref]["source_level"] for ref in source_refs],
+        "max_claim_levels": [max(
+            (section["claim_level"] for section in all_sections),
+            key=claim_rank.__getitem__,
+        )],
+        "section_refs": [section["section_ref"] for section in sections],
+        "claim_refs": [claim_ref(section) for section in sections],
+        "claim_levels": [section["claim_level"] for section in sections],
+    }
+
+    assert coach_runtime._validate_knowledge_event(event) == event
+    poisoned = {**event, "source_refs": ["source:invented"]}
+    with pytest.raises(CoachRuntimeError, match="knowledge"):
+        coach_runtime._validate_knowledge_event(poisoned)
+
+
+def _stream_timing() -> dict[str, object]:
+    return {
+        "total_ms": 38,
+        "first_provider_event_ms": 4,
+        "first_text_delta_ms": 9,
+        "first_safe_text_ms": 12,
+        "provider_rounds": 1,
+        "provider_ms": 30,
+        "provider_round_ms": [30],
+        "tool_ms": 0,
+        "repair_ms": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("first_provider_event_ms", 39),
+        ("first_text_delta_ms", 39),
+        ("first_safe_text_ms", 39),
+        ("first_text_delta_ms", 3),
+        ("first_safe_text_ms", 8),
+    ],
+    ids=[
+        "provider-after-total",
+        "text-after-total",
+        "safe-after-total",
+        "text-before-provider",
+        "safe-before-text",
+    ],
+)
+def test_stream_timing_rejects_impossible_first_event_order(field, value):
+    timing = _stream_timing()
+    timing[field] = value
+
+    with pytest.raises(CoachRuntimeError, match="timing") as exc_info:
+        coach_runtime._validate_stream_timing(timing)
+
+    assert exc_info.value.error_code == "invalid_sidecar_response"
+    assert exc_info.value.side_effects_possible is True
+
+
+def _ndjson_client(monkeypatch, body: bytes, captured: dict[str, str]) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["accept"] = request.headers.get("accept", "")
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/x-ndjson"},
+            content=body,
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        return real_async_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(coach_runtime.httpx, "AsyncClient", client_factory)
+
+
+@pytest.mark.asyncio
+async def test_async_ndjson_sends_accept_delivers_partial_before_final_and_keeps_timing(monkeypatch):
+    captured: dict[str, str] = {}
+    body = b"\n".join([
+        json.dumps({
+            "schema_version": "coach_runtime_stream.v1",
+            "type": "partial",
+            "revision": 1,
+            "text": "safe partial",
+            "elapsed_ms": 12,
+            "provider_rounds": 1,
+        }).encode(),
+        json.dumps({
+            "schema_version": "coach_runtime_stream.v1",
+            "type": "final",
+            "response": _ok_response("final reply"),
+            "timing": _stream_timing(),
+        }).encode(),
+    ])
+    _ndjson_client(monkeypatch, body, captured)
+    observed: list[tuple[str, int]] = []
+
+    async def on_partial(text: str, metadata: dict[str, int]) -> None:
+        observed.append((text, metadata["revision"]))
+
+    result = await coach_runtime.run_pi_coach_turn_async(
+        user_id="runtime-user",
+        profile=_RUNTIME_PROFILE,
+        messages=[{"role": "user", "content": "hello"}],
+        analysis_summary=None,
+        on_partial=on_partial,
+    )
+
+    assert captured["accept"] == "application/x-ndjson"
+    assert observed == [("safe partial", 1)]
+    assert result.reply == "final reply"
+    assert result.timing is not None
+    for key, value in _stream_timing().items():
+        assert result.timing[key] == value
+    for key in ("local_prepare_ms", "sidecar_transport_ms", "client_total_ms"):
+        assert isinstance(result.timing[key], int)
+        assert result.timing[key] >= 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "line",
+    [
+        b"{",
+        b"x" * (256_001),
+    ],
+    ids=["malformed", "oversize"],
+)
+async def test_async_ndjson_any_nonempty_invalid_line_fails_closed_without_subprocess(monkeypatch, line):
+    captured: dict[str, str] = {}
+    _ndjson_client(monkeypatch, line, captured)
+
+    with patch(
+        "webapp.backend.coach_runtime._run_turn_via_subprocess_async",
+        new_callable=AsyncMock,
+    ) as fallback:
+        with pytest.raises(CoachRuntimeError) as exc_info:
+            await coach_runtime.run_pi_coach_turn_async(
+                user_id="runtime-user",
+                profile=_RUNTIME_PROFILE,
+                messages=[{"role": "user", "content": "hello"}],
+                analysis_summary=None,
+            )
+
+    assert exc_info.value.side_effects_possible is True
+    assert captured["accept"] == "application/x-ndjson"
+    fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_ndjson_partial_then_eof_preserves_partial_and_does_not_fallback(monkeypatch):
+    captured: dict[str, str] = {}
+    partial = json.dumps({
+        "schema_version": "coach_runtime_stream.v1",
+        "type": "partial",
+        "revision": 1,
+        "text": "safe partial",
+        "elapsed_ms": 12,
+        "provider_rounds": 1,
+    }).encode()
+    _ndjson_client(monkeypatch, partial, captured)
+
+    with patch(
+        "webapp.backend.coach_runtime._run_turn_via_subprocess_async",
+        new_callable=AsyncMock,
+    ) as fallback:
+        with pytest.raises(CoachRuntimeError, match="final") as exc_info:
+            await coach_runtime.run_pi_coach_turn_async(
+                user_id="runtime-user",
+                profile=_RUNTIME_PROFILE,
+                messages=[{"role": "user", "content": "hello"}],
+                analysis_summary=None,
+            )
+
+    assert exc_info.value.side_effects_possible is True
+    assert exc_info.value.partial_reply == "safe partial"
+    fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_ndjson_partial_then_transport_error_preserves_partial_and_does_not_fallback(monkeypatch):
+    partial = json.dumps({
+        "schema_version": "coach_runtime_stream.v1",
+        "type": "partial",
+        "revision": 1,
+        "text": "safe partial",
+        "elapsed_ms": 12,
+        "provider_rounds": 1,
+    }).encode()
+
+    class InterruptedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield partial + b"\n"
+            raise httpx.ReadError("connection lost")
+
+        async def aclose(self) -> None:
+            return None
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/x-ndjson"},
+            stream=InterruptedStream(),
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        coach_runtime.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: real_async_client(*args, transport=transport, **kwargs),
+    )
+
+    with patch(
+        "webapp.backend.coach_runtime._run_turn_via_subprocess_async",
+        new_callable=AsyncMock,
+    ) as fallback:
+        with pytest.raises(CoachRuntimeError, match="sidecar") as exc_info:
+            await coach_runtime.run_pi_coach_turn_async(
+                user_id="runtime-user",
+                profile=_RUNTIME_PROFILE,
+                messages=[{"role": "user", "content": "hello"}],
+                analysis_summary=None,
+            )
+
+    assert exc_info.value.side_effects_possible is True
+    assert exc_info.value.partial_reply == "safe partial"
+    fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_ndjson_rejects_frame_after_final(monkeypatch):
+    captured: dict[str, str] = {}
+    body = b"\n".join([
+        json.dumps({
+            "schema_version": "coach_runtime_stream.v1",
+            "type": "final",
+            "response": _ok_response("final reply"),
+            "timing": _stream_timing(),
+        }).encode(),
+        json.dumps({
+            "schema_version": "coach_runtime_stream.v1",
+            "type": "partial",
+            "revision": 1,
+            "text": "unsafe after final",
+            "elapsed_ms": 20,
+            "provider_rounds": 1,
+        }).encode(),
+    ])
+    _ndjson_client(monkeypatch, body, captured)
+
+    with pytest.raises(CoachRuntimeError, match="terminal") as exc_info:
+        await coach_runtime._post_turn_to_sidecar_async(
+            {"schema_version": "coach_runtime_turn.v1"},
+            timeout_s=5,
+        )
+
+    assert exc_info.value.side_effects_possible is True

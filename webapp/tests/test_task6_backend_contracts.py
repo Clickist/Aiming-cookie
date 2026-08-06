@@ -78,6 +78,129 @@ async def _seed_done_analysis(owner_id: str, *, issue: bool = False) -> int:
     return session_id
 
 
+@pytest.mark.asyncio
+async def test_running_agent_run_exposes_atomic_cumulative_partial(monkeypatch):
+    owner_id = "streaming-partial-owner"
+    first_written = asyncio.Event()
+    release = asyncio.Event()
+    callbacks = []
+
+    async def execute(**kwargs):
+        callbacks.append(kwargs["on_partial"])
+        await kwargs["on_partial"](
+            "第一段。",
+            {"revision": 1, "elapsed_ms": 12, "provider_rounds": 1},
+        )
+        first_written.set()
+        await release.wait()
+        await kwargs["on_partial"](
+            "第一段。第二段。",
+            {"revision": 2, "elapsed_ms": 25, "provider_rounds": 1},
+        )
+        return {
+            "status": "succeeded",
+            "reply": "第一段。第二段。",
+            "notes": [],
+            "tool_events": [],
+            "timing": {"total_ms": 30, "provider_rounds": 1},
+            "error": None,
+        }
+
+    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
+    run = await coach_agent_runs.create_run(owner_id, "解释这次问题", context_refs=None)
+    await asyncio.wait_for(first_written.wait(), timeout=2)
+
+    running = await coach_agent_runs.get_run(owner_id, run["run_ref"])
+    assert running["status"] == "running"
+    assert running["partial_text"] == "第一段。"
+    text_events = [
+        event for event in running["events"]
+        if event["code"] == "text_revision"
+    ]
+    assert len(text_events) == 1
+    assert text_events[0]["payload"]["mode"] == "replace"
+
+    release.set()
+    await coach_agent_runs._tasks[run["run_ref"]]
+    finished = await coach_agent_runs.get_run(owner_id, run["run_ref"])
+    assert finished["status"] == "succeeded"
+    assert finished["partial_text"] == "第一段。第二段。"
+    assert [
+        event["sequence"] for event in finished["events"]
+    ] == sorted(event["sequence"] for event in finished["events"])
+    latency_events = [
+        event for event in finished["events"]
+        if event["code"] == "latency_trace"
+    ]
+    assert len(latency_events) == 1
+    assert latency_events[0]["payload"]["total_ms"] == 30
+    assert latency_events[0]["payload"]["persistence_ms"] >= 0
+
+    await callbacks[0](
+        "第一段。第二段。迟到片段。",
+        {"revision": 3, "elapsed_ms": 40, "provider_rounds": 1},
+    )
+    unchanged = await coach_agent_runs.get_run(owner_id, run["run_ref"])
+    assert unchanged["partial_text"] == "第一段。第二段。"
+    assert len([
+        event for event in unchanged["events"]
+        if event["code"] == "text_revision"
+    ]) == 2
+
+
+@pytest.mark.asyncio
+async def test_stopped_agent_run_keeps_last_partial_and_rejects_late_revision(monkeypatch):
+    owner_id = "streaming-stop-owner"
+    first_written = asyncio.Event()
+    provider_stopped = asyncio.Event()
+    callbacks = []
+
+    async def execute(**kwargs):
+        callbacks.append(kwargs["on_partial"])
+        await kwargs["on_partial"](
+            "停止前片段。",
+            {"revision": 1, "elapsed_ms": 12, "provider_rounds": 1},
+        )
+        first_written.set()
+        await provider_stopped.wait()
+        await kwargs["on_partial"](
+            "停止前片段。停止后片段。",
+            {"revision": 2, "elapsed_ms": 25, "provider_rounds": 1},
+        )
+        return {
+            "status": "stopped",
+            "reply": None,
+            "notes": [],
+            "tool_events": [],
+            "error": None,
+        }
+
+    async def stop_provider(_run_ref):
+        provider_stopped.set()
+        return True
+
+    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
+    monkeypatch.setattr(coach_agent_runs.coach_runtime, "stop_pi_coach_turn", stop_provider)
+    run = await coach_agent_runs.create_run(owner_id, "生成后停止", context_refs=None)
+    await asyncio.wait_for(first_written.wait(), timeout=2)
+
+    stopped = await coach_agent_runs.stop_run(owner_id, run["run_ref"])
+    assert stopped["status"] == "stopped"
+    assert stopped["partial_text"] == "停止前片段。"
+    assert len([
+        event for event in stopped["events"]
+        if event["code"] == "text_revision"
+    ]) == 1
+
+    await callbacks[0](
+        "停止前片段。更晚的片段。",
+        {"revision": 3, "elapsed_ms": 40, "provider_rounds": 1},
+    )
+    unchanged = await coach_agent_runs.get_run(owner_id, run["run_ref"])
+    assert unchanged["status"] == "stopped"
+    assert unchanged["partial_text"] == "停止前片段。"
+
+
 async def _wait_for_run(
     client: AsyncClient,
     run_ref: str,
@@ -88,6 +211,10 @@ async def _wait_for_run(
         assert response.status_code == 200, response.text
         body = response.json()
         if body["status"] in expected:
+            task = coach_agent_runs._tasks.get(run_ref)
+            if task is not None:
+                with suppress(asyncio.CancelledError):
+                    await asyncio.shield(task)
             return body
         await asyncio.sleep(0.01)
     raise AssertionError(f"agent run {run_ref} did not reach {sorted(expected)}")
@@ -379,6 +506,61 @@ async def test_agent_run_stop_waits_for_inflight_message_write_before_cancelling
         assert stopped.json()["partial_text"] is None
         assert not append_cancelled
         assert (await client.get(f"/api/coach/agent-runs/{run_ref}")).json()["status"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_stop_racing_assistant_write_has_one_terminal_winner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner_id = "assistant-write-race-owner"
+    assistant_write_started = asyncio.Event()
+    release_write = asyncio.Event()
+    original_append = coach_store.append_message
+
+    async def delayed_append(thread_id: int, role: str, content: str, **kwargs) -> int:
+        if role == "assistant":
+            assistant_write_started.set()
+            await release_write.wait()
+        return await original_append(thread_id, role, content, **kwargs)
+
+    async def complete_immediately(**_kwargs):
+        return {
+            "status": "succeeded",
+            "reply": "Complete assistant reply.",
+            "tool_events": [],
+        }
+
+    monkeypatch.setattr(coach_store, "append_message", delayed_append)
+    monkeypatch.setattr(coach_agent_runs, "execute_turn", complete_immediately)
+    headers = {"X-User-Id": owner_id}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=headers,
+    ) as client:
+        created = await client.post("/api/coach/agent-runs", json={
+            "schema_version": "coach_agent_run_request.v1",
+            "content": "finish while stop races with the assistant write",
+            "context_refs": [],
+        })
+        assert created.status_code == 202, created.text
+        run_ref = created.json()["run_ref"]
+        await asyncio.wait_for(assistant_write_started.wait(), timeout=1)
+
+        stop_request = asyncio.create_task(
+            client.post(f"/api/coach/agent-runs/{run_ref}/stop")
+        )
+        await asyncio.sleep(0.02)
+        release_write.set()
+
+        stopped = await asyncio.wait_for(stop_request, timeout=1)
+        assert stopped.status_code == 200, stopped.text
+        assert stopped.json()["status"] == "succeeded"
+        final = (await client.get(f"/api/coach/agent-runs/{run_ref}")).json()
+        assert final["status"] == "succeeded"
+        thread = await coach_store.get_or_create_primary_thread(owner_id)
+        messages = await coach_store.load_messages(thread["id"])
+        assert [message["content"] for message in messages if message["role"] == "assistant"] == [
+            "Complete assistant reply."
+        ]
 
 
 @pytest.mark.asyncio

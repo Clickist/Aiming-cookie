@@ -18,8 +18,8 @@ export function buildCoachModel(config: CoachRuntimeModelConfig) {
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 8192,
+    contextWindow: config.context_window,
+    maxTokens: config.max_tokens,
   };
 }
 

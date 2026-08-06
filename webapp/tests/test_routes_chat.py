@@ -16,9 +16,9 @@ from webapp.backend.contracts import (
 )
 
 import webapp.backend.config as config_mod
-import webapp.backend.coach_engine as coach_engine_mod
+import webapp.backend.coach_service as coach_service_mod
+import webapp.backend.health as health_mod
 import webapp.backend.routes as routes_mod
-import kovaak_tracker.coach.agent as agent_mod
 
 
 # ---------------------------------------------------------------------------
@@ -105,11 +105,51 @@ async def _seed_done_session_v1(user_id: str = "u1") -> int:
     return sid
 
 
+async def _seed_done_session_without_result_schema(user_id: str = "u1") -> int:
+    """Historical done rows can contain an object without an analysis schema."""
+    sid = await queue.enqueue(user_id, "/v", "/c")
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (json.dumps({"schema_version": None}), sid),
+    )
+    await conn.commit()
+    return sid
+
+
 def _patch_chat_ok(monkeypatch, fake_fn):
-    """统一 patch:chat_with_coach 用 fake,_load_backend_or_none 返回非 None。"""
-    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "python")
-    monkeypatch.setattr(agent_mod, "chat_with_coach", fake_fn)
-    monkeypatch.setattr(coach_engine_mod, "load_backend_or_none", lambda: object())
+    """Patch the single Coach runtime while preserving the old assertions."""
+    from kovaak_tracker.coach.agent import ChatMessage
+    from webapp.backend.coach_context import diagnostic_context_to_coach_diagnosis
+    from webapp.backend.coach_engine import EngineCompleteResult
+
+    runtime_profile = {
+        "profile_id": 1,
+        "provider_id": "test-provider",
+        "provider_name": "Test Provider",
+        "kind": "custom_openai_compatible",
+        "base_url": "https://provider.test/v1",
+        "model_id": "test-model",
+        "context_window": 32768,
+        "max_tokens": 4096,
+        "credential": {"type": "api_key", "key": "test-secret"},
+    }
+
+    async def fake_profile(_user_id: str):
+        return dict(runtime_profile)
+
+    async def fake_complete(turn):
+        diagnosis = diagnostic_context_to_coach_diagnosis(turn.diagnostic_context)
+        messages = [
+            ChatMessage(role=message["role"], content=message["content"])
+            for message in turn.prior_messages
+        ]
+        messages.append(ChatMessage(role="user", content=turn.user_message))
+        reply = fake_fn(diagnosis, messages, object())
+        return EngineCompleteResult(reply=reply, notes=[])
+
+    monkeypatch.setattr(coach_service_mod.provider_store, "get_default_runtime_profile", fake_profile)
+    monkeypatch.setattr(coach_service_mod, "complete_turn_async", fake_complete)
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +259,39 @@ async def test_chat_accepts_v1_result_via_contract_adapter(monkeypatch):
     assert resp.status_code == 200, resp.text
     assert resp.json()["reply"] == "v1 ok"
     assert captured["diagnosis_profile"] == "decel_jitter"
+
+
+@pytest.mark.asyncio
+async def test_chat_rejects_done_session_without_supported_result_schema(monkeypatch):
+    """A malformed historical result must not escape as a Coach 500."""
+    sid = await _seed_done_session_without_result_schema()
+    called = False
+
+    def fake_chat_with_coach(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return "must not run"
+
+    _patch_chat_ok(monkeypatch, fake_chat_with_coach)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.post(
+            f"/api/sessions/{sid}/chat",
+            json={"message": "explain this session"},
+        )
+
+    assert response.status_code == 409
+    assert "诊断结果" in response.json()["detail"]
+    assert not called
+
+    from webapp.backend import coach_store
+
+    thread = await coach_store.get_or_create_primary_thread("u1")
+    refs = await coach_store.list_analysis_refs(int(thread["id"]))
+    assert not any(ref["analysis_session_id"] == sid for ref in refs)
 
 
 @pytest.mark.asyncio
@@ -334,3 +407,198 @@ async def test_session_chat_writes_to_primary_thread(monkeypatch):
     )
     row = await cur.fetchone()
     assert int(row["c"]) == 0
+
+
+def _agent_run_payload() -> dict:
+    return {
+        "schema_version": "coach_agent_run.v1",
+        "run_ref": "agent_run:soft-start",
+        "parent_run_ref": None,
+        "attempt": 1,
+        "status": "queued",
+        "phase": "queued",
+        "partial_text": None,
+        "error": None,
+        "contexts": [],
+        "events": [],
+        "created_at": "2026-08-06 00:00:00",
+        "started_at": None,
+        "finished_at": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_analysis_soft_start_accepts_only_ready_owned_done_analysis(monkeypatch):
+    sid = await _seed_done_session()
+    calls: list[tuple[str, int]] = []
+
+    async def provider_ready(_owner_id: str):
+        return None
+
+    async def create_analysis_soft_start(owner_id: str, *, analysis_session_id: int):
+        calls.append((owner_id, analysis_session_id))
+        return _agent_run_payload()
+
+    monkeypatch.setattr(routes_mod, "soft_start_provider_error", provider_ready)
+    monkeypatch.setattr(
+        routes_mod.coach_agent_runs,
+        "create_analysis_soft_start",
+        create_analysis_soft_start,
+        raising=False,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.post(
+            "/api/coach/analysis-soft-start",
+            json={
+                "schema_version": "coach_analysis_soft_start_request.v1",
+                "analysis_session_id": sid,
+            },
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["run_ref"] == "agent_run:soft-start"
+    assert calls == [("u1", sid)]
+
+
+@pytest.mark.asyncio
+async def test_analysis_soft_start_fails_closed_before_starting_agent(monkeypatch):
+    pending = await queue.enqueue("u1", "/v", "/c")
+    calls = 0
+
+    async def create_analysis_soft_start(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _agent_run_payload()
+
+    monkeypatch.setattr(
+        routes_mod.coach_agent_runs,
+        "create_analysis_soft_start",
+        create_analysis_soft_start,
+        raising=False,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.post(
+            "/api/coach/analysis-soft-start",
+            json={
+                "schema_version": "coach_analysis_soft_start_request.v1",
+                "analysis_session_id": pending,
+            },
+        )
+
+    assert response.status_code == 409
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_analysis_soft_start_rejects_unready_provider_without_starting_agent(monkeypatch):
+    sid = await _seed_done_session()
+    calls = 0
+
+    async def provider_unavailable(_owner_id: str):
+        return "provider_unconfigured"
+
+    async def create_analysis_soft_start(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _agent_run_payload()
+
+    monkeypatch.setattr(routes_mod, "soft_start_provider_error", provider_unavailable)
+    monkeypatch.setattr(
+        routes_mod.coach_agent_runs,
+        "create_analysis_soft_start",
+        create_analysis_soft_start,
+        raising=False,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.post(
+            "/api/coach/analysis-soft-start",
+            json={
+                "schema_version": "coach_analysis_soft_start_request.v1",
+                "analysis_session_id": sid,
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "provider_unconfigured"
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_analysis_soft_start_returns_existing_run_before_provider_gate(monkeypatch):
+    sid = await _seed_done_session()
+    provider_calls = 0
+    create_calls = 0
+
+    async def existing(_owner_id: str, *, analysis_session_id: int):
+        assert analysis_session_id == sid
+        return _agent_run_payload()
+
+    async def provider_unavailable(_owner_id: str):
+        nonlocal provider_calls
+        provider_calls += 1
+        return "provider_unconfigured"
+
+    async def create_analysis_soft_start(*_args, **_kwargs):
+        nonlocal create_calls
+        create_calls += 1
+        raise AssertionError("existing soft start must be returned")
+
+    monkeypatch.setattr(
+        routes_mod.coach_agent_runs, "get_analysis_soft_start", existing, raising=False,
+    )
+    monkeypatch.setattr(routes_mod, "soft_start_provider_error", provider_unavailable)
+    monkeypatch.setattr(
+        routes_mod.coach_agent_runs,
+        "create_analysis_soft_start",
+        create_analysis_soft_start,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        response = await client.post(
+            "/api/coach/analysis-soft-start",
+            json={
+                "schema_version": "coach_analysis_soft_start_request.v1",
+                "analysis_session_id": sid,
+            },
+        )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["run_ref"] == "agent_run:soft-start"
+    assert provider_calls == 0
+    assert create_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_soft_start_provider_gate_requires_ready_runtime_and_profile(monkeypatch):
+    monkeypatch.setattr(config_mod, "COACH_RUNTIME", "pi")
+
+    async def runtime_down():
+        return {"ready_for_fast_path": False}
+
+    monkeypatch.setattr(health_mod, "build_coach_runtime_status", runtime_down)
+    assert await coach_service_mod.soft_start_provider_error("u1") == "coach_runtime_unavailable"
+
+    async def runtime_ready():
+        return {"ready_for_fast_path": True}
+
+    async def no_default_profile(_owner_id: str):
+        return None
+
+    monkeypatch.setattr(health_mod, "build_coach_runtime_status", runtime_ready)
+    monkeypatch.setattr(
+        coach_service_mod.provider_store,
+        "get_default_runtime_profile",
+        no_default_profile,
+    )
+    assert await coach_service_mod.soft_start_provider_error("u1") == "provider_unconfigured"

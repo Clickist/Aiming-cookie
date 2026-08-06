@@ -168,7 +168,10 @@ async def test_custom_provider_model_discovery_is_temporary_and_never_echoes_key
 
     async def fetch_models(protocol: str, base_url: str, api_key: str):
         calls.append((protocol, base_url, api_key))
-        return ["provider-model-a", "provider-model-b"]
+        return [
+            {"model_id": "provider-model-a", "context_window": 32768, "max_tokens": 4096},
+            {"model_id": "provider-model-b", "context_window": None, "max_tokens": None},
+        ]
 
     monkeypatch.setattr(coach_runtime, "fetch_custom_provider_models", fetch_models)
     secret = "custom-model-list-secret"
@@ -183,7 +186,10 @@ async def test_custom_provider_model_discovery_is_temporary_and_never_echoes_key
         )
 
     assert response.status_code == 200
-    assert response.json() == {"models": ["provider-model-a", "provider-model-b"]}
+    assert response.json() == {"models": [
+        {"model_id": "provider-model-a", "context_window": 32768, "max_tokens": 4096},
+        {"model_id": "provider-model-b", "context_window": None, "max_tokens": None},
+    ]}
     assert calls == [("openai-completions", "https://provider.example/v1", secret)]
     assert secret not in response.text
 
@@ -218,7 +224,11 @@ async def test_anthropic_model_discovery_uses_anthropic_endpoint_and_headers(mon
 
         @staticmethod
         def json():
-            return {"data": [{"id": "claude-custom"}]}
+            return {"data": [{
+                "id": "claude-custom",
+                "context_window": 200000,
+                "max_tokens": 8192,
+            }]}
 
     class FakeClient:
         async def __aenter__(self):
@@ -240,7 +250,11 @@ async def test_anthropic_model_discovery_uses_anthropic_endpoint_and_headers(mon
         secret,
     )
 
-    assert models == ["claude-custom"]
+    assert models == [{
+        "model_id": "claude-custom",
+        "context_window": 200000,
+        "max_tokens": 8192,
+    }]
     assert calls == [(
         "https://provider.example/v1/models",
         {

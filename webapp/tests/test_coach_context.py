@@ -1643,6 +1643,76 @@ def test_analyzer_issue_reuses_one_exact_registry_prescription_without_new_schem
     }]
 
 
+def test_unverified_scenario_omits_exact_scenario_names_and_family_teaching():
+    result = _registry_backed_result(
+        signal="reverse_ratio high",
+        metric_ref="metric:reverse_ratio",
+        analysis_version="flicking_fair_summary.v1",
+        analysis_type="flicking",
+        input_mode="video_fallback",
+    )
+    result["input_snapshot"]["scenario_resolution"] = None
+    result["deterministic"]["diagnosis"]["issues"][0]["prescriptions"] = [{
+        "scenario": "pasu",
+        "reason": "Keep the correction inside the deceleration phase.",
+        "cue": "Keep the correction inside the deceleration phase.",
+        "source_level": "community_consensus",
+    }]
+
+    context = project_coach_diagnostic_context(result)
+    issue = context["diagnosis"]["issues"][0]
+
+    assert context["scenario"]["scenario_profile_ref"] is None
+    assert issue["prescriptions"] == [{
+        "reason": "Keep the correction inside the deceleration phase.",
+        "cue": "Keep the correction inside the deceleration phase.",
+        "source_level": "community_consensus",
+    }]
+    assert "root_causes" not in issue
+
+
+def test_target_relative_limitation_rephrases_stale_reverse_ratio_copy():
+    result = _registry_backed_result(
+        signal="reverse_ratio high",
+        metric_ref="metric:reverse_ratio",
+        analysis_version="native_flicking.v1",
+        analysis_type="flicking",
+        input_mode="input_native",
+        scenario_profile_ref="scenario:static.fixture@1",
+    )
+    issue = result["deterministic"]["diagnosis"]["issues"][0]
+    issue["plain_language_meaning"] = "接近落点后出现了较多反向修正"
+    issue["limitations"] = ["target_relative_facts_unavailable"]
+
+    context = project_coach_diagnostic_context(result)
+
+    assert context["diagnosis"]["issues"][0]["plain_language_meaning"] == "移动收尾时出现了较多反向修正"
+
+
+def test_scenario_level_target_relative_limitation_rephrases_stale_reverse_ratio_copy():
+    result = _registry_backed_result(
+        signal="reverse_ratio high",
+        metric_ref="metric:reverse_ratio",
+        analysis_version="native_flicking.v1",
+        analysis_type="flicking",
+        input_mode="input_native",
+        scenario_profile_ref="scenario:static.fixture@1",
+    )
+    issue = result["deterministic"]["diagnosis"]["issues"][0]
+    issue["plain_language_meaning"] = "接近落点后出现了较多反向修正"
+    result["scenario"] = {
+        "scenario_profile_ref": "scenario:static.fixture@1",
+        "support_status": "partial",
+        "limitations": ["target_relative_facts_unavailable"],
+    }
+
+    context = project_coach_diagnostic_context(result)
+
+    projected_issue = context["diagnosis"]["issues"][0]
+    assert projected_issue["plain_language_meaning"] == "移动收尾时出现了较多反向修正"
+    assert projected_issue["limitations"] == ["target_relative_facts_unavailable"]
+
+
 def test_unknown_issue_does_not_receive_a_registry_candidate_or_prescription():
     context = project_coach_diagnostic_context(
         _registry_backed_result(

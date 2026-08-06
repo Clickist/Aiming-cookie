@@ -18,6 +18,21 @@ from .coach_engine import CoachTurn, complete_turn_async
 log = logging.getLogger(__name__)
 
 
+async def soft_start_provider_error(x_user_id: str) -> str | None:
+    """Return a stable gate code before a deterministic Coach soft start."""
+    from .health import build_coach_runtime_status
+
+    runtime_status = await build_coach_runtime_status()
+    if not runtime_status["ready_for_fast_path"]:
+        return "coach_runtime_unavailable"
+    profile = await provider_store.get_default_runtime_profile(x_user_id)
+    if not provider_store.runtime_profile_configured(profile):
+        return "provider_unconfigured"
+    if bool(profile and profile.get("credential_needs_reauth")):
+        return "provider_reauthentication_required"
+    return None
+
+
 @dataclass
 class CoachChatResult:
     reply: Optional[str]
@@ -27,6 +42,7 @@ class CoachChatResult:
     context: Optional[dict] = None
     status: str = "succeeded"
     error: dict | None = None
+    timing: dict[str, Any] | None = None
 
 
 def _reachable_context_refs(context: object) -> set[str]:
@@ -94,6 +110,7 @@ async def run_chat_turn(
     agent_run_ref: str | None = None,
     teaching_turn: Mapping[str, Any] | None = None,
     temporary_profile_refs: Mapping[str, str] | None = None,
+    on_partial: Any | None = None,
 ) -> CoachChatResult:
     from .coach_context import coerce_coach_diagnostic_context
 
@@ -122,16 +139,12 @@ async def run_chat_turn(
     from .coach_runtime import normalize_teaching_turn
 
     normalized_teaching_turn = normalize_teaching_turn(teaching_turn)
-    provider_profile = (
-        await provider_store.get_default_runtime_profile(x_user_id)
-        if config.COACH_RUNTIME == "pi"
-        else None
-    )
+    provider_profile = await provider_store.get_default_runtime_profile(x_user_id)
 
     # No selected profile is a recoverable Coach state. Persist the user's
     # message and a stable note, but do not charge budget or invoke legacy
     # providers behind their back.
-    if config.COACH_RUNTIME == "pi" and (
+    if (
         not provider_store.runtime_profile_configured(provider_profile)
         or bool(provider_profile and provider_profile.get("credential_needs_reauth"))
     ):
@@ -165,7 +178,7 @@ async def run_chat_turn(
             },
         )
 
-    if config.COACH_RUNTIME == "pi" and provider_profile is not None:
+    if provider_profile is not None:
         credential = provider_profile.get("credential")
         if provider_commands.credential_requires_refresh(credential):
             try:
@@ -260,9 +273,10 @@ async def run_chat_turn(
     tool_events: list[dict] = []
     status = "succeeded"
     failure: dict | None = None
+    timing: dict[str, Any] | None = None
     tool_bridge: dict | None = None
     try:
-        if config.COACH_RUNTIME == "pi" and tool_bridge_endpoint:
+        if tool_bridge_endpoint:
             tool_bridge = coach_commands.issue_tool_bridge(
                 x_user_id,
                 thread_id,
@@ -282,6 +296,7 @@ async def run_chat_turn(
             tool_bridge=tool_bridge,
             teaching_turn=normalized_teaching_turn,
             run_ref=agent_run_ref,
+            on_partial=on_partial,
         )
         engine_result = await complete_turn_async(turn)
         reply = (
@@ -296,6 +311,7 @@ async def run_chat_turn(
             raise ValueError("Coach tool event contains a Steam identity")
         status = engine_result.status
         failure = engine_result.error
+        timing = engine_result.timing
     except Exception as e:
         # Keep provider credentials out of both logs and the persisted/API note.
         log.warning("coach chat 失败 user=%s error=%s", x_user_id, type(e).__name__)
@@ -358,4 +374,5 @@ async def run_chat_turn(
         context=context,
         status=status,
         error=failure,
+        timing=timing,
     )

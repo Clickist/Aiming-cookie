@@ -22,6 +22,8 @@ def _create_body(**overrides):
         "kind": "custom_openai_compatible",
         "base_url": "http://127.0.0.1:11434/v1",
         "model_id": "qwen2.5",
+        "context_window": 32768,
+        "max_tokens": 4096,
         "api_key": "route-secret-key",
         "is_default": True,
     }
@@ -151,6 +153,22 @@ async def test_custom_provider_requires_http_url_and_model_fields():
             "/api/provider-profiles", json=_create_body(api_key=None),
         )
         assert missing_key.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_custom_provider_without_discovered_limits_is_explicitly_unconfigured():
+    async with await _client("owner-a") as client:
+        created = await client.post(
+            "/api/provider-profiles",
+            json=_create_body(context_window=None, max_tokens=None),
+        )
+        assert created.status_code == 200
+        status = await client.get(f"/api/provider-profiles/{created.json()['id']}/status")
+
+    assert status.status_code == 200
+    assert status.json()["configured"] is False
+    assert status.json()["status"] == "unconfigured"
+    assert "context_window" in status.json()["message"]
 
 
 @pytest.mark.asyncio

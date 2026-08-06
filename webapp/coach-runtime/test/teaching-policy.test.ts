@@ -10,6 +10,7 @@ import {
   teachingTurnRequiresLocalFallback,
   teachingEnvelopeInstruction,
   teachingTurnHoldsState,
+  validateTeachingDirectResponse,
   validateTeachingDraft,
 } from "../src/teaching-policy.ts";
 
@@ -19,6 +20,12 @@ function contract(overrides: Partial<TeachingTurnContract> = {}): TeachingTurnCo
     session_ref: "teaching_session:0123456789abcdef0123456789abcdef",
     session_version: 3,
     phase: "await_teach_back",
+    problem_id: null,
+    problem_label: null,
+    evidence_strength: "limited",
+    supporting_evidence: [],
+    counterevidence_status: "not_observed",
+    counterevidence: [],
     observation: "目标减速时，当前移动常常继续前冲。",
     primary_candidate: "当前更值得先验证的是速度匹配。",
     alternatives: ["也可能与目标读取时机有关。"],
@@ -40,6 +47,8 @@ function contract(overrides: Partial<TeachingTurnContract> = {}): TeachingTurnCo
     },
     ratio_sources: [{ label: "目标内时间占比", value: 0.34 }],
     approved_dose: null,
+    discriminator: null,
+    soft_start: false,
     ...overrides,
   };
 }
@@ -78,6 +87,155 @@ test("teaching contract is strict and ordinary turns remain optional", () => {
   );
 });
 
+test("a compiled problem keeps evidence, candidates, and one discriminator bounded", () => {
+  const compiled = contract({
+    phase: "intake",
+    question_kind: "discriminator",
+    question: "Does the late correction happen after the target slows?",
+    problem_id: "tracking.speed_matching",
+    problem_label: "Late speed matching",
+    evidence_strength: "supported",
+    supporting_evidence: [
+      "Corrections begin after the target decelerates.",
+      "The same pattern appears in a second comparable segment.",
+    ],
+    counterevidence_status: "not_observed",
+    counterevidence: [],
+    primary_candidate: "A possible explanation is late speed matching.",
+    alternatives: ["It may instead reflect delayed target reading."],
+    discriminator: {
+      kind: "question",
+      prompt: "Does the late correction happen after the target slows?",
+    },
+  });
+
+  const parsed = parseTeachingTurnContract(compiled);
+  assert.equal(parsed.problem_id, "tracking.speed_matching");
+  assert.equal(parsed.evidence_strength, "supported");
+  assert.equal(parsed.supporting_evidence.length, 2);
+  assert.equal(parsed.discriminator?.kind, "question");
+  assert.throws(
+    () => parseTeachingTurnContract({ ...compiled, supporting_evidence: ["a", "b", "c", "d", "e"] }),
+    /supporting_evidence/i,
+  );
+  assert.throws(
+    () => parseTeachingTurnContract({ ...compiled, counterevidence_status: "observed", counterevidence: [] }),
+    /evidence/i,
+  );
+  assert.throws(
+    () => parseTeachingTurnContract({ ...compiled, evidence_strength: "limited", supporting_evidence: [] }),
+    /evidence/i,
+  );
+  assert.throws(
+    () => parseTeachingTurnContract({ ...compiled, primary_candidate: "This definitely is late speed matching." }),
+    /primary_candidate/i,
+  );
+  assert.throws(
+    () => parseTeachingTurnContract({
+      ...compiled,
+      discriminator: { kind: "question", prompt: "Is it late? Is it always late?" },
+    }),
+    /discriminator/i,
+  );
+});
+
+test("typed supporting evidence preserves kind and refs while strings remain compatible", () => {
+  const compiled = contract({
+    problem_id: "terminal_control",
+    problem_label: "到点后的收尾修正偏多",
+    supporting_evidence: [{
+      kind: "measured",
+      text: "两条规则化观察都出现了反向修正",
+      refs: ["analysis:42", "context:terminal-control"],
+    }],
+  });
+
+  assert.deepEqual(parseTeachingTurnContract(compiled).supporting_evidence, compiled.supporting_evidence);
+  assert.throws(
+    () => parseTeachingTurnContract({
+      ...compiled,
+      supporting_evidence: [{
+        kind: "body_detected",
+        text: "两条规则化观察都出现了反向修正",
+        refs: ["analysis:42"],
+      }],
+    }),
+    /supporting_evidence/i,
+  );
+});
+
+test("legacy v1 teaching turns normalize diagnosis fields and a soft start holds state", () => {
+  const { problem_id, problem_label, evidence_strength, supporting_evidence, counterevidence_status,
+    counterevidence, discriminator, soft_start, ...legacy } = contract();
+  const parsedLegacy = parseTeachingTurnContract(legacy);
+  assert.deepEqual(parseTeachingTurnContract(parsedLegacy), parsedLegacy);
+  assert.equal(parsedLegacy.problem_id, null);
+  assert.equal(parsedLegacy.evidence_strength, "limited");
+  assert.deepEqual(parsedLegacy.supporting_evidence, []);
+
+  const softStart = parseTeachingTurnContract(contract({
+    phase: "intake",
+    question_kind: "discriminator",
+    question: "Does the late correction happen after the target slows?",
+    problem_id: "tracking.speed_matching",
+    problem_label: "Late speed matching",
+    evidence_strength: "limited",
+    supporting_evidence: ["Corrections begin after the target decelerates."],
+    primary_candidate: "A possible explanation is late speed matching.",
+    alternatives: ["It may instead reflect delayed target reading."],
+    discriminator: {
+      kind: "question",
+      prompt: "Does the late correction happen after the target slows?",
+    },
+    soft_start: true,
+  }));
+  const fallback = fallbackForTeachingTurn(softStart);
+  assert.equal(teachingTurnHoldsState(softStart), true);
+  assert.equal(fallback.action, "ask_discriminator");
+  assert.match(fallback.text, /possible explanation/i);
+  assert.equal((fallback.text.match(/[?？]/g) ?? []).length, 1);
+  assert.deepEqual(validateTeachingDraft(softStart, fallback), { ok: true });
+  assert.notDeepEqual(validateTeachingDraft(softStart, {
+    action: "ask_discriminator",
+    text: `${fallback.text} Training starts now.`,
+  }), { ok: true });
+});
+
+test("diagnostic fallback keeps the first explanation brief without emptying the evidence contract", () => {
+  const intake = contract({
+    phase: "intake",
+    question_kind: "discriminator",
+    question: "你更常先冲过目标，还是到点后才开始回拉？",
+    problem_id: "terminal_control",
+    problem_label: "到点后的收尾修正偏多",
+    evidence_strength: "supported",
+    supporting_evidence: [
+      "到点后出现了反向修正。",
+      "同一份分析里还出现了两段式收尾。",
+      "另一段可比记录也出现了相同模式。",
+    ],
+    primary_candidate: "可能是减速与停枪时机没有配合好，需要继续验证。",
+    alternatives: [
+      "也可能是目标大小或距离变化造成的类似表现。",
+      "也可能是你为了准确率主动放慢了节奏。",
+    ],
+    discriminator: {
+      kind: "question",
+      prompt: "你更常先冲过目标，还是到点后才开始回拉？",
+    },
+    soft_start: true,
+  });
+
+  const fallback = fallbackForTeachingTurn(intake);
+  assert.deepEqual(validateTeachingDraft(intake, fallback), { ok: true });
+  assert.match(fallback.text, /我先看到点后的收尾修正偏多/);
+  assert.match(fallback.text, /到点后出现了反向修正/);
+  assert.match(fallback.text, /可能是减速与停枪时机/);
+  assert.match(fallback.text, /目标大小或距离变化/);
+  assert.doesNotMatch(fallback.text, /两段式收尾|另一段可比记录|主动放慢了节奏/);
+  assert.doesNotMatch(fallback.text, /当前先排查|当前支持它的迹象|初步判断/);
+});
+
 test("an intake without a grounded candidate is a local no-lesson result", () => {
   const noLesson = contract({
     phase: "intake",
@@ -98,6 +256,35 @@ test("an intake without a grounded candidate is a local no-lesson result", () =>
   assert.equal(fallback.action, "pause");
   assert.match(fallback.text, /证据还不足以形成教学结论/);
   assert.doesNotMatch(fallback.text, /[?？]|候选|处方|fallback/i);
+});
+
+test("a direct teaching answer can explain a focus mismatch without advancing the lesson", () => {
+  const result = validateTeachingDirectResponse(
+    contract({
+      phase: "intake",
+      question_kind: "discriminator",
+      question: "你更接近速度匹配时机还是目标读取时机？",
+    }),
+    "页面的第一项仍是减速阶段偏长。当前先谈反向修正，是因为它有已经核对过的练习提示；这不表示它比第一项更严重，也不能据此确认具体原因。",
+  );
+
+  assert.deepEqual(result, { ok: true });
+  assert.notDeepEqual(
+    validateTeachingDirectResponse(contract(), "做 3 组后再说。"),
+    { ok: true },
+  );
+  assert.notDeepEqual(
+    validateTeachingDirectResponse(contract(), "你还想问什么？"),
+    { ok: true },
+  );
+  assert.notDeepEqual(
+    validateTeachingDirectResponse(contract(), "今天先保持这个动作提示。练完告诉我完成情况和主观感受。"),
+    { ok: true },
+  );
+  assert.deepEqual(
+    validateTeachingDirectResponse(contract(), "今天先保持这个动作提示，不需要额外改变训练方向。"),
+    { ok: true },
+  );
 });
 
 test("active item refs are required, nullable and bounded to safe plan item refs", () => {
@@ -266,6 +453,44 @@ test("provider envelope contains only an action and user-facing text", () => {
   }
 });
 
+test("provider instruction treats one short analogy as explanation rather than evidence", () => {
+  const instruction = teachingEnvelopeInstruction(contract({
+    phase: "hypothesize",
+    question_kind: "none",
+    question: null,
+  }));
+  assert.match(instruction, /one short analogy/i);
+  assert.match(instruction, /not evidence/i);
+
+  const hypothesis = contract({
+    phase: "hypothesize",
+    question_kind: "none",
+    question: null,
+  });
+  const withAnalogy = {
+    action: "explain_candidate" as const,
+    text: "目标减速时，当前移动仍会前冲。可以把它想成进弯时收油晚了，最后还要修方向。可能是速度匹配偏晚；也可能和目标读取时机有关。",
+  };
+  assert.deepEqual(validateTeachingDraft(hypothesis, withAnalogy), { ok: true });
+  assert.equal(validateTeachingDraft(hypothesis, {
+    action: "explain_candidate",
+    text: "可以把它想成进弯时收油晚了，最后还要修方向。",
+  }).ok, false);
+});
+
+test("provider instruction preserves the approved dose and rejects only unapproved doses", () => {
+  const instruction = teachingEnvelopeInstruction(contract({
+    phase: "practice_ready",
+    question_kind: "none",
+    question: null,
+    allowed_command: "training_plan.item.add",
+    approved_dose: "练 2 分钟。",
+  }));
+
+  assert.match(instruction, /approved_dose/);
+  assert.match(instruction, /unapproved dose/i);
+});
+
 test("provider envelope exposes the active item only for exact tool parameters", () => {
   const instruction = teachingEnvelopeInstruction(contract({ active_item_ref: "plan-item:guided-loop" }));
   assert.match(instruction, /active_item_ref/);
@@ -422,16 +647,16 @@ test("practice keeps the Registry-backed dose guardrail with the approved cue", 
   );
 });
 
-test("source-preserving ratio display is allowed without semantic expansion", () => {
+test("source-preserving percentage display is allowed without semantic expansion", () => {
   const teaching = contract({ phase: "teach", question_kind: "none", question: null });
   const required = `${teaching.primary_candidate}${teaching.cue}`;
   assert.deepEqual(
     validateTeachingDraft(teaching, { action: "teach", text: `${required}目标内时间占比是 34%。` }),
     { ok: true },
   );
-  assert.deepEqual(
-    validateTeachingDraft(teaching, { action: "teach", text: `${required}目标内时间占比约三分之一。` }),
-    { ok: true },
+  assert.equal(
+    validateTeachingDraft(teaching, { action: "teach", text: `${required}目标内时间占比约三分之一。` }).ok,
+    false,
   );
   for (const text of [
     "目标内时间占比经常发生，所以这是个问题。",
@@ -489,7 +714,7 @@ test("valid teaching drafts must carry the planner-approved lesson content", () 
   );
   const fallback = fallbackForTeachingTurn(hypothesis);
   assert.equal(validateTeachingDraft(hypothesis, fallback).ok, true);
-  assert.match(fallback.text, /另外/);
+  assert.match(fallback.text, /也可能/);
   assert.doesNotMatch(fallback.text, /待验证|候选|备选|TeachingSession|fallback/i);
 });
 

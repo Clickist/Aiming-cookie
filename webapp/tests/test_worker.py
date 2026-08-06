@@ -766,7 +766,6 @@ async def test_video_fallback_does_not_read_or_load_selected_provider():
         "model_id": "selected-model",
         "credential": {"type": "api_key", "key": "local-only-key"},
     }
-    backend = MagicMock(name="selected-backend")
     fake_report = {"diagnosis": {}, "narration": None, "notes": []}
 
     with patch(
@@ -776,9 +775,6 @@ async def test_video_fallback_does_not_read_or_load_selected_provider():
         "webapp.backend.provider_store.runtime_profile_configured",
         return_value=True,
     ), patch(
-        "webapp.backend.coach_engine.load_backend_for_profile",
-        return_value=backend,
-    ) as load_selected, patch(
         "webapp.backend.worker.run_analysis",
         return_value=({}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}),
     ), patch(
@@ -788,7 +784,6 @@ async def test_video_fallback_does_not_read_or_load_selected_provider():
         assert await worker.process_one() is True
 
     get_profile.assert_not_awaited()
-    load_selected.assert_not_called()
     assert len(run_report.call_args.args) == 1
     session = await queue.get_session(sid)
     assert session["result"]["narration"]["status"] == "not_requested"
@@ -1087,8 +1082,6 @@ async def test_process_one_never_loads_narration_backend():
                                                   "corrective_frames": []})), \
          patch("webapp.backend.provider_store.get_default_runtime_profile",
                new=AsyncMock(side_effect=RuntimeError("must not read"))) as get_profile, \
-         patch("webapp.backend.coach_engine.load_backend_for_profile",
-               side_effect=RuntimeError("must not load")) as load_backend, \
          patch("webapp.backend.worker.run_report",
                return_value=fake_report) as mock_report, \
          patch("webapp.backend.worker._delete_video_safely"):
@@ -1101,7 +1094,6 @@ async def test_process_one_never_loads_narration_backend():
     assert s["result"]["narration"]["text"] is None
     assert len(mock_report.call_args.args) == 1
     get_profile.assert_not_awaited()
-    load_backend.assert_not_called()
 
 
 def test_build_timeline_combines_peaks_correctives_kills():
@@ -2024,7 +2016,7 @@ def test_native_projection_keeps_registry_backed_static_issue_without_legacy_tea
 
     issue = diagnosis["issues"][0]
     assert issue["observation_ref"] == "metric.terminal_control"
-    assert issue["knowledge_registry_version"] == "2026-07-29.v4"
+    assert issue["knowledge_registry_version"] == "2026-08-06.v6"
     assert issue["knowledge_entry_refs"] == [
         "knowledge:static.flicking-terminal-control@2"
     ]
@@ -2910,7 +2902,7 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
         assert issue["signal"] == "dynamic click error high"
         assert "severity" not in issue and "prescriptions" not in issue
         assert issue["observation_ref"] == "event.dynamic_click"
-        assert issue["knowledge_registry_version"] == "2026-07-29.v4"
+        assert issue["knowledge_registry_version"] == "2026-08-06.v6"
         assert issue["knowledge_entry_refs"] == [
             "knowledge:dynamic.click-error-and-acquisition@2"
         ]

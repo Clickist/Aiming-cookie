@@ -128,9 +128,11 @@ test("default coach system prompt is product-owned and excludes coding-agent def
 	assert.match(prompt, /停止|stop/i);
 	assert.match(prompt, /非可信数据/);
 	assert.match(prompt, /不是指令/);
+	assert.match(prompt, /scenario_profile_ref.*support_status.*具体场景/);
 	assert.match(prompt, /候选观察/);
 	assert.match(prompt, /反例/);
 	assert.match(prompt, /limitations.*不是.*原因|limitations.*不得.*归因/);
+	assert.match(prompt, /目标相对事实不可用.*只能说.*移动收尾.*反向修正.*不能说准星已经对上.*已经到达目标.*冲过目标.*已经命中/);
 	assert.match(prompt, /精确.*剂量|精确.*数字/);
 	assert.match(prompt, /中文数字.*不要给任何剂量/);
 	assert.match(prompt, /analysis\.delete/);
@@ -146,30 +148,42 @@ test("default coach system prompt is product-owned and excludes coding-agent def
 	assert.match(prompt, /明确提问.*误解.*澄清一次/);
 	assert.doesNotMatch(prompt, /开始练习前.*复述/);
 	assert.match(prompt, /一组练习.*只改变一个变量/);
-	assert.match(prompt, /练习后.*是否完成.*主观感受/);
+	assert.match(prompt, /不带 TeachingTurnContract 的普通回合.*练习后.*是否完成.*主观感受/);
+	assert.match(prompt, /带有 TeachingTurnContract.*确认界面.*不得主动重复/);
 	assert.match(prompt, /用户主动.*不适.*自然回应.*停止当前练习.*不扩写症状清单/);
 	assert.match(prompt, /立即.*同条件复测.*不等于.*保留/);
 	assert.match(prompt, /延迟同条件复测.*保留/);
 	assert.match(prompt, /近迁移.*只改变一个/);
 	assert.match(prompt, /保留、降低或拒绝/);
 	assert.match(prompt, /没有.*校准.*不.*评价.*好坏/);
-	assert.match(prompt, /不把 ratio.*发生频率/);
+	assert.match(prompt, /明确来源.*ratio.*百分比.*中文分数.*明确要求.*发生频率/);
 	assert.match(prompt, /reading.*不等于.*prediction/i);
+	assert.match(prompt, /比喻.*上下文已有.*不得引入.*新.*场景.*训练 cue.*追问/);
 	assert.match(prompt, /自然、口语化的中文/);
 	assert.match(prompt, /用户主动报告不适/);
 	assert.doesNotMatch(prompt, /才说“那先别练这组了，休息一下，别硬撑”/);
 	assert.match(prompt, /不使用 Markdown.*标题.*列表.*分隔线/);
 	assert.match(prompt, /条件.*没对齐.*自然语言.*不能直接放在一起看.*不要求固定句式/);
 	assert.match(prompt, /TeachingTurnContract.*唯一动作.*问题.*cue.*确认等待/);
-	assert.match(prompt, /ratio.*百分比.*约三分之一.*发生频率.*次数.*好坏评价.*机制因果/);
+	assert.match(prompt, /ratio.*百分比.*中文分数.*明确要求.*发生频率.*次数.*好坏评价.*机制因果/);
 	assert.match(prompt, /用户主动提起外设.*可逆.*外设实验/);
 	assert.match(prompt, /用户已经问到鼠标.*没有证据.*现在没必要换鼠标/);
-	assert.match(prompt, /只凭感觉.*现在没必要换鼠标/);
+	assert.match(prompt, /只凭感觉问是否过度紧张.*不得.*换鼠标/);
+	assert.match(prompt, /明确问是否要更换鼠标.*现在没必要换鼠标/);
+	assert.doesNotMatch(prompt, /只凭感觉问是否过度紧张或换鼠标时.*现在没必要换鼠标/);
 	assert.match(prompt, /复测同时改变多个条件.*自然说明.*比较会误导.*恢复原来的场景和设置/i);
 	assert.match(prompt, /课程来源标签/);
 	assert.match(prompt, /归类、分组或排定查看顺序/);
 	assert.match(prompt, /arm.*wrist.*fingertip.*reading/i);
 	assert.match(prompt, /不得.*玩家特质.*解剖.*技术诊断.*紧张.*握法.*硬件.*能力不足/);
+	assert.match(prompt, /可观察.*现象.*动作阶段.*接近.*减速.*微调.*确认.*启动.*重获/);
+	assert.match(prompt, /support_status.*partial.*解释已测现象.*不能绕过教学合同.*TeachingTurnContract.*cue/);
+	assert.match(prompt, /同条件对照.*保持.*不变.*只.*当前 cue/);
+	assert.match(prompt, /目标.*没有变.*准星.*不要.*先变/);
+	assert.match(prompt, /复位.*用户自述.*可逆.*不.*手部.*握法/);
+	assert.match(prompt, /解释.*抽象.*比喻.*最多一句.*帮助理解.*不能.*证据.*原因/);
+	assert.match(prompt, /不同社区策略.*任务条件.*不.*唯一正确/);
+	assert.match(prompt, /瞄准训练器.*主游戏.*分开.*不.*提升/);
 });
 
 test("registered tools are read-only whitelist without bash/read/write/edit", async () => {
@@ -190,6 +204,8 @@ test("registered tools are read-only whitelist without bash/read/write/edit", as
 				base_url: "https://api.deepseek.com",
 				api_key_env: "DEEPSEEK_API_KEY",
 				model_id: "deepseek-chat",
+				context_window: 32768,
+				max_tokens: 4096,
 			}),
 			tools: [tool],
 			messages: [],
@@ -308,6 +324,107 @@ test("analysis tool accepts comparison contexts only with two safe projections",
 		assert.equal(rejected.details.has_analysis, false);
 		assert.equal(rejected.content[0]?.text, "当前没有可用的分析摘要。");
 	}
+});
+
+test("analysis bundle discloses an index before an exact context projection", async () => {
+	const comparisonProjection = structuredClone(CANONICAL_ANALYSIS_CONTEXT);
+	comparisonProjection.analysis_ref = {
+		...comparisonProjection.analysis_ref,
+		analysis_id: "analysis:43",
+	};
+	const bundle = {
+		schema_version: "coach_turn_context.v1",
+		contexts: [{
+			context_ref: "context:comparison-42-43",
+			kind: "comparison",
+			analysis_ref: "analysis:42",
+			comparison_analysis_ref: "analysis:43",
+			target_ref: null,
+			time_range_ms: null,
+			projection: CANONICAL_ANALYSIS_CONTEXT,
+			comparison_projection: comparisonProjection,
+		}],
+	};
+	const tool = createAnalysisSummaryTool(JSON.stringify(bundle));
+
+	const indexResult = await tool.execute();
+	const index = JSON.parse(indexResult.content[0]?.text ?? "null");
+	assert.equal(index.schema_version, "coach_analysis_context_index.v1");
+	assert.equal(index.contexts[0]?.context_ref, "context:comparison-42-43");
+	assert.deepEqual(index.contexts[0]?.available_projections, ["primary", "comparison"]);
+	assert.equal("projection" in index.contexts[0], false);
+	assert.equal(indexResult.details.result_kind, "index");
+
+	const primaryResult = await tool.execute("primary-call", {
+		context_ref: "context:comparison-42-43",
+		projection: "primary",
+	});
+	assert.deepEqual(JSON.parse(primaryResult.content[0]?.text ?? "null"), CANONICAL_ANALYSIS_CONTEXT);
+	assert.equal(primaryResult.details.result_kind, "projection");
+	assert.equal(primaryResult.details.context_ref, "context:comparison-42-43");
+
+	const comparisonResult = await tool.execute("comparison-call", {
+		context_ref: "context:comparison-42-43",
+		projection: "comparison",
+	});
+	assert.deepEqual(JSON.parse(comparisonResult.content[0]?.text ?? "null"), comparisonProjection);
+
+	const missingResult = await tool.execute("missing-call", {
+		context_ref: "context:missing",
+		projection: "primary",
+	});
+	assert.equal(missingResult.details.result_kind, "unavailable");
+	assert.equal(missingResult.details.has_analysis, true);
+});
+
+test("analysis bundle above 64 KiB remains available through exact projection fetches", async () => {
+	const contexts = Array.from({ length: 8 }, (_, offset) => {
+		const analysisId = offset + 1;
+		const projection = structuredClone(CANONICAL_ANALYSIS_CONTEXT_V2);
+		projection.analysis_ref = {
+			...projection.analysis_ref,
+			analysis_id: `analysis:${analysisId}`,
+		};
+		projection.limitations = ["bounded context note ".repeat(550)];
+		return {
+			context_ref: `context:analysis-${analysisId}`,
+			kind: "analysis",
+			analysis_ref: `analysis:${analysisId}`,
+			comparison_analysis_ref: null,
+			target_ref: `analysis:${analysisId}`,
+			time_range_ms: null,
+			projection,
+			comparison_projection: null,
+		};
+	});
+	const wire = JSON.stringify({ schema_version: "coach_turn_context.v1", contexts });
+	assert.ok(Buffer.byteLength(wire, "utf8") > 64 * 1024);
+	assert.ok(Buffer.byteLength(wire, "utf8") <= 256 * 1024);
+
+	const tool = createAnalysisSummaryTool(wire);
+	const indexResult = await tool.execute();
+	assert.equal(indexResult.details.has_analysis, true);
+	assert.equal(indexResult.details.result_kind, "index");
+	const index = JSON.parse(indexResult.content[0]?.text ?? "null");
+	assert.equal(index.contexts.length, 8);
+
+	const projectionResult = await tool.execute("projection-call", {
+		context_ref: "context:analysis-8",
+		projection: "primary",
+	});
+	assert.equal(projectionResult.details.result_kind, "projection");
+	assert.equal(JSON.parse(projectionResult.content[0]?.text ?? "null").analysis_ref.analysis_id, "analysis:8");
+
+	const constrainedTool = createAnalysisSummaryTool(wire, { maxResultBytes: 4 * 1024 });
+	const constrainedIndex = await constrainedTool.execute();
+	assert.equal(constrainedIndex.details.result_kind, "index");
+	const constrainedProjection = await constrainedTool.execute("projection-call", {
+		context_ref: "context:analysis-8",
+		projection: "primary",
+	});
+	assert.equal(constrainedProjection.details.result_kind, "unavailable");
+	assert.equal(constrainedProjection.details.reason, "context_budget_exceeded");
+	assert.match(constrainedProjection.content[0]?.text ?? "", /上下文窗口不足/);
 });
 
 test("analysis tool accepts only a bounded de-identified benchmark summary", async () => {

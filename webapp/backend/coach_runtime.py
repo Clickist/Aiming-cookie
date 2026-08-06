@@ -6,8 +6,11 @@ import json
 import logging
 import os
 import re
+import inspect
 import subprocess
+import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -71,6 +74,25 @@ class PiCoachTurnResult:
     reply: str
     notes: list[str]
     tool_events: list[dict[str, Any]]
+    timing: dict[str, Any] | None = None
+
+
+PartialCallback = Callable[
+    [str, Mapping[str, int]], Awaitable[None] | None,
+]
+
+_STREAM_SCHEMA = "coach_runtime_stream.v1"
+_MAX_STREAM_FRAMES = 4096
+_MAX_STREAM_LINE_CHARS = 256_000
+_TIMING_KEYS = {
+    "total_ms", "first_provider_event_ms", "first_text_delta_ms",
+    "first_safe_text_ms", "provider_rounds", "provider_ms", "tool_ms",
+    "provider_round_ms", "repair_ms",
+}
+
+
+def _monotonic_elapsed_ms(start_ns: int) -> int:
+    return max(0, (time.monotonic_ns() - start_ns) // 1_000_000)
 
 
 def _sidecar_fallback_enabled() -> bool:
@@ -184,6 +206,8 @@ def _normalize_runtime_profile(profile: Mapping[str, Any] | None) -> dict[str, A
     api_key = profile.get("api_key")
     credential = profile.get("credential")
     base_url = profile.get("base_url")
+    context_window = profile.get("context_window")
+    max_tokens = profile.get("max_tokens")
     if not all(
         isinstance(value, str) and value.strip()
         for value in (provider_id, provider_name, kind, model_id)
@@ -205,8 +229,10 @@ def _normalize_runtime_profile(profile: Mapping[str, Any] | None) -> dict[str, A
     if kind in {"custom_openai_compatible", "custom_anthropic_compatible"} and (
         not isinstance(base_url, str) or not base_url.strip()
         or not has_credential_secret
+        or isinstance(context_window, bool) or not isinstance(context_window, int) or context_window <= 0
+        or isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0
     ):
-        raise ProviderUnconfiguredError("Coach Provider 未配置完整凭据")
+        raise ProviderUnconfiguredError("Coach Provider 未返回已验证的模型能力")
     if api_key is not None and not isinstance(api_key, str):
         raise ProviderUnconfiguredError("Coach Provider API key 无效")
     if isinstance(base_url, str) and kind in {"custom_openai_compatible", "custom_anthropic_compatible"}:
@@ -219,6 +245,9 @@ def _normalize_runtime_profile(profile: Mapping[str, Any] | None) -> dict[str, A
         "base_url": base_url.strip().rstrip("/") if isinstance(base_url, str) else None,
         "model_id": model_id.strip(),
     }
+    if kind in {"custom_openai_compatible", "custom_anthropic_compatible"}:
+        normalized["context_window"] = context_window
+        normalized["max_tokens"] = max_tokens
     if isinstance(credential, Mapping):
         normalized["credential"] = dict(credential)
     return normalized
@@ -289,6 +318,8 @@ def _canonical_analysis_summary(analysis_summary: str | None) -> str | None:
 
 _TEACHING_TURN_ALLOWED_KEYS = {
     "schema_version", "session_ref", "session_version", "phase", "observation",
+    "problem_id", "problem_label", "evidence_strength", "supporting_evidence",
+    "counterevidence_status", "counterevidence", "discriminator", "soft_start",
     "primary_candidate", "alternatives", "cue", "changed_variable",
     "active_item_ref", "question_kind", "question", "allowed_command", "confirmation_intent",
     "retest", "ratio_sources", "approved_dose", "prepared_plan_ref", "prepared_item",
@@ -460,6 +491,10 @@ _KNOWLEDGE_EVENT_KEYS_V1 = _TOOL_EVENT_KEYS["knowledge"] - {
     "section_refs", "claim_refs", "claim_levels",
 }
 _KNOWLEDGE_EVENT_KEYS_V2 = _TOOL_EVENT_KEYS["knowledge"]
+_KNOWLEDGE_PROJECTED_REGISTRIES = frozenset({
+    "2026-08-06.v5", "2026-08-06.v6",
+})
+_MAX_KNOWLEDGE_SOURCE_REFS_PER_ENTRY = 8
 
 
 def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -482,7 +517,10 @@ def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
         raise CoachRuntimeError("unsafe knowledge event value")
     expected_keys = (
         _KNOWLEDGE_EVENT_KEYS_V2
-        if registry_version in {"2026-07-22.v2", "2026-07-28.v3", "2026-07-29.v4"}
+        if registry_version in {
+            "2026-07-22.v2", "2026-07-28.v3", "2026-07-29.v4",
+            *_KNOWLEDGE_PROJECTED_REGISTRIES,
+        }
         else _KNOWLEDGE_EVENT_KEYS_V1
     )
     if set(value) != expected_keys:
@@ -588,11 +626,47 @@ def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
     sources_by_ref = {
         source["source_ref"]: source for source in registry["sources"]
     }
-    expected_sources = [
-        sources_by_ref[source_ref]
-        for entry in entries
-        for source_ref in entry["sources"]
-    ]
+    if registry_version in _KNOWLEDGE_PROJECTED_REGISTRIES:
+        canonical_by_ref = {
+            section["section_ref"]: (entry_ref(entry), section)
+            for entry in entries
+            for section in sections_for_entry(entry)
+        }
+        seen_sections: set[str] = set()
+        projected_sections_by_entry: dict[str, list[Mapping[str, Any]]] = {
+            entry_ref(entry): [] for entry in entries
+        }
+        for section_ref, claim, level in zip(section_refs, claim_refs, claim_levels):
+            owner_and_section = canonical_by_ref.get(section_ref)
+            if (
+                owner_and_section is None
+                or section_ref in seen_sections
+                or claim != claim_ref(owner_and_section[1])
+                or level != owner_and_section[1]["claim_level"]
+            ):
+                raise CoachRuntimeError("knowledge event does not match canonical registry")
+            owner_ref, section = owner_and_section
+            if owner_ref not in projected_sections_by_entry:
+                raise CoachRuntimeError("knowledge event does not match canonical registry")
+            seen_sections.add(section_ref)
+            projected_sections_by_entry[owner_ref].append(section)
+        projected_source_refs: list[str] = []
+        for entry in entries:
+            entry_source_refs = list(dict.fromkeys(
+                source_ref
+                for section in projected_sections_by_entry[entry_ref(entry)]
+                for source_ref in section["source_refs"]
+            ))[:_MAX_KNOWLEDGE_SOURCE_REFS_PER_ENTRY]
+            projected_source_refs.extend(entry_source_refs)
+        if source_refs != projected_source_refs:
+            raise CoachRuntimeError("knowledge event does not match canonical registry")
+        expected_sources = [sources_by_ref[source_ref] for source_ref in projected_source_refs]
+    else:
+        expected_sources = [
+            sources_by_ref[source_ref]
+            for entry in entries
+            for source_ref in entry["sources"]
+        ]
     claim_rank = {
         "experimental": 0,
         "community_practice": 1,
@@ -612,9 +686,14 @@ def _validate_knowledge_event(value: Mapping[str, Any]) -> dict[str, Any]:
         or source_refs != [source["source_ref"] for source in expected_sources]
         or source_levels != [source["source_level"] for source in expected_sources]
         or max_claim_levels != expected_max_claims
-        or section_refs != [section["section_ref"] for section in canonical_sections]
-        or claim_refs != [claim_ref(section) for section in canonical_sections]
-        or claim_levels != [section["claim_level"] for section in canonical_sections]
+        or (
+            registry_version not in _KNOWLEDGE_PROJECTED_REGISTRIES
+            and (
+                section_refs != [section["section_ref"] for section in canonical_sections]
+                or claim_refs != [claim_ref(section) for section in canonical_sections]
+                or claim_levels != [section["claim_level"] for section in canonical_sections]
+            )
+        )
     ):
         raise CoachRuntimeError("knowledge event does not match canonical registry")
     return dict(value)
@@ -727,6 +806,7 @@ def _validate_turn_response(
     expected_run_id: str | None = None,
     exit_code: int | None = None,
     secrets: Sequence[str] = (),
+    timing: Mapping[str, Any] | None = None,
 ) -> PiCoachTurnResult:
     def redact(value: str) -> str:
         redacted = value
@@ -781,11 +861,84 @@ def _validate_turn_response(
     notes = response.get("notes")
     if not isinstance(notes, list) or not all(isinstance(note, str) for note in notes):
         raise CoachRuntimeError("coach-runtime notes 无效")
+    safe_timing = _validate_stream_timing(timing)
     return PiCoachTurnResult(
         reply=redact(reply),
         notes=[redact(note) for note in notes],
         tool_events=tool_events,
+        timing=safe_timing,
     )
+
+
+def _validate_stream_timing(
+    value: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != _TIMING_KEYS:
+        raise CoachRuntimeError(
+            "sidecar timing 无效",
+            side_effects_possible=True,
+            error_code="invalid_sidecar_response",
+            retryable=False,
+        )
+    safe: dict[str, Any] = {}
+    for key in _TIMING_KEYS:
+        item = value.get(key)
+        if key == "provider_round_ms":
+            if (
+                not isinstance(item, list)
+                or len(item) > 64
+                or any(
+                    isinstance(entry, bool)
+                    or not isinstance(entry, int)
+                    or not 0 <= entry <= 3_600_000
+                    for entry in item
+                )
+                or len(item) != value.get("provider_rounds")
+                or sum(item) != value.get("provider_ms")
+            ):
+                raise CoachRuntimeError(
+                    "sidecar timing 无效",
+                    side_effects_possible=True,
+                    error_code="invalid_sidecar_response",
+                    retryable=False,
+                )
+            safe[key] = list(item)
+            continue
+        if item is None and key.startswith("first_"):
+            safe[key] = None
+            continue
+        if isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 3_600_000:
+            raise CoachRuntimeError(
+                "sidecar timing 无效",
+                side_effects_possible=True,
+                error_code="invalid_sidecar_response",
+                retryable=False,
+            )
+        safe[key] = item
+    first_provider_event_ms = safe["first_provider_event_ms"]
+    first_text_delta_ms = safe["first_text_delta_ms"]
+    first_safe_text_ms = safe["first_safe_text_ms"]
+    if any(
+        value is not None and value > safe["total_ms"]
+        for value in (first_provider_event_ms, first_text_delta_ms, first_safe_text_ms)
+    ) or (
+        first_provider_event_ms is not None
+        and first_text_delta_ms is not None
+        and first_provider_event_ms > first_text_delta_ms
+    ) or (
+        first_text_delta_ms is not None
+        and first_safe_text_ms is not None
+        and first_text_delta_ms > first_safe_text_ms
+    ):
+        raise CoachRuntimeError(
+            "sidecar timing 无效",
+            side_effects_possible=True,
+            error_code="invalid_sidecar_response",
+            retryable=False,
+        )
+    return safe
 
 
 def _parse_turn_response_stdout(stdout: str) -> dict[str, Any]:
@@ -858,52 +1011,185 @@ def _post_turn_to_sidecar(request: dict[str, Any], timeout_s: int) -> dict[str, 
 
 async def _post_turn_to_sidecar_async(
     request: dict[str, Any], timeout_s: int,
+    on_partial: PartialCallback | None = None,
 ) -> dict[str, Any]:
     schema_version = str(request.get("schema_version") or COACH_RUNTIME_TURN_SCHEMA_V0)
     path = "/v1/turn" if schema_version == COACH_RUNTIME_TURN_SCHEMA_V1 else "/v0/turn"
     url = f"{COACH_SIDECAR_URL.rstrip('/')}{path}"
+    saw_frame = False
+    last_partial: str | None = None
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
-            response = await client.post(url, json=request)
+            async with client.stream(
+                "POST",
+                url,
+                json=request,
+                headers={"Accept": "application/x-ndjson"},
+            ) as response:
+                if response.status_code != 200:
+                    body = await response.aread()
+                    try:
+                        parsed = json.loads(body)
+                    except (TypeError, ValueError, UnicodeDecodeError):
+                        parsed = None
+                    if isinstance(parsed, dict) and parsed.get("ok") is False:
+                        return parsed
+                    raise CoachRuntimeError(
+                        f"sidecar HTTP {response.status_code}",
+                        side_effects_possible=True,
+                        error_category="network",
+                        error_code="sidecar_http_error",
+                        retryable=response.status_code >= 500,
+                    )
+
+                content_type = response.headers.get("content-type", "").lower()
+                if "application/x-ndjson" not in content_type:
+                    body = await response.aread()
+                    try:
+                        parsed = json.loads(body)
+                    except (TypeError, ValueError, UnicodeDecodeError) as error:
+                        raise CoachRuntimeError(
+                            "sidecar 响应非 JSON",
+                            side_effects_possible=True,
+                            error_code="invalid_sidecar_response",
+                            retryable=False,
+                        ) from error
+                    if not isinstance(parsed, dict):
+                        raise CoachRuntimeError(
+                            "sidecar 响应须为 JSON 对象",
+                            side_effects_possible=True,
+                            error_code="invalid_sidecar_response",
+                            retryable=False,
+                        )
+                    return parsed
+
+                final_response: dict[str, Any] | None = None
+                final_timing: dict[str, Any] | None = None
+                last_revision = 0
+                frame_count = 0
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    # Once the sidecar has sent anything, a replay could duplicate
+                    # a dispatched provider/tool turn. Treat malformed data alike.
+                    saw_frame = True
+                    frame_count += 1
+                    if frame_count > _MAX_STREAM_FRAMES or len(line) > _MAX_STREAM_LINE_CHARS:
+                        raise CoachRuntimeError(
+                            "sidecar stream 超出限制",
+                            side_effects_possible=saw_frame,
+                            error_code="invalid_sidecar_response",
+                            retryable=False,
+                            partial_reply=last_partial,
+                        )
+                    try:
+                        frame = json.loads(line)
+                    except (TypeError, ValueError) as error:
+                        raise CoachRuntimeError(
+                            "sidecar stream 帧无效",
+                            side_effects_possible=saw_frame,
+                            error_code="invalid_sidecar_response",
+                            retryable=False,
+                            partial_reply=last_partial,
+                        ) from error
+                    if not isinstance(frame, Mapping) or frame.get("schema_version") != _STREAM_SCHEMA:
+                        raise CoachRuntimeError(
+                            "sidecar stream 帧无效",
+                            side_effects_possible=saw_frame,
+                            error_code="invalid_sidecar_response",
+                            retryable=False,
+                            partial_reply=last_partial,
+                        )
+                    frame_type = frame.get("type")
+                    if frame_type == "partial":
+                        if final_response is not None:
+                            raise CoachRuntimeError(
+                                "sidecar terminal 后出现 partial",
+                                side_effects_possible=True,
+                                error_code="invalid_sidecar_response",
+                                retryable=False,
+                                partial_reply=last_partial,
+                            )
+                        revision = frame.get("revision")
+                        text = frame.get("text")
+                        elapsed_ms = frame.get("elapsed_ms")
+                        provider_rounds = frame.get("provider_rounds")
+                        if (
+                            isinstance(revision, bool)
+                            or not isinstance(revision, int)
+                            or revision != last_revision + 1
+                            or not isinstance(text, str)
+                            or not text.strip()
+                            or len(text) > 12_000
+                            or isinstance(elapsed_ms, bool)
+                            or not isinstance(elapsed_ms, int)
+                            or elapsed_ms < 0
+                            or isinstance(provider_rounds, bool)
+                            or not isinstance(provider_rounds, int)
+                            or provider_rounds < 0
+                        ):
+                            raise CoachRuntimeError(
+                                "sidecar partial 帧无效",
+                                side_effects_possible=saw_frame,
+                                error_code="invalid_sidecar_response",
+                                retryable=False,
+                                partial_reply=last_partial,
+                            )
+                        saw_frame = True
+                        last_revision = revision
+                        last_partial = text
+                        if on_partial is not None:
+                            callback_result = on_partial(
+                                text,
+                                {
+                                    "revision": revision,
+                                    "elapsed_ms": elapsed_ms,
+                                    "provider_rounds": provider_rounds,
+                                },
+                            )
+                            if inspect.isawaitable(callback_result):
+                                await callback_result
+                        continue
+                    if frame_type == "final":
+                        if final_response is not None or not isinstance(frame.get("response"), dict):
+                            raise CoachRuntimeError(
+                                "sidecar final 帧无效",
+                                side_effects_possible=saw_frame,
+                                error_code="invalid_sidecar_response",
+                                retryable=False,
+                                partial_reply=last_partial,
+                            )
+                        final_response = dict(frame["response"])
+                        final_timing = _validate_stream_timing(frame.get("timing"))
+                        saw_frame = True
+                        continue
+                    raise CoachRuntimeError(
+                        "sidecar stream 帧类型无效",
+                        side_effects_possible=saw_frame,
+                        error_code="invalid_sidecar_response",
+                        retryable=False,
+                        partial_reply=last_partial,
+                    )
+                if final_response is None:
+                    raise CoachRuntimeError(
+                        "sidecar stream 在 final 前中断",
+                        side_effects_possible=saw_frame,
+                        error_category="network",
+                        error_code="sidecar_stream_interrupted",
+                        retryable=True,
+                        partial_reply=last_partial,
+                    )
+                final_response["_stream_timing"] = final_timing
+                return final_response
     except httpx.HTTPError as error:
         raise CoachRuntimeError(
             f"sidecar 不可达: {type(error).__name__}",
-            side_effects_possible=not isinstance(error, httpx.ConnectError),
+            side_effects_possible=saw_frame or not isinstance(error, httpx.ConnectError),
             error_category="network",
             error_code="sidecar_unreachable",
             retryable=True,
+            partial_reply=last_partial,
         ) from error
-    if response.status_code != 200:
-        try:
-            parsed = response.json()
-        except (TypeError, ValueError):
-            parsed = None
-        if isinstance(parsed, dict) and parsed.get("ok") is False:
-            return parsed
-        raise CoachRuntimeError(
-            f"sidecar HTTP {response.status_code}",
-            side_effects_possible=True,
-            error_category="network",
-            error_code="sidecar_http_error",
-            retryable=response.status_code >= 500,
-        )
-    try:
-        parsed = response.json()
-    except json.JSONDecodeError as error:
-        raise CoachRuntimeError(
-            "sidecar 响应非 JSON",
-            side_effects_possible=True,
-            error_code="invalid_sidecar_response",
-            retryable=False,
-        ) from error
-    if not isinstance(parsed, dict):
-        raise CoachRuntimeError(
-            "sidecar 响应须为 JSON 对象",
-            side_effects_possible=True,
-            error_code="invalid_sidecar_response",
-            retryable=False,
-        )
-    return parsed
 
 
 def _run_turn_via_subprocess(
@@ -1098,7 +1384,9 @@ async def run_pi_coach_turn_async(
     teaching_turn: Mapping[str, Any] | None = None,
     run_id: str | None = None,
     timeout_s: int | None = None,
+    on_partial: PartialCallback | None = None,
 ) -> PiCoachTurnResult:
+    client_started_ns = time.monotonic_ns()
     schema_version = (
         COACH_RUNTIME_TURN_SCHEMA_V1
         if profile is not None
@@ -1115,16 +1403,18 @@ async def run_pi_coach_turn_async(
         teaching_turn=teaching_turn,
         run_id=run_id,
     )
+    local_prepare_ms = _monotonic_elapsed_ms(client_started_ns)
     timeout = timeout_s if timeout_s is not None else COACH_RUNTIME_TIMEOUT_SECONDS
     response: dict[str, Any] | None = None
     exit_code: int | None = None
+    sidecar_transport_ms: int | None = None
+    sidecar_started_ns = time.monotonic_ns()
     try:
-        response = await _post_turn_to_sidecar_async(request, timeout)
+        response = await _post_turn_to_sidecar_async(request, timeout, on_partial=on_partial)
+        sidecar_transport_ms = _monotonic_elapsed_ms(sidecar_started_ns)
     except CoachRuntimeError as error:
-        if not _sidecar_fallback_enabled() or (
-            schema_version == COACH_RUNTIME_TURN_SCHEMA_V1
-            and error.side_effects_possible
-        ):
+        sidecar_transport_ms = _monotonic_elapsed_ms(sidecar_started_ns)
+        if not _sidecar_fallback_enabled() or error.side_effects_possible:
             raise
         _log.warning(
             "coach sidecar unavailable, async subprocess fallback: %s",
@@ -1133,12 +1423,26 @@ async def run_pi_coach_turn_async(
     if response is None:
         response = await _run_turn_via_subprocess_async(request, timeout)
         exit_code = response.pop("_exit_code", None)
-    return _validate_turn_response(
+    timing = response.pop("_stream_timing", None)
+    result = _validate_turn_response(
         response,
         expected_schema=schema_version,
         expected_run_id=request["run_id"] if run_id is not None else None,
         exit_code=exit_code,
         secrets=secrets,
+        timing=timing,
+    )
+    merged_timing = dict(result.timing or {})
+    merged_timing.update({
+        "local_prepare_ms": local_prepare_ms,
+        "sidecar_transport_ms": sidecar_transport_ms,
+        "client_total_ms": _monotonic_elapsed_ms(client_started_ns),
+    })
+    return PiCoachTurnResult(
+        reply=result.reply,
+        notes=result.notes,
+        tool_events=result.tool_events,
+        timing=merged_timing,
     )
 
 
@@ -1181,7 +1485,7 @@ async def fetch_custom_provider_models(
     base_url: str,
     api_key: str,
     timeout_s: float = 10.0,
-) -> list[str]:
+) -> list[dict[str, int | str | None]]:
     """Read a custom Provider /models list without persisting its key."""
     timeout_s = max(0.001, min(float(timeout_s), 30.0))
     if protocol == "openai-completions":
@@ -1216,14 +1520,32 @@ async def fetch_custom_provider_models(
     if not isinstance(body, Mapping) or not isinstance(body.get("data"), list):
         raise CustomProviderModelDiscoveryError("custom Provider models response is invalid")
 
-    models: list[str] = []
+    models: list[dict[str, int | str | None]] = []
     for item in body["data"]:
         model_id = item.get("id") if isinstance(item, Mapping) else item
         if not isinstance(model_id, str):
             continue
         model_id = model_id.strip()
-        if model_id and model_id not in models:
-            models.append(model_id)
+        if model_id and all(model["model_id"] != model_id for model in models):
+            context_window = item.get("context_window") if isinstance(item, Mapping) else None
+            max_tokens = item.get("max_tokens") if isinstance(item, Mapping) else None
+            models.append({
+                "model_id": model_id,
+                "context_window": (
+                    context_window
+                    if isinstance(context_window, int)
+                    and not isinstance(context_window, bool)
+                    and context_window > 0
+                    else None
+                ),
+                "max_tokens": (
+                    max_tokens
+                    if isinstance(max_tokens, int)
+                    and not isinstance(max_tokens, bool)
+                    and max_tokens > 0
+                    else None
+                ),
+            })
         if len(models) == 200:
             break
     return models
@@ -1271,12 +1593,24 @@ async def get_provider_profile_status(
     from .provider_store import runtime_profile_configured
 
     if not runtime_profile_configured(profile):
+        missing_custom_capabilities = profile.get("kind") in {
+            "custom_openai_compatible", "custom_anthropic_compatible",
+        } and (
+            isinstance(profile.get("context_window"), bool)
+            or not isinstance(profile.get("context_window"), int)
+            or profile["context_window"] <= 0
+            or isinstance(profile.get("max_tokens"), bool)
+            or not isinstance(profile.get("max_tokens"), int)
+            or profile["max_tokens"] <= 0
+        )
         return {
             "configured": False,
             "status": "needs_reauth" if profile.get("credential_needs_reauth") else "unconfigured",
             "message": (
                 "Provider credential 需要重新认证"
                 if profile.get("credential_needs_reauth")
+                else "Provider 未返回已验证的 context_window 和 max_tokens"
+                if missing_custom_capabilities
                 else "Coach Provider 未配置完整凭据"
             ),
         }
@@ -1315,10 +1649,24 @@ async def test_provider_profile(
     from .provider_store import runtime_profile_configured
 
     if not runtime_profile_configured(profile):
+        missing_custom_capabilities = profile.get("kind") in {
+            "custom_openai_compatible", "custom_anthropic_compatible",
+        } and (
+            isinstance(profile.get("context_window"), bool)
+            or not isinstance(profile.get("context_window"), int)
+            or profile["context_window"] <= 0
+            or isinstance(profile.get("max_tokens"), bool)
+            or not isinstance(profile.get("max_tokens"), int)
+            or profile["max_tokens"] <= 0
+        )
         return {
             "configured": False,
             "status": "unconfigured",
-            "message": "Coach Provider 未配置完整凭据",
+            "message": (
+                "Provider 未返回已验证的 context_window 和 max_tokens"
+                if missing_custom_capabilities
+                else "Coach Provider 未配置完整凭据"
+            ),
         }
     timeout_s = max(0.001, min(float(timeout_s), 30.0))
     url = f"{COACH_SIDECAR_URL.rstrip('/')}/v0/providers/test"

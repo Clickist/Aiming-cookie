@@ -2,6 +2,10 @@ import {
   TEACHING_TURN_CONTRACT_SCHEMA,
   isRecord,
   type TeachingAllowedCommand,
+  type TeachingCounterevidenceStatus,
+  type TeachingDiscriminator,
+  type TeachingEvidenceStrength,
+  type TeachingEvidence,
   type TeachingNextRecommendation,
   type TeachingPhase,
   type TeachingPreparedPlanItem,
@@ -57,7 +61,21 @@ const ALLOWED_KEYS = new Set([
   "schema_version", "session_ref", "session_version", "phase", "observation", "primary_candidate",
   "alternatives", "cue", "changed_variable", "active_item_ref", "prepared_plan_ref", "prepared_item", "question_kind", "question", "allowed_command",
   "confirmation_intent", "retest", "ratio_sources", "approved_dose", "next_recommendation",
+  "problem_id", "problem_label", "evidence_strength", "supporting_evidence", "counterevidence_status",
+  "counterevidence", "discriminator", "soft_start",
 ]);
+const LEGACY_CONTRACT_KEYS = [
+  "schema_version", "session_ref", "session_version", "phase", "observation", "primary_candidate",
+  "alternatives", "cue", "changed_variable", "active_item_ref", "prepared_plan_ref", "prepared_item", "question_kind", "question", "allowed_command",
+  "confirmation_intent", "retest", "ratio_sources", "approved_dose", "next_recommendation",
+] as const;
+const DIAGNOSTIC_CONTRACT_KEYS = [
+  "problem_id", "problem_label", "evidence_strength", "supporting_evidence", "counterevidence_status",
+  "counterevidence", "discriminator", "soft_start",
+] as const;
+const EVIDENCE_STRENGTHS = new Set<TeachingEvidenceStrength>(["limited", "supported", "repeated"]);
+const COUNTEREVIDENCE_STATUSES = new Set<TeachingCounterevidenceStatus>(["not_observed", "observed"]);
+const EVIDENCE_KINDS = new Set(["measured", "self_reported", "observed", "inferred", "external"]);
 const ITEM_REF = /^plan-item:[A-Za-z0-9._:@-]{1,159}$/;
 const PLAN_REF = /^plan:[A-Za-z0-9._:@-]{1,159}$/;
 const PREPARED_ITEM_FIELDS = [
@@ -84,6 +102,9 @@ const UNSAFE_CONTRACT_TEXT = /\b(?:api[_-]?key|authorization|credential|token|ra
 const INTERNAL_VOCABULARY = /\b(?:TeachingSession|TeachingTurnContract|session_ref|session_version|active_item_ref|question_kind|allowed_command|confirmation_intent|schema_version|phase|coach_retest_outcome(?:\.v\d+)?)\b|\b(?:table|field|cursor)\b/i;
 const INTERNAL_ITEM_REF = /\bplan-item:[A-Za-z0-9._:@-]{1,159}\b/i;
 const RAW_REFERENCE = /\b(?:analysis|run|event|segment|table|metric):/i;
+const PROBLEM_ID = /^[a-z][a-z0-9._-]{0,95}$/;
+const CANDIDATE_LANGUAGE = /(?:可能|也许|候选|假设|待验证|先验证|值得先验证|may|might|possible|likely)/i;
+const SOFT_START_ADVANCEMENT = /(?:已(?:经)?进入|现在进入|开始).{0,8}(?:训练|练习)|(?:安排|加入).{0,8}(?:训练计划|练习)|(?:training|practice).{0,16}(?:starts|has started|is scheduled)|(?:scheduled|added).{0,16}(?:training|practice)/i;
 const COMPLETION_CLAIM = /(?:已经|已)(?:完成|记录|确认|改善|提高|进步)|(?:证明|说明).{0,12}(?:学会|改善|提高)|(?:复测|训练).{0,8}(?:证明|确认).{0,12}(?:改善|提高)/;
 const DOSE = /(?:\d+(?:\.\d+)?|[一二三四五六七八九十]+)\s*(?:分钟|分(?!之)(?:钟)?|秒|次|组|轮|局|runs?)/i;
 const RATIO_SEMANTIC_EXPANSION = /(?:发生(?:频率|次数)?|频率|次数|片段比例|经常|常常|偏高|偏低|较好|较差|优秀|糟糕|问题|导致|因为|造成|证明|说明)/;
@@ -112,6 +133,66 @@ function requiredText(value: unknown, name: string): string {
   const parsed = boundedText(value, name);
   if (parsed === null) throw new Error(`${name} is invalid`);
   return parsed;
+}
+
+function diagnosticText(value: unknown, name: string, nullable = false): string | null {
+  const parsed = boundedText(value, name, nullable);
+  if (parsed !== null && parsed.length > 240) throw new Error(`${name} is invalid`);
+  return parsed;
+}
+
+function parseProblemId(value: unknown): string | null {
+  if (value === null) return null;
+  const problemId = requiredText(value, "problem_id");
+  if (!PROBLEM_ID.test(problemId)) throw new Error("problem_id is invalid");
+  return problemId;
+}
+
+function parseDiagnosticList(value: unknown, name: string, maximum: number): string[] {
+  if (!Array.isArray(value) || value.length > maximum) throw new Error(`${name} is invalid`);
+  return value.map((item) => {
+    const parsed = diagnosticText(item, name);
+    if (parsed === null) throw new Error(`${name} is invalid`);
+    return parsed;
+  });
+}
+
+function parseSupportingEvidence(value: unknown): Array<string | TeachingEvidence> {
+  if (!Array.isArray(value) || value.length > 4) throw new Error("supporting_evidence is invalid");
+  return value.map((item) => {
+    if (typeof item === "string") {
+      const parsed = diagnosticText(item, "supporting_evidence");
+      if (parsed === null) throw new Error("supporting_evidence is invalid");
+      return parsed;
+    }
+    if (!isRecord(item) || Object.keys(item).length !== 3 ||
+        Object.keys(item).some((key) => !["kind", "text", "refs"].includes(key)) ||
+        typeof item.kind !== "string" || !EVIDENCE_KINDS.has(item.kind) ||
+        !Array.isArray(item.refs) || item.refs.length > 8 ||
+        item.refs.some((ref) => typeof ref !== "string" || !/^[a-z][a-z0-9_-]{0,31}:[A-Za-z0-9._:@-]{1,159}$/.test(ref))) {
+      throw new Error("supporting_evidence is invalid");
+    }
+    const text = diagnosticText(item.text, "supporting_evidence.text");
+    if (text === null) throw new Error("supporting_evidence is invalid");
+    return { kind: item.kind as TeachingEvidence["kind"], text, refs: item.refs as string[] };
+  });
+}
+
+function parseDiscriminator(value: unknown): TeachingDiscriminator | null {
+  if (value === null) return null;
+  if (!isRecord(value) || Object.keys(value).length !== 2 ||
+      Object.keys(value).some((key) => key !== "kind" && key !== "prompt") ||
+      (value.kind !== "question" && value.kind !== "experiment")) {
+    throw new Error("discriminator is invalid");
+  }
+  const prompt = diagnosticText(value.prompt, "discriminator.prompt");
+  if (prompt === null) throw new Error("discriminator is invalid");
+  const questionCount = (prompt.match(/[?？]/g) ?? []).length;
+  if ((value.kind === "question" && questionCount !== 1) ||
+      (value.kind === "experiment" && questionCount !== 0)) {
+    throw new Error("discriminator is invalid");
+  }
+  return { kind: value.kind, prompt };
 }
 
 function phaseQuestionKind(phase: TeachingPhase): TeachingQuestionKind {
@@ -195,6 +276,10 @@ export function parseTeachingTurnContract(raw: unknown): TeachingTurnContract {
   for (const key of Object.keys(value)) {
     if (!ALLOWED_KEYS.has(key)) throw new Error(`teaching_turn contains unsupported field: ${key}`);
   }
+  const hasDiagnosticFields = DIAGNOSTIC_CONTRACT_KEYS.every((key) => key in value);
+  const expectedKeys = hasDiagnosticFields
+    ? [...LEGACY_CONTRACT_KEYS, ...DIAGNOSTIC_CONTRACT_KEYS]
+    : LEGACY_CONTRACT_KEYS;
   if (value.schema_version !== TEACHING_TURN_CONTRACT_SCHEMA) throw new Error("teaching_turn schema_version is invalid");
   const sessionRef = requiredText(value.session_ref, "session_ref");
   if (!/^teaching_session:[a-f0-9]{32}$/.test(sessionRef)) throw new Error("session_ref is invalid");
@@ -202,6 +287,10 @@ export function parseTeachingTurnContract(raw: unknown): TeachingTurnContract {
       !ITEM_REF.test(value.active_item_ref))) throw new Error("active_item_ref is invalid");
   if (value.prepared_plan_ref !== null && (typeof value.prepared_plan_ref !== "string" ||
       !PLAN_REF.test(value.prepared_plan_ref))) throw new Error("prepared_plan_ref is invalid");
+  if (Object.keys(value).length !== expectedKeys.length ||
+      expectedKeys.some((key) => !(key in value))) {
+    throw new Error("teaching_turn has incomplete diagnosis fields");
+  }
   const preparedItem = parsePreparedItem(value.prepared_item);
   const nextRecommendation = parseNextRecommendation(value.next_recommendation);
   if ((value.prepared_plan_ref === null) !== (preparedItem === null)) {
@@ -223,12 +312,38 @@ export function parseTeachingTurnContract(raw: unknown): TeachingTurnContract {
   if (expectedQuestion !== (question !== null) || (question !== null && (question.match(/[?？]/g) ?? []).length !== 1)) {
     throw new Error("question is invalid for phase");
   }
+  const problemId = hasDiagnosticFields ? parseProblemId(value.problem_id) : null;
+  const problemLabel = hasDiagnosticFields ? diagnosticText(value.problem_label, "problem_label", true) : null;
+  if ((problemId === null) !== (problemLabel === null)) throw new Error("problem fields are invalid");
+  const evidenceStrength = hasDiagnosticFields ? value.evidence_strength : "limited";
+  const supportingEvidence = hasDiagnosticFields
+    ? parseSupportingEvidence(value.supporting_evidence) : [];
+  const counterevidenceStatus = hasDiagnosticFields ? value.counterevidence_status : "not_observed";
+  const counterevidence = hasDiagnosticFields
+    ? parseDiagnosticList(value.counterevidence, "counterevidence", 2) : [];
+  const discriminator = hasDiagnosticFields ? parseDiscriminator(value.discriminator) : null;
+  const softStart = hasDiagnosticFields ? value.soft_start : false;
+  if (typeof evidenceStrength !== "string" || !EVIDENCE_STRENGTHS.has(evidenceStrength as TeachingEvidenceStrength) ||
+      (problemId !== null && supportingEvidence.length === 0) ||
+      typeof counterevidenceStatus !== "string" ||
+      !COUNTEREVIDENCE_STATUSES.has(counterevidenceStatus as TeachingCounterevidenceStatus) ||
+      (counterevidenceStatus === "observed") !== (counterevidence.length > 0) ||
+      typeof softStart !== "boolean") {
+    throw new Error("diagnostic evidence is invalid");
+  }
+  if (discriminator !== null && discriminator.kind === "question" &&
+      (phase !== "intake" || question !== discriminator.prompt)) {
+    throw new Error("discriminator is invalid for phase");
+  }
   if (value.allowed_command !== null && (typeof value.allowed_command !== "string" ||
       !ALLOWED_COMMANDS.has(value.allowed_command as TeachingAllowedCommand))) throw new Error("allowed_command is invalid");
   if (value.allowed_command !== phaseCommand(phase, preparedItem !== null)) throw new Error("allowed_command is invalid for phase");
   const expectedConfirmation = phase === "await_execution_confirmation" ? "execution" :
     phase === "await_retest_confirmation" ? "retest" : "none";
   if (value.confirmation_intent !== expectedConfirmation) throw new Error("confirmation_intent is invalid for phase");
+  if (softStart && (phase !== "intake" || value.allowed_command !== null || expectedConfirmation !== "none")) {
+    throw new Error("soft_start is invalid for phase");
+  }
   if (!isRecord(value.retest) || Object.keys(value.retest).length !== 4 ||
       Object.keys(value.retest).some((key) => ![
         "intent", "comparability_required", "comparability", "revision_decision",
@@ -250,6 +365,14 @@ export function parseTeachingTurnContract(raw: unknown): TeachingTurnContract {
   }
   if (!Array.isArray(value.alternatives) || value.alternatives.length > 2 ||
       value.alternatives.some((item) => boundedText(item, "alternatives") === null)) throw new Error("alternatives is invalid");
+  const primaryCandidate = boundedText(value.primary_candidate, "primary_candidate", true);
+  if (problemId !== null && primaryCandidate !== null && !CANDIDATE_LANGUAGE.test(primaryCandidate)) {
+    throw new Error("primary_candidate is invalid");
+  }
+  if (problemId !== null && value.alternatives.some((item) =>
+      !CANDIDATE_LANGUAGE.test(requiredText(item, "alternatives")))) {
+    throw new Error("alternatives is invalid");
+  }
   if (!Array.isArray(value.ratio_sources) || value.ratio_sources.length > 3) throw new Error("ratio_sources is invalid");
   const ratioSources = value.ratio_sources.map((item) => {
     if (!isRecord(item) || Object.keys(item).some((key) => key !== "label" && key !== "value") ||
@@ -263,8 +386,14 @@ export function parseTeachingTurnContract(raw: unknown): TeachingTurnContract {
     session_ref: sessionRef,
     session_version: sessionVersion,
     phase,
+    problem_id: problemId,
+    problem_label: problemLabel,
+    evidence_strength: evidenceStrength as TeachingEvidenceStrength,
+    supporting_evidence: supportingEvidence,
+    counterevidence_status: counterevidenceStatus as TeachingCounterevidenceStatus,
+    counterevidence,
     observation: boundedText(value.observation, "observation", true),
-    primary_candidate: boundedText(value.primary_candidate, "primary_candidate", true),
+    primary_candidate: primaryCandidate,
     alternatives: value.alternatives.map((item) => requiredText(item, "alternatives")),
     cue: boundedText(value.cue, "cue", true),
     changed_variable: boundedText(value.changed_variable, "changed_variable", true),
@@ -284,6 +413,8 @@ export function parseTeachingTurnContract(raw: unknown): TeachingTurnContract {
     },
     ratio_sources: ratioSources,
     approved_dose: boundedText(value.approved_dose, "approved_dose", true),
+    discriminator,
+    soft_start: softStart,
   };
 }
 
@@ -314,15 +445,20 @@ export function teachingTurnRequiresLocalFallback(contract: TeachingTurnContract
 
 function fallbackText(contract: TeachingTurnContract, plan: TeachingPlan): string {
   const sentence = (value: string): string => /[。.!！?？]$/.test(value) ? value : `${value}。`;
+  const evidenceText = (value: TeachingTurnContract["supporting_evidence"][number]): string =>
+    typeof value === "string" ? value : value.text;
   const observation = contract.observation ? sentence(contract.observation) : "";
   const candidate = contract.primary_candidate ? sentence(contract.primary_candidate) : "";
+  const problem = contract.problem_label ? sentence(`我先看${contract.problem_label}`) : "";
+  const supportingEvidence = contract.supporting_evidence.length > 0
+    ? sentence(`目前看到${evidenceText(contract.supporting_evidence[0])}`) : "";
   const alternatives = contract.alternatives.length > 0
-    ? `另外，${sentence(contract.alternatives.join("；"))}`
+    ? sentence(contract.alternatives[0])
     : "";
   const cue = contract.cue ? `这组只记住一件事：${sentence(contract.cue)}` : "";
   const dose = contract.approved_dose ? sentence(contract.approved_dose) : "";
   switch (plan.action) {
-    case "ask_discriminator": return `${observation}${plan.question}`.trim();
+    case "ask_discriminator": return `${problem}${observation}${supportingEvidence}${candidate}${alternatives}${plan.question}`.trim();
     case "explain_candidate": return `${observation}${candidate}${alternatives}`.trim();
     case "teach": return `${observation}${candidate}${cue}`.trim();
     case "ask_teach_back": return `${cue}${plan.question}`.trim();
@@ -392,7 +528,7 @@ export function fallbackForTeachingTurn(contract: TeachingTurnContract): Teachin
 }
 
 export function teachingTurnHoldsState(contract: TeachingTurnContract): boolean {
-  return teachingTurnRequiresLocalFallback(contract) ||
+  return contract.soft_start || teachingTurnRequiresLocalFallback(contract) ||
     contract.phase === "paused" || contract.phase === "stopped_for_discomfort" ||
     (contract.phase === "revise" && contract.retest.revision_decision === null) ||
     (contract.phase === "practice_ready" && contract.prepared_item === null);
@@ -403,6 +539,12 @@ export function teachingEnvelopeInstruction(contract: TeachingTurnContract): str
   const approved = {
     action: plan.action,
     question: plan.question,
+    problem_id: contract.problem_id,
+    problem_label: contract.problem_label,
+    evidence_strength: contract.evidence_strength,
+    supporting_evidence: contract.supporting_evidence,
+    counterevidence_status: contract.counterevidence_status,
+    counterevidence: contract.counterevidence,
     observation: contract.observation,
     primary_candidate: contract.primary_candidate,
     alternatives: contract.alternatives,
@@ -415,6 +557,8 @@ export function teachingEnvelopeInstruction(contract: TeachingTurnContract): str
     approved_dose: contract.approved_dose,
     ratio_sources: contract.ratio_sources,
     retest: contract.retest,
+    discriminator: contract.discriminator,
+    soft_start: contract.soft_start,
   };
   const retestWrite = contract.allowed_command === "training_plan.retest.record"
     ? `For training_plan.retest.record, result must be exactly one of ${TEACHING_RETEST_OUTCOMES.join(", ")}; ` +
@@ -425,11 +569,14 @@ export function teachingEnvelopeInstruction(contract: TeachingTurnContract): str
     ? `For training_plan.item.add, use exactly these tool parameters without changing any key or value: ${JSON.stringify({ plan_ref: contract.prepared_plan_ref, item_payload: contract.prepared_item })}. `
     : "";
   return `Internal teaching contract: reply with exactly one JSON object {"action":"${plan.action}","text":"..."}. ` +
-    `Do not add keys, Markdown, tool names, phase changes, completion claims, dose, causes, or another question. ` +
+    `Do not add keys, Markdown, tool names, phase changes, completion claims, unapproved dose, causes, or another question. ` +
+    `Treat every candidate as a possibility to check, never as an established cause. ` +
+    (contract.soft_start ? "This is a soft start: do not claim that training has advanced, started, or been scheduled. " : "") +
     `Use active_item_ref only as the exact item_ref tool parameter; never put its field name or value in user-visible text. ` +
     preparedItemWrite +
     retestWrite +
-    `Keep every stage-required approved observation, candidate, alternative, and cue in the user-facing text. ` +
+    `Keep the stage-required approved content, but do not list every supporting evidence item or alternative in the first explanation. ` +
+    `For an abstract movement explanation, you may use one short analogy. It may help understanding, but it is not evidence and cannot prove a cause. ` +
     `Naturalize only this approved content: ${JSON.stringify(approved)}`;
 }
 
@@ -453,13 +600,13 @@ function questionCount(value: string): number {
   return (value.match(/[?？]/g) ?? []).length;
 }
 
+const DIRECT_FOLLOW_UP_REQUEST = /(?:告诉我|反馈|说说).{0,32}(?:完成情况|主观感受|感受|练习(?:结果|情况)|反馈)/;
+
 function ratioAliasAllowed(value: number, text: string): boolean {
   const percent = value * 100;
   const percentages = [String(percent), percent.toFixed(1), percent.toFixed(2)]
     .map((item) => item.replace(/\.0+$/, ""));
-  if (percentages.some((item) => text.includes(`${item}%`) || text.includes(`${item}％`))) return true;
-  const fractions: Array<[string, number]> = [["二分之一", 1 / 2], ["三分之一", 1 / 3], ["四分之一", 1 / 4]];
-  return fractions.some(([label, fraction]) => Math.abs(value - fraction) <= 0.015 && text.includes(`约${label}`));
+  return percentages.some((item) => text.includes(`${item}%`) || text.includes(`${item}％`));
 }
 
 function hasUnsupportedRatioMeaning(contract: TeachingTurnContract, text: string): boolean {
@@ -467,6 +614,11 @@ function hasUnsupportedRatioMeaning(contract: TeachingTurnContract, text: string
     text.includes(label) || text.includes(String(value)) || ratioAliasAllowed(value, text),
   );
   return mentionsRatio && RATIO_SEMANTIC_EXPANSION.test(text);
+}
+
+function hasUnapprovedChineseRatioFraction(contract: TeachingTurnContract, text: string): boolean {
+  return contract.ratio_sources.length > 0 &&
+    /(?:约|大约|大概)?(?:二分之一|三分之一|三分之二|四分之一|四分之三|一半|半数)/.test(text);
 }
 
 function hasUnsupportedCausalClaim(text: string): boolean {
@@ -511,7 +663,7 @@ type RequiredTeachingContent = {
   value: string;
   exact: boolean;
   minimumAnchors: number;
-  kind: "observation" | "candidate" | "cue" | "dose";
+  kind: "problem" | "evidence" | "observation" | "candidate" | "cue" | "dose";
 };
 
 function requiredTeachingContent(contract: TeachingTurnContract, plan: TeachingPlan): RequiredTeachingContent[] {
@@ -526,13 +678,25 @@ function requiredTeachingContent(contract: TeachingTurnContract, plan: TeachingP
     value === null ? null : { value, exact: true, minimumAnchors: 0, kind: "dose" };
   switch (plan.action) {
     case "ask_discriminator":
-      values.push(semantic(contract.observation, 2, "observation"));
+      values.push(
+        semantic(contract.problem_label, 1, "problem"),
+        semantic(contract.observation, 2, "observation"),
+        contract.supporting_evidence.length === 0 ? null : semantic(
+          typeof contract.supporting_evidence[0] === "string"
+            ? contract.supporting_evidence[0]
+            : contract.supporting_evidence[0].text,
+          1,
+          "evidence",
+        ),
+        semantic(contract.primary_candidate, 1, "candidate"),
+        semantic(contract.alternatives[0] ?? null, 1, "candidate"),
+      );
       break;
     case "explain_candidate":
       values.push(
         semantic(contract.observation, 2, "observation"),
         semantic(contract.primary_candidate, 1, "candidate"),
-        ...contract.alternatives.map((value) => semantic(value, 1, "candidate")),
+        semantic(contract.alternatives[0] ?? null, 1, "candidate"),
       );
       break;
     case "teach":
@@ -609,6 +773,15 @@ function negatesRequiredTeachingContent(required: RequiredTeachingContent, text:
   if (required.kind === "dose") return false;
   const value = required.kind === "candidate" ? candidateCore(required.value) : required.value;
   const normalizedText = normalizedTeachingText(text);
+  const normalizedValue = normalizedTeachingText(value);
+  if (normalizedText.includes(normalizedValue)) {
+    const escapedValue = normalizedValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const externalNegation = new RegExp(
+      `(?:不是|并非|没有|没|不再|不要|别).{0,6}${escapedValue}|` +
+      `${escapedValue}.{0,6}(?:不是|并非|没有|不对)`,
+    );
+    if (!externalNegation.test(normalizedText)) return false;
+  }
   return exactContractAnchors(value).some((anchor) => {
     const escaped = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(?:不是|并非|没有|没|不再|不要|别).{0,6}${escaped}|${escaped}.{0,6}(?:不是|并非|没有|不对)`).test(normalizedText);
@@ -659,10 +832,16 @@ export function validateTeachingDraft(contract: TeachingTurnContract, draft: Tea
     return { ok: false, reason: "text adds a discomfort checklist" };
   }
   if (COMPLETION_CLAIM.test(draft.text)) return { ok: false, reason: "text claims an unconfirmed fact" };
+  if (contract.soft_start && SOFT_START_ADVANCEMENT.test(draft.text)) {
+    return { ok: false, reason: "soft start advances the teaching session" };
+  }
   if (contract.approved_dose === null && DOSE.test(draft.text)) {
     return { ok: false, reason: "text adds an unapproved dose" };
   }
   if (hasUnsupportedRatioMeaning(contract, draft.text)) return { ok: false, reason: "text extends ratio semantics" };
+  if (hasUnapprovedChineseRatioFraction(contract, draft.text)) {
+    return { ok: false, reason: "text converts a ratio to an unapproved Chinese fraction" };
+  }
   if (hasUnsupportedCausalClaim(draft.text)) return { ok: false, reason: "text makes an unsupported causal claim" };
   if (contract.phase === "revise" && contract.retest.comparability !== "comparable" &&
       REVISION_LANGUAGE.test(draft.text)) {
@@ -672,6 +851,10 @@ export function validateTeachingDraft(contract: TeachingTurnContract, draft: Tea
   if (requiredContent.some((value) =>
     !preservesRequiredTeachingContent(value, draft.text) || negatesRequiredTeachingContent(value, draft.text))) {
     return { ok: false, reason: "text omits required teaching content" };
+  }
+  if (contract.problem_id !== null && requiredContent.some((value) => value.kind === "candidate") &&
+      !CANDIDATE_LANGUAGE.test(draft.text)) {
+    return { ok: false, reason: "text states a candidate as a fact" };
   }
   if (contract.phase === "revise") {
     const decision = contract.retest.revision_decision;
@@ -693,6 +876,50 @@ export function validateTeachingDraft(contract: TeachingTurnContract, draft: Tea
   if (expectedQuestions === 1 && contract.question_kind !== "discriminator" &&
       /(?:还是|以及|并且|同时).{0,32}[?？]/.test(draft.text)) {
     return { ok: false, reason: "text contains a compound question" };
+  }
+  return { ok: true };
+}
+
+/**
+ * A user may interrupt the lesson to question an explanation or correct Coach.
+ * Keep that answer within the same safety boundaries, but do not force it to
+ * repeat the phase's scripted question or advance the TeachingSession.
+ */
+export function validateTeachingDirectResponse(
+  contract: TeachingTurnContract,
+  text: string,
+): TeachingValidation {
+  if (typeof text !== "string" || text.length === 0 || text.length > 1200 || PATH_OR_URL.test(text)) {
+    return { ok: false, reason: "text is invalid" };
+  }
+  if (INTERNAL_VOCABULARY.test(text) || INTERNAL_ITEM_REF.test(text) ||
+      (contract.active_item_ref !== null && text.includes(contract.active_item_ref))) {
+    return { ok: false, reason: "text exposes internal vocabulary" };
+  }
+  if (PROTOCOL_LANGUAGE.test(text) || COMPLETION_CLAIM.test(text)) {
+    return { ok: false, reason: "text exposes protocol language or claims an unconfirmed fact" };
+  }
+  const allowedDoseTokens = new Set(
+    numericUnitTokens(contract.approved_dose ?? "").map(normalizedTeachingText),
+  );
+  const responseDoseTokens = numericUnitTokens(text).map(normalizedTeachingText);
+  if (responseDoseTokens.some((token) => !allowedDoseTokens.has(token))) {
+    return { ok: false, reason: "text adds an unapproved dose" };
+  }
+  if (hasUnsupportedRatioMeaning(contract, text) ||
+      hasUnapprovedChineseRatioFraction(contract, text) ||
+      hasUnsupportedCausalClaim(text)) {
+    return { ok: false, reason: "text exceeds the evidence boundary" };
+  }
+  if (contract.phase === "revise" && contract.retest.comparability !== "comparable" &&
+      REVISION_LANGUAGE.test(text)) {
+    return { ok: false, reason: "text adds a revision decision without a comparable retest" };
+  }
+  if (questionCount(text) !== 0) {
+    return { ok: false, reason: "direct answer adds a follow-up question" };
+  }
+  if (DIRECT_FOLLOW_UP_REQUEST.test(text)) {
+    return { ok: false, reason: "direct answer adds an imperative follow-up" };
   }
   return { ok: true };
 }

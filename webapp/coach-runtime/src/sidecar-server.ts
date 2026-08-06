@@ -7,7 +7,13 @@ import {
 } from "./provider-auth.ts";
 import { getProviderProfileStatus, testProviderConnection } from "./provider-profile.ts";
 import { listBuiltinProviderCatalog } from "./provider-models.ts";
-import { runCoachTurn, stopCoachTurn } from "./turn.ts";
+import {
+  runCoachTurn,
+  stopCoachTurn,
+  type CoachPartialRevision,
+  type CoachTurnTiming,
+} from "./turn.ts";
+import type { CoachRuntimeTurnResponse } from "./contracts.ts";
 
 export const DEFAULT_SIDECAR_HOST = "127.0.0.1";
 export const DEFAULT_SIDECAR_PORT = 8765;
@@ -36,6 +42,30 @@ function writeJson(res: http.ServerResponse, statusCode: number, body: unknown):
   res.end(payload);
 }
 
+const COACH_RUNTIME_STREAM_SCHEMA = "coach_runtime_stream.v1" as const;
+
+type TurnRunner = (
+  request: unknown,
+  options?: {
+    onPartial?: (partial: CoachPartialRevision) => Promise<void> | void;
+    onComplete?: (timing: CoachTurnTiming) => Promise<void> | void;
+  },
+) => Promise<CoachRuntimeTurnResponse>;
+
+function writeNdjsonFrame(res: http.ServerResponse, frame: unknown): void {
+  res.write(`${JSON.stringify(frame)}\n`);
+}
+
+function acceptsNdjson(req: http.IncomingMessage): boolean {
+  const accept = req.headers.accept;
+  if (typeof accept !== "string") return false;
+  return accept.split(",").some((value) => {
+    const [mediaType, ...parameters] = value.trim().split(";");
+    if (mediaType.trim().toLowerCase() !== "application/x-ndjson") return false;
+    return !parameters.some((parameter) => /^\s*q\s*=\s*0(?:\.0*)?\s*$/i.test(parameter));
+  });
+}
+
 function schemaForPath(pathname: string): CoachRuntimeTurnSchema {
   return pathname === "/v0/turn" ? "coach_runtime_turn.v0" : "coach_runtime_turn.v1";
 }
@@ -45,7 +75,8 @@ function turnStatusCode(response: { ok: boolean; error: { code?: string } | null
   if (
     response.error?.code === "invalid_profile" ||
     response.error?.code === "unknown_provider" ||
-    response.error?.code === "unknown_model"
+    response.error?.code === "unknown_model" ||
+    response.error?.code === "unknown_model_capabilities"
   ) {
     return 400;
   }
@@ -96,6 +127,7 @@ export async function handleSidecarRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   authOperations: ProviderAuthOperationManager = defaultAuthOperations,
+  turnRunner: TurnRunner = runCoachTurn,
 ): Promise<void> {
   const host = req.headers.host ?? "127.0.0.1";
   const url = new URL(req.url ?? "/", `http://${host}`);
@@ -234,8 +266,49 @@ export async function handleSidecarRequest(
       return;
     }
 
-    const response = await runCoachTurn(parsed);
-    writeJson(res, turnStatusCode(response), response);
+    if (url.pathname !== "/v1/turn" || !acceptsNdjson(req)) {
+      const response = await turnRunner(parsed);
+      writeJson(res, turnStatusCode(response), response);
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    let timing: CoachTurnTiming | null = null;
+    let lastRevision = 0;
+    const response = await turnRunner(parsed, {
+      onPartial: async (partial) => {
+        if (
+          partial.revision !== lastRevision + 1 ||
+          !partial.text ||
+          partial.text.length > 12_000
+        ) {
+          throw new Error("invalid Coach partial revision");
+        }
+        lastRevision = partial.revision;
+        writeNdjsonFrame(res, {
+          schema_version: COACH_RUNTIME_STREAM_SCHEMA,
+          type: "partial",
+          revision: partial.revision,
+          text: partial.text,
+          elapsed_ms: partial.elapsed_ms,
+          provider_rounds: partial.provider_rounds,
+        });
+      },
+      onComplete: async (completedTiming) => {
+        timing = completedTiming;
+      },
+    });
+    writeNdjsonFrame(res, {
+      schema_version: COACH_RUNTIME_STREAM_SCHEMA,
+      type: "final",
+      response,
+      timing,
+    });
+    res.end();
     return;
   }
 
@@ -254,23 +327,32 @@ export async function handleSidecarRequest(
 
 export function createSidecarServer(options: {
   authOperations?: ProviderAuthOperationManager;
+  turnRunner?: TurnRunner;
 } = {}): http.Server {
   const authOperations = options.authOperations ?? new ProviderAuthOperationManager();
   const ownsAuthOperations = options.authOperations === undefined;
   const server = http.createServer((req, res) => {
-    handleSidecarRequest(req, res, authOperations).catch(() => {
-      writeJson(
-        res,
-        500,
-        failureResponse(
-          makeError({
-            category: "coach_runtime",
-            code: "unhandled",
-            message: "Unhandled sidecar error",
-            retryable: false,
-          }),
-        ),
+    handleSidecarRequest(req, res, authOperations, options.turnRunner ?? runCoachTurn).catch(() => {
+      if (res.writableEnded) return;
+      const failure = failureResponse(
+        makeError({
+          category: "coach_runtime",
+          code: "unhandled",
+          message: "Unhandled sidecar error",
+          retryable: false,
+        }),
       );
+      if (res.headersSent) {
+        writeNdjsonFrame(res, {
+          schema_version: COACH_RUNTIME_STREAM_SCHEMA,
+          type: "final",
+          response: failure,
+          timing: null,
+        });
+        res.end();
+      } else {
+        writeJson(res, 500, failure);
+      }
     });
   });
   if (ownsAuthOperations) server.on("close", () => authOperations.dispose());
