@@ -51,3 +51,9 @@ test("history and run inspector do not expose path or raw trace fields", async (
   assert.match(value, /data-operation=\"manage_storage\"/);
   assert.match(value, /disabled variant=\"secondary\"/);
 });
+
+test("history never promotes an analysis summary into the scenario title", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  assert.match(value, /session\.scenario \?\? "场景信息不可用"/);
+  assert.doesNotMatch(value, /session\.scenario \?\? session\.summary_label/);
+});

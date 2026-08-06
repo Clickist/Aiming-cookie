@@ -811,6 +811,8 @@ export interface ProviderProfileCreate {
   provider_id?: string | null;
   base_url?: string | null;
   model_id: string;
+  context_window?: number | null;
+  max_tokens?: number | null;
   api_key?: string | null;
   is_default?: boolean;
 }
@@ -822,6 +824,8 @@ export interface ProviderProfile {
   kind: ProviderKind;
   base_url: string | null;
   model_id: string;
+  context_window?: number | null;
+  max_tokens?: number | null;
   is_default: boolean;
   configured: boolean;
   credential_configured: boolean;
@@ -842,8 +846,14 @@ export interface ProviderProfileStatus {
   message: string;
 }
 
+export interface CustomProviderModel {
+  model_id: string;
+  context_window: number | null;
+  max_tokens: number | null;
+}
+
 export interface CustomProviderModelListResponse {
-  models: string[];
+  models: CustomProviderModel[];
 }
 
 export interface CustomProviderModelDiscoveryResponse extends CustomProviderModelListResponse {
@@ -1139,6 +1149,11 @@ export interface CoachAgentRunV1 {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface CoachAnalysisSoftStartRequestV1 {
+  schema_version: "coach_analysis_soft_start_request.v1";
+  analysis_session_id: number;
 }
 
 export interface CoachConfirmationV1 {

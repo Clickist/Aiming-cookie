@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getAnalysisEvidenceSegments, getVideoUrl } from "@/lib/api";
+import { getAnalysisEvidenceSegments, getAnalysisVideoBlob } from "@/lib/api";
 import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { getManagedVideoUrl, isDesktopRuntime } from "@/lib/desktop";
 import type { FrontendEvidenceSegmentV1, FrontendEvidenceSegmentsV1, TimelineEvent } from "@/lib/types";
@@ -56,6 +56,7 @@ export function VideoView({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const objectUrlRef = useRef<string | null>(null);
   const [segments, setSegments] = useState<FrontendEvidenceSegmentsV1 | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(presentation.video.kind === "seekable");
@@ -94,13 +95,26 @@ export function VideoView({
     setSegmentsLoading(false);
     setSegmentsFailed(false);
     if (presentation.video.kind !== "seekable") {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
       setVideoUrl(null);
       setLoading(false);
       return;
     }
     try {
-      const managed = isDesktopRuntime() ? await getManagedVideoUrl(analysisId) : null;
-      setVideoUrl(managed ?? getVideoUrl(analysisId));
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+      if (isDesktopRuntime()) {
+        setVideoUrl(await getManagedVideoUrl(analysisId));
+      } else {
+        const objectUrl = URL.createObjectURL(await getAnalysisVideoBlob(analysisId));
+        objectUrlRef.current = objectUrl;
+        setVideoUrl(objectUrl);
+      }
     } catch {
       setVideoUrl(null);
       setLoadFailed(true);
@@ -114,6 +128,10 @@ export function VideoView({
   useEffect(() => {
     void loadEvidence();
   }, [loadEvidence]);
+
+  useEffect(() => () => {
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;

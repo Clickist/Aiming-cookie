@@ -24,6 +24,7 @@ import type {
   CoachPrimaryResponse,
   CoachRuntimeStatusResponse,
   CoachAgentRunV1,
+  CoachAnalysisSoftStartRequestV1,
   CoachConfirmationV1,
   CoachContextListV1,
   CoachContextMutationV1,
@@ -379,6 +380,13 @@ export async function getTimeline(
 /** Browser-only video URL. Desktop uses the Tauri asset protocol instead. */
 export function getVideoUrl(sessionId: number): string {
   return `/api/sessions/${sessionId}/video`;
+}
+
+/** Browser media elements cannot attach the owner header, so fetch bytes before playback. */
+export async function getAnalysisVideoBlob(sessionId: number): Promise<Blob> {
+  const res = await apiFetch(getVideoUrl(sessionId), { method: "GET" });
+  if (!res.ok) throw await apiError(res);
+  return res.blob();
 }
 
 export async function getCoachRuntimeStatus(
@@ -909,6 +917,23 @@ export async function createCoachAgentRun(
         context_refs: contextRefs,
       }),
     },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachAgentRunV1;
+}
+
+export async function startCoachAnalysisSoftStart(
+  analysisId: number,
+  opts: { signal?: AbortSignal } = {},
+): Promise<CoachAgentRunV1> {
+  const body: CoachAnalysisSoftStartRequestV1 = {
+    schema_version: "coach_analysis_soft_start_request.v1",
+    analysis_session_id: analysisId,
+  };
+  const res = await apiFetch(
+    "/api/coach/analysis-soft-start",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
     opts,
   );
   if (!res.ok) throw await apiError(res);

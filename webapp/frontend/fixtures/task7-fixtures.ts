@@ -88,6 +88,18 @@ export const RUN_NATIVE: KovaaKRunListItem = {
   limitations: ["video_unavailable"],
 };
 
+export const RUN_PENDING_MULTIMODAL: KovaaKRunListItem = {
+  ...RUN_MULTIMODAL,
+  readiness_state: "pending_analysis",
+  analysis_count: 0,
+};
+
+export const RUN_PENDING_NATIVE: KovaaKRunListItem = {
+  ...RUN_NATIVE,
+  readiness_state: "pending_analysis",
+  analysis_count: 0,
+};
+
 export const CAPTURE_STATUS: CaptureStatusV1 = {
   schema_version: "capture_status.v1",
   availability: "available",
@@ -786,6 +798,22 @@ export const KOVAAK_SCORES: KovaaKScoresV1 = {
   items: [],
 };
 
+export const KOVAAK_SCORES_AVAILABLE: KovaaKScoresV1 = {
+  schema_version: "kovaak_scores.v1",
+  availability: "available",
+  observed_at: NOW,
+  stages: [
+    { stage: "easier", completed: 18, required: 39, rank: 5, rank_name: "黄金 III" },
+    { stage: "medium", completed: 0, required: 39, rank: 0, rank_name: "未完成" },
+  ],
+  items: [
+    { stage: "easier", name: "controlsphere", category: "Control Tracking", subcategory: "稳定跟随", score: 8214, item_rank: 4, item_rank_name: "黄金 I", completed: true },
+    { stage: "easier", name: "air", category: "Reactive Tracking", subcategory: "变化跟随", score: 5141, item_rank: 2, item_rank_name: "白银 I", completed: true },
+    { stage: "easier", name: "1wall 6targets small", category: "Flick Tech", subcategory: "快速点击", score: 1022, item_rank: 5, item_rank_name: "黄金 III", completed: true },
+    { stage: "medium", name: "microshot speed", category: "Click Timing", subcategory: "点击时机", score: 0, item_rank: 0, item_rank_name: "未完成", completed: false },
+  ],
+};
+
 export interface ApiScenario {
   productState: ProductStateV1;
   runs: KovaaKRunListItem[];
@@ -889,7 +917,13 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
   }
   if (path === "/api/provider-profiles/custom/models" && method === "POST") {
     const body = requestBody(request.body);
-    return typeof body.base_url === "string" && body.base_url.includes("unavailable") ? response({ detail: { code: "model_discovery_failed", message: "Mock provider unavailable" } }, 503) : response({ models: ["custom-model-a", "custom-model-b"], protocol: body.protocol ?? "openai-completions" });
+    return typeof body.base_url === "string" && body.base_url.includes("unavailable") ? response({ detail: { code: "model_discovery_failed", message: "Mock provider unavailable" } }, 503) : response({
+      models: [
+        { model_id: "custom-model-a", context_window: 32768, max_tokens: 4096 },
+        { model_id: "custom-model-b", context_window: 65536, max_tokens: 8192 },
+      ],
+      protocol: body.protocol ?? "openai-completions",
+    });
   }
   const providerAction = /^\/api\/provider-profiles\/(\d+)(?:\/(test|default)|\/auth\/api-key)?$/.exec(path);
   if (providerAction) {
@@ -997,7 +1031,12 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     if (path === "/api/provider-auth/capabilities") return fulfillJson(route, PROVIDER_CAPABILITIES);
     if (path === "/api/provider-profiles/status") return fulfillJson(route, scenario.providerStatus);
     if (path === "/api/provider-profiles" && method === "GET") return fulfillJson(route, scenario.profiles);
-    if (path === "/api/provider-profiles/custom/models" && method === "POST") return fulfillJson(route, { models: ["custom-model-a", "custom-model-b"] });
+    if (path === "/api/provider-profiles/custom/models" && method === "POST") return fulfillJson(route, {
+      models: [
+        { model_id: "custom-model-a", context_window: 32768, max_tokens: 4096 },
+        { model_id: "custom-model-b", context_window: 65536, max_tokens: 8192 },
+      ],
+    });
     if (path === "/api/kovaak-connection" && method === "GET") return fulfillJson(route, { connected: scenario.kovaakConnected });
     if (path === "/api/kovaak-connection" && method === "PUT") return fulfillJson(route, { connected: true });
     if (path === "/api/kovaak-connection" && method === "DELETE") return fulfillJson(route, { deleted: true });

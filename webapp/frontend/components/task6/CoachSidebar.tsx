@@ -10,7 +10,7 @@ import {
   COACH_MIN_WIDTH,
   COACH_WIDTH_STEP,
 } from "@/lib/contracts";
-import type { ProviderProfileState } from "@/lib/types";
+import type { CoachAgentRunV1, ProviderProfileState } from "@/lib/types";
 import { CoachPanel } from "./CoachPanel";
 
 const SIDE_BY_SIDE_BREAKPOINT = 1160;
@@ -22,6 +22,7 @@ export function CoachSidebar({
   onClose,
   onWidthChange,
   pathname,
+  softStartRun,
   state,
   width,
 }: {
@@ -30,6 +31,7 @@ export function CoachSidebar({
   onClose: () => void;
   onWidthChange: (width: number) => void;
   pathname: string;
+  softStartRun: CoachAgentRunV1 | null;
   state: "open" | "closed";
   width: number;
 }) {
@@ -130,6 +132,7 @@ export function CoachSidebar({
       onClose={layout.mode !== "side-by-side" ? closeAndRestoreFocus : undefined}
       onRequestContext={attachCurrent}
       pathname={pathname}
+      softStartRun={softStartRun}
     />
   );
 

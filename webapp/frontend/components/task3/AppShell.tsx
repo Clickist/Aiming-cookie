@@ -4,14 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type AnimationEvent as ReactAnimationEvent, type CSSProperties, type ReactNode } from "react";
 
-import { getDefaultProviderStatus, getSession, listTasks } from "@/lib/api";
+import { getDefaultProviderStatus, getSession, listTasks, startCoachAnalysisSoftStart } from "@/lib/api";
 import { clampCoachWidth, COACH_DEFAULT_WIDTH } from "@/lib/contracts";
-import type { ProviderProfileState } from "@/lib/types";
+import type { CoachAgentRunV1, ProviderProfileState } from "@/lib/types";
 import { CoachSidebar } from "@/components/task6/CoachSidebar";
 import { useAnimatedPresence } from "@/ui/primitives";
 
 const COACH_OPEN_KEY = "aiming-cookie.ui.coach-open";
-const COACH_FIRST_ANALYSIS_KEY = "aiming-cookie.ui.coach-first-analysis-opened";
 const COACH_WIDTH_KEY = "aiming-cookie.ui.coach-width";
 const SETTINGS_RETURN_KEY = "aiming-cookie.ui.settings-return";
 
@@ -57,6 +56,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [coachWidth, setCoachWidth] = useState(COACH_DEFAULT_WIDTH);
   const [preferenceLoaded, setPreferenceLoaded] = useState(false);
   const [settingsMotion, setSettingsMotion] = useState<SettingsMotion>("idle");
+  const [softStartRun, setSoftStartRun] = useState<CoachAgentRunV1 | null>(null);
   const shellHidden = pathname === "/" || pathname.startsWith("/onboarding");
   const settingsActive = pathname.startsWith("/settings");
   const coachSupported = !shellHidden && !pathname.startsWith("/settings");
@@ -111,16 +111,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [capability, coachSupported, wide]);
 
   useEffect(() => {
+    setSoftStartRun(null);
+  }, [pathname]);
+
+  useEffect(() => {
     if (!coachSupported || capability !== "ready" || !pathname.startsWith("/analysis/")) return;
-    if (window.localStorage.getItem(COACH_FIRST_ANALYSIS_KEY) === "true") return;
     const analysisId = Number(pathname.split("/")[2]);
     if (!Number.isSafeInteger(analysisId) || analysisId <= 0) return;
     const controller = new AbortController();
-    void getSession(analysisId, { signal: controller.signal }).then((session) => {
+    void getSession(analysisId, { signal: controller.signal }).then(async (session) => {
       if (session.status !== "done") return;
       setCoachOpen(true);
       setPreferenceLoaded(true);
-      window.localStorage.setItem(COACH_FIRST_ANALYSIS_KEY, "true");
+      try {
+        const run = await startCoachAnalysisSoftStart(analysisId, { signal: controller.signal });
+        if (!controller.signal.aborted) setSoftStartRun(run);
+      } catch {
+        // Coach remains available for a manual, recoverable retry.
+      }
     }).catch(() => undefined);
     return () => controller.abort();
   }, [capability, coachSupported, pathname]);
@@ -267,6 +275,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             onWidthChange={updateCoachWidth}
             open={showCoach}
             pathname={pathname}
+            softStartRun={softStartRun}
             state={coachPresence.state}
             width={coachWidth}
           />

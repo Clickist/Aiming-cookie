@@ -223,7 +223,7 @@ export function TasksClient() {
                     <TaskStatusBadge copy={copy} task={task} />
                     <span className="task3-task-meta">
                       {task.state === "running" || task.state === "retrying"
-                        ? "可离开本页"
+                        ? `${task.attempt_number && task.attempt_number > 1 ? `第 ${task.attempt_number} 次尝试 · ` : ""}可离开本页`
                         : task.created_at
                           ? new Date(task.created_at).toLocaleString("zh-CN")
                           : "时间不可用"}

@@ -252,6 +252,7 @@ test("workspace preserves only safe optional issue knowledge refs", () => {
   issue.knowledge_registry_version = "2026-07-29.v4";
   issue.knowledge_entry_refs = ["knowledge:static.flicking-terminal-control@2"];
   issue.plain_language_meaning = "This observation is a candidate explanation, not a confirmed mechanism.";
+  issue.expected_result = "reverse_ratio ↓";
   issue.claim_level = "deterministic_rule";
 
   const projected = presentAnalysisWorkspace(session({ result: withRefs }))?.issues[0];
@@ -259,6 +260,7 @@ test("workspace preserves only safe optional issue knowledge refs", () => {
   assert.equal(projected?.knowledgeRegistryVersion, "2026-07-29.v4");
   assert.deepEqual(projected?.knowledgeEntryRefs, ["knowledge:static.flicking-terminal-control@2"]);
   assert.equal(projected?.candidateExplanation, "This observation is a candidate explanation, not a confirmed mechanism.");
+  assert.equal(projected?.expectedResult, "反向修正比例下降");
   assert.equal(projected?.claimLevel, "deterministic_rule");
   assert.equal(projected?.claimLabel, "规则化观察");
   assert.equal(projected?.presentationKind, "registry-backed");
@@ -490,13 +492,14 @@ test("workspace projects partial Session 22 findings as descriptive Chinese obse
   assert.deepEqual(presentation?.metrics.summary.map((metric) => metric.referenceKey), ["decel_frac", "reverse_ratio", "submovement_overlap"]);
   assert.deepEqual(presentation?.metrics.formal, []);
   assert.equal(presentation?.profile?.description, "主要移动和后续修正看起来分为两段。");
+  assert.equal(presentation?.headline, "本轮最值得关注：减速阶段偏长");
   assert.deepEqual(presentation?.issues.map((issue) => issue.signal), ["减速阶段偏长", "反向修正偏多", "主要移动与后续修正较分离"]);
   assert.deepEqual(presentation?.issues.map((issue) => issue.priorityReason), [
     null,
     null,
     null,
   ]);
-  assert.deepEqual(presentation?.issues.map((issue) => issue.claimLabel), ["探索性观察", "探索性观察", "探索性观察"]);
+  assert.deepEqual(presentation?.issues.map((issue) => issue.claimLabel), ["待验证", "待验证", "待验证"]);
   assert.deepEqual(presentation?.issues[0]?.metricRefs, ["decel_frac"]);
   assert.deepEqual(presentation?.issues[0]?.rootCauses.map((cause) => cause.text), [
     "速度达到峰值后，减速阶段持续得较久。",
@@ -536,4 +539,30 @@ test("diagnosis summary follows explicit keys and remains empty without formal f
   const outcomePresentation = presentAnalysisWorkspace(session({ result: outcome }));
   assert.equal(outcomePresentation?.metrics.summaryMode, "empty");
   assert.deepEqual(outcomePresentation?.metrics.summary, []);
+});
+
+test("diagnosis falls back to valid metrics when its summary references are absent", () => {
+  const staleSummary = result();
+  staleSummary.deterministic.diagnosis!.summary = {
+    stale_metric: { value: 1, classification: "deterministic" },
+  };
+
+  const presentation = presentAnalysisWorkspace(session({ result: staleSummary }));
+
+  assert.equal(presentation?.metrics.summaryMode, "formal");
+  assert.deepEqual(presentation?.metrics.summary.map((metric) => metric.referenceKey), ["sparc"]);
+});
+
+test("diagnosis keeps available metrics descriptive when scenario resolution is missing", () => {
+  const unresolved = result();
+  delete unresolved.input_snapshot.scenario_resolution;
+
+  const presentation = presentAnalysisWorkspace(session({ result: unresolved }));
+
+  assert.equal(presentation?.family.status, "unavailable");
+  assert.equal(presentation?.metrics.summaryMode, "descriptive");
+  assert.deepEqual(
+    presentation?.metrics.summary.map((metric) => metric.referenceKey),
+    ["sparc"],
+  );
 });

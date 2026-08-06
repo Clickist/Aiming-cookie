@@ -11,11 +11,13 @@ import {
   getKovaaKScores,
   getCurrentTraining,
   getAnalysisFamilyData,
+  getAnalysisVideoBlob,
   listCustomProviderModels,
   listSessions,
   refreshKovaaKConnection,
   retrySession,
   saveKovaaKConnection,
+  startCoachAnalysisSoftStart,
   syncKovaaKScores,
 } from "./api";
 import { getManagedVideoUrl, openKovaakScenario } from "./desktop";
@@ -90,13 +92,61 @@ test("browser API requests stay relative and do not add a desktop token", async 
   assert.equal(headers.get("X-Aiming-Cookie-Desktop-Token"), null);
 });
 
+test("browser video bytes use the owner-scoped API fetch instead of a bare media URL", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(new Uint8Array([0, 1, 2]), {
+      status: 200,
+      headers: { "Content-Type": "video/mp4" },
+    });
+  }) as typeof fetch;
+
+  const video = await getAnalysisVideoBlob(42);
+
+  assert.equal(requests[0]?.input, "/api/sessions/42/video");
+  assert.equal(requests[0]?.init?.method, "GET");
+  assert.equal(new Headers(requests[0]?.init?.headers).get("X-User-Id"), "dev");
+  assert.equal(video.type, "video/mp4");
+  assert.equal(video.size, 3);
+});
+
+test("analysis soft start posts only the typed analysis trigger", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:soft-start", parent_run_ref: null, attempt: 1, status: "succeeded", phase: "completed", partial_text: null, error: null, contexts: [], events: [], created_at: "2026-08-06T00:00:00Z", started_at: "2026-08-06T00:00:00Z", finished_at: "2026-08-06T00:00:00Z" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const run = await startCoachAnalysisSoftStart(42);
+
+  assert.equal(requests[0]?.input, "/api/coach/analysis-soft-start");
+  assert.equal(requests[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    schema_version: "coach_analysis_soft_start_request.v1",
+    analysis_session_id: 42,
+  });
+  assert.equal(run.run_ref, "coach-run:soft-start");
+});
+
 test("custom Provider model discovery submits URL and key once without retaining either", async () => {
   const requests: Array<{ input: string; init?: RequestInit }> = [];
   Reflect.set(globalThis, "isTauri", false);
   Reflect.set(globalThis, "window", {});
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     requests.push({ input: String(input), init });
-    return new Response(JSON.stringify({ models: ["provider-model-a"] }), {
+    return new Response(JSON.stringify({ models: [{
+      model_id: "provider-model-a",
+      context_window: 32768,
+      max_tokens: 4096,
+    }] }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -108,7 +158,11 @@ test("custom Provider model discovery submits URL and key once without retaining
     api_key: "request-only-secret",
   });
 
-  assert.deepEqual(models.models, ["provider-model-a"]);
+  assert.deepEqual(models.models, [{
+    model_id: "provider-model-a",
+    context_window: 32768,
+    max_tokens: 4096,
+  }]);
   assert.equal(requests[0]?.input, "/api/provider-profiles/custom/models");
   assert.equal(requests[0]?.init?.method, "POST");
   assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
@@ -128,7 +182,11 @@ test("custom Provider discovery probes both protocols and selects the successful
     if (body.protocol === "openai-completions") {
       return new Response(JSON.stringify({ detail: "not supported" }), { status: 502 });
     }
-    return new Response(JSON.stringify({ models: ["claude-custom"] }), {
+    return new Response(JSON.stringify({ models: [{
+      model_id: "claude-custom",
+      context_window: 200000,
+      max_tokens: 8192,
+    }] }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -140,7 +198,11 @@ test("custom Provider discovery probes both protocols and selects the successful
   });
 
   assert.equal(discovered.protocol, "anthropic-messages");
-  assert.deepEqual(discovered.models, ["claude-custom"]);
+  assert.deepEqual(discovered.models, [{
+    model_id: "claude-custom",
+    context_window: 200000,
+    max_tokens: 8192,
+  }]);
   assert.deepEqual(requests.map((request) => request.protocol).sort(), ["anthropic-messages", "openai-completions"]);
   assert.ok(requests.every((request) => request.apiKey === "request-only-secret"));
 });

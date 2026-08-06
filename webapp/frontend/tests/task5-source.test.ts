@@ -33,11 +33,20 @@ test("video view consumes managed URLs and evidence segment anchors", async () =
   const video = await source("components/task5/VideoView.tsx");
   assert.match(video, /getAnalysisEvidenceSegments/);
   assert.match(video, /getManagedVideoUrl/);
+  assert.match(video, /getAnalysisVideoBlob/);
+  assert.match(video, /URL\.createObjectURL/);
+  assert.match(video, /URL\.revokeObjectURL/);
   assert.match(video, /relative_start_ms/);
   assert.match(video, /没有可用视觉证据/);
   assert.match(video, /<video/);
   assert.match(video, /aria-label="分析时间轴"/);
   assert.doesNotMatch(video, /raw_trace|video_path|file:\/\//);
+});
+
+test("diagnosis suppresses scenario-specific advice when the scenario is not classified", async () => {
+  const diagnosis = await source("components/task5/DiagnosisView.tsx");
+  assert.match(diagnosis, /presentation\.family\.status !== "unavailable"/);
+  assert.match(diagnosis, /当前场景尚未完成核验/);
 });
 
 test("video view keeps EvidenceSegment failure and retry local to the timeline", async () => {
@@ -93,7 +102,8 @@ test("diagnosis distinguishes current observations from legacy candidate explana
   assert.match(diagnosis, /rootCauses/);
   assert.match(diagnosis, /presentationKind/);
   assert.match(diagnosis, /claimLabel/);
-  assert.match(diagnosis, /重点观察/);
+  assert.match(diagnosis, /分析发现/);
+  assert.match(diagnosis, /issue\.severity !== "info"/);
   assert.match(diagnosis, /候选解释/);
   assert.match(diagnosis, /规则化练习建议/);
   assert.doesNotMatch(diagnosis, /历史候选说明/);
@@ -112,7 +122,9 @@ test("diagnosis keeps descriptive metrics and true empty states inside consisten
   const styles = await source("components/task5/task5.module.css");
 
   assert.match(diagnosis, /summaryMode === "descriptive"/);
-  assert.match(diagnosis, /仅描述本局，不用于通用阈值判断/);
+  assert.match(diagnosis, /当前缺少可比较标准，只展示本局数值/);
+  assert.match(diagnosis, /summaryMode !== "descriptive"/);
+  assert.doesNotMatch(diagnosis, /\? "描述性"/);
   assert.match(diagnosis, /unit === "percent"/);
   assert.match(diagnosis, /unit === "dimensionless" \|\| unit === "ratio"/);
   assert.match(diagnosis, /className=\{styles\.metricSummaryEmpty\}/);

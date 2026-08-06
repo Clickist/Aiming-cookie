@@ -12,6 +12,7 @@ const LEGACY_CANDIDATE_LEVEL_LABEL: Record<string, string> = {
 const METRIC_LABELS: Record<string, string> = {
   sparc: "运动平滑度（SPARC）",
   decel_frac: "减速占比",
+  linearity: "减速线性度",
   reverse_ratio: "反向修正比例",
   submovement_overlap: "动作分段特征",
   path_efficiency: "路径效率",
@@ -21,6 +22,7 @@ const METRIC_LABELS: Record<string, string> = {
 const METRIC_DESCRIPTIONS: Record<string, string> = {
   sparc: "运动平滑度；越接近 0 越平滑",
   decel_frac: "减速阶段占整次移动的时间比例",
+  linearity: "减速阶段偏离匀减速节奏的程度",
   reverse_ratio: "减速阶段出现反向调整的比例",
   submovement_overlap: "主要移动与后续修正之间的分离特征",
   path_efficiency: "移动路径接近直线的程度",
@@ -129,8 +131,13 @@ export function DiagnosisView({
     {},
   );
 
-  const prescription = presentation.issues.map((issue) => issue.prescriptions[0]).find(Boolean) ?? null;
-  const expected = presentation.issues.map((issue) => issue.expectedResult).find(Boolean) ?? null;
+  const hasClassifiedScenario = presentation.family.status !== "unavailable";
+  const prescription = hasClassifiedScenario
+    ? presentation.issues.map((issue) => issue.prescriptions[0]).find(Boolean) ?? null
+    : null;
+  const expected = hasClassifiedScenario
+    ? presentation.issues.map((issue) => issue.expectedResult).find(Boolean) ?? null
+    : null;
   const { summary, summaryMode } = presentation.metrics;
 
   return (
@@ -158,13 +165,13 @@ export function DiagnosisView({
       </section>
 
       {presentation.issues.length === 0 ? (
-        <Empty className={styles.metricSummaryEmpty} title="当前证据不足以形成重点观察">
+        <Empty className={styles.metricSummaryEmpty} title="当前证据不足以形成明确发现">
           查看数据来源和限制，或在后续收集更完整的证据。
         </Empty>
       ) : (
         <section className={styles.issueSection} aria-labelledby="issues-title">
           <div className={styles.sectionHead}>
-            <span className={styles.sectionTitle} id="issues-title">重点观察</span>
+            <span className={styles.sectionTitle} id="issues-title">分析发现</span>
             <span className={styles.sectionHint}>按优先级排序 · 最多展开 {presentation.issues.length} 个</span>
           </div>
           <div className={styles.issueList}>
@@ -175,9 +182,11 @@ export function DiagnosisView({
                 key={`${issue.priority}-${issue.signal}`}
               >
                 <div className={styles.issueHead}>
-                  <Status className={styles.issueSeverity} tone={severityTone(issue.severity)}>
-                    {issue.severity === "fix" ? "优先处理" : issue.severity === "watch" ? "关注" : "观察"}
-                  </Status>
+                  {issue.severity !== "info" ? (
+                    <Status className={styles.issueSeverity} tone={severityTone(issue.severity)}>
+                      {issue.severity === "fix" ? "优先处理" : "需要关注"}
+                    </Status>
+                  ) : null}
                   {issue.claimLabel ? <Status tone="neutral">{issue.claimLabel}</Status> : null}
                   <span className={styles.issueName}>{issue.signal}</span>
                   <div className={styles.issueActions}>
@@ -216,13 +225,19 @@ export function DiagnosisView({
         </section>
       ) : null}
 
+      {!hasClassifiedScenario && presentation.issues.some((issue) => issue.prescriptions.length > 0) ? (
+        <Notice tone="warning" title="当前场景尚未完成核验">
+          本页不展示具体场景建议；请先确认本局场景与可用分析范围。
+        </Notice>
+      ) : null}
+
       <section className={styles.metricSummary} aria-labelledby="core-metrics-title">
         <div className={styles.sectionHead}>
           <span className={styles.sectionTitle} id="core-metrics-title">
-            {summaryMode === "descriptive" ? "描述性指标摘要" : "核心指标摘要"}
+            {summaryMode === "descriptive" ? "本局指标" : "核心指标摘要"}
           </span>
           <span className={styles.sectionHint}>
-            {summaryMode === "descriptive" ? "仅描述本局，不用于通用阈值判断" : "完整数据在「数据」视图"}
+            {summaryMode === "descriptive" ? "当前缺少可比较标准，只展示本局数值" : "完整数据在「数据」视图"}
           </span>
         </div>
         {summary.length ? (
@@ -244,15 +259,11 @@ export function DiagnosisView({
                     {metricDescription(ref)
                       ?? (metric.coverage === null ? "覆盖未知" : `覆盖 ${Math.round(metric.coverage * 100)}%`)}
                   </span>
-                  <Status tone={summaryMode === "descriptive" ? "neutral" : severityTone(severity)}>
-                    {summaryMode === "descriptive"
-                      ? "描述性"
-                      : severity === "fix"
-                        ? "优先处理"
-                        : severity === "watch"
-                          ? "关注"
-                          : "观察"}
-                  </Status>
+                  {summaryMode !== "descriptive" ? (
+                    <Status tone={severityTone(severity)}>
+                      {severity === "fix" ? "优先处理" : severity === "watch" ? "需要关注" : "参考"}
+                    </Status>
+                  ) : null}
                 </button>
               );
             })}
