@@ -33,6 +33,7 @@ import type {
   CalibrationProfileV1,
   CaptureStatusV1,
   CustomProviderKind,
+  CustomProviderModel,
   IncompleteCaptureItemV1,
   KovaaKRunListItem,
   ProviderAuthMode,
@@ -174,7 +175,7 @@ export function SettingsWorkspace() {
   const [modelId, setModelId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [customKind, setCustomKind] = useState<CustomProviderKind>("custom_openai_compatible");
-  const [customModels, setCustomModels] = useState<string[]>([]);
+  const [customModels, setCustomModels] = useState<CustomProviderModel[]>([]);
   const [customModelState, setCustomModelState] = useState<"idle" | "loading" | "loaded" | "manual">("idle");
   const [customModelMessage, setCustomModelMessage] = useState("");
   const [customProtocolNeedsChoice, setCustomProtocolNeedsChoice] = useState(false);
@@ -306,12 +307,15 @@ export function SettingsWorkspace() {
 
   const addProfile = async () => {
     const custom = providerId === "custom";
+    const selectedCustomModel = customModels.find((model) => model.model_id === modelId);
     const created = await createProviderProfile({
       name: profileName.trim() || (custom ? "自定义 Provider" : selectedCatalogProvider?.provider_name ?? "Provider"),
       kind: custom ? customKind : "builtin",
       provider_id: custom ? null : selectedCatalogProvider?.provider_id,
       base_url: custom ? baseUrl.trim() : null,
       model_id: modelId.trim(),
+      context_window: custom ? selectedCustomModel?.context_window ?? null : null,
+      max_tokens: custom ? selectedCustomModel?.max_tokens ?? null : null,
       api_key: custom || newAuthMode === "api_key" ? newApiKey : null,
       is_default: profiles.length === 0,
     });
@@ -597,7 +601,7 @@ export function SettingsWorkspace() {
                       <Field label="Model">
                         <select onChange={(event) => setModelId(event.target.value)} value={modelId}>
                           <option value="">选择 Model</option>
-                          {customModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                          {customModels.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_id}</option>)}
                         </select>
                         <Button onClick={() => { setModelId(""); setCustomModelState("manual"); setCustomModelMessage(""); }} size="compact" variant="ghost">列表中没有需要的 Model ID</Button>
                       </Field>
