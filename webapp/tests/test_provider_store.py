@@ -14,6 +14,8 @@ def _profile(**overrides):
         "kind": "custom_openai_compatible",
         "base_url": "http://127.0.0.1:11434/v1",
         "model_id": "qwen2.5",
+        "context_window": 32768,
+        "max_tokens": 4096,
         "api_key": "secret-provider-key",
         "is_default": False,
     }
@@ -44,6 +46,8 @@ async def test_provider_profile_public_reads_redact_api_key_runtime_read_include
         "kind": "custom_openai_compatible",
         "base_url": "http://127.0.0.1:11434/v1",
         "model_id": "qwen2.5",
+        "context_window": 32768,
+        "max_tokens": 4096,
         "credential": {"type": "api_key", "key": "secret-provider-key"},
     }
 
@@ -74,6 +78,22 @@ async def test_anthropic_compatible_profile_is_configured_and_keeps_credential_p
         "key": "secret-provider-key",
     }
     assert provider_store.runtime_profile_configured(runtime) is True
+
+
+@pytest.mark.asyncio
+async def test_custom_profile_without_discovered_limits_is_persisted_but_not_runtime_ready():
+    created = await provider_store.create_profile(
+        "owner-a", _profile(context_window=None, max_tokens=None),
+    )
+
+    assert created["context_window"] is None
+    assert created["max_tokens"] is None
+    assert created["configured"] is False
+    runtime = await provider_store.get_runtime_profile(created["id"], "owner-a")
+    assert runtime is not None
+    assert runtime["context_window"] is None
+    assert runtime["max_tokens"] is None
+    assert provider_store.runtime_profile_configured(runtime) is False
 
 
 @pytest.mark.asyncio
@@ -184,6 +204,26 @@ async def test_unchanged_provider_identity_preserves_existing_credential():
 
     assert updated is not None
     assert updated["configured"] is True
+    runtime = await provider_store.get_runtime_profile(created["id"], "owner-a")
+    assert runtime is not None
+    assert runtime["credential"] == {
+        "type": "api_key",
+        "key": "secret-provider-key",
+    }
+
+
+@pytest.mark.asyncio
+async def test_model_change_clears_stale_discovered_capabilities_but_keeps_provider_credential():
+    created = await provider_store.create_profile("owner-a", _profile())
+
+    updated = await provider_store.update_profile(
+        created["id"], "owner-a", {"model_id": "new-model"},
+    )
+
+    assert updated is not None
+    assert updated["context_window"] is None
+    assert updated["max_tokens"] is None
+    assert updated["configured"] is False
     runtime = await provider_store.get_runtime_profile(created["id"], "owner-a")
     assert runtime is not None
     assert runtime["credential"] == {

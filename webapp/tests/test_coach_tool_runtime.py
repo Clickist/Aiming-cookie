@@ -13,6 +13,8 @@ _PROFILE = {
     "kind": "custom_openai_compatible",
     "base_url": "https://provider.test/v1",
     "model_id": "test-model",
+    "context_window": 32768,
+    "max_tokens": 4096,
     "api_key": "provider-secret-sentinel",
 }
 
@@ -116,9 +118,40 @@ def test_runtime_accepts_only_versioned_knowledge_references_for_persistence():
 
 def _v2_knowledge_event() -> dict:
     from kovaak_tracker.coach.agent_tools import make_fetch_knowledge
+    from kovaak_tracker.coach.knowledge_registry import entry_ref, load_registry
 
     result = make_fetch_knowledge()("reverse high")
     entries = result["entries"]
+    registry = load_registry(registry_version=result["registry_version"])
+    source_levels = {
+        source["source_ref"]: source["source_level"]
+        for source in registry["sources"]
+    }
+    entries_by_ref = {entry_ref(entry): entry for entry in registry["entries"]}
+    source_refs = []
+    for projected_entry in entries:
+        entry = entries_by_ref[projected_entry["entry_ref"]]
+        sections = [entry["definition"], entry["scope"], entry["expected_direction"]]
+        sections.extend(entry["mechanisms"])
+        for name in (
+            "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+            "stop_adjust_rule",
+        ):
+            value = entry.get(name)
+            if isinstance(value, dict):
+                sections.append(value)
+            elif isinstance(value, list):
+                sections.extend(value)
+        selected = {
+            section["section_ref"]: section
+            for section in sections
+            if section["section_ref"] in projected_entry["section_refs"]
+        }
+        source_refs.extend(list(dict.fromkeys(
+            source_ref
+            for section in selected.values()
+            for source_ref in section["source_refs"]
+        ))[:8])
     return {
         "type": "knowledge",
         "registry_version": result["registry_version"],
@@ -135,16 +168,8 @@ def _v2_knowledge_event() -> dict:
         "claim_levels": [
             level for entry in entries for level in entry["claim_levels"]
         ],
-        "source_refs": [
-            source["source_ref"]
-            for entry in entries
-            for source in entry["sources"]
-        ],
-        "source_levels": [
-            source["source_level"]
-            for entry in entries
-            for source in entry["sources"]
-        ],
+        "source_refs": source_refs,
+        "source_levels": [source_levels[source_ref] for source_ref in source_refs],
         "max_claim_levels": [entry["max_claim_level"] for entry in entries],
     }
 
@@ -619,13 +644,13 @@ async def test_real_analysis_registry_pi_event_is_persisted_as_refs_only(monkeyp
     assert result.tool_events[0]["entry_refs"] == [
         "knowledge:static.flicking-terminal-control@2",
         "knowledge:tracking.control-smoothness@2",
-        "knowledge:hypothesis.tension-management@2",
+        "knowledge:hypothesis.tension-management@3",
     ]
     messages = await coach_store.load_messages(int(thread["id"]))
     trace = messages[-1]["trace"]
     assert trace == result.tool_events
-    assert trace[0]["registry_version"] == "2026-07-29.v4"
-    assert trace[0]["entry_versions"] == [2, 2, 2]
+    assert trace[0]["registry_version"] == "2026-08-06.v6"
+    assert trace[0]["entry_versions"] == [2, 2, 3]
     assert "product.complete-coach-spec" in trace[0]["source_refs"]
     assert "static.flicking-terminal-control.definition" in trace[0]["section_refs"]
     assert "claim:static.flicking-terminal-control.definition" in trace[0]["claim_refs"]

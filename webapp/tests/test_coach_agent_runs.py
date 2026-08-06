@@ -419,6 +419,36 @@ def test_teachable_registry_scenario_match_wins_before_issue_priority():
     assert selected[2] == supported["context_ref"]
 
 
+def test_unverified_scenario_prioritizes_decel_frac_before_registry_entry():
+    registry_only = _grounded_plan_bundle(
+        analysis_ref="analysis:203",
+        scenario_profile_ref="scenario:unverified@1",
+        signal="reverse_ratio high",
+        metric_ref="metric:reverse_ratio",
+    )["contexts"][0]
+    registry_only["kind"] = "analysis"
+    registry_only["target_ref"] = "analysis:203"
+    registry_only["projection"]["diagnosis"]["issues"][0]["priority"] = 3
+
+    priority_one_decel = copy.deepcopy(registry_only)
+    priority_one_decel["context_ref"] = "context:decel-priority-one"
+    priority_one_decel["analysis_ref"] = "analysis:204"
+    priority_one_decel["target_ref"] = "analysis:204"
+    priority_one_decel["projection"]["diagnosis"]["issues"] = [{
+        "signal": "decel_frac high",
+        "priority": 1,
+        "plain_language_meaning": "The movement spends a large share of time decelerating.",
+        "metric_refs": ["metric:decel_frac"],
+    }]
+
+    selected = coach_agent_runs._selected_context_issue({
+        "contexts": [registry_only, priority_one_decel],
+    })
+
+    assert selected is not None
+    assert selected[2] == priority_one_decel["context_ref"]
+
+
 def test_prepared_plan_item_fails_closed_without_active_plan_or_one_deterministic_metric():
     bundle = _grounded_plan_bundle(
         analysis_ref="analysis:104",
@@ -637,6 +667,39 @@ async def test_idle_general_question_uses_the_existing_provider_path_without_a_t
 
     assert captured == [None]
     assert await teaching_session_store.load_run_contract(owner_id, run["run_ref"]) is None
+
+
+@pytest.mark.asyncio
+async def test_initial_analysis_explanation_does_not_force_a_teaching_turn(monkeypatch):
+    owner_id = "analysis-explanation-without-teaching-owner"
+    captured = []
+
+    async def build_bundle(_thread_id, _context_refs):
+        return _analysis_bundle(), []
+
+    async def execute(**kwargs):
+        captured.append(kwargs["teaching_turn"])
+        return {
+            "status": "succeeded",
+            "reply": "减速阶段偏长是当前优先项；反向修正是另一个观察。",
+            "tool_events": [],
+            "error": None,
+        }
+
+    monkeypatch.setattr(coach_agent_runs, "build_context_bundle", build_bundle)
+    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
+
+    run = await coach_agent_runs.create_run(
+        owner_id,
+        "最重要的问题是什么？请解释优先级和证据。",
+        context_refs=None,
+    )
+    await coach_agent_runs._tasks[run["run_ref"]]
+
+    assert captured == [None]
+    assert await teaching_session_store.load_run_contract(owner_id, run["run_ref"]) is None
+    current = await teaching_session_store.get_or_create_primary_session(owner_id)
+    assert current["state"]["phase"] == "intake"
 
 
 @pytest.mark.asyncio
@@ -2179,3 +2242,191 @@ async def test_no_grounded_issue_contract_is_terminal_and_never_accepts_free_tex
     assert contract["primary_candidate"] is None
     assert advanced["phase"] == "intake"
     assert after_free_text["state"]["primary_candidate"] is None
+
+
+@pytest.mark.asyncio
+async def test_analysis_soft_start_is_idempotent_and_writes_no_user_message(monkeypatch):
+    owner_id = "analysis-soft-start-owner"
+    bundle = _grounded_plan_bundle(
+        analysis_ref="analysis:401",
+        scenario_profile_ref="scenario:static.1wall_6targets_small@1",
+        signal="reverse_ratio high",
+        metric_ref="metric:reverse_ratio",
+    )
+    bundle["contexts"][0]["projection"]["scenario"]["analyzer_refs"] = [
+        "static_clicking.v1",
+    ]
+    bundle["contexts"][0]["kind"] = "analysis"
+    bundle["contexts"][0]["target_ref"] = "analysis:401"
+    snapshot = {
+        "schema_version": "coach_context_ref.v1",
+        "context_ref": bundle["contexts"][0]["context_ref"],
+        "kind": "analysis",
+        "status": "active",
+        "label": "analysis:401",
+        "analysis_ref": "analysis:401",
+        "comparison_analysis_ref": None,
+        "target_ref": None,
+        "time_range_ms": None,
+        "attached_at": "2026-08-06 00:00:00",
+        "detached_at": None,
+        "deleted_at": None,
+    }
+
+    async def attach(owner, thread_id, **kwargs):
+        assert owner == owner_id
+        assert thread_id > 0
+        assert kwargs == {"kind": "analysis", "analysis_ref": "analysis:401"}
+        return "attached", snapshot
+
+    async def build_bundle(_thread_id, context_refs):
+        assert context_refs == [snapshot["context_ref"]]
+        return bundle, [snapshot]
+
+    async def profile(_owner_id):
+        return {"schema_version": "aiming_profile.v1", "dimensions": []}
+
+    monkeypatch.setattr(coach_agent_runs, "attach_context", attach)
+    monkeypatch.setattr(coach_agent_runs, "build_context_bundle", build_bundle)
+    monkeypatch.setattr(
+        coach_agent_runs.aiming_profile_store, "get_profile_snapshot", profile,
+    )
+    before = await teaching_session_store.get_or_create_primary_session(owner_id)
+
+    results = await asyncio.gather(*[
+        coach_agent_runs.create_analysis_soft_start(
+            owner_id, analysis_session_id=401,
+        )
+        for _ in range(6)
+    ])
+
+    assert len({item["run_ref"] for item in results}) == 1
+    assert all(item["status"] == "succeeded" for item in results)
+    assert all(not any(event["type"] == "tool" for event in item["events"]) for item in results)
+    messages = await coach_store.load_messages(before["thread_id"])
+    assert [message["role"] for message in messages] == ["assistant"]
+    assert messages[0]["content"].count("?") + messages[0]["content"].count("？") == 1
+    assert "我先看" in messages[0]["content"]
+    assert "还不能确定原因" in messages[0]["content"]
+    assert "我先说当前最值得处理的问题" not in messages[0]["content"]
+    assert "依据是" not in messages[0]["content"]
+    assert "先只问一个问题" not in messages[0]["content"]
+    after = await teaching_session_store.get_or_create_primary_session(owner_id)
+    assert after["state"]["phase"] == before["state"]["phase"] == "intake"
+    conn = await get_conn()
+    rows = await (await conn.execute(
+        "SELECT initiator, trigger_ref, user_message_id FROM coach_agent_runs "
+        "WHERE owner_id=?",
+        (owner_id,),
+    )).fetchall()
+    assert [tuple(row) for row in rows] == [("system", "analysis:401", None)]
+
+
+@pytest.mark.asyncio
+async def test_teaching_turn_keeps_profile_counterevidence_after_soft_start():
+    owner_id = "teaching-profile-counterevidence-owner"
+    session = await teaching_session_store.get_or_create_primary_session(owner_id)
+    bundle = _grounded_plan_bundle(
+        analysis_ref="analysis:404",
+        scenario_profile_ref="scenario:static.1wall_6targets_small@1",
+        signal="reverse_ratio high",
+        metric_ref="metric:reverse_ratio",
+    )
+    bundle["contexts"][0]["projection"]["scenario"]["analyzer_refs"] = [
+        "static_clicking.v1",
+    ]
+    profile = {
+        "schema_version": "aiming_profile.v1",
+        "dimensions": [{
+            "dimension_key": "static_clicking.terminal_control",
+            "counterexample_refs": ["analysis:399"],
+        }],
+    }
+
+    contract = coach_agent_runs._teaching_contract(
+        session, bundle, "继续排查", profile=profile,
+    )
+
+    assert contract["evidence_strength"] == "supported"
+    assert contract["counterevidence_status"] == "observed"
+    assert contract["counterevidence"]
+
+
+@pytest.mark.asyncio
+async def test_analysis_soft_start_fails_closed_while_another_problem_is_active(monkeypatch):
+    owner_id = "analysis-soft-start-busy-owner"
+    session = await teaching_session_store.get_or_create_primary_session(owner_id)
+    state = copy.deepcopy(session["state"])
+    state["primary_candidate"] = {
+        "label": "可能与当前问题有关",
+        "source_refs": ["analysis:400"],
+    }
+    await teaching_session_store.replace_state(
+        owner_id, session["session_ref"], session["version"], state,
+    )
+    called = False
+
+    async def attach(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("busy soft start must not attach a context")
+
+    monkeypatch.setattr(coach_agent_runs, "attach_context", attach)
+
+    with pytest.raises(coach_agent_runs.AgentRunError) as error:
+        await coach_agent_runs.create_analysis_soft_start(
+            owner_id, analysis_session_id=402,
+        )
+
+    assert error.value.code == "teaching_session_busy"
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_analysis_soft_start_detaches_a_new_context_when_no_problem_is_grounded(monkeypatch):
+    owner_id = "analysis-soft-start-no-problem-owner"
+    session = await teaching_session_store.get_or_create_primary_session(owner_id)
+    snapshot = {
+        "schema_version": "coach_context_ref.v1",
+        "context_ref": "context:no-problem",
+        "kind": "analysis",
+        "status": "active",
+        "label": "analysis:403",
+        "analysis_ref": "analysis:403",
+        "comparison_analysis_ref": None,
+        "target_ref": None,
+        "time_range_ms": None,
+        "attached_at": "2026-08-06 00:00:00",
+        "detached_at": None,
+        "deleted_at": None,
+    }
+    detached: list[tuple[str, int, str]] = []
+
+    async def attach(*_args, **_kwargs):
+        return "attached", snapshot
+
+    async def build_bundle(_thread_id, _context_refs):
+        return {"schema_version": "coach_turn_context.v1", "contexts": []}, [snapshot]
+
+    async def profile(_owner_id):
+        return {"schema_version": "aiming_profile.v1", "dimensions": []}
+
+    async def detach(owner, thread_id, context_ref):
+        detached.append((owner, thread_id, context_ref))
+        return "detached", snapshot
+
+    monkeypatch.setattr(coach_agent_runs, "attach_context", attach)
+    monkeypatch.setattr(coach_agent_runs, "build_context_bundle", build_bundle)
+    monkeypatch.setattr(coach_agent_runs, "detach_context", detach, raising=False)
+    monkeypatch.setattr(
+        coach_agent_runs.aiming_profile_store, "get_profile_snapshot", profile,
+    )
+
+    with pytest.raises(coach_agent_runs.AgentRunError) as error:
+        await coach_agent_runs.create_analysis_soft_start(
+            owner_id, analysis_session_id=403,
+        )
+
+    assert error.value.code == "no_grounded_problem"
+    assert detached == [(owner_id, session["thread_id"], "context:no-problem")]
+    assert await coach_store.load_messages(session["thread_id"]) == []

@@ -599,6 +599,13 @@ class CoachAgentRunRequest(BaseModel):
     context_refs: Optional[list[str]] = Field(default=None, max_length=8)
 
 
+class CoachAnalysisSoftStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["coach_analysis_soft_start_request.v1"]
+    analysis_session_id: int = Field(gt=0)
+
+
 class CoachAgentRunErrorOut(BaseModel):
     domain: Literal["network", "model", "permission", "tool"]
     code: str
@@ -916,6 +923,8 @@ class ProviderProfileCreate(BaseModel):
     provider_id: Optional[str] = Field(default=None, validate_default=True)
     base_url: Optional[str] = Field(default=None, validate_default=True)
     model_id: str
+    context_window: Optional[int] = Field(default=None, gt=0)
+    max_tokens: Optional[int] = Field(default=None, gt=0)
     api_key: Optional[str] = Field(default=None, repr=False, validate_default=True)
     is_default: bool = False
 
@@ -972,6 +981,8 @@ class ProviderProfilePatch(BaseModel):
     kind: Optional[PROVIDER_KINDS] = None
     base_url: Optional[str] = None
     model_id: Optional[str] = None
+    context_window: Optional[int] = Field(default=None, gt=0)
+    max_tokens: Optional[int] = Field(default=None, gt=0)
     api_key: Optional[str] = Field(default=None, repr=False)
     is_default: Optional[bool] = None
 
@@ -1014,6 +1025,8 @@ class ProviderProfileOut(BaseModel):
     kind: PROVIDER_KINDS
     base_url: Optional[str] = None
     model_id: str
+    context_window: Optional[int] = None
+    max_tokens: Optional[int] = None
     is_default: bool
     configured: bool
     credential_configured: bool
@@ -1064,8 +1077,14 @@ class CustomProviderModelListRequest(BaseModel):
         return value
 
 
+class CustomProviderModel(BaseModel):
+    model_id: str
+    context_window: Optional[int] = Field(default=None, gt=0)
+    max_tokens: Optional[int] = Field(default=None, gt=0)
+
+
 class CustomProviderModelListResponse(BaseModel):
-    models: list[str]
+    models: list[CustomProviderModel]
 
 
 class ProviderApiKeyRequest(BaseModel):

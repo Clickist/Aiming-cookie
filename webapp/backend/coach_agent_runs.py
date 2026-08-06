@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import re
+import time
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -13,17 +14,26 @@ from . import (
     benchmark_catalog,
     coach_commands,
     coach_context,
+    coach_problem_compiler,
     coach_runtime,
     coach_store,
     teaching_session_store,
     training_plan_store,
 )
-from .coach_context_refs import ContextRefError, build_context_bundle, unavailable_context_refs
+from .coach_context_refs import (
+    ContextRefError,
+    attach_context,
+    build_context_bundle,
+    detach_context,
+    unavailable_context_refs,
+)
 from .db import get_conn
 
 
 _tasks: dict[str, asyncio.Task[None]] = {}
 _provider_turns: set[str] = set()
+_terminal_locks: dict[str, asyncio.Lock] = {}
+_soft_start_locks: dict[tuple[str, str], asyncio.Lock] = {}
 _STOP_SETTLE_TIMEOUT_SECONDS = 3.0
 _SAFE_ERROR_DOMAINS = {"network", "model", "permission", "tool"}
 _EMPTY_OBSERVATION = "尚未选择可重复观察"
@@ -39,6 +49,9 @@ _REFUSAL = re.compile(
 )
 _RESUME = re.compile(r"^(?:继续|继续练|恢复训练|重新开始)[。.!！ ]*$")
 _TEACHING_INTENT = re.compile(r"(?:带(?:我)?练|开始(?:带我)?练|按计划练|安排练习)")
+_ANALYSIS_EXPLANATION_REQUEST = re.compile(
+    r"(?:最重要|优先(?:级|项)?|证据|指标|为什么|为何|解释|说明|比较|区别|噪声|限制|能下.{0,4}结论|不能下.{0,4}结论)"
+)
 _CLARIFICATION = re.compile(r"(?:[?？]|是不是|所以|也就是说|意思是|换句话说|那我就|对吗)")
 _RETEST_RETRY = re.compile(r"(?:重新复测|重新测|再复测|再测|重测|按原条件)")
 _RETEST_OUTCOME_DECISIONS = {
@@ -60,9 +73,27 @@ _REVISION_ITEM_STATUSES = {
 _CONFIRMED_EXECUTION_STATUS_REASON = "coach_teaching_item_status.v1:confirmed_execution"
 _REVISION_STATUS_REASON_PREFIX = "coach_teaching_revision.v1:"
 _ANALYSIS_REF = re.compile(r"^analysis:([A-Za-z0-9._@-]+)$")
+_POSSIBILITY_LANGUAGE = re.compile(
+    r"(?:可能|也许|候选|假设|待验证|先验证|值得先验证|may|might|possible|likely)",
+    re.IGNORECASE,
+)
 _NO_GROUNDED_ISSUE_QUESTION = (
     "这次分析还没看出一个明确问题。你自己最想先解决哪种失误或哪段动作?"
 )
+
+
+def _learner_feedback_text(value: object) -> str:
+    """Expose only explicit learner response text to the existing policy gates."""
+    if not isinstance(value, str):
+        return ""
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return value
+    if not isinstance(parsed, Mapping):
+        return value
+    parts = [str(item) for item in parsed.values() if isinstance(item, (str, bool))]
+    return "；".join(parts)
 _PATH_OR_SECRET = re.compile(
     r"(?:[A-Za-z]:[\\/]|(?:^|\s)/(?:[^\s]+)|\\\\|file:|"
     r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[:=]|"
@@ -120,12 +151,14 @@ async def execute_turn(**kwargs) -> dict[str, Any]:
         agent_run_ref=kwargs["run_ref"],
         teaching_turn=kwargs.get("teaching_turn"),
         temporary_profile_refs=kwargs.get("temporary_profile_refs"),
+        on_partial=kwargs.get("on_partial"),
     )
     return {
         "status": result.status,
         "reply": result.reply,
         "notes": result.notes,
         "tool_events": result.tool_events,
+        "timing": result.timing,
         "error": result.error,
     }
 
@@ -219,10 +252,10 @@ def _selected_context_issue(
             candidates.append((
                 (
                     0 if scenario_matches else 1,
-                    0 if entry is not None else 1,
                     priority
                     if isinstance(priority, (int, float)) and not isinstance(priority, bool)
                     else math.inf,
+                    0 if entry is not None else 1,
                     context_index,
                     issue_index,
                 ),
@@ -236,12 +269,48 @@ def _selected_context_issue(
     return issue, projection, context_ref
 
 
-def _lesson_from_bundle(bundle: Mapping[str, Any]) -> dict[str, Any] | None:
-    selected = _selected_context_issue(bundle)
+def _lesson_from_bundle(
+    bundle: Mapping[str, Any],
+    *,
+    profile: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    compiled = coach_problem_compiler.compile_coach_problem(bundle, profile=profile)
+    selected = None
+    if compiled is not None:
+        evidence = compiled.get("supporting_evidence")
+        primary_evidence = evidence[0] if isinstance(evidence, list) and evidence else None
+        if isinstance(primary_evidence, Mapping):
+            contexts = bundle.get("contexts")
+            for item in contexts if isinstance(contexts, list) else []:
+                if (
+                    not isinstance(item, Mapping)
+                    or item.get("context_ref") != primary_evidence.get("context_ref")
+                ):
+                    continue
+                projection = item.get("projection")
+                diagnosis = projection.get("diagnosis") if isinstance(projection, Mapping) else None
+                issues = diagnosis.get("issues") if isinstance(diagnosis, Mapping) else None
+                issue_index = primary_evidence.get("issue_index")
+                if (
+                    isinstance(issues, list)
+                    and isinstance(issue_index, int)
+                    and not isinstance(issue_index, bool)
+                    and 0 <= issue_index < len(issues)
+                    and isinstance(issues[issue_index], Mapping)
+                    and isinstance(projection, Mapping)
+                ):
+                    selected = issues[issue_index], projection, item["context_ref"]
+                    break
+    if selected is None:
+        selected = _selected_context_issue(bundle)
     if selected is None:
         return None
     issue, projection, context_ref = selected
-    observation = _bounded_lesson_text(issue.get("plain_language_meaning"), maximum=1200)
+    observation = (
+        compiled["problem_label"]
+        if compiled is not None
+        else _bounded_lesson_text(issue.get("plain_language_meaning"), maximum=1200)
+    )
 
     candidate_texts: list[str] = []
     for cause in issue.get("root_causes") or []:
@@ -310,7 +379,9 @@ def _lesson_from_bundle(bundle: Mapping[str, Any]) -> dict[str, Any] | None:
             break
 
     question = _NO_GROUNDED_ISSUE_QUESTION
-    if observation is not None and len(candidate_texts) >= 2:
+    if compiled is not None:
+        question = compiled["discriminator"]["prompt"]
+    elif observation is not None and len(candidate_texts) >= 2:
         question = (
             f"这次出现「{observation}」时，你更明显感觉到"
             f"「{candidate_texts[0]}」还是「{candidate_texts[1]}」?"
@@ -318,21 +389,93 @@ def _lesson_from_bundle(bundle: Mapping[str, Any]) -> dict[str, Any] | None:
     elif observation is not None and candidate_texts:
         question = f"这次出现「{observation}」时，你自己最先感觉卡在哪一步?"
 
+    supporting_evidence: list[dict[str, Any]] = []
+    context_refs = [context_ref]
+    counterevidence: list[str] = []
+    if compiled is not None:
+        context_refs = []
+        for item in compiled["supporting_evidence"]:
+            if item["context_ref"] not in context_refs:
+                context_refs.append(item["context_ref"])
+            text = _bounded_lesson_text(item.get("observation"), maximum=240)
+            if text is not None and not any(existing["text"] == text for existing in supporting_evidence):
+                supporting_evidence.append({
+                    "kind": "measured",
+                    "text": text,
+                    "refs": [item["context_ref"], item["analysis_ref"]],
+                })
+        if not supporting_evidence:
+            supporting_evidence.append({
+                "kind": "measured",
+                "text": f"规则化观察共同指向「{compiled['problem_label']}」",
+                "refs": list(context_refs),
+            })
+        if compiled["counterevidence_status"] == "observed":
+            counterevidence.append("另有可比记录没有出现同样模式，因此当前解释仍需保留修订空间")
+
     return {
         "context_ref": context_ref,
+        "context_refs": context_refs,
         "observation": observation,
         "primary_candidate": (
-            f"我先从{candidate_texts[0]}这个方向查起"
-            if candidate_texts else None
+            compiled["primary_hypothesis"]
+            if compiled is not None
+            else f"我先从{candidate_texts[0]}这个方向查起"
+            if candidate_texts
+            else None
         ),
-        "alternatives": [f"也可能和{text}有关" for text in candidate_texts[1:3]],
+        "alternatives": (
+            compiled["alternative_hypotheses"]
+            if compiled is not None
+            else [f"也可能和{text}有关" for text in candidate_texts[1:3]]
+        ),
         "cue": cue,
         "changed_variable": "注意点" if cue is not None else None,
         "approved_dose": approved_dose,
         "question": question,
         "retest_intent": retest_intent,
         "ratio_sources": ratios,
+        "problem_id": compiled["problem_id"] if compiled is not None else None,
+        "problem_label": compiled["problem_label"] if compiled is not None else None,
+        "evidence_strength": compiled["evidence_strength"] if compiled is not None else "limited",
+        "supporting_evidence": supporting_evidence,
+        "counterevidence_status": (
+            compiled["counterevidence_status"] if compiled is not None else "not_observed"
+        ),
+        "counterevidence": counterevidence,
+        "discriminator": compiled["discriminator"] if compiled is not None else None,
     }
+
+
+def _render_problem_soft_start(problem: Mapping[str, Any]) -> str:
+    strength = {
+        "limited": "现在只有这一份记录",
+        "supported": "几条同类观察都指向这里",
+        "repeated": "多次可比分析都出现了这个模式",
+    }[problem["evidence_strength"]]
+    evidence_texts: list[str] = []
+    for item in problem["supporting_evidence"]:
+        text = _bounded_lesson_text(item.get("observation"), maximum=240)
+        if text is not None:
+            text = re.sub(r"[?？]+", "。", text).strip()
+            if text and text not in evidence_texts:
+                evidence_texts.append(text)
+        if len(evidence_texts) == 1:
+            break
+    evidence = "；".join(evidence_texts) or f"规则化观察共同指向「{problem['problem_label']}」"
+    alternatives = problem["alternative_hypotheses"][:1]
+    alternative = f"；{alternatives[0]}" if alternatives else ""
+    counterevidence = (
+        "但相近记录里也有没出现这个问题的情况"
+        if problem["counterevidence_status"] == "observed"
+        else "目前还没看到反例，不过其他可能也没有排除"
+    )
+    return _safe_text(
+        f"我先看「{problem['problem_label']}」：{evidence}。"
+        f"{strength}，{counterevidence}，所以还不能确定原因。"
+        f"{problem['primary_hypothesis']}{alternative}。\n\n"
+        f"{problem['discriminator']['prompt']}"
+    )
 
 
 def _compile_prepared_plan_item(
@@ -490,6 +633,17 @@ def _hydrate_teaching_state(
     unavailable_source_refs: set[str] | None = None,
 ) -> dict[str, Any]:
     hydrated = json.loads(json.dumps(state, ensure_ascii=False))
+    learner_context = bundle.get("learner_context")
+    if isinstance(learner_context, Mapping):
+        try:
+            normalized = teaching_session_store.validate_state({
+                **hydrated,
+                "learner_context": learner_context,
+            })
+        except ValueError:
+            normalized = None
+        if isinstance(normalized, Mapping):
+            hydrated["learner_context"] = normalized["learner_context"]
     contexts = bundle.get("contexts")
     active_refs = {
         item["context_ref"]
@@ -510,7 +664,7 @@ def _hydrate_teaching_state(
     lesson = _lesson_from_bundle(bundle)
     if lesson is None:
         return hydrated
-    source = [lesson["context_ref"]]
+    source = lesson.get("context_refs") or [lesson["context_ref"]]
     if hydrated["observation"]["summary"] == _EMPTY_OBSERVATION and lesson["observation"] is not None:
         hydrated["observation"] = {"summary": lesson["observation"], "source_refs": source}
     if hydrated.get("primary_candidate") is None and lesson["primary_candidate"] is not None:
@@ -558,6 +712,20 @@ def _humanize_alternative(value: object) -> str | None:
     if label.startswith("待验证候选："):
         return f"也可能和{label.removeprefix('待验证候选：')}有关"
     return label
+
+
+def _qualify_candidate(value: object, *, primary: bool) -> str | None:
+    label = _bounded_lesson_text(value, maximum=160)
+    if label is None or _POSSIBILITY_LANGUAGE.search(label) is not None:
+        return label
+    core = _candidate_core(label)
+    if core is None:
+        return None
+    return (
+        f"可能和「{core}」有关，需要继续验证"
+        if primary
+        else f"也可能和{core}有关"
+    )
 
 
 def _candidate_core(value: object) -> str | None:
@@ -745,13 +913,21 @@ def _requires_teaching_turn(
     session: Mapping[str, Any], bundle: Mapping[str, Any], content: str,
 ) -> bool:
     state = session.get("state")
-    return (
+    phase = state.get("phase") if isinstance(state, Mapping) else None
+    has_active_candidate = (
         isinstance(state, Mapping)
-        and (
-            state.get("phase") != "intake"
-            or isinstance(state.get("primary_candidate"), Mapping)
-        )
-    ) or session.get("active_run_ref") is not None or _bundle_has_analysis_context(bundle) or _TEACHING_INTENT.search(content) is not None
+        and isinstance(state.get("primary_candidate"), Mapping)
+    )
+    return (
+        phase is not None
+        and phase != "intake"
+    ) or session.get("active_run_ref") is not None or _TEACHING_INTENT.search(content) is not None or (
+        has_active_candidate
+        and _ANALYSIS_EXPLANATION_REQUEST.search(content) is None
+    ) or (
+        _bundle_has_analysis_context(bundle)
+        and _ANALYSIS_EXPLANATION_REQUEST.search(content) is None
+    )
 
 
 def _teaching_contract(
@@ -759,9 +935,11 @@ def _teaching_contract(
     bundle: Mapping[str, Any],
     user_content: str | None = None,
     prepared_plan_item: Mapping[str, Any] | None = None,
+    *,
+    profile: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     state = _hydrate_teaching_state(session["state"], bundle)
-    lesson = _lesson_from_bundle(bundle)
+    lesson = _lesson_from_bundle(bundle, profile=profile)
     phase = state["phase"]
     prepared = prepared_plan_item if phase == "practice_ready" else None
     question_kind, question = {
@@ -805,7 +983,7 @@ def _teaching_contract(
         if isinstance(item, Mapping)
         and (label := _humanize_alternative(item.get("label"))) is not None
     ]
-    return {
+    contract = {
         "schema_version": "coach_teaching_turn.v1",
         "session_ref": session["session_ref"],
         "session_version": session["version"],
@@ -849,6 +1027,30 @@ def _teaching_contract(
         ),
         "next_recommendation": state["next_recommendation"],
     }
+    if lesson is not None and lesson["problem_id"] is not None:
+        contract["primary_candidate"] = _qualify_candidate(
+            contract["primary_candidate"], primary=True,
+        )
+        contract["alternatives"] = [
+            qualified
+            for item in contract["alternatives"]
+            if (qualified := _qualify_candidate(item, primary=False)) is not None
+        ]
+        contract.update({
+            "problem_id": lesson["problem_id"],
+            "problem_label": lesson["problem_label"],
+            "evidence_strength": lesson["evidence_strength"],
+            "supporting_evidence": lesson["supporting_evidence"],
+            "counterevidence_status": lesson["counterevidence_status"],
+            "counterevidence": lesson["counterevidence"],
+            "discriminator": (
+                {"kind": "question", "prompt": question}
+                if phase == "intake" and question is not None
+                else None
+            ),
+            "soft_start": False,
+        })
+    return contract
 
 
 def _state_after_success(
@@ -1098,7 +1300,7 @@ async def _reconcile_teaching_session(owner_id: str, session: dict[str, Any]) ->
                 raise AgentRunError(
                     "teaching_execution_missing", "Confirmed execution fact is unavailable",
                 )
-            feedback = str(execution["user_feedback"] or "")
+            feedback = _learner_feedback_text(execution["user_feedback"])
             if _DISCOMFORT.search(feedback) and _NO_DISCOMFORT.search(feedback) is None:
                 state.update({
                     "phase": "stopped_for_discomfort",
@@ -1324,6 +1526,128 @@ async def _append_event(
     await conn.commit()
 
 
+def _safe_timing(value: object) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise AgentRunError("invalid_runner_result", "Coach runner returned invalid timing")
+    allowed = {
+        "total_ms", "first_provider_event_ms", "first_text_delta_ms",
+        "first_safe_text_ms", "provider_rounds", "provider_ms",
+        "provider_round_ms", "tool_ms", "repair_ms", "local_prepare_ms",
+        "sidecar_transport_ms", "client_total_ms", "python_total_ms",
+    }
+    if not set(value).issubset(allowed):
+        raise AgentRunError("invalid_runner_result", "Coach runner returned invalid timing")
+    safe: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "provider_round_ms":
+            if (
+                not isinstance(item, list)
+                or len(item) > 64
+                or any(
+                    isinstance(entry, bool)
+                    or not isinstance(entry, int)
+                    or not 0 <= entry <= 3_600_000
+                    for entry in item
+                )
+            ):
+                raise AgentRunError("invalid_runner_result", "Coach runner returned invalid timing")
+            safe[key] = list(item)
+            continue
+        if item is None and key.startswith("first_"):
+            safe[key] = None
+            continue
+        if isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 3_600_000:
+            raise AgentRunError("invalid_runner_result", "Coach runner returned invalid timing")
+        safe[key] = item
+    return safe
+
+
+async def _write_partial_revision(
+    run_ref: str,
+    text: str,
+    metadata: Mapping[str, int],
+) -> bool:
+    safe_text = _safe_text(coach_commands.redact_temporary_steam_profiles(text))
+    expected_keys = {"revision", "elapsed_ms", "provider_rounds"}
+    if set(metadata) != expected_keys:
+        raise AgentRunError("invalid_partial_revision", "Coach partial metadata is invalid")
+    revision = metadata.get("revision")
+    elapsed_ms = metadata.get("elapsed_ms")
+    provider_rounds = metadata.get("provider_rounds")
+    if (
+        isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or not 1 <= revision <= 4096
+        or isinstance(elapsed_ms, bool)
+        or not isinstance(elapsed_ms, int)
+        or not 0 <= elapsed_ms <= 3_600_000
+        or isinstance(provider_rounds, bool)
+        or not isinstance(provider_rounds, int)
+        or not 0 <= provider_rounds <= 64
+    ):
+        raise AgentRunError("invalid_partial_revision", "Coach partial metadata is invalid")
+
+    conn = await get_conn()
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        cursor = await conn.execute(
+            "UPDATE coach_agent_runs SET partial_text=?, updated_at=CURRENT_TIMESTAMP "
+            "WHERE run_ref=? AND status='running' AND stop_requested=0",
+            (safe_text, run_ref),
+        )
+        if cursor.rowcount != 1:
+            await conn.execute("ROLLBACK")
+            return False
+        prior = await (
+            await conn.execute(
+                "SELECT payload_json FROM coach_agent_run_events "
+                "WHERE run_ref=? AND code='text_revision' ORDER BY sequence DESC LIMIT 1",
+                (run_ref,),
+            )
+        ).fetchone()
+        if prior is not None:
+            prior_payload = json.loads(prior["payload_json"] or "{}")
+            if prior_payload.get("revision") != revision - 1:
+                raise AgentRunError(
+                    "invalid_partial_revision", "Coach partial revision is out of order",
+                )
+        elif revision != 1:
+            raise AgentRunError(
+                "invalid_partial_revision", "Coach partial revision is out of order",
+            )
+        row = await (
+            await conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence "
+                "FROM coach_agent_run_events WHERE run_ref=?",
+                (run_ref,),
+            )
+        ).fetchone()
+        payload = {
+            "mode": "replace",
+            "revision": revision,
+            "elapsed_ms": elapsed_ms,
+            "provider_rounds": provider_rounds,
+        }
+        await conn.execute(
+            "INSERT INTO coach_agent_run_events(event_ref, run_ref, sequence, event_type, "
+            "phase, code, message, payload_json) VALUES(?, ?, ?, 'text', "
+            "'text_generation', 'text_revision', 'Coach response text was revised', ?)",
+            (
+                f"agent_event:{uuid.uuid4().hex}", run_ref, int(row["next_sequence"]),
+                json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                           separators=(",", ":")),
+            ),
+        )
+        await conn.commit()
+        return True
+    except Exception:
+        if conn.in_transaction:
+            await conn.execute("ROLLBACK")
+        raise
+
+
 async def _set_run(
     run_ref: str,
     *,
@@ -1333,13 +1657,14 @@ async def _set_run(
     error: Mapping[str, Any] | None = None,
     started: bool = False,
     finished: bool = False,
-) -> None:
+) -> bool:
     conn = await get_conn()
-    await conn.execute(
+    guard = " AND status IN ('queued', 'running') AND stop_requested=0" if finished else ""
+    cursor = await conn.execute(
         "UPDATE coach_agent_runs SET status=?, phase=?, partial_text=?, error_json=?, "
         "started_at=CASE WHEN ? THEN COALESCE(started_at, CURRENT_TIMESTAMP) ELSE started_at END, "
         "finished_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE finished_at END, "
-        "updated_at=CURRENT_TIMESTAMP WHERE run_ref=?",
+        f"updated_at=CURRENT_TIMESTAMP WHERE run_ref=?{guard}",
         (
             status, phase, partial_text,
             json.dumps(dict(error), ensure_ascii=False, sort_keys=True) if error else None,
@@ -1347,6 +1672,7 @@ async def _set_run(
         ),
     )
     await conn.commit()
+    return cursor.rowcount == 1
 
 
 async def _stop_requested(run_ref: str) -> bool:
@@ -1363,7 +1689,8 @@ async def _stop_requested(run_ref: str) -> bool:
 async def _mark_stopped(run_ref: str, *, partial_text: str | None = None) -> bool:
     conn = await get_conn()
     cursor = await conn.execute(
-        "UPDATE coach_agent_runs SET status='stopped', phase='completed', partial_text=?, "
+        "UPDATE coach_agent_runs SET status='stopped', phase='completed', "
+        "partial_text=COALESCE(?, partial_text), "
         "error_json=NULL, finished_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
         "WHERE run_ref=? AND stop_requested=1 AND status IN ('queued', 'running')",
         (partial_text, run_ref),
@@ -1398,6 +1725,7 @@ def _normalize_outcome(value: object) -> dict[str, Any]:
         raise AgentRunError("invalid_runner_result", "Coach runner returned invalid notes")
     safe_notes = [_safe_text(note, max_length=500) for note in notes]
     events = _safe_tool_events(value.get("tool_events", []))
+    timing = _safe_timing(value.get("timing"))
     error = value.get("error")
     safe_error = None
     if error is not None:
@@ -1432,6 +1760,7 @@ def _normalize_outcome(value: object) -> dict[str, Any]:
         "reply": safe_reply,
         "notes": safe_notes,
         "tool_events": events,
+        "timing": timing,
         "error": safe_error,
     }
 
@@ -1466,6 +1795,10 @@ async def _run_agent(
             return
         _provider_turns.add(run_ref)
         try:
+            async def on_partial(text: str, metadata: Mapping[str, int]) -> None:
+                if contract is None:
+                    await _write_partial_revision(run_ref, text, metadata)
+
             outcome = _normalize_outcome(await execute_turn(
                 run_ref=run_ref,
                 owner_id=owner_id,
@@ -1479,9 +1812,11 @@ async def _run_agent(
                 desktop_token=desktop_token,
                 teaching_turn=contract,
                 temporary_profile_refs=temporary_profile_refs,
+                on_partial=on_partial,
             ))
         finally:
             _provider_turns.discard(run_ref)
+        persistence_started_at = time.perf_counter()
         for tool_event in outcome["tool_events"]:
             await _append_event(
                 run_ref,
@@ -1495,56 +1830,80 @@ async def _run_agent(
                 message="Coach product tool event",
                 payload=tool_event,
             )
-        reply = outcome["reply"]
-        status = "stopped" if await _stop_requested(run_ref) else outcome["status"]
-        if status == "succeeded":
-            if contract is not None and not await _complete_teaching_turn(
-                owner_id,
-                run_ref,
-                thread_id,
-                user_message_id,
-                bundle,
-                contract,
-                outcome,
-            ):
-                raise AgentRunError(
-                    "teaching_session_conflict",
-                    "TeachingSession changed before this turn completed",
-                )
+        terminal_lock = _terminal_locks.setdefault(run_ref, asyncio.Lock())
+        async with terminal_lock:
             reply = outcome["reply"]
-            if reply is not None:
-                await coach_store.append_message(
+            status = "stopped" if await _stop_requested(run_ref) else outcome["status"]
+            if status == "succeeded":
+                if contract is not None and not await _complete_teaching_turn(
+                    owner_id,
+                    run_ref,
                     thread_id,
-                    "assistant",
-                    reply,
-                    trace=outcome["tool_events"],
-                    context_refs=snapshots,
+                    user_message_id,
+                    bundle,
+                    contract,
+                    outcome,
+                ):
+                    raise AgentRunError(
+                        "teaching_session_conflict",
+                        "TeachingSession changed before this turn completed",
+                    )
+                reply = outcome["reply"]
+                if reply is not None:
+                    await coach_store.append_message(
+                        thread_id,
+                        "assistant",
+                        reply,
+                        trace=outcome["tool_events"],
+                        context_refs=snapshots,
+                    )
+                    await _append_event(
+                        run_ref, event_type="text", phase="text_generation",
+                        code="text_available", message="Coach response text is available",
+                    )
+                completed = await _set_run(
+                    run_ref, status="succeeded", phase="completed",
+                    partial_text=reply, finished=True,
                 )
-                await _append_event(
-                    run_ref, event_type="text", phase="text_generation",
-                    code="text_available", message="Coach response text is available",
+                if completed:
+                    timing = dict(outcome["timing"] or {})
+                    timing["persistence_ms"] = max(
+                        0, round((time.perf_counter() - persistence_started_at) * 1000),
+                    )
+                    await _append_event(
+                        run_ref, event_type="phase", phase="completed",
+                        code="latency_trace", message="Coach latency trace", payload=timing,
+                    )
+                    await _append_event(
+                        run_ref, event_type="status", phase="completed",
+                        code="run_succeeded", message="Coach run completed",
+                    )
+                else:
+                    await _mark_stopped(run_ref, partial_text=reply)
+            elif status == "stopped":
+                await _release_teaching_run(owner_id, run_ref)
+                await _mark_stopped(run_ref, partial_text=reply)
+            else:
+                await _release_teaching_run(owner_id, run_ref)
+                completed = await _set_run(
+                    run_ref, status="failed", phase="completed",
+                    partial_text=reply, error=outcome["error"], finished=True,
                 )
-            await _set_run(
-                run_ref, status="succeeded", phase="completed",
-                partial_text=reply, finished=True,
-            )
-            await _append_event(
-                run_ref, event_type="status", phase="completed",
-                code="run_succeeded", message="Coach run completed",
-            )
-        elif status == "stopped":
-            await _release_teaching_run(owner_id, run_ref)
-            await _mark_stopped(run_ref, partial_text=reply)
-        else:
-            await _release_teaching_run(owner_id, run_ref)
-            await _set_run(
-                run_ref, status="failed", phase="completed",
-                partial_text=reply, error=outcome["error"], finished=True,
-            )
-            await _append_event(
-                run_ref, event_type="error", phase="completed",
-                code=outcome["error"]["code"], message=outcome["error"]["message"],
-            )
+                if completed:
+                    timing = dict(outcome["timing"] or {})
+                    timing["persistence_ms"] = max(
+                        0, round((time.perf_counter() - persistence_started_at) * 1000),
+                    )
+                    await _append_event(
+                        run_ref, event_type="phase", phase="completed",
+                        code="latency_trace", message="Coach latency trace", payload=timing,
+                    )
+                    await _append_event(
+                        run_ref, event_type="error", phase="completed",
+                        code=outcome["error"]["code"], message=outcome["error"]["message"],
+                    )
+                else:
+                    await _mark_stopped(run_ref, partial_text=reply)
     except asyncio.CancelledError:
         await _release_teaching_run(owner_id, run_ref)
         await _mark_stopped(run_ref)
@@ -1557,13 +1916,16 @@ async def _run_agent(
             "message": "Coach run output was rejected" if error.code.startswith("unsafe") else str(error),
             "retryable": False,
         }
-        await _set_run(
+        completed = await _set_run(
             run_ref, status="failed", phase="completed", error=failure, finished=True,
         )
-        await _append_event(
-            run_ref, event_type="error", phase="completed",
-            code=failure["code"], message=failure["message"],
-        )
+        if completed:
+            await _append_event(
+                run_ref, event_type="error", phase="completed",
+                code=failure["code"], message=failure["message"],
+            )
+        else:
+            await _mark_stopped(run_ref)
     except Exception:
         await _release_teaching_run(owner_id, run_ref)
         failure = {
@@ -1572,16 +1934,217 @@ async def _run_agent(
             "message": "Coach generation failed",
             "retryable": True,
         }
-        await _set_run(
+        completed = await _set_run(
             run_ref, status="failed", phase="completed", error=failure, finished=True,
         )
-        await _append_event(
-            run_ref, event_type="error", phase="completed",
-            code=failure["code"], message=failure["message"],
-        )
+        if completed:
+            await _append_event(
+                run_ref, event_type="error", phase="completed",
+                code=failure["code"], message=failure["message"],
+            )
+        else:
+            await _mark_stopped(run_ref)
     finally:
         _provider_turns.discard(run_ref)
         _tasks.pop(run_ref, None)
+        _terminal_locks.pop(run_ref, None)
+
+
+async def _system_run_for_trigger(
+    owner_id: str, trigger_ref: str,
+) -> dict[str, Any] | None:
+    conn = await get_conn()
+    row = await (await conn.execute(
+        "SELECT run_ref FROM coach_agent_runs "
+        "WHERE owner_id=? AND initiator='system' AND trigger_ref=?",
+        (owner_id, trigger_ref),
+    )).fetchone()
+    return await get_run(owner_id, row["run_ref"]) if row is not None else None
+
+
+async def get_analysis_soft_start(
+    owner_id: str, *, analysis_session_id: int,
+) -> dict[str, Any] | None:
+    if (
+        not isinstance(analysis_session_id, int)
+        or isinstance(analysis_session_id, bool)
+        or analysis_session_id <= 0
+    ):
+        raise AgentRunError("invalid_analysis", "Analysis is invalid")
+    return await _system_run_for_trigger(owner_id, f"analysis:{analysis_session_id}")
+
+
+async def create_analysis_soft_start(
+    owner_id: str,
+    *,
+    analysis_session_id: int,
+) -> dict[str, Any]:
+    if (
+        not isinstance(analysis_session_id, int)
+        or isinstance(analysis_session_id, bool)
+        or analysis_session_id <= 0
+    ):
+        raise AgentRunError("invalid_analysis", "Analysis is invalid")
+    trigger_ref = f"analysis:{analysis_session_id}"
+    lock = _soft_start_locks.setdefault((owner_id, trigger_ref), asyncio.Lock())
+    async with lock:
+        existing = await _system_run_for_trigger(owner_id, trigger_ref)
+        if existing is not None:
+            return existing
+
+        session = await teaching_session_store.get_or_create_primary_session(owner_id)
+        state = session.get("state")
+        if (
+            session.get("active_run_ref") is not None
+            or not isinstance(state, Mapping)
+            or state.get("phase") != "intake"
+            or state.get("primary_candidate") is not None
+        ):
+            raise AgentRunError(
+                "teaching_session_busy", "Coach is already working on another problem",
+            )
+        thread_id = int(session["thread_id"])
+        attachment_status, context = await attach_context(
+            owner_id,
+            thread_id,
+            kind="analysis",
+            analysis_ref=trigger_ref,
+        )
+
+        async def cleanup_new_context() -> None:
+            if attachment_status == "attached":
+                await detach_context(owner_id, thread_id, context["context_ref"])
+
+        try:
+            bundle, snapshots = await build_context_bundle(
+                thread_id, [context["context_ref"]],
+            )
+            profile = await aiming_profile_store.get_profile_snapshot(owner_id)
+            problem = coach_problem_compiler.compile_coach_problem(bundle, profile=profile)
+            if problem is None:
+                raise AgentRunError(
+                    "no_grounded_problem", "Analysis has no grounded Coach problem",
+                )
+            lesson = _lesson_from_bundle(bundle, profile=profile)
+            if lesson is None or lesson.get("problem_id") != problem["problem_id"]:
+                raise AgentRunError(
+                    "no_grounded_problem", "Analysis has no grounded Coach lesson",
+                )
+            assistant_content = _render_problem_soft_start(problem)
+
+            hydrated_state = teaching_session_store.validate_state(
+                _hydrate_teaching_state(state, bundle),
+            )
+            if hydrated_state.get("phase") != state.get("phase"):
+                raise AgentRunError(
+                    "teaching_session_busy", "Coach lesson changed during soft start",
+                )
+        except Exception:
+            await cleanup_new_context()
+            raise
+
+        run_ref = f"agent_run:{uuid.uuid4().hex}"
+        snapshot_json = json.dumps(
+            snapshots, ensure_ascii=False, allow_nan=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+        conn = await get_conn()
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing_row = await (await conn.execute(
+                "SELECT run_ref FROM coach_agent_runs "
+                "WHERE owner_id=? AND initiator='system' AND trigger_ref=?",
+                (owner_id, trigger_ref),
+            )).fetchone()
+            if existing_row is not None:
+                await conn.execute("ROLLBACK")
+                existing = await get_run(owner_id, existing_row["run_ref"])
+                if existing is None:
+                    raise AgentRunError(
+                        "soft_start_conflict", "Coach soft start is unavailable",
+                    )
+                return existing
+            current = await (await conn.execute(
+                "SELECT active_run_ref, state_json, version FROM teaching_sessions "
+                "WHERE session_ref=? AND owner_id=? AND thread_id=?",
+                (session["session_ref"], owner_id, thread_id),
+            )).fetchone()
+            current_state = (
+                json.loads(current["state_json"])
+                if current is not None and current["state_json"]
+                else None
+            )
+            if (
+                current is None
+                or current["active_run_ref"] is not None
+                or not isinstance(current_state, Mapping)
+                or current_state.get("phase") != "intake"
+                or int(current["version"]) != int(session["version"])
+                or current_state != state
+            ):
+                raise AgentRunError(
+                    "teaching_session_busy", "Coach is already working on another problem",
+                )
+            if hydrated_state != state:
+                cursor = await conn.execute(
+                    "UPDATE teaching_sessions SET state_json=?, version=version+1, "
+                    "pending_confirmation_ref=?, pause_reason=?, updated_at=CURRENT_TIMESTAMP "
+                    "WHERE session_ref=? AND owner_id=? AND thread_id=? AND version=? "
+                    "AND active_run_ref IS NULL",
+                    (
+                        json.dumps(
+                            hydrated_state, ensure_ascii=False, allow_nan=False,
+                            sort_keys=True, separators=(",", ":"),
+                        ),
+                        hydrated_state["pending_confirmation_ref"],
+                        hydrated_state["pause_reason"],
+                        session["session_ref"], owner_id, thread_id, session["version"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise AgentRunError(
+                        "teaching_session_busy", "Coach lesson changed during soft start",
+                    )
+            await conn.execute(
+                "INSERT INTO coach_agent_runs("
+                "run_ref, owner_id, thread_id, attempt, status, phase, content, "
+                "user_message_id, initiator, trigger_ref, context_refs_json, partial_text, "
+                "started_at, finished_at) "
+                "VALUES(?, ?, ?, 1, 'succeeded', 'completed', '', NULL, 'system', ?, ?, ?, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (
+                    run_ref, owner_id, thread_id, trigger_ref, snapshot_json,
+                    assistant_content,
+                ),
+            )
+            await conn.execute(
+                "INSERT INTO coach_messages(thread_id, role, content, context_refs_json) "
+                "VALUES(?, 'assistant', ?, ?)",
+                (thread_id, assistant_content, snapshot_json),
+            )
+            await conn.execute(
+                "UPDATE coach_threads SET updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (thread_id,),
+            )
+            await conn.execute(
+                "INSERT INTO coach_agent_run_events("
+                "event_ref, run_ref, sequence, event_type, phase, code, message) "
+                "VALUES(?, ?, 1, 'status', 'completed', 'soft_start_completed', ?)",
+                (
+                    f"agent_event:{uuid.uuid4().hex}", run_ref,
+                    "Coach analysis soft start completed",
+                ),
+            )
+            await conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                await conn.execute("ROLLBACK")
+            await cleanup_new_context()
+            raise
+        result = await get_run(owner_id, run_ref)
+        if result is None:
+            raise AgentRunError("soft_start_missing", "Coach soft start is unavailable")
+        return result
 
 
 async def create_run(
@@ -1619,6 +2182,7 @@ async def create_run(
         or _requires_teaching_turn(session, bundle, safe_content)
     )
     prepared_plan_item = None
+    profile = None
     if needs_teaching_turn and _retry_contract is None:
         profile = await aiming_profile_store.get_profile_snapshot(owner_id)
         prepared_plan_item = _compile_prepared_plan_item(
@@ -1633,6 +2197,7 @@ async def create_run(
             bundle,
             safe_content,
             prepared_plan_item,
+            profile=profile,
         )
         if needs_teaching_turn
         else None
@@ -1767,16 +2332,22 @@ async def stop_run(owner_id: str, run_ref: str) -> dict[str, Any] | None:
         return None
     if detail["status"] in {"succeeded", "failed", "stopped"}:
         return detail
-    conn = await get_conn()
-    await conn.execute(
-        "UPDATE coach_agent_runs SET stop_requested=1, updated_at=CURRENT_TIMESTAMP "
-        "WHERE run_ref=? AND owner_id=? AND status IN ('queued', 'running')",
-        (run_ref, owner_id),
-    )
-    await conn.commit()
-    current = await get_run(owner_id, run_ref)
-    if current is None or current["status"] in {"succeeded", "failed", "stopped"}:
-        return current
+    terminal_lock = _terminal_locks.setdefault(run_ref, asyncio.Lock())
+    async with terminal_lock:
+        current = await get_run(owner_id, run_ref)
+        if current is None:
+            return None
+        if current["status"] in {"succeeded", "failed", "stopped"}:
+            return current
+        conn = await get_conn()
+        cursor = await conn.execute(
+            "UPDATE coach_agent_runs SET stop_requested=1, updated_at=CURRENT_TIMESTAMP "
+            "WHERE run_ref=? AND owner_id=? AND status IN ('queued', 'running')",
+            (run_ref, owner_id),
+        )
+        await conn.commit()
+        if cursor.rowcount != 1:
+            return await get_run(owner_id, run_ref)
     task = _tasks.get(run_ref)
     if task is not None:
         await coach_runtime.stop_pi_coach_turn(run_ref)

@@ -115,7 +115,7 @@ class _GatedConnection:
 
 _conn: Optional[_GatedConnection] = None
 
-TARGET_USER_VERSION = 22
+TARGET_USER_VERSION = 24
 
 
 async def get_conn() -> _GatedConnection:
@@ -506,6 +506,8 @@ CREATE TABLE IF NOT EXISTS coach_agent_runs (
     )),
     content TEXT NOT NULL,
     user_message_id INTEGER,
+    initiator TEXT NOT NULL DEFAULT 'user' CHECK(initiator IN ('user', 'system')),
+    trigger_ref TEXT,
     context_refs_json TEXT NOT NULL DEFAULT '[]',
     partial_text TEXT,
     error_json TEXT,
@@ -517,13 +519,20 @@ CREATE TABLE IF NOT EXISTS coach_agent_runs (
     started_at TEXT,
     finished_at TEXT,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(thread_id) REFERENCES coach_threads(id)
+    FOREIGN KEY(thread_id) REFERENCES coach_threads(id),
+    CHECK(
+        (initiator='user' AND trigger_ref IS NULL)
+        OR (initiator='system' AND trigger_ref IS NOT NULL)
+    )
 );
 CREATE INDEX IF NOT EXISTS idx_coach_agent_runs_owner_created
     ON coach_agent_runs(owner_id, created_at DESC, run_ref);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_agent_runs_active_teaching_session
     ON coach_agent_runs(teaching_session_ref)
     WHERE teaching_session_ref IS NOT NULL AND status IN ('queued', 'running');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_agent_runs_owner_system_trigger
+    ON coach_agent_runs(owner_id, trigger_ref)
+    WHERE initiator='system' AND trigger_ref IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS teaching_sessions (
     session_ref TEXT PRIMARY KEY,
@@ -850,6 +859,8 @@ async def init_schema() -> None:
         await _migrate_v20_teaching_sessions(conn)
         await _migrate_v21_kovaak_connections(conn)
         await _migrate_v22_provider_profile_kinds(conn)
+        await _migrate_v23_coach_system_triggers(conn)
+        await _migrate_v24_provider_model_capabilities(conn)
         await conn.commit()
         return
 
@@ -903,6 +914,10 @@ async def init_schema() -> None:
             await _migrate_v21_kovaak_connections(conn)
         if user_version < 22:
             await _migrate_v22_provider_profile_kinds(conn)
+        if user_version < 23:
+            await _migrate_v23_coach_system_triggers(conn)
+        if user_version < 24:
+            await _migrate_v24_provider_model_capabilities(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -1262,6 +1277,47 @@ async def _migrate_v22_provider_profile_kinds(conn: aiosqlite.Connection) -> Non
         CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_profiles_owner_default
             ON provider_profiles(owner_id) WHERE is_default = 1;
     """)
+
+
+async def _migrate_v23_coach_system_triggers(conn: aiosqlite.Connection) -> None:
+    """v22 -> v23: explicit, idempotent system-initiated Coach runs."""
+    row = await (await conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='coach_agent_runs'"
+    )).fetchone()
+    if row is None:
+        return
+    await _migrate_add_column_if_missing(
+        conn,
+        "coach_agent_runs",
+        "initiator",
+        "TEXT NOT NULL DEFAULT 'user' CHECK(initiator IN ('user', 'system'))",
+    )
+    await _migrate_add_column_if_missing(
+        conn,
+        "coach_agent_runs",
+        "trigger_ref",
+        "TEXT",
+    )
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_agent_runs_owner_system_trigger "
+        "ON coach_agent_runs(owner_id, trigger_ref) "
+        "WHERE initiator='system' AND trigger_ref IS NOT NULL"
+    )
+
+
+async def _migrate_v24_provider_model_capabilities(conn: aiosqlite.Connection) -> None:
+    """v23 -> v24: retain custom Provider limits returned by discovery."""
+    row = await (await conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='provider_profiles'"
+    )).fetchone()
+    if row is None:
+        return
+    await _migrate_add_column_if_missing(
+        conn, "provider_profiles", "context_window", "INTEGER",
+    )
+    await _migrate_add_column_if_missing(
+        conn, "provider_profiles", "max_tokens", "INTEGER",
+    )
 
 
 async def _execute_transactional_script(

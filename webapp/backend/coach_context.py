@@ -40,6 +40,10 @@ _PROCESSED_EVENT_QUERY_CAPABILITIES = [
 ]
 _COACH_CONTEXT_MAX_BYTES = 32 * 1024
 _COACH_FACTS_MAX_BYTES = 8 * 1024
+_TARGET_RELATIVE_FACTS_UNAVAILABLE = "target_relative_facts_unavailable"
+_REPHRASED_TARGET_RELATIVE_MEANINGS = {
+    "reverse_ratio high": "移动收尾时出现了较多反向修正",
+}
 
 _MISSING = object()
 _METRIC_FIELDS = frozenset(
@@ -437,7 +441,12 @@ def _issue_with_registry_teaching(issue: object) -> object:
     return enriched
 
 
-def _project_issue(issue: object) -> dict[str, object] | None:
+def _project_issue(
+    issue: object,
+    *,
+    include_specific_scenarios: bool = True,
+    inherited_limitations: Sequence[str] = (),
+) -> dict[str, object] | None:
     if not isinstance(issue, Mapping):
         return None
     out: dict[str, object] = {}
@@ -448,10 +457,18 @@ def _project_issue(issue: object) -> dict[str, object] | None:
         if value is not _MISSING:
             out[key] = value
 
+    limitations = _safe_string_list(issue.get("limitations"))
+    effective_limitations = list(dict.fromkeys([*limitations, *inherited_limitations]))
     for key in ("plain_language_meaning", "expected_result"):
         if key not in issue:
             continue
         value = _safe_scalar(issue.get(key))
+        if (
+            key == "plain_language_meaning"
+            and _TARGET_RELATIVE_FACTS_UNAVAILABLE in effective_limitations
+            and issue.get("signal") in _REPHRASED_TARGET_RELATIVE_MEANINGS
+        ):
+            value = _REPHRASED_TARGET_RELATIVE_MEANINGS[issue["signal"]]
         if value is not _MISSING:
             out[key] = value
 
@@ -462,10 +479,12 @@ def _project_issue(issue: object) -> dict[str, object] | None:
         else "experimental"
     )
 
-    for key in ("metric_refs", "event_refs", "limitations"):
+    for key in ("metric_refs", "event_refs"):
         values = _safe_string_list(issue.get(key))
         if values:
             out[key] = values
+    if effective_limitations:
+        out["limitations"] = effective_limitations
 
     if resolve_registry_teaching_entry(issue) is not None:
         out["observation_ref"] = issue["observation_ref"].strip()
@@ -544,6 +563,8 @@ def _project_issue(issue: object) -> dict[str, object] | None:
             "retest_after",
             "stop_or_adjust_rule",
         ):
+            if key == "scenario" and not include_specific_scenarios:
+                continue
             if key not in prescription:
                 continue
             value = _safe_scalar(prescription.get(key))
@@ -605,6 +626,8 @@ def _project_diagnosis(
     fallback_summary: object = None,
     require_deterministic_metrics: bool,
     attach_registry_teaching: bool = False,
+    include_specific_scenarios: bool = True,
+    inherited_limitations: Sequence[str] = (),
 ) -> dict[str, object]:
     data = _mapping(diagnosis)
     profile = _mapping(data.get("profile"))
@@ -625,7 +648,9 @@ def _project_diagnosis(
         if (
             projected := _project_issue(
                 _issue_with_registry_teaching(issue)
-                if attach_registry_teaching else issue
+                if attach_registry_teaching else issue,
+                include_specific_scenarios=include_specific_scenarios,
+                inherited_limitations=inherited_limitations,
             )
         ) is not None
     ]
@@ -966,6 +991,7 @@ def _project_v2_context(context: Mapping[str, Any]) -> dict[str, object] | None:
     diagnosis = _project_diagnosis(
         context.get("diagnosis"),
         require_deterministic_metrics=True,
+        inherited_limitations=_safe_string_list(scenario.get("limitations")),
     )
     segment_refs = list(evidence.get("segment_refs") or [])
     for issue in diagnosis["issues"]:
@@ -1201,6 +1227,18 @@ def project_coach_diagnostic_context(
 
     deterministic = _mapping(analysis_result.get("deterministic"))
     evidence = _mapping(analysis_result.get("evidence"))
+    input_snapshot = _mapping(analysis_result.get("input_snapshot"))
+    scenario_resolution = _mapping(input_snapshot.get("scenario_resolution"))
+    scenario_profile_ref = scenario_resolution.get("scenario_profile_ref")
+    has_verified_scenario = (
+        isinstance(scenario_profile_ref, str) and bool(scenario_profile_ref.strip())
+    )
+    scenario_data = _mapping(analysis_result.get("scenario"))
+    scenario_limitations = _safe_string_list(scenario_data.get("limitations"))
+    if not scenario_limitations:
+        scenario_limitations = _safe_string_list(deterministic.get("limitations"))
+    if not scenario_limitations:
+        scenario_limitations = _safe_string_list(scenario_resolution.get("limitations"))
     if schema_version == "analysis_result.v2" and isinstance(
         evidence.get("derived_artifact"), Mapping
     ):
@@ -1211,7 +1249,9 @@ def project_coach_diagnostic_context(
                 deterministic.get("diagnosis"),
                 fallback_summary=deterministic.get("metrics"),
                 require_deterministic_metrics=True,
-                attach_registry_teaching=True,
+                attach_registry_teaching=has_verified_scenario,
+                include_specific_scenarios=has_verified_scenario,
+                inherited_limitations=scenario_limitations,
             ),
             "evidence_summary": _project_evidence_summary(analysis_result, schema_version),
             "warnings": _project_warnings(
@@ -1234,7 +1274,6 @@ def project_coach_diagnostic_context(
                 "limitations": ["canonical_run_facts_not_inline_available"],
             }
         artifact = _mapping(evidence.get("derived_artifact"))
-        scenario_data = _mapping(analysis_result.get("scenario"))
         if analysis_result.get("analysis_type") == "dynamic_clicking":
             snapshot = _mapping(analysis_result.get("input_snapshot"))
             resolution = _mapping(snapshot.get("scenario_resolution"))
@@ -1306,7 +1345,13 @@ def project_coach_diagnostic_context(
             deterministic.get("diagnosis"),
             fallback_summary=deterministic.get("metrics"),
             require_deterministic_metrics=schema_version == "analysis_result.v2",
-            attach_registry_teaching=True,
+            attach_registry_teaching=(
+                schema_version == "analysis_result.v1" or has_verified_scenario
+            ),
+            include_specific_scenarios=(
+                schema_version == "analysis_result.v1" or has_verified_scenario
+            ),
+            inherited_limitations=scenario_limitations,
         ),
         "evidence_summary": _project_evidence_summary(analysis_result, schema_version),
         "warnings": _project_warnings(

@@ -177,6 +177,10 @@ async def test_v21_to_v22_accepts_anthropic_profiles_without_losing_credentials(
         )
     ).fetchone()
     assert json.loads(credential[0]) == {"type": "api_key", "key": "existing-secret"}
+    columns = {
+        row[1] for row in await (await conn.execute("PRAGMA table_info(provider_profiles)")).fetchall()
+    }
+    assert {"context_window", "max_tokens"} <= columns
     await conn.execute(
         "INSERT INTO provider_profiles("
         "owner_id, name, provider_id, kind, base_url, model_id, is_default"

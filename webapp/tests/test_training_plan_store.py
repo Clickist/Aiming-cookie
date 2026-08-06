@@ -263,6 +263,25 @@ async def test_plan_items_executions_and_both_retest_kinds_are_owner_scoped_appe
         "matched", "near_transfer",
     ]
 
+    structured = await store.record_user_execution(
+        "owner-a",
+        item["item_ref"],
+        scenario_ref="scenario:sixshot@1",
+        run_refs=["run:43"],
+        planned_dose={"amount": 6, "unit": "minutes"},
+        completed_dose={"amount": 6, "unit": "minutes"},
+        completion_status="completed",
+        user_feedback={
+            "cue_clarity": "clear",
+            "felt_control": "easier",
+            "felt_stiffness": "no",
+            "fatigue_or_discomfort": "none",
+            "willing_to_continue": True,
+            "notes": "动作更容易控制",
+        },
+    )
+    assert '"felt_control":"easier"' in structured["user_feedback"]
+
     with pytest.raises(store.PlanForbidden):
         await store.list_plan_items("owner-b", draft["plan_id"])
 

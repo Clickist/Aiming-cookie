@@ -20,7 +20,7 @@ _KINDS = {"builtin", *_CUSTOM_KINDS}
 _WRITE_LOCK = asyncio.Lock()
 _PROFILE_COLUMNS = (
     "id, owner_id, name, provider_id, kind, base_url, model_id, api_key, "
-    "is_default, created_at, updated_at"
+    "context_window, max_tokens, is_default, created_at, updated_at"
 )
 _CREDENTIAL_COLUMNS = (
     "id, owner_id, profile_id, credential_type, credential_json, revision, "
@@ -32,6 +32,14 @@ def _required_text(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} is required")
     return value.strip()
+
+
+def _optional_positive_int(value: Any, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer or null")
+    return value
 
 
 def normalize_custom_provider_base_url(kind: str, base_url: str) -> str:
@@ -87,6 +95,8 @@ def _normalize_profile(
         "kind": kind,
         "base_url": base_url,
         "model_id": _required_text(value.get("model_id"), "model_id"),
+        "context_window": _optional_positive_int(value.get("context_window"), "context_window"),
+        "max_tokens": _optional_positive_int(value.get("max_tokens"), "max_tokens"),
         # Kept only as an input/compatibility field.  The DB column is never
         # used as the credential source after the v10 migration.
         "api_key": api_key,
@@ -148,9 +158,18 @@ def runtime_profile_configured(profile: Mapping[str, Any] | None) -> bool:
     if profile.get("kind") in _CUSTOM_KINDS:
         if not isinstance(profile.get("base_url"), str) or not profile["base_url"].strip():
             return False
-        return isinstance(credential, Mapping) and any(
-            isinstance(credential.get(field), str) and credential[field].strip()
-            for field in ("key", "access", "access_token", "refresh", "refresh_token")
+        return (
+            isinstance(profile.get("context_window"), int)
+            and not isinstance(profile.get("context_window"), bool)
+            and profile["context_window"] > 0
+            and isinstance(profile.get("max_tokens"), int)
+            and not isinstance(profile.get("max_tokens"), bool)
+            and profile["max_tokens"] > 0
+            and isinstance(credential, Mapping)
+            and any(
+                isinstance(credential.get(field), str) and credential[field].strip()
+                for field in ("key", "access", "access_token", "refresh", "refresh_token")
+            )
         )
     # Built-ins may resolve ambient auth in Pi; absence of a local credential is
     # therefore a readiness question, not an invalid profile.
@@ -165,7 +184,16 @@ def _public_profile(
     credential_configured = credential is not None
     # Store reads cannot determine ambient readiness. Fail closed here and let
     # the explicit status endpoint ask Pi whether environment/file auth works.
-    configured = credential_configured and not needs_reauth
+    configured = credential_configured and not needs_reauth and runtime_profile_configured({
+        "provider_id": row["provider_id"],
+        "provider_name": row["name"],
+        "kind": row["kind"],
+        "base_url": row["base_url"],
+        "model_id": row["model_id"],
+        "context_window": row["context_window"],
+        "max_tokens": row["max_tokens"],
+        "credential": credential,
+    })
     has_api_key = bool(
         isinstance(credential, Mapping)
         and credential.get("type") == "api_key"
@@ -179,6 +207,8 @@ def _public_profile(
         "kind": row["kind"],
         "base_url": row["base_url"],
         "model_id": row["model_id"],
+        "context_window": row["context_window"],
+        "max_tokens": row["max_tokens"],
         "is_default": bool(row["is_default"]),
         "configured": configured,
         "credential_configured": credential_configured,
@@ -200,6 +230,8 @@ def _runtime_profile(
         "kind": row["kind"],
         "base_url": row["base_url"],
         "model_id": row["model_id"],
+        "context_window": row["context_window"],
+        "max_tokens": row["max_tokens"],
     }
     if credential is not None:
         runtime["credential"] = credential
@@ -254,11 +286,11 @@ async def create_profile(owner_id: str, value: Mapping[str, Any]) -> dict[str, A
                 )
             cur = await conn.execute(
                 "INSERT INTO provider_profiles(owner_id, name, provider_id, kind, "
-                "base_url, model_id, api_key, is_default) VALUES(?, ?, ?, ?, ?, ?, NULL, ?) "
+                "base_url, model_id, context_window, max_tokens, api_key, is_default) VALUES(?, ?, ?, ?, ?, ?, ?, ?, NULL, ?) "
                 "RETURNING id",
                 (
                     owner_id, profile["name"], profile["provider_id"], profile["kind"],
-                    profile["base_url"], profile["model_id"],
+                    profile["base_url"], profile["model_id"], profile["context_window"], profile["max_tokens"],
                     1 if profile["is_default"] else 0,
                 ),
             )
@@ -515,11 +547,16 @@ async def update_profile(
             merged = {
                 "name": row["name"], "provider_id": row["provider_id"],
                 "kind": row["kind"], "base_url": row["base_url"],
-                "model_id": row["model_id"], "is_default": bool(row["is_default"]),
+                "model_id": row["model_id"], "context_window": row["context_window"],
+                "max_tokens": row["max_tokens"], "is_default": bool(row["is_default"]),
                 "api_key": changes.get("api_key") if credential_supplied else None,
             }
             merged.update({key: value for key, value in changes.items() if key != "api_key"})
             profile = _normalize_profile(merged)
+            model_changed = profile["model_id"] != row["model_id"]
+            if model_changed and not {"context_window", "max_tokens"} <= changes.keys():
+                profile["context_window"] = None
+                profile["max_tokens"] = None
             identity_changed = any(
                 profile[field] != row[field]
                 for field in ("provider_id", "kind", "base_url")
@@ -533,11 +570,11 @@ async def update_profile(
                 )
             await conn.execute(
                 "UPDATE provider_profiles SET name=?, provider_id=?, kind=?, base_url=?, "
-                "model_id=?, api_key=NULL, is_default=?, updated_at=CURRENT_TIMESTAMP "
+                "model_id=?, context_window=?, max_tokens=?, api_key=NULL, is_default=?, updated_at=CURRENT_TIMESTAMP "
                 "WHERE id=? AND owner_id=?",
                 (
                     profile["name"], profile["provider_id"], profile["kind"],
-                    profile["base_url"], profile["model_id"],
+                    profile["base_url"], profile["model_id"], profile["context_window"], profile["max_tokens"],
                     1 if profile["is_default"] else 0, profile_id, owner_id,
                 ),
             )
