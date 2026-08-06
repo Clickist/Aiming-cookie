@@ -22,7 +22,7 @@ const EMPTY_USAGE = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-function assistant(content: Array<Record<string, unknown>>, stopReason: "stop" | "toolUse") {
+function assistant(content: Array<Record<string, unknown>>, stopReason: string) {
   return {
     role: "assistant" as const,
     content,
@@ -35,7 +35,7 @@ function assistant(content: Array<Record<string, unknown>>, stopReason: "stop" |
   };
 }
 
-async function streamAssistant(content: Array<Record<string, unknown>>, stopReason: "stop" | "toolUse") {
+async function streamAssistant(content: Array<Record<string, unknown>>, stopReason: string) {
   const ai = await loadPiAi();
   const createStream = ai.createAssistantMessageEventStream as () => {
     push(event: unknown): void;
@@ -680,7 +680,7 @@ test("the contract-allowed execution write reaches trusted confirmation", async 
 
     assert.deepEqual(fetchedCommands, ["training_plan.execution.record"]);
     assert.equal(response.ok, true);
-    assert.equal(response.reply, "该操作已进入结构化确认流程。请在可信确认界面查看影响并选择确认或取消；文字回复不会执行操作。");
+    assert.equal(response.reply, "操作准备好了。请在确认界面查看影响并选择确认或取消；聊天里回复“确认”不会执行。");
     assert.deepEqual(response.notes, []);
   } finally {
     globalThis.fetch = originalFetch;
@@ -839,7 +839,7 @@ test("the contract-allowed retest write reaches trusted confirmation", async () 
 
     assert.equal(fetchCalls, 1);
     assert.equal(response.ok, true);
-    assert.match(response.reply ?? "", /结构化确认/);
+    assert.match(response.reply ?? "", /确认界面/);
     assert.deepEqual(response.notes, []);
   } finally {
     globalThis.fetch = originalFetch;
@@ -959,6 +959,147 @@ test("no-context turns replace invented exact doses with a safe deterministic fa
   assert.equal(response.error, null);
 });
 
+test("empty length-limited model output receives a safe attached-analysis fallback", async () => {
+  const response = await runCoachTurn(
+    {
+      ...baseRequest(),
+      messages: [{ role: "user", content: "请解释 accuracy。" }],
+      analysis_summary: JSON.stringify(diagnosticContext("analysis:223", {
+        accuracy: { value: 0.41, unit: "ratio", classification: "deterministic" },
+      })),
+    },
+    { streamFn: () => streamAssistant([], "length") },
+  );
+
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /0\.41/);
+  assert.doesNotMatch(response.reply ?? "", /reasoning_content|finish_reason|sidecar_http_error/);
+  assert.equal(response.error, null);
+});
+
+test("a direct answer to a teaching question is retained and holds the lesson", async () => {
+  let capturedContext: Record<string, unknown> | undefined;
+  const fake = createFakeStreamFn(JSON.stringify({
+    action: "ask_discriminator",
+    text: "页面的第一项仍然保留。当前先谈已有练习提示的方向，不表示它比第一项更严重，也不能据此确认具体原因。",
+  }));
+  const response = await runCoachTurn(
+    {
+      ...baseRequest(),
+      messages: [{
+        role: "user",
+        content: "请给出场景、剂量、组数、停止条件和复测；别再问我感受。",
+      }],
+      teaching_turn: teachingTurn({
+        phase: "intake",
+        question_kind: "discriminator",
+        question: "你更接近速度匹配时机还是目标读取时机？",
+      }),
+    },
+    {
+      streamFn: (model, context, options) => {
+        capturedContext = context as Record<string, unknown>;
+        return fake(model, context, options);
+      },
+    },
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(
+    response.reply,
+    "页面的第一项仍然保留。当前先谈已有练习提示的方向，不表示它比第一项更严重，也不能据此确认具体原因。",
+  );
+  assert.deepEqual(response.notes, ["teaching_hold"]);
+  const prompt = String(capturedContext?.systemPrompt);
+  assert.match(prompt, /Direct teaching interruption/);
+  assert.match(prompt, /dose, groups, stopping condition, or retest/);
+  assert.match(prompt, /Do not ask a follow-up question/);
+  assert.match(prompt, /do not advance the teaching phase/);
+  assert.match(prompt, /Do not invent/);
+});
+
+test("a teaching interruption cannot be answered by repeating a valid phase question", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    {
+      ...baseRequest(),
+      messages: [{ role: "user", content: "为什么先看这个？" }],
+      teaching_turn: teachingTurn({
+        phase: "intake",
+        question_kind: "discriminator",
+        question: "你更接近速度匹配时机还是目标读取时机？",
+      }),
+    },
+    JSON.stringify({
+      action: "ask_discriminator",
+      text: "你更接近速度匹配时机还是目标读取时机？",
+    }),
+  );
+
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /现有分析还不能确定原因/);
+  assert.doesNotMatch(response.reply ?? "", /你更接近速度匹配时机/);
+  assert.deepEqual(response.notes, ["teaching_hold"]);
+});
+
+test("a direct practice request falls back to the approved cue without another question", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    {
+      ...baseRequest(),
+      messages: [{
+        role: "user",
+        content: "带我练减速阶段偏长，请直接给我一个今天能执行的练习方向，不要先问我感受。",
+      }],
+      teaching_turn: teachingTurn({
+        phase: "intake",
+        question_kind: "discriminator",
+        question: "你自己最先感觉卡在哪一步？",
+      }),
+    },
+    JSON.stringify({
+      action: "ask_discriminator",
+      text: "今天先保持这个动作提示。练完告诉我完成情况和主观感受。",
+    }),
+  );
+
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /今天先只练一个方向/);
+  assert.match(response.reply ?? "", /看到目标减速时，让自己的移动也开始减速/);
+  assert.match(response.reply ?? "", /命中率/);
+  assert.match(response.reply ?? "", /相同场景和设置复测/);
+  assert.doesNotMatch(response.reply ?? "", /[?？]|最先感觉|卡在哪一步|告诉我完成情况|主观感受/);
+  assert.deepEqual(response.notes, ["teaching_hold"]);
+  assert.deepEqual(response.tool_events, []);
+});
+
+test("a practice judgment request falls back to the cue, accuracy, and matched retest", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    {
+      ...baseRequest(),
+      messages: [{
+        role: "user",
+        content: "我怎么判断这句提示练对了？命中率要不要看？请直接说判断标准，不要问我。",
+      }],
+      teaching_turn: teachingTurn({
+        phase: "intake",
+        question_kind: "discriminator",
+        question: "你自己最先感觉卡在哪一步？",
+      }),
+    },
+    JSON.stringify({
+      action: "ask_discriminator",
+      text: "你自己最先感觉卡在哪一步？",
+    }),
+  );
+
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /看到目标减速时，让自己的移动也开始减速/);
+  assert.match(response.reply ?? "", /命中率/);
+  assert.match(response.reply ?? "", /相同场景和设置复测/);
+  assert.doesNotMatch(response.reply ?? "", /[?？]|最先感觉|卡在哪一步|不足以确认具体原因/);
+  assert.deepEqual(response.notes, ["teaching_hold"]);
+  assert.deepEqual(response.tool_events, []);
+});
+
 test("one bounded grounding repair can replace an unsafe draft", async () => {
   let calls = 0;
   let repairPrompt = "";
@@ -986,6 +1127,639 @@ test("one bounded grounding repair can replace an unsafe draft", async () => {
   assert.equal(response.reply, "当前没有可用指标，只提供不带精确剂量的通用建议。");
   assert.match(repairPrompt, /Rewrite the answer/);
   assert.doesNotMatch(repairPrompt, /confirmation/i);
+});
+
+test("grounding repairs an unrequested Chinese fraction by copying the source value and unit", async () => {
+  let calls = 0;
+  let repairPrompt = "";
+  const request = {
+    ...baseRequest(),
+    messages: [{ role: "user" as const, content: "这个减速比例是多少？" }],
+    analysis_summary: JSON.stringify(diagnosticContext("analysis:4", {
+      decel_frac: {
+        value: 0.6768867924528302,
+        unit: "ratio",
+        classification: "deterministic",
+      },
+    })),
+  };
+  const unsafe = createFakeStreamFn("这个减速比例大约是三分之一。 ");
+  const repaired = createFakeStreamFn("这个减速比例是 0.6768867924528302 ratio。 ");
+  const response = await runCoachTurn(request, {
+    streamFn: (model, context, options) => {
+      calls += 1;
+      if (calls === 2) {
+        const messages = (context as { messages?: unknown[] }).messages;
+        const last = Array.isArray(messages) ? messages.at(-1) : null;
+        const content = last && typeof last === "object"
+          ? (last as { content?: Array<{ text?: unknown }> }).content
+          : null;
+        repairPrompt = Array.isArray(content) && typeof content[0]?.text === "string"
+          ? content[0].text
+          : "";
+      }
+      return (calls === 1 ? unsafe : repaired)(model, context, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "这个减速比例是 0.6768867924528302 ratio。");
+  assert.match(repairPrompt, /exact source number and unit verbatim/i);
+  assert.match(repairPrompt, /do not convert or approximate/i);
+  assert.match(repairPrompt, /0\.6768867924528302 ratio/i);
+  assert.doesNotMatch(repairPrompt, /target-relative|analogy|comparison/i);
+  assert.doesNotMatch(response.reply ?? "", /三分之一|三分之二|一半/);
+});
+
+test("grounding normalizes an approximation prefix in a user-requested Chinese fraction", async () => {
+  let calls = 0;
+  const request = {
+    ...baseRequest(),
+    messages: [{ role: "user" as const, content: "这个比例可以近似说成二分之一吗？" }],
+    analysis_summary: JSON.stringify(diagnosticContext("analysis:4", {
+      decel_frac: {
+        value: 0.5,
+        unit: "ratio",
+        classification: "deterministic",
+      },
+    })),
+  };
+  const response = await runCoachTurn(request, {
+    streamFn: (model, context, options) => {
+      calls += 1;
+      return createFakeStreamFn("可以，约二分之一。 ")(model, context, options);
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "可以，约二分之一。");
+});
+
+test("grounding permits a quantity word used inside an analogy when numeric facts exist", async () => {
+  let calls = 0;
+  const request = {
+    ...baseRequest(),
+    messages: [{ role: "user" as const, content: "我没听懂，用一个类比解释。" }],
+    analysis_summary: JSON.stringify(diagnosticContext("analysis:4", {
+      decel_frac: {
+        value: 0.6768867924528302,
+        unit: "ratio",
+        classification: "deterministic",
+      },
+    })),
+  };
+  const response = await runCoachTurn(request, {
+    streamFn: (model, context, options) => {
+      calls += 1;
+      return createFakeStreamFn("就像推车时先给一半力，再慢慢收力。 ")(model, context, options);
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "就像推车时先给一半力，再慢慢收力。");
+});
+
+test("grounding leaves Chinese quantity words alone when no numeric facts are attached", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    { ...baseRequest(), analysis_summary: null },
+    "大部分时候先把动作放慢，再看手感。",
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "大部分时候先把动作放慢，再看手感。");
+});
+
+test("grounding repairs target-relative claims when target facts are unavailable", async () => {
+  let calls = 0;
+  let repairPrompt = "";
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const unsafe = createFakeStreamFn("准星冲过目标后，又折回来找落点。");
+  const repaired = createFakeStreamFn("这次能看到的是移动收尾时反向修正较多。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      if (calls === 2) {
+        const messages = (streamContext as { messages?: unknown[] }).messages;
+        const last = Array.isArray(messages) ? messages.at(-1) : null;
+        const content = last && typeof last === "object"
+          ? (last as { content?: Array<{ text?: unknown }> }).content
+          : null;
+        repairPrompt = Array.isArray(content) && typeof content[0]?.text === "string"
+          ? content[0].text
+          : "";
+      }
+      return (calls === 1 ? unsafe : repaired)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "这次能看到的是移动收尾时反向修正较多。");
+  assert.match(repairPrompt, /target-relative facts/i);
+  assert.doesNotMatch(repairPrompt, /practice method|analogy|source value\/unit pairs/i);
+  assert.doesNotMatch(response.reply ?? "", /冲过|落点|这是(?:一个)?比喻/);
+});
+
+test("grounding repairs a missing requested analogy", async () => {
+  let calls = 0;
+  let repairPrompt = "";
+  const plain = createFakeStreamFn("这次移动收尾时减速较长，随后还有反向修正。");
+  const analogy = createFakeStreamFn("就像松开油门后车还会滑一段，动作已经开始收住，但收尾还在继续。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{ role: "user", content: "我没听懂，用一个日常类比解释" }],
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      if (calls === 2) {
+        const messages = (streamContext as { messages?: unknown[] }).messages;
+        const last = Array.isArray(messages) ? messages.at(-1) : null;
+        const content = last && typeof last === "object"
+          ? (last as { content?: Array<{ text?: unknown }> }).content
+          : null;
+        repairPrompt = Array.isArray(content) && typeof content[0]?.text === "string"
+          ? content[0].text
+          : "";
+      }
+      return (calls === 1 ? plain : analogy)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "就像松开油门后车还会滑一段，动作已经开始收住，但收尾还在继续。");
+  assert.match(repairPrompt, /requested one short, natural analogy/i);
+  assert.doesNotMatch(repairPrompt, /target-relative|source value\/unit pairs|partial analysis/i);
+});
+
+test("grounding does not force an analogy when the user explicitly rejects one", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    {
+      ...baseRequest(),
+      messages: [{ role: "user", content: "不要用比喻，直接解释" }],
+    },
+    "这次能看到移动收尾时仍有修正。",
+  );
+
+  assert.equal(response.ok, true);
+});
+
+test("grounding accepts a natural like-something analogy", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    {
+      ...baseRequest(),
+      messages: [{ role: "user", content: "用一个类比解释" }],
+    },
+    "像推车一样，手已经开始收力，车身还会继续滑一小段。",
+  );
+
+  assert.equal(response.ok, true);
+});
+
+test("a promised future analogy is repaired or replaced with a completed analogy", async () => {
+  let calls = 0;
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const promise = createFakeStreamFn("你先告诉我哪一句卡住了，我再给你打个比方。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{ role: "user", content: "我没听懂，用一个日常类比解释" }],
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      return promise(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.notEqual(response.reply, "你先告诉我哪一句卡住了，我再给你打个比方。");
+  assert.match(response.reply ?? "", /就像/);
+  assert.deepEqual(response.notes, ["grounding_fallback"]);
+});
+
+test("an analogy with follow-up questions is replaced by one direct grounded analogy", async () => {
+  let calls = 0;
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const indirect = createFakeStreamFn(
+    "就像做菜时看锅里的变化再调火。你是在问跟枪，还是前一句没听懂？告诉我哪句卡住了，我再解释。",
+  );
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{ role: "user", content: "我没听懂，用一个日常类比解释" }],
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      return indirect(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /就像/);
+  assert.doesNotMatch(response.reply ?? "", /[?？]|跟枪|哪句/);
+  assert.deepEqual(response.notes, ["grounding_fallback"]);
+});
+
+test("grounding repairs a target-proximity paraphrase when target facts are unavailable", async () => {
+  let calls = 0;
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const unsafe = createFakeStreamFn("你是先靠近目标，再放慢节奏来校准。");
+  const repaired = createFakeStreamFn("你的补充会改变解释：减速较长可能是主动策略，现有数据还不能判断它是否有效。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{ role: "user", content: "我是故意放慢来保命中的" }],
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      return (calls === 1 ? unsafe : repaired)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "你的补充会改变解释：减速较长可能是主动策略，现有数据还不能判断它是否有效。");
+});
+
+test("grounding removes an analogy disclaimer instead of explaining the metaphor", async () => {
+  let calls = 0;
+  let repairPrompt = "";
+  const unsafe = createFakeStreamFn("就像开车快到路口时慢慢松油门。这个比喻不能证明原因，别把它当结论。");
+  const repaired = createFakeStreamFn("就像开车时已经松了油门，车却还要滑一段才慢下来。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{ role: "user", content: "我没听懂，用一个类比解释" }],
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      if (calls === 2) {
+        const messages = (streamContext as { messages?: unknown[] }).messages;
+        const last = Array.isArray(messages) ? messages.at(-1) : null;
+        const content = last && typeof last === "object"
+          ? (last as { content?: Array<{ text?: unknown }> }).content
+          : null;
+        repairPrompt = Array.isArray(content) && typeof content[0]?.text === "string"
+          ? content[0].text
+          : "";
+      }
+      return (calls === 1 ? unsafe : repaired)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "就像开车时已经松了油门，车却还要滑一段才慢下来。");
+  assert.match(repairPrompt, /do not explain that it is an analogy/i);
+  assert.doesNotMatch(repairPrompt, /first state one observed movement pattern/i);
+  assert.doesNotMatch(response.reply ?? "", /不能证明|别把|结论/);
+});
+
+test("grounding repairs a multi-part question by covering each requested topic", async () => {
+  let calls = 0;
+  let repairPrompt = "";
+  const incomplete = createFakeStreamFn("现有分析还不能判断是不是手紧导致的。");
+  const complete = createFakeStreamFn(
+    "紧张：现有分析不能判断是不是手紧导致。鼠标：没有证据支持通过换鼠标解决。迁移：能否迁移到其他 FPS，需要单独复测。",
+  );
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{
+      role: "user",
+      content: "这是不是手紧导致的？我要不要换鼠标？这个练法能迁移到其他 FPS 吗？",
+    }],
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      if (calls === 2) {
+        const messages = (streamContext as { messages?: unknown[] }).messages;
+        const last = Array.isArray(messages) ? messages.at(-1) : null;
+        const content = last && typeof last === "object"
+          ? (last as { content?: Array<{ text?: unknown }> }).content
+          : null;
+        repairPrompt = Array.isArray(content) && typeof content[0]?.text === "string"
+          ? content[0].text
+          : "";
+      }
+      return (calls === 1 ? incomplete : complete)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "紧张：现有分析不能判断是不是手紧导致。鼠标：没有证据支持通过换鼠标解决。迁移：能否迁移到其他 FPS，需要单独复测。");
+  assert.match(repairPrompt, /鼠标.*迁移/s);
+  assert.doesNotMatch(repairPrompt, /target-relative|source value\/unit pairs|analogy/i);
+});
+
+test("multi-part coverage accepts bounded synonyms and rejects topic deferral", async () => {
+  const request = {
+    ...baseRequest(),
+    messages: [{
+      role: "user" as const,
+      content: "这是不是手紧导致的？我要不要换鼠标？这个练法能迁移到其他 FPS 吗？",
+    }],
+  };
+  const complete = await runCoachTurnWithFakeStream(
+    request,
+    "手部发力是否相关还不能判断；设备不用换；跨游戏需要复测。",
+  );
+  const deferred = await runCoachTurnWithFakeStream(
+    request,
+    "手部发力是否相关还不能判断；鼠标和迁移问题先不谈。",
+  );
+
+  assert.equal(complete.ok, true);
+  assert.equal(deferred.ok, true);
+  assert.notEqual(deferred.reply, "手部发力是否相关还不能判断；鼠标和迁移问题先不谈。");
+  assert.match(deferred.reply ?? "", /鼠标/);
+  assert.match(deferred.reply ?? "", /迁移/);
+  assert.deepEqual(deferred.notes, ["grounding_fallback"]);
+});
+
+test("statements about tension and an unchanged mouse do not create extra answer targets", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    {
+      ...baseRequest(),
+      messages: [{ role: "user", content: "鼠标没换，我有点紧张，这个练法能迁移吗？" }],
+    },
+    "能否迁移需要在匹配条件下复测。",
+  );
+
+  assert.equal(response.ok, true);
+});
+
+test("a repeated target-relative violation uses one audited grounding fallback", async () => {
+  let calls = 0;
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const unsafe = createFakeStreamFn("准星冲过目标后，又折回来找落点。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      return unsafe(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.doesNotMatch(response.reply ?? "", /确认.*移动收尾|收尾.*模式/);
+  assert.match(response.reply ?? "", /不能判断.*到位.*过冲.*欠冲/);
+  assert.deepEqual(response.notes, ["grounding_fallback"]);
+});
+
+test("a no-analysis multi-part fallback does not claim an attached Analysis exists", async () => {
+  let calls = 0;
+  const incomplete = createFakeStreamFn("现有信息还不能判断是不是手紧导致的。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{
+      role: "user",
+      content: "这是不是手紧导致的？我要不要换鼠标？这个练法能迁移到其他 FPS 吗？",
+    }],
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      return incomplete(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.doesNotMatch(response.reply ?? "", /现有分析/);
+  assert.match(response.reply ?? "", /没有附加本局分析/);
+  assert.match(response.reply ?? "", /鼠标/);
+  assert.match(response.reply ?? "", /迁移/);
+  assert.deepEqual(response.notes, ["grounding_fallback"]);
+});
+
+test("a multi-part fallback survives a different first grounding reason", async () => {
+  let calls = 0;
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    limitations: [{
+      code: "target_relative_facts_unavailable",
+      availability: "unavailable",
+    }],
+  };
+  const causal = createFakeStreamFn("这就是手紧导致的，鼠标和迁移先不谈。");
+  const incomplete = createFakeStreamFn("紧张是否相关还不能判断。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{
+      role: "user",
+      content: "这是不是手紧导致的？我要不要换鼠标？这个练法能迁移到其他 FPS 吗？",
+    }],
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      return (calls === 1 ? causal : incomplete)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /紧张/);
+  assert.match(response.reply ?? "", /鼠标/);
+  assert.match(response.reply ?? "", /迁移/);
+  assert.deepEqual(response.notes, ["grounding_fallback"]);
+});
+
+test("a multi-part fallback takes precedence over a target-relative fallback", async () => {
+  let calls = 0;
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const targetClaim = createFakeStreamFn("手紧让准星冲过目标，鼠标和迁移先不谈。");
+  const incomplete = createFakeStreamFn("紧张是否相关还不能判断。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{
+      role: "user",
+      content: "这是不是手紧导致的？我要不要换鼠标？这个练法能迁移到其他 FPS 吗？",
+    }],
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      return (calls === 1 ? targetClaim : incomplete)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /紧张/);
+  assert.match(response.reply ?? "", /鼠标/);
+  assert.match(response.reply ?? "", /迁移/);
+  assert.deepEqual(response.notes, ["grounding_fallback"]);
+});
+
+test("grounding repairs an unsupported problem-free judgment from partial evidence", async () => {
+  let calls = 0;
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const unsafe = createFakeStreamFn("甩的动作本身没问题，问题只在收尾。");
+  const repaired = createFakeStreamFn("这次能确认的是移动收尾时减速较长；现有证据不能评价其他阶段有没有问题。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{ role: "user", content: "这次最重要的问题是什么" }],
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      return (calls === 1 ? unsafe : repaired)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "这次能确认的是移动收尾时减速较长；现有证据不能评价其他阶段有没有问题。");
+});
+
+test("grounding repairs an invented comparison when only one Analysis is attached", async () => {
+  let calls = 0;
+  let repairPrompt = "";
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const unsafe = createFakeStreamFn("你上一次是正常速度，这次是故意放慢，所以两次结果不能比较。");
+  const repaired = createFakeStreamFn("你的补充会改变解释：减速较长可能是主动策略，但这一次分析不能判断它是否有效。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{ role: "user", content: "我是故意放慢来保命中的，你的判断还成立吗" }],
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      if (calls === 2) {
+        const messages = (streamContext as { messages?: unknown[] }).messages;
+        const last = Array.isArray(messages) ? messages.at(-1) : null;
+        const content = last && typeof last === "object"
+          ? (last as { content?: Array<{ text?: unknown }> }).content
+          : null;
+        repairPrompt = Array.isArray(content) && typeof content[0]?.text === "string"
+          ? content[0].text
+          : "";
+      }
+      return (calls === 1 ? unsafe : repaired)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "你的补充会改变解释：减速较长可能是主动策略，但这一次分析不能判断它是否有效。");
+  assert.match(repairPrompt, /only one Analysis is attached/i);
+});
+
+test("grounding repairs an invented practice cue for a partial analysis without a teaching turn", async () => {
+  let calls = 0;
+  let repairPrompt = "";
+  const context = {
+    ...diagnosticContext("analysis:4", {}),
+    scenario: {
+      scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+      analyzer_refs: ["native_flicking.v1"],
+      support_status: "partial",
+      limitations: ["target_relative_facts_unavailable"],
+    },
+  };
+  const unsafe = createFakeStreamFn("练习时先提前收速度，让准星更快停下。");
+  const repaired = createFakeStreamFn("这次分析能说明移动收尾有反向修正，但证据还不够，不能据此定具体练法。");
+  const response = await runCoachTurn({
+    ...baseRequest(),
+    messages: [{ role: "user", content: "直接给我一个练法" }],
+    analysis_summary: JSON.stringify(context),
+  }, {
+    streamFn: (model, streamContext, options) => {
+      calls += 1;
+      if (calls === 2) {
+        const messages = (streamContext as { messages?: unknown[] }).messages;
+        const last = Array.isArray(messages) ? messages.at(-1) : null;
+        const content = last && typeof last === "object"
+          ? (last as { content?: Array<{ text?: unknown }> }).content
+          : null;
+        repairPrompt = Array.isArray(content) && typeof content[0]?.text === "string"
+          ? content[0].text
+          : "";
+      }
+      return (calls === 1 ? unsafe : repaired)(model, streamContext, options);
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "这次分析能说明移动收尾有反向修正，但证据还不够，不能据此定具体练法。");
+  assert.match(repairPrompt, /partial analysis.*cannot create a cue/i);
+  assert.doesNotMatch(response.reply ?? "", /提前收速度|这是(?:一个)?比喻/);
 });
 
 test("grounding repair preserves a source metric's unit instead of converting it", async () => {
@@ -1257,7 +2031,7 @@ test("comparison turns replace unavailable metrics with an honest deterministic 
   );
 
   assert.equal(response.ok, true);
-  assert.match(response.reply ?? "", /没有足够的共同可比指标/);
+  assert.match(response.reply ?? "", /没有能直接对照的指标/);
   assert.ok(!(response.reply ?? "").includes("time_in_radius_ratio"));
   assert.ok(!(response.reply ?? "").includes("0.42"));
 });
@@ -1368,6 +2142,149 @@ test("grounding accepts a source ratio rendered as a rounded percentage", async 
 
   assert.equal(rounded.ok, true);
   assert.equal(invented.ok, false);
+});
+
+test("named available metrics stay available when a teaching turn asks to compare them", async () => {
+  let capturedContext: Record<string, unknown> | undefined;
+  const request = {
+    ...baseRequest(),
+    run_id: "named-metric-comparison",
+    messages: [{ role: "user" as const, content: "请比较 decel_frac 和 reverse_ratio 的数值。" }],
+    analysis_summary: JSON.stringify(diagnosticContext("analysis:223", {
+      decel_frac: { value: 0.741, unit: "ratio", classification: "deterministic" },
+      reverse_ratio: { value: 0.219, unit: "ratio", classification: "deterministic" },
+    })),
+    teaching_turn: teachingTurn({
+      phase: "intake",
+      question_kind: "discriminator",
+      question: "你更接近速度匹配时机还是目标读取时机？",
+    }),
+  };
+  const unavailable = await runCoachTurn(request, {
+    streamFn: (model, context, options) => {
+      capturedContext = context as Record<string, unknown>;
+      return createFakeStreamFn(JSON.stringify({
+        action: "ask_discriminator",
+        text: "这两个指标没有可引用数值。",
+      }))(model, context, options);
+    },
+  });
+  const values = await runCoachTurn({ ...request, run_id: "named-metric-values" }, {
+    streamFn: createFakeStreamFn(JSON.stringify({
+      action: "ask_discriminator",
+      text: "decel_frac 是 0.741，reverse_ratio 是 0.219。没有阈值或基线只限制判断，不会让这两个数值不可用。",
+    })),
+  });
+
+  assert.equal(unavailable.ok, true);
+  assert.match(unavailable.reply ?? "", /0\.741/);
+  assert.match(unavailable.reply ?? "", /0\.219/);
+  assert.doesNotMatch(unavailable.reply ?? "", /不可用|没有可引用数值/);
+  assert.deepEqual(unavailable.notes, ["teaching_hold"]);
+  assert.deepEqual(unavailable.tool_events, []);
+  assert.equal(values.ok, true);
+  const prompt = String(capturedContext?.systemPrompt);
+  assert.match(prompt, /decel_frac=0.741/);
+  assert.match(prompt, /reverse_ratio=0.219/);
+  assert.match(prompt, /does not make the value unavailable/);
+});
+
+test("ordinary turns replace a repeated denial of named available metric values", async () => {
+  let calls = 0;
+  const unavailable = createFakeStreamFn("这两个指标没有可引用数值。");
+  const response = await runCoachTurn(
+    {
+      ...baseRequest(),
+      messages: [{ role: "user", content: "请比较 decel_frac 和 reverse_ratio 的数值。" }],
+      analysis_summary: JSON.stringify(diagnosticContext("analysis:223", {
+        decel_frac: { value: 0.741, unit: "ratio", classification: "deterministic" },
+        reverse_ratio: { value: 0.219, unit: "ratio", classification: "deterministic" },
+      })),
+    },
+    {
+      streamFn: (model, context, options) => {
+        calls += 1;
+        return unavailable(model, context, options);
+      },
+    },
+  );
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /0\.741/);
+  assert.match(response.reply ?? "", /0\.219/);
+  assert.doesNotMatch(response.reply ?? "", /不可用|没有可引用数值/);
+  assert.deepEqual(response.notes, []);
+});
+
+test("grounding rejects advice to ignore hits or accuracy", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    {
+      ...baseRequest(),
+      analysis_summary: JSON.stringify(diagnosticContext("analysis:223", {
+        accuracy: { value: 0.41, unit: "ratio", classification: "deterministic" },
+      })),
+    },
+    "别看有没有打中，先看手感。",
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error?.code, "grounding_violation");
+});
+
+test("grounding repairs an accuracy dismissal when the revised reply retains accuracy", async () => {
+  let calls = 0;
+  const unsafe = createFakeStreamFn("别看有没有打中，先看手感。");
+  const repaired = createFakeStreamFn("准确率 0.41 仍应保留，并和手感一起记录。");
+  const response = await runCoachTurn(
+    {
+      ...baseRequest(),
+      analysis_summary: JSON.stringify(diagnosticContext("analysis:223", {
+        accuracy: { value: 0.41, unit: "ratio", classification: "deterministic" },
+      })),
+    },
+    {
+      streamFn: (model, context, options) => {
+        calls += 1;
+        return (calls === 1 ? unsafe : repaired)(model, context, options);
+      },
+    },
+  );
+
+  assert.equal(calls, 2);
+  assert.equal(response.ok, true);
+  assert.match(response.reply ?? "", /准确率 0\.41/);
+});
+
+test("grounding permits advice to record hits and accuracy alongside another cue", async () => {
+  for (const reply of [
+    "不要只看是否命中，还要记录命中率。",
+    "命中率并非不重要，仍应记录并分析。",
+  ]) {
+    const response = await runCoachTurnWithFakeStream(baseRequest(), reply);
+    assert.equal(response.ok, true, reply);
+  }
+});
+
+test("available metric values may be descriptive-only without triggering a value fallback", async () => {
+  const response = await runCoachTurnWithFakeStream(
+    {
+      ...baseRequest(),
+      messages: [{ role: "user", content: "请比较 decel_frac 和 reverse_ratio 的数值。" }],
+      analysis_summary: JSON.stringify(diagnosticContext("analysis:223", {
+        decel_frac: { value: 0.741, unit: "ratio", classification: "deterministic" },
+        reverse_ratio: { value: 0.219, unit: "ratio", classification: "deterministic" },
+      })),
+      teaching_turn: teachingTurn(),
+    },
+    JSON.stringify({
+      action: "ask_discriminator",
+      text: "这两个数值可引用，但没有基线，指标不可用于判断好坏。",
+    }),
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "这两个数值可引用，但没有基线，指标不可用于判断好坏。");
 });
 
 test("grounding rejects a source count repurposed as an unsupported training dose", async () => {
@@ -1584,6 +2501,8 @@ test("runtime api_key is passed only as stream auth and never enters context or 
       base_url: "https://example.invalid/v1",
       credential: { type: "api_key", key: SECRET },
       model_id: "secret-model",
+      context_window: 32768,
+      max_tokens: 4096,
     },
   };
 
@@ -1600,6 +2519,43 @@ test("runtime api_key is passed only as stream auth and never enters context or 
   assert.equal(capturedOptions?.apiKey, undefined);
   assert.ok(!JSON.stringify(capturedContext).includes(SECRET));
   assert.ok(!JSON.stringify(response).includes(SECRET));
+});
+
+test("analysis tool budget includes the current user prompt", async () => {
+  let analysisTool: {
+    execute: (id?: string, params?: Record<string, unknown>) => Promise<{
+      details: { reason?: string };
+    }>;
+  } | undefined;
+  const request = {
+    ...baseRequest(),
+    messages: [{ role: "user", content: `请分析。${"背景".repeat(6_000)}` }],
+    analysis_summary: JSON.stringify(diagnosticContext("analysis:3", {
+      padding: "x".repeat(12_000),
+    })),
+    model: {
+      kind: "custom_openai_compatible",
+      provider_name: "Small Context Provider",
+      base_url: "https://example.invalid/v1",
+      credential: { type: "api_key", key: SECRET },
+      model_id: "small-context-model",
+      context_window: 40_000,
+      max_tokens: 4_096,
+    },
+  };
+
+  const response = await runCoachTurn(request, {
+    streamFn: (model, context, options) => {
+      const tools = (context as { tools: Array<{ name: string }> }).tools;
+      analysisTool = tools.find((tool) => tool.name === "get_analysis_summary") as typeof analysisTool;
+      return createFakeStreamFn("上下文预算测试回复")(model, context, options);
+    },
+  });
+
+  assert.equal(response.ok, true);
+  assert.ok(analysisTool);
+  const result = await analysisTool.execute("budget-test", {});
+  assert.equal(result.details.reason, "context_budget_exceeded");
 });
 
 test("v1 without a bridge registers analysis and knowledge tools only", async () => {
@@ -1667,6 +2623,8 @@ test("v0 never receives knowledge or product-command tools even if a bridge-shap
           base_url: "https://legacy.example.invalid/v1",
           api_key_env: "LEGACY_COACH_TEST_KEY",
           model_id: "legacy-model",
+          context_window: 32768,
+          max_tokens: 4096,
         },
       },
       {
@@ -1800,7 +2758,7 @@ test("a pending confirmation always uses the trusted UI reply instead of model p
     assert.equal(response.ok, true);
     assert.equal(
       response.reply,
-      "该操作已进入结构化确认流程。请在可信确认界面查看影响并选择确认或取消；文字回复不会执行操作。",
+      "操作准备好了。请在确认界面查看影响并选择确认或取消；聊天里回复“确认”不会执行。",
     );
     assert.deepEqual(response.tool_events, [event]);
     assert.doesNotMatch(response.reply ?? "", /回复确认/);
@@ -1883,7 +2841,7 @@ test("training execution and retest writes wait for trusted confirmation without
       assert.equal(response.ok, true, item.commandName);
       assert.equal(
         response.reply,
-        "该操作已进入结构化确认流程。请在可信确认界面查看影响并选择确认或取消；文字回复不会执行操作。",
+        "操作准备好了。请在确认界面查看影响并选择确认或取消；聊天里回复“确认”不会执行。",
         item.commandName,
       );
       assert.equal(response.tool_events.length, 1, item.commandName);
@@ -1974,7 +2932,7 @@ test("an explicit reachable Analysis deletion receives one constrained tool-comp
     assert.deepEqual(requests[0]?.parameters, { analysis_ref: "analysis:3" });
     assert.match(String(requests[0]?.idempotency_key), /^turn:/);
     assert.equal(response.ok, true);
-    assert.match(response.reply ?? "", /\u7ed3\u6784\u5316\u786e\u8ba4/);
+    assert.match(response.reply ?? "", /\u786e\u8ba4\u754c\u9762/);
     assert.doesNotMatch(response.reply ?? "", /reply with confirmation/i);
     assert.deepEqual(response.tool_events, [event]);
   } finally {
@@ -2059,7 +3017,7 @@ test("a pending deletion confirmation survives a repeated model tool call withou
     assert.ok(calls >= 3);
     assert.equal(fetchCalls, 1);
     assert.equal(response.ok, true);
-    assert.match(response.reply ?? "", /\u7ed3\u6784\u5316\u786e\u8ba4/);
+    assert.match(response.reply ?? "", /\u786e\u8ba4\u754c\u9762/);
     assert.deepEqual(response.tool_events, [event]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -2251,7 +3209,7 @@ test("polite direct deletion requests still receive the constrained tool-complia
 
       assert.equal(calls, 3, content);
       assert.equal(response.ok, true, content);
-      assert.match(response.reply ?? "", /\u7ed3\u6784\u5316\u786e\u8ba4/, content);
+      assert.match(response.reply ?? "", /\u786e\u8ba4\u754c\u9762/, content);
     }
     assert.equal(fetchCalls, 2);
   } finally {
@@ -2385,6 +3343,68 @@ test("stopping an active turn preserves its partial reply", async () => {
   assert.equal(stopCoachTurn(runId), false);
 });
 
+test("ordinary turns publish safe cumulative revisions before final completion", async () => {
+  const firstText = "先看动作。";
+  const finalText = "先看动作。再确认结果。";
+  let finalEmitted = false;
+  let observeFirst!: () => void;
+  let observeSecond!: () => void;
+  const firstObserved = new Promise<void>((resolve) => { observeFirst = resolve; });
+  const secondObserved = new Promise<void>((resolve) => { observeSecond = resolve; });
+  const revisions: Array<{ text: string; revision: number }> = [];
+  let timing: import("../src/turn.ts").CoachTurnTiming | null = null;
+  const streamFn: StreamFn = async () => {
+    const ai = await loadPiAi();
+    const createStream = ai.createAssistantMessageEventStream as () => {
+      push(event: unknown): void;
+      end(result: unknown): void;
+    };
+    const stream = createStream();
+    void (async () => {
+      const initial = assistant([{ type: "text", text: "" }], "stop");
+      const first = assistant([{ type: "text", text: firstText }], "stop");
+      const final = assistant([{ type: "text", text: finalText }], "stop");
+      stream.push({ type: "start", partial: initial });
+      stream.push({ type: "text_start", contentIndex: 0, partial: initial });
+      stream.push({ type: "text_delta", contentIndex: 0, delta: firstText, partial: first });
+      await firstObserved;
+      stream.push({
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "再确认结果。",
+        partial: final,
+      });
+      await secondObserved;
+      finalEmitted = true;
+      stream.push({ type: "done", reason: "stop", message: final });
+      stream.end(final);
+    })();
+    return stream;
+  };
+
+  const response = await runCoachTurn(baseRequest(), {
+    streamFn,
+    onPartial: async (partial) => {
+      assert.equal(finalEmitted, false);
+      revisions.push({ text: partial.text, revision: partial.revision });
+      if (partial.revision === 1) observeFirst();
+      if (partial.revision === 2) observeSecond();
+    },
+    onComplete: (value) => { timing = value; },
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, finalText);
+  assert.deepEqual(revisions.map((item) => item.text), [firstText, finalText]);
+  assert.deepEqual(revisions.map((item) => item.revision), [1, 2]);
+  assert.ok(timing !== null);
+  assert.equal(timing.provider_round_ms.length, timing.provider_rounds);
+  assert.equal(
+    timing.provider_round_ms.reduce((total, value) => total + value, 0),
+    timing.provider_ms,
+  );
+});
+
 test("stopping drops an internal-protocol partial reply", async () => {
   let started!: () => void;
   const streamStarted = new Promise<void>((resolve) => { started = resolve; });
@@ -2498,6 +3518,8 @@ test("v0 accepts the profile-shaped payload used by the local Python runtime", a
         base_url: "http://127.0.0.1:11434/v1",
         model_id: "qwen2.5",
         api_key: SECRET,
+        context_window: 32768,
+        max_tokens: 4096,
       },
     },
     {
@@ -2529,6 +3551,8 @@ test("v0 request remains migration-compatible and returns v0 response schema", a
           base_url: "https://legacy.example.invalid/v1",
           api_key_env: "LEGACY_COACH_TEST_KEY",
           model_id: "legacy-model",
+          context_window: 32768,
+          max_tokens: 4096,
         },
       },
       "legacy reply",

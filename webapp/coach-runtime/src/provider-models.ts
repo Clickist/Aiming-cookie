@@ -130,6 +130,13 @@ async function resolveCustomProfile(
   if (!credential || credential.type !== "api_key" || !credential.key) {
     throw new ProviderProfileError("invalid_profile", "Custom provider API key credential is unavailable");
   }
+  if (!Number.isSafeInteger(profile.context_window) || profile.context_window <= 0
+    || !Number.isSafeInteger(profile.max_tokens) || profile.max_tokens <= 0) {
+    throw new ProviderProfileError(
+      "unknown_model_capabilities",
+      "Custom provider did not return verified context_window and max_tokens",
+    );
+  }
   const credentialStore = new SnapshotCredentialStore(profile.provider_id, credential);
   const ai = (await loadPiAi()) as {
     createModels: (options?: { credentials?: SnapshotCredentialStore }) => PiModels;
@@ -157,8 +164,8 @@ async function resolveCustomProfile(
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 8192,
+    contextWindow: profile.context_window,
+    maxTokens: profile.max_tokens,
   };
   const provider = ai.createProvider({
     id: profile.provider_id,

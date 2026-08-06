@@ -73,6 +73,30 @@ def _required_text(value: Any, field: str, *, max_length: int = _MAX_TEXT_LENGTH
     return text
 
 
+_LEARNER_RESPONSE_FIELDS = {
+    "cue_clarity", "felt_control", "felt_stiffness", "fatigue_or_discomfort",
+    "willing_to_continue", "notes",
+}
+
+
+def _normalize_user_feedback(value: Any) -> str:
+    if isinstance(value, Mapping):
+        if set(value) - _LEARNER_RESPONSE_FIELDS:
+            raise InvalidTrainingPlan("user_feedback contains unsupported learner response fields")
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "notes":
+                normalized[key] = _required_text(item, "user_feedback.notes", max_length=1000)
+            elif not isinstance(item, (str, bool)) and item is not None:
+                raise InvalidTrainingPlan(f"user_feedback.{key} is invalid")
+            elif isinstance(item, str) and len(item) > 120:
+                raise InvalidTrainingPlan(f"user_feedback.{key} is invalid")
+            else:
+                normalized[key] = item
+        return _json(normalized)
+    return _required_text(value, "user_feedback", max_length=1000)
+
+
 def _required_owner(owner_id: str) -> str:
     return _required_text(owner_id, "owner_id", max_length=128)
 
@@ -827,7 +851,7 @@ async def record_user_execution(
     planned_dose: Mapping[str, Any],
     completed_dose: Mapping[str, Any],
     completion_status: str,
-    user_feedback: str,
+    user_feedback: str | Mapping[str, Any],
     recorded_by: str = "user",
 ) -> dict[str, Any]:
     owner_id = _required_owner(owner_id)
@@ -840,7 +864,7 @@ async def record_user_execution(
         raise InvalidTrainingPlan("unknown execution status")
     if recorded_by != "user":
         raise InvalidTrainingPlan("plan execution must be recorded by the user")
-    feedback = _required_text(user_feedback, "user_feedback", max_length=1000)
+    feedback = _normalize_user_feedback(user_feedback)
     conn = await get_conn()
     async with _WRITE_LOCK:
         await conn.execute("BEGIN IMMEDIATE")

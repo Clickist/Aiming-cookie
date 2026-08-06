@@ -91,6 +91,14 @@ export type TeachingAllowedCommand =
 export type TeachingRetestIntent = "none" | "immediate_matched" | "delayed_matched" | "near_transfer";
 export type TeachingRetestComparability = "unresolved" | "comparable" | "not_comparable" | "not_requested";
 export type TeachingRevisionDecision = "retain" | "lower" | "reject";
+export type TeachingEvidenceStrength = "limited" | "supported" | "repeated";
+export type TeachingEvidenceKind = "measured" | "self_reported" | "observed" | "inferred" | "external";
+export type TeachingEvidence = { kind: TeachingEvidenceKind; text: string; refs: string[] };
+export type TeachingCounterevidenceStatus = "not_observed" | "observed";
+export type TeachingDiscriminator = {
+  kind: "question" | "experiment";
+  prompt: string;
+};
 
 export type TeachingPreparedPlanItem = {
   diagnosis_ref: string;
@@ -117,6 +125,12 @@ export type TeachingTurnContract = {
   session_ref: string;
   session_version: number;
   phase: TeachingPhase;
+  problem_id: string | null;
+  problem_label: string | null;
+  evidence_strength: TeachingEvidenceStrength;
+  supporting_evidence: Array<string | TeachingEvidence>;
+  counterevidence_status: TeachingCounterevidenceStatus;
+  counterevidence: string[];
   observation: string | null;
   primary_candidate: string | null;
   alternatives: string[];
@@ -138,6 +152,8 @@ export type TeachingTurnContract = {
   };
   ratio_sources: Array<{ label: string; value: number }>;
   approved_dose: string | null;
+  discriminator: TeachingDiscriminator | null;
+  soft_start: boolean;
 };
 
 /** Legacy v0 OpenAI-compatible model shape, retained only for migration compatibility. */
@@ -145,6 +161,8 @@ export type CoachRuntimeModelConfig = {
   base_url: string;
   api_key_env: string;
   model_id: string;
+  context_window: number;
+  max_tokens: number;
 };
 
 export type ApiKeyCredential = {
@@ -180,6 +198,9 @@ export type CustomOpenAiCompatibleProfile = {
   provider_name: string;
   base_url: string;
   model_id: string;
+  /** Limits returned by this Provider's model discovery response. */
+  context_window?: number;
+  max_tokens?: number;
   /** Custom providers require an api_key credential. */
   credential?: ApiKeyCredential;
   /** Migration compatibility; normalized to an api_key credential during parsing. */
@@ -192,6 +213,9 @@ export type CustomAnthropicCompatibleProfile = {
   provider_name: string;
   base_url: string;
   model_id: string;
+  /** Limits returned by this Provider's model discovery response. */
+  context_window?: number;
+  max_tokens?: number;
   /** Custom providers require an api_key credential. */
   credential?: ApiKeyCredential;
   /** Migration compatibility; normalized to an api_key credential during parsing. */

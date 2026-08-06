@@ -25,16 +25,6 @@ async def check_db_ready() -> bool:
 
 async def build_coach_runtime_status() -> dict[str, object]:
     """Coach UI / dev: sidecar readiness without failing like readyz."""
-    runtime = config.COACH_RUNTIME
-    if runtime == "python":
-        return {
-            "ok": True,
-            "runtime": "python",
-            "sidecar": "n/a",
-            "ready_for_fast_path": True,
-            "message": "Python 教练引擎已就绪（无需 Pi sidecar）",
-        }
-
     sidecar_up = await check_sidecar_ready()
     if sidecar_up:
         return {

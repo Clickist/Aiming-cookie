@@ -11,7 +11,8 @@ import { parseProviderCredential, ProviderAuthRequestError } from "./provider-au
 export type ProviderProfileErrorCode =
   | "invalid_profile"
   | "unknown_provider"
-  | "unknown_model";
+  | "unknown_model"
+  | "unknown_model_capabilities";
 
 export class ProviderProfileError extends Error {
   readonly code: ProviderProfileErrorCode;
@@ -29,6 +30,15 @@ function requiredString(raw: Record<string, unknown>, field: string): string {
     throw new ProviderProfileError("invalid_profile", `model.${field} must be a non-empty string`);
   }
   return value.trim();
+}
+
+function optionalPositiveInteger(raw: Record<string, unknown>, field: string): number | undefined {
+  const value = raw[field];
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ProviderProfileError("invalid_profile", `model.${field} must be a positive integer when supplied`);
+  }
+  return value;
 }
 
 function normalizeHttpBaseUrl(value: string, kind?: unknown): string {
@@ -114,6 +124,8 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
     const providerName = requiredString(raw, "provider_name");
     const providerId =
       raw.provider_id === undefined ? providerName : requiredString(raw, "provider_id");
+    const contextWindow = optionalPositiveInteger(raw, "context_window");
+    const maxTokens = optionalPositiveInteger(raw, "max_tokens");
     return {
       kind: raw.kind,
       provider_id: providerId,
@@ -121,6 +133,8 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
       base_url: normalizeHttpBaseUrl(requiredString(raw, "base_url"), raw.kind),
       credential,
       model_id: requiredString(raw, "model_id"),
+      ...(contextWindow !== undefined ? { context_window: contextWindow } : {}),
+      ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
     };
   }
 
@@ -141,6 +155,8 @@ export function sanitizeProviderProfile(profile: CoachRuntimeProviderProfile): R
     provider_name: profile.provider_name,
     base_url: profile.base_url,
     model_id: profile.model_id,
+    ...(profile.context_window !== undefined ? { context_window: profile.context_window } : {}),
+    ...(profile.max_tokens !== undefined ? { max_tokens: profile.max_tokens } : {}),
   };
 }
 

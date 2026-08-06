@@ -29,6 +29,7 @@ import {
   teachingEnvelopeInstruction,
   teachingTurnHoldsState,
   teachingTurnRequiresLocalFallback,
+  validateTeachingDirectResponse,
   validateTeachingDraft,
 } from "./teaching-policy.ts";
 
@@ -55,13 +56,86 @@ type ParsedRequest = {
 
 type TurnOptions = {
   streamFn?: StreamFn;
+  onPartial?: (partial: CoachPartialRevision) => Promise<void> | void;
+  onComplete?: (timing: CoachTurnTiming) => Promise<void> | void;
 };
 
-class GroundingError extends Error {}
+export type CoachPartialRevision = {
+  revision: number;
+  text: string;
+  elapsed_ms: number;
+  provider_rounds: number;
+};
+
+export type CoachTurnTiming = {
+  total_ms: number;
+  first_provider_event_ms: number | null;
+  first_text_delta_ms: number | null;
+  first_safe_text_ms: number | null;
+  provider_rounds: number;
+  provider_ms: number;
+  provider_round_ms: number[];
+  tool_ms: number;
+  repair_ms: number;
+};
+
+type GroundingReason =
+  | "internal_vocabulary"
+  | "hits_accuracy_dismissal"
+  | "target_relative_claim"
+  | "unsupported_practice"
+  | "analogy_disclaimer"
+  | "analogy_not_direct"
+  | "missing_analogy"
+  | "partial_problem_free"
+  | "invented_comparison"
+  | "requested_metric_denial"
+  | "quantity_conversion"
+  | "ungrounded_quantity"
+  | "unit_mismatch"
+  | "prescription_dose"
+  | "unsupported_causal_claim"
+  | "unavailable_metric"
+  | "missing_answer_target";
+
+class GroundingError extends Error {
+  constructor(
+    readonly reason: GroundingReason,
+    message: string,
+    readonly details: string[] = [],
+  ) {
+    super(message);
+  }
+}
 class ToolComplianceError extends Error {}
+class EmptyAssistantReplyError extends Error {}
 
 const activeTurns = new Map<string, { abort: () => void }>();
 const stopRequested = new Set<string>();
+const TEACHING_INTERRUPTION = /[?？]|(?:为什么|为何|优先|没回答|不对|不是|纠正|解释|说明|比较|视频|噪声|限制|剂量|组数|停止条件|复测|练习方向|训练方向|今天能执行|直接(?:给|告诉)|(?:不要|别)先问|感受)/;
+const DIRECT_PRACTICE_REQUEST = /(?:练习方向|训练方向|今天能执行|直接(?:给|告诉)|(?:不要|别)先问|感受|怎么判断|判断标准|练(?:得)?对|命中率|准确率|是否打中|有没有打中)/;
+const DIRECT_TEACHING_INTERRUPTION_INSTRUCTION =
+  "\n\nDirect teaching interruption: the newest user message asks for an explanation, correction, limitation, practice direction, dose, groups, stopping condition, or retest. " +
+  "Answer that request directly in the usual two-field envelope. Do not ask a follow-up question or repeat the scripted phase question; do not advance the teaching phase or create a training record. " +
+  "Keep the existing evidence, dose, confirmation, and tool boundaries. Do not invent a scenario, dose, group count, stopping condition, cause, or retest result.";
+const DIRECT_TEACHING_INTERRUPTION_FALLBACK =
+  "现有分析还不能确定原因，所以我不会把练习提示说成结论。它只是现在可以试的方向。";
+
+function directTeachingInterruptionFallback(
+  contract: TeachingTurnContract,
+  userContent: string,
+): string {
+  if (!DIRECT_PRACTICE_REQUEST.test(userContent) || contract.cue === null) {
+    return DIRECT_TEACHING_INTERRUPTION_FALLBACK;
+  }
+  const cue = /[。.!！]$/.test(contract.cue) ? contract.cue : `${contract.cue}。`;
+  const dose = contract.approved_dose === null
+    ? ""
+    : /[。.!！]$/.test(contract.approved_dose)
+      ? contract.approved_dose
+      : `${contract.approved_dose}。`;
+  return `今天先只练一个方向：${cue}${dose}训练时继续记录命中率，不要为了动作提示忽略是否打中；练完若要判断有没有帮助，按相同场景和设置复测。`;
+}
 
 export function stopCoachTurn(runId: string): boolean {
   const active = activeTurns.get(runId);
@@ -91,8 +165,10 @@ function parseLegacyProfile(raw: Record<string, unknown>): CoachRuntimeProviderP
     throw new Error("model config is required");
   }
   const model = raw.model;
-  if (typeof model.base_url !== "string" || typeof model.api_key_env !== "string" || typeof model.model_id !== "string") {
-    throw new Error("legacy model.base_url, model.api_key_env, and model.model_id are required");
+  if (typeof model.base_url !== "string" || typeof model.api_key_env !== "string"
+    || typeof model.model_id !== "string" || !Number.isSafeInteger(model.context_window)
+    || model.context_window <= 0 || !Number.isSafeInteger(model.max_tokens) || model.max_tokens <= 0) {
+    throw new Error("legacy model requires verified base_url, credential, model_id, context_window, and max_tokens");
   }
   const apiKey = process.env[model.api_key_env];
   if (!apiKey) {
@@ -104,6 +180,8 @@ function parseLegacyProfile(raw: Record<string, unknown>): CoachRuntimeProviderP
     base_url: model.base_url,
     api_key: apiKey,
     model_id: model.model_id,
+    context_window: model.context_window,
+    max_tokens: model.max_tokens,
   });
 }
 
@@ -202,6 +280,7 @@ function splitConversation(messages: CoachRuntimeMessage[], model: ResolvedProvi
 }
 
 function extractAssistantReply(messages: unknown[]): string {
+  let sawEmptyAssistant = false;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!isRecord(message) || message.role !== "assistant") continue;
@@ -213,7 +292,11 @@ function extractAssistantReply(messages: unknown[]): string {
       .map((block) => (block as { text: string }).text);
     const text = parts.join("").trim();
     if (text.length > 0) return text;
+    if (message.stopReason === "stop" || message.stopReason === "length") {
+      sawEmptyAssistant = true;
+    }
   }
+  if (sawEmptyAssistant) throw new EmptyAssistantReplyError("Provider returned an empty assistant reply");
   throw new Error("No assistant reply in agent transcript");
 }
 
@@ -261,13 +344,29 @@ function extractBridgeSecrets(rawRequest: unknown): string[] {
     .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
-const MANDATORY_POLICY = "\n\nMandatory Coach policy: use only registered product tools; when the user asks to delete an Analysis, call run_product_command with analysis.delete so the trusted UI/backend can create confirmation--a prose request to reply with confirmation is not an action; distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never reveal bridge tokens, paths, URLs, credentials, raw traces, arbitrary payloads, internal schema/table/tool/field names, raw cursors, or raw event/segment refs; write user-facing plain Chinese without exposing canonical timestamps.";
-const GROUNDING_REPAIR_PROMPT = "Rewrite the answer to the current user in plain Chinese. Keep only exact quantities and metric identifiers present in the attached context or successful tool results. Keep every number paired with its source unit, or only a display alias that preserves that unit's meaning. Do not convert a count, duration, ratio, or any other quantity into another unit. Do not expose schema, table, tool, or field names, raw refs or cursors, canonical timestamps, or Markdown formatting. Describe evidence in user-facing language; without an explicit relative playback anchor, do not state an exact video time. Do not call tools again.";
+const MANDATORY_POLICY = "\n\nMandatory Coach policy: use only registered product tools; when the user asks to delete an Analysis, call run_product_command with analysis.delete so the trusted UI/backend can create confirmation--a prose request to reply with confirmation is not an action; distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never advise ignoring hits, whether a shot hit, or accuracy; never reveal bridge tokens, paths, URLs, credentials, raw traces, arbitrary payloads, internal schema/table/tool/field names, raw cursors, or raw event/segment refs; write user-facing plain Chinese without exposing canonical timestamps.";
+const PROVIDER_CONTEXT_SAFETY_TOKENS = 4096;
+const TOOL_SCHEMA_RESERVE_BYTES = 8 * 1024;
+
+function analysisResultBudgetBytes(
+  contextWindow: number,
+  maxTokens: number,
+  systemPrompt: string,
+  conversation: unknown[],
+): number {
+  const inputBudgetTokens = Math.max(0, contextWindow - maxTokens - PROVIDER_CONTEXT_SAFETY_TOKENS);
+  const knownContextBytes = Buffer.byteLength(systemPrompt, "utf8") +
+    Buffer.byteLength(JSON.stringify(conversation), "utf8") + TOOL_SCHEMA_RESERVE_BYTES;
+  // UTF-8 bytes are a conservative upper bound for tokenizer input tokens.
+  return Math.max(0, inputBudgetTokens - knownContextBytes);
+}
+const GROUNDING_REPAIR_PROMPT = "Rewrite the answer to the current user in plain Chinese. Fix only the failed requirement described below. Do not add a fact, quantity, cause, or verdict that is unavailable in the attached context or successful tool results. Do not expose schema, table, tool, or field names, raw refs or cursors, canonical timestamps, or Markdown formatting. Do not call tools again.";
 const CONFIRMATION_REPAIR_GUIDANCE = " If a confirmation is already pending, state that the trusted confirmation UI is ready.";
 const INSUFFICIENT_EVIDENCE_REPAIR_GUIDANCE = " If evidence is insufficient, say so without adding a quantity.";
-const TRUSTED_CONFIRMATION_REPLY = "该操作已进入结构化确认流程。请在可信确认界面查看影响并选择确认或取消；文字回复不会执行操作。";
+const TRUSTED_CONFIRMATION_REPLY = "操作准备好了。请在确认界面查看影响并选择确认或取消；聊天里回复“确认”不会执行。";
 const TEACHING_FALLBACK_NOTE = "teaching_fallback";
 const TEACHING_HOLD_NOTE = "teaching_hold";
+const GROUNDING_FALLBACK_NOTE = "grounding_fallback";
 
 const DELETE_REFERENCE_PATTERN = /(?:\u5220\u9664|\u5220\u6389|\u79fb\u9664|delete|remove)\s*(?:the\s+)?analysis\s*:?\s*(\d+)\b/gi;
 const DELETE_DISCUSSION_PATTERN = /\b(?:how|why|should|would|can\s+i|could\s+i|explain|discuss|what|impact)\b|\u5982\u4f55|\u600e\u4e48|\u662f\u5426|\u8ba8\u8bba|\u5f71\u54cd|\u540e\u679c|(?:\u6211|\u81ea\u5df1)\s*(?:\u53ef\u4ee5|\u80fd\u5426|\u662f\u5426)\s*(?:\u5220\u9664|\u5220\u6389|\u79fb\u9664)/i;
@@ -464,13 +563,58 @@ function hasProductCommandEvent(events: CoachRuntimeToolEvent[]): boolean {
   return events.some((event) => event.type === "product_command");
 }
 
-function groundingRepairPrompt(request: ParsedRequest, currentMessages: unknown[]): string {
+function groundingReasonGuidance(
+  error: GroundingError,
+  request: ParsedRequest,
+  currentMessages: unknown[],
+): string {
+  switch (error.reason) {
+    case "internal_vocabulary":
+      return " Remove internal protocol vocabulary and describe the same user-facing meaning naturally.";
+    case "hits_accuracy_dismissal":
+      return " Do not tell the user to ignore hits or accuracy; retain them as outcome evidence alongside any movement observation.";
+    case "target_relative_claim":
+      return " The context lacks target-relative facts. Describe only the measured movement ending and reverse corrections; do not mention a landing point, overshoot, undershoot, reaching, aligning with, crossing, or returning to a target.";
+    case "unsupported_practice":
+      return " This partial analysis can describe findings but cannot create a cue or practice method because no approved teaching cue is attached. State the observation and the evidence limit only.";
+    case "analogy_disclaimer":
+      return " Keep one short, natural analogy, but do not explain that it is an analogy or add a visible evidence disclaimer after it.";
+    case "analogy_not_direct":
+      return " Keep one short, completed analogy that explains an observation already present in the attached context. Remove every follow-up question, new task or scenario, and practice cue.";
+    case "missing_analogy":
+      return " The user requested one short, natural analogy. Complete it directly using an observation already present in the attached context. Do not add a disclaimer, follow-up question, new task or scenario, or practice cue.";
+    case "partial_problem_free":
+      return " Partial evidence does not prove that an unmeasured movement phase is good, normal, or problem-free. State only the observed finding and its limit.";
+    case "invented_comparison":
+      return " Only one Analysis is attached. Do not invent a previous run, a second test, or different conditions to compare.";
+    case "requested_metric_denial":
+      return " Use the available values of the metrics the user named. Missing thresholds limit evaluation, not whether those values can be quoted.";
+    case "quantity_conversion":
+    case "ungrounded_quantity":
+    case "unit_mismatch":
+    case "prescription_dose": {
+      const unitPairs = repairSourceUnitPairs(request, currentMessages);
+      const available = unitPairs.length > 0
+        ? ` The only source value/unit pairs available for exact copying are: ${unitPairs.join("; ")}.`
+        : " There is no source quantity available to copy.";
+      return `${available} Use only the exact source number and unit verbatim, preserving the source unit. Do not convert or approximate it, round it, or repurpose it as a practice dose; omit every other quantity.`;
+    }
+    case "unsupported_causal_claim":
+      return " Remove the unsupported cause or ability judgment. Keep the measured observation and describe any cause only as unconfirmed.";
+    case "unavailable_metric":
+      return " Remove metric identifiers that are unavailable in the attached context and answer with available user-facing observations only.";
+    case "missing_answer_target":
+      return ` Answer every omitted topic explicitly and separately: ${error.details.join(", ")}. Keep each answer within the available evidence.`;
+  }
+}
+
+function groundingRepairPrompt(
+  request: ParsedRequest,
+  currentMessages: unknown[],
+  error: GroundingError,
+): string {
   const events = collectToolEvents(currentMessages);
-  const unitPairs = repairSourceUnitPairs(request, currentMessages);
-  const unitGuidance = unitPairs.length > 0
-    ? ` The only source value/unit pairs available for copying are: ${unitPairs.join("; ")}. Omit every other quantity.`
-    : "";
-  return `${GROUNDING_REPAIR_PROMPT}${unitGuidance}${hasPendingConfirmation(events) ? CONFIRMATION_REPAIR_GUIDANCE : ""}${INSUFFICIENT_EVIDENCE_REPAIR_GUIDANCE}`;
+  return `${GROUNDING_REPAIR_PROMPT}${groundingReasonGuidance(error, request, currentMessages)}${hasPendingConfirmation(events) ? CONFIRMATION_REPAIR_GUIDANCE : ""}${INSUFFICIENT_EVIDENCE_REPAIR_GUIDANCE}`;
 }
 
 const METRIC_PARTS = new Set([
@@ -563,6 +707,56 @@ function projectionMetricSets(analysisSummary: string | null): Set<string>[] {
   return [...byAnalysis.values()];
 }
 
+type RequestedMetricValue = { key: string; value: number };
+
+function requestedSummaryMetricValues(
+  analysisSummary: string | null,
+  userContent: string,
+): RequestedMetricValue[] {
+  if (!analysisSummary || !userContent) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(analysisSummary);
+  } catch {
+    return [];
+  }
+  const projections: unknown[] = [];
+  if (isRecord(parsed) && parsed.schema_version === "coach_turn_context.v1" && Array.isArray(parsed.contexts)) {
+    for (const context of parsed.contexts) {
+      if (!isRecord(context)) continue;
+      projections.push(context.projection);
+      if (context.comparison_projection !== null) projections.push(context.comparison_projection);
+    }
+  } else {
+    projections.push(parsed);
+  }
+  const values = new Map<string, number>();
+  for (const projection of projections) {
+    const diagnosis = isRecord(projection) && isRecord(projection.diagnosis)
+      ? projection.diagnosis : null;
+    const summary = diagnosis && isRecord(diagnosis.summary) ? diagnosis.summary : null;
+    if (summary === null) continue;
+    for (const [key, metric] of Object.entries(summary)) {
+      if (!metricLike(key) || !metricAvailable(metric) || !isRecord(metric) ||
+          typeof metric.value !== "number" || !Number.isFinite(metric.value) ||
+          !userContent.includes(key)) continue;
+      values.set(key, metric.value);
+    }
+  }
+  return [...values].map(([key, value]) => ({ key, value }));
+}
+
+function explicitMetricInstruction(metrics: RequestedMetricValue[]): string {
+  if (metrics.length === 0) return "";
+  const values = metrics.map(({ key, value }) => `${key}=${String(value)}`).join(", ");
+  return `\n\nExplicit available metric request: the attached Analysis contains ${values}. The user named these metrics. Use their actual values first when answering. A missing threshold or baseline limits evaluation only; it does not make the value unavailable. Do not claim these values are unavailable.`;
+}
+
+function explicitMetricFallback(metrics: RequestedMetricValue[]): string | null {
+  if (metrics.length === 0) return null;
+  return `当前可引用的数值是${metrics.map(({ key, value }) => `${key} 为 ${String(value)}`).join("，")}。没有阈值或基线只限制对好坏和优先级的判断，不会限制引用这些数值。`;
+}
+
 function deterministicComparisonFallback(analysisSummary: string | null): string | null {
   const metricSets = projectionMetricSets(analysisSummary);
   if (metricSets.length < 2) return null;
@@ -573,15 +767,36 @@ function deterministicComparisonFallback(analysisSummary: string | null): string
     }
   }
   if (common.size > 0) return null;
-  return "这些上下文没有足够的共同可比指标，因此不能据此声称玩家表现发生变化。当前只能确认输入模式或证据范围不同；需要同场景、同模式、同指标、同单位、同校准和同质量的记录后再比较。";
+  return "这几份记录里没有能直接对照的指标，所以现在不能判断表现有没有变化。要比较，需要场景、模式、指标、单位、校准和记录质量都能对上。";
 }
 
 function deterministicGroundingFallback(
   request: ParsedRequest,
   currentMessages: unknown[],
+  reason?: GroundingReason,
 ): string | null {
   if (hasPendingConfirmation(collectToolEvents(currentMessages))) {
     return TRUSTED_CONFIRMATION_REPLY;
+  }
+  const targets = requestedAnswerTargets(request.messages.at(-1)?.content ?? "");
+  if (targets.length > 0 && reason !== undefined) {
+    const tensionBoundary = request.analysis_summary
+      ? "紧张：现有分析不能判断是不是紧张导致。"
+      : "紧张：当前没有附加本局分析，不能据此判断是不是紧张导致。";
+    const answers: Record<AnswerTarget, string> = {
+      tension: tensionBoundary,
+      hardware: "鼠标：目前没有证据表明更换设备会解决这个问题。",
+      transfer: "迁移：能否迁移到其他 FPS，需要单独复测。",
+    };
+    return targets.map((target) => answers[target]).join("");
+  }
+  if (reason === "target_relative_claim" &&
+      analysisHasLimitation(request.analysis_summary, "target_relative_facts_unavailable")) {
+    return "当前数据缺少目标相对事实，不能判断是否到位、过冲或欠冲。";
+  }
+  if ((reason === "missing_analogy" || reason === "analogy_not_direct") &&
+      analysisHasLimitation(request.analysis_summary, "target_relative_facts_unavailable")) {
+    return "就像只看到刹车过程、没看到停车线，当前数据缺少目标相对事实，所以不能判断是否到位、过冲或欠冲。";
   }
   const comparison = deterministicComparisonFallback(request.analysis_summary);
   if (comparison !== null) return comparison;
@@ -834,13 +1049,49 @@ function textNumberClaims(value: string): Array<{ value: string; percent: boolea
     .map((match) => ({ value: match[1], percent: match[2] === "%" }));
 }
 
+const CHINESE_QUANTITY_CLAIM = /(?:约|大约|大概|大致|约莫|差不多|将近|接近)?(?:一半|半数|半|大半|大部分|少数|多数|[一二三四五六七八九十百千万两〇零]+分之[一二三四五六七八九十百千万两〇零]+|[一二三四五六七八九十百千万两〇零]+成)/g;
+const ANALOGY_QUANTITY_MARKER = /(?:就像|像是|像(?!素)|比方|好比|打个比方|仿佛)/;
+
+function hasFiniteNumericValue(value: unknown, depth = 0): boolean {
+  if (depth > 12) return false;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.some((child) => hasFiniteNumericValue(child, depth + 1));
+  if (!isRecord(value)) return false;
+  return Object.values(value).some((child) => hasFiniteNumericValue(child, depth + 1));
+}
+
+function analysisHasNumericFacts(analysisSummary: string | null): boolean {
+  if (!analysisSummary) return false;
+  try {
+    return hasFiniteNumericValue(JSON.parse(analysisSummary));
+  } catch {
+    return false;
+  }
+}
+
+function hasUnrequestedChineseQuantity(value: string, userContent: string): boolean {
+  const normalize = (claim: string): string => claim.replace(/^(?:约|大约|大概|大致|约莫|差不多|将近|接近)/, "");
+  const requested = new Set(
+    [...userContent.matchAll(CHINESE_QUANTITY_CLAIM)].map((match) => normalize(match[0])),
+  );
+  const sentences = value.split(/[。！？!?；;\n]/);
+  return sentences.some((sentence, index) => {
+    const previous = sentences[index - 1] ?? "";
+    return [...sentence.matchAll(CHINESE_QUANTITY_CLAIM)].some((match) => (
+      !requested.has(normalize(match[0])) &&
+      !ANALOGY_QUANTITY_MARKER.test(sentence.slice(0, match.index ?? 0)) &&
+      !ANALOGY_QUANTITY_MARKER.test(previous)
+    ));
+  });
+}
+
 const INTERNAL_PROTOCOL_EGRESS_PATTERNS = [
   /\bcoach_(?:diagnostic|turn)_context(?:\.v\d+)?\b/i,
   /\b(?:schema_version|processed[_ ]event[_ ]table|field_catalog|table_ref|event_ref|segment_ref|segment_id|segment_kind|start_ms|end_ms|focus_start_ms|focus_end_ms|available_channels|signal_window(?:\.v\d+)?|result_ref|next_cursor|canonical_time(?:_window)?|run_product_command)\b/i,
   /\banalysis\.(?:evidence|events|metrics|run_facts|outcomes)\.[a-z0-9_]+\b/i,
   /\banalysis:[1-9]\d*:segment:[A-Za-z0-9_.:@-]+\b/i,
   /\b(?:L0|L1|L2|L3|DTO)\b/,
-  /(?<!\d)\d{12,}(?!\d)/,
+  /(?<![\d.])\d{12,}(?![\d.])/,
   /(?:```|^\s*\|.*\|\s*$)/m,
 ];
 
@@ -855,8 +1106,202 @@ function normalizeUserFacingText(value: string): string {
 
 function validateUserFacingEgress(value: string): void {
   if (INTERNAL_PROTOCOL_EGRESS_PATTERNS.some((pattern) => pattern.test(value))) {
-    throw new GroundingError("Coach response was rejected because it exposed internal protocol vocabulary");
+    throw new GroundingError(
+      "internal_vocabulary",
+      "Coach response was rejected because it exposed internal protocol vocabulary",
+    );
   }
+}
+
+const AVAILABLE_METRIC_VALUE_ABSENCE = /(?:没有|无|暂无).{0,8}(?:可引用|可用).{0,4}(?:数值|指标)/;
+const AVAILABLE_METRIC_VALUE_USE_DENIAL = /(?:数值).{0,12}(?:不可用|无法(?:引用|使用))|(?:指标).{0,12}(?:无法引用(?:数值)?)/;
+const HIT_OR_ACCURACY_DISMISSAL = /(?:别|不要|不必|无需|不用).{0,8}(?:看|管|考虑|在意).{0,12}(?:是否|有没有)?(?:打中|命中|准确率|命中率)|(?:打中|命中|准确率|命中率).{0,12}(?:不重要|不用看|别看|无需看)/;
+const TARGET_RELATIVE_CLAIM = /(?:落点|过冲|欠冲|冲过(?:目标|靶|头)|没到(?:目标|靶)|(?:甩|移动|准星|鼠标).{0,16}(?:到|接近|靠近|贴上).{0,4}(?:目标|靶)|(?:到|接近|靠近|贴上).{0,4}(?:目标|靶)|(?:准星|鼠标).{0,16}(?:对上|对准|到达|越过|冲过|折回(?:来)?找|往回找).{0,8}(?:目标|靶)|overshoot|undershoot|crosshair.{0,24}target)/i;
+const TARGET_RELATIVE_UNCERTAINTY = /(?:不能|无法|不可|不应|不要|没有证据|证据不足|还不知道|尚不清楚|不能判断|无法判断|不代表|不说明|不是说|不等于|cannot|can't|unable|insufficient|not enough evidence)/i;
+const PRACTICE_REQUEST = /(?:怎么练|如何练|练法|练习(?:方向)?|训练(?:方向)?|今天能执行|动作提示|\bcue\b|直接(?:给|告诉).{0,12}(?:练|提示))/i;
+const SPECIFIC_PRACTICE_CUE = /(?:先|请|就|要|把|让|试着|尝试|练习时|训练时|可以|建议).{0,40}(?:提前|减速|加速|停(?:住|下)?|收(?:速度|力)?|移动|手腕|手臂|鼠标|准星|跟枪|甩枪|瞄准|放松|发力)/;
+const NON_PRESCRIPTION_BOUNDARY = /(?:不能|无法|不应|不会|不要|先不|暂不|证据不足).{0,24}(?:定|给|建议|采用|使用|练法|练习|训练|动作|提示|cue)?/i;
+const ANALOGY_REQUEST = /(?:类比|比喻)/;
+const ANALOGY_MARKER = /(?:就像|像是|像.{1,24}一样|类似于|相当于|好比|仿佛|如同|把.{0,16}(?:想成|理解成))/;
+const ANALOGY_DISCLAIMER = /(?:(?:这个|这|以上|刚才的)?(?:比喻|类比).{0,24}(?:不能|不代表|不证明|不是).{0,20}(?:证据|原因|结论)|(?:不能|不代表).{0,20}(?:把|将).{0,10}(?:比喻|类比).{0,10}(?:当成|作为).{0,10}(?:证据|结论))/;
+const COMPONENT_PROBLEM_FREE = /(?:甩|启动|加速|减速|收尾|修正|移动|跟枪|瞄准).{0,12}(?:本身)?(?:没(?:有|什么)?|不存在)(?:什么)?问题|(?:甩|启动|加速|减速|收尾|修正|移动|跟枪|瞄准).{0,12}(?:正常|很好)/;
+const EVALUATION_UNCERTAINTY = /(?:不能|无法|不可|不应|没有证据|证据不足|还不知道|尚不清楚|不能判断|无法判断|不代表|不说明)/;
+const USER_COMPARISON = /(?:上一次|上次|之前|前一次|两次|上一局|前一局|相比|比较)/;
+const INVENTED_COMPARISON = /(?:上一次|上次|前一次|上一局|前一局).{0,48}(?:这次|本次|这一局)|(?:这次|本次|这一局).{0,48}(?:上一次|上次|前一次|上一局|前一局)|两次(?:测|结果|记录|分析|条件)|(?:对比|比较).{0,12}两次/;
+
+type AnswerTarget = "tension" | "hardware" | "transfer";
+
+const ANSWER_TARGET_LABELS: Record<AnswerTarget, string> = {
+  tension: "紧张/手紧是否相关",
+  hardware: "是否需要换鼠标",
+  transfer: "能否迁移到其他 FPS",
+};
+
+function requestsAnalogy(userContent: string): boolean {
+  return ANALOGY_REQUEST.test(userContent) &&
+    !/(?:不要|别|不用|无需|不需要).{0,8}(?:类比|比喻)/.test(userContent);
+}
+
+function containsCompletedAnalogy(reply: string): boolean {
+  if (ANALOGY_MARKER.test(reply)) return true;
+  if (/(?:可以|能|会|再|之后|先).{0,8}(?:打个比方|比方说)/.test(reply)) return false;
+  return /(?:打个比方|比方说)[：:,，]?\s*.{6,}/.test(reply);
+}
+
+function userQuestionClauses(userContent: string): string[] {
+  return (userContent.match(/[^，,。；;！？!?]+[！？!?]?/g) ?? []).filter((clause) => (
+    /[？?]/.test(clause) ||
+    /(?:是不是|是否|会不会|要不要|需不需要|该不该|能不能|可不可以|可以吗|有关吗|影响吗)/.test(clause)
+  ));
+}
+
+function requestedAnswerTargets(userContent: string): AnswerTarget[] {
+  const clauses = userQuestionClauses(userContent);
+  const targets: AnswerTarget[] = [];
+  if (clauses.some((clause) => /(?:紧张|手紧|手僵|僵硬|发力)/.test(clause))) {
+    targets.push("tension");
+  }
+  if (clauses.some((clause) => (
+    /(?:鼠标|外设|设备)/.test(clause) && /(?:换|更换|买|要不要|需不需要|该不该)/.test(clause)
+  ))) {
+    targets.push("hardware");
+  }
+  if (clauses.some((clause) => /(?:迁移|跨游戏|实战|其他\s*FPS|别的\s*FPS|其他游戏|别的游戏)/i.test(clause))) {
+    targets.push("transfer");
+  }
+  return targets.length >= 2 ? targets : [];
+}
+
+function missingAnswerTargets(userContent: string, reply: string): AnswerTarget[] {
+  const subjects: Record<AnswerTarget, RegExp> = {
+    tension: /(?:紧张|手紧|手僵|僵硬|发力)/,
+    hardware: /(?:鼠标|外设|设备)/,
+    transfer: /(?:迁移|跨游戏|实战|其他\s*FPS|别的\s*FPS|其他游戏|别的游戏)/i,
+  };
+  const answers: Record<AnswerTarget, RegExp> = {
+    tension: /(?:不能判断|无法判断|不确定|可能|不一定|相关|无关|导致|原因|证据)/,
+    hardware: /(?:不用换|不必换|不需要换|没必要换|需要换|建议换|不建议换|更换|证据|支持)/,
+    transfer: /(?:能否|能|不能|可以|不可以|需要|复测|验证|判断|未知|不确定|支持)/,
+  };
+  const segments = reply.split(/[。！？!?；;\n]/);
+  return requestedAnswerTargets(userContent).filter((target) => !segments.some((segment) => (
+    subjects[target].test(segment) && answers[target].test(segment)
+  )));
+}
+
+function analysisHasLimitation(
+  analysisSummary: string | null,
+  limitation: string,
+): boolean {
+  if (!analysisSummary) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(analysisSummary);
+  } catch {
+    return false;
+  }
+  const visit = (value: unknown, depth = 0): boolean => {
+    if (depth > 12) return false;
+    if (Array.isArray(value)) return value.some((child) => visit(child, depth + 1));
+    if (!isRecord(value)) return false;
+    if (Array.isArray(value.limitations) && value.limitations.includes(limitation)) return true;
+    return Object.values(value).some((child) => visit(child, depth + 1));
+  };
+  return visit(parsed);
+}
+
+function analysisHasScenarioSupportStatus(
+  analysisSummary: string | null,
+  status: string,
+): boolean {
+  if (!analysisSummary) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(analysisSummary);
+  } catch {
+    return false;
+  }
+  const visit = (value: unknown, depth = 0): boolean => {
+    if (depth > 12) return false;
+    if (Array.isArray(value)) return value.some((child) => visit(child, depth + 1));
+    if (!isRecord(value)) return false;
+    if (isRecord(value.scenario) && value.scenario.support_status === status) return true;
+    return Object.values(value).some((child) => visit(child, depth + 1));
+  };
+  return visit(parsed);
+}
+
+function analysisProjectionCount(analysisSummary: string | null): number {
+  if (!analysisSummary) return 0;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(analysisSummary);
+  } catch {
+    return 0;
+  }
+  if (!isRecord(parsed)) return 0;
+  if (parsed.schema_version === "coach_turn_context.v1" && Array.isArray(parsed.contexts)) {
+    return parsed.contexts.filter((context) => isRecord(context) && isRecord(context.projection)).length;
+  }
+  return typeof parsed.schema_version === "string" &&
+    parsed.schema_version.startsWith("coach_diagnostic_context.v") ? 1 : 0;
+}
+
+function shouldGuardPartialPractice(request: ParsedRequest): boolean {
+  return request.teaching_turn === undefined &&
+    PRACTICE_REQUEST.test(request.messages.at(-1)?.content ?? "") &&
+    analysisHasScenarioSupportStatus(request.analysis_summary, "partial");
+}
+
+function containsUnsupportedTargetRelativeClaim(reply: string): boolean {
+  return reply.split(/[。！？!?\n]/).some((sentence) => (
+    TARGET_RELATIVE_CLAIM.test(sentence) && !TARGET_RELATIVE_UNCERTAINTY.test(sentence)
+  ));
+}
+
+function prescribesSpecificPractice(reply: string): boolean {
+  return reply.split(/[。！？!?\n]/).some((sentence) => (
+    SPECIFIC_PRACTICE_CUE.test(sentence) && !NON_PRESCRIPTION_BOUNDARY.test(sentence)
+  ));
+}
+
+function containsAnalogyDisclaimer(reply: string): boolean {
+  return ANALOGY_DISCLAIMER.test(reply);
+}
+
+function claimsUnsupportedProblemFree(reply: string, userContent: string): boolean {
+  if (COMPONENT_PROBLEM_FREE.test(userContent)) return false;
+  return reply.split(/[。！？!?\n]/).some((sentence) => (
+    COMPONENT_PROBLEM_FREE.test(sentence) && !EVALUATION_UNCERTAINTY.test(sentence)
+  ));
+}
+
+function claimsInventedComparison(
+  reply: string,
+  request: ParsedRequest,
+  currentMessages: unknown[],
+): boolean {
+  if (analysisProjectionCount(request.analysis_summary) !== 1 ||
+      USER_COMPARISON.test(request.messages.at(-1)?.content ?? "") ||
+      parseToolPayloads(currentMessages).some(({ commandName }) => (
+        commandName === "analysis.compare" || commandName === "analysis.evidence.compare"
+      ))) {
+    return false;
+  }
+  return INVENTED_COMPARISON.test(reply);
+}
+
+function claimsAvailableMetricValuesUnavailable(reply: string): boolean {
+  if (AVAILABLE_METRIC_VALUE_ABSENCE.test(reply)) return true;
+  return AVAILABLE_METRIC_VALUE_USE_DENIAL.test(reply) &&
+    !/(?:数值|指标).{0,12}(?:可引用|可用)|(?:可引用|可用).{0,12}(?:数值|指标)/.test(reply);
+}
+
+function dismissesHitsOrAccuracy(reply: string): boolean {
+  return reply.split(/[。！？!?]/).some((sentence) => {
+    if (!HIT_OR_ACCURACY_DISMISSAL.test(sentence)) return false;
+    return !/(?:还|仍|也|同时|以及|配合|结合).{0,20}(?:看|记录|评估|分析|考虑)/.test(sentence);
+  });
 }
 
 function validateGroundedReply(
@@ -865,6 +1310,75 @@ function validateGroundedReply(
   currentMessages: unknown[],
 ): void {
   validateUserFacingEgress(reply);
+  if (dismissesHitsOrAccuracy(reply)) {
+    throw new GroundingError(
+      "hits_accuracy_dismissal",
+      "Coach response was rejected because it told the user to ignore hits or accuracy",
+    );
+  }
+  if (analysisHasLimitation(request.analysis_summary, "target_relative_facts_unavailable") &&
+      containsUnsupportedTargetRelativeClaim(reply)) {
+    throw new GroundingError(
+      "target_relative_claim",
+      "Coach response was rejected because it claimed unavailable target-relative facts",
+    );
+  }
+  if (shouldGuardPartialPractice(request) && prescribesSpecificPractice(reply)) {
+    throw new GroundingError(
+      "unsupported_practice",
+      "Coach response was rejected because it invented a practice cue for partial evidence",
+    );
+  }
+  if (containsAnalogyDisclaimer(reply)) {
+    throw new GroundingError(
+      "analogy_disclaimer",
+      "Coach response was rejected because it explained an analogy with a visible disclaimer",
+    );
+  }
+  const userContent = request.messages.at(-1)?.content ?? "";
+  if (requestsAnalogy(userContent) && !containsCompletedAnalogy(reply)) {
+    throw new GroundingError(
+      "missing_analogy",
+      "Coach response was rejected because it omitted the analogy explicitly requested by the user",
+    );
+  }
+  if (requestsAnalogy(userContent) && /[?？]/.test(reply)) {
+    throw new GroundingError(
+      "analogy_not_direct",
+      "Coach response was rejected because it asked follow-up questions instead of directly completing the analogy",
+    );
+  }
+  if (analysisHasScenarioSupportStatus(request.analysis_summary, "partial") &&
+      claimsUnsupportedProblemFree(reply, userContent)) {
+    throw new GroundingError(
+      "partial_problem_free",
+      "Coach response was rejected because it declared an unmeasured phase problem-free",
+    );
+  }
+  if (claimsInventedComparison(reply, request, currentMessages)) {
+    throw new GroundingError(
+      "invented_comparison",
+      "Coach response was rejected because it invented a second Analysis for comparison",
+    );
+  }
+  const missingTargets = missingAnswerTargets(userContent, reply);
+  if (missingTargets.length > 0) {
+    throw new GroundingError(
+      "missing_answer_target",
+      "Coach response was rejected because it omitted part of a multi-part user request",
+      missingTargets.map((target) => ANSWER_TARGET_LABELS[target]),
+    );
+  }
+  const namedMetricValues = requestedSummaryMetricValues(
+    request.analysis_summary,
+    request.messages.at(-1)?.content ?? "",
+  );
+  if (namedMetricValues.length > 0 && claimsAvailableMetricValuesUnavailable(reply)) {
+    throw new GroundingError(
+      "requested_metric_denial",
+      "Coach response was rejected because it denied available requested metric values",
+    );
+  }
   const userClaims = textNumberClaims(request.messages.at(-1)?.content ?? "");
   const allowedNumbers = new Set(userClaims.map((claim) => claim.value));
   const allowedPercentNumbers = new Set(
@@ -909,13 +1423,23 @@ function validateGroundedReply(
     .split(/\r?\n/)
     .map((line) => line.replace(/^\s*(?:#{1,6}\s*)?(?:[-*]\s*)?\d+[.)、]\s+/, ""))
     .join("\n");
+  if (analysisHasNumericFacts(request.analysis_summary) &&
+      hasUnrequestedChineseQuantity(quantitativeText, userContent)) {
+    throw new GroundingError(
+      "quantity_conversion",
+      "Coach response was rejected because it converted a measured quantity into an unrequested Chinese quantity",
+    );
+  }
   const ungroundedQuantity = textNumberClaims(quantitativeText).find((claim) => (
     claim.percent
       ? !allowedPercentNumbers.has(claim.value)
       : !allowedNumbers.has(claim.value)
   ));
   if (ungroundedQuantity) {
-    throw new GroundingError("Coach response was rejected because it contained an ungrounded quantity");
+    throw new GroundingError(
+      "ungrounded_quantity",
+      "Coach response was rejected because it contained an ungrounded quantity",
+    );
   }
   const ungroundedUnit = [...quantitativeText.matchAll(UNIT_CLAIM_PATTERN)].find((match) => {
     const numeric = Number(match[1]);
@@ -924,15 +1448,24 @@ function validateGroundedReply(
     return !allowedUnits.get(match[1])?.has(unit);
   });
   if (ungroundedUnit) {
-    throw new GroundingError("Coach response was rejected because it paired a quantity with an unsupported unit");
+    throw new GroundingError(
+      "unit_mismatch",
+      "Coach response was rejected because it paired a quantity with an unsupported unit",
+    );
   }
   if (hasUnrequestedPrescriptionDose(quantitativeText, userPrescriptionUnits)) {
-    throw new GroundingError("Coach response was rejected because it used an observed quantity as an unrequested prescription dose");
+    throw new GroundingError(
+      "prescription_dose",
+      "Coach response was rejected because it used an observed quantity as an unrequested prescription dose",
+    );
   }
   const sourceHasLimitation = containsEvidenceLimitation(summaryPayload) ||
     toolPayloads.some(({ payload }) => containsEvidenceLimitation(payload));
   if (sourceHasLimitation && containsUnsupportedCausalClaim(quantitativeText)) {
-    throw new GroundingError("Coach response was rejected because it attributed unavailable evidence to player ability");
+    throw new GroundingError(
+      "unsupported_causal_claim",
+      "Coach response was rejected because it attributed unavailable evidence to player ability",
+    );
   }
 
   const replyMetrics = new Set(
@@ -970,7 +1503,10 @@ function validateGroundedReply(
     for (const metric of toolMetrics) allowedMetrics.add(metric);
   }
   if ([...replyMetrics].some((metric) => !allowedMetrics.has(metric))) {
-    throw new GroundingError("Coach response was rejected because it cited an unavailable metric");
+    throw new GroundingError(
+      "unavailable_metric",
+      "Coach response was rejected because it cited an unavailable metric",
+    );
   }
 }
 
@@ -992,6 +1528,7 @@ function safePartialReply(
 }
 
 export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {}): Promise<CoachRuntimeTurnResponse> {
+  const turnStartedAt = performance.now();
   const responseSchema = responseSchemaFor(rawRequest);
   const responseRunId = isRecord(rawRequest) && typeof rawRequest.run_id === "string"
     ? rawRequest.run_id
@@ -1000,8 +1537,10 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
   let agent: {
     prompt: (input: unknown) => Promise<void>;
     abort: () => void;
+    subscribe: (listener: (event: any) => Promise<void> | void) => () => void;
     state: { messages: unknown[]; tools: Array<{ name: string }> };
   } | null = null;
+  let unsubscribe: (() => void) | null = null;
   let activeRunId: string | null = null;
   let turnMessageStart = 0;
   let partialMessageStart = 0;
@@ -1013,10 +1552,30 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
   let outOfPhaseTeachingWriteAttempted = false;
   let teachingFallbackUsed = false;
   let teachingHoldUsed = false;
+  let groundingFallbackUsed = false;
   let parsedRequest: ParsedRequest | null = null;
+  let partialRevision = 0;
+  let lastPartialText: string | null = null;
+  let lastPartialAt = 0;
+  let firstProviderEventMs: number | null = null;
+  let firstTextDeltaMs: number | null = null;
+  let firstSafeTextMs: number | null = null;
+  let providerRounds = 0;
+  let providerMs = 0;
+  const providerRoundMs: number[] = [];
+  let toolMs = 0;
+  let repairMs = 0;
+  const providerStarts: number[] = [];
+  const toolStarts = new Map<string, number>();
   try {
     const request = parseRequest(rawRequest);
     parsedRequest = request;
+    const explicitMetrics = requestedSummaryMetricValues(
+      request.analysis_summary,
+      request.messages.at(-1)?.content ?? "",
+    );
+    const userInterruptsTeaching = request.teaching_turn !== undefined &&
+      TEACHING_INTERRUPTION.test(request.messages.at(-1)?.content ?? "");
     if (request.teaching_turn && teachingTurnRequiresLocalFallback(request.teaching_turn)) {
       const fallback = fallbackForTeachingTurn(request.teaching_turn).text;
       validateGroundedReply(fallback, request, []);
@@ -1033,17 +1592,30 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       Agent: new (opts: Record<string, unknown>) => {
         prompt: (input: unknown) => Promise<void>;
         abort: () => void;
+        subscribe: (listener: (event: any) => Promise<void> | void) => () => void;
         state: { messages: unknown[]; tools: Array<{ name: string }> };
       };
     };
     const { history, prompt } = splitConversation(request.messages, resolved.model);
     turnMessageStart = history.length;
     partialMessageStart = history.length;
-    const streamFn = options.streamFn ?? createModelsStreamFn(resolved.models);
+    const baseStreamFn = options.streamFn ?? createModelsStreamFn(resolved.models);
+    const streamFn: StreamFn = ((model, context, streamOptions) => {
+      providerRounds += 1;
+      providerStarts.push(performance.now());
+      return baseStreamFn(model, context, streamOptions);
+    }) as StreamFn;
+    const systemPrompt = `${resolveSystemPrompt(request.system_prompt)}${MANDATORY_POLICY}${request.teaching_turn ? `\n\n${teachingEnvelopeInstruction(request.teaching_turn)}` : ""}${userInterruptsTeaching ? DIRECT_TEACHING_INTERRUPTION_INSTRUCTION : ""}${explicitMetricInstruction(explicitMetrics)}`;
+    const maxAnalysisResultBytes = analysisResultBudgetBytes(
+      resolved.model.contextWindow,
+      resolved.model.maxTokens,
+      systemPrompt,
+      [...history, ...prompt],
+    );
     const requiredDeleteRef = requiredAnalysisDeleteRef(request);
     requiredDeleteForTurn = requiredDeleteRef !== null;
     const tools = [restrictTurnTools(
-      createAnalysisSummaryTool(request.analysis_summary),
+      createAnalysisSummaryTool(request.analysis_summary, { maxResultBytes: maxAnalysisResultBytes }),
       () => requiredDeleteRef,
       () => groundingRepairActive,
       () => { groundingRepairToolAttempted = true; },
@@ -1085,11 +1657,66 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
     agent = new Agent({
       streamFn,
       initialState: {
-        systemPrompt: `${resolveSystemPrompt(request.system_prompt)}${MANDATORY_POLICY}${request.teaching_turn ? `\n\n${teachingEnvelopeInstruction(request.teaching_turn)}` : ""}`,
+        systemPrompt,
         model: resolved.model,
         tools,
         messages: history,
       },
+    });
+
+    const publishPartial = async (
+      text: string | null,
+      currentMessages: unknown[],
+      force = false,
+    ): Promise<void> => {
+      if (!options.onPartial || text === null || text === lastPartialText) return;
+      const now = performance.now();
+      const sentenceBoundary = /[。！？.!?]$/.test(text);
+      if (!force && partialRevision > 0 && now - lastPartialAt < 80 && !sentenceBoundary) return;
+      validateGroundedReply(text, request, currentMessages);
+      partialRevision += 1;
+      lastPartialText = text;
+      lastPartialAt = now;
+      firstSafeTextMs ??= Math.max(0, Math.round(now - turnStartedAt));
+      await options.onPartial({
+        revision: partialRevision,
+        text,
+        elapsed_ms: Math.max(0, Math.round(now - turnStartedAt)),
+        provider_rounds: providerRounds,
+      });
+    };
+
+    unsubscribe = agent.subscribe(async (event) => {
+      const now = performance.now();
+      if (event.type === "message_start" && event.message?.role === "assistant") {
+        firstProviderEventMs ??= Math.max(0, Math.round(now - turnStartedAt));
+      } else if (event.type === "message_end" && event.message?.role === "assistant") {
+        const providerStartedAt = providerStarts.shift();
+        if (providerStartedAt !== undefined) {
+          const roundMs = Math.max(0, Math.round(now - providerStartedAt));
+          providerRoundMs.push(roundMs);
+          providerMs += roundMs;
+        }
+      } else if (event.type === "tool_execution_start") {
+        toolStarts.set(event.toolCallId, now);
+      } else if (event.type === "tool_execution_end") {
+        const toolStartedAt = toolStarts.get(event.toolCallId);
+        if (toolStartedAt !== undefined) {
+          toolMs += Math.max(0, now - toolStartedAt);
+          toolStarts.delete(event.toolCallId);
+        }
+      }
+      if (
+        event.type !== "message_update" ||
+        event.assistantMessageEvent?.type !== "text_delta"
+      ) return;
+      firstTextDeltaMs ??= Math.max(0, Math.round(now - turnStartedAt));
+      if (request.teaching_turn || requiredDeleteForTurn) return;
+      const currentMessages = agent?.state.messages.slice(turnMessageStart) ?? [event.message];
+      await publishPartial(
+        safePartialReply(extractAssistantPartial([event.message]), request, currentMessages, secrets),
+        currentMessages,
+      );
     });
 
     if (activeTurns.has(request.run_id)) {
@@ -1165,11 +1792,47 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
     if (hasPendingConfirmation(toolEvents)) {
       return successResponse(TRUSTED_CONFIRMATION_REPLY, [], request.schema_version, toolEvents, request.run_id);
     }
-    const rawReply = redactRuntimeSecrets(extractAssistantReply(currentMessages), secrets);
+    let rawReply: string;
+    try {
+      rawReply = redactRuntimeSecrets(extractAssistantReply(currentMessages), secrets);
+    } catch (error) {
+      if (!(error instanceof EmptyAssistantReplyError)) throw error;
+      const emptyReplyFallback = request.teaching_turn
+        ? (explicitMetricFallback(explicitMetrics) ?? (userInterruptsTeaching
+          ? directTeachingInterruptionFallback(
+            request.teaching_turn,
+            request.messages.at(-1)?.content ?? "",
+          )
+          : fallbackForTeachingTurn(request.teaching_turn).text))
+        : (explicitMetricFallback(explicitMetrics) ?? deterministicGroundingFallback(request, currentMessages) ??
+          "这次模型没有生成可显示的回答。附带分析仍然可用，请换一种问法重试。");
+      validateGroundedReply(emptyReplyFallback, request, currentMessages);
+      return successResponse(
+        emptyReplyFallback,
+        request.teaching_turn
+          ? [userInterruptsTeaching ? TEACHING_HOLD_NOTE : TEACHING_FALLBACK_NOTE]
+          : [],
+        request.schema_version,
+        collectToolEvents(currentMessages),
+        request.run_id,
+      );
+    }
     let reply = normalizeUserFacingText(rawReply);
     if (request.teaching_turn) {
       const draft = parseTeachingProviderDraft(rawReply);
-      if (draft === null || !validateTeachingDraft(request.teaching_turn, draft).ok) {
+      const directReply = draft === null ? rawReply : draft.text;
+      if (userInterruptsTeaching) {
+        if ((draft !== null || !rawReply.trimStart().startsWith("{")) &&
+            validateTeachingDirectResponse(request.teaching_turn, directReply).ok) {
+          reply = normalizeUserFacingText(directReply);
+        } else {
+          reply = explicitMetricFallback(explicitMetrics) ?? directTeachingInterruptionFallback(
+            request.teaching_turn,
+            request.messages.at(-1)?.content ?? "",
+          );
+        }
+        teachingHoldUsed = true;
+      } else if (draft === null || !validateTeachingDraft(request.teaching_turn, draft).ok) {
         reply = fallbackForTeachingTurn(request.teaching_turn).text;
         teachingFallbackUsed = true;
       } else {
@@ -1182,20 +1845,43 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
     } catch (error) {
       if (!(error instanceof GroundingError)) throw error;
       if (request.teaching_turn) {
-        reply = fallbackForTeachingTurn(request.teaching_turn).text;
+        const metricFallback = claimsAvailableMetricValuesUnavailable(reply)
+          ? explicitMetricFallback(explicitMetrics)
+          : null;
+        if (metricFallback !== null) {
+          validateGroundedReply(metricFallback, request, currentMessages);
+          return successResponse(metricFallback, [TEACHING_HOLD_NOTE], request.schema_version, [], request.run_id);
+        }
+        reply = userInterruptsTeaching
+          ? directTeachingInterruptionFallback(
+            request.teaching_turn,
+            request.messages.at(-1)?.content ?? "",
+          )
+          : fallbackForTeachingTurn(request.teaching_turn).text;
         validateGroundedReply(reply, request, currentMessages);
-        return successResponse(reply, [TEACHING_FALLBACK_NOTE], request.schema_version, collectToolEvents(currentMessages), request.run_id);
+        return successResponse(
+          reply,
+          [userInterruptsTeaching ? TEACHING_HOLD_NOTE : TEACHING_FALLBACK_NOTE],
+          request.schema_version,
+          userInterruptsTeaching ? [] : collectToolEvents(currentMessages),
+          request.run_id,
+        );
       }
       partialMessageStart = agent.state.messages.length;
       groundingRepairActive = true;
-      await agent.prompt([{
-        role: "user" as const,
-        content: [{
-          type: "text" as const,
-          text: groundingRepairPrompt(request, currentMessages),
-        }],
-        timestamp: Date.now(),
-      }]);
+      const repairStartedAt = performance.now();
+      try {
+        await agent.prompt([{
+          role: "user" as const,
+          content: [{
+            type: "text" as const,
+            text: groundingRepairPrompt(request, currentMessages, error),
+          }],
+          timestamp: Date.now(),
+        }]);
+      } finally {
+        repairMs += Math.max(0, performance.now() - repairStartedAt);
+      }
       currentMessages = agent.state.messages.slice(turnMessageStart);
       if (groundingRepairToolAttempted) {
         throw new ToolComplianceError("Grounding repair attempted to call a tool");
@@ -1225,15 +1911,31 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
         validateGroundedReply(reply, request, currentMessages);
       } catch (repairError) {
         if (!(repairError instanceof GroundingError)) throw repairError;
-        const fallback = deterministicGroundingFallback(request, currentMessages);
+        const metricFallback = claimsAvailableMetricValuesUnavailable(reply)
+          ? explicitMetricFallback(explicitMetrics)
+          : null;
+        const deterministicFallback = deterministicGroundingFallback(
+          request,
+          currentMessages,
+          repairError.reason,
+        ) ?? deterministicGroundingFallback(request, currentMessages, error.reason);
+        const fallback = metricFallback ?? deterministicFallback;
         if (fallback === null) throw repairError;
         reply = fallback;
         validateGroundedReply(reply, request, currentMessages);
+        groundingFallbackUsed = metricFallback === null;
       }
     }
+    await publishPartial(reply, currentMessages, true);
     return successResponse(
       reply,
-      teachingFallbackUsed ? [TEACHING_FALLBACK_NOTE] : teachingHoldUsed ? [TEACHING_HOLD_NOTE] : [],
+      groundingFallbackUsed
+        ? [GROUNDING_FALLBACK_NOTE]
+        : teachingFallbackUsed
+          ? [TEACHING_FALLBACK_NOTE]
+          : teachingHoldUsed
+            ? [TEACHING_HOLD_NOTE]
+            : [],
       request.schema_version,
       collectToolEvents(currentMessages),
       request.run_id,
@@ -1263,9 +1965,32 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       responseRunId,
     );
   } finally {
+    unsubscribe?.();
     if (activeRunId !== null) {
       activeTurns.delete(activeRunId);
       stopRequested.delete(activeRunId);
+    }
+    if (options.onComplete) {
+      const completedAt = performance.now();
+      for (const startedAt of providerStarts.splice(0)) {
+        const roundMs = Math.max(0, Math.round(completedAt - startedAt));
+        providerRoundMs.push(roundMs);
+        providerMs += roundMs;
+      }
+      for (const startedAt of toolStarts.values()) {
+        toolMs += Math.max(0, completedAt - startedAt);
+      }
+      await options.onComplete({
+        total_ms: Math.max(0, Math.round(completedAt - turnStartedAt)),
+        first_provider_event_ms: firstProviderEventMs,
+        first_text_delta_ms: firstTextDeltaMs,
+        first_safe_text_ms: firstSafeTextMs,
+        provider_rounds: providerRounds,
+        provider_ms: providerMs,
+        provider_round_ms: providerRoundMs,
+        tool_ms: Math.max(0, Math.round(toolMs)),
+        repair_ms: Math.max(0, Math.round(repairMs)),
+      });
     }
   }
 }

@@ -6,6 +6,10 @@ const { Type } = (await loadPiAi()) as {
 			properties: Record<string, unknown>,
 			options?: Record<string, unknown>,
 		): unknown;
+		Optional(schema: unknown): unknown;
+		String(options?: Record<string, unknown>): unknown;
+		Literal(value: string): unknown;
+		Union(schemas: unknown[]): unknown;
 	};
 };
 
@@ -990,24 +994,40 @@ function isCanonicalContextBundle(value: unknown): value is JsonRecord {
 	return true;
 }
 
-export function createAnalysisSummaryTool(analysisSummary: string | null) {
+type AnalysisSummaryToolOptions = {
+	maxResultBytes?: number;
+};
+
+export function createAnalysisSummaryTool(
+	analysisSummary: string | null,
+	options: AnalysisSummaryToolOptions = {},
+) {
 	let summaryText = "当前没有可用的分析摘要。";
 	let hasAnalysis = false;
+	let parsedSummary: JsonRecord | null = null;
 	let contextSchema: "coach_diagnostic_context.v1" | "coach_diagnostic_context.v2" | "coach_diagnostic_context.v3" | "coach_turn_context.v1" | "coach_benchmark_summary.v1" =
 		"coach_diagnostic_context.v1";
+	const summaryBytes = analysisSummary ? Buffer.byteLength(analysisSummary, "utf8") : 0;
 	if (
 		analysisSummary &&
 		analysisSummary.trim().length > 0 &&
-		Buffer.byteLength(analysisSummary, "utf8") <= 64 * 1024
+		summaryBytes <= 256 * 1024
 	) {
 		try {
 			const parsed = JSON.parse(analysisSummary);
+			const canonicalBundle = isCanonicalContextBundle(parsed);
 			if (
 				!hasDuplicateJsonObjectKeys(analysisSummary) &&
-				(isCanonicalDiagnosticContext(parsed) || isCanonicalContextBundle(parsed) || isCanonicalBenchmarkSummary(parsed))
+				(
+					canonicalBundle ||
+					(summaryBytes <= 64 * 1024 && (
+						isCanonicalDiagnosticContext(parsed) || isCanonicalBenchmarkSummary(parsed)
+					))
+				)
 			) {
 				summaryText = analysisSummary;
-				hasAnalysis = isCanonicalContextBundle(parsed)
+				parsedSummary = parsed;
+				hasAnalysis = canonicalBundle
 					? parsed.contexts.length > 0 || ("benchmark_summary" in parsed && parsed.benchmark_summary !== null)
 					: true;
 				contextSchema = parsed.schema_version;
@@ -1021,16 +1041,104 @@ export function createAnalysisSummaryTool(analysisSummary: string | null) {
 		name: "get_analysis_summary",
 		label: "Get diagnostic context",
 		description:
-			"返回本轮请求中已附带的 Coach 分析或去标识化 benchmark summary JSON（只读，不访问磁盘或数据库）。分数和排名只能决定优先查看什么，不能诊断 reading、紧张、握法或硬件原因。",
-		parameters: Type.Object({}, { additionalProperties: false }),
-		async execute() {
-			return {
-				content: [{ type: "text", text: summaryText }],
-				details: {
+			"读取本轮已附带的 Coach 分析（只读，不访问磁盘或数据库）。多上下文首次不传参数以取得紧凑索引，再用精确 context_ref 和 primary/comparison 每次读取一份投影；benchmark 用 benchmark。分数和排名只能决定优先查看什么，不能诊断 reading、紧张、握法或硬件原因。",
+		parameters: Type.Object({
+			context_ref: Type.Optional(Type.String({ maxLength: 256 })),
+			projection: Type.Optional(Type.Union([
+				Type.Literal("primary"),
+				Type.Literal("comparison"),
+				Type.Literal("benchmark"),
+			])),
+		}, { additionalProperties: false }),
+		async execute(
+			_id?: string,
+			params: { context_ref?: string; projection?: "primary" | "comparison" | "benchmark" } = {},
+		) {
+			const result = (text: string, details: JsonRecord) => {
+				if (options.maxResultBytes !== undefined && Buffer.byteLength(text, "utf8") > options.maxResultBytes) {
+					return {
+						content: [{
+							type: "text",
+							text: "当前模型的上下文窗口不足以读取这份分析，请改用更大上下文窗口的模型。",
+						}],
+						details: {
+							...details,
+							result_kind: "unavailable",
+							reason: "context_budget_exceeded",
+						},
+					};
+				}
+				return { content: [{ type: "text", text }], details };
+			};
+			if (parsedSummary?.schema_version === "coach_turn_context.v1") {
+				const contexts = parsedSummary.contexts as JsonRecord[];
+				const requestedRef = params.context_ref?.trim();
+				if (!requestedRef && params.projection === "benchmark") {
+					const benchmark = parsedSummary.benchmark_summary;
+					if (benchmark !== null && benchmark !== undefined) {
+						return result(JSON.stringify(benchmark), {
+								has_analysis: hasAnalysis,
+								context_schema: contextSchema,
+								result_kind: "projection",
+								context_ref: null,
+								projection: "benchmark",
+							});
+					}
+				}
+				if (!requestedRef && params.projection === undefined) {
+					const index = {
+						schema_version: "coach_analysis_context_index.v1",
+						contexts: contexts.map((context) => ({
+							context_ref: context.context_ref,
+							kind: context.kind,
+							analysis_ref: context.analysis_ref,
+							comparison_analysis_ref: context.comparison_analysis_ref,
+							target_ref: context.target_ref,
+							time_range_ms: context.time_range_ms,
+							available_projections: context.comparison_projection === null
+								? ["primary"] : ["primary", "comparison"],
+						})),
+						benchmark_summary_available:
+							parsedSummary.benchmark_summary !== null && parsedSummary.benchmark_summary !== undefined,
+					};
+					return result(JSON.stringify(index), {
+							has_analysis: hasAnalysis,
+							context_schema: contextSchema,
+							result_kind: "index",
+							context_count: contexts.length,
+						});
+				}
+
+				const context = contexts.find((item) => item.context_ref === requestedRef);
+				const projection = params.projection ?? "primary";
+				const selected = projection === "primary"
+					? context?.projection
+					: projection === "comparison" ? context?.comparison_projection : null;
+				if (context && selected !== null && selected !== undefined) {
+					return result(JSON.stringify(selected), {
+							has_analysis: hasAnalysis,
+							context_schema: contextSchema,
+							result_kind: "projection",
+							context_ref: requestedRef,
+							projection,
+						});
+				}
+				return {
+					content: [{ type: "text", text: "请求的分析上下文投影不可用。" }],
+					details: {
+						has_analysis: hasAnalysis,
+						context_schema: contextSchema,
+						result_kind: "unavailable",
+						context_ref: requestedRef ?? null,
+						projection,
+					},
+				};
+			}
+			return result(summaryText, {
 					has_analysis: hasAnalysis,
 					context_schema: contextSchema,
-				},
-			};
+					result_kind: hasAnalysis ? "summary" : "unavailable",
+				});
 		},
 	};
 }

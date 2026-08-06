@@ -91,6 +91,8 @@ test("custom OpenAI-compatible profile validates and constructs a Pi provider/mo
     base_url: "http://127.0.0.1:11434/v1/",
     api_key: SECRET,
     model_id: "fixture-model",
+    context_window: 32768,
+    max_tokens: 4096,
   });
   const resolved = await resolveProviderModel(profile);
   const provider = resolved.models.getProvider("local-test-provider");
@@ -101,6 +103,8 @@ test("custom OpenAI-compatible profile validates and constructs a Pi provider/mo
   assert.equal(resolved.model.api, "openai-completions");
   assert.equal(resolved.model.provider, "local-test-provider");
   assert.equal(resolved.model.baseUrl, "http://127.0.0.1:11434/v1");
+  assert.equal(resolved.model.contextWindow, 32768);
+  assert.equal(resolved.model.maxTokens, 4096);
   const auth = await resolved.models.getAuth(resolved.model);
   assert.equal(auth?.auth.apiKey, SECRET);
   assert.equal(typeof provider.stream, "function");
@@ -115,6 +119,8 @@ test("custom Anthropic-compatible profile uses Pi's Anthropic Messages adapter w
     base_url: "https://example.invalid/anthropic/v1/",
     credential: { type: "api_key", key: SECRET },
     model_id: "claude-compatible-model",
+    context_window: 200000,
+    max_tokens: 8192,
   });
   const resolved = await resolveProviderModel(profile);
   const provider = resolved.models.getProvider("anthropic-gateway");
@@ -130,6 +136,21 @@ test("custom Anthropic-compatible profile uses Pi's Anthropic Messages adapter w
   assert.equal(status.status, "ready");
   assert.ok(!JSON.stringify(status).includes(SECRET));
   assert.ok(!JSON.stringify(status).includes('"credential"'));
+});
+
+test("custom profiles without discovered limits fail closed instead of using invented defaults", async () => {
+  await assert.rejects(
+    resolveProviderModel({
+      kind: "custom_openai_compatible",
+      provider_id: "unknown-limits-provider",
+      provider_name: "Unknown Limits Provider",
+      base_url: "https://provider.example/v1",
+      credential: { type: "api_key", key: SECRET },
+      model_id: "manual-model-id",
+    }),
+    (error: unknown) => error instanceof ProviderProfileError
+      && error.code === "unknown_model_capabilities",
+  );
 });
 
 test("invalid custom profiles and client-controlled api_key_env fail closed", () => {
@@ -174,6 +195,8 @@ test("profile status is non-secret and reports runtime credential source only", 
     base_url: "https://example.invalid/v1",
     credential: { type: "api_key", key: SECRET },
     model_id: "secret-model",
+    context_window: 32768,
+    max_tokens: 4096,
   });
   const serialized = JSON.stringify(status);
 
@@ -240,6 +263,8 @@ test("profile status resolves readiness through Models.getAuth without issuing a
       base_url: "https://example.invalid/v1",
       api_key: SECRET,
       model_id: "readiness-model",
+      context_window: 32768,
+      max_tokens: 4096,
     },
     {
       resolveProviderModel: async () => ({
@@ -283,6 +308,8 @@ for (const code of ["auth", "oauth"] as const) {
         base_url: "https://example.invalid/v1",
         credential: { type: "api_key", key: SECRET },
         model_id: "reauth-model",
+        context_window: 32768,
+        max_tokens: 4096,
       },
       {
         resolveProviderModel: async () => ({
@@ -332,6 +359,8 @@ test("explicit provider connection test aborts at the 30-second ceiling (using a
       base_url: "https://example.invalid/v1",
       api_key: SECRET,
       model_id: "timeout-model",
+      context_window: 32768,
+      max_tokens: 4096,
     },
     {
       timeoutMs: 10,

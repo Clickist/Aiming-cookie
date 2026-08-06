@@ -36,7 +36,7 @@ from . import (
     queue,
 )
 from .auth import get_request_user_id, require_desktop_token
-from .coach_service import run_chat_turn
+from .coach_service import run_chat_turn, soft_start_provider_error
 from .coach_context import (
     coerce_coach_diagnostic_context,
     project_coach_diagnostic_context,
@@ -88,6 +88,7 @@ from .schemas import (
     CoachProductCommandResult,
     CoachAgentRunOut,
     CoachAgentRunRequest,
+    CoachAnalysisSoftStartRequest,
     CoachConfirmationDecisionRequest,
     CoachConfirmationOut,
     CoachConfirmationRequest,
@@ -1000,7 +1001,11 @@ async def _diagnosis_from_done_session(s: dict):
     result = s.get("result") or {}
     if not isinstance(result, dict):
         raise HTTPException(409, "诊断结果缺失,暂不可对话")
-    context = project_coach_diagnostic_context(result)
+    try:
+        context = project_coach_diagnostic_context(result)
+    except (TypeError, ValueError):
+        log.warning("coach context unavailable for unsupported result session_id=%s", s.get("id"))
+        raise HTTPException(409, "诊断结果不可用,暂不可对话") from None
     replay = history_trends.visual_replay_capability(s)
     if replay.get("kind") == "unavailable":
         evidence_summary = context.get("evidence_summary")
@@ -1555,6 +1560,39 @@ async def create_coach_agent_run(
     return CoachAgentRunOut(**result)
 
 
+@router.post(
+    "/coach/analysis-soft-start", response_model=CoachAgentRunOut, status_code=202,
+)
+async def create_coach_analysis_soft_start(
+    payload: dict = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    body = _validate_public_body(
+        CoachAnalysisSoftStartRequest,
+        payload,
+        "Coach analysis soft-start request is invalid",
+    )
+    session = await _get_owned_session(body.analysis_session_id, x_user_id)
+    if session["status"] != "done":
+        raise HTTPException(409, "analysis_not_done")
+    existing = await coach_agent_runs.get_analysis_soft_start(
+        x_user_id, analysis_session_id=body.analysis_session_id,
+    )
+    if existing is not None:
+        return CoachAgentRunOut(**existing)
+    provider_error = await soft_start_provider_error(x_user_id)
+    if provider_error is not None:
+        raise HTTPException(409, provider_error)
+    try:
+        result = await coach_agent_runs.create_analysis_soft_start(
+            x_user_id,
+            analysis_session_id=body.analysis_session_id,
+        )
+    except (coach_agent_runs.AgentRunError, coach_context_refs.ContextRefError) as error:
+        raise HTTPException(409, error.code) from error
+    return CoachAgentRunOut(**result)
+
+
 @router.get("/coach/agent-runs/{run_ref}", response_model=CoachAgentRunOut)
 async def get_coach_agent_run(
     run_ref: str = Path(...),
@@ -1725,8 +1763,8 @@ async def post_coach_primary_message(
         await _assert_analysis_ref_active(thread_id, body.analysis_session_id)
         if s["status"] != "done":
             raise HTTPException(409, "分析未完成,不可作为对话上下文")
-        await coach_store.attach_analysis_ref(thread_id, body.analysis_session_id)
         diagnosis = await _diagnosis_from_done_session(s)
+        await coach_store.attach_analysis_ref(thread_id, body.analysis_session_id)
         cost_session_id = body.analysis_session_id
         legacy_session_id = body.analysis_session_id
 
@@ -1799,9 +1837,9 @@ async def chat(
 
     thread = await coach_store.get_or_create_primary_thread(x_user_id)
     thread_id = int(thread["id"])
-    await coach_store.attach_analysis_ref(thread_id, session_id)
-    history = await _load_session_coach_messages(x_user_id, session_id)
     diagnosis = await _diagnosis_from_done_session(s)
+    history = await _load_session_coach_messages(x_user_id, session_id)
+    await coach_store.attach_analysis_ref(thread_id, session_id)
 
     result = await run_chat_turn(
         x_user_id=x_user_id,
