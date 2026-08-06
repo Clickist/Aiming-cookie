@@ -541,7 +541,7 @@
 }
 
 @media (min-width: 1160px) {
-  .task6-coach-sidebar-wrap[data-mode="side-by-side"][data-state="closed"] {
+  .task6-coach-sidebar-wrap[data-mode="side-by-side"] {
     position: fixed;
     top: 48px;
     right: 0;
@@ -775,7 +775,7 @@
 
 .task6-current-training {
   flex: none;
-  padding: 12px 14px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--outline-v);
   background: var(--s-low);
 }
@@ -784,7 +784,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  min-height: 24px;
 }
 
 .task6-current-training-title {
@@ -795,7 +795,6 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 8px;
 }
 
 .task6-training-scenario-label {
@@ -827,13 +826,22 @@
   color: var(--fg);
 }
 
-.task6-training-empty {
-  padding: 16px 14px;
-  text-align: center;
+.task6-training-empty-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg2);
+  font: 500 11.5px/1.3 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.task6-training-empty-title {
-  font: 600 13px var(--font-display);
+.task6-training-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg2);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task6-training-reveal {
@@ -856,6 +864,10 @@
 .task6-training-reveal-inner {
   min-height: 0;
   overflow: hidden;
+}
+
+.task6-training-details {
+  padding-top: 8px;
 }
 
 .task6-training-list {

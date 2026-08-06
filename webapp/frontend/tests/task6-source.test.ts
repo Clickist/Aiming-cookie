@@ -42,7 +42,8 @@ test("Coach shell implements side-by-side, overlay, and full-content modes", asy
   assert.match(styles, /\.task6-tool-step\[data-state="active"\] \.task6-tool-dot::after[\s\S]*animation:\s*task6-tool-pulse/);
   assert.doesNotMatch(styles, /\.task6-tool-step\[data-state="active"\] \.task6-tool-dot\s*\{[^}]*animation:/);
   assert.match(styles, /prefers-reduced-motion/);
-  assert.match(styles, /data-mode="side-by-side"\]\[data-state="closed"\][\s\S]*?position:\s*fixed/);
+  assert.match(styles, /@media \(min-width: 1160px\)[\s\S]*?data-mode="side-by-side"\][\s\S]*?position:\s*fixed/);
+  assert.doesNotMatch(styles, /data-mode="side-by-side"\]\[data-state="closed"\][\s\S]*?position:\s*fixed/);
   assert.match(styles, /contain:\s*layout paint/);
   assert.match(styles, /data-mode="side-by-side"\][\s\S]*?overflow:\s*clip/);
   assert.doesNotMatch(styles, /#[0-9a-fA-F]{3,8}\b|\brgb\s*\(|\bhsl\s*\(/);
@@ -196,7 +197,11 @@ test("Settings hosts the KovaaK connection surface without adding a Benchmark ro
   assert.doesNotMatch(panel, /createCoachAgentRun|training-plan|execution|retest/);
   assert.doesNotMatch(settings, /Benchmark/);
   assert.match(fixtures, /export const KOVAAK_SCORES[\s\S]*availability: "unavailable"/);
-  assert.doesNotMatch(fixtures, /黄金 III|黄金 I|白银 I/);
+  const unavailableScoresFixture = fixtures.slice(
+    fixtures.indexOf("export const KOVAAK_SCORES:"),
+    fixtures.indexOf("export const KOVAAK_SCORES_AVAILABLE:"),
+  );
+  assert.doesNotMatch(unavailableScoresFixture, /黄金 III|黄金 I|白银 I/);
 });
 
 test("Settings keeps its narrow tooltip inside the viewport and removes unreachable mobile nav animation", async () => {
@@ -235,6 +240,30 @@ test("Coach reads current training locally and turns shortcut intents into draft
   assert.match(coach, /disabled={capability !== "ready" \|\| !item\.display_name}/);
   assert.doesNotMatch(sidebar, /capability !== "ready"/);
   assert.doesNotMatch(coach, /createTrainingPlan|recordTrainingExecution|recordRetest|completeTraining/);
+});
+
+test("Coach never overlays a training-read error on a valid no-plan response", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  assert.match(coach, /currentTrainingError && !currentTraining/);
+  assert.match(coach, /currentTraining\?\.reason === "no_current_plan"/);
+  assert.match(coach, /currentTraining\.reason !== "no_current_plan"/);
+});
+
+test("completed Analysis soft-starts Coach without a fabricated user message or browser idempotency state", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  const sidebar = await source("components/task6/CoachSidebar.tsx");
+  const panel = await source("components/task6/CoachPanel.tsx");
+  const api = await source("lib/api.ts");
+  assert.match(shell, /capability !== "ready" \|\| !pathname\.startsWith\("\/analysis\/"\)/);
+  assert.match(shell, /session\.status !== "done"/);
+  assert.match(shell, /startCoachAnalysisSoftStart\(analysisId/);
+  assert.doesNotMatch(shell, /COACH_FIRST_ANALYSIS_KEY|coach-first-analysis-opened/);
+  assert.match(sidebar, /softStartRun/);
+  assert.match(panel, /softStartRun/);
+  assert.match(panel, /setRun\(softStartRun\)/);
+  assert.match(api, /"\/api\/coach\/analysis-soft-start"/);
+  assert.match(api, /coach_analysis_soft_start_request\.v1/);
+  assert.match(api, /analysis_session_id: analysisId/);
 });
 
 test("Coach training actions distinguish plan context from a reviewed KovaaK launch", async () => {

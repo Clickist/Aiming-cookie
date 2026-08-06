@@ -21,6 +21,7 @@ import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import type {
   CaptureStatusV1,
   CustomProviderKind,
+  CustomProviderModel,
   CustomProviderProtocol,
   ProviderAuthMode,
   ProviderAuthOperation,
@@ -82,7 +83,7 @@ export function OnboardingFlow() {
   const [customKind, setCustomKind] = useState<CustomProviderKind>("custom_openai_compatible");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [customModel, setCustomModel] = useState("");
-  const [customModels, setCustomModels] = useState<string[]>([]);
+  const [customModels, setCustomModels] = useState<CustomProviderModel[]>([]);
   const [customModelState, setCustomModelState] = useState<CustomModelState>("idle");
   const [customModelMessage, setCustomModelMessage] = useState("");
   const [customModelError, setCustomModelError] = useState(false);
@@ -265,6 +266,8 @@ export function OnboardingFlow() {
             kind: customKind,
             base_url: customBaseUrl,
             model_id: customModel,
+            context_window: selectedCustomModel?.context_window ?? null,
+            max_tokens: selectedCustomModel?.max_tokens ?? null,
             api_key: apiKey,
             is_default: true,
           })
@@ -335,6 +338,7 @@ export function OnboardingFlow() {
   };
 
   const selectedModel = selectedProvider?.models.find((model) => model.model_id === modelId);
+  const selectedCustomModel = customModels.find((model) => model.model_id === customModel);
   const selectedModelLabel = selectedModel?.model_name ?? selectedModel?.model_id ?? modelId;
   const connectionReady = connectionState === "ready";
   const builtinModelSelectable = Boolean(
@@ -575,14 +579,14 @@ export function OnboardingFlow() {
                               <div className="task3-onboarding-dropdown-label">可用 Model</div>
                               {customModels.map((candidate) => (
                                 <button
-                                  aria-selected={candidate === customModel}
+                                  aria-selected={candidate.model_id === customModel}
                                   className="task3-onboarding-dropdown-option"
-                                  key={candidate}
-                                  onClick={() => selectModel(candidate)}
+                                  key={candidate.model_id}
+                                  onClick={() => selectModel(candidate.model_id)}
                                   role="option"
                                   type="button"
                                 >
-                                  <span>{candidate}</span>
+                                  <span>{candidate.model_id}</span>
                                 </button>
                               ))}
                             </div>

@@ -169,7 +169,7 @@ function AnalysisRow({ session, onLoadDetail }: { session: SessionListItem; onLo
     <div className="task4-rowline">
       <div className="task4-row-main">
         <div className="task4-row-title">
-          <span className="task4-name">{session.scenario ?? session.summary_label ?? "未命名分析"}</span>
+          <span className="task4-name">{session.scenario ?? "场景信息不可用"}</span>
           <span className={`task4-badge task4-badge-${tone === "success" ? "ok" : tone === "error" ? "err" : "neu"}`}>
             {tone === "success" ? <span className="task4-badge-dot" /> : null}
             {sessionStatus(session.status)}

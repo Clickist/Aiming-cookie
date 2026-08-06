@@ -87,12 +87,16 @@ const SWITCHING_PRESENTATION_TEXT: Record<string, string> = {
 
 const DIAGNOSIS_PRESENTATION_TEXT: Record<string, string> = {
   "decel_frac high": "减速阶段偏长",
+  "linearity high": "制动节奏不够均匀",
   "reverse_ratio high": "反向修正偏多",
   "submovement two-stage": "主要移动与后续修正较分离",
   sparc: "运动平滑度（SPARC）",
   decel_frac: "减速占比",
   reverse_ratio: "反向修正比例",
   submovement_overlap: "主动作与修正重叠程度",
+  "reverse_ratio ↓": "反向修正比例下降",
+  "decel_frac toward individually calibrated target": "减速占比向个人基准靠近",
+  "submovement_overlap toward chosen technique": "动作衔接更接近所选技术方式",
   target_relative_facts_unavailable: "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
   alignment_partial: "输入与事件为部分对齐；指标可描述本局，但不应用通用好坏阈值。",
   "Exact reviewed scenario hash only; other hashes with the same display name remain unclassified.": "仅适用于已审核的精确场景；同名其他场景不在此分类中。",
@@ -127,7 +131,7 @@ const KNOWLEDGE_REGISTRY_VERSION_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.v[1-9][0-9]*
 const KNOWLEDGE_ENTRY_REF_RE = /^knowledge:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+@[1-9][0-9]*$/;
 const CLAIM_LEVEL_LABELS: Record<string, string> = {
   deterministic_rule: "规则化观察",
-  experimental: "探索性观察",
+  experimental: "待验证",
   research_supported: "研究支持",
   community_consensus: "社区经验",
 };
@@ -354,6 +358,7 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
       ? "registry-backed"
       : "legacy";
     const claimLevel = safeString(issue.claim_level);
+    const expectedResult = safeString(issue.expected_result);
     return [{
       signal,
       severity,
@@ -369,7 +374,7 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
         ? safeString(issue.plain_language_meaning)
         : null,
       expectedResult: presentationKind === "registry-backed"
-        ? safeString(issue.expected_result)
+        ? expectedResult && presentDisplayText(expectedResult, "当前 Analysis 未提供可展示的验证目标。")
         : null,
       observationRef,
       knowledgeRegistryVersion: hasKnowledgePair ? knowledgeRegistryVersion : null,
@@ -419,10 +424,19 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
   const eligibleSummaryMetrics = metrics.filter((metric) =>
     metric.availability === "available" && metric.classification === "deterministic"
   );
-  const summary = (familySupport === "supported" || familySupport === "descriptive")
-    ? summaryMetricReferences(diagnosis, issues, eligibleSummaryMetrics)
+  const canDescribeDiagnosticMetrics = issues.length > 0 && familySupport !== "outcome-only";
+  const diagnosticMetricReferences = familySupport === "unavailable"
+    ? Array.from(new Set(issues.flatMap((issue) => issue.metricRefs)))
+    : summaryMetricReferences(diagnosis, issues, eligibleSummaryMetrics);
+  const requestedSummary = canDescribeDiagnosticMetrics
+    ? diagnosticMetricReferences
       .flatMap((reference) => eligibleSummaryMetrics.filter((metric) => metric.referenceKey === reference))
     : [];
+  const summary = requestedSummary.length > 0
+    ? requestedSummary
+    : canDescribeDiagnosticMetrics
+      ? eligibleSummaryMetrics
+      : [];
   const summaryMode: AnalysisWorkspacePresentation["metrics"]["summaryMode"] = summary.length === 0
     ? "empty"
     : familySupport === "supported"
@@ -485,8 +499,8 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     },
     partial,
     headline: issues[0]
-      ? `重点观察：${issues[0].signal}`
-      : "当前证据不足以形成重点观察",
+      ? `本轮最值得关注：${issues[0].signal}`
+      : "当前证据不足以形成明确发现",
     profile: profileLabel ? {
       label: profileLabel,
       ...(profileLabel === "两段式型" ? {
