@@ -284,7 +284,7 @@ def test_narrate_diagnosis_end_to_end_mock():
     tool_result_content = backend.calls[1]["messages"][-1]["content"][0]["content"]
     parsed = json.loads(tool_result_content)
     assert parsed["signal"] == "sparc low"
-    assert parsed["registry_version"] == "2026-07-29.v4"
+    assert parsed["registry_version"] == "2026-08-06.v6"
     assert 1 <= len(parsed["entries"]) <= 3
     assert parsed["community"] in parsed["cues"]
     assert all(entry["entry_ref"].startswith("knowledge:") for entry in parsed["entries"])

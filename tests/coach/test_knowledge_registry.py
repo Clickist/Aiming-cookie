@@ -324,7 +324,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-07-29.v4"
+    assert result["registry_version"] == "2026-08-06.v6"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -615,6 +615,113 @@ def test_v4_schema_python_and_article_sources_are_complete():
         if source["source_ref"].startswith("community.rawinput.article.")
     }
     assert article_sources == {"immie", "Keeah", "MattyOW", "pinguefy / Viscose", "Viscose"}
+
+
+def test_v5_adds_revisable_mouse_fit_and_input_latency_differential_intake():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v5.json").read_text(encoding="utf-8"))
+
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(packaged),
+        key=lambda error: list(error.path),
+    )
+    assert errors == [], [error.message for error in errors[:5]]
+    loaded = registry.load_registry(registry_version="2026-08-06.v5")
+    sources = {source["source_ref"]: source for source in loaded["sources"]}
+    assert sources["research.mouse-shape-ergonomics"]["supports_sections"] == ["mechanisms"]
+    assert sources["research.cursor-latency-tracking"]["supports_sections"] == ["mechanisms"]
+    entries = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    for entry_id in (
+        "hypothesis.mouse-fit-differential-intake",
+        "hypothesis.input-latency-differential-intake",
+    ):
+        entry = entries[entry_id]
+        assert entry["supported_uses"] == [
+            "explanation_only", "diagnosis_support", "candidate_experiment",
+        ]
+        assert "user_report_available" in entry["quality_prerequisites"]
+        assert entry["alternative_explanations"]
+        assert entry["counterevidence"]
+        assert entry["cue"] != "not_applicable"
+        assert entry["matched_retest"] != "not_applicable"
+        assert entry["stop_adjust_rule"] != "not_applicable"
+        assert "pain" in " ".join(
+            section["text"] for section in entry["stop_adjust_rule"]
+        ).lower()
+        assert entry["definition"]["source_refs"] == ["product.problem-hypothesis-spec"]
+
+    assert entries["hypothesis.input-latency-differential-intake"]["definition"][
+        "text"
+    ].startswith("Cursor or visual-feedback delay")
+
+
+def test_v6_adds_reviewed_community_practice_without_changing_metric_contract():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v6.json").read_text(encoding="utf-8"))
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(packaged),
+        key=lambda error: list(error.path),
+    )
+    assert errors == [], [error.message for error in errors[:5]]
+    loaded = registry.load_registry(registry_version="2026-08-06.v6")
+    assert loaded == registry.validate_registry(packaged)
+    entries = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    assert entries["community.aim-efficiency-framework"]["supported_uses"] == [
+        "explanation_only",
+    ]
+    practice = entries["community.practice-intent-and-autopilot"]
+    assert practice["supported_uses"] == ["explanation_only"]
+    assert "warm-up" in practice["definition"]["text"]
+    difficulty = entries["community.difficulty-refinement-and-stress-test"]
+    assert "harder" in difficulty["definition"]["text"]
+    tempo = entries["community.qiluno.distance-adaptive-click-tempo"]
+    assert tempo["supported_uses"] == ["explanation_only"]
+    assert "near targets" in tempo["definition"]["text"].lower()
+    timing = entries["community.qiluno.confirmation-timing-schools"]
+    timing_text = json.dumps(timing, ensure_ascii=False).lower()
+    assert "settled" in timing_text and "deceleration" in timing_text
+    assert "single universally correct" in timing_text
+    reset = entries["community.qiluno.reset-as-continuity"]
+    assert reset["supported_uses"] == ["explanation_only"]
+    assert "user report" in " ".join(reset["forbidden_inferences"]).lower()
+    for entry in (tempo, timing, reset):
+        for field in (
+            "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+            "stop_adjust_rule", "scenario_prescription",
+        ):
+            assert field not in entry
+    tracking = entries["tracking.reactive-change-response"]
+    assert "has not changed" in tracking["scope"]["text"]
+    smoothness = entries["tracking.control-smoothness"]
+    assert "continuous reading" in smoothness["mechanisms"][-1]["text"]
+    sources = {source["source_ref"]: source for source in loaded["sources"]}
+    static_source = sources["community.qiluno.bilibili.static-guide"]
+    assert static_source["source_level"] == "coach_first_party"
+    assert static_source["author_or_org"] == "天才烧酒琪露诺"
+    assert static_source["published_at"] == "2024-03-10"
+    assert "BV1Xt421L72J" in static_source["locator"]
+    for entry_id in (
+        "dynamic.speed-matching-and-reading",
+        "tracking.predictable-speed-matching",
+        "tracking.reactive-change-response",
+        "tracking.control-smoothness",
+    ):
+        assert entries[entry_id]["entry_version"] == 2
+    tension = entries["hypothesis.tension-management"]
+    assert tension["entry_version"] == 3
+    assert any("arm" in section["text"].lower() and "wrist" in section["text"].lower()
+               for section in tension["mechanisms"])
+    assert all("model" not in source["locator"].lower()
+               for source in loaded["sources"] if source["source_ref"].startswith("community.viscose.youtube."))
+    wire = json.dumps(loaded, ensure_ascii=False).lower()
+    for forbidden in ("90%", "94%", "转化率97", "one war"):
+        assert forbidden not in wire
+
+
+def test_v6_remains_backward_compatible_with_v5():
+    assert registry.load_registry(registry_version="2026-08-06.v5")["registry_version"] == "2026-08-06.v5"
 
 
 @pytest.mark.parametrize(

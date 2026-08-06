@@ -89,7 +89,7 @@ _PLAIN_MEANINGS = {
     "decel_frac low": "速度峰值后留给连续减速的时间较短",
     "linearity high": "减速阶段的速度下降节奏不够均匀",
     "sparc low": "减速阶段的速度轮廓含较多快速波动",
-    "reverse_ratio high": "接近落点后出现了较多反向修正",
+    "reverse_ratio high": "移动收尾时出现了较多反向修正",
     "submovement two-stage": "主要移动与后续修正更像两个分离动作",
     "peak_position low": "速度峰值出现得较早",
     "peak_position high": "速度峰值出现得较晚",

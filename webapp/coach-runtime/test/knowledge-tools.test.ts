@@ -3,15 +3,6 @@ import test from "node:test";
 
 import { createCoachKnowledgeTool, getCoachKnowledge } from "../src/knowledge-tools.ts";
 
-const ALLOWED_SOURCE_LEVELS = new Set([
-  "product_contract",
-  "academic_peer_reviewed",
-  "community_organization",
-  "coach_first_party",
-  "community_consensus",
-  "personal_experience_unverified",
-  "experimental",
-]);
 const ALLOWED_CLAIM_LEVELS = new Set([
   "deterministic_rule",
   "research_supported",
@@ -32,15 +23,10 @@ test("knowledge retrieval is bounded, versioned and traceable", async () => {
   for (const entry of result.entries) {
     assert.match(entry.entry_ref, /^knowledge:/);
     assert.ok(entry.entry_version >= 1);
-    assert.ok(entry.sources.length > 0);
-    assert.ok(entry.sources.every((source) => ALLOWED_SOURCE_LEVELS.has(source.source_level)));
-    if ("family_scope" in entry) {
-      assert.ok(entry.sources.every((source) => "title" in source && typeof source.title === "string" && source.title.length > 0));
-      assert.ok(entry.sources.every((source) => "author_or_org" in source && typeof source.author_or_org === "string" && source.author_or_org.length > 0));
-      assert.ok(entry.sources.every((source) => "locator" in source && typeof source.locator === "string" && source.locator.length > 0));
-    }
+    assert.ok(entry.source_refs.length > 0);
+    assert.ok(Array.isArray(entry.sections));
+    assert.ok(!("sources" in entry));
     assert.ok(entry.limitations.length > 0);
-    assert.ok("family_scope" in entry);
   }
 
   const tool = createCoachKnowledgeTool();
@@ -65,4 +51,52 @@ test("knowledge retrieval is bounded, versioned and traceable", async () => {
 test("unknown knowledge query returns an empty bounded result", () => {
   const result = getCoachKnowledge({ topic: "unknown-topic" });
   assert.deepEqual(result.entries, []);
+});
+
+test("knowledge event preserves every source returned with a projected entry", async () => {
+  const query = {
+    entry_ref: "knowledge:tracking.control-smoothness@2",
+    supported_use: "candidate_experiment",
+  };
+  const result = getCoachKnowledge(query);
+  const [entry] = result.entries;
+  assert.ok(entry);
+  const projectedSourceRefs = [...new Set(entry.sections.flatMap((section) => section.source_refs))];
+  assert.ok(projectedSourceRefs.length > 8);
+  assert.deepEqual(entry.source_refs, projectedSourceRefs);
+
+  const output = await createCoachKnowledgeTool().execute("knowledge-provenance", query);
+  assert.deepEqual(output.details.event.source_refs, projectedSourceRefs);
+  assert.equal(output.details.event.source_levels.length, projectedSourceRefs.length);
+});
+
+test("exact versioned retrieval returns a bounded projection and source refs", () => {
+  const result = getCoachKnowledge({
+    registry_version: "2026-08-06.v5",
+    entry_ref: "knowledge:hypothesis.input-latency-differential-intake@1",
+    supported_use: "candidate_experiment",
+  });
+  assert.equal(result.registry_version, "2026-08-06.v5");
+  assert.equal(result.entries.length, 1);
+  const [entry] = result.entries;
+  assert.equal(entry?.entry_ref, "knowledge:hypothesis.input-latency-differential-intake@1");
+  assert.ok(entry?.sections.some((section) => section.section_ref.endsWith(".cue")));
+  assert.ok(entry?.source_refs.length);
+  assert.ok(!("sources" in (entry ?? {})));
+  assert.ok(!("family_scope" in (entry ?? {})));
+});
+
+test("knowledge event accepts v5 differential-intake evidence", async () => {
+  const tool = createCoachKnowledgeTool();
+  const output = await tool.execute("knowledge-v5", {
+    topic: "input_latency_differential",
+    supported_use: "candidate_experiment",
+  });
+  const parsed = JSON.parse(output.content[0]?.text ?? "null");
+  assert.equal(parsed.registry_version, "2026-08-06.v6");
+  assert.equal(output.details.event.type, "knowledge");
+  assert.equal(output.details.event.registry_version, "2026-08-06.v6");
+  assert.ok(output.details.event.entry_refs.includes(
+    "knowledge:hypothesis.input-latency-differential-intake@1",
+  ));
 });
