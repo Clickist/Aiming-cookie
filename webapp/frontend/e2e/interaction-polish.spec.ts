@@ -10,6 +10,9 @@ import {
   COACH_CONTEXTS,
   RUN_MULTIMODAL,
   RUN_NATIVE,
+  RUN_PENDING_MULTIMODAL,
+  RUN_PENDING_NATIVE,
+  KOVAAK_SCORES_AVAILABLE,
   TASKS,
   apiScenario,
   analysisSession,
@@ -73,22 +76,20 @@ test.describe("release interaction polish", () => {
     await installApiFixtures(page, apiScenario({ tasks: [TASKS[2]] }));
     await page.goto("/settings");
 
-    const coach = page.locator(".task3-toolbar-action");
-    await expect(coach).toBeDisabled();
-    await expect(coach.locator("..")).toHaveAttribute("title", "当前页面不支持 Coach");
-    await expect(page.getByRole("link", { name: "设置" })).toHaveAttribute("aria-current", "page");
+    await expect(page.getByRole("button", { name: "Coach" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "关闭设置" })).toHaveClass(/active/);
     await expect(page.locator(".task3-task-nav-dot")).toHaveCount(1);
 
-    const toolbarActions = page.locator(".task3-tool-nav > *");
-    const before = await toolbarActions.evaluateAll((nodes) => nodes.map((node) => {
+    const taskLink = page.locator('a[href="/tasks"]');
+    const before = await taskLink.evaluate((node) => {
       const rect = node.getBoundingClientRect();
-      return [rect.left, rect.top, rect.width, rect.height];
-    }));
+      return [rect.width, rect.height];
+    });
     await page.goto("/tasks");
-    const after = await toolbarActions.evaluateAll((nodes) => nodes.map((node) => {
+    const after = await taskLink.evaluate((node) => {
       const rect = node.getBoundingClientRect();
-      return [rect.left, rect.top, rect.width, rect.height];
-    }));
+      return [rect.width, rect.height];
+    });
     expect(after).toEqual(before);
     await expect(page.locator('a[href="/tasks"]')).toHaveAttribute("aria-current", "page");
   });
@@ -103,12 +104,6 @@ test.describe("release interaction polish", () => {
     await expect(sidebar).toBeVisible();
     await expectNoHorizontalOverflow(page);
 
-    await sidebar.getByRole("button", { name: "宽", exact: true }).click();
-    await expect(sidebar).toHaveCSS("width", "480px");
-    await expect(separator).toHaveAttribute("aria-valuenow", "480");
-    await expectNoHorizontalOverflow(page);
-
-    await sidebar.getByRole("button", { name: "默认", exact: true }).click();
     const handle = await separator.boundingBox();
     expect(handle).not.toBeNull();
     await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + 100);
@@ -126,23 +121,23 @@ test.describe("release interaction polish", () => {
     await page.setViewportSize({ width: 960, height: 640 });
     await page.getByRole("button", { name: "Coach" }).click();
     const overlayDialog = page.getByRole("dialog", { name: "Coach" });
-    const overlay = page.locator(".ac-drawer");
+    const overlay = page.locator(".task6-coach-sidebar-wrap");
     await expect(overlayDialog).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await expect(overlay).toHaveAttribute("data-state", "open");
-    await expect(overlay).toHaveCSS("transition-duration", "0.2s");
+    await expect(overlay.locator(".task6-coach-sidebar")).toHaveCSS("transition-duration", "0.2s, 0.2s");
 
-    await overlayDialog.getByRole("button", { name: "Close" }).click();
+    await overlayDialog.getByRole("button", { name: "关闭 Coach" }).click();
     await expect(overlay).toHaveAttribute("data-state", "closed");
     await expect(overlay).toHaveCount(0, { timeout: 500 });
   });
 
   test("History overlays use focus-safe Dialog and Drawer primitives", async ({ page }) => {
     await installDesktopBridge(page);
-    await installApiFixtures(page, apiScenario({ runs: [RUN_MULTIMODAL] }));
+    await installApiFixtures(page, apiScenario({ runs: [RUN_PENDING_MULTIMODAL, RUN_NATIVE] }));
     await page.goto("/history");
 
-    const confirmTrigger = page.getByRole("button", { name: "确认并分析" });
+    const confirmTrigger = page.getByRole("button", { name: "开始分析" }).first();
     await confirmTrigger.click();
     const confirmDialog = page.getByRole("dialog", { name: "确认这条 Run" });
     await expect(confirmDialog.getByRole("button", { name: "Close" })).toBeFocused();
@@ -158,22 +153,15 @@ test.describe("release interaction polish", () => {
     await expect(inspector).toBeHidden();
     await expect(inspectTrigger).toBeFocused();
 
-    const detailTrigger = page.getByRole("button", { name: "查看摘要" });
-    await detailTrigger.click();
-    const detailDialog = page.getByRole("dialog", { name: "分析摘要" });
-    await expect(detailDialog.getByRole("button", { name: "Close" })).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(detailDialog).toBeHidden();
-    await expect(detailTrigger).toBeFocused();
   });
 
   test("History query Run ref selects the matching pending Run in Analyze", async ({ page }) => {
     await installDesktopBridge(page);
-    await installApiFixtures(page, apiScenario({ runs: [RUN_MULTIMODAL, RUN_NATIVE] }));
+    await installApiFixtures(page, apiScenario({ runs: [RUN_PENDING_MULTIMODAL, RUN_PENDING_NATIVE] }));
     await page.goto(`/analyze?run=${encodeURIComponent(RUN_NATIVE.run_ref)}`);
 
     await expect(page.locator('input[name="run"]').nth(1)).toBeChecked();
-    await expect(page.locator(".task3-run-item[data-selected]")).toContainText(
+    await expect(page.locator('.task3-analyze-run-item[data-selected="true"]')).toContainText(
       RUN_NATIVE.scenario ?? "未知场景",
     );
 
@@ -213,7 +201,7 @@ test.describe("release interaction polish", () => {
     await installApiFixtures(page);
     await page.goto("/history");
     const contextButton = page.locator(".task6-context-chip > button").first();
-    await expect(contextButton).toHaveText(COACH_CONTEXTS.contexts[0]!.label);
+    await expect(contextButton).toHaveText(`已附加分析：${COACH_CONTEXTS.contexts[0]!.label}`);
     await contextButton.click();
     const feedback = page.locator(".ac-toast__body");
     await expect(feedback).toHaveText("未能定位，请重试。");
@@ -221,7 +209,7 @@ test.describe("release interaction polish", () => {
 
     await page.goto("/analysis/42");
     await expect(page.getByRole("tab", { name: "诊断" })).toBeVisible();
-    await expect(contextButton).toHaveText(COACH_CONTEXTS.contexts[0]!.label);
+    await expect(contextButton).toHaveText(`已附加分析：${COACH_CONTEXTS.contexts[0]!.label}`);
     await contextButton.click();
     await expect(feedback).toHaveText("已定位");
     const acknowledged = await page.evaluate(() => !window.dispatchEvent(new CustomEvent(
@@ -253,10 +241,13 @@ test.describe("release interaction polish", () => {
 
     const training = page.getByRole("region", { name: "当前训练" });
     await expect(training).toContainText("1wall 6targets small");
+    await expect(training).not.toContainText("练什么");
+    expect((await training.boundingBox())?.height).toBeLessThanOrEqual(48);
+    await training.getByRole("button", { name: "展开" }).click();
     await expect(training).toContainText("练什么");
-    await expect(training).toContainText("复测");
-    await training.getByRole("button", { name: /查看训练项目/ }).click();
-    await expect(training.locator(".task6-training-item")).toHaveCount(3);
+    await expect(training).toContainText("练多少");
+    await expect(training).toContainText("注意");
+    await expect(training.locator(".task6-training-item")).toHaveCount(1);
 
     await training.getByRole("button", { name: "问 Coach" }).first().click();
     const draft = page.locator("#coach-draft");
@@ -274,7 +265,11 @@ test.describe("release interaction polish", () => {
     await page.unrouteAll({ behavior: "wait" });
     await installApiFixtures(page, apiScenario({ currentTraining: CURRENT_TRAINING_NO_PLAN }));
     await page.reload();
-    await expect(page.getByRole("region", { name: "当前训练" })).toContainText("还没有当前训练安排");
+    const noPlanTraining = page.getByRole("region", { name: "当前训练" });
+    await expect(noPlanTraining).toContainText("还没有当前训练安排");
+    await expect(noPlanTraining).not.toContainText("创建训练安排后");
+    await expect(noPlanTraining.getByRole("button", { name: "展开" })).toHaveCount(0);
+    expect((await noPlanTraining.boundingBox())?.height).toBeLessThanOrEqual(48);
 
     await page.unrouteAll({ behavior: "wait" });
     await installApiFixtures(page, apiScenario({
@@ -285,7 +280,7 @@ test.describe("release interaction polish", () => {
     await page.getByRole("button", { name: "Coach" }).click();
     await expect(page.getByRole("complementary", { name: "Coach" })).toBeVisible();
     await expect(page.getByRole("region", { name: "当前训练" })).toContainText("1wall 6targets small");
-    await page.getByRole("region", { name: "当前训练" }).getByRole("button", { name: /查看训练项目/ }).click();
+    await page.getByRole("region", { name: "当前训练" }).getByRole("button", { name: "展开" }).click();
     await expect(page.getByRole("region", { name: "当前训练" }).getByRole("button", { name: "问 Coach" }).first()).toBeDisabled();
 
     await page.setViewportSize({ width: 960, height: 640 });
@@ -296,9 +291,66 @@ test.describe("release interaction polish", () => {
     await expectNoHorizontalOverflow(page);
   });
 
+  test("side-by-side Coach stays viewport-bound while the analysis page scrolls", async ({ page }) => {
+    await page.setViewportSize({ width: 1178, height: 920 });
+    await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
+    await installApiFixtures(page);
+    await page.goto("/analysis/42");
+
+    const coach = page.getByRole("complementary", { name: "Coach" });
+    await expect(coach).toBeVisible();
+    const scrollRange = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+    expect(scrollRange).toBeGreaterThan(100);
+    await page.evaluate((scrollTop) => window.scrollTo(0, scrollTop), Math.round(scrollRange / 2));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+
+    const layout = await page.evaluate(() => {
+      const wrapper = document.querySelector<HTMLElement>(".task6-coach-sidebar-wrap");
+      const header = document.querySelector<HTMLElement>(".task6-coach-header");
+      const composer = document.querySelector<HTMLElement>(".task6-composer");
+      if (!wrapper || !header || !composer) return null;
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const headerRect = header.getBoundingClientRect();
+      const composerRect = composer.getBoundingClientRect();
+      return {
+        composerBottom: Math.round(composerRect.bottom),
+        composerTop: Math.round(composerRect.top),
+        headerTop: Math.round(headerRect.top),
+        position: getComputedStyle(wrapper).position,
+        wrapperBottom: Math.round(wrapperRect.bottom),
+        wrapperTop: Math.round(wrapperRect.top),
+      };
+    });
+
+    expect(layout).toEqual({
+      composerBottom: 920,
+      composerTop: expect.any(Number),
+      headerTop: 48,
+      position: "fixed",
+      wrapperBottom: 920,
+      wrapperTop: 48,
+    });
+    expect(layout?.composerTop).toBeGreaterThan(48);
+  });
+
+  test("no current plan stays a normal empty state without an error overlay", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
+    await installApiFixtures(page, apiScenario({ currentTraining: CURRENT_TRAINING_NO_PLAN }));
+    await page.goto("/history");
+
+    const training = page.getByRole("region", { name: "当前训练" });
+    await expect(training).toContainText("还没有当前训练安排");
+    await expect(training).not.toContainText("创建训练安排后");
+    await expect(training.getByRole("button", { name: "展开" })).toHaveCount(0);
+    expect((await training.boundingBox())?.height).toBeLessThanOrEqual(48);
+    await expect(page.getByText("当前训练暂时无法读取")).toHaveCount(0);
+    await expect(page.getByText("当前训练暂不可用")).toHaveCount(0);
+  });
+
   test("KovaaK score actions carry a safe item name into a Coach draft", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
-    await installApiFixtures(page);
+    await installApiFixtures(page, apiScenario({ kovaakScores: KOVAAK_SCORES_AVAILABLE }));
     let coachRunPosts = 0;
     page.on("request", (request) => {
       if (request.method() === "POST" && new URL(request.url()).pathname === "/api/coach/agent-runs") {
@@ -386,17 +438,16 @@ test("real Tauri WebView preserves Coach resizing and all three responsive modes
   await expect(separator).toHaveAttribute("aria-valuenow", "408");
   await expect(sidebar).toHaveCSS("width", "408px");
 
-  await sidebar.getByRole("button", { name: "宽", exact: true }).click();
   await separator.press("ArrowLeft");
-  await expect(separator).toHaveAttribute("aria-valuenow", "464");
-  await expect(sidebar).toHaveCSS("width", "464px");
+  await expect(separator).toHaveAttribute("aria-valuenow", "392");
+  await expect(sidebar).toHaveCSS("width", "392px");
   await expectNoHorizontalOverflow(page!);
 
   await page!.setViewportSize({ width: 960, height: 640 });
-  const responsiveDrawer = page!.locator(".task6-coach-drawer");
+  const responsiveDrawer = page!.locator(".task6-coach-sidebar-wrap");
   await expect(responsiveDrawer).toHaveAttribute("data-mode", "overlay");
-  await expect(responsiveDrawer.locator(".ac-drawer")).toHaveAttribute("data-state", "open");
-  await expect(responsiveDrawer.locator(".ac-drawer")).toHaveCSS("transition-duration", "0.2s");
+  await expect(responsiveDrawer).toHaveAttribute("data-state", "open");
+  await expect(responsiveDrawer.locator(".task6-coach-sidebar")).toHaveCSS("transition-duration", "0.2s, 0.2s");
   await expectNoHorizontalOverflow(page!);
 
   await page!.setViewportSize({ width: 720, height: 640 });
@@ -405,7 +456,7 @@ test("real Tauri WebView preserves Coach resizing and all three responsive modes
   await expectNoHorizontalOverflow(page!);
 
   await page!.emulateMedia({ reducedMotion: "reduce" });
-  await expect(responsiveDrawer.locator(".ac-drawer")).toHaveCSS("transition-duration", "0s");
+  await expect(responsiveDrawer.locator(".task6-coach-sidebar")).toHaveCSS("transition-duration", "0s");
   const screenshotPath = process.env.AIMING_COOKIE_TAURI_SMOKE_SCREENSHOT;
   if (screenshotPath) await page!.screenshot({ path: screenshotPath });
 });
@@ -466,6 +517,7 @@ test("real Tauri WebView renders the approved frontend realization matrix", asyn
   await page!.goto(new URL("/history", appUrl).toString());
   const currentTraining = page!.getByRole("region", { name: "当前训练" });
   await expect(currentTraining).toBeVisible();
+  await currentTraining.getByRole("button", { name: "展开" }).click();
   for (const label of ["练什么", "练多少", "注意", "观察", "复测"]) {
     await expect(currentTraining.getByText(label, { exact: true })).toBeVisible();
   }

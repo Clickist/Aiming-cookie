@@ -91,7 +91,7 @@ async function prepare(
 }
 
 async function closeCoachOverlay(page: Page): Promise<void> {
-  const backdrop = page.locator(".task6-coach-drawer .ac-drawer-backdrop[data-state='open']");
+  const backdrop = page.locator(".task6-coach-sidebar-wrap[data-state='open'] .task6-coach-scrim");
   await backdrop.waitFor({ state: "visible", timeout: 1_500 }).catch(() => undefined);
   if (await backdrop.isVisible()) {
     await backdrop.click({ position: { x: 4, y: 4 } });
@@ -117,21 +117,21 @@ test.describe("Task 7 screenshot baselines", () => {
   test("analyze 1280 dark desktop", async ({ page }) => {
     await prepare(page, { desktop: true, theme: "dark", width: 1280, height: 820, scenario: apiScenario({ runs: [RUN_MULTIMODAL] }) });
     await page.goto("/analyze");
-    await expect(page.getByRole("heading", { name: "桌面采集状态" })).toBeVisible();
+    await expect(page.getByText("自动采集：采集中", { exact: true })).toBeVisible();
     await expect(page).toHaveScreenshot("analyze-1280-dark.png", { animations: "disabled", fullPage: true });
   });
 
   test("tasks partial 1280 dark", async ({ page }) => {
     await prepare(page, { theme: "dark", width: 1280, height: 820, scenario: apiScenario({ tasks: [TASKS[2], TASKS[6]] }) });
     await page.goto("/tasks");
-    await expect(page.getByText("部分结果可用")).toBeVisible();
+    await expect(page.getByText("部分可用", { exact: true })).toBeVisible();
     await expect(page).toHaveScreenshot("tasks-partial-1280-dark.png", { animations: "disabled", fullPage: true });
   });
 
   test("history 1280 light", async ({ page }) => {
     await prepare(page, { desktop: true, theme: "light", width: 1280, height: 820 });
     await page.goto("/history");
-    await expect(page.getByRole("heading", { name: "历史" })).toBeVisible();
+    await expect(page.locator(".task4-page-title", { hasText: "历史" })).toBeVisible();
     await expect(page).toHaveScreenshot("history-1280-light.png", { animations: "disabled", fullPage: true });
   });
 
@@ -187,8 +187,8 @@ test.describe("Task 7 screenshot baselines", () => {
     await closeCoachOverlay(page);
     await page.getByRole("tab", { name: "数据" }).click();
     await expect(page.locator("#family-detail-title")).toBeVisible();
-    await expect(page.getByText("速度峰值", { exact: true })).toBeVisible();
-    await expect(page.getByText("修正动作", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "逐次 Flick" })).toBeVisible();
+    await expect(page.getByText("路径质量分布", { exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(960);
     await expect(page).toHaveScreenshot("analysis-data-flicking-960-light.png", { animations: "disabled", fullPage: true });
   });
@@ -196,14 +196,14 @@ test.describe("Task 7 screenshot baselines", () => {
   test("settings 1280 dark desktop", async ({ page }) => {
     await prepare(page, { desktop: true, theme: "dark", width: 1280, height: 820 });
     await page.goto("/settings");
-    await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
+    await expect(page.locator(".task6-settings-nav-title", { hasText: "设置" })).toBeVisible();
     await expect(page).toHaveScreenshot("settings-1280-dark.png", { animations: "disabled", fullPage: true });
   });
 
   test("history 960 system", async ({ page }) => {
     await prepare(page, { desktop: true, theme: "system", width: 960, height: 640 });
     await page.goto("/history");
-    await expect(page.getByRole("heading", { name: "历史" })).toBeVisible();
+    await expect(page.locator(".task4-page-title", { hasText: "历史" })).toBeVisible();
     await expect(page).toHaveScreenshot("history-960-system.png", { animations: "disabled", fullPage: true });
   });
 
