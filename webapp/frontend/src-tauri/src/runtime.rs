@@ -5,7 +5,8 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{mpsc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,12 @@ const TOKEN_ENV: &str = "AIMING_COOKIE_DESKTOP_TOKEN";
 const WATCH_PARENT_STDIN_ENV: &str = "AIMING_COOKIE_WATCH_PARENT_STDIN";
 const CAPTURE_CONTROL_ADDRESS_ENV: &str = "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_ADDR";
 const CAPTURE_CONTROL_SECRET_ENV: &str = "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_SECRET";
+const COACH_SIDECAR_HOST_ENV: &str = "COACH_SIDECAR_HOST";
+const COACH_SIDECAR_PORT_ENV: &str = "COACH_SIDECAR_PORT";
+const COACH_SIDECAR_URL_ENV: &str = "COACH_SIDECAR_URL";
+const SUPERVISOR_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const RESTART_BACKOFF: Duration = Duration::from_millis(500);
+const MAX_RESTART_ATTEMPTS: u8 = 3;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,26 +34,48 @@ pub struct RuntimeConnection {
 
 pub struct RuntimeProcess {
     child: Option<Child>,
+    coach_sidecar: Option<Child>,
     connection: RuntimeConnection,
+}
+
+#[derive(Clone, Debug)]
+pub struct RuntimeLayout {
+    working_dir: PathBuf,
+    backend_program: OsString,
+    backend_args: Vec<OsString>,
+    coach_program: OsString,
+    coach_args: Vec<OsString>,
+    coach_loader: Option<PathBuf>,
+    coach_entry: Option<PathBuf>,
+    pi_source_dir: Option<PathBuf>,
+    pi_tsconfig: Option<PathBuf>,
+    resource_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+struct RuntimeLaunch {
+    layout: RuntimeLayout,
+    app_data_dir: PathBuf,
+    capture_control: CaptureControlConnection,
 }
 
 impl RuntimeProcess {
     pub fn start(
-        project_root: &Path,
+        layout: &RuntimeLayout,
         app_data_dir: &Path,
         capture_control: &CaptureControlConnection,
     ) -> Result<Self, String> {
         std::fs::create_dir_all(app_data_dir)
             .map_err(|error| format!("failed to create app data directory: {error}"))?;
 
+        let (mut coach_sidecar, coach_sidecar_url) = start_coach_sidecar(layout)?;
         let token = create_launch_token();
         let database_path = app_data_dir.join("aiming_cookie.db");
         let database_url = format!("sqlite+aiosqlite:///{}", database_path.display());
-        let mut command = Command::new(python_executable());
+        let mut command = Command::new(&layout.backend_program);
         command
-            .arg("-m")
-            .arg("webapp.backend.desktop_runtime")
-            .current_dir(project_root)
+            .args(&layout.backend_args)
+            .current_dir(&layout.working_dir)
             .env(TOKEN_ENV, &token)
             .env(
                 CAPTURE_CONTROL_ADDRESS_ENV,
@@ -57,6 +86,7 @@ impl RuntimeProcess {
             .env("DATA_ROOT", app_data_dir)
             .env("VIDEO_TMP_DIR", app_data_dir)
             .env("DATABASE_URL", database_url)
+            .env(COACH_SIDECAR_URL_ENV, coach_sidecar_url)
             .env(
                 "CORS_ORIGINS",
                 "http://localhost:3000,http://tauri.localhost,tauri://localhost",
@@ -64,16 +94,21 @@ impl RuntimeProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(resource_root) = &layout.resource_root {
+            command.env("AIMING_COOKIE_RESOURCE_ROOT", resource_root);
+        }
         configure_python_io(&mut command);
         configure_process_group(&mut command);
 
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("failed to start local Python runtime: {error}"))?;
+        let mut child = command.spawn().map_err(|error| {
+            terminate_process_tree(&mut coach_sidecar);
+            format!("failed to start local Python runtime: {error}")
+        })?;
         let stdout = match child.stdout.take() {
             Some(stdout) => stdout,
             None => {
                 terminate_process_tree(&mut child);
+                terminate_process_tree(&mut coach_sidecar);
                 return Err("local runtime stdout was unavailable".to_string());
             }
         };
@@ -111,22 +146,29 @@ impl RuntimeProcess {
             Ok(Ok(port)) => port,
             Ok(Err(error)) => {
                 terminate_process_tree(&mut child);
+                terminate_process_tree(&mut coach_sidecar);
                 return Err(error);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 terminate_process_tree(&mut child);
+                terminate_process_tree(&mut coach_sidecar);
                 return Err("local runtime readiness timed out".to_string());
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 terminate_process_tree(&mut child);
+                terminate_process_tree(&mut coach_sidecar);
                 return Err("local runtime readiness channel closed".to_string());
             }
         };
 
-        ensure_runtime_alive_after_ready(&mut child)?;
+        if let Err(error) = ensure_runtime_alive_after_ready(&mut child) {
+            terminate_process_tree(&mut coach_sidecar);
+            return Err(error);
+        }
 
         Ok(Self {
             child: Some(child),
+            coach_sidecar: Some(coach_sidecar),
             connection: RuntimeConnection {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token,
@@ -138,9 +180,30 @@ impl RuntimeProcess {
         self.connection.clone()
     }
 
+    fn unexpected_exit_reason(&mut self) -> Option<String> {
+        if self
+            .child
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(Some(_))))
+        {
+            return Some("local runtime exited unexpectedly".to_string());
+        }
+        if self
+            .coach_sidecar
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(Some(_))))
+        {
+            return Some("Coach sidecar exited unexpectedly".to_string());
+        }
+        None
+    }
+
     pub fn shutdown(&mut self) {
         if let Some(mut child) = self.child.take() {
             terminate_process_tree(&mut child);
+        }
+        if let Some(mut coach_sidecar) = self.coach_sidecar.take() {
+            terminate_process_tree(&mut coach_sidecar);
         }
     }
 }
@@ -151,30 +214,149 @@ impl Drop for RuntimeProcess {
     }
 }
 
-pub struct RuntimeState {
+struct RuntimeSupervisor {
     runtime: Mutex<Option<RuntimeProcess>>,
+    launch: RuntimeLaunch,
+    shutdown_requested: AtomicBool,
+    restart_attempts: Mutex<u8>,
+    terminal_error: Mutex<Option<String>>,
+}
+
+pub struct RuntimeState {
+    supervisor: Arc<RuntimeSupervisor>,
 }
 
 impl RuntimeState {
-    pub fn new(runtime: RuntimeProcess) -> Self {
-        Self {
+    pub fn new(
+        runtime: RuntimeProcess,
+        layout: RuntimeLayout,
+        app_data_dir: PathBuf,
+        capture_control: CaptureControlConnection,
+    ) -> Self {
+        let supervisor = Arc::new(RuntimeSupervisor {
             runtime: Mutex::new(Some(runtime)),
-        }
+            launch: RuntimeLaunch {
+                layout,
+                app_data_dir,
+                capture_control,
+            },
+            shutdown_requested: AtomicBool::new(false),
+            restart_attempts: Mutex::new(0),
+            terminal_error: Mutex::new(None),
+        });
+        start_runtime_supervisor(Arc::clone(&supervisor));
+        Self { supervisor }
     }
 
     pub fn connection(&self) -> Result<RuntimeConnection, String> {
-        self.runtime
+        let mut runtime = self
+            .supervisor
+            .runtime
+            .lock()
+            .map_err(|_| "local runtime state is unavailable".to_string())?;
+        if let Some(process) = runtime.as_mut() {
+            if process.unexpected_exit_reason().is_none() {
+                return Ok(process.connection());
+            }
+        }
+        drop(runtime);
+
+        if let Some(error) = self
+            .supervisor
+            .terminal_error
             .lock()
             .map_err(|_| "local runtime state is unavailable".to_string())?
-            .as_ref()
-            .map(RuntimeProcess::connection)
-            .ok_or_else(|| "local runtime is not running".to_string())
+            .clone()
+        {
+            return Err(error);
+        }
+        Err("local runtime is restarting".to_string())
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut guard) = self.runtime.lock() {
+        self.supervisor
+            .shutdown_requested
+            .store(true, Ordering::SeqCst);
+        if let Ok(mut guard) = self.supervisor.runtime.lock() {
             guard.take();
         }
+    }
+}
+
+fn start_runtime_supervisor(supervisor: Arc<RuntimeSupervisor>) {
+    thread::spawn(move || loop {
+        thread::sleep(SUPERVISOR_POLL_INTERVAL);
+        if supervisor.shutdown_requested.load(Ordering::SeqCst) {
+            return;
+        }
+        let exit_reason = supervisor
+            .runtime
+            .lock()
+            .ok()
+            .and_then(|mut runtime| runtime.as_mut()?.unexpected_exit_reason());
+        if let Some(reason) = exit_reason {
+            restart_runtime(&supervisor, reason);
+        }
+    });
+}
+
+fn restart_runtime(supervisor: &RuntimeSupervisor, exit_reason: String) {
+    if supervisor.shutdown_requested.load(Ordering::SeqCst) {
+        return;
+    }
+    if let Ok(mut runtime) = supervisor.runtime.lock() {
+        runtime.take();
+    }
+
+    let attempt = match supervisor.restart_attempts.lock() {
+        Ok(mut attempts) if restart_is_allowed(false, *attempts) => {
+            *attempts += 1;
+            *attempts
+        }
+        Ok(_) => {
+            set_terminal_runtime_error(supervisor, exit_reason);
+            return;
+        }
+        Err(_) => return,
+    };
+    thread::sleep(RESTART_BACKOFF);
+    if supervisor.shutdown_requested.load(Ordering::SeqCst) {
+        return;
+    }
+
+    match RuntimeProcess::start(
+        &supervisor.launch.layout,
+        &supervisor.launch.app_data_dir,
+        &supervisor.launch.capture_control,
+    ) {
+        Ok(runtime) if !supervisor.shutdown_requested.load(Ordering::SeqCst) => {
+            if let Ok(mut guard) = supervisor.runtime.lock() {
+                let _ = guard.replace(runtime);
+            }
+        }
+        Ok(runtime) => drop(runtime),
+        Err(error) if attempt < MAX_RESTART_ATTEMPTS => {
+            restart_runtime(
+                supervisor,
+                format!("{exit_reason}; restart attempt {attempt} failed: {error}"),
+            );
+        }
+        Err(error) => set_terminal_runtime_error(
+            supervisor,
+            format!("{exit_reason}; restart attempt {attempt} failed: {error}"),
+        ),
+    }
+}
+
+fn restart_is_allowed(shutdown_requested: bool, attempts: u8) -> bool {
+    !shutdown_requested && attempts < MAX_RESTART_ATTEMPTS
+}
+
+fn set_terminal_runtime_error(supervisor: &RuntimeSupervisor, cause: String) {
+    if let Ok(mut error) = supervisor.terminal_error.lock() {
+        *error = Some(format!(
+            "local runtime is unavailable after {MAX_RESTART_ATTEMPTS} restart attempts: {cause}"
+        ));
     }
 }
 
@@ -184,20 +366,218 @@ pub fn project_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
 }
 
-fn python_executable() -> OsString {
-    std::env::var_os("AIMING_COOKIE_PYTHON").unwrap_or_else(|| {
-        if cfg!(windows) {
-            OsString::from("python")
+fn development_runtime_layout(
+    project_root: &Path,
+    python_override: Option<OsString>,
+) -> RuntimeLayout {
+    let pi_source_dir = project_root.join("third_party").join("pi");
+    RuntimeLayout {
+        working_dir: project_root.to_path_buf(),
+        backend_program: python_override.unwrap_or_else(|| {
+            if cfg!(windows) {
+                OsString::from("python")
+            } else {
+                OsString::from("python3")
+            }
+        }),
+        backend_args: vec!["-m".into(), "webapp.backend.desktop_runtime".into()],
+        coach_program: "node".into(),
+        coach_args: Vec::new(),
+        coach_loader: Some(
+            pi_source_dir
+                .join("node_modules")
+                .join("tsx")
+                .join("dist")
+                .join("loader.mjs"),
+        ),
+        coach_entry: Some(
+            project_root
+                .join("webapp")
+                .join("coach-runtime")
+                .join("start-sidecar.ts"),
+        ),
+        pi_tsconfig: Some(pi_source_dir.join("tsconfig.json")),
+        pi_source_dir: Some(pi_source_dir),
+        resource_root: None,
+    }
+}
+
+fn packaged_runtime_layout(resource_dir: &Path) -> Result<RuntimeLayout, String> {
+    let runtime_root = resource_dir.join("runtime");
+    let backend_program = runtime_root
+        .join("aiming-cookie-runtime")
+        .join(if cfg!(windows) {
+            "aiming-cookie-runtime.exe"
         } else {
-            OsString::from("python3")
+            "aiming-cookie-runtime"
+        });
+    let coach_program = runtime_root.join(if cfg!(windows) {
+        "coach-sidecar.exe"
+    } else {
+        "coach-sidecar"
+    });
+    for (label, path, directory) in [
+        ("packaged backend runtime", &backend_program, false),
+        ("packaged Coach runtime", &coach_program, false),
+        ("packaged knowledge", &runtime_root.join("knowledge"), true),
+        (
+            "packaged Coach prompt",
+            &runtime_root.join("coach-system.md"),
+            false,
+        ),
+    ] {
+        let valid = if directory {
+            path.is_dir()
+        } else {
+            path.is_file()
+        };
+        if !valid {
+            return Err(format!("{label} is missing: {}", path.display()));
         }
+    }
+    Ok(RuntimeLayout {
+        working_dir: runtime_root.clone(),
+        backend_program: backend_program.into_os_string(),
+        backend_args: Vec::new(),
+        coach_program: coach_program.into_os_string(),
+        coach_args: Vec::new(),
+        coach_loader: None,
+        coach_entry: None,
+        pi_source_dir: None,
+        pi_tsconfig: None,
+        resource_root: Some(runtime_root),
     })
+}
+
+pub fn runtime_layout(resource_dir: &Path) -> Result<RuntimeLayout, String> {
+    if cfg!(debug_assertions) {
+        Ok(development_runtime_layout(
+            &project_root(),
+            std::env::var_os("AIMING_COOKIE_PYTHON"),
+        ))
+    } else {
+        packaged_runtime_layout(resource_dir)
+    }
 }
 
 fn configure_python_io(command: &mut Command) {
     command
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8");
+}
+
+fn start_coach_sidecar(layout: &RuntimeLayout) -> Result<(Child, String), String> {
+    let mut command = Command::new(&layout.coach_program);
+    if let (Some(pi_source_dir), Some(tsx_loader), Some(sidecar_entry), Some(tsconfig)) = (
+        &layout.pi_source_dir,
+        &layout.coach_loader,
+        &layout.coach_entry,
+        &layout.pi_tsconfig,
+    ) {
+        for (label, path) in [
+            ("Pi source", pi_source_dir),
+            ("tsx loader", tsx_loader),
+            ("Coach sidecar entry", sidecar_entry),
+            ("Pi tsconfig", tsconfig),
+        ] {
+            if !path.exists() {
+                return Err(format!(
+                    "failed to start Coach sidecar: {label} is missing: {}",
+                    path.display()
+                ));
+            }
+        }
+        let loader_url = file_url(tsx_loader)
+            .map_err(|error| format!("failed to start Coach sidecar: {error}"))?;
+        command
+            .arg(format!("--import={loader_url}"))
+            .arg(sidecar_entry)
+            .env("PI_SOURCE_DIR", pi_source_dir)
+            .env("TSX_TSCONFIG_PATH", tsconfig);
+    } else {
+        command.args(&layout.coach_args);
+    }
+    command
+        .current_dir(&layout.working_dir)
+        .env_remove(TOKEN_ENV)
+        .env(COACH_SIDECAR_HOST_ENV, "127.0.0.1")
+        .env(COACH_SIDECAR_PORT_ENV, "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    if let Some(resource_root) = &layout.resource_root {
+        command.env("AIMING_COOKIE_RESOURCE_ROOT", resource_root);
+    }
+    configure_process_group(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to start Coach sidecar: {error}"))?;
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            terminate_process_tree(&mut child);
+            return Err("Coach sidecar stderr was unavailable".to_string());
+        }
+    };
+
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut sent_readiness = false;
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if !sent_readiness {
+                if let Ok(url) = parse_sidecar_readiness_line(&line) {
+                    let _ = sender.send(Ok(url));
+                    sent_readiness = true;
+                    continue;
+                }
+            }
+            eprintln!("[coach-sidecar] {line}");
+        }
+        if !sent_readiness {
+            let _ = sender.send(Err("Coach sidecar exited before readiness".to_string()));
+        }
+    });
+
+    let url = match receiver.recv_timeout(STARTUP_TIMEOUT) {
+        Ok(Ok(url)) => url,
+        Ok(Err(error)) => {
+            terminate_process_tree(&mut child);
+            return Err(error);
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            terminate_process_tree(&mut child);
+            return Err("Coach sidecar readiness timed out".to_string());
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            terminate_process_tree(&mut child);
+            return Err("Coach sidecar readiness channel closed".to_string());
+        }
+    };
+
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        terminate_process_tree(&mut child);
+        return Err("Coach sidecar exited immediately after readiness".to_string());
+    }
+
+    Ok((child, url))
+}
+
+fn file_url(path: &Path) -> Result<String, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve tsx loader: {error}"))?;
+    let value = canonical
+        .to_str()
+        .ok_or_else(|| "failed to resolve tsx loader as a Unicode path".to_string())?
+        .replace('\\', "/");
+    #[cfg(windows)]
+    let value = value.strip_prefix("//?/").unwrap_or(&value).to_string();
+    Ok(if value.starts_with('/') {
+        format!("file://{value}")
+    } else {
+        format!("file:///{value}")
+    })
 }
 
 fn create_launch_token() -> String {
@@ -233,6 +613,19 @@ fn parse_readiness_line(line: &str) -> Result<u16, String> {
     Ok(port as u16)
 }
 
+fn parse_sidecar_readiness_line(line: &str) -> Result<String, String> {
+    let port_text = line
+        .strip_prefix("coach sidecar listening on http://127.0.0.1:")
+        .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .ok_or_else(|| "Coach sidecar emitted malformed readiness message".to_string())?;
+    let port = port_text
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or_else(|| "Coach sidecar emitted malformed readiness message".to_string())?;
+    Ok(format!("http://127.0.0.1:{port}"))
+}
+
 #[cfg(unix)]
 fn configure_process_group(command: &mut Command) {
     use std::os::unix::process::CommandExt;
@@ -243,7 +636,8 @@ fn configure_process_group(command: &mut Command) {
 fn configure_process_group(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -341,7 +735,13 @@ fn terminate_process_tree(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::{configure_python_io, create_launch_token, parse_readiness_line, redact_secrets};
+    use super::{
+        configure_python_io, create_launch_token, development_runtime_layout, file_url,
+        packaged_runtime_layout, parse_readiness_line, parse_sidecar_readiness_line,
+        redact_secrets, restart_is_allowed, RuntimeConnection, RuntimeProcess,
+        MAX_RESTART_ATTEMPTS,
+    };
+    use std::path::Path;
 
     #[cfg(unix)]
     use super::{configure_process_group, terminate_process_tree};
@@ -434,6 +834,81 @@ mod tests {
     }
 
     #[test]
+    fn development_layout_preserves_source_runtime_commands() {
+        let layout = development_runtime_layout(
+            Path::new(r"C:\src\Aiming-cookie"),
+            Some("custom-python".into()),
+        );
+
+        assert_eq!(layout.working_dir, Path::new(r"C:\src\Aiming-cookie"));
+        assert_eq!(layout.backend_program, "custom-python");
+        assert_eq!(
+            layout.backend_args,
+            ["-m", "webapp.backend.desktop_runtime"]
+        );
+        assert_eq!(layout.coach_program, "node");
+        assert_eq!(
+            layout.coach_entry.as_deref(),
+            Some(Path::new(
+                r"C:\src\Aiming-cookie\webapp\coach-runtime\start-sidecar.ts"
+            ))
+        );
+        assert_eq!(
+            layout.pi_source_dir.as_deref(),
+            Some(Path::new(r"C:\src\Aiming-cookie\third_party\pi"))
+        );
+        assert!(layout.resource_root.is_none());
+    }
+
+    #[test]
+    fn packaged_layout_uses_only_validated_resource_paths() {
+        let temp = std::env::temp_dir().join(format!(
+            "aiming-cookie-packaged-layout-{}",
+            create_launch_token()
+        ));
+        let runtime_root = temp.join("runtime");
+        let backend = runtime_root
+            .join("aiming-cookie-runtime")
+            .join("aiming-cookie-runtime.exe");
+        let coach = runtime_root.join("coach-sidecar.exe");
+        let knowledge = runtime_root.join("knowledge");
+        let prompt = runtime_root.join("coach-system.md");
+        std::fs::create_dir_all(backend.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&knowledge).unwrap();
+        std::fs::write(&backend, b"backend").unwrap();
+        std::fs::write(&coach, b"coach").unwrap();
+        std::fs::write(&prompt, b"prompt").unwrap();
+
+        let layout = packaged_runtime_layout(&temp).unwrap();
+        assert_eq!(layout.working_dir, runtime_root);
+        assert_eq!(layout.backend_program, backend.as_os_str());
+        assert!(layout.backend_args.is_empty());
+        assert_eq!(layout.coach_program, coach.as_os_str());
+        assert!(layout.coach_args.is_empty());
+        assert!(layout.pi_source_dir.is_none());
+        assert_eq!(
+            layout.resource_root.as_deref(),
+            Some(layout.working_dir.as_path())
+        );
+
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn packaged_layout_fails_before_spawn_when_resources_are_missing() {
+        let temp = std::env::temp_dir().join(format!(
+            "aiming-cookie-missing-layout-{}",
+            create_launch_token()
+        ));
+        std::fs::create_dir_all(temp.join("runtime")).unwrap();
+
+        let error = packaged_runtime_layout(&temp).unwrap_err();
+        assert!(error.contains("packaged backend runtime is missing"));
+
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
     fn launch_tokens_are_fresh_high_entropy_and_redacted() {
         let first = create_launch_token();
         let second = create_launch_token();
@@ -449,6 +924,35 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_readiness_accepts_only_exact_loopback_dynamic_port_message() {
+        assert_eq!(
+            parse_sidecar_readiness_line("coach sidecar listening on http://127.0.0.1:43127")
+                .unwrap(),
+            "http://127.0.0.1:43127"
+        );
+        for invalid in [
+            "coach sidecar listening on http://localhost:43127",
+            "coach sidecar listening on http://127.0.0.1:0",
+            "coach sidecar listening on http://127.0.0.1:+43127",
+            "coach sidecar listening on http://127.0.0.1:65536",
+            "coach sidecar listening on http://127.0.0.1:43127/path",
+            "coach sidecar failed: EADDRINUSE",
+        ] {
+            assert!(parse_sidecar_readiness_line(invalid).is_err());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn file_url_strips_windows_verbatim_path_prefix() {
+        let executable = std::env::current_exe().expect("resolve current executable");
+        let url = file_url(&executable).expect("convert existing Windows path to file URL");
+
+        assert!(url.starts_with("file:///"));
+        assert!(!url.contains("/?/"));
+    }
+
+    #[test]
     fn runtime_forces_utf8_python_stdio() {
         let mut command = std::process::Command::new("python");
         configure_python_io(&mut command);
@@ -460,6 +964,42 @@ mod tests {
         assert!(envs.iter().any(|(key, value)| {
             *key == "PYTHONIOENCODING" && value.is_some_and(|value| value == "utf-8")
         }));
+    }
+
+    #[test]
+    fn restart_budget_is_bounded_and_normal_shutdown_suppresses_restart() {
+        assert!(restart_is_allowed(false, 0));
+        assert!(restart_is_allowed(false, MAX_RESTART_ATTEMPTS - 1));
+        assert!(!restart_is_allowed(false, MAX_RESTART_ATTEMPTS));
+        assert!(!restart_is_allowed(true, 0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unexpected_child_exit_is_detected_before_the_connection_is_reused() {
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new("cmd")
+            .args(["/C", "exit 0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn exiting child");
+        child.wait().expect("wait for child exit");
+        let mut runtime = RuntimeProcess {
+            child: Some(child),
+            coach_sidecar: None,
+            connection: RuntimeConnection {
+                base_url: "http://127.0.0.1:43127".to_string(),
+                token: "test-token".to_string(),
+            },
+        };
+
+        assert_eq!(
+            runtime.unexpected_exit_reason().as_deref(),
+            Some("local runtime exited unexpectedly")
+        );
     }
 
     #[cfg(windows)]

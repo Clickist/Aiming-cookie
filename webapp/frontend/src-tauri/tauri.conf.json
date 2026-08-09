@@ -6,8 +6,8 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../.next"
+    "beforeBuildCommand": "npm run build:tauri",
+    "frontendDist": "../out"
   },
   "app": {
     "windows": [
@@ -16,7 +16,7 @@
         "title": "Aiming Cookie",
         "width": 1280,
         "height": 820,
-        "minWidth": 960,
+        "minWidth": 1180,
         "minHeight": 640
       }
     ],
@@ -31,6 +31,15 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "resources/runtime/": "runtime/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }
