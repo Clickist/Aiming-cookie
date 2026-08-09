@@ -6,6 +6,7 @@
     "dev": "next dev",
     "dev:mock": "set AIMING_COOKIE_API_MODE=mock&& set NEXT_PUBLIC_AIMING_COOKIE_API_MODE=mock&& next dev",
     "build": "next build",
+    "build:tauri": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../scripts/build-tauri-frontend.ps1",
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",

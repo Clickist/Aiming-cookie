@@ -9,11 +9,11 @@ async function source(relativePath: string): Promise<string> {
   return readFile(path.join(root, relativePath), "utf8");
 }
 
-test("analysis route implements one workspace with three title tabs", async () => {
+test("legacy analysis route redirects while its reusable workspace assets remain", async () => {
   const page = await source("app/analysis/[analysisId]/page.tsx");
   const workspace = await source("components/task5/AnalysisWorkspace.tsx");
   const primitives = await source("ui/primitives.tsx");
-  assert.match(page, /AnalysisWorkspace/);
+  assert.match(page, /redirect\("\/history"\)/);
   assert.match(workspace, /诊断/);
   assert.match(workspace, /视频/);
   assert.match(workspace, /数据/);

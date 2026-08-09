@@ -8,7 +8,9 @@ import type {
   CalibrationProfileV1,
   CaptureStatusV1,
   CoachContextListV1,
+  CoachContextRefV1,
   CoachPrimaryResponse,
+  CoachSessionOut,
   CurrentTrainingV1,
   FrontendAnalysisDataV1,
   FrontendAnalysisFamilyDataV1,
@@ -739,6 +741,35 @@ export const COACH_PRIMARY: CoachPrimaryResponse = {
   refs: [{ id: 1, analysis_session_id: 42, status: "active", attached_at: NOW, deleted_at: null }],
 };
 
+export const COACH_SESSIONS: CoachSessionOut[] = [
+  {
+    id: 1,
+    user_id: "dev",
+    kind: "primary",
+    title: "长期训练",
+    status: "active",
+    deleted_at: null,
+    created_at: NOW,
+    updated_at: NOW,
+    message_count: 1,
+    last_message_preview: "先稳定接近目标时的减速节奏，再复测同一场景。",
+    analysis_session_ids: [42],
+  },
+  {
+    id: 2,
+    user_id: "dev",
+    kind: "conversation",
+    title: "1wall 6targets 复盘",
+    status: "active",
+    deleted_at: null,
+    created_at: NOW,
+    updated_at: NOW,
+    message_count: 0,
+    last_message_preview: null,
+    analysis_session_ids: [],
+  },
+];
+
 export const CURRENT_TRAINING_ACTIVE: CurrentTrainingV1 = {
   // Frozen from real Run 1030, reanalyzed as Session 26 against Registry v4.
   schema_version: "current_training.v1",
@@ -826,6 +857,8 @@ export interface ApiScenario {
   capture: CaptureStatusV1;
   providerStatus: ProviderProfileStatus;
   currentTraining: CurrentTrainingV1;
+  coachContexts: CoachContextListV1;
+  coachSessions: CoachSessionOut[];
   profiles: ProviderProfileListResponse;
   kovaakConnected: boolean;
   kovaakScores: KovaaKScoresV1;
@@ -845,6 +878,11 @@ export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
     capture: CAPTURE_STATUS,
     providerStatus: READY_PROVIDER_STATUS,
     currentTraining: CURRENT_TRAINING_ACTIVE,
+    coachContexts: {
+      ...COACH_CONTEXTS,
+      contexts: COACH_CONTEXTS.contexts.map((context) => ({ ...context })),
+    },
+    coachSessions: COACH_SESSIONS.map((session) => ({ ...session })),
     profiles: { profiles: [PROVIDER_PROFILE] },
     kovaakConnected: true,
     kovaakScores: KOVAAK_SCORES,
@@ -960,7 +998,85 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
   if (path === "/api/sessions/42/retry" && method === "POST") return response({ ...scenario.analysis, id: 43, status: "queued" });
   if (path === "/api/sessions/42") return response(scenario.analysis);
   if (path.startsWith("/api/history/trends/")) return response({ comparable: false, reason: "insufficient_records" } satisfies HistoryTrend);
-  if (path === "/api/coach/context") return response(COACH_CONTEXTS);
+  if (path === "/api/coach/sessions" && method === "GET") {
+    const includeArchived = request.query?.include_archived === "true";
+    const query = request.query?.q?.trim().toLocaleLowerCase();
+    const sessions = scenario.coachSessions.filter((session) => {
+      if (session.status === "deleted" || (!includeArchived && session.status === "archived")) return false;
+      return !query || [session.title, session.last_message_preview]
+        .filter(Boolean)
+        .some((value) => value!.toLocaleLowerCase().includes(query));
+    });
+    return response({ schema_version: "coach_session_list.v1", sessions });
+  }
+  if (path === "/api/coach/sessions" && method === "POST") {
+    const body = requestBody(request.body);
+    const id = Math.max(0, ...scenario.coachSessions.map((session) => session.id)) + 1;
+    const session: CoachSessionOut = {
+      id,
+      user_id: "dev",
+      kind: "conversation",
+      title: typeof body.title === "string" ? body.title : null,
+      status: "active",
+      deleted_at: null,
+      created_at: NOW,
+      updated_at: NOW,
+      message_count: 0,
+      last_message_preview: null,
+      analysis_session_ids: [],
+    };
+    scenario.coachSessions.push(session);
+    return response(session, 201);
+  }
+  const coachSessionMatch = /^\/api\/coach\/sessions\/(\d+)$/.exec(path);
+  if (coachSessionMatch) {
+    const session = scenario.coachSessions.find((candidate) => candidate.id === Number(coachSessionMatch[1]));
+    if (!session) return response({ detail: "Not found" }, 404);
+    if (method === "DELETE") {
+      session.status = "deleted";
+      session.deleted_at = NOW;
+    } else if (method === "PATCH") {
+      const body = requestBody(request.body);
+      if (body.status === "archived") session.status = "archived";
+      if (typeof body.title === "string") session.title = body.title;
+    }
+    return response(session);
+  }
+  if (path === "/api/coach/context") return response(scenario.coachContexts);
+  if (path === "/api/coach/context/attach" && method === "POST") {
+    const body = requestBody(request.body);
+    const analysisRef = typeof body.analysis_ref === "string" ? body.analysis_ref : "";
+    if (body.kind !== "analysis" || !/^analysis:\d+$/.test(analysisRef)) {
+      return response({ detail: { code: "invalid_analysis_ref", message: "Analysis reference is invalid" } }, 400);
+    }
+    const session = scenario.sessions.find((item) => item.analysis_ref === analysisRef);
+    if (!session || session.status !== "done") {
+      return response({ detail: { code: "not_found", message: "Analysis is unavailable" } }, 404);
+    }
+    const existing = scenario.coachContexts.contexts.find(
+      (context) => context.kind === "analysis" && context.analysis_ref === analysisRef && context.status === "active",
+    );
+    if (existing) {
+      return response({ schema_version: "coach_context_mutation.v1", action: "already_attached", context: existing });
+    }
+    const context: CoachContextRefV1 = {
+      schema_version: "coach_context_ref.v1",
+      context_ref: `context:${analysisRef}`,
+      kind: "analysis",
+      status: "active",
+      label: session.presentation_label ?? analysisRef,
+      analysis_ref: analysisRef,
+      comparison_analysis_ref: null,
+      target_ref: null,
+      time_range_ms: null,
+      attached_at: NOW,
+      detached_at: null,
+      deleted_at: null,
+      locator: { view: "diagnosis" },
+    };
+    scenario.coachContexts.contexts.push(context);
+    return response({ schema_version: "coach_context_mutation.v1", action: "attached", context });
+  }
   if (path === "/api/coach/primary") return response(COACH_PRIMARY);
   if (path === "/api/current-training" && method === "GET") return response(scenario.currentTraining);
   if (path === "/api/coach/agent-runs" && method === "POST") return response({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:1", parent_run_ref: null, attempt: 1, status: "running", phase: "text_generation", partial_text: "正在整理证据", error: null, contexts: COACH_CONTEXTS.contexts, events: [], created_at: NOW, started_at: NOW, finished_at: null });
@@ -1017,7 +1133,15 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
-    const shared = handleReviewApiRequest(scenario, { method, path, query: Object.fromEntries(url.searchParams) });
+    let body: unknown;
+    if (method !== "GET" && method !== "HEAD") {
+      try {
+        body = request.postDataJSON();
+      } catch {
+        body = undefined;
+      }
+    }
+    const shared = handleReviewApiRequest(scenario, { method, path, body, query: Object.fromEntries(url.searchParams) });
     if (shared.video) return fulfillVideo(route);
     return fulfillJson(route, shared.body, shared.status);
     /*

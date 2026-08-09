@@ -28,5 +28,6 @@ async function route(request: NextRequest, context: { params: Promise<{ path: st
 
 export const GET = route;
 export const POST = route;
+export const PATCH = route;
 export const PUT = route;
 export const DELETE = route;

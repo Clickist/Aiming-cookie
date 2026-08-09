@@ -1,17 +1,26 @@
 /* History page (task4) — matches OpenDesign history-1280.html / history-960.html */
 
 .task4-page {
-  width: min(100%, 1180px);
+  width: 100%;
+  max-width: 1040px;
   margin-inline: auto;
   padding: 20px 24px 32px;
 }
 
 .task4-page-head {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 4px;
+}
+
+.task4-page-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
 }
 
 .task4-page-title {
@@ -25,7 +34,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 12px;
-  margin-top: 3px;
+  margin-top: 0;
+  margin-left: 8px;
   color: var(--on-surface-variant);
   font-size: 12.5px;
 }
@@ -58,12 +68,6 @@
   font: 500 11px var(--font-mono);
 }
 
-.task4-sec-hint {
-  margin-left: auto;
-  color: var(--on-surface-variant);
-  font-size: 12px;
-}
-
 .task4-panel {
   border: 1px solid var(--outline-variant);
   border-radius: 6px;
@@ -84,6 +88,25 @@
 
 .task4-rowline + .task4-rowline {
   border-top: 1px solid var(--outline-variant);
+}
+
+.task4-row-select {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 2px;
+}
+
+.task4-row-select input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.task4-row-select input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .task4-row-main {
@@ -434,11 +457,6 @@
 
   .task4-sec-head {
     flex-wrap: wrap;
-  }
-
-  .task4-sec-hint {
-    margin-left: 0;
-    width: 100%;
   }
 
   .task4-rowline {

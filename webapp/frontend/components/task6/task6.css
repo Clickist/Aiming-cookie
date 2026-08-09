@@ -1,3 +1,5 @@
+@import "../task7/coach-message-cards.css";
+
 /* Settings + Coach — OpenDesign board styling mapped to app tokens */
 
 /* Board token aliases for clarity (map to existing app tokens) */
@@ -27,15 +29,25 @@
 
 .task6-settings-page {
   min-height: calc(100vh - 48px);
-  padding: 20px 24px 32px;
+  padding: 56px 24px 32px;
   background: var(--bg);
   color: var(--fg);
+}
+
+.task6-settings-state-header {
+  display: flex;
+  align-items: center;
+  width: min(100%, 1040px);
+  gap: 8px;
+  margin: 0 auto 20px;
+  color: var(--fg);
+  font: 600 20px/1.25 var(--font-display);
 }
 
 .task6-settings-layout {
   display: flex;
   gap: 28px;
-  max-width: 1160px;
+  max-width: 1040px;
   margin: 0 auto;
   animation: task6-settings-open 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -57,6 +69,7 @@
   align-self: flex-start;
   flex: none;
   width: 172px;
+  margin-top: -8px;
 }
 
 .task6-settings-nav-title {
@@ -68,6 +81,29 @@
     opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
     transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
     display 160ms allow-discrete;
+}
+
+.task6-settings-nav-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.task6-settings-nav-title-row .task6-settings-nav-title {
+  margin-bottom: 0;
+}
+
+.task6-settings-back {
+  flex: none;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+}
+
+.task6-settings-back:hover {
+  background: var(--surface-container);
 }
 
 @starting-style {
@@ -174,6 +210,10 @@
   align-items: center;
   flex-wrap: wrap;
   margin-left: auto;
+}
+
+.task6-provider-head > .task6-provider-actions {
+  margin-left: 12px;
 }
 
 .task6-provider-actions .ac-field {
@@ -440,6 +480,21 @@
 .task6-st-row dd .task6-ok {
   color: var(--ok);
   font-weight: 600;
+}
+
+.task6-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--fg);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.task6-consent input {
+  margin-top: 2px;
+  flex: none;
 }
 
 /* Storage */
@@ -746,6 +801,10 @@
   overflow-wrap: anywhere;
 }
 
+.task6-coach-context-attachments {
+  margin-top: 2px;
+}
+
 .task6-coach-full-header {
   background: var(--surface);
 }
@@ -1038,6 +1097,25 @@
   gap: 10px;
 }
 
+.task6-message-entry {
+  display: grid;
+  max-width: 92%;
+  gap: 7px;
+}
+
+.task6-message-entry[data-role="user"] {
+  align-self: flex-end;
+  justify-items: end;
+}
+
+.task6-message-entry[data-role="assistant"] {
+  align-self: flex-start;
+}
+
+.task6-message-entry > .task6-message {
+  max-width: 100%;
+}
+
 .task6-message {
   max-width: 92%;
   padding: 9px 12px;
@@ -1300,32 +1378,34 @@
 .task6-composer {
   flex: none;
   padding: 10px 12px;
-  border-top: 1px solid var(--outline-v);
   background: var(--s-low);
 }
 
-.task6-composer-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+.task6-composer-input {
+  position: relative;
+  min-height: 72px;
+  border: 1px solid var(--outline-v);
+  border-radius: 8px;
+  background: var(--s-high);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
-.task6-composer-input {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
+.task6-composer-input:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
 }
 
 .task6-composer-input textarea {
-  flex: 1;
+  display: block;
+  width: 100%;
   min-width: 0;
-  min-height: 38px;
-  max-height: 96px;
-  padding: 9px 11px;
-  border: 1px solid var(--outline-v);
-  border-radius: 6px;
-  background: var(--bg);
+  min-height: 72px;
+  max-height: 144px;
+  padding: 12px 52px 12px 12px;
+  border: 0;
+  border-radius: inherit;
+  outline: 0;
+  background: transparent;
   color: var(--fg);
   font: 400 13px/1.45 var(--font-ui);
   resize: vertical;
@@ -1336,8 +1416,11 @@
 }
 
 .task6-composer-send {
-  width: 38px;
-  height: 38px;
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 32px;
+  height: 32px;
   border: 0;
   border-radius: 6px;
   background: var(--primary);
@@ -1346,7 +1429,6 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: none;
   cursor: pointer;
 }
 
@@ -1565,6 +1647,43 @@
   color: var(--error);
 }
 
+.task6-batch-card {
+  border: 1px solid var(--outline-v);
+  border-radius: 8px;
+  background: var(--s-low);
+  overflow: hidden;
+}
+
+.task6-batch-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0 12px 10px;
+  list-style: none;
+  color: var(--fg2);
+  font-size: 11.5px;
+}
+
+.task6-batch-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.task6-batch-list li span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task6-batch-list li span:last-child {
+  flex: none;
+  color: var(--fg2);
+}
+
 /* Responsive */
 
 @media (max-width: 839px) {
@@ -1596,6 +1715,10 @@
   .task6-provider-actions {
     margin-left: 0;
     justify-content: flex-start;
+  }
+
+  .task6-provider-head > .task6-provider-actions {
+    margin-left: 0;
   }
 
   .task6-st-row {

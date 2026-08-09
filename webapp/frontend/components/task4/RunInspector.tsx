@@ -35,8 +35,9 @@ export function RunInspector({ run }: {
   return (
     <div className="task4-inspector-body">
       <section aria-labelledby="run-identity-title">
-        <h3 id="run-identity-title">训练身份</h3>
+          <h3 id="run-identity-title">训练身份</h3>
         <dl className="task4-facts">
+          <div><dt>记录</dt><dd>{projection.identity.label}</dd></div>
           <div><dt>场景</dt><dd>{projection.identity.scenario}</dd></div>
           <div><dt>时间</dt><dd>{new Date(projection.identity.createdAt).toLocaleString("zh-CN")}</dd></div>
           <div><dt>整理状态</dt><dd>{projection.identity.finalization}</dd></div>

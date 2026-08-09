@@ -1,5 +1,5 @@
-import { AnalyzeClient } from "@/components/task3/AnalyzeClient";
+import { redirect } from "next/navigation";
 
 export default function AnalyzePage() {
-  return <AnalyzeClient />;
+  redirect("/history");
 }

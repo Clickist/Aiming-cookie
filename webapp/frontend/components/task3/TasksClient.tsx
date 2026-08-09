@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { deleteSession, listTasks, retrySession } from "@/lib/api";
 import { presentTask } from "@/lib/contracts";
+import { analysisHref } from "@/lib/navigation";
 import type { TaskDetailV1, TaskPhase } from "@/lib/types";
 import { Button, Dialog, Empty, ErrorState, Loading, Notice, Status } from "@/ui/primitives";
 
@@ -215,8 +216,8 @@ export function TasksClient() {
               return (
                 <article className="task3-task-item" data-state={task.state} key={task.task_ref ?? task.analysis_ref}>
                   <div className="task3-task-head">
-                    <span className="task3-task-name" title={task.run_ref ?? task.analysis_ref ?? "本地导入"}>
-                      {task.run_ref ?? task.analysis_ref ?? "本地导入"}
+                    <span className="task3-task-name" title={copy.presentationLabel}>
+                      {copy.presentationLabel}
                     </span>
                     <ModeBadge mode={task.input_mode} />
                     {task.input_mode === "input_native" ? <PreviewBadge /> : null}
@@ -231,7 +232,7 @@ export function TasksClient() {
                     <span className="task3-task-actions">
                       {task.state === "done" && id !== null ? (
                         <>
-                          <Button href={`/analysis/${id}`} size="compact" variant="secondary">查看诊断</Button>
+                          <Button href={analysisHref(id)} size="compact" variant="secondary">查看诊断</Button>
                           <Link className="ac-button" data-size="compact" data-variant="ghost" href="/history">返回历史</Link>
                         </>
                       ) : null}

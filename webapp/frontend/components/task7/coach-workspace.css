@@ -1,0 +1,405 @@
+.task7-coach-workspace {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 24px;
+  background: var(--background);
+  color: var(--on-background);
+}
+
+.task7-coach-workspace__status,
+.task7-coach-workspace__video-pane,
+.task7-coach-workspace__conversation-pane {
+  min-width: 0;
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+}
+
+.task7-coach-workspace__status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: 8px;
+}
+
+.task7-coach-workspace__status[data-state="waiting-provider"],
+.task7-coach-workspace__status[data-state="missing-video"] {
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.task7-coach-workspace__status[data-state="failed"] {
+  background: var(--error-container);
+  color: var(--on-error-container);
+}
+
+.task7-coach-workspace__status[data-state="completed"] {
+  background: var(--tertiary-container);
+  color: var(--on-tertiary-container);
+}
+
+.task7-coach-workspace__status h1,
+.task7-coach-workspace__pane-heading h2,
+.task7-coach-workspace__evidence-header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.task7-coach-workspace__status h1 {
+  font-size: 18px;
+}
+
+.task7-coach-workspace__status p:last-child,
+.task7-coach-workspace__evidence-header p {
+  margin: 4px 0 0;
+  color: inherit;
+  opacity: 0.78;
+  font-size: 12.5px;
+}
+
+.task7-coach-workspace__eyebrow {
+  margin: 0 0 4px;
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.task7-coach-workspace__status .task7-coach-workspace__eyebrow {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.task7-coach-workspace__state-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 5px var(--primary-container);
+}
+
+.task7-coach-workspace__status[data-state="failed"] .task7-coach-workspace__state-dot {
+  background: var(--error);
+  box-shadow: 0 0 0 5px var(--error-container);
+}
+
+.task7-coach-workspace__status[data-state="completed"] .task7-coach-workspace__state-dot {
+  background: var(--event-kill);
+  box-shadow: 0 0 0 5px var(--tertiary-container);
+}
+
+.task7-coach-workspace__panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.task7-coach-workspace__video-pane,
+.task7-coach-workspace__conversation-pane {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 8px;
+}
+
+.task7-coach-workspace__conversation-pane {
+  grid-template-rows: auto minmax(240px, 1fr) auto;
+}
+
+.task7-coach-workspace__pane-heading,
+.task7-coach-workspace__evidence-header,
+.task7-coach-workspace__composer-actions {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task7-coach-workspace__pane-heading h2,
+.task7-coach-workspace__evidence-header h2 {
+  font-size: 15px;
+}
+
+.task7-coach-workspace__time,
+.task7-coach-workspace__count,
+.task7-coach-workspace__live-label {
+  flex: 0 0 auto;
+  color: var(--on-surface-variant);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.task7-coach-workspace__count,
+.task7-coach-workspace__live-label {
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-family: var(--font-ui);
+}
+
+.task7-coach-workspace__player-frame {
+  display: grid;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+}
+
+.task7-coach-workspace__player {
+  display: block;
+  width: 100%;
+  min-height: 300px;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-container-highest);
+  object-fit: contain;
+}
+
+.task7-coach-workspace__player-placeholder {
+  display: grid;
+  place-content: center;
+  gap: 7px;
+  min-height: 300px;
+  padding: 24px;
+  color: var(--on-surface-variant);
+  text-align: center;
+}
+
+.task7-coach-workspace__player-placeholder strong {
+  color: var(--on-surface);
+  font-size: 14px;
+}
+
+.task7-coach-workspace__player-placeholder span:last-child {
+  max-width: 34ch;
+  font-size: 12px;
+}
+
+.task7-coach-workspace__player-icon {
+  color: var(--primary);
+  font-size: 22px;
+}
+
+.task7-coach-workspace__evidence-header {
+  align-items: start;
+  padding-top: 4px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task7-coach-workspace__evidence-list {
+  display: grid;
+  gap: 8px;
+}
+
+.task7-coach-workspace__evidence-item {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 9px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.task7-coach-workspace__evidence-item:hover {
+  background: var(--surface-container-high);
+}
+
+.task7-coach-workspace__evidence-item:focus-visible,
+.task7-coach-workspace__send:focus-visible,
+.task7-coach-workspace__composer textarea:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.task7-coach-workspace__evidence-time {
+  color: var(--on-surface-variant);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.task7-coach-workspace__evidence-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.task7-coach-workspace__evidence-copy strong,
+.task7-coach-workspace__evidence-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task7-coach-workspace__evidence-copy strong {
+  font-size: 12px;
+}
+
+.task7-coach-workspace__evidence-copy span {
+  color: var(--on-surface-variant);
+  font-size: 11px;
+}
+
+.task7-coach-workspace__evidence-arrow {
+  color: var(--primary);
+  font-size: 16px;
+}
+
+.task7-coach-workspace__messages {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 240px;
+  max-height: 620px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.task7-coach-workspace__message {
+  max-width: 92%;
+  padding: 11px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+}
+
+.task7-coach-workspace__message[data-role="user"] {
+  justify-self: end;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+
+.task7-coach-workspace__message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+  color: var(--on-surface-variant);
+  font-size: 10.5px;
+}
+
+.task7-coach-workspace__message[data-role="user"] .task7-coach-workspace__message-meta {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.task7-coach-workspace__message p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.task7-coach-workspace__composer {
+  display: grid;
+  gap: 9px;
+  padding-top: 14px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task7-coach-workspace__composer-label {
+  color: var(--on-surface-variant);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.task7-coach-workspace__composer textarea {
+  width: 100%;
+  min-height: 74px;
+  resize: vertical;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  line-height: 1.45;
+}
+
+.task7-coach-workspace__composer textarea::placeholder {
+  color: var(--on-surface-variant);
+}
+
+.task7-coach-workspace__composer-actions {
+  align-items: center;
+}
+
+.task7-coach-workspace__composer-actions > span {
+  color: var(--on-surface-variant);
+  font-size: 10.5px;
+}
+
+.task7-coach-workspace__send {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 13px;
+  background: var(--primary);
+  color: var(--on-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.task7-coach-workspace__send:disabled {
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  cursor: not-allowed;
+}
+
+.task7-coach-workspace__empty {
+  margin: 0;
+  padding: 16px 4px;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 840px) {
+  .task7-coach-workspace {
+    padding: 16px;
+  }
+
+  .task7-coach-workspace__panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task7-coach-workspace__conversation-pane {
+    grid-template-rows: auto minmax(180px, 1fr) auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .task7-coach-workspace__status,
+  .task7-coach-workspace__video-pane,
+  .task7-coach-workspace__conversation-pane {
+    padding: 14px;
+  }
+
+  .task7-coach-workspace__evidence-item {
+    grid-template-columns: 62px minmax(0, 1fr) auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task7-coach-workspace__evidence-item {
+    transition: none;
+  }
+}

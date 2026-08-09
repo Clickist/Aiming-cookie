@@ -257,7 +257,7 @@ export interface AnalysisResultV2 {
     support_status?: string;
     diagnosis?: CoachDiagnosis;
     metrics?: Record<string, AnalysisMetricV2 | number>;
-    timeline?: TimelineEvent[];
+    timeline?: unknown[];
     limitations?: string[];
     visual_validation?: { status?: string; limitations?: string[]; [key: string]: unknown };
     [key: string]: unknown;
@@ -344,6 +344,9 @@ export interface AnalysisHistoryDetail {
   analysis_ref: string;
   run_ref: string | null;
   scenario: string | null;
+  presentation_label?: string | null;
+  training_at?: string | null;
+  analysis_completed_at?: string | null;
   input_mode: string;
   source_availability: Record<string, string>;
   trace_quality: TraceQuality;
@@ -369,6 +372,9 @@ export interface SessionStatus {
   analysis_type: string;
   input_mode: string;
   kovaak_run_id: number | null;
+  presentation_label?: string | null;
+  training_at?: string | null;
+  analysis_completed_at?: string | null;
   history: AnalysisHistoryDetail | null;
 }
 
@@ -580,6 +586,9 @@ export interface SessionListItem {
   input_mode: string;
   kovaak_run_id: number | null;
   scenario: string | null;
+  presentation_label?: string | null;
+  training_at?: string | null;
+  analysis_completed_at?: string | null;
   source_availability: Record<string, string>;
   trace_quality: TraceQuality;
 }
@@ -684,6 +693,9 @@ export interface TaskDetailV1 {
   input_mode?: InputMode | null;
   analysis_type?: string | null;
   run_ref?: string | null;
+  presentation_label?: string | null;
+  training_at?: string | null;
+  analysis_completed_at?: string | null;
   failure?: TaskFailureV1 | null;
   partial_outcome?: TaskPartialOutcomeV1 | null;
   retryable?: boolean | null;
@@ -704,6 +716,29 @@ export interface TaskListV1 {
 }
 
 /** Safe public Run list projection. Local source paths, trace bytes, and parser summaries are absent. */
+export interface KovaaKRunStatsCalibration {
+  fov?: number;
+  dpi?: number;
+  sensitivity?: number;
+  cm_per_360?: number;
+}
+
+export interface KovaaKRunAlignment {
+  state?: string;
+  status?: string;
+  coverage?: number;
+  duration_ms?: number;
+  error_code?: string;
+}
+
+export interface KovaaKRunVideoQuality {
+  availability?: string;
+  coverage?: {
+    packet_count?: number;
+    visible_duration_ms?: number;
+  } | null;
+}
+
 export interface KovaaKRunListItem {
   id: number;
   run_ref: string;
@@ -721,9 +756,10 @@ export interface KovaaKRunListItem {
   analysis_count: number;
   supported_input_modes: InputMode[];
   evidence_availability: Record<string, string>;
-  alignment: Record<string, unknown>;
-  video_quality: Record<string, unknown>;
+  alignment: KovaaKRunAlignment;
+  video_quality: KovaaKRunVideoQuality;
   limitations: string[];
+  stats_calibration?: KovaaKRunStatsCalibration | null;
   created_at: string;
   updated_at: string;
 }
@@ -748,6 +784,7 @@ export interface CalibrationValues {
 
 export interface KovaaKAnalysisRequest {
   input_mode?: InputMode;
+  allow_parallel?: boolean;
   video_path?: string;
   /** Legacy wire fields retained for backend migration compatibility; Task 3 UI never sends them. */
   cm_per_360?: number;
@@ -1040,6 +1077,14 @@ export interface CoachThreadOut {
   updated_at: string;
 }
 
+export interface CoachMessageCardV1 {
+  schema_version: "coach_message_card.v1";
+  kind: "metrics" | "timeline" | "evidence";
+  analysis_ref: string;
+  target_ref: string | null;
+  time_range_ms: number[] | null;
+}
+
 export interface CoachThreadMessageOut {
   id: number;
   role: string;
@@ -1047,6 +1092,7 @@ export interface CoachThreadMessageOut {
   created_at: string;
   legacy_session_id: number | null;
   context_refs: CoachContextRefV1[];
+  cards?: CoachMessageCardV1[];
 }
 
 export type CoachAnalysisRefStatus = "active" | "deleted";
@@ -1073,6 +1119,28 @@ export interface CoachPrimaryMessageResponse {
 
 export interface CoachPrimaryAttachResponse {
   ref: CoachAnalysisRefOut;
+}
+
+export type CoachSessionKind = "primary" | "conversation";
+export type CoachSessionStatus = "active" | "archived" | "deleted";
+
+export interface CoachSessionOut {
+  id: number;
+  user_id: string;
+  kind: CoachSessionKind;
+  title: string | null;
+  status: CoachSessionStatus;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  last_message_preview: string | null;
+  analysis_session_ids: number[];
+}
+
+export interface CoachSessionListResponse {
+  schema_version: "coach_session_list.v1";
+  sessions: CoachSessionOut[];
 }
 
 export interface CoachRuntimeStatusResponse {
@@ -1122,7 +1190,7 @@ export interface CoachAgentRunEventV1 {
   schema_version: "coach_agent_run_event.v1";
   event_ref: string;
   sequence: number;
-  type: "status" | "phase" | "tool" | "text" | "confirmation" | "error";
+  type: "status" | "phase" | "tool" | "text" | "confirmation" | "guidance" | "error";
   phase: "queued" | "text_generation" | "tool_execution" | "completed";
   code: string;
   message: string;
@@ -1130,9 +1198,50 @@ export interface CoachAgentRunEventV1 {
   created_at: string;
 }
 
+export interface ProductReadinessDomainV1 {
+  state: string;
+  availability: "known" | "unavailable";
+  reason_code?: string | null;
+  refs: string[];
+  count: number;
+  truncated: boolean;
+}
+
+export interface ProductReadinessV1 {
+  schema_version: "product_readiness.v1";
+  domains: Record<
+    "onboarding" | "provider" | "capture" | "kovaak" | "pending_runs" | "analysis" | "training_plan" | "storage",
+    ProductReadinessDomainV1
+  >;
+  capabilities: string[];
+  blocking_reasons: string[];
+}
+
+export type GuidanceIntentKind =
+  | "execute_command"
+  | "request_confirmation"
+  | "ui_navigation"
+  | "user_action_required"
+  | "wait_for_state"
+  | "completed"
+  | "blocked";
+
+export interface GuidanceIntentV1 {
+  schema_version: "guidance_intent.v1";
+  intent_id: string;
+  kind: GuidanceIntentKind;
+  goal: string;
+  target?: { target_id: string; safe_prefill: Record<string, string> } | null;
+  command_result_ref?: string | null;
+  precondition?: Record<string, unknown> | null;
+  completion_condition?: Record<string, unknown> | null;
+  recovery?: Record<string, unknown> | null;
+}
+
 export interface CoachAgentRunV1 {
   schema_version: "coach_agent_run.v1";
   run_ref: string;
+  session_id: number;
   parent_run_ref: string | null;
   attempt: number;
   status: "queued" | "running" | "succeeded" | "failed" | "stopped";

@@ -37,12 +37,26 @@ test("history loading and empty states use the local panel treatment", async () 
   assert.match(styles, /\.task4-state-panel\s*{[\s\S]*min-height:\s*88px;[\s\S]*padding:\s*18px 20px;/);
 });
 
-test("history header actions share one compact size and stay clear of the Coach overlay", async () => {
+test("history keeps refresh, Coach return, and delegates analysis to Coach", async () => {
   const client = await source("components/task4/HistoryClient.tsx");
   const styles = await source("components/task4/task4.css");
   assert.match(client, /<Button onClick=\{\(\) => void loadHistory\(\)\} size="compact" variant="ghost">刷新<\/Button>/);
-  assert.match(client, /<Button href="\/analyze" size="compact">＋ 新建分析<\/Button>/);
+  assert.doesNotMatch(client, /新建分析/);
+  assert.match(client, /让 Coach 分析/);
   assert.match(styles, /@media \(min-width: 840px\) and \(max-width: 1159px\)[\s\S]*\.task3-workspace\[data-coach-open="true"\] \.task4-page-head[\s\S]*width:\s*calc\(100% - var\(--task3-coach-width, 360px\)\);[\s\S]*flex-wrap:\s*wrap;/);
+});
+
+test("history supports selecting and batch-attaching completed analyses to Coach", async () => {
+  const client = await source("components/task4/HistoryClient.tsx");
+  const styles = await source("components/task4/task4.css");
+  assert.match(client, /attachCoachContext/);
+  assert.match(client, /selectedAnalysisRefs/);
+  assert.match(client, /router\.push\("\/"\)/);
+  assert.match(client, /type="checkbox"/);
+  assert.match(client, /disabled=\{!canAttach\}/);
+  assert.match(client, /Promise\.allSettled\(/);
+  assert.match(client, /引用所选分析/);
+  assert.match(styles, /\.task4-row-select\s*\{/);
 });
 
 test("history and run inspector do not expose path or raw trace fields", async () => {
@@ -54,6 +68,14 @@ test("history and run inspector do not expose path or raw trace fields", async (
 
 test("history never promotes an analysis summary into the scenario title", async () => {
   const value = await source("components/task4/HistoryClient.tsx");
-  assert.match(value, /session\.scenario \?\? "场景信息不可用"/);
-  assert.doesNotMatch(value, /session\.scenario \?\? session\.summary_label/);
+  assert.match(value, /presentRecordLabel\(\{[\s\S]*scenario: session\.scenario/);
+  assert.doesNotMatch(value, /scenario:\s*session\.summary_label/);
+});
+
+test("History keeps Analysis consumption local or sends it to Coach", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  assert.doesNotMatch(value, /analysisHref\(/);
+  assert.doesNotMatch(value, /href=\{[^}]*\/analysis/);
+  assert.match(value, /onLoadDetail\(session\.id\)/);
+  assert.match(value, /attachSelectedAnalyses/);
 });

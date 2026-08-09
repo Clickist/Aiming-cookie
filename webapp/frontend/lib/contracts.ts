@@ -172,6 +172,24 @@ function safeNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function presentTimelineEvent(value: unknown): TimelineEvent | null {
+  const item = record(value);
+  if (Object.keys(item).length === 0) return null;
+  const type = safeString(item.type)
+    ?? safeString(item.event_type)
+    ?? safeString(item.payload_type)
+    ?? safeString(item.kind)
+    ?? "event";
+  return {
+    frame: safeNumber(item.frame),
+    time_s: safeNumber(item.time_s),
+    relative_ms: safeNumber(item.relative_ms),
+    type,
+    label: safeString(item.label) ?? safeString(item.id) ?? type,
+    source: safeString(item.source),
+  };
+}
+
 function hasChineseDisplayText(value: string): boolean {
   return /[\u3400-\u9fff]/.test(value);
 }
@@ -257,6 +275,7 @@ export interface AnalysisIssuePresentation {
 export interface AnalysisWorkspacePresentation {
   analysisId: number;
   scenario: string;
+  recordLabel: string;
   createdAt: string;
   status: string;
   input: {
@@ -319,7 +338,11 @@ function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisM
   };
 }
 
-function presentIssues(value: unknown): AnalysisIssuePresentation[] {
+function containsTargetRelativeClaim(value: string): boolean {
+  return /接近落点|过冲|欠冲|是否到位|没有到位|冲过目标|没到目标|对准目标/.test(value);
+}
+
+function presentIssues(value: unknown, targetRelativeFactsUnavailable: boolean): AnalysisIssuePresentation[] {
   const issues = Array.isArray(value) ? value : [];
   return issues.flatMap((raw) => {
     const issue = record(raw);
@@ -371,7 +394,12 @@ function presentIssues(value: unknown): AnalysisIssuePresentation[] {
       claimLabel: CLAIM_LEVEL_LABELS[claimLevel ?? ""]
         ?? (presentationKind === "registry-backed" ? "未标注" : null),
       candidateExplanation: presentationKind === "registry-backed"
-        ? safeString(issue.plain_language_meaning)
+        ? (() => {
+          const explanation = safeString(issue.plain_language_meaning);
+          return targetRelativeFactsUnavailable && explanation && containsTargetRelativeClaim(explanation)
+            ? presentDisplayText(signalRaw, signal)
+            : explanation;
+        })()
         : null,
       expectedResult: presentationKind === "registry-backed"
         ? expectedResult && presentDisplayText(expectedResult, "当前 Analysis 未提供可展示的验证目标。")
@@ -411,7 +439,9 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
   const diagnosis = record(result.deterministic.diagnosis);
   const profileRaw = record(diagnosis.profile);
   const profileLabel = safeString(profileRaw.label);
-  const issues = presentIssues(diagnosis.issues);
+  const targetRelativeFactsUnavailable = safeStrings(result.deterministic.limitations)
+    .includes("target_relative_facts_unavailable");
+  const issues = presentIssues(diagnosis.issues, targetRelativeFactsUnavailable);
   const familySupport = familyStatus(result);
   const metrics = Object.entries(result.deterministic.metrics ?? {}).map(([key, metric]) =>
     presentMetric(key, metric)
@@ -472,11 +502,17 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     multimodal: "多源模式",
     video_fallback: "视频兼容",
   } as const;
+  const rawScenario = safeString(result.input_snapshot.scenario)
+    ?? safeString(session.history?.scenario);
+  const recordLabel = presentRecordLabel({
+    scenario: rawScenario,
+    trainingAt: session.training_at ?? session.history?.training_at,
+    analysisCompletedAt: session.analysis_completed_at ?? result.completed_at ?? session.finished_at,
+  });
   return {
     analysisId: session.id,
-    scenario: safeString(result.input_snapshot.scenario)
-      ?? safeString(session.history?.scenario)
-      ?? "场景信息不可用",
+    scenario: recordLabel.split(" | ")[0] ?? "未命名场景",
+    recordLabel,
     createdAt: safeString(result.completed_at) ?? safeString(session.created_at) ?? "时间不可用",
     status: safeString(session.status) ?? "unavailable",
     input: {
@@ -512,7 +548,10 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     issues,
     metrics: { formal, limited: metrics.filter((metric) => !formal.includes(metric)), summary, summaryMode },
     timeline: Array.isArray(result.deterministic.timeline)
-      ? result.deterministic.timeline.slice(0, 500)
+      ? result.deterministic.timeline.slice(0, 500).flatMap((event) => {
+        const projected = presentTimelineEvent(event);
+        return projected ? [projected] : [];
+      })
       : [],
     video: { kind: videoKind, reason: safeString(replay?.reason) },
   };
@@ -557,6 +596,36 @@ export interface TaskPresentation {
   state: string;
   phase: string | null;
   failureDomain: string | null;
+  presentationLabel: string;
+}
+
+function safePresentationScenario(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const scenario = value.trim();
+  if (
+    !scenario
+    || scenario.length > 160
+    || /^(?:run|analysis):\d+$/i.test(scenario)
+    || /(?:[A-Za-z]:[\\/]|\/(?:Users|home|private|tmp|var)\/|secret|token|password)/i.test(scenario)
+    || /[\u0000-\u001f]/.test(scenario)
+  ) return null;
+  return scenario;
+}
+
+function safePresentationTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value)) return null;
+  return Number.isNaN(new Date(value).valueOf()) ? null : value;
+}
+
+export function presentRecordLabel(input: {
+  scenario: unknown;
+  trainingAt: unknown;
+  analysisCompletedAt: unknown;
+}): string {
+  const scenario = safePresentationScenario(input.scenario) ?? "未命名场景";
+  const trainingAt = safePresentationTimestamp(input.trainingAt) ?? "训练时间未知";
+  const analysisCompletedAt = safePresentationTimestamp(input.analysisCompletedAt) ?? "分析尚未完成";
+  return `${scenario} | 训练：${trainingAt} | 分析：${analysisCompletedAt}`;
 }
 
 export function presentTask(task: TaskDetailV1): TaskPresentation {
@@ -564,6 +633,11 @@ export function presentTask(task: TaskDetailV1): TaskPresentation {
     state: task.state ? TASK_STATE_TEXT[task.state] : "状态不可用",
     phase: task.phase ? TASK_PHASE_TEXT[task.phase] : null,
     failureDomain: task.failure ? FAILURE_DOMAIN_TEXT[task.failure.domain] : null,
+    presentationLabel: presentRecordLabel({
+      scenario: task.presentation_label?.split(" | ")[0],
+      trainingAt: task.training_at,
+      analysisCompletedAt: task.analysis_completed_at,
+    }),
   };
 }
 
@@ -629,6 +703,8 @@ export function buildHistorySections(input: {
 }
 
 const HISTORY_STATUS_TEXT: Record<string, string> = {
+  completed: "\u5df2\u5b8c\u6210",
+  finalized: "\u5df2\u5b8c\u6210",
   available: "可用",
   attached: "已关联",
   partial: "部分结果",
@@ -682,6 +758,7 @@ export function getTrendPresentation(trend: HistoryTrend): TrendPresentation {
 
 export interface RunInspectorPresentation {
   identity: {
+    label: string;
     scenario: string;
     createdAt: string;
     finalization: string;
@@ -699,11 +776,38 @@ export interface RunInspectorPresentation {
 
 export function presentRunInspector(run: KovaaKRunListItem): RunInspectorPresentation {
   const evidence = run.evidence_availability;
-  const alignment = typeof run.alignment.status === "string"
-    ? run.alignment.status
+  const alignment = run.alignment.state === "resolved"
+    ? "aligned"
+    : typeof run.alignment.status === "string"
+      ? run.alignment.status
     : run.trace_quality.alignment_status ?? "unknown";
+  const alignmentCoverage = typeof run.alignment.coverage === "number"
+    && Number.isFinite(run.alignment.coverage)
+    && run.alignment.coverage >= 0
+    && run.alignment.coverage <= 1
+    ? run.alignment.coverage
+    : null;
+  const visibleDuration = typeof run.video_quality.coverage?.visible_duration_ms === "number"
+    ? run.video_quality.coverage.visible_duration_ms
+    : null;
+  const alignmentDuration = typeof run.alignment.duration_ms === "number"
+    && Number.isFinite(run.alignment.duration_ms)
+    && run.alignment.duration_ms > 0
+    ? run.alignment.duration_ms
+    : null;
+  const videoCoverage = typeof visibleDuration === "number"
+    && Number.isFinite(visibleDuration)
+    && visibleDuration >= 0
+    && alignmentDuration !== null
+    ? Math.min(1, visibleDuration / alignmentDuration)
+    : null;
   return {
     identity: {
+      label: presentRecordLabel({
+        scenario: run.scenario,
+        trainingAt: run.created_at,
+        analysisCompletedAt: null,
+      }),
       scenario: run.scenario ?? "未知场景",
       createdAt: run.created_at,
       finalization: getHistoryStatusText(run.finalization_state),
@@ -721,12 +825,12 @@ export function presentRunInspector(run: KovaaKRunListItem): RunInspectorPresent
       },
       raw: {
         availability: getHistoryStatusText(evidence.raw ?? run.trace_quality.availability),
-        coverage: run.trace_quality.coverage,
+        coverage: run.trace_quality.coverage ?? alignmentCoverage,
         alignment,
       },
       video: {
         availability: getHistoryStatusText(evidence.mp4 ?? evidence.video ?? run.source_availability.mp4),
-        coverage: null,
+        coverage: videoCoverage,
         alignment,
       },
     },

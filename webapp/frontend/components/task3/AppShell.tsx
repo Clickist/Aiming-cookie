@@ -1,184 +1,142 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type AnimationEvent as ReactAnimationEvent, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { getDefaultProviderStatus, getSession, listTasks, startCoachAnalysisSoftStart } from "@/lib/api";
-import { clampCoachWidth, COACH_DEFAULT_WIDTH } from "@/lib/contracts";
-import type { CoachAgentRunV1, ProviderProfileState } from "@/lib/types";
-import { CoachSidebar } from "@/components/task6/CoachSidebar";
-import { useAnimatedPresence } from "@/ui/primitives";
-
-const COACH_OPEN_KEY = "aiming-cookie.ui.coach-open";
-const COACH_WIDTH_KEY = "aiming-cookie.ui.coach-width";
-const SETTINGS_RETURN_KEY = "aiming-cookie.ui.settings-return";
+import {
+  attachCoachContext,
+  createCoachSession,
+  deleteCoachSession,
+  getDefaultProviderStatus,
+  listCoachSessions,
+  updateCoachSession,
+} from "@/lib/api";
+import type { ProviderProfileState } from "@/lib/types";
+import { CoachPanel } from "@/components/task6/CoachPanel";
+import { CoachVideoPane } from "@/components/task7/CoachVideoPane";
+import { GuidanceHost, type GuidanceEventDetail } from "@/components/task7/GuidanceHost";
+import SessionRail, { type SessionRailSession } from "@/components/task7/SessionRail";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
-type SettingsMotion = "idle" | "closing";
-
-function useWideLayout(): boolean {
-  const [wide, setWide] = useState(false);
-  useEffect(() => {
-    const media = window.matchMedia("(min-width: 1160px)");
-    const update = () => setWide(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
-  return wide;
-}
-
-function currentLocation(): string {
-  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
-}
-
-function settingsReturnPath(): string {
-  const stored = window.sessionStorage.getItem(SETTINGS_RETURN_KEY);
-  if (!stored || !stored.startsWith("/") || stored.startsWith("//") || stored.startsWith("/settings")) {
-    return "/history";
-  }
-  return stored;
-}
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
+type CoachVideoTarget = { analysisRef: string; timeMs: number };
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const previousPathnameRef = useRef(pathname);
-  const wide = useWideLayout();
   const [capability, setCapability] = useState<CoachCapability>("loading");
-  const [activeTaskCount, setActiveTaskCount] = useState<number | null>(null);
-  const [coachOpen, setCoachOpen] = useState(false);
-  const [coachWidth, setCoachWidth] = useState(COACH_DEFAULT_WIDTH);
-  const [preferenceLoaded, setPreferenceLoaded] = useState(false);
-  const [settingsMotion, setSettingsMotion] = useState<SettingsMotion>("idle");
-  const [softStartRun, setSoftStartRun] = useState<CoachAgentRunV1 | null>(null);
-  const shellHidden = pathname === "/" || pathname.startsWith("/onboarding");
-  const settingsActive = pathname.startsWith("/settings");
-  const coachSupported = !shellHidden && !pathname.startsWith("/settings");
+  const [coachSessions, setCoachSessions] = useState<SessionRailSession[]>([]);
+  const [selectedCoachSessionId, setSelectedCoachSessionId] = useState<number | null>(null);
+  const [draftSession, setDraftSession] = useState(false);
+  const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
+  const [guidance, setGuidance] = useState<GuidanceEventDetail | null>(null);
+  const shellHidden = pathname.startsWith("/onboarding");
+  const coachWorkspaceRoute = pathname === "/" || pathname.startsWith("/s/");
+  const settingsRoute = pathname.startsWith("/settings");
+  const showSessionRail = !shellHidden && !settingsRoute;
+  const keepSessionRailMounted = !shellHidden;
+  const requestedSessionId = /^\/s\/(\d+)$/.exec(pathname)?.[1];
+  const routeSessionId = requestedSessionId ? Number(requestedSessionId) : null;
 
   useEffect(() => {
-    if (!shellHidden && !settingsActive) {
-      window.sessionStorage.setItem(SETTINGS_RETURN_KEY, currentLocation());
-    }
-  }, [pathname, settingsActive, shellHidden]);
-
-  useEffect(() => {
-    if (previousPathnameRef.current === pathname) return;
-    previousPathnameRef.current = pathname;
-    if (!settingsActive) setSettingsMotion("idle");
-  }, [pathname, settingsActive]);
-
-  useEffect(() => {
-    const stored = Number(window.localStorage.getItem(COACH_WIDTH_KEY));
-    if (Number.isFinite(stored) && stored > 0) setCoachWidth(clampCoachWidth(stored));
-  }, []);
-
-  useEffect(() => {
-    if (shellHidden) return;
+    if (shellHidden) return undefined;
     const controller = new AbortController();
-    void Promise.allSettled([
-      getDefaultProviderStatus({ signal: controller.signal }),
-      listTasks({ signal: controller.signal }),
-    ]).then(([providerResult, tasksResult]) => {
-      if (providerResult.status === "fulfilled") {
-        setCapability(providerResult.value.status);
-      } else if (!controller.signal.aborted) {
-        setCapability("unavailable");
-      }
-      if (tasksResult.status === "fulfilled" && tasksResult.value.availability === "available") {
-        setActiveTaskCount(tasksResult.value.tasks.filter((task) =>
-          task.state === "importing" || task.state === "queued" || task.state === "running" || task.state === "retrying"
-        ).length);
-      }
-    });
+    void getDefaultProviderStatus({ signal: controller.signal })
+      .then((result) => setCapability(result.status))
+      .catch(() => {
+        if (!controller.signal.aborted) setCapability("unavailable");
+      });
     return () => controller.abort();
   }, [shellHidden]);
 
   useEffect(() => {
-    if (!coachSupported || capability === "loading") return;
-    const stored = window.localStorage.getItem(COACH_OPEN_KEY);
-    if (capability === "ready" && wide && stored !== "closed") {
-      setCoachOpen(true);
-    } else {
-      setCoachOpen(capability === "ready" && stored === "open");
-    }
-    setPreferenceLoaded(true);
-  }, [capability, coachSupported, wide]);
-
-  useEffect(() => {
-    setSoftStartRun(null);
-  }, [pathname]);
-
-  useEffect(() => {
-    if (!coachSupported || capability !== "ready" || !pathname.startsWith("/analysis/")) return;
-    const analysisId = Number(pathname.split("/")[2]);
-    if (!Number.isSafeInteger(analysisId) || analysisId <= 0) return;
+    if (shellHidden) return undefined;
     const controller = new AbortController();
-    void getSession(analysisId, { signal: controller.signal }).then(async (session) => {
-      if (session.status !== "done") return;
-      setCoachOpen(true);
-      setPreferenceLoaded(true);
-      try {
-        const run = await startCoachAnalysisSoftStart(analysisId, { signal: controller.signal });
-        if (!controller.signal.aborted) setSoftStartRun(run);
-      } catch {
-        // Coach remains available for a manual, recoverable retry.
-      }
+    void listCoachSessions({ signal: controller.signal }).then((result) => {
+      if (controller.signal.aborted) return;
+      setCoachSessions(result.sessions as SessionRailSession[]);
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [capability, coachSupported, pathname]);
+  }, [shellHidden]);
 
-  const toggleCoach = () => {
-    const next = !coachOpen;
-    setCoachOpen(next);
-    window.localStorage.setItem(COACH_OPEN_KEY, next ? "open" : "closed");
-    setPreferenceLoaded(true);
+  useEffect(() => {
+    setSelectedCoachSessionId((current) => {
+      if (draftSession) return null;
+      if (routeSessionId !== null && coachSessions.some((session) => Number(session.id) === routeSessionId)) {
+        return routeSessionId;
+      }
+      if (current !== null && coachSessions.some((session) => Number(session.id) === current)) return current;
+      const primary = coachSessions.find((session) => session.kind === "primary");
+      return primary ? Number(primary.id) : coachSessions[0] ? Number(coachSessions[0].id) : null;
+    });
+  }, [coachSessions, draftSession, routeSessionId]);
+
+  useEffect(() => {
+    setVideoTarget(null);
+  }, [selectedCoachSessionId]);
+
+  useEffect(() => {
+    if (shellHidden) return undefined;
+    const receiveGuidance = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (!detail || typeof detail !== "object") return;
+      const candidate = detail as Partial<GuidanceEventDetail>;
+      if (typeof candidate.run_ref !== "string" || !candidate.intent || typeof candidate.intent !== "object") return;
+      if ((candidate.intent as { schema_version?: unknown }).schema_version !== "guidance_intent.v1") return;
+      setGuidance({ run_ref: candidate.run_ref, intent: candidate.intent as GuidanceEventDetail["intent"] });
+    };
+    window.addEventListener("aiming-cookie:coach-guidance", receiveGuidance);
+    return () => window.removeEventListener("aiming-cookie:coach-guidance", receiveGuidance);
+  }, [shellHidden]);
+
+  const reloadCoachSessions = useCallback(async (nextSelectedId?: number | null) => {
+    const result = await listCoachSessions();
+    const sessions = result.sessions as SessionRailSession[];
+    setCoachSessions(sessions);
+    setSelectedCoachSessionId((current) => {
+      if (nextSelectedId !== undefined && nextSelectedId !== null && sessions.some((session) => Number(session.id) === nextSelectedId)) {
+        return nextSelectedId;
+      }
+      if (current !== null && sessions.some((session) => Number(session.id) === current)) return current;
+      const primary = sessions.find((session) => session.kind === "primary");
+      return primary ? Number(primary.id) : sessions[0] ? Number(sessions[0].id) : null;
+    });
+  }, []);
+
+  const handleNewCoachSession = () => {
+    setDraftSession(true);
+    setSelectedCoachSessionId(null);
+    router.push("/");
   };
 
-  const closeCoach = () => {
-    setCoachOpen(false);
-    window.localStorage.setItem(COACH_OPEN_KEY, "closed");
-    setPreferenceLoaded(true);
-  };
-
-  const updateCoachWidth = (requestedWidth: number) => {
-    const nextWidth = clampCoachWidth(requestedWidth);
-    setCoachWidth(nextWidth);
-    window.localStorage.setItem(COACH_WIDTH_KEY, String(nextWidth));
-  };
-
-  const rememberSettingsReturn = () => {
-    window.sessionStorage.setItem(SETTINGS_RETURN_KEY, currentLocation());
-  };
-
-  const closeSettings = () => {
-    if (settingsMotion === "closing") return;
-    if (prefersReducedMotion()) {
-      router.replace(settingsReturnPath());
-      return;
+  const ensureCoachSession = useCallback(async () => {
+    try {
+      const session = await createCoachSession();
+      await reloadCoachSessions(session.id);
+      setDraftSession(false);
+      router.push(`/s/${session.id}`);
+      return session.id;
+    } catch {
+      return null;
     }
-    setSettingsMotion("closing");
+  }, [reloadCoachSessions, router]);
+
+  const handleArchiveCoachSession = async (session: SessionRailSession) => {
+    try {
+      await updateCoachSession(Number(session.id), { status: "archived" });
+      await reloadCoachSessions(selectedCoachSessionId === Number(session.id) ? null : undefined);
+    } catch {
+      // Keep the current selection when an archive request fails.
+    }
   };
 
-  const finishSettingsMotion = (event: ReactAnimationEvent<HTMLElement>) => {
-    if (event.currentTarget !== event.target) return;
-    if (settingsMotion === "closing") router.replace(settingsReturnPath());
+  const handleDeleteCoachSession = async (session: SessionRailSession) => {
+    try {
+      await deleteCoachSession(Number(session.id));
+      await reloadCoachSessions(selectedCoachSessionId === Number(session.id) ? null : undefined);
+    } catch {
+      // Keep the current selection when a delete request fails.
+    }
   };
-
-  const navItems = useMemo(() => [
-    { href: "/history", label: "历史" },
-    { href: "/analyze", label: "＋ 新建分析" },
-  ], []);
-
-  const tasksActive = pathname.startsWith("/tasks");
-  const coachActive = coachOpen && coachSupported;
-  const showCoach = coachSupported && coachOpen && preferenceLoaded;
-  const coachPresence = useAnimatedPresence(showCoach, 160);
 
   if (shellHidden) return <>{children}</>;
 
@@ -187,100 +145,74 @@ export function AppShell({ children }: { children: ReactNode }) {
       <a className="task3-skip-link" href="#main-content">跳到主要内容</a>
       <header className="task3-toolbar">
         <span className="task3-logo" aria-label="Aiming Cookie">Aiming&nbsp;Cookie</span>
-        <nav aria-label="主要导航" className="task3-primary-nav">
-          {navItems.map((item) => {
-            const active = item.href === "/analyze"
-              ? pathname === "/analyze" || pathname.startsWith("/analysis/")
-              : pathname.startsWith(item.href);
-            return (
-              <Link
-                aria-current={active ? "page" : undefined}
-                className={["t-btn", active ? "active" : ""].filter(Boolean).join(" ")}
-                href={item.href}
-                key={item.href}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
         <div className="task3-toolbar-spacer" />
-        <nav aria-label="工具导航" className="task3-tool-nav">
-          <Link
-            aria-current={tasksActive ? "page" : undefined}
-            className={["t-btn", tasksActive ? "active" : ""].filter(Boolean).join(" ")}
-            href="/tasks"
-          >
-            <span className="task3-task-nav-label">
-              {activeTaskCount ? <span aria-hidden="true" className="task3-task-nav-dot" /> : null}
-              任务状态
-              {activeTaskCount ? <span className="task3-toolbar-badge">{activeTaskCount}</span> : null}
-            </span>
-          </Link>
-          {coachSupported ? (
-            <span className="task3-toolbar-tooltip">
-              <button
-                aria-expanded={coachOpen}
-                aria-label="Coach"
-                className={["t-icon", coachActive ? "active" : ""].filter(Boolean).join(" ")}
-                onClick={toggleCoach}
-                type="button"
-              >
-                <span aria-hidden="true">◧</span>
-              </button>
-            </span>
-          ) : null}
-          {settingsActive ? (
-            <button
-              aria-label="关闭设置"
-              className="t-icon active"
-              onClick={closeSettings}
-              title="关闭设置"
-              type="button"
-            >
-              <span aria-hidden="true">⚙</span>
-            </button>
-          ) : (
-            <Link
-              aria-label="设置"
-              className="t-icon"
-              href="/settings"
-              onClick={rememberSettingsReturn}
-            >
-              <span aria-hidden="true">⚙</span>
-            </Link>
-          )}
-        </nav>
       </header>
       <div
         className="task3-workspace"
-        data-coach-open={coachPresence.state === "open" || undefined}
-        style={{ "--task3-coach-width": `${coachWidth}px` } as CSSProperties}
+        data-coach-workspace={coachWorkspaceRoute || undefined}
+        data-settings-route={settingsRoute || undefined}
+        data-session-rail={showSessionRail || undefined}
       >
-        <main
-          className="task3-route-content"
-          data-settings-page={settingsActive || undefined}
-          data-settings-motion={settingsActive && settingsMotion === "closing" ? settingsMotion : undefined}
-          id="main-content"
-          key={pathname}
-          onAnimationEnd={finishSettingsMotion}
-          tabIndex={-1}
-        >
-          {children}
-        </main>
-        {coachPresence.present ? (
-          <CoachSidebar
-            capability={capability}
-            onClose={closeCoach}
-            onWidthChange={updateCoachWidth}
-            open={showCoach}
-            pathname={pathname}
-            softStartRun={softStartRun}
-            state={coachPresence.state}
-            width={coachWidth}
+        {keepSessionRailMounted ? (
+          <SessionRail
+            className={settingsRoute ? "task7-session-rail--route-hidden" : undefined}
+            currentSessionId={selectedCoachSessionId}
+            onArchiveSession={(session) => void handleArchiveCoachSession(session)}
+            onHistory={() => router.push("/history")}
+            onNewSession={handleNewCoachSession}
+            onSelectSession={(session) => {
+              setDraftSession(false);
+              setSelectedCoachSessionId(Number(session.id));
+              router.push(`/s/${session.id}`);
+            }}
+            onSettings={() => router.push("/settings")}
+            onSoftDeleteSession={(session) => void handleDeleteCoachSession(session)}
+            providerStatus={capability === "ready" ? "ready" : capability === "loading" ? "loading" : capability === "unavailable" ? "unavailable" : "waiting"}
+            sessions={coachSessions}
           />
         ) : null}
+        <main
+          className="task3-route-content"
+          data-settings-page={settingsRoute || undefined}
+          id="main-content"
+          tabIndex={-1}
+        >
+          <div
+            aria-hidden={!coachWorkspaceRoute || undefined}
+            className="task3-coach-view"
+            data-video-open={Boolean(videoTarget) || undefined}
+            style={{ display: coachWorkspaceRoute ? undefined : "none" }}
+          >
+            {coachWorkspaceRoute ? (
+              videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} onClose={() => setVideoTarget(null)} /> : null
+            ) : null}
+            <div className="task3-coach-conversation">
+              <CoachPanel
+                capability={capability}
+                currentAnalysisRef={null}
+                draftSession={draftSession}
+                layoutMode="full"
+                onEnsureSession={ensureCoachSession}
+                onOpenVideo={(analysisRef, timeMs = 0) => setVideoTarget({ analysisRef, timeMs })}
+                onRequestContext={async (analysisRef) => {
+                  await attachCoachContext(
+                    { kind: "analysis", analysis_ref: analysisRef },
+                    selectedCoachSessionId === null ? {} : { sessionId: selectedCoachSessionId },
+                  );
+                }}
+                pathname={pathname}
+                sessionId={selectedCoachSessionId}
+              />
+            </div>
+          </div>
+          {!coachWorkspaceRoute ? <div className="task3-page-view">{children}</div> : null}
+        </main>
       </div>
+      <GuidanceHost
+        intent={guidance?.intent ?? null}
+        onIntent={(next) => setGuidance((current) => next && current ? { ...current, intent: next } : null)}
+        runRef={guidance?.run_ref ?? null}
+      />
     </div>
   );
 }
