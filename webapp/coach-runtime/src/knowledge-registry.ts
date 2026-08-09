@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isRecord } from "./contracts.ts";
@@ -8,22 +8,28 @@ export const REGISTRY_SCHEMA_VERSION_V1 = "coach_knowledge_registry.v1";
 export const REGISTRY_SCHEMA_VERSION_V2 = "coach_knowledge_registry.v2";
 export const REGISTRY_SCHEMA_VERSION_V3 = "coach_knowledge_registry.v3";
 export const REGISTRY_SCHEMA_VERSION = REGISTRY_SCHEMA_VERSION_V3;
-const REGISTRY_ROOT = join(
-  dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "knowledge", "coach",
+const SOURCE_KNOWLEDGE_ROOT = join(
+  dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "knowledge",
 );
-const SCENARIO_ROOT = join(
-  dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "knowledge", "scenarios",
-);
-const SCENARIO_REGISTRY_FILE = join(SCENARIO_ROOT, "registry.v1.json");
-const SCENARIO_MANIFEST_FILE = join(SCENARIO_ROOT, "launch-manifest.v1.json");
-const REGISTRY_FILES = new Map([
-  ["2026-07-14.v1", join(REGISTRY_ROOT, "registry.v1.json")],
-  ["2026-07-22.v2", join(REGISTRY_ROOT, "registry.v2.json")],
-  ["2026-07-28.v3", join(REGISTRY_ROOT, "registry.v3.json")],
-  ["2026-07-29.v4", join(REGISTRY_ROOT, "registry.v4.json")],
-  ["2026-08-06.v5", join(REGISTRY_ROOT, "registry.v5.json")],
-  ["2026-08-06.v6", join(REGISTRY_ROOT, "registry.v6.json")],
-]);
+function knowledgeRoots(): { registry: string; scenarios: string } {
+  const resourceRoot = process.env.AIMING_COOKIE_RESOURCE_ROOT?.trim();
+  const root = resourceRoot
+    ? resolve(resourceRoot, "knowledge")
+    : SOURCE_KNOWLEDGE_ROOT;
+  return { registry: join(root, "coach"), scenarios: join(root, "scenarios") };
+}
+
+function registryFiles(): Map<string, string> {
+  const { registry } = knowledgeRoots();
+  return new Map([
+    ["2026-07-14.v1", join(registry, "registry.v1.json")],
+    ["2026-07-22.v2", join(registry, "registry.v2.json")],
+    ["2026-07-28.v3", join(registry, "registry.v3.json")],
+    ["2026-07-29.v4", join(registry, "registry.v4.json")],
+    ["2026-08-06.v5", join(registry, "registry.v5.json")],
+    ["2026-08-06.v6", join(registry, "registry.v6.json")],
+  ]);
+}
 const MAX_REGISTRY_BYTES = 512 * 1024;
 const MAX_ENTRIES = 512;
 const MAX_RESULTS = 3;
@@ -84,8 +90,12 @@ const SCENARIO_REVIEW_AFTER = new Set([
 ]);
 
 export function activeScenarioProfileRefs(
-  scenarioRegistryRaw: unknown = JSON.parse(readFileSync(SCENARIO_REGISTRY_FILE, "utf8")),
-  scenarioManifestRaw: unknown = JSON.parse(readFileSync(SCENARIO_MANIFEST_FILE, "utf8")),
+  scenarioRegistryRaw: unknown = JSON.parse(
+    readFileSync(join(knowledgeRoots().scenarios, "registry.v1.json"), "utf8"),
+  ),
+  scenarioManifestRaw: unknown = JSON.parse(
+    readFileSync(join(knowledgeRoots().scenarios, "launch-manifest.v1.json"), "utf8"),
+  ),
 ): Set<string> {
   if (!isRecord(scenarioRegistryRaw) || !Array.isArray(scenarioRegistryRaw.entries)) {
     throw new KnowledgeRegistryError("scenario registry is invalid");
@@ -789,7 +799,7 @@ const cached = new Map<string, KnowledgeRegistry>();
 export function loadKnowledgeRegistry(registryVersion = "2026-08-06.v6"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
-  const registryFile = REGISTRY_FILES.get(registryVersion);
+  const registryFile = registryFiles().get(registryVersion);
   if (!registryFile) throw new KnowledgeRegistryError("unknown registry version");
   const raw = readFileSync(registryFile);
   if (raw.byteLength > MAX_REGISTRY_BYTES) throw new KnowledgeRegistryError("registry exceeds size limit");

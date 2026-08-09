@@ -17,7 +17,12 @@ REGISTRY_SCHEMA_VERSION_V1 = "coach_knowledge_registry.v1"
 REGISTRY_SCHEMA_VERSION_V2 = "coach_knowledge_registry.v2"
 REGISTRY_SCHEMA_VERSION_V3 = "coach_knowledge_registry.v3"
 REGISTRY_SCHEMA_VERSION = REGISTRY_SCHEMA_VERSION_V3
-_REGISTRY_ROOT = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+_RESOURCE_ROOT = os.environ.get("AIMING_COOKIE_RESOURCE_ROOT", "").strip()
+_REGISTRY_ROOT = (
+    Path(_RESOURCE_ROOT) / "knowledge" / "coach"
+    if _RESOURCE_ROOT
+    else Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+)
 REGISTRY_PATH_V1 = _REGISTRY_ROOT / "registry.v1.json"
 REGISTRY_PATH_V2 = _REGISTRY_ROOT / "registry.v2.json"
 REGISTRY_PATH_V3 = _REGISTRY_ROOT / "registry.v3.json"

@@ -32,6 +32,7 @@ from .kovaak_ingest import (
     normalize_kovaak_stem,
 )
 from .workspace import session_dir
+from .source_requirements import validate_source_requirements
 
 
 SNAPSHOT_MAGIC = b"ACRI"
@@ -51,6 +52,7 @@ ANALYSIS_INPUT_SNAPSHOT_VERSION = "analysis_input_snapshot.v3"
 CANONICAL_TIME_WINDOW_VERSION = "canonical_time_window.v1"
 _SHA256_DIGEST = re.compile(r"^[0-9a-fA-F]{64}$")
 _STRICT_IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]+$")
+_SCENARIO_DEFINITION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,159}$")
 _ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 MAX_CAPTURE_WINDOW_MS = 300_000
 
@@ -362,6 +364,22 @@ def _row(row: Any) -> dict:
     return result
 
 
+def _sqlite_timestamp_to_wire_utc(value: object) -> object:
+    """Mark SQLite CURRENT_TIMESTAMP values as UTC for browser parsing."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return value
+    if text.endswith("Z"):
+        return text
+    if " " in text and "T" not in text:
+        return f"{text.replace(' ', 'T')}Z"
+    if "T" in text:
+        return f"{text}Z"
+    return value
+
+
 def _current_video_evidence(
     run: dict, *, shallow: bool = False,
 ) -> tuple[str, dict[str, object] | None]:
@@ -494,11 +512,21 @@ def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]
         and performance_availability == "available"
         and trace_quality["availability"] == "available"
     )
-    supported = ["input_native"] if native else []
-    if native and video_availability == "available":
-        supported.append("multimodal")
-    if stats_availability == "available" and video_availability == "available":
-        supported.append("video_fallback")
+    try:
+        canonical_window = _canonical_time_window_from_run(run)
+    except ValueError:
+        canonical_window = None
+    canonical_window_available = canonical_window is not None
+    fixed_bundle = validate_source_requirements({
+        "sources": {
+            "stats": {"availability": stats_availability},
+            "performance": {"availability": performance_availability},
+            "video": {"availability": video_availability},
+        },
+        "trace": {"availability": trace_quality["availability"]},
+        "canonical_time_window": canonical_window,
+    })
+    supported = ["multimodal"] if fixed_bundle["ready"] else []
     ready = bool(supported)
     analysis_count = int(run.get("analysis_count") or 0)
     limitations: list[str] = []
@@ -510,6 +538,8 @@ def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]
         limitations.append(f"raw_{trace_quality['availability']}")
     if video_availability != "available":
         limitations.append(f"video_{video_availability}")
+    if not canonical_window_available:
+        limitations.append("canonical_window_missing")
     return {
         "readiness_state": (
             "analyzed" if ready and analysis_count > 0
@@ -523,6 +553,7 @@ def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]
             "performance": performance_availability,
             "raw": trace_quality["availability"],
             "video": video_availability,
+            "canonical_window": "available" if canonical_window_available else "missing",
         },
         "video": video,
         "video_quality": _video_quality(run, video_availability),
@@ -552,6 +583,33 @@ def _public_summary(summary: object | None) -> dict | None:
     }
     sanitized = _sanitize_public_value(public)
     return sanitized if isinstance(sanitized, dict) else None
+
+
+def _public_stats_calibration(run: dict) -> dict[str, float] | None:
+    """Project only scalar calibration facts from the private Stats summary."""
+    summary = run.get("stats_summary")
+    config = summary.get("config") if isinstance(summary, dict) else None
+    if not isinstance(config, dict):
+        config = {}
+    raw_values = {
+        "fov": config.get("FOV", run.get("stats_fov")),
+        "dpi": config.get("DPI", run.get("stats_dpi")),
+        "sensitivity": config.get("Horiz Sens", run.get("stats_sensitivity")),
+        "cm_per_360": (
+            summary.get("cm_per_360", run.get("stats_cm_per_360"))
+            if isinstance(summary, dict)
+            else run.get("stats_cm_per_360")
+        ),
+    }
+    values: dict[str, float] = {}
+    for key, raw in raw_values.items():
+        try:
+            numeric = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if numeric > 0 and numeric == numeric:
+            values[key] = numeric
+    return values or None
 
 
 _DROP_PUBLIC_VALUE = object()
@@ -711,6 +769,20 @@ def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
     performance_source = _summary_source(run.get("performance_summary"))
     evidence = _run_evidence_view(run, shallow=shallow)
     video = evidence["video"]
+    alignment = _public_alignment(run)
+    trace_quality = _trace_quality(
+        run.get("trace_state"), trace_path, shallow=shallow,
+    )
+    coverage = alignment.get("coverage")
+    if (
+        trace_quality["availability"] == "available"
+        and alignment.get("state") == "resolved"
+        and isinstance(coverage, (int, float))
+        and not isinstance(coverage, bool)
+        and 0 <= coverage <= 1
+    ):
+        trace_quality["alignment_status"] = "aligned"
+        trace_quality["coverage"] = coverage
     if shallow:
         source_availability = {
             "stats": _source_stat_availability(
@@ -755,9 +827,7 @@ def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
             video.get("artifact_ref") if isinstance(video, dict) else None
         ),
         "source_availability": source_availability,
-        "trace_quality": _trace_quality(
-            run.get("trace_state"), trace_path, shallow=shallow,
-        ),
+        "trace_quality": trace_quality,
         "trace_state": run.get("trace_state", "none"),
         "trace_error": _public_string(run.get("trace_error")),
         "finalization_state": run.get("finalization_state") or "discovered",
@@ -766,13 +836,14 @@ def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
         "analysis_count": int(run.get("analysis_count") or 0),
         "supported_input_modes": evidence["supported_input_modes"],
         "evidence_availability": evidence["evidence_availability"],
-        "alignment": _public_alignment(run),
+        "alignment": alignment,
         "video_quality": evidence["video_quality"],
         "limitations": evidence["limitations"],
+        "stats_calibration": _public_stats_calibration(run),
         "stats_summary": _public_summary(run.get("stats_summary")),
         "performance_summary": _public_summary(run.get("performance_summary")),
-        "created_at": run["created_at"],
-        "updated_at": run["updated_at"],
+        "created_at": _sqlite_timestamp_to_wire_utc(run.get("created_at")),
+        "updated_at": _sqlite_timestamp_to_wire_utc(run.get("updated_at")),
     }
 
 
@@ -782,9 +853,14 @@ async def list_kovaak_run_summaries(user_id: str, limit: int = 100) -> list[dict
     cur = await conn.execute(
         "SELECT kr.id, kr.source_key, kr.scenario, kr.stats_path, kr.performance_path, "
         "kr.mouse_trace_path, kr.trace_state, kr.trace_error, "
+        "kr.window_start_epoch_ms, kr.window_end_epoch_ms, "
         "kr.alignment_state, kr.alignment_summary, kr.finalization_state, "
         "kr.finalization_error, kr.video_path, kr.video_state, kr.video_error, "
         "kr.video_receipt_json, kr.video_summary_json, kr.created_at, kr.updated_at, "
+        "json_extract(kr.stats_summary, '$.config.FOV') AS stats_fov, "
+        "json_extract(kr.stats_summary, '$.config.DPI') AS stats_dpi, "
+        "json_extract(kr.stats_summary, '$.config.\"Horiz Sens\"') AS stats_sensitivity, "
+        "json_extract(kr.stats_summary, '$.cm_per_360') AS stats_cm_per_360, "
         "(SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id=kr.id "
         "AND s.user_id=kr.user_id) AS analysis_count "
         "FROM kovaak_runs AS kr WHERE kr.user_id=? "
@@ -798,6 +874,28 @@ async def list_kovaak_run_summaries(user_id: str, limit: int = 100) -> list[dict
         public.pop("performance_summary", None)
         summaries.append(public)
     return summaries
+
+
+def _local_scenario_behavior_descriptor(
+    scenario: object,
+) -> dict[str, object] | None:
+    if not isinstance(scenario, str) or not _SCENARIO_DEFINITION_NAME.fullmatch(scenario):
+        return None
+    from .config import resolve_kovaak_install_dir
+    from kovaak_tracker.scenario_profiles import parse_local_scenario_behavior_descriptor
+
+    install = resolve_kovaak_install_dir()
+    if install is None:
+        return None
+    candidate = (
+        install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
+        / f"{scenario}.sce"
+    )
+    try:
+        data = candidate.read_bytes()
+    except OSError:
+        return None
+    return parse_local_scenario_behavior_descriptor(data, expected_display_name=scenario)
 
 
 async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
@@ -874,9 +972,11 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
     )
     from kovaak_tracker.scenario_profiles import resolve_scenario_profile
 
+    behavior_descriptor = _local_scenario_behavior_descriptor(run.get("scenario"))
     scenario_resolution = resolve_scenario_profile(
         observed_scenario_hash if isinstance(observed_scenario_hash, str) else None,
         run.get("scenario") if isinstance(run.get("scenario"), str) else None,
+        behavior_descriptor=behavior_descriptor,
     )
     return {
         "schema_version": ANALYSIS_INPUT_SNAPSHOT_VERSION,
@@ -884,6 +984,7 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
         "scenario": run.get("scenario"),
         "scenario_identity_version": SCENARIO_IDENTITY_VERSION,
         "scenario_resolution": scenario_resolution,
+        "scenario_behavior_descriptor": behavior_descriptor,
         "sources": sources,
         "trace": trace,
         "canonical_time_window": canonical_time_window,
@@ -964,6 +1065,10 @@ def public_analysis_input_snapshot(snapshot: dict) -> dict:
     if "scenario_resolution" in snapshot:
         public_snapshot["scenario_resolution"] = _sanitize_public_value(
             snapshot.get("scenario_resolution")
+        )
+    if "scenario_behavior_descriptor" in snapshot:
+        public_snapshot["scenario_behavior_descriptor"] = _sanitize_public_value(
+            snapshot.get("scenario_behavior_descriptor")
         )
     if "calibration" in snapshot:
         public_snapshot["calibration"] = _sanitize_public_value(
@@ -1273,6 +1378,7 @@ async def ingest_discovery(
             "file_name": stats.file_name,
             "summary": stats.summary,
             "config": stats.config,
+            "cm_per_360": getattr(stats, "cm_per_360", None),
             "kill_count": int(len(stats.kills.index)),
             "weapon_aggregates": list(
                 getattr(stats, "weapon_aggregates", ()) or ()

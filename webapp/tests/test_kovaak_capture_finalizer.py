@@ -697,9 +697,10 @@ async def test_raw_completeness_receipt_never_attaches_incomplete_native_trace(
     assert run["trace_state"] == expected_trace_state
     assert run["trace_error"] == expected_error
     readiness = kovaak_run_store.derive_run_readiness(run)
-    assert readiness["input_native"] is (expected_trace_state == "attached")
-    assert readiness["video_fallback"] is True
-    assert readiness["state"] == "pending_analysis"
+    assert readiness["state"] == (
+        "pending_analysis" if expected_trace_state == "attached"
+        else "incomplete_evidence"
+    )
 
 
 @pytest.mark.asyncio
@@ -1063,7 +1064,7 @@ async def test_capture_session_mismatch_is_terminal_video_degradation(
     assert run["video_state"] == "unavailable"
     assert run["video_error"] == "video_capture_session_mismatch"
     assert run["trace_state"] == "attached"
-    assert kovaak_run_store.derive_run_readiness(run)["state"] == "pending_analysis"
+    assert kovaak_run_store.derive_run_readiness(run)["state"] == "incomplete_evidence"
     assert run["finalization_state"] == "finalized"
 
 

@@ -369,6 +369,135 @@ def test_name_only_match_is_candidate_and_never_selects_a_profile():
     assert resolution["claim_ceiling"] == "outcome_only"
 
 
+def test_local_scenario_definition_routes_reactive_concurrent_hitscan_to_dynamic_baseline():
+    definition = """Name=1wall5targets_pasu
+AddedBots=test.bot;test.bot;test.bot;test.bot;test.bot
+PlayerCharacters=A_air_pistol_frozen
+// KovaaK scenario definitions may include explanatory comments.
+
+[Bot Profile]
+Name=test
+DodgeProfileNames=test
+CharacterProfile=react
+free-form metadata from the local scenario author
+
+[Character Profile]
+Name=react
+MaxSpeed=1300.0
+
+[Dodge Profile]
+Name=test
+ToggleLeftRight=true
+ToggleForwardBack=true
+
+[Character Profile]
+Name=A_air_pistol_frozen
+WeaponProfileNames=pistol
+
+[Weapon Profile]
+Name=pistol
+Type=Hitscan
+ShotsPerClick=1
+DamagePerShot=1000.0
+Category=SemiAuto
+"""
+    descriptor = scenario_profiles.parse_local_scenario_behavior_descriptor(
+        definition.encode("utf-8"),
+        expected_display_name="1wall5targets_pasu",
+    )
+
+    assert descriptor == {
+        "schema_version": "scenario_behavior_descriptor.v1",
+        "display_name": "1wall5targets_pasu",
+        "source_sha256": descriptor["source_sha256"],
+        "bot_count": 5,
+        "reactive_bot_count": 5,
+        "dodge_axes": ["horizontal", "depth"],
+        "weapon": {
+            "delivery": "hitscan",
+            "fire_mode": "semi_auto",
+            "shots_per_click": 1,
+            "damage_per_shot": 1000.0,
+        },
+    }
+
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "a5be19c6e6aeb0d774c5e9d9fb497e91",
+        display_name="1wall5targets_pasu",
+        behavior_descriptor=descriptor,
+    )
+
+    assert resolution["scenario_profile_ref"] is None
+    assert resolution["classification_source"] == "local_scenario_definition"
+    assert resolution["classification_confidence"] == "confirmed"
+    assert resolution["aim_family"] == "dynamic_clicking"
+    assert resolution["target_motion"] == {
+        "model": "reactive", "target_count_model": "concurrent",
+    }
+    assert resolution["allowed_analyzers"] == ["dynamic_clicking.baseline.v1"]
+    assert resolution["claim_ceiling"] == "descriptive_only"
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+
+
+def test_local_scenario_definition_routes_static_hitscan_to_static_baseline():
+    definition = """Name=1wall 6targets small
+AddedBots=target.bot;target.bot;target.bot;target.bot;target.bot;target.bot
+PlayerCharacters=Player
+
+[Bot Profile]
+Name=target
+CharacterProfile=target
+
+[Character Profile]
+Name=target
+MaxSpeed=0.0
+
+[Character Profile]
+Name=Player
+WeaponProfileNames=BB Gun
+
+[Weapon Profile]
+Name=BB Gun
+Type=Hitscan
+ShotsPerClick=1
+DamagePerShot=1.0
+Category=SemiAuto
+"""
+    descriptor = scenario_profiles.parse_local_scenario_behavior_descriptor(
+        definition.encode("utf-8"),
+        expected_display_name="1wall 6targets small",
+    )
+
+    assert descriptor is not None
+    assert descriptor["bot_count"] == 6
+    assert descriptor["reactive_bot_count"] == 0
+    assert descriptor["dodge_axes"] == []
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unknown-static-hash",
+        display_name="1wall 6targets small",
+        behavior_descriptor=descriptor,
+    )
+    assert resolution["scenario_profile_ref"] is None
+    assert resolution["aim_family"] == "static_clicking"
+    assert resolution["target_motion"] == {
+        "model": "static", "target_count_model": "concurrent",
+    }
+    assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    assert resolution["claim_ceiling"] == "descriptive_only"
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+
+
+def test_local_scenario_definition_is_not_a_name_fallback_or_path_leak():
+    assert scenario_profiles.parse_local_scenario_behavior_descriptor(
+        b"Name=1wall5targets_pasu\nAddedBots=test.bot\n",
+        expected_display_name="1wall5targets_pasu",
+    ) is None
+    assert scenario_profiles.parse_local_scenario_behavior_descriptor(
+        (b"Name=1wall5targets_pasu\n" + b"x" * (3 * 1024 * 1024)),
+        expected_display_name="1wall5targets_pasu",
+    ) is None
+
+
 def test_same_display_name_with_different_hashes_keeps_distinct_identities():
     first = _profile()
     second = _profile(

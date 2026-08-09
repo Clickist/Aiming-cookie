@@ -771,18 +771,46 @@ async def test_session_video_supports_range_requests_for_seek(tmp_path):
 
 async def _seed_route_video_run(tmp_path: Path, source_key: str) -> tuple[dict, Path]:
     stats = tmp_path / f"{source_key} Stats.csv"
+    performance = tmp_path / f"{source_key} Performance.perf"
+    raw = tmp_path / f"{source_key} Raw.bin"
     stats.write_bytes(f"stats-{source_key}".encode())
+    performance.write_bytes(f"performance-{source_key}".encode())
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": 1_000, "dx": 1, "dy": 2, "buttons": 0},
+    ])
     run = await kovaak_run_store.upsert_kovaak_run(
         user_id=config.DESKTOP_LOCAL_PROFILE,
         source_key=source_key,
         scenario="Scenario",
         stats_path=str(stats),
+        performance_path=str(performance),
+        mouse_trace_path=str(raw),
         stats_summary={
             "source": kovaak_run_store._source_metadata(
                 stats, kovaak_run_store.STATS_PARSER_VERSION,
             ),
         },
+        performance_summary={
+            "source": kovaak_run_store._source_metadata(
+                performance, kovaak_run_store.PERFORMANCE_PARSER_VERSION,
+            ),
+        },
     )
+    run = await kovaak_run_store.set_run_alignment(
+        run["id"], config.DESKTOP_LOCAL_PROFILE,
+        state="resolved",
+        summary={
+            "start_ms": 1_000,
+            "end_ms": 7_000,
+            "duration_ms": 6_000,
+            "start_source": "test_start",
+            "end_source": "test_end",
+            "timebase_version": "time_alignment.v2",
+            "warnings": [],
+        },
+        start_epoch_ms=1_000,
+        end_epoch_ms=7_000,
+    ) or run
     video = tmp_path / "data" / "runs" / str(run["id"]) / "video-auto.mp4"
     video.parent.mkdir(parents=True, exist_ok=True)
     video.write_bytes(f"video-{source_key}".encode())
@@ -922,7 +950,7 @@ async def test_run_owned_video_route_analyzes_one_run_and_leaves_other_pending(
         created = await client.post(
             f"/api/kovaak-runs/{selected['id']}/analyze",
             headers={"Idempotency-Key": "auto-run-owned-video"},
-            json={"input_mode": "video_fallback"},
+            json={"input_mode": "multimodal"},
         )
         listed = await client.get("/api/kovaak-runs")
         detail = await client.get(f"/api/kovaak-runs/{selected['id']}")
@@ -961,7 +989,7 @@ async def test_run_owned_analysis_video_and_segments_are_owner_scoped_and_degrad
         created = await client.post(
             f"/api/kovaak-runs/{run['id']}/analyze",
             headers={"Idempotency-Key": "run-owned-playback"},
-            json={"input_mode": "video_fallback"},
+            json={"input_mode": "multimodal"},
         )
     assert created.status_code == 200, created.text
     session_id = created.json()["session_id"]
@@ -1093,7 +1121,7 @@ async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
         created = await client.post(
             f"/api/kovaak-runs/{run['id']}/analyze",
             headers={"Idempotency-Key": "video-fallback-empty"},
-            json={"input_mode": "video_fallback"},
+            json={"input_mode": "multimodal"},
         )
 
     assert created.status_code == 200, created.text

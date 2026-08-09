@@ -530,6 +530,20 @@ def test_tasks_expose_real_phases_failure_domains_partial_and_attempt_history():
     }
     assert partial["can_delete"] is True
 
+    labeled = build_task_detail_v1({
+        "id": 16,
+        "task_group_ref": "task:16",
+        "status": "done",
+        "scenario": "1wall 5targets pasu",
+        "training_at": "2026-08-09T08:10:09Z",
+        "finished_at": "2026-08-09T08:12:30Z",
+    })
+    assert labeled["presentation_label"] == (
+        "1wall 5targets pasu | 训练：2026-08-09T08:10:09Z | 分析：2026-08-09T08:12:30Z"
+    )
+    assert "run:16" not in labeled["presentation_label"]
+    assert "analysis:16" not in labeled["presentation_label"]
+
     native = build_task_list_v1([{
         "id": 15,
         "task_group_ref": "task:15",

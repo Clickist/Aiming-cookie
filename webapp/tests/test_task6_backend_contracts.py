@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import aiosqlite
 from httpx import ASGITransport, AsyncClient
 
 from webapp.backend import (
@@ -223,7 +224,7 @@ async def _wait_for_run(
 @pytest.mark.asyncio
 async def test_v18_schema_contains_task6_contracts() -> None:
     conn = await db.get_conn()
-    assert db.TARGET_USER_VERSION >= 18
+    assert db.TARGET_USER_VERSION >= 25
     tables = {
         row[0]
         for row in await (
@@ -272,6 +273,131 @@ async def test_v18_schema_contains_task6_contracts() -> None:
         ).fetchall()
     }
     assert {"execution_result_json", "audit_state"} <= audit_columns
+
+
+@pytest.mark.asyncio
+async def test_v25_migrates_legacy_primary_unique_constraint_without_losing_rows():
+    conn = await aiosqlite.connect(":memory:")
+    conn.row_factory = aiosqlite.Row
+    try:
+        await conn.execute(
+            "CREATE TABLE coach_threads ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, "
+            "kind TEXT NOT NULL DEFAULT 'primary', created_at TEXT, updated_at TEXT, "
+            "UNIQUE(user_id, kind))"
+        )
+        await conn.execute(
+            "INSERT INTO coach_threads(user_id, kind, created_at, updated_at) "
+            "VALUES('legacy-owner', 'primary', '2026-01-01', '2026-01-02')"
+        )
+        await db._migrate_v25_coach_thread_lifecycle(conn)
+        columns = {
+            row[1] for row in await (await conn.execute(
+                "PRAGMA table_info(coach_threads)"
+            )).fetchall()
+        }
+        assert {"title", "status", "deleted_at"} <= columns
+        row = await (await conn.execute(
+            "SELECT id, user_id, kind, status FROM coach_threads"
+        )).fetchone()
+        assert dict(row) == {
+            "id": 1, "user_id": "legacy-owner", "kind": "primary", "status": "active",
+        }
+        await conn.execute(
+            "INSERT INTO coach_threads(user_id, kind) VALUES('legacy-owner', 'conversation')"
+        )
+        with pytest.raises(Exception):
+            await conn.execute(
+                "INSERT INTO coach_threads(user_id, kind) VALUES('legacy-owner', 'primary')"
+            )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_coach_session_lifecycle_is_owner_scoped_and_keeps_cross_scenario_refs_together():
+    """Session containers are explicit; analysis refs never split a conversation."""
+    assert await coach_store.get_primary_thread("session-owner") is None
+
+    primary = await coach_store.get_or_create_primary_thread("session-owner")
+    await coach_store.append_message(int(primary["id"]), "user", "first message")
+    first = await coach_store.list_sessions("session-owner")
+    assert [item["id"] for item in first] == [int(primary["id"])]
+
+    conversation = await coach_store.create_session("session-owner", title="训练复盘")
+    assert conversation["status"] == "active"
+    assert conversation["title"] == "训练复盘"
+    await coach_store.attach_analysis_ref(int(conversation["id"]), 101)
+    await coach_store.attach_analysis_ref(int(conversation["id"]), 202)
+
+    listed = await coach_store.list_sessions("session-owner")
+    selected = next(item for item in listed if item["id"] == conversation["id"])
+    assert selected["analysis_session_ids"] == [101, 202]
+    assert len([item for item in listed if item["id"] == conversation["id"]]) == 1
+
+    assert await coach_store.list_sessions("other-owner") == []
+    assert await coach_store.rename_session("other-owner", conversation["id"], "泄露") is None
+    assert await coach_store.get_session("other-owner", conversation["id"]) is None
+
+    renamed = await coach_store.rename_session("session-owner", conversation["id"], "今天的复盘")
+    assert renamed is not None
+    assert renamed["title"] == "今天的复盘"
+    archived = await coach_store.archive_session("session-owner", conversation["id"])
+    assert archived is not None
+    assert archived["status"] == "archived"
+    assert await coach_store.list_sessions("session-owner") == [first[0]]
+    assert await coach_store.list_sessions("session-owner", include_archived=True)
+    assert await coach_store.list_sessions("session-owner", query="复盘", include_archived=True)
+
+    deleted = await coach_store.soft_delete_session("session-owner", conversation["id"])
+    assert deleted is not None
+    assert deleted["status"] == "deleted"
+    assert (
+        await coach_store.soft_delete_session("session-owner", conversation["id"])
+    )["status"] == "deleted"
+    assert all(item["id"] != conversation["id"] for item in await coach_store.list_sessions(
+        "session-owner", include_archived=True,
+    ))
+
+
+@pytest.mark.asyncio
+async def test_coach_session_routes_do_not_create_empty_primary_and_support_lifecycle():
+    headers = {"X-User-Id": "session-route-owner"}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=headers,
+    ) as client:
+        empty = await client.get("/api/coach/primary")
+        assert empty.status_code == 200
+        assert empty.json()["thread"]["id"] == 0
+
+        created = await client.post("/api/coach/sessions", json={"title": "场景复盘"})
+        assert created.status_code == 201, created.text
+        session = created.json()
+        assert session["title"] == "场景复盘"
+
+        listed = await client.get("/api/coach/sessions")
+        assert listed.status_code == 200, listed.text
+        assert [item["id"] for item in listed.json()["sessions"]] == [session["id"]]
+
+        renamed = await client.patch(
+            f"/api/coach/sessions/{session['id']}",
+            json={"title": "新标题"},
+        )
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json()["title"] == "新标题"
+
+        archived = await client.post(f"/api/coach/sessions/{session['id']}/archive")
+        assert archived.status_code == 200, archived.text
+        assert archived.json()["status"] == "archived"
+
+        hidden = await client.get("/api/coach/sessions")
+        assert hidden.json()["sessions"] == []
+        visible = await client.get("/api/coach/sessions?include_archived=true")
+        assert visible.json()["sessions"][0]["status"] == "archived"
+
+        deleted = await client.delete(f"/api/coach/sessions/{session['id']}")
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["status"] == "deleted"
 
 
 @pytest.mark.asyncio
