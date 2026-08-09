@@ -7,7 +7,7 @@ mod window_capture;
 
 use capture_coordinator::{CaptureCoordinatorState, CaptureCoordinatorStatus};
 use raw_input::{RawInputState, RawInputStatus};
-use runtime::{project_root, RuntimeConnection, RuntimeProcess, RuntimeState};
+use runtime::{runtime_layout, RuntimeConnection, RuntimeProcess, RuntimeState};
 use scenario_launch::scenario_open;
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -74,16 +74,23 @@ pub fn run() {
                 Arc::clone(&window_capture),
             )
             .map_err(io::Error::other)?;
-            let runtime = match coordinator.control_connection().and_then(|connection| {
-                RuntimeProcess::start(&project_root(), &app_data_dir, &connection)
-            }) {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    coordinator.shutdown();
-                    return Err(io::Error::other(error).into());
-                }
-            };
-            app.manage(RuntimeState::new(runtime));
+            let runtime_layout =
+                runtime_layout(&app.path().resource_dir()?).map_err(io::Error::other)?;
+            let capture_control = coordinator.control_connection().map_err(io::Error::other)?;
+            let runtime =
+                match RuntimeProcess::start(&runtime_layout, &app_data_dir, &capture_control) {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        coordinator.shutdown();
+                        return Err(io::Error::other(error).into());
+                    }
+                };
+            app.manage(RuntimeState::new(
+                runtime,
+                runtime_layout,
+                app_data_dir,
+                capture_control,
+            ));
             if std::env::var("AIMING_COOKIE_RAW_INPUT_ENABLED")
                 .map(|value| matches!(value.as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false)
