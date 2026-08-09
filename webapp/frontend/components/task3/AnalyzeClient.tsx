@@ -319,6 +319,8 @@ export function AnalyzeClient() {
     () => runs.find((run) => run.id === selectedRunId) ?? null,
     [runs, selectedRunId],
   );
+  const detectedFov = selectedRun?.stats_calibration?.fov ?? statsFov;
+  const detectedCmPer360 = selectedRun?.stats_calibration?.cm_per_360;
 
   useEffect(() => {
     if (selectedRun && inputMode && !selectedRun.supported_input_modes.includes(inputMode)) {
@@ -544,7 +546,7 @@ export function AnalyzeClient() {
           <ManualDropCard
             accept=".csv,text/csv"
             desktop={desktop}
-            extra={statsFov ? `检测到 FOV ${statsFov}，提交后由后端按优先级采用。` : null}
+            extra={detectedFov ? `检测到 FOV ${detectedFov}，提交后由后端按优先级采用。` : null}
             needText="两个文件都齐了之后才能开始分析"
             onClear={() => void chooseStatsFile(null)}
             onSelect={() => void pickDesktopCsvPath().then((path) => { if (path) setStatsPath(path); })}
@@ -576,7 +578,7 @@ export function AnalyzeClient() {
               selected={desktop ? statsPath : statsFile?.name ?? null}
             />
             </div>
-            {statsFov ? <p className="task3-analyze-note">检测到 FOV {statsFov}，提交后由后端按优先级采用。</p> : null}
+            {detectedFov ? <p className="task3-analyze-note">检测到 FOV {detectedFov}，提交后由后端按优先级采用。</p> : null}
           </Panel>
         </div>
       </section>
@@ -621,9 +623,9 @@ export function AnalyzeClient() {
             <dt>分析设置</dt>
             <dd>
               <span className="task3-analyze-mono">
-                {manualCm ? `${manualCm} cm/360` : "无法确定 cm/360"}
+                {manualCm ? `${manualCm} cm/360` : detectedCmPer360 ? `${detectedCmPer360} cm/360` : "无法确定 cm/360"}
                 {" · "}
-                {manualFov ? `FOV ${manualFov}` : "无法确定 FOV"}
+                {manualFov ? `FOV ${manualFov}` : detectedFov ? `FOV ${detectedFov}` : "无法确定 FOV"}
               </span>
               <Badge tone="neutral">Stats 自动读取</Badge>
             </dd>

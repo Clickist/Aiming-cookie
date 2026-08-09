@@ -2,9 +2,10 @@ import "../ui/theme.css";
 import "../components/task3/task3.css";
 import "../components/task4/task4.css";
 import "../components/task6/task6.css";
+import "../components/task7/session-rail.css";
 
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import { AppShell } from "@/components/task3/AppShell";
 import { ThemeProvider, ThemeScript } from "@/ui/theme";
@@ -21,7 +22,11 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         <ThemeScript />
       </head>
       <body>
-        <ThemeProvider><AppShell>{children}</AppShell></ThemeProvider>
+        <ThemeProvider>
+          <Suspense fallback={children}>
+            <AppShell>{children}</AppShell>
+          </Suspense>
+        </ThemeProvider>
       </body>
     </html>
   );

@@ -4,8 +4,8 @@ import { promisify } from "node:util";
 import { chromium, expect, test } from "@playwright/test";
 
 import {
-  RUN_MULTIMODAL,
-  RUN_NATIVE,
+  RUN_PENDING_MULTIMODAL,
+  RUN_PENDING_NATIVE,
   apiScenario,
   installApiFixtures,
 } from "../fixtures/task7-fixtures";
@@ -13,12 +13,12 @@ import {
 const execFileAsync = promisify(execFile);
 const cdpUrl = process.env.AIMING_COOKIE_TAURI_CDP_URL;
 const tauriPid = Number(process.env.AIMING_COOKIE_TAURI_PID);
+const appUrl = process.env.AIMING_COOKIE_TAURI_APP_URL ?? "http://localhost:3000";
 
 async function dismissNativeFilePicker(processId: number): Promise<string> {
   const script = String.raw`
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
-Add-Type -AssemblyName System.Windows.Forms
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
 while ([DateTime]::UtcNow -lt $deadline) {
   $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
@@ -32,10 +32,10 @@ while ([DateTime]::UtcNow -lt $deadline) {
   } | Select-Object -First 1
   if ($null -ne $dialog) {
     $title = $dialog.Current.Name
-    $shell = New-Object -ComObject WScript.Shell
-    $null = $shell.AppActivate($title)
-    Start-Sleep -Milliseconds 100
-    [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+    $window = [System.Windows.Automation.WindowPattern]$dialog.GetCurrentPattern(
+      [System.Windows.Automation.WindowPattern]::Pattern
+    )
+    $window.Close()
     $closeDeadline = [DateTime]::UtcNow.AddSeconds(5)
     while ([DateTime]::UtcNow -lt $closeDeadline) {
       $remaining = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
@@ -75,8 +75,9 @@ test("real Tauri Desktop capability and fixture-backed UI matrix", async () => {
   const browser = await chromium.connectOverCDP(cdpUrl!);
   const page = browser.contexts()[0]?.pages()[0];
   expect(page, "Tauri WebView page").toBeDefined();
+  await page!.setViewportSize({ width: 1280, height: 820 });
   await page!.unrouteAll({ behavior: "wait" });
-  await page!.goto("http://localhost:3000/settings");
+  await page!.goto(`${appUrl}/settings`);
 
   const actual = await page!.evaluate(async () => {
     type TauriInternals = {
@@ -126,44 +127,49 @@ test("real Tauri Desktop capability and fixture-backed UI matrix", async () => {
   expect(actual.viewport.innerHeight).toBeGreaterThanOrEqual(640);
   expect(JSON.stringify(actual)).not.toMatch(/(?:[A-Z]:\\|\/Users\/|secret|token|traceback|stack)/i);
 
-  await installApiFixtures(page!, apiScenario({ runs: [RUN_MULTIMODAL, RUN_NATIVE] }));
-  await page!.goto("http://localhost:3000/analyze");
-  await expect(page!.getByRole("heading", { name: "桌面采集状态" })).toBeVisible();
-  await expect(page!.getByText("2 条待确认 · 必须选择一条")).toBeVisible();
+  await installApiFixtures(page!, apiScenario({ runs: [RUN_PENDING_MULTIMODAL, RUN_PENDING_NATIVE] }));
+  await page!.goto(`${appUrl}/analyze`);
+  await expect(page!.getByRole("heading", { name: "新建分析", exact: true })).toBeVisible();
+  await expect(page!.getByText("自动采集：采集中", { exact: false })).toBeVisible();
+  await expect(page!.getByText("2 条待分析", { exact: true })).toBeVisible();
   await expect(page!.locator('input[name="run"]:checked')).toHaveCount(0);
 
   const runs = page!.locator('input[name="run"]');
-  await runs.nth(0).check();
+  await runs.nth(0).locator("xpath=ancestor::label").click();
+  await expect(runs.nth(0)).toBeChecked();
   const modes = page!.locator('input[name="input-mode"]');
   await expect(modes).toHaveCount(3);
   for (let index = 0; index < 3; index += 1) {
     await expect(modes.nth(index)).toBeEnabled();
-    await modes.nth(index).check();
+    await modes.nth(index).locator("xpath=ancestor::label").click();
     await expect(modes.nth(index)).toBeChecked();
   }
 
-  await runs.nth(1).check();
+  await runs.nth(1).locator("xpath=ancestor::label").click();
+  await expect(runs.nth(1)).toBeChecked();
   await expect(page!.locator('input[name="input-mode"]:not([disabled])')).toHaveCount(1);
   await expect(page!.locator('input[name="input-mode"]:checked')).toHaveCount(0);
-  await page!.goto("http://localhost:3000/tasks");
-  await expect(page!.getByText("等待分析", { exact: true }).first()).toBeVisible();
-  await expect(page!.getByText("分析中", { exact: true }).first()).toBeVisible();
+  await page!.goto(`${appUrl}/tasks`);
+  await expect(page!.getByText("正在导入", { exact: true }).first()).toBeVisible();
+  await expect(page!.getByText("运行中", { exact: true }).first()).toBeVisible();
   await page!.reload();
-  await expect(page!.getByText("等待分析", { exact: true }).first()).toBeVisible();
-  await expect(page!.getByText("分析中", { exact: true }).first()).toBeVisible();
+  await expect(page!.getByText("正在导入", { exact: true }).first()).toBeVisible();
+  await expect(page!.getByText("运行中", { exact: true }).first()).toBeVisible();
 
-  await page!.goto("http://localhost:3000/analyze");
+  await page!.goto(`${appUrl}/analyze`);
   await expect(page!.locator('input[name="run"]')).toHaveCount(2);
   await expect(page!.locator('input[name="run"]:checked')).toHaveCount(0);
-  await page!.goto("http://localhost:3000/settings");
+  await page!.goto(`${appUrl}/settings`);
   for (const label of ["Run 录像", "Raw trace", "分析产物", "未完成采集"]) {
     await expect(page!.getByText(label, { exact: true }).first()).toBeVisible();
   }
-  await expect(page!.getByText("300 秒硬件缓冲", { exact: true })).toBeVisible();
+  await expect(page!.getByText("仅保留最近 300 秒", { exact: false })).toBeVisible();
 
-  await page!.goto("http://localhost:3000/analyze");
-  await page!.getByRole("button", { name: "选择 MP4" }).click();
-  const pickerTitle = await dismissNativeFilePicker(tauriPid);
+  await page!.goto(`${appUrl}/analyze`);
+  const [, pickerTitle] = await Promise.all([
+    page!.locator(".task3-analyze-drop-card").first().click(),
+    dismissNativeFilePicker(tauriPid),
+  ]);
   expect(pickerTitle).toContain("选择 MP4");
-  await expect(page!.getByText("尚未选择录像", { exact: true })).toBeVisible();
+  await expect(page!.locator(".task3-analyze-drop-card").first()).toHaveAttribute("data-filled", "false");
 });

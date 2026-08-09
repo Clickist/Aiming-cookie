@@ -205,6 +205,58 @@ test("workspace separates formal metrics from experimental or unavailable metric
   assert.equal(presentation?.issues[0]?.presentationKind, "legacy");
 });
 
+test("workspace presents the attached training and completion times without internal refs", () => {
+  const presentation = presentAnalysisWorkspace(session({
+    training_at: "2026-07-25T06:30:00Z",
+    analysis_completed_at: "2026-07-25T06:33:00Z",
+  }));
+
+  assert.equal(
+    presentation?.recordLabel,
+    "1wall 6targets small | 训练：2026-07-25T06:30:00Z | 分析：2026-07-25T06:33:00Z",
+  );
+  assert.doesNotMatch(presentation?.recordLabel ?? "", /run:7|analysis:42/);
+});
+
+test("workspace normalizes heterogeneous backend timeline event types", () => {
+  const heterogeneous = result();
+  heterogeneous.deterministic.timeline = [
+    {
+      id: "flick:1",
+      event_type: "flick",
+      relative_ms: 745,
+      source: "raw_input",
+    },
+    {
+      payload_type: "shotsFired",
+      relative_ms: 941,
+      source: "performance",
+    },
+  ];
+
+  assert.deepEqual(
+    presentAnalysisWorkspace(session({ result: heterogeneous }))?.timeline,
+    [
+      {
+        frame: null,
+        time_s: null,
+        relative_ms: 745,
+        type: "flick",
+        label: "flick:1",
+        source: "raw_input",
+      },
+      {
+        frame: null,
+        time_s: null,
+        relative_ms: 941,
+        type: "shotsFired",
+        label: "shotsFired",
+        source: "performance",
+      },
+    ],
+  );
+});
+
 test("workspace keeps deterministic metrics descriptive when family trust is not formal", () => {
   const partial = result({ deterministic: {
     ...result().deterministic,
@@ -526,6 +578,66 @@ test("workspace projects partial Session 22 findings as descriptive Chinese obse
     "当前合同未提供可展示的限制说明",
   ]);
   assert.doesNotMatch(JSON.stringify(presentation), /\[experimental\]|decel_frac high|reverse_ratio high|submovement two-stage|unknown_internal_limitation|Input-native metrics|不能据此判断|这只描述动作模式|不代表好坏/);
+});
+
+test("target-relative limitations suppress contradictory issue wording", () => {
+  const limited = result({
+    deterministic: {
+      ...result().deterministic,
+      limitations: ["target_relative_facts_unavailable"],
+      diagnosis: {
+        profile: result().deterministic.diagnosis!.profile,
+        issues: [{
+          signal: "reverse_ratio high",
+          severity: "info",
+          priority: 1,
+          priority_reason: "observed",
+          observation_ref: "static_clicking.reverse_ratio",
+          knowledge_registry_version: "2026-08-06.v6",
+          knowledge_entry_refs: ["knowledge:static.flicking-terminal-control@2"],
+          plain_language_meaning: "接近落点后出现较多反向修正。",
+        }],
+        summary: {},
+        comparison: null,
+        meta: {},
+      },
+    },
+  });
+
+  const presentation = presentAnalysisWorkspace(session({ result: limited }));
+
+  assert.equal(presentation?.issues[0]?.candidateExplanation, "反向修正偏多");
+  assert.doesNotMatch(JSON.stringify(presentation), /接近落点/);
+});
+
+test("target-relative limitations preserve independent hit-rate observations", () => {
+  const limited = result({
+    deterministic: {
+      ...result().deterministic,
+      limitations: ["target_relative_facts_unavailable"],
+      diagnosis: {
+        profile: result().deterministic.diagnosis!.profile,
+        issues: [{
+          signal: "accuracy low",
+          severity: "info",
+          priority: 1,
+          priority_reason: "observed",
+          observation_ref: "static_clicking.accuracy",
+          knowledge_registry_version: "2026-08-06.v6",
+          knowledge_entry_refs: ["knowledge:static.flicking-terminal-control@2"],
+          plain_language_meaning: "这次命中率波动偏大。",
+        }],
+        summary: {},
+        comparison: null,
+        meta: {},
+      },
+    },
+  });
+
+  assert.equal(
+    presentAnalysisWorkspace(session({ result: limited }))?.issues[0]?.candidateExplanation,
+    "这次命中率波动偏大。",
+  );
 });
 
 test("diagnosis summary follows explicit keys and remains empty without formal family support", () => {

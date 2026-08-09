@@ -1,23 +1,23 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  attachCoachContext,
   getHistoryAnalysisDetail,
   getHistoryRun,
   getHistorySessions,
-  getHistoryTrend,
   listKovaakRuns,
 } from "@/lib/api";
 import { isDesktopRuntime } from "@/lib/desktop";
 import {
   buildHistorySections,
   getHistoryStatusText,
-  getTrendPresentation,
+  presentRecordLabel,
 } from "@/lib/contracts";
-import type { HistoryTrend, KovaaKRunItem, KovaaKRunListItem, SessionListItem, SessionStatus } from "@/lib/types";
-import { Button, Dialog, Drawer, Empty, ErrorState, Loading, Notice, Status } from "@/ui/primitives";
+import type { KovaaKRunItem, KovaaKRunListItem, SessionListItem, SessionStatus } from "@/lib/types";
+import { Button, Dialog, Drawer, Empty, ErrorState, IconButton, Loading, Notice, Status } from "@/ui/primitives";
 
 import { RunInspector } from "./RunInspector";
 
@@ -107,17 +107,18 @@ function runRecordBadge(run: KovaaKRunListItem) {
 function RunRow({
   run,
   onInspect,
-  onConfirm,
-  picked,
-  onPick,
+  onCoachAnalysis,
+  onToggle,
+  selected,
 }: {
   run: KovaaKRunListItem;
   onInspect: (run: KovaaKRunListItem) => void;
-  onConfirm: (run: KovaaKRunListItem) => void;
-  picked: boolean;
-  onPick: (run: KovaaKRunListItem) => void;
+  onCoachAnalysis: (run: KovaaKRunListItem) => void;
+  onToggle: (run: KovaaKRunListItem, selected: boolean) => void;
+  selected: boolean;
 }) {
   const isPending = run.readiness_state === "pending_analysis";
+  const canSelect = run.readiness_state !== "incomplete_evidence";
   const evidence = [
     { label: "Stats", state: historyEvidenceState(sourceState(run, "stats")) },
     { label: "Performance", state: historyEvidenceState(sourceState(run, "performance")) },
@@ -127,17 +128,27 @@ function RunRow({
   return (
     <div
       className="task4-rowline"
-      onClick={isPending ? () => onPick(run) : undefined}
-      style={isPending ? { cursor: "pointer" } : undefined}
     >
-      {isPending ? <span className="task4-sel-dot" data-selected={picked ? "true" : "false"} /> : null}
+      <label className="task4-row-select">
+        <input
+          aria-label={`选择训练 ${run.scenario ?? run.run_ref}`}
+          checked={selected}
+          disabled={!canSelect}
+          onChange={(event) => onToggle(run, event.target.checked)}
+          type="checkbox"
+        />
+      </label>
       <div className="task4-row-main">
         <div className="task4-row-title">
-          <span className="task4-name">{run.scenario ?? "未知场景"}</span>
+          <span className="task4-name">{presentRecordLabel({
+            scenario: run.scenario,
+            trainingAt: run.created_at,
+            analysisCompletedAt: null,
+          })}</span>
           {!isPending ? runRecordBadge(run) : null}
         </div>
         <div className="task4-row-sub">
-          <span>{formatHistoryDate(run.created_at)}</span>
+          <span>训练时间：{formatHistoryDate(run.created_at)}</span>
           {!isPending && run.limitations.length > 0 ? (
             <span>{run.limitations.map((limitation) => getHistoryStatusText(limitation)).join("；")}</span>
           ) : null}
@@ -150,11 +161,7 @@ function RunRow({
       </div>
       <div className="task4-row-actions">
         {isPending ? (
-          picked ? (
-            <Button onClick={() => onConfirm(run)} size="compact">开始分析</Button>
-          ) : (
-            <Button onClick={() => onPick(run)} size="compact" variant="secondary">选择这条</Button>
-          )
+          <Button onClick={() => onCoachAnalysis(run)} size="compact" variant="secondary">让 Coach 分析</Button>
         ) : (
           <Button onClick={() => onInspect(run)} size="compact" variant="ghost">查看 Run</Button>
         )}
@@ -163,13 +170,38 @@ function RunRow({
   );
 }
 
-function AnalysisRow({ session, onLoadDetail }: { session: SessionListItem; onLoadDetail: (id: number) => void }) {
+function AnalysisRow({
+  onLoadDetail,
+  onToggle,
+  selected,
+  session,
+}: {
+  session: SessionListItem;
+  onLoadDetail: (id: number) => void;
+  onToggle: (analysisRef: string, selected: boolean) => void;
+  selected: boolean;
+}) {
   const tone = sessionTone(session.status);
+  const canAttach = session.status === "done";
+  const recordLabel = presentRecordLabel({
+    scenario: session.scenario,
+    trainingAt: session.training_at,
+    analysisCompletedAt: session.analysis_completed_at ?? session.finished_at,
+  });
   return (
     <div className="task4-rowline">
+      <label className="task4-row-select">
+        <input
+          aria-label={`选择分析 ${recordLabel}`}
+          checked={selected}
+          disabled={!canAttach}
+          onChange={(event) => onToggle(session.analysis_ref, event.target.checked)}
+          type="checkbox"
+        />
+      </label>
       <div className="task4-row-main">
         <div className="task4-row-title">
-          <span className="task4-name">{session.scenario ?? "场景信息不可用"}</span>
+          <span className="task4-name">{recordLabel}</span>
           <span className={`task4-badge task4-badge-${tone === "success" ? "ok" : tone === "error" ? "err" : "neu"}`}>
             {tone === "success" ? <span className="task4-badge-dot" /> : null}
             {sessionStatus(session.status)}
@@ -178,38 +210,15 @@ function AnalysisRow({ session, onLoadDetail }: { session: SessionListItem; onLo
           {session.input_mode === "input_native" ? <span className="task4-badge task4-badge-preview">预览</span> : null}
         </div>
         <div className="task4-row-sub">
-          <span>{formatHistoryDate(session.created_at)}</span>
+          <span>训练：{formatHistoryDate(session.training_at)}</span>
+          <span>分析：{formatHistoryDate(session.analysis_completed_at ?? session.finished_at)}</span>
           <span>摘要：{session.summary_label ?? "暂无摘要"}</span>
         </div>
       </div>
       <div className="task4-row-actions">
-        {session.status === "done" ? (
-          <Button href={`/analysis/${session.id}`} size="compact" variant="secondary">查看</Button>
-        ) : (
-          <Button onClick={() => onLoadDetail(session.id)} size="compact" variant="secondary">查看</Button>
-        )}
+        <Button onClick={() => onLoadDetail(session.id)} size="compact" variant="secondary">查看摘要</Button>
       </div>
     </div>
-  );
-}
-
-function TrendChart() {
-  return (
-    <svg className="task4-trend-chart" viewBox="0 0 150 40" aria-hidden="true" width="150" height="40">
-      <path
-        d="M4 26 L40 22 L76 28 L112 20 L146 23 L146 40 L4 40 Z"
-        fill="currentColor"
-        opacity="0.08"
-      />
-      <path
-        d="M4 26 L40 22 L76 28 L112 20 L146 23"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <circle cx="40" cy="22" fill="currentColor" r="3" />
-      <circle cx="112" cy="20" fill="currentColor" r="3" />
-    </svg>
   );
 }
 
@@ -242,20 +251,21 @@ function RunSectionState({
 }
 
 export function HistoryClient() {
+  const router = useRouter();
   const [runs, setRuns] = useState<KovaaKRunListItem[]>([]);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [refresh, setRefresh] = useState<RefreshState>("loading");
   const [runDiscovery, setRunDiscovery] = useState<RunDiscoveryState>("loading");
   const [initialError, setInitialError] = useState(false);
   const [selectedRun, setSelectedRun] = useState<KovaaKRunItem | KovaaKRunListItem | null>(null);
-  const [selectedPendingRun, setSelectedPendingRun] = useState<KovaaKRunListItem | null>(null);
-  const [pickedPendingRef, setPickedPendingRef] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [detail, setDetail] = useState<SessionStatus | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
-  const [trend, setTrend] = useState<HistoryTrend | null>(null);
-  const [trendLoading, setTrendLoading] = useState(false);
+  const [selectedAnalysisRefs, setSelectedAnalysisRefs] = useState<Set<string>>(() => new Set());
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<number>>(() => new Set());
+  const [attachState, setAttachState] = useState<"idle" | "attaching">("idle");
+  const [attachError, setAttachError] = useState<string | null>(null);
 
   const loadHistory = useCallback(async (initial = false) => {
     setRefresh("loading");
@@ -283,7 +293,97 @@ export function HistoryClient() {
   }, [loadHistory]);
 
   const sections = useMemo(() => buildHistorySections({ runs, sessions }), [runs, sessions]);
-  const pickedPending = sections.pendingRuns.find((run) => run.run_ref === pickedPendingRef) ?? sections.pendingRuns[0] ?? null;
+
+  const toggleAnalysisSelection = (analysisRef: string, selected: boolean) => {
+    setSelectedAnalysisRefs((current) => {
+      const next = new Set(current);
+      if (selected) next.add(analysisRef);
+      else next.delete(analysisRef);
+      return next;
+    });
+    setAttachError(null);
+  };
+
+  const attachSelectedAnalyses = async () => {
+    const analysisRefs = Array.from(selectedAnalysisRefs);
+    if (!analysisRefs.length || attachState === "attaching") return;
+    setAttachState("attaching");
+    setAttachError(null);
+    const results = await Promise.allSettled(
+      analysisRefs.map((analysisRef) => attachCoachContext({ kind: "analysis", analysis_ref: analysisRef })),
+    );
+    const failed = results.filter((result) => result.status === "rejected").length;
+    if (failed > 0) {
+      setAttachState("idle");
+      setAttachError(`${failed} 条分析未能引用，请重试。`);
+      return;
+    }
+    setSelectedAnalysisRefs(new Set());
+    setAttachState("idle");
+    router.push("/");
+  };
+
+  const askCoachToAnalyze = (run: KovaaKRunListItem) => {
+    const record = presentRecordLabel({
+      scenario: run.scenario,
+      trainingAt: run.created_at,
+      analysisCompletedAt: null,
+    });
+    window.sessionStorage.setItem(
+      "aiming-cookie.ui.coach-pending-intent",
+      JSON.stringify({ draft: `请分析这次训练：${record}` }),
+    );
+    router.push("/");
+  };
+
+  const toggleRunSelection = (run: KovaaKRunListItem, selected: boolean) => {
+    setSelectedRunIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(run.id);
+      else next.delete(run.id);
+      return next;
+    });
+  };
+
+  const sendSelectedRunsToCoach = () => {
+    const selected = runs.filter((run) => selectedRunIds.has(run.id));
+    if (!selected.length) return;
+    const analysisRefsByRun = new Map<number, string[]>();
+    const analysisStatusByRun = new Map<number, "done" | "active" | "pending">();
+    for (const session of sessions) {
+      if (session.kovaak_run_id === null) continue;
+      if (session.status === "done") {
+        const refs = analysisRefsByRun.get(session.kovaak_run_id) ?? [];
+        refs.push(session.analysis_ref);
+        analysisRefsByRun.set(session.kovaak_run_id, refs);
+        analysisStatusByRun.set(session.kovaak_run_id, "done");
+      } else if (
+        (session.status === "queued" || session.status === "running")
+        && analysisStatusByRun.get(session.kovaak_run_id) !== "done"
+      ) {
+        analysisStatusByRun.set(session.kovaak_run_id, "active");
+      }
+    }
+    window.sessionStorage.setItem(
+      "aiming-cookie.ui.coach-pending-intent",
+      JSON.stringify({
+        kind: "batch-analysis",
+        batch_ref: `analysis-batch:${Date.now()}`,
+        runs: selected.map((run) => ({
+          id: run.id,
+          run_ref: run.run_ref,
+          scenario: run.scenario,
+          created_at: run.created_at,
+          readiness_state: run.readiness_state,
+          limitations: run.limitations,
+          analysis_refs: analysisRefsByRun.get(run.id) ?? [],
+          analysis_status: analysisStatusByRun.get(run.id) ?? "pending",
+        })),
+      }),
+    );
+    setSelectedRunIds(new Set());
+    router.push("/");
+  };
 
   const inspect = async (run: KovaaKRunListItem) => {
     setSelectedRun(run);
@@ -302,19 +402,6 @@ export function HistoryClient() {
     else setDetail(result);
     setDetailLoading(false);
   };
-
-  const loadTrend = async () => {
-    setTrendLoading(true);
-    setTrend(await getHistoryTrend("accuracy").catch(() => null));
-    setTrendLoading(false);
-  };
-
-  const pageSubText = useMemo(() => {
-    if (refresh === "unavailable") return "最近刷新失败 · 旧内容已保留";
-    if (runDiscovery === "browser_unavailable") return "最近刷新：刚刚 · Run 发现需要桌面应用";
-    if (runDiscovery === "service_unavailable") return "最近刷新：刚刚 · Run 来源暂时不可用";
-    return "最近刷新：刚刚 · 全部来源正常";
-  }, [refresh, runDiscovery]);
 
   if (initialError && runs.length === 0 && sessions.length === 0) {
     return (
@@ -336,16 +423,32 @@ export function HistoryClient() {
   return (
     <div className="task4-page">
       <div className="task4-page-head">
-        <div>
+        <div className="task4-page-title-row">
+          <IconButton label="返回 Coach" onClick={() => router.push("/")} size="compact" title="返回 Coach">←</IconButton>
           <div className="task4-page-title">历史</div>
-          <div className="task4-page-sub">{pageSubText}</div>
         </div>
         <div className="task4-page-actions">
+          <Button
+            disabled={selectedRunIds.size === 0}
+            onClick={sendSelectedRunsToCoach}
+            size="compact"
+            variant="primary"
+          >
+            交给 Coach（{selectedRunIds.size}）
+          </Button>
+          <Button
+            disabled={selectedAnalysisRefs.size === 0 || attachState === "attaching"}
+            onClick={() => void attachSelectedAnalyses()}
+            size="compact"
+            variant="primary"
+          >
+            {attachState === "attaching" ? "正在引用…" : `引用所选分析（${selectedAnalysisRefs.size}）`}
+          </Button>
           <Button onClick={() => void loadHistory()} size="compact" variant="ghost">刷新</Button>
-          <Button href="/analyze" size="compact">＋ 新建分析</Button>
         </div>
       </div>
 
+      {attachError ? <Notice tone="warning" title="分析引用失败">{attachError}</Notice> : null}
       {refresh === "unavailable" ? <Notice tone="warning" title="刷新暂时不可用">保留当前已读取内容；恢复本地服务后可以重试。</Notice> : null}
       {runDiscovery === "browser_unavailable" ? <Notice tone="info" title="Run 发现仅在桌面应用可用">浏览器可以查看分析记录；要查看自动采集的 Run，请在桌面应用中打开 History。</Notice> : null}
       {runDiscovery === "service_unavailable" ? <Notice tone="warning" title="Run 暂时不可用">桌面服务没有返回训练 Run；这不是“没有记录”。恢复服务后可以刷新。</Notice> : null}
@@ -354,7 +457,6 @@ export function HistoryClient() {
         <div className="task4-sec-head">
           <h2 id="pending-title" className="task4-sec-title">待分析训练</h2>
           <span className="task4-sec-count">{sections.pendingRuns.length}</span>
-          <span className="task4-sec-hint">自动采集已整理完成 · 选择一条开始分析</span>
         </div>
         {sections.pendingRuns.length === 0 ? (
           <RunSectionState kind="pending" runDiscovery={runDiscovery} />
@@ -363,11 +465,11 @@ export function HistoryClient() {
             {sections.pendingRuns.map((run) => (
               <RunRow
                 key={run.run_ref}
-                onConfirm={setSelectedPendingRun}
+                onCoachAnalysis={askCoachToAnalyze}
                 onInspect={(item) => void inspect(item)}
-                onPick={(item) => setPickedPendingRef(item.run_ref)}
-                picked={pickedPending?.run_ref === run.run_ref}
+                onToggle={toggleRunSelection}
                 run={run}
+                selected={selectedRunIds.has(run.id)}
               />
             ))}
           </div>
@@ -386,11 +488,11 @@ export function HistoryClient() {
             {sections.runRecords.map((run) => (
               <RunRow
                 key={run.run_ref}
-                onConfirm={setSelectedPendingRun}
+                onCoachAnalysis={askCoachToAnalyze}
                 onInspect={(item) => void inspect(item)}
-                onPick={() => undefined}
-                picked={false}
+                onToggle={toggleRunSelection}
                 run={run}
+                selected={selectedRunIds.has(run.id)}
               />
             ))}
           </div>
@@ -404,63 +506,27 @@ export function HistoryClient() {
         </div>
         {sections.analysisRecords.length === 0 ? (
           <Empty className="task4-panel task4-state-panel" title="还没有分析记录">
-            <Link className="ac-button" data-variant="primary" href="/analyze">新建分析</Link>
+            完成一局 KovaaK 训练后，记录会保留在这里。
           </Empty>
         ) : (
           <div className="task4-panel">
             {sections.analysisRecords.map((session) => (
-              <AnalysisRow key={session.analysis_ref} onLoadDetail={loadDetail} session={session} />
+              <AnalysisRow
+                key={session.analysis_ref}
+                onLoadDetail={loadDetail}
+                onToggle={toggleAnalysisSelection}
+                selected={selectedAnalysisRefs.has(session.analysis_ref)}
+                session={session}
+              />
             ))}
           </div>
         )}
       </section>
 
-      <section className="task4-sec" aria-labelledby="trend-title">
-        <div className="task4-sec-head">
-          <h2 id="trend-title" className="task4-sec-title">长期趋势</h2>
-          <span className="task4-sec-hint">仅比较同场景、同模式、同校准的记录</span>
-        </div>
-        {trendLoading ? (
-          <Loading>正在读取趋势</Loading>
-        ) : trend ? (
-          <div className="task4-panel task4-trend-panel">
-            <TrendChart />
-            <div>
-              <div className="task4-trend-text">{getTrendPresentation(trend).summary}</div>
-              <div className="task4-trend-sub">{getTrendPresentation(trend).comparable ? "趋势基于可比记录生成。" : "记录不满足比较条件，未生成伪 PB。"}</div>
-            </div>
-          </div>
-        ) : (
-          <div className="task4-panel task4-trend-empty">
-            <span>仅在场景、模式、指标、单位、校准与质量均满足时生成趋势；不会制造伪 PB。</span>
-            <Button onClick={() => void loadTrend()} size="compact" variant="secondary">读取可比趋势</Button>
-          </div>
-        )}
-      </section>
-
-      <Dialog
-        footer={selectedPendingRun ? (
-          <div className="task4-operation-list">
-            <Button href={`/analyze?run=${encodeURIComponent(selectedPendingRun.run_ref)}`}>去新建分析</Button>
-            <Button onClick={() => setSelectedPendingRun(null)} variant="secondary">取消</Button>
-          </div>
-        ) : null}
-        onClose={() => setSelectedPendingRun(null)}
-        open={Boolean(selectedPendingRun)}
-        title="确认这条 Run"
-      >
-        {selectedPendingRun ? (
-          <>
-            <p>{selectedPendingRun.scenario ?? "未知场景"} · {formatHistoryDate(selectedPendingRun.created_at)}</p>
-            <Notice title="下一步">确认只会把这条 Run 带到新建分析页，不会自动提交任务；其它待分析 Run 保持原状。</Notice>
-          </>
-        ) : null}
-      </Dialog>
-
       <Drawer
         onClose={() => setSelectedRun(null)}
         open={Boolean(selectedRun)}
-        title={selectedRun ? `Run 详情 · ${selectedRun.scenario ?? "未知场景"}` : "Run 详情"}
+        title={selectedRun ? `训练记录详情 · ${selectedRun.scenario ?? "未知场景"}` : "训练记录详情"}
       >
         {selectedRun ? <RunInspector run={selectedRun} /> : null}
       </Drawer>

@@ -127,7 +127,7 @@ test.describe("release interaction polish", () => {
     await expect(overlay).toHaveAttribute("data-state", "open");
     await expect(overlay.locator(".task6-coach-sidebar")).toHaveCSS("transition-duration", "0.2s, 0.2s");
 
-    await overlayDialog.getByRole("button", { name: "关闭 Coach" }).click();
+    await overlayDialog.getByRole("button", { name: "关闭 Coach", exact: true }).click();
     await expect(overlay).toHaveAttribute("data-state", "closed");
     await expect(overlay).toHaveCount(0, { timeout: 500 });
   });
@@ -333,6 +333,32 @@ test.describe("release interaction polish", () => {
     expect(layout?.composerTop).toBeGreaterThan(48);
   });
 
+  test("Coach composer keeps a taller draft area with its send action inside", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
+    await installApiFixtures(page);
+    await page.goto("/history");
+
+    const composerInput = page.locator(".task6-composer-input");
+    const draft = page.locator("#coach-draft");
+    const send = composerInput.getByRole("button", { name: "发送" });
+    const layout = await Promise.all([
+      composerInput.boundingBox(),
+      draft.boundingBox(),
+      send.boundingBox(),
+    ]);
+    const [composerBox, draftBox, sendBox] = layout;
+
+    expect(composerBox?.height).toBeGreaterThanOrEqual(72);
+    expect(draftBox?.height).toBeGreaterThanOrEqual(72);
+    expect(sendBox).not.toBeNull();
+    expect(sendBox!.x).toBeGreaterThan(draftBox!.x);
+    expect(sendBox!.x + sendBox!.width).toBeLessThanOrEqual(composerBox!.x + composerBox!.width);
+    expect(sendBox!.y + sendBox!.height).toBeLessThanOrEqual(composerBox!.y + composerBox!.height);
+    await expect(draft).toHaveCSS("border-top-width", "0px");
+    await expect(composerInput).toHaveCSS("border-top-width", "1px");
+  });
+
   test("no current plan stays a normal empty state without an error overlay", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
     await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
@@ -452,7 +478,7 @@ test("real Tauri WebView preserves Coach resizing and all three responsive modes
 
   await page!.setViewportSize({ width: 720, height: 640 });
   await expect(responsiveDrawer).toHaveAttribute("data-mode", "full");
-  await expect(responsiveDrawer.getByRole("button", { name: "← 返回主工作区" })).toBeVisible();
+  await expect(responsiveDrawer.getByRole("button", { name: "关闭 Coach", exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page!);
 
   await page!.emulateMedia({ reducedMotion: "reduce" });
@@ -481,28 +507,36 @@ test("real Tauri WebView renders the approved frontend realization matrix", asyn
   const closeCoach = async () => {
     await page!.evaluate(() => localStorage.setItem("aiming-cookie.ui.coach-open", "closed"));
   };
+  const closeVisibleCoach = async () => {
+    const openCoach = page!.locator(".task6-coach-sidebar-wrap");
+    await expect(openCoach).toHaveAttribute("data-state", "open");
+    await openCoach.getByRole("button", { name: "关闭 Coach", exact: true }).click();
+    await expect(openCoach).toHaveCount(0);
+  };
 
   await page!.setViewportSize({ width: 1280, height: 820 });
-  await useScenario();
+  await useScenario(apiScenario({ kovaakScores: KOVAAK_SCORES_AVAILABLE }));
   await setTheme("light");
   await page!.goto(new URL("/onboarding", appUrl).toString());
-  await expect(page!.getByRole("heading", { name: "连接模型服务" })).toBeVisible();
+  await expect(page!.getByRole("heading", { name: "连接模型服务", exact: true })).toBeVisible();
   await page!.getByRole("button", { name: "继续", exact: true }).click();
-  await expect(page!.getByRole("heading", { name: "连接 KovaaK 成绩" })).toBeVisible();
-  await expect(page!.getByRole("region", { name: "KovaaK 成绩连接" })).toBeVisible();
+  await expect(page!.getByRole("heading", { name: "连接 KovaaK 成绩", exact: true })).toBeVisible();
+  await expect(page!.getByRole("heading", { name: "已连接 KovaaK 成绩", exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page!);
 
   await setTheme("dark");
   await page!.goto(new URL("/settings", appUrl).toString());
   await expect(page!.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page!.getByRole("heading", { name: "KovaaK 成绩" })).toBeVisible();
-  await expect(page!.locator(".kovaak-stage-summary")).toContainText("Easier");
-  await expect(page!.locator(".kovaak-stage-summary")).toContainText("Medium");
+  const kovaakStages = page!.locator(".kovaak-stage-summary");
+  await expect(kovaakStages).toHaveCount(2);
+  await expect(kovaakStages.nth(0)).toContainText("Easier");
+  await expect(kovaakStages.nth(1)).toContainText("Medium");
   await expectNoHorizontalOverflow(page!);
 
   await closeCoach();
   await useScenario(apiScenario({ analysisFamilyData: ANALYSIS_FAMILY_TRACKING }));
-  await page!.goto(new URL("/analysis/42", appUrl).toString());
+  await page!.goto(new URL("/analysis?id=42", appUrl).toString());
   const analysisTabs = page!.getByRole("tab");
   await expect(analysisTabs).toHaveCount(3);
   await expect(analysisTabs.nth(0)).toHaveText("诊断");
@@ -530,7 +564,8 @@ test("real Tauri WebView renders the approved frontend realization matrix", asyn
     analysisData: familySummaryData("switching"),
     analysisFamilyData: ANALYSIS_FAMILY_SWITCHING,
   }));
-  await page!.goto(new URL("/analysis/42", appUrl).toString());
+  await page!.goto(new URL("/analysis?id=42", appUrl).toString());
+  await closeVisibleCoach();
   await page!.getByRole("tab", { name: "数据" }).click();
   await expect(page!.getByRole("heading", { name: "切换链" })).toBeVisible();
   await expectNoHorizontalOverflow(page!);
@@ -540,11 +575,12 @@ test("real Tauri WebView renders the approved frontend realization matrix", asyn
     analysisData: familySummaryData("flicking"),
     analysisFamilyData: ANALYSIS_FAMILY_FLICKING,
   }));
-  await page!.goto(new URL("/analysis/42", appUrl).toString());
+  await page!.goto(new URL("/analysis?id=42", appUrl).toString());
+  await closeVisibleCoach();
   await page!.getByRole("tab", { name: "数据" }).click();
   await expect(page!.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page!.getByRole("heading", { name: "逐次 Flick" })).toBeVisible();
-  await expect(page!.getByText("速度峰值", { exact: true })).toBeVisible();
-  await expect(page!.getByText("修正动作", { exact: true })).toBeVisible();
+  await expect(page!.getByText("时序分布", { exact: true })).toBeVisible();
+  await expect(page!.getByText("路径质量分布", { exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page!);
 });

@@ -1,34 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 import {
-  ANALYSIS_DATA_TRACKING,
-  ANALYSIS_FAMILY_TRACKING,
   apiScenario,
   analysisSession,
   installApiFixtures,
-  registryBackedAnalysisSession,
 } from "../fixtures/task7-fixtures";
-
-function trackingAnalysis() {
-  const base = analysisSession();
-  if (!base.result || base.result.schema_version !== "analysis_result.v2") throw new Error("tracking fixture requires v2");
-  return analysisSession({
-    analysis_type: "tracking",
-    input_mode: "multimodal",
-    result: {
-      ...base.result,
-      analysis_type: "tracking",
-      input_mode: "multimodal",
-      input_snapshot: {
-        ...base.result.input_snapshot,
-        scenario_resolution: {
-          ...base.result.input_snapshot.scenario_resolution!,
-          aim_family: "continuous_tracking",
-        },
-      },
-    },
-  });
-}
 
 function seekableAnalysis() {
   const base = analysisSession();
@@ -55,10 +31,10 @@ function seekableAnalysis() {
 test.describe("Task 7 accessibility", () => {
   test("landmarks, skip link, focus order, and visible focus are keyboard-operable", async ({ page }) => {
     await installApiFixtures(page);
-    await page.goto("/analyze");
+    await page.goto("/");
     await expect(page.getByRole("banner")).toHaveCount(1);
     await expect(page.getByRole("main")).toHaveCount(1);
-    await expect(page.getByRole("navigation")).toHaveCount(2);
+    await expect(page.getByRole("navigation")).toHaveCount(1);
 
     await page.keyboard.press("Tab");
     const skip = page.getByRole("link", { name: "跳到主要内容" });
@@ -67,9 +43,9 @@ test.describe("Task 7 accessibility", () => {
     await page.keyboard.press("Enter");
     await expect(page.getByRole("main")).toBeFocused();
 
-    const toolbarLink = page.getByRole("link", { name: "历史" });
-    await toolbarLink.focus();
-    const outline = await toolbarLink.evaluate((element) => {
+    const historyButton = page.getByRole("button", { name: "训练历史" });
+    await historyButton.focus();
+    const outline = await historyButton.evaluate((element) => {
       const style = getComputedStyle(element);
       return { width: Number.parseFloat(style.outlineWidth), style: style.outlineStyle };
     });
@@ -98,41 +74,48 @@ test.describe("Task 7 accessibility", () => {
     expect(failures).toEqual([]);
   });
 
-  test("Coach overlay traps focus and closes with Escape", async ({ page }) => {
-    await page.setViewportSize({ width: 960, height: 640 });
+  test("Coach workspace keeps the composer and session actions keyboard-operable", async ({ page }) => {
+    await page.setViewportSize({ width: 1180, height: 720 });
     await installApiFixtures(page);
-    await page.goto("/history");
-    await page.getByRole("button", { name: "Coach" }).click();
-    const dialog = page.getByRole("dialog", { name: "Coach" });
-    await expect(dialog).toBeVisible();
-    const close = dialog.getByRole("button", { name: "关闭 Coach" });
-    await expect(close).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
-    await expect(dialog.locator(":focus")).toHaveCount(1);
-    await page.keyboard.press("Escape");
-    await expect(dialog).toBeHidden();
-    await expect(page.getByRole("button", { name: "Coach" })).toBeFocused();
+    await page.goto("/");
+    const composer = page.locator("#coach-draft");
+    await composer.focus();
+    await expect(composer).toBeFocused();
+    await composer.fill("帮我解释这次训练");
+    await expect(page.getByRole("button", { name: "发送" })).toBeEnabled();
+    const newConversation = page.getByRole("button", { name: "新建对话" });
+    await newConversation.focus();
+    await expect(newConversation).toBeFocused();
   });
 
-  test("live regions, reduced motion, and 200 percent equivalent layout remain usable", async ({ page }) => {
+  test("History sends selected Analysis context to Coach without opening an Analysis page", async ({ page }) => {
+    await page.setViewportSize({ width: 1180, height: 720 });
+    await installApiFixtures(page);
+    await page.goto("/history");
+    await page.getByRole("checkbox", { name: /选择分析/ }).check();
+    await page.getByRole("button", { name: /引用所选分析/ }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator("#coach-draft")).toBeVisible();
+  });
+
+  test("live regions, reduced motion, and the supported desktop width remain usable", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await installApiFixtures(page);
-    await page.goto("/tasks");
+    await page.setViewportSize({ width: 1180, height: 720 });
+    await page.goto("/");
     await expect(page.locator('[aria-live="polite"]')).not.toHaveCount(0);
     const transitionDurations = await page.evaluate(() =>
-      Array.from(document.querySelectorAll<HTMLElement>(".ac-button, .task3-task-row"))
+      Array.from(document.querySelectorAll<HTMLElement>(".ac-button, .task7-session-rail button, .task6-composer-send"))
         .filter((element) => element.getBoundingClientRect().width > 0)
         .map((element) => getComputedStyle(element).transitionDuration),
     );
     expect(transitionDurations.every((duration) => duration === "0s")).toBe(true);
-
-    await page.setViewportSize({ width: 640, height: 410 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await expect(page.getByRole("heading", { name: "任务状态" })).toBeVisible();
+    await expect(page.getByText("Aiming Coach", { exact: true })).toBeVisible();
   });
 
-  test("onboarding dropdowns expose listbox state and remain contained at the narrow desktop size", async ({ page }) => {
-    await page.setViewportSize({ width: 960, height: 640 });
+  test("onboarding dropdowns expose listbox state at the supported desktop width", async ({ page }) => {
+    await page.setViewportSize({ width: 1180, height: 720 });
     await installApiFixtures(page, apiScenario({
       providerStatus: { profile_id: null, configured: false, status: "unconfigured", message: "No provider configured" },
     }));
@@ -158,40 +141,60 @@ test.describe("Task 7 accessibility", () => {
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 
-  test("video controls and chart text alternatives are exposed", async ({ page }) => {
-    await installApiFixtures(page, apiScenario({
-      analysis: trackingAnalysis(),
-      analysisData: ANALYSIS_DATA_TRACKING,
-      analysisFamilyData: ANALYSIS_FAMILY_TRACKING,
-    }));
-    await page.goto("/analysis/42");
-    await page.getByRole("tab", { name: "数据" }).click();
-    await expect(page.getByRole("img", { name: /目标相对误差半径分布，共 3 个样本，峰值 0.8/ })).toBeVisible();
-    await expect(page.getByText(/共 3 个样本，峰值 0.8/)).toBeVisible();
-
-    await page.unrouteAll({ behavior: "wait" });
+  test("Coach chart alternatives and video controls are exposed", async ({ page }) => {
+    const keyWarnings: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error" && message.text().includes('unique "key" prop')) {
+        keyWarnings.push(message.text());
+      }
+    });
     await installApiFixtures(page, apiScenario({ analysis: seekableAnalysis() }));
-    await page.reload();
-    await page.getByRole("tab", { name: "视频" }).click();
+    await page.route("**/api/coach/primary*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          thread: { id: 1, user_id: "dev", kind: "primary", created_at: "2026-08-10T00:00:00Z", updated_at: "2026-08-10T00:00:00Z" },
+          messages: [{
+            id: 1,
+            role: "assistant",
+            content: "结合时间线和视频看这次减速。",
+            created_at: "2026-08-10T00:00:00Z",
+            legacy_session_id: null,
+            context_refs: [],
+            cards: [
+              { schema_version: "coach_message_card.v1", kind: "timeline", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
+              { schema_version: "coach_message_card.v1", kind: "evidence", analysis_ref: "analysis:42", target_ref: null, time_range_ms: [1200, 1800] },
+            ],
+          }],
+          refs: [],
+        }),
+      });
+    });
+    await page.goto("/");
+    await expect(page.getByRole("img", { name: /事件时间线/ })).toBeVisible();
+    await page.getByRole("button", { name: "在视频中查看" }).click();
     await expect(page.getByRole("region", { name: "视频证据播放器" })).toBeVisible();
     await expect(page.getByRole("button", { name: "▶" })).toBeVisible();
     const timeline = page.getByRole("slider", { name: "分析时间轴" });
     await timeline.focus();
     await expect(timeline).toBeFocused();
+    await timeline.press("Home");
     const before = Number(await timeline.inputValue());
     await timeline.press("ArrowRight");
     expect(Number(await timeline.inputValue())).toBeGreaterThan(before);
+    expect(keyWarnings).toEqual([]);
   });
 
-  test("registry-backed diagnosis remains operable without compact-layout overflow", async ({ page }) => {
-    await page.setViewportSize({ width: 960, height: 640 });
-    await installApiFixtures(page, apiScenario({ analysis: registryBackedAnalysisSession() }));
-    await page.goto("/analysis/42");
-    await expect(page.getByText("候选解释", { exact: true })).toBeVisible();
-    await expect(page.getByText("规则化练习建议", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "查看证据" }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "查看指标" }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "问 Coach" }).first()).toBeVisible();
+  test("Settings keeps an explicit keyboard-operable exit at the supported width", async ({ page }) => {
+    await page.setViewportSize({ width: 1180, height: 720 });
+    await installApiFixtures(page);
+    await page.goto("/settings");
+    const exit = page.getByRole("button", { name: "退出设置" });
+    await exit.focus();
+    await expect(exit).toBeFocused();
+    await exit.click();
+    await expect(page).toHaveURL(/\/$/);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 });

@@ -9,68 +9,94 @@ async function source(relativePath: string): Promise<string> {
   return readFile(path.join(frontendRoot, relativePath), "utf8");
 }
 
-test("app shell exposes landmarks and skip navigation without an Account surface", async () => {
+test("app shell exposes an AppBar, skip navigation, a SessionRail, and the Coach workspace", async () => {
   const value = await source("components/task3/AppShell.tsx");
   assert.match(value, /<header/);
-  assert.match(value, /<nav/);
   assert.match(value, /<main/);
   assert.match(value, /skip-link/);
+  assert.match(value, /<SessionRail/);
+  assert.match(value, /<CoachPanel/);
   assert.doesNotMatch(value, /Account/);
 });
 
-test("app shell hides the Coach entry on unsupported pages and marks the task count without layout width", async () => {
-  const value = await source("components/task3/AppShell.tsx");
-  assert.match(value, /\{coachSupported \? \(/);
-  assert.doesNotMatch(value, /disabled=\{!coachSupported\}/);
-  assert.doesNotMatch(value, /当前页面不支持 Coach/);
-  assert.match(value, /task3-task-nav-dot/);
-  assert.match(value, /key={pathname}/);
+test("AppShell is the only mounted Coach owner on Coach routes", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  const routePage = await source("components/task7/CoachWorkspacePage.tsx");
+  assert.match(shell, /coachWorkspaceRoute \? \(/);
+  assert.doesNotMatch(shell, /hidden=\{!coachWorkspaceRoute\}/);
+  assert.match(shell, /<CoachPanel/);
+  assert.doesNotMatch(routePage, /import[\s\S]*CoachPanel|<CoachPanel|getDefaultProviderStatus|attachCoachContext/);
+  assert.match(routePage, /return null/);
 });
 
-test("app shell styles encode active navigation and reduced-motion route transitions", async () => {
+test("app shell removes transient status controls from the AppBar", async () => {
+  const value = await source("components/task3/AppShell.tsx");
+  assert.doesNotMatch(value, /task3-capture-status/);
+  assert.doesNotMatch(value, /task3-analysis-status/);
+  assert.doesNotMatch(value, /task3-provider-status/);
+  assert.doesNotMatch(value, /CoachSidebar/);
+  assert.doesNotMatch(value, /task3-primary-nav/);
+  assert.doesNotMatch(value, /href="\/analyze"/);
+  assert.doesNotMatch(value, /href="\/tasks"/);
+});
+
+test("app shell styles keep the 48px AppBar and make Settings a top-bar-below overlay", async () => {
   const value = await source("components/task3/task3.css");
-  assert.match(value, /a\[aria-current=\"page\"\][^{]*\{[\s\S]*border-bottom-color: var\(--primary\)/);
+  assert.match(value, /\.task3-toolbar[^{]*\{[\s\S]*height:\s*48px/);
+  assert.match(value, /\.task3-route-content\[data-settings-page="true"\][\s\S]*position:\s*fixed/);
+  assert.match(value, /inset:\s*48px 0 0/);
   assert.match(value, /task3-route-fade 140ms ease-out/);
   assert.match(value, /prefers-reduced-motion: reduce[\s\S]*task3-route-content/);
 });
 
-test("settings toolbar entry closes back to the last non-settings page", async () => {
+test("session selection updates the Coach deep link", async () => {
   const value = await source("components/task3/AppShell.tsx");
-  assert.match(value, /const SETTINGS_RETURN_KEY = "aiming-cookie\.ui\.settings-return"/);
-  assert.match(value, /window\.sessionStorage\.setItem\(SETTINGS_RETURN_KEY, currentLocation\(\)\)/);
-  assert.match(value, /router\.replace\(settingsReturnPath\(\)\)/);
-  assert.match(value, /settingsActive \? \([\s\S]*aria-label="关闭设置"[\s\S]*onClick=\{closeSettings\}/);
-  assert.match(value, /<Link[\s\S]*aria-label="设置"[\s\S]*onClick=\{rememberSettingsReturn\}/);
+  assert.match(value, /const coachWorkspaceRoute = pathname === "\/" \|\| pathname\.startsWith\("\/s\/"\)/);
+  assert.match(value, /const requestedSessionId = .*\.exec\(pathname\)/);
+  assert.match(value, /router\.push\(`\/s\/\$\{session\.id\}`\)/);
+  assert.match(value, /routeSessionId !== null/);
 });
 
-test("settings open and close use matching reduced-motion-safe transitions", async () => {
+test("SessionRail is the persistent left navigation without a right Coach sidebar", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   const styles = await source("components/task3/task3.css");
-  const settingsStyles = await source("components/task6/task6.css");
-  assert.match(shell, /useState<SettingsMotion>\("idle"\)/);
-  assert.doesNotMatch(shell, /setSettingsMotion\("opening"\)/);
-  assert.match(shell, /setSettingsMotion\("closing"\)/);
-  assert.match(shell, /onAnimationEnd=\{finishSettingsMotion\}/);
-  assert.match(shell, /data-settings-page=\{settingsActive \|\| undefined\}/);
-  assert.match(shell, /data-settings-motion=\{settingsActive && settingsMotion === "closing" \? settingsMotion : undefined\}/);
-  assert.match(shell, /prefers-reduced-motion: reduce/);
-  assert.match(styles, /data-settings-page="true"[^{]*\{[\s\S]*animation:\s*none/);
-  assert.match(styles, /data-settings-motion="closing"[^{]*\{[\s\S]*task3-settings-close 140ms/);
-  assert.match(settingsStyles, /\.task6-settings-layout[^{]*\{[\s\S]*task6-settings-open 160ms/);
-  assert.match(settingsStyles, /@keyframes task6-settings-open[\s\S]*opacity:\s*0\.96;[\s\S]*translateX\(8px\)/);
+  assert.match(shell, /showSessionRail = !shellHidden/);
+  assert.doesNotMatch(shell, /CoachSidebar/);
+  assert.doesNotMatch(shell, /data-coach-open/);
+  assert.match(styles, /data-session-rail="true"[^{]*\{[\s\S]*grid-template-columns:\s*var\(--task7-rail-width, 292px\) minmax\(0, 1fr\)/);
+  assert.match(styles, /\.task3-workspace > \.task7-session-rail[\s\S]*height:\s*calc\(100vh - 48px\)/);
   assert.match(styles, /\.task3-app[^{]*\{[\s\S]*overflow-x:\s*clip/);
-  assert.match(styles, /prefers-reduced-motion: reduce[\s\S]*task3-route-content/);
-  assert.match(settingsStyles, /prefers-reduced-motion: reduce[\s\S]*task6-settings-layout[\s\S]*animation:\s*none/);
 });
 
-test("responsive shell entries fade without animating layout properties", async () => {
+test("Coach workspace fills the viewport so the composer stays at the bottom", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  const styles = await source("components/task3/task3.css");
+  assert.match(shell, /data-coach-workspace=\{coachWorkspaceRoute \|\| undefined\}/);
+  assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\][^{]*\{[\s\S]*height:\s*calc\(100vh - 48px\)/);
+  assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\] > \.task3-route-content[^{]*\{[\s\S]*display:\s*flex/);
+  assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\] > \.task3-route-content[^{]*\{[\s\S]*flex-direction:\s*column/);
+});
+
+test("AppShell keeps the existing Provider read for the SessionRail footer", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  assert.match(shell, /getDefaultProviderStatus\(/);
+  assert.doesNotMatch(shell, /listTasks\(/);
+  assert.match(shell, /\}, \[shellHidden\]\)/);
+});
+
+test("Settings route hides the SessionRail and exposes a Coach return action", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  assert.match(shell, /const settingsRoute = pathname\.startsWith\("\/settings"\)/);
+  assert.match(shell, /const showSessionRail = !shellHidden && !settingsRoute/);
+  assert.match(settings, /label="退出设置"/);
+  assert.match(settings, /title="返回 Coach"/);
+  assert.match(settings, /router\.push\("\/"\)/);
+});
+
+test("AppBar has no responsive status-control sizing", async () => {
   const value = await source("components/task3/task3.css");
-  assert.match(value, /\.task3-primary-nav\s*\{[\s\S]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[\s\S]*display 160ms allow-discrete/);
-  assert.match(value, /\.task3-primary-nav a:first-child\s*\{[\s\S]*background-color 150ms ease-out[\s\S]*opacity 160ms cubic-bezier\(0\.23, 1, 0\.32, 1\)[\s\S]*display 160ms allow-discrete/);
-  assert.match(value, /@media \(max-width: 720px\)[\s\S]*\.task3-primary-nav a:first-child\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-2px\)[\s\S]*display 120ms allow-discrete/);
-  assert.match(value, /@media \(max-width: 560px\)[\s\S]*\.task3-primary-nav\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-2px\)[\s\S]*display 120ms allow-discrete/);
-  assert.match(value, /prefers-reduced-motion: reduce[\s\S]*\.task3-primary-nav[\s\S]*transform:\s*none/);
-  assert.doesNotMatch(value, /\.task3-primary-nav[^{}]*\{[^}]*transition:[^;}]*(?:width|height|padding|margin|gap|flex|grid|top|left)/);
+  assert.doesNotMatch(value, /task3-capture-status|task3-analysis-status|task3-provider-status/);
 });
 
 test("onboarding never persists credentials in browser storage", async () => {
@@ -177,6 +203,14 @@ test("Analyze applies a query Run ref only after the pending Run list is loaded"
   assert.match(value, /requestedRun\?\.id \?\? \(pending\.length === 1 \? pending\[0\]\.id : null\)/);
 });
 
+test("Analyze surfaces Stats calibration from the selected Run", async () => {
+  const value = await source("components/task3/AnalyzeClient.tsx");
+  assert.match(value, /selectedRun\?\.stats_calibration\?\.fov/);
+  assert.match(value, /selectedRun\?\.stats_calibration\?\.cm_per_360/);
+  assert.match(value, /detectedFov/);
+  assert.match(value, /detectedCmPer360/);
+});
+
 test("Analyze uses the available workspace width when details are absent or Coach is open", async () => {
   const client = await source("components/task3/AnalyzeClient.tsx");
   const styles = await source("components/task3/task3.css");
@@ -184,4 +218,10 @@ test("Analyze uses the available workspace width when details are absent or Coac
   assert.match(styles, /\.task3-analyze-grid\[data-layout="single"\][\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(styles, /\.task3-workspace\[data-coach-open="true"\] \.task3-analyze-grid[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(styles, /\.task3-analyze-grid\[data-layout="single"\] \.task3-analyze-manual-cards[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+});
+
+test("Analyze mode selected dots keep a fixed circular geometry", async () => {
+  const styles = await source("components/task3/task3.css");
+  assert.match(styles, /\.task3-analyze-mode-dot\s*\{[\s\S]*position:\s*relative;[\s\S]*flex:\s*0 0 14px;[\s\S]*width:\s*14px;[\s\S]*height:\s*14px;/);
+  assert.match(styles, /\.task3-analyze-mode-card\[data-selected="true"\] \.task3-analyze-mode-dot::after[\s\S]*inset:\s*3px;[\s\S]*border-radius:\s*50%;/);
 });

@@ -6,6 +6,7 @@ import {
   getProductStartRoute,
   getRunModeAvailability,
   isRunPauseFailClosed,
+  presentRecordLabel,
   presentTask,
 } from "../lib/contracts";
 import type { KovaaKRunListItem, ProductStateV1, TaskDetailV1 } from "../lib/types";
@@ -51,6 +52,9 @@ test("task presentation maps machine codes to Chinese and ignores backend Englis
     input_mode: "input_native",
     analysis_type: "flicking",
     run_ref: "run:1",
+    presentation_label: "1wall 6targets | 训练：2026-07-25T00:00:00Z | 分析：分析尚未完成",
+    training_at: "2026-07-25T00:00:00Z",
+    analysis_completed_at: null,
     failure: null,
     partial_outcome: null,
     retryable: false,
@@ -67,7 +71,22 @@ test("task presentation maps machine codes to Chinese and ignores backend Englis
     state: "分析中",
     phase: "计算运动学指标",
     failureDomain: null,
+    presentationLabel: "1wall 6targets | 训练：2026-07-25T00:00:00Z | 分析：分析尚未完成",
   });
+});
+
+test("record labels include scenario and available timestamps without exposing transport refs", () => {
+  const label = presentRecordLabel({
+    scenario: "1wall 5targets pasu",
+    trainingAt: "2026-08-09T08:10:09Z",
+    analysisCompletedAt: "2026-08-09T08:12:30Z",
+  });
+  assert.equal(label, "1wall 5targets pasu | 训练：2026-08-09T08:10:09Z | 分析：2026-08-09T08:12:30Z");
+  assert.doesNotMatch(label, /run:\d+|analysis:\d+/);
+  assert.equal(
+    presentRecordLabel({ scenario: "C:\\Users\\private\\stats.csv", trainingAt: null, analysisCompletedAt: null }),
+    "未命名场景 | 训练：训练时间未知 | 分析：分析尚未完成",
+  );
 });
 
 test("run mode availability consumes supported_input_modes without re-deriving evidence", () => {

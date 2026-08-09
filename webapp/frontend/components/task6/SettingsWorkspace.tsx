@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   authorizeProviderProfile,
@@ -50,6 +51,7 @@ import {
   ErrorState,
   Field,
   FieldControl,
+  IconButton,
   Loading,
   Notice,
   Panel,
@@ -157,7 +159,12 @@ const NAV_ITEMS = [
   { id: "storage", label: "存储" },
 ];
 
+function SettingsExit({ onExit }: { onExit: () => void }) {
+  return <IconButton className="task6-settings-back" label="退出设置" onClick={onExit} size="compact" title="返回 Coach">←</IconButton>;
+}
+
 export function SettingsWorkspace() {
+  const router = useRouter();
   const { preference, setPreference } = useTheme();
   const [profiles, setProfiles] = useState<ProviderProfile[]>([]);
   const [catalog, setCatalog] = useState<ProviderCatalogV1 | null>(null);
@@ -189,6 +196,8 @@ export function SettingsWorkspace() {
   const [fov, setFov] = useState("");
   const [expandedProviders, setExpandedProviders] = useState<Record<number, boolean>>({});
   const [activeNav, setActiveNav] = useState(NAV_ITEMS[0].id);
+  const [captureConsent, setCaptureConsent] = useState(false);
+  const previousProviderSelection = useRef<string | null>(null);
 
   const desktop = isDesktopRuntime();
 
@@ -229,6 +238,24 @@ export function SettingsWorkspace() {
   }, [refresh]);
 
   useEffect(() => {
+    if (!desktop) return;
+    let disposed = false;
+    const pollCaptureStatus = async () => {
+      try {
+        const next = await getCaptureStatus();
+        if (!disposed) setCapture(next);
+      } catch {
+        // Polling is best effort after the initial settings load.
+      }
+    };
+    const timer = window.setInterval(() => void pollCaptureStatus(), 1_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [desktop]);
+
+  useEffect(() => {
     const syncActiveNav = () => {
       const hash = window.location.hash.slice(1);
       setActiveNav(NAV_ITEMS.some((item) => item.id === hash) ? hash : NAV_ITEMS[0].id);
@@ -244,12 +271,16 @@ export function SettingsWorkspace() {
       ?? (providerId ? undefined : catalog?.providers[0]),
     [catalog, providerId],
   );
+  const selectedProviderKey = providerId || selectedCatalogProvider?.provider_id || "";
+  const selectedAuthModesKey = selectedCatalogProvider?.auth_modes.join(",") ?? "";
 
   useEffect(() => {
     if (providerId === "custom") return;
+    if (previousProviderSelection.current === selectedProviderKey) return;
+    previousProviderSelection.current = selectedProviderKey;
     setModelId("");
     setNewAuthMode(firstAuthMode(selectedCatalogProvider?.auth_modes));
-  }, [providerId, selectedCatalogProvider]);
+  }, [providerId, selectedProviderKey, selectedAuthModesKey, selectedCatalogProvider?.auth_modes]);
 
   useEffect(() => {
     if (providerId !== "custom" || customProtocolNeedsChoice || !baseUrl.trim() || !newApiKey.trim()) return;
@@ -393,6 +424,7 @@ export function SettingsWorkspace() {
   const canAddProvider = customProvider
     ? Boolean(baseUrl.trim() && modelId.trim() && newApiKey.trim() && customProtocolConfirmed)
     : Boolean(selectedCatalogProvider && modelId.trim() && (newAuthMode !== "api_key" || newApiKey.trim()));
+  const latestStatsCalibration = runs.find((run) => run.stats_calibration)?.stats_calibration ?? null;
 
   const storageCategories = storage ? presentStorageCategories(storage.categories) : [];
   const totalBytes = storage?.total_bytes ?? 0;
@@ -406,16 +438,19 @@ export function SettingsWorkspace() {
     { value: "dark", label: "深色" },
   ] as const;
 
-  if (loading) return <div className="task6-settings-page"><Loading>正在读取设置</Loading></div>;
+  if (loading) return <div className="task6-settings-page"><div className="task6-settings-state-header"><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><Loading>正在读取设置</Loading></div>;
   if (loadError && !catalog && profiles.length === 0) {
-    return <div className="task6-settings-page"><ErrorState title="设置暂时不可用"><Button onClick={() => void refresh()} variant="secondary">重试</Button></ErrorState></div>;
+    return <div className="task6-settings-page"><div className="task6-settings-state-header"><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><ErrorState title="设置暂时不可用"><Button onClick={() => void refresh()} variant="secondary">重试</Button></ErrorState></div>;
   }
 
   return (
     <div className="task6-settings-page">
       <div className="task6-settings-layout">
         <nav className="task6-settings-nav" aria-label="设置分区">
-          <div className="task6-settings-nav-title">设置</div>
+          <div className="task6-settings-nav-title-row">
+            <SettingsExit onExit={() => router.push("/")} />
+            <div className="task6-settings-nav-title">设置</div>
+          </div>
           {NAV_ITEMS.map((item) => (
             <a
               aria-current={item.id === activeNav ? "true" : undefined}
@@ -431,10 +466,9 @@ export function SettingsWorkspace() {
         <div className="task6-settings-content">
           {loadError ? <Notice className="task6-settings-notice" tone="warning" title="部分设置未能刷新">已保留当前可用内容。请检查本地服务后重试。</Notice> : null}
 
-          <section className="task6-settings-section" id="llm-provider">
+          <section className="task6-settings-section" data-guidance-target="settings.provider_auth" id="llm-provider" tabIndex={-1}>
             <div className="task6-settings-section-header">
               <span className="task6-settings-section-title">LLM Provider</span>
-              <span className="task6-settings-section-hint">认证只发生在你与 Provider 之间</span>
             </div>
             <Panel className="task6-provider-panel">
               <p className="task6-muted">密钥只会提交到本地 credential store；界面不会回显已有密钥。</p>
@@ -449,7 +483,7 @@ export function SettingsWorkspace() {
                         <span className="task6-provider-name">{profile.name}</span>
                         <Status tone={providerStatusTone(profile.status)}>{providerStateLabel(profile.status)}</Status>
                         {profile.is_default ? <Badge tone="info">默认</Badge> : null}
-                        <span className="task6-provider-actions" style={{ marginLeft: "auto" }}>
+                        <span className="task6-provider-actions">
                           <Button
                             onClick={() => void testProviderProfile(profile.id).then((status) => setFeedback(status.message)).catch(() => setFeedback("连接测试失败，请检查 Provider 与网络。"))}
                             size="compact"
@@ -644,7 +678,11 @@ export function SettingsWorkspace() {
                 </div>
                 <div className="task6-profile-footer">
                   <div className="task6-profile-summary">
-                    <span>DPI：{calibration?.dpi ?? "待读取"} · Sensitivity：{calibration?.sensitivity ?? "待读取"}</span>
+                    <span>
+                      Stats：DPI {latestStatsCalibration?.dpi ?? calibration?.dpi ?? "待读取"}
+                      {" · "}Sensitivity {latestStatsCalibration?.sensitivity ?? calibration?.sensitivity ?? "待读取"}
+                      {" · "}FOV {latestStatsCalibration?.fov ?? "待读取"}
+                    </span>
                     <span className="task6-info">
                       <button aria-describedby="task6-profile-help" aria-label="配置档默认值说明" className="task6-info-trigger" type="button">!</button>
                       <span className="task6-info-tooltip" id="task6-profile-help" role="tooltip">
@@ -675,10 +713,9 @@ export function SettingsWorkspace() {
             </section>
           </div>
 
-          <section className="task6-settings-section" id="capture">
+          <section className="task6-settings-section" data-guidance-target="desktop.capture_control" id="capture" tabIndex={-1}>
             <div className="task6-settings-section-header">
               <span className="task6-settings-section-title">自动采集与 Raw Input</span>
-              <span className="task6-settings-section-hint">各项状态分开表达，不是一个总开关</span>
             </div>
             <Panel>
               {!desktop ? <Notice className="task6-settings-notice" tone="warning" title="浏览器模式">自动采集、Raw Input、硬件回放缓冲和权限管理仅在 Desktop 可用。</Notice> : null}
@@ -711,11 +748,21 @@ export function SettingsWorkspace() {
                   </div>
                 </dl>
               ) : null}
-              <p className="task6-muted">如需关闭 Raw Input 授权，请在 Windows 设置的隐私与应用权限中关闭本应用权限；关闭自动采集不会删除历史 trace。</p>
+              <p className="task6-muted">Windows 不会弹出 Raw Input 系统授权框；下面的勾选和按钮就是本应用的明确授权。授权后仅在 KovaaK 运行时采集 Raw Input，并维护最近 300 秒的 KovaaK 窗口回放，数据只保存在本机。</p>
+              {desktop && capture?.capture_enabled === false ? (
+                <label className="task6-consent">
+                  <input checked={captureConsent} onChange={(event) => setCaptureConsent(event.target.checked)} type="checkbox" />
+                  <span>我同意采集 Raw Input 和 KovaaK 窗口回放，用于本机训练分析。</span>
+                </label>
+              ) : null}
               {desktop && capture?.capture_enabled != null ? (
                 <div className="task6-inline-actions" style={{ marginTop: "12px" }}>
-                  <Button onClick={() => void setDesktopCaptureEnabled(!capture.capture_enabled).then(() => refresh())} variant="secondary">
-                    {capture.capture_enabled ? "关闭未来采集" : "启用自动采集"}
+                  <Button
+                    disabled={!capture.capture_enabled && !captureConsent}
+                    onClick={() => void setDesktopCaptureEnabled(!capture.capture_enabled).then(() => refresh())}
+                    variant="secondary"
+                  >
+                    {capture.capture_enabled ? "关闭未来采集" : "授权并启用自动采集"}
                   </Button>
                 </div>
               ) : null}
@@ -725,17 +772,16 @@ export function SettingsWorkspace() {
           <section className="task6-settings-section" id="kovaak">
             <div className="task6-settings-section-header">
               <span className="task6-settings-section-title">KovaaK 成绩</span>
-              <span className="task6-settings-section-hint">读取一组已审核训练项目的最近成绩</span>
             </div>
             <Panel>
               <KovaaKConnectionPanel context="settings" />
             </Panel>
           </section>
 
-          <section className="task6-settings-section" id="storage">
+          <section className="task6-settings-section" data-guidance-target="storage.incomplete" id="storage" tabIndex={-1}>
             <div className="task6-settings-section-header">
               <span className="task6-settings-section-title">存储</span>
-              <span className="task6-settings-section-hint">总占用 {formatBytes(totalBytes)} · 手动分类管理，不提供自动清理</span>
+              <span className="task6-settings-section-hint">总占用 {formatBytes(totalBytes)}</span>
             </div>
             <Panel>
               {!desktop ? <Notice className="task6-settings-notice" tone="warning" title="Desktop 能力不可用">浏览器不会伪造本地占用或删除操作。</Notice> : null}

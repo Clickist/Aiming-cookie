@@ -9,43 +9,19 @@ async function source(relativePath: string): Promise<string> {
   return readFile(path.join(root, relativePath), "utf8");
 }
 
-test("Coach shell implements side-by-side, overlay, and full-content modes", async () => {
-  const shell = await source("components/task6/CoachSidebar.tsx");
+test("Coach shell renders the existing full workspace in the main column", async () => {
   const appShell = await source("components/task3/AppShell.tsx");
   const appStyles = await source("components/task3/task3.css");
   const panel = await source("components/task6/CoachPanel.tsx");
   const styles = await source("components/task6/task6.css");
-  const contracts = await source("lib/contracts.ts");
-  const primitives = await source("ui/primitives.tsx");
-  assert.match(shell, /1160/);
-  assert.match(shell, /840/);
-  assert.match(shell, /useState\(\s*\(\) => typeof document === "undefined" \? 0 : document\.documentElement\.clientWidth/);
-  assert.match(contracts, /COACH_MIN_WIDTH\s*=\s*320/);
-  assert.match(contracts, /COACH_DEFAULT_WIDTH\s*=\s*360/);
-  assert.match(contracts, /COACH_MAX_WIDTH\s*=\s*480/);
-  assert.match(contracts, /COACH_WIDTH_STEP\s*=\s*16/);
-  assert.match(appShell, /--task3-coach-width/);
-  assert.match(appStyles, /var\(--task3-coach-width/);
-  assert.match(appShell, /useAnimatedPresence\(showCoach,\s*160\)/);
-  assert.match(appShell, /data-coach-open=\{coachPresence\.state === "open" \|\| undefined\}/);
-  assert.match(appShell, /coachPresence\.present\s*\?/);
-  assert.match(shell, /setPointerCapture/);
-  assert.match(shell, /onPointerMove/);
-  assert.match(shell, /aria-valuemin/);
-  assert.match(shell, /data-state=\{state\}/);
-  assert.doesNotMatch(shell, /if \(!open\) return null/);
+  assert.match(appShell, /<CoachPanel/);
+  assert.match(appShell, /layoutMode="full"/);
+  assert.match(appShell, /data-session-rail/);
+  assert.doesNotMatch(appShell, /CoachSidebar/);
+  assert.match(appStyles, /task3-workspace\[data-session-rail="true"\]/);
   assert.match(panel, /aria-live/);
-  assert.match(styles, /transition:\s*transform 200ms cubic-bezier\(0\.32, 0\.72, 0, 1\),\s*opacity 200ms cubic-bezier\(0\.32, 0\.72, 0, 1\)/);
-  assert.match(styles, /data-state="closed"[\s\S]*translateX\(16px\)/);
-  assert.doesNotMatch(styles, /animation:\s*task6-coach-slide/);
-  assert.match(primitives, /requestAnimationFrame\(\(\) => \{\s*frame = window\.requestAnimationFrame/);
-  assert.match(styles, /\.task6-tool-step\[data-state="active"\] \.task6-tool-dot::after[\s\S]*animation:\s*task6-tool-pulse/);
-  assert.doesNotMatch(styles, /\.task6-tool-step\[data-state="active"\] \.task6-tool-dot\s*\{[^}]*animation:/);
+  assert.match(styles, /\.task6-coach-panel/);
   assert.match(styles, /prefers-reduced-motion/);
-  assert.match(styles, /@media \(min-width: 1160px\)[\s\S]*?data-mode="side-by-side"\][\s\S]*?position:\s*fixed/);
-  assert.doesNotMatch(styles, /data-mode="side-by-side"\]\[data-state="closed"\][\s\S]*?position:\s*fixed/);
-  assert.match(styles, /contain:\s*layout paint/);
-  assert.match(styles, /data-mode="side-by-side"\][\s\S]*?overflow:\s*clip/);
   assert.doesNotMatch(styles, /#[0-9a-fA-F]{3,8}\b|\brgb\s*\(|\bhsl\s*\(/);
 });
 
@@ -87,7 +63,7 @@ test("Settings route covers Provider, Profile, capture, theme, and Storage", asy
   }
   assert.match(settings, /useTheme/);
   assert.match(settings, /Stats 自动读取优先/);
-  assert.match(settings, /不提供自动清理/);
+  assert.match(settings, /总占用/);
   assert.match(settings, /getProviderAuthOperation/);
   assert.match(settings, /cancelProviderAuthOperation/);
   for (const status of ["等待认证输入", "授权成功", "已取消", "已超时", "授权失败"]) {
@@ -130,6 +106,14 @@ test("Settings keeps Profile actions together and moves boundary copy into an ac
   assert.match(styles, /\.task6-info\s*\{[\s\S]*position:\s*static;/);
 });
 
+test("Settings displays the latest Stats calibration before Profile fallback values", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  assert.match(settings, /run\.stats_calibration/);
+  assert.match(settings, /latestStatsCalibration\?\.dpi \?\? calibration\?\.dpi/);
+  assert.match(settings, /latestStatsCalibration\?\.sensitivity \?\? calibration\?\.sensitivity/);
+  assert.match(settings, /latestStatsCalibration\?\.fov/);
+});
+
 test("Settings Provider type and auth selects match the shared field height", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   const theme = await source("ui/theme.css");
@@ -153,11 +137,26 @@ test("Settings auto-detects custom Provider protocols and keeps a fallback choic
   assert.match(settings, /isCustomProviderKind\(profile\.kind\)/);
 });
 
-test("closing Coach persists the user's preference", async () => {
+test("Provider model selection does not reset the API key draft", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  assert.match(settings, /previousProviderSelection = useRef<string \| null>\(null\)/);
+  assert.match(settings, /previousProviderSelection\.current === selectedProviderKey/);
+  assert.match(settings, /<select onChange=\{\(event\) => setModelId\(event\.target\.value\)\} value=\{modelId\}>/);
+  assert.doesNotMatch(settings, /setModelId\(event\.target\.value\);\s*setNewApiKey/);
+});
+
+test("Settings refreshes native capture status while it is open", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  assert.match(settings, /const pollCaptureStatus = async \(\) =>/);
+  assert.match(settings, /window\.setInterval\(\(\) => void pollCaptureStatus\(\), 1_000\)/);
+  assert.match(settings, /window\.clearInterval\(timer\)/);
+});
+
+test("Coach is the main workspace instead of a closable sidebar", async () => {
   const shell = await source("components/task3/AppShell.tsx");
-  assert.match(shell, /const closeCoach/);
-  assert.match(shell, /COACH_OPEN_KEY, "closed"/);
-  assert.match(shell, /onClose=\{closeCoach\}/);
+  assert.match(shell, /<CoachPanel/);
+  assert.doesNotMatch(shell, /CoachSidebar/);
+  assert.doesNotMatch(shell, /onClose=\{closeCoach\}/);
 });
 
 test("Settings and Coach use primitives and expose focus-safe dialogs", async () => {
@@ -242,6 +241,13 @@ test("Coach reads current training locally and turns shortcut intents into draft
   assert.doesNotMatch(coach, /createTrainingPlan|recordTrainingExecution|recordRetest|completeTraining/);
 });
 
+test("Coach refreshes the visible training plan after a completed run or confirmation", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  assert.match(coach, /const refreshCurrentTraining = useCallback/);
+  assert.match(coach, /await Promise\.all\(\[refresh\(\), refreshCurrentTraining\(\)\]\)/);
+  assert.match(coach, /await refreshCurrentTraining\(\);/);
+});
+
 test("Coach never overlays a training-read error on a valid no-plan response", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
   assert.match(coach, /currentTrainingError && !currentTraining/);
@@ -249,21 +255,14 @@ test("Coach never overlays a training-read error on a valid no-plan response", a
   assert.match(coach, /currentTraining\.reason !== "no_current_plan"/);
 });
 
-test("completed Analysis soft-starts Coach without a fabricated user message or browser idempotency state", async () => {
+test("new Coach sessions are created only when the first message is sent", async () => {
   const shell = await source("components/task3/AppShell.tsx");
-  const sidebar = await source("components/task6/CoachSidebar.tsx");
   const panel = await source("components/task6/CoachPanel.tsx");
-  const api = await source("lib/api.ts");
-  assert.match(shell, /capability !== "ready" \|\| !pathname\.startsWith\("\/analysis\/"\)/);
-  assert.match(shell, /session\.status !== "done"/);
-  assert.match(shell, /startCoachAnalysisSoftStart\(analysisId/);
-  assert.doesNotMatch(shell, /COACH_FIRST_ANALYSIS_KEY|coach-first-analysis-opened/);
-  assert.match(sidebar, /softStartRun/);
-  assert.match(panel, /softStartRun/);
-  assert.match(panel, /setRun\(softStartRun\)/);
-  assert.match(api, /"\/api\/coach\/analysis-soft-start"/);
-  assert.match(api, /coach_analysis_soft_start_request\.v1/);
-  assert.match(api, /analysis_session_id: analysisId/);
+  assert.match(shell, /const handleNewCoachSession = \(\) =>/);
+  assert.match(shell, /setDraftSession\(true\)/);
+  assert.match(shell, /onEnsureSession=\{ensureCoachSession\}/);
+  assert.match(panel, /const effectiveSessionId = sessionId \?\? \(onEnsureSession/);
+  assert.match(panel, /createCoachAgentRun\(/);
 });
 
 test("Coach training actions distinguish plan context from a reviewed KovaaK launch", async () => {
@@ -284,6 +283,30 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.doesNotMatch(coach, /steam:\/\//);
 });
 
+test("Coach context controls stay with the context header instead of the composer", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  const styles = await source("components/task6/task6.css");
+  assert.match(coach, /task6-coach-context-attachments/);
+  assert.doesNotMatch(coach, /task6-composer-attachments/);
+  assert.match(styles, /\.task6-coach-context-attachments[^{]*\{[\s\S]*margin-top:\s*2px/);
+  assert.doesNotMatch(styles, /\.task6-composer-attachments/);
+});
+
+test("Coach does not repeat the attached analysis in the context status line", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  assert.match(coach, /const hasAttachedAnalysis = Boolean\(activeAnalysisContext\)/);
+  assert.match(coach, /currentAnalysisLabel && !hasAttachedAnalysis/);
+  assert.match(coach, /!hasAttachedAnalysis \? \(/);
+});
+
+test("Coach composer uses a raised input surface without an outer divider", async () => {
+  const styles = await source("components/task6/task6.css");
+  const composer = styles.match(/\.task6-composer\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+  const input = styles.match(/\.task6-composer-input\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+  assert.doesNotMatch(composer, /border-top/);
+  assert.match(input, /background:\s*var\(--s-high\)/);
+});
+
 test("Coach current training animates expand and collapse without leaving interactive hidden content", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
   const styles = await source("components/task6/task6.css");
@@ -295,4 +318,12 @@ test("Coach current training animates expand and collapse without leaving intera
   assert.match(styles, /\.task6-training-reveal\s*\{[\s\S]*grid-template-rows:\s*0fr;[\s\S]*opacity:\s*0;[\s\S]*translateY\(-4px\)/);
   assert.match(styles, /\.task6-training-reveal\[data-state="open"\]\s*\{[\s\S]*grid-template-rows:\s*1fr;[\s\S]*opacity:\s*1;[\s\S]*translateY\(0\)/);
   assert.match(styles, /prefers-reduced-motion:\s*reduce[\s\S]*\.task6-training-reveal/);
+});
+
+test("Coach renders typed cards beside message bubbles and can open video", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  assert.match(coach, /CoachMessageCards/);
+  assert.match(coach, /message\.cards/);
+  assert.match(coach, /onOpenVideo/);
+  assert.doesNotMatch(coach, /JSON\.parse\(message\.content\)/);
 });

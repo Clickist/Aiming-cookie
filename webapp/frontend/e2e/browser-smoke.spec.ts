@@ -3,29 +3,49 @@ import { expect, test } from "@playwright/test";
 import {
   PRODUCT_STATE,
   READY_PROVIDER_STATUS,
-  RUN_MULTIMODAL,
   RUN_NATIVE,
   RUN_PENDING_MULTIMODAL,
-  RUN_PENDING_NATIVE,
-  TASKS,
   KOVAAK_SCORES_AVAILABLE,
   analysisSession,
   apiScenario,
   installApiFixtures,
   installDesktopBridge,
-  registryBackedAnalysisSession,
 } from "../fixtures/task7-fixtures";
 
 const CUSTOM_PROVIDER_OPTION = "自定义 Provider 填写 URL 和 API key 后自动识别接口";
 
+function seekableAnalysis() {
+  const base = analysisSession();
+  if (!base.result || base.result.schema_version !== "analysis_result.v2" || !base.history) {
+    throw new Error("seekable fixture requires v2 history");
+  }
+  return analysisSession({
+    input_mode: "multimodal",
+    result: { ...base.result, input_mode: "multimodal" },
+    history: {
+      ...base.history,
+      input_mode: "multimodal",
+      source_availability: { ...base.history.source_availability, mp4: "available" },
+      visual_replay: {
+        kind: "seekable_mp4",
+        available: true,
+        seekable: true,
+        endpoint: "/api/sessions/42/video",
+        artifact_ref: "analysis:42:video",
+        reason: null,
+      },
+    },
+  });
+}
+
 test.describe("Task 7 browser smoke", () => {
-  test("conditional startup routes to onboarding", async ({ page }) => {
+  test("Coach-first startup stays in the main workspace before onboarding is complete", async ({ page }) => {
     await installApiFixtures(page, apiScenario({
       productState: { ...PRODUCT_STATE, onboarding_completed: false, onboarding_completion_kind: null },
     }));
     await page.goto("/");
-    await expect(page).toHaveURL(/\/onboarding$/);
-    await expect(page.getByRole("heading", { name: "连接模型服务" })).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText("Aiming Coach", { exact: true })).toBeVisible();
   });
 
   test("onboarding exposes accessible dropdowns, custom Provider fields, and a skip explanation", async ({ page }) => {
@@ -150,44 +170,14 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByRole("button", { name: "刷新成绩" })).toBeEnabled();
   });
 
-  test("desktop Run discovery selects one Run and requires a choice for multiple Runs", async ({ page }) => {
+  test("legacy Tasks and Analysis URLs redirect to History", async ({ page }) => {
     await installDesktopBridge(page);
-    await installApiFixtures(page, apiScenario({ runs: [RUN_PENDING_MULTIMODAL] }));
-    await page.goto("/analyze");
-    await expect(page.getByText("自动采集：采集中", { exact: false })).toBeVisible();
-    await expect(page.locator('input[name="run"]')).toBeChecked();
-    await expect(page.locator('input[name="input-mode"]')).toHaveCount(3);
-    await expect(page.getByText("预览 / 实验")).toBeVisible();
-
-    await page.unrouteAll({ behavior: "wait" });
-    await installApiFixtures(page, apiScenario({ runs: [RUN_PENDING_MULTIMODAL, RUN_PENDING_NATIVE] }));
-    await page.reload();
-    await expect(page.getByText("2 条待分析", { exact: true })).toBeVisible();
-    await expect(page.locator('input[name="run"]:checked')).toHaveCount(0);
-  });
-
-  test("manual fallback requires both MP4 and Stats", async ({ page }) => {
-    await installApiFixtures(page, apiScenario({
-      providerStatus: { ...READY_PROVIDER_STATUS, configured: false, profile_id: null, status: "unconfigured" },
-    }));
-    await page.goto("/analyze");
-    const start = page.getByRole("button", { name: "开始分析", exact: true });
-    await expect(start).toBeDisabled();
-    await page.locator('.task3-analyze-manual-cards input[accept="video/mp4"]').setInputFiles({ name: "fixture.mp4", mimeType: "video/mp4", buffer: Buffer.from("fixture") });
-    await expect(start).toBeDisabled();
-    await page.locator('.task3-analyze-manual-cards input[accept*="text/csv"]').setInputFiles({ name: "fixture.csv", mimeType: "text/csv", buffer: Buffer.from("FOV,103\n") });
-    await expect(start).toBeEnabled();
-  });
-
-  test("Tasks shows every lifecycle state, partial outcome, and retry attempt", async ({ page }) => {
-    await installApiFixtures(page, apiScenario({ tasks: TASKS }));
-    await page.goto("/tasks");
-    for (const label of ["正在导入", "排队中", "运行中", "已完成", "正在重试"]) {
-      await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
+    await installApiFixtures(page);
+    for (const path of ["/tasks", "/analyze", "/analysis", "/analysis/42", "/analysis?id=42"]) {
+      await page.goto(path);
+      await expect(page).toHaveURL(/\/history$/);
+      await expect(page.getByRole("heading", { name: "分析记录" })).toBeVisible();
     }
-    await expect(page.getByText("部分可用", { exact: true })).toBeVisible();
-    await expect(page.getByText("第 2 次尝试 · 可离开本页", { exact: true })).toBeVisible();
-    await expect(page.getByText("失败 · 输入对齐", { exact: true })).toBeVisible();
   });
 
   test("History keeps pending Runs, Run records, and Analysis records separate", async ({ page }) => {
@@ -200,6 +190,9 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByRole("heading", { name: "训练记录" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "分析记录" })).toBeVisible();
     await expect(page.locator(".task4-sec-count")).toHaveText(["1", "1", "1"]);
+    await page.getByRole("button", { name: "查看摘要" }).click();
+    await expect(page.getByRole("dialog", { name: "分析摘要" })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Analysis/ })).toHaveCount(0);
   });
 
   test("History empty states remain framed and responsive", async ({ page }) => {
@@ -227,126 +220,46 @@ test.describe("Task 7 browser smoke", () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 
-  test("Analysis workspace keeps Diagnosis, Video, and Data in one workspace", async ({ page }) => {
-    await installApiFixtures(page, apiScenario({ analysis: analysisSession() }));
-    await page.goto("/analysis/42");
-    await expect(page.getByRole("heading", { name: "1wall 6targets small" })).toBeVisible();
-    await expect(page.getByText("本轮最值得关注：减速阶段偏长", { exact: true })).toBeVisible();
-    await expect(page.getByText("训练方向", { exact: true }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "查看证据" }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "查看指标" }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "问 Coach" }).first()).toBeVisible();
-
-    await page.getByRole("tab", { name: "视频" }).click();
-    await expect(page.getByText("没有可用视觉证据", { exact: true })).toBeVisible();
-
-    await page.getByRole("tab", { name: "数据" }).click();
-    await expect(page.getByRole("heading", { name: "实验性或受限指标" })).toBeVisible();
-    await expect(page.getByText("时序分布", { exact: true })).toBeVisible();
-  });
-
-  test("a ready completed Analysis soft-starts Coach once without sending a user message", async ({ page }) => {
-    let softStartCount = 0;
-    let requestBody: unknown = null;
-    let softStartCompleted = false;
-    await installApiFixtures(page, apiScenario({ analysis: analysisSession() }));
-    await page.route("**/api/coach/primary", async (route) => {
-      const completedAtRequest = softStartCompleted;
-      if (!completedAtRequest) await new Promise((resolve) => setTimeout(resolve, 150));
+  test("Coach renders Analysis cards and opens video beside the conversation", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({ analysis: seekableAnalysis() }));
+    await page.route("**/api/coach/primary*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          thread: { id: 1, user_id: "dev", kind: "primary", created_at: "2026-08-06T00:00:00Z", updated_at: "2026-08-06T00:00:00Z" },
-          messages: completedAtRequest ? [{
-            id: 2,
+          thread: { id: 1, user_id: "dev", kind: "primary", created_at: "2026-08-10T00:00:00Z", updated_at: "2026-08-10T00:00:00Z" },
+          messages: [{
+            id: 1,
             role: "assistant",
-            content: "软启动首轮诊断已生成",
-            created_at: "2026-08-06T00:00:00Z",
+            content: "我把这次减速问题和证据放在下面。",
+            created_at: "2026-08-10T00:00:00Z",
             legacy_session_id: null,
             context_refs: [],
-          }] : [],
-          refs: [],
+            cards: [
+              { schema_version: "coach_message_card.v1", kind: "metrics", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
+              { schema_version: "coach_message_card.v1", kind: "timeline", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
+              { schema_version: "coach_message_card.v1", kind: "evidence", analysis_ref: "analysis:42", target_ref: null, time_range_ms: [1200, 1800] },
+            ],
+          }],
+          refs: [{ id: 1, analysis_session_id: 42, status: "active", attached_at: "2026-08-10T00:00:00Z", deleted_at: null }],
         }),
       });
     });
-    await page.route("**/api/coach/analysis-soft-start", async (route) => {
-      softStartCount += 1;
-      requestBody = route.request().postDataJSON();
-      softStartCompleted = true;
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:soft-start", parent_run_ref: null, attempt: 1, status: "succeeded", phase: "completed", partial_text: null, error: null, contexts: [], events: [], created_at: "2026-08-06T00:00:00Z", started_at: "2026-08-06T00:00:00Z", finished_at: "2026-08-06T00:00:00Z" }),
-      });
-    });
-
-    await page.goto(`${process.env.AIMING_COOKIE_E2E_BASE_URL ?? ""}/analysis/42`);
-
-    await expect(page.getByRole("complementary", { name: "Coach" })).toBeVisible();
-    await expect.poll(() => softStartCount).toBe(1);
-    await expect(page.getByText("软启动首轮诊断已生成", { exact: true })).toBeVisible();
-    expect(requestBody).toEqual({ schema_version: "coach_analysis_soft_start_request.v1", analysis_session_id: 42 });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "关键数据" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "事件时间线" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "视频证据" })).toBeVisible();
+    await page.getByRole("button", { name: "在视频中查看" }).click();
+    await expect(page.getByRole("region", { name: "Coach 视频讲解" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "视频证据播放器" })).toBeVisible();
+    await page.getByRole("button", { name: "关闭视频讲解" }).click();
+    await expect(page.getByRole("region", { name: "Coach 视频讲解" })).toBeHidden();
   });
 
-  for (const candidate of [
-    {
-      name: "Provider is not ready",
-      path: "/analysis/42",
-      scenario: apiScenario({
-        providerStatus: { ...READY_PROVIDER_STATUS, configured: false, profile_id: null, status: "unconfigured" },
-      }),
-    },
-    {
-      name: "Analysis is not done",
-      path: "/analysis/42",
-      scenario: apiScenario({ analysis: analysisSession({ status: "queued" }) }),
-    },
-    { name: "page is not an Analysis", path: "/history", scenario: apiScenario() },
-    { name: "Analysis id is invalid", path: "/analysis/not-a-number", scenario: apiScenario() },
-  ]) {
-    test(`Analysis soft start stays off when ${candidate.name}`, async ({ page }) => {
-      let softStartCount = 0;
-      await installApiFixtures(page, candidate.scenario);
-      await page.route("**/api/coach/analysis-soft-start", async (route) => {
-        softStartCount += 1;
-        await route.fulfill({ status: 409, body: "not available" });
-      });
-
-      await page.goto(`${process.env.AIMING_COOKIE_E2E_BASE_URL ?? ""}${candidate.path}`);
-      await page.waitForTimeout(250);
-
-      expect(softStartCount).toBe(0);
-    });
-  }
-
-  test("a failed Analysis soft start leaves manual Coach input available", async ({ page }) => {
-    await installApiFixtures(page, apiScenario({ analysis: analysisSession() }));
-    await page.route("**/api/coach/analysis-soft-start", async (route) => {
-      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: "provider_unavailable" }) });
-    });
-
-    await page.goto(`${process.env.AIMING_COOKIE_E2E_BASE_URL ?? ""}/analysis/42`);
-
-    await expect(page.getByRole("complementary", { name: "Coach" })).toBeVisible();
-    await expect(page.locator("#coach-draft")).toBeEnabled();
-  });
-
-  test("registry-backed Analysis labels candidate explanations without restoring legacy prescriptions", async ({ page }) => {
-    await installApiFixtures(page, apiScenario({ analysis: registryBackedAnalysisSession() }));
-    await page.goto("/analysis/42");
-    await expect(page.getByText("本轮最值得关注：减速阶段偏长", { exact: true })).toBeVisible();
-    await expect(page.getByText("规则化观察", { exact: true })).toBeVisible();
-    await expect(page.getByText("候选解释", { exact: true })).toBeVisible();
-    await expect(page.getByText("规则化练习建议", { exact: true })).toBeVisible();
-    await expect(page.getByText("历史候选说明", { exact: true })).toHaveCount(0);
-  });
-
-  test("Coach supports a primary conversation without a session binding", async ({ page }) => {
+  test("Coach supports the primary conversation as the main workspace", async ({ page }) => {
     await installApiFixtures(page);
-    await page.goto("/history");
-    await expect(page.getByRole("complementary", { name: "Coach" })).toBeVisible();
-    await expect(page.getByText("先稳定接近目标时的减速节奏，再复测同一场景。", { exact: true })).toBeVisible();
+    await page.goto("/");
+    await expect(page.getByLabel("Coach 消息").getByText("先稳定接近目标时的减速节奏，再复测同一场景。", { exact: true })).toBeVisible();
     await expect(page.locator("#coach-draft")).toBeVisible();
     await expect(page.getByRole("button", { name: "发送" })).toBeVisible();
   });
@@ -363,4 +276,5 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByText("Run 录像", { exact: true }).first()).toBeVisible();
     await expect(page.getByText(/task7-fixture-token|C:\\Task7Fixture/)).toHaveCount(0);
   });
+
 });
