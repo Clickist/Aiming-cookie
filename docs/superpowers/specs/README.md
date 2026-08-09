@@ -4,6 +4,10 @@
 
 ## Active
 
+- [`2026-08-10-coach-product-operator-guided-workflows-design.md`](2026-08-10-coach-product-operator-guided-workflows-design.md)：冻结明确自然语言指令的 message-bound 产品操作授权、ProductReadiness、GuidanceIntent、前端 GuidanceHost、用户必须亲自完成的步骤和状态验收；Pi 仍是唯一 Agent runtime。
+
+- [`2026-08-08-windows-internal-installer-design.md`](2026-08-08-windows-internal-installer-design.md)：冻结脱离源码仓库运行的 Windows 内测安装包资源布局、进程/数据边界、NSIS、可选可信签名和 clean-install 验收合同。
+
 - [`2026-08-06-coach-goal-feedback-learning-loop-design.md`](2026-08-06-coach-goal-feedback-learning-loop-design.md)：在现有 TeachingSession 与 Training Plan 中保存用户目标、区分证据来源、记录训练感受并版本化调整计划；Viscose 内容只作为有来源的社区经验，Analysis 数据与显化保持不变。
 - [`2026-08-06-coach-problem-hypothesis-diagnosis-design.md`](2026-08-06-coach-problem-hypothesis-diagnosis-design.md)：Coach 将单个或多个 grounded 观察编译为一个功能性主问题，并通过证据强度、反例、候选原因、区分问题、单变量实验和复测改口完成“望闻问切”；Analysis/Data 页面不承载原因假设。
 
