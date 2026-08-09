@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getSession, retrySession } from "@/lib/api";
 import {
@@ -10,6 +10,7 @@ import {
   presentAnalysisWorkspace,
   type AnalysisViewState,
 } from "@/lib/contracts";
+import { analysisHref, analysisIdFromLocation } from "@/lib/navigation";
 import type { SessionStatus } from "@/lib/types";
 import { Badge, Button, ErrorState, Loading, Notice, Tabs } from "@/ui/primitives";
 
@@ -21,6 +22,9 @@ import { VideoView } from "./VideoView";
 type WorkspaceTab = "diagnosis" | "video" | "data";
 const ANALYSIS_TABS_ID = "analysis-view-tabs";
 const ANALYSIS_PANEL_ID = "analysis-view-panel";
+const COACH_PENDING_INTENT_KEY = "aiming-cookie.ui.coach-pending-intent";
+const ANALYSIS_COACH_DRAFT = "这次分析的核心问题是什么？";
+let cachedDoneSession: SessionStatus | null = null;
 
 const FAMILY_STATUS_LABEL = {
   supported: "正式支持",
@@ -65,16 +69,6 @@ function stateTone(state: AnalysisViewState): "neutral" | "info" | "success" | "
   return "neutral";
 }
 
-function formatDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function evidenceSourceLabel(source: string): string {
   const normalized = source.toLowerCase();
   return EVIDENCE_SOURCE_LABELS[normalized]
@@ -110,32 +104,50 @@ function isCoachLocator(value: unknown): value is { view: WorkspaceTab; relative
 }
 
 export function AnalysisWorkspace() {
-  const params = useParams<{ analysisId: string }>();
+  const pathname = usePathname();
   const router = useRouter();
-  const analysisId = Number(params.analysisId);
-  const [session, setSession] = useState<SessionStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const search = typeof window === "undefined" ? "" : window.location.search;
+  const analysisId = analysisIdFromLocation(pathname, search);
+  const cachedSession = cachedDoneSession?.id === analysisId ? cachedDoneSession : null;
+  const [session, setSession] = useState<SessionStatus | null>(cachedSession);
+  const [loading, setLoading] = useState(cachedSession === null);
   const [loadErrorStatus, setLoadErrorStatus] = useState<number | null>(null);
+  const [loadWarning, setLoadWarning] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [tab, setTab] = useState<WorkspaceTab>("diagnosis");
   const [selectedIssue, setSelectedIssue] = useState<number | null>(null);
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [selectedSegment, setSelectedSegment] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
+  const sessionRef = useRef<SessionStatus | null>(cachedSession);
 
   const load = useCallback(async (showLoading: boolean) => {
-    if (!Number.isSafeInteger(analysisId) || analysisId <= 0) {
+    if (analysisId === null) {
       setLoadErrorStatus(404);
       setLoading(false);
       return;
     }
-    if (showLoading) setLoading(true);
+    if (showLoading && sessionRef.current === null) setLoading(true);
     try {
       const next = await getSession(analysisId);
       setSession(next);
+      sessionRef.current = next;
+      if (next.status === "done") cachedDoneSession = next;
       setLoadErrorStatus(null);
+      setLoadWarning(false);
     } catch (error) {
-      setLoadErrorStatus(errorStatus(error) ?? 503);
+      const status = errorStatus(error) ?? 503;
+      if (sessionRef.current?.status === "done" && status !== 404 && status !== 410) {
+        setLoadWarning(true);
+        setLoadErrorStatus(null);
+      } else {
+        if (status === 404 || status === 410) {
+          if (cachedDoneSession?.id === analysisId) cachedDoneSession = null;
+          setSession(null);
+          sessionRef.current = null;
+        }
+        setLoadErrorStatus(status);
+      }
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -146,12 +158,12 @@ export function AnalysisWorkspace() {
   }, [load]);
 
   useEffect(() => {
-    if (session?.status !== "queued" && session?.status !== "running" && session?.status !== "uploading") {
+    if (!loadWarning && session?.status !== "queued" && session?.status !== "running" && session?.status !== "uploading") {
       return undefined;
     }
     const timer = window.setInterval(() => void load(false), 2000);
     return () => window.clearInterval(timer);
-  }, [load, session?.status]);
+  }, [load, loadWarning, session?.status]);
 
   const viewState = getAnalysisViewState({
     loading,
@@ -184,7 +196,7 @@ export function AnalysisWorkspace() {
     try {
       const next = await retrySession(session.id, { idempotencyKey: crypto.randomUUID() });
       if (next.id !== session.id) {
-        router.push(`/analysis/${next.id}`);
+        router.push(analysisHref(next.id));
       } else {
         setSession(next);
         setLoadErrorStatus(null);
@@ -197,7 +209,14 @@ export function AnalysisWorkspace() {
   };
 
   const openCoach = () => {
-    document.querySelector<HTMLButtonElement>(".task3-toolbar-action")?.click();
+    const intent = { draft: ANALYSIS_COACH_DRAFT };
+    try {
+      window.sessionStorage.setItem(COACH_PENDING_INTENT_KEY, JSON.stringify(intent));
+    } catch {
+      // The event still supplies the draft when the Coach panel is already mounted.
+    }
+    window.dispatchEvent(new CustomEvent("aiming-cookie:coach-draft", { detail: intent }));
+    window.dispatchEvent(new CustomEvent("aiming-cookie:coach-open"));
   };
 
   if (viewState === "loading") {
@@ -309,7 +328,7 @@ export function AnalysisWorkspace() {
               </div>
             </div>
             <div className={styles.headerSubline}>
-              {formatDate(presentation.createdAt)}
+              {presentation.recordLabel}
               {durationText ? ` · ${durationText}` : null}
               {presentation.calibration.cmPer360 ? ` · ${presentation.calibration.cmPer360} cm/360` : null}
               {presentation.calibration.fov ? ` · FOV ${presentation.calibration.fov}` : null}
@@ -337,6 +356,7 @@ export function AnalysisWorkspace() {
           输入原生结果仍然保留；页面不会用视觉失败覆盖已经成立的 native 事实。
         </Notice>
       ) : null}
+      {loadWarning ? <Notice className={styles.partialNotice} tone="warning" title="分析服务刚刚短暂不可用">已保存的分析仍在本机，当前页面保留已读取内容；服务恢复后会自动刷新。</Notice> : null}
 
       <div
         aria-labelledby={`${ANALYSIS_TABS_ID}-${tab}-tab`}

@@ -1,5 +1,5 @@
-import { TasksClient } from "@/components/task3/TasksClient";
+import { redirect } from "next/navigation";
 
 export default function TasksPage() {
-  return <TasksClient />;
+  redirect("/history");
 }

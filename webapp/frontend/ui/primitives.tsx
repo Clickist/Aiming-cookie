@@ -12,6 +12,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import Link from "next/link";
 
 type Tone = "neutral" | "info" | "success" | "warning" | "error";
 
@@ -31,8 +32,16 @@ export type ButtonProps = ButtonCommonProps &
 export function Button({ variant = "primary", size = "default", className, children, ...props }: ButtonProps) {
   const classes = ["ac-button", className].filter(Boolean).join(" ");
   if ("href" in props && props.href) {
+    const { href, ...anchorProps } = props;
+    if (href.startsWith("/") && !href.startsWith("//")) {
+      return (
+        <Link {...anchorProps} className={classes} data-size={size === "compact" ? "compact" : undefined} data-variant={variant} href={href}>
+          {children}
+        </Link>
+      );
+    }
     return (
-      <a {...props} className={classes} data-size={size === "compact" ? "compact" : undefined} data-variant={variant}>
+      <a {...anchorProps} className={classes} data-size={size === "compact" ? "compact" : undefined} data-variant={variant} href={href}>
         {children}
       </a>
     );

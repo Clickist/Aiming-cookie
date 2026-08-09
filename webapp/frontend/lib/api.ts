@@ -9,6 +9,7 @@
 import {
   getDesktopRuntimeConnection,
   isDesktopRuntime,
+  resetDesktopRuntimeConnection,
 } from "./desktop";
 import type {
   AnalyzeResponse,
@@ -22,6 +23,8 @@ import type {
   CoachPrimaryAttachResponse,
   CoachPrimaryMessageResponse,
   CoachPrimaryResponse,
+  CoachSessionListResponse,
+  CoachSessionOut,
   CoachRuntimeStatusResponse,
   CoachAgentRunV1,
   CoachAnalysisSoftStartRequestV1,
@@ -50,6 +53,7 @@ import type {
   KovaaKRunItem,
   KovaaKRunListResponse,
   ProductStateV1,
+  ProductReadinessV1,
   ProviderAuthCapabilitiesV1,
   ProviderAuthOperation,
   ProviderCatalogV1,
@@ -81,30 +85,86 @@ type RequestOptions = {
   userId?: string;
 };
 
+export class DesktopRuntimeUnavailableError extends Error {
+  constructor() {
+    super("Desktop runtime is temporarily unavailable");
+    this.name = "DesktopRuntimeUnavailableError";
+  }
+}
+
+function isReadRequest(init: RequestInit): boolean {
+  const method = (init.method ?? "GET").toUpperCase();
+  return method === "GET" || method === "HEAD";
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+function sameDesktopConnection(
+  left: { baseUrl: string; token: string },
+  right: { baseUrl: string; token: string },
+): boolean {
+  return left.baseUrl === right.baseUrl && left.token === right.token;
+}
+
 async function apiFetch(
   path: string,
   init: RequestInit = {},
   opts: RequestOptions = {},
 ): Promise<Response> {
   const desktop = isDesktopRuntime();
-  const connection = desktop ? await getDesktopRuntimeConnection() : null;
-  const headers = new Headers(init.headers);
-
-  headers.set(
-    "X-User-Id",
-    desktop ? DESKTOP_USER_ID : (opts.userId ?? DEFAULT_USER_ID),
-  );
-  if (desktop && connection) {
-    headers.set("X-Aiming-Cookie-Desktop-Token", connection.token);
-  } else if (opts.desktopToken && !MOCK_API_MODE) {
-    throw new Error("Desktop-only API is unavailable in this browser session");
+  if (!desktop) {
+    if (opts.desktopToken && !MOCK_API_MODE) {
+      throw new Error("Desktop-only API is unavailable in this browser session");
+    }
+    const headers = new Headers(init.headers);
+    headers.set("X-User-Id", opts.userId ?? DEFAULT_USER_ID);
+    return fetch(`${API_BASE}${path}`, { ...init, headers, signal: opts.signal });
   }
 
-  return fetch(`${connection?.baseUrl ?? API_BASE}${path}`, {
-    ...init,
-    headers,
-    signal: opts.signal,
-  });
+  const request = async (connection: Awaited<ReturnType<typeof getDesktopRuntimeConnection>>) => {
+    const headers = new Headers(init.headers);
+    headers.set("X-User-Id", DESKTOP_USER_ID);
+    headers.set("X-Aiming-Cookie-Desktop-Token", connection.token);
+    return fetch(`${connection.baseUrl}${path}`, { ...init, headers, signal: opts.signal });
+  };
+  const connection = await getDesktopRuntimeConnection();
+  let response: Response;
+  try {
+    response = await request(connection);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    resetDesktopRuntimeConnection();
+    if (!isReadRequest(init)) throw new DesktopRuntimeUnavailableError();
+    const replacement = await getDesktopRuntimeConnection();
+    if (sameDesktopConnection(connection, replacement)) {
+      resetDesktopRuntimeConnection();
+      throw new DesktopRuntimeUnavailableError();
+    }
+    try {
+      return await request(replacement);
+    } catch (retryError) {
+      resetDesktopRuntimeConnection();
+      if (isAbortError(retryError)) throw retryError;
+      throw new DesktopRuntimeUnavailableError();
+    }
+  }
+  if (response.status !== 401 || !isReadRequest(init)) return response;
+
+  resetDesktopRuntimeConnection();
+  const replacement = await getDesktopRuntimeConnection();
+  if (sameDesktopConnection(connection, replacement)) {
+    resetDesktopRuntimeConnection();
+    throw new DesktopRuntimeUnavailableError();
+  }
+  try {
+    return await request(replacement);
+  } catch (error) {
+    resetDesktopRuntimeConnection();
+    if (isAbortError(error)) throw error;
+    throw new DesktopRuntimeUnavailableError();
+  }
 }
 
 export interface UploadOptions {
@@ -398,19 +458,21 @@ export async function getCoachRuntimeStatus(
 }
 
 export async function getCoachPrimary(
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachPrimaryResponse> {
-  const res = await apiFetch("/api/coach/primary", { method: "GET" }, opts);
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
+  const res = await apiFetch(`/api/coach/primary${query}`, { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachPrimaryResponse;
 }
 
 export async function attachCoachPrimaryAnalysis(
   analysisSessionId: number,
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachPrimaryAttachResponse> {
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
   const res = await apiFetch(
-    "/api/coach/primary/attach",
+    `/api/coach/primary/attach${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -425,14 +487,15 @@ export async function attachCoachPrimaryAnalysis(
 export async function postCoachPrimaryMessage(
   content: string,
   analysisSessionId?: number,
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachPrimaryMessageResponse> {
   const body: { content: string; analysis_session_id?: number } = { content };
   if (analysisSessionId !== undefined) {
     body.analysis_session_id = analysisSessionId;
   }
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
   const res = await apiFetch(
-    "/api/coach/primary/messages",
+    `/api/coach/primary/messages${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -592,6 +655,27 @@ export async function getProductState(
   const res = await apiFetch("/api/product-state", { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as ProductStateV1;
+}
+
+export async function getProductReadiness(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProductReadinessV1> {
+  const res = await apiFetch("/api/product-readiness", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProductReadinessV1;
+}
+
+export async function acknowledgeCoachGuidance(
+  payload: { run_ref: string; intent_id: string; outcome: "completed" | "cancelled" | "failed" | "timed_out" },
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<{ schema_version: "guidance_ack_response.v1"; run_ref: string; intent_id: string; outcome: typeof payload.outcome; next_intent?: import("@/lib/types").GuidanceIntentV1 | null; terminal_state?: Record<string, unknown> | null }> {
+  const res = await apiFetch("/api/coach/guidance/ack", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ schema_version: "guidance_ack_request.v1", ...payload }),
+  }, opts);
+  if (!res.ok) throw await apiError(res);
+  return await res.json();
 }
 
 export async function completeOnboarding(
@@ -857,11 +941,68 @@ export async function deleteProviderProfile(
 }
 
 export async function getCoachContexts(
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachContextListV1> {
-  const res = await apiFetch("/api/coach/context", { method: "GET" }, opts);
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
+  const res = await apiFetch(`/api/coach/context${query}`, { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachContextListV1;
+}
+
+export async function listCoachSessions(
+  opts: { query?: string; includeArchived?: boolean; signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachSessionListResponse> {
+  const params = new URLSearchParams();
+  if (opts.query?.trim()) params.set("q", opts.query.trim());
+  if (opts.includeArchived) params.set("include_archived", "true");
+  const query = params.toString();
+  const res = await apiFetch(`/api/coach/sessions${query ? `?${query}` : ""}`, { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachSessionListResponse;
+}
+
+export async function createCoachSession(
+  title?: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachSessionOut> {
+  const res = await apiFetch(
+    "/api/coach/sessions",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(title?.trim() ? { title: title.trim() } : {}),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachSessionOut;
+}
+
+export async function updateCoachSession(
+  sessionId: number,
+  update: { title?: string; status?: "archived" },
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachSessionOut> {
+  const res = await apiFetch(
+    `/api/coach/sessions/${sessionId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachSessionOut;
+}
+
+export async function deleteCoachSession(
+  sessionId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachSessionOut> {
+  const res = await apiFetch(`/api/coach/sessions/${sessionId}`, { method: "DELETE" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachSessionOut;
 }
 
 export async function attachCoachContext(
@@ -873,10 +1014,11 @@ export async function attachCoachContext(
     end_ms?: number;
     comparison_analysis_ref?: string;
   },
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachContextMutationV1> {
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
   const res = await apiFetch(
-    "/api/coach/context/attach",
+    `/api/coach/context/attach${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -890,10 +1032,11 @@ export async function attachCoachContext(
 
 export async function detachCoachContext(
   contextRef: string,
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachContextMutationV1> {
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
   const res = await apiFetch(
-    `/api/coach/context/${encodeURIComponent(contextRef)}/detach`,
+    `/api/coach/context/${encodeURIComponent(contextRef)}/detach${query}`,
     { method: "POST" },
     opts,
   );
@@ -904,7 +1047,7 @@ export async function detachCoachContext(
 export async function createCoachAgentRun(
   content: string,
   contextRefs: string[],
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachAgentRunV1> {
   const res = await apiFetch(
     "/api/coach/agent-runs",
@@ -915,6 +1058,7 @@ export async function createCoachAgentRun(
         schema_version: "coach_agent_run_request.v1",
         content,
         context_refs: contextRefs,
+        ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
       }),
     },
     opts,
@@ -942,27 +1086,30 @@ export async function startCoachAnalysisSoftStart(
 
 export async function getCoachAgentRun(
   runRef: string,
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachAgentRunV1> {
-  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}`, { method: "GET" }, opts);
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
+  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}${query}`, { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachAgentRunV1;
 }
 
 export async function stopCoachAgentRun(
   runRef: string,
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachAgentRunV1> {
-  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}/stop`, { method: "POST" }, opts);
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
+  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}/stop${query}`, { method: "POST" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachAgentRunV1;
 }
 
 export async function retryCoachAgentRun(
   runRef: string,
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachAgentRunV1> {
-  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}/retry`, { method: "POST" }, opts);
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
+  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}/retry${query}`, { method: "POST" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachAgentRunV1;
 }
@@ -970,10 +1117,11 @@ export async function retryCoachAgentRun(
 export async function decideCoachConfirmation(
   confirmationRef: string,
   decision: "confirm" | "reject",
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachConfirmationV1> {
+  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
   const res = await apiFetch(
-    `/api/coach/confirmations/${encodeURIComponent(confirmationRef)}/decision`,
+    `/api/coach/confirmations/${encodeURIComponent(confirmationRef)}/decision${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

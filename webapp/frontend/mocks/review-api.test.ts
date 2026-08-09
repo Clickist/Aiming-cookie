@@ -72,3 +72,23 @@ test("review API paginates the full real Flick projection like the backend", () 
   assert.equal(last.rows.length, 23);
   assert.equal(last.next_offset, null);
 });
+
+test("review API attaches analysis context and is idempotent", () => {
+  const scenario = apiScenario({
+    coachContexts: { schema_version: "coach_context_list.v1", contexts: [] },
+  });
+  const request = {
+    method: "POST",
+    path: "/api/coach/context/attach",
+    body: { schema_version: "coach_context_attach.v1", kind: "analysis", analysis_ref: "analysis:42" },
+  } as const;
+  const attached = handleReviewApiRequest(scenario, request);
+  assert.equal(attached.status, 200);
+  assert.equal((attached.body as { action: string }).action, "attached");
+  assert.equal(scenario.coachContexts.contexts.length, 1);
+
+  const duplicate = handleReviewApiRequest(scenario, request);
+  assert.equal(duplicate.status, 200);
+  assert.equal((duplicate.body as { action: string }).action, "already_attached");
+  assert.equal(scenario.coachContexts.contexts.length, 1);
+});

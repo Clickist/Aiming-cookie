@@ -10,6 +10,10 @@ export interface DesktopRuntimeConnection {
 
 let connectionPromise: Promise<DesktopRuntimeConnection> | null = null;
 
+export function resetDesktopRuntimeConnection(): void {
+  connectionPromise = null;
+}
+
 export function isDesktopRuntime(): boolean {
   return typeof window !== "undefined" && isTauri();
 }
@@ -18,7 +22,13 @@ export async function getDesktopRuntimeConnection(): Promise<DesktopRuntimeConne
   if (!isDesktopRuntime()) {
     throw new Error("Desktop runtime is unavailable in this browser session");
   }
-  connectionPromise ??= invoke<DesktopRuntimeConnection>("desktop_runtime_connection");
+  if (!connectionPromise) {
+    const nextConnection = invoke<DesktopRuntimeConnection>("desktop_runtime_connection");
+    connectionPromise = nextConnection;
+    void nextConnection.catch(() => {
+      if (connectionPromise === nextConnection) resetDesktopRuntimeConnection();
+    });
+  }
   return connectionPromise;
 }
 

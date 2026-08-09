@@ -1,0 +1,65 @@
+.task7-coach-video-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.task7-coach-video-pane__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 54px;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--outline-variant);
+  background: var(--surface);
+}
+
+.task7-coach-video-pane__header span {
+  color: var(--on-surface-variant);
+  font-size: 10.5px;
+}
+
+.task7-coach-video-pane__header h2 {
+  max-width: 56ch;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--on-surface);
+  font: 600 14px/1.25 var(--font-display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task7-coach-video-pane__close {
+  display: inline-grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font: 500 20px/1 var(--font-ui);
+}
+
+.task7-coach-video-pane__close:hover {
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+
+.task7-coach-video-pane__close:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.task7-coach-video-pane__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}

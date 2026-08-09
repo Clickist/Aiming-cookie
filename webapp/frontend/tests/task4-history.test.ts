@@ -67,6 +67,17 @@ test("history keeps pending runs, run records, and analysis records in separate 
   assert.equal(sections.analysisRecords.length, 1);
 });
 
+test("history labels retain display data without turning refs into user copy", () => {
+  const item = analysis({
+    training_at: "2026-07-25T00:00:00Z",
+    analysis_completed_at: "2026-07-25T00:01:00Z",
+    presentation_label: "1wall6targets | 训练：2026-07-25T00:00:00Z | 分析：2026-07-25T00:01:00Z",
+  });
+  assert.doesNotMatch(item.presentation_label ?? "", /run:1|analysis:9/);
+  assert.equal(item.training_at, "2026-07-25T00:00:00Z");
+  assert.equal(item.analysis_completed_at, "2026-07-25T00:01:00Z");
+});
+
 test("history status text distinguishes unavailable, partial, unsupported, offline, permission, and deleted", () => {
   assert.equal(getHistoryStatusText("source_unavailable"), "来源不可用");
   assert.equal(getHistoryStatusText("partial"), "部分结果");
@@ -99,4 +110,20 @@ test("run inspector projects five levels without paths or internal identifiers",
   assert.equal(inspector.capabilities.modes[0]?.code, "input_native");
   assert.equal(inspector.operations.includes("manage_storage"), true);
   assert.doesNotMatch(JSON.stringify(inspector), /C:\\|Users|trace\.bin|stats\.csv|run:1/);
+});
+
+test("run inspector preserves finalization, resolved alignment, and source coverage", () => {
+  const inspector = presentRunInspector(run({
+    finalization_state: "finalized",
+    alignment: { state: "resolved", coverage: 0.75, duration_ms: 1_000 },
+    trace_quality: { state: "attached", availability: "available", alignment_status: null, coverage: null },
+    video_quality: {
+      availability: "available",
+      coverage: { visible_duration_ms: 800 },
+    },
+  }));
+  assert.equal(inspector.identity.finalization, "已完成");
+  assert.equal(inspector.evidence.raw.alignment, "aligned");
+  assert.equal(inspector.evidence.raw.coverage, 0.75);
+  assert.equal(inspector.evidence.video.coverage, 0.8);
 });

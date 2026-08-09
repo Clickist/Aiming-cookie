@@ -9,9 +9,13 @@ import {
   deleteKovaaKConnection,
   getKovaaKConnection,
   getKovaaKScores,
+  getProductReadiness,
   getCurrentTraining,
   getAnalysisFamilyData,
   getAnalysisVideoBlob,
+  getCoachContexts,
+  getCoachPrimary,
+  createCoachAgentRun,
   listCustomProviderModels,
   listSessions,
   refreshKovaaKConnection,
@@ -20,7 +24,11 @@ import {
   startCoachAnalysisSoftStart,
   syncKovaaKScores,
 } from "./api";
-import { getManagedVideoUrl, openKovaakScenario } from "./desktop";
+import {
+  getManagedVideoUrl,
+  openKovaakScenario,
+  resetDesktopRuntimeConnection,
+} from "./desktop";
 
 const originalFetch = globalThis.fetch;
 const originalWindow = Reflect.get(globalThis, "window");
@@ -36,6 +44,7 @@ function restoreGlobal(name: "window" | "isTauri", value: unknown): void {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  resetDesktopRuntimeConnection();
   restoreGlobal("window", originalWindow);
   restoreGlobal("isTauri", originalIsTauri);
 });
@@ -92,6 +101,89 @@ test("browser API requests stay relative and do not add a desktop token", async 
   assert.equal(headers.get("X-Aiming-Cookie-Desktop-Token"), null);
 });
 
+test("product readiness uses the single bounded guidance bootstrap API", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      schema_version: "product_readiness.v1",
+      domains: {},
+      capabilities: ["product_readiness.read"],
+      blocking_reasons: [],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const readiness = await getProductReadiness();
+
+  assert.equal(readiness.schema_version, "product_readiness.v1");
+  assert.deepEqual(requests.map((request) => request.input), ["/api/product-readiness"]);
+  assert.equal(requests[0]?.init?.method, "GET");
+});
+
+test("desktop reads retry once with a refreshed Tauri runtime connection", async () => {
+  const requests: string[] = [];
+  let connectionCalls = 0;
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async (command: string) => {
+        assert.equal(command, "desktop_runtime_connection");
+        connectionCalls += 1;
+        return connectionCalls === 1
+          ? { baseUrl: "http://127.0.0.1:43127", token: "stale-token" }
+          : { baseUrl: "http://127.0.0.1:43128", token: "fresh-token" };
+      },
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.startsWith("http://127.0.0.1:43127")) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
+  }) as typeof fetch;
+
+  await listSessions();
+
+  assert.deepEqual(requests, [
+    "http://127.0.0.1:43127/api/sessions",
+    "http://127.0.0.1:43128/api/sessions",
+  ]);
+  assert.equal(connectionCalls, 2);
+});
+
+test("desktop writes are not replayed but release the stale connection for the next request", async () => {
+  const requests: string[] = [];
+  let connectionCalls = 0;
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => {
+        connectionCalls += 1;
+        return connectionCalls === 1
+          ? { baseUrl: "http://127.0.0.1:43127", token: "stale-token" }
+          : { baseUrl: "http://127.0.0.1:43128", token: "fresh-token" };
+      },
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.startsWith("http://127.0.0.1:43127")) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
+  }) as typeof fetch;
+
+  await assert.rejects(completeOnboarding("skipped"), /temporarily unavailable/i);
+  await listSessions();
+
+  assert.deepEqual(requests, [
+    "http://127.0.0.1:43127/api/product-state/onboarding",
+    "http://127.0.0.1:43128/api/sessions",
+  ]);
+  assert.equal(connectionCalls, 2);
+});
+
 test("browser video bytes use the owner-scoped API fetch instead of a bare media URL", async () => {
   const requests: Array<{ input: string; init?: RequestInit }> = [];
   Reflect.set(globalThis, "isTauri", false);
@@ -134,6 +226,29 @@ test("analysis soft start posts only the typed analysis trigger", async () => {
     analysis_session_id: 42,
   });
   assert.equal(run.run_ref, "coach-run:soft-start");
+});
+
+test("Coach session adapters forward the selected session identity", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({}), { status: 200 });
+  }) as typeof fetch;
+
+  await getCoachPrimary({ sessionId: 17 });
+  await getCoachContexts({ sessionId: 17 });
+  await createCoachAgentRun("先看稳定性", [], { sessionId: 17 });
+
+  assert.equal(requests[0]?.input, "/api/coach/primary?session_id=17");
+  assert.equal(requests[1]?.input, "/api/coach/context?session_id=17");
+  assert.deepEqual(JSON.parse(String(requests[2]?.init?.body)), {
+    schema_version: "coach_agent_run_request.v1",
+    content: "先看稳定性",
+    context_refs: [],
+    session_id: 17,
+  });
 });
 
 test("custom Provider model discovery submits URL and key once without retaining either", async () => {
@@ -239,7 +354,7 @@ test("analysis write requests forward their stable idempotency keys", async () =
 
   await analyzeKovaakRun(
     7,
-    { input_mode: "input_native" },
+    { input_mode: "multimodal", allow_parallel: true },
     { idempotencyKey: "analyze-key" },
   );
   await retrySession(11, { idempotencyKey: "retry-key" });
@@ -248,6 +363,10 @@ test("analysis write requests forward their stable idempotency keys", async () =
     new Headers(requests[0]?.init?.headers).get("Idempotency-Key"),
     "analyze-key",
   );
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    input_mode: "multimodal",
+    allow_parallel: true,
+  });
   assert.equal(
     new Headers(requests[1]?.init?.headers).get("Idempotency-Key"),
     "retry-key",

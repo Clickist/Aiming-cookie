@@ -17,6 +17,8 @@ const SIDE_BY_SIDE_BREAKPOINT = 1160;
 const OVERLAY_BREAKPOINT = 840;
 
 export function CoachSidebar({
+  analysisId,
+  sessionId = null,
   capability,
   open,
   onClose,
@@ -26,6 +28,8 @@ export function CoachSidebar({
   state,
   width,
 }: {
+  analysisId: number | null;
+  sessionId?: number | null;
   capability: "loading" | ProviderProfileState | "unavailable";
   open: boolean;
   onClose: () => void;
@@ -53,9 +57,7 @@ export function CoachSidebar({
     () => coachLayoutMode(availableWidth || SIDE_BY_SIDE_BREAKPOINT, width),
     [availableWidth, width],
   );
-  const currentAnalysisRef = pathname.startsWith("/analysis/")
-    ? `analysis:${pathname.split("/")[2]}`
-    : null;
+  const currentAnalysisRef = analysisId === null ? null : `analysis:${analysisId}`;
 
   const closeAndRestoreFocus = () => {
     onClose();
@@ -120,7 +122,10 @@ export function CoachSidebar({
   };
 
   const attachCurrent = async (analysisRef: string) => {
-    await attachCoachContext({ kind: "analysis", analysis_ref: analysisRef });
+    await attachCoachContext(
+      { kind: "analysis", analysis_ref: analysisRef },
+      sessionId == null ? {} : { sessionId },
+    );
     window.dispatchEvent(new CustomEvent("aiming-cookie:coach-context-updated"));
   };
 
@@ -128,6 +133,7 @@ export function CoachSidebar({
     <CoachPanel
       capability={capability}
       currentAnalysisRef={currentAnalysisRef}
+      sessionId={sessionId}
       layoutMode={layout.mode !== "side-by-side" ? (layout.mode === "full" || availableWidth < OVERLAY_BREAKPOINT ? "full" : "overlay") : "side-by-side"}
       onClose={layout.mode !== "side-by-side" ? closeAndRestoreFocus : undefined}
       onRequestContext={attachCurrent}
