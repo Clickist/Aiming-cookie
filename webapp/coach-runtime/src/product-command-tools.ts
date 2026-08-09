@@ -121,6 +121,9 @@ function safeCommandEvent(result: Record<string, unknown>, commandName: string) 
     audit_ref: result.audit_ref,
     ui_event: !isKovaakScoreCommand && isRecord(result.ui_event) ? result.ui_event : null,
     warning_or_error: !isKovaakScoreCommand && isRecord(result.warning_or_error) ? result.warning_or_error : null,
+    ...(result.authorization_source === "explicit_user_request" ? {
+      authorization_source: "explicit_user_request" as const,
+    } : {}),
   };
 }
 
@@ -135,11 +138,21 @@ export function createProductCommandTool(bridge: CoachToolBridge) {
       command_name: commandSchema,
       parameters: Type.Object({}, { additionalProperties: true }),
       idempotency_key: Type.Optional(Type.String({ maxLength: 256 })),
+      instruction_quote: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
     }, { additionalProperties: false }),
-    async execute(_id: string, params: { command_name: ProductCommandName; parameters: Record<string, unknown>; idempotency_key?: string }, signal?: AbortSignal) {
+    async execute(_id: string, params: {
+      command_name: ProductCommandName;
+      parameters: Record<string, unknown>;
+      idempotency_key?: string;
+      instruction_quote?: string;
+    }, signal?: AbortSignal) {
       const isKovaakScoreCommand = KOVAAK_SCORE_COMMANDS.has(params.command_name);
       if (!PRODUCT_COMMAND_NAMES.includes(params.command_name) || !isRecord(params.parameters) ||
           !hasValidCommandParameters(params.command_name, params.parameters) ||
+          (params.instruction_quote !== undefined && (
+            typeof params.instruction_quote !== "string" || !params.instruction_quote ||
+            params.instruction_quote.length > 512 || PATH_OR_URL_TEXT.test(params.instruction_quote)
+          )) ||
           (!isKovaakScoreCommand && containsForbidden(params.parameters))) {
         throw new Error("Product command contains unsupported fields");
       }
@@ -148,6 +161,7 @@ export function createProductCommandTool(bridge: CoachToolBridge) {
         parameters: params.parameters,
       };
       if (WRITE_COMMANDS.has(params.command_name)) body.idempotency_key = params.idempotency_key || stableKey(bridge, params.command_name, params.parameters);
+      if (params.instruction_quote !== undefined) body.instruction_quote = params.instruction_quote;
       const headers: Record<string, string> = { "Content-Type": "application/json", Authorization: `Bearer ${bridge.bearer_token}` };
       if (bridge.desktop_token) headers["X-Aiming-Cookie-Desktop-Token"] = bridge.desktop_token;
       let parsed: unknown;
@@ -158,13 +172,18 @@ export function createProductCommandTool(bridge: CoachToolBridge) {
       } catch {
         throw new Error("Product command bridge request failed");
       }
-      const responseText = JSON.stringify(parsed);
-      const secrets = [bridge.bearer_token, bridge.desktop_token].filter((value): value is string => Boolean(value));
-      if (!isRecord(parsed) || containsUnsafeResult(parsed) || secrets.some((secret) => responseText.includes(secret))) {
+      if (!isRecord(parsed)) {
         throw new Error("Product command returned an invalid result");
       }
       const event = safeCommandEvent(parsed, params.command_name);
-      return { content: [{ type: "text", text: JSON.stringify(parsed) }], details: { event } };
+      const providerResult = { ...parsed };
+      delete providerResult.confirmation;
+      const responseText = JSON.stringify(providerResult);
+      const secrets = [bridge.bearer_token, bridge.desktop_token].filter((value): value is string => Boolean(value));
+      if (containsUnsafeResult(providerResult) || secrets.some((secret) => responseText.includes(secret))) {
+        throw new Error("Product command returned an invalid result");
+      }
+      return { content: [{ type: "text", text: responseText }], details: { event } };
     },
   };
 }

@@ -115,7 +115,7 @@ class _GatedConnection:
 
 _conn: Optional[_GatedConnection] = None
 
-TARGET_USER_VERSION = 24
+TARGET_USER_VERSION = 26
 
 
 async def get_conn() -> _GatedConnection:
@@ -202,9 +202,11 @@ CREATE TABLE IF NOT EXISTS coach_threads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'primary',
+    title TEXT,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived', 'deleted')),
+    deleted_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, kind)
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS coach_messages (
@@ -557,7 +559,7 @@ CREATE TABLE IF NOT EXISTS coach_agent_run_events (
     run_ref TEXT NOT NULL,
     sequence INTEGER NOT NULL CHECK(sequence >= 1),
     event_type TEXT NOT NULL CHECK(event_type IN (
-        'status', 'phase', 'tool', 'text', 'confirmation', 'error'
+        'status', 'phase', 'tool', 'text', 'confirmation', 'guidance', 'error'
     )),
     phase TEXT NOT NULL CHECK(phase IN (
         'queued', 'text_generation', 'tool_execution', 'completed'
@@ -861,11 +863,13 @@ async def init_schema() -> None:
         await _migrate_v22_provider_profile_kinds(conn)
         await _migrate_v23_coach_system_triggers(conn)
         await _migrate_v24_provider_model_capabilities(conn)
+        await _migrate_v25_coach_thread_lifecycle(conn)
+        await _migrate_v26_guidance_events(conn)
         await conn.commit()
         return
 
     foreign_keys_disabled = False
-    if user_version < 22:
+    if user_version < 26:
         foreign_keys = await (await conn.execute("PRAGMA foreign_keys")).fetchone()
         if foreign_keys and foreign_keys[0]:
             await conn.execute("PRAGMA foreign_keys = OFF")
@@ -918,6 +922,10 @@ async def init_schema() -> None:
             await _migrate_v23_coach_system_triggers(conn)
         if user_version < 24:
             await _migrate_v24_provider_model_capabilities(conn)
+        if user_version < 25:
+            await _migrate_v25_coach_thread_lifecycle(conn)
+        if user_version < 26:
+            await _migrate_v26_guidance_events(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -1318,6 +1326,83 @@ async def _migrate_v24_provider_model_capabilities(conn: aiosqlite.Connection) -
     await _migrate_add_column_if_missing(
         conn, "provider_profiles", "max_tokens", "INTEGER",
     )
+
+
+async def _migrate_v25_coach_thread_lifecycle(conn: aiosqlite.Connection) -> None:
+    """v24 -> v25: multiple owner-scoped Coach sessions with soft lifecycle."""
+    cur = await conn.execute("PRAGMA table_info(coach_threads)")
+    columns = {row[1] for row in await cur.fetchall()}
+    required = {"title", "status", "deleted_at"}
+    if required.issubset(columns):
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_coach_threads_owner_status "
+            "ON coach_threads(user_id, status, updated_at DESC, id DESC)"
+        )
+        await conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_threads_owner_primary "
+            "ON coach_threads(user_id) WHERE kind = 'primary'"
+        )
+        return
+
+    # The original table had UNIQUE(user_id, kind), which prevents more than
+    # one conversation. Rebuild it while preserving every existing row/id.
+    await _execute_transactional_script(conn, """
+        CREATE TABLE coach_threads_v25 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'primary',
+            title TEXT,
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active', 'archived', 'deleted')),
+            deleted_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO coach_threads_v25(
+            id, user_id, kind, title, status, deleted_at, created_at, updated_at
+        )
+        SELECT id, user_id, kind, NULL, 'active', NULL, created_at, updated_at
+        FROM coach_threads;
+        DROP TABLE coach_threads;
+        ALTER TABLE coach_threads_v25 RENAME TO coach_threads;
+        CREATE INDEX IF NOT EXISTS idx_coach_threads_owner_status
+            ON coach_threads(user_id, status, updated_at DESC, id DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_threads_owner_primary
+            ON coach_threads(user_id) WHERE kind = 'primary';
+        """)
+
+
+async def _migrate_v26_guidance_events(conn: aiosqlite.Connection) -> None:
+    """v25 -> v26: permit bounded guidance events in Coach run history."""
+    row = await (await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='coach_agent_run_events'"
+    )).fetchone()
+    if row is None or not isinstance(row[0], str) or "'guidance'" in row[0]:
+        return
+    await _execute_transactional_script(conn, """
+        CREATE TABLE coach_agent_run_events_v26 (
+            event_ref TEXT PRIMARY KEY,
+            run_ref TEXT NOT NULL,
+            sequence INTEGER NOT NULL CHECK(sequence >= 1),
+            event_type TEXT NOT NULL CHECK(event_type IN (
+                'status', 'phase', 'tool', 'text', 'confirmation', 'guidance', 'error'
+            )),
+            phase TEXT NOT NULL CHECK(phase IN (
+                'queued', 'text_generation', 'tool_execution', 'completed'
+            )),
+            code TEXT NOT NULL,
+            message TEXT NOT NULL,
+            payload_json TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(run_ref, sequence),
+            FOREIGN KEY(run_ref) REFERENCES coach_agent_runs(run_ref)
+        );
+        INSERT INTO coach_agent_run_events_v26
+        SELECT event_ref, run_ref, sequence, event_type, phase, code, message, payload_json, created_at
+        FROM coach_agent_run_events;
+        DROP TABLE coach_agent_run_events;
+        ALTER TABLE coach_agent_run_events_v26 RENAME TO coach_agent_run_events;
+    """)
 
 
 async def _execute_transactional_script(

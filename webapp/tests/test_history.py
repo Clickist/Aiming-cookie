@@ -415,6 +415,40 @@ async def test_list_sessions_includes_path_free_scenario_from_input_snapshot():
 
 
 @pytest.mark.asyncio
+async def test_session_list_projects_safe_presentation_label_with_training_and_completion_times(tmp_path: Path):
+    user_id = "u_presentation_label"
+    run, _, _ = await _seed_history_run(tmp_path, user_id=user_id)
+    sid = await queue.enqueue(
+        user_id,
+        "/private/source/video.mp4",
+        "/private/source/stats.csv",
+        kovaak_run_id=run["id"],
+        input_snapshot={
+            "schema_version": "analysis_input_snapshot.v1",
+            "scenario": "1wall 6targets small",
+        },
+    )
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', finished_at=? WHERE id=?",
+        ("2026-08-09 09:12:30", sid),
+    )
+    await conn.commit()
+
+    rows = await queue.list_sessions(user_id)
+    item = next(row for row in rows if row["id"] == sid)
+
+    expected_training_at = queue.sqlite_timestamp_to_wire_utc(run["created_at"])
+    assert item["training_at"] == expected_training_at
+    assert item["analysis_completed_at"] == "2026-08-09T09:12:30Z"
+    assert item["presentation_label"] == (
+        f"1wall 6targets small | 训练：{expected_training_at} | 分析：2026-08-09T09:12:30Z"
+    )
+    assert "run:" not in item["presentation_label"]
+    assert "analysis:" not in item["presentation_label"]
+
+
+@pytest.mark.asyncio
 async def test_queue_list_sessions_never_selects_full_result_blob(monkeypatch):
     sid = await queue.enqueue("u_light", "/private/video.mp4", "/private/stats.csv")
     conn = await db.get_conn()

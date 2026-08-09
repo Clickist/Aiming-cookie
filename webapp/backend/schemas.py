@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal, Optional, Union
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 
 class ErrorV1(BaseModel):
@@ -47,7 +47,8 @@ class AnalyzePathsRequest(BaseModel):
 class KovaaKAnalysisRequest(BaseModel):
     """Create an Analysis from a persisted local Run."""
 
-    input_mode: Optional[Literal["input_native", "multimodal", "video_fallback"]] = None
+    input_mode: Literal["multimodal"] = "multimodal"
+    allow_parallel: bool = False
     video_path: Optional[str] = None
     cm_per_360: Optional[float] = None
     fov: Optional[float] = None
@@ -125,6 +126,9 @@ class AnalysisHistoryDetailOut(BaseModel):
     analysis_ref: str
     run_ref: Optional[str] = None
     scenario: Optional[str] = None
+    presentation_label: Optional[str] = None
+    training_at: Optional[str] = None
+    analysis_completed_at: Optional[str] = None
     input_mode: str
     source_availability: dict[str, str] = Field(default_factory=dict)
     trace_quality: TraceQualityOut
@@ -150,6 +154,9 @@ class SessionStatus(BaseModel):
     analysis_type: str = "flicking"
     input_mode: str = "video_fallback"
     kovaak_run_id: Optional[int] = None
+    presentation_label: Optional[str] = None
+    training_at: Optional[str] = None
+    analysis_completed_at: Optional[str] = None
     history: Optional[AnalysisHistoryDetailOut] = None
 
 
@@ -168,6 +175,9 @@ class SessionListItem(BaseModel):
     input_mode: str = "video_fallback"
     kovaak_run_id: Optional[int] = None
     scenario: Optional[str] = None
+    presentation_label: Optional[str] = None
+    training_at: Optional[str] = None
+    analysis_completed_at: Optional[str] = None
     source_availability: dict[str, str] = Field(default_factory=dict)
     trace_quality: TraceQualityOut
 
@@ -258,6 +268,9 @@ class TaskDetailResponse(BaseModel):
     input_mode: Optional[str] = None
     analysis_type: Optional[str] = None
     run_ref: Optional[str] = None
+    presentation_label: Optional[str] = None
+    training_at: Optional[str] = None
+    analysis_completed_at: Optional[str] = None
     failure: Optional[TaskFailure] = None
     partial_outcome: Optional[TaskPartialOutcome] = None
     retryable: Optional[bool] = None
@@ -300,6 +313,7 @@ class KovaaKRunListItem(BaseModel):
     alignment: dict = Field(default_factory=dict)
     video_quality: dict = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)
+    stats_calibration: Optional[dict[str, float]] = None
     created_at: str
     updated_at: str
 
@@ -484,6 +498,50 @@ class CoachThreadOut(BaseModel):
     updated_at: str
 
 
+class CoachSessionOut(BaseModel):
+    """Owner-scoped Coach conversation metadata; no paths or credentials."""
+
+    id: int
+    user_id: str
+    kind: Literal["primary", "conversation"]
+    title: Optional[str] = None
+    status: Literal["active", "archived", "deleted"]
+    deleted_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+    message_count: int = 0
+    last_message_preview: Optional[str] = None
+    analysis_session_ids: list[int] = Field(default_factory=list)
+
+
+class CoachSessionListResponse(BaseModel):
+    schema_version: Literal["coach_session_list.v1"] = "coach_session_list.v1"
+    sessions: list[CoachSessionOut] = Field(default_factory=list)
+
+
+class CoachSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, max_length=120)
+
+
+class CoachSessionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, max_length=120)
+    status: Optional[Literal["archived"]] = None
+
+
+class CoachMessageCardOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["coach_message_card.v1"] = "coach_message_card.v1"
+    kind: Literal["metrics", "timeline", "evidence"]
+    analysis_ref: str
+    target_ref: Optional[str] = None
+    time_range_ms: Optional[list[float]] = None
+
+
 class CoachThreadMessageOut(BaseModel):
     id: int
     role: str
@@ -492,6 +550,7 @@ class CoachThreadMessageOut(BaseModel):
     legacy_session_id: Optional[int] = None
     context: Optional[dict] = None
     context_refs: list[dict] = []
+    cards: list[CoachMessageCardOut] = []
 
 
 class CoachAnalysisRefOut(BaseModel):
@@ -597,6 +656,7 @@ class CoachAgentRunRequest(BaseModel):
     schema_version: Literal["coach_agent_run_request.v1"]
     content: str = Field(min_length=1, max_length=12_000)
     context_refs: Optional[list[str]] = Field(default=None, max_length=8)
+    session_id: Optional[int] = Field(default=None, gt=0)
 
 
 class CoachAnalysisSoftStartRequest(BaseModel):
@@ -617,7 +677,7 @@ class CoachAgentRunEventOut(BaseModel):
     schema_version: Literal["coach_agent_run_event.v1"]
     event_ref: str
     sequence: int
-    type: Literal["status", "phase", "tool", "text", "confirmation", "error"]
+    type: Literal["status", "phase", "tool", "text", "confirmation", "guidance", "error"]
     phase: Literal["queued", "text_generation", "tool_execution", "completed"]
     code: str
     message: str
@@ -625,9 +685,125 @@ class CoachAgentRunEventOut(BaseModel):
     created_at: str
 
 
+class ProductReadinessDomain(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: str
+    availability: Literal["known", "unavailable"]
+    reason_code: Optional[str] = None
+    refs: list[str] = Field(default_factory=list, max_length=8)
+    count: int = Field(ge=0)
+    truncated: bool = False
+
+
+class ProductReadinessResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["product_readiness.v1"]
+    domains: dict[str, ProductReadinessDomain]
+    capabilities: list[str] = Field(default_factory=list, max_length=32)
+    blocking_reasons: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("domains")
+    @classmethod
+    def _known_readiness_domains(cls, value: dict[str, ProductReadinessDomain]) -> dict[str, ProductReadinessDomain]:
+        expected = {
+            "onboarding", "provider", "capture", "kovaak", "pending_runs",
+            "analysis", "training_plan", "storage",
+        }
+        if set(value) != expected:
+            raise ValueError("domains must match product readiness registry")
+        return value
+
+
+class GuidanceTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_id: str
+    safe_prefill: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _allow_listed_target(self) -> "GuidanceTarget":
+        from .coach_guidance import load_guidance_target_registry
+        try:
+            keys = load_guidance_target_registry().get(self.target_id)
+        except ValueError as error:
+            raise ValueError("guidance target registry is unavailable") from error
+        if keys is None or set(self.safe_prefill) - set(keys):
+            raise ValueError("guidance target is not allow-listed")
+        if any(
+            not (value.startswith("run:") or value.startswith("analysis:") or value.startswith("plan:") or value.startswith("provider_profile:") or value.startswith("incomplete:"))
+            for value in self.safe_prefill.values()
+        ):
+            raise ValueError("guidance safe prefill must use an opaque product ref")
+        return self
+
+
+class GuidanceIntent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["guidance_intent.v1"]
+    intent_id: str
+    kind: Literal[
+        "execute_command", "request_confirmation", "ui_navigation",
+        "user_action_required", "wait_for_state", "completed", "blocked",
+    ]
+    goal: str
+    target: Optional[GuidanceTarget] = None
+    command_result_ref: Optional[str] = None
+    precondition: Optional[dict] = None
+    completion_condition: Optional[dict] = None
+    recovery: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def _validate_semantics(self) -> "GuidanceIntent":
+        from .coach_guidance import validate_guidance_intent
+        try:
+            validate_guidance_intent(self.model_dump(exclude_none=True))
+        except ValueError as error:
+            raise ValueError("guidance intent is not valid") from error
+        return self
+
+
+class GuidanceAckRequest(BaseModel):
+    """UI-only acknowledgement; product state is always re-read server-side."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["guidance_ack_request.v1"]
+    run_ref: str = Field(min_length=1, max_length=160)
+    intent_id: str = Field(min_length=1, max_length=160)
+    outcome: Literal["completed", "cancelled", "failed", "timed_out"]
+
+
+class GuidanceAckResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["guidance_ack_response.v1"]
+    run_ref: str
+    intent_id: str
+    outcome: Literal["completed", "cancelled", "failed", "timed_out"]
+    next_intent: Optional[GuidanceIntent] = None
+    terminal_state: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def _exactly_one_continuation(self) -> "GuidanceAckResponse":
+        if (self.next_intent is None) == (self.terminal_state is None):
+            raise ValueError("guidance ack must return exactly one continuation")
+        if self.terminal_state is not None:
+            if set(self.terminal_state) - {"state", "reason_code", "recovery"}:
+                raise ValueError("guidance terminal state is invalid")
+            if self.terminal_state.get("state") not in {
+                "completed", "blocked", "cancelled", "failed", "timed_out",
+            }:
+                raise ValueError("guidance terminal state is invalid")
+        return self
+
+
 class CoachAgentRunOut(BaseModel):
     schema_version: Literal["coach_agent_run.v1"]
     run_ref: str
+    session_id: int
     parent_run_ref: Optional[str] = None
     attempt: int
     status: Literal["queued", "running", "succeeded", "failed", "stopped"]

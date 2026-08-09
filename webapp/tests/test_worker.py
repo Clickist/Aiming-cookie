@@ -2522,6 +2522,57 @@ async def test_process_one_active_exact_hash_dispatches_only_frozen_allowed_anal
     assert result["analysis_version"] == "native_flicking.v1"
 
 
+@pytest.mark.asyncio
+async def test_process_one_local_dynamic_baseline_keeps_native_facts_without_static_diagnosis():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = {
+        **_scenario_resolution(manifest_status="unlisted", dispatch="none"),
+        "classification_source": "local_scenario_definition",
+        "classification_confidence": "confirmed",
+        "aim_family": "dynamic_clicking",
+        "subdomains": ["reactive", "control"],
+        "target_motion": {"model": "reactive", "target_count_model": "concurrent"},
+        "allowed_analyzers": ["dynamic_clicking.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": [
+            "exact_visual_profile_unavailable",
+            "target_relative_facts_unavailable",
+            "outcome_association_unavailable",
+            "scenario_prescription_unavailable",
+        ],
+    }
+    job = {
+        "id": 110,
+        "user_id": "u1",
+        "analysis_type": "flicking",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result, calls, native_mock, cv_mock = await _capture_mode_result(
+        job,
+        native_result=_native_v2_adapter_result(),
+    )
+
+    assert calls == ["native"]
+    native_mock.assert_called_once()
+    cv_mock.assert_not_called()
+    assert result["analysis_version"] == "dynamic_clicking.baseline.v1"
+    assert result["analysis_type"] == "dynamic_clicking"
+    assert result["scenario"]["support_status"] == "partial"
+    assert result["deterministic"]["diagnosis"]["issues"] == []
+    assert "target_relative_facts_unavailable" in result["deterministic"]["limitations"]
+
+
 def test_exact_packaged_static_v3_snapshot_dispatches_native_flicking():
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"
@@ -2546,6 +2597,89 @@ def test_exact_packaged_static_v3_snapshot_dispatches_native_flicking():
         {"analysis_type": "flicking", "input_snapshot": metric_restricted},
         "input_native",
     ) == "outcome_only"
+
+
+def test_local_dynamic_baseline_dispatches_native_facts_without_exact_visual_profile():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    descriptor = scenario_profiles.parse_local_scenario_behavior_descriptor(
+        b"""Name=1wall5targets_pasu
+AddedBots=test.bot;test.bot;test.bot;test.bot;test.bot
+PlayerCharacters=player
+[Bot Profile]
+Name=test
+DodgeProfileNames=test
+CharacterProfile=react
+[Character Profile]
+Name=react
+MaxSpeed=1300
+[Dodge Profile]
+Name=test
+ToggleLeftRight=true
+ToggleForwardBack=true
+[Character Profile]
+Name=player
+WeaponProfileNames=pistol
+[Weapon Profile]
+Name=pistol
+Type=Hitscan
+ShotsPerClick=1
+DamagePerShot=1000
+Category=SemiAuto
+""",
+        expected_display_name="1wall5targets_pasu",
+    )
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "a5be19c6e6aeb0d774c5e9d9fb497e91",
+        display_name="1wall5targets_pasu",
+        behavior_descriptor=descriptor,
+    )
+
+    assert worker._scenario_dispatch(
+        {"analysis_type": "flicking", "input_snapshot": snapshot},
+        "input_native",
+    ) == "dynamic_clicking.baseline.v1"
+    assert worker._scenario_dispatch(
+        {"analysis_type": "flicking", "input_snapshot": snapshot},
+        "video_fallback",
+    ) == "outcome_only"
+
+
+def test_local_static_baseline_dispatches_native_facts_without_exact_visual_profile():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    descriptor = scenario_profiles.parse_local_scenario_behavior_descriptor(
+        b"""Name=unknown static
+AddedBots=target.bot;target.bot
+PlayerCharacters=player
+[Bot Profile]
+Name=target
+CharacterProfile=target
+[Character Profile]
+Name=target
+MaxSpeed=0
+[Character Profile]
+Name=player
+WeaponProfileNames=pistol
+[Weapon Profile]
+Name=pistol
+Type=Hitscan
+ShotsPerClick=1
+DamagePerShot=1
+Category=SemiAuto
+""",
+        expected_display_name="unknown static",
+    )
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "unknown-static-hash",
+        display_name="unknown static",
+        behavior_descriptor=descriptor,
+    )
+
+    assert worker._scenario_dispatch(
+        {"analysis_type": "flicking", "input_snapshot": snapshot},
+        "input_native",
+    ) == "static_clicking.baseline.v1"
 
 
 def test_tracking_worker_adapter_requires_one_target_and_passes_only_validated_changes():

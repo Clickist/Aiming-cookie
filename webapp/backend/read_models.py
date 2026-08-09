@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from datetime import datetime
 from collections.abc import Mapping, Sequence
 from typing import Any, TypeVar
 
@@ -122,6 +123,9 @@ _INTERNAL_REF_TEXT = re.compile(
 )
 _PUBLIC_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._@+-]{0,239}$")
 _EVENT_KIND = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+_PRESENTATION_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$"
+)
 _T = TypeVar("_T")
 
 
@@ -158,6 +162,43 @@ def _safe_analysis_limitations(value: object) -> list[str]:
         and 0 < len(item) <= 240
         and not _FORBIDDEN_TEXT.search(item)
     ))
+
+
+def _safe_presentation_scenario(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    scenario = value.strip()
+    if (
+        not scenario
+        or len(scenario) > 160
+        or _FORBIDDEN_TEXT.search(scenario)
+        or any(ord(char) < 32 for char in scenario)
+    ):
+        return None
+    return scenario
+
+
+def _safe_presentation_timestamp(value: object) -> str | None:
+    if not isinstance(value, str) or not _PRESENTATION_TIMESTAMP.fullmatch(value):
+        return None
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return value
+
+
+def build_record_presentation_label(
+    *,
+    scenario: object,
+    training_at: object,
+    analysis_completed_at: object,
+) -> str:
+    """Create the sole user-facing identity for a Run or Analysis record."""
+    safe_scenario = _safe_presentation_scenario(scenario) or "未命名场景"
+    safe_training_at = _safe_presentation_timestamp(training_at) or "训练时间未知"
+    safe_analysis_at = _safe_presentation_timestamp(analysis_completed_at) or "分析尚未完成"
+    return f"{safe_scenario} | 训练：{safe_training_at} | 分析：{safe_analysis_at}"
 
 
 def _project_event_rows(
@@ -935,6 +976,8 @@ def build_task_detail_v1(
     attempt_rows.sort(key=lambda item: int(item.get("attempt_number") or 1))
     failure = _safe_failure(row)
     task_ref = row.get("task_group_ref") or f"task:{row.get('id')}"
+    training_at = _safe_presentation_timestamp(row.get("training_at"))
+    analysis_completed_at = _safe_presentation_timestamp(row.get("finished_at"))
     return {
         "schema_version": TASK_DETAIL_SCHEMA_VERSION,
         "availability": "available",
@@ -947,6 +990,13 @@ def build_task_detail_v1(
         "input_mode": row.get("input_mode") or "video_fallback",
         "analysis_type": row.get("analysis_type") or "flicking",
         "run_ref": f"run:{row['kovaak_run_id']}" if row.get("kovaak_run_id") else None,
+        "presentation_label": build_record_presentation_label(
+            scenario=row.get("scenario"),
+            training_at=training_at,
+            analysis_completed_at=analysis_completed_at,
+        ),
+        "training_at": training_at,
+        "analysis_completed_at": analysis_completed_at,
         "failure": failure,
         "partial_outcome": _partial_outcome(row),
         "retryable": bool(failure and failure.get("retryable")),

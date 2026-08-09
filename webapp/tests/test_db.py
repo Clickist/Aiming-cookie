@@ -757,7 +757,7 @@ async def test_fresh_v14_schema_uses_v13_helper_and_exact_tombstone_ddl(
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 24
+    assert db.TARGET_USER_VERSION == 26
     assert calls == 1
     assert "analysis_deletion_tombstones" not in db.SCHEMA
     assert _normalized_ddl(db._V13_ANALYSIS_DELETION_TOMBSTONES) == _normalized_ddl(
@@ -1200,7 +1200,7 @@ async def test_init_schema_migrates_v13_to_v18_preserving_run_and_session_rows()
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 24
+    assert db.TARGET_USER_VERSION == 26
     assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == db.TARGET_USER_VERSION
     connection_columns = await (
         await conn.execute("PRAGMA table_info(kovaak_connections)")

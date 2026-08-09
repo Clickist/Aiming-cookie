@@ -580,12 +580,11 @@ async def test_coach_preflight_refreshes_expired_oauth_without_context_or_error_
         cost_session_id=None,
     )
 
-    assert result.reply == "refreshed reply"
-    assert refresh_calls == [("owner-a", 7)]
-    assert len(turns) == 1
-    assert turns[0].provider_profile["credential"]["access"] == fresh_secret
-    assert expired_secret not in repr(turns[0].diagnostic_context)
-    assert fresh_secret not in repr(turns[0].diagnostic_context)
+    assert result.reply is None
+    assert result.error["code"] == "provider_reauthentication_required"
+    assert result.error["retryable"] is True
+    assert refresh_calls == []
+    assert turns == []
     assert expired_secret not in repr(result)
     assert fresh_secret not in repr(result)
     assert expired_secret not in repr(stored)

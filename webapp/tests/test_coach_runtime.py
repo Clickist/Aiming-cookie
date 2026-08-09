@@ -16,12 +16,77 @@ from kovaak_tracker.coach.diagnosis import (
     RootCause,
 )
 from webapp.backend import coach_runtime, config
+from webapp.backend.schemas import GuidanceIntent
 from webapp.backend.coach_runtime import (
     CoachRuntimeError,
     diagnosis_to_analysis_summary,
     ProviderUnconfiguredError,
     run_pi_coach_turn as _run_pi_coach_turn,
 )
+
+
+@pytest.mark.parametrize("kind", [
+    "execute_command", "request_confirmation", "ui_navigation", "user_action_required",
+    "wait_for_state", "completed", "blocked",
+])
+def test_guidance_intent_accepts_only_the_bounded_contract(kind: str):
+    intent: dict[str, object] = {
+        "schema_version": "guidance_intent.v1",
+        "intent_id": f"guidance:{kind}",
+        "kind": kind,
+        "goal": "Recover the selected product step.",
+    }
+    if kind in {"ui_navigation", "user_action_required"}:
+        intent["target"] = {"target_id": "coach.panel", "safe_prefill": {}}
+    if kind == "execute_command":
+        intent["command_result_ref"] = "command:result"
+    if kind == "wait_for_state":
+        intent["completion_condition"] = {
+            "readiness_key": "provider", "terminal_states": ["ready"],
+        }
+
+    assert coach_runtime.normalize_guidance_intent(intent) == intent
+
+
+@pytest.mark.parametrize("target", [
+    {"target_id": "https://example.test", "safe_prefill": {}},
+    {"target_id": "coach.panel", "safe_prefill": {"path": "run:1"}},
+    {"target_id": "coach.panel", "safe_prefill": {"provider_profile_ref": "C:\\secret"}},
+])
+def test_guidance_intent_rejects_unsafe_or_unregistered_targets(target: dict[str, object]):
+    with pytest.raises(CoachRuntimeError, match="guidance"):
+        coach_runtime.normalize_guidance_intent({
+            "schema_version": "guidance_intent.v1",
+            "intent_id": "guidance:unsafe",
+            "kind": "ui_navigation",
+            "goal": "Open a control.",
+            "target": target,
+        })
+
+
+def test_guidance_schema_rejects_unknown_readiness_key_and_target_payload():
+    with pytest.raises(ValueError):
+        GuidanceIntent.model_validate({
+            "schema_version": "guidance_intent.v1",
+            "intent_id": "guidance:wait",
+            "kind": "wait_for_state",
+            "goal": "Wait for recovery.",
+            "completion_condition": {
+                "readiness_key": "unknown",
+                "terminal_states": ["ready"],
+            },
+        })
+    with pytest.raises(ValueError):
+        GuidanceIntent.model_validate({
+            "schema_version": "guidance_intent.v1",
+            "intent_id": "guidance:navigation",
+            "kind": "ui_navigation",
+            "goal": "Open a control.",
+            "target": {
+                "target_id": "coach.panel",
+                "safe_prefill": {"path": "run:1"},
+            },
+        })
 
 _RUNTIME_PROFILE = {
     "provider_id": "test-provider",
@@ -162,6 +227,31 @@ def test_build_turn_request_keeps_exact_canonical_analysis_summary():
     )
 
     assert request["analysis_summary"] == canonical_wire
+
+
+def test_build_turn_request_forwards_only_opaque_coach_thread_session_id():
+    request, _ = coach_runtime._build_turn_request(
+        schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V1,
+        user_id="runtime-user",
+        profile=_RUNTIME_PROFILE,
+        messages=[{"role": "user", "content": "hello"}],
+        analysis_summary=None,
+        system_prompt=None,
+        session_id="coach-thread:42",
+    )
+
+    assert request["session_id"] == "coach-thread:42"
+
+    with pytest.raises(CoachRuntimeError, match="opaque Coach thread identity"):
+        coach_runtime._build_turn_request(
+            schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V1,
+            user_id="runtime-user",
+            profile=_RUNTIME_PROFILE,
+            messages=[{"role": "user", "content": "hello"}],
+            analysis_summary=None,
+            system_prompt=None,
+            session_id="agent_run:secret-or-unstable",
+        )
 
 
 def _teaching_turn() -> dict:

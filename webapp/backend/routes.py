@@ -19,6 +19,7 @@ from . import (
     coach_commands,
     coach_confirmations,
     coach_context_refs,
+    coach_guidance,
     coach_runtime,
     coach_store,
     config,
@@ -88,6 +89,8 @@ from .schemas import (
     CoachProductCommandResult,
     CoachAgentRunOut,
     CoachAgentRunRequest,
+    GuidanceAckRequest,
+    GuidanceAckResponse,
     CoachAnalysisSoftStartRequest,
     CoachConfirmationDecisionRequest,
     CoachConfirmationOut,
@@ -95,6 +98,10 @@ from .schemas import (
     CoachContextAttachRequest,
     CoachContextListResponse,
     CoachContextMutationResponse,
+    CoachSessionCreateRequest,
+    CoachSessionListResponse,
+    CoachSessionOut,
+    CoachSessionUpdateRequest,
     CalibrationProfileOut,
     CalibrationProfileUpdateRequest,
     IncompleteCaptureListResponse,
@@ -142,6 +149,7 @@ from .schemas import (
     CaptureStatusResponse,
     OnboardingStateRequest,
     ProductStateResponse,
+    ProductReadinessResponse,
     TaskDetailResponse,
     TaskListResponse,
 )
@@ -383,6 +391,14 @@ async def set_product_onboarding(
     return ProductStateResponse(**build_product_state_v1(**state))
 
 
+@router.get("/product-readiness", response_model=ProductReadinessResponse)
+async def get_product_readiness(x_user_id: str = Depends(get_request_user_id)):
+    """Return the bounded, non-persistent Coach guidance read model."""
+    return ProductReadinessResponse(
+        **await coach_guidance.get_product_readiness(x_user_id),
+    )
+
+
 @router.get("/capture-status", response_model=CaptureStatusResponse)
 async def get_capture_status(
     request: Request,
@@ -598,6 +614,9 @@ def _session_status_response(s: dict, *, history: dict | None = None) -> Session
         analysis_type=s.get("analysis_type") or "flicking",
         input_mode=s.get("input_mode") or "video_fallback",
         kovaak_run_id=s.get("kovaak_run_id"),
+        presentation_label=s.get("presentation_label"),
+        training_at=s.get("training_at"),
+        analysis_completed_at=s.get("analysis_completed_at"),
         history=history,
     )
 
@@ -926,6 +945,7 @@ async def analyze_kovaak_run(
         manual_override=(request.manual_override.model_dump() if request.manual_override else None),
         managed_video_source=video_source,
         idempotency_key=idempotency_key,
+        allow_parallel=request.allow_parallel,
     )
     _raise_product_command_error(
         result,
@@ -1057,7 +1077,89 @@ def _coach_thread_message_out(m: dict) -> CoachThreadMessageOut:
         legacy_session_id=m.get("legacy_session_id"),
         context=m.get("context"),
         context_refs=m.get("context_refs") or [],
+        cards=_coach_message_cards(m),
     )
+
+
+_COACH_CARD_COMMANDS = {
+    "analysis.run_facts.get": "metrics",
+    "analysis.outcomes.timeline": "timeline",
+    "analysis.events.list": "timeline",
+    "analysis.events.filter": "timeline",
+    "analysis.events.get": "timeline",
+    "analysis.evidence.list": "evidence",
+    "analysis.evidence.signal_window": "evidence",
+}
+
+
+def _valid_analysis_ref(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("analysis:"):
+        return False
+    suffix = value.removeprefix("analysis:")
+    return suffix.isdigit() and int(suffix) > 0 and value == f"analysis:{int(suffix)}"
+
+
+def _safe_time_range(value: object) -> list[float] | None:
+    if (
+        not isinstance(value, list)
+        or len(value) != 2
+        or not all(isinstance(part, (int, float)) and not isinstance(part, bool) for part in value)
+        or value[0] < 0
+        or value[1] < value[0]
+    ):
+        return None
+    return [float(value[0]), float(value[1])]
+
+
+def _coach_message_cards(message: dict) -> list[dict]:
+    if message.get("role") != "assistant":
+        return []
+    contexts = [
+        item for item in (message.get("context_refs") or [])
+        if isinstance(item, dict)
+        and item.get("status") == "active"
+        and _valid_analysis_ref(item.get("analysis_ref"))
+    ][:2]
+    if not contexts:
+        return []
+
+    kinds: list[str] = []
+    for event in message.get("trace") or []:
+        if not isinstance(event, dict) or event.get("status") != "succeeded":
+            continue
+        kind = _COACH_CARD_COMMANDS.get(event.get("command_name"))
+        if kind and kind not in kinds:
+            kinds.append(kind)
+    for context in contexts:
+        context_kind = context.get("kind")
+        inferred = (
+            "metrics" if context_kind == "metric"
+            else "evidence" if context_kind in {"evidence_segment", "time_range"}
+            else "timeline" if context_kind == "comparison"
+            else None
+        )
+        if inferred and inferred not in kinds:
+            kinds.append(inferred)
+
+    cards: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for kind in kinds:
+        for context in contexts:
+            key = (kind, context["analysis_ref"])
+            if key in seen:
+                continue
+            target_ref = context.get("target_ref")
+            cards.append({
+                "schema_version": "coach_message_card.v1",
+                "kind": kind,
+                "analysis_ref": context["analysis_ref"],
+                "target_ref": target_ref if isinstance(target_ref, str) and len(target_ref) <= 200 else None,
+                "time_range_ms": _safe_time_range(context.get("time_range_ms")),
+            })
+            seen.add(key)
+            if len(cards) == 4:
+                return cards
+    return cards
 
 
 def _coach_ref_out(r: dict) -> CoachAnalysisRefOut:
@@ -1071,11 +1173,50 @@ def _coach_ref_out(r: dict) -> CoachAnalysisRefOut:
     )
 
 
-async def _build_coach_primary_response(x_user_id: str) -> CoachPrimaryResponse:
-    thread = await coach_store.get_or_create_primary_thread(x_user_id)
-    tid = int(thread["id"])
-    messages = await coach_store.load_messages(tid)
-    refs = await coach_store.list_analysis_refs(tid)
+async def _coach_thread_for_request(
+    x_user_id: str,
+    session_id: Optional[int] = None,
+) -> dict:
+    """Resolve the selected Coach session through the existing owner check."""
+    if session_id is None:
+        return await coach_store.get_or_create_primary_thread(x_user_id)
+    thread = await coach_store.get_session(x_user_id, int(session_id))
+    if thread is None:
+        raise HTTPException(404, "Coach session is unavailable")
+    return thread
+
+
+async def _build_coach_primary_response(
+    x_user_id: str,
+    session_id: Optional[int] = None,
+) -> CoachPrimaryResponse:
+    thread = (
+        await coach_store.get_primary_thread(x_user_id)
+        if session_id is None
+        else await coach_store.get_session(x_user_id, int(session_id))
+    )
+    if session_id is not None and thread is None:
+        raise HTTPException(404, "Coach session is unavailable")
+    if thread is None:
+        # The workspace may be opened before the first user message. Keep the
+        # response renderable without inserting an empty persistent session.
+        now = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+        )
+        thread = {
+            "id": 0,
+            "user_id": x_user_id,
+            "kind": "primary",
+            "created_at": now,
+            "updated_at": now,
+        }
+        tid = 0
+        messages = []
+        refs = []
+    else:
+        tid = int(thread["id"])
+        messages = await coach_store.load_messages(tid)
+        refs = await coach_store.list_analysis_refs(tid)
     return CoachPrimaryResponse(
         thread=CoachThreadOut(
             id=tid,
@@ -1484,23 +1625,47 @@ def _validate_public_body(model, payload: dict, message: str):
 
 @router.get("/coach/context", response_model=CoachContextListResponse)
 async def get_coach_contexts(
+    session_id: Optional[int] = Query(default=None, gt=0),
     x_user_id: str = Depends(get_request_user_id),
 ):
-    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    thread = await _coach_thread_for_request(x_user_id, session_id)
     return CoachContextListResponse(
         contexts=await coach_context_refs.list_contexts(int(thread["id"])),
+    )
+
+
+def _coach_session_out(item: dict) -> CoachSessionOut:
+    kind = "primary" if item.get("kind") == "primary" else "conversation"
+    preview = item.get("last_message_preview")
+    if isinstance(preview, str) and len(preview) > 240:
+        preview = preview[:240]
+    return CoachSessionOut(
+        id=int(item["id"]),
+        user_id=str(item["user_id"]),
+        kind=kind,
+        title=item.get("title"),
+        status=item.get("status", "active"),
+        deleted_at=item.get("deleted_at"),
+        created_at=item["created_at"],
+        updated_at=item["updated_at"],
+        message_count=int(item.get("message_count", 0)),
+        last_message_preview=preview,
+        analysis_session_ids=[
+            int(value) for value in item.get("analysis_session_ids", [])
+        ],
     )
 
 
 @router.post("/coach/context/attach", response_model=CoachContextMutationResponse)
 async def attach_coach_context(
     payload: dict = Body(...),
+    session_id: Optional[int] = Query(default=None, gt=0),
     x_user_id: str = Depends(get_request_user_id),
 ):
     body = _validate_public_body(
         CoachContextAttachRequest, payload, "Coach context request is invalid",
     )
-    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    thread = await _coach_thread_for_request(x_user_id, session_id)
     try:
         action, context = await coach_context_refs.attach_context(
             x_user_id,
@@ -1524,9 +1689,10 @@ async def attach_coach_context(
 )
 async def detach_coach_context(
     context_ref: str = Path(...),
+    session_id: Optional[int] = Query(default=None, gt=0),
     x_user_id: str = Depends(get_request_user_id),
 ):
-    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    thread = await _coach_thread_for_request(x_user_id, session_id)
     result = await coach_context_refs.detach_context(
         x_user_id, int(thread["id"]), context_ref,
     )
@@ -1547,11 +1713,14 @@ async def create_coach_agent_run(
     body = _validate_public_body(
         CoachAgentRunRequest, payload, "Coach agent run request is invalid",
     )
+    if body.session_id is not None:
+        await _coach_thread_for_request(x_user_id, body.session_id)
     try:
         result = await coach_agent_runs.create_run(
             x_user_id,
             body.content,
             context_refs=body.context_refs,
+            session_id=body.session_id,
             tool_bridge_endpoint=_coach_tool_bridge_endpoint(request),
             desktop_token=config.DESKTOP_LAUNCH_TOKEN or None,
         )
@@ -1595,13 +1764,43 @@ async def create_coach_analysis_soft_start(
 
 @router.get("/coach/agent-runs/{run_ref}", response_model=CoachAgentRunOut)
 async def get_coach_agent_run(
+    request: Request,
     run_ref: str = Path(...),
     x_user_id: str = Depends(get_request_user_id),
 ):
+    # Polling the persisted run is also the recovery trigger after Provider
+    # settings/authentication become usable again. The recovery check is
+    # owner-scoped and read-only; it never refreshes credentials.
+    await coach_agent_runs.resume_waiting_runs(
+        x_user_id,
+        tool_bridge_endpoint=_coach_tool_bridge_endpoint(request),
+        desktop_token=config.DESKTOP_LAUNCH_TOKEN or None,
+    )
     result = await coach_agent_runs.get_run(x_user_id, run_ref)
     if result is None:
         raise HTTPException(404, "Coach agent run is unavailable")
     return CoachAgentRunOut(**result)
+
+
+@router.post("/coach/guidance/ack", response_model=GuidanceAckResponse)
+async def acknowledge_coach_guidance(
+    payload: dict = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    body = _validate_public_body(
+        GuidanceAckRequest, payload, "Coach guidance acknowledgement is invalid",
+    )
+    try:
+        result = await coach_agent_runs.acknowledge_guidance(
+            x_user_id,
+            run_ref=body.run_ref,
+            intent_id=body.intent_id,
+            outcome=body.outcome,
+        )
+    except coach_agent_runs.AgentRunError as error:
+        status = 404 if error.code == "run_not_found" else 409
+        raise HTTPException(status, error.code) from error
+    return GuidanceAckResponse(**result)
 
 
 @router.post("/coach/agent-runs/{run_ref}/stop", response_model=CoachAgentRunOut)
@@ -1711,19 +1910,107 @@ async def delete_calibration_profile(
     )
 
 
-@router.get("/coach/primary", response_model=CoachPrimaryResponse)
-async def get_coach_primary(
+@router.get("/coach/sessions", response_model=CoachSessionListResponse)
+async def list_coach_sessions(
+    q: Optional[str] = Query(default=None, max_length=120),
+    include_archived: bool = Query(default=False),
     x_user_id: str = Depends(get_request_user_id),
 ):
-    return await _build_coach_primary_response(x_user_id)
+    sessions = await coach_store.list_sessions(
+        x_user_id,
+        query=q,
+        include_archived=include_archived,
+    )
+    return CoachSessionListResponse(
+        sessions=[_coach_session_out(item) for item in sessions],
+    )
+
+
+@router.post(
+    "/coach/sessions",
+    response_model=CoachSessionOut,
+    status_code=201,
+)
+async def create_coach_session(
+    body: CoachSessionCreateRequest = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    try:
+        session = await coach_store.create_session(x_user_id, title=body.title)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    return _coach_session_out(session)
+
+
+@router.get("/coach/sessions/{session_id}", response_model=CoachSessionOut)
+async def get_coach_session(
+    session_id: int = Path(..., gt=0),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    session = await coach_store.get_session(x_user_id, session_id)
+    if session is None:
+        raise HTTPException(404, "Coach session is unavailable")
+    return _coach_session_out(session)
+
+
+@router.patch("/coach/sessions/{session_id}", response_model=CoachSessionOut)
+async def update_coach_session(
+    body: CoachSessionUpdateRequest,
+    session_id: int = Path(..., gt=0),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    if body.title is None and body.status is None:
+        raise HTTPException(400, "Coach session update is empty")
+    session = None
+    try:
+        if body.title is not None:
+            session = await coach_store.rename_session(x_user_id, session_id, body.title)
+        if body.status == "archived":
+            session = await coach_store.archive_session(x_user_id, session_id)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    if session is None:
+        raise HTTPException(404, "Coach session is unavailable")
+    return _coach_session_out(session)
+
+
+@router.post("/coach/sessions/{session_id}/archive", response_model=CoachSessionOut)
+async def archive_coach_session(
+    session_id: int = Path(..., gt=0),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    session = await coach_store.archive_session(x_user_id, session_id)
+    if session is None:
+        raise HTTPException(404, "Coach session is unavailable")
+    return _coach_session_out(session)
+
+
+@router.delete("/coach/sessions/{session_id}", response_model=CoachSessionOut)
+async def delete_coach_session(
+    session_id: int = Path(..., gt=0),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    session = await coach_store.soft_delete_session(x_user_id, session_id)
+    if session is None:
+        raise HTTPException(404, "Coach session is unavailable")
+    return _coach_session_out(session)
+
+
+@router.get("/coach/primary", response_model=CoachPrimaryResponse)
+async def get_coach_primary(
+    session_id: Optional[int] = Query(default=None, gt=0),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    return await _build_coach_primary_response(x_user_id, session_id)
 
 
 @router.post("/coach/primary/attach", response_model=CoachPrimaryAttachResponse)
 async def attach_coach_primary_analysis(
     body: CoachPrimaryAttachRequest = Body(...),
+    session_id: Optional[int] = Query(default=None, gt=0),
     x_user_id: str = Depends(get_request_user_id),
 ):
-    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    thread = await _coach_thread_for_request(x_user_id, session_id)
     await _ensure_done_analysis_attached(
         x_user_id, int(thread["id"]), body.analysis_session_id,
     )
@@ -1739,13 +2026,14 @@ async def attach_coach_primary_analysis(
 async def post_coach_primary_message(
     request: Request,
     body: CoachPrimaryMessageRequest = Body(...),
+    session_id: Optional[int] = Query(default=None, gt=0),
     x_user_id: str = Depends(get_request_user_id),
 ):
     user_msg = body.content.strip()
     if not user_msg:
         raise HTTPException(400, "消息不能为空")
 
-    thread = await coach_store.get_or_create_primary_thread(x_user_id)
+    thread = await _coach_thread_for_request(x_user_id, session_id)
     thread_id = int(thread["id"])
     prior = await coach_store.load_messages(thread_id)
 
@@ -1835,6 +2123,8 @@ async def chat(
     else:
         user_msg_to_store = user_msg
 
+    # This legacy route's path parameter is an analysis session id, not a
+    # Coach session/thread id; preserve its primary-thread compatibility.
     thread = await coach_store.get_or_create_primary_thread(x_user_id)
     thread_id = int(thread["id"])
     diagnosis = await _diagnosis_from_done_session(s)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import math
 import os
@@ -14,7 +15,12 @@ from typing import Any
 REGISTRY_SCHEMA_VERSION = "scenario_profile_registry.v1"
 MANIFEST_SCHEMA_VERSION = "launch_scenario_manifest.v1"
 RESOLUTION_SCHEMA_VERSION = "scenario_resolution.v1"
-SCENARIOS_DIR = Path(__file__).resolve().parents[1] / "knowledge" / "scenarios"
+_RESOURCE_ROOT = os.environ.get("AIMING_COOKIE_RESOURCE_ROOT", "").strip()
+SCENARIOS_DIR = (
+    Path(_RESOURCE_ROOT) / "knowledge" / "scenarios"
+    if _RESOURCE_ROOT
+    else Path(__file__).resolve().parents[1] / "knowledge" / "scenarios"
+)
 REGISTRY_PATH = SCENARIOS_DIR / "registry.v1.json"
 MANIFEST_PATH = SCENARIOS_DIR / "launch-manifest.v1.json"
 MAX_REGISTRY_BYTES = 512 * 1024
@@ -22,6 +28,8 @@ MAX_MANIFEST_BYTES = 256 * 1024
 MAX_ENTRIES = 512
 MAX_LIST_LENGTH = 64
 MAX_DEPTH = 8
+MAX_LOCAL_SCENARIO_DEFINITION_BYTES = 2 * 1024 * 1024
+MAX_LOCAL_SCENARIO_DEFINITION_LINES = 65_536
 
 _ENTRY_FIELDS = {
     "entry_id", "entry_version", "status", "scenario_hash", "display_name",
@@ -56,6 +64,207 @@ _METRIC_FAMILIES = {
     "outcome", "input_kinematics", "static_clicking", "dynamic_clicking",
     "continuous_tracking", "target_switching",
 }
+
+
+def _normalized_scenario_name(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def _definition_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    normalized = value.strip().casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def _definition_number(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _definition_sections(data: bytes) -> tuple[dict[str, str], dict[str, list[dict[str, str]]]] | None:
+    if not data or len(data) > MAX_LOCAL_SCENARIO_DEFINITION_BYTES or b"\0" in data:
+        return None
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    lines = text.splitlines()
+    if len(lines) > MAX_LOCAL_SCENARIO_DEFINITION_LINES:
+        return None
+    root: dict[str, str] = {}
+    sections: dict[str, list[dict[str, str]]] = {}
+    current: dict[str, str] | None = None
+    current_kind: str | None = None
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith((";", "#", "//")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_kind = line[1:-1].strip().casefold()
+            if not current_kind or len(current_kind) > 80:
+                return None
+            current = {}
+            sections.setdefault(current_kind, []).append(current)
+            if len(sections[current_kind]) > MAX_LIST_LENGTH:
+                return None
+            continue
+        if "=" not in line:
+            if current is not None:
+                continue
+            return None
+        key, value = (part.strip() for part in line.split("=", 1))
+        if not key or len(key) > 80 or len(value) > 2_000:
+            return None
+        target = current if current is not None else root
+        if key in target:
+            return None
+        target[key] = value
+    return root, sections
+
+
+def _named_definition_section(
+    sections: Mapping[str, Sequence[Mapping[str, str]]],
+    kind: str,
+    name: str,
+) -> Mapping[str, str] | None:
+    matches = [
+        section for section in sections.get(kind.casefold(), ())
+        if _normalized_scenario_name(section.get("Name", "")) == _normalized_scenario_name(name)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def parse_local_scenario_behavior_descriptor(
+    data: bytes,
+    *,
+    expected_display_name: str,
+) -> dict[str, Any] | None:
+    """Extract a bounded, path-free behavior descriptor from a local KovaaK definition."""
+    expected = _optional_display_name(expected_display_name)
+    parsed = _definition_sections(data)
+    if expected is None or parsed is None:
+        return None
+    root, sections = parsed
+    if _normalized_scenario_name(root.get("Name", "")) != _normalized_scenario_name(expected):
+        return None
+    bots = [item.strip() for item in root.get("AddedBots", "").split(";") if item.strip()]
+    if not 2 <= len(bots) <= MAX_LIST_LENGTH:
+        return None
+    bot_profiles = {item.rsplit(".", 1)[0] for item in bots}
+    if len(bot_profiles) != 1:
+        return None
+    bot_profile = _named_definition_section(sections, "bot profile", bot_profiles.pop())
+    if bot_profile is None:
+        return None
+    character_name = bot_profile.get("CharacterProfile")
+    dodge_name = next((item.strip() for item in bot_profile.get("DodgeProfileNames", "").split(";") if item.strip()), None)
+    character = (
+        _named_definition_section(sections, "character profile", character_name)
+        if character_name else None
+    )
+    dodge = _named_definition_section(sections, "dodge profile", dodge_name) if dodge_name else None
+    max_speed = _definition_number(character.get("MaxSpeed")) if character else None
+    if character is None or max_speed is None or max_speed < 0:
+        return None
+    axes = []
+    if dodge is not None and _definition_bool(dodge.get("ToggleLeftRight")) is True:
+        axes.append("horizontal")
+    if dodge is not None and _definition_bool(dodge.get("ToggleForwardBack")) is True:
+        axes.append("depth")
+    reactive = max_speed > 0 and bool(axes)
+    if max_speed > 0 and not reactive:
+        return None
+    player_name = root.get("PlayerCharacters")
+    player = (
+        _named_definition_section(sections, "character profile", player_name)
+        if player_name else None
+    )
+    weapon_name = (
+        next((item.strip() for item in player.get("WeaponProfileNames", "").split(";") if item.strip()), None)
+        if player is not None else None
+    )
+    weapon = _named_definition_section(sections, "weapon profile", weapon_name) if weapon_name else None
+    shots = _definition_number(weapon.get("ShotsPerClick")) if weapon else None
+    damage = _definition_number(weapon.get("DamagePerShot")) if weapon else None
+    if not (
+        weapon is not None
+        and weapon.get("Type", "").casefold() == "hitscan"
+        and weapon.get("Category", "").casefold() == "semiauto"
+        and shots == 1
+        and damage is not None
+        and damage > 0
+    ):
+        return None
+    return {
+        "schema_version": "scenario_behavior_descriptor.v1",
+        "display_name": expected,
+        "source_sha256": hashlib.sha256(data).hexdigest(),
+        "bot_count": len(bots),
+        "reactive_bot_count": len(bots) if reactive else 0,
+        "dodge_axes": axes if reactive else [],
+        "weapon": {
+            "delivery": "hitscan",
+            "fire_mode": "semi_auto",
+            "shots_per_click": 1,
+            "damage_per_shot": damage,
+        },
+    }
+
+
+def _valid_local_scenario_behavior_descriptor(
+    value: object,
+    *,
+    display_name: str | None,
+) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema_version", "display_name", "source_sha256", "bot_count", "reactive_bot_count",
+        "dodge_axes", "weapon",
+    } or value.get("schema_version") != "scenario_behavior_descriptor.v1":
+        return None
+    name = _optional_display_name(value.get("display_name"))
+    digest = value.get("source_sha256")
+    if (
+        name is None
+        or display_name is None
+        or _normalized_scenario_name(name) != _normalized_scenario_name(display_name)
+        or not isinstance(digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+    ):
+        return None
+    counts = (value.get("bot_count"), value.get("reactive_bot_count"))
+    if not isinstance(counts[0], int) or isinstance(counts[0], bool) or not 1 <= counts[0] <= MAX_LIST_LENGTH:
+        return None
+    if not isinstance(counts[1], int) or isinstance(counts[1], bool) or not 0 <= counts[1] <= counts[0]:
+        return None
+    axes = value.get("dodge_axes")
+    weapon = value.get("weapon")
+    if (
+        not isinstance(axes, list)
+        or (bool(axes) != bool(counts[1]))
+        or set(axes) - {"horizontal", "depth"}
+        or len(set(axes)) != len(axes)
+        or not isinstance(weapon, Mapping)
+        or set(weapon) != {"delivery", "fire_mode", "shots_per_click", "damage_per_shot"}
+        or weapon.get("delivery") != "hitscan"
+        or weapon.get("fire_mode") != "semi_auto"
+        or weapon.get("shots_per_click") != 1
+        or not isinstance(weapon.get("damage_per_shot"), (int, float))
+        or isinstance(weapon.get("damage_per_shot"), bool)
+        or not math.isfinite(float(weapon["damage_per_shot"]))
+        or float(weapon["damage_per_shot"]) <= 0
+    ):
+        return None
+    return copy.deepcopy(dict(value))
 
 
 class ScenarioProfileError(ValueError):
@@ -398,12 +607,103 @@ def _outcome_only_resolution(
     }
 
 
+def _dynamic_baseline_resolution(
+    *,
+    scenario_hash: str | None,
+    display_name: str,
+    registry_version: str,
+    manifest_version: str,
+    target_count_model: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": RESOLUTION_SCHEMA_VERSION,
+        "scenario_hash": scenario_hash,
+        "display_name": display_name,
+        "registry_version": registry_version,
+        "manifest_version": manifest_version,
+        "scenario_profile_ref": None,
+        "classification_source": "local_scenario_definition",
+        "classification_confidence": "confirmed",
+        "profile_status": "unknown",
+        "reviewed_at": None,
+        "source_refs": [],
+        "supersedes": [],
+        "manifest_status": "unlisted",
+        "fixture_ref": None,
+        "review_source_ref": None,
+        "manifest_reviewed_at": None,
+        "family_gate_refs": [],
+        "aim_family": "dynamic_clicking",
+        "subdomains": ["reactive", "control"],
+        "target_motion": {
+            "model": "reactive",
+            "target_count_model": target_count_model,
+        },
+        "allowed_analyzers": ["dynamic_clicking.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": [
+            "exact_visual_profile_unavailable",
+            "target_relative_facts_unavailable",
+            "outcome_association_unavailable",
+            "scenario_prescription_unavailable",
+        ],
+    }
+
+
+def _static_baseline_resolution(
+    *,
+    scenario_hash: str | None,
+    display_name: str,
+    registry_version: str,
+    manifest_version: str,
+    target_count_model: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": RESOLUTION_SCHEMA_VERSION,
+        "scenario_hash": scenario_hash,
+        "display_name": display_name,
+        "registry_version": registry_version,
+        "manifest_version": manifest_version,
+        "scenario_profile_ref": None,
+        "classification_source": "local_scenario_definition",
+        "classification_confidence": "confirmed",
+        "profile_status": "unknown",
+        "reviewed_at": None,
+        "source_refs": [],
+        "supersedes": [],
+        "manifest_status": "unlisted",
+        "fixture_ref": None,
+        "review_source_ref": None,
+        "manifest_reviewed_at": None,
+        "family_gate_refs": [],
+        "aim_family": "static_clicking",
+        "subdomains": ["precision", "control"],
+        "target_motion": {
+            "model": "static",
+            "target_count_model": target_count_model,
+        },
+        "allowed_analyzers": ["static_clicking.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": [
+            "exact_visual_profile_unavailable",
+            "target_relative_facts_unavailable",
+            "outcome_association_unavailable",
+            "scenario_prescription_unavailable",
+        ],
+    }
+
+
 def resolve_scenario_profile(
     scenario_hash: str | None,
     display_name: str | None = None,
     *,
     registry: Mapping[str, Any] | None = None,
     manifest: Mapping[str, Any] | None = None,
+    behavior_descriptor: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve only reviewed exact hashes; display names remain non-dispatching hints."""
     data = validate_registry(registry) if registry is not None else load_registry()
@@ -432,6 +732,25 @@ def resolve_scenario_profile(
             profiles_by_hash[entry["scenario_hash"]] = entry
     profile = profiles_by_hash.get(safe_hash) if safe_hash else None
     if profile is None:
+        descriptor = _valid_local_scenario_behavior_descriptor(
+            behavior_descriptor,
+            display_name=safe_display_name,
+        )
+        if descriptor is not None:
+            baseline = (
+                _dynamic_baseline_resolution
+                if descriptor["reactive_bot_count"] == descriptor["bot_count"]
+                else _static_baseline_resolution
+            )
+            return baseline(
+                scenario_hash=safe_hash,
+                display_name=safe_display_name,
+                registry_version=data["registry_version"],
+                manifest_version=launch_manifest["manifest_version"],
+                target_count_model=(
+                    "single" if descriptor["bot_count"] == 1 else "concurrent"
+                ),
+            )
         candidates = [
             entry for entry in data["entries"]
             if entry["status"] == "active" and safe_display_name
@@ -500,5 +819,5 @@ def resolve_scenario_profile(
 __all__ = [
     "MANIFEST_PATH", "MANIFEST_SCHEMA_VERSION", "REGISTRY_PATH", "REGISTRY_SCHEMA_VERSION",
     "RESOLUTION_SCHEMA_VERSION", "ScenarioProfileError", "active_scenario_profile_refs", "load_launch_manifest", "load_registry",
-    "resolve_scenario_profile", "scenario_profile_ref", "validate_launch_manifest", "validate_registry",
+    "parse_local_scenario_behavior_descriptor", "resolve_scenario_profile", "scenario_profile_ref", "validate_launch_manifest", "validate_registry",
 ]

@@ -159,6 +159,84 @@ async def test_analysis_delete_is_confirmed_owner_scoped_and_idempotent(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_bridge_grants_a_current_explicit_delete_without_a_confirmation(monkeypatch):
+    journal = coach_commands.InMemoryCommandJournal()
+    coach_commands.set_command_journal(journal)
+    calls: list[tuple[int, str]] = []
+
+    async def delete(session_id: int, owner_id: str):
+        calls.append((session_id, owner_id))
+        return {"deleted": True, "id": session_id, "files_removed": [], "cleanup_failed": []}
+
+    monkeypatch.setattr(queue, "delete_session", delete)
+    bridge = coach_commands.issue_tool_bridge(
+        "direct-grant-owner",
+        7,
+        "coach_message:19",
+        "http://127.0.0.1:43127/api/coach/tools/execute",
+        reachable_refs={"analysis:3"},
+        current_user_message="Please delete this analysis now.",
+    )
+    try:
+        result = await coach_commands.execute_tool_bridge(
+            bridge["bearer_token"],
+            {
+                "command_name": "analysis.delete",
+                "parameters": {"analysis_ref": "3"},
+                "instruction_quote": "delete this analysis",
+                "idempotency_key": "direct-delete-analysis-3",
+            },
+        )
+    finally:
+        coach_commands.set_command_journal(None)
+
+    assert result["status"] == "succeeded"
+    assert result["authorization_source"] == "explicit_user_request"
+    assert "confirmation" not in result
+    assert calls == [(3, "direct-grant-owner")]
+    assert journal.audit_events[-1]["context"]["instruction_grant"] == {
+        "schema_version": "instruction_grant.v1",
+        "message_ref": "coach_message:19",
+        "command_name": "analysis.delete",
+        "target_ref": "analysis:3",
+        "status": "issued",
+    }
+    assert "Please delete" not in json.dumps(journal.audit_events[-1])
+
+
+@pytest.mark.asyncio
+async def test_bridge_refuses_nonmatching_or_ambiguous_direct_instruction_grants(monkeypatch):
+    async def delete(*_args, **_kwargs):
+        raise AssertionError("a refused grant must not delete")
+
+    monkeypatch.setattr(queue, "delete_session", delete)
+    cases = [
+        ({"analysis:3"}, "Please delete this analysis now.", "remove this analysis", "analysis:3", "needs_confirmation"),
+        ({"analysis:3", "analysis:4"}, "Please delete this analysis now.", "delete this analysis", "analysis:3", "needs_confirmation"),
+        ({"analysis:3"}, "Please delete this analysis now.", "delete this analysis", "analysis:4", "failed"),
+    ]
+    for refs, message, quote, analysis_ref, expected_status in cases:
+        bridge = coach_commands.issue_tool_bridge(
+            "direct-grant-refusal-owner",
+            7,
+            "coach_message:20",
+            "http://127.0.0.1:43127/api/coach/tools/execute",
+            reachable_refs=refs,
+            current_user_message=message,
+        )
+        result = await coach_commands.execute_tool_bridge(
+            bridge["bearer_token"],
+            {
+                "command_name": "analysis.delete",
+                "parameters": {"analysis_ref": analysis_ref},
+                "instruction_quote": quote,
+                "idempotency_key": f"refused-{analysis_ref}-{len(refs)}",
+            },
+        )
+        assert result["status"] == expected_status
+
+
+@pytest.mark.asyncio
 async def test_analysis_delete_rejects_extra_parameters_before_confirmation(monkeypatch):
     async def delete(*_args, **_kwargs):
         raise AssertionError("invalid delete must not reach queue")
@@ -188,6 +266,12 @@ def test_analysis_type_follows_reviewed_scenario_family():
     assert coach_commands._analysis_type_for_snapshot({
         "scenario_resolution": {"aim_family": "static_clicking"},
     }) == "flicking"
+    assert coach_commands._analysis_type_for_snapshot({
+        "scenario_resolution": {
+            "aim_family": "static_clicking",
+            "allowed_analyzers": ["static_clicking.baseline.v1"],
+        },
+    }) == "static_clicking"
     assert coach_commands._analysis_type_for_snapshot({}) == "flicking"
 
 
@@ -453,7 +537,7 @@ async def test_run_analysis_route_delegates_to_shared_handler(monkeypatch):
     async def create(owner_id: str, run_id: int, **kwargs):
         assert owner_id == config.DESKTOP_LOCAL_PROFILE
         assert run_id == 7
-        assert kwargs["input_mode"] == "input_native"
+        assert kwargs["input_mode"] == "multimodal"
         return {"session_id": 99}
 
     monkeypatch.setattr(coach_commands, "create_analysis_from_run", create)
@@ -464,11 +548,39 @@ async def test_run_analysis_route_delegates_to_shared_handler(monkeypatch):
                 "X-Aiming-Cookie-Desktop-Token": "route-token",
                 "Idempotency-Key": "route-analysis-7",
             },
-            json={"input_mode": "input_native"},
+            json={"input_mode": "multimodal"},
         )
 
     assert response.status_code == 200
     assert response.json() == {"session_id": 99}
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_route_forwards_parallel_batch_flag(monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "route-token")
+    captured: dict[str, object] = {}
+
+    async def create(owner_id: str, run_id: int, **kwargs):
+        captured.update(kwargs)
+        return {"session_id": 100}
+
+    monkeypatch.setattr(coach_commands, "create_analysis_from_run", create)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/kovaak-runs/7/analyze",
+            headers={
+                "X-Aiming-Cookie-Desktop-Token": "route-token",
+                "Idempotency-Key": "route-analysis-batch-7",
+            },
+            json={"input_mode": "multimodal", "allow_parallel": True},
+        )
+
+    assert response.status_code == 200
+    assert captured["allow_parallel"] is True
 
 
 @pytest.mark.asyncio
@@ -490,6 +602,21 @@ async def test_active_analysis_is_reported_as_unavailable_with_stable_ref(monkey
 
     assert result["status"] == "unavailable"
     assert result["result_ref"] == "analysis:23"
+
+
+@pytest.mark.asyncio
+async def test_create_analysis_reuses_completed_run_analysis(monkeypatch):
+    async def existing(owner_id: str, run_id: int):
+        return [{"id": 31, "status": "done", "kovaak_run_id": run_id}]
+
+    monkeypatch.setattr(coach_commands.queue, "get_run_analysis_states", existing)
+    result = await coach_commands.create_analysis_from_run("owner-a", 12)
+
+    assert result == {
+        "session_id": 31,
+        "analysis_ref": "analysis:31",
+        "reused": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -1715,7 +1842,9 @@ async def _seed_run_owned_video(
     await conn.execute(
         "UPDATE kovaak_runs SET video_path=?, video_state='attached', "
         "video_receipt_json=?, video_summary_json=?, "
-        "finalization_state='finalized' WHERE id=?",
+        "finalization_state='finalized', alignment_state='resolved', "
+        "window_start_epoch_ms=1000, window_end_epoch_ms=2000, "
+        "alignment_summary=? WHERE id=?",
         (
             str(video.resolve()),
             json.dumps({"version": "capture_receipt.v1"}),
@@ -1725,6 +1854,15 @@ async def _seed_run_owned_video(
                 "packetCount": 60,
                 "visibleDuration100ns": 10_000_000,
                 "timebaseVersion": "time_alignment.v2",
+            }),
+            json.dumps({
+                "start_ms": 1000,
+                "end_ms": 2000,
+                "duration_ms": 1000,
+                "start_source": "fixture",
+                "end_source": "fixture",
+                "timebase_version": "time_alignment.v2",
+                "warnings": [],
             }),
             run["id"],
         ),
@@ -1736,9 +1874,7 @@ async def _seed_run_owned_video(
 @pytest.mark.parametrize(
     ("input_mode", "include_trace", "uses_video"),
     [
-        ("input_native", True, False),
         ("multimodal", True, True),
-        ("video_fallback", False, True),
     ],
 )
 @pytest.mark.asyncio
@@ -1769,11 +1905,7 @@ async def test_analysis_modes_consume_run_owned_video_via_managed_hard_link(
     else:
         assert session["video_path"] == ""
         assert "video" not in session["input_snapshot"]["sources"]
-    if input_mode == "video_fallback":
-        assert session["input_snapshot"]["trace"] is None
-        assert set(session["input_snapshot"]["sources"]) == {"stats", "video"}
-    if input_mode == "multimodal":
-        assert session["input_snapshot"]["trace"] is not None
+    assert session["input_snapshot"]["trace"] is not None
 
 
 @pytest.mark.asyncio
@@ -1797,11 +1929,10 @@ async def test_incomplete_run_rejects_unsupported_mode_with_stable_reason(
         await coach_commands.create_analysis_from_run(
             "owner-incomplete",
             run["id"],
-            input_mode="video_fallback",
+            input_mode="input_native",
         )
 
-    assert exc_info.value.code == "input_unavailable"
-    assert "video_fallback" in exc_info.value.message
+    assert exc_info.value.code == "unsupported_input_mode"
 
 
 def _coach_evidence_artifact(

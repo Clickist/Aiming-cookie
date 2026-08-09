@@ -5,6 +5,8 @@ import math
 import os
 import re
 
+from .source_requirements import validate_source_requirements
+
 ANALYSIS_RESULT_SCHEMA_VERSION = "analysis_result.v1"
 ANALYSIS_RESULT_V2_SCHEMA_VERSION = "analysis_result.v2"
 ANALYSIS_VERSION = "flicking_fair_summary.v1"
@@ -639,7 +641,7 @@ def validate_scenario_resolution_v1(value: object) -> dict:
     classification_source = value.get("classification_source")
     if classification_source not in {
         "reviewed_registry", "official_metadata", "unknown", "name_heuristic",
-        "user_declaration",
+        "user_declaration", "local_scenario_definition",
     }:
         raise ValueError("scenario_resolution.classification_source is invalid")
     confidence = value.get("classification_confidence")
@@ -786,8 +788,22 @@ def validate_scenario_resolution_v1(value: object) -> dict:
             or claim_ceiling != "family_specific"
         ):
             raise ValueError("scenario_resolution active dispatch is inconsistent")
+    elif dispatch == "allowed":
+        if not (
+            manifest_status == "unlisted"
+            and profile_ref is None
+            and classification_source == "local_scenario_definition"
+            and confidence == "confirmed"
+            and profile_status == "unknown"
+            and aim_family in {"static_clicking", "dynamic_clicking"}
+            and claim_ceiling == "descriptive_only"
+            and allowed_analyzers == [f"{aim_family}.baseline.v1"]
+            and allowed_metric_families == ["outcome", "input_kinematics"]
+            and limitations
+        ):
+            raise ValueError("scenario_resolution baseline dispatch is inconsistent")
     elif dispatch != "none":
-        raise ValueError("scenario_resolution dispatch requires an active manifest entry")
+        raise ValueError("scenario_resolution dispatch is invalid")
 
     if manifest_status in {"pending_gate", "retired"} and (
         profile_ref is None
@@ -846,6 +862,16 @@ def _validate_analysis_result_v2(result: dict) -> dict:
     if not isinstance(result.get("input_snapshot"), dict):
         raise ValueError("input_snapshot must be a dict")
     input_snapshot = result["input_snapshot"]
+    if (
+        input_mode == "multimodal"
+        and isinstance(kovaak_run_ref, str)
+        and kovaak_run_ref.startswith("run:")
+        and input_snapshot.get("source_requirements_version") == "fixed_all_source.v1"
+    ):
+        source_gate = validate_source_requirements(input_snapshot)
+        if not source_gate["ready"]:
+            missing = ", ".join(str(item) for item in source_gate["missing"])
+            raise ValueError(f"multimodal Run input snapshot is incomplete: {missing}")
     snapshot_version = input_snapshot.get("schema_version")
     if snapshot_version in {"analysis_input_snapshot.v2", "analysis_input_snapshot.v3"}:
         scenario_resolution = input_snapshot.get("scenario_resolution")

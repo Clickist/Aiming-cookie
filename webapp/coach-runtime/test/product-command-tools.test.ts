@@ -23,6 +23,13 @@ function bridge(overrides: Partial<CoachToolBridge> = {}): CoachToolBridge {
   };
 }
 
+test("Provider management commands remain outside the Coach product-command allowlist", () => {
+  assert.deepEqual(
+    PRODUCT_COMMAND_NAMES.filter((name) => name.startsWith("provider.")),
+    [],
+  );
+});
+
 function commandResult() {
   return {
     schema_version: "coach_product_command_result.v1",
@@ -75,6 +82,87 @@ test("product command allowlist includes every bounded evidence query", () => {
   assert.ok(PRODUCT_COMMAND_NAMES.includes("analysis.delete"));
   assert.ok(PRODUCT_COMMAND_NAMES.includes("kovaak_scores.lookup"));
   assert.ok(PRODUCT_COMMAND_NAMES.includes("kovaak_scores.refresh_connected"));
+});
+
+test("analysis.get accepts the public command-route result shape", async () => {
+  const originalFetch = globalThis.fetch;
+  const routeResult = {
+    schema_version: "coach_product_command_result.v1",
+    command_id: "command:analysis:6",
+    status: "succeeded",
+    result_ref: "analysis:6",
+    audit_ref: "audit:analysis:6",
+    ui_event: null,
+    confirmation: null,
+    warning_or_error: null,
+    result: {
+      analysis_ref: "analysis:6",
+      id: 6,
+      status: "done",
+      analysis_type: "flicking",
+      input_mode: "multimodal",
+      run_ref: "run:52326",
+      created_at: "2026-08-08T16:10:09+08:00",
+      started_at: "2026-08-08T16:10:10+08:00",
+      finished_at: "2026-08-08T16:10:20+08:00",
+      error: null,
+    },
+  };
+  globalThis.fetch = (async () => new Response(JSON.stringify(routeResult), { status: 200 })) as typeof fetch;
+  try {
+    const result = await createProductCommandTool(bridge()).execute("analysis-get", {
+      command_name: "analysis.get",
+      parameters: { analysis_ref: "analysis:6" },
+    });
+
+    const { confirmation: _confirmation, ...providerResult } = routeResult;
+    assert.equal(result.content[0]?.text, JSON.stringify(providerResult));
+    assert.ok(!Object.hasOwn(JSON.parse(result.content[0]?.text ?? "{}"), "confirmation"));
+    assert.deepEqual(result.details.event, {
+      type: "product_command",
+      command_id: "command:analysis:6",
+      command_name: "analysis.get",
+      status: "succeeded",
+      result_ref: "analysis:6",
+      audit_ref: "audit:analysis:6",
+      ui_event: null,
+      warning_or_error: null,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("pending confirmation metadata stays local while the Provider receives only the safe command result", async () => {
+  const originalFetch = globalThis.fetch;
+  const routeResult = {
+    schema_version: "coach_product_command_result.v1",
+    command_id: "command:plan-draft",
+    status: "needs_confirmation",
+    result_ref: null,
+    result: null,
+    ui_event: null,
+    confirmation: {
+      schema_version: "coach_product_command_confirmation.v1",
+      confirmation_ref: "confirmation:local-only",
+      command_name: "training_plan.generate_draft",
+    },
+    warning_or_error: { code: "confirmation_required", message: "User confirmation required" },
+    audit_ref: "audit:plan-draft",
+  };
+  globalThis.fetch = (async () => new Response(JSON.stringify(routeResult), { status: 200 })) as typeof fetch;
+  try {
+    const result = await createProductCommandTool(bridge()).execute("plan-draft", {
+      command_name: "training_plan.generate_draft",
+      parameters: { plan_payload: { title: "Test" } },
+    });
+
+    assert.equal(result.details.event.status, "needs_confirmation");
+    assert.ok(!result.content[0]?.text.includes("confirmation_ref"));
+    assert.ok(!result.content[0]?.text.includes("confirmation:local-only"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("KovaaK score lookup only forwards a bridge-issued profile reference", async () => {
@@ -295,6 +383,36 @@ test("write calls use stable turn-local idempotency and never return bridge secr
     assert.match(first.content[0]?.text ?? "", /path_efficiency/);
     assert.ok(!JSON.stringify(first).includes(BEARER));
     assert.ok(!JSON.stringify(first).includes(DESKTOP));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("product commands forward only a bounded exact instruction quote", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Record<string, unknown>[] = [];
+  globalThis.fetch = (async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify({
+      ...commandResult(), authorization_source: "explicit_user_request",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const result = await createProductCommandTool(bridge()).execute("direct-delete", {
+      command_name: "analysis.delete",
+      parameters: { analysis_ref: "analysis:3" },
+      instruction_quote: "delete this analysis",
+    });
+    assert.equal(requests[0]?.instruction_quote, "delete this analysis");
+    assert.equal(result.details.event.authorization_source, "explicit_user_request");
+    await assert.rejects(
+      createProductCommandTool(bridge()).execute("unsafe-quote", {
+        command_name: "analysis.delete",
+        parameters: { analysis_ref: "analysis:3" },
+        instruction_quote: "delete C:\\private\\trace.csv",
+      }),
+      /unsupported fields/,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
