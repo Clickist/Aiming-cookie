@@ -4,6 +4,17 @@
 
 ## Active
 
+- [`2026-08-10-coach-conversation-cards-video-workspace-v1.md`](2026-08-10-coach-conversation-cards-video-workspace-v1.md)：Tasks 1-7 的计划内实现、必需自动化与两档桌面视觉检查已完成；Coach 卡片、Session rail + 中央视频 + 右侧对话、`1180px` 最小宽度、History/Settings 居中和旧路由退役均已落地。新 screenshot 基线二进制不在 Allowed files，且根路由当前行为与首次 onboarding 合同仍有待裁决，因此暂保留 active，不归档、不把截图套件记为通过。
+
+- [`2026-08-10-coach-product-operator-guided-workflows-v1.md`](2026-08-10-coach-product-operator-guided-workflows-v1.md)：在现有 Pi runtime、typed product commands、confirmation/idempotency/audit、Coach runs/events、TeachingSession 与 Training Plan 上增加 message-bound direct grant、ProductReadiness、GuidanceIntent、命令覆盖和单一 GuidanceHost；当前尚未授权任何 Task。
+
+- [`2026-08-09-coach-first-single-pipeline-v1.md`](2026-08-09-coach-first-single-pipeline-v1.md): Provider-required Coach workflow, fixed all-source Run analysis, explicit incomplete-evidence states, and backend Coach/session contracts. OpenDesign owns the workspace layout and visual implementation separately.
+
+- [`2026-08-09-scenario-family-routing-and-run-presentation-v1.md`](2026-08-09-scenario-family-routing-and-run-presentation-v1.md): 点点已授权修复新场景不可分析与内部 Run 编号泄漏；按本机场景定义优先的自动 family 识别、baseline 分析降级、用户安全记录标签和回归验证推进，未完成前不得重打内测包。
+- [`2026-08-08-internal-beta-e2e-remediation-v1.md`](2026-08-08-internal-beta-e2e-remediation-v1.md)：点点已授权 Tasks 1-4；按 Coach 读取与工具失败真值、Tauri 子进程有界自愈、production Analysis/状态/计划一致性以及全量回归与隔离安装态 E2E 收口本轮内测阻塞，全部通过后才能重打未签名安装包。
+
+- [`2026-08-08-windows-internal-installer-v1.md`](2026-08-08-windows-internal-installer-v1.md)：点点已授权 Tasks 1-4，按静态前端、自包含 Python/Coach runtime、Tauri resource-dir、NSIS 与可选可信签名顺序生成可脱离仓库运行的 Windows 内测安装包。
+
 - [`2026-08-06-coach-goal-feedback-learning-loop-v1.md`](2026-08-06-coach-goal-feedback-learning-loop-v1.md)：Task 1 已获授权；复用现有 TeachingSession、Training Plan、confirmation、Registry 与鼠标数据，补用户目标、证据类型、训练反馈、计划调整和 Viscose 社区经验，同时冻结 Analysis/History/current-training DTO。
 - [`2026-08-06-coach-problem-hypothesis-diagnosis-v1.md`](2026-08-06-coach-problem-hypothesis-diagnosis-v1.md)：Tasks 1-5 的代码与自动化验证已完成；复用现有 Registry、context、TeachingSession、Training Plan、确认与 agent run，补齐多信号问题编译、可解释问诊、设备差分和首次 Analysis 幂等软启动。当前仅等待真实 Provider 连续问诊 field Gate，当前端点返回 `HTTP 502`，因此 plan 保持 active。
 

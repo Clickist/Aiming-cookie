@@ -55,6 +55,17 @@ Stats AND (MP4 OR (Raw + Performance))
 - `MP4` 提供视觉轨迹、回放、时间定位和 Coach 的直观讲解，但不包含可靠的真实点击事件；
 - 自动采集的 MP4 必须已被切分并对齐到同一 Run；手动 fallback 的 MP4 由用户明确选择为该次 Challenge 的录像。
 
+### Current Coach Run analysis gate
+
+The new Coach Run path accepts only the `multimodal` contract and requires all
+of `Stats + Performance (.perf) + Raw Input + managed MP4 + canonical window`
+before enqueue. The source validator returns stable missing-source codes and a
+bounded public summary without paths or raw evidence. Missing sources leave a
+retained pending/incomplete Run and do not trigger either legacy fallback.
+
+The following mode table is retained for historical records and compatibility
+reading; it is not a mode selector for newly created Coach Run Analysis.
+
 三种 Analysis mode 保持不变：
 
 | Mode | Evidence | 计算与讲解边界 |

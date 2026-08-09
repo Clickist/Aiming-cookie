@@ -2,6 +2,7 @@
 
 > 状态：active
 > 目的：冻结 Coach 如何拥有与当前用户对齐的产品能力、如何把确定性运动学转成可行动解释，以及用户如何配置 LLM provider/model/auth。
+> 授权更新：本文件 §2.3、§2.5 中与明确自然语言指令和二次确认有关的规则，已由较新且更具体的 [`2026-08-10-coach-product-operator-guided-workflows-design.md`](2026-08-10-coach-product-operator-guided-workflows-design.md) 覆盖；其余命令、解释和 Provider 边界继续有效。
 > 上游：[`../../PRD.md`](../../PRD.md)、[`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)、[`../../frontend-uiux-design.md`](../../frontend-uiux-design.md)
 > 相关合同：[`2026-07-13-analysis-evidence-coach-context-design.md`](2026-07-13-analysis-evidence-coach-context-design.md)、[`2026-07-13-frontend-product-reconstruction-design.md`](2026-07-13-frontend-product-reconstruction-design.md)
 
