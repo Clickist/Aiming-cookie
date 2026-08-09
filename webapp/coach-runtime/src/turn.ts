@@ -47,6 +47,7 @@ type ParsedRequest = {
   run_id: string;
   user_id: string;
   messages: CoachRuntimeMessage[];
+  session_id?: string;
   analysis_summary: string | null;
   system_prompt?: string;
   model: CoachRuntimeProviderProfile;
@@ -198,6 +199,10 @@ function parseRequest(raw: unknown): ParsedRequest {
   }
 
   const messages = parseMessages(raw.messages);
+  const sessionId = raw.session_id;
+  if (sessionId !== undefined && (typeof sessionId !== "string" || !/^coach-thread:[0-9]+$/.test(sessionId))) {
+    throw new Error("session_id must be an opaque Coach thread identity");
+  }
   const analysisSummaryValue = raw.analysis_summary;
   const analysisSummary: string | null =
     typeof analysisSummaryValue === "string" ? analysisSummaryValue : null;
@@ -219,6 +224,7 @@ function parseRequest(raw: unknown): ParsedRequest {
     run_id: raw.run_id,
     user_id: raw.user_id,
     messages,
+    session_id: sessionId,
     analysis_summary: analysisSummary,
     system_prompt: systemPrompt,
     model,
@@ -483,6 +489,7 @@ function restrictTurnTools<T extends {
   teachingTurn: () => TeachingTurnContract | undefined,
   hasTeachingWriteViolation: () => boolean,
   onOutOfPhaseTeachingWrite: () => void,
+  onProductCommandExecutionFailure: () => void,
 ): T {
   const execute = tool.execute.bind(tool);
   return {
@@ -533,7 +540,18 @@ function restrictTurnTools<T extends {
         }
         onRequiredDeletionIssued();
       }
-      return execute(...args);
+      try {
+        const result = await execute(...args);
+        if (tool.name === "run_product_command" && isRecord(result) &&
+            isRecord(result.details) && isRecord(result.details.event) &&
+            ["failed", "cancelled", "unavailable"].includes(String(result.details.event.status))) {
+          onProductCommandExecutionFailure();
+        }
+        return result;
+      } catch (error) {
+        if (tool.name === "run_product_command") onProductCommandExecutionFailure();
+        throw error;
+      }
     },
   } as T;
 }
@@ -557,6 +575,12 @@ function hasPendingConfirmation(events: CoachRuntimeToolEvent[]): boolean {
 function hasRequiredDeleteConfirmation(events: CoachRuntimeToolEvent[]): boolean {
   return events.some((event) => event.type === "product_command" &&
     event.command_name === "analysis.delete" && event.status === "needs_confirmation");
+}
+
+function hasRequiredDirectDeletion(events: CoachRuntimeToolEvent[]): boolean {
+  return events.some((event) => event.type === "product_command" &&
+    event.command_name === "analysis.delete" && event.status === "succeeded" &&
+    isRecord(event) && (event as Record<string, unknown>).authorization_source === "explicit_user_request");
 }
 
 function hasProductCommandEvent(events: CoachRuntimeToolEvent[]): boolean {
@@ -1550,6 +1574,7 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
   let requiredDeleteBridgeCallIssued = false;
   let unrequestedDeletionAttempted = false;
   let outOfPhaseTeachingWriteAttempted = false;
+  let productCommandExecutionFailed = false;
   let teachingFallbackUsed = false;
   let teachingHoldUsed = false;
   let groundingFallbackUsed = false;
@@ -1575,18 +1600,8 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       request.messages.at(-1)?.content ?? "",
     );
     const userInterruptsTeaching = request.teaching_turn !== undefined &&
-      TEACHING_INTERRUPTION.test(request.messages.at(-1)?.content ?? "");
-    if (request.teaching_turn && teachingTurnRequiresLocalFallback(request.teaching_turn)) {
-      const fallback = fallbackForTeachingTurn(request.teaching_turn).text;
-      validateGroundedReply(fallback, request, []);
-      return successResponse(
-        fallback,
-        [TEACHING_HOLD_NOTE],
-        request.schema_version,
-        [],
-        request.run_id,
-      );
-    }
+      (TEACHING_INTERRUPTION.test(request.messages.at(-1)?.content ?? "") ||
+        teachingTurnRequiresLocalFallback(request.teaching_turn));
     const resolved = await resolveProviderModel(request.model);
     const { Agent } = (await loadPiAgent()) as {
       Agent: new (opts: Record<string, unknown>) => {
@@ -1625,6 +1640,7 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       () => request.teaching_turn,
       () => outOfPhaseTeachingWriteAttempted,
       () => { outOfPhaseTeachingWriteAttempted = true; },
+      () => { productCommandExecutionFailed = true; },
     )];
     if (request.schema_version === COACH_RUNTIME_TURN_SCHEMA_V1) {
       tools.push(restrictTurnTools(
@@ -1638,6 +1654,7 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
         () => request.teaching_turn,
         () => outOfPhaseTeachingWriteAttempted,
         () => { outOfPhaseTeachingWriteAttempted = true; },
+        () => { productCommandExecutionFailed = true; },
       ) as never);
     }
     if (request.schema_version === COACH_RUNTIME_TURN_SCHEMA_V1 && request.tool_bridge) {
@@ -1652,10 +1669,12 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
         () => request.teaching_turn,
         () => outOfPhaseTeachingWriteAttempted,
         () => { outOfPhaseTeachingWriteAttempted = true; },
+        () => { productCommandExecutionFailed = true; },
       ) as never);
     }
     agent = new Agent({
       streamFn,
+      sessionId: request.session_id,
       initialState: {
         systemPrompt,
         model: resolved.model,
@@ -1745,12 +1764,17 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
     if (requiredDeleteRef === null && unrequestedDeletionAttempted) {
       throw new ToolComplianceError("Analysis deletion requires an explicit reachable user request");
     }
+    if (productCommandExecutionFailed) {
+      throw new ToolComplianceError("Product command execution failed");
+    }
     if (outOfPhaseTeachingWriteAttempted && request.teaching_turn) {
       const fallback = fallbackForTeachingTurn(request.teaching_turn).text;
       validateGroundedReply(fallback, request, currentMessages);
       return successResponse(fallback, [TEACHING_FALLBACK_NOTE], request.schema_version, collectToolEvents(currentMessages), request.run_id);
     }
-    if (requiredDeleteRef !== null && !hasRequiredDeleteConfirmation(collectToolEvents(currentMessages))) {
+    if (requiredDeleteRef !== null &&
+        !hasRequiredDeleteConfirmation(collectToolEvents(currentMessages)) &&
+        !hasRequiredDirectDeletion(collectToolEvents(currentMessages))) {
       if (hasProductCommandEvent(collectToolEvents(currentMessages))) {
         throw new ToolComplianceError("Explicit Analysis deletion did not create the required structured confirmation");
       }
@@ -1764,6 +1788,9 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
         timestamp: Date.now(),
       }]);
       currentMessages = agent.state.messages.slice(turnMessageStart);
+      if (productCommandExecutionFailed) {
+        throw new ToolComplianceError("Product command execution failed");
+      }
       if (stopRequested.has(request.run_id)) {
         return failureResponse(
           makeError({
@@ -1784,7 +1811,8 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
           request.run_id,
         );
       }
-      if (!hasRequiredDeleteConfirmation(collectToolEvents(currentMessages))) {
+      if (!hasRequiredDeleteConfirmation(collectToolEvents(currentMessages)) &&
+          !hasRequiredDirectDeletion(collectToolEvents(currentMessages))) {
         throw new ToolComplianceError("Explicit Analysis deletion did not create the required structured confirmation");
       }
     }

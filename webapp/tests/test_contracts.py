@@ -28,6 +28,7 @@ from webapp.backend.contracts import (
     dump_contract_json,
     normalize_json_value,
     project_evidence_segment,
+    validate_scenario_resolution_v1,
 )
 
 
@@ -499,6 +500,29 @@ def test_analysis_result_v2_preserves_frozen_unknown_scenario_resolution():
     result = build_analysis_result_v2(**kwargs)
 
     assert result["input_snapshot"]["scenario_resolution"] == resolution
+
+
+def test_contract_allows_confirmed_local_dynamic_baseline_without_exact_profile():
+    resolution = _unknown_scenario_resolution()
+    resolution.update({
+        "classification_source": "local_scenario_definition",
+        "classification_confidence": "confirmed",
+        "aim_family": "dynamic_clicking",
+        "subdomains": ["reactive", "control"],
+        "target_motion": {"model": "reactive", "target_count_model": "concurrent"},
+        "allowed_analyzers": ["dynamic_clicking.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": [
+            "exact_visual_profile_unavailable",
+            "target_relative_facts_unavailable",
+            "outcome_association_unavailable",
+            "scenario_prescription_unavailable",
+        ],
+    })
+
+    assert validate_scenario_resolution_v1(resolution) == resolution
 
 
 @pytest.mark.parametrize(

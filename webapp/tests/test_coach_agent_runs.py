@@ -9,12 +9,262 @@ import pytest
 from webapp.backend import (
     coach_agent_runs,
     coach_commands,
+    coach_guidance,
+    coach_runtime,
     coach_store,
+    provider_commands,
+    provider_store,
     queue,
     teaching_session_store,
     training_plan_store,
 )
 from webapp.backend.db import get_conn
+
+
+def test_guidance_compiler_is_deterministic_and_asks_for_one_run_when_ambiguous():
+    readiness = {
+        "schema_version": "product_readiness.v1",
+        "domains": {
+            name: {"state": "none", "availability": "known", "refs": [], "count": 0, "truncated": False}
+            for name in ("onboarding", "provider", "capture", "kovaak", "pending_runs", "analysis", "training_plan", "storage")
+        },
+        "capabilities": [],
+        "blocking_reasons": [],
+    }
+    readiness["domains"]["provider"] = {"state": "ready", "availability": "known", "refs": ["provider_profile:1"], "count": 1, "truncated": False}
+    readiness["domains"]["capture"] = {"state": "ready", "availability": "known", "refs": [], "count": 0, "truncated": False}
+    readiness["domains"]["kovaak"] = {"state": "connected", "availability": "known", "refs": ["kovaak_connection:current"], "count": 1, "truncated": False}
+    readiness["domains"]["pending_runs"] = {"state": "many", "availability": "known", "refs": ["run:1", "run:2"], "count": 2, "truncated": False}
+    first = coach_guidance.compile_guidance("analyze latest run", readiness)
+    second = coach_guidance.compile_guidance("analyze latest run", readiness)
+    assert first == second
+    assert first["kind"] == "user_action_required"
+    assert first["target"]["target_id"] == "history.runs"
+    assert first["completion_condition"]["readiness_key"] == "pending_runs"
+
+
+@pytest.mark.asyncio
+async def test_guidance_ack_keeps_terminal_run_and_rejects_repeated_intent(monkeypatch):
+    owner = "guidance-owner"
+    run = await coach_agent_runs.create_run(owner, "inspect progress", context_refs=None)
+    run_ref = run["run_ref"]
+    task = coach_agent_runs._tasks.get(run_ref)
+    if task is not None:
+        await task
+    conn = await get_conn()
+    await conn.execute("UPDATE coach_agent_runs SET status='succeeded', phase='completed' WHERE run_ref=?", (run_ref,))
+    await conn.commit()
+    intent = {
+        "schema_version": "guidance_intent.v1",
+        "intent_id": "guidance:test-ack",
+        "kind": "ui_navigation",
+        "goal": "inspect_progress",
+        "target": {"target_id": "history.runs", "safe_prefill": {}},
+    }
+    await coach_agent_runs.append_guidance_intent(owner, run_ref, intent)
+    async def readiness(_owner: str) -> dict:
+        return _ready_readiness()
+
+    monkeypatch.setattr(coach_guidance, "get_product_readiness", readiness)
+    result = await coach_agent_runs.acknowledge_guidance(
+        owner, run_ref=run_ref, intent_id="guidance:test-ack", outcome="cancelled",
+    )
+    assert result["terminal_state"]["state"] == "cancelled"
+    assert (await coach_agent_runs.get_run(owner, run_ref))["status"] == "succeeded"
+    with pytest.raises(coach_agent_runs.AgentRunError, match="not current"):
+        await coach_agent_runs.acknowledge_guidance(
+            owner, run_ref=run_ref, intent_id="guidance:test-ack", outcome="completed",
+        )
+
+
+def _ready_readiness() -> dict:
+    return {
+        "schema_version": "product_readiness.v1",
+        "domains": {
+            name: {"state": "none", "availability": "known", "refs": [], "count": 0, "truncated": False}
+            for name in ("onboarding", "provider", "capture", "kovaak", "pending_runs", "analysis", "training_plan", "storage")
+        },
+        "capabilities": [],
+        "blocking_reasons": [],
+    }
+
+
+def test_v1_runtime_requires_a_selected_provider_and_preserves_reauth_code():
+    with pytest.raises(coach_runtime.ProviderUnconfiguredError) as missing:
+        coach_runtime._build_turn_request(
+            schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V1,
+            user_id="owner",
+            profile=None,
+            messages=[{"role": "user", "content": "hello"}],
+            analysis_summary=None,
+            system_prompt=None,
+        )
+    assert missing.value.error_code == "provider_unconfigured"
+    assert missing.value.error_category == "permission"
+    assert missing.value.retryable is True
+
+    with pytest.raises(coach_runtime.ProviderReauthenticationRequiredError) as reauth:
+        coach_runtime._build_turn_request(
+            schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V1,
+            user_id="owner",
+            profile={
+                "provider_id": "builtin-provider",
+                "provider_name": "Builtin Provider",
+                "kind": "builtin",
+                "model_id": "builtin-model",
+                "credential_needs_reauth": True,
+            },
+            messages=[{"role": "user", "content": "hello"}],
+            analysis_summary=None,
+            system_prompt=None,
+        )
+    assert reauth.value.error_code == "provider_reauthentication_required"
+    assert reauth.value.error_category == "permission"
+    assert reauth.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_provider_recovery_readiness_is_read_only_and_fail_closed(monkeypatch):
+    profile = {
+        "provider_id": "provider",
+        "provider_name": "Provider",
+        "kind": "custom_openai_compatible",
+        "base_url": "https://provider.test/v1",
+        "model_id": "model",
+        "context_window": 32768,
+        "max_tokens": 4096,
+        "credential": {"type": "api_key", "key": "secret"},
+    }
+    monkeypatch.setattr(
+        provider_store, "get_default_runtime_profile", lambda _owner: _async_value(profile),
+    )
+    refresh_calls = 0
+
+    def no_refresh(credential):
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return credential.get("expired", False)
+
+    monkeypatch.setattr(provider_commands, "credential_requires_refresh", no_refresh)
+    assert await coach_agent_runs._provider_recovery_ready("owner") is True
+    assert refresh_calls == 1
+
+    profile["credential_needs_reauth"] = True
+    assert await coach_agent_runs._provider_recovery_ready("owner") is False
+    profile.clear()
+    assert await coach_agent_runs._provider_recovery_ready("owner") is False
+
+
+async def _async_value(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_provider_unavailable_run_waits_without_answer_and_recovers_once(monkeypatch):
+    owner_id = "provider-wait-owner"
+    calls = 0
+
+    async def execute(**_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "status": "failed",
+                "reply": None,
+                "notes": ["Provider unavailable"],
+                "tool_events": [],
+                "error": {
+                    "domain": "permission",
+                    "code": "provider_unconfigured",
+                    "message": "Coach Provider is not configured",
+                    "retryable": True,
+                },
+            }
+        return {
+            "status": "succeeded",
+            "reply": "Provider 恢复后的回答",
+            "notes": [],
+            "tool_events": [],
+            "error": None,
+        }
+
+    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
+    run = await coach_agent_runs.create_run(owner_id, "Provider 恢复后继续", context_refs=None)
+    task = coach_agent_runs._tasks.get(run["run_ref"])
+    assert task is not None
+    await task
+
+    waiting = await coach_agent_runs.get_run(owner_id, run["run_ref"])
+    assert waiting["status"] == "queued"
+    assert waiting["error"]["code"] == "provider_unconfigured"
+    assert any(event["code"] == "provider_waiting" for event in waiting["events"])
+    thread = await coach_store.get_or_create_primary_thread(owner_id)
+    assert not any(
+        message["role"] == "assistant"
+        for message in await coach_store.load_messages(int(thread["id"]))
+    )
+
+    async def provider_ready(_owner_id):
+        return True
+
+    monkeypatch.setattr(coach_agent_runs, "_provider_recovery_ready", provider_ready)
+    resumed = await coach_agent_runs.resume_waiting_runs(owner_id)
+    assert [item["run_ref"] for item in resumed] == [run["run_ref"]]
+    assert await coach_agent_runs.resume_waiting_runs(owner_id) == []
+    task = coach_agent_runs._tasks.get(run["run_ref"])
+    assert task is not None
+    await task
+
+    completed = await coach_agent_runs.get_run(owner_id, run["run_ref"])
+    assert completed["status"] == "succeeded"
+    assert completed["partial_text"] == "Provider 恢复后的回答"
+    assert any(event["code"] == "provider_requeued" for event in completed["events"])
+    messages = await coach_store.load_messages(int(thread["id"]))
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_provider_wait_recovery_is_owner_scoped(monkeypatch):
+    calls = {}
+
+    async def execute(**kwargs):
+        owner_id = kwargs["owner_id"]
+        calls[owner_id] = calls.get(owner_id, 0) + 1
+        return {
+            "status": "failed",
+            "reply": None,
+            "notes": [],
+            "tool_events": [],
+            "error": {
+                "domain": "permission",
+                "code": "provider_reauthentication_required",
+                "message": "Provider credential requires reauthentication",
+                "retryable": True,
+            },
+        }
+
+    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
+    first = await coach_agent_runs.create_run("provider-owner-a", "a", context_refs=None)
+    second = await coach_agent_runs.create_run("provider-owner-b", "b", context_refs=None)
+    for run in (first, second):
+        task = coach_agent_runs._tasks.get(run["run_ref"])
+        assert task is not None
+        await task
+
+    async def provider_ready(owner_id):
+        return owner_id == "provider-owner-a"
+
+    monkeypatch.setattr(coach_agent_runs, "_provider_recovery_ready", provider_ready)
+    resumed = await coach_agent_runs.resume_waiting_runs("provider-owner-a")
+    assert [item["run_ref"] for item in resumed] == [first["run_ref"]]
+    task = coach_agent_runs._tasks.get(first["run_ref"])
+    assert task is not None
+    await task
+
+    assert (await coach_agent_runs.get_run("provider-owner-a", first["run_ref"]))["status"] == "queued"
+    assert (await coach_agent_runs.get_run("provider-owner-b", second["run_ref"]))["status"] == "queued"
+    assert calls == {"provider-owner-a": 2, "provider-owner-b": 1}
 
 
 def _contract() -> dict:
@@ -119,6 +369,54 @@ async def _session_with_retest_item(
         state,
     )
     return session, item
+
+
+@pytest.mark.asyncio
+async def test_audited_explicit_execution_fact_advances_teaching_session_without_confirmation():
+    owner_id = "teaching-direct-execution-owner"
+    session, item = await _session_with_retest_item(owner_id)
+    state = dict(session["state"])
+    state.update({"phase": "await_execution_confirmation", "active_item_ref": item["item_ref"]})
+    session = await teaching_session_store.replace_state(
+        owner_id, session["session_ref"], session["version"], state,
+    )
+    command = {
+        "command_name": "training_plan.execution.record",
+        "parameters": {
+            "item_ref": item["item_ref"],
+            "scenario_ref": "scenario:tracking.smoothbot@1",
+            "run_refs": ["run:42"],
+            "planned_dose": {"amount": 3, "unit": "runs"},
+            "completed_dose": {"amount": 2, "unit": "runs"},
+            "completion_status": "partial",
+            "user_feedback": "I completed 2 runs.",
+        },
+        "idempotency_key": "teaching-direct-execution",
+        "user_message_ref": "coach_message:77",
+    }
+    result = await coach_commands.execute_product_command(
+        owner_id, command, authorization_source="explicit_user_request", thread_id=session["thread_id"],
+    )
+    event = {
+        "type": "product_command",
+        "command_name": "training_plan.execution.record",
+        "status": "succeeded",
+        "authorization_source": "explicit_user_request",
+        "audit_ref": result["audit_ref"],
+        "result_ref": result["result_ref"],
+    }
+
+    audited_ref = await coach_agent_runs._audited_direct_teaching_fact_ref(
+        owner_id, session["thread_id"], 77, event,
+    )
+    next_state = await coach_agent_runs._direct_teaching_next_state(
+        owner_id, session, event["command_name"], audited_ref or "",
+    )
+
+    assert result["status"] == "succeeded"
+    assert audited_ref == result["result_ref"]
+    assert next_state["phase"] == "retest_ready"
+    assert next_state["pending_confirmation_ref"] is None
 
 
 def _analysis_bundle() -> dict:
@@ -1047,6 +1345,33 @@ def test_teaching_contract_rejects_out_of_phase_product_command():
                 "status": "needs_confirmation",
             }],
         )
+
+
+def test_analysis_fact_questions_do_not_enter_teaching_fallback():
+    session = {
+        "state": {"phase": "intake", "primary_candidate": None},
+        "active_run_ref": None,
+    }
+    bundle = {"contexts": [{"kind": "analysis", "analysis_ref": "analysis:1"}]}
+
+    assert coach_agent_runs._requires_teaching_turn(
+        session, bundle, "\u8fd9\u6b21\u8bad\u7ec3\u51fa\u4e86\u4ec0\u4e48\u95ee\u9898"
+    ) is False
+
+
+def test_coach_context_labels_never_use_internal_analysis_references():
+    from webapp.backend import coach_context_refs
+
+    label = coach_context_refs._presentation_label(
+        "analysis",
+        {"scenario": "1wall 5targets pasu", "training_at": "2026-08-09T08:10:09Z", "finished_at": "2026-08-09T08:12:30Z"},
+        target_ref=None,
+        start_ms=None,
+        end_ms=None,
+    )
+
+    assert label == "1wall 5targets pasu | 训练：2026-08-09T08:10:09Z | 分析：2026-08-09T08:12:30Z"
+    assert "analysis:" not in label
 
 
 def test_teaching_contract_does_not_treat_existing_product_commands_as_training_writes():

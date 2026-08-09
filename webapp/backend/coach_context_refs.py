@@ -11,6 +11,7 @@ from typing import Any
 from . import queue
 from .coach_context import coerce_coach_diagnostic_context, project_coach_diagnostic_context
 from .db import get_conn
+from .read_models import build_record_presentation_label
 
 
 CONTEXT_BUNDLE_SCHEMA_VERSION = "coach_turn_context.v1"
@@ -391,25 +392,69 @@ def _validate_target(kind: str, analysis_ref: str, target_ref: str | None, proje
     return target_ref
 
 
-def _label(kind: str, analysis_ref: str, target_ref: str | None, start_ms: float | None, end_ms: float | None) -> str:
+def _presentation_label(
+    kind: str,
+    session: Mapping[str, Any],
+    *,
+    target_ref: str | None,
+    start_ms: float | None,
+    end_ms: float | None,
+    comparison_session: Mapping[str, Any] | None = None,
+) -> str:
+    snapshot = session.get("input_snapshot")
+    scenario = snapshot.get("scenario") if isinstance(snapshot, Mapping) else None
+    if scenario is None:
+        scenario = session.get("run_scenario") or session.get("scenario")
+    label = build_record_presentation_label(
+        scenario=scenario,
+        training_at=session.get("training_at"),
+        analysis_completed_at=session.get("finished_at"),
+    )
     if kind == "analysis":
-        return analysis_ref
+        return label
     if kind == "time_range":
         if start_ms == end_ms:
-            return f"{analysis_ref} @ {start_ms:g} ms"
-        return f"{analysis_ref} @ {start_ms:g}-{end_ms:g} ms"
+            return f"{label} | 片段：{start_ms:g} ms"
+        return f"{label} | 片段：{start_ms:g}-{end_ms:g} ms"
     if kind == "comparison":
-        return f"{analysis_ref} comparison"
-    return target_ref or analysis_ref
+        if comparison_session is None:
+            return f"{label} | 对比分析"
+        comparison_snapshot = comparison_session.get("input_snapshot")
+        comparison_scenario = (
+            comparison_snapshot.get("scenario")
+            if isinstance(comparison_snapshot, Mapping)
+            else None
+        )
+        if comparison_scenario is None:
+            comparison_scenario = comparison_session.get("run_scenario") or comparison_session.get("scenario")
+        comparison_label = build_record_presentation_label(
+            scenario=comparison_scenario,
+            training_at=comparison_session.get("training_at"),
+            analysis_completed_at=comparison_session.get("finished_at"),
+        )
+        return f"{label} | 对比：{comparison_label}"
+    return f"{label} | { {'issue': '问题', 'metric': '数据项', 'evidence_segment': '证据片段'}.get(kind, '分析内容') }"
 
 
-def _public(row: Mapping[str, Any], *, status: str | None = None) -> dict[str, Any]:
+def _public_label(value: object) -> str:
+    if isinstance(value, str) and value and re.search(r"\banalysis:[1-9][0-9]*\b", value) is None:
+        return value
+    return build_record_presentation_label(
+        scenario=None,
+        training_at=None,
+        analysis_completed_at=None,
+    )
+
+
+def _public(
+    row: Mapping[str, Any], *, status: str | None = None, label: str | None = None,
+) -> dict[str, Any]:
     return {
         "schema_version": "coach_context_ref.v1",
         "context_ref": row["context_ref"],
         "kind": row["kind"],
         "status": status or row["status"],
-        "label": row["label"],
+        "label": label or _public_label(row.get("label")),
         "analysis_ref": f"analysis:{row['analysis_session_id']}",
         "comparison_analysis_ref": (
             f"analysis:{row['comparison_session_id']}" if row.get("comparison_session_id") else None
@@ -422,6 +467,28 @@ def _public(row: Mapping[str, Any], *, status: str | None = None) -> dict[str, A
         "detached_at": row.get("detached_at"),
         "deleted_at": row.get("deleted_at"),
     }
+
+
+async def _public_with_live_label(row: Mapping[str, Any], *, status: str | None = None) -> dict[str, Any]:
+    session = await queue.get_session(int(row["analysis_session_id"]))
+    if session is None:
+        return _public(row, status=status)
+    comparison_session = None
+    comparison_id = row.get("comparison_session_id")
+    if comparison_id is not None:
+        comparison_session = await queue.get_session(int(comparison_id))
+    return _public(
+        row,
+        status=status,
+        label=_presentation_label(
+            str(row["kind"]),
+            session,
+            target_ref=row.get("target_ref"),
+            start_ms=row.get("start_ms"),
+            end_ms=row.get("end_ms"),
+            comparison_session=comparison_session,
+        ),
+    )
 
 
 async def attach_context(
@@ -441,6 +508,7 @@ async def attach_context(
     projection = _projection(session)
     comparison_id = None
     comparison_projection = None
+    comparison = None
     if kind == "time_range":
         if start_ms is None:
             raise ContextRefError("invalid_time_range", "Time context requires start_ms")
@@ -492,7 +560,14 @@ async def attach_context(
         if comparison_projection is not None
         else None
     )
-    label = _label(kind, analysis_ref, target, start_ms, end_ms)
+    label = _presentation_label(
+        kind,
+        session,
+        target_ref=target,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        comparison_session=comparison,
+    )
     await conn.execute(
         "INSERT INTO coach_context_refs(context_ref, thread_id, dedupe_key, kind, "
         "analysis_session_id, comparison_session_id, target_ref, start_ms, end_ms, label, "
@@ -515,7 +590,7 @@ async def attach_context(
             (thread_id, dedupe_key),
         )
     ).fetchone()
-    return "attached", _public(dict(row))
+    return "attached", _public(dict(row), label=label)
 
 
 async def list_contexts(thread_id: int, *, active_only: bool = True) -> list[dict[str, Any]]:
@@ -525,7 +600,7 @@ async def list_contexts(thread_id: int, *, active_only: bool = True) -> list[dic
     if active_only:
         sql += " AND status='active'"
     rows = await (await conn.execute(sql + " ORDER BY attached_at, context_ref", params)).fetchall()
-    return [_public(dict(row)) for row in rows]
+    return [await _public_with_live_label(dict(row)) for row in rows]
 
 
 async def unavailable_context_refs(context_refs: Sequence[str]) -> set[str]:
@@ -556,7 +631,7 @@ async def detach_context(owner_id: str, thread_id: int, context_ref: str) -> tup
     if row is None:
         return None
     if row["status"] != "active":
-        return "already_detached", _public(dict(row))
+        return "already_detached", await _public_with_live_label(dict(row))
     await conn.execute(
         "UPDATE coach_context_refs SET status='detached', detached_at=CURRENT_TIMESTAMP, "
         "updated_at=CURRENT_TIMESTAMP WHERE context_ref=?",
@@ -566,7 +641,7 @@ async def detach_context(owner_id: str, thread_id: int, context_ref: str) -> tup
     updated = await (
         await conn.execute("SELECT * FROM coach_context_refs WHERE context_ref=?", (context_ref,))
     ).fetchone()
-    return "detached", _public(dict(updated))
+    return "detached", await _public_with_live_label(dict(updated))
 
 
 async def build_context_bundle(
@@ -611,7 +686,7 @@ async def build_context_bundle(
                 raise ContextRefError(
                     "context_unavailable", "Comparison context projection is invalid",
                 )
-        snapshots.append(_public(row))
+        snapshots.append(await _public_with_live_label(row))
         contexts.append({
             "context_ref": ref,
             "kind": row["kind"],

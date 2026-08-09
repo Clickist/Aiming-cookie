@@ -39,12 +39,12 @@ test("coach-runtime product sources must not import coding-agent", () => {
   );
 });
 
-test("pi-source only resolves pinned packages/ai and packages/agent source modules", () => {
+test("pi-source embeds only pinned packages/ai and packages/agent source modules", () => {
   const piSource = readFileSync(join(RUNTIME_ROOT, "src", "pi-source.ts"), "utf8");
-  assert.match(piSource, /packages", "ai", "src", "index\.ts/);
-  assert.match(piSource, /packages", "agent", "src", "index\.ts/);
-  assert.match(piSource, /packages", "ai", "src", "providers", "all\.ts/);
-  assert.match(piSource, /packages", "ai", "src", "api", "openai-completions\.ts/);
+  assert.match(piSource, /third_party\/pi\/packages\/ai\/src\/index\.ts/);
+  assert.match(piSource, /third_party\/pi\/packages\/agent\/src\/index\.ts/);
+  assert.match(piSource, /third_party\/pi\/packages\/ai\/src\/providers\/all\.ts/);
+  assert.match(piSource, /third_party\/pi\/packages\/ai\/src\/api\/openai-completions\.ts/);
   assert.ok(!piSource.includes("coding-agent"));
   assert.ok(!piSource.includes("packages/coding-agent"));
   assert.ok(!piSource.includes('packages", "coding-agent"'));

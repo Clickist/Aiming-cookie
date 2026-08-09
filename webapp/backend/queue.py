@@ -21,6 +21,7 @@ from .contracts import (
 )
 from . import coach_store, history_trends
 from .db import get_conn
+from .read_models import build_record_presentation_label
 from .workspace import (
     copy_path_to_path,
     remove_session_workspace,
@@ -602,6 +603,22 @@ async def get_active_session(user_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+async def get_run_analysis_states(user_id: str, run_id: int) -> list[dict]:
+    """Return existing Analysis rows for one owner-scoped Run.
+
+    This is intentionally a small projection used by batch submission to make
+    repeated confirmations idempotent without introducing a second analysis
+    registry.
+    """
+    conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, status, kovaak_run_id FROM sessions "
+        "WHERE user_id=? AND kovaak_run_id=? ORDER BY id DESC",
+        (user_id, run_id),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
 async def has_active(user_id: str) -> bool:
     return await get_active_session(user_id) is not None
 
@@ -691,8 +708,9 @@ async def list_sessions(user_id: str) -> list[dict]:
         "CASE WHEN json_valid(s.result) THEN COALESCE("
         "json_extract(s.result, '$.deterministic.diagnosis.profile.label'), "
         "json_extract(s.result, '$.diagnosis.profile.label')) END AS summary_label, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.scenario') END AS scenario, "
+        "COALESCE(CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.scenario') END, kr.scenario) AS scenario, "
+        "kr.created_at AS training_at, "
         "CASE WHEN json_valid(s.input_snapshot_json) THEN "
         "json_extract(s.input_snapshot_json, '$.sources.stats.path') END AS snapshot_stats_path, "
         "CASE WHEN json_valid(s.input_snapshot_json) THEN "
@@ -754,7 +772,16 @@ async def list_sessions(user_id: str) -> list[dict]:
         item = dict(row)
         item["created_at"] = sqlite_timestamp_to_wire_utc(item.get("created_at")) or ""
         item["finished_at"] = sqlite_timestamp_to_wire_utc(item.get("finished_at"))
-        out.append(history_trends.analysis_list_item(item))
+        item["training_at"] = sqlite_timestamp_to_wire_utc(item.get("training_at"))
+        projected = history_trends.analysis_list_item(item)
+        projected["training_at"] = item["training_at"]
+        projected["analysis_completed_at"] = projected["finished_at"]
+        projected["presentation_label"] = build_record_presentation_label(
+            scenario=projected["scenario"],
+            training_at=projected["training_at"],
+            analysis_completed_at=projected["analysis_completed_at"],
+        )
+        out.append(projected)
     return out
 
 
@@ -972,7 +999,7 @@ def _task_row_from_db(row) -> dict:
                 item[public_key] = None
         if public_key != json_key:
             item.pop(json_key, None)
-    for key in ("created_at", "started_at", "finished_at"):
+    for key in ("created_at", "started_at", "finished_at", "training_at"):
         item[key] = sqlite_timestamp_to_wire_utc(item.get(key))
     return item
 
@@ -980,11 +1007,15 @@ def _task_row_from_db(row) -> dict:
 async def list_task_rows(user_id: str) -> list[dict]:
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id, user_id, status, analysis_type, input_mode, kovaak_run_id, "
+        "SELECT s.id, s.user_id, s.status, s.analysis_type, s.input_mode, s.kovaak_run_id, "
         "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
         "failure_domain, partial_outcome_json, error, result, calibration_request_json, "
-        "calibration_snapshot_json, created_at, started_at, finished_at "
-        "FROM sessions WHERE user_id=? ORDER BY created_at DESC, id DESC",
+        "calibration_snapshot_json, s.created_at, s.started_at, s.finished_at, "
+        "COALESCE(CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.scenario') END, kr.scenario) AS scenario, "
+        "kr.created_at AS training_at "
+        "FROM sessions AS s LEFT JOIN kovaak_runs AS kr ON kr.id=s.kovaak_run_id "
+        "AND kr.user_id=s.user_id WHERE s.user_id=? ORDER BY s.created_at DESC, s.id DESC",
         (user_id,),
     )
     return [_task_row_from_db(row) for row in await cur.fetchall()]
@@ -993,12 +1024,16 @@ async def list_task_rows(user_id: str) -> list[dict]:
 async def get_task_rows(task_ref: str, user_id: str) -> list[dict]:
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id, user_id, status, analysis_type, input_mode, kovaak_run_id, "
+        "SELECT s.id, s.user_id, s.status, s.analysis_type, s.input_mode, s.kovaak_run_id, "
         "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
         "failure_domain, partial_outcome_json, error, result, calibration_request_json, "
-        "calibration_snapshot_json, created_at, started_at, finished_at "
-        "FROM sessions WHERE user_id=? AND task_group_ref=? "
-        "ORDER BY attempt_number, id",
+        "calibration_snapshot_json, s.created_at, s.started_at, s.finished_at, "
+        "COALESCE(CASE WHEN json_valid(s.input_snapshot_json) THEN "
+        "json_extract(s.input_snapshot_json, '$.scenario') END, kr.scenario) AS scenario, "
+        "kr.created_at AS training_at "
+        "FROM sessions AS s LEFT JOIN kovaak_runs AS kr ON kr.id=s.kovaak_run_id "
+        "AND kr.user_id=s.user_id WHERE s.user_id=? AND s.task_group_ref=? "
+        "ORDER BY s.attempt_number, s.id",
         (user_id, task_ref),
     )
     return [_task_row_from_db(row) for row in await cur.fetchall()]
@@ -1095,14 +1130,16 @@ async def set_onboarding_state(
 async def get_session(session_id: int) -> Optional[dict]:
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id, user_id, status, video_path, csv_path, analysis_type, input_mode, "
-        "kovaak_run_id, input_snapshot_json, result, error, "
+        "SELECT s.id, s.user_id, s.status, s.video_path, s.csv_path, s.analysis_type, s.input_mode, "
+        "s.kovaak_run_id, s.input_snapshot_json, s.result, s.error, "
         "llm_cost_cny, cm_per_360, fov, attempts, max_attempts, worker_id, "
         "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
         "failure_domain, partial_outcome_json, calibration_request_json, "
         "calibration_snapshot_json, "
-        "started_at, finished_at, created_at, updated_at "
-        "FROM sessions WHERE id=?",
+        "s.started_at, s.finished_at, s.created_at, s.updated_at, kr.scenario AS run_scenario, "
+        "kr.created_at AS training_at "
+        "FROM sessions AS s LEFT JOIN kovaak_runs AS kr ON kr.id=s.kovaak_run_id "
+        "AND kr.user_id=s.user_id WHERE s.id=?",
         (session_id,),
     )
     row = await cur.fetchone()
@@ -1124,6 +1161,16 @@ async def get_session(session_id: int) -> Optional[dict]:
     d["created_at"] = sqlite_timestamp_to_wire_utc(d.get("created_at")) or ""
     d["started_at"] = sqlite_timestamp_to_wire_utc(d.get("started_at"))
     d["finished_at"] = sqlite_timestamp_to_wire_utc(d.get("finished_at"))
+    d["training_at"] = sqlite_timestamp_to_wire_utc(d.get("training_at"))
+    snapshot = d.get("input_snapshot")
+    snapshot_scenario = snapshot.get("scenario") if isinstance(snapshot, dict) else None
+    d["scenario"] = snapshot_scenario if snapshot_scenario is not None else d.get("run_scenario")
+    d["analysis_completed_at"] = d["finished_at"]
+    d["presentation_label"] = build_record_presentation_label(
+        scenario=d["scenario"],
+        training_at=d["training_at"],
+        analysis_completed_at=d["analysis_completed_at"],
+    )
 
     raw_result = d.get("result")
     if raw_result:

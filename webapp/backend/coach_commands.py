@@ -34,14 +34,15 @@ from kovaak_tracker.analysis_evidence import (
     validate_normalized_outcome_timeline_v1,
 )
 
-from . import coach_retest_decision, coach_store, evidence_store, history_trends, kovaak_run_store, queue
+from . import calibration_profile_store, coach_context_refs, coach_guidance, coach_retest_decision, coach_store, evidence_store, history_trends, kovaak_connection_store, kovaak_run_store, queue
 from .contracts import project_evidence_segment
+from .source_requirements import validate_source_requirements
 from .workspace import copy_path_to_path, remove_session_workspace, session_dir
 
 RESULT_SCHEMA_VERSION = "coach_product_command_result.v1"
 TOOL_BRIDGE_ENDPOINT = "/api/coach/tools/execute"
 _TOOL_BRIDGE_PAYLOAD_KEYS = frozenset({
-    "command_id", "command_name", "parameters", "idempotency_key",
+    "command_id", "command_name", "parameters", "idempotency_key", "instruction_quote",
 })
 
 _QUERY_COMMANDS = {
@@ -56,6 +57,10 @@ _QUERY_COMMANDS = {
     "training_plan.review",
     "kovaak_scores.lookup",
     "kovaak_scores.refresh_connected",
+    "product.readiness.get",
+    "calibration.get",
+    "kovaak.connection.get",
+    "coach.session.list",
 }
 _EVIDENCE_QUERY_COMMANDS = frozenset({
     "analysis.metrics.distribution",
@@ -81,6 +86,14 @@ _WRITE_COMMANDS = {
     "training_plan.activate",
     "training_plan.pause",
     "training_plan.adjust",
+    "calibration.save",
+    "calibration.delete",
+    "kovaak.connection.disconnect",
+    "coach.session.create",
+    "coach.session.rename",
+    "coach.session.archive",
+    "coach.session.delete",
+    "coach.context.detach",
 }
 _EXPLICIT_USER_FACT_COMMANDS = {
     "training_plan.item.add",
@@ -105,6 +118,9 @@ _FORBIDDEN_MODEL_KEYS = {
     "secret",
     "raw_trace",
     "trace_path",
+    "authorization_source",
+    "instruction_grant",
+    "grant_metadata",
 }
 _REF_RE = re.compile(r"^(?P<kind>run|analysis):(?P<id>[1-9][0-9]*)$")
 _PATH_OR_URL_TEXT_RE = re.compile(
@@ -278,7 +294,11 @@ class InMemoryCommandJournal:
 
     async def audit(self, owner_id: str, result: dict[str, Any]) -> None:
         async with self._lock:
-            self.audit_events.append({"owner_id": owner_id, "result": _copy_json(result)})
+            self.audit_events.append({
+                "owner_id": owner_id,
+                "result": _copy_json(result),
+                "context": _copy_json(_audit_context.get()),
+            })
 
     async def confirm_and_reserve(
         self,
@@ -882,7 +902,12 @@ def _analysis_type_for_snapshot(snapshot: Mapping[str, Any]) -> str:
         "dynamic_clicking": "dynamic_clicking",
         "continuous_tracking": "continuous_tracking",
         "target_switching": "target_switching",
-        "static_clicking": "flicking",
+        "static_clicking": (
+            "static_clicking"
+            if "static_clicking.baseline.v1"
+            in (resolution.get("allowed_analyzers") or [])
+            else "flicking"
+        ),
     }.get(family, "flicking")
 
 
@@ -890,7 +915,8 @@ async def create_analysis_from_run(
     owner_id: str,
     run_id: int,
     *,
-    input_mode: Literal["input_native", "multimodal", "video_fallback"] | None = "input_native",
+    input_mode: Literal["multimodal"] = "multimodal",
+    allow_parallel: bool = False,
     cm_per_360: float | None = None,
     fov: float | None = None,
     profile_default: Mapping[str, object] | None = None,
@@ -900,12 +926,32 @@ async def create_analysis_from_run(
 ) -> dict[str, Any]:
     """Freeze a registered run and enqueue an Analysis through managed stores.
 
-    Coach command calls use only ``input_native`` and never provide a source
-    path.  The pre-existing desktop UI may opt into its separately validated
-    multimodal/video-fallback capability through this same orchestration.
+    New Run-based Analysis uses one all-source ``multimodal`` contract.
+    Historical Analysis rows remain readable, but legacy modes cannot create
+    new Run Analysis records through this boundary.
     """
+    existing = await queue.get_run_analysis_states(owner_id, run_id)
+    completed = next((item for item in existing if item.get("status") == "done"), None)
+    if completed is not None:
+        session_id = int(completed["id"])
+        return {
+            "session_id": session_id,
+            "analysis_ref": f"analysis:{session_id}",
+            "reused": True,
+        }
+    run_active = next(
+        (item for item in existing if item.get("status") in {"uploading", "queued", "running"}),
+        None,
+    )
+    if run_active is not None:
+        session_id = int(run_active["id"])
+        return {
+            "session_id": session_id,
+            "analysis_ref": f"analysis:{session_id}",
+            "reused": True,
+        }
     active = await queue.get_active_session(owner_id)
-    if active is not None:
+    if active is not None and not allow_parallel:
         raise ProductCommandError(
             "active_analysis",
             "已有 Analysis 正在进行",
@@ -923,11 +969,12 @@ async def create_analysis_from_run(
     except (LookupError, ValueError) as exc:
         raise ProductCommandError("input_unavailable", str(exc), kind="unavailable") from exc
 
-    native_ready = bool(
-        snapshot["sources"].get("stats")
-        and snapshot["sources"].get("performance")
-        and snapshot.get("trace")
-    )
+    if input_mode != "multimodal":
+        raise ProductCommandError(
+            "unsupported_input_mode",
+            "new Run Analysis requires multimodal input",
+            kind="unavailable",
+        )
     run_video = snapshot["sources"].get("video")
     run_video_source = None
     if managed_video_source is None and isinstance(run_video, Mapping):
@@ -939,20 +986,6 @@ async def create_analysis_from_run(
             and isinstance(run_video_fingerprint, Mapping)
         ):
             run_video_source = Path(run_video_path)
-    video_ready = managed_video_source is not None or run_video_source is not None
-    if input_mode is None:
-        input_mode = "multimodal" if native_ready and video_ready else (
-            "input_native" if native_ready else "video_fallback"
-        )
-    if input_mode == "input_native" and not native_ready:
-        raise ProductCommandError("native_input_unavailable", "input_native 需要 Stats、Performance 和 Raw Input trace", kind="unavailable")
-    if input_mode == "multimodal" and (not native_ready or not video_ready):
-        raise ProductCommandError("input_unavailable", "multimodal 需要完整 native evidence 和视频", kind="unavailable")
-    if input_mode == "video_fallback" and (
-        not snapshot["sources"].get("stats") or not video_ready
-    ):
-        raise ProductCommandError("input_unavailable", "video_fallback 需要视频", kind="unavailable")
-
     video_fingerprint = None
     if managed_video_source is not None:
         video_fingerprint = (
@@ -980,15 +1013,15 @@ async def create_analysis_from_run(
     elif run_video_source is not None and isinstance(run_video, Mapping):
         video_fingerprint = dict(run_video["fingerprint"])
 
-    if input_mode == "input_native":
-        snapshot["sources"].pop("video", None)
-    elif input_mode == "video_fallback":
-        snapshot["sources"] = {
-            kind: source
-            for kind, source in snapshot["sources"].items()
-            if kind in {"stats", "video"}
-        }
-        snapshot["trace"] = None
+    source_gate = validate_source_requirements(snapshot)
+    if not source_gate["ready"]:
+        missing = ", ".join(str(item) for item in source_gate["missing"])
+        raise ProductCommandError(
+            "input_unavailable",
+            f"required Run sources are unavailable: {missing}",
+            kind="unavailable",
+        )
+    snapshot["source_requirements_version"] = "fixed_all_source.v1"
 
     session_id = await queue.enqueue(
         owner_id,
@@ -1008,9 +1041,7 @@ async def create_analysis_from_run(
         managed_video = ""
         managed_csv = ""
         workspace = session_dir(session_id)
-        if managed_video_source is not None and input_mode in {
-            "multimodal", "video_fallback",
-        }:
+        if managed_video_source is not None:
             video_destination = workspace / "video.mp4"
             try:
                 copy_path_to_path(managed_video_source, video_destination)
@@ -1037,9 +1068,7 @@ async def create_analysis_from_run(
                     kind="unavailable",
                 )
             managed_video = str(video_destination)
-        elif run_video_source is not None and input_mode in {
-            "multimodal", "video_fallback",
-        }:
+        elif run_video_source is not None:
             video_destination = workspace / "video.mp4"
             workspace.mkdir(parents=True, exist_ok=True)
             os.link(run_video_source, video_destination)
@@ -1054,27 +1083,6 @@ async def create_analysis_from_run(
                     kind="unavailable",
                 )
             managed_video = str(video_destination)
-        if input_mode == "video_fallback":
-            stats_source = snapshot["sources"].get("stats")
-            if not isinstance(stats_source, Mapping):
-                raise ProductCommandError("input_unavailable", "Stats source unavailable", kind="unavailable")
-            stats_path = stats_source.get("path")
-            if not isinstance(stats_path, str) or not Path(stats_path).is_file():
-                raise ProductCommandError("input_unavailable", "Stats source unavailable", kind="unavailable")
-            csv_destination = workspace / "stats.csv"
-            stats_source_path = Path(stats_path)
-            copy_path_to_path(stats_source_path, csv_destination)
-            if not _matches_frozen_copy(
-                csv_destination,
-                stats_source.get("fingerprint"),
-                source=stats_source_path,
-            ):
-                raise ProductCommandError(
-                    "source_unavailable",
-                    "Stats source revision changed before managed copy",
-                    kind="unavailable",
-                )
-            managed_csv = str(csv_destination)
         await queue.set_session_input_paths(session_id, owner_id, managed_video, managed_csv)
         if not await queue.finish_upload(session_id):
             raise ProductCommandError("upload_state_lost", "分析输入状态已失效，请重新提交", kind="unavailable")
@@ -1311,6 +1319,7 @@ async def execute_product_command(
     *,
     authorization_source: Literal["explicit_user_request", "confirmed", "system_safe", "coach_inferred"] = "coach_inferred",
     thread_id: int | None = None,
+    instruction_grant: _InstructionGrant | None = None,
 ) -> dict[str, Any]:
     """Execute one allow-listed product command and return the canonical result."""
     command_id = _command_id(envelope.get("command_id") if isinstance(envelope, Mapping) else None)
@@ -1346,6 +1355,24 @@ async def execute_product_command(
         return await _finish(owner_id, _result(command_id, "failed", warning_or_error=_error(exc.code, exc.message)))
     if _contains_forbidden_model_data(parameters):
         return await _finish(owner_id, _result(command_id, "failed", warning_or_error=_error("untrusted_field", "paths, URLs, credentials and raw traces are not accepted")))
+    if instruction_grant is not None:
+        try:
+            grant_digest = _idempotency_digest(command_name, parameters)
+        except (TypeError, ValueError):
+            grant_digest = None
+        if (
+            authorization_source != "explicit_user_request"
+            or instruction_grant.owner_id != owner_id
+            or instruction_grant.thread_id != thread_id
+            or instruction_grant.user_message_ref != envelope.get("user_message_ref")
+            or instruction_grant.command_name != command_name
+            or instruction_grant.parameters_digest != grant_digest
+            or instruction_grant.expires_at <= time.time()
+        ):
+            return await _finish(
+                owner_id,
+                _result(command_id, "failed", warning_or_error=_error("invalid_instruction_grant", "instruction grant is unavailable")),
+            )
 
     idempotency_key = envelope.get("idempotency_key")
     digest = None
@@ -1358,6 +1385,7 @@ async def execute_product_command(
         "idempotency_key": idempotency_key if isinstance(idempotency_key, str) else None,
         "parameters_digest": None,
         "safe_parameters_summary": _safe_parameter_summary(parameters),
+        **({"instruction_grant": instruction_grant.audit_projection()} if instruction_grant is not None else {}),
     })
     try:
         if command_name in _WRITE_COMMANDS:
@@ -1390,13 +1418,14 @@ async def execute_trusted_analysis_create(
     owner_id: str,
     run_id: int,
     *,
-    input_mode: Literal["input_native", "multimodal", "video_fallback"] | None,
+    input_mode: Literal["multimodal"] = "multimodal",
     cm_per_360: float | None,
     fov: float | None,
     profile_default: Mapping[str, object] | None = None,
     manual_override: Mapping[str, object] | None = None,
     managed_video_source: Path | None = None,
     idempotency_key: str | None = None,
+    allow_parallel: bool = False,
 ) -> dict[str, Any]:
     """Execute the validated desktop Analysis write through the shared journal."""
     command_name = "analysis.create_from_run"
@@ -1463,6 +1492,7 @@ async def execute_trusted_analysis_create(
                 idempotency_key=idempotency_key,
                 trusted_analysis_args={
                     "input_mode": input_mode,
+                    **({"allow_parallel": True} if allow_parallel else {}),
                     "cm_per_360": cm_per_360,
                     "fov": fov,
                     "profile_default": dict(profile_default) if isinstance(profile_default, Mapping) else None,
@@ -1713,13 +1743,31 @@ async def _execute_product_command_inner(
             )
         elif command_name == "navigation.open":
             result = _result(command_id, "succeeded", ui_event=_navigation_event(parameters))
+        elif command_name == "product.readiness.get":
+            if parameters:
+                raise ProductCommandError("invalid_parameters", "product readiness does not accept parameters")
+            result = _result(command_id, "succeeded", result=await coach_guidance.get_product_readiness(owner_id))
+        elif command_name == "calibration.get":
+            if parameters:
+                raise ProductCommandError("invalid_parameters", "calibration.get does not accept parameters")
+            profile = await calibration_profile_store.get_profile(owner_id)
+            result = _result(command_id, "succeeded", result_ref="calibration:current", result={"calibration_ref": "calibration:current", **profile})
+        elif command_name == "kovaak.connection.get":
+            if parameters:
+                raise ProductCommandError("invalid_parameters", "kovaak.connection.get does not accept parameters")
+            connected = await kovaak_connection_store.get_connection(owner_id) is not None
+            result = _result(command_id, "succeeded", result_ref="kovaak_connection:current", result={"connection_ref": "kovaak_connection:current", "connected": connected})
+        elif command_name == "coach.session.list":
+            if parameters:
+                raise ProductCommandError("invalid_parameters", "coach.session.list does not accept parameters")
+            result = _result(command_id, "succeeded", result=await coach_store.list_sessions(owner_id))
         elif command_name == "analysis.create_from_run":
             run_id, _ = _parse_ref(parameters.get("run_ref"), "run")
             if trusted_analysis_args is None:
                 created = await create_analysis_from_run(
                     owner_id,
                     run_id,
-                    input_mode="input_native",
+                    input_mode="multimodal",
                     cm_per_360=parameters.get("cm_per_360"),
                     fov=parameters.get("fov"),
                 )
@@ -1774,6 +1822,44 @@ async def _execute_product_command_inner(
                     "cleanup_pending": bool(deleted.get("cleanup_failed")),
                 },
             )
+        elif command_name == "calibration.save":
+            saved = await calibration_profile_store.save_profile(owner_id, cm_per_360=parameters.get("cm_per_360"), fov=parameters.get("fov"))
+            result = _result(command_id, "succeeded", result_ref="calibration:current", result={"calibration_ref": "calibration:current", **saved})
+        elif command_name == "calibration.delete":
+            deleted = await calibration_profile_store.delete_profile(owner_id)
+            result = _result(command_id, "succeeded", result_ref="calibration:current", result={"calibration_ref": "calibration:current", **deleted})
+        elif command_name == "kovaak.connection.disconnect":
+            deleted = await kovaak_connection_store.delete_connection(owner_id)
+            result = _result(command_id, "succeeded", result_ref="kovaak_connection:current", result={"connection_ref": "kovaak_connection:current", "disconnected": True, "was_connected": deleted})
+        elif command_name == "coach.session.create":
+            created = await coach_store.create_session(owner_id, title=parameters.get("title"))
+            result = _result(command_id, "succeeded", result_ref=f"session:{created['id']}", result=created)
+        elif command_name in {"coach.session.rename", "coach.session.archive", "coach.session.delete"}:
+            session_ref = parameters.get("session_ref")
+            if not isinstance(session_ref, str) or not session_ref.startswith("session:"):
+                raise ProductCommandError("invalid_parameters", "session_ref is required")
+            try:
+                session_id = int(session_ref.split(":", 1)[1])
+            except ValueError as exc:
+                raise ProductCommandError("invalid_parameters", "session_ref is invalid") from exc
+            if command_name == "coach.session.rename":
+                changed = await coach_store.rename_session(owner_id, session_id, str(parameters.get("title", "")))
+            elif command_name == "coach.session.archive":
+                changed = await coach_store.archive_session(owner_id, session_id)
+            else:
+                changed = await coach_store.soft_delete_session(owner_id, session_id)
+            if changed is None:
+                raise ProductCommandError("not_found", "Coach session is unavailable")
+            result = _result(command_id, "succeeded", result_ref=session_ref, result=changed)
+        elif command_name == "coach.context.detach":
+            context_ref = parameters.get("context_ref")
+            thread_id = parameters.get("session_id")
+            if not isinstance(context_ref, str) or not isinstance(thread_id, int):
+                raise ProductCommandError("invalid_parameters", "context_ref and session_id are required")
+            detached = await coach_context_refs.detach_context(owner_id, thread_id, context_ref)
+            if detached is None:
+                raise ProductCommandError("not_found", "Coach context is unavailable")
+            result = _result(command_id, "succeeded", result_ref=context_ref, result={"context_ref": context_ref, "status": detached[0]})
         elif command_name in _EXPLICIT_USER_FACT_COMMANDS:
             fact, fact_ref = await _execute_training_plan_fact(
                 owner_id, command_name, parameters,
@@ -3581,13 +3667,37 @@ class _ToolBridge:
     expires_at: float
     max_calls: int
     calls: int
+    current_user_message: str | None = None
     bytes_used: int = 0
     signal_points_used: int = 0
     signal_bytes_used: int = 0
     reachable_refs: set[str] = field(default_factory=set)
     temporary_profile_refs: dict[str, str] = field(default_factory=dict)
+    instruction_grants: dict[str, "_InstructionGrant"] = field(default_factory=dict)
     cursors: dict[str, dict[str, Any]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+@dataclass(frozen=True)
+class _InstructionGrant:
+    schema_version: Literal["instruction_grant.v1"]
+    bridge_id: str
+    owner_id: str
+    thread_id: int
+    user_message_ref: str
+    command_name: str
+    target_ref: str
+    parameters_digest: str
+    expires_at: float
+
+    def audit_projection(self) -> dict[str, str]:
+        return {
+            "schema_version": self.schema_version,
+            "message_ref": self.user_message_ref,
+            "command_name": self.command_name,
+            "target_ref": self.target_ref,
+            "status": "issued",
+        }
 
 
 _tool_bridges: dict[str, _ToolBridge] = {}
@@ -3614,7 +3724,7 @@ def _stable_reachable_refs(value: object) -> set[str]:
                     or key.endswith("_refs")
                     or key in {"analysis_id", "segment_id", "event_id", "evidence_id", "id"}
                 )
-                and child.startswith(("analysis:", "run:", "segment:", "event:", "metric:", "evidence:"))
+                and child.startswith(("analysis:", "run:", "plan:", "plan-item:", "segment:", "event:", "metric:", "evidence:"))
                 and not child.startswith("cursor:")
             ):
                 refs.add(child)
@@ -3632,6 +3742,138 @@ def _stable_reachable_refs(value: object) -> set[str]:
     return refs
 
 
+_INSTRUCTION_TARGETS: dict[str, tuple[str, str]] = {
+    "analysis.create_from_run": ("run_ref", "run"),
+    "analysis.retry": ("analysis_ref", "analysis"),
+    "analysis.delete": ("analysis_ref", "analysis"),
+    "training_plan.save": ("plan_ref", "plan"),
+    "training_plan.activate": ("plan_ref", "plan"),
+    "training_plan.pause": ("plan_ref", "plan"),
+    "training_plan.adjust": ("plan_ref", "plan"),
+    "training_plan.item.add": ("plan_ref", "plan"),
+    "training_plan.execution.record": ("item_ref", "plan-item"),
+    "training_plan.retest.record": ("item_ref", "plan-item"),
+}
+_INSTRUCTION_ACTIONS: dict[str, tuple[str, ...]] = {
+    "analysis.create_from_run": ("analyse", "analyze", "分析"),
+    "analysis.retry": ("retry", "重试"),
+    "analysis.delete": ("delete", "remove", "删除", "移除"),
+    "training_plan.generate_draft": ("generate", "draft", "生成", "制定"),
+    "training_plan.save": ("save", "保存"),
+    "training_plan.activate": ("activate", "start", "启用", "开始"),
+    "training_plan.pause": ("pause", "暂停"),
+    "training_plan.adjust": ("adjust", "update", "调整", "更新"),
+    "training_plan.item.add": ("add", "添加"),
+    "training_plan.execution.record": ("record", "完成", "记录"),
+    "training_plan.retest.record": ("retest", "复测", "记录"),
+}
+
+
+def _instruction_action_matches(command_name: str, quote: str) -> bool:
+    return any(token in quote.lower() for token in _INSTRUCTION_ACTIONS.get(command_name, ()))
+
+
+def _compatible_instruction_refs(bridge: _ToolBridge, kind: str) -> set[str]:
+    prefix = f"{kind}:"
+    return {ref for ref in bridge.reachable_refs if ref.startswith(prefix)}
+
+
+def _quote_ref_candidates(quote: str, refs: set[str], kind: str) -> set[str]:
+    candidates: set[str] = set()
+    for ref in refs:
+        ref_id = ref.partition(":")[2]
+        if ref in quote or re.search(rf"(?<![A-Za-z0-9]){re.escape(kind)}[\\s:#-]*{re.escape(ref_id)}(?![0-9])", quote, re.IGNORECASE):
+            candidates.add(ref)
+    return candidates
+
+
+def _normalize_instruction_target(
+    bridge: _ToolBridge,
+    command_name: str,
+    parameters: Mapping[str, Any],
+    quote: str,
+) -> tuple[dict[str, Any], str] | None:
+    target = _INSTRUCTION_TARGETS.get(command_name)
+    if target is None:
+        return None
+    field_name, kind = target
+    candidates = _compatible_instruction_refs(bridge, kind)
+    if not candidates:
+        return None
+    quoted = _quote_ref_candidates(quote, candidates, kind)
+    if len(quoted) == 1:
+        resolved = next(iter(quoted))
+    elif len(candidates) == 1:
+        resolved = next(iter(candidates))
+    else:
+        return None
+    supplied = parameters.get(field_name)
+    if kind in {"analysis", "run"} and isinstance(supplied, str) and supplied.isdecimal():
+        supplied = f"{kind}:{supplied}"
+    if supplied is not None and supplied != resolved:
+        return None
+    normalized = dict(parameters)
+    normalized[field_name] = resolved
+    return normalized, resolved
+
+
+def _instruction_scalars_are_stated(parameters: Mapping[str, Any], quote: str) -> bool:
+    """Reject model-supplied scalar facts which the exact user quote does not state."""
+    for key, value in parameters.items():
+        if key.endswith("_ref") or key.endswith("_refs") or key in {"plan_payload", "evidence_refs", "verification_targets"}:
+            continue
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)) and str(value).lower() not in quote.lower():
+            return False
+        if isinstance(value, (list, dict)):
+            return False
+    return True
+
+
+def _issue_instruction_grant(
+    bridge: _ToolBridge,
+    command_name: object,
+    parameters: object,
+    quote: object,
+) -> tuple[_InstructionGrant, dict[str, Any]] | None:
+    if (
+        not isinstance(command_name, str)
+        or command_name not in _WRITE_COMMANDS
+        or not isinstance(parameters, Mapping)
+        or not isinstance(quote, str)
+        or not quote
+        or len(quote) > 512
+        or bridge.current_user_message is None
+        or quote not in bridge.current_user_message
+        or not _instruction_action_matches(command_name, quote)
+    ):
+        return None
+    resolved = _normalize_instruction_target(bridge, command_name, parameters, quote)
+    if resolved is None:
+        return None
+    normalized, target_ref = resolved
+    if not _instruction_scalars_are_stated(normalized, quote):
+        return None
+    try:
+        parameters_digest = _idempotency_digest(command_name, normalized)
+    except (TypeError, ValueError):
+        return None
+    grant = _InstructionGrant(
+        schema_version="instruction_grant.v1",
+        bridge_id=bridge.bridge_id,
+        owner_id=bridge.owner_id,
+        thread_id=bridge.thread_id,
+        user_message_ref=bridge.user_message_ref,
+        command_name=command_name,
+        target_ref=target_ref,
+        parameters_digest=parameters_digest,
+        expires_at=bridge.expires_at,
+    )
+    bridge.instruction_grants[parameters_digest] = grant
+    return grant, normalized
+
+
 def issue_tool_bridge(
     owner_id: str,
     thread_id: int,
@@ -3643,6 +3885,7 @@ def issue_tool_bridge(
     *,
     reachable_refs: set[str] | None = None,
     temporary_profile_refs: Mapping[str, str] | None = None,
+    current_user_message: str | None = None,
 ) -> dict[str, Any]:
     """Issue an in-memory, turn-scoped bearer bridge for one Coach turn."""
     parsed = urlparse(endpoint)
@@ -3660,6 +3903,10 @@ def issue_tool_bridge(
         raise ValueError("owner_id and thread_id are required")
     if not isinstance(user_message_ref, str) or not user_message_ref or len(user_message_ref) > 160:
         raise ValueError("user_message_ref is required")
+    if current_user_message is not None and (
+        not isinstance(current_user_message, str) or not current_user_message or len(current_user_message) > 16_384
+    ):
+        raise ValueError("current_user_message is invalid")
     if desktop_token is not None and (not isinstance(desktop_token, str) or not desktop_token):
         raise ValueError("desktop_token is invalid")
     if not isinstance(ttl_seconds, int) or not 1 <= ttl_seconds <= 900:
@@ -3694,6 +3941,7 @@ def issue_tool_bridge(
         expires_at=expires_at,
         max_calls=max_calls,
         calls=0,
+        current_user_message=current_user_message,
         reachable_refs=set(reachable_refs or ()),
         temporary_profile_refs=safe_profile_refs,
     )
@@ -3888,6 +4136,7 @@ async def execute_tool_bridge(bearer_token: str, payload: Mapping[str, Any]) -> 
         trusted_payload["user_message_ref"] = bridge.user_message_ref
         command_name = trusted_payload.get("command_name")
         parameters = trusted_payload.get("parameters")
+        instruction_quote = trusted_payload.pop("instruction_quote", None)
         if command_name in _KOVAAK_SCORE_COMMANDS:
             return await _execute_kovaak_scores_bridge(bridge, trusted_payload)
         if command_name == "analysis.delete":
@@ -3924,13 +4173,27 @@ async def execute_tool_bridge(bearer_token: str, payload: Mapping[str, Any]) -> 
             trusted_payload["parameters"] = {"analysis_ref": analysis_ref}
         if command_name in _EVIDENCE_QUERY_COMMANDS:
             return await _execute_evidence_bridge(bridge, trusted_payload)
+        instruction_grant: _InstructionGrant | None = None
+        if command_name in _WRITE_COMMANDS:
+            issued = _issue_instruction_grant(
+                bridge, command_name, trusted_payload.get("parameters"), instruction_quote,
+            )
+            if issued is not None:
+                instruction_grant, normalized_parameters = issued
+                trusted_payload["parameters"] = normalized_parameters
         result = await execute_product_command(
             bridge.owner_id,
             trusted_payload,
-            authorization_source="coach_inferred",
+            authorization_source=(
+                "explicit_user_request" if instruction_grant is not None else "coach_inferred"
+            ),
             thread_id=bridge.thread_id,
+            instruction_grant=instruction_grant,
         )
         safe_result = _copy_json(result)
+        safe_result["authorization_source"] = (
+            "explicit_user_request" if instruction_grant is not None else "coach_inferred"
+        )
         confirmation = safe_result.get("confirmation")
         if isinstance(confirmation, dict):
             confirmation.pop("confirmation_ref", None)

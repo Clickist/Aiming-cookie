@@ -20,6 +20,9 @@ class CoachTurn:
     provider_profile: Mapping[str, Any] | None = field(default=None, repr=False)
     tool_bridge: Mapping[str, Any] | None = field(default=None, repr=False)
     teaching_turn: Mapping[str, Any] | None = field(default=None, repr=False)
+    # Stable opaque Coach thread identity forwarded to Pi; transcript remains
+    # canonical in the backend and is rebuilt for each turn.
+    pi_session_id: str | None = field(default=None, repr=False)
     run_ref: str | None = None
     on_partial: Any | None = field(default=None, repr=False)
 
@@ -77,6 +80,7 @@ class PiCoachEngine:
             analysis_summary=analysis_summary,
             tool_bridge=turn.tool_bridge,
             teaching_turn=turn.teaching_turn,
+            session_id=turn.pi_session_id,
             return_result=True,
         )
 
@@ -93,6 +97,7 @@ class PiCoachEngine:
             tool_bridge=turn.tool_bridge,
             teaching_turn=turn.teaching_turn,
             run_id=turn.run_ref,
+            session_id=turn.pi_session_id,
             on_partial=turn.on_partial,
         )
 

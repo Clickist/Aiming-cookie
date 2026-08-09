@@ -77,6 +77,7 @@ function baseRequest() {
     schema_version: COACH_RUNTIME_TURN_SCHEMA,
     run_id: "run-test-1",
     user_id: "dev",
+    session_id: "coach-thread:42",
     messages: [{ role: "user", content: "帮我看看该怎么练" }],
     analysis_summary: null,
     model: {
@@ -164,26 +165,142 @@ test("an ordinary no-context Coach turn remains provider-backed without a teachi
   assert.deepEqual(response.notes, []);
 });
 
-test("a no-lesson intake returns locally without accepting a provider draft", async () => {
-  const response = await runCoachTurnWithFakeStream({
-    ...baseRequest(),
-    schema_version: COACH_RUNTIME_TURN_SCHEMA,
-    teaching_turn: teachingTurn({
-      phase: "intake",
-      observation: null,
-      primary_candidate: null,
-      alternatives: [],
-      cue: null,
-      changed_variable: null,
-      question_kind: "discriminator",
-      question: "内部问题不会显示给用户？",
-    }),
-  }, '{"action":"ask_discriminator","text":"你是不是手紧?"}');
+test("a no-lesson intake still lets a direct question read its attached analysis", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchedCommands: string[] = [];
+  let streamCalls = 0;
+  globalThis.fetch = (async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as { command_name: string };
+    fetchedCommands.push(body.command_name);
+    return new Response(JSON.stringify({
+      schema_version: "coach_product_command_result.v1",
+      command_id: "command:no-lesson-read",
+      status: "succeeded",
+      result_ref: "analysis:6",
+      audit_ref: "audit:no-lesson-read",
+      result: { analysis_ref: "analysis:6", status: "done", input_mode: "multimodal" },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const response = await runCoachTurn({
+      ...baseRequest(),
+      messages: [{ role: "user", content: "这条分析现在有什么记录？" }],
+      teaching_turn: teachingTurn({
+        phase: "intake",
+        observation: null,
+        primary_candidate: null,
+        alternatives: [],
+        cue: null,
+        changed_variable: null,
+        question_kind: "discriminator",
+        question: "内部问题不会显示给用户？",
+      }),
+      tool_bridge: toolBridge(),
+    }, {
+      streamFn: async () => {
+        streamCalls += 1;
+        if (streamCalls === 1) {
+          return streamAssistant([{
+            type: "toolCall",
+            id: "no-lesson-read",
+            name: "run_product_command",
+            arguments: { command_name: "analysis.get", parameters: { analysis_ref: "analysis:6" } },
+          }], "toolUse");
+        }
+        return streamAssistant([{
+          type: "text",
+          text: JSON.stringify({ action: "pause", text: "我已读取这条分析。当前证据不足以形成训练处方。" }),
+        }], "stop");
+      },
+    });
 
-  assert.equal(response.ok, true);
-  assert.match(response.reply ?? "", /证据还不足以形成教学结论/);
-  assert.deepEqual(response.tool_events, []);
-  assert.deepEqual(response.notes, ["teaching_hold"]);
+    assert.equal(streamCalls, 2);
+    assert.deepEqual(fetchedCommands, ["analysis.get"]);
+    assert.equal(response.ok, true);
+    assert.equal(response.reply, "我已读取这条分析。当前证据不足以形成训练处方。");
+    assert.deepEqual(response.notes, ["teaching_hold"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a product command execution failure cannot become a successful Provider reply", async () => {
+  const originalFetch = globalThis.fetch;
+  let streamCalls = 0;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    schema_version: "coach_product_command_result.v1",
+    command_id: "command:invalid-analysis",
+    status: "succeeded",
+    result_ref: "analysis:6",
+    audit_ref: "audit:invalid-analysis",
+    result: { analysis_ref: "analysis:6", video_path: "C:/private/video.mp4" },
+  }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+  try {
+    const response = await runCoachTurn({
+      ...baseRequest(),
+      tool_bridge: toolBridge(),
+    }, {
+      streamFn: async () => {
+        streamCalls += 1;
+        if (streamCalls === 1) {
+          return streamAssistant([{
+            type: "toolCall",
+            id: "invalid-analysis",
+            name: "run_product_command",
+            arguments: { command_name: "analysis.get", parameters: { analysis_ref: "analysis:6" } },
+          }], "toolUse");
+        }
+        return streamAssistant([{ type: "text", text: "读取已经完成。" }], "stop");
+      },
+    });
+
+    assert.equal(streamCalls, 2);
+    assert.equal(response.ok, false);
+    assert.equal(response.reply, null);
+    assert.equal(response.error?.code, "tool_compliance_required");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a structured failed product command cannot become a successful Provider reply", async () => {
+  const originalFetch = globalThis.fetch;
+  let streamCalls = 0;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    schema_version: "coach_product_command_result.v1",
+    command_id: "command:failed-analysis",
+    status: "failed",
+    result_ref: null,
+    audit_ref: "audit:failed-analysis",
+    result: null,
+    warning_or_error: { code: "analysis_unavailable", message: "Analysis unavailable" },
+  }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+  try {
+    const response = await runCoachTurn({
+      ...baseRequest(),
+      tool_bridge: toolBridge(),
+    }, {
+      streamFn: async () => {
+        streamCalls += 1;
+        if (streamCalls === 1) {
+          return streamAssistant([{
+            type: "toolCall",
+            id: "failed-analysis",
+            name: "run_product_command",
+            arguments: { command_name: "analysis.get", parameters: { analysis_ref: "analysis:6" } },
+          }], "toolUse");
+        }
+        return streamAssistant([{ type: "text", text: "读取已经完成。" }], "stop");
+      },
+    });
+
+    assert.equal(streamCalls, 2);
+    assert.equal(response.ok, false);
+    assert.equal(response.reply, null);
+    assert.equal(response.error?.code, "tool_compliance_required");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("teaching turns fall back without a Provider repair for invalid envelopes", async () => {
@@ -2479,6 +2596,7 @@ test("Pi Agent receives the actual selected builtin model without protocol rewri
   const response = await runCoachTurn(baseRequest(), {
     streamFn: (model, context, options) => {
       selected = model as Record<string, unknown>;
+      assert.equal((options as { sessionId?: string } | undefined)?.sessionId, "coach-thread:42");
       return fake(model, context, options);
     },
   });
@@ -3212,6 +3330,48 @@ test("polite direct deletion requests still receive the constrained tool-complia
       assert.match(response.reply ?? "", /\u786e\u8ba4\u754c\u9762/, content);
     }
     assert.equal(fetchCalls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an explicit deletion quote preserves the trusted direct authorization event", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    schema_version: "coach_product_command_result.v1",
+    command_id: "command:direct-delete",
+    status: "succeeded",
+    result_ref: "analysis:3",
+    audit_ref: "audit:direct-delete",
+    authorization_source: "explicit_user_request",
+  }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+  try {
+    let calls = 0;
+    const response = await runCoachTurn({
+      ...baseRequest(),
+      messages: [{ role: "user", content: "Please delete Analysis 3." }],
+      analysis_summary: JSON.stringify(diagnosticContext("analysis:3", {})),
+      tool_bridge: toolBridge(),
+    }, {
+      streamFn: async () => {
+        calls += 1;
+        if (calls === 2) {
+          return streamAssistant([{
+            type: "toolCall",
+            id: "direct-delete",
+            name: "run_product_command",
+            arguments: {
+              command_name: "analysis.delete",
+              parameters: { analysis_ref: "analysis:3" },
+              instruction_quote: "delete Analysis 3",
+            },
+          }], "toolUse");
+        }
+        return streamAssistant([{ type: "text", text: "Deleted." }], "stop");
+      },
+    });
+    assert.equal(response.ok, true);
+    assert.match(JSON.stringify(response.tool_events), /"authorization_source":"explicit_user_request"/);
   } finally {
     globalThis.fetch = originalFetch;
   }

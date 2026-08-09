@@ -146,7 +146,6 @@ async def run_chat_turn(
     # providers behind their back.
     if (
         not provider_store.runtime_profile_configured(provider_profile)
-        or bool(provider_profile and provider_profile.get("credential_needs_reauth"))
     ):
         notes = ["LLM Provider 未配置，请先在 Provider Settings 完成连接测试"]
         assistant_content = "(Coach Provider 未配置，暂未生成回复)"
@@ -174,90 +173,47 @@ async def run_chat_turn(
                 "domain": "permission",
                 "code": "provider_unconfigured",
                 "message": "Coach Provider is not configured",
-                "retryable": False,
+                "retryable": True,
             },
         )
 
-    if provider_profile is not None:
-        credential = provider_profile.get("credential")
-        if provider_commands.credential_requires_refresh(credential):
-            try:
-                refreshed = await provider_commands.refresh_for_coach(
-                    x_user_id, int(provider_profile["profile_id"]),
-                )
-            except Exception as error:
-                from .coach_runtime import redact_provider_secrets
-
-                notes = [
-                    "Provider credential 已过期，自动刷新失败，请重新认证",
-                ]
-                log.warning(
-                    "coach credential refresh failed user=%s error=%s",
-                    x_user_id,
-                    redact_provider_secrets(str(error), provider_profile),
-                )
-                assistant_content = "(Coach Provider credential 已过期，暂未生成回复)"
-                if persist:
-                    await coach_store.append_message(
-                        thread_id, "user", user_msg_to_store,
-                        legacy_session_id=legacy_session_id, context=context,
-                        context_refs=context_refs,
-                    )
-                    await coach_store.append_message(
-                        thread_id, "assistant", assistant_content,
-                        legacy_session_id=legacy_session_id, context=context,
-                        context_refs=context_refs,
-                    )
-                return CoachChatResult(
-                    None, notes, assistant_content, [], context, "failed",
-                    {
-                        "domain": "permission", "code": "credential_refresh_failed",
-                        "message": "Provider credential refresh failed", "retryable": True,
-                    },
-                )
-            if refreshed.get("status") != "succeeded":
-                notes = ["Provider credential 刷新未完成，请重新认证"]
-                assistant_content = "(Coach Provider credential 刷新未完成，暂未生成回复)"
-                if persist:
-                    await coach_store.append_message(
-                        thread_id, "user", user_msg_to_store,
-                        legacy_session_id=legacy_session_id, context=context,
-                        context_refs=context_refs,
-                    )
-                    await coach_store.append_message(
-                        thread_id, "assistant", assistant_content,
-                        legacy_session_id=legacy_session_id, context=context,
-                        context_refs=context_refs,
-                    )
-                return CoachChatResult(
-                    None, notes, assistant_content, [], context, "failed",
-                    {
-                        "domain": "permission", "code": "credential_refresh_incomplete",
-                        "message": "Provider credential refresh is incomplete", "retryable": True,
-                    },
-                )
-            provider_profile = await provider_store.get_default_runtime_profile(x_user_id)
-            if not provider_store.runtime_profile_configured(provider_profile):
-                notes = ["Provider credential 刷新后仍不可用，请重新认证"]
-                assistant_content = "(Coach Provider credential 不可用，暂未生成回复)"
-                if persist:
-                    await coach_store.append_message(
-                        thread_id, "user", user_msg_to_store,
-                        legacy_session_id=legacy_session_id, context=context,
-                        context_refs=context_refs,
-                    )
-                    await coach_store.append_message(
-                        thread_id, "assistant", assistant_content,
-                        legacy_session_id=legacy_session_id, context=context,
-                        context_refs=context_refs,
-                    )
-                return CoachChatResult(
-                    None, notes, assistant_content, [], context, "failed",
-                    {
-                        "domain": "permission", "code": "credential_unavailable",
-                        "message": "Provider credential is unavailable", "retryable": False,
-                    },
-                )
+    if (
+        bool(provider_profile and provider_profile.get("credential_needs_reauth"))
+        or (
+            provider_profile is not None
+            and provider_commands.credential_requires_refresh(provider_profile.get("credential"))
+        )
+    ):
+        # Provider credentials are changed only through explicit Settings or
+        # onboarding flows. Coach fails closed and asks the user to re-auth.
+        assistant_content = "(Coach Provider credential requires reauthentication)"
+        if persist:
+            await coach_store.append_message(
+                thread_id, "user", user_msg_to_store,
+                legacy_session_id=legacy_session_id,
+                context=context,
+                context_refs=context_refs,
+            )
+            await coach_store.append_message(
+                thread_id, "assistant", assistant_content,
+                legacy_session_id=legacy_session_id,
+                context=context,
+                context_refs=context_refs,
+            )
+        return CoachChatResult(
+            reply=None,
+            notes=["Provider credential requires reauthentication"],
+            assistant_content=assistant_content,
+            tool_events=[],
+            context=context,
+            status="failed",
+            error={
+                "domain": "permission",
+                "code": "provider_reauthentication_required",
+                "message": "Provider credential requires reauthentication",
+                "retryable": True,
+            },
+        )
 
     if persist:
         user_message_id = await coach_store.append_message(
@@ -286,6 +242,7 @@ async def run_chat_turn(
                 ttl_seconds=min(config.COACH_RUNTIME_TIMEOUT_SECONDS, 900),
                 reachable_refs=_reachable_context_refs(context),
                 temporary_profile_refs=profile_refs,
+                current_user_message=user_msg_to_store,
             )
         turn = CoachTurn(
             prior_messages=safe_prior_messages,
@@ -295,6 +252,7 @@ async def run_chat_turn(
             provider_profile=provider_profile,
             tool_bridge=tool_bridge,
             teaching_turn=normalized_teaching_turn,
+            pi_session_id=f"coach-thread:{thread_id}",
             run_ref=agent_run_ref,
             on_partial=on_partial,
         )

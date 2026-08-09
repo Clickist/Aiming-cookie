@@ -64,6 +64,26 @@ class CoachRuntimeError(RuntimeError):
 class ProviderUnconfiguredError(CoachRuntimeError):
     """The owner has no usable selected Provider profile."""
 
+    def __init__(self, message: str = "Coach Provider is not configured") -> None:
+        super().__init__(
+            message,
+            error_category="permission",
+            error_code="provider_unconfigured",
+            retryable=True,
+        )
+
+
+class ProviderReauthenticationRequiredError(CoachRuntimeError):
+    """The selected Provider credential must be reauthenticated in Settings."""
+
+    def __init__(self, message: str = "Coach Provider credential requires reauthentication") -> None:
+        super().__init__(
+            message,
+            error_category="permission",
+            error_code="provider_reauthentication_required",
+            retryable=True,
+        )
+
 
 class CustomProviderModelDiscoveryError(RuntimeError):
     """A custom Provider could not return its model list."""
@@ -224,7 +244,7 @@ def _normalize_runtime_profile(profile: Mapping[str, Any] | None) -> dict[str, A
         except ValueError as error:
             raise ProviderUnconfiguredError("Coach Provider credential 无效") from error
     if profile.get("credential_needs_reauth"):
-        raise ProviderUnconfiguredError("Coach Provider credential 需要重新认证")
+        raise ProviderReauthenticationRequiredError()
     has_credential_secret = bool(credential_secret_values({"credential": credential}))
     if kind in {"custom_openai_compatible", "custom_anthropic_compatible"} and (
         not isinstance(base_url, str) or not base_url.strip()
@@ -394,6 +414,7 @@ def _build_turn_request(
     system_prompt: str | None,
     tool_bridge: Mapping[str, Any] | None = None,
     teaching_turn: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
     run_id: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     from .coach_commands import redact_temporary_steam_profiles
@@ -411,6 +432,8 @@ def _build_turn_request(
     if not normalized_messages:
         raise CoachRuntimeError("messages 不能为空")
 
+    if schema_version == COACH_RUNTIME_TURN_SCHEMA_V1 and profile is None:
+        raise ProviderUnconfiguredError("Coach Provider profile is required for v1 turns")
     runtime_profile = _normalize_runtime_profile(profile)
     if profile is not None and (not isinstance(user_id, str) or not user_id.strip()):
         raise CoachRuntimeError("selected Provider turn requires user_id")
@@ -423,6 +446,10 @@ def _build_turn_request(
         "analysis_summary": _canonical_analysis_summary(analysis_summary),
         "model": runtime_profile,
     }
+    if session_id is not None:
+        if not isinstance(session_id, str) or not re.fullmatch(r"coach-thread:[0-9]+", session_id):
+            raise CoachRuntimeError("session_id must be an opaque Coach thread identity")
+        payload["session_id"] = session_id
     if system_prompt is not None:
         payload["system_prompt"] = system_prompt
     normalized_teaching_turn = normalize_teaching_turn(teaching_turn)
@@ -490,6 +517,16 @@ _KNOWLEDGE_CLAIM_LEVELS = frozenset({
 _KNOWLEDGE_EVENT_KEYS_V1 = _TOOL_EVENT_KEYS["knowledge"] - {
     "section_refs", "claim_refs", "claim_levels",
 }
+
+
+def normalize_guidance_intent(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep guidance events on the same safe bridge as other Pi output."""
+    from .coach_guidance import validate_guidance_intent
+
+    try:
+        return dict(validate_guidance_intent(value))
+    except ValueError as error:
+        raise CoachRuntimeError("unsafe guidance intent") from error
 _KNOWLEDGE_EVENT_KEYS_V2 = _TOOL_EVENT_KEYS["knowledge"]
 _KNOWLEDGE_PROJECTED_REGISTRIES = frozenset({
     "2026-08-06.v5", "2026-08-06.v6",
@@ -1304,6 +1341,7 @@ def run_pi_coach_turn(
     system_prompt: str | None = None,
     tool_bridge: Mapping[str, Any] | None = None,
     teaching_turn: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
     return_result: bool = False,
     timeout_s: int | None = None,
 ) -> str | PiCoachTurnResult:
@@ -1322,6 +1360,7 @@ def run_pi_coach_turn(
         system_prompt=system_prompt,
         tool_bridge=tool_bridge,
         teaching_turn=teaching_turn,
+        session_id=session_id,
     )
     timeout = timeout_s if timeout_s is not None else COACH_RUNTIME_TIMEOUT_SECONDS
 
@@ -1382,6 +1421,7 @@ async def run_pi_coach_turn_async(
     system_prompt: str | None = None,
     tool_bridge: Mapping[str, Any] | None = None,
     teaching_turn: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
     run_id: str | None = None,
     timeout_s: int | None = None,
     on_partial: PartialCallback | None = None,
@@ -1401,6 +1441,7 @@ async def run_pi_coach_turn_async(
         system_prompt=system_prompt,
         tool_bridge=tool_bridge,
         teaching_turn=teaching_turn,
+        session_id=session_id,
         run_id=run_id,
     )
     local_prepare_ms = _monotonic_elapsed_ms(client_started_ns)

@@ -515,7 +515,7 @@ function fallbackText(contract: TeachingTurnContract, plan: TeachingPlan): strin
     case "ask_follow_up": return String(plan.question);
     case "pause":
       if (teachingTurnRequiresLocalFallback(contract)) {
-        return "这次分析的证据还不足以形成教学结论，所以先不把它编成训练。你可以解除这条分析后继续普通对话，或换一条有明确问题的分析。";
+        return "\u8fd9\u6761\u5206\u6790\u5df2\u7ecf\u9644\u52a0\u3002\u5f53\u524d\u8bc1\u636e\u4e0d\u8db3\u4ee5\u5f62\u6210\u8bad\u7ec3\u5904\u65b9\uff0c\u4f46\u4ecd\u53ef\u4ee5\u67e5\u8fd9\u6761\u8bb0\u5f55\u7684\u539f\u59cb\u4e8b\u5b9e\u548c\u5386\u53f2\u8d8b\u52bf\uff0c\u4e0d\u9700\u8981\u91cd\u65b0\u9644\u52a0\u3002";
       }
       return "那这组先不练，训练计划不改。你准备继续时再告诉我。";
     case "stop_for_discomfort": return "那先别练这组了，休息一下，别硬撑。";

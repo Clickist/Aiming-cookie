@@ -254,8 +254,10 @@ test("an intake without a grounded candidate is a local no-lesson result", () =>
   assert.equal(teachingTurnRequiresLocalFallback(parsed), true);
   assert.equal(teachingTurnHoldsState(parsed), true);
   assert.equal(fallback.action, "pause");
-  assert.match(fallback.text, /证据还不足以形成教学结论/);
-  assert.doesNotMatch(fallback.text, /[?？]|候选|处方|fallback/i);
+  assert.match(fallback.text, /已经附加/);
+  assert.match(fallback.text, /证据不足以形成训练处方/);
+  assert.doesNotMatch(fallback.text, /解除这条分析/);
+  assert.doesNotMatch(fallback.text, /[?？]|候选|fallback/i);
 });
 
 test("a direct teaching answer can explain a focus mismatch without advancing the lesson", () => {

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import db, provider_store, queue, training_plan_store
+from webapp.backend import coach_store, db, provider_store, queue, training_plan_store
 from webapp.backend.app import app
 from webapp.backend.contracts import (
     ARTIFACT_MANIFEST_SCHEMA_VERSION,
@@ -21,6 +21,124 @@ import webapp.backend.config as config_mod
 import webapp.backend.coach_runtime as coach_runtime_mod
 import webapp.backend.coach_service as coach_service_mod
 import webapp.backend.routes as routes_mod
+
+
+@pytest.mark.asyncio
+async def test_product_readiness_route_returns_only_bounded_safe_projection(monkeypatch):
+    from webapp.backend import coach_guidance
+
+    captured: list[str] = []
+
+    async def projection(owner_id: str) -> dict:
+        captured.append(owner_id)
+        return {
+            "schema_version": "product_readiness.v1",
+            "domains": {
+                "onboarding": {"state": "complete", "availability": "known", "refs": [], "count": 0, "truncated": False},
+                "provider": {"state": "ready", "availability": "known", "refs": ["provider_profile:7"], "count": 1, "truncated": False},
+                "capture": {"state": "ready", "availability": "known", "refs": [], "count": 0, "truncated": False},
+                "kovaak": {"state": "connected", "availability": "known", "refs": ["kovaak_connection:current"], "count": 1, "truncated": False},
+                "pending_runs": {"state": "none", "availability": "known", "refs": [], "count": 0, "truncated": False},
+                "analysis": {"state": "ready", "availability": "known", "refs": ["analysis:9"], "count": 1, "truncated": False},
+                "training_plan": {"state": "active", "availability": "known", "refs": ["plan:today"], "count": 1, "truncated": False},
+                "storage": {"state": "empty", "availability": "known", "refs": [], "count": 0, "truncated": False},
+            },
+            "capabilities": ["coach_commands.v1"],
+            "blocking_reasons": [],
+        }
+
+    monkeypatch.setattr(coach_guidance, "get_product_readiness", projection)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "readiness-owner"},
+    ) as client:
+        response = await client.get("/api/product-readiness")
+
+    assert response.status_code == 200, response.text
+    assert captured == ["readiness-owner"]
+    body = response.json()
+    assert body["schema_version"] == "product_readiness.v1"
+    assert "steam_id" not in json.dumps(body)
+    assert "secret" not in json.dumps(body)
+
+
+@pytest.mark.asyncio
+async def test_product_readiness_route_keeps_failed_domain_unavailable(monkeypatch):
+    from webapp.backend import coach_guidance
+
+    async def projection(_owner_id: str) -> dict:
+        return coach_guidance.project_product_readiness({
+            "onboarding": {"availability": "unavailable", "reason_code": "product_state_unavailable"},
+        })
+
+    monkeypatch.setattr(coach_guidance, "get_product_readiness", projection)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "readiness-owner"},
+    ) as client:
+        response = await client.get("/api/product-readiness")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["domains"]["onboarding"] == {
+        "state": "unknown",
+        "availability": "unavailable",
+        "reason_code": "product_state_unavailable",
+        "refs": [],
+        "count": 0,
+        "truncated": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_guidance_ack_route_forwards_only_the_frozen_ui_outcome(monkeypatch):
+    from webapp.backend import coach_agent_runs
+
+    captured: list[dict] = []
+
+    async def acknowledge(owner_id: str, *, run_ref: str, intent_id: str, outcome: str) -> dict:
+        captured.append({"owner_id": owner_id, "run_ref": run_ref, "intent_id": intent_id, "outcome": outcome})
+        return {
+            "schema_version": "guidance_ack_response.v1",
+            "run_ref": run_ref,
+            "intent_id": intent_id,
+            "outcome": outcome,
+            "terminal_state": {"state": "blocked", "reason_code": "ui_cancelled"},
+        }
+
+    monkeypatch.setattr(coach_agent_runs, "acknowledge_guidance", acknowledge)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "guidance-route-owner"},
+    ) as client:
+        response = await client.post(
+            "/api/coach/guidance/ack",
+            json={
+                "schema_version": "guidance_ack_request.v1",
+                "run_ref": "run:1",
+                "intent_id": "guidance:one",
+                "outcome": "cancelled",
+            },
+        )
+        invalid = await client.post(
+            "/api/coach/guidance/ack",
+            json={
+                "schema_version": "guidance_ack_request.v1",
+                "run_ref": "run:1",
+                "intent_id": "guidance:one",
+                "outcome": "cancelled",
+                "readiness": {"provider": "ready"},
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["terminal_state"]["state"] == "blocked"
+    assert captured == [{
+        "owner_id": "guidance-route-owner",
+        "run_ref": "run:1",
+        "intent_id": "guidance:one",
+        "outcome": "cancelled",
+    }]
+    assert invalid.status_code in {400, 422}
 
 
 def _fake_report_dict(*, fps=None, duration_frames=None, timeline=None) -> dict:
@@ -690,8 +808,8 @@ def _patch_chat_ok(monkeypatch, fake_fn):
 
 
 @pytest.mark.asyncio
-async def test_get_primary_lazy_creates_thread():
-    """GET /api/coach/primary 惰性创建 primary thread。"""
+async def test_get_primary_does_not_create_empty_thread():
+    """Opening Coach renders an ephemeral shell until the first message."""
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
         headers={"X-User-Id": "coach-user"},
@@ -701,8 +819,10 @@ async def test_get_primary_lazy_creates_thread():
     body = resp.json()
     assert body["thread"]["kind"] == "primary"
     assert body["thread"]["user_id"] == "coach-user"
+    assert body["thread"]["id"] == 0
     assert body["messages"] == []
     assert body["refs"] == []
+    assert await coach_store.get_primary_thread("coach-user") is None
 
 
 @pytest.mark.asyncio
@@ -1042,3 +1162,57 @@ async def test_selected_profile_secret_does_not_enter_coach_messages_or_context(
     persisted = [dict(row) for row in await cur.fetchall()]
     assert persisted
     assert "selected-secret-key" not in json.dumps(persisted, ensure_ascii=False)
+
+
+def test_coach_message_cards_are_derived_only_from_safe_analysis_trace_and_live_refs():
+    message = routes_mod._coach_thread_message_out({
+        "id": 7,
+        "role": "assistant",
+        "content": '{"kind":"timeline","analysis_ref":"analysis:999"}',
+        "created_at": "2026-08-10T00:00:00Z",
+        "trace": [
+            {
+                "command_name": "analysis.outcomes.timeline",
+                "status": "succeeded",
+                "result_ref": "analysis:7:timeline:overview",
+            },
+            {"command_name": "analysis.evidence.list", "status": "failed"},
+            {"command_name": "provider.profile.get", "status": "succeeded"},
+        ],
+        "context_refs": [
+            {
+                "schema_version": "coach_context_ref.v1",
+                "context_ref": "context:live",
+                "kind": "analysis",
+                "status": "active",
+                "label": "Fixture",
+                "analysis_ref": "analysis:7",
+            },
+            {
+                "schema_version": "coach_context_ref.v1",
+                "context_ref": "context:deleted",
+                "kind": "analysis",
+                "status": "deleted",
+                "label": "Deleted",
+                "analysis_ref": "analysis:8",
+            },
+        ],
+    })
+
+    assert [card.model_dump() for card in message.cards] == [{
+        "schema_version": "coach_message_card.v1",
+        "kind": "timeline",
+        "analysis_ref": "analysis:7",
+        "target_ref": None,
+        "time_range_ms": None,
+    }]
+
+    user_message = routes_mod._coach_thread_message_out({
+        "id": 8,
+        "role": "user",
+        "content": "给我一张图表",
+        "created_at": "2026-08-10T00:00:01Z",
+        "trace": message.model_dump().get("cards", []),
+        "context_refs": message.context_refs,
+    })
+    assert user_message.cards == []

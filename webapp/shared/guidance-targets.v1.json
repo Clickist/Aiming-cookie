@@ -1,0 +1,11 @@
+{
+  "schema_version": "guidance_target_registry.v1",
+  "targets": [
+    { "target_id": "coach.panel", "safe_prefill_keys": [] },
+    { "target_id": "settings.provider_auth", "safe_prefill_keys": ["provider_profile_ref"] },
+    { "target_id": "desktop.capture_control", "safe_prefill_keys": [] },
+    { "target_id": "history.runs", "safe_prefill_keys": ["run_ref"] },
+    { "target_id": "training.current", "safe_prefill_keys": ["plan_ref"] },
+    { "target_id": "storage.incomplete", "safe_prefill_keys": ["item_ref"] }
+  ]
+}

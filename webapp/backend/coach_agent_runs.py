@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import re
 import time
@@ -17,6 +18,8 @@ from . import (
     coach_problem_compiler,
     coach_runtime,
     coach_store,
+    provider_commands,
+    provider_store,
     teaching_session_store,
     training_plan_store,
 )
@@ -31,10 +34,15 @@ from .db import get_conn
 
 
 _tasks: dict[str, asyncio.Task[None]] = {}
+log = logging.getLogger(__name__)
 _provider_turns: set[str] = set()
 _terminal_locks: dict[str, asyncio.Lock] = {}
 _soft_start_locks: dict[tuple[str, str], asyncio.Lock] = {}
 _STOP_SETTLE_TIMEOUT_SECONDS = 3.0
+_PROVIDER_WAIT_CODES = frozenset({
+    "provider_unconfigured",
+    "provider_reauthentication_required",
+})
 _SAFE_ERROR_DOMAINS = {"network", "model", "permission", "tool"}
 _EMPTY_OBSERVATION = "尚未选择可重复观察"
 _RAW_REFERENCE = re.compile(r"\b(?:analysis|run|event|segment|table|metric):", re.IGNORECASE)
@@ -60,6 +68,9 @@ _RETEST_OUTCOME_DECISIONS = {
     "coach_retest_outcome.v1:mixed_or_inconclusive": "lower",
     "coach_retest_outcome.v1:worsened": "reject",
 }
+_ANALYSIS_FACT_REQUEST = re.compile(
+    r"(?:\u51fa\u4e86\u4ec0\u4e48\u95ee\u9898|\u54ea\u91cc\u6709\u95ee\u9898|\u600e\u4e48\u56de\u4e8b|\u5177\u4f53\u60c5\u51b5)"
+)
 _TEACHING_WRITE_COMMANDS = frozenset({
     "training_plan.item.add",
     "training_plan.execution.record",
@@ -106,6 +117,24 @@ class AgentRunError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _provider_wait_error(error: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(error, Mapping):
+        return None
+    code = error.get("code")
+    if code not in _PROVIDER_WAIT_CODES or error.get("retryable") is not True:
+        return None
+    messages = {
+        "provider_unconfigured": "Coach Provider is not configured",
+        "provider_reauthentication_required": "Coach Provider credential requires reauthentication",
+    }
+    return {
+        "domain": "permission",
+        "code": code,
+        "message": messages[code],
+        "retryable": True,
+    }
 
 
 def _safe_text(value: object, *, max_length: int = 12_000) -> str:
@@ -927,6 +956,7 @@ def _requires_teaching_turn(
     ) or (
         _bundle_has_analysis_context(bundle)
         and _ANALYSIS_EXPLANATION_REQUEST.search(content) is None
+        and _ANALYSIS_FACT_REQUEST.search(content) is None
     )
 
 
@@ -1138,11 +1168,138 @@ def _matching_command_events(contract: Mapping[str, Any], events: Sequence[Mappi
     if allowed is None:
         raise AgentRunError("teaching_command_out_of_phase", "Teaching turn emitted an out-of-phase product command")
     for event in product_events:
-        if event.get("command_name") != allowed or event.get("status") != "needs_confirmation":
+        direct_success = (
+            event.get("status") == "succeeded"
+            and event.get("authorization_source") == "explicit_user_request"
+        )
+        if event.get("command_name") != allowed or (
+            event.get("status") != "needs_confirmation" and not direct_success
+        ):
             raise AgentRunError("teaching_command_out_of_phase", "Teaching turn emitted an out-of-phase product command")
     if len(product_events) != 1:
         raise AgentRunError("teaching_command_out_of_phase", "Teaching turn emitted more than one product command")
     return product_events
+
+
+async def _audited_direct_teaching_fact_ref(
+    owner_id: str,
+    thread_id: int,
+    user_message_id: int,
+    event: Mapping[str, Any],
+) -> str | None:
+    audit_ref = event.get("audit_ref")
+    command_name = event.get("command_name")
+    result_ref = event.get("result_ref")
+    if not all(isinstance(value, str) and value for value in (audit_ref, command_name, result_ref)):
+        return None
+    conn = await get_conn()
+    row = await (await conn.execute(
+        "SELECT result_ref FROM coach_product_commands "
+        "WHERE audit_ref=? AND owner_id=? AND thread_id=? AND user_message_ref=? "
+        "AND command_name=? AND authorization_source='explicit_user_request' AND status='succeeded'",
+        (audit_ref, owner_id, thread_id, f"coach_message:{user_message_id}", command_name),
+    )).fetchone()
+    if row is None or row["result_ref"] != result_ref:
+        return None
+    return result_ref
+
+
+async def _direct_teaching_next_state(
+    owner_id: str,
+    session: Mapping[str, Any],
+    command_name: str,
+    result_ref: str,
+) -> dict[str, Any]:
+    state = json.loads(json.dumps(session["state"], ensure_ascii=False))
+    item_ref = state.get("active_item_ref")
+    conn = await get_conn()
+    if command_name == "training_plan.item.add":
+        item = await (await conn.execute(
+            "SELECT 1 FROM training_plan_items WHERE owner_id=? AND item_ref=?",
+            (owner_id, result_ref),
+        )).fetchone()
+        if item is None:
+            raise AgentRunError("teaching_item_missing", "Explicit plan item fact is unavailable")
+        state.update({
+            "phase": "await_execution_confirmation",
+            "active_item_ref": result_ref,
+            "pending_confirmation_ref": None,
+            "pause_reason": None,
+        })
+        return state
+    if not isinstance(item_ref, str):
+        raise AgentRunError("teaching_fact_missing", "Teaching item is unavailable")
+    if command_name == "training_plan.execution.record":
+        execution = await (await conn.execute(
+            "SELECT completion_status, user_feedback FROM training_plan_executions "
+            "WHERE execution_ref=? AND owner_id=? AND item_ref=?",
+            (result_ref, owner_id, item_ref),
+        )).fetchone()
+        if execution is None:
+            raise AgentRunError("teaching_execution_missing", "Explicit execution fact is unavailable")
+        feedback = _learner_feedback_text(execution["user_feedback"])
+        if _DISCOMFORT.search(feedback) and _NO_DISCOMFORT.search(feedback) is None:
+            state.update({"phase": "stopped_for_discomfort", "pending_confirmation_ref": None, "pause_reason": "discomfort"})
+        elif execution["completion_status"] == "skipped":
+            state.update({"phase": "paused", "pending_confirmation_ref": None, "pause_reason": "user_refused"})
+        else:
+            state = _promote_explicit_candidate(state, feedback)
+            await training_plan_store.set_plan_item_status(
+                owner_id, item_ref, "active", reason=_CONFIRMED_EXECUTION_STATUS_REASON,
+            )
+            state.update({"phase": "retest_ready", "pending_confirmation_ref": None, "pause_reason": None})
+        return state
+    if command_name != "training_plan.retest.record":
+        raise AgentRunError("teaching_command_out_of_phase", "Teaching turn emitted an out-of-phase product command")
+    retest = await (await conn.execute(
+        "SELECT comparability, result, limitations_json FROM training_plan_retests "
+        "WHERE retest_ref=? AND owner_id=? AND item_ref=?",
+        (result_ref, owner_id, item_ref),
+    )).fetchone()
+    if retest is None:
+        raise AgentRunError("teaching_retest_missing", "Explicit retest fact is unavailable")
+    comparability = {
+        "comparable": "comparable", "not_comparable": "not_comparable", "unavailable": "unresolved",
+    }.get(retest["comparability"], "unresolved")
+    try:
+        limitations = json.loads(retest["limitations_json"] or "[]")
+    except (TypeError, json.JSONDecodeError):
+        limitations = None
+    policy_missing = isinstance(limitations, list) and "metric_change_policy_missing" in limitations
+    revision_decision = (
+        _RETEST_OUTCOME_DECISIONS.get(retest["result"])
+        if comparability == "comparable" and limitations is not None and not policy_missing else None
+    )
+    item_payload = None
+    item_row = await (await conn.execute(
+        "SELECT item_payload_json FROM training_plan_items WHERE owner_id=? AND item_ref=?",
+        (owner_id, item_ref),
+    )).fetchone()
+    if item_row is not None:
+        try:
+            parsed_item = json.loads(item_row["item_payload_json"])
+        except (TypeError, json.JSONDecodeError):
+            parsed_item = None
+        if isinstance(parsed_item, Mapping):
+            item_payload = parsed_item
+    if revision_decision is not None:
+        await training_plan_store.set_plan_item_status(
+            owner_id, item_ref, _REVISION_ITEM_STATUSES[revision_decision],
+            reason=f"{_REVISION_STATUS_REASON_PREFIX}{revision_decision}",
+        )
+    state.update({
+        "phase": "revise",
+        "pending_confirmation_ref": None,
+        "pause_reason": None,
+        "retest_comparability": comparability,
+        "revision_decision": revision_decision,
+        "next_recommendation": (
+            _next_recommendation_for_confirmed_retest(
+                item_payload, comparability=comparability, result=retest["result"], limitations=limitations,
+            ) if isinstance(item_payload, Mapping) else None
+        ),
+    })
+    return state
 
 
 async def _release_teaching_run(
@@ -1468,6 +1625,20 @@ async def _complete_teaching_turn(
         session = await teaching_session_store.get_session(owner_id, contract["session_ref"])
         if session is None:
             raise AgentRunError("teaching_session_missing", "TeachingSession is unavailable")
+        event = matching_events[0]
+        if event.get("authorization_source") == "explicit_user_request":
+            result_ref = await _audited_direct_teaching_fact_ref(
+                owner_id, thread_id, user_message_id, event,
+            )
+            if result_ref is None:
+                raise AgentRunError(
+                    "teaching_direct_fact_unaudited",
+                    "Explicit teaching fact is not backed by an audited command result",
+                )
+            next_state = await _direct_teaching_next_state(
+                owner_id, session, str(event["command_name"]), result_ref,
+            )
+            return await _release_teaching_run(owner_id, run_ref, next_state=next_state)
         confirmation_ref = await _pending_confirmation_ref(
             owner_id, thread_id, user_message_id, contract["allowed_command"],
         )
@@ -1878,32 +2049,60 @@ async def _run_agent(
                         run_ref, event_type="status", phase="completed",
                         code="run_succeeded", message="Coach run completed",
                     )
+                    try:
+                        from . import coach_guidance
+
+                        workflow_goal = coach_guidance.detect_guidance_goal(content)
+                        if workflow_goal is not None:
+                            readiness = await coach_guidance.get_product_readiness(owner_id)
+                            await append_guidance_intent(
+                                owner_id,
+                                run_ref,
+                                coach_guidance.compile_guidance(workflow_goal, readiness),
+                            )
+                    except Exception:
+                        # Guidance must not turn an already terminal model run
+                        # into a failed Agent run.
+                        log.exception("Coach guidance compilation failed run=%s", run_ref)
                 else:
                     await _mark_stopped(run_ref, partial_text=reply)
             elif status == "stopped":
                 await _release_teaching_run(owner_id, run_ref)
                 await _mark_stopped(run_ref, partial_text=reply)
             else:
-                await _release_teaching_run(owner_id, run_ref)
-                completed = await _set_run(
-                    run_ref, status="failed", phase="completed",
-                    partial_text=reply, error=outcome["error"], finished=True,
-                )
-                if completed:
-                    timing = dict(outcome["timing"] or {})
-                    timing["persistence_ms"] = max(
-                        0, round((time.perf_counter() - persistence_started_at) * 1000),
+                provider_wait = _provider_wait_error(outcome["error"])
+                if provider_wait is not None:
+                    # Keep the same run and teaching claim alive. No assistant
+                    # message is written; recovery will restart this run_ref.
+                    await _set_run(
+                        run_ref, status="queued", phase="queued",
+                        partial_text=None, error=provider_wait,
                     )
                     await _append_event(
-                        run_ref, event_type="phase", phase="completed",
-                        code="latency_trace", message="Coach latency trace", payload=timing,
-                    )
-                    await _append_event(
-                        run_ref, event_type="error", phase="completed",
-                        code=outcome["error"]["code"], message=outcome["error"]["message"],
+                        run_ref, event_type="status", phase="queued",
+                        code="provider_waiting", message="Coach run is waiting for Provider",
                     )
                 else:
-                    await _mark_stopped(run_ref, partial_text=reply)
+                    await _release_teaching_run(owner_id, run_ref)
+                    completed = await _set_run(
+                        run_ref, status="failed", phase="completed",
+                        partial_text=reply, error=outcome["error"], finished=True,
+                    )
+                    if completed:
+                        timing = dict(outcome["timing"] or {})
+                        timing["persistence_ms"] = max(
+                            0, round((time.perf_counter() - persistence_started_at) * 1000),
+                        )
+                        await _append_event(
+                            run_ref, event_type="phase", phase="completed",
+                            code="latency_trace", message="Coach latency trace", payload=timing,
+                        )
+                        await _append_event(
+                            run_ref, event_type="error", phase="completed",
+                            code=outcome["error"]["code"], message=outcome["error"]["message"],
+                        )
+                    else:
+                        await _mark_stopped(run_ref, partial_text=reply)
     except asyncio.CancelledError:
         await _release_teaching_run(owner_id, run_ref)
         await _mark_stopped(run_ref)
@@ -2152,6 +2351,7 @@ async def create_run(
     content: str,
     *,
     context_refs: Sequence[str] | None,
+    session_id: int | None = None,
     parent_run_ref: str | None = None,
     attempt: int = 1,
     tool_bridge_endpoint: str | None = None,
@@ -2161,10 +2361,18 @@ async def create_run(
 ) -> dict[str, Any]:
     safe_content, temporary_profile_refs = coach_commands.prepare_temporary_steam_profiles(content)
     safe_content = _safe_text(safe_content)
+    target_thread_id: int | None = None
+    if session_id is not None:
+        target = await coach_store.get_session(owner_id, int(session_id))
+        if target is None:
+            raise AgentRunError("session_unavailable", "Coach session is unavailable")
+        target_thread_id = int(target["id"])
     session = await teaching_session_store.get_or_create_primary_session(owner_id)
     session = await _reconcile_teaching_session(owner_id, session)
     session = await _prepare_session_for_user_input(owner_id, session, safe_content)
-    thread_id = int(session["thread_id"])
+    # TeachingSession remains owner-scoped; the Coach transcript can target
+    # the owner-scoped thread selected by the Session rail.
+    thread_id = target_thread_id or int(session["thread_id"])
     bundle, snapshots = await build_context_bundle(thread_id, context_refs)
     unavailable_refs = await unavailable_context_refs(_teaching_source_refs(session["state"]))
     hydrated_state = _hydrate_teaching_state(
@@ -2297,6 +2505,133 @@ async def _events(run_ref: str) -> list[dict[str, Any]]:
     return result
 
 
+def _guidance_intent_from_event(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    if event.get("type") != "guidance":
+        return None
+    payload = event.get("payload")
+    if not isinstance(payload, Mapping):
+        return None
+    intent = payload.get("intent")
+    return dict(intent) if isinstance(intent, Mapping) else None
+
+
+async def current_guidance_intent(owner_id: str, run_ref: str) -> dict[str, Any] | None:
+    """Return the latest unacknowledged intent for one owner-scoped run."""
+    run = await get_run(owner_id, run_ref)
+    if run is None:
+        return None
+    acknowledged: set[str] = set()
+    latest: dict[str, Any] | None = None
+    for event in run["events"]:
+        payload = event.get("payload")
+        if event.get("type") == "guidance" and isinstance(payload, Mapping):
+            if isinstance(payload.get("ack_intent_id"), str):
+                acknowledged.add(payload["ack_intent_id"])
+            intent = _guidance_intent_from_event(event)
+            if intent is not None:
+                latest = intent
+    if latest is None or latest.get("intent_id") in acknowledged:
+        return None
+    return latest
+
+
+async def append_guidance_intent(owner_id: str, run_ref: str, intent: Mapping[str, Any]) -> dict[str, Any]:
+    """Append one validated guidance intent without changing Agent-run status."""
+    run = await get_run(owner_id, run_ref)
+    if run is None:
+        raise AgentRunError("run_not_found", "Coach run is unavailable")
+    from .coach_guidance import validate_guidance_intent
+
+    safe_intent = validate_guidance_intent(intent)
+    await _append_event(
+        run_ref,
+        event_type="guidance",
+        phase="completed",
+        code="guidance_intent",
+        message="Coach guidance intent is ready",
+        payload={"intent": safe_intent},
+    )
+    return safe_intent
+
+
+def _guidance_completion_verified(intent: Mapping[str, Any], readiness: Mapping[str, Any]) -> bool:
+    condition = intent.get("completion_condition")
+    if not isinstance(condition, Mapping):
+        return False
+    key = condition.get("readiness_key")
+    terminal = condition.get("terminal_states")
+    domains = readiness.get("domains") if isinstance(readiness, Mapping) else None
+    domain = domains.get(key) if isinstance(domains, Mapping) else None
+    return (
+        isinstance(key, str)
+        and isinstance(terminal, list)
+        and isinstance(domain, Mapping)
+        and domain.get("availability") == "known"
+        and domain.get("state") in terminal
+    )
+
+
+async def acknowledge_guidance(
+    owner_id: str,
+    *,
+    run_ref: str,
+    intent_id: str,
+    outcome: str,
+) -> dict[str, Any]:
+    """Acknowledge a UI outcome and compile exactly one bounded continuation."""
+    if outcome not in {"completed", "cancelled", "failed", "timed_out"}:
+        raise AgentRunError("invalid_guidance_outcome", "Guidance outcome is invalid")
+    run = await get_run(owner_id, run_ref)
+    if run is None:
+        raise AgentRunError("run_not_found", "Coach run is unavailable")
+    current = await current_guidance_intent(owner_id, run_ref)
+    if current is None or current.get("intent_id") != intent_id:
+        raise AgentRunError("stale_guidance_intent", "Guidance intent is not current")
+    await _append_event(
+        run_ref,
+        event_type="guidance",
+        phase="completed",
+        code="guidance_ack",
+        message="Coach guidance outcome acknowledged",
+        payload={"ack_intent_id": intent_id, "outcome": outcome},
+    )
+    from . import coach_guidance
+
+    # Every UI outcome performs a fresh canonical read. A failed or cancelled
+    # UI action is not product evidence, but the read still determines the
+    # recovery boundary and prevents stale local claims.
+    readiness = await coach_guidance.get_product_readiness(owner_id)
+    if outcome != "completed":
+        return {
+            "schema_version": "guidance_ack_response.v1",
+            "run_ref": run_ref,
+            "intent_id": intent_id,
+            "outcome": outcome,
+            "terminal_state": {
+                "state": "cancelled" if outcome == "cancelled" else "blocked",
+                "reason_code": f"ui_{outcome}",
+                "recovery": "return_to_coach",
+            },
+        }
+    if _guidance_completion_verified(current, readiness):
+        return {
+            "schema_version": "guidance_ack_response.v1",
+            "run_ref": run_ref,
+            "intent_id": intent_id,
+            "outcome": outcome,
+            "terminal_state": {"state": "completed", "reason_code": "canonical_state_verified"},
+        }
+    next_intent = coach_guidance.compile_guidance(current.get("goal", "inspect_progress"), readiness)
+    await append_guidance_intent(owner_id, run_ref, next_intent)
+    return {
+        "schema_version": "guidance_ack_response.v1",
+        "run_ref": run_ref,
+        "intent_id": intent_id,
+        "outcome": outcome,
+        "next_intent": next_intent,
+    }
+
+
 async def get_run(owner_id: str, run_ref: str) -> dict[str, Any] | None:
     conn = await get_conn()
     row = await (
@@ -2312,6 +2647,7 @@ async def get_run(owner_id: str, run_ref: str) -> dict[str, Any] | None:
     return {
         "schema_version": "coach_agent_run.v1",
         "run_ref": row["run_ref"],
+        "session_id": int(row["thread_id"]),
         "parent_run_ref": row["parent_run_ref"],
         "attempt": row["attempt"],
         "status": row["status"],
@@ -2324,6 +2660,126 @@ async def get_run(owner_id: str, run_ref: str) -> dict[str, Any] | None:
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
     }
+
+
+async def _provider_recovery_ready(owner_id: str) -> bool:
+    """Return whether the owner's selected Provider can accept a new turn.
+
+    This is deliberately a read-only readiness check. Coach recovery must not
+    refresh credentials or mutate Provider state as a side effect.
+    """
+    try:
+        profile = await provider_store.get_default_runtime_profile(owner_id)
+        if not provider_store.runtime_profile_configured(profile):
+            return False
+        if profile.get("credential_needs_reauth"):
+            return False
+        return not provider_commands.credential_requires_refresh(profile.get("credential"))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+async def resume_waiting_runs(
+    owner_id: str,
+    *,
+    tool_bridge_endpoint: str | None = None,
+    desktop_token: str | None = None,
+) -> list[dict[str, Any]]:
+    """Requeue Provider-waiting runs for one owner, at most once per run.
+
+    The persisted run remains the idempotency identity. We rebuild only its
+    bounded context bundle and start the same ``run_ref``; no child retry run
+    or second user message is created.
+    """
+    if not await _provider_recovery_ready(owner_id):
+        return []
+
+    conn = await get_conn()
+    rows = await (
+        await conn.execute(
+            "SELECT run_ref, thread_id, content, context_refs_json, error_json "
+            "FROM coach_agent_runs WHERE owner_id=? AND status='queued' "
+            "AND stop_requested=0 AND error_json IS NOT NULL "
+            "ORDER BY created_at, rowid",
+            (owner_id,),
+        )
+    ).fetchall()
+    resumed: list[dict[str, Any]] = []
+    for row in rows:
+        run_ref = row["run_ref"]
+        try:
+            error = json.loads(row["error_json"] or "null")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(error, Mapping) or error.get("code") not in _PROVIDER_WAIT_CODES:
+            continue
+
+        terminal_lock = _terminal_locks.setdefault(run_ref, asyncio.Lock())
+        async with terminal_lock:
+            if run_ref in _tasks:
+                continue
+            current = await (
+                await conn.execute(
+                    "SELECT thread_id, content, context_refs_json, error_json "
+                    "FROM coach_agent_runs WHERE owner_id=? AND run_ref=? "
+                    "AND status='queued' AND stop_requested=0",
+                    (owner_id, run_ref),
+                )
+            ).fetchone()
+            if current is None:
+                continue
+            try:
+                current_error = json.loads(current["error_json"] or "null")
+                snapshots = json.loads(current["context_refs_json"] or "[]")
+                if not isinstance(current_error, Mapping) or (
+                    current_error.get("code") not in _PROVIDER_WAIT_CODES
+                ) or not isinstance(snapshots, list):
+                    continue
+                refs = [
+                    item["context_ref"]
+                    for item in snapshots
+                    if isinstance(item, Mapping) and isinstance(item.get("context_ref"), str)
+                ]
+                bundle, rebuilt_snapshots = await build_context_bundle(
+                    int(current["thread_id"]), refs,
+                )
+                safe_content = _safe_text(current["content"])
+            except (ContextRefError, AgentRunError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+
+            expected_error = json.dumps(
+                dict(current_error), ensure_ascii=False, sort_keys=True,
+            )
+            cursor = await conn.execute(
+                "UPDATE coach_agent_runs SET error_json=NULL, partial_text=NULL, "
+                "phase='queued', updated_at=CURRENT_TIMESTAMP "
+                "WHERE owner_id=? AND run_ref=? AND status='queued' "
+                "AND stop_requested=0 AND error_json=?",
+                (owner_id, run_ref, expected_error),
+            )
+            await conn.commit()
+            if cursor.rowcount != 1:
+                continue
+            await _append_event(
+                run_ref,
+                event_type="status",
+                phase="queued",
+                code="provider_requeued",
+                message="Coach run requeued after Provider recovery",
+            )
+            task = asyncio.create_task(_run_agent(
+                run_ref,
+                owner_id=owner_id,
+                thread_id=int(current["thread_id"]),
+                content=safe_content,
+                bundle=bundle,
+                snapshots=rebuilt_snapshots,
+                tool_bridge_endpoint=tool_bridge_endpoint,
+                desktop_token=desktop_token,
+            ))
+            _tasks[run_ref] = task
+            resumed.append({"run_ref": run_ref})
+    return resumed
 
 
 async def stop_run(owner_id: str, run_ref: str) -> dict[str, Any] | None:
@@ -2387,7 +2843,7 @@ async def retry_run(
     conn = await get_conn()
     row = await (
         await conn.execute(
-            "SELECT content, context_refs_json, user_message_id, teaching_contract_json "
+            "SELECT content, context_refs_json, user_message_id, teaching_contract_json, thread_id "
             "FROM coach_agent_runs WHERE run_ref=? AND owner_id=?",
             (run_ref, owner_id),
         )
@@ -2399,6 +2855,7 @@ async def retry_run(
         owner_id,
         row["content"],
         context_refs=refs,
+        session_id=int(row["thread_id"]),
         parent_run_ref=run_ref,
         attempt=int(detail["attempt"]) + 1,
         tool_bridge_endpoint=tool_bridge_endpoint,

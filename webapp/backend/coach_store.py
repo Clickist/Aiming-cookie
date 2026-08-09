@@ -350,14 +350,23 @@ async def get_or_create_primary_thread(
     owns_commit = conn is None
     if conn is None:
         conn = await get_conn()
+    # A partial unique index protects one primary per owner while allowing
+    # multiple conversation rows. INSERT OR IGNORE targets that index without
+    # requiring the removed table-level (user_id, kind) uniqueness contract.
     await conn.execute(
-        "INSERT INTO coach_threads(user_id, kind) VALUES(?, 'primary') "
-        "ON CONFLICT(user_id, kind) DO NOTHING",
+        "UPDATE coach_threads SET status='active', deleted_at=NULL, "
+        "updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND kind='primary' "
+        "AND status='deleted'",
+        (user_id,),
+    )
+    await conn.execute(
+        "INSERT OR IGNORE INTO coach_threads(user_id, kind) VALUES(?, 'primary')",
         (user_id,),
     )
     cur = await conn.execute(
         "SELECT id, user_id, kind, created_at, updated_at "
-        "FROM coach_threads WHERE user_id=? AND kind='primary'",
+        "FROM coach_threads WHERE user_id=? AND kind='primary' "
+        "AND status <> 'deleted'",
         (user_id,),
     )
     row = await cur.fetchone()
@@ -366,6 +375,200 @@ async def get_or_create_primary_thread(
     if owns_commit:
         await conn.commit()
     return dict(row)
+
+
+async def get_primary_thread(
+    user_id: str,
+    *,
+    conn: Optional[aiosqlite.Connection] = None,
+) -> dict[str, Any] | None:
+    """Read the primary thread without creating an empty session."""
+    if conn is None:
+        conn = await get_conn()
+    cur = await conn.execute(
+        "SELECT id, user_id, kind, created_at, updated_at "
+        "FROM coach_threads WHERE user_id=? AND kind='primary' "
+        "AND status <> 'deleted'",
+        (user_id,),
+    )
+    row = await cur.fetchone()
+    return dict(row) if row is not None else None
+
+
+def _session_title(value: str | None) -> str | None:
+    if value is None:
+        return None
+    title = value.strip()
+    if not title:
+        raise ValueError("session title cannot be empty")
+    return title[:120]
+
+
+async def _session_summary(
+    conn: aiosqlite.Connection,
+    row: aiosqlite.Row | Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return a path-free, owner-independent summary for the session rail."""
+    result = dict(row)
+    cur = await conn.execute(
+        "SELECT analysis_session_id FROM coach_analysis_refs "
+        "WHERE thread_id=? AND status='active' AND analysis_session_id IS NOT NULL "
+        "ORDER BY id",
+        (int(result["id"]),),
+    )
+    result["analysis_session_ids"] = [
+        int(item["analysis_session_id"]) for item in await cur.fetchall()
+    ]
+    result.setdefault("title", None)
+    result.setdefault("status", "active")
+    result.setdefault("deleted_at", None)
+    return result
+
+
+async def get_session(
+    user_id: str,
+    session_id: int,
+    *,
+    include_deleted: bool = False,
+) -> dict[str, Any] | None:
+    """Read one owner-scoped Coach session without creating it."""
+    conn = await get_conn()
+    where = "t.user_id=? AND t.id=?"
+    params: list[Any] = [user_id, int(session_id)]
+    if not include_deleted:
+        where += " AND status <> 'deleted'"
+    cur = await conn.execute(
+        "SELECT t.id, t.user_id, t.kind, t.title, t.status, t.deleted_at, "
+        "t.created_at, t.updated_at, COUNT(m.id) AS message_count, "
+        "(SELECT content FROM coach_messages lm WHERE lm.thread_id=t.id "
+        "ORDER BY lm.id DESC LIMIT 1) AS last_message_preview "
+        "FROM coach_threads t LEFT JOIN coach_messages m ON m.thread_id=t.id "
+        f"WHERE {where} GROUP BY t.id",
+        params,
+    )
+    row = await cur.fetchone()
+    return await _session_summary(conn, row) if row is not None else None
+
+
+async def list_sessions(
+    user_id: str,
+    *,
+    query: str | None = None,
+    include_archived: bool = False,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """List active owner sessions ordered by recent activity.
+
+    The primary thread is omitted until its first message. Explicitly created
+    conversation threads remain visible even when empty so a new-session action
+    has a stable target. Analysis refs are metadata on the same thread and never
+    cause content-based conversation splitting.
+    """
+    conn = await get_conn()
+    limit = max(1, min(int(limit), 200))
+    statuses = ("active", "archived") if include_archived else ("active",)
+    placeholders = ",".join("?" for _ in statuses)
+    conditions = [
+        "t.user_id=?",
+        f"t.status IN ({placeholders})",
+        "(t.kind <> 'primary' OR EXISTS "
+        "(SELECT 1 FROM coach_messages pm WHERE pm.thread_id=t.id))",
+    ]
+    params: list[Any] = [user_id, *statuses]
+    if query and query.strip():
+        needle = f"%{query.strip()}%"
+        conditions.append(
+            "(COALESCE(t.title, '') LIKE ? OR EXISTS "
+            "(SELECT 1 FROM coach_messages qm WHERE qm.thread_id=t.id "
+            "AND qm.content LIKE ?))"
+        )
+        params.extend([needle, needle])
+    params.append(limit)
+    cur = await conn.execute(
+        "SELECT t.id, t.user_id, t.kind, t.title, t.status, t.deleted_at, "
+        "t.created_at, t.updated_at, COUNT(m.id) AS message_count, "
+        "(SELECT content FROM coach_messages lm WHERE lm.thread_id=t.id "
+        "ORDER BY lm.id DESC LIMIT 1) AS last_message_preview "
+        "FROM coach_threads t LEFT JOIN coach_messages m ON m.thread_id=t.id "
+        f"WHERE {' AND '.join(conditions)} GROUP BY t.id "
+        "ORDER BY t.updated_at DESC, t.id DESC LIMIT ?",
+        params,
+    )
+    return [await _session_summary(conn, row) for row in await cur.fetchall()]
+
+
+async def create_session(
+    user_id: str,
+    *,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Create an empty unclassified Coach conversation container."""
+    conn = await get_conn()
+    normalized_title = _session_title(title) if title is not None else "新对话"
+    cur = await conn.execute(
+        "INSERT INTO coach_threads(user_id, kind, title, status) "
+        "VALUES(?, 'conversation', ?, 'active') "
+        "RETURNING id, user_id, kind, title, status, deleted_at, created_at, updated_at",
+        (user_id, normalized_title),
+    )
+    row = await cur.fetchone()
+    await conn.commit()
+    return await _session_summary(conn, row)
+
+
+async def rename_session(
+    user_id: str,
+    session_id: int,
+    title: str,
+) -> dict[str, Any] | None:
+    normalized_title = _session_title(title)
+    conn = await get_conn()
+    cur = await conn.execute(
+        "UPDATE coach_threads SET title=?, updated_at=CURRENT_TIMESTAMP "
+        "WHERE id=? AND user_id=? AND status <> 'deleted'",
+        (normalized_title, int(session_id), user_id),
+    )
+    if cur.rowcount != 1:
+        await conn.commit()
+        return None
+    await conn.commit()
+    return await get_session(user_id, session_id)
+
+
+async def archive_session(
+    user_id: str,
+    session_id: int,
+) -> dict[str, Any] | None:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "UPDATE coach_threads SET status='archived', updated_at=CURRENT_TIMESTAMP "
+        "WHERE id=? AND user_id=? AND status <> 'deleted'",
+        (int(session_id), user_id),
+    )
+    if cur.rowcount != 1:
+        await conn.commit()
+        return None
+    await conn.commit()
+    return await get_session(user_id, session_id)
+
+
+async def soft_delete_session(
+    user_id: str,
+    session_id: int,
+) -> dict[str, Any] | None:
+    conn = await get_conn()
+    cur = await conn.execute(
+        "UPDATE coach_threads SET status='deleted', deleted_at=CURRENT_TIMESTAMP, "
+        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status <> 'deleted'",
+        (int(session_id), user_id),
+    )
+    if cur.rowcount != 1:
+        await conn.commit()
+        # DELETE is intentionally idempotent for a local UI retry, while the
+        # row remains hidden from normal list/get calls.
+        return await get_session(user_id, session_id, include_deleted=True)
+    await conn.commit()
+    return await get_session(user_id, session_id, include_deleted=True)
 
 
 async def append_message(

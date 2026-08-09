@@ -35,6 +35,8 @@ log = logging.getLogger(__name__)
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 SCENARIO_OUTCOME_ONLY_VERSION = "scenario_outcome_only.v1"
+DYNAMIC_CLICKING_BASELINE_ANALYSIS_VERSION = "dynamic_clicking.baseline.v1"
+STATIC_CLICKING_BASELINE_ANALYSIS_VERSION = "static_clicking.baseline.v1"
 VISUAL_WORKER_RESPONSE_LIMIT_BYTES = 64 * 1024 * 1024
 VISUAL_WORKER_SHUTDOWN_GRACE_SECONDS = 2.0
 VISUAL_WORKER_JOB_FIELDS = ("id", "kovaak_run_id", "video_path", "input_snapshot")
@@ -2554,6 +2556,20 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
         and _target_switching_production_gate(resolution)
     ):
         return TARGET_SWITCHING_ANALYSIS_VERSION
+    if (
+        resolution.get("manifest_status") == "unlisted"
+        and resolution.get("classification_source") == "local_scenario_definition"
+        and resolution.get("classification_confidence") == "confirmed"
+        and resolution.get("family_analyzer_dispatch") == "allowed"
+        and resolution.get("aim_family") in {"static_clicking", "dynamic_clicking"}
+        and resolution.get("claim_ceiling") == "descriptive_only"
+        and input_mode in {"input_native", "multimodal"}
+        and f"{resolution.get('aim_family')}.baseline.v1"
+        in (resolution.get("allowed_analyzers") or [])
+        and set(resolution.get("allowed_metric_families") or [])
+        == {"outcome", "input_kinematics"}
+    ):
+        return f"{resolution['aim_family']}.baseline.v1"
     return "outcome_only"
 
 
@@ -3291,6 +3307,63 @@ def _build_native_result_v2(
     return result
 
 
+def _build_clicking_baseline_result_v2(
+    job: dict,
+    native_result: dict,
+    *,
+    created_at: str,
+    completed_at: str,
+) -> dict:
+    """Expose input-native movement facts for an auto-classified dynamic task.
+
+    This deliberately reuses the native movement computation but removes the
+    static diagnosis layer. Target geometry and outcome association require the
+    exact visual profile path and are not available here.
+    """
+    result = _build_native_result_v2(
+        job,
+        native_result,
+        created_at=created_at,
+        completed_at=completed_at,
+    )
+    snapshot = job.get("input_snapshot") or {}
+    resolution = snapshot.get("scenario_resolution") or {}
+    deterministic = result.get("deterministic") or {}
+    limitations = list(dict.fromkeys([
+        *(deterministic.get("limitations") or []),
+        *(resolution.get("limitations") or []),
+        f"{resolution.get('aim_family')}_baseline_without_exact_visual_profile",
+    ]))
+    deterministic["support_status"] = "partial"
+    deterministic["limitations"] = limitations
+    deterministic["diagnosis"] = {
+        "profile": {},
+        "issues": [],
+        "summary": dict(deterministic.get("metrics") or {}),
+        "comparison": None,
+        "meta": {
+            "summary_type": f"{resolution.get('aim_family')}_baseline",
+            "classification": "deterministic",
+        },
+    }
+    aim_family = resolution.get("aim_family")
+    result["analysis_version"] = f"{aim_family}.baseline.v1"
+    result["analysis_type"] = aim_family
+    result["deterministic"] = deterministic
+    result["scenario"] = {
+        "scenario_profile_ref": None,
+        "aim_family": aim_family,
+        "analyzer_refs": [f"{aim_family}.baseline.v1"],
+        "support_status": "partial",
+        "limitations": limitations,
+    }
+    result["warnings"] = [
+        *result.get("warnings", []),
+        {"code": f"{aim_family}_baseline"},
+    ]
+    return result
+
+
 _VIDEO_FALLBACK_SPARC_METRIC_VERSION = "flicking_fair_summary.sparc.v2"
 
 
@@ -3986,7 +4059,13 @@ async def process_one() -> bool:
             video_availability = None
             warnings: list[dict] = []
             visual_validation = None
-            if input_mode == "multimodal":
+            if (
+                input_mode == "multimodal"
+                and scenario_dispatch not in {
+                    DYNAMIC_CLICKING_BASELINE_ANALYSIS_VERSION,
+                    STATIC_CLICKING_BASELINE_ANALYSIS_VERSION,
+                }
+            ):
                 await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
                 snapshot = job.get("input_snapshot") or {}
                 if snapshot.get("schema_version") in {
@@ -4048,15 +4127,26 @@ async def process_one() -> bool:
                         log.warning("multimodal video validation unavailable session=%s", sid)
                         video_availability = "unavailable"
                         warnings.append({"code": "video_cv_unavailable"})
-            result = _build_native_result_v2(
-                job,
-                native_result,
-                created_at=created_at_iso,
-                completed_at=completed_at_iso,
-                video_availability=video_availability,
-                warnings=warnings,
-                visual_validation=visual_validation,
-            )
+            if scenario_dispatch in {
+                DYNAMIC_CLICKING_BASELINE_ANALYSIS_VERSION,
+                STATIC_CLICKING_BASELINE_ANALYSIS_VERSION,
+            }:
+                result = _build_clicking_baseline_result_v2(
+                    job,
+                    native_result,
+                    created_at=created_at_iso,
+                    completed_at=completed_at_iso,
+                )
+            else:
+                result = _build_native_result_v2(
+                    job,
+                    native_result,
+                    created_at=created_at_iso,
+                    completed_at=completed_at_iso,
+                    video_availability=video_availability,
+                    warnings=warnings,
+                    visual_validation=visual_validation,
+                )
             cost = 0.0
         else:
             await queue.set_task_phase(sid, "computing_kinematics", worker_id=WORKER_ID)

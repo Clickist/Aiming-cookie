@@ -230,6 +230,8 @@ export type CoachRuntimeProviderProfile =
 export type CoachRuntimeTurnRequest = {
   schema_version: typeof COACH_RUNTIME_TURN_SCHEMA_V1;
   run_id: string;
+  /** Stable opaque Coach thread identity forwarded to Pi for provider affinity. */
+  session_id?: string;
   user_id: string;
   messages: CoachRuntimeMessage[];
   analysis_summary: string | null;
