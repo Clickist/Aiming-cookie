@@ -63,19 +63,33 @@ Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享
 
 ### 2.3 当前产品合同边界
 
-共享分析合同必须能表达三种输入模式：
+共享合同必须能读取历史三种输入模式，并为新 Coach Run 固定一种输入模式：
 
-- **input-native**：KovaaK Run + Raw Input，直接计算输入运动学；
-- **multimodal**：input-native + MP4；native 仍是输入运动学主事实，MP4 用于直观回放、问题定位和可验证的视觉证据；
-- **video-fallback**：MP4 + Stats，作为非 Windows、未开启 Raw Input 和旧工作流的 compatibility fallback，沿用 CV pan trajectory。
+- 历史记录仍可能包含 **input-native**、**multimodal** 和 **video-fallback** 三种 mode；它们只用于兼容读取。
+- 新 Coach Run 只接受 **multimodal**：Stats + Performance + Raw Input + managed MP4 + canonical window 必须同时存在并通过校验。
 
-所有 Analysis 创建统一遵守 `Stats AND (MP4 OR (Raw + Performance))`。自动 MP4 必须已由 Run Finalizer 对齐到当前 Challenge；手动 fallback 必须由用户同时选择明确对应的 MP4 与 Stats，系统不能仅凭 MP4 猜测 Stats / Performance。
+新 Coach Run Analysis 统一遵守 `Stats + Performance + Raw Input + MP4 + canonical window`。历史 Analysis 可以继续读取旧兼容 mode，但新创建不能使用 fallback，也不能仅凭 MP4 推断缺失来源。
 
 暂停局是 v1 的明确 fail-closed 分支：当 Stats 表示 `Pause Count > 0` 时，不生成永久 MP4，不把暂停期间的 Raw/Performance 强行标为 canonical aligned，也不把该 Run 宣称为 ready；证据可以保留为 partial/unavailable 供诊断。normal 与 timescale-only（`Pause Count = 0`）继续使用当前永久 MP4 路径。
 
 Raw Input 解决的是输入运动学事实源；目标/准星相对误差、视觉反应时刻和场景证据仍需经过本地 MP4 预处理、统一时间窗口和质量 Gate。首发目标覆盖 static/dynamic clicking、continuous tracking 与 target switching；各 family 只能消费其已验证的事实与指标。没有玩家移动遥测的 movement aiming 保持 outcome-only，不能由输入或结果反推移动机制。
 
+场景 family 路由与精确 ScenarioProfile 是两层独立合同。Run finalization 可以从同名本地 `.sce` 及已冻结的 Challenge 事实生成有界、无路径和无原文的 `scenario_behavior_descriptor.v1`，据此确认 family 并选择对应的 baseline analyzer；名称匹配只产生不调度的候选。exact reviewed profile 仍是完整视觉/场景分析的唯一许可，不能因 family 相同跨 hash 复用。baseline 只能消费 Raw Input、Stats、Performance 等原生已验证事实，必须显式保留缺少目标相对几何、命中关联、目标身份/速度和场景处方的 limitations；证据不足的场景保持 unknown/outcome-only，而不是猜测。
+
 Raw Input snapshot 的采样语义必须随格式版本识别。`ACRI v1` 保持历史逐报告 trace 的只读兼容；新的 1 ms canonical 运动归一化使用 `ACRI v2`。现存滚动 v1 snapshot 在继续采集前必须确定性迁移为 v2，迁移需保持每毫秒 X/Y 净位移、按钮边沿及其顺序；不得把 v1 与 v2 记录混装后标为单一语义。Analysis 可继续消费相同的 `timestamp_ms/dx/dy/buttons` 记录形状，但 provenance 必须保留实际 snapshot format version。
+
+### Current Coach Run source gate
+
+The new Coach Run analysis contract is a single all-source `multimodal` path.
+Before enqueue, the server must validate Stats, Performance (`.perf`), Raw
+Input, managed KovaaK-window MP4, and a resolved canonical time window. The
+validator is allow-listed and returns only stable missing-source codes plus a
+bounded path-free summary. Missing or invalid sources keep the Run in an
+incomplete/pending state and must not select `input-native` or
+`video-fallback`.
+
+The three modes above remain readable for historical Analysis records. They
+are compatibility history, not alternate modes for new Coach Run Analysis.
 
 ## 3. 稳定数据合同
 
@@ -107,9 +121,9 @@ AnalysisResult
 
 - measured/derived 数值、事件、时间、来源、质量和 limitations 是 Coach 不得改写或重算的事实输入；deterministic diagnosis/prescription 是规则层生成的可追溯候选观察与初始排序，不是不可挑战的最终因果结论。Coach 可结合完整动作级 processed data、反例、历史和知识重新排序、保留或拒绝候选解释，但不得伪造测量、覆盖正式指标或把假设写成事实；
 - `analysis_type` 必须显式，不能靠字段猜测 flicking/tracking；
-- `input_mode` 必须显式区分 input-native / multimodal / video-fallback；报告和 UI 不能靠是否有 MP4 或 trace 猜测；
+- 历史报告的 `input_mode` 必须显式区分 input-native / multimodal / video-fallback；新 Coach Run 的 `input_mode` 固定为 multimodal，不能靠是否有 MP4 或 trace 猜测；
 - `analysis_id` 必须绑定所属 Analysis Session 的稳定引用（当前 wire format 为 `analysis:{session_id}`）；terminal write 必须同时校验 owner/local profile、`analysis_type`、`input_mode` 与可选 `kovaak_run_id/ref` 均匹配已 claim 的 request，结构合法但属于另一 request 的结果必须 fail-closed；
-- multimodal 不得让视频重新定义已经成立的输入运动学；视觉失败只降低回放/视觉证据 availability，不抹掉 native 结果；
+- multimodal 不得让视频重新定义已经成立的输入运动学；视觉校验失败保留 Run 的 failed/incomplete 记录，不生成 native 或 video-fallback 替代 Analysis；
 - 每个关键指标必须能追溯到 Raw Input、Performance、Stats、MP4 或融合计算；证据缺失时使用 warning/availability 表达；
 - Coach 可获得版本化、类型化、字段白名单化的 L1-L3 facts/evidence/diagnosis；不得获得 L0 原始载体或私有 parser payload；
 - artifact 通过 manifest/稳定引用暴露，不泄露任意文件系统路径；
@@ -224,7 +238,7 @@ Coach 是用户关系层，不属于某个 analysis session：
 Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 或训练事实：
 
 - 每个 owner / primary Coach thread 最多一条 active `TeachingSession`；它只保存当前 lesson 的受限状态、版本、当前 run 锁、待确认引用和可重建的 `TeachingTurnContract`，不保存 Raw、路径、Provider secret 或未经确认的训练结果；
-- `TeachingSession` 的候选解释、cue、单一变更变量和 retest intent 是教学过程状态。Training Plan item、execution 和 retest 仍是独立、owner-scoped 的正式事实，只有现有 trusted confirmation 可写入；
+- `TeachingSession` 的候选解释、cue、单一变更变量和 retest intent 是教学过程状态。Training Plan item、execution 和 retest 仍是独立、owner-scoped 的正式事实，只有绑定当前用户明确陈述的 trusted instruction grant 或现有 trusted confirmation 可写入；
 - 每次 Agent run 绑定一个不可变 `TeachingTurnContract` snapshot。它只允许一个下一教学动作和一个用户问题；重试必须重放原 contract，不能从聊天文本重新猜阶段；
 - session 的推进、confirmed-fact reconciliation、可比性判定、暂停和不适停止由本地 planner/store 决定。Provider 只能表达已批准的内容，不能声明完成、选择状态转移或把候选机制升级为测量事实；
 - Analysis/history 是 metric comparability 与 meaningful-change policy 的唯一事实源。没有按 exact metric/version/conditions 注册的重复测量误差、worthwhile change 与必要 guardrail 时，非零 delta 必须保持 inconclusive；Profile 只能将精确相等的可比值显示为 stable，不能把任意非零差异显示为 improving/deteriorating；
@@ -259,7 +273,7 @@ Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 
 - `POST /api/benchmarks/sync/kovaaks`：用户明确同意后手动刷新有限 KovaaK 成绩；失败不覆盖上次成功快照，响应不回显 Steam Profile URL 或 ID；
 - `/api/kovaak-connection`：本地 owner scope 的已连接账号状态、设置和移除；公开响应不回显 Steam Profile URL 或 ID；
 - `POST /api/kovaak-connection/refresh`：使用已连接账号手动刷新有限 KovaaK 成绩；没有连接或上游失败不覆盖上次成功快照；
-- `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions`、`POST /api/training-plan-items/{item_ref}/retests`：显式用户写入训练事实，要求 `Idempotency-Key`。Coach bridge 可预填同一三类训练事实，但 `coach_inferred` 调用只能返回 `needs_confirmation`；只有 trusted UI/backend confirmation 才能写入。模型不得把推断、沉默或聊天语气伪装为已完成练习、主观反馈或复测结果。
+- `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions`、`POST /api/training-plan-items/{item_ref}/retests`：显式用户写入训练事实，要求 `Idempotency-Key`。Coach bridge 可预填同一三类训练事实；绑定当前用户明确陈述的 trusted instruction grant 可直接写入，`coach_inferred` 调用只能返回 `needs_confirmation`，现有 trusted UI/backend confirmation 仍可写入。模型不得把推断、沉默或聊天语气伪装为已完成练习、主观反馈或复测结果。
 
 Analysis 删除后，以上 Analysis/Evidence refs 返回 unavailable/deleted 语义；原有 Coach 消息、画像和训练历史不被级联删除。
 
@@ -293,7 +307,19 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 - workspace、filesystem、shell、network 和 secret 权限遵循最小授权；
 - 无 LLM 或 Coach 不可用时，确定性诊断闭环仍完整。
 
-### 5.1 Provider、model 与认证
+### 5.1 Product command authority and guided workflows
+
+- Pi 负责把当前自然语言消息解释为已注册 command intent，但不能提交或修改 `authorization_source`、owner、confirmation、grant 或审计元数据；
+- Pi 对明确指令必须提供当前消息中的精确 instruction quote。可信 backend 校验消息引用、quote、命令、参数、stable ref、owner/thread、expiry 与 bridge 后，才签发 turn-scoped `instruction_grant.v1` 并赋予 `explicit_user_request`；grant 只允许同一命令和参数 digest 使用；
+- 当前消息明确要求的已注册产品操作，包括删除等 consequential operation，可直接执行；Coach 主动提议或推断的 consequential operation 仍以 `coach_inferred` 创建现有 confirmation；歧义参数先澄清，不猜目标；
+- grant 不是业务越权令牌。命令处理器仍独立执行 ownership、capability、state transition、stable-ref reachability、idempotency、audit、privacy 和 result redaction；
+- secret/credential 输入、OAuth/device-code 交互、系统/隐私权限、文件选择、现实训练和主观事实不进入 Agent execution。Coach 只能生成受限 guidance intent，导航到可信 UI、预填非敏感值、等待并从 canonical state 验证；
+- `product_readiness.v1` 只从既有 Provider、capture、KovaaK、Run、Analysis/task、Training Plan、Storage 与 TeachingSession 事实源派生，不持久化为第二套状态；
+- `guidance_intent.v1` 只允许 `execute_command`、`request_confirmation`、`ui_navigation`、`user_action_required`、`wait_for_state`、`completed` 与 `blocked`。UI target 必须语义化且 allow-listed，不得包含 URL、DOM selector、script、path、secret 或任意 Tauri invoke；
+- 前端只有一个 GuidanceHost，复用现有 AppShell、routes、Settings/onboarding controls、stores 和 adapters。它不模拟点击、不复制业务 handler，也不建立通用自动化或 workflow store；
+- deterministic workflow compiler 只按 readiness 与已注册操作选择下一步；Pi 仍是唯一 Agent runtime，Training Plan、TeachingSession 和 Agent run/event 仍是各自现有事实源。
+
+### 5.2 Provider、model 与认证
 
 Coach 是否可用取决于当前本地 profile 是否选择并连接了可工作的 LLM Provider/model。Provider 可以无需认证，也可以要求 API key、OAuth、device-code 或其它 Pi 支持的认证方式；认证只发生在用户与模型服务之间，不创建 Aiming Cookie 账号或产品 session。
 
@@ -309,7 +335,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - provider/model 目录、API key/ambient auth、OAuth/device-code 以及 OpenAI-compatible / Anthropic-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
 - Provider/model/credential/sidecar 失败只影响 Coach readiness，不得阻塞 Analysis、History 或 deterministic report/prescription；
 - Pi coding-agent、shell、filesystem 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；
-- 首次启动以 Provider onboarding 为主路径，但允许用户明确跳过并进入本地分析；未配置 Provider 时没有 Coach 对话、AI 解释、长期档案维护、训练计划或 Coach 产品命令，只有本地指标、确定性诊断、规则化提示、History 和可恢复的 Provider 配置入口。
+- 首次启动以 Provider onboarding 为主路径；Provider 是 Coach 的必要条件。未配置或不可用时，采集和已有 Run 记录可以保留，但不生成 Provider-less Analysis、Coach 对话、AI 解释、训练计划或 Coach 产品命令；用户可从既有 Settings/Onboarding 入口恢复 Provider。
 
 ## 6. 本地归属与安全
 
@@ -324,8 +350,9 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - Web 预览只允许在受控环境访问，不把外部 VPN/SSO/代理访问控制包装成产品账号；
 - 所有 artifact、Coach 和 History 读写统一校验本地 profile、稳定引用和 capability；
 - Provider API key、OAuth access/refresh token、Desktop launch token 和其它 secret 即使允许保存在 app-owned 本地 SQLite/config，也不得进入 AnalysisResult、Coach context/message、普通日志、diagnostics、crash report 或 export；
-- 查询、导航和用户在当前指令中明确要求的普通可恢复产品动作可以直接执行；
-- 删除、覆盖、credential 变更、Provider OAuth 授权/撤销、上传/分享、打开外部购买链接，或 Coach 自主推断而非用户明确要求的副作用动作，必须先说明影响并获得确认；所有 Agent 操作都要保留可审计结果。
+- 查询、导航和用户在当前指令中明确要求的已注册产品操作可以直接执行，不因删除、覆盖或其它 consequential classification 另加第二次确认；
+- Coach 主动推断或提议、但用户当前消息没有明确要求的 consequential operation，必须先说明影响并获得确认；
+- credential/secret 输入、Provider OAuth/device-code 交互、系统与隐私权限、文件选择、现实训练和主观事实不注册为 Agent 可执行操作，只能由可信 UI 接收并由 Coach 等待验证；所有 Agent 操作和 guidance 结果都要保留安全、可审计的结果。
 
 ## 7. 运行与可观测性
 

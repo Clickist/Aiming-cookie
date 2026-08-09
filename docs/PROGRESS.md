@@ -1,11 +1,14 @@
 # Aiming Cookie 当前进度
 
-> **最后整理：2026-08-07。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
+> **最后整理：2026-08-10。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
 
 ## 当前摘要
 
 - 产品保持 Desktop-first、local-first 和确定性诊断主路径。当前 launch scope 为 static clicking、dynamic clicking、continuous tracking 与 target switching；movement aiming 在缺少玩家移动遥测时保持 outcome-only。Aiming Cookie 不提供产品账号、登录或用户鉴权服务器；Coach 在 Provider 可用时承担长期关系与产品操作。
 - 当前实现已覆盖 Run/Analysis recovery、正式 Browser/Desktop 产品界面、History/Run inspector、Analysis workspace、Coach sidebar/Provider Settings、有限 KovaaK 成绩同步、去身份 Coach 成绩摘要、版本化 Knowledge Registry 与 Training Plan 命令流。所有未校准的比较、诊断和处方继续 fail closed。
+- 2026-08-10 Coach conversation cards/video workspace Tasks 1-7 已完成计划内实现：用户可见一级区域收敛为 Coach、History、Settings，旧 `/tasks`、`/analyze`、`/analysis*` 跳转 History；History 只消费安全摘要或把所选 Analysis 交给 Coach；Coach 可渲染由安全 Analysis 投影生成的 metrics、timeline、evidence 卡片，并在需要时切换为 Session rail + 中央视频 + 右侧 Coach。Tauri 最小宽度为 `1180px`，History/Settings 内容最大宽度为 `1040px` 并居中，不再维护窄屏产品布局。
+- 本轮自动化结果：frontend unit `34 passed`、contracts `125 passed`、type-check 与 production build 通过，Playwright browser smoke + accessibility `22 passed`。Browser 实测 `1280x820` 与 `1920x1080` 的 Coach、History、Settings、消息卡和视频打开状态均无横向溢出、重叠或截断，Settings 退出按钮可见。截图套件的 Coach/History/Settings 新基线二进制尚未纳入 Task 7 Allowed files，旧 Settings 基线也已过期，因此未把 screenshot suite 记为通过；真实 Tauri/KovaaK/hardware/release Gate 均未复跑、状态不变。
+- 当前实现差距：`app/page.tsx` 在 fixture 的 `onboarding_completed=false` 时仍停留 Coach 根工作区，与 PRD 的首次启动必须停留 Provider onboarding 语义冲突。该文件不在 Task 7 Allowed files，本轮未修改；需单独裁决并以新的计划任务处理，不能用 E2E 期待静默改写产品合同。
 - 当前范围只对已有 NVIDIA 实机证据的路径作支持声明；AMD/Intel 与 OAuth/device-code 不在当前范围内。Tracking exact-parity 中位数为 `148.039s`，尚未达到 `<=130s` 目标；Raw Input 1000 Hz canonical 归一化已完成代码、自动化与实测，且后续数据采集核心通路未改动。真实 Tauri product-path、Tracking 时延，以及 installer、签名、updater 和下载验证仍为 release No-Go Gate。
 - 2026-07-30 full-worktree review 的已确认代码与文档问题已按独立复证、最小修复、根会话复核和逻辑分批提交收敛。最终自动化为 Python `1555 passed, 5 skipped`、Coach runtime `172 passed`、Pi AI `473 passed, 733 skipped`、frontend 默认 `58 passed`、production Playwright `55 passed, 3 skipped`、MSVC Rust `73 passed, 7 ignored`；compileall、type-check/build、Rust fmt/check/clippy、diff check、Agent contract parity 与相关文档链接检查通过。skip/ignored 与未执行实机项不改变上方 release No-Go。
 - 2026-07-31 已将 OpenDesign 交付的 dark token、可选 KovaaK 连接与无分类 Tab 成绩列表、Switching/Tracking/Flicking 有界 Data 呈现和 Coach 当前训练落实到正式前端；Easier/Medium 仅作行内进度，Analysis 仍只有诊断/视频/数据三个视图。自动化为 Python `1558 passed, 5 skipped`、frontend unit/contracts `68 passed`、production Playwright `65 passed, 4 skipped`，type-check、production build、18 张截图基线、diff check、Agent contract parity 与 119 份 docs 相对链接检查通过。

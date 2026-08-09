@@ -28,6 +28,7 @@
 - 当前施工：只使用 [`superpowers/plans/README.md`](superpowers/plans/README.md) 列为 active 的 plan/Task。
 - full-worktree 合同修复已完成；范围、逐 Task 验收与最终矩阵见 [`archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md`](archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md)。真实现场与发行 Gate 不因自动化通过而闭合。
 - 局部设计：只使用 [`superpowers/specs/README.md`](superpowers/specs/README.md) 列为 active 的 spec。
+- Coach 代办与引导：明确自然语言指令的直接授权、ProductReadiness、GuidanceIntent、用户必须亲自完成的步骤和前端 GuidanceHost 使用 active [`superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md`](superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md)；对应施工只按 active [`superpowers/plans/2026-08-10-coach-product-operator-guided-workflows-v1.md`](superpowers/plans/2026-08-10-coach-product-operator-guided-workflows-v1.md) 中由点点明确指定的单个 Task 执行。
 - 自动 Run 采集与分析前选择：使用 active [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md)；它只冻结产品/系统合同，不构成实施授权。
 - 自动 Run finalization 的内部实施已完成；范围与验证证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 物理硬件仍由 Roadmap 维护为外部发布 Gate。
 - 完整 Coach 的 aim-family 范围、L0-L3 context/tool results、EvidenceSegment 与 outcome-only 降级：使用 active [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)；它是设计合同，不构成实施授权。
