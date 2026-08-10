@@ -295,7 +295,7 @@ def _teaching_turn() -> dict:
     }
 
 
-def test_build_turn_request_propagates_bounded_teaching_turn_only_for_v1():
+def test_build_turn_request_propagates_bounded_teaching_turn():
     teaching_turn = _teaching_turn()
     request, _ = coach_runtime._build_turn_request(
         schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V1,
@@ -308,16 +308,6 @@ def test_build_turn_request_propagates_bounded_teaching_turn_only_for_v1():
     )
 
     assert request["teaching_turn"] == teaching_turn
-
-    legacy_request, _ = coach_runtime._build_turn_request(
-        schema_version=coach_runtime.COACH_RUNTIME_TURN_SCHEMA_V0,
-        user_id=None,
-        profile=None,
-        messages=[{"role": "user", "content": "hello"}],
-        analysis_summary=None,
-        system_prompt=None,
-    )
-    assert "teaching_turn" not in legacy_request
 
 
 def test_build_turn_request_accepts_complete_prepared_training_item():
@@ -1065,18 +1055,14 @@ def test_config_paths_exist():
     assert config.COACH_RUNTIME_RUN_TURN.is_file()
     assert "run-turn" in config.COACH_RUNTIME_RUN_TURN.name
 
-def test_run_pi_coach_turn_without_profile_or_legacy_config_is_recoverably_unconfigured():
-    with patch(
-        "webapp.backend.coach_runtime._load_legacy_provider_turn_profile",
-        return_value=None,
-    ):
-        with pytest.raises(ProviderUnconfiguredError, match="未配置"):
-            _run_pi_coach_turn(
-                user_id="owner-a",
-                profile=None,
-                messages=[{"role": "user", "content": "hello"}],
-                analysis_summary=None,
-            )
+def test_run_pi_coach_turn_without_profile_is_recoverably_unconfigured():
+    with pytest.raises(ProviderUnconfiguredError, match="profile is required"):
+        _run_pi_coach_turn(
+            user_id="owner-a",
+            profile=None,
+            messages=[{"role": "user", "content": "hello"}],
+            analysis_summary=None,
+        )
 
 
 def test_run_pi_coach_turn_redacts_api_key_from_sidecar_error():

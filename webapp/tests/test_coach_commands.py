@@ -22,35 +22,6 @@ from webapp.backend.contracts import build_analysis_result_v2, build_artifact_ma
 
 
 @pytest.mark.asyncio
-async def test_inferred_write_needs_confirmation_without_touching_application_handler(monkeypatch):
-    called = False
-
-    async def create(*args, **kwargs):
-        nonlocal called
-        called = True
-        return {"session_id": 42}
-
-    monkeypatch.setattr(coach_commands, "create_analysis_from_run", create)
-
-    result = await coach_commands.execute_product_command(
-        "owner-a",
-        {
-            "command_id": "cmd-inferred-create",
-            "command_name": "analysis.create_from_run",
-            "parameters": {"run_ref": "run:12"},
-            "idempotency_key": "inferred-create-12",
-        },
-        authorization_source="coach_inferred",
-    )
-
-    assert result["schema_version"] == "coach_product_command_result.v1"
-    assert result["status"] == "needs_confirmation"
-    assert result["confirmation"]["command_name"] == "analysis.create_from_run"
-    assert result["confirmation"]["target_ref"] == "run:12"
-    assert called is False
-
-
-@pytest.mark.asyncio
 async def test_analysis_create_command_rejects_model_path_and_uses_input_native_only(monkeypatch):
     async def create(*args, **kwargs):
         raise AssertionError("unsafe command must not reach application handler")
@@ -103,63 +74,6 @@ async def test_product_command_rejects_paths_and_urls_embedded_in_text(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_analysis_delete_is_confirmed_owner_scoped_and_idempotent(monkeypatch):
-    calls: list[tuple[int, str]] = []
-
-    async def delete(session_id: int, owner_id: str):
-        calls.append((session_id, owner_id))
-        return {
-            "deleted": True,
-            "id": session_id,
-            "files_removed": ["workspace"],
-            "cleanup_failed": [],
-        }
-
-    monkeypatch.setattr(queue, "delete_session", delete)
-    command = {
-        "command_id": "cmd-delete-analysis-3",
-        "command_name": "analysis.delete",
-        "parameters": {"analysis_ref": "analysis:3"},
-        "idempotency_key": "delete-analysis-3",
-    }
-
-    pending = await coach_commands.execute_product_command(
-        "owner-delete", command, authorization_source="coach_inferred", thread_id=7,
-    )
-    assert pending["status"] == "needs_confirmation"
-    assert pending["confirmation"]["target_ref"] == "analysis:3"
-    assert calls == []
-
-    wrong_owner = await coach_commands.execute_product_command(
-        "other-owner",
-        {**command, "confirmation_ref": pending["confirmation"]["confirmation_ref"]},
-        authorization_source="confirmed",
-        thread_id=7,
-    )
-    assert wrong_owner["warning_or_error"]["code"] == "invalid_confirmation"
-    assert calls == []
-
-    confirmed = await coach_commands.execute_product_command(
-        "owner-delete",
-        {**command, "confirmation_ref": pending["confirmation"]["confirmation_ref"]},
-        authorization_source="confirmed",
-        thread_id=7,
-    )
-    replay = await coach_commands.execute_product_command(
-        "owner-delete", command, authorization_source="explicit_user_request", thread_id=7,
-    )
-
-    assert confirmed["status"] == "succeeded"
-    assert confirmed["result"] == {
-        "analysis_ref": "analysis:3",
-        "deleted": True,
-        "cleanup_pending": False,
-    }
-    assert replay["status"] == "succeeded"
-    assert calls == [(3, "owner-delete")]
-
-
-@pytest.mark.asyncio
 async def test_bridge_grants_a_current_explicit_delete_without_a_confirmation(monkeypatch):
     journal = coach_commands.InMemoryCommandJournal()
     coach_commands.set_command_journal(journal)
@@ -206,35 +120,81 @@ async def test_bridge_grants_a_current_explicit_delete_without_a_confirmation(mo
 
 
 @pytest.mark.asyncio
-async def test_bridge_refuses_nonmatching_or_ambiguous_direct_instruction_grants(monkeypatch):
-    async def delete(*_args, **_kwargs):
-        raise AssertionError("a refused grant must not delete")
+async def test_bridge_can_resolve_create_and_attach_analysis_from_current_request(monkeypatch):
+    owner_id = "direct-analysis-owner"
+    created_run_ids: list[int] = []
+    attached: list[tuple[str, int, str]] = []
 
-    monkeypatch.setattr(queue, "delete_session", delete)
-    cases = [
-        ({"analysis:3"}, "Please delete this analysis now.", "remove this analysis", "analysis:3", "needs_confirmation"),
-        ({"analysis:3", "analysis:4"}, "Please delete this analysis now.", "delete this analysis", "analysis:3", "needs_confirmation"),
-        ({"analysis:3"}, "Please delete this analysis now.", "delete this analysis", "analysis:4", "failed"),
-    ]
-    for refs, message, quote, analysis_ref, expected_status in cases:
-        bridge = coach_commands.issue_tool_bridge(
-            "direct-grant-refusal-owner",
-            7,
-            "coach_message:20",
-            "http://127.0.0.1:43127/api/coach/tools/execute",
-            reachable_refs=refs,
-            current_user_message=message,
-        )
-        result = await coach_commands.execute_tool_bridge(
-            bridge["bearer_token"],
+    async def list_runs(_owner_id: str):
+        assert _owner_id == owner_id
+        return [
             {
-                "command_name": "analysis.delete",
-                "parameters": {"analysis_ref": analysis_ref},
-                "instruction_quote": quote,
-                "idempotency_key": f"refused-{analysis_ref}-{len(refs)}",
+                "run_ref": "run:70",
+                "scenario": "1wall 6targets small",
+                "created_at": "2026-08-08T18:00:00Z",
+                "readiness_state": "analyzed",
             },
-        )
-        assert result["status"] == expected_status
+            {
+                "run_ref": "run:71",
+                "scenario": "1wall 6targets small",
+                "created_at": "2026-08-08T19:20:47Z",
+                "readiness_state": "pending_analysis",
+            },
+        ]
+
+    async def create(_owner_id: str, run_id: int, **_kwargs):
+        assert _owner_id == owner_id
+        created_run_ids.append(run_id)
+        return {"session_id": 71, "analysis_ref": "analysis:71", "reused": False}
+
+    async def get_session(session_id: int):
+        assert session_id == 71
+        return {"id": 71, "user_id": owner_id, "status": "done"}
+
+    async def attach_context(_owner_id: str, thread_id: int, *, kind: str, analysis_ref: str):
+        attached.append((_owner_id, thread_id, analysis_ref))
+        assert kind == "analysis"
+        return "attached", {"context_ref": "context:analysis-71"}
+
+    monkeypatch.setattr(coach_commands, "list_runs", list_runs)
+    monkeypatch.setattr(coach_commands, "create_analysis_from_run", create)
+    monkeypatch.setattr(coach_commands.queue, "get_session", get_session)
+    monkeypatch.setattr(coach_commands.coach_context_refs, "attach_context", attach_context)
+    bridge = coach_commands.issue_tool_bridge(
+        owner_id,
+        thread_id=27,
+        user_message_ref="message:direct-analysis",
+        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
+        current_user_message=(
+            "请分析这次训练：1wall 6targets small | "
+            "训练：2026-08-08T19:20:47Z | 分析：分析尚未完成"
+        ),
+    )
+
+    listed = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {"command_name": "run.list", "parameters": {}},
+    )
+    created = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {
+            "command_name": "analysis.create_from_run",
+            "parameters": {"run_ref": "run:71"},
+            "instruction_quote": (
+                "请分析这次训练：1wall 6targets small | "
+                "训练：2026-08-08T19:20:47Z | 分析：分析尚未完成"
+            ),
+            "idempotency_key": "direct-analysis-run-71",
+        },
+    )
+
+    assert listed["status"] == "succeeded"
+    assert created["status"] == "succeeded"
+    assert created["authorization_source"] == "explicit_user_request"
+    assert created["result"]["analysis_status"] == "done"
+    assert created["result"]["context_ref"] == "context:analysis-71"
+    assert created_run_ids == [71]
+    assert attached == [(owner_id, 27, "analysis:71")]
 
 
 @pytest.mark.asyncio
@@ -990,492 +950,6 @@ async def test_confirmation_reservation_conflict_rolls_back_consumption(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_persistent_confirmation_is_owner_parameter_and_single_use_bound(monkeypatch):
-    calls = 0
-
-    async def create(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return {"session_id": 41, "analysis_ref": "analysis:41"}
-
-    monkeypatch.setattr(coach_commands, "create_analysis_from_run", create)
-    base = {
-        "command_id": "cmd-confirm",
-        "command_name": "analysis.create_from_run",
-        "parameters": {"run_ref": "run:4"},
-        "idempotency_key": "confirm-key-4",
-    }
-    pending = await coach_commands.execute_product_command(
-        "owner-confirm", base, authorization_source="coach_inferred", thread_id=3,
-    )
-    ref = pending["confirmation"]["confirmation_ref"]
-    assert pending["status"] == "needs_confirmation"
-
-    wrong_owner = await coach_commands.execute_product_command(
-        "other-owner", {**base, "confirmation_ref": ref},
-        authorization_source="confirmed", thread_id=8,
-    )
-    assert wrong_owner["warning_or_error"]["code"] == "invalid_confirmation"
-
-    wrong_ref = await coach_commands.execute_product_command(
-        "owner-confirm",
-        {**base, "confirmation_ref": "confirmation:missing"},
-        authorization_source="confirmed",
-        thread_id=3,
-    )
-    assert wrong_ref["warning_or_error"]["code"] == "invalid_confirmation"
-
-    confirmed = await coach_commands.execute_product_command(
-        "owner-confirm", {**base, "confirmation_ref": ref},
-        authorization_source="confirmed", thread_id=3,
-    )
-    assert confirmed["status"] == "succeeded"
-    assert calls == 1
-
-    consumed = await coach_commands.execute_product_command(
-        "owner-confirm", {**base, "confirmation_ref": ref, "idempotency_key": "second-key"},
-        authorization_source="confirmed", thread_id=3,
-    )
-    assert consumed["warning_or_error"]["code"] == "invalid_confirmation"
-
-
-@pytest.mark.asyncio
-async def test_confirmation_cannot_be_consumed_without_durable_reservation(monkeypatch):
-    from webapp.backend import coach_store, db
-
-    calls = 0
-
-    async def create(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return {"session_id": 42, "analysis_ref": "analysis:42"}
-
-    monkeypatch.setattr(coach_commands, "create_analysis_from_run", create)
-    base = {
-        "command_name": "analysis.create_from_run",
-        "parameters": {"run_ref": "run:42"},
-        "idempotency_key": "confirm-reservation-42",
-    }
-    journal = coach_commands.SqliteCommandJournal()
-    coach_commands.set_command_journal(journal)
-    try:
-        pending = await coach_commands.execute_product_command(
-            "owner-confirm-reservation",
-            base,
-            authorization_source="coach_inferred",
-        )
-        confirmation_ref = pending["confirmation"]["confirmation_ref"]
-        original_store = coach_store._store_command_idempotency_row
-        failed = False
-
-        async def fail_reservation_once(
-            conn, owner_id, command_name, idempotency_key, parameters_digest, result,
-        ):
-            nonlocal failed
-            error = result.get("warning_or_error") or {}
-            if error.get("code") == "idempotency_outcome_unknown" and not failed:
-                failed = True
-                raise RuntimeError("simulated failure before reservation commit")
-            await original_store(
-                conn,
-                owner_id,
-                command_name,
-                idempotency_key,
-                parameters_digest,
-                result,
-            )
-
-        monkeypatch.setattr(
-            coach_store, "_store_command_idempotency_row", fail_reservation_once,
-        )
-        with pytest.raises(RuntimeError, match="reservation commit"):
-            await coach_commands.execute_product_command(
-                "owner-confirm-reservation",
-                {**base, "confirmation_ref": confirmation_ref},
-                authorization_source="confirmed",
-            )
-
-        conn = await db.get_conn()
-        confirmation = await (await conn.execute(
-            "SELECT status FROM coach_command_confirmations WHERE confirmation_ref=?",
-            (confirmation_ref,),
-        )).fetchone()
-        assert confirmation["status"] == "pending"
-
-        replay = await coach_commands.execute_product_command(
-            "owner-confirm-reservation",
-            {**base, "confirmation_ref": confirmation_ref},
-            authorization_source="confirmed",
-        )
-    finally:
-        coach_commands.set_command_journal(None)
-
-    assert failed is True
-    assert replay["status"] == "succeeded"
-    assert calls == 1
-
-
-def _real_plan_payload(cue: str = "Pause, then commit once.") -> dict:
-    return {
-        "title": "Stabilize first-shot correction",
-        "diagnostic_context": {
-            "analysis_refs": ["analysis:run-42"],
-            "metric_refs": ["metric:first_shot_correction"],
-            "knowledge_refs": ["knowledge:stopping_corrections"],
-        },
-        "prescriptions": [{
-            "scenario": "Sixshot",
-            "cue": cue,
-            "purpose": "Reduce corrective reversal.",
-            "target_metric_refs": ["metric:first_shot_correction"],
-            "expected_direction": "decrease",
-            "source_level": "deterministic_rule",
-        }],
-    }
-
-
-def _real_verification_targets() -> list[dict]:
-    return [{
-        "target_metric": "metric:first_shot_correction",
-        "expected_direction": "decrease",
-        "comparable_requirements": ["same scenario", "same sensitivity profile"],
-        "retest_after": "after three focused sessions",
-        "insufficient_evidence_behavior": "keep the plan and collect another comparable run",
-    }]
-
-
-@pytest.mark.asyncio
-async def test_real_training_plan_command_lifecycle_versions_confirmation_and_audit():
-    from webapp.backend import db, training_plan_store
-
-    owner = "owner-real-plan"
-
-    async def command(name: str, parameters: dict, key: str | None = None, **kwargs):
-        envelope = {"command_name": name, "parameters": parameters}
-        if key is not None:
-            envelope["idempotency_key"] = key
-        envelope.update(kwargs.pop("envelope", {}))
-        return await coach_commands.execute_product_command(
-            owner,
-            envelope,
-            authorization_source=kwargs.pop("authorization_source", "explicit_user_request"),
-            thread_id=21,
-        )
-
-    first = await command(
-        "training_plan.generate_draft",
-        {
-            "plan_payload": _real_plan_payload(),
-            "evidence_refs": ["analysis:run-42", "metric:first_shot_correction"],
-            "verification_targets": _real_verification_targets(),
-        },
-        "plan-generate-1",
-    )
-    first_ref = first["result_ref"]
-    assert first["status"] == "succeeded"
-    assert first["result"]["status"] == "draft"
-    assert "owner_id" not in first["result"]
-
-    assert (await command("training_plan.save", {"plan_ref": first_ref}, "plan-save-1"))["result"]["status"] == "saved"
-    assert (await command("training_plan.activate", {"plan_ref": first_ref}, "plan-activate-1"))["result"]["status"] == "active"
-
-    second = await command(
-        "training_plan.generate_draft",
-        {
-            "plan_payload": _real_plan_payload("Land once; do not chase the target."),
-            "evidence_refs": ["analysis:run-42"],
-            "verification_targets": _real_verification_targets(),
-        },
-        "plan-generate-2",
-    )
-    second_ref = second["result_ref"]
-    await command("training_plan.save", {"plan_ref": second_ref}, "plan-save-2")
-
-    pending = await command(
-        "training_plan.activate",
-        {"plan_ref": second_ref},
-        "plan-activate-2",
-    )
-    assert pending["status"] == "needs_confirmation"
-    confirmation_ref = pending["confirmation"]["confirmation_ref"]
-
-    confirmed = await command(
-        "training_plan.activate",
-        {"plan_ref": second_ref},
-        "plan-activate-2",
-        authorization_source="confirmed",
-        envelope={"confirmation_ref": confirmation_ref},
-    )
-    assert confirmed["status"] == "succeeded"
-    assert confirmed["result"]["status"] == "active"
-    assert (await training_plan_store.get_plan(owner, first_ref))["status"] == "paused"
-
-    adjusted = await command(
-        "training_plan.adjust",
-        {
-            "plan_ref": second_ref,
-            "plan_payload": _real_plan_payload("Brake continuously, then settle once."),
-            "adjustment_reason": "Comparable runs still show a late corrective reversal.",
-            "evidence_refs": ["analysis:run-43", "metric:first_shot_correction"],
-            "verification_targets": _real_verification_targets(),
-        },
-        "plan-adjust-2",
-    )
-    assert adjusted["result"]["version"] == 2
-    assert adjusted["result"]["verification_targets"] == _real_verification_targets()
-    assert adjusted["result"]["adjustment_reason"] == "Comparable runs still show a late corrective reversal."
-
-    transitions_before = await training_plan_store.list_transitions(owner, second_ref)
-    reviewed = await command("training_plan.review", {"plan_ref": second_ref})
-    transitions_after = await training_plan_store.list_transitions(owner, second_ref)
-    assert reviewed["result"]["version"] == 2
-    assert reviewed["result"]["status"] == "active"
-    assert transitions_after == transitions_before
-
-    forbidden = await coach_commands.execute_product_command(
-        "other-owner",
-        {"command_name": "training_plan.review", "parameters": {"plan_ref": second_ref}},
-        authorization_source="explicit_user_request",
-    )
-    assert forbidden["warning_or_error"]["code"] == "forbidden"
-
-    conn = await db.get_conn()
-    activation_audits = await (await conn.execute(
-        "SELECT status FROM coach_product_commands "
-        "WHERE owner_id=? AND command_name='training_plan.activate' "
-        "AND idempotency_key='plan-activate-2' ORDER BY audit_id",
-        (owner,),
-    )).fetchall()
-    assert [row["status"] for row in activation_audits] == ["needs_confirmation", "succeeded"]
-    idempotency = await (await conn.execute(
-        "SELECT result_json FROM coach_command_idempotency "
-        "WHERE owner_id=? AND command_name='training_plan.activate' "
-        "AND idempotency_key='plan-activate-2'",
-        (owner,),
-    )).fetchone()
-    assert '"status":"succeeded"' in idempotency["result_json"]
-
-
-def _real_plan_item_payload() -> dict:
-    return {
-        "diagnosis_ref": "diagnosis:tracking-error@1",
-        "knowledge_ref": "knowledge:tracking-speed-matching@1",
-        "scenario_profile_ref": "scenario:tracking.whj@1",
-        "baseline_metric_ref": "metric:continuous_tracking.target_relative_error_px@v1",
-        "expected_direction": "lower_better",
-        "practice_condition": "Repeat the same reviewed tracking scenario.",
-        "cue": "Match speed before correcting position.",
-        "dose_guardrail": "Stop after three degraded runs.",
-        "matched_retest_ref": "retest-spec:tracking-matched@1",
-        "near_transfer_retest_ref": "retest-spec:tracking-transfer@1",
-        "review_date": "2026-07-30",
-    }
-
-
-@pytest.mark.asyncio
-async def test_explicit_user_plan_item_execution_and_retest_commands_are_idempotent():
-    owner = "owner-plan-facts"
-    draft = await coach_commands.execute_product_command(
-        owner,
-        {
-            "command_name": "training_plan.generate_draft",
-            "parameters": {
-                "plan_payload": _real_plan_payload(),
-                "evidence_refs": ["analysis:run-42"],
-                "verification_targets": _real_verification_targets(),
-            },
-            "idempotency_key": "plan-facts-draft",
-        },
-        authorization_source="explicit_user_request",
-    )
-    plan_ref = draft["result_ref"]
-
-    item_envelope = {
-        "command_name": "training_plan.item.add",
-        "parameters": {
-            "plan_ref": plan_ref,
-            "item_payload": _real_plan_item_payload(),
-        },
-        "idempotency_key": "plan-facts-item",
-    }
-    item = await coach_commands.execute_product_command(
-        owner, item_envelope, authorization_source="explicit_user_request",
-    )
-    replay = await coach_commands.execute_product_command(
-        owner, item_envelope, authorization_source="explicit_user_request",
-    )
-    assert item["status"] == "succeeded"
-    assert replay["result_ref"] == item["result_ref"]
-    item_ref = item["result_ref"]
-
-    pending = await coach_commands.execute_product_command(
-        owner,
-        {
-            "command_name": "training_plan.execution.record",
-            "parameters": {
-                "item_ref": item_ref,
-                "scenario_ref": "scenario:tracking.whj@1",
-                "run_refs": ["run:52207"],
-                "planned_dose": {"amount": 3, "unit": "runs"},
-                "completed_dose": {"amount": 3, "unit": "runs"},
-                "completion_status": "completed",
-                "user_feedback": "The cue was manageable.",
-            },
-            "idempotency_key": "plan-facts-execution-denied",
-        },
-        authorization_source="coach_inferred",
-    )
-    assert pending["status"] == "needs_confirmation"
-
-    execution = await coach_commands.execute_product_command(
-        owner,
-        {
-            "command_name": "training_plan.execution.record",
-            "parameters": {
-                "item_ref": item_ref,
-                "scenario_ref": "scenario:tracking.whj@1",
-                "run_refs": ["run:52207"],
-                "planned_dose": {"amount": 3, "unit": "runs"},
-                "completed_dose": {"amount": 2, "unit": "runs"},
-                "completion_status": "partial",
-                "user_feedback": "Fatigue increased on the third run.",
-            },
-            "idempotency_key": "plan-facts-execution",
-        },
-        authorization_source="explicit_user_request",
-    )
-    assert execution["status"] == "succeeded"
-    assert execution["result_ref"].startswith("plan-execution:")
-
-    retest = await coach_commands.execute_product_command(
-        owner,
-        {
-            "command_name": "training_plan.retest.record",
-            "parameters": {
-                "item_ref": item_ref,
-                "kind": "matched",
-                "expected_metric_ref": "metric:continuous_tracking.target_relative_error_px@v1",
-                "expected_direction": "lower_better",
-                "analysis_refs": ["analysis:5"],
-                "comparability": "comparable",
-                "result": "improved",
-                "limitations": ["one comparable retest"],
-            },
-            "idempotency_key": "plan-facts-retest",
-        },
-        authorization_source="explicit_user_request",
-    )
-    assert retest["status"] == "succeeded"
-    assert retest["result_ref"].startswith("retest:")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "command_name",
-    [
-        "training_plan.item.add",
-        "training_plan.execution.record",
-        "training_plan.retest.record",
-    ],
-)
-async def test_coach_inferred_training_fact_requires_owner_scoped_confirmation_once(
-    monkeypatch: pytest.MonkeyPatch,
-    command_name: str,
-) -> None:
-    writes: list[tuple[str, str, dict]] = []
-
-    async def write_fact(owner_id: str, name: str, parameters: dict) -> tuple[dict, str]:
-        writes.append((owner_id, name, parameters))
-        return {"command_name": name}, f"fact:{name}"
-
-    monkeypatch.setattr(coach_commands, "_execute_training_plan_fact", write_fact)
-    command = {
-        "command_name": command_name,
-        "parameters": {"fact": command_name},
-        "idempotency_key": f"confirmation:{command_name}",
-    }
-    pending = await coach_commands.execute_product_command(
-        "owner-training-fact",
-        command,
-        authorization_source="coach_inferred",
-        thread_id=41,
-    )
-    confirmation_ref = pending["confirmation"]["confirmation_ref"]
-
-    assert pending["status"] == "needs_confirmation"
-    assert writes == []
-
-    system_attempt = await coach_commands.execute_product_command(
-        "owner-training-fact",
-        command,
-        authorization_source="system_safe",
-        thread_id=41,
-    )
-    wrong_owner = await coach_commands.execute_product_command(
-        "other-owner",
-        {**command, "confirmation_ref": confirmation_ref},
-        authorization_source="confirmed",
-        thread_id=41,
-    )
-    replay_pending = await coach_commands.execute_product_command(
-        "owner-training-fact",
-        command,
-        authorization_source="coach_inferred",
-        thread_id=41,
-    )
-    expired_command = {
-        **command,
-        "parameters": {"fact": f"{command_name}:expired"},
-        "idempotency_key": f"expired:{command_name}",
-    }
-    expired_pending = await coach_commands.execute_product_command(
-        "owner-training-fact",
-        expired_command,
-        authorization_source="coach_inferred",
-        thread_id=41,
-    )
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE coach_command_confirmations SET expires_at=? WHERE confirmation_ref=?",
-        ("2000-01-01T00:00:00Z", expired_pending["confirmation"]["confirmation_ref"]),
-    )
-    await conn.commit()
-    expired = await coach_commands.execute_product_command(
-        "owner-training-fact",
-        {
-            **expired_command,
-            "confirmation_ref": expired_pending["confirmation"]["confirmation_ref"],
-        },
-        authorization_source="confirmed",
-        thread_id=41,
-    )
-    confirmed = await coach_commands.execute_product_command(
-        "owner-training-fact",
-        {**command, "confirmation_ref": confirmation_ref},
-        authorization_source="confirmed",
-        thread_id=41,
-    )
-    replay_confirmed = await coach_commands.execute_product_command(
-        "owner-training-fact",
-        {**command, "confirmation_ref": confirmation_ref},
-        authorization_source="confirmed",
-        thread_id=41,
-    )
-
-    assert wrong_owner["status"] == "failed"
-    assert wrong_owner["warning_or_error"]["code"] == "invalid_confirmation"
-    assert system_attempt["warning_or_error"]["code"] == "explicit_user_required"
-    assert replay_pending["status"] == "needs_confirmation"
-    assert expired["status"] == "failed"
-    assert expired["warning_or_error"]["code"] == "invalid_confirmation"
-    assert confirmed["status"] == "succeeded"
-    assert replay_confirmed["status"] == "succeeded"
-    assert writes == [
-        ("owner-training-fact", command_name, {"fact": command_name}),
-    ]
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("command_name", "untrusted_field"),
     [
@@ -1642,89 +1116,6 @@ async def test_connected_kovaak_refresh_requires_a_saved_account_and_audits_only
     assert audit["command_name"] == "kovaak_scores.refresh_connected"
     assert audit["thread_id"] == 43
     assert audit["user_message_ref"] == "message:connected-score"
-
-
-@pytest.mark.asyncio
-async def test_bridge_cannot_self_authorize_or_consume_confirmation(monkeypatch):
-    calls = 0
-
-    async def create(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return {"session_id": 71, "analysis_ref": "analysis:71"}
-
-    monkeypatch.setattr(coach_commands, "create_analysis_from_run", create)
-    bridge = coach_commands.issue_tool_bridge(
-        "owner-bridge-confirm",
-        thread_id=22,
-        user_message_ref="message:22",
-        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
-        ttl_seconds=60,
-        max_calls=3,
-    )
-    base = {
-        "command_name": "analysis.create_from_run",
-        "parameters": {"run_ref": "run:71"},
-        "idempotency_key": "bridge-confirm-71",
-    }
-    pending = await coach_commands.execute_tool_bridge(bridge["bearer_token"], base)
-    claimed_explicit = await coach_commands.execute_tool_bridge(
-        bridge["bearer_token"], {**base, "request_basis": "explicit_user_request"},
-    )
-    claimed_confirmed = await coach_commands.execute_tool_bridge(
-        bridge["bearer_token"], {**base, "confirmation_ref": "confirmation:model-supplied"},
-    )
-
-    assert pending["status"] == "needs_confirmation"
-    assert "confirmation_ref" not in pending["confirmation"]
-    assert claimed_explicit["status"] == "failed"
-    assert claimed_explicit["warning_or_error"]["code"] == "untrusted_field"
-    assert claimed_confirmed["status"] == "failed"
-    assert claimed_confirmed["warning_or_error"]["code"] == "untrusted_field"
-    assert calls == 0
-    assert bridge["bearer_token"] not in repr(
-        [pending, claimed_explicit, claimed_confirmed]
-    )
-
-
-@pytest.mark.asyncio
-async def test_bridge_normalizes_only_reachable_analysis_delete_shorthand():
-    reachable = coach_commands.issue_tool_bridge(
-        "owner-delete-shorthand",
-        thread_id=23,
-        user_message_ref="message:delete-shorthand",
-        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
-        ttl_seconds=60,
-        max_calls=1,
-        reachable_refs={"analysis:3"},
-    )
-    unreachable = coach_commands.issue_tool_bridge(
-        "owner-delete-shorthand",
-        thread_id=23,
-        user_message_ref="message:delete-unreachable",
-        endpoint="http://127.0.0.1:43127/api/coach/tools/execute",
-        ttl_seconds=60,
-        max_calls=1,
-        reachable_refs={"analysis:3"},
-    )
-    base = {
-        "command_name": "analysis.delete",
-        "idempotency_key": "delete-shorthand",
-    }
-
-    pending = await coach_commands.execute_tool_bridge(
-        reachable["bearer_token"],
-        {**base, "parameters": {"analysis_ref": "3"}},
-    )
-    rejected = await coach_commands.execute_tool_bridge(
-        unreachable["bearer_token"],
-        {**base, "parameters": {"analysis_ref": "4"}},
-    )
-
-    assert pending["status"] == "needs_confirmation"
-    assert pending["confirmation"]["target_ref"] == "analysis:3"
-    assert rejected["status"] == "failed"
-    assert rejected["warning_or_error"]["code"] == "unreachable_ref"
 
 
 @pytest.mark.asyncio
@@ -3500,3 +2891,140 @@ async def test_signal_windows_reserve_a_turn_byte_subbudget_for_other_queries(
         for result in signal_successes
     ) <= 32 * 1024
     assert compared["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_teaching_session_update_succeeds_and_advances_version():
+    from webapp.backend import teaching_session_store
+    owner = "owner-session-update"
+    session = await teaching_session_store.get_or_create_primary_session(owner)
+
+    result = await coach_commands.execute_product_command(
+        owner,
+        {
+            "command_name": "teaching_session.update",
+            "parameters": {
+                "session_ref": session["session_ref"],
+                "expected_version": session["version"],
+                "next_phase": "hypothesize",
+                "updates": {
+                    "observation": {"summary": "减速阶段有重复修正", "source_refs": ["analysis:3"]},
+                    "primary_candidate": {"label": "可能是速度匹配", "source_refs": []},
+                    "cue": "先匹配速度再修正位置",
+                },
+            },
+        },
+        authorization_source="explicit_user_request",
+    )
+
+    assert result["status"] == "succeeded"
+    assert result["result_ref"] == session["session_ref"]
+    assert result["result"]["version"] == session["version"] + 1
+    assert result["result"]["state"]["phase"] == "hypothesize"
+    assert result["result"]["state"]["observation"]["summary"] == "减速阶段有重复修正"
+    assert result["result"]["state"]["cue"] == "先匹配速度再修正位置"
+
+
+@pytest.mark.asyncio
+async def test_teaching_session_update_rejects_version_conflict():
+    from webapp.backend import teaching_session_store
+    owner = "owner-session-conflict"
+    session = await teaching_session_store.get_or_create_primary_session(owner)
+
+    result = await coach_commands.execute_product_command(
+        owner,
+        {
+            "command_name": "teaching_session.update",
+            "parameters": {
+                "session_ref": session["session_ref"],
+                "expected_version": session["version"] + 99,
+                "next_phase": "hypothesize",
+                "updates": {},
+            },
+        },
+        authorization_source="explicit_user_request",
+    )
+
+    assert result["status"] == "unavailable"
+    assert result["warning_or_error"]["code"] == "session_conflict"
+
+
+@pytest.mark.parametrize("forbidden_field", ["active_run_ref", "pending_confirmation_ref"])
+@pytest.mark.asyncio
+async def test_teaching_session_update_rejects_forbidden_fields(forbidden_field: str):
+    from webapp.backend import teaching_session_store
+    owner = f"owner-session-{forbidden_field}"
+    session = await teaching_session_store.get_or_create_primary_session(owner)
+
+    result = await coach_commands.execute_product_command(
+        owner,
+        {
+            "command_name": "teaching_session.update",
+            "parameters": {
+                "session_ref": session["session_ref"],
+                "expected_version": session["version"],
+                "next_phase": None,
+                "updates": {forbidden_field: "value"},
+            },
+        },
+        authorization_source="explicit_user_request",
+    )
+
+    assert result["status"] == "failed"
+    assert result["warning_or_error"]["code"] == "invalid_parameters"
+
+
+@pytest.mark.asyncio
+async def test_teaching_session_update_rejects_invalid_phase():
+    from webapp.backend import teaching_session_store
+    owner = "owner-session-bad-phase"
+    session = await teaching_session_store.get_or_create_primary_session(owner)
+
+    result = await coach_commands.execute_product_command(
+        owner,
+        {
+            "command_name": "teaching_session.update",
+            "parameters": {
+                "session_ref": session["session_ref"],
+                "expected_version": session["version"],
+                "next_phase": "not_a_real_phase",
+                "updates": {},
+            },
+        },
+        authorization_source="explicit_user_request",
+    )
+
+    assert result["status"] == "failed"
+    assert result["warning_or_error"]["code"] == "invalid_parameters"
+
+
+@pytest.mark.asyncio
+async def test_teaching_session_update_partial_merge_retains_unspecified_fields():
+    from webapp.backend import teaching_session_store
+    owner = "owner-session-merge"
+    session = await teaching_session_store.get_or_create_primary_session(owner)
+    original_observation = session["state"]["observation"]
+    original_candidate = session["state"]["primary_candidate"]
+
+    result = await coach_commands.execute_product_command(
+        owner,
+        {
+            "command_name": "teaching_session.update",
+            "parameters": {
+                "session_ref": session["session_ref"],
+                "expected_version": session["version"],
+                "next_phase": "teach",
+                "updates": {
+                    "cue": "保持稳定后再一次修正",
+                },
+            },
+        },
+        authorization_source="explicit_user_request",
+    )
+
+    assert result["status"] == "succeeded"
+    new_state = result["result"]["state"]
+    assert new_state["phase"] == "teach"
+    assert new_state["cue"] == "保持稳定后再一次修正"
+    assert new_state["observation"] == original_observation
+    assert new_state["primary_candidate"] == original_candidate

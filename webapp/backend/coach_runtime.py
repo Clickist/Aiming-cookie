@@ -25,17 +25,14 @@ from .config import (
     COACH_RUNTIME_TSX_LOADER,
     COACH_SIDECAR_FALLBACK_SUBPROCESS,
     COACH_SIDECAR_URL,
-    LLM_PROVIDER,
     PI_SOURCE_DIR,
 )
 
 _log = logging.getLogger(__name__)
 
-COACH_RUNTIME_TURN_SCHEMA_V0 = "coach_runtime_turn.v0"
 COACH_RUNTIME_TURN_SCHEMA_V1 = "coach_runtime_turn.v1"
 COACH_RUNTIME_TURN_SCHEMA = COACH_RUNTIME_TURN_SCHEMA_V1
 _DEFAULT_USER_ID = "dev"  # compatibility-only legacy callers
-_PROVIDERS_JSON = Path(__file__).resolve().parents[2] / "kovaak_tracker" / "coach" / "providers.json"
 
 
 class CoachRuntimeError(RuntimeError):
@@ -191,34 +188,7 @@ def _normalize_tool_bridge(value: Mapping[str, Any] | None) -> tuple[dict[str, A
     return normalized, secrets
 
 
-def _load_legacy_provider_turn_profile() -> dict[str, Any] | None:
-    """Compatibility-only providers.json read; never creates a DB profile."""
-    try:
-        with _PROVIDERS_JSON.open(encoding="utf-8") as f:
-            cfg = json.load(f)
-        provider = cfg.get(LLM_PROVIDER)
-        if not isinstance(provider, Mapping):
-            return None
-        api_key_env = str(provider.get("api_key_env", ""))
-        api_key = os.environ.get(api_key_env) or None
-        result = {
-            "provider_id": LLM_PROVIDER,
-            "provider_name": LLM_PROVIDER,
-            "kind": "builtin",
-            "base_url": provider.get("base_url"),
-            "model_id": str(provider.get("model", "")),
-        }
-        if api_key:
-            result["credential"] = {"type": "api_key", "key": api_key}
-            result["api_key"] = api_key
-        return result
-    except (OSError, json.JSONDecodeError, TypeError):
-        return None
-
-
 def _normalize_runtime_profile(profile: Mapping[str, Any] | None) -> dict[str, Any]:
-    if profile is None:
-        profile = _load_legacy_provider_turn_profile()
     if not isinstance(profile, Mapping):
         raise ProviderUnconfiguredError("Coach Provider 未配置")
 
@@ -435,7 +405,7 @@ def _build_turn_request(
     if not normalized_messages:
         raise CoachRuntimeError("messages 不能为空")
 
-    if schema_version == COACH_RUNTIME_TURN_SCHEMA_V1 and profile is None:
+    if profile is None:
         raise ProviderUnconfiguredError("Coach Provider profile is required for v1 turns")
     runtime_profile = _normalize_runtime_profile(profile)
     if profile is not None and (not isinstance(user_id, str) or not user_id.strip()):
@@ -457,8 +427,6 @@ def _build_turn_request(
         payload["system_prompt"] = system_prompt
     normalized_teaching_turn = normalize_teaching_turn(teaching_turn)
     if normalized_teaching_turn is not None:
-        if schema_version != COACH_RUNTIME_TURN_SCHEMA_V1:
-            raise CoachRuntimeError("teaching_turn 仅支持 selected Provider turn")
         payload["teaching_turn"] = normalized_teaching_turn
     normalized_bridge, bridge_secrets = _normalize_tool_bridge(tool_bridge)
     if normalized_bridge is not None:
@@ -1031,9 +999,7 @@ def _subprocess_command() -> list[str]:
 
 
 def _post_turn_to_sidecar(request: dict[str, Any], timeout_s: int) -> dict[str, Any]:
-    schema_version = str(request.get("schema_version") or COACH_RUNTIME_TURN_SCHEMA_V0)
-    path = "/v1/turn" if schema_version == COACH_RUNTIME_TURN_SCHEMA_V1 else "/v0/turn"
-    url = f"{COACH_SIDECAR_URL.rstrip('/')}{path}"
+    url = f"{COACH_SIDECAR_URL.rstrip('/')}/v1/turn"
     try:
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(url, json=request)
@@ -1075,9 +1041,7 @@ async def _post_turn_to_sidecar_async(
     on_partial: PartialCallback | None = None,
     on_activity: ActivityCallback | None = None,
 ) -> dict[str, Any]:
-    schema_version = str(request.get("schema_version") or COACH_RUNTIME_TURN_SCHEMA_V0)
-    path = "/v1/turn" if schema_version == COACH_RUNTIME_TURN_SCHEMA_V1 else "/v0/turn"
-    url = f"{COACH_SIDECAR_URL.rstrip('/')}{path}"
+    url = f"{COACH_SIDECAR_URL.rstrip('/')}/v1/turn"
     saw_frame = False
     last_partial: str | None = None
     try:
@@ -1401,11 +1365,7 @@ def run_pi_coach_turn(
     timeout_s: int | None = None,
 ) -> str | PiCoachTurnResult:
     """Run one selected-profile turn; legacy callers may use providers.json only."""
-    schema_version = (
-        COACH_RUNTIME_TURN_SCHEMA_V1
-        if profile is not None
-        else COACH_RUNTIME_TURN_SCHEMA_V0
-    )
+    schema_version = COACH_RUNTIME_TURN_SCHEMA_V1
     request, secrets = _build_turn_request(
         schema_version=schema_version,
         user_id=user_id,
@@ -1427,10 +1387,7 @@ def run_pi_coach_turn(
         response = _post_turn_to_sidecar(request, timeout)
         response_source = "sidecar"
     except CoachRuntimeError as error:
-        if not _sidecar_fallback_enabled() or (
-            schema_version == COACH_RUNTIME_TURN_SCHEMA_V1
-            and error.side_effects_possible
-        ):
+        if not _sidecar_fallback_enabled() or error.side_effects_possible:
             message = str(error)
             for secret in secrets:
                 message = message.replace(secret, "[REDACTED]")
@@ -1483,11 +1440,7 @@ async def run_pi_coach_turn_async(
     on_activity: ActivityCallback | None = None,
 ) -> PiCoachTurnResult:
     client_started_ns = time.monotonic_ns()
-    schema_version = (
-        COACH_RUNTIME_TURN_SCHEMA_V1
-        if profile is not None
-        else COACH_RUNTIME_TURN_SCHEMA_V0
-    )
+    schema_version = COACH_RUNTIME_TURN_SCHEMA_V1
     request, secrets = _build_turn_request(
         schema_version=schema_version,
         user_id=user_id,

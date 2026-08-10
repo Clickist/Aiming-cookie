@@ -128,6 +128,10 @@ _ANALYSIS_REF_FIELDS = frozenset(
 _ANALYSIS_ID_PATTERN = re.compile(r"^analysis:[A-Za-z0-9][A-Za-z0-9._-]*$")
 _NETWORK_URL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 _V2_INPUT_MODES = frozenset({"input_native", "multimodal", "video_fallback"})
+_V2_SCENARIO_AIM_FAMILIES = frozenset({
+    "static_clicking", "dynamic_clicking", "continuous_tracking",
+    "target_switching", "movement_aiming", "unknown",
+})
 
 
 def _is_absolute_path(value: str) -> bool:
@@ -898,7 +902,10 @@ def _project_v2_run_facts(value: object) -> dict[str, object] | None:
 def _project_v2_scenario(value: object) -> dict[str, object] | None:
     if not isinstance(value, Mapping):
         return None
-    allowed = {"scenario_profile_ref", "analyzer_refs", "support_status", "limitations"}
+    allowed = {
+        "scenario_profile_ref", "analyzer_refs", "support_status",
+        "limitations", "display_name", "aim_family",
+    }
     if set(value) - allowed:
         return None
     profile_ref = value.get("scenario_profile_ref")
@@ -915,11 +922,19 @@ def _project_v2_scenario(value: object) -> dict[str, object] | None:
     limitations = _safe_string_list(value.get("limitations"))
     if len(limitations) > 8:
         return None
+    display_name = value.get("display_name")
+    if display_name is not None and not isinstance(display_name, str):
+        display_name = None
+    aim_family = value.get("aim_family")
+    if aim_family is not None and not isinstance(aim_family, str):
+        aim_family = None
     return {
         "scenario_profile_ref": profile_ref,
         "analyzer_refs": analyzer_refs,
         "support_status": status,
         "limitations": limitations,
+        "display_name": display_name,
+        "aim_family": aim_family,
     }
 
 
@@ -1295,6 +1310,8 @@ def project_coach_diagnostic_context(
                 else "supported" if scenario_data else "unavailable"
             ),
             "limitations": _safe_string_list(scenario_data.get("limitations"))[:8],
+            "display_name": scenario_resolution.get("display_name"),
+            "aim_family": scenario_resolution.get("aim_family"),
         }
         evidence_summary = dict(legacy["evidence_summary"])
         evidence_summary["segment_refs"] = []

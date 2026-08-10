@@ -184,10 +184,6 @@ export function extractRuntimeSecrets(raw: unknown): string[] {
     secrets.push(model.api_key);
   }
   if (model.credential !== undefined) collectCredentialStrings(model.credential, secrets);
-  if (raw.schema_version === "coach_runtime_turn.v0" && typeof model.api_key_env === "string") {
-    const value = process.env[model.api_key_env];
-    if (value) secrets.push(value);
-  }
   return secrets;
 }
 
