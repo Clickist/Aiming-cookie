@@ -874,8 +874,6 @@ export function DataView({
   const [loadingFamily, setLoadingFamily] = useState(false);
   const [loadingMoreFamily, setLoadingMoreFamily] = useState(false);
   const [familyUnavailable, setFamilyUnavailable] = useState(false);
-  const wantsFamilyDetail = true;
-
   useEffect(() => {
     let active = true;
     setLoadingData(true);
@@ -899,12 +897,6 @@ export function DataView({
     let active = true;
     setFamilyData(null);
     setFamilyUnavailable(false);
-    if (!wantsFamilyDetail) {
-      setLoadingFamily(false);
-      return () => {
-        active = false;
-      };
-    }
     setLoadingFamily(true);
     void getAnalysisFamilyData(presentation.analysisId)
       .then((next) => {

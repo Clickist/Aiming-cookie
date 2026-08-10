@@ -16,12 +16,13 @@ import {
   listProviderProfiles,
   submitProviderAuthInput,
   testProviderProfile,
+  updateProviderProfile,
 } from "@/lib/api";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
+import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
 import type {
   CaptureStatusV1,
   CustomProviderKind,
-  CustomProviderModel,
   CustomProviderProtocol,
   ProviderAuthMode,
   ProviderAuthOperation,
@@ -33,7 +34,6 @@ import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel
 
 type ConnectionState = "idle" | "loading" | "authorizing" | "testing" | "ready" | "failed";
 type OpenMenu = "provider" | "protocol" | "model" | null;
-type CustomModelState = "idle" | "loading" | "loaded" | "manual";
 
 const CUSTOM_PROVIDER_ID = "custom";
 const CUSTOM_PROTOCOLS: Record<CustomProviderKind, { label: string; discovery: CustomProviderProtocol }> = {
@@ -46,24 +46,6 @@ const CUSTOM_PROTOCOLS: Record<CustomProviderKind, { label: string; discovery: C
     discovery: "anthropic-messages",
   },
 };
-
-function customKindForProtocol(protocol: CustomProviderProtocol): CustomProviderKind {
-  return protocol === "anthropic-messages" ? "custom_anthropic_compatible" : "custom_openai_compatible";
-}
-
-function isCustomProviderKind(kind: string): kind is CustomProviderKind {
-  return kind === "custom_openai_compatible" || kind === "custom_anthropic_compatible";
-}
-
-function firstAuthMode(provider: ProviderCatalogEntry | undefined): ProviderAuthMode {
-  if (provider?.auth_modes.includes("api_key")) return "api_key";
-  if (provider?.auth_modes.includes("oauth")) return "oauth";
-  return "ambient";
-}
-
-function isAuthTerminal(operation: ProviderAuthOperation): boolean {
-  return ["succeeded", "failed", "cancelled", "timed_out", "interrupted"].includes(operation.status);
-}
 
 function authModeLabel(mode: ProviderAuthMode): string {
   if (mode === "api_key") return "API Key";
@@ -80,15 +62,9 @@ export function OnboardingFlow() {
   const [authMode, setAuthMode] = useState<ProviderAuthMode>("api_key");
   const [apiKey, setApiKey] = useState("");
   const [custom, setCustom] = useState(false);
-  const [customKind, setCustomKind] = useState<CustomProviderKind>("custom_openai_compatible");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [customModel, setCustomModel] = useState("");
-  const [customModels, setCustomModels] = useState<CustomProviderModel[]>([]);
-  const [customModelState, setCustomModelState] = useState<CustomModelState>("idle");
-  const [customModelMessage, setCustomModelMessage] = useState("");
-  const [customModelError, setCustomModelError] = useState(false);
   const [customProtocolNeedsChoice, setCustomProtocolNeedsChoice] = useState(false);
-  const [customProtocolConfirmed, setCustomProtocolConfirmed] = useState(false);
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("loading");
   const [profileId, setProfileId] = useState<number | null>(null);
@@ -104,6 +80,21 @@ export function OnboardingFlow() {
   const providerMenuRef = useRef<HTMLDivElement>(null);
   const protocolMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+
+  const customDiscovery = useCustomModelDiscovery({
+    baseUrl: customBaseUrl,
+    apiKey,
+    enabled: custom && !customProtocolNeedsChoice,
+    discover: discoverCustomProviderModels,
+  });
+  const {
+    models: customModels,
+    state: customModelState,
+    message: customModelMessage,
+    error: customModelError,
+    protocolConfirmed: customProtocolConfirmed,
+    kind: customKind,
+  } = customDiscovery;
 
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.provider_id === providerId),
@@ -149,8 +140,7 @@ export function OnboardingFlow() {
           setSavedProfile(profile);
           if (profile && isCustomProviderKind(profile.kind)) {
             setCustom(true);
-            setCustomKind(profile.kind);
-            setCustomProtocolConfirmed(true);
+            customDiscovery.confirmProtocol(profile.kind);
             setCustomBaseUrl(profile.base_url ?? "");
             setCustomModel(profile.model_id);
           } else if (profile) {
@@ -167,48 +157,14 @@ export function OnboardingFlow() {
 
   useEffect(() => {
     if (!selectedProvider) return;
-    setAuthMode(firstAuthMode(selectedProvider));
+    setAuthMode(firstAuthMode(selectedProvider.auth_modes));
   }, [selectedProvider]);
 
   useEffect(() => {
-    if (!custom || customProtocolNeedsChoice || !customBaseUrl.trim() || !apiKey.trim()) return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      setCustomModelState("loading");
-      setCustomModel("");
-      setCustomModelMessage("");
-      setCustomModelError(false);
-      void discoverCustomProviderModels({
-        base_url: customBaseUrl.trim(),
-        api_key: apiKey,
-      }, { signal: controller.signal })
-        .then((response) => {
-          if (controller.signal.aborted) return;
-          setCustomKind(customKindForProtocol(response.protocol));
-          setCustomProtocolConfirmed(true);
-          setCustomModels(response.models);
-          if (response.models.length) {
-            setCustomModelState("loaded");
-          } else {
-            setCustomModelState("manual");
-            setCustomModelMessage("这个 Provider 没有返回可选 Model ID，请手动填写。");
-          }
-        })
-        .catch(() => {
-          if (controller.signal.aborted) return;
-          setCustomModels([]);
-          setCustomProtocolNeedsChoice(true);
-          setCustomProtocolConfirmed(false);
-          setCustomModelState("manual");
-          setCustomModelMessage("无法自动识别接口协议或读取模型列表，请选择协议后手动填写 Model ID。");
-          setCustomModelError(true);
-        });
-    }, 500);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [apiKey, custom, customBaseUrl, customProtocolNeedsChoice]);
+    if (customDiscovery.needsProtocolChoice && !customProtocolNeedsChoice) {
+      setCustomProtocolNeedsChoice(true);
+    }
+  }, [customDiscovery.needsProtocolChoice, customProtocolNeedsChoice]);
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent) => {
@@ -260,8 +216,8 @@ export function OnboardingFlow() {
     setMessage("");
     setOperation(null);
     try {
-      const profile = custom
-        ? await createProviderProfile({
+      const profileInput = custom
+        ? {
             name: "自定义 Provider",
             kind: customKind,
             base_url: customBaseUrl,
@@ -270,15 +226,18 @@ export function OnboardingFlow() {
             max_tokens: selectedCustomModel?.max_tokens ?? null,
             api_key: apiKey,
             is_default: true,
-          })
-        : await createProviderProfile({
+          } as const
+        : {
             name: selectedProvider?.provider_name ?? providerId,
             kind: "builtin",
             provider_id: providerId,
             model_id: modelId,
             api_key: authMode === "api_key" ? apiKey : undefined,
             is_default: true,
-          });
+          } as const;
+      const profile = profileId === null
+        ? await createProviderProfile(profileInput)
+        : await updateProviderProfile(profileId, profileInput);
       setProfileId(profile.id);
       if (!custom && authMode === "oauth") {
         setConnectionState("authorizing");
@@ -290,7 +249,6 @@ export function OnboardingFlow() {
       const status = await testProviderProfile(profile.id);
       setConnectionState(status.status === "ready" ? "ready" : "failed");
       setMessage(status.status === "ready" ? `连接成功 · ${custom ? customModel : selectedModelLabel}` : status.message);
-      setApiKey("");
     } catch {
       setConnectionState("failed");
       setMessage("连接失败。请检查 Provider、模型和认证信息后重试。");
@@ -320,8 +278,9 @@ export function OnboardingFlow() {
         !coordinator.enabled
         || status.availability !== "available"
         || !status.platform_supported
-        || status.raw_input_permission !== "granted"
+        || status.raw_input_permission === "denied"
         || !status.capture_enabled
+        || status.runtime_health === "unavailable"
       ) throw new Error("capture_not_ready");
       const state = await completeOnboarding("connected");
       if (state.availability !== "available") throw new Error("unavailable");
@@ -367,6 +326,8 @@ export function OnboardingFlow() {
     setOpenMenu(null);
     setModelId("");
     setApiKey("");
+    setProfileId(null);
+    setSavedProfile(null);
     setMessage("");
     setConnectionState("idle");
     if (nextProviderId === CUSTOM_PROVIDER_ID) {
@@ -374,25 +335,20 @@ export function OnboardingFlow() {
       setProviderId("");
       setAuthMode("api_key");
       setCustomModel("");
-      setCustomModels([]);
-      setCustomModelState("idle");
-      setCustomModelMessage("");
-      setCustomModelError(false);
       setCustomProtocolNeedsChoice(false);
-      setCustomProtocolConfirmed(false);
+      customDiscovery.reset();
       return;
     }
     const nextProvider = providers.find((provider) => provider.provider_id === nextProviderId);
     setCustom(false);
     setProviderId(nextProviderId);
-    setAuthMode(firstAuthMode(nextProvider));
+    setAuthMode(firstAuthMode(nextProvider?.auth_modes));
   };
 
   const selectModel = (nextModelId: string) => {
     setModelId(nextModelId);
     setCustomModel(nextModelId);
     setOpenMenu(null);
-    if (!custom) setApiKey("");
     setMessage("");
     setConnectionState("idle");
   };
@@ -401,26 +357,19 @@ export function OnboardingFlow() {
     if (field === "baseUrl") setCustomBaseUrl(value);
     else setApiKey(value);
     setCustomModel("");
-    setCustomModels([]);
-    setCustomModelState("idle");
-    setCustomModelMessage("");
-    setCustomModelError(false);
     setCustomProtocolNeedsChoice(false);
-    setCustomProtocolConfirmed(false);
+    customDiscovery.reset();
   };
 
   const selectCustomProtocol = (nextKind: CustomProviderKind) => {
-    setCustomKind(nextKind);
+    customDiscovery.confirmProtocol(nextKind);
     setOpenMenu(null);
-    setCustomProtocolNeedsChoice(true);
-    setCustomProtocolConfirmed(true);
   };
 
   const useManualCustomModel = () => {
     setOpenMenu(null);
     setCustomModel("");
-    setCustomModelState("manual");
-    setCustomModelMessage("");
+    customDiscovery.enterManualMode();
   };
 
   return (
