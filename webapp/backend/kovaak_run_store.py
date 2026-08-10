@@ -526,7 +526,7 @@ def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]
         "trace": {"availability": trace_quality["availability"]},
         "canonical_time_window": canonical_window,
     })
-    supported = ["multimodal"] if fixed_bundle["ready"] else []
+    supported = list(fixed_bundle["supported_modes"])
     ready = bool(supported)
     analysis_count = int(run.get("analysis_count") or 0)
     limitations: list[str] = []

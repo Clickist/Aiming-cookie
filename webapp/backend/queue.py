@@ -1113,7 +1113,7 @@ async def set_onboarding_state(
 ) -> dict:
     if not completed:
         raise ValueError("onboarding can only be marked completed")
-    if completion_kind not in {"connected", "skipped", "legacy"}:
+    if completion_kind not in {"connected", "legacy"}:
         raise ValueError("invalid onboarding completion kind")
     conn = await get_conn()
     await conn.execute(

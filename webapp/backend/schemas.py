@@ -47,7 +47,6 @@ class AnalyzePathsRequest(BaseModel):
 class KovaaKAnalysisRequest(BaseModel):
     """Create an Analysis from a persisted local Run."""
 
-    input_mode: Literal["multimodal"] = "multimodal"
     allow_parallel: bool = False
     video_path: Optional[str] = None
     cm_per_360: Optional[float] = None
@@ -190,7 +189,7 @@ class ProductStateResponse(BaseModel):
     schema_version: Literal["product_state.v1"]
     availability: Literal["available", "unavailable"]
     onboarding_completed: Optional[bool] = None
-    onboarding_completion_kind: Optional[Literal["connected", "skipped", "legacy"]] = None
+    onboarding_completion_kind: Optional[Literal["connected", "legacy"]] = None
     has_pending_runs: Optional[bool] = None
     has_runs: Optional[bool] = None
     has_analyses: Optional[bool] = None
@@ -199,7 +198,7 @@ class ProductStateResponse(BaseModel):
 
 class OnboardingStateRequest(BaseModel):
     completed: bool = True
-    completion_kind: Literal["connected", "skipped", "legacy"]
+    completion_kind: Literal["connected", "legacy"]
 
 
 class CaptureRunAttachment(BaseModel):

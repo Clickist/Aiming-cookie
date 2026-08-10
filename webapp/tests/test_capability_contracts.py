@@ -408,10 +408,10 @@ async def test_frontend_analysis_family_data_route_reads_owned_revision_and_uses
     assert forbidden.status_code == 403
 
 
-def test_product_state_distinguishes_empty_from_read_failure_and_skip_is_complete():
+def test_product_state_distinguishes_empty_from_read_failure_and_connected_is_complete():
     empty = build_product_state_v1(
         onboarding_completed=True,
-        onboarding_completion_kind="skipped",
+        onboarding_completion_kind="connected",
         has_pending_runs=False,
         has_runs=False,
         has_analyses=False,
@@ -419,7 +419,7 @@ def test_product_state_distinguishes_empty_from_read_failure_and_skip_is_complet
     assert empty["schema_version"] == "product_state.v1"
     assert empty["availability"] == "available"
     assert empty["onboarding_completed"] is True
-    assert empty["onboarding_completion_kind"] == "skipped"
+    assert empty["onboarding_completion_kind"] == "connected"
     assert empty["has_runs"] is False
 
     failed = build_product_state_v1(read_error="database_unavailable")
@@ -634,20 +634,32 @@ def test_analysis_input_snapshot_freezes_selected_calibration_without_paths():
 
 
 @pytest.mark.asyncio
-async def test_product_state_route_persists_explicit_skip_and_reports_read_failure(monkeypatch):
+async def test_product_state_route_persists_connected_onboarding_and_reports_read_failure(monkeypatch):
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "onboarding-token")
+    async def no_runtime_profile(_owner):
+        return None
+
+    monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
+
+    async def provider_ready(_profile):
+        return {"status": "ready"}
+
+    monkeypatch.setattr(routes_mod.coach_runtime, "get_provider_profile_status", provider_ready)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-        headers={"X-User-Id": "product-owner"},
+        headers={"X-User-Id": "product-owner", "X-Aiming-Cookie-Desktop-Token": "onboarding-token"},
     ) as client:
         empty = await client.get("/api/product-state")
-        skipped = await client.post(
+        connected = await client.post(
             "/api/product-state/onboarding",
-            json={"completed": True, "completion_kind": "skipped"},
+            json={"completed": True, "completion_kind": "connected"},
         )
     assert empty.json()["onboarding_completed"] is False
-    assert skipped.json()["onboarding_completed"] is True
-    assert skipped.json()["onboarding_completion_kind"] == "skipped"
+    assert connected.json()["onboarding_completed"] is True
+    assert connected.json()["onboarding_completion_kind"] == "connected"
 
     async def fail_read(_owner: str):
         raise RuntimeError("private database error")
@@ -656,7 +668,7 @@ async def test_product_state_route_persists_explicit_skip_and_reports_read_failu
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-        headers={"X-User-Id": "product-owner"},
+        headers={"X-User-Id": "product-owner", "X-Aiming-Cookie-Desktop-Token": "onboarding-token"},
     ) as client:
         failed = await client.get("/api/product-state")
     assert failed.status_code == 200
@@ -666,6 +678,18 @@ async def test_product_state_route_persists_explicit_skip_and_reports_read_failu
 
 @pytest.mark.asyncio
 async def test_product_state_onboarding_write_failure_is_versioned_unavailable(monkeypatch):
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "onboarding-token")
+    async def no_runtime_profile(_owner):
+        return None
+
+    monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
+
+    async def provider_ready(_profile):
+        return {"status": "ready"}
+
+    monkeypatch.setattr(routes_mod.coach_runtime, "get_provider_profile_status", provider_ready)
     async def fail_write(*_args, **_kwargs):
         raise RuntimeError("private database error")
 
@@ -673,11 +697,11 @@ async def test_product_state_onboarding_write_failure_is_versioned_unavailable(m
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-        headers={"X-User-Id": "product-owner"},
+        headers={"X-User-Id": "product-owner", "X-Aiming-Cookie-Desktop-Token": "onboarding-token"},
     ) as client:
         response = await client.post(
             "/api/product-state/onboarding",
-            json={"completed": True, "completion_kind": "skipped"},
+            json={"completed": True, "completion_kind": "connected"},
         )
 
     assert response.status_code == 200
@@ -688,6 +712,18 @@ async def test_product_state_onboarding_write_failure_is_versioned_unavailable(m
 
 @pytest.mark.asyncio
 async def test_product_state_onboarding_value_error_remains_client_error(monkeypatch):
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "onboarding-token")
+    async def no_runtime_profile(_owner):
+        return None
+
+    monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
+
+    async def provider_ready(_profile):
+        return {"status": "ready"}
+
+    monkeypatch.setattr(routes_mod.coach_runtime, "get_provider_profile_status", provider_ready)
     async def reject_write(*_args, **_kwargs):
         raise ValueError("invalid onboarding completion kind")
 
@@ -695,7 +731,7 @@ async def test_product_state_onboarding_value_error_remains_client_error(monkeyp
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-        headers={"X-User-Id": "product-owner"},
+        headers={"X-User-Id": "product-owner", "X-Aiming-Cookie-Desktop-Token": "onboarding-token"},
     ) as client:
         response = await client.post(
             "/api/product-state/onboarding",
@@ -703,6 +739,33 @@ async def test_product_state_onboarding_value_error_remains_client_error(monkeyp
         )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_product_state_onboarding_rejects_an_untested_provider(monkeypatch):
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "onboarding-token")
+
+    async def no_runtime_profile(_owner):
+        return None
+
+    async def provider_unready(_profile):
+        return {"status": "connection_failed"}
+
+    monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
+    monkeypatch.setattr(routes_mod.coach_runtime, "get_provider_profile_status", provider_unready)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-User-Id": "product-owner", "X-Aiming-Cookie-Desktop-Token": "onboarding-token"},
+    ) as client:
+        response = await client.post(
+            "/api/product-state/onboarding",
+            json={"completed": True, "completion_kind": "connected"},
+        )
+
+    assert response.status_code == 409
 
 
 @pytest.mark.asyncio
