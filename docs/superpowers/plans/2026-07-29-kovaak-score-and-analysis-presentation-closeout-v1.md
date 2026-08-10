@@ -86,7 +86,7 @@ Stop if the change needs a new layout, route, tab, processed-row contract, chart
 - `docs/ROADMAP.md`
 - `docs/PROGRESS.md`
 - `docs/frontend-uiux-design.md`
-- `docs/opendesign-desktop-handoff.md`
+- `docs/archive/retired/opendesign-desktop-handoff.md`（历史引用）
 - `docs/README.md`
 - `docs/superpowers/plans/README.md`
 - this plan

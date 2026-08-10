@@ -13,7 +13,7 @@
 > - [`../../../frontend-uiux-design.md`](../../../frontend-uiux-design.md)
 > - [`../../../../DESIGN-cursor.md`](../../../../DESIGN-cursor.md)
 > - [`../../../design-system.md`](../../../design-system.md)
-> - [`../../../opendesign-desktop-handoff.md`](../../../opendesign-desktop-handoff.md)：派生设计交接入口；只约束设计流程与验收，不覆盖上游合同，也不自动授权 Task
+> - [`../../retired/opendesign-desktop-handoff.md`](../../retired/opendesign-desktop-handoff.md)：已退役的派生设计交接入口；只保留历史流程与验收背景，不覆盖上游合同，也不自动授权 Task
 > - 已列为 active 的 [`../../../superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](../../../superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)
 > - 已有能力合同：[`../../../superpowers/specs/2026-07-13-kovaak-run-trace-lifecycle-design.md`](../../../superpowers/specs/2026-07-13-kovaak-run-trace-lifecycle-design.md)、[`../../../superpowers/specs/2026-07-13-analysis-evidence-coach-context-design.md`](../../../superpowers/specs/2026-07-13-analysis-evidence-coach-context-design.md)、[`../../../superpowers/specs/2026-07-17-automatic-run-capture-design.md`](../../../superpowers/specs/2026-07-17-automatic-run-capture-design.md)
 >

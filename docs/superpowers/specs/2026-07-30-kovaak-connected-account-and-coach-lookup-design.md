@@ -22,4 +22,4 @@ Neither command treats scores, course labels or ranking as technique, body, tens
 
 ## UI Boundary
 
-The existing OpenDesign handoff remains the authority for the future onboarding/Settings module and minimal score view. The module now says that a connected account is saved locally for later manual refresh; it still does not display the raw identifier, add Steam OAuth, create a user account or add a leaderboard.
+The current frontend UI/UX contract is the authority for onboarding/Settings and the minimal score view. The retired OpenDesign handoff remains historical context only. The module now says that a connected account is saved locally for later manual refresh; it still does not display the raw identifier, add Steam OAuth, create a user account or add a leaderboard.
