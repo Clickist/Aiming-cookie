@@ -33,6 +33,7 @@ import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimat
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachLayoutMode = "side-by-side" | "overlay" | "full";
 const COACH_PENDING_INTENT_KEY = "aiming-cookie.ui.coach-pending-intent";
+const SEGMENT_SEEK_PADDING_MS = 2000;
 
 type BatchAnalysisRun = {
   id: number;
@@ -628,7 +629,8 @@ export function CoachPanel({
     const source = contexts.find((item) => item.context_ref === context.contextRef);
     if (source?.analysis_ref && source.status === "active" && onOpenVideo) {
       const timeMs = source.time_range_ms?.[0] ?? context.locator?.relative_start_ms ?? 0;
-      onOpenVideo(source.analysis_ref, timeMs);
+      const paddedTime = Math.max(0, timeMs - SEGMENT_SEEK_PADDING_MS);
+      onOpenVideo(source.analysis_ref, paddedTime);
       setFeedback("已在视频中定位");
       return;
     }
