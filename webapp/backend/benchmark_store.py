@@ -142,14 +142,18 @@ async def get_record(record_id: int, user_id: str) -> dict | None:
 async def list_records(user_id: str) -> list[dict]:
     conn = await get_conn()
     cur = await conn.execute(
-        "SELECT id FROM benchmark_records WHERE user_id=? "
+        "SELECT id, provider, provider_license_note, catalog_version, scenario_id, "
+        "metric_key, unit, value, observed_at, availability, external_identity_ref, "
+        "identity_consent, created_at FROM benchmark_records WHERE user_id=? "
         "ORDER BY observed_at DESC, id DESC",
         (user_id,),
     )
-    return [
-        record for row in await cur.fetchall()
-        if (record := await get_record(row["id"], user_id))
-    ]
+    records = []
+    for row in await cur.fetchall():
+        out = dict(row)
+        out["identity_consent"] = bool(out["identity_consent"])
+        records.append(out)
+    return records
 
 
 async def list_latest_snapshot(

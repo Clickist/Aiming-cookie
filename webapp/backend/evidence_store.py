@@ -164,11 +164,6 @@ def write_analysis_evidence_artifact(
         else:
             os.replace(temp_dir, final_dir)
             committed = True
-        validate_committed_analysis_evidence(
-            session_id=session_id,
-            owner_id=owner_id,
-            safe_ref=safe_ref,
-        )
     except Exception:
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)

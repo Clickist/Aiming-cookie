@@ -51,17 +51,11 @@ _PERIPHERAL_CHANGE_REQUEST = re.compile(
 )
 _DISCOMFORT = re.compile(r"(?:疼痛|疼|麻木|发麻|刺痛|无力|持续不适)")
 _NO_DISCOMFORT = re.compile(r"(?:没有|没|不)(?:有)?(?:疼痛|疼|麻木|发麻|刺痛|无力|不适)")
-_REFUSAL = re.compile(
-    r"(?:先不练|不练了|不想继续|暂停训练|先暂停|算了|不要记录|先不记录|"
-    r"(?:别|不要|不想|不再).{0,6}(?:重新复测|重新测|再复测|再测|重测|复测))",
-)
-_RESUME = re.compile(r"^(?:继续|继续练|恢复训练|重新开始)[。.!！ ]*$")
 _TEACHING_INTENT = re.compile(r"(?:带(?:我)?练|开始(?:带我)?练|按计划练|安排练习)")
 _ANALYSIS_EXPLANATION_REQUEST = re.compile(
-    r"(?:最重要|优先(?:级|项)?|证据|指标|为什么|为何|解释|说明|比较|区别|噪声|限制|能下.{0,4}结论|不能下.{0,4}结论)"
+    r"(?:最重要|最需要(?:改|解决)|核心(?:问题|结论)?|优先(?:级|项)?|证据|指标|为什么|为何|解释|说明|比较|区别|噪声|限制|能下.{0,4}结论|不能下.{0,4}结论)"
 )
 _CLARIFICATION = re.compile(r"(?:[?？]|是不是|所以|也就是说|意思是|换句话说|那我就|对吗)")
-_RETEST_RETRY = re.compile(r"(?:重新复测|重新测|再复测|再测|重测|按原条件)")
 _RETEST_OUTCOME_DECISIONS = {
     "coach_retest_outcome.v1:improved": "retain",
     "coach_retest_outcome.v1:unchanged": "lower",
@@ -181,6 +175,7 @@ async def execute_turn(**kwargs) -> dict[str, Any]:
         teaching_turn=kwargs.get("teaching_turn"),
         temporary_profile_refs=kwargs.get("temporary_profile_refs"),
         on_partial=kwargs.get("on_partial"),
+        on_activity=kwargs.get("on_activity"),
     )
     return {
         "status": result.status,
@@ -850,64 +845,6 @@ def _promote_explicit_candidate(
     updated["primary_candidate"] = selected
     updated["alternatives"] = remaining
     return updated
-
-
-async def _prepare_session_for_user_input(
-    owner_id: str,
-    session: dict[str, Any],
-    content: str,
-) -> dict[str, Any]:
-    state = json.loads(json.dumps(session["state"], ensure_ascii=False))
-    if _DISCOMFORT.search(content) and _NO_DISCOMFORT.search(content) is None:
-        state.update({
-            "phase": "stopped_for_discomfort",
-            "pending_confirmation_ref": None,
-            "pause_reason": "discomfort",
-        })
-    elif state["phase"] == "paused" and _RESUME.fullmatch(content.strip()):
-        state.update({"phase": "intake", "pending_confirmation_ref": None, "pause_reason": None})
-    elif _REFUSAL.search(content):
-        state.update({
-            "phase": "paused",
-            "pending_confirmation_ref": None,
-            "pause_reason": "user_refused",
-        })
-    elif (
-        state["phase"] == "revise"
-        and state.get("revision_decision") is None
-        and (_is_practice_acceptance(content) or _RETEST_RETRY.search(content))
-    ):
-        state.update({
-            "phase": "retest_ready",
-            "pending_confirmation_ref": None,
-            "retest_comparability": "unresolved",
-            "pause_reason": None,
-        })
-    elif state["phase"] in {"await_teach_back", "teach_back_repair"}:
-        state["phase"] = "teach" if _requests_clarification(content) else "practice_ready"
-    elif state["phase"] == "practice_ready" and _requests_clarification(content):
-        state["phase"] = "teach"
-    elif state["phase"] == "hypothesize":
-        if (
-            _unique_candidate_index(state, content) is None
-            and _needs_candidate_clarification(state, content)
-        ):
-            # Do not infer a synonym as an existing explanation. Ask once more
-            # instead of letting the old candidate advance into teaching.
-            state["phase"] = "intake"
-        else:
-            state = _promote_explicit_candidate(state, content)
-    elif state["phase"] == "intake" and isinstance(state.get("primary_candidate"), Mapping):
-        if _unique_candidate_index(state, content) is not None:
-            state = _promote_explicit_candidate(state, content)
-            state["phase"] = "hypothesize"
-    if state == session["state"]:
-        return session
-    return await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
-
-
 def _candidate_discriminator_question(state: Mapping[str, Any]) -> str | None:
     primary = state.get("primary_candidate")
     alternatives = state.get("alternatives")
@@ -943,21 +880,10 @@ def _requires_teaching_turn(
 ) -> bool:
     state = session.get("state")
     phase = state.get("phase") if isinstance(state, Mapping) else None
-    has_active_candidate = (
-        isinstance(state, Mapping)
-        and isinstance(state.get("primary_candidate"), Mapping)
-    )
     return (
         phase is not None
         and phase != "intake"
-    ) or session.get("active_run_ref") is not None or _TEACHING_INTENT.search(content) is not None or (
-        has_active_candidate
-        and _ANALYSIS_EXPLANATION_REQUEST.search(content) is None
-    ) or (
-        _bundle_has_analysis_context(bundle)
-        and _ANALYSIS_EXPLANATION_REQUEST.search(content) is None
-        and _ANALYSIS_FACT_REQUEST.search(content) is None
-    )
+    ) or session.get("active_run_ref") is not None or _TEACHING_INTENT.search(content) is not None
 
 
 def _teaching_contract(
@@ -1120,21 +1046,6 @@ def _state_after_success(
             "next_recommendation": None,
         })
     return next_state
-
-
-def _may_advance_teaching_fallback(
-    contract: Mapping[str, Any], tool_events: Sequence[Mapping[str, Any]],
-) -> bool:
-    return (
-        contract.get("phase") == "intake"
-        and _bounded_lesson_text(contract.get("observation")) is not None
-        and _bounded_lesson_text(contract.get("primary_candidate")) is not None
-        and contract.get("allowed_command") is None
-        and contract.get("confirmation_intent") == "none"
-        and not _teaching_command_events(tool_events)
-    )
-
-
 async def _pending_confirmation_ref(
     owner_id: str,
     thread_id: int,
@@ -1204,39 +1115,50 @@ async def _audited_direct_teaching_fact_ref(
     return result_ref
 
 
-async def _direct_teaching_next_state(
+async def _apply_teaching_fact_transition(
+    conn: Any,
     owner_id: str,
-    session: Mapping[str, Any],
+    state: dict[str, Any],
     command_name: str,
-    result_ref: str,
+    fact_ref: str,
+    *,
+    fact_label: str,
 ) -> dict[str, Any]:
-    state = json.loads(json.dumps(session["state"], ensure_ascii=False))
+    """Apply the state transition for a resolved teaching command fact.
+
+    Shared by _direct_teaching_next_state (explicit facts) and
+    _reconcile_teaching_session (confirmed facts).  Callers resolve the
+    fact reference and perform path-specific pre-checks before delegating.
+    """
     item_ref = state.get("active_item_ref")
-    conn = await get_conn()
     if command_name == "training_plan.item.add":
         item = await (await conn.execute(
             "SELECT 1 FROM training_plan_items WHERE owner_id=? AND item_ref=?",
-            (owner_id, result_ref),
+            (owner_id, fact_ref),
         )).fetchone()
         if item is None:
-            raise AgentRunError("teaching_item_missing", "Explicit plan item fact is unavailable")
+            raise AgentRunError(
+                "teaching_item_missing",
+                f"{fact_label} plan item fact is unavailable",
+            )
         state.update({
             "phase": "await_execution_confirmation",
-            "active_item_ref": result_ref,
+            "active_item_ref": fact_ref,
             "pending_confirmation_ref": None,
             "pause_reason": None,
         })
         return state
-    if not isinstance(item_ref, str):
-        raise AgentRunError("teaching_fact_missing", "Teaching item is unavailable")
     if command_name == "training_plan.execution.record":
         execution = await (await conn.execute(
             "SELECT completion_status, user_feedback FROM training_plan_executions "
             "WHERE execution_ref=? AND owner_id=? AND item_ref=?",
-            (result_ref, owner_id, item_ref),
+            (fact_ref, owner_id, item_ref),
         )).fetchone()
         if execution is None:
-            raise AgentRunError("teaching_execution_missing", "Explicit execution fact is unavailable")
+            raise AgentRunError(
+                "teaching_execution_missing",
+                f"{fact_label} execution fact is unavailable",
+            )
         feedback = _learner_feedback_text(execution["user_feedback"])
         if _DISCOMFORT.search(feedback) and _NO_DISCOMFORT.search(feedback) is None:
             state.update({"phase": "stopped_for_discomfort", "pending_confirmation_ref": None, "pause_reason": "discomfort"})
@@ -1249,15 +1171,16 @@ async def _direct_teaching_next_state(
             )
             state.update({"phase": "retest_ready", "pending_confirmation_ref": None, "pause_reason": None})
         return state
-    if command_name != "training_plan.retest.record":
-        raise AgentRunError("teaching_command_out_of_phase", "Teaching turn emitted an out-of-phase product command")
     retest = await (await conn.execute(
         "SELECT comparability, result, limitations_json FROM training_plan_retests "
         "WHERE retest_ref=? AND owner_id=? AND item_ref=?",
-        (result_ref, owner_id, item_ref),
+        (fact_ref, owner_id, item_ref),
     )).fetchone()
     if retest is None:
-        raise AgentRunError("teaching_retest_missing", "Explicit retest fact is unavailable")
+        raise AgentRunError(
+            "teaching_retest_missing",
+            f"{fact_label} retest fact is unavailable",
+        )
     comparability = {
         "comparable": "comparable", "not_comparable": "not_comparable", "unavailable": "unresolved",
     }.get(retest["comparability"], "unresolved")
@@ -1300,6 +1223,32 @@ async def _direct_teaching_next_state(
         ),
     })
     return state
+
+
+async def _direct_teaching_next_state(
+    owner_id: str,
+    session: Mapping[str, Any],
+    command_name: str,
+    result_ref: str,
+) -> dict[str, Any]:
+    state = json.loads(json.dumps(session["state"], ensure_ascii=False))
+    item_ref = state.get("active_item_ref")
+    conn = await get_conn()
+    if command_name == "training_plan.item.add":
+        return await _apply_teaching_fact_transition(
+            conn, owner_id, state, command_name, result_ref, fact_label="Explicit",
+        )
+    if not isinstance(item_ref, str):
+        raise AgentRunError("teaching_fact_missing", "Teaching item is unavailable")
+    if command_name == "training_plan.execution.record":
+        return await _apply_teaching_fact_transition(
+            conn, owner_id, state, command_name, result_ref, fact_label="Explicit",
+        )
+    if command_name != "training_plan.retest.record":
+        raise AgentRunError("teaching_command_out_of_phase", "Teaching turn emitted an out-of-phase product command")
+    return await _apply_teaching_fact_transition(
+        conn, owner_id, state, command_name, result_ref, fact_label="Explicit",
+    )
 
 
 async def _release_teaching_run(
@@ -1430,126 +1379,34 @@ async def _reconcile_teaching_session(owner_id: str, session: dict[str, Any]) ->
             confirmed_item_ref = await _confirmed_fact_ref(
                 conn, owner_id, row, prefix="plan-item:",
             )
-            item = await (await conn.execute(
-                "SELECT 1 FROM training_plan_items WHERE owner_id=? AND item_ref=?",
-                (owner_id, confirmed_item_ref),
-            )).fetchone()
-            if item is None:
-                raise AgentRunError(
-                    "teaching_item_missing", "Confirmed plan item fact is unavailable",
-                )
-            state.update({
-                "phase": "await_execution_confirmation",
-                "active_item_ref": confirmed_item_ref,
-                "pending_confirmation_ref": None,
-                "pause_reason": None,
-            })
+            state = await _apply_teaching_fact_transition(
+                conn, owner_id, state, row["command_name"], confirmed_item_ref,
+                fact_label="Confirmed",
+            )
         elif row["command_name"] == "training_plan.execution.record":
             execution_ref = await _confirmed_fact_ref(
                 conn, owner_id, row, prefix="plan-execution:",
             )
-            execution = await (await conn.execute(
-                "SELECT completion_status, user_feedback FROM training_plan_executions "
-                "WHERE execution_ref=? AND owner_id=? AND item_ref=?",
-                (execution_ref, owner_id, item_ref),
-            )).fetchone()
-            if execution_ref is None or item_ref != state.get("active_item_ref") or execution is None:
+            if execution_ref is None or item_ref != state.get("active_item_ref"):
                 raise AgentRunError(
                     "teaching_execution_missing", "Confirmed execution fact is unavailable",
                 )
-            feedback = _learner_feedback_text(execution["user_feedback"])
-            if _DISCOMFORT.search(feedback) and _NO_DISCOMFORT.search(feedback) is None:
-                state.update({
-                    "phase": "stopped_for_discomfort",
-                    "pending_confirmation_ref": None,
-                    "pause_reason": "discomfort",
-                })
-            elif execution["completion_status"] == "skipped":
-                state.update({
-                    "phase": "paused",
-                    "pending_confirmation_ref": None,
-                    "pause_reason": "user_refused",
-                })
-            else:
-                state = _promote_explicit_candidate(state, feedback)
-                await training_plan_store.set_plan_item_status(
-                    owner_id,
-                    item_ref,
-                    "active",
-                    reason=_CONFIRMED_EXECUTION_STATUS_REASON,
-                )
-                state.update({
-                    "phase": "retest_ready",
-                    "pending_confirmation_ref": None,
-                    "pause_reason": None,
-                })
+            state = await _apply_teaching_fact_transition(
+                conn, owner_id, state, row["command_name"], execution_ref,
+                fact_label="Confirmed",
+            )
         elif row["command_name"] == "training_plan.retest.record":
             retest_ref = await _confirmed_fact_ref(
                 conn, owner_id, row, prefix="retest:",
             )
-            retest = await (await conn.execute(
-                "SELECT comparability, result, limitations_json FROM training_plan_retests "
-                "WHERE retest_ref=? AND owner_id=? AND item_ref=?",
-                (retest_ref, owner_id, item_ref),
-            )).fetchone()
-            if retest_ref is None or retest is None:
+            if retest_ref is None:
                 raise AgentRunError("teaching_retest_missing", "Confirmed retest fact is unavailable")
             if item_ref != state.get("active_item_ref"):
                 raise AgentRunError("teaching_retest_missing", "Confirmed retest fact is unavailable")
-            comparability = {
-                "comparable": "comparable",
-                "not_comparable": "not_comparable",
-                "unavailable": "unresolved",
-            }.get(retest["comparability"], "unresolved")
-            try:
-                limitations = json.loads(retest["limitations_json"] or "[]")
-            except (TypeError, json.JSONDecodeError):
-                limitations = None
-            policy_missing = (
-                isinstance(limitations, list)
-                and "metric_change_policy_missing" in limitations
+            state = await _apply_teaching_fact_transition(
+                conn, owner_id, state, row["command_name"], retest_ref,
+                fact_label="Confirmed",
             )
-            revision_decision = (
-                _RETEST_OUTCOME_DECISIONS.get(retest["result"])
-                if comparability == "comparable" and limitations is not None and not policy_missing
-                else None
-            )
-            item_payload = None
-            item_row = await (await conn.execute(
-                "SELECT item_payload_json FROM training_plan_items WHERE owner_id=? AND item_ref=?",
-                (owner_id, item_ref),
-            )).fetchone()
-            if item_row is not None:
-                try:
-                    parsed_item = json.loads(item_row["item_payload_json"])
-                except (TypeError, json.JSONDecodeError):
-                    parsed_item = None
-                if isinstance(parsed_item, Mapping):
-                    item_payload = parsed_item
-            if revision_decision is not None:
-                await training_plan_store.set_plan_item_status(
-                    owner_id,
-                    item_ref,
-                    _REVISION_ITEM_STATUSES[revision_decision],
-                    reason=f"{_REVISION_STATUS_REASON_PREFIX}{revision_decision}",
-                )
-            state.update({
-                "phase": "revise",
-                "pending_confirmation_ref": None,
-                "pause_reason": None,
-                "retest_comparability": comparability,
-                "revision_decision": revision_decision,
-                "next_recommendation": (
-                    _next_recommendation_for_confirmed_retest(
-                        item_payload,
-                        comparability=comparability,
-                        result=retest["result"],
-                        limitations=limitations,
-                    )
-                    if isinstance(item_payload, Mapping)
-                    else None
-                ),
-            })
         else:
             state.update({"pending_confirmation_ref": None, "pause_reason": None})
     else:
@@ -1599,27 +1456,6 @@ async def _complete_teaching_turn(
     outcome: Mapping[str, Any],
 ) -> bool:
     tool_events = outcome["tool_events"]
-    teaching_notes = set(outcome["notes"])
-    if teaching_notes & {"teaching_fallback", "teaching_hold"}:
-        if _teaching_command_events(tool_events):
-            raise AgentRunError(
-                "teaching_command_out_of_phase",
-                "A non-advancing teaching turn may not execute a product command",
-            )
-        if (
-            "teaching_fallback" in teaching_notes
-            and _may_advance_teaching_fallback(contract, tool_events)
-        ):
-            session = await teaching_session_store.get_session(owner_id, contract["session_ref"])
-            if session is None:
-                raise AgentRunError("teaching_session_missing", "TeachingSession is unavailable")
-            return await _release_teaching_run(
-                owner_id,
-                run_ref,
-                next_state=_state_after_success(session["state"], contract, bundle),
-            )
-        return await _release_teaching_run(owner_id, run_ref)
-
     matching_events = _matching_command_events(contract, tool_events)
     if matching_events:
         session = await teaching_session_store.get_session(owner_id, contract["session_ref"])
@@ -1710,29 +1546,11 @@ def _safe_timing(value: object) -> dict[str, Any] | None:
     }
     if not set(value).issubset(allowed):
         raise AgentRunError("invalid_runner_result", "Coach runner returned invalid timing")
-    safe: dict[str, Any] = {}
-    for key, item in value.items():
-        if key == "provider_round_ms":
-            if (
-                not isinstance(item, list)
-                or len(item) > 64
-                or any(
-                    isinstance(entry, bool)
-                    or not isinstance(entry, int)
-                    or not 0 <= entry <= 3_600_000
-                    for entry in item
-                )
-            ):
-                raise AgentRunError("invalid_runner_result", "Coach runner returned invalid timing")
-            safe[key] = list(item)
-            continue
-        if item is None and key.startswith("first_"):
-            safe[key] = None
-            continue
-        if isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 3_600_000:
-            raise AgentRunError("invalid_runner_result", "Coach runner returned invalid timing")
-        safe[key] = item
-    return safe
+
+    def _raise_invalid() -> None:
+        raise AgentRunError("invalid_runner_result", "Coach runner returned invalid timing")
+
+    return coach_runtime._validate_timing_fields(value, raise_invalid=_raise_invalid)
 
 
 async def _write_partial_revision(
@@ -1970,6 +1788,39 @@ async def _run_agent(
                 if contract is None:
                     await _write_partial_revision(run_ref, text, metadata)
 
+            async def on_activity(activity: Mapping[str, Any]) -> None:
+                kind = activity.get("kind")
+                state = activity.get("state")
+                if kind not in {"thinking", "tool"} or state not in {"started", "completed", "failed"}:
+                    return
+                payload = {
+                    key: activity[key]
+                    for key in (
+                        "sequence", "kind", "state", "tool_call_id", "tool_name", "command_name",
+                    )
+                    if key in activity
+                }
+                conn = await get_conn()
+                await conn.execute(
+                    "UPDATE coach_agent_runs SET phase=?, updated_at=CURRENT_TIMESTAMP "
+                    "WHERE run_ref=? AND status IN ('queued', 'running')",
+                    (
+                        "tool_execution"
+                        if kind == "tool" and state == "started"
+                        else "text_generation",
+                        run_ref,
+                    ),
+                )
+                await conn.commit()
+                await _append_event(
+                    run_ref,
+                    event_type="tool" if kind == "tool" else "phase",
+                    phase="tool_execution" if kind == "tool" else "text_generation",
+                    code=f"{kind}_{state}",
+                    message="Coach activity update",
+                    payload=payload,
+                )
+
             outcome = _normalize_outcome(await execute_turn(
                 run_ref=run_ref,
                 owner_id=owner_id,
@@ -1984,6 +1835,7 @@ async def _run_agent(
                 teaching_turn=contract,
                 temporary_profile_refs=temporary_profile_refs,
                 on_partial=on_partial,
+                on_activity=on_activity,
             ))
         finally:
             _provider_turns.discard(run_ref)
@@ -2229,14 +2081,13 @@ async def create_analysis_soft_start(
                 raise AgentRunError(
                     "no_grounded_problem", "Analysis has no grounded Coach lesson",
                 )
-            assistant_content = _render_problem_soft_start(problem)
 
             hydrated_state = teaching_session_store.validate_state(
                 _hydrate_teaching_state(state, bundle),
             )
             if hydrated_state.get("phase") != state.get("phase"):
                 raise AgentRunError(
-                    "teaching_session_busy", "Coach lesson changed during soft start",
+                    "teaching_session_busy", "Coach lesson changed during context attachment",
                 )
         except Exception:
             await cleanup_new_context()
@@ -2250,19 +2101,6 @@ async def create_analysis_soft_start(
         conn = await get_conn()
         await conn.execute("BEGIN IMMEDIATE")
         try:
-            existing_row = await (await conn.execute(
-                "SELECT run_ref FROM coach_agent_runs "
-                "WHERE owner_id=? AND initiator='system' AND trigger_ref=?",
-                (owner_id, trigger_ref),
-            )).fetchone()
-            if existing_row is not None:
-                await conn.execute("ROLLBACK")
-                existing = await get_run(owner_id, existing_row["run_ref"])
-                if existing is None:
-                    raise AgentRunError(
-                        "soft_start_conflict", "Coach soft start is unavailable",
-                    )
-                return existing
             current = await (await conn.execute(
                 "SELECT active_run_ref, state_json, version FROM teaching_sessions "
                 "WHERE session_ref=? AND owner_id=? AND thread_id=?",
@@ -2302,24 +2140,18 @@ async def create_analysis_soft_start(
                 )
                 if cursor.rowcount != 1:
                     raise AgentRunError(
-                        "teaching_session_busy", "Coach lesson changed during soft start",
+                        "teaching_session_busy", "Coach lesson changed during context attachment",
                     )
             await conn.execute(
                 "INSERT INTO coach_agent_runs("
                 "run_ref, owner_id, thread_id, attempt, status, phase, content, "
                 "user_message_id, initiator, trigger_ref, context_refs_json, partial_text, "
                 "started_at, finished_at) "
-                "VALUES(?, ?, ?, 1, 'succeeded', 'completed', '', NULL, 'system', ?, ?, ?, "
+                "VALUES(?, ?, ?, 1, 'succeeded', 'completed', '', NULL, 'system', ?, ?, '', "
                 "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 (
                     run_ref, owner_id, thread_id, trigger_ref, snapshot_json,
-                    assistant_content,
                 ),
-            )
-            await conn.execute(
-                "INSERT INTO coach_messages(thread_id, role, content, context_refs_json) "
-                "VALUES(?, 'assistant', ?, ?)",
-                (thread_id, assistant_content, snapshot_json),
             )
             await conn.execute(
                 "UPDATE coach_threads SET updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -2328,13 +2160,13 @@ async def create_analysis_soft_start(
             await conn.execute(
                 "INSERT INTO coach_agent_run_events("
                 "event_ref, run_ref, sequence, event_type, phase, code, message) "
-                "VALUES(?, ?, 1, 'status', 'completed', 'soft_start_completed', ?)",
+                "VALUES(?, ?, 1, 'status', 'completed', 'context_attached', ?)",
                 (
                     f"agent_event:{uuid.uuid4().hex}", run_ref,
-                    "Coach analysis soft start completed",
+                    "Coach analysis context attached",
                 ),
             )
-            await conn.commit()
+            await conn.execute("COMMIT")
         except Exception:
             if conn.in_transaction:
                 await conn.execute("ROLLBACK")
@@ -2342,7 +2174,7 @@ async def create_analysis_soft_start(
             raise
         result = await get_run(owner_id, run_ref)
         if result is None:
-            raise AgentRunError("soft_start_missing", "Coach soft start is unavailable")
+            raise AgentRunError("soft_start_missing", "Coach analysis context attach is unavailable")
         return result
 
 
@@ -2369,7 +2201,6 @@ async def create_run(
         target_thread_id = int(target["id"])
     session = await teaching_session_store.get_or_create_primary_session(owner_id)
     session = await _reconcile_teaching_session(owner_id, session)
-    session = await _prepare_session_for_user_input(owner_id, session, safe_content)
     # TeachingSession remains owner-scoped; the Coach transcript can target
     # the owner-scoped thread selected by the Session rail.
     thread_id = target_thread_id or int(session["thread_id"])
@@ -2443,6 +2274,7 @@ async def create_run(
             await conn.execute("ROLLBACK")
         raise
     if contract is not None:
+        await _load_or_append_user_message(run_ref, thread_id, safe_content, snapshots)
         try:
             await teaching_session_store.claim_active_run(
                 owner_id, session["session_ref"], session["version"], run_ref, contract,
