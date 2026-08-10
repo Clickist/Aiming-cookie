@@ -8,8 +8,6 @@
 
 - [`2026-08-10-coach-product-operator-guided-workflows-v1.md`](2026-08-10-coach-product-operator-guided-workflows-v1.md)：在现有 Pi runtime、typed product commands、confirmation/idempotency/audit、Coach runs/events、TeachingSession 与 Training Plan 上增加 message-bound direct grant、ProductReadiness、GuidanceIntent、命令覆盖和单一 GuidanceHost；当前尚未授权任何 Task。
 
-- [`2026-08-09-coach-first-single-pipeline-v1.md`](2026-08-09-coach-first-single-pipeline-v1.md): Historical Provider-required Coach workflow and fixed all-source analysis proposal. Its input-tier and OpenDesign wording is superseded by the current PRD and frontend UI/UX contract.
-
 - [`2026-08-09-scenario-family-routing-and-run-presentation-v1.md`](2026-08-09-scenario-family-routing-and-run-presentation-v1.md): 点点已授权修复新场景不可分析与内部 Run 编号泄漏；按本机场景定义优先的自动 family 识别、baseline 分析降级、用户安全记录标签和回归验证推进，未完成前不得重打内测包。
 - [`2026-08-08-internal-beta-e2e-remediation-v1.md`](2026-08-08-internal-beta-e2e-remediation-v1.md)：点点已授权 Tasks 1-4；按 Coach 读取与工具失败真值、Tauri 子进程有界自愈、production Analysis/状态/计划一致性以及全量回归与隔离安装态 E2E 收口本轮内测阻塞，全部通过后才能重打未签名安装包。
 
