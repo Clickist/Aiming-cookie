@@ -100,6 +100,9 @@ class PiCoachTurnResult:
 PartialCallback = Callable[
     [str, Mapping[str, int]], Awaitable[None] | None,
 ]
+ActivityCallback = Callable[
+    [Mapping[str, Any]], Awaitable[None] | None,
+]
 
 _STREAM_SCHEMA = "coach_runtime_stream.v1"
 _MAX_STREAM_FRAMES = 4096
@@ -907,6 +910,41 @@ def _validate_turn_response(
     )
 
 
+def _validate_timing_fields(
+    value: Mapping[str, Any],
+    *,
+    raise_invalid: Callable[[], Any],
+) -> dict[str, Any]:
+    """Validate common per-field timing constraints and return a safe copy.
+
+    Shared by _validate_stream_timing and coach_agent_runs._safe_timing.
+    Callers handle set-membership checks and cross-field constraints.
+    """
+    safe: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "provider_round_ms":
+            if (
+                not isinstance(item, list)
+                or len(item) > 64
+                or any(
+                    isinstance(entry, bool)
+                    or not isinstance(entry, int)
+                    or not 0 <= entry <= 3_600_000
+                    for entry in item
+                )
+            ):
+                raise_invalid()
+            safe[key] = list(item)
+            continue
+        if item is None and key.startswith("first_"):
+            safe[key] = None
+            continue
+        if isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 3_600_000:
+            raise_invalid()
+        safe[key] = item
+    return safe
+
+
 def _validate_stream_timing(
     value: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -919,41 +957,27 @@ def _validate_stream_timing(
             error_code="invalid_sidecar_response",
             retryable=False,
         )
-    safe: dict[str, Any] = {}
-    for key in _TIMING_KEYS:
-        item = value.get(key)
-        if key == "provider_round_ms":
-            if (
-                not isinstance(item, list)
-                or len(item) > 64
-                or any(
-                    isinstance(entry, bool)
-                    or not isinstance(entry, int)
-                    or not 0 <= entry <= 3_600_000
-                    for entry in item
-                )
-                or len(item) != value.get("provider_rounds")
-                or sum(item) != value.get("provider_ms")
-            ):
-                raise CoachRuntimeError(
-                    "sidecar timing 无效",
-                    side_effects_possible=True,
-                    error_code="invalid_sidecar_response",
-                    retryable=False,
-                )
-            safe[key] = list(item)
-            continue
-        if item is None and key.startswith("first_"):
-            safe[key] = None
-            continue
-        if isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 3_600_000:
-            raise CoachRuntimeError(
-                "sidecar timing 无效",
-                side_effects_possible=True,
-                error_code="invalid_sidecar_response",
-                retryable=False,
-            )
-        safe[key] = item
+
+    def _raise_invalid() -> None:
+        raise CoachRuntimeError(
+            "sidecar timing 无效",
+            side_effects_possible=True,
+            error_code="invalid_sidecar_response",
+            retryable=False,
+        )
+
+    safe = _validate_timing_fields(value, raise_invalid=_raise_invalid)
+    provider_round_ms = safe["provider_round_ms"]
+    if (
+        len(provider_round_ms) != safe["provider_rounds"]
+        or sum(provider_round_ms) != safe["provider_ms"]
+    ):
+        raise CoachRuntimeError(
+            "sidecar timing 无效",
+            side_effects_possible=True,
+            error_code="invalid_sidecar_response",
+            retryable=False,
+        )
     first_provider_event_ms = safe["first_provider_event_ms"]
     first_text_delta_ms = safe["first_text_delta_ms"]
     first_safe_text_ms = safe["first_safe_text_ms"]
@@ -1049,6 +1073,7 @@ def _post_turn_to_sidecar(request: dict[str, Any], timeout_s: int) -> dict[str, 
 async def _post_turn_to_sidecar_async(
     request: dict[str, Any], timeout_s: int,
     on_partial: PartialCallback | None = None,
+    on_activity: ActivityCallback | None = None,
 ) -> dict[str, Any]:
     schema_version = str(request.get("schema_version") or COACH_RUNTIME_TURN_SCHEMA_V0)
     path = "/v1/turn" if schema_version == COACH_RUNTIME_TURN_SCHEMA_V1 else "/v0/turn"
@@ -1103,6 +1128,7 @@ async def _post_turn_to_sidecar_async(
                 final_response: dict[str, Any] | None = None
                 final_timing: dict[str, Any] | None = None
                 last_revision = 0
+                last_activity_sequence = 0
                 frame_count = 0
                 async for line in response.aiter_lines():
                     if not line:
@@ -1184,6 +1210,35 @@ async def _post_turn_to_sidecar_async(
                                     "provider_rounds": provider_rounds,
                                 },
                             )
+                            if inspect.isawaitable(callback_result):
+                                await callback_result
+                        continue
+                    if frame_type == "activity":
+                        activity = frame.get("activity")
+                        if (
+                            not isinstance(activity, Mapping)
+                            or isinstance(activity.get("sequence"), bool)
+                            or not isinstance(activity.get("sequence"), int)
+                            or activity["sequence"] != last_activity_sequence + 1
+                            or activity.get("kind") not in {"thinking", "tool"}
+                            or activity.get("state") not in {"started", "completed", "failed"}
+                            or any(
+                                key in activity and (
+                                    not isinstance(activity[key], str) or len(activity[key]) > 120
+                                )
+                                for key in ("tool_call_id", "tool_name", "command_name")
+                            )
+                        ):
+                            raise CoachRuntimeError(
+                                "sidecar activity frame invalid",
+                                side_effects_possible=saw_frame,
+                                error_code="invalid_sidecar_response",
+                                retryable=False,
+                                partial_reply=last_partial,
+                            )
+                        last_activity_sequence = int(activity["sequence"])
+                        if on_activity is not None:
+                            callback_result = on_activity(dict(activity))
                             if inspect.isawaitable(callback_result):
                                 await callback_result
                         continue
@@ -1425,6 +1480,7 @@ async def run_pi_coach_turn_async(
     run_id: str | None = None,
     timeout_s: int | None = None,
     on_partial: PartialCallback | None = None,
+    on_activity: ActivityCallback | None = None,
 ) -> PiCoachTurnResult:
     client_started_ns = time.monotonic_ns()
     schema_version = (
@@ -1451,7 +1507,9 @@ async def run_pi_coach_turn_async(
     sidecar_transport_ms: int | None = None
     sidecar_started_ns = time.monotonic_ns()
     try:
-        response = await _post_turn_to_sidecar_async(request, timeout, on_partial=on_partial)
+        response = await _post_turn_to_sidecar_async(
+            request, timeout, on_partial=on_partial, on_activity=on_activity,
+        )
         sidecar_transport_ms = _monotonic_elapsed_ms(sidecar_started_ns)
     except CoachRuntimeError as error:
         sidecar_transport_ms = _monotonic_elapsed_ms(sidecar_started_ns)

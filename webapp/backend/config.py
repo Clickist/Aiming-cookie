@@ -318,7 +318,6 @@ KOVAAK_WATCH_POLL_SECONDS = float(os.environ.get("KOVAAK_WATCH_POLL_SECONDS", "1
 # Legacy compatibility inputs only. Active Coach/worker provider selection is
 # owner-scoped local profile state and does not apply the fixed CNY budget.
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek")
-LLM_DAILY_BUDGET_CNY = float(os.environ.get("LLM_DAILY_BUDGET_CNY", "1.0"))
 MAX_VIDEO_BYTES = 100 * 1024 * 1024  # 100MB
 MAX_CSV_BYTES = 10 * 1024 * 1024    # 10MB(KovaaK Stats CSV 实际 <1MB,留余量)
 UPLOAD_CHUNK_SIZE = int(os.environ.get("UPLOAD_CHUNK_SIZE", str(1024 * 1024)))  # 1MB
