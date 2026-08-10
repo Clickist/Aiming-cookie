@@ -28,8 +28,8 @@
 | 视觉方向与语义设计语言 | [`DESIGN-cursor.md`](DESIGN-cursor.md) |
 | 前端 token、主题和组件的实现治理 | [`docs/design-system.md`](docs/design-system.md) 与当前前端实现 |
 | 安装、启动、测试和代码入口 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
-| 单个局部设计合同 | [`docs/superpowers/specs/README.md`](docs/superpowers/specs/README.md) 列出的 active spec |
-| executor 可执行步骤 | [`docs/superpowers/plans/README.md`](docs/superpowers/plans/README.md) 列出的 active plan 与明确 Task |
+| 单个局部设计合同 | 相关设计文档、当前代码和测试 |
+| 施工顺序与当前状态 | [`docs/ROADMAP.md`](docs/ROADMAP.md)、[`docs/PROGRESS.md`](docs/PROGRESS.md) 与当前任务说明 |
 | 历史证据 | [`docs/archive/README.md`](docs/archive/README.md)；只供追溯，不是当前依据 |
 
 `AGENTS.md` / `CLAUDE.md` 只定义协作和文档治理规则，不得复制产品状态、发布日期、代码地图、算法说明、测试数字或当前施工清单。
@@ -48,7 +48,7 @@
 - 产品范围：读 PRD；涉及交付顺序再读 Roadmap 和 Progress。
 - 架构或数据合同：读 PRD 的相关部分与 Architecture，再核对代码和测试。
 - 前端产品设计：读 PRD、`frontend-uiux-design.md`；涉及视觉再读 `DESIGN-cursor.md` 和 `design-system.md`。
-- 实施任务：先确认 active plan、指定 Task、Allowed files 和测试；不默认扫描 archive。
+- 实施任务：先确认当前目标、影响范围和测试；相关 spec/plan 只在需要时作为参考，不构成开工门槛。
 - 当前状态或 review：以相关 diff、关键调用链、测试和 Progress 为范围，不自动扩展成全仓审计。
 - 理论或处方：只读取与问题相关的 research / theory 文档；它们不能决定产品优先级或实施状态。
 
@@ -77,17 +77,11 @@
 - 与计划的偏差和剩余风险；
 - 最终 `git status`，并区分本次改动与原有改动。
 
-## 6. Executor / Fast 模型协议
+## 6. 轻量开发流程
 
-只有在点点明确指定 [`docs/superpowers/plans/README.md`](docs/superpowers/plans/README.md) 中的一个 active plan Task 时，执行模型才能开工。
-
-- 每次只执行一个 Task，只修改其 Allowed files；
-- 开工前回显 Task、Allowed files、Tests first、冻结决策和 Stop rule；
-- Architecture、Roadmap 或 PRD 不能替代 implementation plan；
-- 不得自行定义 schema、migration、retry、delete、security、数据保留或产品默认值；
-- plan 有歧义、代码事实不符、验证失败或需要扩大范围时立即停止；
-- 不得自行修订 plan 解除阻塞，必须由架构负责人或点点裁决；
-- 完成后报告 changed files、验证命令、未运行检查、偏差和 `git status`；未经指示不继续下一 Task。
+- 不要求安装或使用 superpowers 系列 skill，也不要求 active plan/Task 才能开工；
+- 普通任务按当前请求、相关 PRD/Architecture、代码和测试推进，先说明假设、计划和成功标准；
+- 保持改动小而可验证，完成后报告 changed files、验证结果、未运行检查、剩余风险和 `git status`。
 
 ## 7. 文档治理规则
 
@@ -96,7 +90,7 @@
 - 代码入口和命令写入 `docs/DEVELOPMENT.md`，不写入 Agent Contract。
 - 易变化的测试数字、当前 commit、日期化交接和详细 review 放入 Progress；过期后移入 archive history。
 - active spec 只描述尚需长期引用的局部合同；实施完成且结论已回写上游后移入 `docs/archive/retired/specs/`。
-- active plan 目录只保留当前可执行计划；完成、冻结、退役计划分别移入 archive 对应目录。
+- `docs/superpowers/plans/` 与 `docs/superpowers/specs/` 作为可选设计参考和历史记录维护，不构成施工授权或流程门槛。
 - 归档文件尽量保留原正文；若当前结论需要恢复，先核对 PRD、Architecture 与代码，再写回活跃文档。
 - 新增、移动或退役文档时，同步更新 `docs/README.md`、相应索引和活跃文档链接。
 - 若修改本文件，必须将完全相同的内容同步到 `AGENTS.md` 和 `CLAUDE.md`，并用 `cmp -s AGENTS.md CLAUDE.md` 验证。

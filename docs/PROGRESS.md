@@ -1,20 +1,22 @@
-# Aiming Cookie 当前进度
+# Aiming Cookie Current Progress
 
-> **最后整理：2026-08-10。** 本文是当前快照，不是产品或架构事实源。详细研发流水见 [`archive/history/`](archive/history/)；产品、架构与 UI/UX 结论分别以 [`PRD.md`](PRD.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
+> Updated: 2026-08-10. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
 
-## 当前摘要
+## Current Product Direction
 
-- 产品保持 Desktop-first、local-first 和确定性诊断主路径。当前 launch scope 为 static clicking、dynamic clicking、continuous tracking 与 target switching；movement aiming 在缺少玩家移动遥测时保持 outcome-only。Aiming Cookie 不提供产品账号、登录或用户鉴权服务器；Coach 在 Provider 可用时承担长期关系与产品操作。
-- 当前实现已覆盖 Run/Analysis recovery、正式 Browser/Desktop 产品界面、History/Run inspector、Analysis workspace、Coach sidebar/Provider Settings、有限 KovaaK 成绩同步、去身份 Coach 成绩摘要、版本化 Knowledge Registry 与 Training Plan 命令流。所有未校准的比较、诊断和处方继续 fail closed。
-- 2026-08-10 Coach conversation cards/video workspace Tasks 1-7 已完成计划内实现：用户可见一级区域收敛为 Coach、History、Settings，旧 `/tasks`、`/analyze`、`/analysis*` 跳转 History；History 只消费安全摘要或把所选 Analysis 交给 Coach；Coach 可渲染由安全 Analysis 投影生成的 metrics、timeline、evidence 卡片，并在需要时切换为 Session rail + 中央视频 + 右侧 Coach。Tauri 最小宽度为 `1180px`，History/Settings 内容最大宽度为 `1040px` 并居中，不再维护窄屏产品布局。
-- 本轮自动化结果：frontend unit `34 passed`、contracts `125 passed`、type-check 与 production build 通过，Playwright browser smoke + accessibility `22 passed`。Browser 实测 `1280x820` 与 `1920x1080` 的 Coach、History、Settings、消息卡和视频打开状态均无横向溢出、重叠或截断，Settings 退出按钮可见。截图套件的 Coach/History/Settings 新基线二进制尚未纳入 Task 7 Allowed files，旧 Settings 基线也已过期，因此未把 screenshot suite 记为通过；真实 Tauri/KovaaK/hardware/release Gate 均未复跑、状态不变。
-- 当前实现差距：`app/page.tsx` 在 fixture 的 `onboarding_completed=false` 时仍停留 Coach 根工作区，与 PRD 的首次启动必须停留 Provider onboarding 语义冲突。该文件不在 Task 7 Allowed files，本轮未修改；需单独裁决并以新的计划任务处理，不能用 E2E 期待静默改写产品合同。
-- 当前范围只对已有 NVIDIA 实机证据的路径作支持声明；AMD/Intel 与 OAuth/device-code 不在当前范围内。Tracking exact-parity 中位数为 `148.039s`，尚未达到 `<=130s` 目标；Raw Input 1000 Hz canonical 归一化已完成代码、自动化与实测，且后续数据采集核心通路未改动。真实 Tauri product-path、Tracking 时延，以及 installer、签名、updater 和下载验证仍为 release No-Go Gate。
-- 2026-07-30 full-worktree review 的已确认代码与文档问题已按独立复证、最小修复、根会话复核和逻辑分批提交收敛。最终自动化为 Python `1555 passed, 5 skipped`、Coach runtime `172 passed`、Pi AI `473 passed, 733 skipped`、frontend 默认 `58 passed`、production Playwright `55 passed, 3 skipped`、MSVC Rust `73 passed, 7 ignored`；compileall、type-check/build、Rust fmt/check/clippy、diff check、Agent contract parity 与相关文档链接检查通过。skip/ignored 与未执行实机项不改变上方 release No-Go。
-- 2026-07-31 已将 OpenDesign 交付的 dark token、可选 KovaaK 连接与无分类 Tab 成绩列表、Switching/Tracking/Flicking 有界 Data 呈现和 Coach 当前训练落实到正式前端；Easier/Medium 仅作行内进度，Analysis 仍只有诊断/视频/数据三个视图。自动化为 Python `1558 passed, 5 skipped`、frontend unit/contracts `68 passed`、production Playwright `65 passed, 4 skipped`，type-check、production build、18 张截图基线、diff check、Agent contract parity 与 119 份 docs 相对链接检查通过。
-- 2026-08-03 release blocker closeout 已恢复 Tauri `scenario_open` command 注册，并将 Coach primary thread 创建改为 SQLite 原子 insert-or-read；Rust fmt/check/test/clippy、全仓 Python `1570 passed, 5 skipped`、frontend unit/contracts `94 passed`、type-check 和 production build 通过。Settings/KovaaK 的隐私语义、状态色、窄屏布局和空成绩 fixture 已作为独立前端提交收敛。
-- 同日使用隔离 SQLite/Data Root、不存在的 KovaaK 路径和零 Provider secret 运行真实 Pi sidecar、FastAPI、worker 与 production Next：health/ready、Onboarding、Provider catalog、Tasks、History、Settings、Coach primary 与 Desktop-only 拒绝语义通过，浏览器控制台无 error，进程和端口干净退出。真实 Tauri product-path 尚未在本轮复跑；Tracking `<=130s`、installer/signing/updater/download 仍是 release No-Go Gate。
-- 2026-08-04 Raw Input 1000 Hz Task 1 已实现 native 毫秒运动聚合、独立按钮边沿、所有 capture boundary 的 pending-bucket flush、checked overflow fail-closed、`ACRI v2` 写入、v1/v2 双读、rolling v1 确定性迁移和实际版本 provenance。自动化为 MSVC Rust `85 passed, 7 ignored`、相关 Python Run/finalizer `100 passed`；Rust fmt/check/clippy 与 scoped diff check 通过。点点于 2026-08-07 确认 Raw Input 已完成实测，且后续数据采集核心通路未改动；该 plan 已归档，不再作为当前发布阻塞项。
-- 2026-08-06 Coach problem-hypothesis Tasks 1-5 已完成代码与自动化闭环：确定性 problem compiler 在同一 family 内选择一个功能性主问题并保留证据强度/反例；TeachingTurn、Registry v5、现有 agent run/TeachingSession 和首次完成 Analysis 的幂等软启动已接通，Analysis/Data UI 不展示原因假设。收尾验证为计划范围 Python `291 passed`、Coach runtime `140 passed`、frontend unit/contracts `25 + 93 passed`，type-check、production build、全新 `3116` 构建上的 soft-start Playwright、Registry Python/Node provenance 回归与 diff check 通过。真实 Provider 的四 family 合成 TeachingTurn 均被当前端点以 `HTTP 502` 拒绝，受控 subprocess fallback 对 Static 复现相同结果，因此真实 Provider 连续问诊仍是未关闭 field Gate；真实 Tauri/KovaaK/hardware/release Gate 不变。
-- 2026-08-06 Coach goal/feedback learning loop Task 1 已接入现有链路：TeachingSession 可选保存用户目标，TeachingTurn 保留旧字符串并支持 typed evidence，execution `user_feedback` 可承载受限 learner response，compiler 只在用户明确目标与现有排序打平时调整 Coach 优先级；Registry 已升级 v6，新增 Viscose 的效率、tension budget、练习意图/难度社区经验。AnalysisResult、Analysis Data/family、History 与 `current_training.v1` 未改字段或解读。专项验证：Python `173 passed`（另含 Registry `67 passed`），Coach runtime 教学 `30 passed`、turn `78 passed`、Registry `16 passed`；真实 Provider 502 field Gate 与硬件/发布 Gate 仍未关闭。
-- 被本快照覆盖的原始日期化状态、blocker 和验证记录见 [`archive/history/2026-07-30-progress-superseded-history.md`](archive/history/2026-07-30-progress-superseded-history.md)。
+- First activation requires a tested Provider plus enabled Windows Raw Input and KovaaK-window capture. The normal product surfaces are Coach, History, and Settings.
+- Coach automatically selects the strongest valid Run tier: `multimodal`, then `input_native`, then `video_fallback`. A Run with no valid tier is not a normal History record; Coach explains the failure and repair path.
+- Pre-install KovaaK Stats/Performance files are not imported or displayed. Optional KovaaK score linking remains onboarding context only.
+
+## Implementation Status
+
+- Documentation has been realigned with the above contract; the retired OpenDesign handoff and historical superpowers materials are reference-only.
+- Backend automatic tier selection, Run readiness, server-side Analysis tier selection, first-launch routing, and mandatory onboarding UI are implemented and covered by the focused validation below.
+- Real Tauri, KovaaK, hardware, Provider, installer/signing/updater/download, and cross-vendor capture validation remain release gates. Automated checks do not close those gates.
+
+## Verification
+
+- Python source-selection, Coach command, DB, Run, and capability suite: `230 passed`.
+- Frontend type-check, unit tests: `34 passed`, and contract tests: `126 passed`.
+- Production Next build and browser smoke: `14 passed`.
+- Changed-Markdown local link scan, `git diff --check`, and `AGENTS.md`/`CLAUDE.md` parity passed.

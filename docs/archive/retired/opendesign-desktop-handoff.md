@@ -1,6 +1,6 @@
 # OpenDesign Desktop Frontend Handoff
 
-> **状态：active 派生设计交接入口。** 本文帮助 OpenDesign 快速进入 Aiming Cookie Desktop 的正式前端设计工作，但不新增产品事实、不覆盖上游文档，也不构成任何 implementation Task 的编码授权。
+> **状态：retired / historical reference。** 本文保留已结束的 OpenDesign 桌面设计交接背景，不是当前入口、active Task 或实现授权；不得用它覆盖上游文档或当前代码事实。
 >
 > **当前范围：** 只设计桌面产品前端。营销 Landing 保留为后续独立交付，等正式产品界面、真实截图和演示 MP4 可用后再设计与实现。
 
@@ -32,14 +32,14 @@ OpenDesign 的职责是补齐现有合同有意留下的最后一段设计空间
 
 发生冲突时，按以下顺序处理；不得让 prototype、设计稿或 OpenDesign 产物反向覆盖上游合同：
 
-1. [`PRD.md`](PRD.md)：产品目标、范围、用户语义与非目标；
-2. [`ARCHITECTURE.md`](ARCHITECTURE.md)：系统、数据、依赖与安全边界；
-3. [`frontend-uiux-design.md`](frontend-uiux-design.md)：桌面产品骨架、页面职责与交互关系；
-4. [`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)：正式前端局部设计合同；
-5. [`DESIGN-cursor.md`](../DESIGN-cursor.md)：视觉方向、语义色板与共同基础；
-6. [`design-system.md`](design-system.md)：token、主题、primitives 与视觉评审治理；
-7. [`archive/completed/plans/2026-07-13-frontend-product-reconstruction.md`](archive/completed/plans/2026-07-13-frontend-product-reconstruction.md)：已完成 Task 2-7 的施工顺序、Allowed files、Tests first 与 Stop rule；
-8. [`PROGRESS.md`](PROGRESS.md) 与当前代码：当前实际完成度和可运行能力。
+1. [`../../PRD.md`](../../PRD.md)：产品目标、范围、用户语义与非目标；
+2. [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)：系统、数据、依赖与安全边界；
+3. [`../../frontend-uiux-design.md`](../../frontend-uiux-design.md)：桌面产品骨架、页面职责与交互关系；
+4. [`../../superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](../../superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)：正式前端局部设计合同；
+5. [`../../../DESIGN-cursor.md`](../../../DESIGN-cursor.md)：视觉方向、语义色板与共同基础；
+6. [`../../design-system.md`](../../design-system.md)：token、主题、primitives 与视觉评审治理；
+7. [`../completed/plans/2026-07-13-frontend-product-reconstruction.md`](../completed/plans/2026-07-13-frontend-product-reconstruction.md)：已完成 Task 2-7 的施工顺序、Allowed files、Tests first 与 Stop rule；
+8. [`../../PROGRESS.md`](../../PROGRESS.md) 与当前代码：当前实际完成度和可运行能力。
 
 OpenDesign 应通过链接读取原文，不在新产物中复制整段长期事实。发现冲突时停止并报告具体文件与条目，不自行选择一个版本继续设计。
 
@@ -264,7 +264,9 @@ installer 完成不是开始设计 Landing 的前置条件；但 Landing 发布�
 ## 14. 建议的首次 OpenDesign 指令
 
 ```text
-Read docs/opendesign-desktop-handoff.md completely, then follow its source-order links.
+Historical prompt only; do not execute it as a current task. The retired handoff is
+archived at docs/archive/retired/opendesign-desktop-handoff.md; follow current
+source-order links from docs/README.md instead.
 This is a design-only first round: do not edit production frontend, backend, Tauri,
 package files, plans, specs, PRD, or Architecture.
 

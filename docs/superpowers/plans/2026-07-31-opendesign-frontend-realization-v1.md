@@ -304,8 +304,8 @@ npm.cmd exec playwright test e2e/interaction-polish.spec.ts e2e/accessibility.sp
 
 - `docs/PROGRESS.md`
 - `docs/README.md`
-- `docs/opendesign-desktop-handoff.md` (move only)
-- `docs/archive/design-references/opendesign-desktop-handoff.md` (moved file)
+- `docs/opendesign-desktop-handoff.md`（历史路径，已退役）
+- `docs/archive/retired/opendesign-desktop-handoff.md`（当前归档位置）
 - `docs/archive/completed/plans/2026-07-13-frontend-product-reconstruction.md` (repair moved-handoff link only)
 - `docs/superpowers/plans/README.md`
 - `docs/superpowers/plans/2026-07-29-kovaak-score-and-analysis-presentation-closeout-v1.md` (move only)

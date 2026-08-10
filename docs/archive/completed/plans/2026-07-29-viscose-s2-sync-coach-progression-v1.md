@@ -14,7 +14,7 @@
 - `docs/ARCHITECTURE.md`
 - `docs/ROADMAP.md`
 - `docs/frontend-uiux-design.md`
-- `docs/opendesign-desktop-handoff.md`
+- `docs/archive/retired/opendesign-desktop-handoff.md`（历史引用）
 - `docs/README.md`
 - `docs/superpowers/specs/README.md`
 - `docs/superpowers/plans/README.md`
