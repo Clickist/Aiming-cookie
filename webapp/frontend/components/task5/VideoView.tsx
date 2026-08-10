@@ -10,6 +10,8 @@ import { Badge, Button, Empty, Loading, Notice } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
 
+const SEGMENT_SEEK_PADDING_MS = 2000;
+
 function eventTimeMs(event: TimelineEvent): number | null {
   if (typeof event.relative_ms === "number") return event.relative_ms;
   if (typeof event.time_s === "number") return event.time_s * 1000;
@@ -204,7 +206,10 @@ export function VideoView({
     onSelectSegment(segment.segment_id);
     setSelectedEvent(null);
     setDrawerOpen(true);
-    if (typeof segment.playback.relative_start_ms === "number") seek(segment.playback.relative_start_ms);
+    if (typeof segment.playback.relative_start_ms === "number") {
+      const paddedStart = Math.max(0, segment.playback.relative_start_ms - SEGMENT_SEEK_PADDING_MS);
+      seek(paddedStart);
+    }
   };
 
   const openEvent = (index: number) => {

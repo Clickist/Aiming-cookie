@@ -6,6 +6,8 @@ import { getSession } from "@/lib/api";
 import { presentAnalysisWorkspace, type AnalysisMetricPresentation, type AnalysisWorkspacePresentation } from "@/lib/contracts";
 import type { CoachMessageCardV1, CoachThreadMessageOut, TimelineEvent } from "@/lib/types";
 
+const SEGMENT_SEEK_PADDING_MS = 2000;
+
 const presentationCache = new Map<number, AnalysisWorkspacePresentation>();
 
 function analysisIdFromRef(value: string): number | null {
@@ -115,7 +117,10 @@ function MessageCard({
         <p className="task7-message-card__lead">{presentation.issues[0]?.signal ?? presentation.headline}</p>
       ) : null}
       {card.kind === "evidence" && presentation.video.kind === "seekable" && onOpenVideo ? (
-        <button className="task7-message-card__action" onClick={() => onOpenVideo(card.analysis_ref, firstTime)} type="button">在视频中查看 <span aria-hidden="true">→</span></button>
+        <button className="task7-message-card__action" onClick={() => {
+          const paddedTime = Math.max(0, firstTime - SEGMENT_SEEK_PADDING_MS);
+          onOpenVideo(card.analysis_ref, paddedTime);
+        }} type="button">在视频中查看 <span aria-hidden="true">→</span></button>
       ) : null}
     </article>
   );
