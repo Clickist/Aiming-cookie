@@ -1,5 +1,11 @@
 import { loadPiAi } from "./pi-source.ts";
 
+// typebox lives in third_party/pi/node_modules; import its compile submodule
+// via a relative path to the Pi checkout so resolution doesn't depend on a
+// node_modules entry in the webapp tree.
+const { Compile } = await import(
+	"../../../third_party/pi/node_modules/typebox/build/compile/index.mjs"
+);
 const { Type } = (await loadPiAi()) as {
 	Type: {
 		Object(
@@ -10,6 +16,13 @@ const { Type } = (await loadPiAi()) as {
 		String(options?: Record<string, unknown>): unknown;
 		Literal(value: string): unknown;
 		Union(schemas: unknown[]): unknown;
+		Null(): unknown;
+		Boolean(): unknown;
+		Number(options?: Record<string, unknown>): unknown;
+		Array(schema: unknown, options?: Record<string, unknown>): unknown;
+		Tuple(schemas: unknown[]): unknown;
+		Record(key: unknown, value: unknown): unknown;
+		Any(): unknown;
 	};
 };
 
@@ -144,25 +157,6 @@ function hasDuplicateJsonObjectKeys(source: string): boolean {
 	return duplicate;
 }
 
-const V1_TOP_LEVEL_KEYS = new Set([
-	"schema_version",
-	"analysis_ref",
-	"diagnosis",
-	"evidence_summary",
-	"warnings",
-]);
-const V2_TOP_LEVEL_KEYS = new Set([
-	"schema_version",
-	"analysis_ref",
-	"scenario",
-	"run_facts",
-	"diagnosis",
-	"evidence_summary",
-	"trends",
-	"training",
-	"limitations",
-]);
-const V3_TOP_LEVEL_KEYS = new Set([...V2_TOP_LEVEL_KEYS, "processed_events"]);
 const PROCESSED_EVENTS_KEYS = new Set([
 	"mode", "tables", "query_capabilities", "limitations",
 ]);
@@ -185,145 +179,6 @@ const PROCESSED_QUERY_CAPABILITIES = [
 	"analysis.events.sequence",
 	"analysis.evidence.compare",
 ];
-const ANALYSIS_REF_KEYS = new Set([
-	"analysis_id",
-	"analysis_result_version",
-	"analysis_type",
-	"input_mode",
-]);
-const DIAGNOSIS_KEYS = new Set([
-	"profile",
-	"issues",
-	"summary",
-	"comparison",
-	"meta",
-]);
-const PROFILE_KEYS = new Set([
-	"archetype_id",
-	"label",
-	"confidence",
-	"secondary_tags",
-]);
-const ISSUE_KEYS = new Set([
-	"signal",
-	"severity",
-	"priority",
-	"priority_reason",
-	"plain_language_meaning",
-	"expected_result",
-	"claim_level",
-	"observation_ref",
-	"knowledge_registry_version",
-	"knowledge_entry_refs",
-	"metric_refs",
-	"event_refs",
-	"limitations",
-	"primary_evidence_segment_ref",
-	"supporting_evidence_segment_refs",
-	"verification",
-	"root_causes",
-	"prescriptions",
-]);
-const VERIFICATION_KEYS = new Set([
-	"comparable_requirements",
-	"success_signals",
-	"insufficient_evidence_behavior",
-]);
-const ROOT_CAUSE_KEYS = new Set(["level", "text"]);
-const PRESCRIPTION_KEYS = new Set([
-	"scenario",
-	"reason",
-	"cue",
-	"purpose",
-	"dosage",
-	"retest_after",
-	"stop_or_adjust_rule",
-	"target_metrics",
-	"expected_direction",
-	"source_level",
-]);
-const METRIC_KEYS = new Set([
-	"value",
-	"unit",
-	"provenance",
-	"metric_version",
-	"classification",
-	"min",
-	"max",
-	"mean",
-	"median",
-	"med",
-	"p25",
-	"p50",
-	"p75",
-	"p90",
-	"std",
-	"iqr",
-	"count",
-	"n",
-	"score",
-	"status",
-	"key",
-	"availability",
-	"sample_count",
-	"coverage",
-	"limitations",
-	"outlier_method",
-	"outlier_refs",
-	"sample_refs",
-	"definition",
-]);
-const PROVENANCE_KEYS = new Set(["kind", "sources"]);
-const COMPARISON_KEYS = new Set([
-	"status",
-	"reason",
-	"comparable",
-	"metric",
-	"delta",
-	"unit",
-	"classification",
-]);
-const META_KEYS = new Set([
-	"summary_type",
-	"analysis_context",
-	"metric_version",
-	"scenario_identity_version",
-	"calibration_compatibility",
-	"minimum_evidence_quality",
-	"classification",
-]);
-const EVIDENCE_SUMMARY_KEYS = new Set([
-	"availability",
-	"alignment",
-	"coverage",
-]);
-const V2_EVIDENCE_SUMMARY_KEYS = new Set([
-	"availability",
-	"alignment",
-	"coverage",
-	"confidence",
-	"artifact_ref",
-	"evidence_revision",
-	"segment_refs",
-]);
-const ALIGNMENT_KEYS = new Set(["status", "coverage_ratio"]);
-const WARNING_KEYS = new Set([
-	"code",
-	"domain",
-	"retryable",
-	"user_message_key",
-	"evidence_ref",
-]);
-const EVIDENCE_REF_KEYS = new Set([
-	"id",
-	"source",
-	"artifact_id",
-	"alignment_status",
-	"availability",
-	"local_only",
-	"metric_keys",
-	"challenge_time_range_ms",
-]);
 const CLAIM_LEVELS = new Set([
 	"measured",
 	"deterministic_rule",
@@ -332,15 +187,6 @@ const CLAIM_LEVELS = new Set([
 	"community_consensus",
 	"experimental",
 ]);
-const SOURCE_LEVELS = new Set([
-	"product_contract",
-	"academic_peer_reviewed",
-	"community_practice",
-	"community_consensus",
-	"personal_experience_unverified",
-	"experimental",
-]);
-const PROVENANCE_KINDS = new Set(["measured", "derived", "fused"]);
 type AnalysisResultVersion =
 	| "analysis_result.v1"
 	| "analysis_result.v2"
@@ -450,16 +296,434 @@ function isSafeStringArray(value: unknown): value is string[] {
 	);
 }
 
+// --- TypeBox schemas (structural validation) ---
+// ScalarSchema covers null|boolean|finite-number|string.  Compiled TypeBox
+// Number already rejects NaN/Infinity, so the structural shape matches
+// isSafeScalar — only the string-content safety check remains as a post-check.
+const ScalarSchema = Type.Union([
+	Type.Null(),
+	Type.Boolean(),
+	Type.Number(),
+	Type.String(),
+]);
+
+const SafeStringArraySchema = Type.Array(Type.String());
+
+// Leaf schemas — all use additionalProperties: false to replace hasOnlyKeys.
+// Fields are Optional unless the original validator requires them explicitly.
+
+const ProfileSchema = Type.Object(
+	{
+		archetype_id: Type.Optional(ScalarSchema),
+		label: Type.Optional(ScalarSchema),
+		confidence: Type.Optional(ScalarSchema),
+		secondary_tags: Type.Optional(SafeStringArraySchema),
+	},
+	{ additionalProperties: false },
+);
+
+const VerificationSchema = Type.Object(
+	{
+		comparable_requirements: Type.Optional(SafeStringArraySchema),
+		success_signals: Type.Optional(SafeStringArraySchema),
+		insufficient_evidence_behavior: Type.Optional(ScalarSchema),
+	},
+	{ additionalProperties: false },
+);
+
+const RootCauseSchema = Type.Object(
+	{
+		level: Type.Optional(ScalarSchema),
+		text: Type.Optional(ScalarSchema),
+	},
+	{ additionalProperties: false },
+);
+
+const PrescriptionSchema = Type.Object(
+	{
+		scenario: Type.Optional(ScalarSchema),
+		reason: Type.Optional(ScalarSchema),
+		cue: Type.Optional(ScalarSchema),
+		purpose: Type.Optional(ScalarSchema),
+		dosage: Type.Optional(ScalarSchema),
+		retest_after: Type.Optional(ScalarSchema),
+		stop_or_adjust_rule: Type.Optional(ScalarSchema),
+		target_metrics: Type.Optional(SafeStringArraySchema),
+		expected_direction: Type.Optional(SafeStringArraySchema),
+		source_level: Type.Optional(
+			Type.Union([
+				Type.Literal("product_contract"),
+				Type.Literal("academic_peer_reviewed"),
+				Type.Literal("community_practice"),
+				Type.Literal("community_consensus"),
+				Type.Literal("personal_experience_unverified"),
+				Type.Literal("experimental"),
+			]),
+		),
+	},
+	{ additionalProperties: false },
+);
+
+// kind is required (original validator explicitly checks typeof + Set.has).
+const ProvenanceSchema = Type.Object(
+	{
+		kind: Type.Union([
+			Type.Literal("measured"),
+			Type.Literal("derived"),
+			Type.Literal("fused"),
+		]),
+		sources: Type.Optional(SafeStringArraySchema),
+	},
+	{ additionalProperties: false },
+);
+
+const EvidenceRefSchema = Type.Object(
+	{
+		id: Type.Optional(ScalarSchema),
+		source: Type.Optional(ScalarSchema),
+		artifact_id: Type.Optional(ScalarSchema),
+		alignment_status: Type.Optional(ScalarSchema),
+		availability: Type.Optional(ScalarSchema),
+		local_only: Type.Optional(ScalarSchema),
+		metric_keys: Type.Optional(SafeStringArraySchema),
+		challenge_time_range_ms: Type.Optional(
+			Type.Array(ScalarSchema, { minItems: 2, maxItems: 2 }),
+		),
+	},
+	{ additionalProperties: false },
+);
+
+// Compiled leaf validators.
+const profileValidator = Compile(ProfileSchema);
+const verificationValidator = Compile(VerificationSchema);
+const rootCauseValidator = Compile(RootCauseSchema);
+const prescriptionValidator = Compile(PrescriptionSchema);
+const provenanceValidator = Compile(ProvenanceSchema);
+const evidenceRefValidator = Compile(EvidenceRefSchema);
+
+// --- Composite schemas ---
+
+// Flat-record schemas (replace validateFlatRecord + COMPARISON/META/ALIGNMENT keys).
+const ComparisonSchema = Type.Object(
+	{
+		status: Type.Optional(ScalarSchema),
+		reason: Type.Optional(ScalarSchema),
+		comparable: Type.Optional(ScalarSchema),
+		metric: Type.Optional(ScalarSchema),
+		delta: Type.Optional(ScalarSchema),
+		unit: Type.Optional(ScalarSchema),
+		classification: Type.Optional(ScalarSchema),
+	},
+	{ additionalProperties: false },
+);
+
+const MetaSchema = Type.Object(
+	{
+		summary_type: Type.Optional(ScalarSchema),
+		analysis_context: Type.Optional(ScalarSchema),
+		metric_version: Type.Optional(ScalarSchema),
+		scenario_identity_version: Type.Optional(ScalarSchema),
+		calibration_compatibility: Type.Optional(ScalarSchema),
+		minimum_evidence_quality: Type.Optional(ScalarSchema),
+		classification: Type.Optional(ScalarSchema),
+	},
+	{ additionalProperties: false },
+);
+
+const AlignmentSchema = Type.Object(
+	{
+		status: Type.Optional(ScalarSchema),
+		coverage_ratio: Type.Optional(ScalarSchema),
+	},
+	{ additionalProperties: false },
+);
+
+const MetricSchema = Type.Object(
+	{
+		value: Type.Optional(ScalarSchema),
+		unit: Type.Optional(ScalarSchema),
+		provenance: Type.Optional(ProvenanceSchema),
+		metric_version: Type.Optional(ScalarSchema),
+		classification: Type.Optional(Type.Literal("deterministic")),
+		min: Type.Optional(ScalarSchema),
+		max: Type.Optional(ScalarSchema),
+		mean: Type.Optional(ScalarSchema),
+		median: Type.Optional(ScalarSchema),
+		med: Type.Optional(ScalarSchema),
+		p25: Type.Optional(ScalarSchema),
+		p50: Type.Optional(ScalarSchema),
+		p75: Type.Optional(ScalarSchema),
+		p90: Type.Optional(ScalarSchema),
+		std: Type.Optional(ScalarSchema),
+		iqr: Type.Optional(ScalarSchema),
+		count: Type.Optional(ScalarSchema),
+		n: Type.Optional(ScalarSchema),
+		score: Type.Optional(ScalarSchema),
+		status: Type.Optional(ScalarSchema),
+		key: Type.Optional(ScalarSchema),
+		availability: Type.Optional(ScalarSchema),
+		sample_count: Type.Optional(ScalarSchema),
+		coverage: Type.Optional(ScalarSchema),
+		limitations: Type.Optional(SafeStringArraySchema),
+		outlier_method: Type.Optional(ScalarSchema),
+		outlier_refs: Type.Optional(SafeStringArraySchema),
+		sample_refs: Type.Optional(SafeStringArraySchema),
+		definition: Type.Optional(ScalarSchema),
+	},
+	{ additionalProperties: false },
+);
+
+const IssueSchema = Type.Object(
+	{
+		signal: Type.Optional(ScalarSchema),
+		severity: Type.Optional(ScalarSchema),
+		priority: Type.Optional(ScalarSchema),
+		priority_reason: Type.Optional(ScalarSchema),
+		plain_language_meaning: Type.Optional(ScalarSchema),
+		expected_result: Type.Optional(ScalarSchema),
+		claim_level: Type.Optional(
+			Type.Union([
+				Type.Literal("measured"),
+				Type.Literal("deterministic_rule"),
+				Type.Literal("research_supported"),
+				Type.Literal("community_practice"),
+				Type.Literal("community_consensus"),
+				Type.Literal("experimental"),
+			]),
+		),
+		observation_ref: Type.Optional(Type.String()),
+		knowledge_registry_version: Type.Optional(Type.String()),
+		knowledge_entry_refs: Type.Optional(Type.Array(Type.String())),
+		metric_refs: Type.Optional(SafeStringArraySchema),
+		event_refs: Type.Optional(SafeStringArraySchema),
+		limitations: Type.Optional(SafeStringArraySchema),
+		primary_evidence_segment_ref: Type.Optional(
+			Type.Union([Type.Null(), Type.String()]),
+		),
+		supporting_evidence_segment_refs: Type.Optional(SafeStringArraySchema),
+		verification: Type.Optional(VerificationSchema),
+		root_causes: Type.Optional(Type.Array(RootCauseSchema)),
+		prescriptions: Type.Optional(Type.Array(PrescriptionSchema)),
+	},
+	{ additionalProperties: false },
+);
+
+const DiagnosisSchema = Type.Object(
+	{
+		profile: ProfileSchema,
+		issues: Type.Array(IssueSchema),
+		summary: Type.Record(Type.String(), Type.Any()),
+		comparison: Type.Union([Type.Null(), ComparisonSchema]),
+		meta: MetaSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const WarningSchema = Type.Object(
+	{
+		code: Type.String(),
+		domain: Type.Optional(ScalarSchema),
+		retryable: Type.Optional(ScalarSchema),
+		user_message_key: Type.Optional(ScalarSchema),
+		evidence_ref: Type.Optional(EvidenceRefSchema),
+	},
+	{ additionalProperties: false },
+);
+
+const EvidenceSummarySchema = Type.Object(
+	{
+		availability: Type.Record(Type.String(), ScalarSchema),
+		alignment: AlignmentSchema,
+		coverage: Type.Optional(ScalarSchema),
+	},
+	{ additionalProperties: false },
+);
+
+const V2ScenarioSchema = Type.Object(
+	{
+		scenario_profile_ref: Type.Union([Type.Null(), Type.String()]),
+		analyzer_refs: SafeStringArraySchema,
+		support_status: Type.Union([
+			Type.Literal("supported"),
+			Type.Literal("partial"),
+			Type.Literal("outcome_only"),
+			Type.Literal("unsupported"),
+			Type.Literal("unavailable"),
+		]),
+		limitations: SafeStringArraySchema,
+	},
+	{ additionalProperties: false },
+);
+
+const V2EvidenceSummarySchema = Type.Object(
+	{
+		availability: Type.Record(Type.String(), ScalarSchema),
+		alignment: AlignmentSchema,
+		coverage: Type.Optional(ScalarSchema),
+		confidence: Type.Optional(ScalarSchema),
+		artifact_ref: Type.Optional(ScalarSchema),
+		evidence_revision: Type.Optional(ScalarSchema),
+		segment_refs: Type.Optional(SafeStringArraySchema),
+	},
+	{ additionalProperties: false },
+);
+
+// Compiled composite validators.
+const metricValidator = Compile(MetricSchema);
+const issueValidator = Compile(IssueSchema);
+const diagnosisValidator = Compile(DiagnosisSchema);
+const warningValidator = Compile(WarningSchema);
+const evidenceSummaryValidator = Compile(EvidenceSummarySchema);
+const v2ScenarioValidator = Compile(V2ScenarioSchema);
+const v2EvidenceSummaryValidator = Compile(V2EvidenceSummarySchema);
+
+// --- Context-level schemas ---
+
+const AnalysisRefSchema = Type.Object(
+	{
+		analysis_id: Type.Any(),
+		analysis_result_version: Type.Any(),
+		analysis_type: Type.Any(),
+		input_mode: Type.Any(),
+	},
+	{ additionalProperties: false },
+);
+
+const TrainingSchema = Type.Object(
+	{
+		active_plan_ref: Type.Union([Type.Null(), Type.String()]),
+		recent_retest_ref: Type.Union([Type.Null(), Type.String()]),
+	},
+	{ additionalProperties: false },
+);
+
+// V2 context: exact key set + schema_version literal.
+// Nested fields are validated by post-check functions, so they use Type.Any()
+// here — the schema only enforces key presence and rejects extras.
+const V2ContextSchema = Type.Object(
+	{
+		schema_version: Type.Literal("coach_diagnostic_context.v2"),
+		analysis_ref: Type.Any(),
+		scenario: Type.Any(),
+		run_facts: Type.Any(),
+		diagnosis: Type.Any(),
+		evidence_summary: Type.Any(),
+		trends: Type.Array(Type.Any(), { maxItems: 4 }),
+		training: TrainingSchema,
+		limitations: Type.Array(Type.String()),
+	},
+	{ additionalProperties: false },
+);
+
+const V3ContextSchema = Type.Object(
+	{
+		schema_version: Type.Literal("coach_diagnostic_context.v3"),
+		analysis_ref: Type.Any(),
+		scenario: Type.Any(),
+		run_facts: Type.Any(),
+		diagnosis: Type.Any(),
+		evidence_summary: Type.Any(),
+		trends: Type.Array(Type.Any(), { maxItems: 4 }),
+		training: TrainingSchema,
+		limitations: Type.Array(Type.String()),
+		processed_events: Type.Any(),
+	},
+	{ additionalProperties: false },
+);
+
+const V1ContextSchema = Type.Object(
+	{
+		schema_version: Type.Literal("coach_diagnostic_context.v1"),
+		analysis_ref: Type.Any(),
+		diagnosis: Type.Any(),
+		evidence_summary: Type.Any(),
+		warnings: Type.Array(Type.Any()),
+	},
+	{ additionalProperties: false },
+);
+
+const BenchmarkSummarySchema = Type.Object(
+	{
+		schema_version: Type.Any(),
+		catalog_ref: Type.Any(),
+		catalog_version: Type.Any(),
+		observed_at: Type.Any(),
+		completion: Type.Any(),
+		provisional_ranks: Type.Any(),
+		scenarios: Type.Array(Type.Any()),
+		review_candidates: Type.Array(Type.Any()),
+	},
+	{ additionalProperties: false },
+);
+
+const BenchmarkScenarioSchema = Type.Object(
+	{
+		difficulty: Type.Union([
+			Type.Literal("easier"),
+			Type.Literal("medium"),
+		]),
+		scenario_name: Type.String(),
+		category: Type.String(),
+		subcategory: Type.String(),
+		score: Type.Number(),
+		scenario_rank: Type.Number(),
+	},
+	{ additionalProperties: false },
+);
+
+const ContextBundleSchema = Type.Object(
+	{
+		schema_version: Type.Literal("coach_turn_context.v1"),
+		contexts: Type.Array(Type.Any()),
+		benchmark_summary: Type.Optional(Type.Any()),
+	},
+	{ additionalProperties: false },
+);
+
+const ContextBundleItemSchema = Type.Object(
+	{
+		context_ref: Type.String(),
+		kind: Type.Union([
+			Type.Literal("analysis"),
+			Type.Literal("issue"),
+			Type.Literal("time_range"),
+			Type.Literal("metric"),
+			Type.Literal("evidence_segment"),
+			Type.Literal("comparison"),
+		]),
+		analysis_ref: Type.String(),
+		comparison_analysis_ref: Type.Union([Type.Null(), Type.String()]),
+		target_ref: Type.Union([Type.Null(), Type.String()]),
+		time_range_ms: Type.Union([
+			Type.Null(),
+			Type.Tuple([Type.Number(), Type.Number()]),
+		]),
+		projection: Type.Any(),
+		comparison_projection: Type.Any(),
+	},
+	{ additionalProperties: false },
+);
+
+// Compiled context-level validators.
+const analysisRefValidator = Compile(AnalysisRefSchema);
+const v2ContextValidator = Compile(V2ContextSchema);
+const v3ContextValidator = Compile(V3ContextSchema);
+const v1ContextValidator = Compile(V1ContextSchema);
+const benchmarkSummaryValidator = Compile(BenchmarkSummarySchema);
+const benchmarkScenarioValidator = Compile(BenchmarkScenarioSchema);
+const contextBundleValidator = Compile(ContextBundleSchema);
+const contextBundleItemValidator = Compile(ContextBundleItemSchema);
+
 function validateProfile(value: unknown): boolean {
-	if (!isRecord(value) || !hasOnlyKeys(value, PROFILE_KEYS)) return false;
-	return Object.entries(value).every(([key, item]) =>
+	if (!profileValidator.Check(value)) return false;
+	return Object.entries(value as JsonRecord).every(([key, item]) =>
 		key === "secondary_tags" ? isSafeStringArray(item) : isSafeScalar(item),
 	);
 }
 
 function validateVerification(value: unknown): boolean {
-	if (!isRecord(value) || !hasOnlyKeys(value, VERIFICATION_KEYS)) return false;
-	return Object.entries(value).every(([key, item]) =>
+	if (!verificationValidator.Check(value)) return false;
+	return Object.entries(value as JsonRecord).every(([key, item]) =>
 		key === "insufficient_evidence_behavior"
 			? isSafeScalar(item)
 			: isSafeStringArray(item),
@@ -467,30 +731,28 @@ function validateVerification(value: unknown): boolean {
 }
 
 function validateRootCause(value: unknown): boolean {
-	return (
-		isRecord(value) &&
-		hasOnlyKeys(value, ROOT_CAUSE_KEYS) &&
-		Object.values(value).every(isSafeScalar)
-	);
+	if (!rootCauseValidator.Check(value)) return false;
+	return Object.values(value as JsonRecord).every(isSafeScalar);
 }
 
 function validatePrescription(value: unknown): boolean {
-	if (!isRecord(value) || !hasOnlyKeys(value, PRESCRIPTION_KEYS)) return false;
-	return Object.entries(value).every(([key, item]) => {
+	if (!prescriptionValidator.Check(value)) return false;
+	return Object.entries(value as JsonRecord).every(([key, item]) => {
 		if (key === "target_metrics" || key === "expected_direction")
 			return isSafeStringArray(item);
-		if (key === "source_level")
-			return typeof item === "string" && SOURCE_LEVELS.has(item);
+		// source_level already validated by schema (literal union); its values
+		// are inherently safe scalars, so fall through to isSafeScalar.
 		return isSafeScalar(item);
 	});
 }
 
 function validateIssue(value: unknown): boolean {
-	if (!isRecord(value) || !hasOnlyKeys(value, ISSUE_KEYS)) return false;
-	const hasKnowledgeRegistryVersion = "knowledge_registry_version" in value;
-	const hasKnowledgeEntryRefs = "knowledge_entry_refs" in value;
+	if (!issueValidator.Check(value)) return false;
+	const record = value as JsonRecord;
+	const hasKnowledgeRegistryVersion = "knowledge_registry_version" in record;
+	const hasKnowledgeEntryRefs = "knowledge_entry_refs" in record;
 	if (hasKnowledgeRegistryVersion !== hasKnowledgeEntryRefs) return false;
-	return Object.entries(value).every(([key, item]) => {
+	return Object.entries(record).every(([key, item]) => {
 		if (key === "observation_ref") {
 			return (
 				typeof item === "string" &&
@@ -550,9 +812,7 @@ function validateIssue(value: unknown): boolean {
 }
 
 function validateProvenance(value: unknown): boolean {
-	if (!isRecord(value) || !hasOnlyKeys(value, PROVENANCE_KEYS)) return false;
-	if (typeof value.kind !== "string" || !PROVENANCE_KINDS.has(value.kind))
-		return false;
+	if (!provenanceValidator.Check(value)) return false;
 	return value.sources === undefined || isSafeStringArray(value.sources);
 }
 
@@ -560,17 +820,13 @@ function validateMetric(
 	value: unknown,
 	requireDeterministic: boolean,
 ): boolean {
-	if (
-		!isRecord(value) ||
-		Object.keys(value).length === 0 ||
-		!hasOnlyKeys(value, METRIC_KEYS)
-	) {
+	if (!metricValidator.Check(value)) return false;
+	const record = value as JsonRecord;
+	if (Object.keys(record).length === 0) return false;
+	if (requireDeterministic && record.classification !== "deterministic") {
 		return false;
 	}
-	if (requireDeterministic && value.classification !== "deterministic") {
-		return false;
-	}
-	return Object.entries(value).every(([key, item]) => {
+	return Object.entries(record).every(([key, item]) => {
 		if (
 			key === "limitations" ||
 			key === "outlier_refs" ||
@@ -579,7 +835,7 @@ function validateMetric(
 			return isSafeStringArray(item);
 		}
 		if (key === "provenance") return validateProvenance(item);
-		if (key === "classification") return item === "deterministic";
+		// classification already constrained to "deterministic" by schema.
 		return isSafeScalar(item);
 	});
 }
@@ -597,49 +853,37 @@ function validateSummary(
 	);
 }
 
-function validateFlatRecord(value: unknown, keys: Set<string>): boolean {
-	return (
-		isRecord(value) &&
-		hasOnlyKeys(value, keys) &&
-		Object.values(value).every(isSafeScalar)
-	);
-}
-
 function validateDiagnosis(
 	value: unknown,
 	resultVersion: AnalysisResultVersion,
 ): boolean {
-	if (!isRecord(value) || !hasExactKeys(value, DIAGNOSIS_KEYS)) return false;
-	return Object.entries(value).every(([key, item]) => {
-		if (key === "profile") return validateProfile(item);
-		if (key === "issues")
-			return Array.isArray(item) && item.every(validateIssue);
-		if (key === "summary") {
-			return validateSummary(item, resultVersion === "analysis_result.v2");
-		}
-		if (key === "comparison") {
-			return (
-				item === null ||
-				(validateFlatRecord(item, COMPARISON_KEYS) &&
-					isRecord(item) &&
-					item.classification === "deterministic")
-			);
-		}
-		if (key === "meta") {
-			return (
-				validateFlatRecord(item, META_KEYS) &&
-				(!isRecord(item) ||
-					item.classification === undefined ||
-					item.classification === "deterministic")
-			);
-		}
+	if (!diagnosisValidator.Check(value)) return false;
+	const record = value as JsonRecord;
+	if (!validateProfile(record.profile)) return false;
+	if (!Array.isArray(record.issues) || !record.issues.every(validateIssue))
 		return false;
-	});
+	if (!validateSummary(record.summary, resultVersion === "analysis_result.v2"))
+		return false;
+	const comparison = record.comparison;
+	if (comparison !== null) {
+		const comp = comparison as JsonRecord;
+		if (comp.classification !== "deterministic" ||
+			!Object.values(comp).every(isSafeScalar))
+			return false;
+	}
+	const meta = record.meta as JsonRecord;
+	if (
+		meta.classification !== undefined &&
+		meta.classification !== "deterministic"
+	)
+		return false;
+	if (!Object.values(meta).every(isSafeScalar)) return false;
+	return true;
 }
 
 function validateEvidenceRef(value: unknown): boolean {
-	if (!isRecord(value) || !hasOnlyKeys(value, EVIDENCE_REF_KEYS)) return false;
-	return Object.entries(value).every(([key, item]) => {
+	if (!evidenceRefValidator.Check(value)) return false;
+	return Object.entries(value as JsonRecord).every(([key, item]) => {
 		if (key === "metric_keys") return isSafeStringArray(item);
 		if (key === "challenge_time_range_ms") {
 			return (
@@ -651,33 +895,24 @@ function validateEvidenceRef(value: unknown): boolean {
 }
 
 function validateWarning(value: unknown): boolean {
-	if (
-		!isRecord(value) ||
-		!hasOnlyKeys(value, WARNING_KEYS) ||
-		typeof value.code !== "string"
-	) {
-		return false;
-	}
-	return Object.entries(value).every(([key, item]) =>
+	if (!warningValidator.Check(value)) return false;
+	return Object.entries(value as JsonRecord).every(([key, item]) =>
 		key === "evidence_ref" ? validateEvidenceRef(item) : isSafeScalar(item),
 	);
 }
 
 function validateEvidenceSummary(value: unknown): boolean {
-	if (!isRecord(value) || !hasOnlyKeys(value, EVIDENCE_SUMMARY_KEYS))
-		return false;
-	if (!("availability" in value) || !("alignment" in value)) return false;
-	return Object.entries(value).every(([key, item]) => {
+	if (!evidenceSummaryValidator.Check(value)) return false;
+	const record = value as JsonRecord;
+	return Object.entries(record).every(([key, item]) => {
 		if (key === "availability") {
-			return (
-				isRecord(item) &&
-				Object.entries(item).every(
-					([source, availability]) =>
-						!isForbiddenKey(source) && isSafeScalar(availability),
-				)
+			return Object.entries(item as JsonRecord).every(
+				([source, availability]) =>
+					!isForbiddenKey(source) && isSafeScalar(availability),
 			);
 		}
-		if (key === "alignment") return validateFlatRecord(item, ALIGNMENT_KEYS);
+		if (key === "alignment")
+			return Object.values(item as JsonRecord).every(isSafeScalar);
 		return isSafeScalar(item);
 	});
 }
@@ -741,40 +976,34 @@ function validateV2RunFacts(value: unknown): boolean {
 }
 
 function validateV2Scenario(value: unknown): boolean {
-	if (!isRecord(value) || !hasExactKeys(value, new Set([
-		"scenario_profile_ref",
-		"analyzer_refs",
-		"support_status",
-		"limitations",
-	]))) return false;
+	if (!v2ScenarioValidator.Check(value)) return false;
+	const record = value as JsonRecord;
 	return (
-		(value.scenario_profile_ref === null || (typeof value.scenario_profile_ref === "string" && !isUnsafeString(value.scenario_profile_ref))) &&
-		isSafeStringArray(value.analyzer_refs) && value.analyzer_refs.length <= 16 &&
-		typeof value.support_status === "string" && new Set(["supported", "partial", "outcome_only", "unsupported", "unavailable"]).has(value.support_status) &&
-		isSafeStringArray(value.limitations) && value.limitations.length <= 8
+		(record.scenario_profile_ref === null || !isUnsafeString(record.scenario_profile_ref as string)) &&
+		isSafeStringArray(record.analyzer_refs) && record.analyzer_refs.length <= 16 &&
+		isSafeStringArray(record.limitations) && record.limitations.length <= 8
 	);
 }
 
 function validateV2EvidenceSummary(value: unknown): boolean {
-	if (!isRecord(value) || !hasOnlyKeys(value, V2_EVIDENCE_SUMMARY_KEYS)) return false;
-	if (!("availability" in value) || !("alignment" in value)) return false;
-	if (!isRecord(value.availability) || !Object.entries(value.availability).every(([key, item]) => !isForbiddenKey(key) && isSafeScalar(item))) return false;
-	if (!validateFlatRecord(value.alignment, ALIGNMENT_KEYS)) return false;
+	if (!v2EvidenceSummaryValidator.Check(value)) return false;
+	const record = value as JsonRecord;
+	if (!Object.entries(record.availability as JsonRecord).every(([key, item]) => !isForbiddenKey(key) && isSafeScalar(item))) return false;
+	if (!Object.values(record.alignment as JsonRecord).every(isSafeScalar)) return false;
 	for (const key of ["coverage", "confidence", "artifact_ref", "evidence_revision"]) {
-		if (key in value && !isSafeScalar(value[key])) return false;
+		if (key in record && !isSafeScalar(record[key])) return false;
 	}
-	return !("segment_refs" in value) || (isSafeStringArray(value.segment_refs) && value.segment_refs.length <= 24);
+	return !("segment_refs" in record) || (isSafeStringArray(record.segment_refs) && record.segment_refs.length <= 24);
 }
 
 function validateV2Context(value: JsonRecord): boolean {
-	if (!hasExactKeys(value, V2_TOP_LEVEL_KEYS) || value.schema_version !== "coach_diagnostic_context.v2") return false;
+	if (!v2ContextValidator.Check(value)) return false;
 	const resultVersion = validatedAnalysisRefVersion(value.analysis_ref);
 	if (resultVersion !== "analysis_result.v2") return false;
 	if (!validateV2Scenario(value.scenario) || !validateV2RunFacts(value.run_facts)) return false;
 	if (!validateDiagnosis(value.diagnosis, resultVersion) || !validateV2EvidenceSummary(value.evidence_summary)) return false;
-	if (!Array.isArray(value.trends) || value.trends.length > 4 || !value.trends.every((item) => validateBoundedFactsValue(item))) return false;
-	if (!isRecord(value.training) || !hasExactKeys(value.training, new Set(["active_plan_ref", "recent_retest_ref"]))) return false;
-	if (!Object.values(value.training).every((item) => item === null || (typeof item === "string" && !isUnsafeString(item)))) return false;
+	if (!(value.trends as unknown[]).every(validateBoundedFactsValue)) return false;
+	if (!Object.values(value.training as JsonRecord).every((item) => item === null || !isUnsafeString(item as string))) return false;
 	if (!isSafeStringArray(value.limitations) || value.limitations.length > 8) return false;
 	return Buffer.byteLength(JSON.stringify(value), "utf8") <= 32 * 1024;
 }
@@ -815,7 +1044,7 @@ function validateProcessedEventTable(value: unknown, analysisId: string): boolea
 }
 
 function validateV3Context(value: JsonRecord): boolean {
-	if (!hasExactKeys(value, V3_TOP_LEVEL_KEYS) || value.schema_version !== "coach_diagnostic_context.v3") return false;
+	if (!v3ContextValidator.Check(value)) return false;
 	const { processed_events: processedEvents, ...v2Fields } = value;
 	if (!validateV2Context({ ...v2Fields, schema_version: "coach_diagnostic_context.v2" })) return false;
 	if (!isRecord(processedEvents) || !hasExactKeys(processedEvents, PROCESSED_EVENTS_KEYS)) return false;
@@ -833,13 +1062,14 @@ function validateV3Context(value: JsonRecord): boolean {
 function validatedAnalysisRefVersion(
 	value: unknown,
 ): AnalysisResultVersion | undefined {
-	if (!isRecord(value) || !hasExactKeys(value, ANALYSIS_REF_KEYS)) {
+	if (!analysisRefValidator.Check(value)) {
 		return undefined;
 	}
-	const version = value.analysis_result_version;
-	const analysisId = value.analysis_id;
-	const analysisType = value.analysis_type;
-	const inputMode = value.input_mode;
+	const record = value as JsonRecord;
+	const version = record.analysis_result_version;
+	const analysisId = record.analysis_id;
+	const analysisType = record.analysis_type;
+	const inputMode = record.input_mode;
 	const stableId =
 		typeof analysisId === "string" &&
 		/^analysis:[A-Za-z0-9][A-Za-z0-9._-]*$/.test(analysisId);
@@ -877,68 +1107,62 @@ function isCanonicalDiagnosticContext(value: unknown): value is JsonRecord {
 	if (!isRecord(value)) return false;
 	if (value.schema_version === "coach_diagnostic_context.v3") return validateV3Context(value);
 	if (value.schema_version === "coach_diagnostic_context.v2") return validateV2Context(value);
-	if (!hasExactKeys(value, V1_TOP_LEVEL_KEYS)) return false;
-	if (value.schema_version !== "coach_diagnostic_context.v1") return false;
+	if (!v1ContextValidator.Check(value)) return false;
 	const resultVersion = validatedAnalysisRefVersion(value.analysis_ref);
 	if (resultVersion === undefined) return false;
 	return (
 		validateDiagnosis(value.diagnosis, resultVersion) &&
 		validateEvidenceSummary(value.evidence_summary) &&
-		Array.isArray(value.warnings) &&
-		value.warnings.every(validateWarning)
+		(value.warnings as unknown[]).every(validateWarning)
 	);
 }
 
 function isCanonicalBenchmarkSummary(value: unknown): value is JsonRecord {
-	if (!isRecord(value) || !hasExactKeys(value, new Set([
-		"schema_version", "catalog_ref", "catalog_version", "observed_at", "completion",
-		"provisional_ranks", "scenarios", "review_candidates",
-	]))) return false;
+	if (!benchmarkSummaryValidator.Check(value)) return false;
+	const record = value as JsonRecord;
 	if (
-		value.schema_version !== "coach_benchmark_summary.v1" ||
-		value.catalog_ref !== "benchmark-catalog:viscose-s2@1" ||
-		typeof value.catalog_version !== "string" || value.catalog_version.length > 120 ||
-		typeof value.observed_at !== "string" || value.observed_at.length > 40 ||
-		!Number.isFinite(Date.parse(value.observed_at)) ||
-		!isRecord(value.completion) || !isRecord(value.provisional_ranks) ||
-		!Array.isArray(value.scenarios) || value.scenarios.length !== 78 ||
-		!Array.isArray(value.review_candidates) || value.review_candidates.length > 8
+		record.schema_version !== "coach_benchmark_summary.v1" ||
+		record.catalog_ref !== "benchmark-catalog:viscose-s2@1" ||
+		typeof record.catalog_version !== "string" || record.catalog_version.length > 120 ||
+		typeof record.observed_at !== "string" || record.observed_at.length > 40 ||
+		!Number.isFinite(Date.parse(record.observed_at)) ||
+		!isRecord(record.completion) || !isRecord(record.provisional_ranks) ||
+		!Array.isArray(record.scenarios) || record.scenarios.length !== 78 ||
+		!Array.isArray(record.review_candidates) || record.review_candidates.length > 8
 	) return false;
 	for (const difficulty of ["easier", "medium"]) {
-		const completion = value.completion[difficulty];
-		const rank = value.provisional_ranks[difficulty];
+		const completion = record.completion[difficulty];
+		const rank = record.provisional_ranks[difficulty];
 		if (!isRecord(completion) || !hasExactKeys(completion, new Set(["completed", "required"])) ||
 			!Number.isInteger(completion.completed) || !Number.isInteger(completion.required) ||
 			completion.completed < 0 || completion.completed > completion.required || completion.required !== 39 ||
 			!Number.isInteger(rank) || rank < 0 || rank > 9) return false;
 	}
-	if (Object.keys(value.completion).length !== 2 || Object.keys(value.provisional_ranks).length !== 2) return false;
+	if (Object.keys(record.completion).length !== 2 || Object.keys(record.provisional_ranks).length !== 2) return false;
 	const itemKeys = new Set<string>();
 	const scenariosByKey = new Map<string, JsonRecord>();
 	const validItem = (item: unknown): item is JsonRecord => {
-		if (!isRecord(item) || !hasExactKeys(item, new Set([
-			"difficulty", "scenario_name", "category", "subcategory", "score", "scenario_rank",
-		]))) return false;
+		if (!benchmarkScenarioValidator.Check(item)) return false;
+		const rec = item as JsonRecord;
 		if (
-			(item.difficulty !== "easier" && item.difficulty !== "medium") ||
-			typeof item.scenario_name !== "string" || item.scenario_name.length === 0 ||
-			item.scenario_name.length > 200 || isUnsafeString(item.scenario_name) ||
-			typeof item.category !== "string" || typeof item.subcategory !== "string" ||
-			!BENCHMARK_COURSE_LABELS.has(`${item.category}:${item.subcategory}`) ||
-			typeof item.score !== "number" || !Number.isFinite(item.score) || item.score < 0 ||
-			!Number.isInteger(item.scenario_rank) || item.scenario_rank < 0 || item.scenario_rank > 9
+			typeof rec.scenario_name !== "string" || rec.scenario_name.length === 0 ||
+			rec.scenario_name.length > 200 || isUnsafeString(rec.scenario_name) ||
+			!BENCHMARK_COURSE_LABELS.has(`${rec.category}:${rec.subcategory}`) ||
+			!Number.isFinite(rec.score) || rec.score < 0 ||
+			!Number.isInteger(rec.scenario_rank) || rec.scenario_rank < 0 || rec.scenario_rank > 9
 		) return false;
 		return true;
 	};
-	for (const item of value.scenarios) {
+	for (const item of record.scenarios) {
 		if (!validItem(item)) return false;
-		const key = `${item.difficulty}:${item.scenario_name}`;
+		const rec = item as JsonRecord;
+		const key = `${rec.difficulty}:${rec.scenario_name}`;
 		if (itemKeys.has(key)) return false;
 		itemKeys.add(key);
-		scenariosByKey.set(key, item);
+		scenariosByKey.set(key, rec);
 	}
 	const candidateKeys = new Set<string>();
-	return value.review_candidates.every((item) => {
+	return (record.review_candidates as unknown[]).every((item) => {
 		if (!validItem(item)) return false;
 		const key = `${item.difficulty}:${item.scenario_name}`;
 		const scenario = scenariosByKey.get(key);
@@ -953,41 +1177,33 @@ function isCanonicalBenchmarkSummary(value: unknown): value is JsonRecord {
 }
 
 function isCanonicalContextBundle(value: unknown): value is JsonRecord {
-	if (!isRecord(value) || !hasOnlyKeys(value, new Set([
-		"schema_version", "contexts", "benchmark_summary",
-	]))) {
-		return false;
-	}
-	if (value.schema_version !== "coach_turn_context.v1") return false;
-	if (!Array.isArray(value.contexts) || value.contexts.length > 8) return false;
-	if ("benchmark_summary" in value && value.benchmark_summary !== null && !isCanonicalBenchmarkSummary(value.benchmark_summary)) return false;
+	if (!contextBundleValidator.Check(value)) return false;
+	const record = value as JsonRecord;
+	const contexts = record.contexts as unknown[];
+	if (contexts.length > 8) return false;
+	if (record.benchmark_summary !== undefined && record.benchmark_summary !== null && !isCanonicalBenchmarkSummary(record.benchmark_summary)) return false;
 	const refs = new Set<string>();
-	for (const item of value.contexts) {
-		if (!isRecord(item) || !hasExactKeys(item, new Set([
-			"context_ref", "kind", "analysis_ref", "comparison_analysis_ref",
-			"target_ref", "time_range_ms", "projection", "comparison_projection",
-		]))) return false;
+	for (const item of contexts) {
+		if (!contextBundleItemValidator.Check(item)) return false;
+		const ctx = item as JsonRecord;
 		if (
-			typeof item.context_ref !== "string" || isUnsafeString(item.context_ref) ||
-			refs.has(item.context_ref)
+			isUnsafeString(ctx.context_ref as string) ||
+			refs.has(ctx.context_ref as string)
 		) return false;
-		refs.add(item.context_ref);
-		if (!new Set(["analysis", "issue", "time_range", "metric", "evidence_segment", "comparison"]).has(String(item.kind))) return false;
-		if (typeof item.analysis_ref !== "string" || !/^analysis:[1-9][0-9]*$/.test(item.analysis_ref)) return false;
-		if (item.comparison_analysis_ref !== null && (
-			typeof item.comparison_analysis_ref !== "string" ||
-			!/^analysis:[1-9][0-9]*$/.test(item.comparison_analysis_ref)
-		)) return false;
-		if (item.target_ref !== null && (typeof item.target_ref !== "string" || !isSafeScalar(item.target_ref))) return false;
-		if (item.time_range_ms !== null && (
-			!Array.isArray(item.time_range_ms) || item.time_range_ms.length !== 2 ||
-			!item.time_range_ms.every((part) => typeof part === "number" && Number.isFinite(part) && part >= 0) ||
-			item.time_range_ms[1] < item.time_range_ms[0]
-		)) return false;
-		if (!isCanonicalDiagnosticContext(item.projection)) return false;
-		if (item.kind === "comparison") {
-			if (item.comparison_analysis_ref === null || !isCanonicalDiagnosticContext(item.comparison_projection)) return false;
-		} else if (item.comparison_analysis_ref !== null || item.comparison_projection !== null) {
+		refs.add(ctx.context_ref as string);
+		if (!/^analysis:[1-9][0-9]*$/.test(ctx.analysis_ref as string)) return false;
+		if (ctx.comparison_analysis_ref !== null &&
+			!/^analysis:[1-9][0-9]*$/.test(ctx.comparison_analysis_ref as string)
+		) return false;
+		if (ctx.target_ref !== null && !isSafeScalar(ctx.target_ref)) return false;
+		if (ctx.time_range_ms !== null) {
+			const tr = ctx.time_range_ms as [number, number];
+			if (!(tr[0] >= 0) || !(tr[1] >= 0) || tr[1] < tr[0]) return false;
+		}
+		if (!isCanonicalDiagnosticContext(ctx.projection)) return false;
+		if (ctx.kind === "comparison") {
+			if (ctx.comparison_analysis_ref === null || !isCanonicalDiagnosticContext(ctx.comparison_projection)) return false;
+		} else if (ctx.comparison_analysis_ref !== null || ctx.comparison_projection !== null) {
 			return false;
 		}
 	}
