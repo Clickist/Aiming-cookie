@@ -39,3 +39,8 @@ third_party/pi/**/node_modules/
 
 # session recordings under data/ stay tracked (override *.mp4 above)
 !data/*.mp4
+
+# dev server logs
+webapp/frontend/mock-*.log
+webapp/frontend/*.err.log
+webapp/frontend/*.out.log
