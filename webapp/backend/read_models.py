@@ -729,7 +729,7 @@ def build_product_state_v1(
         }
     if onboarding_completed is not True and onboarding_completed is not False:
         raise ValueError("onboarding_completed is required for an available state")
-    if onboarding_completion_kind not in {"connected", "skipped", "legacy", None}:
+    if onboarding_completion_kind not in {"connected", "legacy", None}:
         raise ValueError("invalid onboarding_completion_kind")
     return {
         "schema_version": PRODUCT_STATE_SCHEMA_VERSION,

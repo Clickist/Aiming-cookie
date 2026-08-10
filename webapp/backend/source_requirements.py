@@ -1,4 +1,4 @@
-"""Fail-closed source requirements for the fixed Run analysis pipeline.
+"""Fail-closed source requirements for automatic Run analysis selection.
 
 The validator deliberately accepts an analysis snapshot-shaped mapping and
 returns only bounded, path-free readiness data.  Raw source payloads remain
@@ -21,8 +21,6 @@ _SOURCE_KEYS: Final = ("stats", "performance", "raw_input", "video")
 _AVAILABILITIES: Final = frozenset(
     {"available", "missing", "unavailable", "invalid", "not_present"}
 )
-
-
 def _availability(value: object) -> str:
     if not isinstance(value, Mapping):
         return "invalid"
@@ -60,7 +58,7 @@ def _valid_canonical_window(value: object) -> bool:
 
 
 def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[str, object]:
-    """Validate the fixed all-source input bundle.
+    """Return bounded source readiness and the highest automatic analysis tier.
 
     ``bundle`` follows the private snapshot shape: Stats, Performance and
     video live under ``sources``; Raw Input is the top-level ``trace``.  The
@@ -99,12 +97,25 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
         for key in (*_SOURCE_KEYS, "canonical_window")
         if availability[key] != "available"
     ]
+    available = lambda *keys: all(availability[key] == "available" for key in keys)
+    supported_modes = [
+        mode
+        for mode, required in (
+            ("multimodal", ("stats", "performance", "raw_input", "video", "canonical_window")),
+            ("input_native", ("stats", "performance", "raw_input", "canonical_window")),
+            ("video_fallback", ("stats", "video")),
+        )
+        if available(*required)
+    ]
+    selected_mode = supported_modes[0] if supported_modes else None
     return {
-        "ready": not missing,
+        "ready": selected_mode is not None,
         "missing": missing,
         "availability": availability,
+        "supported_modes": supported_modes,
+        "selected_mode": selected_mode,
         "summary": {
-            "mode": "multimodal",
+            "mode": selected_mode,
             "source_count": len(_SOURCE_KEYS),
             "canonical_window": canonical,
         },

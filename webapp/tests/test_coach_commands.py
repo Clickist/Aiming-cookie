@@ -15,6 +15,7 @@ from webapp.backend import (
     evidence_store,
     kovaak_run_store,
     queue,
+    worker,
 )
 from webapp.backend.workspace import session_dir
 from webapp.backend.contracts import build_analysis_result_v2, build_artifact_manifest_v2
@@ -537,7 +538,7 @@ async def test_run_analysis_route_delegates_to_shared_handler(monkeypatch):
     async def create(owner_id: str, run_id: int, **kwargs):
         assert owner_id == config.DESKTOP_LOCAL_PROFILE
         assert run_id == 7
-        assert kwargs["input_mode"] == "multimodal"
+        assert "input_mode" not in kwargs
         return {"session_id": 99}
 
     monkeypatch.setattr(coach_commands, "create_analysis_from_run", create)
@@ -1872,19 +1873,21 @@ async def _seed_run_owned_video(
 
 
 @pytest.mark.parametrize(
-    ("input_mode", "include_trace", "uses_video"),
+    ("requested_mode", "include_trace", "expected_mode", "uses_video"),
     [
-        ("multimodal", True, True),
+        ("multimodal", True, "multimodal", True),
+        ("input_native", False, "video_fallback", True),
     ],
 )
 @pytest.mark.asyncio
-async def test_analysis_modes_consume_run_owned_video_via_managed_hard_link(
+async def test_analysis_creation_uses_the_snapshot_selected_tier(
     tmp_path: Path,
-    input_mode: str,
+    requested_mode: str,
     include_trace: bool,
+    expected_mode: str,
     uses_video: bool,
 ) -> None:
-    owner_id = f"owner-{input_mode}"
+    owner_id = f"owner-{expected_mode}"
     run, video = await _seed_run_owned_video(
         tmp_path, owner_id, include_trace=include_trace,
     )
@@ -1892,11 +1895,11 @@ async def test_analysis_modes_consume_run_owned_video_via_managed_hard_link(
     created = await coach_commands.create_analysis_from_run(
         owner_id,
         run["id"],
-        input_mode=input_mode,
+        input_mode=requested_mode,
     )
     session = await queue.get_session(created["session_id"])
 
-    assert session["input_mode"] == input_mode
+    assert session["input_mode"] == expected_mode
     if uses_video:
         managed_video = session_dir(session["id"]) / "video.mp4"
         assert Path(session["video_path"]) == managed_video
@@ -1905,11 +1908,53 @@ async def test_analysis_modes_consume_run_owned_video_via_managed_hard_link(
     else:
         assert session["video_path"] == ""
         assert "video" not in session["input_snapshot"]["sources"]
-    assert session["input_snapshot"]["trace"] is not None
+    assert (session["input_snapshot"]["trace"] is not None) is include_trace
 
 
 @pytest.mark.asyncio
-async def test_incomplete_run_rejects_unsupported_mode_with_stable_reason(
+async def test_run_video_fallback_copies_frozen_stats_for_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run, _ = await _seed_run_owned_video(
+        tmp_path,
+        "owner-video-fallback",
+        include_trace=False,
+    )
+
+    created = await coach_commands.create_analysis_from_run(
+        "owner-video-fallback",
+        run["id"],
+    )
+    queued = await queue.get_session(created["session_id"])
+
+    assert queued["input_mode"] == "video_fallback"
+    assert Path(queued["csv_path"]) == session_dir(queued["id"]) / "stats.csv"
+    assert Path(queued["csv_path"]).read_bytes() == b"stats"
+
+    monkeypatch.setattr(
+        worker,
+        "run_analysis",
+        lambda *_args, **_kwargs: (
+            {},
+            {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []},
+        ),
+    )
+    monkeypatch.setattr(
+        worker,
+        "run_report",
+        lambda _summary: {"diagnosis": {}, "figures": {}, "narration": None, "notes": []},
+    )
+    monkeypatch.setattr(worker, "_scenario_dispatch", lambda _job, _mode: "legacy_static_compatibility")
+
+    assert await worker.process_one() is True
+    completed = await queue.get_session(created["session_id"])
+    assert completed["status"] == "done"
+    assert completed["result"]["input_mode"] == "video_fallback"
+
+
+@pytest.mark.asyncio
+async def test_incomplete_run_rejects_when_no_automatic_tier_is_available(
     tmp_path: Path,
 ) -> None:
     stats = tmp_path / "Stats.csv"
@@ -1932,7 +1977,7 @@ async def test_incomplete_run_rejects_unsupported_mode_with_stable_reason(
             input_mode="input_native",
         )
 
-    assert exc_info.value.code == "unsupported_input_mode"
+    assert exc_info.value.code == "input_unavailable"
 
 
 def _coach_evidence_artifact(

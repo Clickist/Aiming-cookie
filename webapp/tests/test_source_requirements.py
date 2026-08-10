@@ -61,6 +61,8 @@ def test_complete_bundle_is_ready_and_has_bounded_public_summary():
             "video": "available",
             "canonical_window": "available",
         },
+        "supported_modes": ["multimodal", "input_native", "video_fallback"],
+        "selected_mode": "multimodal",
         "summary": {
             "mode": "multimodal",
             "source_count": 4,
@@ -93,13 +95,45 @@ def test_missing_required_source_returns_stable_code(field: str, code: str):
 
     result = validate_source_requirements(snapshot)
 
-    assert result["ready"] is False
+    assert result["ready"] is (field != "stats")
     assert result["missing"] == [code]
     assert result["summary"] == {
-        "mode": "multimodal",
+        "mode": (
+            "input_native" if field == "video"
+            else "video_fallback" if field in {"performance", "trace", "canonical_time_window"}
+            else None
+        ),
         "source_count": 4,
         "canonical_window": "available" if field != "canonical_time_window" else "missing",
     }
+
+
+@pytest.mark.parametrize(
+    ("missing_fields", "expected_modes", "selected_mode"),
+    [
+        ((), ["multimodal", "input_native", "video_fallback"], "multimodal"),
+        (("video",), ["input_native"], "input_native"),
+        (("performance", "trace", "canonical_time_window"), ["video_fallback"], "video_fallback"),
+        (("stats",), [], None),
+    ],
+)
+def test_automatic_mode_selection_uses_the_highest_valid_tier(
+    missing_fields: tuple[str, ...], expected_modes: list[str], selected_mode: str | None,
+):
+    snapshot = _complete_snapshot()
+    for field in missing_fields:
+        if field == "trace":
+            snapshot.pop("trace")
+        elif field == "canonical_time_window":
+            snapshot.pop(field)
+        else:
+            snapshot["sources"].pop(field)
+
+    result = validate_source_requirements(snapshot)
+
+    assert result["supported_modes"] == expected_modes
+    assert result["selected_mode"] == selected_mode
+    assert result["ready"] is (selected_mode is not None)
 
 
 def test_unavailable_and_malformed_sources_fail_closed_without_echoing_values():

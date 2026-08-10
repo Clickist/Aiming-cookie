@@ -2309,7 +2309,7 @@ async def test_reconcile_run_videos_attaches_retries_and_quarantines_without_sou
 
 
 @pytest.mark.asyncio
-async def test_run_readiness_requires_complete_source_bundle_without_analysis_creation(
+async def test_run_readiness_exposes_the_best_available_analysis_tier(
     tmp_path: Path,
 ):
     raw_run, _, _, _ = await _complete_multimodal_run(
@@ -2323,22 +2323,12 @@ async def test_run_readiness_requires_complete_source_bundle_without_analysis_cr
     raw_readiness = kovaak_run_store.derive_run_readiness(
         await kovaak_run_store.get_kovaak_run(raw_run["id"], "u1")
     )
-    assert raw_readiness["ready"] is False
-    assert raw_readiness["state"] == "incomplete_evidence"
-
-    video_run, _, _, _ = await _complete_multimodal_run(
-        tmp_path,
-        user_id="u1",
-        source_key="video-incomplete",
-    )
-    await kovaak_run_store.mark_mouse_trace_unavailable(
-        video_run["id"], "u1", "trace_capture_unavailable",
-    )
-    video_readiness = kovaak_run_store.derive_run_readiness(
-        await kovaak_run_store.get_kovaak_run(video_run["id"], "u1")
-    )
-    assert video_readiness["ready"] is False
-    assert video_readiness["state"] == "incomplete_evidence"
+    assert raw_readiness == {
+        "ready": True,
+        "state": "pending_analysis",
+        "input_native": True,
+        "video_fallback": False,
+    }
 
     incomplete = await kovaak_run_store.upsert_kovaak_run(
         user_id="u1", source_key="incomplete",
@@ -2439,7 +2429,7 @@ async def test_run_owned_video_snapshot_and_public_dto_are_path_free(
 
     public = kovaak_run_store.public_kovaak_run(run)
     assert public["readiness_state"] == "pending_analysis"
-    assert public["supported_input_modes"] == ["multimodal"]
+    assert public["supported_input_modes"] == ["multimodal", "input_native", "video_fallback"]
     assert public["evidence_availability"] == {
         "stats": "available",
         "performance": "available",

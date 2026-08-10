@@ -115,7 +115,7 @@ class _GatedConnection:
 
 _conn: Optional[_GatedConnection] = None
 
-TARGET_USER_VERSION = 26
+TARGET_USER_VERSION = 27
 
 
 async def get_conn() -> _GatedConnection:
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS product_state (
     owner_id TEXT PRIMARY KEY,
     onboarding_completed INTEGER NOT NULL DEFAULT 0 CHECK(onboarding_completed IN (0, 1)),
     onboarding_completion_kind TEXT CHECK(
-        onboarding_completion_kind IN ('connected', 'skipped', 'legacy')
+        onboarding_completion_kind IN ('connected', 'legacy')
     ),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -456,7 +456,7 @@ CREATE TABLE IF NOT EXISTS product_state (
     owner_id TEXT PRIMARY KEY,
     onboarding_completed INTEGER NOT NULL DEFAULT 0 CHECK(onboarding_completed IN (0, 1)),
     onboarding_completion_kind TEXT CHECK(
-        onboarding_completion_kind IN ('connected', 'skipped', 'legacy')
+        onboarding_completion_kind IN ('connected', 'legacy')
     ),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -865,6 +865,7 @@ async def init_schema() -> None:
         await _migrate_v24_provider_model_capabilities(conn)
         await _migrate_v25_coach_thread_lifecycle(conn)
         await _migrate_v26_guidance_events(conn)
+        await _migrate_v27_provider_first_onboarding(conn)
         await conn.commit()
         return
 
@@ -926,6 +927,8 @@ async def init_schema() -> None:
             await _migrate_v25_coach_thread_lifecycle(conn)
         if user_version < 26:
             await _migrate_v26_guidance_events(conn)
+        if user_version < 27:
+            await _migrate_v27_provider_first_onboarding(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -1402,6 +1405,43 @@ async def _migrate_v26_guidance_events(conn: aiosqlite.Connection) -> None:
         FROM coach_agent_run_events;
         DROP TABLE coach_agent_run_events;
         ALTER TABLE coach_agent_run_events_v26 RENAME TO coach_agent_run_events;
+    """)
+
+
+async def _migrate_v27_provider_first_onboarding(conn: aiosqlite.Connection) -> None:
+    """v26 -> v27: remove the retired skipped onboarding state."""
+    schema_row = await (await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='product_state'"
+    )).fetchone()
+    skipped_row = await (await conn.execute(
+        "SELECT 1 FROM product_state WHERE onboarding_completion_kind='skipped' LIMIT 1"
+    )).fetchone()
+    if (
+        schema_row is None
+        or not isinstance(schema_row[0], str)
+        or "'skipped'" not in schema_row[0]
+    ) and skipped_row is None:
+        return
+    await _execute_transactional_script(conn, """
+        CREATE TABLE product_state_v27 (
+            owner_id TEXT PRIMARY KEY,
+            onboarding_completed INTEGER NOT NULL DEFAULT 0 CHECK(onboarding_completed IN (0, 1)),
+            onboarding_completion_kind TEXT CHECK(
+                onboarding_completion_kind IN ('connected', 'legacy')
+            ),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO product_state_v27(
+            owner_id, onboarding_completed, onboarding_completion_kind, created_at, updated_at
+        )
+        SELECT owner_id,
+            CASE WHEN onboarding_completion_kind = 'skipped' THEN 0 ELSE onboarding_completed END,
+            CASE WHEN onboarding_completion_kind = 'skipped' THEN NULL ELSE onboarding_completion_kind END,
+            created_at, updated_at
+        FROM product_state;
+        DROP TABLE product_state;
+        ALTER TABLE product_state_v27 RENAME TO product_state;
     """)
 
 
