@@ -8,6 +8,7 @@ import {
   createCoachSession,
   deleteCoachSession,
   getDefaultProviderStatus,
+  getProductState,
   listCoachSessions,
   updateCoachSession,
 } from "@/lib/api";
@@ -24,6 +25,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [capability, setCapability] = useState<CoachCapability>("loading");
+  const [startupRouteResolved, setStartupRouteResolved] = useState(false);
   const [coachSessions, setCoachSessions] = useState<SessionRailSession[]>([]);
   const [selectedCoachSessionId, setSelectedCoachSessionId] = useState<number | null>(null);
   const [draftSession, setDraftSession] = useState(false);
@@ -36,6 +38,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   const keepSessionRailMounted = !shellHidden;
   const requestedSessionId = /^\/s\/(\d+)$/.exec(pathname)?.[1];
   const routeSessionId = requestedSessionId ? Number(requestedSessionId) : null;
+
+  useEffect(() => {
+    if (!coachWorkspaceRoute) return undefined;
+    const controller = new AbortController();
+    void getProductState({ signal: controller.signal })
+      .then((state) => {
+        if (controller.signal.aborted) return;
+        if (state.availability === "available" && state.onboarding_completed !== true) {
+          router.replace("/onboarding");
+          return;
+        }
+        setStartupRouteResolved(true);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setStartupRouteResolved(true);
+      });
+    return () => controller.abort();
+  }, [coachWorkspaceRoute, router]);
 
   useEffect(() => {
     if (shellHidden) return undefined;
@@ -139,6 +159,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   if (shellHidden) return <>{children}</>;
+  if (coachWorkspaceRoute && !startupRouteResolved) return null;
 
   return (
     <div className="task3-app">

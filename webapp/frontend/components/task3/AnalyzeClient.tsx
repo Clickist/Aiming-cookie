@@ -341,7 +341,7 @@ export function AnalyzeClient() {
     try {
       await analyzeKovaakRun(
         selectedRun.id,
-        buildRunAnalysisRequest({ inputMode, manualOverride: calibration() }),
+        buildRunAnalysisRequest({ manualOverride: calibration() }),
         { idempotencyKey: crypto.randomUUID() },
       );
       router.push("/tasks");

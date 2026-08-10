@@ -1,3 +1,5 @@
+"use client";
+
 import { CoachWorkspacePage } from "@/components/task7/CoachWorkspacePage";
 
 export default function CoachHomePage() {
