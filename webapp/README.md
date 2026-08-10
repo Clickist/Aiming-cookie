@@ -50,7 +50,7 @@ Windows PowerShell 的 Python 测试入口为 `.\.venv\Scripts\python.exe -m pyt
 ## 常用环境变量
 
 - `DATABASE_URL`：本地默认 SQLite；具体默认值以当前 backend 配置为准；
-- `LLM_PROVIDER` / `LLM_DAILY_BUDGET_CNY`：仅供旧环境兼容；active Coach/Analysis narration 使用本地 owner-scoped Provider profile，不使用固定 DeepSeek/CNY gate；
+- `LLM_PROVIDER`：仅供旧环境兼容；active Coach/Analysis narration 使用本地 owner-scoped Provider profile；
 - Coach runtime 固定使用 Pi policy stack；Provider/sidecar 失败时只返回可重试错误，不切换旧 Python Coach；
 - `COACH_SIDECAR_URL`：Coach sidecar 地址。
 
