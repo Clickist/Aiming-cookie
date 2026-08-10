@@ -1,22 +1,14 @@
-/**
- * Single adapter: AnalysisResult v1 (wire) → CoachReport (UI view model).
- * Mirrors webapp/backend/contracts.py analysis_result_to_coach_report.
- */
-
 import type {
   AnalysisFamilySupportState,
   AnalysisMetricV2,
   AnalysisResultV2,
-  AnalysisResultV1,
   CalibrationValues,
   CoachContextRefV1,
-  CoachReport,
   InputMode,
   HistoryTrend,
   KovaaKAnalysisRequest,
   KovaaKRunListItem,
   SessionListItem,
-  ProductStateV1,
   TaskDetailV1,
   TaskFailureDomain,
   TaskPhase,
@@ -25,21 +17,6 @@ import type {
   StorageCategoryTotals,
   TimelineEvent,
 } from "./types";
-
-export function analysisResultToCoachReport(
-  result: AnalysisResultV1,
-): CoachReport {
-  const narration = result.narration;
-  const narrationOut: string | null =
-    narration.status === "available" ? narration.text : null;
-
-  return {
-    diagnosis: result.deterministic.diagnosis,
-    figures: result.deterministic.figures,
-    narration: narrationOut,
-    notes: [...(result.notes ?? [])],
-  };
-}
 
 export type AnalysisViewState =
   | "loading"
@@ -555,14 +532,6 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
       : [],
     video: { kind: videoKind, reason: safeString(replay?.reason) },
   };
-}
-
-export function getProductStartRoute(
-  state: ProductStateV1,
-): "/onboarding" | "/" | null {
-  if (state.availability !== "available") return null;
-  if (state.onboarding_completed !== true) return "/onboarding";
-  return "/";
 }
 
 const TASK_STATE_TEXT: Record<TaskState, string> = {

@@ -29,12 +29,12 @@ import {
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
+import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import type {
   CalibrationProfileV1,
   CaptureStatusV1,
   CustomProviderKind,
-  CustomProviderModel,
   IncompleteCaptureItemV1,
   KovaaKRunListItem,
   ProviderAuthMode,
@@ -130,19 +130,6 @@ function incompleteReasonLabel(value: IncompleteCaptureItemV1["reason"]): string
   return value === "interrupted_finalization" ? "整理过程被中断" : "未归类的采集产物";
 }
 
-function firstAuthMode(modes: ProviderAuthMode[] | undefined): ProviderAuthMode {
-  if (modes?.includes("api_key")) return "api_key";
-  return modes?.[0] ?? "api_key";
-}
-
-function isAuthTerminal(operation: ProviderAuthOperation): boolean {
-  return ["succeeded", "failed", "cancelled", "timed_out", "interrupted"].includes(operation.status);
-}
-
-function isCustomProviderKind(kind: string): kind is CustomProviderKind {
-  return kind === "custom_openai_compatible" || kind === "custom_anthropic_compatible";
-}
-
 function providerStatusTone(status: ProviderProfileState): "success" | "warning" | "error" | "neutral" {
   if (status === "ready") return "success";
   if (status === "needs_reauth" || status === "auth_expired") return "warning";
@@ -158,6 +145,18 @@ const NAV_ITEMS = [
   { id: "kovaak", label: "KovaaK 成绩" },
   { id: "storage", label: "存储" },
 ];
+
+type SettingsSnapshot = {
+  profiles: ProviderProfile[];
+  catalog: ProviderCatalogV1 | null;
+  calibration: CalibrationProfileV1;
+  capture: CaptureStatusV1 | null;
+  storage: StorageResponse | null;
+  incomplete: IncompleteCaptureItemV1[];
+  runs: KovaaKRunListItem[];
+};
+
+let settingsSnapshot: SettingsSnapshot | null = null;
 
 function SettingsExit({ onExit }: { onExit: () => void }) {
   return <IconButton className="task6-settings-back" label="退出设置" onClick={onExit} size="compact" title="返回 Coach">←</IconButton>;
@@ -181,12 +180,7 @@ export function SettingsWorkspace() {
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [customKind, setCustomKind] = useState<CustomProviderKind>("custom_openai_compatible");
-  const [customModels, setCustomModels] = useState<CustomProviderModel[]>([]);
-  const [customModelState, setCustomModelState] = useState<"idle" | "loading" | "loaded" | "manual">("idle");
-  const [customModelMessage, setCustomModelMessage] = useState("");
   const [customProtocolNeedsChoice, setCustomProtocolNeedsChoice] = useState(false);
-  const [customProtocolConfirmed, setCustomProtocolConfirmed] = useState(false);
   const [newApiKey, setNewApiKey] = useState("");
   const [newAuthMode, setNewAuthMode] = useState<ProviderAuthMode>("api_key");
   const [credentialDrafts, setCredentialDrafts] = useState<Record<number, string>>({});
@@ -201,37 +195,78 @@ export function SettingsWorkspace() {
 
   const desktop = isDesktopRuntime();
 
-  const refresh = useCallback(async () => {
+  const customDiscovery = useCustomModelDiscovery({
+    baseUrl,
+    apiKey: newApiKey,
+    enabled: providerId === "custom" && !customProtocolNeedsChoice,
+    discover: discoverCustomProviderModels,
+  });
+  const {
+    models: customModels,
+    state: customModelState,
+    message: customModelMessage,
+    protocolConfirmed: customProtocolConfirmed,
+    kind: customKind,
+  } = customDiscovery;
+
+  const applySnapshot = useCallback((snapshot: SettingsSnapshot) => {
+    setProfiles(snapshot.profiles);
+    setCatalog(snapshot.catalog);
+    setCalibration(snapshot.calibration);
+    setCmPer360(snapshot.calibration.values.cm_per_360?.toString() ?? "");
+    setFov(snapshot.calibration.values.fov?.toString() ?? "");
+    setCapture(snapshot.capture);
+    setStorage(snapshot.storage);
+    setIncomplete(snapshot.incomplete);
+    setRuns(snapshot.runs);
+  }, []);
+
+  const refresh = useCallback(async (force = false) => {
+    if (!force && settingsSnapshot) {
+      applySnapshot(settingsSnapshot);
+      setLoadError(settingsSnapshot.catalog === null);
+      setLoading(false);
+      return;
+    }
     try {
       const [profileResult, catalogResult, calibrationResult] = await Promise.all([
         listProviderProfiles(),
         getProviderCatalog().catch(() => null),
         getCalibrationProfile(),
       ]);
-      setProfiles(profileResult.profiles);
-      setCatalog(catalogResult);
-      setCalibration(calibrationResult);
-      setCmPer360(calibrationResult.values.cm_per_360?.toString() ?? "");
-      setFov(calibrationResult.values.fov?.toString() ?? "");
+      let captureResult: CaptureStatusV1 | null = null;
+      let storageResult: StorageResponse | null = null;
+      let incompleteResult: IncompleteCaptureItemV1[] = [];
+      let runResult: KovaaKRunListItem[] = [];
       if (desktop) {
-        const [captureResult, storageResult, incompleteResult, runResult] = await Promise.all([
+        const [nextCapture, nextStorage, nextIncomplete, nextRuns] = await Promise.all([
           getCaptureStatus(),
           getStorage(),
           listIncompleteCaptures(),
           listKovaakRuns(),
         ]);
-        setCapture(captureResult);
-        setStorage(storageResult);
-        setIncomplete(incompleteResult.items);
-        setRuns(runResult.runs);
+        captureResult = nextCapture;
+        storageResult = nextStorage;
+        incompleteResult = nextIncomplete.items;
+        runResult = nextRuns.runs;
       }
+      settingsSnapshot = {
+        profiles: profileResult.profiles,
+        catalog: catalogResult,
+        calibration: calibrationResult,
+        capture: captureResult,
+        storage: storageResult,
+        incomplete: incompleteResult,
+        runs: runResult,
+      };
+      applySnapshot(settingsSnapshot);
       setLoadError(catalogResult === null);
     } catch {
       setLoadError(true);
     } finally {
       setLoading(false);
     }
-  }, [desktop]);
+  }, [applySnapshot, desktop]);
 
   useEffect(() => {
     void refresh();
@@ -283,42 +318,10 @@ export function SettingsWorkspace() {
   }, [providerId, selectedProviderKey, selectedAuthModesKey, selectedCatalogProvider?.auth_modes]);
 
   useEffect(() => {
-    if (providerId !== "custom" || customProtocolNeedsChoice || !baseUrl.trim() || !newApiKey.trim()) return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      setCustomModelState("loading");
-      setModelId("");
-      setCustomModelMessage("");
-      void discoverCustomProviderModels({
-        base_url: baseUrl.trim(),
-        api_key: newApiKey,
-      }, { signal: controller.signal })
-        .then((response) => {
-          if (controller.signal.aborted) return;
-          setCustomKind(response.protocol === "anthropic-messages" ? "custom_anthropic_compatible" : "custom_openai_compatible");
-          setCustomProtocolConfirmed(true);
-          setCustomModels(response.models);
-          if (response.models.length) {
-            setCustomModelState("loaded");
-          } else {
-            setCustomModelState("manual");
-            setCustomModelMessage("这个 Provider 没有返回可选 Model ID，请手动填写。");
-          }
-        })
-        .catch(() => {
-          if (controller.signal.aborted) return;
-          setCustomModels([]);
-          setCustomProtocolNeedsChoice(true);
-          setCustomProtocolConfirmed(false);
-          setCustomModelState("manual");
-          setCustomModelMessage("无法自动识别接口协议或读取模型列表，请选择协议后手动填写 Model ID。");
-        });
-    }, 500);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [baseUrl, newApiKey, providerId, customProtocolNeedsChoice]);
+    if (customDiscovery.needsProtocolChoice && !customProtocolNeedsChoice) {
+      setCustomProtocolNeedsChoice(true);
+    }
+  }, [customDiscovery.needsProtocolChoice, customProtocolNeedsChoice]);
 
   useEffect(() => {
     if (!authOperation || isAuthTerminal(authOperation)) return;
@@ -328,7 +331,7 @@ export function SettingsWorkspace() {
           setAuthOperation(next);
           if (next.status === "succeeded") {
             setFeedback("Provider 授权成功，可以测试连接。");
-            await refresh();
+            await refresh(true);
           }
         })
         .catch(() => setFeedback("认证状态暂时无法读取，可重试或取消。"));
@@ -352,16 +355,13 @@ export function SettingsWorkspace() {
     });
     setNewApiKey("");
     setFeedback(`已添加 ${created.name}`);
-    await refresh();
+    await refresh(true);
   };
 
   const resetCustomModels = () => {
     setModelId("");
-    setCustomModels([]);
-    setCustomModelState("idle");
-    setCustomModelMessage("");
     setCustomProtocolNeedsChoice(false);
-    setCustomProtocolConfirmed(false);
+    customDiscovery.reset();
   };
 
   const startAuthorization = async (profileId: number) => {
@@ -414,7 +414,7 @@ export function SettingsWorkspace() {
     try {
       await confirmAction.run();
       setConfirmAction(null);
-      await refresh();
+      await refresh(true);
     } catch {
       setFeedback("操作未完成，未伪造成功状态，请重试。");
     }
@@ -440,7 +440,7 @@ export function SettingsWorkspace() {
 
   if (loading) return <div className="task6-settings-page"><div className="task6-settings-state-header"><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><Loading>正在读取设置</Loading></div>;
   if (loadError && !catalog && profiles.length === 0) {
-    return <div className="task6-settings-page"><div className="task6-settings-state-header"><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><ErrorState title="设置暂时不可用"><Button onClick={() => void refresh()} variant="secondary">重试</Button></ErrorState></div>;
+    return <div className="task6-settings-page"><div className="task6-settings-state-header"><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><ErrorState title="设置暂时不可用"><Button onClick={() => void refresh(true)} variant="secondary">重试</Button></ErrorState></div>;
   }
 
   return (
@@ -509,7 +509,7 @@ export function SettingsWorkspace() {
                         <div className="task6-provider-actions" style={{ marginTop: "10px", marginLeft: 0, justifyContent: "flex-start" }}>
                           {!profile.is_default ? (
                             <Button
-                              onClick={() => void setDefaultProviderProfile(profile.id).then(() => refresh()).catch(() => setFeedback("默认 Provider 未能更新。"))}
+                              onClick={() => void setDefaultProviderProfile(profile.id).then(() => refresh(true)).catch(() => setFeedback("默认 Provider 未能更新。"))}
                               size="compact"
                               variant="ghost"
                             >
@@ -621,9 +621,7 @@ export function SettingsWorkspace() {
                     <Field label="API key"><FieldControl autoComplete="off" onChange={(event) => { setNewApiKey(event.target.value); resetCustomModels(); }} type="password" value={newApiKey} /></Field>
                     {customProtocolNeedsChoice ? <Field label="接口协议">
                       <select onChange={(event) => {
-                        setCustomKind(event.target.value as CustomProviderKind);
-                        setCustomProtocolNeedsChoice(true);
-                        setCustomProtocolConfirmed(true);
+                        customDiscovery.confirmProtocol(event.target.value as CustomProviderKind);
                       }} value={customKind}>
                         <option value="custom_openai_compatible">OpenAI-compatible</option>
                         <option value="custom_anthropic_compatible">Anthropic-compatible</option>
@@ -637,7 +635,7 @@ export function SettingsWorkspace() {
                           <option value="">选择 Model</option>
                           {customModels.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_id}</option>)}
                         </select>
-                        <Button onClick={() => { setModelId(""); setCustomModelState("manual"); setCustomModelMessage(""); }} size="compact" variant="ghost">列表中没有需要的 Model ID</Button>
+                        <Button onClick={() => { setModelId(""); customDiscovery.enterManualMode(); }} size="compact" variant="ghost">列表中没有需要的 Model ID</Button>
                       </Field>
                     ) : null}
                     {customModelState === "manual" ? <Field label="Model ID"><FieldControl autoComplete="off" onChange={(event) => setModelId(event.target.value)} value={modelId} /></Field> : null}
@@ -759,7 +757,7 @@ export function SettingsWorkspace() {
                 <div className="task6-inline-actions" style={{ marginTop: "12px" }}>
                   <Button
                     disabled={!capture.capture_enabled && !captureConsent}
-                    onClick={() => void setDesktopCaptureEnabled(!capture.capture_enabled).then(() => refresh())}
+                    onClick={() => void setDesktopCaptureEnabled(!capture.capture_enabled).then(() => refresh(true))}
                     variant="secondary"
                   >
                     {capture.capture_enabled ? "关闭未来采集" : "授权并启用自动采集"}

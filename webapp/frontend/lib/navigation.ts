@@ -77,6 +77,3 @@ export function validateGuidancePrefill(
   return Object.fromEntries(entries);
 }
 
-export function guidanceRoute(targetId: string): string | null {
-  return resolveGuidanceTarget(targetId)?.route ?? null;
-}
