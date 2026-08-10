@@ -122,7 +122,7 @@ def execute_request(
     evidence_runner: Callable[[dict, dict, dict, dict], dict] | None = None,
 ) -> dict:
     """Execute one validated request without exposing exception messages."""
-    from .worker import SourceSnapshotChangedError
+    from .worker_source_validation import SourceSnapshotChangedError
 
     if not isinstance(request, dict):
         return {
