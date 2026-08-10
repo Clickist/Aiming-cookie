@@ -141,14 +141,15 @@ test("onboarding uses accessible Provider and Model listboxes without category t
   assert.doesNotMatch(value, /role="tablist"/);
 });
 
-test("onboarding keeps a three-column action row with a status dot and skip tooltip", async () => {
+test("onboarding requires a Provider and enabled desktop capture before completion", async () => {
   const onboarding = await source("components/task3/OnboardingFlow.tsx");
   const styles = await source("components/task3/task3.css");
   assert.match(onboarding, /task3-onboarding-wizard-actions/);
-  assert.match(onboarding, /task3-onboarding-skip-tooltip/);
+  assert.doesNotMatch(onboarding, /task3-onboarding-skip-tooltip|completeOnboarding\("skipped"\)/);
+  assert.match(onboarding, /!desktop \|\| !captureOptIn/);
+  assert.match(onboarding, /status\.raw_input_permission !== "granted"/);
+  assert.match(onboarding, /completeOnboarding\("connected"\)/);
   assert.match(styles, /task3-onboarding-status span::before/);
-  assert.match(styles, /task3-onboarding-wizard-actions[^{]*\{[\s\S]*justify-content: space-between/);
-  assert.match(styles, /task3-onboarding-skip-wrap:hover[\s\S]*task3-onboarding-skip-tooltip/);
 });
 
 test("KovaaK onboarding is optional and uses the shared identity-free connection panel", async () => {

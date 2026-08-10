@@ -174,7 +174,7 @@ test("desktop writes are not replayed but release the stale connection for the n
     return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
   }) as typeof fetch;
 
-  await assert.rejects(completeOnboarding("skipped"), /temporarily unavailable/i);
+  await assert.rejects(completeOnboarding("connected"), /temporarily unavailable/i);
   await listSessions();
 
   assert.deepEqual(requests, [
@@ -354,7 +354,7 @@ test("analysis write requests forward their stable idempotency keys", async () =
 
   await analyzeKovaakRun(
     7,
-    { input_mode: "multimodal", allow_parallel: true },
+    { allow_parallel: true },
     { idempotencyKey: "analyze-key" },
   );
   await retrySession(11, { idempotencyKey: "retry-key" });
@@ -364,7 +364,6 @@ test("analysis write requests forward their stable idempotency keys", async () =
     "analyze-key",
   );
   assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
-    input_mode: "multimodal",
     allow_parallel: true,
   });
   assert.equal(
@@ -631,15 +630,19 @@ test("KovaaK scenario launch rejects arbitrary text before reaching the desktop 
 
 test("onboarding completion persists an explicit completion kind", async () => {
   const requests: Array<{ input: string; init?: RequestInit }> = [];
-  Reflect.set(globalThis, "isTauri", false);
-  Reflect.set(globalThis, "window", {});
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => ({ baseUrl: "http://127.0.0.1:43129", token: "onboarding-token" }),
+    },
+  });
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     requests.push({ input: String(input), init });
     return new Response(JSON.stringify({
       schema_version: "product_state.v1",
       availability: "available",
       onboarding_completed: true,
-      onboarding_completion_kind: "skipped",
+      onboarding_completion_kind: "connected",
       has_pending_runs: false,
       has_runs: false,
       has_analyses: false,
@@ -647,12 +650,12 @@ test("onboarding completion persists an explicit completion kind", async () => {
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
 
-  await completeOnboarding("skipped");
+  await completeOnboarding("connected");
 
-  assert.equal(requests[0]?.input, "/api/product-state/onboarding");
+  assert.equal(requests[0]?.input, "http://127.0.0.1:43129/api/product-state/onboarding");
   assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
     completed: true,
-    completion_kind: "skipped",
+    completion_kind: "connected",
   });
 });
 

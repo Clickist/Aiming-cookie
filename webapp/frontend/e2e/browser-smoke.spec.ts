@@ -39,16 +39,16 @@ function seekableAnalysis() {
 }
 
 test.describe("Task 7 browser smoke", () => {
-  test("Coach-first startup stays in the main workspace before onboarding is complete", async ({ page }) => {
+  test("startup redirects to mandatory onboarding before the Coach workspace", async ({ page }) => {
     await installApiFixtures(page, apiScenario({
       productState: { ...PRODUCT_STATE, onboarding_completed: false, onboarding_completion_kind: null },
     }));
     await page.goto("/");
-    await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByText("Aiming Coach", { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/onboarding$/);
+    await expect(page.getByRole("heading", { name: "连接模型服务", exact: true })).toBeVisible();
   });
 
-  test("onboarding exposes accessible dropdowns, custom Provider fields, and a skip explanation", async ({ page }) => {
+  test("onboarding exposes accessible dropdowns and custom Provider fields without a skip path", async ({ page }) => {
     await installApiFixtures(page, apiScenario({
       providerStatus: { ...READY_PROVIDER_STATUS, configured: false, profile_id: null, status: "unconfigured" },
     }));
@@ -63,8 +63,8 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByRole("button", { name: "读取可用模型" })).toHaveCount(0);
 
     const skip = page.getByRole("button", { name: "暂时不连接" });
-    await skip.hover();
-    await expect(page.getByRole("tooltip")).toBeVisible();
+    await expect(skip).toHaveCount(0);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "测试连接" })).toBeDisabled();
   });
 

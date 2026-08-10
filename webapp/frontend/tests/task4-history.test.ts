@@ -67,6 +67,20 @@ test("history keeps pending runs, run records, and analysis records in separate 
   assert.equal(sections.analysisRecords.length, 1);
 });
 
+test("history keeps incomplete runs visible even when no analysis tier is available", () => {
+  const incomplete = run({
+    id: 3,
+    run_ref: "run:3",
+    readiness_state: "incomplete_evidence",
+    supported_input_modes: [],
+    limitations: ["missing_performance"],
+  });
+
+  const sections = buildHistorySections({ runs: [incomplete], sessions: [] });
+
+  assert.deepEqual(sections.runRecords, [incomplete]);
+});
+
 test("history labels retain display data without turning refs into user copy", () => {
   const item = analysis({
     training_at: "2026-07-25T00:00:00Z",

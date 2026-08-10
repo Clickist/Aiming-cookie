@@ -25,17 +25,17 @@ function productState(overrides: Partial<ProductStateV1>): ProductStateV1 {
   };
 }
 
-test("conditional start distinguishes unavailable, onboarding, analyze, and history", () => {
+test("conditional start distinguishes unavailable, onboarding, and Coach", () => {
   assert.equal(getProductStartRoute(productState({ availability: "unavailable" })), null);
   assert.equal(getProductStartRoute(productState({ onboarding_completed: false })), "/onboarding");
-  assert.equal(getProductStartRoute(productState({ onboarding_completed: true })), "/analyze");
+  assert.equal(getProductStartRoute(productState({ onboarding_completed: true })), "/");
   assert.equal(
     getProductStartRoute(productState({ onboarding_completed: true, has_runs: true })),
-    "/history",
+    "/",
   );
   assert.equal(
     getProductStartRoute(productState({ onboarding_completed: true, has_analyses: true })),
-    "/history",
+    "/",
   );
 });
 
@@ -137,12 +137,10 @@ test("pause warning follows the selected Run instead of global capture history",
 test("analysis request keeps profile defaults and per-run overrides separate", () => {
   assert.deepEqual(
     buildRunAnalysisRequest({
-      inputMode: "multimodal",
       profileDefault: { cm_per_360: 42, fov: 103 },
       manualOverride: { cm_per_360: 38 },
     }),
     {
-      input_mode: "multimodal",
       profile_default: { cm_per_360: 42, fov: 103 },
       manual_override: { cm_per_360: 38 },
     },

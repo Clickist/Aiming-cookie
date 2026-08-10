@@ -600,7 +600,7 @@ export function CoachPanel({
       const results = await Promise.allSettled(
         readyRuns.map((item) => analyzeKovaakRun(
           item.id,
-          { input_mode: "multimodal", allow_parallel: true },
+          { allow_parallel: true },
           { idempotencyKey: `${batchProposal.batch_ref ?? "analysis-batch"}:${item.run_ref}` },
         )),
       );
