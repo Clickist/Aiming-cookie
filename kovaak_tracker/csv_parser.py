@@ -87,20 +87,32 @@ class KovaaKStats:
         return self.summary["Scenario"]
 
     @property
-    def dpi(self) -> int:
-        return int(float(self.config["DPI"]))
+    def dpi(self) -> int | None:
+        try:
+            return int(float(self.config["DPI"]))
+        except (KeyError, ValueError):
+            return None
 
     @property
-    def fov(self) -> float:
-        return float(self.config["FOV"])
+    def fov(self) -> float | None:
+        try:
+            return float(self.config["FOV"])
+        except (KeyError, ValueError):
+            return None
 
     @property
-    def horiz_sens(self) -> float:
-        return float(self.config["Horiz Sens"])
+    def horiz_sens(self) -> float | None:
+        try:
+            return float(self.config["Horiz Sens"])
+        except (KeyError, ValueError):
+            return None
 
     @property
-    def vert_sens(self) -> float:
-        return float(self.config["Vert Sens"])
+    def vert_sens(self) -> float | None:
+        try:
+            return float(self.config["Vert Sens"])
+        except (KeyError, ValueError):
+            return None
 
     @property
     def resolution(self) -> str:

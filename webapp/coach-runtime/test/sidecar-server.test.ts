@@ -64,11 +64,11 @@ test("GET /healthz returns ok", async () => {
   }
 });
 
-test("POST /v0/turn with invalid JSON returns 400", async () => {
+test("POST /v1/turn with invalid JSON returns 400", async () => {
   const server = createSidecarServer();
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   try {
-    const res = await request(server, "POST", "/v0/turn", "{not-json");
+    const res = await request(server, "POST", "/v1/turn", "{not-json");
     assert.equal(res.statusCode, 400);
     assert.equal((res.json as { ok: boolean }).ok, false);
   } finally {

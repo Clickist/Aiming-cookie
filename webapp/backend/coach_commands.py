@@ -110,6 +110,11 @@ _EXPLICIT_USER_FACT_COMMANDS = {
     "training_plan.retest.record",
 }
 _WRITE_COMMANDS |= _EXPLICIT_USER_FACT_COMMANDS
+_COACH_INFERRED_CONFIRMATION_COMMANDS = _EXPLICIT_USER_FACT_COMMANDS | {
+    "analysis.create_from_run",
+    "analysis.delete",
+    "analysis.retry",
+}
 _DIRECT_WRITE_COMMANDS = {
     "teaching_session.update",
 }
@@ -1688,6 +1693,28 @@ async def _execute_product_command_inner(
             return await _finish(owner_id, _idempotency_conflict_result(command_id))
         if prior is not None:
             return await _replay_idempotent_result(owner_id, command_id, prior)
+
+    if (
+        authorization_source == "coach_inferred"
+        and command_name in _COACH_INFERRED_CONFIRMATION_COMMANDS
+    ):
+        pending_confirmation = await _create_confirmation(
+            owner_id, command_name, parameters, _risk_for(command_name),
+        )
+        result = _result(
+            command_id,
+            "needs_confirmation",
+            confirmation=_confirmation(
+                command_name,
+                parameters,
+                reason="Coach 推断的操作需要用户确认后执行",
+                confirmation_ref=pending_confirmation["confirmation_ref"],
+                expires_at=pending_confirmation["expires_at"],
+            ),
+        )
+        return await _record_and_finish(
+            owner_id, command_name, idempotency_key, digest, result,
+        )
 
     try:
         if command_name == "run.list":
