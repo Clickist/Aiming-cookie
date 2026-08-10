@@ -414,6 +414,7 @@ def _agent_run_payload() -> dict:
         "schema_version": "coach_agent_run.v1",
         "run_ref": "agent_run:soft-start",
         "parent_run_ref": None,
+        "session_id": 1,
         "attempt": 1,
         "status": "queued",
         "phase": "queued",

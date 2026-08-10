@@ -188,6 +188,34 @@ async def test_claim_and_release_use_version_cas_and_one_active_run():
 
 
 @pytest.mark.asyncio
+async def test_owner_scoped_teaching_session_can_claim_a_conversation_run():
+    from webapp.backend import coach_store, teaching_session_store as store
+    from webapp.backend.db import get_conn
+
+    owner_id = "conversation-claim-owner"
+    session = await store.get_or_create_primary_session(owner_id)
+    conversation = await coach_store.create_session(owner_id)
+    conn = await get_conn()
+    await conn.execute(
+        "INSERT INTO coach_agent_runs(run_ref, owner_id, thread_id, attempt, status, phase, content) "
+        "VALUES(?, ?, ?, 1, 'queued', 'queued', 'lesson')",
+        ("agent_run:conversation", owner_id, int(conversation["id"])),
+    )
+    await conn.commit()
+
+    claimed = await store.claim_active_run(
+        owner_id,
+        session["session_ref"],
+        session["version"],
+        "agent_run:conversation",
+        _contract(session["session_ref"], session["version"]),
+    )
+
+    assert claimed["active_run_ref"] == "agent_run:conversation"
+    assert await store.load_run_contract(owner_id, "agent_run:conversation") is not None
+
+
+@pytest.mark.asyncio
 async def test_failed_claim_rolls_back_active_run_and_contract_snapshot():
     from webapp.backend import coach_store, teaching_session_store as store
     from webapp.backend.db import get_conn

@@ -208,6 +208,8 @@ def _v2_context(*, run_facts: dict) -> dict:
             "analyzer_refs": ["native_flicking.v1"],
             "support_status": "supported",
             "limitations": [],
+            "display_name": None,
+            "aim_family": None,
         },
         "run_facts": run_facts,
         "diagnosis": {
@@ -1240,6 +1242,8 @@ def test_dynamic_context_projects_frozen_profile_analyzer_and_table_without_rows
         "input_snapshot": {
             "scenario_resolution": {
                 "scenario_profile_ref": "scenario:dynamic.fixture@1",
+                "display_name": "VT Dynamic Clicking",
+                "aim_family": "dynamic_clicking",
             },
         },
         "deterministic": {
@@ -1287,6 +1291,8 @@ def test_dynamic_context_projects_frozen_profile_analyzer_and_table_without_rows
         "analyzer_refs": ["dynamic_clicking.v1"],
         "support_status": "supported",
         "limitations": ["motion_predictability_evidence_unavailable"],
+        "display_name": "VT Dynamic Clicking",
+        "aim_family": "dynamic_clicking",
     }
     assert context["processed_events"]["tables"] == [table]
     assert context["diagnosis"]["issues"][0]["signal"] == (
@@ -1380,6 +1386,8 @@ def test_tracking_context_uses_generic_processed_table_directory_without_rows():
         "analyzer_refs": ["continuous_tracking.v1"],
         "support_status": "supported",
         "limitations": [],
+        "display_name": None,
+        "aim_family": None,
     }
     assert context["processed_events"]["tables"] == [table]
     wire = json.dumps(context, ensure_ascii=False, sort_keys=True)

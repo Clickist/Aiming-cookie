@@ -10,6 +10,7 @@ import { listBuiltinProviderCatalog } from "./provider-models.ts";
 import {
   runCoachTurn,
   stopCoachTurn,
+  type CoachActivityUpdate,
   type CoachPartialRevision,
   type CoachTurnTiming,
 } from "./turn.ts";
@@ -48,6 +49,7 @@ type TurnRunner = (
   request: unknown,
   options?: {
     onPartial?: (partial: CoachPartialRevision) => Promise<void> | void;
+    onActivity?: (activity: CoachActivityUpdate) => Promise<void> | void;
     onComplete?: (timing: CoachTurnTiming) => Promise<void> | void;
   },
 ) => Promise<CoachRuntimeTurnResponse>;
@@ -66,8 +68,8 @@ function acceptsNdjson(req: http.IncomingMessage): boolean {
   });
 }
 
-function schemaForPath(pathname: string): CoachRuntimeTurnSchema {
-  return pathname === "/v0/turn" ? "coach_runtime_turn.v0" : "coach_runtime_turn.v1";
+function schemaForPath(_pathname: string): CoachRuntimeTurnSchema {
+  return "coach_runtime_turn.v1";
 }
 
 function turnStatusCode(response: { ok: boolean; error: { code?: string } | null }): number {
@@ -244,7 +246,7 @@ export async function handleSidecarRequest(
     return;
   }
 
-  if (req.method === "POST" && (url.pathname === "/v0/turn" || url.pathname === "/v1/turn")) {
+  if (req.method === "POST" && url.pathname === "/v1/turn") {
     let parsed: unknown;
     try {
       parsed = await parseJsonBody(req);
@@ -266,7 +268,7 @@ export async function handleSidecarRequest(
       return;
     }
 
-    if (url.pathname !== "/v1/turn" || !acceptsNdjson(req)) {
+    if (!acceptsNdjson(req)) {
       const response = await turnRunner(parsed);
       writeJson(res, turnStatusCode(response), response);
       return;
@@ -279,6 +281,7 @@ export async function handleSidecarRequest(
     });
     let timing: CoachTurnTiming | null = null;
     let lastRevision = 0;
+    let lastActivitySequence = 0;
     const response = await turnRunner(parsed, {
       onPartial: async (partial) => {
         if (
@@ -296,6 +299,24 @@ export async function handleSidecarRequest(
           text: partial.text,
           elapsed_ms: partial.elapsed_ms,
           provider_rounds: partial.provider_rounds,
+        });
+      },
+      onActivity: async (activity) => {
+        if (
+          activity.sequence !== lastActivitySequence + 1 ||
+          !["thinking", "tool"].includes(activity.kind) ||
+          !["started", "completed", "failed"].includes(activity.state) ||
+          (activity.tool_call_id !== undefined && typeof activity.tool_call_id !== "string") ||
+          (activity.tool_name !== undefined && typeof activity.tool_name !== "string") ||
+          (activity.command_name !== undefined && typeof activity.command_name !== "string")
+        ) {
+          throw new Error("invalid Coach activity update");
+        }
+        lastActivitySequence = activity.sequence;
+        writeNdjsonFrame(res, {
+          schema_version: COACH_RUNTIME_STREAM_SCHEMA,
+          type: "activity",
+          activity,
         });
       },
       onComplete: async (completedTiming) => {

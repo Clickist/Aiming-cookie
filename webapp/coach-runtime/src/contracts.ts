@@ -1,4 +1,3 @@
-export const COACH_RUNTIME_TURN_SCHEMA_V0 = "coach_runtime_turn.v0" as const;
 export const COACH_RUNTIME_TURN_SCHEMA_V1 = "coach_runtime_turn.v1" as const;
 export const COACH_RUNTIME_TURN_SCHEMA = COACH_RUNTIME_TURN_SCHEMA_V1;
 export const PROVIDER_CATALOG_SCHEMA = "coach_provider_catalog.v1" as const;
@@ -241,9 +240,7 @@ export type CoachRuntimeTurnRequest = {
   teaching_turn?: TeachingTurnContract;
 };
 
-export type CoachRuntimeTurnSchema =
-  | typeof COACH_RUNTIME_TURN_SCHEMA_V0
-  | typeof COACH_RUNTIME_TURN_SCHEMA_V1;
+export type CoachRuntimeTurnSchema = typeof COACH_RUNTIME_TURN_SCHEMA_V1;
 
 export type CoachRuntimeError = {
   category: string;
