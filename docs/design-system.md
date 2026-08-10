@@ -59,7 +59,7 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 - 页面只能组合语义组件和 token，不复制私有按钮/卡片样式；
 - Coach 侧栏、主工作区和系统级导航共享同一视觉语言，但职责和层级由 UI/UX 文档决定；
 - 训练 Run、证据来源、Raw Input 授权/采集状态和 source unavailable 使用统一语义状态组件；状态必须同时有文字或图标，不得只依赖颜色；
-- input-native、multimodal、video-fallback 是能力/证据状态，不是装饰性标签；组件应使用一致的 badge、notice、warning 和 disabled 语义；
+- input-native、multimodal、video-fallback 是 Coach 自动选择的能力/证据等级，不是用户可切换的模式或装饰性标签；组件应使用一致的 badge、notice、warning 和 disabled 语义；
 - 营销页面不自动继承 Desktop app 的信息密度和组件合同；
 - 旧组件、当前 prototype 或截图只能帮助识别 capability 和状态，不能因为“已有实现”就覆盖新合同；
 - 页面只能消费 `webapp/frontend/ui/tokens.ts` 定义的唯一 executable token 入口。

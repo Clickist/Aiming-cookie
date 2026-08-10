@@ -63,12 +63,13 @@ Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享
 
 ### 2.3 当前产品合同边界
 
-共享合同必须能读取历史三种输入模式，并为新 Coach Run 固定一种输入模式：
+新 Coach Run 由 Coach 自动选择一条证据等级路径，不向用户暴露 mode selector：
 
-- 历史记录仍可能包含 **input-native**、**multimodal** 和 **video-fallback** 三种 mode；它们只用于兼容读取。
-- 新 Coach Run 只接受 **multimodal**：Stats + Performance + Raw Input + managed MP4 + canonical window 必须同时存在并通过校验。
+- `multimodal`：Stats + Performance + Raw Input + managed MP4 + canonical window；
+- `input_native`：Stats + Performance + Raw Input + canonical window；没有视觉结论；
+- `video_fallback`：Stats + managed MP4；没有 Raw Input provenance 或输入运动学测量。
 
-新 Coach Run Analysis 统一遵守 `Stats + Performance + Raw Input + MP4 + canonical window`。历史 Analysis 可以继续读取旧兼容 mode，但新创建不能使用 fallback，也不能仅凭 MP4 推断缺失来源。
+服务端按 `multimodal > input_native > video_fallback` 选择最高可用路径；三者均不可用时不得创建 Analysis。所有路径都必须冻结 owner-scoped 输入快照，结果必须带 evidence provenance 和 limitations。历史旧结果仍可读，但安装前孤立 Stats/Performance 文件不导入、不展示。
 
 暂停局是 v1 的明确 fail-closed 分支：当 Stats 表示 `Pause Count > 0` 时，不生成永久 MP4，不把暂停期间的 Raw/Performance 强行标为 canonical aligned，也不把该 Run 宣称为 ready；证据可以保留为 partial/unavailable 供诊断。normal 与 timescale-only（`Pause Count = 0`）继续使用当前永久 MP4 路径。
 
@@ -80,16 +81,17 @@ Raw Input snapshot 的采样语义必须随格式版本识别。`ACRI v1` 保持
 
 ### Current Coach Run source gate
 
-The new Coach Run analysis contract is a single all-source `multimodal` path.
-Before enqueue, the server must validate Stats, Performance (`.perf`), Raw
-Input, managed KovaaK-window MP4, and a resolved canonical time window. The
-validator is allow-listed and returns only stable missing-source codes plus a
-bounded path-free summary. Missing or invalid sources keep the Run in an
-incomplete/pending state and must not select `input-native` or
-`video-fallback`.
+The new Coach Run analysis contract uses the highest available evidence tier.
+Before enqueue, the server validates the allow-listed sources for each tier and
+returns only stable missing-source codes plus a bounded path-free summary:
 
-The three modes above remain readable for historical Analysis records. They
-are compatibility history, not alternate modes for new Coach Run Analysis.
+- `multimodal`: Stats, Performance, Raw Input, managed KovaaK-window MP4, and canonical time window;
+- `input_native`: Stats, Performance, Raw Input, and canonical time window;
+- `video_fallback`: Stats and managed KovaaK-window MP4.
+
+The server selects `multimodal > input_native > video_fallback` and rejects the
+Run only when all three tiers are unavailable. Every created Analysis freezes an
+owner-scoped snapshot and exposes its evidence provenance and limitations.
 
 ## 3. 稳定数据合同
 
@@ -121,9 +123,9 @@ AnalysisResult
 
 - measured/derived 数值、事件、时间、来源、质量和 limitations 是 Coach 不得改写或重算的事实输入；deterministic diagnosis/prescription 是规则层生成的可追溯候选观察与初始排序，不是不可挑战的最终因果结论。Coach 可结合完整动作级 processed data、反例、历史和知识重新排序、保留或拒绝候选解释，但不得伪造测量、覆盖正式指标或把假设写成事实；
 - `analysis_type` 必须显式，不能靠字段猜测 flicking/tracking；
-- 历史报告的 `input_mode` 必须显式区分 input-native / multimodal / video-fallback；新 Coach Run 的 `input_mode` 固定为 multimodal，不能靠是否有 MP4 或 trace 猜测；
+- 历史报告与新 Coach Run 的 `input_mode` 都必须显式区分 input-native / multimodal / video-fallback；新 Run 使用 source gate 冻结的选择，不能靠是否有 MP4 或 trace 在下游猜测；
 - `analysis_id` 必须绑定所属 Analysis Session 的稳定引用（当前 wire format 为 `analysis:{session_id}`）；terminal write 必须同时校验 owner/local profile、`analysis_type`、`input_mode` 与可选 `kovaak_run_id/ref` 均匹配已 claim 的 request，结构合法但属于另一 request 的结果必须 fail-closed；
-- multimodal 不得让视频重新定义已经成立的输入运动学；视觉校验失败保留 Run 的 failed/incomplete 记录，不生成 native 或 video-fallback 替代 Analysis；
+- multimodal 不得让视频重新定义已经成立的输入运动学；视觉校验失败时保留受限结果和 warning，不把该 Analysis 静默改标为另一种 input mode；
 - 每个关键指标必须能追溯到 Raw Input、Performance、Stats、MP4 或融合计算；证据缺失时使用 warning/availability 表达；
 - Coach 可获得版本化、类型化、字段白名单化的 L1-L3 facts/evidence/diagnosis；不得获得 L0 原始载体或私有 parser payload；
 - artifact 通过 manifest/稳定引用暴露，不泄露任意文件系统路径；
@@ -333,9 +335,9 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - `LLM_PROVIDER` 与 `kovaak_tracker/coach/providers.json` 只保留为旧环境/配置兼容入口，不得继续充当 provider/model 事实源；迁移必须保留显式选择，不能把 obsolete `deepseek-chat` 静默改写为其它 model；
 - active Coach turn 只能使用 owner 当前 selected local profile；Analysis worker 不得加载 Provider 或生成 narration，新 `analysis_result.v2` 只保留 `not_requested` / `null` 兼容 envelope，旧 v1/unversioned narration 继续可读；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；
 - provider/model 目录、API key/ambient auth、OAuth/device-code 以及 OpenAI-compatible / Anthropic-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
-- Provider/model/credential/sidecar 失败只影响 Coach readiness，不得阻塞 Analysis、History 或 deterministic report/prescription；
+- 首次 onboarding 和每次创建 Analysis 前都必须存在已测试的 selected Provider；Provider 后续请求失败时保留已保存记录，由 Coach 显示错误并引导 Settings 修复，不转为本地无 Provider 分析；Provider-to-Provider fallback 暂不启用；
 - Pi coding-agent、shell、filesystem 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；
-- 首次启动以 Provider onboarding 为主路径；Provider 是 Coach 的必要条件。未配置或不可用时，采集和已有 Run 记录可以保留，但不生成 Provider-less Analysis、Coach 对话、AI 解释、训练计划或 Coach 产品命令；用户可从既有 Settings/Onboarding 入口恢复 Provider。
+- 首次启动以不可跳过的 Provider onboarding 为主路径；Provider 与 Windows Raw Input/窗口回放采集授权、启用都是进入主工作区的硬门槛。后续 Provider 失效不回退 onboarding，Coach 对话提供错误和 Settings 恢复入口。
 
 ## 6. 本地归属与安全
 
@@ -386,5 +388,5 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 
 - PRD 决定产品目标与范围；本文只展开系统合同。
 - Roadmap 决定实施顺序与发布 Gate；Progress 记录当前事实。
-- active spec 只冻结局部设计；active plan 才能授权 executor 修改代码。
+- 设计材料与历史 plan 只作为可选参考；它们不授权 executor，也不构成开发流程门槛。
 - 代码和测试可证明“已实现什么”，不能静默修改本文定义的长期边界。
