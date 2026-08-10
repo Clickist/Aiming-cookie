@@ -372,9 +372,14 @@ async def get_product_state(x_user_id: str = Depends(get_request_user_id)):
 @router.post("/product-state/onboarding", response_model=ProductStateResponse)
 async def set_product_onboarding(
     request: OnboardingStateRequest,
+    _: None = Depends(require_desktop_token),
     x_user_id: str = Depends(get_request_user_id),
 ):
-    """Persist an explicit connected/skipped onboarding completion decision."""
+    """Persist a completed Provider-backed desktop onboarding decision."""
+    profile = await provider_store.get_default_runtime_profile(x_user_id)
+    provider_status = await coach_runtime.get_provider_profile_status(profile)
+    if provider_status.get("status") != "ready":
+        raise HTTPException(409, "A tested Provider connection is required before onboarding can finish")
     try:
         state = await queue.set_onboarding_state(
             x_user_id,
@@ -938,7 +943,6 @@ async def analyze_kovaak_run(
     result = await coach_commands.execute_trusted_analysis_create(
         config.DESKTOP_LOCAL_PROFILE,
         run_id,
-        input_mode=request.input_mode,
         cm_per_360=request.cm_per_360,
         fov=request.fov,
         profile_default=(request.profile_default.model_dump() if request.profile_default else None),

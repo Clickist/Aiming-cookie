@@ -924,11 +924,11 @@ async def create_analysis_from_run(
     managed_video_source: Path | None = None,
     managed_video_fingerprint: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
-    """Freeze a registered run and enqueue an Analysis through managed stores.
+    """Freeze a Run and enqueue its highest valid automatic evidence tier.
 
-    New Run-based Analysis uses one all-source ``multimodal`` contract.
-    Historical Analysis rows remain readable, but legacy modes cannot create
-    new Run Analysis records through this boundary.
+    ``input_mode`` remains an internal compatibility argument for older callers.
+    New Run Analysis never trusts it: the frozen snapshot is the sole source
+    of the selected tier.
     """
     existing = await queue.get_run_analysis_states(owner_id, run_id)
     completed = next((item for item in existing if item.get("status") == "done"), None)
@@ -969,12 +969,6 @@ async def create_analysis_from_run(
     except (LookupError, ValueError) as exc:
         raise ProductCommandError("input_unavailable", str(exc), kind="unavailable") from exc
 
-    if input_mode != "multimodal":
-        raise ProductCommandError(
-            "unsupported_input_mode",
-            "new Run Analysis requires multimodal input",
-            kind="unavailable",
-        )
     run_video = snapshot["sources"].get("video")
     run_video_source = None
     if managed_video_source is None and isinstance(run_video, Mapping):
@@ -1021,7 +1015,10 @@ async def create_analysis_from_run(
             f"required Run sources are unavailable: {missing}",
             kind="unavailable",
         )
-    snapshot["source_requirements_version"] = "fixed_all_source.v1"
+    selected_mode = source_gate["selected_mode"]
+    if not isinstance(selected_mode, str):  # guarded by ready; keeps the queue contract strict
+        raise ProductCommandError("input_unavailable", "Run has no supported analysis tier", kind="unavailable")
+    snapshot["source_requirements_version"] = "automatic_quality_tier.v1"
 
     session_id = await queue.enqueue(
         owner_id,
@@ -1032,7 +1029,7 @@ async def create_analysis_from_run(
         profile_default=dict(profile_default) if isinstance(profile_default, Mapping) else None,
         manual_override=dict(manual_override) if isinstance(manual_override, Mapping) else None,
         analysis_type=_analysis_type_for_snapshot(snapshot),
-        input_mode=input_mode,
+        input_mode=selected_mode,
         kovaak_run_id=run_id,
         input_snapshot=snapshot,
         status="uploading",
@@ -1041,7 +1038,8 @@ async def create_analysis_from_run(
         managed_video = ""
         managed_csv = ""
         workspace = session_dir(session_id)
-        if managed_video_source is not None:
+        uses_video = selected_mode in {"multimodal", "video_fallback"}
+        if uses_video and managed_video_source is not None:
             video_destination = workspace / "video.mp4"
             try:
                 copy_path_to_path(managed_video_source, video_destination)
@@ -1068,7 +1066,7 @@ async def create_analysis_from_run(
                     kind="unavailable",
                 )
             managed_video = str(video_destination)
-        elif run_video_source is not None:
+        elif uses_video and run_video_source is not None:
             video_destination = workspace / "video.mp4"
             workspace.mkdir(parents=True, exist_ok=True)
             os.link(run_video_source, video_destination)
@@ -1083,6 +1081,45 @@ async def create_analysis_from_run(
                     kind="unavailable",
                 )
             managed_video = str(video_destination)
+        if selected_mode == "video_fallback":
+            run_stats = snapshot["sources"].get("stats")
+            stats_path = run_stats.get("path") if isinstance(run_stats, Mapping) else None
+            stats_fingerprint = (
+                run_stats.get("fingerprint") if isinstance(run_stats, Mapping) else None
+            )
+            if not isinstance(stats_path, str) or not isinstance(stats_fingerprint, Mapping):
+                raise ProductCommandError(
+                    "source_unavailable",
+                    "Stats source identity is unavailable",
+                    kind="unavailable",
+                )
+            stats_source = Path(stats_path)
+            stats_destination = workspace / "stats.csv"
+            try:
+                copy_path_to_path(stats_source, stats_destination)
+            except OSError as exc:
+                try:
+                    source_matches = _matches_frozen_copy(stats_source, stats_fingerprint)
+                except OSError:
+                    source_matches = False
+                if not source_matches:
+                    raise ProductCommandError(
+                        "source_unavailable",
+                        "Stats source revision changed before managed copy",
+                        kind="unavailable",
+                    ) from exc
+                raise
+            if not _matches_frozen_copy(
+                stats_destination,
+                stats_fingerprint,
+                source=stats_source,
+            ):
+                raise ProductCommandError(
+                    "source_unavailable",
+                    "Stats source revision changed before managed copy",
+                    kind="unavailable",
+                )
+            managed_csv = str(stats_destination)
         await queue.set_session_input_paths(session_id, owner_id, managed_video, managed_csv)
         if not await queue.finish_upload(session_id):
             raise ProductCommandError("upload_state_lost", "分析输入状态已失效，请重新提交", kind="unavailable")
@@ -1101,7 +1138,15 @@ async def create_analysis_from_run(
             "input_setup_failed",
             "无法建立分析输入快照",
         ) from exc
-    return {"session_id": session_id, "analysis_ref": f"analysis:{session_id}"}
+    return {
+        "session_id": session_id,
+        "analysis_ref": f"analysis:{session_id}",
+        "input_mode": selected_mode,
+        "limitations": [
+            item for item in source_gate["missing"]
+            if isinstance(item, str)
+        ],
+    }
 
 
 async def retry_analysis(owner_id: str, analysis_id: int, *, thread_id: int | None = None) -> dict[str, Any]:
@@ -1418,7 +1463,6 @@ async def execute_trusted_analysis_create(
     owner_id: str,
     run_id: int,
     *,
-    input_mode: Literal["multimodal"] = "multimodal",
     cm_per_360: float | None,
     fov: float | None,
     profile_default: Mapping[str, object] | None = None,
@@ -1456,7 +1500,6 @@ async def execute_trusted_analysis_create(
         ).hexdigest()
     parameters = {
         "run_ref": f"run:{run_id}",
-        "input_mode": input_mode,
         "cm_per_360": cm_per_360,
         "fov": fov,
         "profile_default": dict(profile_default) if isinstance(profile_default, Mapping) else None,
@@ -1473,7 +1516,6 @@ async def execute_trusted_analysis_create(
         "parameters_digest": None,
         "safe_parameters_summary": {
             "run_ref": f"run:{run_id}",
-            "input_mode": input_mode,
             "cm_per_360": cm_per_360,
             "fov": fov,
             "has_video_source": managed_video_source is not None,
@@ -1491,7 +1533,6 @@ async def execute_trusted_analysis_create(
                 thread_id=None,
                 idempotency_key=idempotency_key,
                 trusted_analysis_args={
-                    "input_mode": input_mode,
                     **({"allow_parallel": True} if allow_parallel else {}),
                     "cm_per_360": cm_per_360,
                     "fov": fov,
@@ -1767,7 +1808,6 @@ async def _execute_product_command_inner(
                 created = await create_analysis_from_run(
                     owner_id,
                     run_id,
-                    input_mode="multimodal",
                     cm_per_360=parameters.get("cm_per_360"),
                     fov=parameters.get("fov"),
                 )

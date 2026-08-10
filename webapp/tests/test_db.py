@@ -757,7 +757,7 @@ async def test_fresh_v14_schema_uses_v13_helper_and_exact_tombstone_ddl(
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 26
+    assert db.TARGET_USER_VERSION == 27
     assert calls == 1
     assert "analysis_deletion_tombstones" not in db.SCHEMA
     assert _normalized_ddl(db._V13_ANALYSIS_DELETION_TOMBSTONES) == _normalized_ddl(
@@ -1046,6 +1046,40 @@ async def test_v20_teaching_session_migration_is_transactional_and_idempotent():
 
 
 @pytest.mark.asyncio
+async def test_v27_provider_first_onboarding_migration_resets_skipped_rows():
+    conn = await aiosqlite.connect(":memory:")
+    conn.row_factory = aiosqlite.Row
+    try:
+        await conn.executescript(
+            """
+            CREATE TABLE product_state (
+                owner_id TEXT PRIMARY KEY,
+                onboarding_completed INTEGER NOT NULL DEFAULT 0,
+                onboarding_completion_kind TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO product_state VALUES
+                ('skipped-owner', 1, 'skipped', 'a', 'b'),
+                ('connected-owner', 1, 'connected', 'c', 'd');
+            """
+        )
+        await conn.execute("BEGIN IMMEDIATE")
+        await db._migrate_v27_provider_first_onboarding(conn)
+        await conn.commit()
+        rows = {
+            row["owner_id"]: dict(row)
+            for row in await (await conn.execute("SELECT * FROM product_state")).fetchall()
+        }
+        assert rows["skipped-owner"]["onboarding_completed"] == 0
+        assert rows["skipped-owner"]["onboarding_completion_kind"] is None
+        assert rows["connected-owner"]["onboarding_completion_kind"] == "connected"
+        await db._migrate_v27_provider_first_onboarding(conn)
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
 async def test_v12_to_v13_init_schema_rolls_back_table_and_version_on_failure(
     monkeypatch,
 ):
@@ -1200,7 +1234,7 @@ async def test_init_schema_migrates_v13_to_v18_preserving_run_and_session_rows()
     await db.init_schema()
     conn = await db.get_conn()
 
-    assert db.TARGET_USER_VERSION == 26
+    assert db.TARGET_USER_VERSION == 27
     assert (await (await conn.execute("PRAGMA user_version")).fetchone())[0] == db.TARGET_USER_VERSION
     connection_columns = await (
         await conn.execute("PRAGMA table_info(kovaak_connections)")
