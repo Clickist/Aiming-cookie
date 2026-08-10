@@ -679,7 +679,7 @@ export async function acknowledgeCoachGuidance(
 }
 
 export async function completeOnboarding(
-  completionKind: "connected" | "skipped",
+  completionKind: "connected",
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProductStateV1> {
   const res = await apiFetch(
@@ -689,7 +689,7 @@ export async function completeOnboarding(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ completed: true, completion_kind: completionKind }),
     },
-    opts,
+    { ...opts, desktopToken: true },
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as ProductStateV1;

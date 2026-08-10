@@ -607,7 +607,7 @@ export interface ProductStateV1 {
   schema_version: "product_state.v1";
   availability: "available" | "unavailable";
   onboarding_completed: boolean | null;
-  onboarding_completion_kind: "connected" | "skipped" | "legacy" | null;
+  onboarding_completion_kind: "connected" | "legacy" | null;
   has_pending_runs: boolean | null;
   has_runs: boolean | null;
   has_analyses: boolean | null;
@@ -783,7 +783,6 @@ export interface CalibrationValues {
 }
 
 export interface KovaaKAnalysisRequest {
-  input_mode?: InputMode;
   allow_parallel?: boolean;
   video_path?: string;
   /** Legacy wire fields retained for backend migration compatibility; Task 3 UI never sends them. */

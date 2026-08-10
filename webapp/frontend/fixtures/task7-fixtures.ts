@@ -938,7 +938,7 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
   if (path === "/api/product-state" && method === "GET") return response(scenario.productState);
   if (path === "/api/product-state/onboarding" && method === "POST") {
     const body = requestBody(request.body);
-    scenario.productState = { ...scenario.productState, onboarding_completed: true, onboarding_completion_kind: body.completion_kind === "skipped" ? "skipped" : "connected" };
+    scenario.productState = { ...scenario.productState, onboarding_completed: true, onboarding_completion_kind: "connected" };
     return response(scenario.productState);
   }
   if (path === "/api/providers/catalog") return response(PROVIDER_CATALOG);

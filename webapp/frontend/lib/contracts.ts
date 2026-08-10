@@ -559,10 +559,10 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
 
 export function getProductStartRoute(
   state: ProductStateV1,
-): "/onboarding" | "/analyze" | "/history" | null {
+): "/onboarding" | "/" | null {
   if (state.availability !== "available") return null;
   if (state.onboarding_completed !== true) return "/onboarding";
-  return state.has_runs || state.has_analyses ? "/history" : "/analyze";
+  return "/";
 }
 
 const TASK_STATE_TEXT: Record<TaskState, string> = {
@@ -670,12 +670,10 @@ function hasCalibrationValue(values: CalibrationValues | undefined): boolean {
 }
 
 export function buildRunAnalysisRequest(input: {
-  inputMode: InputMode;
   profileDefault?: CalibrationValues;
   manualOverride?: CalibrationValues;
 }): KovaaKAnalysisRequest {
   return {
-    input_mode: input.inputMode,
     ...(hasCalibrationValue(input.profileDefault)
       ? { profile_default: input.profileDefault }
       : {}),

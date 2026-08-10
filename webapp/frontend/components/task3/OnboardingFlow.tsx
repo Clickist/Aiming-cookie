@@ -309,28 +309,23 @@ export function OnboardingFlow() {
     }
   };
 
-  const skip = async () => {
-    setFinishing(true);
-    try {
-      const state = await completeOnboarding("skipped");
-      if (state.availability !== "available") throw new Error("unavailable");
-      router.push("/analyze");
-    } catch {
-      setMessage("暂时无法保存跳过决定，请重试。");
-      setFinishing(false);
-    }
-  };
-
   const finish = async () => {
     setFinishing(true);
     setMessage("");
     try {
-      if (captureOptIn) {
-        await setDesktopCaptureEnabled(true);
-      }
+      if (!desktop || !captureOptIn) throw new Error("capture_required");
+      const coordinator = await setDesktopCaptureEnabled(true);
+      const status = await getCaptureStatus();
+      if (
+        !coordinator.enabled
+        || status.availability !== "available"
+        || !status.platform_supported
+        || status.raw_input_permission !== "granted"
+        || !status.capture_enabled
+      ) throw new Error("capture_not_ready");
       const state = await completeOnboarding("connected");
       if (state.availability !== "available") throw new Error("unavailable");
-      router.push("/analyze");
+      router.push("/");
     } catch {
       setMessage("设置未能完整保存。没有假装自动采集已启用，请重试。");
       setFinishing(false);
@@ -698,14 +693,7 @@ export function OnboardingFlow() {
           ) : null}
 
           <div className="task3-onboarding-wizard-actions">
-            <div className="task3-onboarding-skip-wrap">
-              <button className="task3-skip-action" disabled={finishing} onClick={() => void skip()} type="button">
-                暂时不连接
-              </button>
-              <div className="task3-onboarding-skip-tooltip" role="tooltip">
-                跳过后将没有 Coach 对话、AI 解释、长期档案与训练计划；只保留本地指标、确定性诊断、规则化提示和历史。之后可随时在设置中激活。
-              </div>
-            </div>
+            <div />
             <div aria-atomic="true" aria-live="polite" className="task3-onboarding-status">
               {statusMessage && statusTone ? <span data-tone={statusTone}>{statusMessage}</span> : null}
             </div>
@@ -752,7 +740,7 @@ export function OnboardingFlow() {
           {message ? <Notice tone="error">{message}</Notice> : null}
           <div className="task3-onboarding-actions">
             <Button onClick={() => setStep(2)} variant="secondary">返回</Button>
-            <Button disabled={finishing || (captureOptIn && !desktop)} onClick={() => void finish()}>{finishing ? "正在保存" : "进入工作台"}</Button>
+            <Button disabled={finishing || !desktop || !captureOptIn} onClick={() => void finish()}>{finishing ? "正在保存" : "进入工作台"}</Button>
           </div>
         </section>
       )}
