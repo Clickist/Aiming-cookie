@@ -40,7 +40,7 @@
 - [x] `git diff --check` and staged diff checks
 - [x] Changed-Markdown local link validation
 - [x] `cmp -s AGENTS.md CLAUDE.md`
-- [ ] Final `git status`, local/remote HEAD, and remaining field/release gates reported
+- [x] Final `git status`, local/remote HEAD, and remaining field/release gates reported
 
 ## Main-review verification
 
@@ -49,3 +49,4 @@
 - Production build and browser smoke: `14 passed`.
 - The root onboarding smoke initially exposed a real routing defect: `AppShell` owns Coach routes and did not mount the page component containing the gate. The gate now lives in `AppShell`; the stale smoke copy was updated to assert the onboarding heading.
 - Real Tauri, KovaaK, hardware, Provider, installer/signing/updater/download, and cross-vendor capture gates remain unverified by these automated checks.
+- Final repository state: local `main` and `origin/main` both point to `05dd3e6`; tracked changes are clean. The root SOP, `logo.jfif`, and `viscose-youtube/` remain intentionally untracked pending explicit classification.
