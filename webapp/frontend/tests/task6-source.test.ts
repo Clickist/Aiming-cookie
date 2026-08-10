@@ -73,6 +73,13 @@ test("Settings route covers Provider, Profile, capture, theme, and Storage", asy
   assert.doesNotMatch(settings, /\{profile\.status\}|\{capture\.raw_input_permission\}|Account/);
 });
 
+test("Settings reuses the in-memory snapshot when revisiting and forces refresh after changes", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  assert.match(settings, /let settingsSnapshot: SettingsSnapshot \| null = null/);
+  assert.match(settings, /if \(!force && settingsSnapshot\)/);
+  assert.match(settings, /await refresh\(true\)/);
+});
+
 test("Settings section navigation follows the current URL hash", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   assert.match(settings, /window\.location\.hash\.slice\(1\)/);
@@ -124,8 +131,9 @@ test("Settings Provider type and auth selects match the shared field height", as
 
 test("Settings auto-detects custom Provider protocols and keeps a fallback choice", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
+  const helpers = await source("lib/provider-helpers.ts");
   assert.match(settings, /custom_anthropic_compatible/);
-  assert.match(settings, /anthropic-messages/);
+  assert.match(helpers, /anthropic-messages/);
   assert.match(settings, /customKind === "custom_anthropic_compatible" \? "https:\/\/provider\.example" : "https:\/\/provider\.example\/v1"/);
   assert.match(settings, /discoverCustomProviderModels/);
   assert.match(settings, /customProtocolNeedsChoice/);
@@ -265,6 +273,38 @@ test("new Coach sessions are created only when the first message is sent", async
   assert.match(panel, /createCoachAgentRun\(/);
 });
 
+test("Coach shows a sent user message immediately and restores the draft on failure", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /optimisticMessageIdRef/);
+  assert.match(panel, /setMessages\(\(current\) => \[\.\.\.current,/);
+  assert.match(panel, /role: "user"/);
+  assert.match(panel, /message\.id !== optimisticId/);
+  assert.match(panel, /setDraft\(content\)/);
+});
+
+test("Coach keeps each session's active or failed run when switching conversations", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /runBySessionRef/);
+  assert.match(panel, /runBySessionRef\.current\.get\(activeSessionKey\)/);
+  assert.match(panel, /runBySessionRef\.current\.set\(activeSessionKeyRef\.current, run\)/);
+});
+
+test("Coach analysis proposals hide stale messages and generic suggestions", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /!batchProposal && messages\.length === 0 && !run/);
+  assert.match(panel, /!batchProposal \? messages\.map/);
+  assert.match(panel, /!run && !batchProposal/);
+});
+
+test("Coach analysis proposals wait, attach to a new conversation, and start Provider interpretation", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /getSession/);
+  assert.match(panel, /await onEnsureSession\(\)/);
+  assert.match(panel, /attachCoachContext/);
+  assert.match(panel, /await createCoachAgentRun\(/);
+  assert.match(panel, /completedRunIds[\s\S]*?analysis_status:[\s\S]*?"done"/);
+});
+
 test("Coach training actions distinguish plan context from a reviewed KovaaK launch", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
   const desktop = await source("lib/desktop.ts");
@@ -276,7 +316,9 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.match(coach, /scenario_profile_ref/);
   assert.match(coach, /正在查看的分析/);
   assert.match(coach, /已附加分析：/);
-  assert.match(coach, /引用分析：/);
+  assert.doesNotMatch(coach, /引用分析：/);
+  assert.match(coach, /正在理解问题和分析上下文/);
+  assert.match(coach, /读取已附加分析/);
   assert.match(coach, /尚未绑定可启动的 KovaaK 场景/);
   assert.match(desktop, /scenario_open/);
   assert.match(desktop, /当前网页预览不能启动 KovaaK/);
