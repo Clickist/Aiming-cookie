@@ -1,14 +1,14 @@
-# Implementation Plan 状态入口
+# Historical Implementation Plan Index
 
-> 本页只回答“现在是否有可交给 executor 的实施合同”。产品方向看 [`../../PRD.md`](../../PRD.md)，架构边界看 [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)，当前优先级看 [`../../ROADMAP.md`](../../ROADMAP.md)。
+> 本页保留历史 implementation plan，供理解旧范围、验证和决策。产品方向看 [`../../PRD.md`](../../PRD.md)，架构边界看 [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)，当前优先级看 [`../../ROADMAP.md`](../../ROADMAP.md)。目录内旧的 Active、Task、executor、Allowed files 与 Stop rule 文字均为历史原文，不构成当前开发流程或授权。
 
-## Active
+## Historical References
 
 - [`2026-08-10-coach-conversation-cards-video-workspace-v1.md`](2026-08-10-coach-conversation-cards-video-workspace-v1.md)：Tasks 1-7 的计划内实现、必需自动化与两档桌面视觉检查已完成；Coach 卡片、Session rail + 中央视频 + 右侧对话、`1180px` 最小宽度、History/Settings 居中和旧路由退役均已落地。新 screenshot 基线二进制不在 Allowed files，且根路由当前行为与首次 onboarding 合同仍有待裁决，因此暂保留 active，不归档、不把截图套件记为通过。
 
 - [`2026-08-10-coach-product-operator-guided-workflows-v1.md`](2026-08-10-coach-product-operator-guided-workflows-v1.md)：在现有 Pi runtime、typed product commands、confirmation/idempotency/audit、Coach runs/events、TeachingSession 与 Training Plan 上增加 message-bound direct grant、ProductReadiness、GuidanceIntent、命令覆盖和单一 GuidanceHost；当前尚未授权任何 Task。
 
-- [`2026-08-09-coach-first-single-pipeline-v1.md`](2026-08-09-coach-first-single-pipeline-v1.md): Provider-required Coach workflow, fixed all-source Run analysis, explicit incomplete-evidence states, and backend Coach/session contracts. OpenDesign owns the workspace layout and visual implementation separately.
+- [`2026-08-09-coach-first-single-pipeline-v1.md`](2026-08-09-coach-first-single-pipeline-v1.md): Historical Provider-required Coach workflow and fixed all-source analysis proposal. Its input-tier and OpenDesign wording is superseded by the current PRD and frontend UI/UX contract.
 
 - [`2026-08-09-scenario-family-routing-and-run-presentation-v1.md`](2026-08-09-scenario-family-routing-and-run-presentation-v1.md): 点点已授权修复新场景不可分析与内部 Run 编号泄漏；按本机场景定义优先的自动 family 识别、baseline 分析降级、用户安全记录标签和回归验证推进，未完成前不得重打内测包。
 - [`2026-08-08-internal-beta-e2e-remediation-v1.md`](2026-08-08-internal-beta-e2e-remediation-v1.md)：点点已授权 Tasks 1-4；按 Coach 读取与工具失败真值、Tauri 子进程有界自愈、production Analysis/状态/计划一致性以及全量回归与隔离安装态 E2E 收口本轮内测阻塞，全部通过后才能重打未签名安装包。
@@ -28,7 +28,7 @@
 - [`2026-07-27-launch-family-production-activation.md`](2026-07-27-launch-family-production-activation.md)：使用真实 `Run 1030 / 1032 / 1036` 逐 family 激活 Static、Dynamic 与连续 LG Switching exact hash；Static 复用 input-native analyzer，Dynamic 独立 calibration/holdout，Switching 使用 `Stats kill boundary -> event-local episode`，不建立 persistent identity。四 family 资源矩阵、全量自动化与对话循环已收敛；没有 grounded issue/active plan 的 family 仍不伪造 knowledge/plan ref。不改 PRD / Architecture，不提交私人媒体或 Raw/source payload。
 - [`2026-07-20-complete-coach-analysis-context-v1.md`](2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的规范化 Run facts、数据后处理、专项 analyzer、有界 evidence tools、知识、画像、计划与复测实施顺序；pre-activation 治理已完成，点点已授权从 Task 1 起继续推进，每次只执行一个 Task。
 
-在新 plan 被审阅并明确标记为 active 之前，executor 不得依据 PRD、Architecture、Roadmap、spec 或归档 plan 自行拆解实施任务。
+当前实施按点点的任务说明、PRD/Architecture、代码和测试推进；不得把本目录任何计划当作必经流程或独立授权。
 
 ## Unresolved
 
@@ -84,10 +84,8 @@ Frozen plan 不得执行，也不得仅通过口头指令跳过其冻结条件�
 - [`../../archive/completed/plans/2026-07-12-kovaak-local-ingestion.md`](../../archive/completed/plans/2026-07-12-kovaak-local-ingestion.md)：KovaaK Stats/Performance 本地发现与解析；Task 1 已完成。
 近期已完成的 implementation plans 位于 [`../../archive/completed/plans/`](../../archive/completed/plans/)。它们只用于追溯已批准范围、验收方法和历史决策，不是当前施工入口。
 
-## 使用规则
+## 使用边界
 
-1. 只有本页列为 **active** 的 plan 才可能交给 executor；
-2. 点点还必须明确指定该 plan 中的一个 Task；
-3. executor 每次只执行一个 Task，并遵守其 Allowed files、Tests first、冻结决策和 Stop rule；
-4. completed、frozen、retired 或其他 archive plan 均不得直接执行；
-5. 需要恢复旧 plan 时，必须先核对当前代码和上游事实源，再生成或重新批准 active plan。
+1. 历史 plan 只用于核对旧范围、验证方式和已知风险；
+2. 当前范围来自点点的任务说明与上游事实源，并由代码和测试验证；
+3. 若恢复旧方案，必须先核对当前代码和上游事实源，不能直接复制其状态或步骤。

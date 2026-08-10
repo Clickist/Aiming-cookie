@@ -23,22 +23,22 @@
 - 产品问题：`PRD.md`；涉及交付先后时再读 `ROADMAP.md`、`PROGRESS.md`。
 - 架构或数据合同：`PRD.md` 相关段落 + `ARCHITECTURE.md`，然后核对代码和测试。
 - 前端产品设计：`PRD.md` + `frontend-uiux-design.md`；涉及视觉再读 `DESIGN-cursor.md` 与 `design-system.md`。
-- OpenDesign 桌面前端设计交接：从 [`opendesign-desktop-handoff.md`](opendesign-desktop-handoff.md) 进入；它只路由既有事实源、冻结设计自由度与交付 Gate，不构成 implementation Task 授权。Landing 明确延后到正式桌面截图和演示素材可用后。
+- 已退役的 OpenDesign 桌面交接记录见 [`archive/retired/opendesign-desktop-handoff.md`](archive/retired/opendesign-desktop-handoff.md)；它只保留历史设计决策，不构成当前产品或实现依据。
 - 开发与验证：`DEVELOPMENT.md`，再进入相关代码目录。
-- 当前施工：只使用 [`superpowers/plans/README.md`](superpowers/plans/README.md) 列为 active 的 plan/Task。
+- 当前施工：按当前任务说明、相关事实源、代码和测试推进；`superpowers/plans/` 仅作为可选参考，不构成开工门槛。
 - full-worktree 合同修复已完成；范围、逐 Task 验收与最终矩阵见 [`archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md`](archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md)。真实现场与发行 Gate 不因自动化通过而闭合。
-- 局部设计：只使用 [`superpowers/specs/README.md`](superpowers/specs/README.md) 列为 active 的 spec。
-- Coach 代办与引导：明确自然语言指令的直接授权、ProductReadiness、GuidanceIntent、用户必须亲自完成的步骤和前端 GuidanceHost 使用 active [`superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md`](superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md)；对应施工只按 active [`superpowers/plans/2026-08-10-coach-product-operator-guided-workflows-v1.md`](superpowers/plans/2026-08-10-coach-product-operator-guided-workflows-v1.md) 中由点点明确指定的单个 Task 执行。
-- 自动 Run 采集与分析前选择：使用 active [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md)；它只冻结产品/系统合同，不构成实施授权。
+- 局部设计：需要时参考 [`superpowers/specs/README.md`](superpowers/specs/README.md) 及其中的设计材料；它们不构成施工流程要求。
+- Coach 代办与引导：相关 ProductReadiness、GuidanceIntent、用户步骤和前端 GuidanceHost 设计见 [`superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md`](superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md)，按当前任务和代码/测试需要参考。
+- 自动 Run 采集与分析前选择：设计材料见 [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md)；它只冻结产品/系统合同，不构成施工流程要求。
 - 自动 Run finalization 的内部实施已完成；范围与验证证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 物理硬件仍由 Roadmap 维护为外部发布 Gate。
-- 完整 Coach 的 aim-family 范围、L0-L3 context/tool results、EvidenceSegment 与 outcome-only 降级：使用 active [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)；它是设计合同，不构成实施授权。
-- 完整 Coach 的当前施工顺序与 Gate：使用 active [`superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md`](superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md)，按指定 Task 的 Allowed files、Tests first 与 Stop rule 执行。
-- Coach 主动带练的 intake、候选假设、teach-back、单变量练习、执行确认与复测改口：使用 active [`superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md`](superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md)。提示词切片的旧 [`archive/blocked/plans/2026-07-27-coach-guided-teaching-loop-v1.md`](archive/blocked/plans/2026-07-27-coach-guided-teaching-loop-v1.md) 已按 Stop rule blocked；TeachingSession 的已完成实施证据见 [`archive/completed/plans/2026-07-27-coach-teaching-session-v1.md`](archive/completed/plans/2026-07-27-coach-teaching-session-v1.md)，后续施工须由新的 active plan 承接。
-- Coach 的多信号问题编译、证据强度、反例、候选原因、区分问题与首次 Analysis 软启动：使用 active [`superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md`](superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md)；当前施工按 active [`superpowers/plans/2026-08-06-coach-problem-hypothesis-diagnosis-v1.md`](superpowers/plans/2026-08-06-coach-problem-hypothesis-diagnosis-v1.md) 的授权 Task 执行。
-- Coach 的用户目标、证据类型、训练感受、living plan 调整与 Viscose 社区经验：使用 active [`superpowers/specs/2026-08-06-coach-goal-feedback-learning-loop-design.md`](superpowers/specs/2026-08-06-coach-goal-feedback-learning-loop-design.md)；对应施工见 active [`superpowers/plans/2026-08-06-coach-goal-feedback-learning-loop-v1.md`](superpowers/plans/2026-08-06-coach-goal-feedback-learning-loop-v1.md)。Analysis、History 与 current-training DTO 不由该合同改写。
-- Viscose S2 Easier/Medium 的有限成绩同步、去身份 Coach 摘要和 Easier→复测→Medium 课程衔接：设计合同使用 active [`superpowers/specs/2026-07-29-viscose-s2-sync-coach-progression-design.md`](superpowers/specs/2026-07-29-viscose-s2-sync-coach-progression-design.md)；已完成实施证据见 [`archive/completed/plans/2026-07-29-viscose-s2-sync-coach-progression-v1.md`](archive/completed/plans/2026-07-29-viscose-s2-sync-coach-progression-v1.md)。
-- 本地已连接 KovaaK 账号与 Coach turn-scoped 临时 Profile 查询：长期合同使用 active [`superpowers/specs/2026-07-30-kovaak-connected-account-and-coach-lookup-design.md`](superpowers/specs/2026-07-30-kovaak-connected-account-and-coach-lookup-design.md)，实施证据见 [`archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md`](archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md)。
-- Analysis 删除/恢复：长期合同使用 active [`superpowers/specs/2026-07-16-analysis-deletion-reconciliation-design.md`](superpowers/specs/2026-07-16-analysis-deletion-reconciliation-design.md)；实施证据见 completed [`archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md`](archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md)。
+- 完整 Coach 的 aim-family 范围、L0-L3 context/tool results、EvidenceSegment 与 outcome-only 降级：设计材料见 [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)；它是设计合同，不构成施工流程要求。
+- 完整 Coach 的施工顺序与 Gate：可参考 [`superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md`](superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md)，实际范围以当前任务、代码和测试为准。
+- Coach 主动带练的 intake、候选假设、teach-back、单变量练习、执行确认与复测改口：设计材料见 [`superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md`](superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md)；TeachingSession 的实施证据见 [`archive/completed/plans/2026-07-27-coach-teaching-session-v1.md`](archive/completed/plans/2026-07-27-coach-teaching-session-v1.md)，后续施工按当前任务推进。
+- Coach 的多信号问题编译、证据强度、反例、候选原因、区分问题与首次 Analysis 软启动：设计材料见 [`superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md`](superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md)，实现按当前任务和验证结果推进。
+- Coach 的用户目标、证据类型、训练感受、living plan 调整与 Viscose 社区经验：设计材料见 [`superpowers/specs/2026-08-06-coach-goal-feedback-learning-loop-design.md`](superpowers/specs/2026-08-06-coach-goal-feedback-learning-loop-design.md)；Analysis、History 与 current-training DTO 不由该材料改写。
+- Viscose S2 Easier/Medium 的有限成绩同步、去身份 Coach 摘要和 Easier→复测→Medium 课程衔接：设计材料见 [`superpowers/specs/2026-07-29-viscose-s2-sync-coach-progression-design.md`](superpowers/specs/2026-07-29-viscose-s2-sync-coach-progression-design.md)；已完成实施证据见 [`archive/completed/plans/2026-07-29-viscose-s2-sync-coach-progression-v1.md`](archive/completed/plans/2026-07-29-viscose-s2-sync-coach-progression-v1.md)。
+- 本地已连接 KovaaK 账号与 Coach turn-scoped 临时 Profile 查询：长期设计材料见 [`superpowers/specs/2026-07-30-kovaak-connected-account-and-coach-lookup-design.md`](superpowers/specs/2026-07-30-kovaak-connected-account-and-coach-lookup-design.md)，实施证据见 [`archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md`](archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md)。
+- Analysis 删除/恢复：长期设计材料见 [`superpowers/specs/2026-07-16-analysis-deletion-reconciliation-design.md`](superpowers/specs/2026-07-16-analysis-deletion-reconciliation-design.md)；实施证据见 completed [`archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md`](archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md)。
 - Windows Desktop 前端前置 Gate：Steam 多库 KovaaK bounded discovery 与 launch-token descendant isolation 的实施证据见 completed [`archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md`](archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md)。
 
 ## 专题资料
@@ -49,7 +49,7 @@
 - [`coach-theory-foundation.md`](coach-theory-foundation.md)：教练理论基础；
 - [`coach-community-frontier.md`](coach-community-frontier.md)：社区实践观察；
 - [`coach-prescription-manual.md`](coach-prescription-manual.md)：处方规则说明；
-- [`deployment-guide.md`](deployment-guide.md)：2026-07-10 部署候选调研快照；使用前必须重新核实并通过新的 active plan；
+- [`deployment-guide.md`](deployment-guide.md)：2026-07-10 部署候选调研快照；使用前必须重新核实并通过相关测试与发布 Gate；
 - [`superpowers/assessments/`](superpowers/assessments/)：评估证据与历史决策输入。
   - [`superpowers/assessments/2026-07-13-reflek-capability-adoption.md`](superpowers/assessments/2026-07-13-reflek-capability-adoption.md)：RefleK 全产品能力、数据链、分析与 Coach 采纳评估。
   - [`superpowers/assessments/2026-07-22-real-run-analysis-capability-audit.md`](superpowers/assessments/2026-07-22-real-run-analysis-capability-audit.md)：现存 normal/timescale/restart/pause 实机四件套、已产品化采集规则、Task 6-9 可用与禁止用途，以及 visual input 合同纠偏。
@@ -61,6 +61,6 @@
 
 ## 归档边界
 
-[`archive/`](archive/) 保存 completed、frozen、retired、review 和 history 材料。归档只用于追溯；不得把归档 spec/plan 当作当前合同或直接交给 executor。
+[`archive/`](archive/) 保存 completed、frozen、retired、review 和 history 材料。归档只用于追溯；不得未经核对把归档 spec/plan 当作当前合同。
 
 根目录草稿、mockup、Stitch、HTML 和 `.firecrawl/` 采集结果默认都是参考材料。若要升级为事实源，必须先把结论写入相应活跃主责任文档。

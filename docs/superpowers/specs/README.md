@@ -1,8 +1,8 @@
-# Active Spec 状态入口
+# Design Reference Index
 
-> 本目录只保留仍在生效的局部设计合同。产品定义以 [`../../PRD.md`](../../PRD.md) 为准，稳定系统边界以 [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) 为准，桌面 IA 与交互关系以 [`../../frontend-uiux-design.md`](../../frontend-uiux-design.md) 为准。
+> 本目录保留设计材料与历史局部合同，供追溯和对照。产品定义以 [`../../PRD.md`](../../PRD.md) 为准，稳定系统边界以 [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) 为准，桌面 IA 与交互关系以 [`../../frontend-uiux-design.md`](../../frontend-uiux-design.md) 为准。它们不构成 superpowers 开发流程、实施授权或当前状态声明。
 
-## Active
+## Reference Materials
 
 - [`2026-08-10-coach-product-operator-guided-workflows-design.md`](2026-08-10-coach-product-operator-guided-workflows-design.md)：冻结明确自然语言指令的 message-bound 产品操作授权、ProductReadiness、GuidanceIntent、前端 GuidanceHost、用户必须亲自完成的步骤和状态验收；Pi 仍是唯一 Agent runtime。
 
@@ -44,4 +44,4 @@
 1. 复制 PRD、Architecture 或 UI/UX 文档的大段正文；
 2. 修改产品目标、阶段范围或系统边界而不先更新对应上游事实源；
 3. 混入施工顺序、完成状态或测试流水；
-4. 在没有 active implementation plan 的情况下直接授权 executor 编码。
+4. 把该材料当作实施授权或当前代码事实。

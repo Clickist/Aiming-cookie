@@ -90,7 +90,7 @@ Stop if the TypeScript bridge widens URL/credential acceptance for any other com
 - `docs/ROADMAP.md`
 - `docs/PROGRESS.md`
 - `docs/frontend-uiux-design.md`
-- `docs/opendesign-desktop-handoff.md`
+- `docs/archive/retired/opendesign-desktop-handoff.md`（历史引用）
 - `docs/README.md`
 - `docs/superpowers/plans/README.md`
 - `docs/superpowers/specs/README.md`

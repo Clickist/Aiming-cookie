@@ -8,6 +8,7 @@
 - [`frozen/plans/`](frozen/plans/)：前置条件未满足或当前阶段明确 No-Go 的计划；
 - [`retired/plans/`](retired/plans/)：技术假设或产品边界已经失效、明确不得执行的计划；
 - [`retired/specs/`](retired/specs/)：已被 PRD、Architecture、UI/UX 文档或新 spec 吸收/取代的旧设计；
+- [`retired/`](retired/) 下的其它文档：已退役的设计交接或说明材料，仅作历史参考，不构成当前入口或执行授权；
 - [`legacy/`](legacy/)：旧产品说明、旧战略和旧研究文档；
 - [`reviews/`](reviews/)：按日期保存的历史审阅快照；
 - [`history/`](history/)：从活跃进度文档拆出的逐日研发流水；
