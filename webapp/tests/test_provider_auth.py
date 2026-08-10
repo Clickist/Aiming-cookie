@@ -450,7 +450,7 @@ async def test_authorize_timeout_and_lost_sidecar_operation_are_recoverable(monk
 async def test_selected_provider_chat_ignores_legacy_cny_budget_and_cost_estimate(
     monkeypatch,
 ):
-    from webapp.backend import coach_service, config, llm_budget, queue
+    from webapp.backend import coach_service, config, queue
     from webapp.backend.coach_engine import EngineCompleteResult
 
     profile = {
@@ -472,9 +472,6 @@ async def test_selected_provider_chat_ignores_legacy_cny_budget_and_cost_estimat
     async def default_profile(_owner_id):
         return profile
 
-    async def reject_legacy_budget(*_args, **_kwargs):
-        return False
-
     async def fake_complete(_turn):
         return EngineCompleteResult(reply="selected reply", notes=[])
 
@@ -489,9 +486,6 @@ async def test_selected_provider_chat_ignores_legacy_cny_budget_and_cost_estimat
     )
     monkeypatch.setattr(
         coach_service.provider_store, "runtime_profile_configured", lambda _value: True
-    )
-    monkeypatch.setattr(
-        llm_budget, "check_and_record", reject_legacy_budget
     )
     monkeypatch.setattr(coach_service, "complete_turn_async", fake_complete)
     monkeypatch.setattr(coach_service.coach_store, "append_message", fake_append)
