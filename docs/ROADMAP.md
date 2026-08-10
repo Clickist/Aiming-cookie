@@ -12,9 +12,11 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 → bounded evidence-backed Coach → local history, plan, and retest
 ```
 
-现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测，后续数据采集核心通路未改动。当前发布仍受真实 Tauri product-path、Tracking 时延和发布工程约束。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 仍只能作为 Preview / Experimental。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺；v1 不把未具备条件的 AMD/Intel 物理验证设为发布阻塞。
+现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测，后续数据采集核心通路未改动。当前发布仍受真实 Tauri product-path、Tracking 时延和发布工程约束。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 与 video-fallback 是正式但有界的降级路径，真实现场与发布 Gate 仍单独维护。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺；v1 不把未具备条件的 AMD/Intel 物理验证设为发布阻塞。
 
-完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留 Provider-first onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化，不包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
+完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留不可跳过的 Provider + 采集授权 onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化，不包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
+
+当前分析策略是 Coach 自动选择 `multimodal > input_native > video_fallback`。三种路径分别表示完整多源、输入证据优先和视频证据优先；不提供用户 mode selector。只有三条路径均不可用时才不创建 Analysis，由 Coach 说明缺失来源和修复动作。安装前已有的 Stats/Performance 文件不导入、不展示。
 
 ## 2. 当前施工优先级
 
@@ -28,9 +30,9 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 6. 让自动 MP4 成为 Run-owned 直观回放与视觉 evidence；multimodal 仍只用 Raw 计算运动学，录像失败时保留满足条件的 native 结果；
 7. 在 Settings 显示分类存储占用，并允许用户分别手动管理 Run-owned 自动 MP4、Raw trace 和未完成采集数据；不启用静默自动清理；
 8. 保持 native import、managed storage、launch token、runtime lifecycle、KovaaK watcher 和 Raw Input opt-in 的既有能力；Windows Steam 多库发现、50-file bound 与 launch-token descendant isolation 已完成自动化和本机 Gate；
-9. 保持已完成的正式前端应用骨架、首次 Provider onboarding、分析工作区、Coach sidebar 与 Settings；继续用真实 product-path Gate 验证其消费的 capability，跳过 Provider 后没有 Coach，只有本地确定性闭环；
-10. Frontend reconstruction Task 1–7 已完成并归档；后续 UI 功能或发布改动必须使用新的 active Task，不能复用已完成 plan 扩大范围，UI 仍只消费稳定 capability、不反向定义后端合同。
-11. 完成有限 KovaaK 训练项目的本地手动成绩同步、去身份 Coach 摘要和现有 TeachingSession 的较低阶段→matched retest→较高阶段建议接线；本地已连接账号可供后续手动刷新，Coach 可做不持久化的单回合临时查询。前端只在新 Task 中实现 onboarding / Settings 输入和最小成绩视图，不建立独立 Benchmark 页面，也不在用户侧突出外部作者、课程代号或阶段体系。
+9. 保持已完成的正式前端应用骨架、不可跳过的 Provider + Windows 采集授权 onboarding、分析工作区、Coach sidebar 与 Settings；继续用真实 product-path Gate 验证其消费的 capability，Provider 失效时保留可恢复状态并引导 Settings；
+10. Frontend reconstruction Task 1–7 已完成并归档；后续 UI 功能或发布改动按当前任务、稳定 capability 和真实 product-path Gate 推进，UI 仍不反向定义后端合同。
+11. 完成有限 KovaaK 训练项目的本地手动成绩同步、去身份 Coach 摘要和现有 TeachingSession 的较低阶段→matched retest→较高阶段建议接线；本地已连接账号可供后续手动刷新，Coach 可做不持久化的单回合临时查询。前端按当前任务实现 onboarding / Settings 输入和最小成绩视图，不建立独立 Benchmark 页面，也不在用户侧突出外部作者、课程代号或阶段体系。
 
 ### P0 — 冻结本地数据可靠性合同
 
@@ -47,7 +49,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 - runtime crash 后的 restart、fatal-state 或重建策略；
 - launch token 对子进程的环境隔离。
 
-这些涉及状态机、安全和数据保留，必须先写 spec/plan，不能由 executor 临场决定。
+这些涉及状态机、安全和数据保留，必须先明确设计决策、影响范围和验证方式；不要求使用 superpowers 的 spec/plan 流程。
 
 ### P0 — 既有后端前置硬终点（已到达；新主路径例外）
 
@@ -76,7 +78,7 @@ OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成，Raw In
 - 完成通知、明确失败态、重试和恢复反馈；
 - Coach 长上下文、表现档案、用户级产品命令、解释链与训练计划；
 - 首次 Provider onboarding、完整 Provider/model/auth Settings、未配置/需重新认证/连接失败状态和 secret-safe credential 管理；
-- Landing 在下载前说明 Coach 价值、Provider 成本、可选本地模式和数据边界，并提供带字幕/文字步骤的教学；
+- Landing 在下载前说明 Coach 价值、Provider 成本、Provider-first 数据边界和恢复方式，并提供带字幕/文字步骤的教学；
 - 窄窗口、空状态、错误状态和 Provider/Coach runtime 不可用状态；
 - 视觉 token 在新前端中的可执行落点。
 
@@ -88,22 +90,22 @@ OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成，Raw In
 
 ## 3. 下一可执行切片
 
-当前 active implementation plans：
+当前可参考的 implementation plans（非强制流程）：
 
 - [`superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md`](superpowers/plans/2026-07-20-complete-coach-analysis-context-v1.md)：完整 Coach 的 Run facts、processed event tables、visual producer、跨 family analyzer、Knowledge Registry v2、画像/计划/复测与 release Gate；
 - [`superpowers/plans/2026-07-13-reflek-capability-adoption.md`](superpowers/plans/2026-07-13-reflek-capability-adoption.md)：Analysis/evidence correctness、Run/trace 与 Coach 结构化能力；
 - [`superpowers/plans/2026-07-13-coach-productization-provider-management.md`](superpowers/plans/2026-07-13-coach-productization-provider-management.md)：解释/处方合同、input-native 核心指标、Pi provider/model/auth、用户级 Coach 命令与 Provider Settings；
 
-下一可执行切片必须遵守：
+下一切片建议遵守：
 
 1. RefleK Task 6A backend History/evidence read model 与 comparability 已完成；Task 6B 与正式 frontend 继续 deferred；
-2. Pi coding-agent、AgentHarness/skills/prompt/filesystem harness 的上游 Windows 全仓失败不属于当前产品 Gate；若未来采纳对应 capability，必须另立 active Task；
-3. Frontend reconstruction Task 1–7 已完成并归档；新的 UI、Landing 或发布工程必须先建立并授权新的 active Task，不能继续执行已归档 plan；
+2. Pi coding-agent、AgentHarness/skills/prompt/filesystem harness 的上游 Windows 全仓失败不属于当前产品 Gate；若未来采纳对应 capability，先明确范围和验证方式；
+3. Frontend reconstruction Task 1–7 已完成并归档；新的 UI、Landing 或发布工程按当前任务、相关合同和测试推进，不能直接复用已归档结论；
 4. Analysis deletion/reconciliation Task 1–3 已完成并归档；terminal Analysis 的 SQLite logical delete、managed workspace cleanup 与 startup/API Gate 已闭合；
-5. Windows Desktop pre-frontend Task 1–2 已完成并归档；当前没有新的已授权切片，等待点点明确指定；
-6. 每次只执行一个被点点指定的 active plan Task；新增数据可靠性工作在 spec/plan 获批前不得直接施工。
+5. Windows Desktop pre-frontend Task 1–2 已完成并归档；后续切片按当前任务和验证结果决定；
+6. 保持每次改动范围小且可验证；新增数据可靠性工作先明确合同和测试，再直接按当前任务施工。
 7. 自动采集局部合同已由 [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md) 冻结；Capture Coordinator、Run Finalizer、Run-owned evidence、pending Run readiness 与 Storage/recovery 的实施证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 保持未验证且不在 v1 承诺支持；正式前端已实现的 capability 消费继续由合同测试和真实 product-path Gate 保护。
-8. 完整 Coach spec/plan 已在采集集成、上游文档和状态索引协调后由点点批准为 active；Task 1-5 后先补 processed event table 的 Coach 消费与真实 event/segment comparison，再进入 visual producer 和其它 family analyzer；每次只执行一个被授权 Task。
+8. 完整 Coach 的设计材料可用于核对采集集成、上游文档和状态索引；先补 processed event table 的 Coach 消费与真实 event/segment comparison，再进入 visual producer 和其它 family analyzer，具体切片按当前任务和验证结果决定。
 
 ## 4. Desktop Complete Coach Go/No-Go Gates
 
@@ -111,15 +113,15 @@ OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成，Raw In
 
 - 自动采集在 KovaaK 进程 gate 内获得 Raw 与仅 KovaaK 窗口的 300 秒硬件编码回放缓冲，并在 Stats/Performance 到达后把连续 Challenge 事后切成独立 Run；normal/timescale-only 生成永久 MP4，`Pause Count > 0` 的暂停局 fail closed；
 - 单局默认选中并等待确认，多局要求选择一条；其余 Run 保留在 History 顶部待分析，不进入 Tasks、不合并、不自动删除；
-- 满足 `Stats AND (MP4 OR (Raw + Performance))` 的 Run 可创建对应模式 Analysis；自动来源不足或非 Windows 时，手动 MP4 + Stats CSV 可创建 video-fallback；
-- input-native 基础运动学不要求 MP4；选择 MP4 后进入 multimodal 增强而不是另一套产品；
+- 满足完整 multimodal、input-native 或 video-fallback 任一路径的 Run 可由 Coach 自动创建对应 Analysis；用户不选择模式；
+- input-native 与 video-fallback 都必须明确显示缺失来源、适用范围和修复建议，不能被描述为完整多源结果；
 - processing 可离开页面，完成/失败状态可被重新找到；
 - deterministic report 在无 LLM 时完整；
 - 报告显示 input mode、evidence provenance 和缺失范围，不把 Raw Input 解释成目标视觉测量；
 - 有 MP4 时 managed video 可播放、seek，并作为直观回放/视觉 evidence 与诊断、数据和 Coach 引用联动；
 - History 可查看待分析 Run、其它训练记录、来源完整度和 terminal analysis；
-- 首次启动无需产品账号，先说明 Provider 的价值、第三方费用和数据边界；用户可选择、连接并测试 Provider，在 Provider 要求时完成认证，也可明确跳过进入本地分析；
-- Provider 可选择、配置、连接、测试和恢复；只有要求认证的 Provider 才显示认证步骤，未配置或失败不阻塞确定性诊断；
+- 首次启动无需产品账号，但必须完成 Provider 连接测试与 Raw Input/窗口回放采集授权；不能跳过进入本地分析；
+- Provider 可在 Settings 修复或新增；后续 Provider 失败由 Coach 对话报错，不把用户打回 onboarding，也不转为 Provider-less 分析；
 - 第一次分析完成且 Provider 可用时自动展开 Coach；Coach 能把指标转成证据、白话解释、训练 cue、预期变化与复测，并可调用本地 profile 拥有的产品命令。
 - static clicking、dynamic clicking、continuous tracking 与 target switching 各自至少有通过 ScenarioProfile、analyzer、knowledge、fixture、必要视觉质量和真实 Run Gate 的 launch scenario；movement aiming 无移动遥测时只显示 outcome-only。
 - Coach 可读取 bounded L1-L3 规范化 facts/evidence/diagnosis，包括整局完整动作级 processed event table 的固定查询结果；不可读取 Raw、MP4、原始 CSV/protobuf、私有 parser payload 或未知字段。Coach 能检查支持证据和反例后独立综合候选诊断；当前 MP4 只由本地确定性预处理器消费。
@@ -169,4 +171,4 @@ OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成，Raw In
 - Roadmap 只写未来优先级、里程碑和 Gate；完成后把结果写入 Progress，并将 plan 归档。
 - 日期只有在存在真实外部承诺时才进入 Roadmap；探索性内部目标优先写顺序和 Gate。
 - 新工作必须先核对 PRD/Architecture；发生产品冲突时先更新 PRD，而不是在 Roadmap 绕过。
-- active plan/Task 才能授权 executor；Roadmap 条目本身不是实施合同。
+- Roadmap 描述优先级和 Gate，不是必须遵循的 superpowers 施工流程；实际范围以当前任务、代码和测试为准。

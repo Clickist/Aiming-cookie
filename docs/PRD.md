@@ -1,5 +1,16 @@
 # Aiming Cookie — 产品需求文档 (PRD)
 
+## 2026-08-10 首发产品合同（当前生效）
+
+本节是首发前最后一次产品重定，覆盖本文中与其冲突的旧预览、fallback 和迁移描述：
+
+- Aiming Cookie 是 Provider-backed Agent 产品。首次 onboarding 不允许跳过 Provider；Provider 连接并测试成功、Windows 自动采集授权并启用后，才能进入 Coach、History 和 Settings 主工作区。
+- 首发不迁移或展示安装前已有的 KovaaK Stats/Performance 文件；它们不含 Aiming Cookie 的 Raw Input 与受管 MP4，不进入 Run 或 Analysis。
+- 新训练由 Coach 自动选择最高质量的可用分析路径：`multimodal`（Stats + Performance + Raw Input + managed MP4 + canonical window）→ `input_native`（Stats + Performance + Raw Input + canonical window）→ `video_fallback`（Stats + managed MP4）。用户不手动选择模式。
+- fallback 是正式可用的有限分析，不是伪造的完整结果。每个结果必须显示缺失来源和限制，并提示修复采集以获得更高质量分析；三条路径均不可用时，Coach 说明本局不能分析及下一步。
+- 多局练习中的每个可用 Run 都可独立分析；跨局比较只使用双方共同具备且已验证的指标，不把证据等级差异写成疲劳或瞄准变化。
+- Provider 后续失效不把用户强制送回 onboarding；Coach 对话显示错误并引导 Settings 修复或新增 Provider。Provider fallback 暂不属于首发合同。
+
 > **文档定位** · 建立 2026-07-08
 > 这是 Aiming Cookie 的**方向锚** + **原始设想记录**。所有下游文档（spec / plan / 各子系统设计）从此派生。多轮 spec/plan 迭代若与本文冲突，**以本文为准**；本文过时则更新本文，不在下游打补丁。
 >
@@ -11,7 +22,7 @@
 
 桌面产品只支持正常窗口与最大化/全屏使用，Tauri 最小内容宽度为 `1180px`，不为更窄窗口维护另一套导航或 Coach 布局。History 与 Settings 的主要消费内容最大宽度为 `1040px` 并在可用区域居中，避免全屏时横向拉散。
 
-以下较早的“右侧 Coach 侧栏 / 顶部导航 / 单主会话”文字仅保留作决策演进记录；涉及当前 IA、路由或布局时，以本同步段和 OpenDesign handoff 为准。
+以下较早的“右侧 Coach 侧栏 / 顶部导航 / 单主会话”文字仅保留作决策演进记录；涉及当前 IA、路由或布局时，以本同步段和 [`frontend-uiux-design.md`](frontend-uiux-design.md) 为准。
 
 ---
 
@@ -403,7 +414,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - **删除分析不抹教练记忆**：进行中不可删；删除 terminal Analysis 只清理该 Analysis 自有结果与 managed artifacts，不删除 KovaaK Run、Run-owned Raw/MP4、用户源文件或 Coach 历史
 - **常驻 Coach 是 Agent 操作层**：provider 可用时 agent 可随时进入、调用稳定的应用工具，减少用户对多页面流程的记忆负担；项目内 Pi 源码是 Coach runtime 基线，项目可直接修改且不承诺跟随上游升级；已有可用的 workspace、权限或 sandbox 能力优先保留，不无证据重写
 - **持久表现档案 + 上下文衔接**：支撑长教练关系体验；窗口顶满后的 session 衔接另研究，不在本条锁实现
-- **固定多源 Coach 分析**（2026-08-09）：新 Run 只接受 Stats + Performance + Windows Raw Input + managed MP4 + canonical window 的 multimodal 路径；历史 input-native/video-fallback 仅兼容读取，不作为新创建选项。基础运动学、目标语义和视觉证据必须按来源分层，不把单一来源过度解释为完整视觉测量。
+- **自动证据层级 Coach 分析**（2026-08-10，取代 2026-08-09 的固定多源决定）：新 Run 由服务端按 `multimodal > input_native > video_fallback` 自动选择最高可用路径；三档都必须按来源分层并显示 limitations，不把单一来源过度解释为完整视觉测量。
 - **Raw Input canonical 运动上限固定为 1000 Hz**（2026-08-04）：不改变鼠标硬件 polling rate；native layer 继续接收 Windows Raw Input，但进入 canonical trace 前按 1 ms 聚合运动增量。同毫秒 `dx/dy` 分别求和，按钮边沿按顺序单独保留，因此不会因限频丢失每毫秒 X/Y 净位移或点击边沿；亚毫秒路径形状明确不属于产品分析事实。新语义必须版本化，旧 trace 保持只读兼容，不允许在同一未标版本中混用两种采样语义。
 - **自动采集统一主路径**（2026-07-18，2026-07-19 暂停裁决）：应用不依赖实时 Challenge hook，而是在 KovaaK 进程 gate 内统一采集 Raw Input，并以硬件编码维护仅 KovaaK 窗口最近 300 秒的有界回放缓冲；Stats / Performance 到达后按 Challenge 时间窗事后切成独立 Run。v1 仅为 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 MP4；`Pause Count > 0` 的暂停局 fail closed，证据只能保留为 partial/unavailable，不能声明 canonical Raw/Performance 对齐。超过 300 秒、长时间中断或来源覆盖不完整时明确降级。Analysis 最低条件为 `Stats AND (MP4 OR (Raw + Performance))`；单局确认、多局选一条，其余保留待分析；手动 `MP4 + Stats` 是独立 fallback。
 - **Run-owned evidence 由用户手动管理**（2026-07-17）：自动 Raw 和自动切分 MP4 随 Run 保存，不随 Analysis 删除。Settings 显示分类占用，用户可分别移除大体积 evidence；不静默自动清理、不自动删除最旧 Run，也不连带删除 Run metadata、Analysis 或用户源文件。

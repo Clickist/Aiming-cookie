@@ -4,13 +4,13 @@
 >
 > **边界：** 本文展开 [`PRD.md`](PRD.md)，不得改写产品范围。视觉方向看 [`../DESIGN-cursor.md`](../DESIGN-cursor.md)，token/组件实现看 [`design-system.md`](design-system.md)，当前完成度看 [`PROGRESS.md`](PROGRESS.md)。旧 IA 与 persistent-Coach specs 已退役；若历史材料与本文冲突，以 PRD 和本文为准。
 >
-> **不包含：** 具体视觉值、组件库、代码结构、收费额度、后端 schema 和施工步骤。本文本身不授权编码；实施仍需 active plan/Task。
+> **不包含：** 具体视觉值、组件库、代码结构、收费额度、后端 schema 和施工步骤。本文本身不授权编码；实施按当前任务、上游合同、代码和测试推进。
 >
-> **完整 Coach 数据边界：** 完整 Coach 的 aim-family 范围、证据分层与后续 Gate 见 active [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)。本文只规定其前端可见性，不能把尚未通过的 family Gate 写成当前已实现能力。
+> **完整 Coach 数据边界：** 完整 Coach 的 aim-family 范围、证据分层与后续 Gate 可参考 [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)。本文只规定其前端可见性，不能把尚未通过的 family Gate 写成当前已实现能力。
 
 > **2026-08-10 IA 同步：** Coach 为默认主工作区；`/` 为 Coach 首页，`/s/:sessionId` 为指定会话；左侧 Session rail 为唯一主导航，用户可见一级消费面只有 Coach、History 与 Settings。Tasks 与独立 Analysis 页面退役，旧 URL 只跳转 History；Analysis 数据对象和可复用数据/视频组件继续作为内部能力保留。桌面最小内容宽度为 `1180px`，不维护更窄窗口的第二套布局；History 与 Settings 的内容最大宽度为 `1040px` 并居中。旧侧栏和独立报告页文字仅保留为决策演进记录，不得据此恢复页面。
 >
-> **当前实现边界：** 当前工作区中未按本文完成页面、状态、视觉和交互验收的前端，只视为能力接线与流程验证 prototype。它不构成正式 IA、视觉或组件事实源，也不能反向改写本文。正式前端应从本文、视觉合同和设计系统重新开始；删除或隔离 prototype 必须通过独立实施计划执行，并与底层能力和适配层的保留范围分开处理。
+> **当前实现边界：** 当前前端实现是实际能力和运行行为的事实源；若其与本文冲突，记录为实现差距并按 PRD 裁决，不能让任一方静默覆盖另一方。已退役页面和旧 prototype 只保留为历史参考。
 
 ## 1. 产品界面前提
 
@@ -157,7 +157,7 @@ Coach 主工作区按需要提供以下信息：
 - 本次分析设置摘要：按需显示当前 `cm/360` 与 FOV，修改入口进入 Settings；
 - 历史 input mode 只作为 provenance 摘要，不作为当前用户可选择的模式；
 - 文件/证据检查结果：分别说明 Run、Raw Input、Performance、Stats、MP4 和时间对齐状态；
-- “开始分析”只在所选 Run 满足当前固定来源 Gate 时可用；未选择或来源不完整的 Run 留在 History，不进入用户可见 Tasks 页面。
+- Coach 自动选择 `multimodal > input_native > video_fallback` 的最高有效证据等级；用户不选择 mode。三条路径均不可用的 Run 不进入普通 History，由 Coach 说明失败与修复动作。
 
 文件有问题时，错误紧邻对应来源或 Coach 状态卡显示，不把错误拖到后台以后才暴露。
 
@@ -185,7 +185,7 @@ Stats、Performance、Raw Input 和 MP4 必须分别显示三层信息：
 | 可用 | 来源完整且满足当前用途 | 说明它会支持哪些分析能力 |
 | 部分可用 | 只有部分覆盖或部分字段可信 | 说明受影响的结论，允许继续执行仍然成立的部分 |
 | 缺失 | 本次没有该来源 | 提供添加来源、选择其他 Run 或改用可行模式的入口 |
-| 平台不支持 | 当前环境不能提供该来源 | 使用中性说明，并提供 video-fallback 等替代路径 |
+| 平台不支持 | 当前环境不能提供该来源 | 使用中性说明，并让 Coach 自动选择仍有效的证据等级 |
 | 来源不可用 | 曾存在，但当前无法访问 | 保留稳定引用和历史状态，提供重新定位、重新添加或重试入口 |
 | 无效或质量不足 | 来源存在，但不满足本次分析要求 | 说明具体影响，不把它显示成“已完成证据” |
 | 对齐失败 | 多个来源无法可靠对应到同一训练时间范围 | 禁止使用未对齐部分生成跨来源结论；multimodal 中保留可独立成立的 native 结果 |
@@ -251,7 +251,7 @@ Run 详情是训练记录与来源状态的检查器，不是缩小版分析报�
 
 1. **训练身份**：场景、发生时间、稳定 source key 的用户可读表示和当前 Run 状态；
 2. **Evidence 来源**：Stats、Performance、Raw Input、MP4 分别显示存在性、可用性、质量、覆盖范围和对齐结果；
-3. **分析能力**：当前可选择的 input mode、不可选择的原因，以及每种模式能生成和不能生成的结论；
+3. **分析能力**：Coach 自动选中的证据等级、缺失来源，以及该等级能生成和不能生成的结论；
 4. **关联 Analysis**：已有、进行中、失败和可重试的 Analysis，不能把重新分析误写成覆盖旧结果；
 5. **主要操作**：开始分析、处理来源不可用、查看已有分析、进入 Storage 管理 Run-owned evidence；手动补充/替换 MP4 只在合同允许的 fallback 或修复路径出现。
 
@@ -289,8 +289,8 @@ Session rail | 中央视频讲解区 | 右侧 Coach 对话
 自动采集是 Desktop 主路径；Raw Input 与窗口回放缓冲必须以明确授权、可见状态和局部失败呈现：
 
 - 设置页显示平台支持状态、自动采集开关、Raw Input 授权、窗口录制范围、仅在 KovaaK 进程运行时维护 300 秒瞬态缓冲、只保存在本地的说明；
-- Windows 首次启用必须使用解释性确认，而不是无上下文的开关；用户可以跳过，跳过后继续使用 MP4 + Stats compatibility fallback；
-- 非 Windows 显示“当前平台不可用”，同时提供视频 fallback，不显示为故障；
+- Windows 首次启用必须使用解释性确认，并作为完成 onboarding 的硬门槛；拒绝授权时不能进入主工作区。
+- 首发只支持 Windows Desktop 自动采集；浏览器预览和非 Windows 不提供可完成的 onboarding。
 - 自动回放缓冲只捕获 KovaaK 窗口，不捕获完整桌面、其它应用窗口或系统通知；
 - 运行中显示待命 / 采集中 / 整理中 / 完成 / 失败状态，但不持续打扰用户；可选托盘/悬浮状态不得抢焦点，并可在 Settings 关闭；
 - Raw Input trace 是否存在、是否已与 Run 对齐、是否可用于本次分析必须在 Run inspector、History 摘要或 Coach 安全投影中可见；
@@ -369,7 +369,7 @@ Analysis、Run、Raw Input trace、自动 Run-owned MP4、用户 Stats / Perform
 
 ### 4.0 OpenDesign Coach-first 布局取代说明
 
-以下上下文、引用、确认和错误恢复规则继续有效，但早期关于“右侧侧栏打开/收起”“工具栏 Coach 开关”“单条主会话”的布局与入口描述已由 2026-08-09 OpenDesign handoff 取代。实现必须使用：
+以下上下文、引用、确认和错误恢复规则继续有效，但早期关于“右侧侧栏打开/收起”“工具栏 Coach 开关”“单条主会话”的布局与入口描述已被本合同第 2-3 节取代。实现必须使用：
 
 - `/` 作为 Coach 首页，`/s/:sessionId` 作为指定会话；
 - 左侧 Session rail 作为唯一主导航，History 与 Settings 位于 rail 底部；
@@ -621,8 +621,8 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 |---|---|---|
 | KovaaK Run 发现 | 可自动采集并在 Stats / Performance 到达后事后切成独立 Run | 不依赖本地自动发现，使用浏览器可访问的文件输入 |
 | Stats / Performance | 可使用已发现来源或本地选择 | 由用户选择或上传浏览器可访问的文件 |
-| Raw Input | 仅在受支持的 Windows Desktop 环境中 opt-in；用于首发 Preview / Experimental 的 input-native 能力 | 不提供，使用中性“不支持”状态而不是错误 |
-| MP4 | 自动维护仅 KovaaK 窗口回放缓冲并事后生成 Run-owned MP4；手动 fallback 可选择本地录像 | 由用户选择或上传浏览器可访问的录像 |
+| Raw Input | 仅在受支持的 Windows Desktop 环境中完成授权并启用；用于自动质量分级 | 不支持完成产品 onboarding |
+| MP4 | 自动维护仅 KovaaK 窗口回放缓冲并事后生成 Run-owned MP4 | 不支持完成产品 onboarding |
 | 后台本地能力 | 可以在应用内持续运行并由 Coach / History 恢复状态 | 只表达实际可持续的服务状态，不伪装成本地常驻能力 |
 | 视频回放 | 使用应用管理的可播放来源 | 使用浏览器可访问的受管来源 |
 | Coach 卡片与视频讲解 | 与 Web 保持相同数据与安全边界 | 与 Desktop 保持相同产品关系，不伪装 Tauri 窗口约束 |
@@ -649,7 +649,7 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 - 已成功生成或加载的部分保留，失败区域提供说明、重试或替代入口；
 - 部分数据缺失时明确标注影响范围，不伪造图表、指标或结论；
 - 文件、本地分析、网络、Provider LLM、Coach runtime、系统授权和单次工具执行错误必须分别说明。
-- Raw Input 授权拒绝、平台不支持、进程未检测到、窗口录制失败、Stats/Performance 延迟、切窗失败、snapshot 失败和时间对齐失败必须分别说明，并提供当前仍成立的 mode、手动 fallback 或稍后重试。
+- Raw Input 授权拒绝、平台不支持、进程未检测到、窗口录制失败、Stats/Performance 延迟、切窗失败、snapshot 失败和时间对齐失败必须分别说明；先完成有界恢复，再由 Coach 自动选择仍成立的证据等级或说明本局无法分析。
 
 ### 7.3 离线与服务不可用
 
