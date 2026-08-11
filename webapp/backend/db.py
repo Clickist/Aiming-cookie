@@ -115,7 +115,7 @@ class _GatedConnection:
 
 _conn: Optional[_GatedConnection] = None
 
-TARGET_USER_VERSION = 27
+TARGET_USER_VERSION = 28
 
 
 async def get_conn() -> _GatedConnection:
@@ -612,6 +612,20 @@ CREATE TABLE IF NOT EXISTS calibration_profiles (
     CHECK(cm_per_360 IS NOT NULL OR fov IS NOT NULL)
 );
 
+CREATE TABLE IF NOT EXISTS peripheral_profiles (
+    owner_id TEXT PRIMARY KEY,
+    grip_type TEXT CHECK(grip_type IS NULL OR grip_type IN ('fingertip', 'fingertip_claw', 'claw', 'claw_palm', 'palm')),
+    hand_length_cm REAL CHECK(hand_length_cm IS NULL OR (hand_length_cm >= 5 AND hand_length_cm <= 30)),
+    wrist_position TEXT CHECK(wrist_position IS NULL OR wrist_position IN ('suspended', 'on_pad')),
+    grip_preference TEXT,
+    current_mouse_brand TEXT,
+    current_mouse_model TEXT,
+    current_mousepad TEXT,
+    budget TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS incomplete_capture_deletion_tombstones (
     item_ref TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL,
@@ -866,6 +880,7 @@ async def init_schema() -> None:
         await _migrate_v25_coach_thread_lifecycle(conn)
         await _migrate_v26_guidance_events(conn)
         await _migrate_v27_provider_first_onboarding(conn)
+        await _migrate_v28_peripheral_profiles(conn)
         await conn.commit()
         return
 
@@ -929,6 +944,8 @@ async def init_schema() -> None:
             await _migrate_v26_guidance_events(conn)
         if user_version < 27:
             await _migrate_v27_provider_first_onboarding(conn)
+        if user_version < 28:
+            await _migrate_v28_peripheral_profiles(conn)
         await conn.execute(f"PRAGMA user_version = {TARGET_USER_VERSION}")
         await conn.commit()
     except Exception:
@@ -1442,6 +1459,25 @@ async def _migrate_v27_provider_first_onboarding(conn: aiosqlite.Connection) -> 
         FROM product_state;
         DROP TABLE product_state;
         ALTER TABLE product_state_v27 RENAME TO product_state;
+    """)
+
+
+async def _migrate_v28_peripheral_profiles(conn: aiosqlite.Connection) -> None:
+    """v27 -> v28: peripheral recommendation user profile."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS peripheral_profiles (
+            owner_id TEXT PRIMARY KEY,
+            grip_type TEXT CHECK(grip_type IS NULL OR grip_type IN ('fingertip', 'fingertip_claw', 'claw', 'claw_palm', 'palm')),
+            hand_length_cm REAL CHECK(hand_length_cm IS NULL OR (hand_length_cm >= 5 AND hand_length_cm <= 30)),
+            wrist_position TEXT CHECK(wrist_position IS NULL OR wrist_position IN ('suspended', 'on_pad')),
+            grip_preference TEXT,
+            current_mouse_brand TEXT,
+            current_mouse_model TEXT,
+            current_mousepad TEXT,
+            budget TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
     """)
 
 

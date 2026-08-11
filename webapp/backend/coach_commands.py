@@ -70,6 +70,8 @@ _QUERY_COMMANDS = {
     "calibration.get",
     "kovaak.connection.get",
     "coach.session.list",
+    "eloshapes.query",
+    "peripheral_profile.get",
 }
 _EVIDENCE_QUERY_COMMANDS = frozenset({
     "analysis.metrics.distribution",
@@ -117,6 +119,7 @@ _COACH_INFERRED_CONFIRMATION_COMMANDS = _EXPLICIT_USER_FACT_COMMANDS | {
 }
 _DIRECT_WRITE_COMMANDS = {
     "teaching_session.update",
+    "peripheral_profile.update",
 }
 _COMMANDS = _QUERY_COMMANDS | _WRITE_COMMANDS | _DIRECT_WRITE_COMMANDS
 _FORBIDDEN_MODEL_KEYS = {
@@ -1769,6 +1772,29 @@ async def _execute_product_command_inner(
             if parameters:
                 raise ProductCommandError("invalid_parameters", "coach.session.list does not accept parameters")
             result = _result(command_id, "succeeded", result=await coach_store.list_sessions(owner_id))
+        elif command_name == "eloshapes.query":
+            from . import eloshapes_query
+
+            allowed = (
+                "weight_max", "size_category", "shape", "front_flare",
+                "side_curvature", "hump_placement", "hand_compatibility",
+                "brand_search", "model_search", "limit",
+            )
+            filtered = {k: v for k, v in parameters.items() if k in allowed and v is not None}
+            query_result = eloshapes_query.query_mice(**filtered)
+            result = _result(command_id, "succeeded", result=query_result)
+        elif command_name == "peripheral_profile.get":
+            if parameters:
+                raise ProductCommandError("invalid_parameters", "peripheral_profile.get does not accept parameters")
+            from . import peripheral_profile_store
+
+            profile = await peripheral_profile_store.get_profile(owner_id)
+            result = _result(command_id, "succeeded", result_ref="peripheral_profile:current", result=profile)
+        elif command_name == "peripheral_profile.update":
+            from . import peripheral_profile_store
+
+            profile = await peripheral_profile_store.update_profile(owner_id, parameters)
+            result = _result(command_id, "succeeded", result_ref="peripheral_profile:current", result=profile)
         elif command_name == "analysis.create_from_run":
             run_id, _ = _parse_ref(parameters.get("run_ref"), "run")
             if trusted_analysis_args is None:
