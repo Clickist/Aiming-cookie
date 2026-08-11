@@ -23,9 +23,15 @@ export const PRODUCT_COMMAND_NAMES = [
   "analysis.events.list", "analysis.events.get", "analysis.events.rank",
   "analysis.events.filter", "analysis.events.aggregate", "analysis.events.co_occurrence",
   "analysis.events.sequence", "profile.aiming.snapshot",
+  "product.readiness.get",
   "kovaak_scores.lookup", "kovaak_scores.refresh_connected",
+  "teaching_session.update",
+  "eloshapes.query", "peripheral_profile.get", "peripheral_profile.update",
 ] as const;
 type ProductCommandName = typeof PRODUCT_COMMAND_NAMES[number];
+type ProductCommandToolOptions = {
+  excludedCommands?: readonly ProductCommandName[];
+};
 const KOVAAK_SCORE_COMMANDS = new Set<ProductCommandName>([
   "kovaak_scores.lookup", "kovaak_scores.refresh_connected",
 ]);
@@ -127,9 +133,14 @@ function safeCommandEvent(result: Record<string, unknown>, commandName: string) 
   };
 }
 
-export function createProductCommandTool(bridge: CoachToolBridge) {
+export function createProductCommandTool(
+  bridge: CoachToolBridge,
+  options: ProductCommandToolOptions = {},
+) {
   validateBridge(bridge);
-  const commandSchema = Type.Union(PRODUCT_COMMAND_NAMES.map((name) => Type.Literal(name)));
+  const excludedCommands = new Set(options.excludedCommands ?? []);
+  const commandNames = PRODUCT_COMMAND_NAMES.filter((name) => !excludedCommands.has(name));
+  const commandSchema = Type.Union(commandNames.map((name) => Type.Literal(name)));
   return {
     name: "run_product_command",
     label: "Run product command",
@@ -147,7 +158,10 @@ export function createProductCommandTool(bridge: CoachToolBridge) {
       instruction_quote?: string;
     }, signal?: AbortSignal) {
       const isKovaakScoreCommand = KOVAAK_SCORE_COMMANDS.has(params.command_name);
-      if (!PRODUCT_COMMAND_NAMES.includes(params.command_name) || !isRecord(params.parameters) ||
+      if (!commandNames.includes(params.command_name)) {
+        throw new Error("Product command is not available for this turn");
+      }
+      if (!isRecord(params.parameters) ||
           !hasValidCommandParameters(params.command_name, params.parameters) ||
           (params.instruction_quote !== undefined && (
             typeof params.instruction_quote !== "string" || !params.instruction_quote ||

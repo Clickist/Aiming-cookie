@@ -8,6 +8,7 @@ import { createFakeStreamFn } from "../src/fake-stream.ts";
 import { loadPiAi } from "../src/pi-source.ts";
 import type { StreamFn } from "../src/stream-openai-compatible.ts";
 import { runCoachTurn, runCoachTurnWithFakeStream, stopCoachTurn } from "../src/turn.ts";
+import { diagnosticContextPromptText } from "../src/turn.ts";
 
 const SECRET = "turn-secret-sentinel-do-not-return";
 const BRIDGE_SECRET = "bridge-secret-sentinel-do-not-return";
@@ -476,6 +477,25 @@ test("grounding normalizes an approximation prefix in a user-requested Chinese f
   assert.equal(response.reply, "可以，约二分之一。");
 });
 
+test("translated metric names do not break issue metric prioritization", async () => {
+  const summary = Object.fromEntries(
+    Array.from({ length: 16 }, (_, index) => {
+      const key = `metric_${index}`;
+      return [key, {
+        value: index,
+        unit: "count",
+        classification: "deterministic",
+        ...(index === 15 ? { definition: { name: "优先指标" } } : {}),
+      }];
+    }),
+  );
+  const context = diagnosticContext("analysis:15", summary);
+  context.diagnosis.issues = [{ signal: "priority signal", metric_refs: ["metric_15"] }];
+  const prompt = diagnosticContextPromptText(context, 64 * 1024);
+  assert.ok(prompt);
+  assert.ok(prompt.includes("- 优先指标: 15 (count)"));
+});
+
 test("grounding permits a quantity word used inside an analogy when numeric facts exist", async () => {
   let calls = 0;
   const request = {
@@ -846,6 +866,7 @@ test("v1 without a bridge registers analysis and knowledge tools only", async ()
   assert.deepEqual(tools.map((tool) => tool.name), [
     "get_analysis_summary",
     "get_coach_knowledge",
+    "get_peripheral_reference",
   ]);
 });
 
@@ -871,6 +892,7 @@ test("v1 bridge registers only the three product tools and keeps mandatory polic
   assert.deepEqual(tools.map((tool) => tool.name), [
     "get_analysis_summary",
     "get_coach_knowledge",
+    "get_peripheral_reference",
     "run_product_command",
   ]);
   const prompt = String(capturedContext?.systemPrompt);
