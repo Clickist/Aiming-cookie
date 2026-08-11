@@ -242,7 +242,7 @@ Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 
 - 每个 owner / primary Coach thread 最多一条 active `TeachingSession`；它只保存当前 lesson 的受限状态、版本、当前 run 锁、待确认引用和可重建的 `TeachingTurnContract`，不保存 Raw、路径、Provider secret 或未经确认的训练结果；
 - `TeachingSession` 的候选解释、cue、单一变更变量和 retest intent 是教学过程状态。Training Plan item、execution 和 retest 仍是独立、owner-scoped 的正式事实，只有绑定当前用户明确陈述的 trusted instruction grant 或现有 trusted confirmation 可写入；
 - 每次 Agent run 绑定一个不可变 `TeachingTurnContract` snapshot。它只允许一个下一教学动作和一个用户问题；重试必须重放原 contract，不能从聊天文本重新猜阶段；
-- session 的推进、confirmed-fact reconciliation、可比性判定、暂停和不适停止由本地 planner/store 决定。Provider 只能表达已批准的内容，不能声明完成、选择状态转移或把候选机制升级为测量事实；
+- session 的推进、confirmed-fact reconciliation、可比性判定、暂停和不适停止由本地 store 校验和执行。当前实现中 LLM 通过 `teaching_session.update` 命令直接驱动阶段推进和内容更新，store 强制字段白名单与 transition 合法性；planner 级校验在后续迭代中加强。Provider 不能声明完成、绕过 store 校验选择状态转移或把候选机制升级为测量事实；
 - Analysis/history 是 metric comparability 与 meaningful-change policy 的唯一事实源。没有按 exact metric/version/conditions 注册的重复测量误差、worthwhile change 与必要 guardrail 时，非零 delta 必须保持 inconclusive；Profile 只能将精确相等的可比值显示为 stable，不能把任意非零差异显示为 improving/deteriorating；
 - ratio 的数学等价展示可以保留其原单位语义（例如有明确来源的 ratio 显示为百分比）。本地 validator 拦截的是无来源的语义扩展、好坏评价、发生频率或因果解释，而不是等价格式本身；
 - 删除 Analysis 只会令 session 中对应 evidence ref unavailable；不会删除 session、消息或已经确认的训练事实。若 session 无法继续安全教学，planner 必须回到 intake / unresolved，而非猜测替代证据。
