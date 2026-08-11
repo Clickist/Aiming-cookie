@@ -14,6 +14,7 @@ import {
 } from "./contracts.ts";
 import { createAnalysisSummaryTool } from "./analysis-summary-tool.ts";
 import { createCoachKnowledgeTool } from "./knowledge-tools.ts";
+import { createPeripheralReferenceTool } from "./peripheral-tools.ts";
 import { createProductCommandTool } from "./product-command-tools.ts";
 import { createFakeStreamFn } from "./fake-stream.ts";
 import { resolveSystemPrompt } from "./load-system-prompt.ts";
@@ -854,6 +855,19 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
     )];
     tools.push(restrictTurnTools(
       createCoachKnowledgeTool(),
+      () => requiredDeleteRef,
+      () => false,
+      () => {},
+      () => requiredDeleteBridgeCallIssued,
+      () => { requiredDeleteBridgeCallIssued = true; },
+      () => { unrequestedDeletionAttempted = true; },
+      () => request.teaching_turn,
+      () => outOfPhaseTeachingWriteAttempted,
+      () => { outOfPhaseTeachingWriteAttempted = true; },
+      () => { productCommandExecutionFailed = true; },
+    ) as never);
+    tools.push(restrictTurnTools(
+      createPeripheralReferenceTool(),
       () => requiredDeleteRef,
       () => false,
       () => {},
