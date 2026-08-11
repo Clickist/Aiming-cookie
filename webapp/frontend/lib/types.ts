@@ -215,6 +215,7 @@ export interface AnalysisMetricV2 {
   calibration_ref?: string | null;
   limitations?: string[];
   provenance?: { kind?: string; sources?: string[] };
+  definition?: { name?: string; description?: string };
 }
 
 export type AimFamily =

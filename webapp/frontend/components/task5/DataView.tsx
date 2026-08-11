@@ -13,41 +13,6 @@ import { Badge, Button, Empty, Loading, Notice, Status } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
 
-const METRIC_LABELS: Record<string, string> = {
-  "continuous_tracking.target_relative_error_px": "目标偏差",
-  "continuous_tracking.time_in_radius_ratio": "目标范围内时间占比",
-  "continuous_tracking.loss_count": "偏离目标次数",
-  "continuous_tracking.loss_duration_ms": "偏离目标持续时间",
-  "continuous_tracking.reacquisition_latency_ms": "重新捕获延迟",
-  "continuous_tracking.correction_burden": "修正负担",
-  "target_switching.transition_time_ms": "切换到新目标耗时",
-  "target_switching.transition_distance_px": "切换位移",
-  "target_switching.path_efficiency": "路径效率",
-  "target_switching.settle_duration_ms": "到达后稳定耗时",
-  transition_time_ms: "切换到新目标耗时",
-  transition_distance_px: "切换位移",
-  path_efficiency: "路径效率",
-  settle_duration_ms: "到达后稳定耗时",
-  target_relative_error_px: "目标偏差",
-  time_in_radius_ratio: "目标范围内时间占比",
-  loss_count: "偏离目标次数",
-  loss_duration_ms: "偏离目标持续时间",
-  reacquisition_latency_ms: "重新跟上耗时",
-  correction_burden: "修正负担",
-  sparc: "运动平滑度（SPARC）",
-  decel_frac: "减速占比",
-  linearity: "直线性",
-  reverse_ratio: "反向修正",
-  duration_ms: "偏离持续时间",
-  observed_change_response_ms: "观测到的变向响应",
-  alignment_latency_ms: "采集对齐延迟",
-  post_change_error_px: "变向后目标偏差",
-  accel_duration_ms: "加速阶段",
-  decel_duration_ms: "减速阶段",
-  peak_speed: "峰值速度",
-  corrective_count: "修正次数",
-};
-
 /* 事件与行类型的自然语言命名（原稿「事件命名」面板 + 分布图） */
 const EVENT_KIND_LABELS: Record<string, string> = {
   kill: "击杀",
@@ -65,23 +30,6 @@ const EVENT_KIND_LABELS: Record<string, string> = {
   tracking_loss: "偏离",
   tracking_reacquisition: "重新捕获",
   low_confidence: "低可信度观测",
-};
-
-const FAMILY_METRIC_DESCRIPTIONS: Record<string, string> = {
-  transition_time_ms: "中位数；越短越好但不追极限",
-  transition_distance_px: "本次击杀到下一目标的移动距离",
-  path_efficiency: "直线程度；低于 0.6 说明绕路明显",
-  settle_duration_ms: "本次证据无法可靠判定稳定完成点",
-  target_relative_error_px: "鼠标与目标中心的距离（归一化前）",
-  time_in_radius_ratio: "鼠标在目标半径内的时间比例",
-  loss_count: "鼠标离开目标半径的次数",
-  loss_duration_ms: "每次偏离的典型持续时间（中位数）",
-  reacquisition_latency_ms: "偏离后重新进入目标范围的耗时（中位数）",
-  correction_burden: "维持跟踪需要的修正强度",
-  sparc: "移动轨迹的频谱弧长（越大越平滑）",
-  decel_frac: "减速段占整次 Flick 的时间比例",
-  linearity: "路径质量",
-  reverse_ratio: "反向修正比例",
 };
 
 const FAMILY_GROUPS: Record<string, { title: string; keys: string[] }[]> = {
@@ -127,12 +75,12 @@ function metricReference(metric: AnalysisMetricPresentation): string {
   return metric.referenceKey ?? metric.key;
 }
 
-function metricLabel(key: string): string {
-  return METRIC_LABELS[key] ?? key;
+function metricLabel(metric: AnalysisMetricPresentation): string {
+  return metric.definition?.name ?? metricReference(metric);
 }
 
-function metricDescription(key: string): string | null {
-  return FAMILY_METRIC_DESCRIPTIONS[key] ?? null;
+function metricDescription(metric: AnalysisMetricPresentation): string | null {
+  return metric.definition?.description ?? null;
 }
 
 function metricSourceText(metric: AnalysisMetricPresentation): string {
@@ -230,9 +178,9 @@ function MetricOverviewPanel({
               const ref = metricReference(metric);
               return (
                 <button className={styles.metricRow} data-metric-label={ref} key={ref} onClick={() => onSelectMetric(ref)} type="button">
-                  <span className={styles.metricKey}>{metricLabel(metricReference(metric))}</span>
+                  <span className={styles.metricKey}>{metricLabel(metric)}</span>
                   <span className={styles.metricValue}>{valueText(metric)}</span>
-                  <span className={styles.metricPlain}>{metricDescription(ref) ?? availabilityLabel(metric.availability)}</span>
+                  <span className={styles.metricPlain}>{metricDescription(metric) ?? availabilityLabel(metric.availability)}</span>
                 </button>
               );
             })}
@@ -250,9 +198,9 @@ function MetricOverviewPanel({
               const ref = metricReference(metric);
               return (
                 <button className={styles.metricRow} data-metric-label={ref} key={ref} onClick={() => onSelectMetric(ref)} type="button">
-                  <span className={styles.metricKey}>{metricLabel(metricReference(metric))}</span>
+                  <span className={styles.metricKey}>{metricLabel(metric)}</span>
                   <span className={styles.metricValue}>{valueText(metric)}</span>
-                  <span className={styles.metricPlain}>{metricDescription(ref) ?? availabilityLabel(metric.availability)}</span>
+                  <span className={styles.metricPlain}>{metricDescription(metric) ?? availabilityLabel(metric.availability)}</span>
                 </button>
               );
             })}
@@ -1000,9 +948,9 @@ export function DataView({
               const ref = metricReference(metric);
               return (
                 <button className={styles.metricRow} data-metric-label={ref} key={ref} onClick={() => onSelectMetric(ref)} type="button">
-                  <span className={styles.metricKey}>{metricLabel(metricReference(metric))}</span>
+                  <span className={styles.metricKey}>{metricLabel(metric)}</span>
                   <span className={styles.metricValue}>{valueText(metric)}</span>
-                  <span className={styles.metricPlain}>{metricDescription(ref) ?? availabilityLabel(metric.availability)}</span>
+                  <span className={styles.metricPlain}>{metricDescription(metric) ?? availabilityLabel(metric.availability)}</span>
                 </button>
               );
             })}
@@ -1015,7 +963,7 @@ export function DataView({
           <summary>不可用指标（{unavailableMetrics.length} 项）与原因——不补假数据</summary>
           {unavailableMetrics.map((metric) => (
             <div className={styles.metricRow} data-metric-label={metricReference(metric)} key={metricReference(metric)}>
-              <span className={styles.metricKey}>{metricLabel(metricReference(metric))}</span>
+              <span className={styles.metricKey}>{metricLabel(metric)}</span>
               <span className={styles.metricValue}>不可用</span>
               <span className={styles.metricPlain}>
                 {metric.limitations.map(limitationLabel).join("；") || "本次证据不足以安全计算"}
