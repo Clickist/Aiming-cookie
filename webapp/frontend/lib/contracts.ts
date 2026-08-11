@@ -227,6 +227,7 @@ export interface AnalysisMetricPresentation {
   coverage: number | null;
   sources: string[];
   limitations: string[];
+  definition?: { name?: string; description?: string };
 }
 
 export interface AnalysisIssuePresentation {
@@ -290,7 +291,7 @@ export interface AnalysisWorkspacePresentation {
 function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisMetricPresentation {
   if (typeof value === "number") {
     return {
-      key: presentDisplayText(key, "指标名称暂不可展示"),
+      key,
       referenceKey: key,
       value: safeNumber(value),
       unit: null,
@@ -302,8 +303,12 @@ function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisM
     };
   }
   const referenceKey = safeString(value.key) ?? key;
+  const definition = value.definition;
+  const displayName = definition?.name
+    ? definition.name
+    : referenceKey;
   return {
-    key: presentDisplayText(referenceKey, "指标名称暂不可展示"),
+    key: displayName,
     referenceKey,
     value: typeof value.value === "string" ? safeString(value.value) : safeNumber(value.value),
     unit: safeString(value.unit),
@@ -312,6 +317,7 @@ function presentMetric(key: string, value: AnalysisMetricV2 | number): AnalysisM
     coverage: safeNumber(value.coverage),
     sources: safeStrings(value.provenance?.sources),
     limitations: Array.from(new Set(safeStrings(value.limitations).map(presentLimitation))),
+    definition,
   };
 }
 

@@ -9,6 +9,8 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from kovaak_tracker.metric_definitions import get_metric_definition
+
 COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION = "coach_diagnostic_context.v1"
 COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION = "coach_diagnostic_context.v2"
 COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION = "coach_diagnostic_context.v3"
@@ -259,10 +261,71 @@ def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _resolve_metric_definition(
+    metric_key: str,
+) -> dict[str, object] | None:
+    """Return only display fields from the unified metric catalog."""
+    if not metric_key:
+        return None
+    defn = get_metric_definition(metric_key)
+    if defn is None:
+        return None
+    result: dict[str, object] = {}
+    for field in ("name", "description"):
+        value = defn.get(field)
+        if isinstance(value, str) and value:
+            result[field] = value
+    return result or None
+
+
+def _project_metric_definition_map(metrics: Mapping[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    for metric_key, metric in metrics.items():
+        if not isinstance(metric, Mapping):
+            projected[metric_key] = metric
+            continue
+        projected_metric = dict(metric)
+        projected_metric.pop("definition", None)
+        definition = _resolve_metric_definition(str(metric_key))
+        if definition is not None:
+            projected_metric["definition"] = definition
+        projected[metric_key] = projected_metric
+    return projected
+
+
+def project_analysis_result_metric_definitions(
+    analysis_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Add catalog display definitions to public result metric objects.
+
+    This is a read-time projection: the stored analysis result is not
+    mutated, and all fields outside the two public metric containers are
+    preserved as-is.
+    """
+    projected = dict(analysis_result)
+    deterministic = analysis_result.get("deterministic")
+    if not isinstance(deterministic, Mapping):
+        return projected
+    projected_deterministic = dict(deterministic)
+    metrics = deterministic.get("metrics")
+    if isinstance(metrics, Mapping):
+        projected_deterministic["metrics"] = _project_metric_definition_map(metrics)
+    diagnosis = deterministic.get("diagnosis")
+    if isinstance(diagnosis, Mapping):
+        projected_diagnosis = dict(diagnosis)
+        summary = diagnosis.get("summary")
+        if isinstance(summary, Mapping):
+            projected_diagnosis["summary"] = _project_metric_definition_map(summary)
+        projected_deterministic["diagnosis"] = projected_diagnosis
+    projected["deterministic"] = projected_deterministic
+    return projected
+
+
 def _project_metric(
     metric: object,
     *,
     require_deterministic: bool,
+    metric_key: str = "",
 ) -> dict[str, object] | None:
     if isinstance(metric, Mapping):
         classification = metric.get("classification")
@@ -301,11 +364,17 @@ def _project_metric(
                 if provenance:
                     out[key] = provenance
                 continue
+            if key == "definition":
+                continue  # handled below after the loop
             value = _safe_scalar(metric[key])
             if key == "classification" and value is None:
                 continue
             if value is not _MISSING:
                 out[key] = value
+        # Enrich with metric definition from the single source of truth.
+        definition = _resolve_metric_definition(metric_key)
+        if definition is not None:
+            out["definition"] = definition
         return out or None
 
     if require_deterministic:
@@ -329,6 +398,7 @@ def _project_summary(
         projected = _project_metric(
             metric,
             require_deterministic=require_deterministic,
+            metric_key=key,
         )
         if projected is not None:
             out[key] = projected

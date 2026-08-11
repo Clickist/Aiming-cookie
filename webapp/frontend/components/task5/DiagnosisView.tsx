@@ -9,37 +9,6 @@ const LEGACY_CANDIDATE_LEVEL_LABEL: Record<string, string> = {
   training: "训练方向",
 };
 
-const METRIC_LABELS: Record<string, string> = {
-  sparc: "运动平滑度（SPARC）",
-  decel_frac: "减速占比",
-  linearity: "减速线性度",
-  reverse_ratio: "反向修正比例",
-  submovement_overlap: "动作分段特征",
-  path_efficiency: "路径效率",
-  peak_position_pct: "速度峰值位置",
-};
-
-const METRIC_DESCRIPTIONS: Record<string, string> = {
-  sparc: "运动平滑度；越接近 0 越平滑",
-  decel_frac: "减速阶段占整次移动的时间比例",
-  linearity: "减速阶段偏离匀减速节奏的程度",
-  reverse_ratio: "减速阶段出现反向调整的比例",
-  submovement_overlap: "主要移动与后续修正之间的分离特征",
-  path_efficiency: "移动路径接近直线的程度",
-  peak_position_pct: "速度峰值出现在整次移动中的相对位置",
-  "continuous_tracking.target_relative_error_px": "鼠标与目标中心的距离",
-  "continuous_tracking.time_in_radius_ratio": "鼠标在目标半径内的时间比例",
-  "continuous_tracking.loss_count": "鼠标离开目标半径的次数",
-  "continuous_tracking.loss_duration_ms": "每次偏离的典型持续时间",
-  "continuous_tracking.reacquisition_latency_ms": "偏离后重新进入目标范围的耗时",
-  "continuous_tracking.correction_direction_reversal_count": "修正方向反转次数",
-  "continuous_tracking.smoothness_acceleration_rms": "加速度波动",
-  "target_switching.transition_time_ms": "切换到新目标耗时",
-  "target_switching.transition_distance_px": "切换位移",
-  "target_switching.path_efficiency": "路径效率；越接近 1 越直",
-  "target_switching.settle_duration_ms": "到达后稳定耗时",
-};
-
 function severityTone(severity: "info" | "watch" | "fix"): "neutral" | "warning" | "error" {
   if (severity === "fix") return "error";
   if (severity === "watch") return "warning";
@@ -58,12 +27,12 @@ function metricReference(metric: AnalysisMetricPresentation): string {
   return metric.referenceKey ?? metric.key;
 }
 
-function metricLabel(key: string): string {
-  return METRIC_LABELS[key] ?? key.split(".").pop() ?? key;
+function metricLabel(metric: AnalysisMetricPresentation): string {
+  return metric.definition?.name ?? metricReference(metric);
 }
 
-function metricDescription(key: string): string | null {
-  return METRIC_DESCRIPTIONS[key] ?? null;
+function metricDescription(metric: AnalysisMetricPresentation): string | null {
+  return metric.definition?.description ?? null;
 }
 
 function IssueBody({
@@ -253,10 +222,10 @@ export function DiagnosisView({
                   onClick={() => onSelectMetric(ref)}
                   type="button"
                 >
-                  <span className={styles.metricKey}>{metricLabel(ref)}</span>
+                  <span className={styles.metricKey}>{metricLabel(metric)}</span>
                   <span className={styles.metricValue}>{formatMetricValue(metric.value, metric.unit)}</span>
                   <span className={styles.metricPlain}>
-                    {metricDescription(ref)
+                    {metricDescription(metric)
                       ?? (metric.coverage === null ? "覆盖未知" : `覆盖 ${Math.round(metric.coverage * 100)}%`)}
                   </span>
                   {summaryMode !== "descriptive" ? (
