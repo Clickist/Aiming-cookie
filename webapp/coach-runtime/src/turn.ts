@@ -488,7 +488,8 @@ function collectToolEvents(messages: unknown[]): CoachRuntimeToolEvent[] {
 
 function hasRequiredDirectDeletion(events: CoachRuntimeToolEvent[]): boolean {
   return events.some((event) => event.type === "product_command" &&
-    event.command_name === "analysis.delete" && event.status === "succeeded");
+    event.command_name === "analysis.delete" &&
+    (event.status === "succeeded" || event.status === "needs_confirmation"));
 }
 
 function hasProductCommandEvent(events: CoachRuntimeToolEvent[]): boolean {
@@ -578,7 +579,7 @@ function safeDisplayString(value: unknown): string | null {
   return trimmed;
 }
 
-function diagnosticContextPromptText(
+export function diagnosticContextPromptText(
   parsed: Record<string, unknown>,
   maxBytes: number,
 ): string | null {
@@ -634,31 +635,40 @@ function diagnosticContextPromptText(
         }
       }
 
-      const metricEntries: Array<{ key: string; value: number | string; unit: string | null }> = [];
+      const metricEntries: Array<{
+        rawKey: string;
+        displayName: string;
+        value: number | string;
+        unit: string | null;
+      }> = [];
       for (const [key, metric] of Object.entries(diagnosis.summary)) {
         if (!isRecord(metric) || !metricAvailable(metric)) continue;
         const val = metric.value;
         if (val == null) continue;
         const safeKey = safeDisplayString(key);
         if (!safeKey) continue;
+        const translatedName = isRecord(metric.definition) && typeof metric.definition.name === "string"
+          ? safeDisplayString(metric.definition.name)
+          : null;
+        const displayName = translatedName || safeKey;
         if (typeof val === "number" && Number.isFinite(val)) {
-          metricEntries.push({ key: safeKey, value: val, unit: safeDisplayString(metric.unit) });
+          metricEntries.push({ rawKey: safeKey, displayName, value: val, unit: safeDisplayString(metric.unit) });
         } else if (typeof val === "string") {
           const safeVal = safeDisplayString(val);
-          if (safeVal) metricEntries.push({ key: safeKey, value: safeVal, unit: safeDisplayString(metric.unit) });
+          if (safeVal) metricEntries.push({ rawKey: safeKey, displayName, value: safeVal, unit: safeDisplayString(metric.unit) });
         }
       }
 
       if (metricEntries.length > 15) {
-        const prioritized = metricEntries.filter((e) => issueMetricRefs.has(e.key));
-        const rest = metricEntries.filter((e) => !issueMetricRefs.has(e.key)).slice(0, 10);
+        const prioritized = metricEntries.filter((e) => issueMetricRefs.has(e.rawKey));
+        const rest = metricEntries.filter((e) => !issueMetricRefs.has(e.rawKey)).slice(0, 10);
         metricEntries.length = 0;
         metricEntries.push(...prioritized, ...rest);
       }
 
       if (metricEntries.length > 0) {
-        const metricLines = metricEntries.map(({ key, value, unit }) =>
-          `- ${key}: ${String(value)}${unit ? ` (${unit})` : ""}`,
+        const metricLines = metricEntries.map(({ displayName, value, unit }) =>
+          `- ${displayName}: ${String(value)}${unit ? ` (${unit})` : ""}`,
         );
         const withoutMetricsBytes = Buffer.byteLength(lines.join("\n"), "utf8");
         const prefixBytes = Buffer.byteLength("\nMetrics:", "utf8");

@@ -468,7 +468,13 @@ const MetricSchema = Type.Object(
 		outlier_method: Type.Optional(ScalarSchema),
 		outlier_refs: Type.Optional(SafeStringArraySchema),
 		sample_refs: Type.Optional(SafeStringArraySchema),
-		definition: Type.Optional(ScalarSchema),
+		definition: Type.Optional(Type.Object(
+			{
+				name: Type.Optional(Type.String()),
+				description: Type.Optional(Type.String()),
+			},
+			{ additionalProperties: false },
+		)),
 	},
 	{ additionalProperties: false },
 );
@@ -551,6 +557,8 @@ const V2ScenarioSchema = Type.Object(
 			Type.Literal("unavailable"),
 		]),
 		limitations: SafeStringArraySchema,
+		display_name: Type.Optional(Type.String()),
+		aim_family: Type.Optional(Type.String()),
 	},
 	{ additionalProperties: false },
 );
@@ -835,6 +843,14 @@ function validateMetric(
 			return isSafeStringArray(item);
 		}
 		if (key === "provenance") return validateProvenance(item);
+		if (key === "definition") {
+			if (item === undefined) return true;
+			if (!isRecord(item)) return false;
+			return Object.entries(item).every(
+				([k, v]) =>
+					(k === "name" || k === "description") && typeof v === "string",
+			);
+		}
 		// classification already constrained to "deterministic" by schema.
 		return isSafeScalar(item);
 	});
