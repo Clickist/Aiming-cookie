@@ -13,6 +13,11 @@ import { createHash } from "node:crypto";
 
 import { getDb, type SqliteDb } from "./db.ts";
 
+function sqliteTimestampToWireUtc(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  return value.includes("T") ? value : value.replace(" ", "T") + "Z";
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -512,13 +517,13 @@ export function getAgentRun(runRef: string, ownerId: string): Record<string, unk
     attempt: row.attempt as number,
     status: row.status as string,
     phase: row.phase as string,
-    partial_text: row.partial_text as string,
+    partial_text: row.partial_text ?? null,
     error,
     contexts,
     events,
-    created_at: row.created_at,
-    started_at: row.started_at,
-    finished_at: row.finished_at,
+    created_at: sqliteTimestampToWireUtc(row.created_at),
+    started_at: sqliteTimestampToWireUtc(row.started_at),
+    finished_at: sqliteTimestampToWireUtc(row.finished_at),
   };
 }
 
@@ -528,7 +533,7 @@ export function listCoachSessions(
   opts: { q?: string; includeArchived?: boolean } = {},
 ): { sessions: SessionOut[] } {
   const db = getDb();
-  if (!db) return { sessions: [] };
+  if (!db) return { schema_version: "coach_session_list.v1", sessions: [] };
 
   const statuses = opts.includeArchived ? ["active", "archived"] : ["active"];
   const placeholders = statuses.map(() => "?").join(",");
@@ -553,7 +558,7 @@ export function listCoachSessions(
       + "ORDER BY t.updated_at DESC, t.id DESC LIMIT ?",
   ).all(...params) as SessionRow[];
 
-  return { sessions: rows.map((r) => shapeSession(db, r)) };
+  return { schema_version: "coach_session_list.v1", sessions: rows.map((r) => shapeSession(db, r)) };
 }
 
 /** GET /v1/primary — matches Python _build_coach_primary_response(). */
@@ -608,7 +613,7 @@ export function listCoachContexts(
   sessionId?: number,
 ): { contexts: ContextRefOut[] } {
   const db = getDb();
-  if (!db) return { contexts: [] };
+  if (!db) return { schema_version: "coach_context_list.v1", contexts: [] };
   const threadId = threadIdForRequest(db, ownerId, sessionId);
   const rows = db.prepare(
     "SELECT context_ref, thread_id, kind, analysis_session_id, comparison_session_id, "
@@ -616,7 +621,7 @@ export function listCoachContexts(
       + "FROM coach_context_refs WHERE thread_id=? AND status='active' "
       + "ORDER BY attached_at, context_ref",
   ).all(threadId) as ContextRefRow[];
-  return { contexts: rows.map(shapeContextRef) };
+  return { schema_version: "coach_context_list.v1", contexts: rows.map(shapeContextRef) };
 }
 
 /** POST /v1/sessions — matches Python create_coach_session(). */
@@ -891,7 +896,7 @@ export function attachCoachContext(
       + "FROM coach_context_refs WHERE thread_id=? AND dedupe_key=?",
   ).get(threadId, dedupeKey) as ContextRefRow;
 
-  return { action: "attached", context: shapeContextRef(row) };
+  return { schema_version: "coach_context_mutation.v1", action: "attached", context: shapeContextRef(row) };
 }
 
 /** POST /v1/contexts/:ref/detach — matches Python detach_coach_context(). */
@@ -924,5 +929,5 @@ export function detachCoachContext(
       + "target_ref, start_ms, end_ms, label, status, attached_at, detached_at, deleted_at "
       + "FROM coach_context_refs WHERE context_ref=?",
   ).get(contextRef) as ContextRefRow;
-  return { action: "detached", context: shapeContextRef(updated) };
+  return { schema_version: "coach_context_mutation.v1", action: "detached", context: shapeContextRef(updated) };
 }
