@@ -1164,7 +1164,7 @@ export function resumeWaitingRuns(db: SqliteDb, ownerId: string): string[] {
     const threadId = current.thread_id as number;
     let bundle: AnyDict;
     try {
-      const rebuilt = buildContextBundle(db, threadId, refs);
+      const rebuilt = buildContextBundle(db, threadId, refs, ownerId);
       bundle = rebuilt.bundle;
     } catch {
       continue;
@@ -1351,9 +1351,12 @@ export function decideConfirmation(
     "WHERE confirmation_ref=? AND owner_id=? AND status='pending'",
   ).run(resultStatus, confirmationRef, ownerId);
   if (cursor.changes !== 1) {
-    // Status changed concurrently — re-read
-    const refreshed = getAgentRun(db, ownerId, confirmationRef);
-    return refreshed ? formatConfirmation(request, null, null, null) : null;
+    // Status changed concurrently — re-read the confirmation request
+    const refreshed = db.prepare(
+      "SELECT confirmation_ref, action, target_ref, status, impact_code, impact_message, created_at, decided_at " +
+      "FROM coach_confirmation_requests WHERE confirmation_ref=? AND owner_id=?",
+    ).get(confirmationRef, ownerId) as AnyDict | undefined;
+    return refreshed ? formatConfirmation(refreshed, null, null, null) : null;
   }
 
   db.prepare(

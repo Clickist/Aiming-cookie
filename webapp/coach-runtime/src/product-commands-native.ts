@@ -112,9 +112,8 @@ const kovaakConnectionGet: CommandHandler = (db, _params, ownerId) => {
 
 const peripheralProfileGet: CommandHandler = (db, _params, ownerId) => {
   const row = db.prepare(
-    `SELECT owner_id, grip_type, hand_length_mm, wrist_rest_position,
-            current_mouse_shape, current_mouse_weight_g, current_mousepad,
-            budget_tier, preferred_flare, preferred_hump, preferred_size_category,
+    `SELECT owner_id, grip_type, hand_length_cm, wrist_position, grip_preference,
+            current_mouse_brand, current_mouse_model, current_mousepad, budget,
             created_at, updated_at
      FROM peripheral_profiles WHERE owner_id = ?`,
   ).get(ownerId) as Record<string, unknown> | undefined;
@@ -132,15 +131,13 @@ const peripheralProfileGet: CommandHandler = (db, _params, ownerId) => {
       owner_ref: ownerId,
       profile_ref: `peripheral:${ownerId}`,
       grip_type: row.grip_type ?? null,
-      hand_length_mm: row.hand_length_mm ?? null,
-      wrist_rest_position: row.wrist_rest_position ?? null,
-      current_mouse_shape: row.current_mouse_shape ?? null,
-      current_mouse_weight_g: row.current_mouse_weight_g ?? null,
+      hand_length_cm: row.hand_length_cm ?? null,
+      wrist_position: row.wrist_position ?? null,
+      grip_preference: row.grip_preference ?? null,
+      current_mouse_brand: row.current_mouse_brand ?? null,
+      current_mouse_model: row.current_mouse_model ?? null,
       current_mousepad: row.current_mousepad ?? null,
-      budget_tier: row.budget_tier ?? null,
-      preferred_flare: row.preferred_flare ?? null,
-      preferred_hump: row.preferred_hump ?? null,
-      preferred_size_category: row.preferred_size_category ?? null,
+      budget: row.budget ?? null,
       updated_at: sqliteTimestampToWireUtc(row.updated_at),
     },
   };

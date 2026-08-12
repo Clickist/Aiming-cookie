@@ -51,7 +51,19 @@ function registry(): EvidenceKeyRegistry {
 let dataRoot: string | null | undefined;
 function getDataRoot(): string | null {
   if (dataRoot !== undefined) return dataRoot;
-  dataRoot = process.env.DATA_ROOT || null;
+  const env = process.env.DATA_ROOT;
+  if (env) { dataRoot = env; return dataRoot; }
+  // Fallback: match Python's config.resolve_data_root() defaults
+  const home = process.env.USERPROFILE || process.env.HOME || "";
+  const platform = process.platform;
+  if (platform === "win32") {
+    const appData = process.env.APPDATA || (home ? `${home}/AppData/Roaming` : "");
+    dataRoot = appData ? `${appData}/Aiming Cookie` : null;
+  } else if (platform === "darwin") {
+    dataRoot = `${home}/Library/Application Support/Aiming Cookie`;
+  } else {
+    dataRoot = `${home}/.local/share/Aiming Cookie`;
+  }
   return dataRoot;
 }
 
@@ -452,7 +464,6 @@ function runPhaseGroups(events: AnyDict[]): Array<[string, AnyDict[]]> {
   const total = events.length;
   events.forEach((event, index) => {
     const phaseIndex = Math.min(2, Math.floor((index * 3) / Math.max(1, total)));
-    (["early", "middle", "late"] as const)[phaseIndex].length; // type guard
     groups[["early", "middle", "late"][phaseIndex]].push(event);
   });
   return ([["early", groups.early], ["middle", groups.middle], ["late", groups.late]] as const)
