@@ -66,12 +66,12 @@ _EVIDENCE_QUERY_RESULT_SCHEMA = "coach_evidence_query_result.v1"
 _EVIDENCE_AUDIT_SCHEMA = "coach_evidence_audit.v1"
 _OUTCOME_SERIES_MAX = 8
 _METRIC_KEYS_MAX = 8
-_LIST_MAX = 20
+_LIST_MAX = 200
 _SIGNAL_CHANNEL_MAX = 4
 _SIGNAL_POINTS_PER_CHANNEL = 600
 _FACT_SECTION_MAX = 8
 _FORBIDDEN_EVIDENCE_PARAMETER_KEYS = frozenset({
-    "start_ms", "end_ms", "time_ms", "frame", "frame_index", "artifact_ref",
+    "frame", "frame_index", "artifact_ref",
     "path", "sql", "python", "code", "query",
 })
 
@@ -482,31 +482,15 @@ def _facts_section_summaries(analysis_ref: str, facts: dict[str, Any]) -> list[d
     return summaries
 
 
-def _new_cursor(bridge: _ToolBridge, *, command_name: str, state: dict[str, Any]) -> str:
-    cursor = f"cursor:{secrets.token_urlsafe(24)}"
-    bridge.cursors[cursor] = {"command_name": command_name, **state}
-    return cursor
-
-
-def _cursor_state(bridge: _ToolBridge, cursor: object, command_name: str) -> dict[str, Any]:
-    if not isinstance(cursor, str):
-        raise ProductCommandError("cursor_not_valid", "cursor is invalid")
-    state = bridge.cursors.get(cursor)
-    if state is None or state.get("command_name") != command_name:
-        raise ProductCommandError("cursor_not_valid", "cursor is invalid")
-    return dict(state)
-
-
 def _audit_evidence_result(
     result: dict[str, Any],
     *,
     command_name: str,
     parameters: dict[str, Any],
-    bridge: _ToolBridge,
     response_bytes: int,
     signal_points: int,
 ) -> dict[str, Any]:
-    refs = sorted(ref for ref in _stable_reachable_refs(result) if not ref.startswith("cursor:"))
+    refs = sorted(_stable_reachable_refs(result))
     requested_event_fields: list[str] = []
     for value in [parameters.get("field"), *(parameters.get("fields") or [])]:
         if isinstance(value, str) and value not in requested_event_fields:
@@ -537,16 +521,10 @@ def _audit_evidence_result(
         "requested_segment_kinds": parameters.get("segment_kinds", []),
         "requested_issue_refs": parameters.get("issue_refs", []),
         "requested_event_fields": requested_event_fields,
-        "query_digest": _idempotency_digest(command_name, {
-            key: value for key, value in parameters.items() if key != "cursor"
-        }),
-        "budget_used": {
+        "query_digest": _idempotency_digest(command_name, parameters),
+        "response_size": {
             "response_bytes": response_bytes,
             "signal_points": signal_points,
-        },
-        "budget_remaining": {
-            "response_bytes": coach_commands._MAX_BRIDGE_BYTES - bridge.bytes_used - response_bytes,
-            "signal_points": _MAX_SIGNAL_POINTS - bridge.signal_points_used - signal_points,
         },
         "status": result.get("status"),
     }
@@ -560,24 +538,6 @@ def _audit_evidence_result(
     }
 
 
-def _result_cursors(value: object) -> set[str]:
-    cursors: set[str] = set()
-    if isinstance(value, str) and value.startswith("cursor:"):
-        cursors.add(value)
-    elif isinstance(value, Mapping):
-        for child in value.values():
-            cursors.update(_result_cursors(child))
-    elif isinstance(value, list):
-        for child in value:
-            cursors.update(_result_cursors(child))
-    return cursors
-
-
-def _discard_result_cursors(bridge: _ToolBridge, result: dict[str, Any]) -> None:
-    for cursor in _result_cursors(result):
-        bridge.cursors.pop(cursor, None)
-
-
 async def _finish_evidence_result(
     bridge: _ToolBridge,
     result: dict[str, Any],
@@ -589,30 +549,15 @@ async def _finish_evidence_result(
     if result.get("status") != "succeeded":
         return result
     size = _canonical_wire_size(result)
-    if size > coach_commands._MAX_SINGLE_RESULT_BYTES:
-        _discard_result_cursors(bridge, result)
-        return _result(result["command_id"], "unavailable", warning_or_error=_error("response_too_large", "evidence response exceeds the per-response budget"))
-    is_signal = command_name == "analysis.evidence.signal_window"
     async with _tool_bridge_lock:
         current = _tool_bridges.get(bridge.token_digest)
         if current is not bridge or bridge.expires_at <= time.time():
             _tool_bridges.pop(bridge.token_digest, None)
-            bridge.cursors.clear()
             return _result(result["command_id"], "unavailable", warning_or_error=_error("bridge_unavailable", "tool bridge is unavailable"))
-    if bridge.bytes_used + size > coach_commands._MAX_BRIDGE_BYTES:
-        _discard_result_cursors(bridge, result)
-        return _result(result["command_id"], "unavailable", warning_or_error=_error("budget_exhausted", "Coach evidence byte budget is exhausted"))
-    if bridge.signal_points_used + signal_points > _MAX_SIGNAL_POINTS:
-        _discard_result_cursors(bridge, result)
-        return _result(result["command_id"], "unavailable", warning_or_error=_error("signal_point_budget_exhausted", "Coach signal point budget is exhausted"))
-    if is_signal and bridge.signal_bytes_used + size > _MAX_SIGNAL_BYTES:
-        _discard_result_cursors(bridge, result)
-        return _result(result["command_id"], "unavailable", warning_or_error=_error("signal_byte_budget_exhausted", "Coach signal byte budget is exhausted"))
     audit = _audit_evidence_result(
         result,
         command_name=command_name,
         parameters=parameters,
-        bridge=bridge,
         response_bytes=size,
         signal_points=signal_points,
     )
@@ -630,27 +575,12 @@ async def _finish_evidence_result(
         try:
             await _journal().audit(bridge.owner_id, audit)
         except Exception:
-            _discard_result_cursors(bridge, result)
             return _result(result["command_id"], "unavailable", warning_or_error=_error("audit_unavailable", "evidence audit is unavailable"))
         async with _tool_bridge_lock:
             current = _tool_bridges.get(bridge.token_digest)
             if current is not bridge or bridge.expires_at <= time.time():
                 _tool_bridges.pop(bridge.token_digest, None)
-                bridge.cursors.clear()
                 return _result(result["command_id"], "unavailable", warning_or_error=_error("bridge_unavailable", "tool bridge is unavailable"))
-            if bridge.bytes_used + size > coach_commands._MAX_BRIDGE_BYTES:
-                _discard_result_cursors(bridge, result)
-                return _result(result["command_id"], "unavailable", warning_or_error=_error("budget_exhausted", "Coach evidence byte budget is exhausted"))
-            if bridge.signal_points_used + signal_points > _MAX_SIGNAL_POINTS:
-                _discard_result_cursors(bridge, result)
-                return _result(result["command_id"], "unavailable", warning_or_error=_error("signal_point_budget_exhausted", "Coach signal point budget is exhausted"))
-            if is_signal and bridge.signal_bytes_used + size > _MAX_SIGNAL_BYTES:
-                _discard_result_cursors(bridge, result)
-                return _result(result["command_id"], "unavailable", warning_or_error=_error("signal_byte_budget_exhausted", "Coach signal byte budget is exhausted"))
-            bridge.bytes_used += size
-            bridge.signal_points_used += signal_points
-            if is_signal:
-                bridge.signal_bytes_used += size
             bridge.reachable_refs.update(_stable_reachable_refs(result))
         return result
     finally:
@@ -719,56 +649,37 @@ async def _query_metric_distribution(bridge: _ToolBridge, command_id: str, param
 
 
 async def _query_evidence_list(bridge: _ToolBridge, command_id: str, parameters: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    _exact_parameters(parameters, {"analysis_ref", "segment_kinds", "issue_refs", "limit", "cursor"})
-    if "cursor" in parameters:
-        _exact_parameters(parameters, {"cursor"})
-        state = _cursor_state(bridge, parameters.get("cursor"), "analysis.evidence.list")
-        analysis_ref = state["analysis_ref"]
-        offset = int(state["offset"])
-        limit = int(state["limit"])
-        segment_kinds = list(state["segment_kinds"])
-        issue_refs = list(state["issue_refs"])
-    else:
-        analysis_ref = parameters.get("analysis_ref")
-        if not isinstance(analysis_ref, str):
-            raise ProductCommandError("invalid_reference", "analysis_ref is required")
-        offset = 0
-        limit = parameters.get("limit", _LIST_MAX)
-        segment_kinds = _string_list(
-            parameters.get("segment_kinds"),
-            field_name="segment_kinds",
-            max_items=8,
-        )
-        if not all(EvidenceKeyRegistry().allows_segment(kind) for kind in segment_kinds):
-            raise ProductCommandError("invalid_parameters", "segment kind is not registered")
-        issue_refs = (
-            _stable_ref_list(parameters.get("issue_refs"), field_name="issue_refs", max_items=8)
-            if "issue_refs" in parameters
-            else []
-        )
+    _exact_parameters(parameters, {"analysis_ref", "segment_kinds", "issue_refs", "limit"})
+    analysis_ref = parameters.get("analysis_ref")
+    if not isinstance(analysis_ref, str):
+        raise ProductCommandError("invalid_reference", "analysis_ref is required")
+    limit = parameters.get("limit", _LIST_MAX)
+    segment_kinds = _string_list(
+        parameters.get("segment_kinds"),
+        field_name="segment_kinds",
+        max_items=8,
+    )
+    if not all(EvidenceKeyRegistry().allows_segment(kind) for kind in segment_kinds):
+        raise ProductCommandError("invalid_parameters", "segment kind is not registered")
+    issue_refs = (
+        _stable_ref_list(parameters.get("issue_refs"), field_name="issue_refs", max_items=8)
+        if "issue_refs" in parameters
+        else []
+    )
     artifact, _, _ = await coach_commands._load_evidence_for_bridge(bridge, analysis_ref)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _LIST_MAX:
-        raise ProductCommandError("invalid_parameters", "limit must be between 1 and 20")
+        raise ProductCommandError("invalid_parameters", f"limit must be between 1 and {_LIST_MAX}")
     segments = [
         segment
         for segment in artifact.get("evidence_segments", [])
         if (not segment_kinds or segment.get("segment_kind") in segment_kinds)
         and (not issue_refs or set(segment.get("issue_refs", [])) & set(issue_refs))
     ]
-    selected = segments[offset:offset + limit]
-    next_cursor = None
-    if offset + len(selected) < len(segments):
-        next_cursor = _new_cursor(bridge, command_name="analysis.evidence.list", state={
-            "analysis_ref": analysis_ref,
-            "offset": offset + len(selected),
-            "limit": limit,
-            "segment_kinds": list(segment_kinds),
-            "issue_refs": list(issue_refs),
-        })
-    result = _evidence_result(command_id, result_ref=f"{analysis_ref}:evidence:list:{offset}", result={
+    selected = segments[:limit]
+    result = _evidence_result(command_id, result_ref=f"{analysis_ref}:evidence:list", result={
         "analysis_ref": analysis_ref,
         "segments": [_safe_segment(segment) for segment in selected],
-        "next_cursor": next_cursor,
+        "next_cursor": None,
     })
     return result, 0
 
@@ -874,30 +785,6 @@ async def _query_signal_window(bridge: _ToolBridge, command_id: str, parameters:
             raise ProductCommandError("evidence_unavailable", "signal channel has no samples in the segment focus window", kind="unavailable")
         source_points.append((channel_key, sample, metadata, points))
 
-    remaining_points = _MAX_SIGNAL_POINTS - bridge.signal_points_used
-    available_bytes = min(
-        coach_commands._MAX_SINGLE_RESULT_BYTES,
-        coach_commands._MAX_BRIDGE_BYTES - bridge.bytes_used,
-        _MAX_SIGNAL_BYTES - bridge.signal_bytes_used,
-    )
-    minimum_per_channel = max(
-        len({
-            0,
-            len(points) - 1,
-            min(range(len(points)), key=lambda index: (points[index][1], index)),
-            max(range(len(points)), key=lambda index: (points[index][1], -index)),
-        })
-        for _, _, _, points in source_points
-    )
-    if remaining_points < minimum_per_channel * len(source_points):
-        raise ProductCommandError("signal_point_budget_exhausted", "Coach signal point budget is exhausted", kind="unavailable")
-    if available_bytes <= 0:
-        raise ProductCommandError("signal_byte_budget_exhausted", "Coach signal byte budget is exhausted", kind="unavailable")
-    max_per_channel = min(
-        _SIGNAL_POINTS_PER_CHANNEL,
-        max(1, remaining_points // len(source_points)),
-    )
-
     def build_result(point_limit: int) -> tuple[dict[str, Any], int]:
         channels: list[dict[str, Any]] = []
         point_count = 0
@@ -922,12 +809,6 @@ async def _query_signal_window(bridge: _ToolBridge, command_id: str, parameters:
             "downsample_version": "deterministic_extrema.v1",
             "point_count": point_count,
             "truncated": truncated,
-            "budget_used": {"response_bytes": 0, "signal_points": point_count},
-            "budget_remaining": {
-                "response_bytes": 0,
-                "signal_response_bytes": 0,
-                "signal_points": remaining_points - point_count,
-            },
             "limitations": ["deterministic_extrema_downsampled"] if truncated else [],
         }
         result = _evidence_result(
@@ -935,30 +816,9 @@ async def _query_signal_window(bridge: _ToolBridge, command_id: str, parameters:
             result_ref=f"{segment_ref}:signal-window",
             result=body,
         )
-        for _ in range(4):
-            response_bytes = _canonical_wire_size(result)
-            body["budget_used"]["response_bytes"] = response_bytes
-            body["budget_remaining"]["response_bytes"] = max(
-                0, coach_commands._MAX_BRIDGE_BYTES - bridge.bytes_used - response_bytes,
-            )
-            body["budget_remaining"]["signal_response_bytes"] = max(
-                0, _MAX_SIGNAL_BYTES - bridge.signal_bytes_used - response_bytes,
-            )
         return result, point_count
 
-    best: tuple[dict[str, Any], int] | None = None
-    low, high = minimum_per_channel, max_per_channel
-    while low <= high:
-        middle = (low + high) // 2
-        candidate = build_result(middle)
-        if _canonical_wire_size(candidate[0]) <= available_bytes:
-            best = candidate
-            low = middle + 1
-        else:
-            high = middle - 1
-    if best is None:
-        raise ProductCommandError("signal_byte_budget_exhausted", "Coach signal byte budget is exhausted", kind="unavailable")
-    return best
+    return build_result(_SIGNAL_POINTS_PER_CHANNEL)
 
 
 async def _query_evidence_compare(bridge: _ToolBridge, command_id: str, parameters: dict[str, Any]) -> tuple[dict[str, Any], int]:
@@ -1155,7 +1015,7 @@ async def _query_run_facts(bridge: _ToolBridge, command_id: str, parameters: dic
         if len(selected) != len(requested_keys):
             raise ProductCommandError("invalid_parameters", "unknown facts section")
         facts = {**facts, "sections": selected}
-    if _canonical_wire_size(facts) <= 8 * 1024 and _canonical_wire_size(facts) <= coach_commands._MAX_SINGLE_RESULT_BYTES:
+    if _canonical_wire_size(facts) <= 8 * 1024:
         run_facts = {"mode": "inline", "field_registry_version": facts.get("field_registry_version"), "facts": facts, "section_summaries": [], "limitations": facts.get("limitations", [])}
     else:
         run_facts = {"mode": "section_refs", "field_registry_version": facts.get("field_registry_version"), "section_summaries": summaries, "limitations": ["facts_over_inline_budget"]}
@@ -1245,31 +1105,20 @@ def _overview_timeline(
 
 
 async def _query_outcomes_timeline(bridge: _ToolBridge, command_id: str, parameters: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    _exact_parameters(parameters, {"analysis_ref", "scope", "segment_ref", "mode", "series", "cursor"})
-    if "cursor" in parameters:
-        _exact_parameters(parameters, {"cursor"})
-        state = _cursor_state(bridge, parameters.get("cursor"), "analysis.outcomes.timeline")
-        analysis_ref = state["analysis_ref"]
-        scope = state["scope"]
-        segment_ref = state["segment_ref"]
-        series = state["series"]
-        offset = state["offset"]
-        mode = "exact_page"
-    else:
-        analysis_ref = parameters.get("analysis_ref")
-        scope = parameters.get("scope")
-        segment_ref = parameters.get("segment_ref")
-        mode = parameters.get("mode")
-        series = _string_list(parameters.get("series"), field_name="series", max_items=_OUTCOME_SERIES_MAX, allow_empty=False)
-        offset = 0
-        if not isinstance(analysis_ref, str) or scope not in {"whole_run", "evidence_segment"} or mode not in {"overview", "exact_page"}:
-            raise ProductCommandError("invalid_parameters", "timeline requires a bounded scope and overview/exact_page mode")
-        if scope == "evidence_segment":
-            if not isinstance(segment_ref, str):
-                raise ProductCommandError("invalid_reference", "segment_ref is required")
-            _require_reachable(bridge, segment_ref)
-        elif segment_ref is not None:
-            raise ProductCommandError("invalid_parameters", "whole_run cannot include segment_ref")
+    _exact_parameters(parameters, {"analysis_ref", "scope", "segment_ref", "mode", "series"})
+    analysis_ref = parameters.get("analysis_ref")
+    scope = parameters.get("scope")
+    segment_ref = parameters.get("segment_ref")
+    mode = parameters.get("mode")
+    series = _string_list(parameters.get("series"), field_name="series", max_items=_OUTCOME_SERIES_MAX, allow_empty=False)
+    if not isinstance(analysis_ref, str) or scope not in {"whole_run", "evidence_segment"} or mode not in {"overview", "exact_page"}:
+        raise ProductCommandError("invalid_parameters", "timeline requires a bounded scope and overview/exact_page mode")
+    if scope == "evidence_segment":
+        if not isinstance(segment_ref, str):
+            raise ProductCommandError("invalid_reference", "segment_ref is required")
+        _require_reachable(bridge, segment_ref)
+    elif segment_ref is not None:
+        raise ProductCommandError("invalid_parameters", "whole_run cannot include segment_ref")
     artifact, safe_ref, _ = await coach_commands._load_evidence_for_bridge(bridge, analysis_ref)
     segment_bounds = None
     if scope == "evidence_segment":
@@ -1297,58 +1146,38 @@ async def _query_outcomes_timeline(bridge: _ToolBridge, command_id: str, paramet
         scope=scope,
         segment_ref=segment_ref,
         selected_series=series,
-        offset=offset,
+        offset=0,
     )
     page = page_normalized_outcomes(
         artifact.get("normalized_outcome_records", []),
         analysis_ref=analysis_ref,
         canonical_time_window_ref=f"{analysis_ref}:canonical-window",
         descriptor=descriptor,
-        byte_limit=min(
-            20 * 1024,
-            max(1, coach_commands._MAX_BRIDGE_BYTES - bridge.bytes_used - 2 * 1024),
-        ),
+        byte_limit=24 * 1024,
         segment_bounds=segment_bounds,
     )
-    next_cursor = None
-    if page.get("next_page_descriptor") is not None:
-        next_cursor = _new_cursor(bridge, command_name="analysis.outcomes.timeline", state={
-            "analysis_ref": analysis_ref, "scope": scope, "segment_ref": segment_ref,
-            "series": list(series), "offset": page["next_page_descriptor"]["offset"],
-        })
     timeline = page["timeline"]
-    timeline["next_cursor"] = next_cursor
-    return _evidence_result(command_id, result_ref=f"{analysis_ref}:timeline:{offset}", result={"analysis_ref": analysis_ref, "timeline": timeline, "next_cursor": next_cursor}), 0
+    timeline["next_cursor"] = None
+    return _evidence_result(command_id, result_ref=f"{analysis_ref}:timeline:0", result={"analysis_ref": analysis_ref, "timeline": timeline, "next_cursor": None}), 0
 
 
 async def _query_events(bridge: _ToolBridge, command_id: str, parameters: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    _exact_parameters(parameters, {"analysis_ref", "scope", "segment_ref", "event_kinds", "limit", "cursor"})
-    if "cursor" in parameters:
-        _exact_parameters(parameters, {"cursor"})
-        state = _cursor_state(bridge, parameters.get("cursor"), "analysis.events.list")
-        analysis_ref = state["analysis_ref"]
-        scope = state["scope"]
-        segment_ref = state["segment_ref"]
-        event_kinds = state["event_kinds"]
-        offset = state["offset"]
-        limit = state["limit"]
-    else:
-        analysis_ref = parameters.get("analysis_ref")
-        scope = parameters.get("scope")
-        segment_ref = parameters.get("segment_ref")
-        event_kinds = _string_list(parameters.get("event_kinds"), field_name="event_kinds", max_items=16, allow_empty=False)
-        if not all(EvidenceKeyRegistry().allows_event(kind) for kind in event_kinds):
-            raise ProductCommandError("invalid_parameters", "event kind is not registered")
-        offset = 0
-        if not isinstance(analysis_ref, str) or scope not in {"whole_run", "evidence_segment"}:
-            raise ProductCommandError("invalid_parameters", "events requires a bounded scope")
-        if scope == "evidence_segment":
-            if not isinstance(segment_ref, str):
-                raise ProductCommandError("invalid_reference", "segment_ref is required")
-            _require_reachable(bridge, segment_ref)
-        elif segment_ref is not None:
-            raise ProductCommandError("invalid_parameters", "whole_run cannot include segment_ref")
-        limit = parameters.get("limit", _LIST_MAX)
+    _exact_parameters(parameters, {"analysis_ref", "scope", "segment_ref", "event_kinds", "limit"})
+    analysis_ref = parameters.get("analysis_ref")
+    scope = parameters.get("scope")
+    segment_ref = parameters.get("segment_ref")
+    event_kinds = _string_list(parameters.get("event_kinds"), field_name="event_kinds", max_items=16, allow_empty=False)
+    if not all(EvidenceKeyRegistry().allows_event(kind) for kind in event_kinds):
+        raise ProductCommandError("invalid_parameters", "event kind is not registered")
+    if not isinstance(analysis_ref, str) or scope not in {"whole_run", "evidence_segment"}:
+        raise ProductCommandError("invalid_parameters", "events requires a bounded scope")
+    if scope == "evidence_segment":
+        if not isinstance(segment_ref, str):
+            raise ProductCommandError("invalid_reference", "segment_ref is required")
+        _require_reachable(bridge, segment_ref)
+    elif segment_ref is not None:
+        raise ProductCommandError("invalid_parameters", "whole_run cannot include segment_ref")
+    limit = parameters.get("limit", _LIST_MAX)
     artifact, _, _ = await coach_commands._load_evidence_for_bridge(bridge, analysis_ref)
     bounds = None
     if scope == "evidence_segment":
@@ -1437,15 +1266,9 @@ async def _query_events(bridge: _ToolBridge, command_id: str, parameters: dict[s
             })
     events.sort(key=lambda item: (item.get("start_ms", 0), item.get("end_ms", 0), item.get("event_id", "")))
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _LIST_MAX:
-        raise ProductCommandError("invalid_parameters", "limit must be between 1 and 20")
-    selected = events[offset:offset + limit]
-    next_cursor = None
-    if offset + len(selected) < len(events):
-        next_cursor = _new_cursor(bridge, command_name="analysis.events.list", state={
-            "analysis_ref": analysis_ref, "scope": scope, "segment_ref": segment_ref,
-            "event_kinds": list(event_kinds), "offset": offset + len(selected), "limit": limit,
-        })
-    return _evidence_result(command_id, result_ref=f"{analysis_ref}:events:{offset}", result={"analysis_ref": analysis_ref, "scope": scope, "records": selected, "event_refs": [event["event_id"] for event in selected], "next_cursor": next_cursor}), 0
+        raise ProductCommandError("invalid_parameters", f"limit must be between 1 and {_LIST_MAX}")
+    selected = events[:limit]
+    return _evidence_result(command_id, result_ref=f"{analysis_ref}:events:0", result={"analysis_ref": analysis_ref, "scope": scope, "records": selected, "event_refs": [event["event_id"] for event in selected], "next_cursor": None}), 0
 
 
 async def _query_event_get(
@@ -1537,40 +1360,19 @@ async def _query_event_filter(
     command_id: str,
     parameters: dict[str, Any],
 ) -> tuple[dict[str, Any], int]:
-    _exact_parameters(parameters, {"table_ref", "predicates", "limit", "cursor"})
-    if "cursor" in parameters:
-        _exact_parameters(parameters, {"cursor"})
-        state = _cursor_state(bridge, parameters.get("cursor"), "analysis.events.filter")
-        table_ref = state["table_ref"]
-        predicate_values = state["predicates"]
-        limit = state["limit"]
-        offset = state["offset"]
-    else:
-        table_ref = parameters.get("table_ref")
-        predicate_values = parameters.get("predicates")
-        limit = parameters.get("limit", _LIST_MAX)
-        offset = 0
+    _exact_parameters(parameters, {"table_ref", "predicates", "limit"})
+    table_ref = parameters.get("table_ref")
+    predicate_values = parameters.get("predicates")
+    limit = parameters.get("limit", _LIST_MAX)
     _, table, events = await _load_processed_table_for_bridge(bridge, table_ref)
     predicates = _predicates(predicate_values, table)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _LIST_MAX:
-        raise ProductCommandError("invalid_parameters", "limit must be between 1 and 20")
+        raise ProductCommandError("invalid_parameters", f"limit must be between 1 and {_LIST_MAX}")
     matched = _matching_events(events, predicates)
-    selected = matched[offset:offset + limit]
-    next_cursor = None
-    if offset + len(selected) < len(matched):
-        next_cursor = _new_cursor(
-            bridge,
-            command_name="analysis.events.filter",
-            state={
-                "table_ref": table["table_ref"],
-                "predicates": predicates,
-                "limit": limit,
-                "offset": offset + len(selected),
-            },
-        )
+    selected = matched[:limit]
     return _evidence_result(
         command_id,
-        result_ref=f"{table['table_ref']}:filter:{offset}",
+        result_ref=f"{table['table_ref']}:filter:0",
         result={
             "table_ref": table["table_ref"],
             "evaluated_count": len(events),
@@ -1578,7 +1380,7 @@ async def _query_event_filter(
             "excluded_count": len(events) - len(matched),
             "rows": [_safe_event(event) for event in selected],
             "event_refs": [event["event_id"] for event in selected],
-            "next_cursor": next_cursor,
+            "next_cursor": None,
             "completeness": table["completeness"],
             "limitations": list(table["limitations"]),
         },
@@ -1805,14 +1607,10 @@ class _ToolBridge:
     max_calls: int
     calls: int
     current_user_message: str | None = None
-    bytes_used: int = 0
-    signal_points_used: int = 0
-    signal_bytes_used: int = 0
     reachable_refs: set[str] = field(default_factory=set)
     reference_descriptors: dict[str, dict[str, str]] = field(default_factory=dict)
     temporary_profile_refs: dict[str, str] = field(default_factory=dict)
     instruction_grants: dict[str, "_InstructionGrant"] = field(default_factory=dict)
-    cursors: dict[str, dict[str, Any]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -1840,8 +1638,6 @@ class _InstructionGrant:
 
 _tool_bridges: dict[str, _ToolBridge] = {}
 _tool_bridge_lock = asyncio.Lock()
-_MAX_SIGNAL_BYTES = 32 * 1024
-_MAX_SIGNAL_POINTS = 2_400
 _ANALYSIS_WORKFLOW_TIMEOUT_SECONDS = 240.0
 _ANALYSIS_WORKFLOW_POLL_SECONDS = 0.5
 
@@ -1863,7 +1659,6 @@ def _stable_reachable_refs(value: object) -> set[str]:
                     or key in {"analysis_id", "segment_id", "event_id", "evidence_id", "id"}
                 )
                 and child.startswith(("analysis:", "run:", "plan:", "plan-item:", "segment:", "event:", "metric:", "evidence:"))
-                and not child.startswith("cursor:")
             ):
                 refs.add(child)
             return
@@ -1907,6 +1702,7 @@ _INSTRUCTION_TARGETS: dict[str, tuple[str, str]] = {
     "analysis.create_from_run": ("run_ref", "run"),
     "analysis.retry": ("analysis_ref", "analysis"),
     "analysis.delete": ("analysis_ref", "analysis"),
+    "training_plan.generate_draft": ("", "training_plan"),
     "training_plan.save": ("plan_ref", "plan"),
     "training_plan.activate": ("plan_ref", "plan"),
     "training_plan.pause": ("plan_ref", "plan"),
@@ -1957,6 +1753,9 @@ def _normalize_instruction_target(
     target = _INSTRUCTION_TARGETS.get(command_name)
     if target is None:
         return None
+    if command_name == "training_plan.generate_draft":
+        # Draft creation intentionally has no existing plan ref to resolve.
+        return dict(parameters), "training_plan:draft"
     field_name, kind = target
     candidates = _compatible_instruction_refs(bridge, kind)
     if not candidates:
@@ -2064,7 +1863,7 @@ def issue_tool_bridge(
     endpoint: str,
     desktop_token: str | None = None,
     ttl_seconds: int = 300,
-    max_calls: int = 6,
+    max_calls: int = 50,
     *,
     reachable_refs: set[str] | None = None,
     temporary_profile_refs: Mapping[str, str] | None = None,
@@ -2094,8 +1893,8 @@ def issue_tool_bridge(
         raise ValueError("desktop_token is invalid")
     if not isinstance(ttl_seconds, int) or not 1 <= ttl_seconds <= 900:
         raise ValueError("ttl_seconds must be between 1 and 900")
-    if not isinstance(max_calls, int) or not 1 <= max_calls <= 6:
-        raise ValueError("max_calls must be between 1 and 6")
+    if not isinstance(max_calls, int) or not 1 <= max_calls <= 50:
+        raise ValueError("max_calls must be between 1 and 50")
     safe_profile_refs: dict[str, str] = {}
     if temporary_profile_refs is not None:
         if not isinstance(temporary_profile_refs, Mapping):
@@ -2362,7 +2161,6 @@ async def execute_tool_bridge(bearer_token: str, payload: Mapping[str, Any]) -> 
             current = _tool_bridges.get(digest)
             if current is not bridge or bridge.expires_at <= time.time() or bridge.calls >= bridge.max_calls:
                 _tool_bridges.pop(digest, None)
-                bridge.cursors.clear()
                 return _result("command:bridge", "unavailable", warning_or_error=_error("bridge_unavailable", "tool bridge is unavailable"))
             bridge.calls += 1
         if (
@@ -2462,6 +2260,4 @@ async def revoke_tool_bridge(bearer_token: str) -> bool:
         return False
     async with _tool_bridge_lock:
         bridge = _tool_bridges.pop(_bridge_digest(bearer_token), None)
-        if bridge is not None:
-            bridge.cursors.clear()
         return bridge is not None

@@ -10,8 +10,8 @@ from pathlib import Path
 
 from . import kovaak_run_store
 from .kovaak_ingest import (
-    ExpectedIngestionState,
     KovaaKFileDiscovery,
+    NonRetryableIngestionError,
     RetryableIngestionError,
     normalize_kovaak_stem,
 )
@@ -21,14 +21,6 @@ from .native_capture_client import (
     NativeCaptureRetryableError,
     NativeCaptureTerminalError,
 )
-
-
-class CaptureFinalizationPending(RetryableIngestionError):
-    pass
-
-
-class CaptureFinalizationWaiting(ExpectedIngestionState):
-    pass
 
 
 _TERMINAL_VIDEO_ERRORS = {
@@ -186,7 +178,7 @@ class KovaaKCaptureFinalizer:
 
     async def finalize(self, discovery: KovaaKFileDiscovery) -> dict:
         merged = await self._merge_discovery(discovery)
-        trace_pending: kovaak_run_store.TracePendingError | None = None
+        trace_pending: RetryableIngestionError | None = None
         try:
             run = await kovaak_run_store.ingest_discovery(
                 merged,
@@ -195,7 +187,9 @@ class KovaaKCaptureFinalizer:
                 require_stats_for_trace=True,
                 defer_trace_attachment=True,
             )
-        except kovaak_run_store.TracePendingError as error:
+        except RetryableIngestionError as error:
+            if error.code != "trace_pending":
+                raise
             trace_pending = error
             run = await kovaak_run_store.get_kovaak_run_by_source_key(
                 self._user_id, _source_key(merged),
@@ -211,7 +205,9 @@ class KovaaKCaptureFinalizer:
                 await kovaak_run_store.set_run_finalization_state(
                     run["id"], self._user_id, "pending", "waiting_for_sources",
                 )
-            raise CaptureFinalizationWaiting("waiting_for_sources")
+            raise NonRetryableIngestionError(
+                "waiting_for_sources", code="waiting_for_sources",
+            )
 
         if (
             run.get("finalization_state") == "finalized"
@@ -298,7 +294,9 @@ class KovaaKCaptureFinalizer:
             await kovaak_run_store.set_run_finalization_state(
                 run["id"], self._user_id, "retryable", "capture_session_mismatch",
             )
-            raise CaptureFinalizationPending("capture_session_mismatch")
+            raise RetryableIngestionError(
+                "capture_session_mismatch", code="capture_session_mismatch",
+            )
 
         if trace_needs_snapshot:
             snapshot: dict[str, object] | None = None
@@ -361,7 +359,9 @@ class KovaaKCaptureFinalizer:
             await kovaak_run_store.set_run_finalization_state(
                 run["id"], self._user_id, "retryable", "video_pending_conflict",
             )
-            raise CaptureFinalizationPending("video_pending_conflict")
+            raise RetryableIngestionError(
+                "video_pending_conflict", code="video_pending_conflict",
+            )
 
         try:
             response = await asyncio.to_thread(
@@ -440,7 +440,7 @@ class KovaaKCaptureFinalizer:
         self,
         run: dict,
         raw_snapshot_receipt: dict[str, object] | None,
-    ) -> tuple[dict, kovaak_run_store.TracePendingError | None]:
+    ) -> tuple[dict, RetryableIngestionError | None]:
         try:
             attached = await kovaak_run_store.attach_mouse_trace_snapshot_window(
                 run,
@@ -449,7 +449,7 @@ class KovaaKCaptureFinalizer:
                 raw_snapshot_receipt=raw_snapshot_receipt,
                 require_coverage=True,
             )
-        except kovaak_run_store.TracePendingError as error:
+        except RetryableIngestionError as error:
             current = await kovaak_run_store.get_kovaak_run(
                 run["id"], self._user_id,
             )
@@ -459,7 +459,7 @@ class KovaaKCaptureFinalizer:
     async def _finish_or_retry_trace(
         self,
         run: dict,
-        trace_pending: kovaak_run_store.TracePendingError | None,
+        trace_pending: RetryableIngestionError | None,
         finalization_error: str | None,
     ) -> dict:
         if trace_pending is not None:
@@ -479,7 +479,5 @@ class KovaaKCaptureFinalizer:
 
 
 __all__ = [
-    "CaptureFinalizationPending",
-    "CaptureFinalizationWaiting",
     "KovaaKCaptureFinalizer",
 ]

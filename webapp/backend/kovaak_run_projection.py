@@ -243,7 +243,7 @@ def _source_revision_availability(
             candidate,
             str(parser_version or "source.v1"),
         )
-    except (OSError, kovaak_run_store.SourceUnstableError):
+    except (OSError, kovaak_run_store.RetryableIngestionError):
         return "unavailable"
     return "available" if (
         observed.get("sha256") == sha256.lower()

@@ -1991,10 +1991,6 @@ def _exact_parameters(parameters: dict[str, Any], allowed: set[str]) -> None:
         raise ProductCommandError("invalid_parameters", "unsupported evidence query parameters")
 
 
-_MAX_BRIDGE_BYTES = 64 * 1024
-_MAX_SINGLE_RESULT_BYTES = 24 * 1024
-
-
 from .coach_evidence_bridge import (
     _InstructionGrant,
     _ToolBridge,

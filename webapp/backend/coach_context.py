@@ -41,7 +41,8 @@ _PROCESSED_EVENT_QUERY_CAPABILITIES = [
     "analysis.evidence.compare",
 ]
 _COACH_CONTEXT_MAX_BYTES = 32 * 1024
-_COACH_FACTS_MAX_BYTES = 8 * 1024
+_COACH_FACTS_MAX_BYTES = 32 * 1024
+_COACH_CONTEXT_OPTIONAL_BRIEF = frozenset({"analysis_brief"})
 _TARGET_RELATIVE_FACTS_UNAVAILABLE = "target_relative_facts_unavailable"
 _REPHRASED_TARGET_RELATIVE_MEANINGS = {
     "reverse_ratio high": "移动收尾时出现了较多反向修正",
@@ -1053,8 +1054,290 @@ def _project_v2_evidence_summary(value: object) -> dict[str, object] | None:
     return projected
 
 
+_COACH_BRIEF_SEGMENT_FIELDS = frozenset(
+    {
+        "segment_id", "segment_kind", "title_key",
+        "relative_start_ms", "relative_end_ms",
+    }
+)
+_COACH_BRIEF_METRIC_FIELDS = frozenset(
+    {"metric_key", "value", "unit", "classification"}
+)
+_COACH_BRIEF_KILL_FIELDS = frozenset(
+    {"total_kills", "avg_accuracy", "avg_ttk_ms", "weapon_breakdown"}
+)
+_HEADLINE_METRIC_KEYS = frozenset(
+    {
+        "accuracy", "ttk", "ttk_ms", "time_to_kill", "path_efficiency",
+        "sparc", "overshoot", "reaction_time", "smoothness",
+        "reverse_ratio", "tracking_accuracy", "click_accuracy",
+        "target_switch_time", "precision", "consistency",
+        "score", "kills_per_minute", "kpm", "dps",
+    }
+)
+
+
+def _project_analysis_brief(value: object) -> dict[str, object] | None:
+    """Validate an analysis_brief produced by :func:`build_analysis_brief`."""
+    if not isinstance(value, Mapping):
+        return None
+    if set(value) - {"evidence_segments", "key_metrics", "kill_summary", "video_time_note"}:
+        return None
+
+    out: dict[str, object] = {}
+
+    segments = value.get("evidence_segments")
+    if segments is not None:
+        if not isinstance(segments, list) or len(segments) > 24:
+            return None
+        projected_segments: list[dict[str, object]] = []
+        for segment in segments:
+            if not isinstance(segment, Mapping):
+                return None
+            projected: dict[str, object] = {}
+            for key in _COACH_BRIEF_SEGMENT_FIELDS:
+                if key in segment and not _is_forbidden_key(key):
+                    safe = _safe_scalar(segment[key])
+                    if safe is not _MISSING:
+                        projected[key] = safe
+            issue_refs = _safe_string_list(segment.get("issue_refs"))
+            if issue_refs:
+                projected["issue_refs"] = issue_refs[:3]
+            if "segment_id" not in projected:
+                return None
+            projected_segments.append(projected)
+        out["evidence_segments"] = projected_segments
+
+    video_time_note = value.get("video_time_note")
+    if video_time_note is not None:
+        safe_note = _safe_scalar(video_time_note)
+        if safe_note is _MISSING or not isinstance(safe_note, str):
+            return None
+        out["video_time_note"] = safe_note
+
+    metrics = value.get("key_metrics")
+    if metrics is not None:
+        if not isinstance(metrics, list) or len(metrics) > 32:
+            return None
+        projected_metrics: list[dict[str, object]] = []
+        for metric in metrics:
+            if not isinstance(metric, Mapping):
+                return None
+            pm: dict[str, object] = {}
+            for key in _COACH_BRIEF_METRIC_FIELDS:
+                if key in metric and not _is_forbidden_key(key):
+                    safe = _safe_scalar(metric[key])
+                    if key == "classification" and safe is None:
+                        continue
+                    if safe is not _MISSING:
+                        pm[key] = safe
+            if "metric_key" not in pm:
+                return None
+            projected_metrics.append(pm)
+        out["key_metrics"] = projected_metrics
+
+    kill_summary = value.get("kill_summary")
+    if kill_summary is not None:
+        if not isinstance(kill_summary, Mapping):
+            return None
+        if set(kill_summary) - _COACH_BRIEF_KILL_FIELDS:
+            return None
+        projected_kill: dict[str, object] = {}
+        for key in ("total_kills", "avg_accuracy", "avg_ttk_ms"):
+            if key in kill_summary:
+                safe = _safe_scalar(kill_summary[key])
+                if safe is not _MISSING:
+                    projected_kill[key] = safe
+        weapons = kill_summary.get("weapon_breakdown")
+        if weapons is not None:
+            if not isinstance(weapons, Mapping) or len(weapons) > 16:
+                return None
+            projected_weapons: dict[str, object] = {}
+            for weapon, count in weapons.items():
+                safe_weapon = _safe_scalar(weapon)
+                safe_count = _safe_scalar(count)
+                if safe_weapon is not _MISSING and safe_count is not _MISSING:
+                    projected_weapons[str(safe_weapon)] = safe_count
+            if projected_weapons:
+                projected_kill["weapon_breakdown"] = projected_weapons
+        out["kill_summary"] = projected_kill
+
+    return out or None
+
+
+def build_analysis_brief(
+    artifact: Mapping[str, Any],
+    diagnosis: Mapping[str, Any] | None = None,
+) -> dict[str, object] | None:
+    """Build a compact analysis brief from an evidence artifact.
+
+    The brief includes evidence segment time ranges, headline metric values,
+    aggregate kill stats, and diagnosis issues with per-event video times —
+    the data the Coach needs up-front so it does not waste tool calls
+    discovering where in the video the problems are.
+    """
+    if not isinstance(artifact, Mapping):
+        return None
+
+    brief: dict[str, object] = {}
+
+    # Compute the training-start offset so segment times are relative
+    # (video playback starts at 0, not at canonical_time_window.start_ms).
+    window = artifact.get("canonical_time_window")
+    window_start_ms = 0
+    if isinstance(window, Mapping):
+        start = window.get("start_ms")
+        if isinstance(start, int) and not isinstance(start, bool):
+            window_start_ms = start
+
+    # Evidence segments — compact playable time ranges (relative to video start).
+    segments = artifact.get("evidence_segments")
+    if isinstance(segments, list):
+        compact_segments: list[dict[str, object]] = []
+        for segment in segments:
+            if not isinstance(segment, Mapping):
+                continue
+            compact: dict[str, object] = {}
+            for key in _COACH_BRIEF_SEGMENT_FIELDS:
+                value = segment.get(key)
+                if value is not None:
+                    compact[key] = value
+            # Convert absolute focus times to relative video-playback times.
+            focus_start = segment.get("focus_start_ms")
+            focus_end = segment.get("focus_end_ms")
+            if isinstance(focus_start, int) and not isinstance(focus_start, bool):
+                compact["relative_start_ms"] = focus_start - window_start_ms
+            if isinstance(focus_end, int) and not isinstance(focus_end, bool):
+                compact["relative_end_ms"] = focus_end - window_start_ms
+            issue_refs = segment.get("issue_refs")
+            if isinstance(issue_refs, list):
+                compact["issue_refs"] = [
+                    str(ref) for ref in issue_refs[:3] if isinstance(ref, str)
+                ]
+            if compact.get("segment_id") is not None:
+                compact_segments.append(compact)
+        if compact_segments:
+            brief["evidence_segments"] = compact_segments[:24]
+            brief["video_time_note"] = (
+                "relative_start_ms/relative_end_ms 是视频播放时间（从 0 开始）。"
+                "你没有视频帧读取能力，只能说'在这个时间段请重点观察什么'，"
+                "不能说'我看到画面里……'。"
+            )
+
+    # Key metrics — headline computed values only.
+    metric_records = artifact.get("metric_records")
+    if isinstance(metric_records, list):
+        compact_metrics: list[dict[str, object]] = []
+        for metric in metric_records:
+            if not isinstance(metric, Mapping):
+                continue
+            key = metric.get("metric_key")
+            if not isinstance(key, str) or key not in _HEADLINE_METRIC_KEYS:
+                continue
+            compact_metrics.append(
+                {
+                    "metric_key": key,
+                    "value": metric.get("value"),
+                    "unit": metric.get("unit"),
+                    "classification": metric.get("classification"),
+                }
+            )
+        if compact_metrics:
+            brief["key_metrics"] = compact_metrics
+
+    # Kill summary — aggregate stats from event bundles.
+    event_bundles = artifact.get("event_bundles")
+    if isinstance(event_bundles, list):
+        kill_events: list[Mapping[str, Any]] = []
+        for bundle in event_bundles:
+            if not isinstance(bundle, Mapping):
+                continue
+            for event in bundle.get("events", []):
+                if (
+                    isinstance(event, Mapping)
+                    and event.get("event_kind") in {"kill", "elimination"}
+                ):
+                    kill_events.append(event)
+        if kill_events:
+            weapon_counts: dict[str, int] = {}
+            accuracies: list[float] = []
+            ttks: list[float] = []
+            for event in kill_events:
+                attrs = event.get("attributes")
+                if isinstance(attrs, Mapping):
+                    weapon = attrs.get("weapon")
+                    if isinstance(weapon, str):
+                        weapon_counts[weapon] = weapon_counts.get(weapon, 0) + 1
+                    acc = attrs.get("accuracy")
+                    if isinstance(acc, (int, float)) and not isinstance(acc, bool):
+                        accuracies.append(float(acc))
+                    ttk = attrs.get("ttk_ms")
+                    if ttk is None:
+                        ttk = attrs.get("ttk")
+                    if isinstance(ttk, (int, float)) and not isinstance(ttk, bool):
+                        ttks.append(float(ttk))
+            kill_summary: dict[str, object] = {"total_kills": len(kill_events)}
+            if accuracies:
+                kill_summary["avg_accuracy"] = sum(accuracies) / len(accuracies)
+            if ttks:
+                kill_summary["avg_ttk_ms"] = sum(ttks) / len(ttks)
+            if weapon_counts:
+                kill_summary["weapon_breakdown"] = dict(
+                    sorted(weapon_counts.items(), key=lambda x: -x[1])[:16]
+                )
+            brief["kill_summary"] = kill_summary
+
+    # Diagnosis issues — connect each issue to relative video times.
+    # Build an event_id → relative_time_ms lookup from event bundles.
+    event_times: dict[str, int] = {}
+    for bundle in (event_bundles if isinstance(event_bundles, list) else []):
+        if not isinstance(bundle, Mapping):
+            continue
+        for event in bundle.get("events", []):
+            if isinstance(event, Mapping):
+                eid = event.get("event_id")
+                start = event.get("start_ms")
+                if isinstance(eid, str) and isinstance(start, int) and not isinstance(start, bool):
+                    event_times[eid] = start - window_start_ms
+
+    diag = diagnosis if diagnosis is not None else artifact.get("diagnosis")
+    if isinstance(diag, Mapping):
+        issues = diag.get("issues")
+        if isinstance(issues, list):
+            compact_issues: list[dict[str, object]] = []
+            for issue in issues:
+                if not isinstance(issue, Mapping):
+                    continue
+                compact_issue: dict[str, object] = {}
+                for key in ("signal", "plain_language_meaning", "metric_refs"):
+                    value = issue.get(key)
+                    if value is not None:
+                        compact_issue[key] = value
+                # Map each event_ref to its relative video time.
+                event_refs = issue.get("event_refs")
+                if isinstance(event_refs, list):
+                    event_times_out: list[dict[str, object]] = []
+                    for ref in event_refs[:6]:
+                        if isinstance(ref, str) and ref in event_times:
+                            event_times_out.append({
+                                "event_ref": ref,
+                                "relative_time_ms": event_times[ref],
+                            })
+                    if event_times_out:
+                        compact_issue["event_times"] = event_times_out
+                if compact_issue.get("signal") is not None:
+                    compact_issues.append(compact_issue)
+            if compact_issues:
+                brief["diagnosis_issues"] = compact_issues
+
+    return brief or None
+
+
 def _project_v2_context(context: Mapping[str, Any]) -> dict[str, object] | None:
-    if set(context) != _COACH_CONTEXT_V2_TOP_LEVEL_FIELDS:
+    context_keys = set(context)
+    if not _COACH_CONTEXT_V2_TOP_LEVEL_FIELDS.issubset(context_keys):
+        return None
+    if context_keys - _COACH_CONTEXT_V2_TOP_LEVEL_FIELDS - _COACH_CONTEXT_OPTIONAL_BRIEF:
         return None
     if context.get("schema_version") != COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION:
         return None
@@ -1119,6 +1402,12 @@ def _project_v2_context(context: Mapping[str, Any]) -> dict[str, object] | None:
         "training": projected_training,
         "limitations": limitations,
     }
+    brief = context.get("analysis_brief")
+    if brief is not None:
+        projected_brief = _project_analysis_brief(brief)
+        if projected_brief is None:
+            return None
+        projected["analysis_brief"] = projected_brief
     if len(_canonical_json_bytes(projected)) > _COACH_CONTEXT_MAX_BYTES:
         return None
     return projected
@@ -1182,7 +1471,10 @@ def _without_inline_processed_event_refs(
 
 
 def _project_v3_context(context: Mapping[str, Any]) -> dict[str, object] | None:
-    if set(context) != _COACH_CONTEXT_V3_TOP_LEVEL_FIELDS:
+    context_keys = set(context)
+    if not _COACH_CONTEXT_V3_TOP_LEVEL_FIELDS.issubset(context_keys):
+        return None
+    if context_keys - _COACH_CONTEXT_V3_TOP_LEVEL_FIELDS - _COACH_CONTEXT_OPTIONAL_BRIEF:
         return None
     if context.get("schema_version") != COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION:
         return None

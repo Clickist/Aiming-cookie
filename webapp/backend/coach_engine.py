@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Protocol, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 _log = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ class CoachTurn:
     pi_session_id: str | None = field(default=None, repr=False)
     run_ref: str | None = None
     on_partial: Any | None = field(default=None, repr=False)
+    on_activity: Any | None = field(default=None, repr=False)
 
 
 def _pi_turn_messages(
@@ -39,10 +40,6 @@ def _pi_turn_messages(
     ]
     messages.append({"role": "user", "content": user_message})
     return messages
-
-
-class CoachEngine(Protocol):
-    def complete(self, turn: CoachTurn) -> str: ...
 
 
 class PiCoachEngine:
@@ -66,24 +63,6 @@ class PiCoachEngine:
             coerce_coach_diagnostic_context(value)
         )
 
-    def complete(self, turn: CoachTurn):
-        from .coach_runtime import run_pi_coach_turn
-
-        pi_messages = _pi_turn_messages(turn.prior_messages, turn.user_message)
-        analysis_summary = self._analysis_summary(
-            turn.diagnostic_context if turn.diagnostic_context is not None else turn.diagnosis
-        )
-        return run_pi_coach_turn(
-            user_id=turn.user_id,
-            profile=turn.provider_profile,
-            messages=pi_messages,
-            analysis_summary=analysis_summary,
-            tool_bridge=turn.tool_bridge,
-            teaching_turn=turn.teaching_turn,
-            session_id=turn.pi_session_id,
-            return_result=True,
-        )
-
     async def complete_async(self, turn: CoachTurn):
         from .coach_runtime import run_pi_coach_turn_async
 
@@ -99,6 +78,7 @@ class PiCoachEngine:
             run_id=turn.run_ref,
             session_id=turn.pi_session_id,
             on_partial=turn.on_partial,
+            on_activity=turn.on_activity,
         )
 
 
@@ -140,89 +120,33 @@ def _runtime_failure(error) -> tuple[str, dict[str, Any]]:
     }
 
 
-class RuntimeRoutingCoachEngine:
-    """Product Coach runtime. Failures stay in the selected Pi Provider path."""
+async def complete_turn_async(
+    turn: CoachTurn, *, engine: PiCoachEngine | None = None,
+) -> EngineCompleteResult:
+    from .coach_runtime import CoachRuntimeError, redact_provider_secrets
 
-    def __init__(
-        self,
-        *,
-        pi: PiCoachEngine | None = None,
-    ) -> None:
-        self._pi = pi or PiCoachEngine()
-
-    def complete_with_notes(self, turn: CoachTurn) -> EngineCompleteResult:
-        notes: list[str] = []
-        reply: Optional[str] = None
-
-        from .coach_runtime import CoachRuntimeError
-
-        try:
-            pi_result = self._pi.complete(turn)
-            if isinstance(pi_result, str):
-                return EngineCompleteResult(reply=pi_result, notes=notes)
-            return EngineCompleteResult(
-                reply=pi_result.reply,
-                notes=list(pi_result.notes),
-                tool_events=list(pi_result.tool_events),
-                timing=pi_result.timing,
-            )
-        except CoachRuntimeError as e:
-            from .coach_runtime import redact_provider_secrets
-
-            message = redact_provider_secrets(str(e), turn.provider_profile)
-            _log.warning("run_pi_coach_turn 失败: %s", message)
-            notes.append(f"Pi coach-runtime 失败: {message}")
-            tool_events = list(e.tool_events)
-            if tool_events or e.side_effects_possible:
-                notes.append("本轮可能已执行产品工具；重试前请先检查当前状态")
-            status, failure = _runtime_failure(e)
-            return EngineCompleteResult(
-                reply=reply,
-                notes=notes,
-                tool_events=tool_events,
-                status=status,
-                error=failure,
-            )
-
-    async def complete_with_notes_async(self, turn: CoachTurn) -> EngineCompleteResult:
-        from .coach_runtime import CoachRuntimeError, redact_provider_secrets
-
-        try:
-            result = await self._pi.complete_async(turn)
-            return EngineCompleteResult(
-                reply=result.reply,
-                notes=list(result.notes),
-                tool_events=list(result.tool_events),
-                timing=result.timing,
-            )
-        except CoachRuntimeError as error:
-            message = redact_provider_secrets(str(error), turn.provider_profile)
-            _log.warning("run_pi_coach_turn_async 失败: %s", message)
-            status, failure = _runtime_failure(error)
-            reply = getattr(error, "partial_reply", None)
-            notes = [f"Pi coach-runtime 失败: {message}"]
-            tool_events = list(error.tool_events)
-            if tool_events or error.side_effects_possible:
-                notes.append("本轮可能已执行产品工具；重试前请先检查当前状态")
-            return EngineCompleteResult(
-                reply=reply,
-                notes=notes,
-                tool_events=tool_events,
-                status=status,
-                error=failure,
-            )
-
-
-_configured_engine: RuntimeRoutingCoachEngine | None = None
-
-
-def get_configured_engine() -> RuntimeRoutingCoachEngine:
-    global _configured_engine
-    if _configured_engine is None:
-        _configured_engine = RuntimeRoutingCoachEngine()
-    return _configured_engine
-
-
-async def complete_turn_async(turn: CoachTurn) -> EngineCompleteResult:
-    engine = get_configured_engine()
-    return await engine.complete_with_notes_async(turn)
+    pi_engine = engine or PiCoachEngine()
+    try:
+        result = await pi_engine.complete_async(turn)
+        return EngineCompleteResult(
+            reply=result.reply,
+            notes=list(result.notes),
+            tool_events=list(result.tool_events),
+            timing=result.timing,
+        )
+    except CoachRuntimeError as error:
+        message = redact_provider_secrets(str(error), turn.provider_profile)
+        _log.warning("run_pi_coach_turn_async 失败: %s", message)
+        status, failure = _runtime_failure(error)
+        reply = getattr(error, "partial_reply", None)
+        notes = [f"Pi coach-runtime 失败: {message}"]
+        tool_events = list(error.tool_events)
+        if tool_events or error.side_effects_possible:
+            notes.append("本轮可能已执行产品工具；重试前请先检查当前状态")
+        return EngineCompleteResult(
+            reply=reply,
+            notes=notes,
+            tool_events=tool_events,
+            status=status,
+            error=failure,
+        )

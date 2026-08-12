@@ -2834,7 +2834,11 @@ def test_tracking_public_result_projects_profile_and_analyzer_to_coach_context()
         "limitations": [],
     }
     assert context["schema_version"] == "coach_diagnostic_context.v2"
-    assert context["scenario"] == result["scenario"]
+    assert context["scenario"] == {
+        **result["scenario"],
+        "display_name": "Tile Frenzy",
+        "aim_family": "continuous_tracking",
+    }
     assert "processed_rows" not in json.dumps(result)
     assert "local_samples" not in json.dumps(result)
 
