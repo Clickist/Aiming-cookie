@@ -12,65 +12,6 @@ export function resolveTheme(preference: ThemePreference, systemTheme: ThemeMode
   return preference === "system" ? systemTheme : preference;
 }
 
-export interface ThemeEnvironment {
-  readPreference: () => string | null;
-  writePreference: (preference: ThemePreference) => void;
-  readSystemTheme: () => ThemeMode;
-  subscribeSystem: (listener: (theme: ThemeMode) => void) => () => void;
-  applyTheme: (theme: ThemeMode) => void;
-}
-
-export interface ThemeState {
-  preference: ThemePreference;
-  resolvedTheme: ThemeMode;
-}
-
-export interface ThemeController {
-  start: () => ThemeState;
-  stop: () => void;
-  setPreference: (preference: ThemePreference) => ThemeState;
-  getState: () => ThemeState;
-}
-
-export function createThemeController(environment: ThemeEnvironment): ThemeController {
-  let preference = normalizeThemePreference(environment.readPreference());
-  let systemTheme = environment.readSystemTheme();
-  let unsubscribe: (() => void) | undefined;
-  let started = false;
-
-  const getState = (): ThemeState => ({
-    preference,
-    resolvedTheme: resolveTheme(preference, systemTheme),
-  });
-  const apply = () => environment.applyTheme(getState().resolvedTheme);
-
-  return {
-    start() {
-      if (!started) {
-        started = true;
-        unsubscribe = environment.subscribeSystem((nextTheme) => {
-          systemTheme = nextTheme;
-          apply();
-        });
-      }
-      apply();
-      return getState();
-    },
-    stop() {
-      unsubscribe?.();
-      unsubscribe = undefined;
-      started = false;
-    },
-    setPreference(nextPreference) {
-      preference = nextPreference;
-      environment.writePreference(nextPreference);
-      apply();
-      return getState();
-    },
-    getState,
-  };
-}
-
 export function applyThemeToDocument(theme: ThemeMode): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;

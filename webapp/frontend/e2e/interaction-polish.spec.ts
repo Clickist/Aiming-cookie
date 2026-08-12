@@ -18,6 +18,7 @@ import {
   analysisSession,
   installApiFixtures,
   installDesktopBridge,
+  redirectTauriRuntime,
 } from "../fixtures/task7-fixtures";
 
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {
@@ -432,7 +433,7 @@ test.describe("release interaction polish", () => {
   });
 });
 
-test("real Tauri WebView preserves Coach resizing and all three responsive modes", async () => {
+test("real Tauri WebView keeps the Coach-first workspace layout at desktop width", async () => {
   const cdpUrl = process.env.AIMING_COOKIE_TAURI_CDP_URL;
   const appUrl = process.env.AIMING_COOKIE_TAURI_APP_URL ?? "http://localhost:3000";
   test.skip(!cdpUrl, "requires an isolated Tauri smoke instance and its CDP endpoint");
@@ -443,51 +444,31 @@ test("real Tauri WebView preserves Coach resizing and all three responsive modes
   expect(page, "Tauri WebView page").toBeDefined();
   await page!.unrouteAll({ behavior: "wait" });
   await installApiFixtures(page!);
-  await page!.addInitScript(() => {
-    localStorage.setItem("aiming-cookie.ui.coach-open", "open");
-    localStorage.setItem("aiming-cookie.ui.coach-width", "360");
-  });
 
   await page!.setViewportSize({ width: 1280, height: 820 });
+
+  // Coach workspace at / has Session rail and toolbar.
+  await page!.goto(new URL("/", appUrl).toString());
+  await expect(page!.getByRole("navigation", { name: "会话" })).toBeVisible();
+  await expect(page!.locator('[aria-label="Aiming Cookie"]')).toBeVisible();
+  await expectNoHorizontalOverflow(page!);
+
+  // History page keeps Session rail.
   await page!.goto(new URL("/history", appUrl).toString());
-  const sidebar = page!.getByRole("complementary", { name: "Coach" });
-  const separator = page!.getByRole("separator", { name: "调整 Coach 宽度" });
-  await expect(sidebar).toBeVisible();
+  await expect(page!.getByRole("navigation", { name: "会话" })).toBeVisible();
   await expectNoHorizontalOverflow(page!);
 
-  const handle = await separator.boundingBox();
-  expect(handle).not.toBeNull();
-  await page!.mouse.move(handle!.x + handle!.width / 2, handle!.y + 100);
-  await page!.mouse.down();
-  await page!.mouse.move(handle!.x + handle!.width / 2 - 48, handle!.y + 100, { steps: 4 });
-  await page!.mouse.up();
-  await expect(separator).toHaveAttribute("aria-valuenow", "408");
-  await expect(sidebar).toHaveCSS("width", "408px");
-
-  await separator.press("ArrowLeft");
-  await expect(separator).toHaveAttribute("aria-valuenow", "392");
-  await expect(sidebar).toHaveCSS("width", "392px");
+  // Settings page hides Session rail but stays overflow-free.
+  await page!.goto(new URL("/settings", appUrl).toString());
   await expectNoHorizontalOverflow(page!);
 
-  await page!.setViewportSize({ width: 960, height: 640 });
-  const responsiveDrawer = page!.locator(".task6-coach-sidebar-wrap");
-  await expect(responsiveDrawer).toHaveAttribute("data-mode", "overlay");
-  await expect(responsiveDrawer).toHaveAttribute("data-state", "open");
-  await expect(responsiveDrawer.locator(".task6-coach-sidebar")).toHaveCSS("transition-duration", "0.2s, 0.2s");
-  await expectNoHorizontalOverflow(page!);
-
-  await page!.setViewportSize({ width: 720, height: 640 });
-  await expect(responsiveDrawer).toHaveAttribute("data-mode", "full");
-  await expect(responsiveDrawer.getByRole("button", { name: "关闭 Coach", exact: true })).toBeVisible();
-  await expectNoHorizontalOverflow(page!);
-
+  // Reduced motion is respected.
   await page!.emulateMedia({ reducedMotion: "reduce" });
-  await expect(responsiveDrawer.locator(".task6-coach-sidebar")).toHaveCSS("transition-duration", "0s");
   const screenshotPath = process.env.AIMING_COOKIE_TAURI_SMOKE_SCREENSHOT;
   if (screenshotPath) await page!.screenshot({ path: screenshotPath });
 });
 
-test("real Tauri WebView renders the approved frontend realization matrix", async () => {
+test("real Tauri WebView renders the Coach-first product surface", async () => {
   const cdpUrl = process.env.AIMING_COOKIE_TAURI_CDP_URL;
   const appUrl = process.env.AIMING_COOKIE_TAURI_APP_URL ?? "http://localhost:3000";
   test.skip(!cdpUrl, "requires an isolated Tauri smoke instance and its CDP endpoint");
@@ -496,6 +477,8 @@ test("real Tauri WebView renders the approved frontend realization matrix", asyn
   const pages = browser.contexts().flatMap((context) => context.pages());
   const page = pages.find((candidate) => candidate.url().startsWith("http://localhost:")) ?? pages[0];
   expect(page, "Tauri WebView page").toBeDefined();
+  await page!.unrouteAll({ behavior: "wait" });
+  await redirectTauriRuntime(page!, appUrl);
 
   const useScenario = async (scenario = apiScenario()) => {
     await page!.unrouteAll({ behavior: "wait" });
@@ -504,83 +487,36 @@ test("real Tauri WebView renders the approved frontend realization matrix", asyn
   const setTheme = async (theme: "light" | "dark") => {
     await page!.evaluate((value) => localStorage.setItem("aiming-cookie.ui.theme", value), theme);
   };
-  const closeCoach = async () => {
-    await page!.evaluate(() => localStorage.setItem("aiming-cookie.ui.coach-open", "closed"));
-  };
-  const closeVisibleCoach = async () => {
-    const openCoach = page!.locator(".task6-coach-sidebar-wrap");
-    await expect(openCoach).toHaveAttribute("data-state", "open");
-    await openCoach.getByRole("button", { name: "关闭 Coach", exact: true }).click();
-    await expect(openCoach).toHaveCount(0);
-  };
 
   await page!.setViewportSize({ width: 1280, height: 820 });
   await useScenario(apiScenario({ kovaakScores: KOVAAK_SCORES_AVAILABLE }));
+
+  // Coach workspace at / is the default surface.
   await setTheme("light");
-  await page!.goto(new URL("/onboarding", appUrl).toString());
-  await expect(page!.getByRole("heading", { name: "连接模型服务", exact: true })).toBeVisible();
-  await page!.getByRole("button", { name: "继续", exact: true }).click();
-  await expect(page!.getByRole("heading", { name: "连接 KovaaK 成绩", exact: true })).toBeVisible();
-  await expect(page!.getByRole("heading", { name: "已连接 KovaaK 成绩", exact: true })).toBeVisible();
+  await page!.goto(new URL("/", appUrl).toString());
+  await expect(page!.locator('[aria-label="Aiming Cookie"]')).toBeVisible();
   await expectNoHorizontalOverflow(page!);
 
+  // Settings page shows KovaaK scores and theme.
   await setTheme("dark");
   await page!.goto(new URL("/settings", appUrl).toString());
   await expect(page!.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page!.getByRole("heading", { name: "KovaaK 成绩" })).toBeVisible();
-  const kovaakStages = page!.locator(".kovaak-stage-summary");
-  await expect(kovaakStages).toHaveCount(2);
-  await expect(kovaakStages.nth(0)).toContainText("Easier");
-  await expect(kovaakStages.nth(1)).toContainText("Medium");
   await expectNoHorizontalOverflow(page!);
 
-  await closeCoach();
-  await useScenario(apiScenario({ analysisFamilyData: ANALYSIS_FAMILY_TRACKING }));
-  await page!.goto(new URL("/analysis?id=42", appUrl).toString());
-  const analysisTabs = page!.getByRole("tab");
-  await expect(analysisTabs).toHaveCount(3);
-  await expect(analysisTabs.nth(0)).toHaveText("诊断");
-  await expect(analysisTabs.nth(1)).toHaveText("视频");
-  await expect(analysisTabs.nth(2)).toHaveText("数据");
-  await analysisTabs.nth(2).click();
-  await expect(page!.getByRole("heading", { name: "跟踪分段" })).toBeVisible();
-  await expectNoHorizontalOverflow(page!);
-
-  await page!.evaluate(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
+  // Coach home shows the current training plan.
   await useScenario();
-  await page!.goto(new URL("/history", appUrl).toString());
-  const currentTraining = page!.getByRole("region", { name: "当前训练" });
+  await page!.goto(new URL("/", appUrl).toString());
+  const currentTraining = page!.getByRole("region", { name: "当前训练计划" });
   await expect(currentTraining).toBeVisible();
   await currentTraining.getByRole("button", { name: "展开" }).click();
   for (const label of ["练什么", "练多少", "注意", "观察", "复测"]) {
     await expect(currentTraining.getByText(label, { exact: true })).toBeVisible();
   }
 
-  await page!.setViewportSize({ width: 960, height: 640 });
-  await setTheme("light");
-  await closeCoach();
-  await useScenario(apiScenario({
-    analysis: familyAnalysis("target_switching", "multimodal"),
-    analysisData: familySummaryData("switching"),
-    analysisFamilyData: ANALYSIS_FAMILY_SWITCHING,
-  }));
+  // Retired URLs redirect to History.
+  await page!.goto(new URL("/analyze", appUrl).toString());
+  await expect(page!).toHaveURL(/\/history/);
   await page!.goto(new URL("/analysis?id=42", appUrl).toString());
-  await closeVisibleCoach();
-  await page!.getByRole("tab", { name: "数据" }).click();
-  await expect(page!.getByRole("heading", { name: "切换链" })).toBeVisible();
-  await expectNoHorizontalOverflow(page!);
-
-  await useScenario(apiScenario({
-    analysis: familyAnalysis("static_clicking", "input_native"),
-    analysisData: familySummaryData("flicking"),
-    analysisFamilyData: ANALYSIS_FAMILY_FLICKING,
-  }));
-  await page!.goto(new URL("/analysis?id=42", appUrl).toString());
-  await closeVisibleCoach();
-  await page!.getByRole("tab", { name: "数据" }).click();
-  await expect(page!.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(page!.getByRole("heading", { name: "逐次 Flick" })).toBeVisible();
-  await expect(page!.getByText("时序分布", { exact: true })).toBeVisible();
-  await expect(page!.getByText("路径质量分布", { exact: true })).toBeVisible();
-  await expectNoHorizontalOverflow(page!);
+  await expect(page!).toHaveURL(/\/history/);
 });

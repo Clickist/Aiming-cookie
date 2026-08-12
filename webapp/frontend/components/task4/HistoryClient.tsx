@@ -23,6 +23,12 @@ import { RunInspector } from "./RunInspector";
 
 type RefreshState = "idle" | "loading" | "unavailable";
 type RunDiscoveryState = "loading" | "available" | "browser_unavailable" | "service_unavailable";
+const COACH_PENDING_INTENT_KEY = "aiming-cookie.ui.coach-pending-intent";
+
+function publishCoachIntent(intent: unknown): void {
+  window.sessionStorage.setItem(COACH_PENDING_INTENT_KEY, JSON.stringify(intent));
+  window.dispatchEvent(new CustomEvent("aiming-cookie:coach-draft", { detail: intent }));
+}
 
 function sessionTone(status: string): "neutral" | "info" | "success" | "warning" | "error" {
   if (status === "done") return "success";
@@ -324,15 +330,20 @@ export function HistoryClient() {
   };
 
   const askCoachToAnalyze = (run: KovaaKRunListItem) => {
-    const record = presentRecordLabel({
-      scenario: run.scenario,
-      trainingAt: run.created_at,
-      analysisCompletedAt: null,
+    publishCoachIntent({
+      kind: "batch-analysis",
+      batch_ref: `analysis:${run.run_ref}`,
+      runs: [{
+        id: run.id,
+        run_ref: run.run_ref,
+        scenario: run.scenario,
+        created_at: run.created_at,
+        readiness_state: run.readiness_state,
+        limitations: run.limitations,
+        analysis_refs: [],
+        analysis_status: "pending",
+      }],
     });
-    window.sessionStorage.setItem(
-      "aiming-cookie.ui.coach-pending-intent",
-      JSON.stringify({ draft: `请分析这次训练：${record}` }),
-    );
     router.push("/");
   };
 
@@ -361,26 +372,26 @@ export function HistoryClient() {
         (session.status === "queued" || session.status === "running")
         && analysisStatusByRun.get(session.kovaak_run_id) !== "done"
       ) {
+        const refs = analysisRefsByRun.get(session.kovaak_run_id) ?? [];
+        refs.push(session.analysis_ref);
+        analysisRefsByRun.set(session.kovaak_run_id, refs);
         analysisStatusByRun.set(session.kovaak_run_id, "active");
       }
     }
-    window.sessionStorage.setItem(
-      "aiming-cookie.ui.coach-pending-intent",
-      JSON.stringify({
-        kind: "batch-analysis",
-        batch_ref: `analysis-batch:${Date.now()}`,
-        runs: selected.map((run) => ({
-          id: run.id,
-          run_ref: run.run_ref,
-          scenario: run.scenario,
-          created_at: run.created_at,
-          readiness_state: run.readiness_state,
-          limitations: run.limitations,
-          analysis_refs: analysisRefsByRun.get(run.id) ?? [],
-          analysis_status: analysisStatusByRun.get(run.id) ?? "pending",
-        })),
-      }),
-    );
+    publishCoachIntent({
+      kind: "batch-analysis",
+      batch_ref: `analysis-batch:${Date.now()}`,
+      runs: selected.map((run) => ({
+        id: run.id,
+        run_ref: run.run_ref,
+        scenario: run.scenario,
+        created_at: run.created_at,
+        readiness_state: run.readiness_state,
+        limitations: run.limitations,
+        analysis_refs: analysisRefsByRun.get(run.id) ?? [],
+        analysis_status: analysisStatusByRun.get(run.id) ?? "pending",
+      })),
+    });
     setSelectedRunIds(new Set());
     router.push("/");
   };

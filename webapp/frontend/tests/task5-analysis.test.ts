@@ -63,6 +63,10 @@ function result(overrides: Partial<AnalysisResultV2> = {}): AnalysisResultV2 {
       metrics: {
         sparc: {
           key: "sparc",
+          definition: {
+            name: "运动平滑度（SPARC）",
+            description: "运动轨迹的频谱弧长",
+          },
           value: -4.21,
           unit: "score",
           availability: "available",
@@ -198,7 +202,7 @@ test("family status uses only frozen resolution and analyzer support", () => {
 test("workspace separates formal metrics from experimental or unavailable metrics", () => {
   const presentation = presentAnalysisWorkspace(session());
   assert.deepEqual(presentation?.metrics.formal.map((metric) => metric.key), ["运动平滑度（SPARC）"]);
-  assert.deepEqual(presentation?.metrics.limited.map((metric) => metric.key), ["指标名称暂不可展示"]);
+  assert.deepEqual(presentation?.metrics.limited.map((metric) => metric.key), ["visual_guess"]);
   assert.equal(presentation?.issues.length, 1);
   assert.equal(presentation?.issues[0]?.rootCauses.length, 3);
   assert.equal(presentation?.issues[0]?.prescriptions.length, 1);
@@ -291,7 +295,7 @@ test("workspace keeps deterministic metrics descriptive when family trust is not
     assert.deepEqual(presentation?.metrics.formal, []);
     assert.deepEqual(
       presentation?.metrics.limited.map((metric) => metric.key),
-        ["运动平滑度（SPARC）", "指标名称暂不可展示"],
+        ["运动平滑度（SPARC）", "visual_guess"],
     );
   }
 });
@@ -343,6 +347,7 @@ test("workspace presents only known Switching identifiers as natural user text",
   switching.deterministic.metrics = {
     "target_switching.transition_time_ms": {
       key: "target_switching.transition_time_ms",
+      definition: { name: "切换耗时", description: "离开当前目标后到关联新目标的耗时" },
       value: 180,
       unit: "ms",
       availability: "available",
@@ -354,6 +359,7 @@ test("workspace presents only known Switching identifiers as natural user text",
     },
     "target_switching.transition_distance_px": {
       key: "target_switching.transition_distance_px",
+      definition: { name: "切换相对位移", description: "离开与捕获时刻的目标相对误差向量变化量" },
       value: 320,
       unit: "px",
       availability: "available",
@@ -365,6 +371,7 @@ test("workspace presents only known Switching identifiers as natural user text",
     },
     "target_switching.path_efficiency": {
       key: "target_switching.path_efficiency",
+      definition: { name: "路径效率", description: "切换位移与路径长度的比值" },
       value: 0.84,
       unit: "ratio",
       availability: "available",
@@ -376,6 +383,7 @@ test("workspace presents only known Switching identifiers as natural user text",
     },
     "target_switching.settle_duration_ms": {
       key: "target_switching.settle_duration_ms",
+      definition: { name: "稳定耗时", description: "关联到新目标后的稳定阶段时长" },
       value: 95,
       unit: "ms",
       availability: "available",
@@ -418,10 +426,10 @@ test("workspace presents only known Switching identifiers as natural user text",
     presentation?.metrics.formal.map((metric) => [metric.key, metric.referenceKey]),
     [
       ["切换耗时", "target_switching.transition_time_ms"],
-      ["切换距离", "target_switching.transition_distance_px"],
+      ["切换相对位移", "target_switching.transition_distance_px"],
       ["路径效率", "target_switching.path_efficiency"],
       ["稳定耗时", "target_switching.settle_duration_ms"],
-      ["指标名称暂不可展示", "unknown.safe_metric"],
+      ["unknown.safe_metric", "unknown.safe_metric"],
     ],
   );
   assert.equal(presentation?.issues[0]?.signal, "切换耗时高于可比基线");

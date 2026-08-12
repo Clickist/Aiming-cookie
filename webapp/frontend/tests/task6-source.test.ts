@@ -237,7 +237,6 @@ test("review KovaaK refresh reports zero completion for an empty score corpus", 
 
 test("Coach reads current training locally and turns shortcut intents into drafts only", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
-  const sidebar = await source("components/task6/CoachSidebar.tsx");
   assert.match(coach, /getCurrentTraining/);
   assert.match(coach, /current_training\.v1/);
   assert.match(coach, /aiming-cookie:coach-kovaak-intent/);
@@ -245,7 +244,6 @@ test("Coach reads current training locally and turns shortcut intents into draft
   assert.match(coach, /setDraft/);
   assert.match(coach, /slice\(0, 3\)/);
   assert.match(coach, /disabled={capability !== "ready" \|\| !item\.display_name}/);
-  assert.doesNotMatch(sidebar, /capability !== "ready"/);
   assert.doesNotMatch(coach, /createTrainingPlan|recordTrainingExecution|recordRetest|completeTraining/);
 });
 

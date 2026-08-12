@@ -121,17 +121,51 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByText("Model ID", { exact: true })).toBeVisible();
   });
 
-  test("built-in Provider reveals catalog models after its API key is supplied", async ({ page }) => {
+  test("built-in Provider preserves its API key and reuses one profile when a test is retried", async ({ page }) => {
     await installApiFixtures(page, apiScenario({
       providerStatus: { ...READY_PROVIDER_STATUS, configured: false, profile_id: null, status: "unconfigured" },
+      providerTestStatuses: [
+        { profile_id: 1, configured: true, status: "connection_failed", message: "Provider unavailable" },
+        { ...READY_PROVIDER_STATUS, profile_id: 1 },
+      ],
+      profiles: { profiles: [] },
     }));
+    const profileWrites: string[] = [];
+    const testedProfileIds: string[] = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path === "/api/provider-profiles" && request.method() === "POST") profileWrites.push(`POST ${path}`);
+      if (/^\/api\/provider-profiles\/\d+$/.test(path) && request.method() === "PUT") profileWrites.push(`PUT ${path}`);
+      const testPath = /^\/api\/provider-profiles\/(\d+)\/test$/.exec(path);
+      if (testPath) testedProfileIds.push(testPath[1]);
+    });
     await page.goto("/onboarding");
     await page.getByRole("button", { name: "选择 Provider" }).click();
     await page.getByRole("option", { name: "OpenAI API Key / OAuth / 设备码" }).click();
 
+    const apiKey = page.locator('input[type="password"]');
+    const model = page.getByRole("button", { name: "选择 Model" });
     await expect(page.getByText("Model", { exact: true })).toHaveCount(0);
-    await page.locator('input[type="password"]').fill("builtin-secret");
-    await expect(page.getByText("Model", { exact: true })).toBeVisible();
+    await apiKey.fill("builtin-secret");
+    await expect(model).toBeVisible();
+
+    await model.click();
+    await page.getByRole("option", { name: "GPT-5.4" }).click();
+    await expect(apiKey).toHaveValue("builtin-secret");
+
+    const testConnection = page.getByRole("button", { name: "测试连接" });
+    await expect(testConnection).toBeEnabled();
+    await testConnection.click();
+    await expect(page.getByText("Provider unavailable", { exact: true })).toBeVisible();
+    await expect(apiKey).toHaveValue("builtin-secret");
+    await expect(testConnection).toBeEnabled();
+
+    await testConnection.click();
+    await expect(page.getByRole("button", { name: "继续" })).toBeVisible();
+    await expect(apiKey).toHaveValue("builtin-secret");
+    await expect(page.getByRole("button", { name: "GPT-5.4" })).toBeVisible();
+    expect(profileWrites).toEqual(["POST /api/provider-profiles", "PUT /api/provider-profiles/1"]);
+    expect(testedProfileIds).toEqual(["1", "1"]);
   });
 
   test("Settings keeps custom Provider available when the built-in catalog is unavailable", async ({ page }) => {

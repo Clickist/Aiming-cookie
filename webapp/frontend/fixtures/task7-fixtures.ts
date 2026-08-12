@@ -856,6 +856,8 @@ export interface ApiScenario {
   evidenceSegments: FrontendEvidenceSegmentsV1;
   capture: CaptureStatusV1;
   providerStatus: ProviderProfileStatus;
+  providerTestStatuses: ProviderProfileStatus[];
+  coachPrimary: CoachPrimaryResponse;
   currentTraining: CurrentTrainingV1;
   coachContexts: CoachContextListV1;
   coachSessions: CoachSessionOut[];
@@ -877,6 +879,8 @@ export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
     evidenceSegments: EVIDENCE_SEGMENTS,
     capture: CAPTURE_STATUS,
     providerStatus: READY_PROVIDER_STATUS,
+    providerTestStatuses: [READY_PROVIDER_STATUS],
+    coachPrimary: COACH_PRIMARY,
     currentTraining: CURRENT_TRAINING_ACTIVE,
     coachContexts: {
       ...COACH_CONTEXTS,
@@ -967,9 +971,28 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
   if (providerAction) {
     const profile = scenario.profiles.profiles.find((item) => item.id === Number(providerAction[1]));
     if (!profile) return response({ detail: "Not found" }, 404);
-    if (providerAction[2] === "test" && method === "POST") { profile.status = "ready"; scenario.providerStatus = { profile_id: profile.id, configured: true, status: "ready", message: "Provider ready" }; return response(scenario.providerStatus); }
+    if (providerAction[2] === "test" && method === "POST") {
+      const status = scenario.providerTestStatuses.shift() ?? READY_PROVIDER_STATUS;
+      profile.status = status.status;
+      scenario.providerStatus = { ...status, profile_id: profile.id, configured: profile.configured };
+      return response(scenario.providerStatus);
+    }
     if (providerAction[2] === "default" && method === "POST") { scenario.profiles.profiles.forEach((item) => { item.is_default = item.id === profile.id; }); return response(profile); }
     if (path.endsWith("/auth/api-key") && method === "PUT") { profile.configured = true; profile.credential_configured = true; profile.has_api_key = true; return response(profile); }
+    if (method === "PUT") {
+      const body = requestBody(request.body);
+      if (typeof body.name === "string") profile.name = body.name;
+      if (typeof body.provider_id === "string") profile.provider_id = body.provider_id;
+      if (typeof body.kind === "string") profile.kind = body.kind as ProviderProfile["kind"];
+      if (typeof body.base_url === "string") profile.base_url = body.base_url;
+      if (typeof body.model_id === "string") profile.model_id = body.model_id;
+      if (typeof body.api_key === "string") {
+        profile.configured = true;
+        profile.credential_configured = true;
+        profile.has_api_key = true;
+      }
+      return response(profile);
+    }
     if (method === "DELETE") { scenario.profiles.profiles = scenario.profiles.profiles.filter((item) => item.id !== profile.id); return response({ deleted: true }); }
   }
   if (path === "/api/kovaak-connection" && method === "GET") return response({ connected: scenario.kovaakConnected });
@@ -1077,7 +1100,7 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
     scenario.coachContexts.contexts.push(context);
     return response({ schema_version: "coach_context_mutation.v1", action: "attached", context });
   }
-  if (path === "/api/coach/primary") return response(COACH_PRIMARY);
+  if (path === "/api/coach/primary") return response(scenario.coachPrimary);
   if (path === "/api/current-training" && method === "GET") return response(scenario.currentTraining);
   if (path === "/api/coach/agent-runs" && method === "POST") return response({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:1", parent_run_ref: null, attempt: 1, status: "running", phase: "text_generation", partial_text: "正在整理证据", error: null, contexts: COACH_CONTEXTS.contexts, events: [], created_at: NOW, started_at: NOW, finished_at: null });
   if (path === "/api/analyze" || path === "/api/desktop/analyze-paths") return response({ session_id: 42 });
@@ -1144,82 +1167,6 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     const shared = handleReviewApiRequest(scenario, { method, path, body, query: Object.fromEntries(url.searchParams) });
     if (shared.video) return fulfillVideo(route);
     return fulfillJson(route, shared.body, shared.status);
-    /*
-    // Legacy explicit map retained below only until its static cases are removed.
-    const failureStatus = scenario.failures[`${method} ${path}`] ?? scenario.failures[path];
-    if (failureStatus) return fulfillJson(route, { detail: { code: "fixture_unavailable", message: "Fixture service unavailable" } }, failureStatus);
-
-    if (path === "/api/product-state") return fulfillJson(route, scenario.productState);
-    if (path === "/api/product-state/onboarding") return fulfillJson(route, { ...scenario.productState, onboarding_completed: true });
-    if (path === "/api/providers/catalog") return fulfillJson(route, PROVIDER_CATALOG);
-    if (path === "/api/provider-auth/capabilities") return fulfillJson(route, PROVIDER_CAPABILITIES);
-    if (path === "/api/provider-profiles/status") return fulfillJson(route, scenario.providerStatus);
-    if (path === "/api/provider-profiles" && method === "GET") return fulfillJson(route, scenario.profiles);
-    if (path === "/api/provider-profiles/custom/models" && method === "POST") return fulfillJson(route, {
-      models: [
-        { model_id: "custom-model-a", context_window: 32768, max_tokens: 4096 },
-        { model_id: "custom-model-b", context_window: 65536, max_tokens: 8192 },
-      ],
-    });
-    if (path === "/api/kovaak-connection" && method === "GET") return fulfillJson(route, { connected: scenario.kovaakConnected });
-    if (path === "/api/kovaak-connection" && method === "PUT") return fulfillJson(route, { connected: true });
-    if (path === "/api/kovaak-connection" && method === "DELETE") return fulfillJson(route, { deleted: true });
-    if (path === "/api/kovaak-connection/refresh" && method === "POST") {
-      return fulfillJson(route, { schema_version: "kovaak_benchmark_sync_result.v1", imported_score_count: scenario.kovaakScores.items.length, difficulty_counts: { easier: 18, medium: 0 }, observed_at: NOW });
-    }
-    if (path === "/api/kovaak-scores" && method === "GET") return fulfillJson(route, scenario.kovaakScores);
-    if (path === "/api/calibration-profile") return fulfillJson(route, CALIBRATION_PROFILE);
-    if (path === "/api/capture-status") return fulfillJson(route, scenario.capture);
-    if (path === "/api/storage") return fulfillJson(route, STORAGE);
-    if (path === "/api/storage/incomplete") return fulfillJson(route, INCOMPLETE_CAPTURES);
-    if (path === "/api/tasks") {
-      const body: TaskListV1 = { schema_version: "task_list.v1", availability: "available", tasks: scenario.tasks, error: null };
-      return fulfillJson(route, body);
-    }
-    if (path === "/api/kovaak-runs") return fulfillJson(route, { runs: scenario.runs });
-    const runMatch = /^\/api\/kovaak-runs\/(\d+)$/.exec(path);
-    if (runMatch !== null) {
-      const run = scenario.runs.find((candidate) => candidate.id === Number(runMatch[1]!));
-      return run ? fulfillJson(route, runDetail(run)) : fulfillJson(route, { detail: "Not found" }, 404);
-    }
-    if (/^\/api\/kovaak-runs\/\d+\/analyze$/.test(path)) return fulfillJson(route, { session_id: 42 });
-    if (path === "/api/sessions") return fulfillJson(route, { sessions: scenario.sessions });
-    if (path === "/api/sessions/42/analysis-data") return fulfillJson(route, scenario.analysisData);
-    if (path === "/api/sessions/42/analysis-data/family") return fulfillJson(route, scenario.analysisFamilyData);
-    if (path === "/api/sessions/42/evidence-segments") return fulfillJson(route, scenario.evidenceSegments);
-    if (path === "/api/sessions/42/video") {
-      await fulfillVideo(route);
-      return;
-    }
-    if (path === "/api/sessions/42/retry") return fulfillJson(route, { ...scenario.analysis, id: 43, status: "queued" });
-    if (path === "/api/sessions/42") return fulfillJson(route, scenario.analysis);
-    if (path === "/api/history/trends/accuracy") {
-      const trend: HistoryTrend = { comparable: false, reason: "insufficient_records" };
-      return fulfillJson(route, trend);
-    }
-    if (path === "/api/coach/context") return fulfillJson(route, COACH_CONTEXTS);
-    if (path === "/api/coach/primary") return fulfillJson(route, COACH_PRIMARY);
-    if (path === "/api/current-training" && method === "GET") return fulfillJson(route, scenario.currentTraining);
-    if (path === "/api/coach/agent-runs" && method === "POST") {
-      return fulfillJson(route, {
-        schema_version: "coach_agent_run.v1",
-        run_ref: "coach-run:1",
-        parent_run_ref: null,
-        attempt: 1,
-        status: "running",
-        phase: "text_generation",
-        partial_text: "正在整理证据",
-        error: null,
-        contexts: COACH_CONTEXTS.contexts,
-        events: [],
-        created_at: NOW,
-        started_at: NOW,
-        finished_at: null,
-      });
-    }
-    if (path === "/api/analyze" || path === "/api/desktop/analyze-paths") return fulfillJson(route, { session_id: 42 });
-    await fulfillJson(route, { detail: { code: "fixture_route_missing", message: `${method} ${path}` } }, 501);
-    */
   });
 }
 
@@ -1273,6 +1220,30 @@ export async function installDesktopBridge(page: Page): Promise<void> {
         `http://${protocol}.localhost/${encodeURIComponent(path)}`,
     };
   }, { origin: "http://127.0.0.1:3106" });
+}
+
+/**
+ * For real Tauri WebView E2E: monkey-patch window.fetch so API calls that
+ * target the Tauri runtime backend (http://127.0.0.1:<port>/api/...) are
+ * redirected to the dev server origin where Playwright route handlers can
+ * intercept them. Non-API requests and real Tauri IPC calls are unaffected.
+ */
+export async function redirectTauriRuntime(page: Page, baseUrl: string): Promise<void> {
+  await page.addInitScript((target) => {
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+      if (/^http:\/\/127\.0\.0\.1:\d+\/api\//.test(url)) {
+        const redirected = url.replace(/^http:\/\/127\.0\.0\.1:\d+/, target);
+        return realFetch(redirected, init);
+      }
+      return realFetch(input as RequestInfo | URL, init);
+    };
+  }, baseUrl);
 }
 
 export async function setThemePreference(page: Page, preference: "system" | "light" | "dark"): Promise<void> {

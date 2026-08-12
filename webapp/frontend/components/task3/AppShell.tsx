@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import {
@@ -21,6 +21,11 @@ import SessionRail, { type SessionRailSession } from "@/components/task7/Session
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachVideoTarget = { analysisRef: string; timeMs: number };
 
+function parseSessionId(raw: string | null): number | null {
+  if (!raw || !/^[1-9][0-9]*$/.test(raw)) return null;
+  return Number(raw);
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -32,12 +37,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
   const [guidance, setGuidance] = useState<GuidanceEventDetail | null>(null);
   const shellHidden = pathname.startsWith("/onboarding");
-  const coachWorkspaceRoute = pathname === "/" || pathname.startsWith("/s/");
+  const searchParams = useSearchParams();
+  const coachWorkspaceRoute = pathname === "/" || pathname === "/s" || pathname === "/s/";
   const settingsRoute = pathname.startsWith("/settings");
   const showSessionRail = !shellHidden && !settingsRoute;
   const keepSessionRailMounted = !shellHidden;
-  const requestedSessionId = /^\/s\/(\d+)$/.exec(pathname)?.[1];
-  const routeSessionId = requestedSessionId ? Number(requestedSessionId) : null;
+  const routeSessionId = parseSessionId(searchParams.get("sessionId"));
 
   useEffect(() => {
     if (!coachWorkspaceRoute) return undefined;
@@ -133,7 +138,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       const session = await createCoachSession();
       await reloadCoachSessions(session.id);
       setDraftSession(false);
-      router.push(`/s/${session.id}`);
+      router.push(`/s?sessionId=${session.id}`);
       return session.id;
     } catch {
       return null;
@@ -184,7 +189,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             onSelectSession={(session) => {
               setDraftSession(false);
               setSelectedCoachSessionId(Number(session.id));
-              router.push(`/s/${session.id}`);
+              router.push(`/s?sessionId=${session.id}`);
             }}
             onSettings={() => router.push("/settings")}
             onSoftDeleteSession={(session) => void handleDeleteCoachSession(session)}
