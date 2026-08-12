@@ -104,6 +104,17 @@ function runErrorTitle(error: CoachAgentRunV1["error"]): string {
   }
 }
 
+function requestFeedback(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  if (error.name === "DesktopRuntimeUnavailableError") {
+    return "桌面运行时暂时不可用，草稿已保留，请重启应用后重试。";
+  }
+  if (error.name.startsWith("ApiError_") && error.message.trim()) {
+    return fallback.replace("，请重试。", "") + "：" + error.message;
+  }
+  return fallback;
+}
+
 function trainingStatusLabel(status: CurrentTrainingItemV1["status"]): string {
   switch (status) {
     case "active": return "进行中";
@@ -396,6 +407,11 @@ export function CoachPanel({
     void refreshCurrentTraining();
   }, [refreshCurrentTraining]);
 
+  // Pending intent from History/Settings must only be consumed by the Coach
+  // workspace panel. Hidden panels on other routes must NOT read or destroy
+  // the sessionStorage intent — otherwise it's gone before the user arrives.
+  const isCoachWorkspace = pathname === "/" || pathname === "/s" || pathname === "/s/";
+
   useEffect(() => {
     const applyPendingIntent = (value: unknown) => {
       const batch = batchAnalysisIntent(value);
@@ -411,19 +427,24 @@ export function CoachPanel({
       if (nextDraft) setDraft(nextDraft);
     };
     const handleKovaaKIntent = (event: Event) => {
+      if (!isCoachWorkspace) return;
       applyPendingIntent((event as CustomEvent<unknown>).detail);
     };
     const handleCoachDraft = (event: Event) => {
+      if (!isCoachWorkspace) return;
       applyPendingIntent((event as CustomEvent<unknown>).detail);
       window.sessionStorage.removeItem(COACH_PENDING_INTENT_KEY);
     };
-    const pending = window.sessionStorage.getItem(COACH_PENDING_INTENT_KEY);
-    if (pending) {
-      window.sessionStorage.removeItem(COACH_PENDING_INTENT_KEY);
-      try {
-        applyPendingIntent(JSON.parse(pending));
-      } catch {
-        // Ignore malformed local UI intent data.
+    // Read and consume sessionStorage only when on the Coach workspace.
+    if (isCoachWorkspace) {
+      const pending = window.sessionStorage.getItem(COACH_PENDING_INTENT_KEY);
+      if (pending) {
+        window.sessionStorage.removeItem(COACH_PENDING_INTENT_KEY);
+        try {
+          applyPendingIntent(JSON.parse(pending));
+        } catch {
+          // Ignore malformed local UI intent data.
+        }
       }
     }
     window.addEventListener("aiming-cookie:coach-kovaak-intent", handleKovaaKIntent);
@@ -432,7 +453,7 @@ export function CoachPanel({
       window.removeEventListener("aiming-cookie:coach-kovaak-intent", handleKovaaKIntent);
       window.removeEventListener("aiming-cookie:coach-draft", handleCoachDraft);
     };
-  }, []);
+  }, [isCoachWorkspace]);
 
   useEffect(() => {
     if (!run || !["queued", "running"].includes(run.status)) return;
@@ -793,12 +814,12 @@ export function CoachPanel({
         effectiveSessionId == null ? {} : { sessionId: effectiveSessionId },
       );
       setRun(created);
-    } catch {
+    } catch (error) {
       if (optimisticId !== null) {
         setMessages((current) => current.filter((message) => message.id !== optimisticId));
       }
       setDraft(content);
-      setFeedback("消息未发送，草稿已保留，请重试。");
+      setFeedback(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
     }
   };
 

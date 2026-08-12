@@ -387,7 +387,16 @@ async function apiError(res: Response): Promise<Error> {
   let detail = `${res.status} ${res.statusText}`;
   try {
     const body = await res.json();
-    if (body?.detail) detail = String(body.detail);
+    if (typeof body?.detail === "string") {
+      detail = body.detail;
+    } else if (body?.detail && typeof body.detail === "object") {
+      const structured = body.detail as { message?: unknown; code?: unknown };
+      if (typeof structured.message === "string" && structured.message.trim()) {
+        detail = structured.message;
+      } else if (typeof structured.code === "string" && structured.code.trim()) {
+        detail = structured.code;
+      }
+    }
   } catch {
     // Not JSON — keep status text.
   }
@@ -802,6 +811,24 @@ export async function createProviderProfile(
     "/api/provider-profiles",
     {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfile;
+}
+
+export async function updateProviderProfile(
+  profileId: number,
+  profile: ProviderProfileCreate,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfile> {
+  const res = await apiFetch(
+    `/api/provider-profiles/${profileId}`,
+    {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(profile),
     },
