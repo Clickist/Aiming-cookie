@@ -1679,7 +1679,7 @@ def _evidence_bridge(
     owner_id: str,
     refs: set[str],
     *,
-    max_calls: int = 6,
+    max_calls: int = 50,
     ttl_seconds: int = 60,
 ) -> dict:
     return coach_commands.issue_tool_bridge(
@@ -1796,6 +1796,76 @@ async def test_evidence_list_makes_only_returned_segment_ids_reachable(
 
 
 @pytest.mark.asyncio
+async def test_evidence_list_with_only_analysis_ref_returns_playable_segments(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The model's first evidence.list call should work with only analysis_ref
+    and return segments with valid kinds and reachable segment_ids."""
+    owner_id = "owner-evidence-bare-ref"
+    analysis_ref, _ = await _seed_completed_evidence(
+        monkeypatch, tmp_path, owner_id=owner_id,
+    )
+    bridge = _evidence_bridge(owner_id, {analysis_ref})
+
+    result = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {
+            "command_name": "analysis.evidence.list",
+            "parameters": {"analysis_ref": analysis_ref},
+        },
+    )
+
+    assert result["status"] == "succeeded"
+    segments = result["result"]["segments"]
+    assert len(segments) >= 1
+    valid_kinds = {"typical", "worst", "improved", "comparison", "low_confidence"}
+    for segment in segments:
+        assert segment["segment_kind"] in valid_kinds
+        assert segment["segment_id"].startswith(f"{analysis_ref}:segment:")
+    # The returned segment_ids must be reachable for signal_window.
+    signal = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {
+            "command_name": "analysis.evidence.signal_window",
+            "parameters": {
+                "segment_ref": segments[0]["segment_id"],
+                "channel_keys": ["mouse.speed"],
+            },
+        },
+    )
+    assert signal["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_evidence_list_rejects_metric_key_as_segment_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The model must not confuse metric_keys or analyzer names (e.g.
+    'static_clicking.worst') with segment_kinds."""
+    owner_id = "owner-evidence-metric-as-segment"
+    analysis_ref, _ = await _seed_completed_evidence(
+        monkeypatch, tmp_path, owner_id=owner_id,
+    )
+    bridge = _evidence_bridge(owner_id, {analysis_ref})
+
+    result = await coach_commands.execute_tool_bridge(
+        bridge["bearer_token"],
+        {
+            "command_name": "analysis.evidence.list",
+            "parameters": {
+                "analysis_ref": analysis_ref,
+                "segment_kinds": ["static_clicking.worst"],
+            },
+        },
+    )
+
+    assert result["status"] == "failed"
+    assert result["warning_or_error"]["code"] == "invalid_parameters"
+
+
+@pytest.mark.asyncio
 async def test_run_facts_over_inline_budget_returns_refs_without_silent_truncation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1896,7 +1966,6 @@ async def test_profile_snapshot_command_is_owner_scoped_and_read_only() -> None:
 @pytest.mark.parametrize(
     ("command_name", "parameters", "code"),
     [
-        ("analysis.evidence.signal_window", {"start_ms": 0}, "untrusted_field"),
         ("analysis.evidence.signal_window", {"frame": 10}, "untrusted_field"),
         ("analysis.evidence.signal_window", {"artifact_ref": "analysis:1:evidence"}, "untrusted_field"),
         ("analysis.metrics.distribution", {"metric_keys": ["SELECT * FROM sessions"]}, "invalid_parameters"),
@@ -1990,10 +2059,12 @@ async def test_evidence_queries_fail_closed_for_unreachable_other_owner_and_nont
 
 
 @pytest.mark.asyncio
-async def test_evidence_bridge_enforces_six_calls_and_signal_point_budget(
+async def test_evidence_bridge_allows_many_calls_without_budget_limits(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """With budgets removed, the bridge allows many calls per turn and multiple
+    signal windows without exhausting an arbitrary point or byte budget."""
     owner_id = "owner-evidence-budget"
     analysis_ref, segment_ref = await _seed_completed_evidence(
         monkeypatch, tmp_path, owner_id=owner_id,
@@ -2001,7 +2072,7 @@ async def test_evidence_bridge_enforces_six_calls_and_signal_point_budget(
     bridge = _evidence_bridge(owner_id, {analysis_ref, segment_ref})
 
     results = []
-    for index in range(6):
+    for index in range(8):
         results.append(await coach_commands.execute_tool_bridge(
             bridge["bearer_token"],
             {
@@ -2010,25 +2081,12 @@ async def test_evidence_bridge_enforces_six_calls_and_signal_point_budget(
                 "parameters": {"analysis_ref": analysis_ref, "limit": 1},
             },
         ))
-    seventh = await coach_commands.execute_tool_bridge(
-        bridge["bearer_token"],
-        {
-            "command_name": "analysis.evidence.list",
-            "parameters": {"analysis_ref": analysis_ref, "limit": 1},
-        },
-    )
 
     assert all(result["status"] == "succeeded" for result in results)
-    assert sum(
-        len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        for result in results
-    ) <= 64 * 1024
-    assert seventh["status"] == "unavailable"
-    assert seventh["warning_or_error"]["code"] == "bridge_unavailable"
 
     points_bridge = _evidence_bridge(owner_id, {analysis_ref, segment_ref})
     point_results = []
-    for _ in range(4):
+    for _ in range(5):
         point_results.append(await coach_commands.execute_tool_bridge(
             points_bridge["bearer_token"],
             {
@@ -2039,75 +2097,11 @@ async def test_evidence_bridge_enforces_six_calls_and_signal_point_budget(
                 },
             },
         ))
-    over_points = await coach_commands.execute_tool_bridge(
-        points_bridge["bearer_token"],
-        {
-            "command_name": "analysis.evidence.signal_window",
-            "parameters": {
-                "segment_ref": segment_ref,
-                "channel_keys": ["mouse.speed"],
-            },
-        },
-    )
 
     assert all(result["status"] == "succeeded" for result in point_results)
-    successful_signals = [
-        result for result in [*point_results, over_points]
-        if result["status"] == "succeeded"
-    ]
-    assert sum(_signal_point_count(result) for result in successful_signals) <= 2_400
-    assert any(result["result"]["truncated"] for result in successful_signals)
-    if over_points["status"] == "unavailable":
-        assert over_points["warning_or_error"]["code"] in {
-            "signal_point_budget_exhausted", "signal_byte_budget_exhausted",
-        }
-
-
-@pytest.mark.asyncio
-async def test_evidence_cursor_cannot_cross_bridge_or_command_kind(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    owner_id = "owner-evidence-cursor"
-    analysis_ref, segment_ref = await _seed_completed_evidence(
-        monkeypatch, tmp_path, owner_id=owner_id, record_count=121,
-    )
-    bridge = _evidence_bridge(owner_id, {analysis_ref, segment_ref})
-    timeline = await coach_commands.execute_tool_bridge(
-        bridge["bearer_token"],
-        {
-            "command_name": "analysis.outcomes.timeline",
-            "parameters": {
-                "analysis_ref": analysis_ref,
-                "scope": "whole_run",
-                "mode": "exact_page",
-                "series": ["performance.shotsFired"],
-            },
-        },
-    )
-    cursor = timeline["result"]["next_cursor"]
-    wrong_kind = await coach_commands.execute_tool_bridge(
-        bridge["bearer_token"],
-        {
-            "command_name": "analysis.events.list",
-            "parameters": {"cursor": cursor},
-        },
-    )
-    other_bridge = _evidence_bridge(owner_id, {analysis_ref, segment_ref})
-    cross_bridge = await coach_commands.execute_tool_bridge(
-        other_bridge["bearer_token"],
-        {
-            "command_name": "analysis.outcomes.timeline",
-            "parameters": {"cursor": cursor},
-        },
-    )
-
-    assert timeline["status"] == "succeeded"
-    assert isinstance(cursor, str) and cursor
-    assert wrong_kind["status"] == "failed"
-    assert wrong_kind["warning_or_error"]["code"] == "cursor_not_valid"
-    assert cross_bridge["status"] == "failed"
-    assert cross_bridge["warning_or_error"]["code"] == "cursor_not_valid"
+    # Each signal window returns up to 600 points per channel (one channel).
+    for result in point_results:
+        assert _signal_point_count(result) <= 600
 
 
 @pytest.mark.asyncio
@@ -2143,8 +2137,7 @@ async def test_signal_window_uses_focus_interval_preserves_extrema_and_stays_bou
     channels = result["result"]["channels"]
     assert set(result["result"]) == {
         "schema_version", "analysis_ref", "segment_ref", "focus_range_ms", "channels",
-        "downsample_version", "point_count", "truncated", "budget_used",
-        "budget_remaining", "limitations",
+        "downsample_version", "point_count", "truncated", "limitations",
     }
     assert len(channels) == 1
     points = channels[0]["points"]
@@ -2152,7 +2145,6 @@ async def test_signal_window_uses_focus_interval_preserves_extrema_and_stays_bou
     assert all(100 <= point[0] < 12_100 for point in points)
     assert points[0][1] == 5.0
     assert max(point[1] for point in points) == 16.0
-    assert len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= 24 * 1024
 
 
 def test_extrema_downsample_fails_closed_when_budget_cannot_keep_required_points() -> None:
@@ -2161,34 +2153,6 @@ def test_extrema_downsample_fails_closed_when_budget_cannot_keep_required_points
     assert coach_commands._downsample_points(points, 4) == points
     with pytest.raises(ValueError, match="preserve endpoints and extrema"):
         coach_commands._downsample_points(points, 3)
-
-
-@pytest.mark.asyncio
-async def test_signal_window_does_not_claim_extrema_when_response_budget_is_too_small(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    owner_id = "owner-signal-extrema-budget"
-    analysis_ref, segment_ref = await _seed_completed_evidence(
-        monkeypatch, tmp_path, owner_id=owner_id,
-    )
-    bridge = _evidence_bridge(owner_id, {analysis_ref, segment_ref})
-    monkeypatch.setattr(coach_commands, "_MAX_SINGLE_RESULT_BYTES", 100)
-
-    result = await coach_commands.execute_tool_bridge(
-        bridge["bearer_token"],
-        {
-            "command_name": "analysis.evidence.signal_window",
-            "parameters": {
-                "segment_ref": segment_ref,
-                "channel_keys": ["mouse.speed"],
-            },
-        },
-    )
-
-    assert result["status"] == "unavailable"
-    assert result["warning_or_error"]["code"] == "signal_byte_budget_exhausted"
-    assert "result" not in result
 
 
 @pytest.mark.asyncio
@@ -2285,9 +2249,8 @@ async def test_evidence_full_result_is_bridge_only_and_audit_is_a_projection(
     )
 
     assert facts["status"] == timeline["status"] == "succeeded"
-    cursor = timeline["result"]["next_cursor"]
+    assert timeline["result"]["next_cursor"] is None
     assert "Fixture" in json.dumps(facts["result"], ensure_ascii=False)
-    assert isinstance(cursor, str) and cursor
     conn = await db.get_conn()
     rows = await (await conn.execute(
         "SELECT result_json, safe_parameters_summary_json FROM coach_product_commands "
@@ -2300,43 +2263,13 @@ async def test_evidence_full_result_is_bridge_only_and_audit_is_a_projection(
     assert len(rows) == 2
     assert "coach_evidence_audit.v1" in persisted
     for forbidden in (
-        "Fixture", "shotsFired", cursor, '"points":[', "video", "frame", "path", "raw",
+        "Fixture", "shotsFired", '"points":[', "video", "frame", "path", "raw",
     ):
         assert forbidden not in persisted
 
 
 @pytest.mark.asyncio
-async def test_budget_rejection_never_persists_a_succeeded_evidence_audit(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    owner_id = "owner-evidence-budget-audit"
-    analysis_ref, segment_ref = await _seed_completed_evidence(
-        monkeypatch, tmp_path, owner_id=owner_id,
-    )
-    bridge = _evidence_bridge(owner_id, {analysis_ref, segment_ref})
-    monkeypatch.setattr(coach_commands, "_MAX_BRIDGE_BYTES", 1)
-
-    result = await coach_commands.execute_tool_bridge(
-        bridge["bearer_token"],
-        {
-            "command_name": "analysis.evidence.list",
-            "parameters": {"analysis_ref": analysis_ref, "limit": 1},
-        },
-    )
-
-    assert result["status"] == "unavailable"
-    assert result["warning_or_error"]["code"] == "budget_exhausted"
-    conn = await db.get_conn()
-    rows = await (await conn.execute(
-        "SELECT status FROM coach_product_commands WHERE owner_id=? AND command_name=?",
-        (owner_id, "analysis.evidence.list"),
-    )).fetchall()
-    assert rows == []
-
-
-@pytest.mark.asyncio
-async def test_concurrent_evidence_queries_obey_call_byte_and_point_budgets(
+async def test_concurrent_evidence_queries_succeed_without_budget_limits(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2360,12 +2293,7 @@ async def test_concurrent_evidence_queries_obey_call_byte_and_point_budgets(
         )
         for index in range(8)
     ])
-    assert sum(result["status"] == "succeeded" for result in list_results) == 6
-    assert sum(result["status"] == "unavailable" for result in list_results) == 2
-    assert sum(
-        len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        for result in list_results if result["status"] == "succeeded"
-    ) <= 64 * 1024
+    assert all(result["status"] == "succeeded" for result in list_results)
 
     signal_bridge = _evidence_bridge(owner_id, {analysis_ref, segment_ref})
     signal_results = await asyncio.gather(*[
@@ -2382,19 +2310,9 @@ async def test_concurrent_evidence_queries_obey_call_byte_and_point_budgets(
         )
         for index in range(5)
     ])
-    succeeded = [result for result in signal_results if result["status"] == "succeeded"]
-    assert sum(_signal_point_count(result) for result in succeeded) <= 2_400
-    assert sum(
-        len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        for result in succeeded
-    ) <= 32 * 1024
-    assert any(
-        result.get("result", {}).get("truncated")
-        or result.get("warning_or_error", {}).get("code") in {
-            "signal_point_budget_exhausted", "signal_byte_budget_exhausted",
-        }
-        for result in signal_results
-    )
+    assert all(result["status"] == "succeeded" for result in signal_results)
+    for result in signal_results:
+        assert _signal_point_count(result) <= 600
 
 
 @pytest.mark.parametrize("lifecycle", ["revoke", "expire"])
@@ -2443,7 +2361,7 @@ async def test_in_flight_evidence_query_cannot_outlive_bridge_lifecycle(
 
 
 @pytest.mark.asyncio
-async def test_events_cursor_pages_at_limit_twenty_without_losing_or_reordering_records(
+async def test_events_list_returns_all_records_without_cursor_pagination(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2452,7 +2370,7 @@ async def test_events_cursor_pages_at_limit_twenty_without_losing_or_reordering_
         monkeypatch, tmp_path, owner_id=owner_id, event_count=21,
     )
     bridge = _evidence_bridge(owner_id, {analysis_ref, segment_ref})
-    first = await coach_commands.execute_tool_bridge(
+    result = await coach_commands.execute_tool_bridge(
         bridge["bearer_token"],
         {
             "command_name": "analysis.events.list",
@@ -2460,26 +2378,18 @@ async def test_events_cursor_pages_at_limit_twenty_without_losing_or_reordering_
                 "analysis_ref": analysis_ref,
                 "scope": "whole_run",
                 "event_kinds": ["acquire"],
-                "limit": 20,
+                "limit": 50,
             },
         },
     )
-    second = await coach_commands.execute_tool_bridge(
-        bridge["bearer_token"],
-        {
-            "command_name": "analysis.events.list",
-            "parameters": {"cursor": first["result"]["next_cursor"]},
-        },
-    )
 
-    assert first["status"] == second["status"] == "succeeded"
-    records = first["result"]["records"] + second["result"]["records"]
-    assert len(first["result"]["records"]) == 20
-    assert len(second["result"]["records"]) == 1
+    assert result["status"] == "succeeded"
+    assert result["result"]["next_cursor"] is None
+    records = result["result"]["records"]
+    assert len(records) == 21
     assert [record["event_id"] for record in records] == [
         f"{analysis_ref}:event:acquire:{index}" for index in range(1, 22)
     ]
-    assert first["result"]["next_cursor"] not in json.dumps(second, ensure_ascii=False)
 
 
 @pytest.mark.asyncio
@@ -2843,10 +2753,12 @@ async def test_evidence_commands_cannot_bypass_turn_scoped_bridge(
 
 
 @pytest.mark.asyncio
-async def test_signal_windows_reserve_a_turn_byte_subbudget_for_other_queries(
+async def test_signal_windows_and_other_queries_coexist_without_budget_limits(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """With byte budgets removed, multiple signal windows and a comparison query
+    all succeed on the same bridge turn."""
     owner_id = "owner-signal-byte-budget"
     analysis_ref, segment_ref = await _seed_completed_evidence(
         monkeypatch,
@@ -2874,7 +2786,6 @@ async def test_signal_windows_reserve_a_turn_byte_subbudget_for_other_queries(
                 },
             },
         ))
-    signal_successes = [result for result in signal_results if result["status"] == "succeeded"]
     compared = await coach_commands.execute_tool_bridge(
         bridge["bearer_token"],
         {
@@ -2886,10 +2797,7 @@ async def test_signal_windows_reserve_a_turn_byte_subbudget_for_other_queries(
         },
     )
 
-    assert sum(
-        len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        for result in signal_successes
-    ) <= 32 * 1024
+    assert all(result["status"] == "succeeded" for result in signal_results)
     assert compared["status"] == "succeeded"
 
 
@@ -3028,3 +2936,28 @@ async def test_teaching_session_update_partial_merge_retains_unspecified_fields(
     assert new_state["cue"] == "保持稳定后再一次修正"
     assert new_state["observation"] == original_observation
     assert new_state["primary_candidate"] == original_candidate
+@pytest.mark.asyncio
+async def test_bridge_grants_explicit_training_plan_draft_without_existing_plan_ref():
+    from webapp.backend import coach_evidence_bridge
+
+    bridge = coach_evidence_bridge.issue_tool_bridge(
+        "draft-grant-owner",
+        7,
+        "coach_message:20",
+        "http://127.0.0.1:43127/api/coach/tools/execute",
+        current_user_message="Please generate this training plan.",
+    )
+    try:
+        issued = coach_evidence_bridge._issue_instruction_grant(
+            coach_evidence_bridge._tool_bridges[coach_evidence_bridge._bridge_digest(bridge["bearer_token"])],
+            "training_plan.generate_draft",
+            {"plan_payload": {"title": "test"}},
+            "generate this training plan",
+        )
+    finally:
+        await coach_evidence_bridge.revoke_tool_bridge(bridge["bearer_token"])
+
+    assert issued is not None
+    grant, normalized = issued
+    assert grant.target_ref == "training_plan:draft"
+    assert normalized == {"plan_payload": {"title": "test"}}

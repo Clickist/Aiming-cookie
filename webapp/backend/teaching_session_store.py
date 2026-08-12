@@ -34,6 +34,9 @@ _RETEST_INTENTS = {"none", "immediate_matched", "delayed_matched", "near_transfe
 _COMPARABILITY = {"unresolved", "comparable", "not_comparable", "not_requested"}
 _REVISION_DECISIONS = {None, "retain", "lower", "reject"}
 _PAUSE_REASONS = {None, "user_refused", "discomfort", "awaiting_confirmation"}
+_FORBIDDEN_DIRECT_UPDATE_FIELDS = frozenset({
+    "active_run_ref", "pending_confirmation_ref", "schema_version", "version", "phase",
+})
 _EVIDENCE_STRENGTHS = {"limited", "supported", "repeated"}
 _COUNTEREVIDENCE_STATUSES = {"not_observed", "observed"}
 _EVIDENCE_KINDS = {"measured", "self_reported", "observed", "inferred", "external"}
@@ -43,10 +46,6 @@ _SESSION_REF_RE = re.compile(r"^teaching_session:[a-f0-9]{32}$")
 _RUN_REF_RE = re.compile(r"^agent_run:[A-Za-z0-9_-]{1,64}$")
 _ITEM_REF_RE = re.compile(r"^plan-item:[A-Za-z0-9._:@-]{1,159}$")
 _PROBLEM_ID_RE = re.compile(r"^[a-z][a-z0-9._-]{0,95}$")
-_CANDIDATE_LANGUAGE = re.compile(
-    r"(?:可能|也许|候选|假设|待验证|先验证|值得先验证|may|might|possible|likely)",
-    re.IGNORECASE,
-)
 _FORBIDDEN_TEXT = re.compile(
     r"(?:[A-Za-z]:[\\/]|\\\\|file:|https?://|"
     r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[:=])",
@@ -228,9 +227,6 @@ def _next_recommendation(value: object) -> dict[str, Any] | None:
         scenario_name is None
         or message is None
         or scenario_name not in message
-        or "压力测试" not in message
-        or "新的基线" not in message
-        or "不证明迁移" not in message
     ):
         raise ValueError("next_recommendation is invalid")
     return {
@@ -435,10 +431,6 @@ def validate_contract(value: object, *, session_ref: str, session_version: int) 
             raise ValueError("TeachingTurnContract is invalid")
         normalized_alternatives.append(alternative)
     primary_candidate = _contract_text(value.get("primary_candidate"), "contract.primary_candidate")
-    if problem_id is not None and primary_candidate is not None and _CANDIDATE_LANGUAGE.search(primary_candidate) is None:
-        raise ValueError("TeachingTurnContract is invalid")
-    if problem_id is not None and any(_CANDIDATE_LANGUAGE.search(item) is None for item in normalized_alternatives):
-        raise ValueError("TeachingTurnContract is invalid")
     normalized_ratios: list[dict[str, Any]] = []
     for ratio in ratios:
         if not isinstance(ratio, Mapping) or set(ratio) != {"label", "value"}:
@@ -596,9 +588,13 @@ async def claim_active_run(
             contract, session_ref=session_ref, session_version=expected_version,
         )
         run = await (await conn.execute(
-            "SELECT run_ref, teaching_session_ref, teaching_state_version, teaching_contract_json "
-            "FROM coach_agent_runs WHERE run_ref=? AND owner_id=? AND thread_id=?",
-            (run_ref, owner_id, session["thread_id"]),
+            "SELECT run.run_ref, run.thread_id, run.teaching_session_ref, "
+            "run.teaching_state_version, run.teaching_contract_json "
+            "FROM coach_agent_runs AS run "
+            "JOIN coach_threads AS thread ON thread.id=run.thread_id "
+            "WHERE run.run_ref=? AND run.owner_id=? AND thread.user_id=? "
+            "AND thread.status <> 'deleted'",
+            (run_ref, owner_id, owner_id),
         )).fetchone()
         if run is None:
             raise TeachingSessionConflictError("Coach run is unavailable")
@@ -628,7 +624,7 @@ async def claim_active_run(
                 "AND teaching_contract_json IS NULL",
                 (
                     session_ref, expected_version, encoded_contract, run_ref, owner_id,
-                    session["thread_id"],
+                    int(run["thread_id"]),
                 ),
             )
             if cursor.rowcount != 1:
@@ -707,6 +703,56 @@ async def release_active_run(
         raise
 
 
+async def update_state_partial(
+    owner_id: str,
+    session_ref: str,
+    expected_version: int,
+    next_phase: str | None,
+    updates: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge partial updates into TeachingSession state with optimistic versioning."""
+    if (
+        not isinstance(expected_version, int)
+        or isinstance(expected_version, bool)
+        or expected_version < 0
+    ):
+        raise ValueError("TeachingSession update is invalid")
+    session_ref = _session_ref(session_ref)
+    if not isinstance(updates, Mapping) or set(updates) & _FORBIDDEN_DIRECT_UPDATE_FIELDS:
+        raise ValueError("TeachingSession update contains forbidden fields")
+    conn = await get_conn()
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        session = await _owned_session_for_update(conn, owner_id, session_ref)
+        if session["version"] != expected_version:
+            raise TeachingSessionConflictError("TeachingSession changed before this update could apply")
+        merged = dict(session["state"])
+        if next_phase is not None:
+            merged["phase"] = next_phase
+        merged.update(updates)
+        normalized = validate_state(merged)
+        cursor = await conn.execute(
+            "UPDATE teaching_sessions SET state_json=?, version=version+1, "
+            "pending_confirmation_ref=?, pause_reason=?, updated_at=CURRENT_TIMESTAMP "
+            "WHERE session_ref=? AND owner_id=? AND version=?",
+            (
+                _wire(normalized), normalized["pending_confirmation_ref"],
+                normalized["pause_reason"], session_ref, owner_id, expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise TeachingSessionConflictError("TeachingSession changed before this update could apply")
+        row = await (await conn.execute(
+            "SELECT * FROM teaching_sessions WHERE session_ref=?", (session_ref,),
+        )).fetchone()
+        await conn.commit()
+        return _row_to_session(row)
+    except Exception:
+        if conn.in_transaction:
+            await conn.rollback()
+        raise
+
+
 async def bind_run_contract(
     owner_id: str,
     run_ref: str,
@@ -760,8 +806,7 @@ async def load_run_contract(owner_id: str, run_ref: str) -> dict[str, Any] | Non
         "SELECT run.teaching_session_ref, run.teaching_state_version, run.teaching_contract_json "
         "FROM coach_agent_runs AS run JOIN teaching_sessions AS session "
         "ON session.session_ref=run.teaching_session_ref "
-        "WHERE run.run_ref=? AND run.owner_id=? AND session.owner_id=? "
-        "AND run.thread_id=session.thread_id",
+        "WHERE run.run_ref=? AND run.owner_id=? AND session.owner_id=?",
         (run_ref, owner_id, owner_id),
     )).fetchone()
     if row is None or row["teaching_contract_json"] is None:

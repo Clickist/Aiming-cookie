@@ -110,18 +110,6 @@ _RUN_SELECT_COLUMNS = (
 )
 
 
-class PairingConflictError(NonRetryableIngestionError):
-    """Raised when sources with one stable key disagree on scenario identity."""
-
-
-class SourceUnstableError(RetryableIngestionError):
-    """Raised when a source revision changes while it is being parsed."""
-
-
-class TracePendingError(RetryableIngestionError):
-    """Raised while waiting for the post-run Raw Input snapshot flush."""
-
-
 def _normalize_scenario_identity(value: str | None) -> str:
     return " ".join((value or "").split()).casefold()
 
@@ -133,7 +121,9 @@ def _assert_same_scenario_identity(*values: str | None) -> None:
         if (normalized := _normalize_scenario_identity(value))
     }
     if len(identities) > 1:
-        raise PairingConflictError("pairing_conflict: scenario identity mismatch")
+        raise NonRetryableIngestionError(
+            "pairing_conflict: scenario identity mismatch", code="pairing_conflict",
+        )
 
 
 def _stat_revision(path: str | Path) -> tuple[int, int]:
@@ -150,7 +140,9 @@ def _source_metadata(path: str | Path, parser_version: str) -> dict[str, object]
             digest.update(chunk)
     after = _stat_revision(source)
     if before != after:
-        raise SourceUnstableError("source_unstable: source changed while fingerprinting")
+        raise RetryableIngestionError(
+            "source_unstable: source changed while fingerprinting", code="source_unstable",
+        )
     return {
         "path": str(source),
         "basename": source.name,
@@ -173,13 +165,17 @@ def _assert_source_identity(
     if not isinstance(existing_source, dict):
         return
     if existing_source.get("path") != observed_source.get("path"):
-        raise PairingConflictError(f"pairing_conflict: second {kind} source")
+        raise NonRetryableIngestionError(
+            f"pairing_conflict: second {kind} source", code="pairing_conflict",
+        )
     revision_fields = ("sha256", "size", "mtime_ns", "parser_version")
     if any(
         existing_source.get(field) != observed_source.get(field)
         for field in revision_fields
     ):
-        raise PairingConflictError(f"pairing_conflict: changed {kind} source revision")
+        raise NonRetryableIngestionError(
+            f"pairing_conflict: changed {kind} source revision", code="pairing_conflict",
+        )
 
 
 def _now_ms() -> int:
@@ -490,8 +486,9 @@ async def attach_mouse_trace_snapshot_window(
     ):
         if within_retention:
             await mark_mouse_trace_waiting(run["id"], user_id)
-            raise TracePendingError(
-                "trace_pending: Raw Input snapshot coverage is not ready"
+            raise RetryableIngestionError(
+                "trace_pending: Raw Input snapshot coverage is not ready",
+                code="trace_pending",
             )
         return await mark_mouse_trace_unavailable(
             run["id"], user_id, "trace_snapshot_stale",
@@ -499,7 +496,9 @@ async def attach_mouse_trace_snapshot_window(
     if not raw_input_snapshot_path or not Path(raw_input_snapshot_path).is_file():
         if within_retention:
             await mark_mouse_trace_waiting(run["id"], user_id)
-            raise TracePendingError("trace_pending: waiting for Raw Input snapshot")
+            raise RetryableIngestionError(
+                "trace_pending: waiting for Raw Input snapshot", code="trace_pending",
+            )
         return await mark_mouse_trace_unavailable(
             run["id"], user_id, "trace_capture_unavailable",
         ) or run
@@ -525,8 +524,9 @@ async def attach_mouse_trace_snapshot_window(
                 user_id,
                 expected_pending_trace_path=target,
             )
-            raise TracePendingError(
+            raise RetryableIngestionError(
                 "trace_pending: Raw Input snapshot is not ready",
+                code="trace_pending",
             ) from error
         return await mark_mouse_trace_unavailable(
             run["id"],
@@ -541,7 +541,9 @@ async def attach_mouse_trace_snapshot_window(
                 user_id,
                 expected_pending_trace_path=target,
             )
-            raise TracePendingError("trace_pending: trace window is not flushed yet")
+            raise RetryableIngestionError(
+                "trace_pending: trace window is not flushed yet", code="trace_pending",
+            )
         return await mark_mouse_trace_unavailable(
             run["id"],
             user_id,
@@ -671,7 +673,9 @@ async def ingest_discovery(
         stats = parse_stats_csv(discovery.stats_path)
         stats_source = _source_metadata(discovery.stats_path, STATS_PARSER_VERSION)
         if stats_revision != (stats_source["size"], stats_source["mtime_ns"]):
-            raise SourceUnstableError("source_unstable: Stats changed while parsing")
+            raise RetryableIngestionError(
+                "source_unstable: Stats changed while parsing", code="source_unstable",
+            )
         stats_scenario = stats.scenario
         stats_summary = {
             "file_name": stats.file_name,
@@ -697,7 +701,9 @@ async def ingest_discovery(
         if performance_revision != (
             performance_source["size"], performance_source["mtime_ns"],
         ):
-            raise SourceUnstableError("source_unstable: Performance changed while parsing")
+            raise RetryableIngestionError(
+                "source_unstable: Performance changed while parsing", code="source_unstable",
+            )
         performance_scenario = performance.header.scenario_name or None
         performance_summary = {
             "header": asdict(performance.header),

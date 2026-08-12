@@ -1216,3 +1216,40 @@ def test_coach_message_cards_are_derived_only_from_safe_analysis_trace_and_live_
         "context_refs": message.context_refs,
     })
     assert user_message.cards == []
+def test_evidence_cards_use_enriched_brief_segment_times_when_context_is_whole_analysis():
+    message = routes_mod._coach_thread_message_out({
+        "id": 9,
+        "role": "assistant",
+        "content": "evidence",
+        "created_at": "2026-08-10T00:00:00Z",
+        "trace": [{"command_name": "analysis.evidence.list", "status": "succeeded"}],
+        "context_refs": [{
+            "schema_version": "coach_context_ref.v1",
+            "context_ref": "context:analysis-7",
+            "kind": "analysis",
+            "status": "active",
+            "label": "Fixture",
+            "analysis_ref": "analysis:7",
+            "time_range_ms": None,
+        }],
+        "context": {
+            "schema_version": "coach_turn_context.v1",
+            "contexts": [{
+                "context_ref": "context:analysis-7",
+                "analysis_ref": "analysis:7",
+                "projection": {"analysis_brief": {"evidence_segments": [{
+                    "segment_id": "analysis:7:segment:typical:1",
+                    "relative_start_ms": 2059,
+                    "relative_end_ms": 2456,
+                }]}},
+            }],
+        },
+    })
+
+    assert [card.model_dump() for card in message.cards] == [{
+        "schema_version": "coach_message_card.v1",
+        "kind": "evidence",
+        "analysis_ref": "analysis:7",
+        "target_ref": "analysis:7:segment:typical:1",
+        "time_range_ms": [2059.0, 2456.0],
+    }]

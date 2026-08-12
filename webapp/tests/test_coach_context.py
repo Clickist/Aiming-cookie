@@ -9,12 +9,15 @@ import pytest
 
 from webapp.backend.coach_context import (
     COACH_DIAGNOSTIC_CONTEXT_SCHEMA_VERSION,
+    build_analysis_brief,
     coerce_coach_diagnostic_context,
     diagnostic_context_to_coach_diagnosis,
+    project_analysis_result_metric_definitions,
     project_coach_diagnostic_context,
     resolve_registry_teaching_entry,
     serialize_coach_diagnostic_context,
 )
+from kovaak_tracker.metric_definitions import get_metric_definition
 
 
 _FORBIDDEN_MARKERS = (
@@ -157,7 +160,7 @@ def _canonical_context() -> dict:
 def _canonical_run_facts(*, oversized: bool = False) -> dict:
     limitations = []
     if oversized:
-        limitations = [f"limit-{index:03d}-" + ("x" * 220) for index in range(40)]
+        limitations = [f"limit-{index:03d}-" + ("x" * 220) for index in range(200)]
     return {
         "schema_version": "canonical_run_facts.v1",
         "analysis_ref": "analysis:42",
@@ -359,6 +362,10 @@ def test_projector_supports_analysis_result_v1_and_v2_without_forbidden_data(
             "sample_count": 42,
             "coverage": 0.9,
             "provenance": {"kind": "derived", "sources": ["raw_input"]},
+            "definition": {
+                "name": get_metric_definition("path_length")["name"],
+                "description": get_metric_definition("path_length")["description"],
+            },
         }
         assert context["diagnosis"]["summary"]["path_efficiency"]["value"] == 0.84
         assert "path" not in context["diagnosis"]["summary"]
@@ -391,6 +398,49 @@ def test_projector_supports_analysis_result_v1_and_v2_without_forbidden_data(
     assert "path" not in context
     assert "source_path" not in flattened
     assert "snapshotPath" not in flattened
+
+
+def test_metric_definitions_are_catalog_authoritative_and_read_only():
+    source = {
+        "schema_version": "analysis_result.v2",
+        "deterministic": {
+            "metrics": {
+                "sparc": {
+                    "value": 0.5,
+                    "definition": {
+                        "name": "upstream override",
+                        "description": "upstream override",
+                        "direction": "higher_better",
+                    },
+                },
+                "unknown_metric": {
+                    "value": 1,
+                    "definition": {"name": "upstream unknown"},
+                },
+            },
+            "diagnosis": {
+                "summary": {
+                    "sparc": {"med": 0.5},
+                },
+            },
+        },
+    }
+
+    projected = project_analysis_result_metric_definitions(source)
+    expected = get_metric_definition("sparc")
+
+    assert expected is not None
+    assert projected["deterministic"]["metrics"]["sparc"]["definition"] == {
+        "name": expected["name"],
+        "description": expected["description"],
+    }
+    assert "direction" not in projected["deterministic"]["metrics"]["sparc"]["definition"]
+    assert "definition" not in projected["deterministic"]["metrics"]["unknown_metric"]
+    assert projected["deterministic"]["diagnosis"]["summary"]["sparc"]["definition"] == {
+        "name": expected["name"],
+        "description": expected["description"],
+    }
+    assert source["deterministic"]["metrics"]["sparc"]["definition"]["name"] == "upstream override"
 
 
 def test_python_adapter_consumes_projected_context_only():
@@ -1081,7 +1131,7 @@ def test_v2_inline_context_preserves_allowlisted_facts_and_stays_within_budget()
     context_wire = json.dumps(
         canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
-    assert len(facts_wire) <= 8 * 1024
+    assert len(facts_wire) <= 32 * 1024
     assert len(context_wire) <= 32 * 1024
 
 
@@ -1446,12 +1496,12 @@ def test_processed_table_projection_failure_does_not_silently_fall_back_to_v2():
         })
 
 
-def test_v2_inline_facts_over_8k_are_rejected_instead_of_silent_truncation():
+def test_v2_inline_facts_over_32k_are_rejected_instead_of_silent_truncation():
     facts = _canonical_run_facts(oversized=True)
     facts_wire = json.dumps(
         facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
-    assert len(facts_wire) > 8 * 1024
+    assert len(facts_wire) > 32 * 1024
 
     context = _v2_context(
         run_facts={
@@ -1834,3 +1884,89 @@ def test_legacy_signal_only_issue_does_not_resolve_a_new_registry_entry():
     issue.pop("observation_ref")
 
     assert resolve_registry_teaching_entry(issue) is None
+
+
+def test_build_analysis_brief_uses_relative_video_time():
+    """Evidence segment times should be relative to video playback start (0),
+    not absolute canonical_time_window times."""
+    analysis_ref = "analysis:13"
+    window_start = 26000  # canonical window starts at 26s
+    artifact = {
+        "canonical_time_window": {"start_ms": window_start, "end_ms": 86000},
+        "evidence_segments": [
+            {
+                "segment_id": f"{analysis_ref}:segment:worst:57",
+                "segment_kind": "worst",
+                "focus_start_ms": 54087,   # absolute
+                "focus_end_ms": 54765,     # absolute
+                "title_key": "static_clicking.worst",
+                "issue_refs": ["issue:1"],
+            },
+            {
+                "segment_id": f"{analysis_ref}:segment:improved:61",
+                "segment_kind": "improved",
+                "focus_start_ms": 56234,
+                "focus_end_ms": 56714,
+                "title_key": "static_clicking.improved",
+                "issue_refs": [],
+            },
+            {
+                "segment_id": f"{analysis_ref}:segment:typical:4",
+                "segment_kind": "typical",
+                "focus_start_ms": 28059,
+                "focus_end_ms": 28456,
+                "title_key": "static_clicking.typical",
+                "issue_refs": [],
+            },
+        ],
+        "metric_records": [],
+        "event_bundles": [],
+    }
+
+    brief = build_analysis_brief(artifact)
+
+    assert brief is not None
+    segments = brief["evidence_segments"]
+    assert len(segments) == 3
+
+    # worst: 54087-54765 absolute → 28087-28765 relative
+    worst = next(s for s in segments if s["segment_kind"] == "worst")
+    assert worst["relative_start_ms"] == 28087
+    assert worst["relative_end_ms"] == 28765
+    assert "focus_start_ms" not in worst
+    assert "focus_end_ms" not in worst
+
+    # improved: 56234-56714 absolute → 30234-30714 relative
+    improved = next(s for s in segments if s["segment_kind"] == "improved")
+    assert improved["relative_start_ms"] == 30234
+    assert improved["relative_end_ms"] == 30714
+
+    # typical: 28059-28456 absolute → 2059-2456 relative
+    typical = next(s for s in segments if s["segment_kind"] == "typical")
+    assert typical["relative_start_ms"] == 2059
+    assert typical["relative_end_ms"] == 2456
+
+    # Video frame capability note is present.
+    assert "video_time_note" in brief
+    assert "relative_start_ms" in brief["video_time_note"]
+    assert "没有视频帧读取能力" in brief["video_time_note"]
+def test_analysis_brief_keeps_playback_times_and_frame_limitation_after_projection():
+    context = _v2_context(run_facts={"mode": "unavailable", "limitations": []})
+    context["analysis_brief"] = {
+        "evidence_segments": [{
+            "segment_id": "analysis:42:segment:typical:1",
+            "segment_kind": "typical",
+            "title_key": "static_clicking.typical",
+            "relative_start_ms": 2059,
+            "relative_end_ms": 2456,
+        }],
+        "video_time_note": "relative_start_ms/relative_end_ms are playback seconds; no video frame read capability.",
+    }
+
+    canonical = coerce_coach_diagnostic_context(context)
+
+    assert canonical is not None
+    brief = canonical["analysis_brief"]
+    assert brief["evidence_segments"][0]["relative_start_ms"] == 2059
+    assert brief["evidence_segments"][0]["relative_end_ms"] == 2456
+    assert "no video frame read capability" in brief["video_time_note"]

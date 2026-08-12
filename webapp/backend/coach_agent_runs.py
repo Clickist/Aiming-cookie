@@ -27,6 +27,7 @@ from .coach_context_refs import (
     ContextRefError,
     attach_context,
     build_context_bundle,
+    coerce_context_bundle,
     detach_context,
     unavailable_context_refs,
 )
@@ -182,6 +183,7 @@ async def execute_turn(**kwargs) -> dict[str, Any]:
         "reply": result.reply,
         "notes": result.notes,
         "tool_events": result.tool_events,
+        "context": result.context,
         "timing": result.timing,
         "error": result.error,
     }
@@ -1715,6 +1717,11 @@ def _normalize_outcome(value: object) -> dict[str, Any]:
     safe_notes = [_safe_text(note, max_length=500) for note in notes]
     events = _safe_tool_events(value.get("tool_events", []))
     timing = _safe_timing(value.get("timing"))
+    context = value.get("context")
+    if context is not None:
+        context = coerce_context_bundle(context)
+        if context is None:
+            raise AgentRunError("invalid_runner_result", "Coach runner returned an invalid context")
     error = value.get("error")
     safe_error = None
     if error is not None:
@@ -1750,6 +1757,7 @@ def _normalize_outcome(value: object) -> dict[str, Any]:
         "notes": safe_notes,
         "tool_events": events,
         "timing": timing,
+        "context": context,
         "error": safe_error,
     }
 
@@ -1878,6 +1886,7 @@ async def _run_agent(
                         "assistant",
                         reply,
                         trace=outcome["tool_events"],
+                        context=outcome.get("context"),
                         context_refs=snapshots,
                     )
                     await _append_event(

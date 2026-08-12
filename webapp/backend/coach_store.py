@@ -587,6 +587,7 @@ async def append_message(
         COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
         coerce_coach_diagnostic_context,
     )
+    from .coach_context_refs import coerce_context_bundle
 
     conn = await get_conn()
     trace_json = json.dumps(trace, ensure_ascii=False) if trace else None
@@ -600,6 +601,8 @@ async def append_message(
         }
     ):
         canonical_context = coerce_coach_diagnostic_context(context)
+    elif isinstance(context, dict) and context.get("schema_version") == "coach_turn_context.v1":
+        canonical_context = coerce_context_bundle(context)
     context_json = json.dumps(
         canonical_context,
         ensure_ascii=False,
@@ -670,6 +673,13 @@ async def load_messages(thread_id: int) -> list[dict[str, Any]]:
                     }
                 ):
                     context = coerce_coach_diagnostic_context(value)
+                elif (
+                    isinstance(value, dict)
+                    and value.get("schema_version") == "coach_turn_context.v1"
+                ):
+                    from .coach_context_refs import coerce_context_bundle
+
+                    context = coerce_context_bundle(value)
             except (json.JSONDecodeError, TypeError):
                 context = None
         context_refs: list[dict[str, Any]] = []

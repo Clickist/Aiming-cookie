@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from webapp.backend import desktop_runtime, routes
-from webapp.backend.kovaak_capture_finalizer import CaptureFinalizationWaiting
+from webapp.backend.kovaak_ingest import NonRetryableIngestionError
 from webapp.backend.native_capture_client import NativeCaptureRetryableError
 
 
@@ -662,7 +662,9 @@ async def test_ingestion_service_treats_waiting_for_sources_as_expected(
     class FakeFinalizer:
         async def finalize(self, _discovery):
             finalized.set()
-            raise CaptureFinalizationWaiting("waiting_for_sources")
+            raise NonRetryableIngestionError(
+                "waiting_for_sources", code="waiting_for_sources",
+            )
 
     service = desktop_runtime.create_kovaak_ingestion_service(
         asyncio.get_running_loop(),

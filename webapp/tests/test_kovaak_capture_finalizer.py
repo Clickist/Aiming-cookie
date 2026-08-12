@@ -16,12 +16,12 @@ from kovaak_tracker.performance_parser import (
 )
 from webapp.backend import kovaak_run_store
 from webapp.backend.kovaak_capture_finalizer import (
-    CaptureFinalizationPending,
     KovaaKCaptureFinalizer,
 )
 from webapp.backend.kovaak_ingest import (
     KovaaKFileDiscovery,
     NonRetryableIngestionError,
+    RetryableIngestionError,
 )
 from webapp.backend.native_capture_client import (
     NativeCaptureProtocolError,
@@ -602,7 +602,7 @@ async def test_complete_pair_waits_for_native_raw_snapshot_barrier_without_reexp
         performance_path=performance,
     )
 
-    with pytest.raises(kovaak_run_store.TracePendingError, match="coverage"):
+    with pytest.raises(RetryableIngestionError, match="coverage"):
         await finalizer.finalize(discovery)
 
     pending = (await kovaak_run_store.list_kovaak_runs("u1"))[0]
@@ -697,10 +697,11 @@ async def test_raw_completeness_receipt_never_attaches_incomplete_native_trace(
     assert run["trace_state"] == expected_trace_state
     assert run["trace_error"] == expected_error
     readiness = kovaak_run_store.derive_run_readiness(run)
-    assert readiness["state"] == (
-        "pending_analysis" if expected_trace_state == "attached"
-        else "incomplete_evidence"
-    )
+    assert readiness["state"] == "pending_analysis"
+    if expected_trace_state == "attached":
+        assert readiness["input_native"] is True
+    else:
+        assert readiness["video_fallback"] is True
 
 
 @pytest.mark.asyncio
@@ -957,7 +958,7 @@ async def test_response_loss_does_not_attach_raw_from_a_new_capture_session(
 
     client.capture_session_id = "session-2"
     client.raw_snapshot_covered_through_epoch_ms = 2_000
-    with pytest.raises(CaptureFinalizationPending, match="capture_session_mismatch"):
+    with pytest.raises(RetryableIngestionError, match="capture_session_mismatch"):
         await finalizer.finalize(discovery)
 
     unchanged = await kovaak_run_store.get_kovaak_run(pending["id"], "u1")
@@ -1064,7 +1065,10 @@ async def test_capture_session_mismatch_is_terminal_video_degradation(
     assert run["video_state"] == "unavailable"
     assert run["video_error"] == "video_capture_session_mismatch"
     assert run["trace_state"] == "attached"
-    assert kovaak_run_store.derive_run_readiness(run)["state"] == "incomplete_evidence"
+    readiness = kovaak_run_store.derive_run_readiness(run)
+    assert readiness["state"] == "pending_analysis"
+    assert readiness["input_native"] is True
+    assert readiness["video_fallback"] is False
     assert run["finalization_state"] == "finalized"
 
 
@@ -1088,7 +1092,7 @@ async def test_conflicting_same_path_source_revision_remains_pairing_conflict(
         ))
     stats.write_bytes(b"conflicting-second-stats-revision")
 
-    with pytest.raises(kovaak_run_store.PairingConflictError):
+    with pytest.raises(kovaak_run_store.NonRetryableIngestionError):
         await finalizer.finalize(KovaaKFileDiscovery(
             stem="revision-conflict",
             performance_path=performance,

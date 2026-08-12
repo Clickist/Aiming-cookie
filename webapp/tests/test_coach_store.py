@@ -42,6 +42,8 @@ def _v2_context() -> dict:
             "analyzer_refs": ["native_flicking.v1"],
             "support_status": "supported",
             "limitations": [],
+            "display_name": None,
+            "aim_family": None,
         },
         "run_facts": {
             "mode": "unavailable",

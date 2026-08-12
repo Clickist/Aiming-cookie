@@ -10,8 +10,10 @@ from . import (
     coach_confirmations,
     coach_store,
     config,
+    evidence_store,
     provider_commands,
     provider_store,
+    queue,
 )
 from .coach_engine import CoachTurn, complete_turn_async
 
@@ -92,6 +94,124 @@ def _reachable_context_refs(context: object) -> set[str]:
     return refs
 
 
+async def _load_brief_for_projection(
+    projection: object,
+    owner_id: str,
+) -> dict[str, Any] | None:
+    """Load the evidence artifact for one analysis projection and build a brief."""
+    if not isinstance(projection, Mapping):
+        return None
+    analysis_ref_obj = projection.get("analysis_ref")
+    if not isinstance(analysis_ref_obj, Mapping):
+        return None
+    analysis_id = analysis_ref_obj.get("analysis_id")
+    if not isinstance(analysis_id, str) or not analysis_id.startswith("analysis:"):
+        return None
+    try:
+        numeric_id = int(analysis_id.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return None
+    try:
+        session = await queue.get_session(numeric_id)
+    except Exception as exc:
+        log.warning("brief enrichment: get_session failed for %s: %s", analysis_id, type(exc).__name__)
+        return None
+    if (
+        session is None
+        or session.get("user_id") != owner_id
+        or session.get("status") != "done"
+    ):
+        return None
+    result = session.get("result")
+    if not isinstance(result, Mapping):
+        return None
+    derived_artifact = (result.get("evidence") or {}).get("derived_artifact")
+    if not isinstance(derived_artifact, Mapping):
+        return None
+    try:
+        artifact = await evidence_store.read_analysis_evidence_artifact(
+            owner_id=owner_id,
+            analysis_ref=analysis_id,
+            artifact_ref=derived_artifact.get("artifact_ref"),
+            evidence_revision=derived_artifact.get("evidence_revision"),
+        )
+    except Exception as exc:
+        log.warning("brief enrichment: read artifact failed for %s: %s", analysis_id, type(exc).__name__)
+        return None
+
+    # Extract diagnosis from the projection (analysis result) if available.
+    diagnosis = None
+    if isinstance(projection, Mapping):
+        diag = projection.get("diagnosis")
+        if isinstance(diag, Mapping):
+            diagnosis = diag
+
+    return build_analysis_brief(artifact, diagnosis=diagnosis)
+
+
+async def _enrich_context_with_briefs(
+    context: object,
+    owner_id: str,
+) -> dict[str, Any] | None:
+    """Inject compact analysis briefs from evidence artifacts.
+
+    If no analysis is attached or the evidence artifact is unavailable,
+    the context is returned unchanged (backward compatible).
+    """
+    if not isinstance(context, Mapping):
+        return context  # type: ignore[return-value]
+
+    from .coach_context import (
+        COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+    )
+
+    schema = context.get("schema_version")
+
+    if schema in (
+        COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA_VERSION,
+        COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA_VERSION,
+    ):
+        if context.get("analysis_brief") is not None:
+            return context  # type: ignore[return-value]
+        brief = await _load_brief_for_projection(context, owner_id)
+        if brief is not None:
+            return {**context, "analysis_brief": brief}
+        return context  # type: ignore[return-value]
+
+    if schema == "coach_turn_context.v1":
+        contexts = context.get("contexts")
+        if not isinstance(contexts, list):
+            return context  # type: ignore[return-value]
+        enriched_items: list[dict[str, Any]] = []
+        modified = False
+        for item in contexts:
+            if not isinstance(item, Mapping):
+                enriched_items.append(item)  # type: ignore[arg-type]
+                continue
+            projection = item.get("projection")
+            if (
+                isinstance(projection, Mapping)
+                and projection.get("analysis_brief") is None
+            ):
+                brief = await _load_brief_for_projection(projection, owner_id)
+                if brief is not None:
+                    enriched_items.append(
+                        {
+                            **item,
+                            "projection": {**projection, "analysis_brief": brief},
+                        }
+                    )
+                    modified = True
+                    continue
+            enriched_items.append(item)  # type: ignore[arg-type]
+        if modified:
+            return {**context, "contexts": enriched_items}
+        return context  # type: ignore[return-value]
+
+    return context  # type: ignore[return-value]
+
+
 async def run_chat_turn(
     *,
     x_user_id: str,
@@ -111,6 +231,7 @@ async def run_chat_turn(
     teaching_turn: Mapping[str, Any] | None = None,
     temporary_profile_refs: Mapping[str, str] | None = None,
     on_partial: Any | None = None,
+    on_activity: Any | None = None,
 ) -> CoachChatResult:
     from .coach_context import coerce_coach_diagnostic_context
 
@@ -136,6 +257,7 @@ async def run_chat_turn(
         if diagnostic_context is not None
         else coerce_coach_diagnostic_context(diagnosis)
     )
+    context = await _enrich_context_with_briefs(context, x_user_id)
     from .coach_runtime import normalize_teaching_turn
 
     normalized_teaching_turn = normalize_teaching_turn(teaching_turn)
@@ -255,6 +377,7 @@ async def run_chat_turn(
             pi_session_id=f"coach-thread:{thread_id}",
             run_ref=agent_run_ref,
             on_partial=on_partial,
+            on_activity=on_activity,
         )
         engine_result = await complete_turn_async(turn)
         reply = (

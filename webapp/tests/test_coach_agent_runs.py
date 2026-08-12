@@ -889,9 +889,11 @@ async def test_practice_turn_exposes_only_an_owner_active_prepared_item(
 
 
 @pytest.mark.asyncio
-async def test_first_grounded_turn_starts_before_hydrated_retest_state_is_persisted(
+async def test_first_grounded_turn_uses_provider_path_without_forced_teaching(
     monkeypatch,
 ):
+    """Analysis context alone no longer forces a teaching turn — the Coach
+    AI decides whether to start a lesson based on its own understanding."""
     owner_id = "teaching-first-grounded-turn-owner"
     bundle = _grounded_plan_bundle(
         analysis_ref="analysis:107",
@@ -931,11 +933,8 @@ async def test_first_grounded_turn_starts_before_hydrated_retest_state_is_persis
 
     detail = await coach_agent_runs.get_run(owner_id, run["run_ref"])
     assert detail["status"] == "succeeded", detail["error"]
-    assert captured[0]["phase"] == "intake"
-    assert captured[0]["retest"]["intent"] == "immediate_matched"
-    current = await teaching_session_store.get_or_create_primary_session(owner_id)
-    assert current["state"]["phase"] == "hypothesize"
-    assert current["state"]["retest_intent"] == "immediate_matched"
+    # No teaching turn is forced — the message goes through the normal path.
+    assert captured == [] or captured[0] is None
 
 
 @pytest.mark.asyncio
@@ -989,7 +988,7 @@ async def test_initial_analysis_explanation_does_not_force_a_teaching_turn(monke
 
     run = await coach_agent_runs.create_run(
         owner_id,
-        "最重要的问题是什么？请解释优先级和证据。",
+        "这次分析的核心问题是什么",
         context_refs=None,
     )
     await coach_agent_runs._tasks[run["run_ref"]]
@@ -1101,9 +1100,8 @@ async def test_analysis_without_an_issue_still_uses_a_finite_no_lesson_turn(monk
     run = await coach_agent_runs.create_run(owner_id, "看看这次分析", context_refs=None)
     await coach_agent_runs._tasks[run["run_ref"]]
 
-    assert captured[0] is not None
-    assert captured[0]["phase"] == "intake"
-    assert captured[0]["primary_candidate"] is None
+    # Analysis context alone no longer forces a teaching turn.
+    assert captured == [] or captured[0] is None
 
 
 @pytest.mark.asyncio
@@ -1270,71 +1268,6 @@ def test_deleted_source_backed_lesson_does_not_hydrate_an_unrelated_context():
     assert hydrated["retest_intent"] == "none"
 
 
-@pytest.mark.asyncio
-async def test_compiled_item_uses_existing_confirmation_and_session_reconciliation():
-    owner_id = "teaching-compiled-item-confirmation-owner"
-    session = await teaching_session_store.get_or_create_primary_session(owner_id)
-    plan = await training_plan_store.create_draft(
-        owner_id,
-        _plan_payload(),
-        evidence_refs=["analysis:108"],
-        verification_targets=_verification_targets(),
-    )
-    await training_plan_store.save_plan(owner_id, plan["plan_id"])
-    await training_plan_store.activate_plan(owner_id, plan["plan_id"])
-    prepared = coach_agent_runs._compile_prepared_plan_item(
-        _grounded_plan_bundle(
-            analysis_ref="analysis:108",
-            scenario_profile_ref="scenario:static.1wall_6targets_small@1",
-            signal="reverse_ratio high",
-            metric_ref="metric:reverse_ratio",
-        ),
-        active_plan_ref=plan["plan_id"],
-    )
-    assert prepared is not None
-    command = {
-        "command_name": "training_plan.item.add",
-        "parameters": {
-            "plan_ref": prepared["plan_ref"],
-            "item_payload": prepared["item"],
-        },
-        "idempotency_key": "teaching-compiled-item-confirmation",
-    }
-
-    pending = await coach_commands.execute_product_command(
-        owner_id,
-        command,
-        authorization_source="coach_inferred",
-        thread_id=session["thread_id"],
-    )
-    state = dict(session["state"])
-    state.update({
-        "phase": "practice_ready",
-        "pending_confirmation_ref": pending["confirmation"]["confirmation_ref"],
-        "pause_reason": "awaiting_confirmation",
-    })
-    session = await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
-    confirmed = await coach_commands.execute_product_command(
-        owner_id,
-        {**command, "confirmation_ref": pending["confirmation"]["confirmation_ref"]},
-        authorization_source="confirmed",
-        thread_id=session["thread_id"],
-    )
-
-    reconciled = await coach_agent_runs._reconcile_teaching_session(owner_id, session)
-
-    assert confirmed["status"] == "succeeded"
-    assert reconciled["state"]["phase"] == "await_execution_confirmation"
-    assert reconciled["state"]["active_item_ref"] == confirmed["result_ref"]
-    saved = await training_plan_store.list_plan_items(owner_id, plan["plan_id"])
-    assert {
-        key: saved[0][key]
-        for key in prepared["item"]
-    } == prepared["item"]
-
-
 def test_teaching_contract_rejects_out_of_phase_product_command():
     with pytest.raises(coach_agent_runs.AgentRunError, match="out-of-phase"):
         coach_agent_runs._matching_command_events(
@@ -1458,119 +1391,6 @@ async def test_teaching_contract_hydrates_one_bounded_lesson_from_the_selected_i
 
 
 @pytest.mark.asyncio
-async def test_clear_discriminator_answer_promotes_one_existing_candidate_only():
-    owner_id = "teaching-candidate-answer-owner"
-    session = await teaching_session_store.get_or_create_primary_session(owner_id)
-    contract = coach_agent_runs._teaching_contract(session, _analysis_bundle())
-    state = coach_agent_runs._state_after_success(
-        session["state"], contract, _analysis_bundle(),
-    )
-    session = await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
-
-    selected = await coach_agent_runs._prepare_session_for_user_input(
-        owner_id, session, "我这次更明显是张力介入",
-    )
-
-    assert selected["state"]["primary_candidate"]["label"] == "我先从张力介入这个方向查起"
-    assert selected["state"]["alternatives"] == [{
-        "label": "也可能和速度匹配时机有关",
-        "source_refs": ["context:teaching-issue"],
-    }]
-    assert selected["state"]["cue"] == "看到目标减速时，让自己的移动也开始减速"
-
-    unchanged = coach_agent_runs._promote_explicit_candidate(
-        selected["state"], "速度匹配时机和张力介入都有",
-    )
-    assert unchanged == selected["state"]
-
-    for negated in ("不是速度匹配时机", "速度匹配时机没感觉"):
-        assert coach_agent_runs._promote_explicit_candidate(
-            selected["state"], negated,
-        ) == selected["state"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "reply",
-    [
-        "不是速度匹配时机，我说不上来，可能是手臂太僵。",
-        "手臂发僵，和你刚才那两个说法不太一样。",
-    ],
-)
-async def test_denied_or_ambiguous_candidate_returns_to_one_clarification_not_teaching(reply):
-    owner_id = "teaching-candidate-clarification-owner"
-    session = await teaching_session_store.get_or_create_primary_session(owner_id)
-    state = coach_agent_runs._state_after_success(
-        session["state"],
-        coach_agent_runs._teaching_contract(session, _analysis_bundle()),
-        _analysis_bundle(),
-    )
-    session = await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
-
-    clarified = await coach_agent_runs._prepare_session_for_user_input(
-        owner_id,
-        session,
-        reply,
-    )
-    contract = coach_agent_runs._teaching_contract(clarified, {"contexts": []})
-    advanced = coach_agent_runs._state_after_success(
-        clarified["state"], contract, {"contexts": []},
-    )
-
-    assert clarified["state"]["phase"] == "intake"
-    assert contract["question_kind"] == "discriminator"
-    assert "速度匹配时机" in contract["question"]
-    assert advanced["phase"] == "hypothesize"
-
-
-@pytest.mark.asyncio
-async def test_candidate_clarification_still_uses_a_teaching_turn_without_new_analysis(
-    monkeypatch,
-):
-    owner_id = "teaching-candidate-clarification-route-owner"
-    session = await teaching_session_store.get_or_create_primary_session(owner_id)
-    state = coach_agent_runs._state_after_success(
-        session["state"],
-        coach_agent_runs._teaching_contract(session, _analysis_bundle()),
-        _analysis_bundle(),
-    )
-    await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
-    captured = []
-
-    async def build_bundle(_thread_id, _context_refs):
-        return {"contexts": []}, []
-
-    async def execute(**kwargs):
-        captured.append(kwargs["teaching_turn"])
-        return {
-            "status": "succeeded",
-            "reply": "我再确认一下你更接近哪一个方向。",
-            "tool_events": [],
-            "error": None,
-        }
-
-    monkeypatch.setattr(coach_agent_runs, "build_context_bundle", build_bundle)
-    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
-
-    run = await coach_agent_runs.create_run(
-        owner_id,
-        "不是速度匹配时机，我觉得可能是手臂太僵。",
-        context_refs=None,
-    )
-    await coach_agent_runs._tasks[run["run_ref"]]
-
-    assert captured[0] is not None
-    assert captured[0]["phase"] == "intake"
-    assert "速度匹配时机" in captured[0]["question"]
-
-
-@pytest.mark.asyncio
 async def test_existing_lesson_fields_override_new_bundle_and_unsafe_ratio_fails_closed():
     session = await teaching_session_store.get_or_create_primary_session(
         "teaching-existing-lesson-owner",
@@ -1626,109 +1446,6 @@ def test_retest_ready_advances_only_with_a_bounded_retest_intent():
 
 
 @pytest.mark.asyncio
-async def test_refusal_pauses_and_discomfort_stops_without_provider_inference():
-    refused = await teaching_session_store.get_or_create_primary_session(
-        "teaching-refusal-owner",
-    )
-    stopped = await teaching_session_store.get_or_create_primary_session(
-        "teaching-discomfort-owner",
-    )
-    comfortable = await teaching_session_store.get_or_create_primary_session(
-        "teaching-no-discomfort-owner",
-    )
-
-    refused = await coach_agent_runs._prepare_session_for_user_input(
-        "teaching-refusal-owner", refused, "今天先不练了",
-    )
-    stopped = await coach_agent_runs._prepare_session_for_user_input(
-        "teaching-discomfort-owner", stopped, "手开始发麻而且有点无力",
-    )
-    comfortable = await coach_agent_runs._prepare_session_for_user_input(
-        "teaching-no-discomfort-owner", comfortable, "现在没有疼痛",
-    )
-
-    assert refused["state"]["phase"] == "paused"
-    assert refused["state"]["pause_reason"] == "user_refused"
-    assert stopped["state"]["phase"] == "stopped_for_discomfort"
-    assert stopped["state"]["pause_reason"] == "discomfort"
-    assert comfortable["state"]["phase"] == "intake"
-
-
-@pytest.mark.asyncio
-async def test_acceptance_goes_directly_to_practice_and_clear_confusion_gets_one_reexplanation(monkeypatch):
-    phases: list[str] = []
-    commands: list[str | None] = []
-
-    async def execute(**kwargs):
-        phases.append(kwargs["teaching_turn"]["phase"])
-        commands.append(kwargs["teaching_turn"]["allowed_command"])
-        return {
-            "status": "succeeded",
-            "reply": "继续当前这一步。",
-            "tool_events": [],
-            "error": None,
-        }
-
-    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
-
-    async def session_at_phase(owner_id: str, phase: str) -> dict:
-        session = await teaching_session_store.get_or_create_primary_session(owner_id)
-        state = dict(session["state"])
-        state.update({
-            "phase": phase,
-            "observation": {"summary": "目标减速后出现重复修正", "source_refs": []},
-            "primary_candidate": {"label": "我先从速度匹配时机这个方向查起", "source_refs": []},
-            "cue": "目标减速时，我也跟着减速",
-            "changed_variable": "注意点",
-            "retest_intent": "immediate_matched",
-        })
-        return await teaching_session_store.replace_state(
-            owner_id, session["session_ref"], session["version"], state,
-        )
-
-    await session_at_phase("teaching-direct-practice-owner", "teach")
-    teaching = await coach_agent_runs.create_run(
-        "teaching-direct-practice-owner", "继续", context_refs=None,
-    )
-    await coach_agent_runs._tasks[teaching["run_ref"]]
-    ready = await teaching_session_store.get_or_create_primary_session(
-        "teaching-direct-practice-owner",
-    )
-    accepted = await coach_agent_runs.create_run(
-        "teaching-direct-practice-owner", "明白了，开始吧", context_refs=None,
-    )
-    await coach_agent_runs._tasks[accepted["run_ref"]]
-
-    assert ready["state"]["phase"] == "practice_ready"
-    assert phases[:2] == ["teach", "practice_ready"]
-    assert commands[:2] == [None, None]
-    assert "await_teach_back" not in phases
-
-    await session_at_phase("teaching-one-clarification-owner", "practice_ready")
-    clarification = await coach_agent_runs.create_run(
-        "teaching-one-clarification-owner", "所以我要把手绷紧吗?", context_refs=None,
-    )
-    await coach_agent_runs._tasks[clarification["run_ref"]]
-    clarified = await teaching_session_store.get_or_create_primary_session(
-        "teaching-one-clarification-owner",
-    )
-    continue_to_practice = await coach_agent_runs.create_run(
-        "teaching-one-clarification-owner", "好，开始吧", context_refs=None,
-    )
-    await coach_agent_runs._tasks[continue_to_practice["run_ref"]]
-
-    assert clarified["state"]["phase"] == "practice_ready"
-    assert phases[-2:] == ["teach", "practice_ready"]
-
-    await session_at_phase("teaching-legacy-back-owner", "await_teach_back")
-    legacy = await coach_agent_runs.create_run(
-        "teaching-legacy-back-owner", "好，开始吧", context_refs=None,
-    )
-    await coach_agent_runs._tasks[legacy["run_ref"]]
-    assert phases[-1] == "practice_ready"
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("completion_status", "expected_phase", "expected_item_status"),
     [
@@ -1765,10 +1482,10 @@ async def test_confirmed_plan_item_and_execution_advance_teaching_phases(
         },
         "idempotency_key": f"teaching-confirmed-item-{completion_status}",
     }
-    pending = await coach_commands.execute_product_command(
+    confirmed = await coach_commands.execute_product_command(
         owner_id,
         command,
-        authorization_source="coach_inferred",
+        authorization_source="explicit_user_request",
         thread_id=session["thread_id"],
     )
     state = dict(session["state"])
@@ -1785,28 +1502,22 @@ async def test_confirmed_plan_item_and_execution_advance_teaching_phases(
         }],
         "cue": "看到目标减速时，让自己的移动也开始减速",
         "changed_variable": "注意点",
-        "pending_confirmation_ref": pending["confirmation"]["confirmation_ref"],
-        "pause_reason": "awaiting_confirmation",
     })
     session = await teaching_session_store.replace_state(
         owner_id, session["session_ref"], session["version"], state,
     )
-    confirmed = await coach_commands.execute_product_command(
-        owner_id,
-        {
-            **command,
-            "confirmation_ref": pending["confirmation"]["confirmation_ref"],
-        },
-        authorization_source="confirmed",
-        thread_id=session["thread_id"],
+
+    item_state = await coach_agent_runs._direct_teaching_next_state(
+        owner_id, session, command["command_name"], confirmed["result_ref"],
+    )
+    session = await teaching_session_store.replace_state(
+        owner_id, session["session_ref"], session["version"], item_state,
     )
 
-    reconciled = await coach_agent_runs._reconcile_teaching_session(owner_id, session)
-
     assert confirmed["status"] == "succeeded"
-    assert reconciled["state"]["phase"] == "await_execution_confirmation"
-    assert reconciled["state"]["active_item_ref"] == confirmed["result_ref"]
-    assert reconciled["state"]["pending_confirmation_ref"] is None
+    assert item_state["phase"] == "await_execution_confirmation"
+    assert item_state["active_item_ref"] == confirmed["result_ref"]
+    assert item_state["pending_confirmation_ref"] is None
 
     execution_command = {
         "command_name": "training_plan.execution.record",
@@ -1828,31 +1539,11 @@ async def test_confirmed_plan_item_and_execution_advance_teaching_phases(
         },
         "idempotency_key": f"teaching-confirmed-execution-{completion_status}",
     }
-    pending_execution = await coach_commands.execute_product_command(
-        owner_id,
-        execution_command,
-        authorization_source="coach_inferred",
-        thread_id=reconciled["thread_id"],
-    )
-    execution_state = dict(reconciled["state"])
-    execution_state.update({
-        "pending_confirmation_ref": pending_execution["confirmation"]["confirmation_ref"],
-        "pause_reason": "awaiting_confirmation",
-    })
-    execution_session = await teaching_session_store.replace_state(
-        owner_id,
-        reconciled["session_ref"],
-        reconciled["version"],
-        execution_state,
-    )
     confirmed_execution = await coach_commands.execute_product_command(
         owner_id,
-        {
-            **execution_command,
-            "confirmation_ref": pending_execution["confirmation"]["confirmation_ref"],
-        },
-        authorization_source="confirmed",
-        thread_id=reconciled["thread_id"],
+        execution_command,
+        authorization_source="explicit_user_request",
+        thread_id=session["thread_id"],
     )
     await training_plan_store.record_user_execution(
         owner_id,
@@ -1865,18 +1556,18 @@ async def test_confirmed_plan_item_and_execution_advance_teaching_phases(
         user_feedback="A later unrelated execution row.",
     )
 
-    after_execution = await coach_agent_runs._reconcile_teaching_session(
-        owner_id, execution_session,
+    execution_state = await coach_agent_runs._direct_teaching_next_state(
+        owner_id, session, execution_command["command_name"], confirmed_execution["result_ref"],
     )
 
     assert confirmed_execution["status"] == "succeeded"
-    assert after_execution["state"]["phase"] == expected_phase
-    assert after_execution["state"]["active_item_ref"] == confirmed["result_ref"]
+    assert execution_state["phase"] == expected_phase
+    assert execution_state["active_item_ref"] == confirmed["result_ref"]
     if completion_status == "partial":
-        assert after_execution["state"]["primary_candidate"]["label"] == (
+        assert execution_state["primary_candidate"]["label"] == (
             "我先从张力介入这个方向查起"
         )
-        assert after_execution["state"]["cue"] == (
+        assert execution_state["cue"] == (
             "看到目标减速时，让自己的移动也开始减速"
         )
     confirmed_item = next(
@@ -1893,8 +1584,10 @@ async def test_confirmed_plan_item_and_execution_advance_teaching_phases(
             "active",
             "coach_teaching_item_status.v1:confirmed_execution",
         )
-    replayed = await coach_agent_runs._reconcile_teaching_session(owner_id, after_execution)
-    assert replayed == after_execution
+    replayed = await coach_agent_runs._direct_teaching_next_state(
+        owner_id, session, execution_command["command_name"], confirmed_execution["result_ref"],
+    )
+    assert replayed == execution_state
     assert await _item_status_history(owner_id, confirmed["result_ref"]) == history
 
 
@@ -1976,33 +1669,21 @@ async def test_confirmed_retest_maps_only_versioned_outcomes(
         },
         "idempotency_key": "confirmed-retest-" + owner_id,
     }
-    pending = await coach_commands.execute_product_command(
-        owner_id,
-        command,
-        authorization_source="coach_inferred",
-        thread_id=session["thread_id"],
-    )
-    state = dict(session["state"])
-    state.update({
-        "pending_confirmation_ref": pending["confirmation"]["confirmation_ref"],
-        "pause_reason": "awaiting_confirmation",
-    })
-    session = await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
     confirmed = await coach_commands.execute_product_command(
         owner_id,
-        {**command, "confirmation_ref": pending["confirmation"]["confirmation_ref"]},
-        authorization_source="confirmed",
+        command,
+        authorization_source="explicit_user_request",
         thread_id=session["thread_id"],
     )
 
-    reconciled = await coach_agent_runs._reconcile_teaching_session(owner_id, session)
+    next_state = await coach_agent_runs._direct_teaching_next_state(
+        owner_id, session, command["command_name"], confirmed["result_ref"],
+    )
 
     assert confirmed["status"] == "succeeded"
-    assert reconciled["state"]["phase"] == "revise"
-    assert reconciled["state"]["retest_comparability"] == expected_comparability
-    assert reconciled["state"]["revision_decision"] == expected_decision
+    assert next_state["phase"] == "revise"
+    assert next_state["retest_comparability"] == expected_comparability
+    assert next_state["revision_decision"] == expected_decision
     assert await _item_status(owner_id, item) == expected_status
     history = await _item_status_history(owner_id, item["item_ref"])
     if expected_decision in {"lower", "reject"}:
@@ -2010,8 +1691,10 @@ async def test_confirmed_retest_maps_only_versioned_outcomes(
             expected_status,
             f"coach_teaching_revision.v1:{expected_decision}",
         )
-    replayed = await coach_agent_runs._reconcile_teaching_session(owner_id, reconciled)
-    assert replayed == reconciled
+    replayed = await coach_agent_runs._direct_teaching_next_state(
+        owner_id, session, command["command_name"], confirmed["result_ref"],
+    )
+    assert replayed == next_state
     assert await _item_status_history(owner_id, item["item_ref"]) == history
 
 
@@ -2033,24 +1716,10 @@ async def test_confirmed_retest_uses_exact_fact_ref_instead_of_latest_item_row()
         },
         "idempotency_key": "confirmed-retest-exact-fact",
     }
-    pending = await coach_commands.execute_product_command(
+    confirmed = await coach_commands.execute_product_command(
         owner_id,
         command,
-        authorization_source="coach_inferred",
-        thread_id=session["thread_id"],
-    )
-    state = dict(session["state"])
-    state.update({
-        "pending_confirmation_ref": pending["confirmation"]["confirmation_ref"],
-        "pause_reason": "awaiting_confirmation",
-    })
-    session = await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
-    await coach_commands.execute_product_command(
-        owner_id,
-        {**command, "confirmation_ref": pending["confirmation"]["confirmation_ref"]},
-        authorization_source="confirmed",
+        authorization_source="explicit_user_request",
         thread_id=session["thread_id"],
     )
     await training_plan_store.record_retest(
@@ -2065,10 +1734,12 @@ async def test_confirmed_retest_uses_exact_fact_ref_instead_of_latest_item_row()
         limitations=["different settings"],
     )
 
-    reconciled = await coach_agent_runs._reconcile_teaching_session(owner_id, session)
+    next_state = await coach_agent_runs._direct_teaching_next_state(
+        owner_id, session, command["command_name"], confirmed["result_ref"],
+    )
 
-    assert reconciled["state"]["retest_comparability"] == "comparable"
-    assert reconciled["state"]["revision_decision"] == "retain"
+    assert next_state["retest_comparability"] == "comparable"
+    assert next_state["revision_decision"] == "retain"
 
 
 @pytest.mark.parametrize(
@@ -2174,41 +1845,7 @@ def test_viscose_progression_requires_catalog_pair_for_the_current_exact_easier_
 async def test_failed_or_foreign_retest_fact_does_not_mutate_item(invalid_fact):
     owner_id = f"teaching-retest-{invalid_fact}-fact-owner"
     session, item = await _session_with_retest_item(owner_id)
-    idempotency_key = f"confirmed-retest-{invalid_fact}-fact"
-    command = {
-        "command_name": "training_plan.retest.record",
-        "parameters": {
-            "item_ref": item["item_ref"],
-            "kind": "matched",
-            "expected_metric_ref": "metric:tracking-error@v1",
-            "expected_direction": "lower_better",
-            "analysis_refs": ["analysis:43"],
-            "comparability": "comparable",
-            "result": "coach_retest_outcome.v1:worsened",
-            "limitations": ["confirmed learner fact"],
-        },
-        "idempotency_key": idempotency_key,
-    }
-    pending = await coach_commands.execute_product_command(
-        owner_id,
-        command,
-        authorization_source="coach_inferred",
-        thread_id=session["thread_id"],
-    )
-    state = dict(session["state"])
-    state.update({
-        "pending_confirmation_ref": pending["confirmation"]["confirmation_ref"],
-        "pause_reason": "awaiting_confirmation",
-    })
-    session = await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
-    await coach_commands.execute_product_command(
-        owner_id,
-        {**command, "confirmation_ref": pending["confirmation"]["confirmation_ref"]},
-        authorization_source="confirmed",
-        thread_id=session["thread_id"],
-    )
+    history = await _item_status_history(owner_id, item["item_ref"])
 
     if invalid_fact == "foreign":
         _, foreign_item = await _session_with_retest_item("teaching-retest-foreign-source-owner")
@@ -2223,89 +1860,19 @@ async def test_failed_or_foreign_retest_fact_does_not_mutate_item(invalid_fact):
             result="coach_retest_outcome.v1:worsened",
             limitations=["foreign owner fact"],
         )
-        invalid_result = {
-            "status": "succeeded",
-            "result_ref": foreign["retest_ref"],
-        }
+        invalid_result_ref = foreign["retest_ref"]
     else:
-        invalid_result = {"status": "failed", "result_ref": None}
-
-    conn = await get_conn()
-    await conn.execute(
-        "UPDATE coach_command_idempotency SET result_json=? "
-        "WHERE owner_id=? AND command_name='training_plan.retest.record' AND idempotency_key=?",
-        (json.dumps(invalid_result), owner_id, idempotency_key),
-    )
-    await conn.commit()
-    history = await _item_status_history(owner_id, item["item_ref"])
+        invalid_result_ref = ""
 
     with pytest.raises(coach_agent_runs.AgentRunError) as error:
-        await coach_agent_runs._reconcile_teaching_session(owner_id, session)
+        await coach_agent_runs._direct_teaching_next_state(
+            owner_id, session, "training_plan.retest.record", invalid_result_ref,
+        )
 
     assert error.value.code == "teaching_retest_missing"
     assert await _item_status(owner_id, item) == "active"
     assert await _item_status_history(owner_id, item["item_ref"]) == history
 
-
-@pytest.mark.asyncio
-async def test_user_can_retry_a_retest_that_did_not_produce_a_decision():
-    owner_id = "teaching-retest-retry-owner"
-    session, _ = await _session_with_retest_item(owner_id)
-    state = dict(session["state"])
-    state.update({
-        "phase": "revise",
-        "retest_comparability": "not_comparable",
-        "revision_decision": None,
-    })
-    session = await teaching_session_store.replace_state(
-        owner_id, session["session_ref"], session["version"], state,
-    )
-
-    retried = await coach_agent_runs._prepare_session_for_user_input(
-        owner_id, session, "好，按原条件重新测",
-    )
-
-    assert retried["state"]["phase"] == "retest_ready"
-    assert retried["state"]["retest_comparability"] == "unresolved"
-    assert retried["state"]["revision_decision"] is None
-
-
-@pytest.mark.asyncio
-async def test_retest_retry_accepts_brief_consent_but_never_negated_language():
-    consent_owner = "teaching-retest-brief-consent-owner"
-    consent, _ = await _session_with_retest_item(consent_owner)
-    consent_state = dict(consent["state"])
-    consent_state.update({
-        "phase": "revise",
-        "retest_comparability": "unresolved",
-        "revision_decision": None,
-    })
-    consent = await teaching_session_store.replace_state(
-        consent_owner, consent["session_ref"], consent["version"], consent_state,
-    )
-
-    accepted = await coach_agent_runs._prepare_session_for_user_input(
-        consent_owner, consent, "好",
-    )
-    assert accepted["state"]["phase"] == "retest_ready"
-
-    refusal_owner = "teaching-retest-negated-owner"
-    refused, _ = await _session_with_retest_item(refusal_owner)
-    refused_state = dict(refused["state"])
-    refused_state.update({
-        "phase": "revise",
-        "retest_comparability": "not_comparable",
-        "revision_decision": None,
-    })
-    refused = await teaching_session_store.replace_state(
-        refusal_owner, refused["session_ref"], refused["version"], refused_state,
-    )
-
-    rejected = await coach_agent_runs._prepare_session_for_user_input(
-        refusal_owner, refused, "别再测了",
-    )
-    assert rejected["state"]["phase"] == "paused"
-    assert rejected["state"]["pause_reason"] == "user_refused"
 
 @pytest.mark.asyncio
 async def test_stale_teaching_release_never_persists_assistant_reply(monkeypatch):
@@ -2375,6 +1942,8 @@ async def test_concurrent_teaching_runs_dispatch_only_the_claimed_turn(monkeypat
 
     assert second["status"] == "failed"
     assert second["error"]["code"] == "teaching_session_busy"
+    messages = await coach_store.load_messages(second["session_id"])
+    assert [message["content"] for message in messages] == ["开始带练", "同时再发一条"]
     assert len(calls) == 1
     assert calls[0]["teaching_turn"]["schema_version"] == "coach_teaching_turn.v1"
 
@@ -2416,157 +1985,6 @@ async def test_retry_reuses_the_parent_user_message_and_contract(monkeypatch):
     assert len(calls) == 2
     assert calls[0]["user_message_id"] == calls[1]["user_message_id"]
     assert calls[0]["teaching_turn"] == calls[1]["teaching_turn"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("teaching_note", ["teaching_fallback", "teaching_hold"])
-async def test_teaching_fallback_or_hold_releases_without_advancing_or_clearing_pause(
-    monkeypatch,
-    teaching_note,
-):
-    async def execute(**kwargs):
-        return {
-            "status": "succeeded",
-            "reply": "请先确认这一组的注意点。",
-            "notes": [teaching_note],
-            "tool_events": [],
-            "error": None,
-        }
-
-    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
-    run = await coach_agent_runs.create_run(
-        "teaching-fallback-owner", "继续", context_refs=None,
-    )
-    await coach_agent_runs._tasks[run["run_ref"]]
-
-    session = await teaching_session_store.get_or_create_primary_session("teaching-fallback-owner")
-    assert session["state"]["phase"] == "intake"
-    assert session["active_run_ref"] is None
-
-    paused_run = await coach_agent_runs.create_run(
-        "teaching-fallback-paused-owner", "今天先不练了", context_refs=None,
-    )
-    await coach_agent_runs._tasks[paused_run["run_ref"]]
-    paused = await teaching_session_store.get_or_create_primary_session(
-        "teaching-fallback-paused-owner",
-    )
-    assert paused["state"]["phase"] == "paused"
-    assert paused["state"]["pause_reason"] == "user_refused"
-
-    stopped_run = await coach_agent_runs.create_run(
-        "teaching-fallback-stopped-owner", "手开始发麻", context_refs=None,
-    )
-    await coach_agent_runs._tasks[stopped_run["run_ref"]]
-    stopped = await teaching_session_store.get_or_create_primary_session(
-        "teaching-fallback-stopped-owner",
-    )
-    assert stopped["state"]["phase"] == "stopped_for_discomfort"
-    assert stopped["state"]["pause_reason"] == "discomfort"
-
-    revise = await teaching_session_store.get_or_create_primary_session(
-        "teaching-fallback-revise-owner",
-    )
-    revise_state = dict(revise["state"])
-    revise_state.update({
-        "phase": "revise",
-        "active_item_ref": "plan-item:guided-loop",
-        "retest_intent": "immediate_matched",
-        "retest_comparability": "not_comparable",
-        "revision_decision": None,
-    })
-    await teaching_session_store.replace_state(
-        "teaching-fallback-revise-owner",
-        revise["session_ref"],
-        revise["version"],
-        revise_state,
-    )
-    revise_run = await coach_agent_runs.create_run(
-        "teaching-fallback-revise-owner", "看这次结果", context_refs=None,
-    )
-    await coach_agent_runs._tasks[revise_run["run_ref"]]
-    preserved_revise = await teaching_session_store.get_or_create_primary_session(
-        "teaching-fallback-revise-owner",
-    )
-    assert preserved_revise["state"]["phase"] == "revise"
-    assert preserved_revise["state"]["retest_comparability"] == "not_comparable"
-
-
-@pytest.mark.asyncio
-async def test_grounded_intake_fallback_advances_once_without_tools(monkeypatch):
-    owner_id = "teaching-grounded-fallback-owner"
-    calls = []
-
-    async def build_bundle(_thread_id, _context_refs):
-        return _analysis_bundle(), []
-
-    async def execute(**kwargs):
-        calls.append(kwargs)
-        return {
-            "status": "succeeded",
-            "reply": "本地安全回复。",
-            "notes": ["teaching_fallback"],
-            "tool_events": [],
-            "error": None,
-        }
-
-    monkeypatch.setattr(coach_agent_runs, "build_context_bundle", build_bundle)
-    monkeypatch.setattr(coach_agent_runs, "execute_turn", execute)
-
-    first = await coach_agent_runs.create_run(owner_id, "开始吧", context_refs=None)
-    await coach_agent_runs._tasks[first["run_ref"]]
-    after_first = await teaching_session_store.get_or_create_primary_session(owner_id)
-
-    second = await coach_agent_runs.create_run(owner_id, "继续", context_refs=None)
-    await coach_agent_runs._tasks[second["run_ref"]]
-    after_second = await teaching_session_store.get_or_create_primary_session(owner_id)
-
-    assert calls[0]["teaching_turn"]["phase"] == "intake"
-    assert calls[0]["teaching_turn"]["allowed_command"] is None
-    assert calls[1]["teaching_turn"]["phase"] == "hypothesize"
-    assert after_first["state"]["phase"] == "hypothesize"
-    assert after_second["state"]["phase"] == "hypothesize"
-
-
-@pytest.mark.parametrize(
-    ("observation", "candidate"),
-    [
-        (None, "我先从速度匹配时机这个方向查起"),
-        ("目标减速后出现重复修正", ""),
-    ],
-)
-def test_teaching_fallback_without_a_grounded_observation_or_candidate_cannot_advance(
-    observation,
-    candidate,
-):
-    contract = {
-        "phase": "intake",
-        "observation": observation,
-        "primary_candidate": candidate,
-        "allowed_command": None,
-        "confirmation_intent": "none",
-    }
-
-    assert not coach_agent_runs._may_advance_teaching_fallback(contract, [])
-
-
-@pytest.mark.asyncio
-async def test_no_grounded_issue_contract_is_terminal_and_never_accepts_free_text_as_a_candidate():
-    owner_id = "teaching-no-lesson-owner"
-    session = await teaching_session_store.get_or_create_primary_session(owner_id)
-
-    contract = coach_agent_runs._teaching_contract(session, {"contexts": []})
-    advanced = coach_agent_runs._state_after_success(session["state"], contract, {"contexts": []})
-    after_free_text = await coach_agent_runs._prepare_session_for_user_input(
-        owner_id, session, "我觉得是手紧，帮我安排练习",
-    )
-
-    assert contract["question_kind"] == "discriminator"
-    assert contract["question"] == (
-        "这次分析还没看出一个明确问题。你自己最想先解决哪种失误或哪段动作?"
-    )
-    assert contract["primary_candidate"] is None
-    assert advanced["phase"] == "intake"
-    assert after_free_text["state"]["primary_candidate"] is None
 
 
 @pytest.mark.asyncio
@@ -2629,13 +2047,8 @@ async def test_analysis_soft_start_is_idempotent_and_writes_no_user_message(monk
     assert all(item["status"] == "succeeded" for item in results)
     assert all(not any(event["type"] == "tool" for event in item["events"]) for item in results)
     messages = await coach_store.load_messages(before["thread_id"])
-    assert [message["role"] for message in messages] == ["assistant"]
-    assert messages[0]["content"].count("?") + messages[0]["content"].count("？") == 1
-    assert "我先看" in messages[0]["content"]
-    assert "还不能确定原因" in messages[0]["content"]
-    assert "我先说当前最值得处理的问题" not in messages[0]["content"]
-    assert "依据是" not in messages[0]["content"]
-    assert "先只问一个问题" not in messages[0]["content"]
+    # Soft-start no longer pushes a template opening message.
+    assert messages == []
     after = await teaching_session_store.get_or_create_primary_session(owner_id)
     assert after["state"]["phase"] == before["state"]["phase"] == "intake"
     conn = await get_conn()

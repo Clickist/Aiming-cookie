@@ -45,16 +45,14 @@ _RETRYABLE_CODES = {
 
 class NativeCaptureRetryableError(RetryableIngestionError):
     def __init__(self, code: str) -> None:
-        self.code = code
+        super().__init__(code, code=code)
         self.retryable = True
-        super().__init__(code)
 
 
 class NativeCaptureTerminalError(NonRetryableIngestionError):
     def __init__(self, code: str) -> None:
-        self.code = code
+        super().__init__(code, code=code)
         self.retryable = False
-        super().__init__(code)
 
 
 class NativeCaptureProtocolError(NativeCaptureTerminalError):

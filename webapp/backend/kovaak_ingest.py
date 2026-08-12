@@ -22,13 +22,17 @@ log = logging.getLogger(__name__)
 class NonRetryableIngestionError(RuntimeError):
     """An ingestion failure that should remain observable without hot-loop retries."""
 
-
-class ExpectedIngestionState(NonRetryableIngestionError):
-    """An expected non-retryable state that does not need an error traceback."""
+    def __init__(self, message: str = "", *, code: str = "") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class RetryableIngestionError(RuntimeError):
     """A transient ingestion failure that should return to the ready state."""
+
+    def __init__(self, message: str = "", *, code: str = "") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _is_retryable(error: BaseException) -> bool:
@@ -176,7 +180,7 @@ class KovaaKDirectoryWatcher:
                     self._release(key)
                 else:
                     self._mark_emitted(key)
-                if isinstance(error, ExpectedIngestionState):
+                if isinstance(error, NonRetryableIngestionError):
                     log.info(
                         "KovaaK ingestion awaiting state for %s: %s",
                         discovery.stem,
@@ -224,7 +228,7 @@ class KovaaKDirectoryWatcher:
                     self._release(key)
                 else:
                     self._mark_emitted(key)
-                if isinstance(error, ExpectedIngestionState):
+                if isinstance(error, NonRetryableIngestionError):
                     log.info(
                         "KovaaK ingestion awaiting state for %s: %s",
                         discovery.stem,
@@ -266,7 +270,6 @@ __all__ = [
     "KovaaKDirectoryWatcher",
     "KovaaKFileDiscovery",
     "KovaaKIngestionService",
-    "ExpectedIngestionState",
     "NonRetryableIngestionError",
     "RetryableIngestionError",
     "is_performance_path",
