@@ -4,6 +4,7 @@ import { isRecord, type CoachToolBridge } from "./contracts.ts";
 import type { SqliteDb } from "./db.ts";
 import { NATIVE_READ_COMMANDS, executeNativeRead } from "./product-commands-native.ts";
 import { isNativeEvidenceCommand, executeNativeEvidence } from "./evidence-native.ts";
+import { isNativeWriteCommand, executeNativeWrite, type NativeWriteResult } from "./product-commands-write.ts";
 
 type TypeBuilder = {
   Literal(value: string): unknown;
@@ -135,6 +136,30 @@ function nativeToToolResult(commandName: string, nativeResult: NativeCommandResu
   return { content: [{ type: "text", text: responseText }], details: { event } };
 }
 
+function writeResultToToolResult(commandName: string, result: NativeWriteResult) {
+  const event = {
+    type: "product_command" as const,
+    command_id: result.command_id,
+    command_name: commandName,
+    status: result.status,
+    result_ref: result.result_ref ?? null,
+    audit_ref: result.audit_ref,
+    ui_event: result.ui_event ?? null,
+    warning_or_error: result.warning_or_error ?? null,
+  };
+  const responseObj: Record<string, unknown> = {
+    schema_version: "coach_product_command_result.v1",
+    command_id: result.command_id,
+    status: result.status,
+    audit_ref: result.audit_ref,
+  };
+  if (result.result_ref !== undefined) responseObj.result_ref = result.result_ref;
+  if (result.result !== undefined) responseObj.result = result.result;
+  if (result.ui_event) responseObj.ui_event = result.ui_event;
+  if (result.warning_or_error) responseObj.warning_or_error = result.warning_or_error;
+  return { content: [{ type: "text", text: JSON.stringify(responseObj) }], details: { event } };
+}
+
 export function createProductCommandTool(
   bridge: CoachToolBridge | null,
   options: ProductCommandToolOptions & { db?: SqliteDb | null; ownerId?: string } = {},
@@ -179,6 +204,19 @@ export function createProductCommandTool(
       if (db !== null && isNativeEvidenceCommand(params.command_name)) {
         const nativeResult = executeNativeEvidence(db, params.command_name, params.parameters, ownerId);
         return nativeToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native write commands: execute DB mutations directly, skip the HTTP bridge.
+      if (db !== null && isNativeWriteCommand(params.command_name)) {
+        let idempotencyKey = params.idempotency_key;
+        if (!idempotencyKey && bridge) {
+          idempotencyKey = stableKey(bridge, params.command_name, params.parameters);
+        } else if (!idempotencyKey) {
+          // No bridge — generate a stable key scoped to owner + command + params.
+          idempotencyKey = `native:${createHash("sha256").update(canonicalJson({ owner: ownerId, commandName: params.command_name, parameters: params.parameters })).digest("hex")}`;
+        }
+        const nativeResult = executeNativeWrite(db, params.command_name, params.parameters, ownerId, idempotencyKey);
+        return writeResultToToolResult(params.command_name, nativeResult);
       }
 
       if (!bridge) {
