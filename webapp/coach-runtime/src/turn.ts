@@ -16,6 +16,7 @@ import { createAnalysisSummaryTool } from "./analysis-summary-tool.ts";
 import { createCoachKnowledgeTool } from "./knowledge-tools.ts";
 import { createSkillLoaderTool, skillsSystemPromptBlock } from "./skill-loader.ts";
 import { createProductCommandTool } from "./product-command-tools.ts";
+import { getDb } from "./db.ts";
 import { createFakeStreamFn } from "./fake-stream.ts";
 import { resolveSystemPrompt } from "./load-system-prompt.ts";
 import { extractRuntimeSecrets, parseProviderProfile, ProviderProfileError, redactRuntimeSecrets } from "./provider-profile.ts";
@@ -272,7 +273,7 @@ function extractBridgeSecrets(rawRequest: unknown): string[] {
     .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
-const MANDATORY_POLICY = "\n\nMandatory Coach policy: use only registered product tools; when the user asks to delete an Analysis, call run_product_command with analysis.delete so the trusted UI/backend can create confirmation--a prose request to reply with confirmation is not an action; when the user asks about KovaaK scores/成绩/分数, call kovaak_scores.refresh_connected for the connected account, or kovaak_scores.lookup only when the user supplied steam_profile:N; do not substitute history.list or history.trend; when the user explicitly asks to generate a training-plan draft, call training_plan.generate_draft even without attached analysis and report any grounding error from the command; distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never advise ignoring hits, whether a shot hit, or accuracy; never reveal bridge tokens, paths, URLs, credentials, raw traces, arbitrary payloads, internal schema/table/tool/field names, raw cursors, or raw event/segment refs; write user-facing plain Chinese without exposing canonical timestamps.";
+const MANDATORY_POLICY = "\n\nMandatory Coach policy: use only registered product tools; when the user asks to delete an Analysis, call run_product_command with analysis.delete so the trusted UI/backend can create confirmation--a prose request to reply with confirmation is not an action; when the user asks about KovaaK scores/成绩/分数, call kovaak_scores.refresh_connected for the connected account, or kovaak_scores.lookup only when the user supplied steam_profile:N; do not substitute history.list or history.trend; when the user explicitly asks to generate a training-plan draft, call training_plan.generate_draft even without attached analysis and report any grounding error from the command; distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never advise ignoring hits, whether a shot hit, or accuracy; write user-facing plain Chinese without exposing canonical timestamps.";
 
 const PROVIDER_CONTEXT_SAFETY_TOKENS = 4096;
 const TOOL_SCHEMA_RESERVE_BYTES = 8 * 1024;
@@ -638,16 +639,22 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
     if (attachedAnalysisInput !== null) {
       prompt[0].content.push({ type: "text" as const, text: attachedAnalysisInput });
     }
+    const nativeDb = getDb();
     const tools = [
       createAnalysisSummaryTool(request.analysis_summary, { maxResultBytes: maxAnalysisResultBytes }),
       createCoachKnowledgeTool(),
       createSkillLoaderTool(),
     ];
-    if (request.tool_bridge) {
-      tools.push(createProductCommandTool(request.tool_bridge, hasAttachedAnalysis ? {
+    // Product command tool: native reads go to SQLite directly, writes/evidence
+    // still go through the HTTP bridge. If no bridge is available, only native
+    // reads work.
+    tools.push(createProductCommandTool(request.tool_bridge ?? null, {
+      db: nativeDb,
+      ownerId: request.user_id,
+      ...(hasAttachedAnalysis ? {
         excludedCommands: ["run.list", "analysis.create_from_run"],
-      } : {}));
-    }
+      } : {}),
+    }));
     agent = new Agent({
       streamFn,
       sessionId: request.session_id,

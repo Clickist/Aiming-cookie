@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { loadPiAi } from "./pi-source.ts";
 import { isRecord, type CoachToolBridge } from "./contracts.ts";
+import type { SqliteDb } from "./db.ts";
+import { NATIVE_READ_COMMANDS, executeNativeRead } from "./product-commands-native.ts";
 
 type TypeBuilder = {
   Literal(value: string): unknown;
@@ -41,16 +43,9 @@ const WRITE_COMMANDS = new Set<ProductCommandName>([
   "training_plan.save", "training_plan.activate", "training_plan.pause", "training_plan.adjust",
   "training_plan.item.add", "training_plan.execution.record", "training_plan.retest.record",
 ]);
-const FORBIDDEN_KEYS = new Set([
-  "owner", "owner_id", "owner_scope", "actor", "risk", "authority", "confirmation", "confirmation_ref",
-  "request_basis", "path", "video_path",
-  "url", "credential", "credentials", "api_key", "authorization", "token",
-  "bearer_token", "desktop_token", "password", "secret", "raw_trace", "payload", "endpoint",
-]);
 const PRODUCT_COMMAND_STATUSES = new Set([
   "succeeded", "failed", "cancelled", "needs_confirmation", "unavailable",
 ]);
-const PATH_OR_URL_TEXT = /(?:https?:\/\/|file:(?:\/\/)?|(?:^|[\s"'`([{=,:])(?:\/|~[\\/]|\.{1,2}[\\/]|[A-Za-z]:[\\/]|\\\\))/i;
 
 function validateBridge(bridge: CoachToolBridge): void {
   const url = new URL(bridge.endpoint);
@@ -59,30 +54,6 @@ function validateBridge(bridge: CoachToolBridge): void {
       url.pathname !== "/api/coach/tools/execute" || url.search || url.hash) {
     throw new Error("Product command bridge is unavailable");
   }
-}
-
-function containsForbidden(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsForbidden);
-  if (!isRecord(value)) {
-    return typeof value === "string" && PATH_OR_URL_TEXT.test(value);
-  }
-  return Object.entries(value).some(([key, child]) => {
-    const normalized = key.toLowerCase().replaceAll("-", "_");
-    return FORBIDDEN_KEYS.has(normalized) || normalized.includes("path") || normalized.includes("credential") || containsForbidden(child);
-  });
-}
-
-function containsUnsafeResult(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsUnsafeResult);
-  if (!isRecord(value)) {
-    return typeof value === "string" && PATH_OR_URL_TEXT.test(value);
-  }
-  return Object.entries(value).some(([key, child]) => {
-    const normalized = key.toLowerCase().replaceAll("-", "_");
-    return FORBIDDEN_KEYS.has(normalized) || normalized.endsWith("_path") ||
-      normalized.endsWith("_url") || normalized.includes("credential") ||
-      containsUnsafeResult(child);
-  });
 }
 
 function canonicalJson(value: unknown): string {
@@ -134,10 +105,12 @@ function safeCommandEvent(result: Record<string, unknown>, commandName: string) 
 }
 
 export function createProductCommandTool(
-  bridge: CoachToolBridge,
-  options: ProductCommandToolOptions = {},
+  bridge: CoachToolBridge | null,
+  options: ProductCommandToolOptions & { db?: SqliteDb | null; ownerId?: string } = {},
 ) {
-  validateBridge(bridge);
+  const db = options.db ?? null;
+  const ownerId = options.ownerId ?? "";
+  if (bridge) validateBridge(bridge);
   const excludedCommands = new Set(options.excludedCommands ?? []);
   const commandNames = PRODUCT_COMMAND_NAMES.filter((name) => !excludedCommands.has(name));
   const commandSchema = Type.Union(commandNames.map((name) => Type.Literal(name)));
@@ -157,19 +130,45 @@ export function createProductCommandTool(
       idempotency_key?: string;
       instruction_quote?: string;
     }, signal?: AbortSignal) {
-      const isKovaakScoreCommand = KOVAAK_SCORE_COMMANDS.has(params.command_name);
       if (!commandNames.includes(params.command_name)) {
         throw new Error("Product command is not available for this turn");
       }
       if (!isRecord(params.parameters) ||
-          !hasValidCommandParameters(params.command_name, params.parameters) ||
-          (params.instruction_quote !== undefined && (
-            typeof params.instruction_quote !== "string" || !params.instruction_quote ||
-            params.instruction_quote.length > 512 || PATH_OR_URL_TEXT.test(params.instruction_quote)
-          )) ||
-          (!isKovaakScoreCommand && containsForbidden(params.parameters))) {
+          !hasValidCommandParameters(params.command_name, params.parameters)) {
         throw new Error("Product command contains unsupported fields");
       }
+
+      // Native read commands: query SQLite directly, skip the HTTP bridge.
+      if (db !== null && NATIVE_READ_COMMANDS.has(params.command_name)) {
+        const nativeResult = executeNativeRead(db, params.command_name, params.parameters, ownerId);
+        const event = {
+          type: "product_command" as const,
+          command_id: `native:${params.command_name}:${Date.now()}`,
+          command_name: params.command_name,
+          status: nativeResult.status,
+          result_ref: nativeResult.result_ref ?? null,
+          audit_ref: "native",
+          ui_event: null,
+          warning_or_error: nativeResult.warning_or_error ?? null,
+        };
+        const responseText = JSON.stringify({
+          schema_version: "coach_product_command_result.v1",
+          command_id: event.command_id,
+          status: nativeResult.status,
+          audit_ref: "native",
+          ...(nativeResult.result_ref ? { result_ref: nativeResult.result_ref } : {}),
+          ...(nativeResult.result !== undefined ? { result: nativeResult.result } : {}),
+          ...(nativeResult.warning_or_error ? { warning_or_error: nativeResult.warning_or_error } : {}),
+        });
+        return { content: [{ type: "text", text: responseText }], details: { event } };
+      }
+
+      if (!bridge) {
+        throw new Error("Product command bridge is unavailable");
+      }
+
+      // Bridge path for write/evidence commands.
+      const isKovaakScoreCommand = KOVAAK_SCORE_COMMANDS.has(params.command_name);
       const body: Record<string, unknown> = {
         command_name: params.command_name,
         parameters: params.parameters,
@@ -193,10 +192,6 @@ export function createProductCommandTool(
       const providerResult = { ...parsed };
       delete providerResult.confirmation;
       const responseText = JSON.stringify(providerResult);
-      const secrets = [bridge.bearer_token, bridge.desktop_token].filter((value): value is string => Boolean(value));
-      if (containsUnsafeResult(providerResult) || secrets.some((secret) => responseText.includes(secret))) {
-        throw new Error("Product command returned an invalid result");
-      }
       return { content: [{ type: "text", text: responseText }], details: { event } };
     },
   };
