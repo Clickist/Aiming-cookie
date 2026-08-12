@@ -5,6 +5,8 @@ import type { SqliteDb } from "./db.ts";
 import { NATIVE_READ_COMMANDS, executeNativeRead } from "./product-commands-native.ts";
 import { isNativeEvidenceCommand, executeNativeEvidence } from "./evidence-native.ts";
 import { isNativeWriteCommand, executeNativeWrite, type NativeWriteResult } from "./product-commands-write.ts";
+import { isNativeEloshapesCommand, executeNativeEloshapes } from "./eloshapes-native.ts";
+import { isNativeKovaakScoreCommand, executeNativeKovaakScore } from "./kovaak-scores-native.ts";
 
 type TypeBuilder = {
   Literal(value: string): unknown;
@@ -217,6 +219,23 @@ export function createProductCommandTool(
         }
         const nativeResult = executeNativeWrite(db, params.command_name, params.parameters, ownerId, idempotencyKey);
         return writeResultToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native eloshapes query: read artifact files, skip the HTTP bridge.
+      if (isNativeEloshapesCommand(params.command_name)) {
+        const nativeResult = executeNativeEloshapes(params.command_name, params.parameters);
+        return nativeToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native KovaaK scores: async HTTP call to KovaaK API, skip the HTTP bridge.
+      if (db !== null && isNativeKovaakScoreCommand(params.command_name)) {
+        // temporary_profile_refs are not carried on the Node bridge type yet;
+        // kovaak_scores.lookup will return temporary_profile_unavailable until
+        // wired, while refresh_connected works (reads steam_id from DB).
+        const nativeResult = await executeNativeKovaakScore(
+          db, params.command_name, params.parameters, ownerId,
+        );
+        return nativeToToolResult(params.command_name, nativeResult);
       }
 
       if (!bridge) {
