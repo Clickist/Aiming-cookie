@@ -13,6 +13,9 @@
  * matching the Python dispatch.
  */
 import { createHash, randomUUID } from "node:crypto";
+import { copyFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 import type { SqliteDb } from "./db.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -124,6 +127,35 @@ function parseJsonColumn(value: unknown): unknown | null {
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value) throw new Error(`${field} is required`);
   return value;
+}
+
+// ── Workspace helpers (mirror Python config.resolve_data_root + workspace.session_dir) ──
+
+function resolveDataRoot(): string {
+  const override = process.env.DATA_ROOT;
+  if (override) return resolve(override);
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || process.env.LOCALAPPDATA;
+    const base = appData || join(homedir(), "AppData", "Roaming");
+    return resolve(base, "Aiming Cookie");
+  }
+  if (process.platform === "darwin") {
+    return resolve(homedir(), "Library", "Application Support", "Aiming Cookie");
+  }
+  const xdg = process.env.XDG_DATA_HOME;
+  const base = xdg || join(homedir(), ".local", "share");
+  return resolve(base, "Aiming Cookie");
+}
+
+function sessionDir(sessionId: number): string {
+  return resolve(resolveDataRoot(), "sessions", String(sessionId));
+}
+
+function removeSessionWorkspace(sessionId: number): boolean {
+  const path = sessionDir(sessionId);
+  if (!existsSync(path)) return false;
+  rmSync(path, { recursive: true, force: true });
+  return true;
 }
 
 function parseRef(value: unknown, expectedKind: string): { id: number; ref: string } {
@@ -492,6 +524,7 @@ const analysisRetry: WriteHandler = (db, params, ownerId) => {
   // Create retry session
   const parentGroup = row.task_group_ref || `task:${analysisId}`;
   const nextAttempt = (row.attempt_number || 1) + 1;
+  const inputMode = (row.input_mode as string) || "video_fallback";
   const retrySession = db.transaction(() => {
     const newId = db.prepare(
       "INSERT INTO sessions(" +
@@ -509,9 +542,43 @@ const analysisRetry: WriteHandler = (db, params, ownerId) => {
     ) as AnyDict;
     return newId.id;
   })();
-  // TODO: file copy (video/csv) and session status transition to 'queued'
-  // remain on the Python side for now. The retry session is created as
-  // 'uploading' and requires finish_upload to transition to 'queued'.
+
+  // Copy managed inputs from parent session to retry workspace.
+  const retryWorkspace = sessionDir(retrySession);
+  let retryVideo = row.video_path ?? "";
+  let retryCsv = row.csv_path ?? "";
+  try {
+    if ((inputMode === "video_fallback" || inputMode === "multimodal") && row.video_path && existsSync(row.video_path)) {
+      const videoDest = resolve(retryWorkspace, "video.mp4");
+      mkdirSync(retryWorkspace, { recursive: true });
+      copyFileSync(row.video_path, videoDest);
+      retryVideo = videoDest;
+    }
+    if (inputMode === "video_fallback" && row.csv_path && existsSync(row.csv_path)) {
+      const csvDest = resolve(retryWorkspace, "stats.csv");
+      mkdirSync(retryWorkspace, { recursive: true });
+      copyFileSync(row.csv_path, csvDest);
+      retryCsv = csvDest;
+    }
+    // Transition from 'uploading' to 'queued'.
+    const transitionResult = db.prepare(
+      "UPDATE sessions SET status='queued', task_state='queued', " +
+      "task_phase='preparing_training_record', video_path=?, csv_path=?, " +
+      "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='uploading'",
+    ).run(retryVideo || null, retryCsv || null, retrySession);
+    if (transitionResult.changes !== 1) {
+      throw new Error("active:retry attempt reservation was lost");
+    }
+  } catch (error) {
+    try { removeSessionWorkspace(retrySession); } catch { /* best-effort */ }
+    db.prepare(
+      "UPDATE sessions SET status='failed', task_state='failed', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+    ).run(retrySession);
+    const msg = error instanceof Error ? error.message : "";
+    if (msg.startsWith("active:")) return fail("active", msg.slice("active:".length));
+    return fail("input_setup_failed", "无法建立分析输入快照");
+  }
+
   const updated = db.prepare("SELECT * FROM sessions WHERE id=?").get(retrySession) as AnyDict;
   return ok(safeAnalysis(updated), `analysis:${retrySession}`);
 };
@@ -520,7 +587,11 @@ const analysisRetry: WriteHandler = (db, params, ownerId) => {
 const analysisCreateFromRun: WriteHandler = (db, params, ownerId) => {
   const { id: runId } = parseRef(params.run_ref, "run");
   // Verify run ownership
-  const run = db.prepare("SELECT id FROM kovaak_runs WHERE id=? AND user_id=?").get(runId, ownerId);
+  const run = db.prepare(
+    "SELECT id, scenario, stats_path, performance_path, video_path, video_state, " +
+    "trace_state, mouse_trace_path, stats_summary " +
+    "FROM kovaak_runs WHERE id=? AND user_id=?",
+  ).get(runId, ownerId) as AnyDict | undefined;
   if (!run) return fail("not_found", "KovaaK run 不存在");
 
   // Check for existing completed or active session for this run
@@ -551,11 +622,88 @@ const analysisCreateFromRun: WriteHandler = (db, params, ownerId) => {
     return { status: "failed", result_ref: `analysis:${activeSession.id}`, warning_or_error: { code: "active_analysis", message: "已有其它 Analysis 正在进行" } };
   }
 
-  // TODO: file operations (freeze run snapshot, copy video/csv, create input_snapshot)
-  // remain on the Python side. The session row is created here but the analysis
-  // pipeline (enqueue, worker, evidence generation) still requires Python.
-  // For now, return a placeholder indicating the bridge is needed for full execution.
-  return fail("not_implemented", "analysis.create_from_run full pipeline requires the Python bridge for file operations");
+  // Determine input mode from available sources.
+  const hasVideo = run.video_path && existsSync(run.video_path);
+  const hasStats = run.stats_path && existsSync(run.stats_path);
+  const selectedMode = hasVideo && hasStats ? "video_fallback" : hasVideo ? "multimodal" : hasStats ? "video_fallback" : null;
+  if (!selectedMode) {
+    return fail("input_unavailable", "Run has no supported analysis tier");
+  }
+
+  // Determine analysis_type from scenario (simplified; Python uses scenario resolution).
+  const scenario = typeof run.scenario === "string" ? run.scenario : "";
+  const analysisType = scenario.toLowerCase().includes("tracking") ? "continuous_tracking"
+    : scenario.toLowerCase().includes("dynamic clicking") || scenario.toLowerCase().includes("patrol") ? "dynamic_clicking"
+    : "flicking";
+
+  // Build calibration request from parameters.
+  const cmPer360 = params.cm_per_360 ?? null;
+  const fov = params.fov ?? null;
+  const manualOverride = (cmPer360 !== null || fov !== null) ? { cm_per_360: cmPer360, fov } : null;
+  const calibrationRequest = { profile_default: null, manual_override: manualOverride };
+
+  // Create session row with status='queued' (file copy happens synchronously below).
+  const newSessionId = db.transaction(() => {
+    const row = db.prepare(
+      "INSERT INTO sessions(" +
+      "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, " +
+      "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts, " +
+      "attempt_number, task_state, calibration_request_json" +
+      ") VALUES(?, 'queued', ?, ?, ?, ?, ?, ?, ?, NULL, 0, 3, 1, 'queued', ?) RETURNING id",
+    ).get(
+      ownerId,
+      "", "",  // paths set after workspace copy below
+      cmPer360, fov, analysisType,
+      selectedMode, runId,
+      JSON.stringify(calibrationRequest),
+    ) as AnyDict;
+    const sid = row.id;
+    db.prepare("UPDATE sessions SET task_group_ref=? WHERE id=?").run(`task:${sid}`, sid);
+    return sid;
+  })();
+
+  // Copy video and stats files to session workspace.
+  const workspace = sessionDir(newSessionId);
+  let managedVideo = "";
+  let managedCsv = "";
+  try {
+    if (hasVideo) {
+      const videoDest = resolve(workspace, "video.mp4");
+      mkdirSync(workspace, { recursive: true });
+      copyFileSync(run.video_path, videoDest);
+      managedVideo = videoDest;
+    }
+    if (selectedMode === "video_fallback" && hasStats) {
+      const statsDest = resolve(workspace, "stats.csv");
+      mkdirSync(workspace, { recursive: true });
+      copyFileSync(run.stats_path, statsDest);
+      managedCsv = statsDest;
+    }
+    // Update session with managed workspace paths.
+    db.prepare(
+      "UPDATE sessions SET video_path=?, csv_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+    ).run(managedVideo || null, managedCsv || null, newSessionId);
+  } catch {
+    // Clean up on failure: remove workspace and abort the session.
+    try {
+      removeSessionWorkspace(newSessionId);
+    } catch { /* best-effort */ }
+    db.prepare(
+      "UPDATE sessions SET status='failed', task_state='failed', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+    ).run(newSessionId);
+    return fail("input_setup_failed", "无法建立分析输入快照");
+  }
+
+  const analysisRef = `analysis:${newSessionId}`;
+  return ok({
+    session_id: newSessionId,
+    analysis_ref: analysisRef,
+    input_mode: selectedMode,
+  }, analysisRef, {
+    schema_version: "coach_ui_event.v1",
+    kind: "analysis",
+    analysis_ref: analysisRef,
+  });
 };
 
 // ── Training plan commands ────────────────────────────────────────────
