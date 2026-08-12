@@ -30,6 +30,14 @@ const SIGNAL_CHANNEL_MAX = 4;
 const SIGNAL_POINTS_PER_CHANNEL = 600;
 const FACT_SECTION_MAX = 8;
 
+const HEADLINE_METRIC_KEYS = new Set([
+  "accuracy", "ttk", "ttk_ms", "time_to_kill", "path_efficiency",
+  "sparc", "overshoot", "reaction_time", "smoothness",
+  "reverse_ratio", "tracking_accuracy", "click_accuracy",
+  "target_switch_time", "precision", "consistency",
+  "score", "kills_per_minute", "kpm", "dps",
+]);
+
 // ── EvidenceKeyRegistry singleton ──
 
 let registryInstance: EvidenceKeyRegistry | undefined;
@@ -47,9 +55,9 @@ function getDataRoot(): string | null {
   return dataRoot;
 }
 
-type LoadedArtifact = { artifact: AnyDict; analysisRef: string };
+type LoadedArtifact = { artifact: AnyDict; analysisRef: string; derivedArtifact: AnyDict };
 
-function loadArtifact(db: SqliteDb, analysisRef: string, ownerId: string): LoadedArtifact | null {
+export function loadArtifact(db: SqliteDb, analysisRef: string, ownerId: string): LoadedArtifact | null {
   const match = analysisRef.match(/^analysis:(\d+)$/);
   if (!match) return null;
   const sessionId = parseInt(match[1], 10);
@@ -84,10 +92,162 @@ function loadArtifact(db: SqliteDb, analysisRef: string, ownerId: string): Loade
 
   try {
     const raw = readFileSync(artifactPath, "utf-8");
-    return { artifact: JSON.parse(raw), analysisRef };
+    return { artifact: JSON.parse(raw), analysisRef, derivedArtifact: safeRef };
   } catch {
     return null;
   }
+}
+
+// ── Analysis brief builder (ported from coach_context.build_analysis_brief) ──
+
+export function buildAnalysisBrief(
+  artifact: AnyDict,
+  diagnosis?: AnyDict | null,
+): AnyDict | null {
+  if (!artifact || typeof artifact !== "object") return null;
+
+  const brief: AnyDict = {};
+
+  // Compute the training-start offset so segment times are relative.
+  const window = artifact.canonical_time_window;
+  let windowStartMs = 0;
+  if (window && typeof window === "object" && typeof window.start_ms === "number") {
+    windowStartMs = window.start_ms;
+  }
+
+  // Evidence segments — compact playable time ranges (relative to video start).
+  const segments = artifact.evidence_segments;
+  if (Array.isArray(segments)) {
+    const compactSegments: AnyDict[] = [];
+    for (const segment of segments) {
+      if (!segment || typeof segment !== "object") continue;
+      const compact: AnyDict = {};
+      for (const key of ["segment_id", "segment_kind", "title_key"]) {
+        if (key in segment && segment[key] != null) compact[key] = segment[key];
+      }
+      const focusStart = segment.focus_start_ms;
+      const focusEnd = segment.focus_end_ms;
+      if (typeof focusStart === "number") compact.relative_start_ms = focusStart - windowStartMs;
+      if (typeof focusEnd === "number") compact.relative_end_ms = focusEnd - windowStartMs;
+      if (Array.isArray(segment.issue_refs)) {
+        compact.issue_refs = segment.issue_refs.filter((r: unknown) => typeof r === "string").slice(0, 3);
+      }
+      if (compact.segment_id != null) compactSegments.push(compact);
+    }
+    if (compactSegments.length > 0) {
+      brief.evidence_segments = compactSegments.slice(0, 24);
+      brief.video_time_note =
+        "relative_start_ms/relative_end_ms 是视频播放时间（从 0 开始）。" +
+        "你没有视频帧读取能力，只能说'在这个时间段请重点观察什么'，" +
+        "不能说'我看到画面里……'。";
+    }
+  }
+
+  // Key metrics — headline computed values only.
+  const metricRecords = artifact.metric_records;
+  if (Array.isArray(metricRecords)) {
+    const compactMetrics: AnyDict[] = [];
+    for (const metric of metricRecords) {
+      if (!metric || typeof metric !== "object") continue;
+      const key = metric.metric_key;
+      if (typeof key !== "string" || !HEADLINE_METRIC_KEYS.has(key)) continue;
+      compactMetrics.push({
+        metric_key: key,
+        value: metric.value,
+        unit: metric.unit,
+        classification: metric.classification,
+      });
+    }
+    if (compactMetrics.length > 0) brief.key_metrics = compactMetrics;
+  }
+
+  // Kill summary — aggregate stats from event bundles.
+  const eventBundles = artifact.event_bundles;
+  if (Array.isArray(eventBundles)) {
+    const killEvents: AnyDict[] = [];
+    for (const bundle of eventBundles) {
+      if (!bundle || typeof bundle !== "object") continue;
+      for (const event of bundle.events || []) {
+        if (
+          event && typeof event === "object" &&
+          (event.event_kind === "kill" || event.event_kind === "elimination")
+        ) {
+          killEvents.push(event);
+        }
+      }
+    }
+    if (killEvents.length > 0) {
+      const weaponCounts: Record<string, number> = {};
+      const accuracies: number[] = [];
+      const ttks: number[] = [];
+      for (const event of killEvents) {
+        const attrs = event.attributes;
+        if (attrs && typeof attrs === "object") {
+          if (typeof attrs.weapon === "string") {
+            weaponCounts[attrs.weapon] = (weaponCounts[attrs.weapon] || 0) + 1;
+          }
+          if (typeof attrs.accuracy === "number") accuracies.push(attrs.accuracy);
+          let ttk: unknown = attrs.ttk_ms;
+          if (ttk == null) ttk = attrs.ttk;
+          if (typeof ttk === "number") ttks.push(ttk);
+        }
+      }
+      const killSummary: AnyDict = { total_kills: killEvents.length };
+      if (accuracies.length > 0) killSummary.avg_accuracy = accuracies.reduce((a, b) => a + b, 0) / accuracies.length;
+      if (ttks.length > 0) killSummary.avg_ttk_ms = ttks.reduce((a, b) => a + b, 0) / ttks.length;
+      if (Object.keys(weaponCounts).length > 0) {
+        const sorted = Object.entries(weaponCounts).sort((a, b) => b[1] - a[1]).slice(0, 16);
+        killSummary.weapon_breakdown = Object.fromEntries(sorted);
+      }
+      brief.kill_summary = killSummary;
+    }
+  }
+
+  // Diagnosis issues — connect each issue to relative video times.
+  const eventTimes: Record<string, number> = {};
+  if (Array.isArray(eventBundles)) {
+    for (const bundle of eventBundles) {
+      if (!bundle || typeof bundle !== "object") continue;
+      for (const event of bundle.events || []) {
+        if (
+          event && typeof event === "object" &&
+          typeof event.event_id === "string" &&
+          typeof event.start_ms === "number"
+        ) {
+          eventTimes[event.event_id] = event.start_ms - windowStartMs;
+        }
+      }
+    }
+  }
+
+  const diag = diagnosis ?? artifact.diagnosis;
+  if (diag && typeof diag === "object") {
+    const issues = (diag as AnyDict).issues;
+    if (Array.isArray(issues)) {
+      const compactIssues: AnyDict[] = [];
+      for (const issue of issues) {
+        if (!issue || typeof issue !== "object") continue;
+        const compactIssue: AnyDict = {};
+        for (const key of ["signal", "plain_language_meaning", "metric_refs"]) {
+          if (key in issue && issue[key] != null) compactIssue[key] = issue[key];
+        }
+        const eventRefs = issue.event_refs;
+        if (Array.isArray(eventRefs)) {
+          const eventTimesOut: AnyDict[] = [];
+          for (const ref of eventRefs.slice(0, 6)) {
+            if (typeof ref === "string" && ref in eventTimes) {
+              eventTimesOut.push({ event_ref: ref, relative_time_ms: eventTimes[ref] });
+            }
+          }
+          if (eventTimesOut.length > 0) compactIssue.event_times = eventTimesOut;
+        }
+        if (compactIssue.signal != null) compactIssues.push(compactIssue);
+      }
+      if (compactIssues.length > 0) brief.diagnosis_issues = compactIssues;
+    }
+  }
+
+  return Object.keys(brief).length > 0 ? brief : null;
 }
 
 // ── Ref parsing helpers ──
@@ -350,6 +510,64 @@ function tableField(table: AnyDict, field: string): AnyDict {
   const def = table.field_catalog?.find((f: AnyDict) => f.field_key === field);
   if (!def) throw new Error(`field "${field}" not in table field_catalog`);
   return def;
+}
+
+function tableMetricField(table: AnyDict, metricKey: string): AnyDict {
+  const matches = (table.field_catalog || []).filter((f: AnyDict) => f.metric_key === metricKey);
+  if (matches.length !== 1) throw new Error("requested metric does not map to one processed event field");
+  return matches[0];
+}
+
+function processedMetricRecord(
+  table: AnyDict,
+  events: AnyDict[],
+  metricKey: string,
+  evidenceRef: string,
+): AnyDict {
+  const definition = tableMetricField(table, metricKey);
+  const field = definition.field_key;
+  const values: number[] = [];
+  for (const event of events) {
+    const value = eventFieldValue(event, field);
+    if (typeof value === "number" && !Number.isNaN(value) && Number.isFinite(value)) {
+      values.push(value);
+    }
+  }
+  if (!values.length) throw new Error("processed event metric is unavailable");
+  const value = values.length === 1 ? values[0] : nearestRank(values, 0.5);
+  const eventRefs = events.map((e) => e.event_id);
+  const sourceRefs = new Set<string>();
+  for (const event of events) {
+    for (const ref of event.source_refs || []) sourceRefs.add(ref as string);
+  }
+  const minConfidence = events.reduce((min, e) => Math.min(min, e.confidence ?? 0), 0);
+  return {
+    schema_version: "metric_record.v1",
+    metric_key: metricKey,
+    metric_version: definition.metric_version,
+    value,
+    unit: definition.unit,
+    availability: "available",
+    classification: "deterministic",
+    provenance: {
+      kind: "derived",
+      source_refs: [...sourceRefs].sort(),
+    },
+    population: {
+      sample_count: events.length,
+      valid_count: values.length,
+      excluded_count: events.length - values.length,
+    },
+    condition_refs: [],
+    event_refs: eventRefs,
+    evidence_segment_refs: evidenceRef.includes(":segment:") ? [evidenceRef] : [],
+    coverage: minConfidence,
+    confidence: minConfidence,
+    limitations: [
+      ...(definition.limitations || []),
+      ...(values.length === 1 ? [] : ["segment_value_is_median_of_processed_rows"]),
+    ],
+  };
 }
 
 // ── Evidence result wrapper ──
@@ -879,7 +1097,7 @@ function cmdEventsSequence(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   }
 }
 
-// 13. analysis.evidence.compare (simplified — analysis-scope only for now)
+// 13. analysis.evidence.compare
 function cmdEvidenceCompare(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   const refs: string[] = params.evidence_refs ?? [];
   const metricKeys: string[] = params.metric_keys ?? [];
@@ -890,54 +1108,180 @@ function cmdEvidenceCompare(ctx: EvidenceCtx, params: AnyDict): NativeResult {
     return evidenceFailed("invalid_parameters", "metric_keys must contain 1 to 8 keys");
   }
 
-  // All refs must be the same scope
-  let scope: string | null = null;
+  // All refs must be the same scope.
+  let comparisonScope: string | null = null;
   for (const ref of refs) {
     let refScope: string;
     if (ref.includes(":segment:")) refScope = "segment";
     else if (ref.includes(":event:")) refScope = "event";
     else if (/^analysis:\d+$/.test(ref)) refScope = "analysis";
     else return evidenceFailed("invalid_reference", "comparison refs must be analysis, segment or processed event refs");
-    if (scope === null) scope = refScope;
-    else if (scope !== refScope) return evidenceFailed("not_comparable", "analysis and segment evidence cannot be mixed");
+    if (comparisonScope === null) comparisonScope = refScope;
+    else if (comparisonScope !== refScope) return evidenceFailed("not_comparable", "analysis and segment evidence cannot be mixed");
   }
 
-  // For analysis scope: compare metric_records directly
-  if (scope === "analysis") {
-    const comparisons: AnyDict[] = [];
-    for (const ref of refs) {
-      const { artifact } = requireArtifact(ctx, ref);
-      const metrics = (artifact.metric_records || [])
+  const comparisonContracts: AnyDict[] = [];
+  const comparisonLimitations: string[] = [];
+  const rows: AnyDict[] = [];
+
+  for (const ref of refs) {
+    const loaded = requireArtifact(ctx, ref);
+    const { artifact, derivedArtifact } = loaded;
+
+    let segment: AnyDict | null = null;
+    let event: AnyDict | null = null;
+    let table: AnyDict | null = null;
+
+    if (comparisonScope === "segment") {
+      try {
+        segment = findSegment(artifact, ref);
+      } catch {
+        return evidenceFailed("not_found", "EvidenceSegment 不存在");
+      }
+    }
+
+    // All requested keys must exist in metric_records.
+    const availableKeys = new Set((artifact.metric_records || []).map((m: AnyDict) => m.metric_key));
+    if (!metricKeys.every((k) => availableKeys.has(k))) {
+      return evidenceFailed("invalid_parameters", "metric is not available for comparison");
+    }
+
+    let predicateVersion: string;
+    let metrics: AnyDict[];
+
+    if (comparisonScope === "analysis") {
+      predicateVersion = "analysis_metric_comparability.v1";
+      metrics = (artifact.metric_records || [])
         .filter((m: AnyDict) => metricKeys.includes(m.metric_key))
         .map(safeMetric);
-      comparisons.push({ evidence_ref: ref, scope: "analysis", metrics });
-    }
-    // Compute deltas from first
-    const first = comparisons[0].metrics;
-    for (let i = 1; i < comparisons.length; i++) {
-      const deltas: AnyDict = {};
-      for (const mk of metricKeys) {
-        const firstMetric = first.find((m: AnyDict) => m.metric_key === mk);
-        const currMetric = comparisons[i].metrics.find((m: AnyDict) => m.metric_key === mk);
-        if (firstMetric && currMetric && typeof firstMetric.value === "number" && typeof currMetric.value === "number") {
-          deltas[mk] = currMetric.value - firstMetric.value;
+    } else {
+      const processedTables = buildProcessedEventTableCatalog(artifact);
+
+      if (comparisonScope === "segment" && processedTables.length === 0) {
+        // Legacy: use metric_records linked to the segment.
+        predicateVersion = "legacy_segment_metric_comparability.v1";
+        metrics = (artifact.metric_records || [])
+          .filter((m: AnyDict) =>
+            metricKeys.includes(m.metric_key) &&
+            Array.isArray(m.evidence_segment_refs) &&
+            m.evidence_segment_refs.includes(ref),
+          )
+          .map(safeMetric);
+        comparisonLimitations.push("legacy_segment_compare_uses_linked_metric_record");
+      } else if (comparisonScope === "event") {
+        // Find the unique table containing the event.
+        predicateVersion = "processed_event_metric_comparability.v1";
+        const matches: Array<[AnyDict, AnyDict[]]> = [];
+        for (const candidate of processedTables) {
+          const [, candidateEvents] = processedTableEvents(artifact, candidate.table_ref);
+          const candidateEvent = candidateEvents.find((e: AnyDict) => e.event_id === ref);
+          if (candidateEvent) matches.push([candidate, [candidateEvent]]);
         }
+        if (matches.length !== 1) {
+          return evidenceFailed("not_comparable", "event ref is not a unique processed event");
+        }
+        table = matches[0][0];
+        const selectedEvents = matches[0][1];
+        event = selectedEvents[0];
+        metrics = metricKeys.map((k) => safeMetric(processedMetricRecord(table, selectedEvents, k, ref)));
+      } else {
+        // Segment scope with processed tables: find the unique table covering the segment.
+        predicateVersion = "processed_event_metric_comparability.v1";
+        const matches: Array<[AnyDict, AnyDict[]]> = [];
+        for (const candidate of processedTables) {
+          if (!metricKeys.every((key) =>
+            (candidate.field_catalog || []).some((f: AnyDict) => f.metric_key === key),
+          )) continue;
+          const [, candidateEvents] = processedTableEvents(artifact, candidate.table_ref);
+          const selectedEvents = candidateEvents.filter(
+            (e: AnyDict) => segment!.start_ms <= (e.start_ms ?? -1) && (e.start_ms ?? -1) < segment!.end_ms,
+          );
+          if (selectedEvents.length > 0) matches.push([candidate, selectedEvents]);
+        }
+        if (matches.length !== 1) {
+          return evidenceFailed("not_comparable", "segment does not resolve to one processed event table");
+        }
+        table = matches[0][0];
+        const selectedEvents = matches[0][1];
+        metrics = metricKeys.map((k) => safeMetric(processedMetricRecord(table, selectedEvents, k, ref)));
       }
-      comparisons[i].deltas_from_first = deltas;
     }
-    const resultRef = `evidence:compare:${refs.join(",")}`.slice(0, 80);
-    return evidenceResult(resultRef, {
-      scope: "analysis",
-      comparability: "comparable",
-      comparability_predicate_version: "analysis_metric_comparability.v1",
-      metric_keys: metricKeys,
-      comparisons,
-      limitations: [],
+
+    // All requested metrics must be present.
+    const metricKeySet = new Set(metrics.map((m: AnyDict) => m.metric_key));
+    if (metricKeySet.size !== metricKeys.length || !metricKeys.every((k) => metricKeySet.has(k))) {
+      return evidenceFailed("not_comparable", "requested metrics are not linked to every comparison ref");
+    }
+
+    // Build the comparison contract.
+    const facts = artifact.canonical_run_facts || {};
+    const rawMetrics: Record<string, AnyDict> = {};
+    for (const m of metrics) rawMetrics[m.metric_key] = m;
+
+    const contract: AnyDict = {
+      predicate_version: predicateVersion,
+      artifact_contract_version: derivedArtifact.contract_version,
+      scenario_profile_ref: facts.scenario_profile_ref ?? null,
+      timebase_version: artifact.canonical_time_window?.timebase_version ?? null,
+      analyzer_ref: segment?.analyzer_ref ?? table?.analyzer_ref ?? null,
+      metrics: Object.fromEntries(metricKeys.map((key) => {
+        const rm = rawMetrics[key] || {};
+        return [key, {
+          metric_version: rm.metric_version ?? null,
+          unit: rm.unit ?? null,
+          classification: rm.classification ?? null,
+          provenance_kind: (rm.provenance || {}).kind ?? null,
+          condition_refs: Array.isArray(rm.condition_refs) ? [...rm.condition_refs].sort() : [],
+        }];
+      })),
+    };
+    comparisonContracts.push(contract);
+
+    rows.push({
+      evidence_ref: ref,
+      scope: comparisonScope,
+      segment: segment ? safeSegment(segment) : null,
+      event: event ? safeEvent(event) : null,
+      metrics,
     });
   }
 
-  // Segment/event scope comparison requires more complex logic — fall through to bridge for now
-  return evidenceFailed("not_implemented", "segment/event scope comparison not yet implemented natively");
+  // All contracts must match.
+  const firstContract = JSON.stringify(comparisonContracts[0]);
+  for (let i = 1; i < comparisonContracts.length; i++) {
+    if (JSON.stringify(comparisonContracts[i]) !== firstContract) {
+      return evidenceFailed("not_comparable", "versioned comparison contracts do not match");
+    }
+  }
+
+  // Compute deltas from the first row.
+  const baseline: Record<string, unknown> = {};
+  for (const m of rows[0].metrics) {
+    baseline[m.metric_key] = m.value;
+  }
+  for (const row of rows) {
+    row.deltas_from_first = Object.fromEntries(
+      row.metrics.map((m: AnyDict) => {
+        const bv = baseline[m.metric_key];
+        return [
+          m.metric_key,
+          typeof m.value === "number" && typeof bv === "number"
+            ? m.value - bv
+            : null,
+        ];
+      }),
+    );
+  }
+
+  const resultRef = `evidence:compare:${refs.join(",")}`.slice(0, 80);
+  return evidenceResult(resultRef, {
+    scope: comparisonScope,
+    comparability: "comparable",
+    comparability_predicate_version: comparisonContracts[0].predicate_version,
+    metric_keys: metricKeys,
+    comparisons: rows,
+    limitations: [...new Set(comparisonLimitations)],
+  });
 }
 
 // ── Helpers for events.list ──
