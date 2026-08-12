@@ -1101,6 +1101,7 @@ export async function createCoachAgentRun(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        schema_version: "coach_agent_run_request.v1",
         content,
         context_refs: contextRefs,
         ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
@@ -1174,7 +1175,7 @@ export async function decideCoachConfirmation(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ schema_version: "coach_confirmation_decision.v1", decision }),
     },
     opts,
   );
