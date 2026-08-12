@@ -18,7 +18,7 @@
 
 ### 2026-08-10 Coach-first IA/UI 同步
 
-本节只同步已确认的 Coach-first 信息架构，不新增分析能力或改变数据合同：Coach 是默认主工作区，`/` 为 Coach 首页，`/s/:sessionId` 为指定会话；左侧 Session rail 是唯一主导航，用户可见的一级消费面只有 Coach、History 与 Settings。Tasks 和独立 Analysis 页面不再是产品页面，旧 URL 只作有界兼容跳转。Analysis 仍是本地、owner-scoped 的内部数据对象：History 可按需显示安全摘要或把所选记录交给 Coach；指标、时间线和视频证据只在 Coach 解释需要时以确定性卡片出现。无视频时对话保持可读的居中最大宽度；打开视频证据时才进入 Session rail + 中央视频 + 右侧 Coach 的三栏形态。
+本节只同步已确认的 Coach-first 信息架构，不新增分析能力或改变数据合同：Coach 是默认主工作区，`/` 为 Coach 首页，`/s?sessionId=<id>` 为指定会话；左侧 Session rail 是唯一主导航，用户可见的一级消费面只有 Coach、History 与 Settings。Tasks 和独立 Analysis 页面不再是产品页面，旧 URL 只作有界兼容跳转。Analysis 仍是本地、owner-scoped 的内部数据对象：History 可按需显示安全摘要或把所选记录交给 Coach；指标、时间线和视频证据只在 Coach 解释需要时以确定性卡片出现。无视频时对话保持可读的居中最大宽度；打开视频证据时才进入 Session rail + 中央视频 + 右侧 Coach 的三栏形态。
 
 桌面产品只支持正常窗口与最大化/全屏使用，Tauri 最小内容宽度为 `1180px`，不为更窄窗口维护另一套导航或 Coach 布局。History 与 Settings 的主要消费内容最大宽度为 `1040px` 并在可用区域居中，避免全屏时横向拉散。
 

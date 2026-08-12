@@ -286,6 +286,53 @@ def test_dynamic_clicking_computes_error_acquisition_and_relative_velocity():
     assert dynamic_event["attributes"]["outcome_success"] == 1.0
 
 
+def test_target_state_accuracy_reports_success_ratio_not_binary_median():
+    payload = _payload()
+    target_available = payload["visual_event_bundle"]["events"][2]
+    payload["click_events"] = []
+    payload["visual_event_bundle"]["events"] = [target_available]
+    payload["visual_event_bundle"]["outcome_associations"] = []
+
+    for index, (time_ms, outcome_kind) in enumerate(
+        ((100, "hit"), (150, "hit"), (200, "miss")), 1,
+    ):
+        shot_ref = f"analysis:1:shot:{index}"
+        outcome_ref = f"analysis:1:{outcome_kind}:{index}"
+        payload["click_events"].append({"event_ref": shot_ref, "time_ms": time_ms})
+        payload["visual_event_bundle"]["events"].extend((
+            {
+                "event_id": shot_ref, "event_kind": "shot",
+                "start_ms": time_ms, "end_ms": time_ms, "actor_refs": [],
+                "source_refs": ["analysis:1:source:fixture"], "confidence": 1.0,
+                "attributes": {}, "limitations": [],
+            },
+            {
+                "event_id": outcome_ref, "event_kind": outcome_kind,
+                "start_ms": time_ms, "end_ms": time_ms, "actor_refs": [],
+                "source_refs": ["analysis:1:source:fixture"], "confidence": 1.0,
+                "attributes": {}, "limitations": [],
+            },
+        ))
+        payload["visual_event_bundle"]["outcome_associations"].append({
+            "association_id": f"analysis:1:association:{index}",
+            "shot_event_ref": shot_ref,
+            "outcome_event_ref": outcome_ref,
+            "target_track_ref": "analysis:1:target-track:1",
+            "weapon_temporal_model": "hitscan",
+            "association_kind": "directly_observed",
+            "source_refs": ["analysis:1:source:fixture"],
+            "confidence": 1.0,
+            "availability": "available",
+            "limitations": [],
+        })
+
+    result = analyze_dynamic_clicking_v1(payload)
+
+    metric = result["metrics"]["dynamic_clicking.target_state_accuracy"]
+    assert metric["value"] == pytest.approx(2 / 3)
+    assert metric["population"]["valid_count"] == 3
+
+
 def test_predictable_motion_without_segment_evidence_only_has_lead_lag_descriptor():
     result = analyze_dynamic_clicking_v1(_payload())
 

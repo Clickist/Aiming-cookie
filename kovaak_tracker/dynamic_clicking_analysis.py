@@ -296,10 +296,16 @@ def _metric(
     condition_refs: list[str],
     limitations: list[str],
     confidence: float,
+    use_mean: bool = False,
 ) -> dict[str, Any]:
     valid = [float(value) for value in values if value is not None and isfinite(value)]
     available = bool(valid)
-    value = float(median(valid)) if valid else None
+    median_value = float(median(valid)) if valid else None
+    value = (
+        float(sum(valid) / len(valid))
+        if valid and use_mean
+        else median_value
+    )
     ordered = sorted(valid)
     distribution = None
     if valid:
@@ -307,7 +313,7 @@ def _metric(
             "min": min(ordered),
             "p10": ordered[max(0, int(round((len(ordered) - 1) * 0.10)))],
             "p25": ordered[max(0, int(round((len(ordered) - 1) * 0.25)))],
-            "median": value,
+            "median": median_value,
             "p75": ordered[max(0, int(round((len(ordered) - 1) * 0.75)))],
             "p90": ordered[max(0, int(round((len(ordered) - 1) * 0.90)))],
             "max": max(ordered),
@@ -839,6 +845,7 @@ def analyze_dynamic_clicking_v1(payload: Mapping[str, Any]) -> dict[str, Any]:
                 else limitations
             ),
             confidence=confidence,
+            use_mean=True,
         ),
     ]
     for metric in metric_records:

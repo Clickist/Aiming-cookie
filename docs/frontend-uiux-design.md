@@ -8,7 +8,7 @@
 >
 > **完整 Coach 数据边界：** 完整 Coach 的 aim-family 范围、证据分层与后续 Gate 可参考 [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)。本文只规定其前端可见性，不能把尚未通过的 family Gate 写成当前已实现能力。
 
-> **2026-08-10 IA 同步：** Coach 为默认主工作区；`/` 为 Coach 首页，`/s/:sessionId` 为指定会话；左侧 Session rail 为唯一主导航，用户可见一级消费面只有 Coach、History 与 Settings。Tasks 与独立 Analysis 页面退役，旧 URL 只跳转 History；Analysis 数据对象和可复用数据/视频组件继续作为内部能力保留。桌面最小内容宽度为 `1180px`，不维护更窄窗口的第二套布局；History 与 Settings 的内容最大宽度为 `1040px` 并居中。旧侧栏和独立报告页文字仅保留为决策演进记录，不得据此恢复页面。
+> **2026-08-10 IA 同步：** Coach 为默认主工作区；`/` 为 Coach 首页，`/s?sessionId=<id>` 为指定会话；左侧 Session rail 为唯一主导航，用户可见一级消费面只有 Coach、History 与 Settings。Tasks 与独立 Analysis 页面退役，旧 URL 只跳转 History；Analysis 数据对象和可复用数据/视频组件继续作为内部能力保留。桌面最小内容宽度为 `1180px`，不维护更窄窗口的第二套布局；History 与 Settings 的内容最大宽度为 `1040px` 并居中。旧侧栏和独立报告页文字仅保留为决策演进记录，不得据此恢复页面。
 >
 > **当前实现边界：** 当前前端实现是实际能力和运行行为的事实源；若其与本文冲突，记录为实现差距并按 PRD 裁决，不能让任一方静默覆盖另一方。已退役页面和旧 prototype 只保留为历史参考。
 

@@ -125,10 +125,16 @@ def _metric(
     condition_refs: Sequence[str] = (),
     limitations: Sequence[str] = (),
     confidence: float = 1.0,
+    use_mean: bool = False,
 ) -> dict[str, Any]:
     valid = [float(value) for value in values if value is not None and isfinite(value)]
     ordered = sorted(valid)
     availability = "available" if valid else "unavailable"
+    value = (
+        float(sum(valid) / len(valid))
+        if valid and use_mean
+        else float(median(valid)) if valid else None
+    )
     distribution = None
     if valid:
         def percentile(fraction: float) -> float:
@@ -142,7 +148,7 @@ def _metric(
         "schema_version": "metric_record.v1",
         "metric_key": key,
         "metric_version": f"{key}.v1",
-        "value": float(median(valid)) if valid else None,
+        "value": value,
         "unit": unit,
         "availability": availability,
         "classification": "deterministic",
@@ -700,6 +706,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
         refs: Sequence[str] = event_refs,
         extra_limitations: Sequence[str] = (),
         conditions: Sequence[str] = (condition_ref,),
+        use_mean: bool = False,
     ) -> dict[str, Any]:
         record = _metric(
             key,
@@ -711,6 +718,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
             condition_refs=conditions,
             limitations=[*limitations, *extra_limitations],
             confidence=confidence,
+            use_mean=use_mean,
         )
         if record["coverage"] is not None:
             record["coverage"] = min(float(record["coverage"]), confidence)
@@ -723,6 +731,7 @@ def analyze_continuous_tracking_v1(payload: Mapping[str, Any]) -> dict[str, Any]
         "continuous_tracking.time_in_radius_ratio": metric(
             "continuous_tracking.time_in_radius_ratio", on_target_values, unit="ratio",
             extra_limitations=[] if radii_available else ["target_radius_unavailable"],
+            use_mean=True,
         ),
         "continuous_tracking.loss_count": metric(
             "continuous_tracking.loss_count",
