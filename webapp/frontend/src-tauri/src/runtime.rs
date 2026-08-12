@@ -68,10 +68,10 @@ impl RuntimeProcess {
         std::fs::create_dir_all(app_data_dir)
             .map_err(|error| format!("failed to create app data directory: {error}"))?;
 
-        let (mut coach_sidecar, coach_sidecar_url) = start_coach_sidecar(layout)?;
-        let token = create_launch_token();
         let database_path = app_data_dir.join("aiming_cookie.db");
         let database_url = format!("sqlite+aiosqlite:///{}", database_path.display());
+        let (mut coach_sidecar, coach_sidecar_url) = start_coach_sidecar(layout, app_data_dir, &database_url)?;
+        let token = create_launch_token();
         let mut command = Command::new(&layout.backend_program);
         command
             .args(&layout.backend_args)
@@ -466,7 +466,7 @@ fn configure_python_io(command: &mut Command) {
         .env("PYTHONIOENCODING", "utf-8");
 }
 
-fn start_coach_sidecar(layout: &RuntimeLayout) -> Result<(Child, String), String> {
+fn start_coach_sidecar(layout: &RuntimeLayout, app_data_dir: &Path, database_url: &str) -> Result<(Child, String), String> {
     let mut command = Command::new(&layout.coach_program);
     if let (Some(pi_source_dir), Some(tsx_loader), Some(sidecar_entry), Some(tsconfig)) = (
         &layout.pi_source_dir,
@@ -502,6 +502,8 @@ fn start_coach_sidecar(layout: &RuntimeLayout) -> Result<(Child, String), String
         .env_remove(TOKEN_ENV)
         .env(COACH_SIDECAR_HOST_ENV, "127.0.0.1")
         .env(COACH_SIDECAR_PORT_ENV, "0")
+        .env("DATABASE_URL", database_url)
+        .env("DATA_ROOT", app_data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
