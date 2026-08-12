@@ -30,6 +30,7 @@ const MAX_RESTART_ATTEMPTS: u8 = 3;
 pub struct RuntimeConnection {
     pub base_url: String,
     pub token: String,
+    pub sidecar_url: String,
 }
 
 pub struct RuntimeProcess {
@@ -172,6 +173,7 @@ impl RuntimeProcess {
             connection: RuntimeConnection {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token,
+                sidecar_url: coach_sidecar_url,
             },
         })
     }
@@ -995,6 +997,7 @@ mod tests {
             connection: RuntimeConnection {
                 base_url: "http://127.0.0.1:43127".to_string(),
                 token: "test-token".to_string(),
+                sidecar_url: "http://127.0.0.1:43128".to_string(),
             },
         };
 
