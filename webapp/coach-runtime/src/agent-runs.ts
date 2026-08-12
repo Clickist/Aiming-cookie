@@ -6,14 +6,12 @@
  * the Python → Node HTTP round-trip for LLM turns.
  *
  * Simplified vs. Python:
- *   - Teaching session reconciliation is not ported; teaching_turn is null.
+ *   - Teaching session reconciliation is ported with a simplified contract
+ *     builder (no lesson extraction from bundle, no prepared_plan_item).
  *   - Analysis soft-start and guidance compilation are not implemented.
- *   - Context enrichment (analysis briefs from evidence artifacts) is not ported.
- *   - Provider recovery / resume_waiting_runs is not implemented.
+ *   - Provider recovery / resume_waiting_runs is implemented.
  *   - Confirmation execution calls executeNativeWrite for coach_side_effect
  *     confirmations; the full audit reconciliation is simplified.
- *
- * These are tracked as TODOs for a future tier.
  */
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
@@ -25,11 +23,14 @@ import type {
   CoachRuntimeProviderProfile,
   CoachRuntimeMessage,
   CoachRuntimeToolEvent,
+  TeachingTurnContract,
 } from "./contracts.ts";
+import { TEACHING_TURN_CONTRACT_SCHEMA } from "./contracts.ts";
 import { extractRuntimeSecrets, redactRuntimeSecrets } from "./provider-profile.ts";
 import { runCoachTurn, stopCoachTurn } from "./turn.ts";
 import { startTask, stopTask, waitForTask, isTaskActive } from "./task-manager.ts";
 import { executeNativeWrite } from "./product-commands-write.ts";
+import { loadArtifact, buildAnalysisBrief } from "./evidence-native.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -286,12 +287,13 @@ function resolveThreadId(db: SqliteDb, ownerId: string, sessionId?: number): num
  * Simplified port of Python's build_context_bundle. Reads projections
  * from coach_context_refs and wraps them in a coach_turn_context.v1 bundle.
  *
- * TODO: benchmark_summary, analysis_brief enrichment from evidence artifacts.
+ * TODO: benchmark_summary.
  */
 function buildContextBundle(
   db: SqliteDb,
   threadId: number,
   requestedRefs: string[] | null,
+  ownerId: string,
 ): { bundle: AnyDict; snapshots: AnyDict[] } {
   const rows = db.prepare(
     "SELECT context_ref, kind, analysis_session_id, comparison_session_id, target_ref, " +
@@ -326,6 +328,16 @@ function buildContextBundle(
     if (row.kind === "comparison") {
       comparisonProjection = parseJson(row.comparison_projection_json);
     }
+    // Enrich projection with analysis brief from evidence artifacts.
+    const analysisRef = `analysis:${row.analysis_session_id}`;
+    const enrichedProjection = { ...projection };
+    if (!enrichedProjection.analysis_brief) {
+      const loaded = loadArtifact(db, analysisRef, ownerId);
+      if (loaded) {
+        const brief = buildAnalysisBrief(loaded.artifact, enrichedProjection.diagnosis ?? null);
+        if (brief) enrichedProjection.analysis_brief = brief;
+      }
+    }
     snapshots.push({
       context_ref: ref,
       kind: row.kind,
@@ -336,11 +348,11 @@ function buildContextBundle(
     contexts.push({
       context_ref: ref,
       kind: row.kind,
-      analysis_ref: `analysis:${row.analysis_session_id}`,
+      analysis_ref: analysisRef,
       comparison_analysis_ref: row.comparison_session_id ? `analysis:${row.comparison_session_id}` : null,
       target_ref: row.target_ref ?? null,
       time_range_ms: row.start_ms != null ? [row.start_ms, row.end_ms] : null,
-      projection,
+      projection: enrichedProjection,
       comparison_projection: comparisonProjection,
     });
   }
@@ -394,6 +406,236 @@ function appendAssistantMessage(
     "INSERT INTO coach_messages(thread_id, role, content, trace_json) VALUES(?, 'assistant', ?, ?)",
   ).run(threadId, content, traceJson);
   db.prepare("UPDATE coach_threads SET updated_at=CURRENT_TIMESTAMP WHERE id=?").run(threadId);
+}
+
+// ── Teaching session helpers ──────────────────────────────────────────
+
+const EMPTY_OBSERVATION = "尚未选择可重复观察";
+const NO_GROUNDED_ISSUE_QUESTION = "这次分析还没看出一个明确问题。你自己最想先解决哪种失误或哪段动作?";
+
+const TEACHING_PHASES = new Set([
+  "intake", "hypothesize", "teach", "await_teach_back", "teach_back_repair",
+  "practice_ready", "await_execution_confirmation", "retest_ready",
+  "await_retest_confirmation", "revise", "follow_up", "paused", "stopped_for_discomfort",
+]);
+
+/**
+ * Load the teaching session for an owner+thread from the DB.
+ * Returns null if no session exists or the state is invalid.
+ */
+function loadTeachingSession(
+  db: SqliteDb,
+  ownerId: string,
+  threadId: number,
+): { sessionRef: string; version: number; state: AnyDict; activeRunRef: string | null } | null {
+  const row = db.prepare(
+    "SELECT session_ref, version, state_json, active_run_ref " +
+    "FROM teaching_sessions WHERE owner_id=? AND thread_id=?",
+  ).get(ownerId, threadId) as AnyDict | undefined;
+  if (!row) return null;
+  const state = parseJson(row.state_json);
+  if (!state || typeof state.phase !== "string" || !TEACHING_PHASES.has(state.phase)) return null;
+  return {
+    sessionRef: row.session_ref as string,
+    version: row.version as number,
+    state,
+    activeRunRef: (row.active_run_ref as string | null) ?? null,
+  };
+}
+
+/**
+ * Build a simplified TeachingTurnContract from the session state.
+ *
+ * Simplified vs. Python's _teaching_contract:
+ *   - No lesson extraction from the context bundle (that's context enrichment).
+ *   - No prepared_plan_item compilation (requires plan-store access).
+ *   - No humanized/qualified candidate text.
+ *   - No peripheral-change-request detection.
+ *
+ * What it does: maps the session phase to question_kind/question, sets the
+ * allowed_command based on phase, and fills the contract from session state.
+ */
+function buildTeachingTurn(session: {
+  sessionRef: string;
+  version: number;
+  state: AnyDict;
+}): TeachingTurnContract | null {
+  const state = session.state;
+  const phase = state.phase as TeachingTurnContract["phase"];
+
+  const questionKindMap: Record<string, TeachingTurnContract["question_kind"]> = {
+    intake: "discriminator",
+    await_teach_back: "teach_back",
+    teach_back_repair: "teach_back_repair",
+    follow_up: "follow_up",
+  };
+  const questionMap: Record<string, string | null> = {
+    intake: NO_GROUNDED_ISSUE_QUESTION,
+    await_teach_back: "这组练习的注意点是什么?",
+    teach_back_repair: "用自己的话再说一次这组只改变什么?",
+    follow_up: "下一次你准备在哪个相近任务里复测?",
+  };
+
+  const questionKind = questionKindMap[phase] ?? "none";
+  const question = questionKind !== "none" ? (questionMap[phase] ?? null) : null;
+
+  const commandMap: Record<string, TeachingTurnContract["allowed_command"] | null> = {
+    await_execution_confirmation: "training_plan.execution.record",
+    await_retest_confirmation: "training_plan.retest.record",
+  };
+  const allowedCommand = commandMap[phase] ?? null;
+
+  const confirmationIntent: TeachingTurnContract["confirmation_intent"] =
+    phase === "await_execution_confirmation" ? "execution" :
+    phase === "await_retest_confirmation" ? "retest" : "none";
+
+  const observation = state.observation?.summary;
+  const isEmptyObservation = observation === EMPTY_OBSERVATION;
+
+  const primary = isRecord(state.primary_candidate) ? state.primary_candidate.label : null;
+
+  const alternatives: string[] = Array.isArray(state.alternatives)
+    ? state.alternatives
+        .map((item: unknown) => (isRecord(item) ? item.label : null))
+        .filter((label: unknown): label is string => typeof label === "string")
+    : [];
+
+  return {
+    schema_version: TEACHING_TURN_CONTRACT_SCHEMA,
+    session_ref: session.sessionRef,
+    session_version: session.version,
+    phase,
+    problem_id: null,
+    problem_label: null,
+    evidence_strength: "limited",
+    supporting_evidence: [],
+    counterevidence_status: "not_observed",
+    counterevidence: [],
+    observation: isEmptyObservation || typeof observation !== "string" ? null : observation,
+    primary_candidate: typeof primary === "string" ? primary : null,
+    alternatives,
+    cue: typeof state.cue === "string" ? state.cue : null,
+    changed_variable: typeof state.changed_variable === "string" ? state.changed_variable : null,
+    active_item_ref: typeof state.active_item_ref === "string" ? state.active_item_ref : null,
+    prepared_plan_ref: null,
+    prepared_item: null,
+    next_recommendation: null,
+    question_kind: questionKind,
+    question,
+    allowed_command: allowedCommand,
+    confirmation_intent: confirmationIntent,
+    retest: {
+      intent: (state.retest_intent as TeachingTurnContract["retest"]["intent"]) ?? "none",
+      comparability_required: (state.retest_intent ?? "none") !== "none",
+      comparability: (state.retest_comparability as TeachingTurnContract["retest"]["comparability"]) ?? "unresolved",
+      revision_decision: (state.revision_decision as TeachingTurnContract["retest"]["revision_decision"]) ?? null,
+    },
+    ratio_sources: [],
+    approved_dose: null,
+    discriminator: null,
+    soft_start: false,
+  };
+}
+
+/**
+ * Compute the next teaching state after a successful turn (no tool command used).
+ *
+ * Simplified port of Python's _state_after_success. Advances the phase
+ * according to the fixed transition map. Resets lesson data on follow_up→intake.
+ */
+function stateAfterSuccess(state: AnyDict, contract: TeachingTurnContract): AnyDict {
+  const nextPhaseMap: Record<string, string> = {
+    intake: "hypothesize",
+    hypothesize: "teach",
+    teach: "practice_ready",
+    await_teach_back: "practice_ready",
+    teach_back_repair: "practice_ready",
+    retest_ready: "await_retest_confirmation",
+    revise: "follow_up",
+    follow_up: "intake",
+  };
+  let nextPhase = nextPhaseMap[contract.phase] ?? contract.phase;
+
+  // Guard: intake with no candidate stays in intake
+  if (contract.phase === "intake" && contract.primary_candidate === null) {
+    nextPhase = "intake";
+  }
+  // Guard: retest_ready with no retest intent stays in retest_ready
+  if (contract.phase === "retest_ready" && contract.retest.intent === "none") {
+    nextPhase = "retest_ready";
+  }
+
+  const next: AnyDict = JSON.parse(JSON.stringify(state));
+  next.phase = nextPhase;
+  next.pending_confirmation_ref = null;
+  next.pause_reason = null;
+
+  // follow_up → intake resets the lesson
+  if (contract.phase === "follow_up") {
+    next.observation = { summary: EMPTY_OBSERVATION, source_refs: [] };
+    next.primary_candidate = null;
+    next.alternatives = [];
+    next.cue = null;
+    next.changed_variable = null;
+    next.active_item_ref = null;
+    next.retest_intent = "none";
+    next.retest_comparability = "unresolved";
+    next.revision_decision = null;
+    next.next_recommendation = null;
+  }
+
+  return next;
+}
+
+/**
+ * Persist the next teaching session state, incrementing version and releasing
+ * the active run. Simplified — does not use optimistic-locking CAS beyond the
+ * version check.
+ */
+function releaseTeachingRun(
+  db: SqliteDb,
+  ownerId: string,
+  sessionRef: string,
+  expectedVersion: number,
+  runRef: string,
+  nextState: AnyDict | null,
+): boolean {
+  if (nextState !== null) {
+    const cursor = db.prepare(
+      "UPDATE teaching_sessions SET state_json=?, version=version+1, active_run_ref=NULL, " +
+      "pending_confirmation_ref=?, pause_reason=?, updated_at=CURRENT_TIMESTAMP " +
+      "WHERE session_ref=? AND owner_id=? AND version=? AND active_run_ref=?",
+    ).run(
+      JSON.stringify(nextState),
+      nextState.pending_confirmation_ref ?? null,
+      nextState.pause_reason ?? null,
+      sessionRef,
+      ownerId,
+      expectedVersion,
+      runRef,
+    );
+    return cursor.changes === 1;
+  }
+  const cursor = db.prepare(
+    "UPDATE teaching_sessions SET active_run_ref=NULL, updated_at=CURRENT_TIMESTAMP " +
+    "WHERE session_ref=? AND owner_id=? AND version=? AND active_run_ref=?",
+  ).run(sessionRef, ownerId, expectedVersion, runRef);
+  return cursor.changes === 1;
+}
+
+/**
+ * Check whether the model used a teaching command (training_plan.item.add,
+ * training_plan.execution.record, training_plan.retest.record) in this turn.
+ */
+function usedTeachingCommand(toolEvents: CoachRuntimeToolEvent[]): boolean {
+  const teachingCommands = new Set([
+    "training_plan.item.add",
+    "training_plan.execution.record",
+    "training_plan.retest.record",
+  ]);
+  return toolEvents.some(
+    (e) => e.type === "product_command" && teachingCommands.has(e.command_name),
+  );
 }
 
 // ── Async turn execution ──────────────────────────────────────────────
@@ -469,8 +711,12 @@ async function runAgentTurn(
       return;
     }
 
+    // Load teaching session and build the teaching turn contract
+    const teachingSession = loadTeachingSession(db, ownerId, threadId);
+    const teachingTurn = teachingSession ? buildTeachingTurn(teachingSession) : undefined;
+
     // Build the turn request
-    const turnRequest = {
+    const turnRequest: AnyDict = {
       schema_version: "coach_runtime_turn.v1",
       run_id: runRef,
       session_id: `coach-thread:${threadId}`,
@@ -479,8 +725,10 @@ async function runAgentTurn(
       analysis_summary: analysisSummary,
       model: providerResult.profile,
       // tool_bridge is null — native DB access handles product commands
-      // teaching_turn is null — not ported in this tier
     };
+    if (teachingTurn) {
+      turnRequest.teaching_turn = teachingTurn;
+    }
 
     const secrets = extractRuntimeSecrets(turnRequest);
 
@@ -493,6 +741,20 @@ async function runAgentTurn(
           "UPDATE coach_agent_runs SET partial_text=?, updated_at=CURRENT_TIMESTAMP " +
           "WHERE run_ref=? AND status='running' AND stop_requested=0",
         ).run(safeText, runRef);
+        appendEvent(
+          db,
+          runRef,
+          "text",
+          "text_generation",
+          "text_revision",
+          "Coach response text was revised",
+          {
+            mode: "replace",
+            revision: partial.revision,
+            elapsed_ms: partial.elapsed_ms,
+            provider_rounds: partial.provider_rounds,
+          },
+        );
       },
       onActivity: async (activity) => {
         if (signal.aborted) return;
@@ -525,6 +787,17 @@ async function runAgentTurn(
 
     if (signal.aborted || isStopRequested(db, runRef)) {
       const partialReply = response.partial_reply;
+      // Release the teaching session claim on stop (no state advancement)
+      if (teachingSession) {
+        releaseTeachingRun(
+          db,
+          ownerId,
+          teachingSession.sessionRef,
+          teachingSession.version,
+          runRef,
+          null,
+        );
+      }
       markStopped(db, runRef, partialReply);
       return;
     }
@@ -549,6 +822,24 @@ async function runAgentTurn(
     if (response.ok) {
       const reply = response.reply ?? "(本次未能生成回复,见 notes)";
       const redactedReply = redactRuntimeSecrets(reply, secrets);
+
+      // Update teaching session state after a successful turn.
+      // If the model used a teaching command, just release the run (the
+      // confirmation flow handles state advancement). Otherwise, advance
+      // the phase via stateAfterSuccess.
+      if (teachingSession && teachingTurn) {
+        const usedCommand = usedTeachingCommand(toolEvents);
+        const nextState = usedCommand ? null : stateAfterSuccess(teachingSession.state, teachingTurn);
+        releaseTeachingRun(
+          db,
+          ownerId,
+          teachingSession.sessionRef,
+          teachingSession.version,
+          runRef,
+          nextState,
+        );
+      }
+
       // Persist assistant message
       appendAssistantMessage(db, threadId, redactedReply, toolEvents);
       appendEvent(db, runRef, "text", "text_generation", "text_available", "Coach response text is available");
@@ -581,11 +872,23 @@ async function runAgentTurn(
             retryable: true,
           };
 
-      // Provider-waiting codes keep the run queued
+      // Provider-waiting codes keep the run queued (and the teaching claim alive)
       if (failure.code === "provider_unconfigured" || failure.code === "provider_reauthentication_required") {
         setRun(db, runRef, "queued", "queued", { partialText: null, error: failure });
         appendEvent(db, runRef, "status", "queued", "provider_waiting", "Coach run is waiting for Provider");
         return;
+      }
+
+      // Release the teaching session claim on failure (no state advancement)
+      if (teachingSession) {
+        releaseTeachingRun(
+          db,
+          ownerId,
+          teachingSession.sessionRef,
+          teachingSession.version,
+          runRef,
+          null,
+        );
       }
 
       const completed = setRun(db, runRef, "failed", "completed", {
@@ -641,6 +944,7 @@ export function createAgentRun(
     db,
     threadId,
     options.contextRefs ?? null,
+    ownerId,
   );
 
   const runRef = `agent_run:${randomUUID().replace(/-/g, "")}`;
@@ -657,6 +961,86 @@ export function createAgentRun(
   startTask(runRef, (signal) => runAgentTurn(db, runRef, ownerId, threadId, safeContent, bundle, snapshots, signal));
 
   return getAgentRun(db, ownerId, runRef)!;
+}
+
+/**
+ * Requeue Provider-waiting runs for one owner, at most once per run.
+ *
+ * Called on every poll of GET /api/coach/agent-runs/{ref}. Checks for runs in
+ * 'queued' status with a provider-waiting error (provider_unconfigured or
+ * provider_reauthentication_required). If the provider is now configured,
+ * clears the error and restarts the turn.
+ *
+ * Port of Python's resume_waiting_runs. Simplified:
+ *   - No terminal locks (Node is single-threaded within one process).
+ *   - Reuses loadDefaultProviderProfile as the readiness check.
+ */
+export function resumeWaitingRuns(db: SqliteDb, ownerId: string): string[] {
+  const providerResult = loadDefaultProviderProfile(db, ownerId);
+  if (!providerResult || providerResult.needsReauth) return [];
+
+  const rows = db.prepare(
+    "SELECT run_ref, thread_id, content, context_refs_json, error_json " +
+    "FROM coach_agent_runs WHERE owner_id=? AND status='queued' " +
+    "AND stop_requested=0 AND error_json IS NOT NULL " +
+    "ORDER BY created_at, rowid",
+  ).all(ownerId) as AnyDict[];
+
+  const providerWaitCodes = new Set(["provider_unconfigured", "provider_reauthentication_required"]);
+  const resumed: string[] = [];
+
+  for (const row of rows) {
+    const error = parseJson(row.error_json);
+    if (!error || typeof error.code !== "string" || !providerWaitCodes.has(error.code)) continue;
+
+    const runRef = row.run_ref as string;
+    if (isTaskActive(runRef)) continue;
+
+    // Re-read to confirm still queued+waiting (no concurrent mutation)
+    const current = db.prepare(
+      "SELECT thread_id, content, context_refs_json, error_json " +
+      "FROM coach_agent_runs WHERE owner_id=? AND run_ref=? " +
+      "AND status='queued' AND stop_requested=0",
+    ).get(ownerId, runRef) as AnyDict | undefined;
+    if (!current) continue;
+
+    const currentError = parseJson(current.error_json);
+    if (!currentError || typeof currentError.code !== "string" || !providerWaitCodes.has(currentError.code)) continue;
+
+    const snapshots = parseJsonArray(current.context_refs_json);
+    const refs = snapshots
+      .map((s) => s.context_ref)
+      .filter((r: unknown): r is string => typeof r === "string");
+
+    const threadId = current.thread_id as number;
+    let bundle: AnyDict;
+    try {
+      const rebuilt = buildContextBundle(db, threadId, refs);
+      bundle = rebuilt.bundle;
+    } catch {
+      continue;
+    }
+
+    // Atomically clear the error and requeue
+    const expectedError = JSON.stringify(currentError, null, 0);
+    const cursor = db.prepare(
+      "UPDATE coach_agent_runs SET error_json=NULL, partial_text=NULL, " +
+      "phase='queued', updated_at=CURRENT_TIMESTAMP " +
+      "WHERE owner_id=? AND run_ref=? AND status='queued' " +
+      "AND stop_requested=0 AND error_json=?",
+    ).run(ownerId, runRef, expectedError);
+    if (cursor.changes !== 1) continue;
+
+    appendEvent(db, runRef, "status", "queued", "provider_requeued", "Coach run requeued after Provider recovery");
+
+    const safeContent = (current.content as string).trim().slice(0, 12_000);
+    startTask(runRef, (signal) =>
+      runAgentTurn(db, runRef, ownerId, threadId, safeContent, bundle, snapshots, signal),
+    );
+    resumed.push(runRef);
+  }
+
+  return resumed;
 }
 
 /**
@@ -692,9 +1076,11 @@ export function getAgentRun(db: SqliteDb, ownerId: string, runRef: string): Agen
 
 /**
  * Stop a running agent run.
- * Sets stop_requested=1, calls stopCoachTurn, and waits for graceful shutdown.
+ * Sets stop_requested=1, calls stopCoachTurn, and waits up to 3 seconds
+ * for the background task to finish cooperatively. If the task is still
+ * active after the timeout, force-marks the run as stopped.
  */
-export function stopAgentRun(db: SqliteDb, ownerId: string, runRef: string): AgentRunState | null {
+export async function stopAgentRun(db: SqliteDb, ownerId: string, runRef: string): Promise<AgentRunState | null> {
   const current = getAgentRun(db, ownerId, runRef);
   if (!current) return null;
   if (["succeeded", "failed", "stopped"].includes(current.status)) return current;
@@ -708,12 +1094,16 @@ export function stopAgentRun(db: SqliteDb, ownerId: string, runRef: string): Age
   stopCoachTurn(runRef);
   stopTask(runRef);
 
-  // Wait briefly for graceful shutdown
+  // Wait up to 3 seconds for graceful shutdown
   if (isTaskActive(runRef)) {
-    // Can't use async in this synchronous context; mark stopped directly
-    if (!isStopRequested(db, runRef) || current.status === "queued") {
+    await waitForTask(runRef, 3000);
+    // If still active after timeout, force mark stopped
+    if (isTaskActive(runRef)) {
       markStopped(db, runRef, current.partial_text);
     }
+  } else {
+    // No active task — mark stopped directly
+    markStopped(db, runRef, current.partial_text);
   }
 
   return getAgentRun(db, ownerId, runRef);
@@ -740,7 +1130,7 @@ export function retryAgentRun(
   const snapshots = parseJsonArray(row.context_refs_json);
   const refs = snapshots.map((s) => s.context_ref).filter((r: unknown) => typeof r === "string");
   const threadId = row.thread_id;
-  const { bundle } = buildContextBundle(db, threadId, refs);
+  const { bundle } = buildContextBundle(db, threadId, refs, ownerId);
 
   const newRunRef = `agent_run:${randomUUID().replace(/-/g, "")}`;
   const attempt = (detail.attempt ?? 1) + 1;

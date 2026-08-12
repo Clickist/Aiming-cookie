@@ -9,6 +9,7 @@
  */
 
 import type http from "node:http";
+import { createHash } from "node:crypto";
 
 import { getDb, type SqliteDb } from "./db.ts";
 
@@ -682,6 +683,215 @@ export function deleteCoachSession(ownerId: string, sessionId: number): SessionO
   ).get(ownerId, sessionId) as SessionRow | undefined;
   if (!row) throw new CoachDataError(404, "Coach session is unavailable");
   return shapeSession(db, row);
+}
+
+// ---------------------------------------------------------------------------
+// Context attach (simplified port of Python coach_context_refs.attach_context)
+// ---------------------------------------------------------------------------
+
+const _CONTEXT_KINDS = new Set([
+  "analysis", "issue", "time_range", "metric", "evidence_segment", "comparison",
+]);
+const _ANALYSIS_REF_RE = /^analysis:([1-9][0-9]*)$/;
+const _SAFE_TARGET_REF_RE = /^[A-Za-z][A-Za-z0-9_.:@-]{1,200}$/;
+
+/**
+ * Build a simplified diagnostic context projection from an analysis result.
+ *
+ * Simplified vs. Python project_coach_diagnostic_context: the Python version
+ * runs an extensive allow-list filter over every field (hundreds of lines of
+ * validation). This port extracts the key structural fields (schema_version,
+ * analysis_ref, diagnosis, evidence) and passes them through without the
+ * per-field allow-list scrubbing. The Coach may need to call analysis tools
+ * for details that the full projection would have included inline.
+ */
+function buildSimplifiedProjection(
+  sessionId: number,
+  result: unknown,
+): Record<string, unknown> {
+  const r = isRecord(result) ? result : {};
+  const schemaVersion = r.schema_version === "analysis_result.v2"
+    ? "analysis_result.v2"
+    : "analysis_result.v1";
+  const deterministic = isRecord(r.deterministic) ? r.deterministic : {};
+  const diagnosis = isRecord(deterministic.diagnosis) ? deterministic.diagnosis : {};
+  return {
+    schema_version: "coach_diagnostic_context.v1",
+    analysis_ref: {
+      analysis_id: `analysis:${sessionId}`,
+      analysis_result_version: schemaVersion,
+      analysis_type: typeof r.analysis_type === "string" ? r.analysis_type : null,
+      input_mode: typeof r.input_mode === "string" ? r.input_mode : "unknown",
+    },
+    diagnosis: {
+      profile: isRecord(diagnosis.profile) ? diagnosis.profile : {},
+      issues: Array.isArray(diagnosis.issues) ? diagnosis.issues : [],
+      summary: isRecord(diagnosis.summary)
+        ? diagnosis.summary
+        : isRecord(deterministic.metrics) ? deterministic.metrics : {},
+      comparison: diagnosis.comparison ?? null,
+      meta: isRecord(diagnosis.meta) ? diagnosis.meta : {},
+    },
+    evidence_summary: { availability: {}, alignment: {} },
+    warnings: [],
+  };
+}
+
+/** POST /v1/context/attach — simplified port of Python attach_context(). */
+export function attachCoachContext(
+  ownerId: string,
+  context: {
+    kind: string;
+    analysis_ref: string;
+    target_ref?: string;
+    start_ms?: number;
+    end_ms?: number;
+    comparison_analysis_ref?: string;
+  },
+  sessionId?: number,
+): { action: string; context: ContextRefOut } {
+  const db = getDb();
+  if (!db) throw new CoachDataError(503, "Database is unavailable");
+
+  const { kind, analysis_ref } = context;
+  const target_ref = context.target_ref;
+  const start_ms = context.start_ms;
+  const end_ms = context.end_ms;
+  const comparison_analysis_ref = context.comparison_analysis_ref;
+
+  if (!_CONTEXT_KINDS.has(kind)) {
+    throw new CoachDataError(400, "invalid_kind");
+  }
+
+  const refMatch = analysis_ref.match(_ANALYSIS_REF_RE);
+  if (!refMatch) {
+    throw new CoachDataError(400, "invalid_analysis_ref");
+  }
+  const analysisSessionId = parseInt(refMatch[1], 10);
+
+  // Validate ownership and status
+  const session = db.prepare(
+    "SELECT id, user_id, status, result FROM sessions WHERE id=?",
+  ).get(analysisSessionId) as { id: number; user_id: string; status: string; result: string | null } | undefined;
+  if (!session || session.user_id !== ownerId) {
+    throw new CoachDataError(404, "not_found");
+  }
+  if (session.status !== "done") {
+    throw new CoachDataError(409, "analysis_unavailable");
+  }
+
+  const threadId = threadIdForRequest(db, ownerId, sessionId);
+  const projection = buildSimplifiedProjection(analysisSessionId, parseJson(session.result));
+
+  // Validate time_range
+  let validatedStartMs: number | null = null;
+  let validatedEndMs: number | null = null;
+  if (kind === "time_range") {
+    if (typeof start_ms !== "number") {
+      throw new CoachDataError(400, "invalid_time_range");
+    }
+    validatedStartMs = start_ms;
+    validatedEndMs = typeof end_ms === "number" ? end_ms : start_ms;
+    if (validatedStartMs < 0 || validatedEndMs < validatedStartMs) {
+      throw new CoachDataError(400, "invalid_time_range");
+    }
+  } else if (start_ms !== undefined && start_ms !== null) {
+    throw new CoachDataError(400, "invalid_time_range");
+  }
+
+  // Validate comparison
+  let comparisonSessionId: number | null = null;
+  let comparisonProjectionJson: string | null = null;
+  if (kind === "comparison") {
+    const compMatch = comparison_analysis_ref?.match(_ANALYSIS_REF_RE);
+    if (!compMatch) {
+      throw new CoachDataError(400, "invalid_comparison_ref");
+    }
+    comparisonSessionId = parseInt(compMatch[1], 10);
+    const compSession = db.prepare(
+      "SELECT id, user_id, status, result FROM sessions WHERE id=?",
+    ).get(comparisonSessionId) as { id: number; user_id: string; status: string; result: string | null } | undefined;
+    if (!compSession || compSession.user_id !== ownerId) {
+      throw new CoachDataError(404, "not_found");
+    }
+    if (compSession.status !== "done") {
+      throw new CoachDataError(409, "analysis_unavailable");
+    }
+    comparisonProjectionJson = JSON.stringify(
+      buildSimplifiedProjection(comparisonSessionId, parseJson(compSession.result)),
+    );
+  } else if (comparison_analysis_ref) {
+    throw new CoachDataError(400, "invalid_comparison_ref");
+  }
+
+  // Validate target_ref (simplified — skips issue/metric/evidence_segment membership checks)
+  let validatedTargetRef: string | null = null;
+  if (kind === "analysis" || kind === "comparison") {
+    if (target_ref) {
+      throw new CoachDataError(400, "invalid_target_ref");
+    }
+    validatedTargetRef = analysis_ref;
+  } else {
+    if (!target_ref || !_SAFE_TARGET_REF_RE.test(target_ref)) {
+      throw new CoachDataError(400, "invalid_target_ref");
+    }
+    validatedTargetRef = target_ref;
+  }
+
+  // Compute dedupe_key (keys in alphabetical order to match Python sort_keys=True)
+  const dedupeKey = createHash("sha256").update(
+    JSON.stringify({
+      analysis_ref,
+      comparison_analysis_ref: comparison_analysis_ref ?? undefined,
+      end_ms: validatedEndMs,
+      kind,
+      start_ms: validatedStartMs,
+      target_ref: validatedTargetRef,
+    }),
+  ).digest("hex");
+  const contextRef = `context:${dedupeKey.slice(0, 24)}`;
+
+  // Check for existing active context
+  const existing = db.prepare(
+    "SELECT context_ref, thread_id, kind, analysis_session_id, comparison_session_id, "
+      + "target_ref, start_ms, end_ms, label, status, attached_at, detached_at, deleted_at "
+      + "FROM coach_context_refs WHERE thread_id=? AND dedupe_key=?",
+  ).get(threadId, dedupeKey) as ContextRefRow | undefined;
+  if (existing && existing.status === "active") {
+    return { action: "already_attached", context: shapeContextRef(existing) };
+  }
+
+  const projectionJson = JSON.stringify(projection);
+
+  db.prepare(
+    "INSERT INTO coach_context_refs(context_ref, thread_id, dedupe_key, kind, "
+      + "analysis_session_id, comparison_session_id, target_ref, start_ms, end_ms, label, "
+      + "projection_json, comparison_projection_json, status) "
+      + "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active') "
+      + "ON CONFLICT(thread_id, dedupe_key) DO UPDATE SET status='active', "
+      + "projection_json=excluded.projection_json, "
+      + "comparison_projection_json=excluded.comparison_projection_json, "
+      + "label=excluded.label, detached_at=NULL, "
+      + "deleted_at=NULL, attached_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP",
+  ).run(
+    contextRef, threadId, dedupeKey, kind, analysisSessionId, comparisonSessionId,
+    validatedTargetRef, validatedStartMs, validatedEndMs, null,
+    projectionJson, comparisonProjectionJson,
+  );
+
+  // Ensure the analysis session is tracked in coach_analysis_refs
+  db.prepare(
+    "INSERT OR IGNORE INTO coach_analysis_refs(thread_id, analysis_session_id, status) "
+      + "VALUES(?, ?, 'active')",
+  ).run(threadId, analysisSessionId);
+
+  const row = db.prepare(
+    "SELECT context_ref, thread_id, kind, analysis_session_id, comparison_session_id, "
+      + "target_ref, start_ms, end_ms, label, status, attached_at, detached_at, deleted_at "
+      + "FROM coach_context_refs WHERE thread_id=? AND dedupe_key=?",
+  ).get(threadId, dedupeKey) as ContextRefRow;
+
+  return { action: "attached", context: shapeContextRef(row) };
 }
 
 /** POST /v1/contexts/:ref/detach — matches Python detach_coach_context(). */

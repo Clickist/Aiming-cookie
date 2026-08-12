@@ -1063,14 +1063,14 @@ export async function attachCoachContext(
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachContextMutationV1> {
   const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
-  const res = await apiFetch(
-    `/api/coach/context/attach${query}`,
+  const res = await apiFetchSidecar(
+    `/v1/context/attach${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ schema_version: "coach_context_attach.v1", ...context }),
     },
-    opts,
+    { signal: opts.signal },
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachContextMutationV1;
