@@ -3,6 +3,7 @@ import { loadPiAi } from "./pi-source.ts";
 import { isRecord, type CoachToolBridge } from "./contracts.ts";
 import type { SqliteDb } from "./db.ts";
 import { NATIVE_READ_COMMANDS, executeNativeRead } from "./product-commands-native.ts";
+import { isNativeEvidenceCommand, executeNativeEvidence } from "./evidence-native.ts";
 
 type TypeBuilder = {
   Literal(value: string): unknown;
@@ -104,6 +105,36 @@ function safeCommandEvent(result: Record<string, unknown>, commandName: string) 
   };
 }
 
+type NativeCommandResult = {
+  status: "succeeded" | "failed";
+  result?: unknown;
+  result_ref?: string;
+  warning_or_error?: { code: string; message: string };
+};
+
+function nativeToToolResult(commandName: string, nativeResult: NativeCommandResult) {
+  const event = {
+    type: "product_command" as const,
+    command_id: `native:${commandName}:${Date.now()}`,
+    command_name: commandName,
+    status: nativeResult.status,
+    result_ref: nativeResult.result_ref ?? null,
+    audit_ref: "native",
+    ui_event: null,
+    warning_or_error: nativeResult.warning_or_error ?? null,
+  };
+  const responseText = JSON.stringify({
+    schema_version: "coach_product_command_result.v1",
+    command_id: event.command_id,
+    status: nativeResult.status,
+    audit_ref: "native",
+    ...(nativeResult.result_ref ? { result_ref: nativeResult.result_ref } : {}),
+    ...(nativeResult.result !== undefined ? { result: nativeResult.result } : {}),
+    ...(nativeResult.warning_or_error ? { warning_or_error: nativeResult.warning_or_error } : {}),
+  });
+  return { content: [{ type: "text", text: responseText }], details: { event } };
+}
+
 export function createProductCommandTool(
   bridge: CoachToolBridge | null,
   options: ProductCommandToolOptions & { db?: SqliteDb | null; ownerId?: string } = {},
@@ -141,26 +172,13 @@ export function createProductCommandTool(
       // Native read commands: query SQLite directly, skip the HTTP bridge.
       if (db !== null && NATIVE_READ_COMMANDS.has(params.command_name)) {
         const nativeResult = executeNativeRead(db, params.command_name, params.parameters, ownerId);
-        const event = {
-          type: "product_command" as const,
-          command_id: `native:${params.command_name}:${Date.now()}`,
-          command_name: params.command_name,
-          status: nativeResult.status,
-          result_ref: nativeResult.result_ref ?? null,
-          audit_ref: "native",
-          ui_event: null,
-          warning_or_error: nativeResult.warning_or_error ?? null,
-        };
-        const responseText = JSON.stringify({
-          schema_version: "coach_product_command_result.v1",
-          command_id: event.command_id,
-          status: nativeResult.status,
-          audit_ref: "native",
-          ...(nativeResult.result_ref ? { result_ref: nativeResult.result_ref } : {}),
-          ...(nativeResult.result !== undefined ? { result: nativeResult.result } : {}),
-          ...(nativeResult.warning_or_error ? { warning_or_error: nativeResult.warning_or_error } : {}),
-        });
-        return { content: [{ type: "text", text: responseText }], details: { event } };
+        return nativeToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native evidence commands: read artifact from filesystem, skip the HTTP bridge.
+      if (db !== null && isNativeEvidenceCommand(params.command_name)) {
+        const nativeResult = executeNativeEvidence(db, params.command_name, params.parameters, ownerId);
+        return nativeToToolResult(params.command_name, nativeResult);
       }
 
       if (!bridge) {
