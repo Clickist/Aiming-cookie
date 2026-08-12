@@ -855,6 +855,85 @@ const trainingPlanRetestRecord: WriteHandler = (db, params, ownerId) => {
   }, retestRef);
 };
 
+// ── Teaching session state validation ─────────────────────────────────
+
+const _TEACHING_SESSION_SCHEMA = "teaching_session.v1";
+const _TEACHING_PHASES = new Set([
+  "intake", "hypothesize", "teach", "await_teach_back", "teach_back_repair",
+  "practice_ready", "await_execution_confirmation", "retest_ready",
+  "await_retest_confirmation", "revise", "follow_up", "paused", "stopped_for_discomfort",
+]);
+const _RETEST_INTENTS = new Set(["none", "immediate_matched", "delayed_matched", "near_transfer"]);
+const _TEACHING_COMPARABILITY = new Set(["unresolved", "comparable", "not_comparable", "not_requested"]);
+const _TEACHING_REVISION_DECISIONS = new Set([null, "retain", "lower", "reject"]);
+const _TEACHING_PAUSE_REASONS = new Set([null, "user_refused", "discomfort", "awaiting_confirmation"]);
+
+/**
+ * Validate a TeachingSession state after partial merge.
+ *
+ * Port of Python teaching_session_store.validate_state. Simplified: skips
+ * per-field text scanning (path/secret regex), candidate label length limits,
+ * source_ref regex validation, and next_recommendation structural checks.
+ * Focuses on schema_version, phase enum, observation structure, alternatives
+ * count, and the retest/revision/pause enum constraints.
+ */
+function validateTeachingState(state: unknown): AnyDict {
+  if (typeof state !== "object" || state === null || Array.isArray(state)) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+  const s = state as AnyDict;
+
+  if (s.schema_version !== _TEACHING_SESSION_SCHEMA) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+  if (typeof s.phase !== "string" || !_TEACHING_PHASES.has(s.phase)) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+
+  // observation must be {summary, source_refs}
+  const obs = s.observation;
+  if (typeof obs !== "object" || obs === null || Array.isArray(obs)
+    || Object.keys(obs).length !== 2
+    || typeof (obs as AnyDict).summary !== "string"
+    || (obs as AnyDict).summary.length > 1200
+    || !Array.isArray((obs as AnyDict).source_refs)
+    || (obs as AnyDict).source_refs.length > 8
+  ) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+
+  // alternatives max 2
+  if (!Array.isArray(s.alternatives) || s.alternatives.length > 2) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+
+  // Enum fields
+  if (typeof s.retest_intent !== "string" || !_RETEST_INTENTS.has(s.retest_intent)) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+  if (typeof s.retest_comparability !== "string" || !_TEACHING_COMPARABILITY.has(s.retest_comparability)) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+  if (!_TEACHING_REVISION_DECISIONS.has(s.revision_decision)) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+  if (!_TEACHING_PAUSE_REASONS.has(s.pause_reason)) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+
+  // Cross-field constraint: revision_decision requires comparable
+  if (s.retest_comparability !== "comparable" && s.revision_decision !== null) {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+
+  // pending_confirmation_ref must be string or null
+  if (s.pending_confirmation_ref !== null && typeof s.pending_confirmation_ref !== "string") {
+    throw new Error("invalid_state:TeachingSession state is invalid");
+  }
+
+  return s;
+}
+
 // ── Teaching session update ───────────────────────────────────────────
 
 const teachingSessionUpdate: WriteHandler = (db, params, ownerId) => {
@@ -893,17 +972,15 @@ const teachingSessionUpdate: WriteHandler = (db, params, ownerId) => {
       if (nextPhase !== null && nextPhase !== undefined) merged.phase = nextPhase;
       Object.assign(merged, updates);
 
-      // TODO: full validate_state is not ported — the Python teaching_session_store
-      // runs extensive phase/field validation (validate_state) before writing.
-      // The native path relies on the Coach agent producing valid state.
+      const normalized = validateTeachingState(merged);
 
       const result = db.prepare(
         "UPDATE teaching_sessions SET state_json=?, version=version+1, " +
         "pending_confirmation_ref=?, pause_reason=?, updated_at=CURRENT_TIMESTAMP " +
         "WHERE session_ref=? AND owner_id=? AND version=?",
       ).run(
-        stableJson(merged), merged.pending_confirmation_ref ?? null,
-        merged.pause_reason ?? null, sessionRef, ownerId, expectedVersion,
+        stableJson(normalized), normalized.pending_confirmation_ref ?? null,
+        normalized.pause_reason ?? null, sessionRef, ownerId, expectedVersion,
       );
       if (result.changes !== 1) throw new Error("conflict:TeachingSession changed before this update could apply");
       return db.prepare("SELECT * FROM teaching_sessions WHERE session_ref=?").get(sessionRef) as AnyDict;
@@ -911,6 +988,7 @@ const teachingSessionUpdate: WriteHandler = (db, params, ownerId) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.startsWith("conflict:")) return fail("session_conflict", "TeachingSession changed or is unavailable");
+    if (msg.startsWith("invalid_state:")) return fail("invalid_state", msg.slice("invalid_state:".length));
     throw error;
   }
 

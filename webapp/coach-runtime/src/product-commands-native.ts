@@ -423,6 +423,238 @@ const analysisCompare: CommandHandler = (db, params, ownerId) => {
 
 // ── Comparison logic (ported from history_trends.compare_analysis_results) ──
 
+const SAFE_IDENTITY_RE = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/;
+const SAFE_SCENARIO_HASH_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
+const SAFE_SCENARIO_PROFILE_REF_RE = /^scenario:[A-Za-z0-9][A-Za-z0-9._-]{0,159}@[1-9][0-9]*$/;
+const V2_INPUT_MODES = new Set(["input_native", "multimodal", "video_fallback"]);
+const TARGET_SWITCHING_CHAIN_CONDITION_REF = "condition:target_switching:stats_kill_bounded_chain";
+const TARGET_SWITCHING_COMPARISON_METRICS = new Set([
+  "target_switching.transition_time_ms",
+  "target_switching.settle_duration_ms",
+]);
+
+const SCENARIO_RESOLUTION_FIELDS = new Set([
+  "schema_version", "scenario_hash", "display_name", "registry_version",
+  "manifest_version", "scenario_profile_ref", "classification_source",
+  "classification_confidence", "profile_status", "reviewed_at",
+  "source_refs", "supersedes", "manifest_status", "fixture_ref",
+  "review_source_ref", "manifest_reviewed_at", "family_gate_refs",
+  "aim_family", "subdomains", "target_motion", "allowed_analyzers",
+  "allowed_metric_families", "claim_ceiling", "family_analyzer_dispatch",
+  "limitations",
+]);
+
+function safeIdentity(value: unknown): string | null {
+  if (
+    typeof value !== "string" ||
+    !SAFE_IDENTITY_RE.test(value) ||
+    value.toLowerCase().startsWith("file:") ||
+    /^[A-Za-z]:/.test(value)
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function safeInputMode(value: unknown): string | null {
+  return typeof value === "string" && V2_INPUT_MODES.has(value) ? value : null;
+}
+
+function safeScenario(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const scenario = value.trim();
+  const lowered = scenario.toLowerCase();
+  if (
+    scenario.startsWith("\\") ||
+    /^[A-Za-z]:[\\/]/.test(scenario) ||
+    lowered.startsWith("file:") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(lowered)
+  ) {
+    return null;
+  }
+  return scenario;
+}
+
+function getResultMetric(result: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const det = result.deterministic;
+  if (!det || typeof det !== "object") return null;
+  const metrics = (det as Record<string, unknown>).metrics;
+  if (!metrics || typeof metrics !== "object") return null;
+  const value = (metrics as Record<string, unknown>)[key];
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function analysisVersion(result: Record<string, unknown>): string | null {
+  return "analysis_version" in result ? safeIdentity(result.analysis_version) : null;
+}
+
+function timebaseVersion(result: Record<string, unknown>): string | null {
+  const snapshot = result.input_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const window = (snapshot as Record<string, unknown>).canonical_time_window;
+  if (!window || typeof window !== "object") return null;
+  const value = (window as Record<string, unknown>).timebase_version;
+  return value != null ? safeIdentity(value) : null;
+}
+
+function scenarioResolution(result: Record<string, unknown>): Record<string, unknown> | null {
+  const snapshot = result.input_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const resolution = (snapshot as Record<string, unknown>).scenario_resolution;
+  return resolution && typeof resolution === "object" ? (resolution as Record<string, unknown>) : null;
+}
+
+function validateScenarioResolutionV1(value: unknown): void {
+  if (!value || typeof value !== "object") throw new Error("scenario_resolution must be a dict");
+  const obj = value as Record<string, unknown>;
+  const keys = new Set(Object.keys(obj));
+  for (const f of SCENARIO_RESOLUTION_FIELDS) {
+    if (!keys.has(f)) throw new Error("scenario_resolution fields are invalid");
+  }
+  for (const k of keys) {
+    if (!SCENARIO_RESOLUTION_FIELDS.has(k)) throw new Error("scenario_resolution fields are invalid");
+  }
+  if (obj.schema_version !== "scenario_resolution.v1") throw new Error("unsupported contract version");
+  const scenarioHash = obj.scenario_hash;
+  if (scenarioHash != null && (typeof scenarioHash !== "string" || !SAFE_SCENARIO_HASH_RE.test(scenarioHash))) {
+    throw new Error("scenario_resolution.scenario_hash is invalid");
+  }
+  const profileRef = obj.scenario_profile_ref;
+  if (profileRef != null && (typeof profileRef !== "string" || !SAFE_SCENARIO_PROFILE_REF_RE.test(profileRef))) {
+    throw new Error("scenario_resolution.scenario_profile_ref is invalid");
+  }
+  for (const field of ["registry_version", "manifest_version"]) {
+    const v = obj[field];
+    if (typeof v !== "string" || !v.trim() || v.length > 80) {
+      throw new Error(`scenario_resolution.${field} is invalid`);
+    }
+  }
+}
+
+function scenarioResolutionIsInvalid(result: Record<string, unknown>): boolean {
+  const snapshot = result.input_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return false;
+  const snap = snapshot as Record<string, unknown>;
+  const resolution = snap.scenario_resolution;
+  if (resolution == null) {
+    return snap.schema_version === "analysis_input_snapshot.v3";
+  }
+  try {
+    validateScenarioResolutionV1(resolution);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function scenarioHash(result: Record<string, unknown>): string | null {
+  const resolution = scenarioResolution(result);
+  if (!resolution) return null;
+  const value = resolution.scenario_hash;
+  return typeof value === "string" && SAFE_SCENARIO_HASH_RE.test(value) ? value : null;
+}
+
+function scenarioProfileRef(result: Record<string, unknown>): string | null {
+  const resolution = scenarioResolution(result);
+  if (!resolution) return null;
+  const value = resolution.scenario_profile_ref;
+  return typeof value === "string" && SAFE_SCENARIO_PROFILE_REF_RE.test(value) ? value : null;
+}
+
+function scenarioRegistryVersion(result: Record<string, unknown>): string | null {
+  const resolution = scenarioResolution(result);
+  if (!resolution) return null;
+  return safeIdentity(resolution.registry_version);
+}
+
+function scenarioName(result: Record<string, unknown>): string | null {
+  const snapshot = result.input_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  return safeScenario((snapshot as Record<string, unknown>).scenario);
+}
+
+function scenarioIdentityVersion(result: Record<string, unknown>): string | null {
+  const snapshot = result.input_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  return safeIdentity((snapshot as Record<string, unknown>).scenario_identity_version);
+}
+
+function fullCoverage(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value === 1.0;
+}
+
+function hasCompleteSwitchingMetricEvidence(
+  result: Record<string, unknown>,
+  metric: Record<string, unknown>,
+): boolean {
+  if (result.analysis_type !== "target_switching") return false;
+  const det = result.deterministic;
+  if (!det || typeof det !== "object") return false;
+  if ((det as Record<string, unknown>).support_status !== "supported") return false;
+  if (!TARGET_SWITCHING_COMPARISON_METRICS.has(metric.key as string)) return false;
+  const conditionRefs = metric.condition_refs;
+  if (!Array.isArray(conditionRefs) || conditionRefs.length !== 1 || conditionRefs[0] !== TARGET_SWITCHING_CHAIN_CONDITION_REF) return false;
+  const evidence = result.evidence;
+  if (!evidence || typeof evidence !== "object") return false;
+  const coverage = (evidence as Record<string, unknown>).coverage;
+  return typeof coverage === "number" && Number.isFinite(coverage) && coverage > 0.0 && coverage <= 1.0;
+}
+
+function qualityReason(
+  result: Record<string, unknown>,
+  metric: Record<string, unknown>,
+): string | null {
+  if (metric.classification !== "deterministic") return "metric_not_deterministic";
+  if (metric.availability !== "available") return "metric_unavailable";
+  if (!fullCoverage(metric.coverage)) return "insufficient_metric_coverage";
+  const evidence = result.evidence;
+  if (!evidence || typeof evidence !== "object") return "insufficient_evidence_coverage";
+  const evidenceObj = evidence as Record<string, unknown>;
+  if (!fullCoverage(evidenceObj.coverage) && !hasCompleteSwitchingMetricEvidence(result, metric)) {
+    return "insufficient_evidence_coverage";
+  }
+  const alignmentValue = evidenceObj.alignment;
+  const alignment = alignmentValue && typeof alignmentValue === "object"
+    ? (alignmentValue as Record<string, unknown>).status
+    : null;
+  if (alignment !== "aligned" && alignment !== "not_required") return "insufficient_alignment_quality";
+  return null;
+}
+
+function familyComparabilityReason(
+  current: Record<string, unknown>,
+  baseline: Record<string, unknown>,
+  currentMetric: Record<string, unknown>,
+  baselineMetric: Record<string, unknown>,
+  missingReason: string,
+): string | null {
+  const currentDet = current.deterministic;
+  const baselineDet = baseline.deterministic;
+  if (!currentDet || typeof currentDet !== "object" || !baselineDet || typeof baselineDet !== "object") {
+    return missingReason;
+  }
+  const currentProfile = safeIdentity((currentDet as Record<string, unknown>).visual_quality_profile_ref);
+  const baselineProfile = safeIdentity((baselineDet as Record<string, unknown>).visual_quality_profile_ref);
+  if (!currentProfile || !baselineProfile) return "visual_quality_profile_missing";
+  if (currentProfile !== baselineProfile) return "visual_quality_profile_mismatch";
+  const currentMotion = safeIdentity((currentDet as Record<string, unknown>).scenario_motion_class);
+  const baselineMotion = safeIdentity((baselineDet as Record<string, unknown>).scenario_motion_class);
+  if (!currentMotion || currentMotion !== baselineMotion) return "motion_condition_mismatch";
+  const conditionSets: string[][] = [];
+  for (const metric of [currentMetric, baselineMetric]) {
+    const rawRefs = metric.condition_refs;
+    if (!Array.isArray(rawRefs) || rawRefs.length === 0) return "metric_condition_missing";
+    const refs = rawRefs
+      .map((r: unknown) => safeIdentity(r))
+      .filter((r): r is string => r !== null)
+      .sort();
+    if (refs.length !== rawRefs.length) return "metric_condition_missing";
+    conditionSets.push(refs);
+  }
+  if (JSON.stringify(conditionSets[0]) !== JSON.stringify(conditionSets[1])) return "metric_condition_mismatch";
+  return null;
+}
+
 function compareAnalysisResults(
   current: Record<string, unknown>,
   baseline: Record<string, unknown>,
@@ -432,48 +664,130 @@ function compareAnalysisResults(
     return { comparable: false, reason: "analysis_result_version_mismatch" };
   }
 
-  // Predicate matching
-  const currentDet = current.deterministic as Record<string, unknown> | undefined;
-  const baselineDet = baseline.deterministic as Record<string, unknown> | undefined;
-  if (!currentDet || !baselineDet) {
-    return { comparable: false, reason: "missing_deterministic" };
+  // Analysis version must match (when either side carries one).
+  if ("analysis_version" in current || "analysis_version" in baseline) {
+    const cv = analysisVersion(current);
+    const bv = analysisVersion(baseline);
+    if (!cv || cv !== bv) {
+      return { comparable: false, reason: "analysis_version_mismatch" };
+    }
   }
 
-  const currentMetrics = currentDet.metrics as Record<string, unknown> | undefined;
-  const baselineMetrics = baselineDet.metrics as Record<string, unknown> | undefined;
-  if (!currentMetrics || !baselineMetrics || !(metricKey in currentMetrics) || !(metricKey in baselineMetrics)) {
-    return { comparable: false, reason: "metric_not_found" };
+  // Timebase version must match (when either side has a canonical_time_window).
+  const currentSnapshot = current.input_snapshot;
+  const baselineSnapshot = baseline.input_snapshot;
+  const currentHasWindow = currentSnapshot && typeof currentSnapshot === "object" &&
+    "canonical_time_window" in (currentSnapshot as Record<string, unknown>);
+  const baselineHasWindow = baselineSnapshot && typeof baselineSnapshot === "object" &&
+    "canonical_time_window" in (baselineSnapshot as Record<string, unknown>);
+  if (currentHasWindow || baselineHasWindow) {
+    const ct = timebaseVersion(current);
+    const bt = timebaseVersion(baseline);
+    if (!ct || ct !== bt) {
+      return { comparable: false, reason: "timebase_version_mismatch" };
+    }
   }
 
-  const currentMetric = currentMetrics[metricKey] as Record<string, unknown>;
-  const baselineMetric = baselineMetrics[metricKey] as Record<string, unknown>;
-
-  // Classification and availability checks
-  if (currentMetric.classification !== "deterministic" || baselineMetric.classification !== "deterministic") {
-    return { comparable: false, reason: "metric_classification_mismatch" };
-  }
-  if (currentMetric.availability !== "available" || baselineMetric.availability !== "available") {
-    return { comparable: false, reason: "metric_unavailable" };
+  // Scenario resolution must be structurally valid.
+  if (scenarioResolutionIsInvalid(current) || scenarioResolutionIsInvalid(baseline)) {
+    return { comparable: false, reason: "scenario_resolution_invalid" };
   }
 
-  // Unit and version must match
-  if (currentMetric.unit !== baselineMetric.unit) {
-    return { comparable: false, reason: "metric_unit_mismatch" };
+  // Build the predicate list (resolution-aware vs. legacy).
+  const currentResolution = scenarioResolution(current);
+  const baselineResolution = scenarioResolution(baseline);
+  type Predicate = [string, string | null, string | null];
+  let scenarioPredicates: Predicate[];
+  if (currentResolution !== null || baselineResolution !== null) {
+    scenarioPredicates = [
+      ["scenario_hash", scenarioHash(current), scenarioHash(baseline)],
+      ["scenario_profile_ref", scenarioProfileRef(current), scenarioProfileRef(baseline)],
+      ["scenario_registry_version", scenarioRegistryVersion(current), scenarioRegistryVersion(baseline)],
+    ];
+  } else {
+    scenarioPredicates = [
+      ["scenario", scenarioName(current), scenarioName(baseline)],
+      ["scenario_identity_version", scenarioIdentityVersion(current), scenarioIdentityVersion(baseline)],
+    ];
   }
-  if (currentMetric.metric_version !== baselineMetric.metric_version) {
+  const predicates: Predicate[] = [
+    ["analysis_type", safeIdentity(current.analysis_type), safeIdentity(baseline.analysis_type)],
+    ...scenarioPredicates,
+    ["input_mode", safeInputMode(current.input_mode), safeInputMode(baseline.input_mode)],
+  ];
+  for (const [name, left, right] of predicates) {
+    if (!left || left !== right) {
+      return { comparable: false, reason: `${name}_mismatch` };
+    }
+  }
+
+  // Metric lookup and key validation.
+  if (safeIdentity(metricKey) === null) {
+    return { comparable: false, reason: "metric_key_mismatch" };
+  }
+  const currentMetric = getResultMetric(current, metricKey);
+  const baselineMetric = getResultMetric(baseline, metricKey);
+  if (!currentMetric || !baselineMetric) {
+    return { comparable: false, reason: "metric_missing" };
+  }
+  if (safeIdentity(currentMetric.key) !== metricKey || safeIdentity(baselineMetric.key) !== metricKey) {
+    return { comparable: false, reason: "metric_key_mismatch" };
+  }
+
+  // Family-specific comparability (dynamic_clicking / tracking / switching).
+  const familyMissingReason = ({
+    dynamic_clicking: "dynamic_comparability_missing",
+    continuous_tracking: "continuous_tracking_comparability_missing",
+    target_switching: "target_switching_comparability_missing",
+  } as Record<string, string>)[current.analysis_type as string];
+  if (familyMissingReason) {
+    const reason = familyComparabilityReason(current, baseline, currentMetric, baselineMetric, familyMissingReason);
+    if (reason) {
+      return { comparable: false, reason };
+    }
+  }
+
+  // Quality checks (classification, availability, coverage, alignment).
+  for (const [result, metric] of [
+    [current, currentMetric],
+    [baseline, baselineMetric],
+  ] as [Record<string, unknown>, Record<string, unknown>][]) {
+    const reason = qualityReason(result, metric);
+    if (reason) {
+      return { comparable: false, reason };
+    }
+  }
+
+  // Metric version and unit must match.
+  const currentMetricVersion = safeIdentity(currentMetric.metric_version);
+  const baselineMetricVersion = safeIdentity(baselineMetric.metric_version);
+  if (!currentMetricVersion || currentMetricVersion !== baselineMetricVersion) {
     return { comparable: false, reason: "metric_version_mismatch" };
   }
-
-  // Analysis type must match
-  const currentType = current.analysis_type ?? "flicking";
-  const baselineType = baseline.analysis_type ?? "flicking";
-  if (currentType !== baselineType) {
-    return { comparable: false, reason: "analysis_type_mismatch" };
+  const currentUnit = safeIdentity(currentMetric.unit);
+  const baselineUnit = safeIdentity(baselineMetric.unit);
+  if (!currentUnit || currentUnit !== baselineUnit) {
+    return { comparable: false, reason: "metric_unit_mismatch" };
   }
 
-  const currentValue = typeof currentMetric.value === "number" ? currentMetric.value : parseFloat(String(currentMetric.value));
-  const baselineValue = typeof baselineMetric.value === "number" ? baselineMetric.value : parseFloat(String(baselineMetric.value));
-  if (!Number.isFinite(currentValue) || !Number.isFinite(baselineValue)) {
+  // Calibration must be present and match.
+  const currentCalibration = safeIdentity(currentMetric.calibration_ref);
+  const baselineCalibration = safeIdentity(baselineMetric.calibration_ref);
+  if (!currentCalibration || !baselineCalibration) {
+    return { comparable: false, reason: "calibration_compatibility_missing" };
+  }
+  if (currentCalibration !== baselineCalibration) {
+    return { comparable: false, reason: "calibration_mismatch" };
+  }
+
+  // Value must be finite numbers.
+  const currentValue = currentMetric.value;
+  const baselineValue = baselineMetric.value;
+  if (
+    typeof currentValue === "boolean" || typeof baselineValue === "boolean" ||
+    typeof currentValue !== "number" || typeof baselineValue !== "number" ||
+    !Number.isFinite(currentValue) || !Number.isFinite(baselineValue)
+  ) {
     return { comparable: false, reason: "metric_value_invalid" };
   }
 
@@ -485,8 +799,8 @@ function compareAnalysisResults(
     reason: null,
     classification: "deterministic",
     metric_key: metricKey,
-    unit: currentMetric.unit,
-    metric_version: currentMetric.metric_version,
+    unit: currentUnit,
+    metric_version: currentMetricVersion,
     current: currentValue,
     baseline: baselineValue,
     delta,

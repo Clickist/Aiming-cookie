@@ -3,6 +3,7 @@ import http from "node:http";
 import { failureResponse, makeError, type CoachRuntimeTurnSchema, isRecord } from "./contracts.ts";
 import {
   CoachDataError,
+  attachCoachContext,
   createCoachSession,
   deleteCoachSession,
   detachCoachContext,
@@ -33,6 +34,7 @@ import {
   stopAgentRun,
   retryAgentRun,
   decideConfirmation,
+  resumeWaitingRuns,
 } from "./agent-runs.ts";
 import { getDb } from "./db.ts";
 
@@ -430,7 +432,7 @@ export async function handleSidecarRequest(
       const runRef = decodeURIComponent(agentRunStopMatch[1]);
       const db = requireDb(res);
       if (!db) return;
-      const result = stopAgentRun(db, ownerId, runRef);
+      const result = await stopAgentRun(db, ownerId, runRef);
       if (result === null) {
         writeJson(res, 404, { detail: "Coach agent run is unavailable" });
       } else {
@@ -505,6 +507,12 @@ export async function handleSidecarRequest(
     try {
       const ownerId = ownerIdFromRequest(req);
       const runRef = decodeURIComponent(agentRunMatch[1]);
+      // Polling the persisted run is also the recovery trigger after Provider
+      // settings/authentication become usable again.
+      const db = getDb();
+      if (db) {
+        resumeWaitingRuns(db, ownerId);
+      }
       const result = getAgentRun(runRef, ownerId);
       if (result === null) {
         writeJson(res, 404, { detail: "Coach agent run is unavailable" });
@@ -577,6 +585,41 @@ export async function handleSidecarRequest(
         return;
       }
       writeJson(res, 200, getCoachPrimary(ownerId, sessionId));
+    } catch (error) {
+      writeCoachDataError(res, error);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/context/attach") {
+    try {
+      const ownerId = ownerIdFromRequest(req);
+      const sessionIdParam = url.searchParams.get("session_id");
+      const sessionId = sessionIdParam ? Number(sessionIdParam) : undefined;
+      if (sessionId !== undefined && (!Number.isInteger(sessionId) || sessionId <= 0)) {
+        writeJson(res, 400, { detail: "Coach session id is invalid" });
+        return;
+      }
+      const body = await parseJsonBody(req);
+      if (!isRecord(body)) {
+        writeJson(res, 400, { detail: "Request body must be a JSON object" });
+        return;
+      }
+      const result = attachCoachContext(
+        ownerId,
+        {
+          kind: typeof body.kind === "string" ? body.kind : "",
+          analysis_ref: typeof body.analysis_ref === "string" ? body.analysis_ref : "",
+          target_ref: typeof body.target_ref === "string" ? body.target_ref : undefined,
+          start_ms: typeof body.start_ms === "number" ? body.start_ms : undefined,
+          end_ms: typeof body.end_ms === "number" ? body.end_ms : undefined,
+          comparison_analysis_ref: typeof body.comparison_analysis_ref === "string"
+            ? body.comparison_analysis_ref
+            : undefined,
+        },
+        sessionId,
+      );
+      writeJson(res, 200, result);
     } catch (error) {
       writeCoachDataError(res, error);
     }
