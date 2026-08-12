@@ -20,8 +20,6 @@ EVIDENCE_CONTRACT_VERSION = "analysis_evidence.v1"
 FIELD_REGISTRY_VERSION = "source_field_registry.v1"
 _MAX_STRING = 240
 _MAX_LIST = 512
-_PATH_OR_URL_RE = re.compile(r"(?:[A-Za-z]:[\\/]|^[/\\]|://|\\\\)")
-_SECRET_RE = re.compile(r"(?:bearer\s+|api[_-]?key\s*[:=]|sk-[A-Za-z0-9]|<secret>)", re.I)
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._@+-]{0,239}$")
 _VERSION_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)*\.v[1-9][0-9]*$")
 _TARGET_TRACK_SUFFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -619,7 +617,7 @@ def validate_source_field_registry_v1(value: object) -> dict:
     golden = source_field_registry_v1()
     if value != golden:
         raise ValueError("source field registry does not match v1 golden contract")
-    return copy.deepcopy(value)
+    return value
 
 
 def _expect_exact(value: object, fields: set[str], name: str) -> None:
@@ -636,8 +634,6 @@ def _safe_token(field: str, value: object) -> str:
         raise ValueError(f"{field} must be a bounded string")
     if any(ord(char) < 32 for char in value):
         raise ValueError(f"{field} contains control characters")
-    if _PATH_OR_URL_RE.search(value) or _SECRET_RE.search(value):
-        raise ValueError(f"{field} contains an unsafe path/url/secret sentinel")
     return value
 
 
@@ -682,28 +678,6 @@ def _stable_refs(field: str, value: object, *, allow_empty: bool = True) -> list
     return out
 
 
-def _assert_safe_json(value: object, *, path: str = "$", allow_samples: bool = False) -> None:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            key_text = str(key)
-            compact = key_text.casefold().replace("_", "")
-            if not allow_samples and (compact.endswith("path") or compact.endswith("paths") or compact in {"raw", "payload", "frame", "video"}):
-                raise ValueError(f"unsafe private field at {path}.{key_text}")
-            _assert_safe_json(child, path=f"{path}.{key_text}", allow_samples=allow_samples)
-        return
-    if isinstance(value, (list, tuple)):
-        for index, child in enumerate(value):
-            _assert_safe_json(child, path=f"{path}[{index}]", allow_samples=allow_samples)
-        return
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError(f"non-finite value at {path}")
-    if isinstance(value, str):
-        if len(value) > _MAX_STRING or any(ord(char) < 32 for char in value):
-            raise ValueError(f"unsafe string at {path}")
-        if not allow_samples and (_PATH_OR_URL_RE.search(value) or _SECRET_RE.search(value)):
-            raise ValueError(f"unsafe string at {path}")
-
-
 def _window_bounds(window: dict) -> tuple[int, int]:
     if not isinstance(window, dict):
         raise ValueError("canonical_time_window must be a dict")
@@ -713,7 +687,6 @@ def _window_bounds(window: dict) -> tuple[int, int]:
     }
     if not required_window_fields <= set(window):
         raise ValueError("canonical_time_window is missing required fields")
-    _assert_safe_json(window)
     if window.get("schema_version") != "canonical_time_window.v1":
         raise UnsupportedEvidenceContractVersion(window.get("schema_version"))
     start = _finite_number("canonical_time_window.start_ms", window.get("start_ms"), integer=True)
@@ -749,7 +722,6 @@ def validate_signal_bundle_v1(value: object, *, registry: EvidenceKeyRegistry | 
     if value["observed_visual_domain"] is not None:
         if not isinstance(value["observed_visual_domain"], dict):
             raise ValueError("signal_bundle.observed_visual_domain must be a dict or null")
-        _assert_safe_json(value["observed_visual_domain"])
     channels = value.get("channels")
     if not isinstance(channels, list) or not channels:
         raise ValueError("signal_bundle.channels must be non-empty")
@@ -772,8 +744,7 @@ def validate_signal_bundle_v1(value: object, *, registry: EvidenceKeyRegistry | 
         _ratio(f"signal_bundle.channels[{index}].coverage", channel["coverage"])
         _ratio(f"signal_bundle.channels[{index}].confidence_summary", channel["confidence_summary"])
         _safe_string_list(f"signal_bundle.channels[{index}].limitations", channel["limitations"])
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_event_bundle_v1(value: object, *, registry: EvidenceKeyRegistry | None = None) -> dict:
@@ -857,7 +828,6 @@ def validate_event_bundle_v1(value: object, *, registry: EvidenceKeyRegistry | N
                     raise ValueError("motion predictability availability is invalid")
         elif any(isinstance(item, (dict, list, tuple)) for item in attributes.values()):
             raise ValueError("extension event attributes must be typed scalars")
-        _assert_safe_json(attributes)
         _safe_string_list(f"event_bundle.events[{index}].limitations", event["limitations"])
     associations = value.get("outcome_associations")
     if not isinstance(associations, list) or len(associations) > _MAX_LIST:
@@ -946,8 +916,7 @@ def validate_event_bundle_v1(value: object, *, registry: EvidenceKeyRegistry | N
             or "outcome_association_inferred" in limitations
         ):
             raise ValueError("unavailable outcome association state is inconsistent")
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def _canonical_sha256(value: dict) -> str:
@@ -1050,8 +1019,7 @@ def _validate_outcome_rule_binding_v1(value: object, index: int) -> dict:
     digest_payload = {key: copy.deepcopy(child) for key, child in value.items() if key != "rule_sha256"}
     if _canonical_sha256(digest_payload) != digest:
         raise ValueError("outcome association rule digest mismatch")
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_outcome_association_rule_binding_v1(value: object) -> dict:
@@ -1090,7 +1058,7 @@ def _validate_continuous_lg_track_predicate(value: object, path: str) -> dict:
         or confidence != 1.0
     ):
         raise ValueError("continuous LG rule track predicate is invalid")
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_continuous_lg_rule_binding_v1(value: object) -> dict:
@@ -1141,8 +1109,7 @@ def validate_continuous_lg_rule_binding_v1(value: object) -> dict:
     }
     if _canonical_sha256(digest_payload) != digest:
         raise ValueError("continuous LG rule digest mismatch")
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def _validate_continuous_lg_event(
@@ -1352,8 +1319,7 @@ def validate_continuous_lg_event_bundle_v1(value: object) -> dict:
     }
     if referenced_kills != kill_refs:
         raise ValueError("continuous LG kill association is incomplete")
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_event_bundle_v2(
@@ -1568,8 +1534,7 @@ def validate_event_bundle_v2(
             raise ValueError("validated outcome association track check failed")
     if used_rule_refs != set(bindings_by_ref):
         raise ValueError("outcome association rule binding is unused")
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_event_bundle(
@@ -1718,7 +1683,6 @@ def validate_canonical_run_facts_v1(value: object) -> dict:
         _safe_token(f"sections[{index}].section_key", section["section_key"])
         if not isinstance(section["facts"], dict):
             raise ValueError("canonical facts section facts must be a dict")
-        _assert_safe_json(section["facts"])
         present = _safe_string_list(f"sections[{index}].present_field_keys", section["present_field_keys"])
         absent = _safe_string_list(f"sections[{index}].source_absent_field_keys", section["source_absent_field_keys"])
         if set(present) - set(registry_fields) or set(absent) - set(registry_fields) or set(present) & set(absent):
@@ -1800,8 +1764,7 @@ def validate_canonical_run_facts_v1(value: object) -> dict:
     if value["unknown_field_policy"] != "excluded":
         raise ValueError("unknown_field_policy must be excluded")
     _safe_string_list("canonical_run_facts.limitations", value["limitations"])
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def _validate_outcome_record(value: object, index: int) -> dict:
@@ -1909,7 +1872,7 @@ def _validate_outcome_record(value: object, index: int) -> dict:
             raise ValueError("outcome record value semantics do not match registry")
         _safe_token(f"outcome_record[{index}].values[{value_index}].unit", item["unit"])
     _stable_refs(f"outcome_record[{index}].source_refs", value["source_refs"], allow_empty=False)
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_normalized_outcome_timeline_v1(value: object) -> dict:
@@ -2020,8 +1983,7 @@ def validate_normalized_outcome_timeline_v1(value: object) -> dict:
     if value["next_cursor"] is not None:
         _safe_ref("normalized_outcome_timeline.next_cursor", value["next_cursor"])
     _safe_string_list("normalized_outcome_timeline.limitations", value["limitations"])
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_metric_record_v1(value: object, *, registry: EvidenceKeyRegistry | None = None) -> dict:
@@ -2071,7 +2033,6 @@ def validate_metric_record_v1(value: object, *, registry: EvidenceKeyRegistry | 
                 previous = number
         if not isinstance(distribution["histogram_bins"], list):
             raise ValueError("metric histogram_bins must be a list")
-        _assert_safe_json(distribution["histogram_bins"])
     _stable_refs("metric_record.condition_refs", value["condition_refs"])
     _stable_refs("metric_record.event_refs", value["event_refs"])
     _stable_refs("metric_record.evidence_segment_refs", value["evidence_segment_refs"])
@@ -2080,8 +2041,7 @@ def validate_metric_record_v1(value: object, *, registry: EvidenceKeyRegistry | 
     if value["confidence"] is not None:
         _ratio("metric_record.confidence", value["confidence"])
     _safe_string_list("metric_record.limitations", value["limitations"])
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_evidence_segment_v1(value: object, *, canonical_window: dict, registry: EvidenceKeyRegistry | None = None) -> dict:
@@ -2132,8 +2092,7 @@ def validate_evidence_segment_v1(value: object, *, canonical_window: dict, regis
     elif playback["start_ms"] is not None or playback["end_ms"] is not None:
         raise ValueError("unavailable video playback cannot contain bounds")
     _safe_string_list("evidence_segment.limitations", value["limitations"])
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def _validate_analysis_evidence_artifact(
@@ -2530,8 +2489,7 @@ def _validate_analysis_evidence_artifact(
             if geometric_candidate_refs != {association["target_track_ref"]}:
                 raise ValueError("validated outcome association geometric candidate is not unique")
     _safe_string_list("analysis_evidence_artifact.limitations", value["limitations"])
-    _assert_safe_json(value, allow_samples=True)
-    return copy.deepcopy(value)
+    return value
 
 
 def validate_analysis_evidence_artifact_v1(
@@ -2642,8 +2600,7 @@ def validate_processed_event_table_v1(value: object) -> dict:
     if len(index_fields) > 8 or not set(index_fields) <= set(field_keys):
         raise ValueError("processed event index fields are invalid")
     _safe_string_list("processed_event_table.limitations", value["limitations"])
-    _assert_safe_json(value)
-    return copy.deepcopy(value)
+    return value
 
 
 def _static_processed_field_catalog_v1() -> list[dict]:

@@ -73,6 +73,17 @@ def test_tracking_recovers_known_geometric_lag_and_separate_alignment_latency():
     assert result["metrics"]["continuous_tracking.time_in_radius_ratio"]["value"] == 1.0
 
 
+def test_time_in_radius_metric_reports_sample_ratio_not_binary_median():
+    payload = _payload()
+    payload["crosshair_samples"][-1]["x"] = 50.0
+
+    result = analyze_continuous_tracking_v1(payload)
+
+    metric = result["metrics"]["continuous_tracking.time_in_radius_ratio"]
+    assert metric["value"] == pytest.approx(0.75)
+    assert metric["population"]["valid_count"] == 4
+
+
 def test_fixed_viewport_center_keeps_geometry_and_withholds_player_motion_metrics():
     payload = _payload()
     payload["player_motion_status"] = "unavailable_fixed_viewport_center"
