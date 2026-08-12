@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from webapp.backend.kovaak_ingest import (
-    ExpectedIngestionState,
     KovaaKDirectoryWatcher,
     NonRetryableIngestionError,
     is_performance_path,
@@ -207,7 +206,9 @@ def test_watcher_expected_async_state_logs_without_traceback(
     caplog.set_level(logging.INFO, logger="webapp.backend.kovaak_ingest")
 
     assert len(watcher.scan_once()) == 1
-    future.set_exception(ExpectedIngestionState("waiting_for_sources"))
+    future.set_exception(NonRetryableIngestionError(
+        "waiting_for_sources", code="waiting_for_sources",
+    ))
 
     records = [
         record for record in caplog.records

@@ -31,6 +31,7 @@ from webapp.backend.contracts import (
     dump_contract_json,
 )
 from webapp.backend.workspace import session_dir
+from kovaak_tracker.metric_definitions import get_metric_definition
 
 TEST_WORKER = "test-worker:routes"
 
@@ -428,6 +429,37 @@ async def test_get_session_returns_v1_result_for_new_row():
     assert body["result"]["schema_version"] == ANALYSIS_RESULT_SCHEMA_VERSION
     assert body["result"]["input"] == {"cm_per_360": 40.0, "fov": 103.0}
     assert "diagnosis" in body["result"]["deterministic"]
+
+
+@pytest.mark.asyncio
+async def test_get_session_projects_metric_definition_without_mutating_stored_result():
+    sid = await queue.enqueue("u1", "/a", "/a.csv")
+    result = _minimal_v1_result()
+    conn = await db.get_conn()
+    await conn.execute(
+        "UPDATE sessions SET status='done', result=? WHERE id=?",
+        (dump_contract_json(result), sid),
+    )
+    await conn.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": "u1"},
+    ) as client:
+        resp = await client.get(f"/api/sessions/{sid}")
+
+    assert resp.status_code == 200, resp.text
+    expected = get_metric_definition("sparc")
+    assert expected is not None
+    metric = resp.json()["result"]["deterministic"]["diagnosis"]["summary"]["sparc"]
+    assert metric["definition"] == {
+        "name": expected["name"],
+        "description": expected["description"],
+    }
+    assert "direction" not in metric["definition"]
+
+    stored = await queue.get_session(sid)
+    assert "definition" not in stored["result"]["deterministic"]["diagnosis"]["summary"]["sparc"]
 
 
 @pytest.mark.asyncio

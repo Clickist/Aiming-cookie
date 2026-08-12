@@ -125,7 +125,7 @@ async def test_ingest_rejects_conflicting_stats_and_performance_identity(
         ),
     )
 
-    with pytest.raises(kovaak_run_store.PairingConflictError, match="pairing_conflict"):
+    with pytest.raises(kovaak_run_store.NonRetryableIngestionError, match="pairing_conflict"):
         await kovaak_run_store.ingest_discovery(
             KovaaKFileDiscovery(stem="shared", performance_path=performance),
             user_id="u1",
@@ -183,7 +183,7 @@ async def test_ingest_rejects_second_stats_source_for_same_run_identity(tmp_path
         user_id="u1",
     )
 
-    with pytest.raises(kovaak_run_store.PairingConflictError, match="pairing_conflict"):
+    with pytest.raises(kovaak_run_store.NonRetryableIngestionError, match="pairing_conflict"):
         await kovaak_run_store.ingest_discovery(
             KovaaKFileDiscovery(stem="stable-run", stats_path=second),
             user_id="u1",
@@ -1408,7 +1408,7 @@ async def test_ingest_retries_trace_pairing_during_post_run_retention_grace(
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
     monkeypatch.setattr(kovaak_run_store, "_now_ms", lambda: 2_001)
 
-    with pytest.raises(kovaak_run_store.TracePendingError, match="trace_pending"):
+    with pytest.raises(kovaak_run_store.RetryableIngestionError, match="trace_pending"):
         await kovaak_run_store.ingest_discovery(
             KovaaKFileDiscovery(stem="scenario", performance_path=performance),
             user_id="u1",
@@ -1464,7 +1464,7 @@ async def test_automatic_trace_attachment_requires_native_snapshot_coverage_wate
     )
     discovery = KovaaKFileDiscovery(stem="covered", performance_path=performance)
 
-    with pytest.raises(kovaak_run_store.TracePendingError, match="coverage"):
+    with pytest.raises(kovaak_run_store.RetryableIngestionError, match="coverage"):
         await kovaak_run_store.ingest_discovery(
             discovery,
             user_id="u1",

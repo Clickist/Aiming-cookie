@@ -564,6 +564,8 @@ async def test_v2_context_seeds_only_its_reachable_analysis_ref_for_tool_bridge(
             "analyzer_refs": [],
             "support_status": "supported",
             "limitations": [],
+            "display_name": None,
+            "aim_family": None,
         },
         "run_facts": {"mode": "unavailable", "limitations": []},
         "diagnosis": {
@@ -805,7 +807,8 @@ def test_run_pi_coach_turn_ok_false_raises():
             )
 
 
-def test_runtime_engine_preserves_tool_events_and_skips_python_fallback(monkeypatch):
+@pytest.mark.asyncio
+async def test_complete_turn_async_preserves_tool_events_on_runtime_error():
     from webapp.backend import coach_engine
 
     event = {
@@ -820,87 +823,63 @@ def test_runtime_engine_preserves_tool_events_and_skips_python_fallback(monkeypa
     }
     error = CoachRuntimeError("turn failed after tool")
     error.tool_events = [event]
-    python_calls = 0
 
-    class Pi:
-        def complete(self, turn):
+    class FakePi:
+        async def complete_async(self, turn):
             raise error
 
-    class Python:
-        def complete_with_notes(self, turn):
-            nonlocal python_calls
-            python_calls += 1
-            return "unsafe fallback", []
-
-    monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
-    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi())
-    result = engine.complete_with_notes(coach_engine.CoachTurn(
+    result = await coach_engine.complete_turn_async(coach_engine.CoachTurn(
         prior_messages=[],
         user_message="执行并解释",
         tool_bridge={"schema_version": "coach_tool_bridge.v1"},
-    ))
+    ), engine=FakePi())
 
     assert result.reply is None
     assert result.tool_events == [event]
-    assert python_calls == 0
 
 
-def test_runtime_engine_uncertain_turn_without_events_skips_python_fallback(monkeypatch):
+@pytest.mark.asyncio
+async def test_complete_turn_async_notes_side_effects_without_events():
     from webapp.backend import coach_engine
 
     error = CoachRuntimeError(
         "subprocess timed out after dispatch",
         side_effects_possible=True,
     )
-    python_calls = 0
 
-    class Pi:
-        def complete(self, turn):
+    class FakePi:
+        async def complete_async(self, turn):
             raise error
 
-    class Python:
-        def complete_with_notes(self, turn):
-            nonlocal python_calls
-            python_calls += 1
-            return "unsafe fallback", []
-
-    monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
-    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi())
-    result = engine.complete_with_notes(coach_engine.CoachTurn(
+    result = await coach_engine.complete_turn_async(coach_engine.CoachTurn(
         prior_messages=[],
         user_message="解释知识",
-    ))
+    ), engine=FakePi())
 
     assert result.reply is None
     assert result.tool_events == []
-    assert python_calls == 0
+    assert any("可能已执行产品工具" in note for note in result.notes)
 
 
-def test_sync_pi_runtime_failure_never_uses_python_fallback(monkeypatch):
+@pytest.mark.asyncio
+async def test_complete_turn_async_maps_runtime_error_to_failed_status():
     from webapp.backend import coach_engine
 
     error = CoachRuntimeError("pi unavailable")
 
-    class Pi:
-        def complete(self, turn):
+    class FakePi:
+        async def complete_async(self, turn):
             raise error
 
-    class Python:
-        def complete_with_notes(self, turn):
-            raise AssertionError("product Coach must not use the legacy Python coach")
-
-    monkeypatch.setattr(config, "COACH_RUNTIME", "pi")
-    engine = coach_engine.RuntimeRoutingCoachEngine(pi=Pi())
-    result = engine.complete_with_notes(coach_engine.CoachTurn(
+    result = await coach_engine.complete_turn_async(coach_engine.CoachTurn(
         prior_messages=[],
         user_message="provider failure",
-    ))
+    ), engine=FakePi())
 
     assert result.reply is None
     assert result.status == "failed"
     assert result.error is not None
     assert result.error["retryable"] is True
-    assert not any("回退" in note for note in result.notes)
 
 
 def test_run_pi_coach_turn_http_success_skips_subprocess():

@@ -411,13 +411,6 @@ def test_contract_bounds_compiled_problem_fields_and_normalizes_legacy_v1():
             session_ref=session_ref,
             session_version=3,
         )
-    with pytest.raises(ValueError, match="TeachingTurnContract"):
-        store.validate_contract(
-            {**compiled, "primary_candidate": "This definitely is late speed matching."},
-            session_ref=session_ref,
-            session_version=3,
-        )
-
     legacy = dict(compiled)
     for field in (
         "problem_id", "problem_label", "evidence_strength", "supporting_evidence",

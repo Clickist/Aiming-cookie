@@ -40,6 +40,7 @@ from .auth import get_request_user_id, require_desktop_token
 from .coach_service import run_chat_turn, soft_start_provider_error
 from .coach_context import (
     coerce_coach_diagnostic_context,
+    project_analysis_result_metric_definitions,
     project_coach_diagnostic_context,
 )
 from .health import build_coach_runtime_status
@@ -607,7 +608,11 @@ def _session_status_response(s: dict, *, history: dict | None = None) -> Session
     return SessionStatus(
         id=s["id"],
         status=s["status"],
-        result=s["result"],
+        result=(
+            project_analysis_result_metric_definitions(s["result"])
+            if isinstance(s.get("result"), dict)
+            else s["result"]
+        ),
         error=project_error_for_session(s["error"]),
         llm_cost_cny=float(s["llm_cost_cny"] or 0),
         created_at=s["created_at"],
@@ -1115,6 +1120,30 @@ def _safe_time_range(value: object) -> list[float] | None:
     return [float(value[0]), float(value[1])]
 
 
+def _brief_time_ranges(message: dict, analysis_ref: str) -> list[tuple[str | None, list[float]]]:
+    context = message.get("context")
+    if not isinstance(context, dict) or context.get("schema_version") != "coach_turn_context.v1":
+        return []
+    ranges: list[tuple[str | None, list[float]]] = []
+    for item in context.get("contexts") or []:
+        if not isinstance(item, dict) or item.get("analysis_ref") != analysis_ref:
+            continue
+        projection = item.get("projection")
+        brief = projection.get("analysis_brief") if isinstance(projection, dict) else None
+        for segment in (brief or {}).get("evidence_segments") if isinstance(brief, dict) else []:
+            if not isinstance(segment, dict):
+                continue
+            time_range = _safe_time_range([
+                segment.get("relative_start_ms"), segment.get("relative_end_ms"),
+            ])
+            if time_range is not None:
+                ranges.append((
+                    segment.get("segment_id") if isinstance(segment.get("segment_id"), str) else None,
+                    time_range,
+                ))
+    return ranges
+
+
 def _coach_message_cards(message: dict) -> list[dict]:
     if message.get("role") != "assistant":
         return []
@@ -1146,23 +1175,32 @@ def _coach_message_cards(message: dict) -> list[dict]:
             kinds.append(inferred)
 
     cards: list[dict] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, int]] = set()
     for kind in kinds:
         for context in contexts:
-            key = (kind, context["analysis_ref"])
-            if key in seen:
-                continue
             target_ref = context.get("target_ref")
-            cards.append({
-                "schema_version": "coach_message_card.v1",
-                "kind": kind,
-                "analysis_ref": context["analysis_ref"],
-                "target_ref": target_ref if isinstance(target_ref, str) and len(target_ref) <= 200 else None,
-                "time_range_ms": _safe_time_range(context.get("time_range_ms")),
-            })
-            seen.add(key)
-            if len(cards) == 4:
-                return cards
+            time_ranges = [_safe_time_range(context.get("time_range_ms"))]
+            brief_ranges = _brief_time_ranges(message, context["analysis_ref"]) if kind == "evidence" else []
+            if time_ranges[0] is None and brief_ranges:
+                time_ranges = [time_range for _, time_range in brief_ranges]
+            for index, time_range in enumerate(time_ranges):
+                segment_ref = brief_ranges[index][0] if index < len(brief_ranges) else None
+                card_key = (kind, context["analysis_ref"], index)
+                if card_key in seen:
+                    continue
+                cards.append({
+                    "schema_version": "coach_message_card.v1",
+                    "kind": kind,
+                    "analysis_ref": context["analysis_ref"],
+                    "target_ref": (
+                        target_ref if isinstance(target_ref, str) and len(target_ref) <= 200
+                        else segment_ref
+                    ),
+                    "time_range_ms": time_range,
+                })
+                seen.add(card_key)
+                if len(cards) == 4:
+                    return cards
     return cards
 
 
