@@ -43,6 +43,10 @@ test("history keeps refresh, Coach return, and delegates analysis to Coach", asy
   assert.match(client, /<Button onClick=\{\(\) => void loadHistory\(\)\} size="compact" variant="ghost">刷新<\/Button>/);
   assert.doesNotMatch(client, /新建分析/);
   assert.match(client, /让 Coach 分析/);
+  assert.match(client, /aiming-cookie:coach-draft/);
+  assert.match(client, /publishCoachIntent/);
+  assert.match(client, /const askCoachToAnalyze[\s\S]*?kind: "batch-analysis"[\s\S]*?id: run\.id[\s\S]*?router\.push\("\/"\);/);
+  assert.doesNotMatch(client, /publishCoachIntent\(\{ draft: `请分析这次训练/);
   assert.match(styles, /@media \(min-width: 840px\) and \(max-width: 1159px\)[\s\S]*\.task3-workspace\[data-coach-open="true"\] \.task4-page-head[\s\S]*width:\s*calc\(100% - var\(--task3-coach-width, 360px\)\);[\s\S]*flex-wrap:\s*wrap;/);
 });
 
@@ -50,6 +54,7 @@ test("history supports selecting and batch-attaching completed analyses to Coach
   const client = await source("components/task4/HistoryClient.tsx");
   const styles = await source("components/task4/task4.css");
   assert.match(client, /attachCoachContext/);
+  assert.match(client, /publishCoachIntent/);
   assert.match(client, /selectedAnalysisRefs/);
   assert.match(client, /router\.push\("\/"\)/);
   assert.match(client, /type="checkbox"/);

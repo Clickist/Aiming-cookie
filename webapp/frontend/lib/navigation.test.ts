@@ -4,7 +4,6 @@ import { test } from "node:test";
 import {
   analysisHref,
   analysisIdFromLocation,
-  guidanceRoute,
   resolveGuidanceTarget,
   validateGuidancePrefill,
 } from "./navigation";
@@ -23,10 +22,10 @@ test("analysis route parser accepts the static shell and legacy dynamic route", 
 });
 
 test("guidance navigation resolves only registered semantic targets", () => {
-  assert.equal(guidanceRoute("settings.provider_auth"), "/settings");
-  assert.equal(guidanceRoute("training.current"), "/");
+  assert.equal(resolveGuidanceTarget("settings.provider_auth")?.route, "/settings");
+  assert.equal(resolveGuidanceTarget("training.current")?.route, "/");
   assert.equal(resolveGuidanceTarget("desktop.capture_control")?.sectionId, "capture");
-  assert.equal(guidanceRoute("javascript:alert(1)"), null);
+  assert.equal(resolveGuidanceTarget("javascript:alert(1)"), null);
   assert.equal(resolveGuidanceTarget("#capture"), null);
 });
 

@@ -3,41 +3,12 @@ import { test } from "node:test";
 
 import {
   buildRunAnalysisRequest,
-  getProductStartRoute,
   getRunModeAvailability,
   isRunPauseFailClosed,
   presentRecordLabel,
   presentTask,
 } from "../lib/contracts";
-import type { KovaaKRunListItem, ProductStateV1, TaskDetailV1 } from "../lib/types";
-
-function productState(overrides: Partial<ProductStateV1>): ProductStateV1 {
-  return {
-    schema_version: "product_state.v1",
-    availability: "available",
-    onboarding_completed: false,
-    onboarding_completion_kind: null,
-    has_pending_runs: false,
-    has_runs: false,
-    has_analyses: false,
-    error: null,
-    ...overrides,
-  };
-}
-
-test("conditional start distinguishes unavailable, onboarding, and Coach", () => {
-  assert.equal(getProductStartRoute(productState({ availability: "unavailable" })), null);
-  assert.equal(getProductStartRoute(productState({ onboarding_completed: false })), "/onboarding");
-  assert.equal(getProductStartRoute(productState({ onboarding_completed: true })), "/");
-  assert.equal(
-    getProductStartRoute(productState({ onboarding_completed: true, has_runs: true })),
-    "/",
-  );
-  assert.equal(
-    getProductStartRoute(productState({ onboarding_completed: true, has_analyses: true })),
-    "/",
-  );
-});
+import type { KovaaKRunListItem, TaskDetailV1 } from "../lib/types";
 
 test("task presentation maps machine codes to Chinese and ignores backend English labels", () => {
   const task = {

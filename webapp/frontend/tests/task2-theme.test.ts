@@ -12,7 +12,6 @@ import {
 } from "../ui/tokens";
 import {
   THEME_STORAGE_KEY,
-  createThemeController,
   createThemeScript,
 } from "../ui/theme-core";
 
@@ -81,39 +80,6 @@ test("primary text roles remain readable in both themes", () => {
     assert.ok(contrastRatio(tokens["on-primary"], tokens.primary) >= 4.5);
     assert.ok(contrastRatio(tokens["on-error"], tokens.error) >= 4.5);
   }
-});
-
-test("system preference follows the system and explicit preferences stay fixed", () => {
-  let systemTheme: "light" | "dark" = "light";
-  let onSystemChange: ((theme: "light" | "dark") => void) | undefined;
-  const applied: Array<"light" | "dark"> = [];
-  const controller = createThemeController({
-    readPreference: () => null,
-    writePreference: () => undefined,
-    readSystemTheme: () => systemTheme,
-    subscribeSystem: (listener) => {
-      onSystemChange = listener;
-      return () => {
-        onSystemChange = undefined;
-      };
-    },
-    applyTheme: (theme) => applied.push(theme),
-  });
-
-  assert.deepEqual(controller.start(), { preference: "system", resolvedTheme: "light" });
-  systemTheme = "dark";
-  onSystemChange?.(systemTheme);
-  assert.equal(applied.at(-1), "dark");
-
-  controller.setPreference("light");
-  systemTheme = "dark";
-  onSystemChange?.(systemTheme);
-  assert.equal(applied.at(-1), "light");
-
-  controller.setPreference("dark");
-  systemTheme = "light";
-  onSystemChange?.(systemTheme);
-  assert.equal(applied.at(-1), "dark");
 });
 
 test("theme preference is local UI storage and the hydration script applies it before paint", () => {

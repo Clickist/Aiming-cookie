@@ -251,6 +251,24 @@ test("Coach session adapters forward the selected session identity", async () =>
   });
 });
 
+test("structured API errors expose the server message instead of object coercion", async () => {
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    detail: { code: "provider_unconfigured", message: "Coach Provider is not configured" },
+  }), {
+    status: 503,
+    headers: { "Content-Type": "application/json" },
+  })) as typeof fetch;
+
+  await assert.rejects(
+    () => createCoachAgentRun("test", []),
+    (error: unknown) => error instanceof Error
+      && error.name === "ApiError_503"
+      && error.message === "Coach Provider is not configured",
+  );
+});
+
 test("custom Provider model discovery submits URL and key once without retaining either", async () => {
   const requests: Array<{ input: string; init?: RequestInit }> = [];
   Reflect.set(globalThis, "isTauri", false);

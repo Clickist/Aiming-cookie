@@ -51,9 +51,10 @@ test("app shell styles keep the 48px AppBar and make Settings a top-bar-below ov
 
 test("session selection updates the Coach deep link", async () => {
   const value = await source("components/task3/AppShell.tsx");
-  assert.match(value, /const coachWorkspaceRoute = pathname === "\/" \|\| pathname\.startsWith\("\/s\/"\)/);
-  assert.match(value, /const requestedSessionId = .*\.exec\(pathname\)/);
-  assert.match(value, /router\.push\(`\/s\/\$\{session\.id\}`\)/);
+  assert.match(value, /const coachWorkspaceRoute = pathname === "\/" \|\| pathname === "\/s" \|\| pathname === "\/s\/"/);
+  assert.match(value, /useSearchParams/);
+  assert.match(value, /parseSessionId\(searchParams\.get\("sessionId"\)\)/);
+  assert.match(value, /router\.push\(`\/s\?sessionId=\$\{session\.id\}`\)/);
   assert.match(value, /routeSessionId !== null/);
 });
 
@@ -141,13 +142,31 @@ test("onboarding uses accessible Provider and Model listboxes without category t
   assert.doesNotMatch(value, /role="tablist"/);
 });
 
+test("onboarding preserves the API key draft while selecting and testing a model", async () => {
+  const onboarding = await source("components/task3/OnboardingFlow.tsx");
+  const selectModel = onboarding.slice(
+    onboarding.indexOf("const selectModel"),
+    onboarding.indexOf("const updateCustomConnection"),
+  );
+  const connect = onboarding.slice(
+    onboarding.indexOf("const connect"),
+    onboarding.indexOf("const submitPrompt"),
+  );
+
+  assert.doesNotMatch(selectModel, /setApiKey/);
+  assert.doesNotMatch(connect, /setApiKey/);
+  assert.match(connect, /profileId === null/);
+  assert.match(connect, /updateProviderProfile\(profileId,/);
+});
+
 test("onboarding requires a Provider and enabled desktop capture before completion", async () => {
   const onboarding = await source("components/task3/OnboardingFlow.tsx");
   const styles = await source("components/task3/task3.css");
   assert.match(onboarding, /task3-onboarding-wizard-actions/);
   assert.doesNotMatch(onboarding, /task3-onboarding-skip-tooltip|completeOnboarding\("skipped"\)/);
   assert.match(onboarding, /!desktop \|\| !captureOptIn/);
-  assert.match(onboarding, /status\.raw_input_permission !== "granted"/);
+  assert.match(onboarding, /status\.raw_input_permission === "denied"/);
+  assert.match(onboarding, /status\.runtime_health === "unavailable"/);
   assert.match(onboarding, /completeOnboarding\("connected"\)/);
   assert.match(styles, /task3-onboarding-status span::before/);
 });

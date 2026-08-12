@@ -15,9 +15,8 @@ test("mock review mode keeps DTO-backed state while pages remain navigable", asy
   await page.goto("/history");
   await expect(page.getByRole("main")).toBeVisible();
   await page.goto("/analysis/42");
-  await expect(page.getByRole("tabpanel")).toBeVisible();
-  await page.getByRole("tab").nth(2).click();
-  await expect(page.getByRole("tabpanel")).toBeVisible();
+  await expect(page).toHaveURL(/\/history$/);
+  await expect(page.getByRole("heading", { name: "分析记录" })).toBeVisible();
   await page.goto("/settings");
   await expect(page.getByRole("main")).toBeVisible();
 });

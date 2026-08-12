@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const tauriCdp = !!process.env.AIMING_COOKIE_TAURI_CDP_URL;
+
 export default defineConfig({
   testDir: "./e2e",
   testIgnore: "mock-review.spec.ts",
@@ -24,7 +26,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },
-  webServer: {
+  // Tauri E2E tests connect via CDP; the browser webServer is only needed for non-Tauri specs.
+  webServer: tauriCdp ? undefined : {
     command: "npm run start -- --port 3106",
     url: "http://127.0.0.1:3106",
     reuseExistingServer: true,
