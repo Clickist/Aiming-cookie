@@ -167,6 +167,25 @@ async function apiFetch(
   }
 }
 
+async function apiFetchSidecar(
+  path: string,
+  init: RequestInit = {},
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<Response> {
+  if (!isDesktopRuntime()) {
+    // Browser/dev sessions have no sidecar — fall back to the Python backend.
+    return apiFetch(path.replace(/^\/v1\//, "/api/coach/"), init, opts);
+  }
+  const connection = await getDesktopRuntimeConnection();
+  const headers = new Headers(init.headers);
+  headers.set("X-User-Id", DESKTOP_USER_ID);
+  return fetch(`${connection.sidecarUrl}${path}`, {
+    ...init,
+    headers,
+    signal: opts.signal,
+  });
+}
+
 export interface UploadOptions {
   /** Required Stats CSV (KovaaK's export). Backend hard-requires it. */
   csv: File;
@@ -470,7 +489,7 @@ export async function getCoachPrimary(
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachPrimaryResponse> {
   const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
-  const res = await apiFetch(`/api/coach/primary${query}`, { method: "GET" }, opts);
+  const res = await apiFetchSidecar(`/v1/primary${query}`, { method: "GET" }, { signal: opts.signal });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachPrimaryResponse;
 }
@@ -971,7 +990,7 @@ export async function getCoachContexts(
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachContextListV1> {
   const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
-  const res = await apiFetch(`/api/coach/context${query}`, { method: "GET" }, opts);
+  const res = await apiFetchSidecar(`/v1/context${query}`, { method: "GET" }, { signal: opts.signal });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachContextListV1;
 }
@@ -983,7 +1002,7 @@ export async function listCoachSessions(
   if (opts.query?.trim()) params.set("q", opts.query.trim());
   if (opts.includeArchived) params.set("include_archived", "true");
   const query = params.toString();
-  const res = await apiFetch(`/api/coach/sessions${query ? `?${query}` : ""}`, { method: "GET" }, opts);
+  const res = await apiFetchSidecar(`/v1/sessions${query ? `?${query}` : ""}`, { method: "GET" }, { signal: opts.signal });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachSessionListResponse;
 }
@@ -992,14 +1011,14 @@ export async function createCoachSession(
   title?: string,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<CoachSessionOut> {
-  const res = await apiFetch(
-    "/api/coach/sessions",
+  const res = await apiFetchSidecar(
+    "/v1/sessions",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(title?.trim() ? { title: title.trim() } : {}),
     },
-    opts,
+    { signal: opts.signal },
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachSessionOut;
@@ -1010,14 +1029,14 @@ export async function updateCoachSession(
   update: { title?: string; status?: "archived" },
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<CoachSessionOut> {
-  const res = await apiFetch(
-    `/api/coach/sessions/${sessionId}`,
+  const res = await apiFetchSidecar(
+    `/v1/sessions/${sessionId}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(update),
     },
-    opts,
+    { signal: opts.signal },
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachSessionOut;
@@ -1027,7 +1046,7 @@ export async function deleteCoachSession(
   sessionId: number,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<CoachSessionOut> {
-  const res = await apiFetch(`/api/coach/sessions/${sessionId}`, { method: "DELETE" }, opts);
+  const res = await apiFetchSidecar(`/v1/sessions/${sessionId}`, { method: "DELETE" }, { signal: opts.signal });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachSessionOut;
 }
@@ -1062,10 +1081,10 @@ export async function detachCoachContext(
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachContextMutationV1> {
   const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
-  const res = await apiFetch(
-    `/api/coach/context/${encodeURIComponent(contextRef)}/detach${query}`,
+  const res = await apiFetchSidecar(
+    `/v1/context/${encodeURIComponent(contextRef)}/detach${query}`,
     { method: "POST" },
-    opts,
+    { signal: opts.signal },
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachContextMutationV1;
@@ -1076,13 +1095,12 @@ export async function createCoachAgentRun(
   contextRefs: string[],
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachAgentRunV1> {
-  const res = await apiFetch(
-    "/api/coach/agent-runs",
+  const res = await apiFetchSidecar(
+    "/v1/agent-runs",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        schema_version: "coach_agent_run_request.v1",
         content,
         context_refs: contextRefs,
         ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
@@ -1115,8 +1133,7 @@ export async function getCoachAgentRun(
   runRef: string,
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachAgentRunV1> {
-  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
-  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}${query}`, { method: "GET" }, opts);
+  const res = await apiFetchSidecar(`/v1/agent-runs/${encodeURIComponent(runRef)}`, { method: "GET" }, { signal: opts.signal });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachAgentRunV1;
 }
@@ -1125,8 +1142,11 @@ export async function stopCoachAgentRun(
   runRef: string,
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachAgentRunV1> {
-  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
-  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}/stop${query}`, { method: "POST" }, opts);
+  const res = await apiFetchSidecar(
+    `/v1/agent-runs/${encodeURIComponent(runRef)}/stop`,
+    { method: "POST" },
+    opts,
+  );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachAgentRunV1;
 }
@@ -1135,8 +1155,11 @@ export async function retryCoachAgentRun(
   runRef: string,
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachAgentRunV1> {
-  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
-  const res = await apiFetch(`/api/coach/agent-runs/${encodeURIComponent(runRef)}/retry${query}`, { method: "POST" }, opts);
+  const res = await apiFetchSidecar(
+    `/v1/agent-runs/${encodeURIComponent(runRef)}/retry`,
+    { method: "POST" },
+    opts,
+  );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachAgentRunV1;
 }
@@ -1146,13 +1169,12 @@ export async function decideCoachConfirmation(
   decision: "confirm" | "reject",
   opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
 ): Promise<CoachConfirmationV1> {
-  const query = opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : "";
-  const res = await apiFetch(
-    `/api/coach/confirmations/${encodeURIComponent(confirmationRef)}/decision${query}`,
+  const res = await apiFetchSidecar(
+    `/v1/confirmations/${encodeURIComponent(confirmationRef)}/decision`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ schema_version: "coach_confirmation_decision.v1", decision }),
+      body: JSON.stringify({ decision }),
     },
     opts,
   );

@@ -6,6 +6,7 @@ import type { DesktopCaptureCoordinatorStatus, ScenarioOpenResultV1 } from "./ty
 export interface DesktopRuntimeConnection {
   baseUrl: string;
   token: string;
+  sidecarUrl: string;
 }
 
 let connectionPromise: Promise<DesktopRuntimeConnection> | null = null;
