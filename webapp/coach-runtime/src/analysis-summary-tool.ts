@@ -619,6 +619,7 @@ const V2ContextSchema = Type.Object(
 		trends: Type.Array(Type.Any(), { maxItems: 4 }),
 		training: TrainingSchema,
 		limitations: Type.Array(Type.String()),
+		analysis_brief: Type.Optional(Type.Any()),
 	},
 	{ additionalProperties: false },
 );
@@ -635,6 +636,7 @@ const V3ContextSchema = Type.Object(
 		training: TrainingSchema,
 		limitations: Type.Array(Type.String()),
 		processed_events: Type.Any(),
+		analysis_brief: Type.Optional(Type.Any()),
 	},
 	{ additionalProperties: false },
 );

@@ -165,7 +165,7 @@ test("an ordinary no-context Coach turn remains provider-backed without a teachi
   assert.deepEqual(response.notes, []);
 });
 
-test("a product command execution failure cannot become a successful Provider reply", async () => {
+test("a transient product command execution failure on a read allows the turn to continue", async () => {
   const originalFetch = globalThis.fetch;
   let streamCalls = 0;
   globalThis.fetch = (async () => new Response(JSON.stringify({
@@ -196,15 +196,14 @@ test("a product command execution failure cannot become a successful Provider re
     });
 
     assert.equal(streamCalls, 2);
-    assert.equal(response.ok, false);
-    assert.equal(response.reply, null);
-    assert.equal(response.error?.code, "tool_compliance_required");
+    assert.equal(response.ok, true);
+    assert.equal(response.reply, "读取已经完成。");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("a structured failed product command cannot become a successful Provider reply", async () => {
+test("a structured failed product command on a read allows the turn to continue", async () => {
   const originalFetch = globalThis.fetch;
   let streamCalls = 0;
   globalThis.fetch = (async () => new Response(JSON.stringify({
@@ -236,9 +235,8 @@ test("a structured failed product command cannot become a successful Provider re
     });
 
     assert.equal(streamCalls, 2);
-    assert.equal(response.ok, false);
-    assert.equal(response.reply, null);
-    assert.equal(response.error?.code, "tool_compliance_required");
+    assert.equal(response.ok, true);
+    assert.equal(response.reply, "读取已经完成。");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -567,7 +565,7 @@ test("statements about tension and an unchanged mouse do not create extra answer
   assert.equal(response.ok, true);
 });
 
-test("Markdown formatting is normalized without spending the grounding repair", async () => {
+test("Markdown formatting is normalized in a single model call", async () => {
   let calls = 0;
   const response = await runCoachTurn(baseRequest(), {
     streamFn: async () => {
@@ -866,7 +864,7 @@ test("v1 without a bridge registers analysis and knowledge tools only", async ()
   assert.deepEqual(tools.map((tool) => tool.name), [
     "get_analysis_summary",
     "get_coach_knowledge",
-    "get_peripheral_reference",
+    "load_skill",
   ]);
 });
 
@@ -892,7 +890,7 @@ test("v1 bridge registers only the three product tools and keeps mandatory polic
   assert.deepEqual(tools.map((tool) => tool.name), [
     "get_analysis_summary",
     "get_coach_knowledge",
-    "get_peripheral_reference",
+    "load_skill",
     "run_product_command",
   ]);
   const prompt = String(capturedContext?.systemPrompt);
@@ -963,7 +961,7 @@ test("failed turn preserves product-command events that completed before the str
   }
 });
 
-test("an explicit reachable Analysis deletion fails closed when the compliance retry still omits the tool", async () => {
+test("an explicit Analysis deletion request is answered by the model without runtime-forced retry", async () => {
   let calls = 0;
   const response = await runCoachTurn({
     ...baseRequest(),
@@ -977,16 +975,12 @@ test("an explicit reachable Analysis deletion fails closed when the compliance r
     },
   });
 
-  assert.equal(calls, 2);
-  assert.equal(response.ok, false);
-  assert.equal(response.error?.code, "tool_compliance_required");
-  assert.equal(response.error?.retryable, true);
-  assert.equal(response.reply, null);
-  assert.equal(response.partial_reply, null);
-  assert.deepEqual(response.tool_events, []);
+  assert.equal(calls, 1);
+  assert.equal(response.ok, true);
+  assert.equal(response.reply, "Reply again and I will call analysis.delete.");
 });
 
-test("the required deletion guard does not send a different product command during compliance", async () => {
+test("a deletion request where the model gives a text reply does not force a retry", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   let calls = 0;
@@ -1021,17 +1015,16 @@ test("the required deletion guard does not send a different product command duri
       },
     });
 
-    assert.ok(calls >= 2);
+    assert.equal(calls, 1);
     assert.equal(fetchCalls, 0);
-    assert.equal(response.ok, false);
-    assert.equal(response.error?.code, "tool_compliance_required");
-    assert.equal(response.partial_reply, null);
+    assert.equal(response.ok, true);
+    assert.equal(response.reply, "I did not create a confirmation.");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("the required deletion guard rejects a different numeric ref before the bridge", async () => {
+test("a deletion request where the model gives a text reply does not force a retry for a wrong ref", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   let calls = 0;
@@ -1066,17 +1059,16 @@ test("the required deletion guard rejects a different numeric ref before the bri
       },
     });
 
-    assert.ok(calls >= 2);
+    assert.equal(calls, 1);
     assert.equal(fetchCalls, 0);
-    assert.equal(response.ok, false);
-    assert.equal(response.error?.code, "tool_compliance_required");
-    assert.equal(response.partial_reply, null);
+    assert.equal(response.ok, true);
+    assert.equal(response.reply, "No confirmation was created.");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("deletion discussion, a missing ref, or an unreachable ref never triggers automatic tool compliance", async () => {
+test("deletion discussion, a missing ref, or an unreachable ref produces a normal reply without forced tool calls", async () => {
   const cases = [
     "Can you explain how to delete Analysis 3?",
     "How do I delete Analysis 3?",
@@ -1133,7 +1125,7 @@ test("an explicit deletion quote preserves the trusted direct authorization even
     }, {
       streamFn: async () => {
         calls += 1;
-        if (calls === 2) {
+        if (calls === 1) {
           return streamAssistant([{
             type: "toolCall",
             id: "direct-delete",
@@ -1148,6 +1140,7 @@ test("an explicit deletion quote preserves the trusted direct authorization even
         return streamAssistant([{ type: "text", text: "Deleted." }], "stop");
       },
     });
+    assert.equal(calls, 2);
     assert.equal(response.ok, true);
     assert.match(JSON.stringify(response.tool_events), /"authorization_source":"explicit_user_request"/);
   } finally {
@@ -1155,12 +1148,20 @@ test("an explicit deletion quote preserves the trusted direct authorization even
   }
 });
 
-test("an unrequested deletion tool call never reaches the bridge", async () => {
+test("an unrequested deletion tool call reaches the backend and the model handles the rejection", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   globalThis.fetch = (async () => {
     fetchCalls += 1;
-    throw new Error("an unrequested deletion must not reach the bridge");
+    return new Response(JSON.stringify({
+      schema_version: "coach_product_command_result.v1",
+      command_id: "command:unrequested-delete",
+      status: "failed",
+      result_ref: null,
+      audit_ref: "audit:unrequested-delete",
+      result: null,
+      warning_or_error: { code: "unauthorized", message: "User did not request this deletion" },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   const multipleAttached = JSON.stringify({
     schema_version: "coach_turn_context.v1",
@@ -1206,12 +1207,10 @@ test("an unrequested deletion tool call never reaches the bridge", async () => {
       });
 
       assert.ok(calls >= 1, item.content);
-      assert.equal(response.ok, false, item.content);
-      assert.equal(response.error?.code, "tool_compliance_required", item.content);
-      assert.equal(response.partial_reply, null, item.content);
-      assert.deepEqual(response.tool_events, [], item.content);
+      assert.equal(response.ok, true, item.content);
+      assert.equal(response.reply, "No deletion was requested.", item.content);
     }
-    assert.equal(fetchCalls, 0);
+    assert.equal(fetchCalls, cases.length);
   } finally {
     globalThis.fetch = originalFetch;
   }

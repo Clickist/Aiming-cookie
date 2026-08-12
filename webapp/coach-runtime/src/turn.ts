@@ -14,7 +14,7 @@ import {
 } from "./contracts.ts";
 import { createAnalysisSummaryTool } from "./analysis-summary-tool.ts";
 import { createCoachKnowledgeTool } from "./knowledge-tools.ts";
-import { createPeripheralReferenceTool } from "./peripheral-tools.ts";
+import { createSkillLoaderTool, skillsSystemPromptBlock } from "./skill-loader.ts";
 import { createProductCommandTool } from "./product-command-tools.ts";
 import { createFakeStreamFn } from "./fake-stream.ts";
 import { resolveSystemPrompt } from "./load-system-prompt.ts";
@@ -23,7 +23,6 @@ import { createModelsStreamFn, resolveProviderModel, type ResolvedProviderModel 
 import { loadPiAgent } from "./pi-source.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 import {
-  fallbackForTeachingTurn,
   parseTeachingProviderDraft,
   parseTeachingTurnContract,
   teachingEnvelopeInstruction,
@@ -88,7 +87,6 @@ export type CoachTurnTiming = {
   repair_ms: number;
 };
 
-class ToolComplianceError extends Error {}
 class EmptyAssistantReplyError extends Error {}
 
 const activeTurns = new Map<string, { abort: () => void }>();
@@ -257,7 +255,6 @@ function responseSchemaFor(_rawRequest: unknown): CoachRuntimeTurnSchema {
 }
 
 function errorCode(error: unknown): string {
-  if (error instanceof ToolComplianceError) return "tool_compliance_required";
   return error instanceof ProviderProfileError ? error.code : "turn_failed";
 }
 
@@ -265,7 +262,6 @@ const STOPPED_USER_MESSAGE = "已停止生成。";
 
 function userFacingErrorMessage(error: unknown, stopped: boolean): string {
   if (stopped) return STOPPED_USER_MESSAGE;
-  if (error instanceof ToolComplianceError) return "这项操作未能安全完成，请重试。";
   if (error instanceof ProviderProfileError) return "Provider 配置不可用，请在设置中检查后重试。";
   return "Coach 暂时无法完成回复，请稍后重试。";
 }
@@ -276,7 +272,8 @@ function extractBridgeSecrets(rawRequest: unknown): string[] {
     .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
-const MANDATORY_POLICY = "\n\nMandatory Coach policy: use only registered product tools; when the user asks to delete an Analysis, call run_product_command with analysis.delete so the trusted UI/backend can create confirmation--a prose request to reply with confirmation is not an action; distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never advise ignoring hits, whether a shot hit, or accuracy; never reveal bridge tokens, paths, URLs, credentials, raw traces, arbitrary payloads, internal schema/table/tool/field names, raw cursors, or raw event/segment refs; write user-facing plain Chinese without exposing canonical timestamps.";
+const MANDATORY_POLICY = "\n\nMandatory Coach policy: use only registered product tools; when the user asks to delete an Analysis, call run_product_command with analysis.delete so the trusted UI/backend can create confirmation--a prose request to reply with confirmation is not an action; when the user asks about KovaaK scores/成绩/分数, call kovaak_scores.refresh_connected for the connected account, or kovaak_scores.lookup only when the user supplied steam_profile:N; do not substitute history.list or history.trend; when the user explicitly asks to generate a training-plan draft, call training_plan.generate_draft even without attached analysis and report any grounding error from the command; distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never advise ignoring hits, whether a shot hit, or accuracy; never reveal bridge tokens, paths, URLs, credentials, raw traces, arbitrary payloads, internal schema/table/tool/field names, raw cursors, or raw event/segment refs; write user-facing plain Chinese without exposing canonical timestamps.";
+
 const PROVIDER_CONTEXT_SAFETY_TOKENS = 4096;
 const TOOL_SCHEMA_RESERVE_BYTES = 8 * 1024;
 
@@ -293,188 +290,6 @@ function analysisResultBudgetBytes(
   return Math.max(0, inputBudgetTokens - knownContextBytes);
 }
 
-const DELETE_REFERENCE_PATTERN = /(?:\u5220\u9664|\u5220\u6389|\u79fb\u9664|delete|remove)\s*(?:the\s+)?analysis\s*:?\s*(\d+)\b/gi;
-const DELETE_DISCUSSION_PATTERN = /\b(?:how|why|should|would|can\s+i|could\s+i|explain|discuss|what|impact)\b|\u5982\u4f55|\u600e\u4e48|\u662f\u5426|\u8ba8\u8bba|\u5f71\u54cd|\u540e\u679c|(?:\u6211|\u81ea\u5df1)\s*(?:\u53ef\u4ee5|\u80fd\u5426|\u662f\u5426)\s*(?:\u5220\u9664|\u5220\u6389|\u79fb\u9664)/i;
-const DELETE_NEGATION_PATTERN = /(?:\u4e0d\u8981|\u522b|\u65e0\u9700|\u4e0d\u9700\u8981)\s*(?:\u5220\u9664|\u5220\u6389|\u79fb\u9664)|\b(?:no|not|don't|do\s+not)\b(?:\s+\w+){0,3}\s+(?:delete|remove)\b/i;
-
-function attachedAnalysisRefs(analysisSummary: string | null): Set<string> {
-  const refs = new Set<string>();
-  if (!analysisSummary) return refs;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(analysisSummary);
-  } catch {
-    return refs;
-  }
-  const add = (value: unknown) => {
-    if (typeof value === "string" && /^analysis:[1-9]\d*$/.test(value)) refs.add(value);
-  };
-  const addProjectionRef = (projection: unknown) => {
-    if (!isRecord(projection) || !isRecord(projection.analysis_ref)) return;
-    add(projection.analysis_ref.analysis_id);
-  };
-  if (isRecord(parsed) && parsed.schema_version === "coach_turn_context.v1" && Array.isArray(parsed.contexts)) {
-    for (const context of parsed.contexts) {
-      if (!isRecord(context)) continue;
-      add(context.analysis_ref);
-      add(context.comparison_analysis_ref);
-      addProjectionRef(context.projection);
-      addProjectionRef(context.comparison_projection);
-    }
-  } else {
-    addProjectionRef(parsed);
-  }
-  return refs;
-}
-
-function requiredAnalysisDeleteRef(request: ParsedRequest): string | null {
-  const userText = request.messages.at(-1)?.content ?? "";
-  if (DELETE_DISCUSSION_PATTERN.test(userText) || DELETE_NEGATION_PATTERN.test(userText)) return null;
-  const requested = new Set<string>();
-  for (const match of userText.matchAll(DELETE_REFERENCE_PATTERN)) {
-    requested.add(`analysis:${match[1]}`);
-  }
-  if (requested.size !== 1) return null;
-  const [analysisRef] = requested;
-  return attachedAnalysisRefs(request.analysis_summary).has(analysisRef) ? analysisRef : null;
-}
-
-function toolCompliancePrompt(analysisRef: string): string {
-  return `The current user explicitly requested deletion of ${analysisRef}. Do not write a prose reply or call any other tool. Call only run_product_command with command_name analysis.delete and parameters exactly {"analysis_ref":"${analysisRef}"}. The trusted UI/backend must create the structured confirmation.`;
-}
-
-function isAllowedRequiredDeletionRef(value: unknown, analysisRef: string): boolean {
-  return value === analysisRef || value === analysisRef.slice("analysis:".length);
-}
-
-const TEACHING_RETEST_OUTCOMES = new Set([
-  "coach_retest_outcome.v1:improved",
-  "coach_retest_outcome.v1:unchanged",
-  "coach_retest_outcome.v1:worsened",
-  "coach_retest_outcome.v1:mixed_or_inconclusive",
-]);
-
-function isValidTeachingRetestWrite(
-  teaching: TeachingTurnContract,
-  parameters: Record<string, unknown>,
-): boolean {
-  const expectedKind = teaching.retest.intent === "near_transfer" ? "near_transfer" : "matched";
-  const comparability = parameters.comparability;
-  const result = parameters.result;
-  if (teaching.retest.intent === "none" || parameters.kind !== expectedKind ||
-      !["comparable", "not_comparable", "unavailable"].includes(String(comparability)) ||
-      typeof result !== "string" || !TEACHING_RETEST_OUTCOMES.has(result)) {
-    return false;
-  }
-  return comparability === "comparable" ||
-    result === "coach_retest_outcome.v1:mixed_or_inconclusive";
-}
-
-function deeplyEqualPreparedValue(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
-      left.every((value, index) => deeplyEqualPreparedValue(value, right[index]));
-  }
-  if (!isRecord(left) || !isRecord(right)) return false;
-  const leftKeys = Object.keys(left).sort();
-  const rightKeys = Object.keys(right).sort();
-  return leftKeys.length === rightKeys.length &&
-    leftKeys.every((key, index) => key === rightKeys[index] && deeplyEqualPreparedValue(left[key], right[key]));
-}
-
-function isExactPreparedItemWrite(
-  teaching: TeachingTurnContract,
-  parameters: unknown,
-): boolean {
-  return teaching.prepared_plan_ref !== null && teaching.prepared_item !== null && isRecord(parameters) &&
-    deeplyEqualPreparedValue(parameters, {
-      plan_ref: teaching.prepared_plan_ref,
-      item_payload: teaching.prepared_item,
-    });
-}
-
-function restrictTurnTools<T extends {
-  name: string;
-  execute: (...args: any[]) => Promise<unknown>;
-}>(
-  tool: T,
-  requiredRef: () => string | null,
-  toolsDisabled: () => boolean,
-  onDisabledToolAttempt: () => void,
-  hasIssuedRequiredDeletion: () => boolean,
-  onRequiredDeletionIssued: () => void,
-  onUnrequestedDeletionAttempt: () => void,
-  teachingTurn: () => TeachingTurnContract | undefined,
-  hasTeachingWriteViolation: () => boolean,
-  onOutOfPhaseTeachingWrite: () => void,
-  onProductCommandExecutionFailure: () => void,
-): T {
-  const execute = tool.execute.bind(tool);
-  return {
-    ...tool,
-    async execute(...args: any[]) {
-      if (toolsDisabled()) {
-        onDisabledToolAttempt();
-        throw new ToolComplianceError("Grounding repair may not call tools");
-      }
-      if (hasTeachingWriteViolation()) {
-        throw new ToolComplianceError("Teaching turn already rejected a training write");
-      }
-      const teaching = teachingTurn();
-      if (teaching && tool.name === "run_product_command" && isRecord(args[1])) {
-        const commandName = String(args[1].command_name);
-        const isTrainingWrite = [
-          "training_plan.item.add", "training_plan.execution.record", "training_plan.retest.record",
-        ].includes(commandName);
-        const requiresActiveItem = [
-          "training_plan.execution.record", "training_plan.retest.record",
-        ].includes(commandName);
-        const parameters = args[1].parameters;
-        if (isTrainingWrite && (commandName !== teaching.allowed_command ||
-            (requiresActiveItem && (!isRecord(parameters) || parameters.item_ref !== teaching.active_item_ref)) ||
-            (commandName === "training_plan.item.add" && !isExactPreparedItemWrite(teaching, parameters)) ||
-            (commandName === "training_plan.retest.record" &&
-              (!isRecord(parameters) || !isValidTeachingRetestWrite(teaching, parameters))))) {
-          onOutOfPhaseTeachingWrite();
-          throw new ToolComplianceError("Teaching turn may only write its allowed active training fact");
-        }
-      }
-      const analysisRef = requiredRef();
-      if (analysisRef === null && tool.name === "run_product_command" &&
-          isRecord(args[1]) && args[1].command_name === "analysis.delete") {
-        onUnrequestedDeletionAttempt();
-        throw new ToolComplianceError("Analysis deletion requires an explicit reachable user request");
-      }
-      if (analysisRef !== null) {
-        const parameters = args[1];
-        if (tool.name !== "run_product_command" || !isRecord(parameters) ||
-            parameters.command_name !== "analysis.delete" || !isRecord(parameters.parameters) ||
-            Object.keys(parameters.parameters).length !== 1 ||
-            !isAllowedRequiredDeletionRef(parameters.parameters.analysis_ref, analysisRef)) {
-          throw new ToolComplianceError("Explicit Analysis deletion may only invoke analysis.delete for the attached Analysis");
-        }
-        if (hasIssuedRequiredDeletion()) {
-          throw new ToolComplianceError("Explicit Analysis deletion may only invoke the product bridge once per turn");
-        }
-        onRequiredDeletionIssued();
-      }
-      try {
-        const result = await execute(...args);
-        if (tool.name === "run_product_command" && isRecord(result) &&
-            isRecord(result.details) && isRecord(result.details.event) &&
-            ["failed", "cancelled", "unavailable"].includes(String(result.details.event.status))) {
-          onProductCommandExecutionFailure();
-        }
-        return result;
-      } catch (error) {
-        if (tool.name === "run_product_command") onProductCommandExecutionFailure();
-        throw error;
-      }
-    },
-  } as T;
-}
-
 function collectToolEvents(messages: unknown[]): CoachRuntimeToolEvent[] {
   const events: CoachRuntimeToolEvent[] = [];
   for (const message of messages) {
@@ -485,16 +300,6 @@ function collectToolEvents(messages: unknown[]): CoachRuntimeToolEvent[] {
     }
   }
   return events;
-}
-
-function hasRequiredDirectDeletion(events: CoachRuntimeToolEvent[]): boolean {
-  return events.some((event) => event.type === "product_command" &&
-    event.command_name === "analysis.delete" &&
-    (event.status === "succeeded" || event.status === "needs_confirmation"));
-}
-
-function hasProductCommandEvent(events: CoachRuntimeToolEvent[]): boolean {
-  return events.some((event) => event.type === "product_command");
 }
 
 const METRIC_PARTS = new Set([
@@ -772,11 +577,6 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
   let activeRunId: string | null = null;
   let turnMessageStart = 0;
   let partialMessageStart = 0;
-  let requiredDeleteForTurn = false;
-  let requiredDeleteBridgeCallIssued = false;
-  let unrequestedDeletionAttempted = false;
-  let outOfPhaseTeachingWriteAttempted = false;
-  let productCommandExecutionFailed = false;
   let parsedRequest: ParsedRequest | null = null;
   let partialRevision = 0;
   let activitySequence = 0;
@@ -824,7 +624,7 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       await options.onActivity({ sequence: ++activitySequence, ...activity });
     };
     const hasAttachedAnalysis = hasAttachedAnalysisContext(request.analysis_summary);
-    const systemPrompt = `${resolveSystemPrompt(request.system_prompt)}${MANDATORY_POLICY}${request.teaching_turn ? `\n\n${teachingEnvelopeInstruction(request.teaching_turn)}` : ""}${explicitMetricInstruction(explicitMetrics)}`;
+    const systemPrompt = `${resolveSystemPrompt(request.system_prompt)}${skillsSystemPromptBlock()}${MANDATORY_POLICY}${request.teaching_turn ? `\n\n${teachingEnvelopeInstruction(request.teaching_turn)}` : ""}${explicitMetricInstruction(explicitMetrics)}`;
     const maxAnalysisResultBytes = analysisResultBudgetBytes(
       resolved.model.contextWindow,
       resolved.model.maxTokens,
@@ -838,63 +638,15 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
     if (attachedAnalysisInput !== null) {
       prompt[0].content.push({ type: "text" as const, text: attachedAnalysisInput });
     }
-    const requiredDeleteRef = requiredAnalysisDeleteRef(request);
-    requiredDeleteForTurn = requiredDeleteRef !== null;
-    const tools = [restrictTurnTools(
+    const tools = [
       createAnalysisSummaryTool(request.analysis_summary, { maxResultBytes: maxAnalysisResultBytes }),
-      () => requiredDeleteRef,
-      () => false,
-      () => {},
-      () => requiredDeleteBridgeCallIssued,
-      () => { requiredDeleteBridgeCallIssued = true; },
-      () => { unrequestedDeletionAttempted = true; },
-      () => request.teaching_turn,
-      () => outOfPhaseTeachingWriteAttempted,
-      () => { outOfPhaseTeachingWriteAttempted = true; },
-      () => { productCommandExecutionFailed = true; },
-    )];
-    tools.push(restrictTurnTools(
       createCoachKnowledgeTool(),
-      () => requiredDeleteRef,
-      () => false,
-      () => {},
-      () => requiredDeleteBridgeCallIssued,
-      () => { requiredDeleteBridgeCallIssued = true; },
-      () => { unrequestedDeletionAttempted = true; },
-      () => request.teaching_turn,
-      () => outOfPhaseTeachingWriteAttempted,
-      () => { outOfPhaseTeachingWriteAttempted = true; },
-      () => { productCommandExecutionFailed = true; },
-    ) as never);
-    tools.push(restrictTurnTools(
-      createPeripheralReferenceTool(),
-      () => requiredDeleteRef,
-      () => false,
-      () => {},
-      () => requiredDeleteBridgeCallIssued,
-      () => { requiredDeleteBridgeCallIssued = true; },
-      () => { unrequestedDeletionAttempted = true; },
-      () => request.teaching_turn,
-      () => outOfPhaseTeachingWriteAttempted,
-      () => { outOfPhaseTeachingWriteAttempted = true; },
-      () => { productCommandExecutionFailed = true; },
-    ) as never);
+      createSkillLoaderTool(),
+    ];
     if (request.tool_bridge) {
-      tools.push(restrictTurnTools(
-        createProductCommandTool(request.tool_bridge, hasAttachedAnalysis ? {
-          excludedCommands: ["run.list", "analysis.create_from_run"],
-        } : {}),
-        () => requiredDeleteRef,
-        () => false,
-        () => {},
-        () => requiredDeleteBridgeCallIssued,
-        () => { requiredDeleteBridgeCallIssued = true; },
-        () => { unrequestedDeletionAttempted = true; },
-        () => request.teaching_turn,
-        () => outOfPhaseTeachingWriteAttempted,
-        () => { outOfPhaseTeachingWriteAttempted = true; },
-        () => { productCommandExecutionFailed = true; },
-      ) as never);
+      tools.push(createProductCommandTool(request.tool_bridge, hasAttachedAnalysis ? {
+        excludedCommands: ["run.list", "analysis.create_from_run"],
+      } : {}));
     }
     agent = new Agent({
       streamFn,
@@ -970,7 +722,7 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
         event.assistantMessageEvent?.type !== "text_delta"
       ) return;
       firstTextDeltaMs ??= Math.max(0, Math.round(now - turnStartedAt));
-      if (request.teaching_turn || requiredDeleteForTurn) return;
+      if (request.teaching_turn) return;
       const currentMessages = agent?.state.messages.slice(turnMessageStart) ?? [event.message];
       await publishPartial(
         safePartialReply(extractAssistantPartial([event.message]), request, currentMessages, secrets),
@@ -1001,58 +753,6 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
         request.run_id,
       );
     }
-    if (requiredDeleteRef === null && unrequestedDeletionAttempted) {
-      throw new ToolComplianceError("Analysis deletion requires an explicit reachable user request");
-    }
-    if (productCommandExecutionFailed) {
-      throw new ToolComplianceError("Product command execution failed");
-    }
-    if (outOfPhaseTeachingWriteAttempted && request.teaching_turn) {
-      const fallback = fallbackForTeachingTurn(request.teaching_turn).text;
-      return successResponse(fallback, [], request.schema_version, collectToolEvents(currentMessages), request.run_id);
-    }
-    if (requiredDeleteRef !== null &&
-        !hasRequiredDirectDeletion(collectToolEvents(currentMessages))) {
-      if (hasProductCommandEvent(collectToolEvents(currentMessages))) {
-        throw new ToolComplianceError("Explicit Analysis deletion did not create the required structured confirmation");
-      }
-      partialMessageStart = agent.state.messages.length;
-      await agent.prompt([{
-        role: "user" as const,
-        content: [{
-          type: "text" as const,
-          text: toolCompliancePrompt(requiredDeleteRef),
-        }],
-        timestamp: Date.now(),
-      }]);
-      currentMessages = agent.state.messages.slice(turnMessageStart);
-      if (productCommandExecutionFailed) {
-        throw new ToolComplianceError("Product command execution failed");
-      }
-      if (stopRequested.has(request.run_id)) {
-        return failureResponse(
-          makeError({
-            category: "coach_runtime",
-            code: "stopped",
-            message: STOPPED_USER_MESSAGE,
-            retryable: true,
-          }),
-          [],
-          request.schema_version,
-          collectToolEvents(currentMessages),
-          safePartialReply(
-            extractAssistantPartial(agent.state.messages.slice(partialMessageStart)),
-            request,
-            currentMessages,
-            secrets,
-          ),
-          request.run_id,
-        );
-      }
-      if (!hasRequiredDirectDeletion(collectToolEvents(currentMessages))) {
-        throw new ToolComplianceError("Explicit Analysis deletion did not execute");
-      }
-    }
     const rawReply = redactRuntimeSecrets(extractAssistantReply(currentMessages), secrets);
     let reply = normalizeUserFacingText(rawReply);
     if (request.teaching_turn) {
@@ -1074,12 +774,12 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
         category: "coach_runtime",
         code: stopped ? "stopped" : errorCode(error),
         message: userFacingErrorMessage(error, stopped),
-        retryable: stopped || error instanceof ToolComplianceError || error instanceof EmptyAssistantReplyError,
+        retryable: stopped || error instanceof EmptyAssistantReplyError,
       }),
       [],
       responseSchema,
       agent === null ? [] : collectToolEvents(agent.state.messages.slice(turnMessageStart)),
-      agent === null || requiredDeleteForTurn || error instanceof ToolComplianceError
+      agent === null
         ? null
         : parsedRequest === null
           ? null
