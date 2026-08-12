@@ -9,9 +9,6 @@ export const COACH_DIAGNOSTIC_CONTEXT_V1_SCHEMA = "coach_diagnostic_context.v1" 
 export const COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA = "coach_diagnostic_context.v2" as const;
 export const COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA = "coach_diagnostic_context.v3" as const;
 
-export const CODING_AGENT_DEFAULT_PROMPT_MARKER =
-  "expert coding assistant operating inside pi, a coding agent harness";
-
 export const FORBIDDEN_TOOL_NAMES = new Set([
   "bash", "shell", "exec", "read", "write", "edit", "read_file",
   "write_file", "apply_patch", "filesystem", "coding-agent", "coding_agent",

@@ -144,7 +144,7 @@ export function createProductCommandTool(
   return {
     name: "run_product_command",
     label: "Run product command",
-    description: "通过 Aiming Cookie 产品命令层查询、导航或提出可恢复动作。Coach 可以准备用户明确陈述的训练事实；写入仍必须由可信 UI/backend 确认后执行。Evidence 必须从已附加的 analysis:N 开始：先调用 analysis.evidence.list，parameters 只传 analysis_ref（可选 limit/segment_kinds/issue_refs）；仅当结果返回 segment_ref 与 available_channels 后，才能调用 analysis.evidence.signal_window，并且 parameters 只传该 segment_ref 与从 available_channels 选择的 channel_keys。事件列表 analysis.events.list 只传 analysis_ref、scope='whole_run'、从 processed event table 目录选择的 event_kinds，以及可选 limit；scope='evidence_segment' 时还必须传已返回且 reachable 的 segment_ref。ProcessedEventTable 查询必须从上下文目录或成功结果取得 table_ref 与 field_catalog，不能用 analysis_ref 代替 table_ref：analysis.events.aggregate 只传 table_ref、数值 fields，以及可选 group_by='run_phase' 或已注册分类字段；analysis.events.rank 只传 table_ref、数值 field、direction='asc'|'desc'、predicates 数组和 limit；analysis.events.filter 只传 table_ref、predicates 与可选 limit；analysis.events.get 只传已返回的 table_ref 与 event_ref。不得猜 artifact/segment/table/event ref 或字段。删除 Analysis 使用 analysis.delete，parameters 必须精确为已附加上下文中的 {\"analysis_ref\":\"analysis:N\"}；仅对本轮已 reachable 的 Analysis，数字 shorthand N 会在可信 bridge 内规范化。删除必须等待可信 UI/backend 的结构化确认。写操作授权与确认只由可信 UI/backend 决定；不得提交 authorization、confirmation、owner、risk、路径、URL、credential 或任意 payload。",
+    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。不要猜测 ref，只用已返回的 ref。写操作需用户授权。不得提交路径、URL、credential 或任意 payload。",
     parameters: Type.Object({
       command_name: commandSchema,
       parameters: Type.Object({}, { additionalProperties: true }),

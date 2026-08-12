@@ -100,19 +100,9 @@ const NEXT_RECOMMENDATION_FIELDS = ["scenario_name", "scenario_profile_ref", "me
 const PATH_OR_URL = /(?:https?:\/\/|file:(?:\/\/)?|(?:^|[\s"'`([{=,:])[A-Za-z]:[\\/]|\\\\)/i;
 const UNSAFE_CONTRACT_TEXT = /\b(?:api[_-]?key|authorization|credential|token|raw_trace|payload)\b/i;
 const INTERNAL_VOCABULARY = /\b(?:TeachingSession|TeachingTurnContract|session_ref|session_version|active_item_ref|question_kind|allowed_command|confirmation_intent|schema_version|phase|coach_retest_outcome(?:\.v\d+)?)\b|\b(?:table|field|cursor)\b/i;
-const INTERNAL_ITEM_REF = /\bplan-item:[A-Za-z0-9._:@-]{1,159}\b/i;
 const RAW_REFERENCE = /\b(?:analysis|run|event|segment|table|metric):/i;
 const PROBLEM_ID = /^[a-z][a-z0-9._-]{0,95}$/;
 const CANDIDATE_LANGUAGE = /(?:可能|也许|候选|假设|待验证|先验证|值得先验证|may|might|possible|likely)/i;
-const SOFT_START_ADVANCEMENT = /(?:已(?:经)?进入|现在进入|开始).{0,8}(?:训练|练习)|(?:安排|加入).{0,8}(?:训练计划|练习)|(?:training|practice).{0,16}(?:starts|has started|is scheduled)|(?:scheduled|added).{0,16}(?:training|practice)/i;
-const COMPLETION_CLAIM = /(?:已经|已)(?:完成|记录|确认|改善|提高|进步)|(?:证明|说明).{0,12}(?:学会|改善|提高)|(?:复测|训练).{0,8}(?:证明|确认).{0,12}(?:改善|提高)/;
-const DOSE = /(?:\d+(?:\.\d+)?|[一二三四五六七八九十]+)\s*(?:分钟|分(?!之)(?:钟)?|秒|次|组|轮|局|runs?)/i;
-const RATIO_SEMANTIC_EXPANSION = /(?:发生(?:频率|次数)?|频率|次数|片段比例|经常|常常|偏高|偏低|较好|较差|优秀|糟糕|问题|导致|因为|造成|证明|说明)/;
-const UNSUPPORTED_CAUSAL_CLAIM = /(?:这是因为|因为.{0,32}(?:导致|造成)|这说明.{0,32}(?:能力差|能力不足|紧张|疲劳|握力)|(?:手部紧张|肌肉紧张|reading 能力).{0,24}(?:导致|造成|说明))/i;
-const CAUSAL_DENIAL_OR_CANDIDATE = /(?:不能|无法|不应).{0,12}(?:说明|证明|归因)|(?:当作|作为).{0,12}(?:候选|假设)/;
-const REVISION_LANGUAGE = /\b(?:retain|lower|reject)\b|(?:保留|降低|拒绝|继续沿着|继续用|往后放|不沿着.{0,8}练|训练方向(?:改成|调整为))/i;
-const PROTOCOL_LANGUAGE = /待验证(?:的)?\s*候选|\bunresolved\b|本地\s*fallback|\bfallback\b|这次不能比较，?暂时不下结论/i;
-const DISCOMFORT_TERMS = [/(?:疼痛|疼)/, /(?:麻木|发麻|手麻)/, /无力/];
 
 function requireRecord(raw: unknown, name: string): Record<string, unknown> {
   if (!isRecord(raw)) throw new Error(`${name} must be an object`);
@@ -535,49 +525,40 @@ export function teachingTurnHoldsState(contract: TeachingTurnContract): boolean 
 }
 
 export function teachingEnvelopeInstruction(contract: TeachingTurnContract): string {
-  const plan = planTeachingTurn(contract);
-  const approved = {
-    action: plan.action,
-    question: plan.question,
-    problem_id: contract.problem_id,
-    problem_label: contract.problem_label,
-    evidence_strength: contract.evidence_strength,
-    supporting_evidence: contract.supporting_evidence,
-    counterevidence_status: contract.counterevidence_status,
-    counterevidence: contract.counterevidence,
-    observation: contract.observation,
-    primary_candidate: contract.primary_candidate,
-    alternatives: contract.alternatives,
-    cue: contract.cue,
-    changed_variable: contract.changed_variable,
-    active_item_ref: contract.active_item_ref,
-    prepared_plan_ref: contract.prepared_plan_ref,
-    prepared_item: contract.prepared_item,
-    next_recommendation: contract.next_recommendation?.message ?? null,
-    approved_dose: contract.approved_dose,
-    ratio_sources: contract.ratio_sources,
-    retest: contract.retest,
-    discriminator: contract.discriminator,
-    soft_start: contract.soft_start,
-  };
-  const retestWrite = contract.allowed_command === "training_plan.retest.record"
-    ? `For training_plan.retest.record, result must be exactly one of ${TEACHING_RETEST_OUTCOMES.join(", ")}; ` +
-      `not_comparable or unavailable must use coach_retest_outcome.v1:mixed_or_inconclusive. `
-    : "";
+  const parts: string[] = [];
+  parts.push(`Teaching context — phase: ${contract.phase}`);
+  if (contract.observation) parts.push(`Observation: ${contract.observation}`);
+  if (contract.primary_candidate) parts.push(`Current candidate: ${contract.primary_candidate}`);
+  if (contract.cue) parts.push(`Practice cue: ${contract.cue}`);
+  if (contract.approved_dose) parts.push(`Approved dose: ${contract.approved_dose}`);
+  if (contract.problem_label) parts.push(`Problem: ${contract.problem_label}`);
+  if (contract.question) parts.push(`Question: ${contract.question}`);
+  if (contract.changed_variable) parts.push(`Changed variable: ${contract.changed_variable}`);
+  if (contract.discriminator) parts.push(`Discriminator: ${contract.discriminator.kind === "question" ? contract.discriminator.prompt : "experiment"}`);
+  if (contract.retest.intent !== "none") {
+    parts.push(`Retest intent: ${contract.retest.intent}`);
+    if (contract.retest.comparability !== "unresolved") parts.push(`Retest comparability: ${contract.retest.comparability}`);
+    if (contract.retest.revision_decision) parts.push(`Revision decision: ${contract.retest.revision_decision}`);
+  }
+  if (contract.next_recommendation) parts.push(`Next recommendation: ${contract.next_recommendation.message}`);
+  if (contract.alternatives.length > 0) parts.push(`Alternatives: ${contract.alternatives.join("; ")}`);
+
+  let result = parts.join(". ") + ".";
+
+  if (contract.soft_start) {
+    result += " This is a soft start: do not claim that training has advanced, started, or been scheduled.";
+  }
+
   const preparedItemWrite = contract.allowed_command === "training_plan.item.add" &&
       contract.prepared_plan_ref !== null && contract.prepared_item !== null
-    ? `For training_plan.item.add, use exactly these tool parameters without changing any key or value: ${JSON.stringify({ plan_ref: contract.prepared_plan_ref, item_payload: contract.prepared_item })}. `
+    ? ` If recording this training action, use exactly these tool parameters: ${JSON.stringify({ plan_ref: contract.prepared_plan_ref, item_payload: contract.prepared_item })}.`
     : "";
-  return `Internal teaching contract: reply with exactly one JSON object {"action":"${plan.action}","text":"..."}. ` +
-    `Do not add keys, Markdown, tool names, phase changes, completion claims, unapproved dose, causes, or another question. ` +
-    `Treat every candidate as a possibility to check, never as an established cause. ` +
-    (contract.soft_start ? "This is a soft start: do not claim that training has advanced, started, or been scheduled. " : "") +
-    `Use active_item_ref only as the exact item_ref tool parameter; never put its field name or value in user-visible text. ` +
-    preparedItemWrite +
-    retestWrite +
-    `Keep the stage-required approved content, but do not list every supporting evidence item or alternative in the first explanation. ` +
-    `For an abstract movement explanation, you may use one short analogy. It may help understanding, but it is not evidence and cannot prove a cause. ` +
-    `Naturalize only this approved content: ${JSON.stringify(approved)}`;
+
+  const retestWrite = contract.allowed_command === "training_plan.retest.record"
+    ? ` If recording a retest, the result must be exactly one of ${TEACHING_RETEST_OUTCOMES.join(", ")}.`
+    : "";
+
+  return result + preparedItemWrite + retestWrite;
 }
 
 export function parseTeachingProviderDraft(raw: string): TeachingProviderDraft | null {
@@ -594,332 +575,4 @@ export function parseTeachingProviderDraft(raw: string): TeachingProviderDraft |
     return null;
   }
   return { action: parsed.action as TeachingAction, text: parsed.text };
-}
-
-function questionCount(value: string): number {
-  return (value.match(/[?？]/g) ?? []).length;
-}
-
-const DIRECT_FOLLOW_UP_REQUEST = /(?:告诉我|反馈|说说).{0,32}(?:完成情况|主观感受|感受|练习(?:结果|情况)|反馈)/;
-
-function ratioAliasAllowed(value: number, text: string): boolean {
-  const percent = value * 100;
-  const percentages = [String(percent), percent.toFixed(1), percent.toFixed(2)]
-    .map((item) => item.replace(/\.0+$/, ""));
-  return percentages.some((item) => text.includes(`${item}%`) || text.includes(`${item}％`));
-}
-
-function hasUnsupportedRatioMeaning(contract: TeachingTurnContract, text: string): boolean {
-  const mentionsRatio = contract.ratio_sources.some(({ label, value }) =>
-    text.includes(label) || text.includes(String(value)) || ratioAliasAllowed(value, text),
-  );
-  return mentionsRatio && RATIO_SEMANTIC_EXPANSION.test(text);
-}
-
-function hasUnapprovedChineseRatioFraction(contract: TeachingTurnContract, text: string): boolean {
-  return contract.ratio_sources.length > 0 &&
-    /(?:约|大约|大概)?(?:二分之一|三分之一|三分之二|四分之一|四分之三|一半|半数)/.test(text);
-}
-
-function hasUnsupportedCausalClaim(text: string): boolean {
-  return !CAUSAL_DENIAL_OR_CANDIDATE.test(text) && UNSUPPORTED_CAUSAL_CLAIM.test(text);
-}
-
-function matchesRevisionDecision(text: string, decision: TeachingTurnContract["retest"]["revision_decision"]): boolean {
-  if (decision === "retain") {
-    if (/(?:不|未|没有|并未|不该|不应|不要|别).{0,8}(?:支持|继续用|保留)|往后放|降低|下调|不沿着|放弃|拒绝/.test(text)) return false;
-    return /继续用|保留(?:这个|当前)?方向/.test(text);
-  }
-  if (decision === "lower") {
-    if (/(?:不|未|没有|并未|不该|不应|不要|别).{0,8}(?:往后放|降低|下调)|继续用|保留(?:这个|当前)?方向|不沿着|放弃|拒绝/.test(text)) return false;
-    return /往后放|(?:降低|下调).{0,8}(?:优先级|信心|置信)/.test(text);
-  }
-  if (decision === "reject") {
-    if (/(?:不|未|没有|并未|不该|不应|不应该|不要|别).{0,8}(?:拒绝|放弃)|不是.{0,6}不沿着|继续用|保留(?:这个|当前)?方向|往后放|降低|下调/.test(text)) return false;
-    return /不(?:再)?沿着.{0,8}练|放弃(?:这个|当前)?方向|拒绝(?:这个|当前)?方向/.test(text);
-  }
-  return false;
-}
-
-function matchesRetestIntentBoundary(contract: TeachingTurnContract, text: string): boolean {
-  if (contract.retest.intent === "immediate_matched") {
-    const durableClaim = /(?:已经)?(?:稳定掌握|长期(?:改善|提升|进步)|学会)|保留下来/.test(text);
-    const durableDenial = /(?:不能|还不能|不代表|无法).{0,12}(?:稳定掌握|长期(?:改善|提升|进步)|学会|保留下来)/.test(text);
-    return /(?:这次|本轮|这一轮|当下)/.test(text) && (!durableClaim || durableDenial);
-  }
-  if (contract.retest.intent === "delayed_matched") {
-    return /(?:隔一段时间|过一段时间|延迟|下次|之后)/.test(text) &&
-      /(?:保留|保持|稳定|仍)/.test(text);
-  }
-  if (contract.retest.intent === "near_transfer") {
-    return /(?:相近任务|近迁移)/.test(text) &&
-      /(?:不代表|不能代表|不能直接代表).{0,12}(?:主游戏|实战)/.test(text);
-  }
-  return false;
-}
-
-
-type RequiredTeachingContent = {
-  value: string;
-  exact: boolean;
-  minimumAnchors: number;
-  kind: "problem" | "evidence" | "observation" | "candidate" | "cue" | "dose";
-};
-
-function requiredTeachingContent(contract: TeachingTurnContract, plan: TeachingPlan): RequiredTeachingContent[] {
-  const values: Array<RequiredTeachingContent | null> = [];
-  const semantic = (
-    value: string | null,
-    minimumAnchors: number,
-    kind: RequiredTeachingContent["kind"],
-  ): RequiredTeachingContent | null =>
-    value === null ? null : { value, exact: false, minimumAnchors, kind };
-  const exact = (value: string | null): RequiredTeachingContent | null =>
-    value === null ? null : { value, exact: true, minimumAnchors: 0, kind: "dose" };
-  switch (plan.action) {
-    case "ask_discriminator":
-      values.push(
-        semantic(contract.problem_label, 1, "problem"),
-        semantic(contract.observation, 2, "observation"),
-        contract.supporting_evidence.length === 0 ? null : semantic(
-          typeof contract.supporting_evidence[0] === "string"
-            ? contract.supporting_evidence[0]
-            : contract.supporting_evidence[0].text,
-          1,
-          "evidence",
-        ),
-        semantic(contract.primary_candidate, 1, "candidate"),
-        semantic(contract.alternatives[0] ?? null, 1, "candidate"),
-      );
-      break;
-    case "explain_candidate":
-      values.push(
-        semantic(contract.observation, 2, "observation"),
-        semantic(contract.primary_candidate, 1, "candidate"),
-        semantic(contract.alternatives[0] ?? null, 1, "candidate"),
-      );
-      break;
-    case "teach":
-      values.push(
-        semantic(contract.primary_candidate, 1, "candidate"),
-        semantic(contract.cue, 2, "cue"),
-      );
-      break;
-    case "ask_teach_back":
-    case "repair_teach_back":
-      values.push(semantic(contract.cue, 2, "cue"));
-      break;
-    case "practice":
-      values.push(semantic(contract.cue, 2, "cue"), exact(contract.approved_dose));
-      break;
-  }
-  return values.filter((value): value is RequiredTeachingContent => value !== null);
-}
-
-function normalizedTeachingText(value: string): string {
-  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-}
-
-function numericUnitTokens(value: string): string[] {
-  return value.normalize("NFKC").match(
-    /(?:\d+(?:\.\d+)?|[一二三四五六七八九十]+)\s*(?:分钟|秒钟|秒|次|组|轮|局|runs?)/giu,
-  ) ?? [];
-}
-
-function candidateCore(value: string): string {
-  return value
-    .replace(/^(?:当前更值得先验证的是|我先从|也可能(?:与|和))/, "")
-    .replace(/(?:这个方向查起|有关)[。.!！]?$/, "")
-    .trim();
-}
-
-function exactContractAnchors(value: string): string[] {
-  const normalized = normalizedTeachingText(value);
-  const anchors = new Set<string>();
-  for (let index = 0; index < normalized.length - 3; index += 1) {
-    anchors.add(normalized.slice(index, index + 4));
-  }
-  return [...anchors];
-}
-
-function hasRequiredExactContractAnchors(value: string, text: string, minimumAnchors: number): boolean {
-  const normalizedValue = normalizedTeachingText(value);
-  const normalizedText = normalizedTeachingText(text);
-  let matched = 0;
-  let nextEligibleIndex = 0;
-  for (let index = 0; index < normalizedValue.length - 3; index += 1) {
-    if (index < nextEligibleIndex) continue;
-    if (normalizedText.includes(normalizedValue.slice(index, index + 4))) {
-      matched += 1;
-      nextEligibleIndex = index + 4;
-      if (matched >= minimumAnchors) return true;
-    }
-  }
-  return false;
-}
-
-function preservesRequiredTeachingContent(required: RequiredTeachingContent, text: string): boolean {
-  const value = required.kind === "candidate" ? candidateCore(required.value) : required.value;
-  const normalizedValue = normalizedTeachingText(value);
-  const normalizedText = normalizedTeachingText(text);
-  if (normalizedText.includes(normalizedValue)) return true;
-  if (required.exact || numericUnitTokens(value).some((token) => !normalizedText.includes(normalizedTeachingText(token)))) {
-    return false;
-  }
-  return hasRequiredExactContractAnchors(value, text, required.minimumAnchors);
-}
-
-function negatesRequiredTeachingContent(required: RequiredTeachingContent, text: string): boolean {
-  if (required.kind === "dose") return false;
-  const value = required.kind === "candidate" ? candidateCore(required.value) : required.value;
-  const normalizedText = normalizedTeachingText(text);
-  const normalizedValue = normalizedTeachingText(value);
-  if (normalizedText.includes(normalizedValue)) {
-    const escapedValue = normalizedValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const externalNegation = new RegExp(
-      `(?:不是|并非|没有|没|不再|不要|别).{0,6}${escapedValue}|` +
-      `${escapedValue}.{0,6}(?:不是|并非|没有|不对)`,
-    );
-    if (!externalNegation.test(normalizedText)) return false;
-  }
-  return exactContractAnchors(value).some((anchor) => {
-    const escaped = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?:不是|并非|没有|没|不再|不要|别).{0,6}${escaped}|${escaped}.{0,6}(?:不是|并非|没有|不对)`).test(normalizedText);
-  });
-}
-
-function discriminatorChoices(contract: TeachingTurnContract, plan: TeachingPlan): string[] {
-  if (contract.question_kind !== "discriminator" || plan.question === null) return [];
-  const normalizedQuestion = normalizedTeachingText(plan.question);
-  return [contract.primary_candidate, ...contract.alternatives]
-    .filter((value): value is string => value !== null)
-    .map(candidateCore)
-    .filter((value) => {
-      const normalized = normalizedTeachingText(value);
-      return normalized.length >= 4 && normalizedQuestion.includes(normalized);
-    });
-}
-
-function preservesContractQuestion(contract: TeachingTurnContract, plan: TeachingPlan, text: string): boolean {
-  if (plan.question === null) return true;
-  if (normalizedTeachingText(text).includes(normalizedTeachingText(plan.question))) return true;
-  if (contract.question_kind === "teach_back" || contract.question_kind === "teach_back_repair") {
-    return /(?:复述|说说|讲讲|描述|解释|怎么做)/.test(text) &&
-      /(?:提示|提醒|注意点|动作|做法|内容)/.test(text);
-  }
-  if (contract.question_kind === "discriminator") {
-    const choices = discriminatorChoices(contract, plan);
-    return /(?:哪|哪个|是否|还是|更常|更容易|更明显)/.test(text) &&
-      choices.every((choice) => hasRequiredExactContractAnchors(choice, text, 1)) &&
-      exactContractAnchors(plan.question).some((anchor) => normalizedTeachingText(text).includes(anchor));
-  }
-  return exactContractAnchors(plan.question).some((anchor) => normalizedTeachingText(text).includes(anchor));
-}
-
-export function validateTeachingDraft(contract: TeachingTurnContract, draft: TeachingProviderDraft): TeachingValidation {
-  const plan = planTeachingTurn(contract);
-  if (draft.action !== plan.action) return { ok: false, reason: "action is outside the teaching contract" };
-  if (typeof draft.text !== "string" || draft.text.length === 0 || draft.text.length > 1200 || PATH_OR_URL.test(draft.text)) {
-    return { ok: false, reason: "text is invalid" };
-  }
-  if (INTERNAL_VOCABULARY.test(draft.text) || INTERNAL_ITEM_REF.test(draft.text) ||
-      (contract.active_item_ref !== null && draft.text.includes(contract.active_item_ref))) {
-    return { ok: false, reason: "text exposes internal vocabulary" };
-  }
-  if (PROTOCOL_LANGUAGE.test(draft.text)) return { ok: false, reason: "text exposes protocol language" };
-  if (contract.phase === "stopped_for_discomfort" &&
-      DISCOMFORT_TERMS.filter((pattern) => pattern.test(draft.text)).length > 1) {
-    return { ok: false, reason: "text adds a discomfort checklist" };
-  }
-  if (COMPLETION_CLAIM.test(draft.text)) return { ok: false, reason: "text claims an unconfirmed fact" };
-  if (contract.soft_start && SOFT_START_ADVANCEMENT.test(draft.text)) {
-    return { ok: false, reason: "soft start advances the teaching session" };
-  }
-  if (contract.approved_dose === null && DOSE.test(draft.text)) {
-    return { ok: false, reason: "text adds an unapproved dose" };
-  }
-  if (hasUnsupportedRatioMeaning(contract, draft.text)) return { ok: false, reason: "text extends ratio semantics" };
-  if (hasUnapprovedChineseRatioFraction(contract, draft.text)) {
-    return { ok: false, reason: "text converts a ratio to an unapproved Chinese fraction" };
-  }
-  if (hasUnsupportedCausalClaim(draft.text)) return { ok: false, reason: "text makes an unsupported causal claim" };
-  if (contract.phase === "revise" && contract.retest.comparability !== "comparable" &&
-      REVISION_LANGUAGE.test(draft.text)) {
-    return { ok: false, reason: "text adds a revision decision without a comparable retest" };
-  }
-  const requiredContent = requiredTeachingContent(contract, plan);
-  if (requiredContent.some((value) =>
-    !preservesRequiredTeachingContent(value, draft.text) || negatesRequiredTeachingContent(value, draft.text))) {
-    return { ok: false, reason: "text omits required teaching content" };
-  }
-  if (contract.problem_id !== null && requiredContent.some((value) => value.kind === "candidate") &&
-      !CANDIDATE_LANGUAGE.test(draft.text)) {
-    return { ok: false, reason: "text states a candidate as a fact" };
-  }
-  if (contract.phase === "revise") {
-    const decision = contract.retest.revision_decision;
-    if (decision !== null && !matchesRevisionDecision(draft.text, decision)) {
-      return { ok: false, reason: "text omits the revision decision" };
-    }
-    if (decision !== null && !matchesRetestIntentBoundary(contract, draft.text)) {
-      return { ok: false, reason: "text exceeds the retest intent boundary" };
-    }
-    if (contract.next_recommendation !== null && !draft.text.includes(contract.next_recommendation.message)) {
-      return { ok: false, reason: "text omits the next recommendation" };
-    }
-  }
-  const expectedQuestions = plan.question === null ? 0 : 1;
-  if (questionCount(draft.text) !== expectedQuestions) return { ok: false, reason: "text has an invalid question count" };
-  if (!preservesContractQuestion(contract, plan, draft.text)) {
-    return { ok: false, reason: "text does not preserve the contract question" };
-  }
-  if (expectedQuestions === 1 && contract.question_kind !== "discriminator" &&
-      /(?:还是|以及|并且|同时).{0,32}[?？]/.test(draft.text)) {
-    return { ok: false, reason: "text contains a compound question" };
-  }
-  return { ok: true };
-}
-
-/**
- * A user may interrupt the lesson to question an explanation or correct Coach.
- * Keep that answer within the same safety boundaries, but do not force it to
- * repeat the phase's scripted question or advance the TeachingSession.
- */
-export function validateTeachingDirectResponse(
-  contract: TeachingTurnContract,
-  text: string,
-): TeachingValidation {
-  if (typeof text !== "string" || text.length === 0 || text.length > 1200 || PATH_OR_URL.test(text)) {
-    return { ok: false, reason: "text is invalid" };
-  }
-  if (INTERNAL_VOCABULARY.test(text) || INTERNAL_ITEM_REF.test(text) ||
-      (contract.active_item_ref !== null && text.includes(contract.active_item_ref))) {
-    return { ok: false, reason: "text exposes internal vocabulary" };
-  }
-  if (PROTOCOL_LANGUAGE.test(text) || COMPLETION_CLAIM.test(text)) {
-    return { ok: false, reason: "text exposes protocol language or claims an unconfirmed fact" };
-  }
-  const allowedDoseTokens = new Set(
-    numericUnitTokens(contract.approved_dose ?? "").map(normalizedTeachingText),
-  );
-  const responseDoseTokens = numericUnitTokens(text).map(normalizedTeachingText);
-  if (responseDoseTokens.some((token) => !allowedDoseTokens.has(token))) {
-    return { ok: false, reason: "text adds an unapproved dose" };
-  }
-  if (hasUnsupportedRatioMeaning(contract, text) ||
-      hasUnapprovedChineseRatioFraction(contract, text) ||
-      hasUnsupportedCausalClaim(text)) {
-    return { ok: false, reason: "text exceeds the evidence boundary" };
-  }
-  if (contract.phase === "revise" && contract.retest.comparability !== "comparable" &&
-      REVISION_LANGUAGE.test(text)) {
-    return { ok: false, reason: "text adds a revision decision without a comparable retest" };
-  }
-  if (questionCount(text) !== 0) {
-    return { ok: false, reason: "direct answer adds a follow-up question" };
-  }
-  if (DIRECT_FOLLOW_UP_REQUEST.test(text)) {
-    return { ok: false, reason: "direct answer adds an imperative follow-up" };
-  }
-  return { ok: true };
 }
