@@ -86,6 +86,7 @@ Require-Path $coachExe "packaged Coach executable"
 
 Copy-Item -LiteralPath (Join-Path $RepoRoot "knowledge") -Destination (Join-Path $runtimeRoot "knowledge") -Recurse
 Copy-Item -LiteralPath (Join-Path $RepoRoot "webapp\coach-runtime\prompts\coach-system.md") -Destination (Join-Path $runtimeRoot "coach-system.md")
+Copy-Item -LiteralPath (Join-Path $RepoRoot "webapp\coach-runtime\prompts\skills") -Destination (Join-Path $runtimeRoot "skills") -Recurse
 New-Item -ItemType Directory -Path (Join-Path $runtimeRoot "pi\packages\agent") -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $RepoRoot "third_party\pi\packages\agent\package.json") -Destination (Join-Path $runtimeRoot "pi\packages\agent\package.json")
 
