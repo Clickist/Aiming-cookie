@@ -13,7 +13,7 @@ import type { SqliteDb } from "./db.ts";
 // ── Types ──────────────────────────────────────────────────────────────
 
 export type NativeCommandResult = {
-  status: "succeeded" | "failed";
+  status: "succeeded" | "failed" | "unavailable";
   result?: unknown;
   result_ref?: string;
   warning_or_error?: { code: string; message: string };

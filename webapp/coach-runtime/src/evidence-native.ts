@@ -635,7 +635,6 @@ function cmdEvidenceList(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   return evidenceResult(`${ref}:evidence:list`, {
     analysis_ref: ref,
     segments: segments.map(safeSegment),
-    next_cursor: null,
   });
 }
 
@@ -816,7 +815,6 @@ function cmdOutcomesTimeline(ctx: EvidenceCtx, params: AnyDict): NativeResult {
       records: null,
       event_refs: [],
       completeness: "downsampled",
-      next_cursor: null,
       limitations: ["deterministic_binned_overview"],
     },
   });
@@ -861,7 +859,6 @@ function cmdEventsList(ctx: EvidenceCtx, params: AnyDict): NativeResult {
     scope,
     records: events.map(safeEvent),
     event_refs: events.map((e) => e.event_id),
-    next_cursor: null,
   });
 }
 
@@ -946,7 +943,6 @@ function cmdEventsFilter(ctx: EvidenceCtx, params: AnyDict): NativeResult {
       excluded_count: events.length - matched.length,
       rows: matched.map(safeEvent),
       event_refs: matched.map((e) => e.event_id),
-      next_cursor: null,
       completeness: table.completeness,
       limitations: table.limitations,
     });

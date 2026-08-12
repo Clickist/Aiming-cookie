@@ -6,8 +6,8 @@
  * the Python → Node HTTP round-trip for LLM turns.
  *
  * Simplified vs. Python:
- *   - Teaching session reconciliation is ported with a simplified contract
- *     builder (no lesson extraction from bundle, no prepared_plan_item).
+ *   - Teaching session reconciliation is ported with partial lesson extraction
+ *     from the context bundle (cue, observation, candidates). No prepared_plan_item.
  *   - Analysis soft-start and guidance compilation are not implemented.
  *   - Provider recovery / resume_waiting_runs is implemented.
  *   - Confirmation execution calls executeNativeWrite for coach_side_effect
@@ -443,25 +443,167 @@ function loadTeachingSession(
   };
 }
 
+// ── Lesson extraction (simplified port of Python _selected_context_issue + _lesson_from_bundle) ──
+
+const RAW_REFERENCE_RE = /\b(?:analysis|run|event|segment|table|metric):/i;
+const PATH_OR_SECRET_RE = /(?:[A-Za-z]:[\\/]|\\\\|file:|https?:\/\/|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[:=])/i;
+
+function boundedLessonText(value: unknown, maximum: number): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text || text.length > maximum) return null;
+  if (PATH_OR_SECRET_RE.test(text) || RAW_REFERENCE_RE.test(text)) return null;
+  return text;
+}
+
+type SelectedIssue = { issue: AnyDict; projection: AnyDict; contextRef: string };
+
 /**
- * Build a simplified TeachingTurnContract from the session state.
+ * Find the most relevant diagnostic issue from the context bundle.
+ * Simplified port of Python _selected_context_issue — checks explicit issue
+ * targets first, then falls back to the first context with diagnosis issues.
+ */
+function selectedContextIssue(bundle: AnyDict): SelectedIssue | null {
+  const contexts = bundle.contexts;
+  if (!Array.isArray(contexts)) return null;
+
+  // An explicit issue target is a user-selected context and therefore wins.
+  for (const item of contexts) {
+    if (!isRecord(item) || item.kind !== "issue") continue;
+    const analysisRef = item.analysis_ref;
+    const targetRef = item.target_ref;
+    if (typeof analysisRef !== "string" || typeof targetRef !== "string") continue;
+    const prefix = `${analysisRef}:issue:`;
+    if (!targetRef.startsWith(prefix)) continue;
+    const index = parseInt(targetRef.slice(prefix.length), 10);
+    if (!Number.isInteger(index) || index < 0) continue;
+    const projection = item.projection;
+    if (!isRecord(projection)) continue;
+    const diagnosis = projection.diagnosis;
+    const issues = isRecord(diagnosis) ? diagnosis.issues : null;
+    if (Array.isArray(issues) && index < issues.length && isRecord(issues[index])) {
+      const contextRef = item.context_ref;
+      if (typeof contextRef === "string") {
+        return { issue: issues[index], projection, contextRef };
+      }
+    }
+  }
+
+  // Fallback: first context with diagnosis issues.
+  for (const item of contexts) {
+    if (!isRecord(item)) continue;
+    const projection = item.projection;
+    if (!isRecord(projection)) continue;
+    const diagnosis = projection.diagnosis;
+    const issues = isRecord(diagnosis) ? diagnosis.issues : null;
+    if (!Array.isArray(issues) || issues.length === 0) continue;
+    const contextRef = item.context_ref;
+    if (typeof contextRef !== "string") continue;
+    const firstIssue = issues.find((i: unknown) => isRecord(i));
+    if (firstIssue) {
+      return { issue: firstIssue as AnyDict, projection, contextRef };
+    }
+  }
+  return null;
+}
+
+type Lesson = {
+  observation: string | null;
+  primaryCandidate: string | null;
+  alternatives: string[];
+  cue: string | null;
+  changedVariable: string | null;
+  approvedDose: string | null;
+  question: string;
+  contextRef: string;
+};
+
+/**
+ * Extract lesson data (observation, candidates, cue) from the context bundle's
+ * diagnostic issues. Simplified port of Python _lesson_from_bundle — does not
+ * use coach_problem_compiler, so it only follows the fallback path.
+ */
+function lessonFromBundle(bundle: AnyDict): Lesson | null {
+  const selected = selectedContextIssue(bundle);
+  if (!selected) return null;
+  const { issue, contextRef } = selected;
+
+  const observation = boundedLessonText(issue.plain_language_meaning, 1200);
+
+  // Compile candidates from root_causes (training/hypothesis level only).
+  const candidateTexts: string[] = [];
+  const rootCauses = issue.root_causes;
+  if (Array.isArray(rootCauses)) {
+    for (const cause of rootCauses) {
+      if (!isRecord(cause) || (cause.level !== "training" && cause.level !== "hypothesis")) continue;
+      const text = boundedLessonText(cause.text, 130);
+      if (text !== null && !candidateTexts.includes(text)) candidateTexts.push(text);
+      if (candidateTexts.length === 3) break;
+    }
+  }
+
+  // Extract cue + approved_dose from the first valid prescription.
+  let cue: string | null = null;
+  let approvedDose: string | null = null;
+  const prescriptions = issue.prescriptions;
+  if (Array.isArray(prescriptions)) {
+    for (const prescription of prescriptions) {
+      if (!isRecord(prescription)) continue;
+      const candidateCue = boundedLessonText(prescription.cue, 240);
+      if (candidateCue === null || candidateCue.toLowerCase() === "not_applicable") continue;
+      cue = candidateCue;
+      approvedDose = boundedLessonText(prescription.dosage, 480);
+      break;
+    }
+  }
+
+  const primaryCandidate = candidateTexts.length > 0 ? `我先从${candidateTexts[0]}这个方向查起` : null;
+  const alternatives = candidateTexts.slice(1, 3).map((text) => `也可能和${text}有关`);
+
+  // Build a discriminator question for the intake phase.
+  let question = NO_GROUNDED_ISSUE_QUESTION;
+  if (observation !== null && candidateTexts.length >= 2) {
+    question = `这次出现「${observation}」时，你更明显感觉到「${candidateTexts[0]}」还是「${candidateTexts[1]}」?`;
+  } else if (observation !== null && candidateTexts.length >= 1) {
+    question = `这次出现「${observation}」时，你自己最先感觉卡在哪一步?`;
+  }
+
+  return {
+    observation,
+    primaryCandidate,
+    alternatives,
+    cue,
+    changedVariable: cue !== null ? "注意点" : null,
+    approvedDose,
+    question,
+    contextRef,
+  };
+}
+
+/**
+ * Build a TeachingTurnContract from the session state and context bundle.
  *
- * Simplified vs. Python's _teaching_contract:
- *   - No lesson extraction from the context bundle (that's context enrichment).
+ * Partial port of Python's _teaching_contract — extracts cue, observation,
+ * and candidates from the context bundle's diagnostic issues, and uses them
+ * to fill empty state fields (hydration pattern).
+ *
+ * Still simplified vs. Python:
  *   - No prepared_plan_item compilation (requires plan-store access).
  *   - No humanized/qualified candidate text.
  *   - No peripheral-change-request detection.
- *
- * What it does: maps the session phase to question_kind/question, sets the
- * allowed_command based on phase, and fills the contract from session state.
+ *   - No coach_problem_compiler integration.
  */
-function buildTeachingTurn(session: {
-  sessionRef: string;
-  version: number;
-  state: AnyDict;
-}): TeachingTurnContract | null {
+function buildTeachingTurn(
+  session: {
+    sessionRef: string;
+    version: number;
+    state: AnyDict;
+  },
+  bundle: AnyDict,
+): TeachingTurnContract | null {
   const state = session.state;
   const phase = state.phase as TeachingTurnContract["phase"];
+  const lesson = lessonFromBundle(bundle);
 
   const questionKindMap: Record<string, TeachingTurnContract["question_kind"]> = {
     intake: "discriminator",
@@ -477,7 +619,9 @@ function buildTeachingTurn(session: {
   };
 
   const questionKind = questionKindMap[phase] ?? "none";
-  const question = questionKind !== "none" ? (questionMap[phase] ?? null) : null;
+  const question = questionKind !== "none"
+    ? (phase === "intake" && lesson ? lesson.question : (questionMap[phase] ?? null))
+    : null;
 
   const commandMap: Record<string, TeachingTurnContract["allowed_command"] | null> = {
     await_execution_confirmation: "training_plan.execution.record",
@@ -489,16 +633,21 @@ function buildTeachingTurn(session: {
     phase === "await_execution_confirmation" ? "execution" :
     phase === "await_retest_confirmation" ? "retest" : "none";
 
-  const observation = state.observation?.summary;
-  const isEmptyObservation = observation === EMPTY_OBSERVATION;
+  const stateObservation = state.observation?.summary;
+  const isEmptyObservation = stateObservation === EMPTY_OBSERVATION;
+  const observation = isEmptyObservation || typeof stateObservation !== "string"
+    ? (lesson?.observation ?? null)
+    : stateObservation;
 
-  const primary = isRecord(state.primary_candidate) ? state.primary_candidate.label : null;
+  const statePrimary = isRecord(state.primary_candidate) ? state.primary_candidate.label : null;
+  const primary = typeof statePrimary === "string" ? statePrimary : (lesson?.primaryCandidate ?? null);
 
-  const alternatives: string[] = Array.isArray(state.alternatives)
+  const stateAlternatives: string[] = Array.isArray(state.alternatives)
     ? state.alternatives
         .map((item: unknown) => (isRecord(item) ? item.label : null))
         .filter((label: unknown): label is string => typeof label === "string")
     : [];
+  const alternatives = stateAlternatives.length > 0 ? stateAlternatives : (lesson?.alternatives ?? []);
 
   return {
     schema_version: TEACHING_TURN_CONTRACT_SCHEMA,
@@ -511,11 +660,11 @@ function buildTeachingTurn(session: {
     supporting_evidence: [],
     counterevidence_status: "not_observed",
     counterevidence: [],
-    observation: isEmptyObservation || typeof observation !== "string" ? null : observation,
-    primary_candidate: typeof primary === "string" ? primary : null,
+    observation,
+    primary_candidate: primary,
     alternatives,
-    cue: typeof state.cue === "string" ? state.cue : null,
-    changed_variable: typeof state.changed_variable === "string" ? state.changed_variable : null,
+    cue: typeof state.cue === "string" ? state.cue : (lesson?.cue ?? null),
+    changed_variable: typeof state.changed_variable === "string" ? state.changed_variable : (lesson?.changedVariable ?? null),
     active_item_ref: typeof state.active_item_ref === "string" ? state.active_item_ref : null,
     prepared_plan_ref: null,
     prepared_item: null,
@@ -531,7 +680,7 @@ function buildTeachingTurn(session: {
       revision_decision: (state.revision_decision as TeachingTurnContract["retest"]["revision_decision"]) ?? null,
     },
     ratio_sources: [],
-    approved_dose: null,
+    approved_dose: lesson?.approvedDose ?? null,
     discriminator: null,
     soft_start: false,
   };
@@ -713,7 +862,7 @@ async function runAgentTurn(
 
     // Load teaching session and build the teaching turn contract
     const teachingSession = loadTeachingSession(db, ownerId, threadId);
-    const teachingTurn = teachingSession ? buildTeachingTurn(teachingSession) : undefined;
+    const teachingTurn = teachingSession ? buildTeachingTurn(teachingSession, bundle) : undefined;
 
     // Build the turn request
     const turnRequest: AnyDict = {
