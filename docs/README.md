@@ -29,6 +29,7 @@
 - full-worktree 合同修复已完成；范围、逐 Task 验收与最终矩阵见 [`archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md`](archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md)。真实现场与发行 Gate 不因自动化通过而闭合。
 - 局部设计：需要时参考 [`superpowers/specs/README.md`](superpowers/specs/README.md) 及其中的设计材料；它们不构成施工流程要求。
 - Coach 代办与引导：相关 ProductReadiness、GuidanceIntent、用户步骤和前端 GuidanceHost 设计见 [`superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md`](superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md)，按当前任务和代码/测试需要参考。
+- Coach Skills 架构：三类 skill（引导/执行/教学）、Route A 状态管理决策、系统提示词更新方向与 `teaching_session.update` 命令设计见 [`skills-design.md`](skills-design.md)。
 - 自动 Run 采集与分析前选择：设计材料见 [`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md)；它只冻结产品/系统合同，不构成施工流程要求。
 - 自动 Run finalization 的内部实施已完成；范围与验证证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 物理硬件仍由 Roadmap 维护为外部发布 Gate。
 - 完整 Coach 的 aim-family 范围、L0-L3 context/tool results、EvidenceSegment 与 outcome-only 降级：设计材料见 [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)；它是设计合同，不构成施工流程要求。

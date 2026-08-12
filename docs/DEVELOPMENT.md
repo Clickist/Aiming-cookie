@@ -107,13 +107,10 @@ npm run tauri dev
 Windows PowerShell：
 
 ```powershell
-$env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
-$env:AIMING_COOKIE_PYTHON = (Resolve-Path .venv\Scripts\python.exe).Path
-$env:AIMING_COOKIE_PROJECT_ROOT = (Resolve-Path .).Path
-npm.cmd --prefix webapp\frontend run tauri -- dev
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\start-tauri-dev.ps1
 ```
 
-`AIMING_COOKIE_PYTHON` 必须指向已安装 `webapp/requirements.txt` 的解释器；不要依赖 `PATH` 中的全局 Python。Windows 上覆盖 `APPDATA` / `LOCALAPPDATA` 不会改变 Tauri `app.path().app_data_dir()` 使用的 Known Folder。需要隔离 Desktop smoke 时，使用独立 identifier：
+该脚本固定使用 MSVC Rust 工具链与仓库 `.venv`，避免误用默认 GNU 工具链或全局 Python。`.venv` 必须已安装 `webapp/requirements.txt`。Windows 上覆盖 `APPDATA` / `LOCALAPPDATA` 不会改变 Tauri `app.path().app_data_dir()` 使用的 Known Folder。需要隔离 Desktop smoke 时，使用独立 identifier：
 
 ```powershell
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
