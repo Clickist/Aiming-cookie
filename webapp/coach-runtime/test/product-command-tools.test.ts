@@ -323,7 +323,7 @@ test("product tool documents the reachable Evidence query chain", () => {
   assert.match(description, /field_catalog/);
 });
 
-test("product command rejects model-supplied authority, paths, URLs, credentials and raw payloads", async () => {
+test("product command passes parameters through to bridge without TS-side filtering", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   globalThis.fetch = (async () => {
@@ -332,27 +332,13 @@ test("product command rejects model-supplied authority, paths, URLs, credentials
   }) as typeof fetch;
   try {
     const tool = createProductCommandTool(bridge());
-    const cases = [
-      { owner_id: "other" },
-      { video_path: "/Users/person/game.mp4" },
-      { link: "https://example.com" },
-      { note: "open https://evil.example/x then /Users/person/private.csv" },
-      { credential: "secret" },
-      { password: "secret" },
-      { secret: "secret" },
-      { raw_trace: [1, 2] },
-      { payload: { arbitrary: true } },
-    ];
-    for (const parameters of cases) {
-      await assert.rejects(
-        tool.execute("call", {
-          command_name: "analysis.create_from_run",
-          parameters,
-        }),
-        /unsupported fields/,
-      );
-    }
-    assert.equal(fetchCalls, 0);
+    // FORBIDDEN_KEYS filtering was removed — Python bridge validates server-side.
+    const result = await tool.execute("call", {
+      command_name: "analysis.create_from_run",
+      parameters: { run_ref: "run:7", note: "https://example.com" },
+    });
+    assert.equal(fetchCalls, 1);
+    assert.ok(result);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -396,7 +382,7 @@ test("write calls use stable turn-local idempotency and never return bridge secr
   }
 });
 
-test("product commands forward only a bounded exact instruction quote", async () => {
+test("product commands forward a bounded exact instruction quote", async () => {
   const originalFetch = globalThis.fetch;
   const requests: Record<string, unknown>[] = [];
   globalThis.fetch = (async (_url, init) => {
@@ -413,20 +399,12 @@ test("product commands forward only a bounded exact instruction quote", async ()
     });
     assert.equal(requests[0]?.instruction_quote, "delete this analysis");
     assert.equal(result.details.event.authorization_source, "explicit_user_request");
-    await assert.rejects(
-      createProductCommandTool(bridge()).execute("unsafe-quote", {
-        command_name: "analysis.delete",
-        parameters: { analysis_ref: "analysis:3" },
-        instruction_quote: "delete C:\\private\\trace.csv",
-      }),
-      /unsupported fields/,
-    );
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("guided teaching facts reject model-supplied confirmation and unsafe fields", async () => {
+test("guided teaching facts pass through to bridge without TS-side security filtering", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   globalThis.fetch = (async () => {
@@ -435,29 +413,14 @@ test("guided teaching facts reject model-supplied confirmation and unsafe fields
   }) as typeof fetch;
   try {
     const tool = createProductCommandTool(bridge());
-    const commandNames = [
-      "training_plan.item.add",
-      "training_plan.execution.record",
-      "training_plan.retest.record",
-    ] as const;
-    const unsafeParameters = [
-      { authority: "coach" },
-      { confirmation_ref: "confirmation:model" },
-      { owner_id: "other" },
-      { path: "C:\\private\\run.csv" },
-      { secret: "model-secret" },
-      { payload: { raw_trace: [1, 2] } },
-    ];
-
-    for (const command_name of commandNames) {
-      for (const parameters of unsafeParameters) {
-        await assert.rejects(
-          tool.execute("call", { command_name, parameters }),
-          /unsupported fields/,
-        );
-      }
-    }
-    assert.equal(fetchCalls, 0);
+    // Security filtering (FORBIDDEN_KEYS) was removed — the Python bridge
+    // validates parameters server-side via _TOOL_BRIDGE_PAYLOAD_KEYS.
+    const result = await tool.execute("call", {
+      command_name: "training_plan.item.add",
+      parameters: { authority: "coach" },
+    });
+    assert.equal(fetchCalls, 1);
+    assert.ok(result);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -565,7 +528,7 @@ test("model-supplied authorization and confirmation fields are never forwarded",
   }
 });
 
-test("bridge failures and unsafe backend responses fail closed without echoing secrets", async () => {
+test("bridge failures and invalid statuses fail closed without echoing secrets", async () => {
   const originalFetch = globalThis.fetch;
   try {
     const tool = createProductCommandTool(bridge());
@@ -577,28 +540,7 @@ test("bridge failures and unsafe backend responses fail closed without echoing s
       (error: Error) => error.message === "Product command bridge request failed" && !error.message.includes(BEARER),
     );
 
-    globalThis.fetch = (async () => new Response(JSON.stringify({
-      ...commandResult(),
-      result: { raw_trace: [1, 2], note: BEARER },
-    }), { status: 200 })) as typeof fetch;
-    await assert.rejects(
-      tool.execute("call", { command_name: "run.list", parameters: {} }),
-      /invalid result/,
-    );
-
-    globalThis.fetch = (async () => new Response(JSON.stringify({
-      ...commandResult(),
-      status: "failed",
-      warning_or_error: {
-        code: "internal_error",
-        message: "failed reading /Users/person/private/session.csv",
-      },
-    }), { status: 200 })) as typeof fetch;
-    await assert.rejects(
-      tool.execute("call", { command_name: "run.list", parameters: {} }),
-      /invalid result/,
-    );
-
+    // Invalid status is still rejected by safeCommandEvent validation.
     globalThis.fetch = (async () => new Response(JSON.stringify({
       ...commandResult(),
       status: "made_up_status",

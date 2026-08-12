@@ -849,7 +849,7 @@ test("analysis tool budget includes the current user prompt", async () => {
   assert.equal(result.details.reason, "context_budget_exceeded");
 });
 
-test("v1 without a bridge registers analysis and knowledge tools only", async () => {
+test("v1 without a bridge registers analysis, knowledge, and native-read product command tools", async () => {
   let capturedContext: Record<string, unknown> | undefined;
   const fake: StreamFn = createFakeStreamFn("registry reply");
   const response = await runCoachTurn(baseRequest(), {
@@ -865,6 +865,7 @@ test("v1 without a bridge registers analysis and knowledge tools only", async ()
     "get_analysis_summary",
     "get_coach_knowledge",
     "load_skill",
+    "run_product_command",
   ]);
 });
 
