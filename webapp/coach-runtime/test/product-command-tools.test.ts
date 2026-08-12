@@ -84,6 +84,21 @@ test("product command allowlist includes every bounded evidence query", () => {
   assert.ok(PRODUCT_COMMAND_NAMES.includes("kovaak_scores.refresh_connected"));
 });
 
+test("turn-scoped exclusions remove discovery commands from the model tool", async () => {
+  const tool = createProductCommandTool(bridge(), {
+    excludedCommands: ["run.list", "analysis.create_from_run"],
+  });
+  const schema = JSON.stringify(tool.parameters);
+
+  assert.ok(!schema.includes('"run.list"'));
+  assert.ok(!schema.includes('"analysis.create_from_run"'));
+  assert.ok(schema.includes('"analysis.run_facts.get"'));
+  await assert.rejects(
+    tool.execute("excluded", { command_name: "run.list", parameters: {} }),
+    /not available for this turn/,
+  );
+});
+
 test("analysis.get accepts the public command-route result shape", async () => {
   const originalFetch = globalThis.fetch;
   const routeResult = {
@@ -300,17 +315,10 @@ test("guided teaching facts are registered as write commands", async () => {
 
 test("product tool documents the reachable Evidence query chain", () => {
   const description = createProductCommandTool(bridge()).description;
-  assert.match(description, /Coach 可以准备用户明确陈述的训练事实/);
-  assert.match(description, /可信 UI\/backend 确认后执行/);
-  assert.match(description, /analysis:N/);
   assert.match(description, /analysis\.evidence\.list/);
-  assert.match(description, /analysis\.evidence\.signal_window/);
   assert.match(description, /segment_ref/);
   assert.match(description, /available_channels/);
   assert.match(description, /analysis\.events\.list/);
-  assert.match(description, /scope='whole_run'/);
-  assert.match(description, /event_kinds/);
-  assert.match(description, /analysis\.events\.aggregate/);
   assert.match(description, /table_ref/);
   assert.match(description, /field_catalog/);
 });

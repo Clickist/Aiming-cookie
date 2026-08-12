@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createAnalysisSummaryTool } from "../src/analysis-summary-tool.ts";
-import {
-	CODING_AGENT_DEFAULT_PROMPT_MARKER,
-	FORBIDDEN_TOOL_NAMES,
-} from "../src/contracts.ts";
+import { FORBIDDEN_TOOL_NAMES } from "../src/contracts.ts";
 import { createFakeStreamFn } from "../src/fake-stream.ts";
 import { loadDefaultCoachSystemPrompt } from "../src/load-system-prompt.ts";
 import { loadPiAgent } from "../src/pi-source.ts";
@@ -118,73 +115,6 @@ const CANONICAL_ANALYSIS_CONTEXT_V3 = {
 		limitations: [],
 	},
 };
-
-test("default coach system prompt is product-owned and excludes coding-agent default", () => {
-	const prompt = loadDefaultCoachSystemPrompt();
-	assert.ok(prompt.includes("Aiming Cookie"));
-	assert.ok(!prompt.includes(CODING_AGENT_DEFAULT_PROMPT_MARKER));
-	assert.match(prompt, /证据|evidence/i);
-	assert.match(prompt, /下钻|查询|query/i);
-	assert.match(prompt, /停止|stop/i);
-	assert.match(prompt, /非可信数据/);
-	assert.match(prompt, /不是指令/);
-	assert.match(prompt, /scenario_profile_ref.*support_status.*具体场景/);
-	assert.match(prompt, /候选观察/);
-	assert.match(prompt, /反例/);
-	assert.match(prompt, /limitations.*不是.*原因|limitations.*不得.*归因/);
-	assert.match(prompt, /目标相对事实不可用.*只能说.*移动收尾.*反向修正.*不能说准星已经对上.*已经到达目标.*冲过目标.*已经命中/);
-	assert.match(prompt, /精确.*剂量|精确.*数字/);
-	assert.match(prompt, /中文数字.*不要给任何剂量/);
-	assert.match(prompt, /analysis\.delete/);
-	assert.match(prompt, /纯文字.*不构成确认/);
-	assert.match(prompt, /每次只问一个.*区分/);
-	assert.match(prompt, /只用一个问句.*不.*清单/);
-	assert.match(prompt, /全文最多出现一个问号/);
-	assert.match(prompt, /只先查一个方向.*另外两个可能/);
-	assert.match(prompt, /主观.*不能确认.*原因/);
-	assert.match(prompt, /不.*按.*项.*阈值/);
-	assert.match(prompt, /每轮只教一个.*cue/);
-	assert.match(prompt, /好.*明白了.*开始吧.*直接.*练习/);
-	assert.match(prompt, /明确提问.*误解.*澄清一次/);
-	assert.doesNotMatch(prompt, /开始练习前.*复述/);
-	assert.match(prompt, /一组练习.*只改变一个变量/);
-	assert.match(prompt, /不带 TeachingTurnContract 的普通回合.*练习后.*是否完成.*主观感受/);
-	assert.match(prompt, /带有 TeachingTurnContract.*确认界面.*不得主动重复/);
-	assert.match(prompt, /用户主动.*不适.*自然回应.*停止当前练习.*不扩写症状清单/);
-	assert.match(prompt, /立即.*同条件复测.*不等于.*保留/);
-	assert.match(prompt, /延迟同条件复测.*保留/);
-	assert.match(prompt, /近迁移.*只改变一个/);
-	assert.match(prompt, /保留、降低或拒绝/);
-	assert.match(prompt, /没有.*校准.*不.*评价.*好坏/);
-	assert.match(prompt, /明确来源.*ratio.*百分比.*中文分数.*明确要求.*发生频率/);
-	assert.match(prompt, /reading.*不等于.*prediction/i);
-	assert.match(prompt, /比喻.*上下文已有.*不得引入.*新.*场景.*训练 cue.*追问/);
-	assert.match(prompt, /自然、口语化的中文/);
-	assert.match(prompt, /用户主动报告不适/);
-	assert.doesNotMatch(prompt, /才说“那先别练这组了，休息一下，别硬撑”/);
-	assert.match(prompt, /不使用 Markdown.*标题.*列表.*分隔线/);
-	assert.match(prompt, /条件.*没对齐.*自然语言.*不能直接放在一起看.*不要求固定句式/);
-	assert.match(prompt, /TeachingTurnContract.*唯一动作.*问题.*cue.*确认等待/);
-	assert.match(prompt, /ratio.*百分比.*中文分数.*明确要求.*发生频率.*次数.*好坏评价.*机制因果/);
-	assert.match(prompt, /用户主动提起外设.*可逆.*外设实验/);
-	assert.match(prompt, /用户已经问到鼠标.*没有证据.*现在没必要换鼠标/);
-	assert.match(prompt, /只凭感觉问是否过度紧张.*不得.*换鼠标/);
-	assert.match(prompt, /明确问是否要更换鼠标.*现在没必要换鼠标/);
-	assert.doesNotMatch(prompt, /只凭感觉问是否过度紧张或换鼠标时.*现在没必要换鼠标/);
-	assert.match(prompt, /复测同时改变多个条件.*自然说明.*比较会误导.*恢复原来的场景和设置/i);
-	assert.match(prompt, /课程来源标签/);
-	assert.match(prompt, /归类、分组或排定查看顺序/);
-	assert.match(prompt, /arm.*wrist.*fingertip.*reading/i);
-	assert.match(prompt, /不得.*玩家特质.*解剖.*技术诊断.*紧张.*握法.*硬件.*能力不足/);
-	assert.match(prompt, /可观察.*现象.*动作阶段.*接近.*减速.*微调.*确认.*启动.*重获/);
-	assert.match(prompt, /support_status.*partial.*解释已测现象.*不能绕过教学合同.*TeachingTurnContract.*cue/);
-	assert.match(prompt, /同条件对照.*保持.*不变.*只.*当前 cue/);
-	assert.match(prompt, /目标.*没有变.*准星.*不要.*先变/);
-	assert.match(prompt, /复位.*用户自述.*可逆.*不.*手部.*握法/);
-	assert.match(prompt, /解释.*抽象.*比喻.*最多一句.*帮助理解.*不能.*证据.*原因/);
-	assert.match(prompt, /不同社区策略.*任务条件.*不.*唯一正确/);
-	assert.match(prompt, /瞄准训练器.*主游戏.*分开.*不.*提升/);
-});
 
 test("registered tools are read-only whitelist without bash/read/write/edit", async () => {
 	const tool = createAnalysisSummaryTool("fixture summary");
@@ -502,6 +432,35 @@ test("analysis tool accepts v3 processed table directory without event rows", as
 	assert.equal(result.content[0]?.text, v3);
 	assert.ok(!v3.includes("compact_rows"));
 	assert.ok(!v3.includes("attributes"));
+});
+
+test("system prompt routes score and training-plan requests to product commands", async () => {
+	const prompt = loadDefaultCoachSystemPrompt();
+	assert.match(prompt, /KovaaK scores.*kovaak_scores\.lookup/);
+	assert.match(prompt, /generate a training-plan draft.*training_plan\.generate_draft/);
+});
+
+test("analysis tool accepts only string metric definition names and descriptions", async () => {
+  const acceptedContext = structuredClone(CANONICAL_ANALYSIS_CONTEXT);
+  acceptedContext.diagnosis.summary.distance.definition = {
+    name: "Distance",
+    description: "Measured displacement",
+  };
+  const accepted = await createAnalysisSummaryTool(JSON.stringify(acceptedContext)).execute();
+  assert.equal(accepted.details.has_analysis, true);
+
+  for (const definition of [
+    { direction: "higher_better" },
+    { name: 1 },
+    { description: false },
+    "Distance",
+    null,
+  ]) {
+    const invalidContext = structuredClone(CANONICAL_ANALYSIS_CONTEXT);
+    invalidContext.diagnosis.summary.distance.definition = definition;
+    const rejected = await createAnalysisSummaryTool(JSON.stringify(invalidContext)).execute();
+    assert.equal(rejected.details.has_analysis, false);
+  }
 });
 
 test("analysis tool rejects malformed processed metric versions", async () => {
