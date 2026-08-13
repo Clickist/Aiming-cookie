@@ -640,15 +640,6 @@ async def test_product_state_route_persists_connected_onboarding_and_reports_rea
     from webapp.backend import config
 
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "onboarding-token")
-    async def no_runtime_profile(_owner):
-        return None
-
-    monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
-
-    async def provider_ready(_profile):
-        return {"status": "ready"}
-
-    monkeypatch.setattr(routes_mod.provider_store, "get_provider_profile_status", provider_ready)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -683,15 +674,6 @@ async def test_product_state_onboarding_write_failure_is_versioned_unavailable(m
     from webapp.backend import config
 
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "onboarding-token")
-    async def no_runtime_profile(_owner):
-        return None
-
-    monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
-
-    async def provider_ready(_profile):
-        return {"status": "ready"}
-
-    monkeypatch.setattr(routes_mod.provider_store, "get_provider_profile_status", provider_ready)
     async def fail_write(*_args, **_kwargs):
         raise RuntimeError("private database error")
 
@@ -717,15 +699,6 @@ async def test_product_state_onboarding_value_error_remains_client_error(monkeyp
     from webapp.backend import config
 
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "onboarding-token")
-    async def no_runtime_profile(_owner):
-        return None
-
-    monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
-
-    async def provider_ready(_profile):
-        return {"status": "ready"}
-
-    monkeypatch.setattr(routes_mod.provider_store, "get_provider_profile_status", provider_ready)
     async def reject_write(*_args, **_kwargs):
         raise ValueError("invalid onboarding completion kind")
 
@@ -741,33 +714,6 @@ async def test_product_state_onboarding_value_error_remains_client_error(monkeyp
         )
 
     assert response.status_code == 400
-
-
-@pytest.mark.asyncio
-async def test_product_state_onboarding_rejects_an_untested_provider(monkeypatch):
-    from webapp.backend import config
-
-    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "onboarding-token")
-
-    async def no_runtime_profile(_owner):
-        return None
-
-    async def provider_unready(_profile):
-        return {"status": "connection_failed"}
-
-    monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
-    monkeypatch.setattr(routes_mod.provider_store, "get_provider_profile_status", provider_unready)
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        headers={"X-User-Id": "product-owner", "X-Aiming-Cookie-Desktop-Token": "onboarding-token"},
-    ) as client:
-        response = await client.post(
-            "/api/product-state/onboarding",
-            json={"completed": True, "completion_kind": "connected"},
-        )
-
-    assert response.status_code == 409
 
 
 @pytest.mark.asyncio

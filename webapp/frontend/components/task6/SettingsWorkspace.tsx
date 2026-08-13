@@ -25,6 +25,7 @@ import {
   setDefaultProviderProfile,
   setProviderApiKey,
   submitProviderAuthInput,
+  takeProviderAuthResult,
   testProviderProfile,
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
@@ -185,6 +186,7 @@ export function SettingsWorkspace() {
   const [newAuthMode, setNewAuthMode] = useState<ProviderAuthMode>("api_key");
   const [credentialDrafts, setCredentialDrafts] = useState<Record<number, string>>({});
   const [authOperation, setAuthOperation] = useState<ProviderAuthOperation | null>(null);
+  const [authProfileId, setAuthProfileId] = useState<number | null>(null);
   const [authPromptValue, setAuthPromptValue] = useState("");
   const [cmPer360, setCmPer360] = useState("");
   const [fov, setFov] = useState("");
@@ -326,10 +328,13 @@ export function SettingsWorkspace() {
   useEffect(() => {
     if (!authOperation || isAuthTerminal(authOperation)) return;
     const timer = window.setTimeout(() => {
-      void getProviderAuthOperation(authOperation.operation_id)
+      void getProviderAuthOperation(authOperation.id)
         .then(async (next) => {
           setAuthOperation(next);
           if (next.status === "succeeded") {
+            if (authProfileId !== null) {
+              await takeProviderAuthResult(authProfileId, next.id);
+            }
             setFeedback("Provider 授权成功，可以测试连接。");
             await refresh(true);
           }
@@ -337,7 +342,7 @@ export function SettingsWorkspace() {
         .catch(() => setFeedback("认证状态暂时无法读取，可重试或取消。"));
     }, 900);
     return () => window.clearTimeout(timer);
-  }, [authOperation, refresh]);
+  }, [authOperation, authProfileId, refresh]);
 
   const addProfile = async () => {
     const custom = providerId === "custom";
@@ -366,6 +371,7 @@ export function SettingsWorkspace() {
 
   const startAuthorization = async (profileId: number) => {
     const operation = await authorizeProviderProfile(profileId, "oauth");
+    setAuthProfileId(profileId);
     setAuthOperation(operation);
     setAuthPromptValue("");
     setFeedback("请按 Provider 指引完成授权。");
@@ -376,7 +382,7 @@ export function SettingsWorkspace() {
     if (!authOperation || !prompt || !authPromptValue.trim()) return;
     try {
       setAuthOperation(await submitProviderAuthInput(
-        authOperation.operation_id,
+        authOperation.id,
         prompt.prompt_id,
         authPromptValue,
       ));
@@ -389,7 +395,7 @@ export function SettingsWorkspace() {
   const cancelAuthorization = async () => {
     if (!authOperation) return;
     try {
-      setAuthOperation(await cancelProviderAuthOperation(authOperation.operation_id));
+      setAuthOperation(await cancelProviderAuthOperation(authOperation.id));
       setFeedback("Provider 授权已取消。");
     } catch {
       setFeedback("授权未能取消，请重试。");

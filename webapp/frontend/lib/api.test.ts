@@ -374,7 +374,7 @@ test("custom Provider model discovery submits URL and key once without retaining
     context_window: 32768,
     max_tokens: 4096,
   }]);
-  assert.equal(requests[0]?.input, "/api/provider-profiles/custom/models");
+  assert.equal(requests[0]?.input, "/api/coach/provider-profiles/custom/models");
   assert.equal(requests[0]?.init?.method, "POST");
   assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
     protocol: "openai-completions",
@@ -789,5 +789,5 @@ test("provider credential is write-only and is not copied into browser storage",
 
   assert.equal(created.has_api_key, true);
   assert.equal("api_key" in created, false);
-  assert.equal(requests[0]?.input, "/api/provider-profiles");
+  assert.equal(requests[0]?.input, "/api/coach/provider-profiles");
 });

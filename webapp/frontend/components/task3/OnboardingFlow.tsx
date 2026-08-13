@@ -15,6 +15,7 @@ import {
   getProviderCatalog,
   listProviderProfiles,
   submitProviderAuthInput,
+  takeProviderAuthResult,
   testProviderProfile,
   updateProviderProfile,
 } from "@/lib/api";
@@ -184,11 +185,12 @@ export function OnboardingFlow() {
   useEffect(() => {
     if (!operation || isAuthTerminal(operation)) return;
     const timer = window.setTimeout(() => {
-      void getProviderAuthOperation(operation.operation_id)
+      void getProviderAuthOperation(operation.id)
         .then(async (next) => {
           setOperation(next);
           if (next.status === "succeeded" && profileId !== null) {
             setConnectionState("testing");
+            await takeProviderAuthResult(profileId, next.id);
             const status = await testProviderProfile(profileId);
             setConnectionState(status.status === "ready" ? "ready" : "failed");
             setMessage(status.status === "ready" ? `连接成功 · ${custom ? customModel : selectedModelLabel}` : status.message);
@@ -260,7 +262,7 @@ export function OnboardingFlow() {
     const prompt = operation?.prompts[0];
     if (!operation || !prompt || !promptValue) return;
     try {
-      const next = await submitProviderAuthInput(operation.operation_id, prompt.prompt_id, promptValue);
+      const next = await submitProviderAuthInput(operation.id, prompt.prompt_id, promptValue);
       setPromptValue("");
       setOperation(next);
     } catch {

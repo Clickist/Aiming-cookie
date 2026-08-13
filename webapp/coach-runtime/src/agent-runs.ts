@@ -12,18 +12,15 @@
 
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 
-import { isRecord } from "./contracts.ts";
 import type {
   CoachRuntimeProviderProfile,
   CoachRuntimeToolEvent,
 } from "./contracts.ts";
 import { extractRuntimeSecrets, redactRuntimeSecrets } from "./provider-profile.ts";
+import { loadProfile } from "./provider-store.ts";
 import { runCoachTurn, stopCoachTurn } from "./turn.ts";
 import { startTask, stopTask, waitForTask, isTaskActive } from "./task-manager.ts";
-import { getConfigDir } from "./app-data.ts";
 import {
   ensureSession,
   nextSessionIdSync,
@@ -105,21 +102,12 @@ export function loadDefaultProviderProfile(_ownerId: string): {
   profile: CoachRuntimeProviderProfile;
   needsReauth: boolean;
 } | null {
-  const configPath = join(getConfigDir(), "provider.json");
-  if (!existsSync(configPath)) return null;
-  try {
-    const raw = readFileSync(configPath, "utf8");
-    const config = JSON.parse(raw);
-    if (!isRecord(config)) return null;
-    const profile = config.profile ?? config;
-    if (!isRecord(profile) || typeof profile.kind !== "string") return null;
-    return {
-      profile: profile as CoachRuntimeProviderProfile,
-      needsReauth: false,
-    };
-  } catch {
-    return null;
-  }
+  const profile = loadProfile();
+  if (!profile) return null;
+  return {
+    profile,
+    needsReauth: false,
+  };
 }
 
 // ── Session management ────────────────────────────────────────────────
