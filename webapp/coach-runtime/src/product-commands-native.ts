@@ -62,6 +62,17 @@ function parseAnalysisRef(ref: unknown): number {
   throw new Error("invalid analysis_ref");
 }
 
+function parseRunRef(ref: unknown): number {
+  if (typeof ref === "number" && Number.isInteger(ref) && ref > 0) return ref;
+  if (typeof ref === "string") {
+    const match = ref.match(/^run:(\d+)$/);
+    if (match) return parseInt(match[1], 10);
+    const parsed = parseInt(ref, 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  throw new Error("invalid run_ref");
+}
+
 // ── Simple commands ────────────────────────────────────────────────────
 
 const calibrationGet: CommandHandler = (db, _params, ownerId) => {
@@ -843,6 +854,47 @@ const runList: CommandHandler = (db, _params, ownerId) => {
   return { status: "succeeded", result: items };
 };
 
+const runGet: CommandHandler = (db, params, ownerId) => {
+  const runId = parseRunRef(params.run_ref);
+  const row = db.prepare(
+    `SELECT kr.id, kr.source_key, kr.scenario, kr.trace_state,
+            kr.alignment_state, kr.alignment_summary,
+            kr.finalization_state, kr.video_path, kr.video_state,
+            kr.created_at, kr.updated_at,
+            json_extract(kr.stats_summary, '$.config.FOV') AS stats_fov,
+            json_extract(kr.stats_summary, '$.config.DPI') AS stats_dpi,
+            json_extract(kr.stats_summary, '$.config."Horiz Sens"') AS stats_sensitivity,
+            json_extract(kr.stats_summary, '$.cm_per_360') AS stats_cm_per_360,
+            (SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id = kr.id AND s.user_id = kr.user_id) AS analysis_count
+     FROM kovaak_runs AS kr
+     WHERE kr.id = ? AND kr.user_id = ?`,
+  ).get(runId, ownerId) as Record<string, unknown> | undefined;
+  if (!row) {
+    return { status: "failed", warning_or_error: { code: "not_found", message: "KovaaK run does not exist" } };
+  }
+  return {
+    status: "succeeded",
+    result_ref: `run:${row.id}`,
+    result: {
+      id: row.id,
+      run_ref: `run:${row.id}`,
+      source_key: row.source_key,
+      scenario: row.scenario,
+      trace_state: row.trace_state ?? "none",
+      finalization_state: row.finalization_state ?? "pending",
+      analysis_count: row.analysis_count,
+      stats_calibration: {
+        FOV: row.stats_fov ?? null,
+        DPI: row.stats_dpi ?? null,
+        sensitivity: row.stats_sensitivity ?? null,
+        cm_per_360: row.stats_cm_per_360 ?? null,
+      },
+      created_at: sqliteTimestampToWireUtc(row.created_at),
+      updated_at: sqliteTimestampToWireUtc(row.updated_at),
+    },
+  };
+};
+
 // ── profile.aiming.snapshot ───────────────────────────────────────────
 
 const profileAimingSnapshot: CommandHandler = (db, _params, ownerId) => {
@@ -924,6 +976,7 @@ const HANDLERS: Record<string, CommandHandler> = {
   "history.trend": historyTrend,
   "analysis.compare": analysisCompare,
   "run.list": runList,
+  "run.get": runGet,
   "profile.aiming.snapshot": profileAimingSnapshot,
   "training_plan.review": trainingPlanReview,
 };
@@ -939,6 +992,8 @@ export const NATIVE_READ_COMMANDS = new Set([
   "history.trend",
   "analysis.compare",
   "run.list",
+  "run.get",
+  "navigation.open",
   "profile.aiming.snapshot",
   "training_plan.review",
 ]);
