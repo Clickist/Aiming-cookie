@@ -369,12 +369,16 @@ function buildContextBundle(
 
 // ── Message helpers ───────────────────────────────────────────────────
 
-function loadMessages(db: SqliteDb, threadId: number): CoachRuntimeMessage[] {
+function loadMessages(
+  db: SqliteDb,
+  threadId: number,
+  excludedMessageId?: number,
+): CoachRuntimeMessage[] {
   const rows = db.prepare(
     "SELECT id, role, content FROM coach_messages WHERE thread_id=? ORDER BY id",
   ).all(threadId) as { id: number; role: string; content: string }[];
   return rows
-    .filter((r) => r.role === "user" || r.role === "assistant")
+    .filter((r) => r.id !== excludedMessageId && (r.role === "user" || r.role === "assistant"))
     .map((r) => ({ role: r.role as "user" | "assistant", content: r.content }));
 }
 
@@ -393,6 +397,45 @@ function appendUserMessage(
   ).get(threadId, content, contextRefsJson) as { id: number };
   db.prepare("UPDATE coach_threads SET updated_at=CURRENT_TIMESTAMP WHERE id=?").run(threadId);
   return row.id;
+}
+
+function loadOrAppendUserMessage(
+  db: SqliteDb,
+  runRef: string,
+  threadId: number,
+  content: string,
+  snapshots: AnyDict[],
+): { priorMessages: CoachRuntimeMessage[]; userMessageId: number } {
+  return db.transaction(() => {
+    const run = db.prepare(
+      "SELECT user_message_id FROM coach_agent_runs WHERE run_ref=?",
+    ).get(runRef) as { user_message_id: number | null } | undefined;
+    if (!run) {
+      throw new AgentRunError("run_unavailable", "Coach run is unavailable");
+    }
+    if (run.user_message_id !== null) {
+      const stored = db.prepare(
+        "SELECT id FROM coach_messages WHERE id=? AND thread_id=? AND role='user'",
+      ).get(run.user_message_id, threadId) as { id: number } | undefined;
+      if (!stored) {
+        throw new AgentRunError("teaching_message_missing", "Stored Coach user message is unavailable");
+      }
+      return {
+        priorMessages: loadMessages(db, threadId, stored.id),
+        userMessageId: stored.id,
+      };
+    }
+
+    const priorMessages = loadMessages(db, threadId);
+    const userMessageId = appendUserMessage(db, threadId, content, snapshots);
+    const cursor = db.prepare(
+      "UPDATE coach_agent_runs SET user_message_id=? WHERE run_ref=? AND user_message_id IS NULL",
+    ).run(userMessageId, runRef);
+    if (cursor.changes !== 1) {
+      throw new AgentRunError("teaching_message_conflict", "Coach user message changed before execution");
+    }
+    return { priorMessages, userMessageId };
+  })();
 }
 
 function appendAssistantMessage(
@@ -741,14 +784,14 @@ function stateAfterSuccess(state: AnyDict, contract: TeachingTurnContract): AnyD
  * the active run. Simplified — does not use optimistic-locking CAS beyond the
  * version check.
  */
-function releaseTeachingRun(
+export function releaseTeachingRun(
   db: SqliteDb,
   ownerId: string,
   sessionRef: string,
   expectedVersion: number,
   runRef: string,
   nextState: AnyDict | null,
-): boolean {
+): void {
   if (nextState !== null) {
     const cursor = db.prepare(
       "UPDATE teaching_sessions SET state_json=?, version=version+1, active_run_ref=NULL, " +
@@ -763,13 +806,37 @@ function releaseTeachingRun(
       expectedVersion,
       runRef,
     );
-    return cursor.changes === 1;
+    if (cursor.changes === 1) return;
+  } else {
+    const cursor = db.prepare(
+      "UPDATE teaching_sessions SET active_run_ref=NULL, updated_at=CURRENT_TIMESTAMP " +
+      "WHERE session_ref=? AND owner_id=? AND version=? AND active_run_ref=?",
+    ).run(sessionRef, ownerId, expectedVersion, runRef);
+    if (cursor.changes === 1) return;
   }
-  const cursor = db.prepare(
-    "UPDATE teaching_sessions SET active_run_ref=NULL, updated_at=CURRENT_TIMESTAMP " +
-    "WHERE session_ref=? AND owner_id=? AND version=? AND active_run_ref=?",
-  ).run(sessionRef, ownerId, expectedVersion, runRef);
-  return cursor.changes === 1;
+
+  const current = db.prepare(
+    "SELECT version, active_run_ref FROM teaching_sessions WHERE session_ref=? AND owner_id=?",
+  ).get(sessionRef, ownerId) as { version: number; active_run_ref: string | null } | undefined;
+  if (!current) {
+    throw new AgentRunError("teaching_session_missing", "TeachingSession is unavailable");
+  }
+
+  if (current.active_run_ref === runRef) {
+    const released = db.prepare(
+      "UPDATE teaching_sessions SET active_run_ref=NULL, updated_at=CURRENT_TIMESTAMP " +
+      "WHERE session_ref=? AND owner_id=? AND version=? AND active_run_ref=?",
+    ).run(sessionRef, ownerId, current.version, runRef);
+    if (released.changes !== 1) {
+      throw new AgentRunError("teaching_state_conflict", "TeachingSession changed before the run was released");
+    }
+  } else if (current.active_run_ref !== null) {
+    throw new AgentRunError("teaching_state_conflict", "TeachingSession is owned by another run");
+  }
+
+  if (nextState !== null) {
+    throw new AgentRunError("teaching_state_conflict", "TeachingSession changed before the lesson advanced");
+  }
 }
 
 /**
@@ -778,6 +845,7 @@ function releaseTeachingRun(
  */
 function usedTeachingCommand(toolEvents: CoachRuntimeToolEvent[]): boolean {
   const teachingCommands = new Set([
+    "teaching_session.update",
     "training_plan.item.add",
     "training_plan.execution.record",
     "training_plan.retest.record",
@@ -811,6 +879,7 @@ async function runAgentTurn(
 ): Promise<void> {
   const analysisSummary = JSON.stringify(bundle, null, 0);
   const persistenceStart = performance.now();
+  let teachingSession: ReturnType<typeof loadTeachingSession> = null;
 
   try {
     // Phase 1: text generation
@@ -822,12 +891,13 @@ async function runAgentTurn(
       return;
     }
 
-    // Load prior messages and append user message
-    const priorMessages = loadMessages(db, threadId);
-    const userMessageId = appendUserMessage(db, threadId, content, snapshots);
-    db.prepare(
-      "UPDATE coach_agent_runs SET user_message_id=? WHERE run_ref=? AND user_message_id IS NULL",
-    ).run(userMessageId, runRef);
+    const { priorMessages } = loadOrAppendUserMessage(
+      db,
+      runRef,
+      threadId,
+      content,
+      snapshots,
+    );
 
     if (isStopRequested(db, runRef)) {
       markStopped(db, runRef);
@@ -843,8 +913,8 @@ async function runAgentTurn(
         message: "Coach Provider is not configured",
         retryable: true,
       };
-      setRun(db, runRef, "failed", "completed", { error: failure, finished: true });
-      appendEvent(db, runRef, "error", "completed", failure.code, failure.message);
+      setRun(db, runRef, "queued", "queued", { error: failure });
+      appendEvent(db, runRef, "status", "queued", "provider_waiting", "Coach run is waiting for Provider");
       return;
     }
 
@@ -855,13 +925,13 @@ async function runAgentTurn(
         message: "Provider credential requires reauthentication",
         retryable: true,
       };
-      setRun(db, runRef, "failed", "completed", { error: failure, finished: true });
-      appendEvent(db, runRef, "error", "completed", failure.code, failure.message);
+      setRun(db, runRef, "queued", "queued", { error: failure });
+      appendEvent(db, runRef, "status", "queued", "provider_waiting", "Coach run is waiting for Provider");
       return;
     }
 
     // Load teaching session and build the teaching turn contract
-    const teachingSession = loadTeachingSession(db, ownerId, threadId);
+    teachingSession = loadTeachingSession(db, ownerId, threadId);
     const teachingTurn = teachingSession ? buildTeachingTurn(teachingSession, bundle) : undefined;
 
     // Build the turn request
@@ -1052,13 +1122,33 @@ async function runAgentTurn(
       }
     }
   } catch (error) {
-    // Unexpected error — mark as failed
-    const failure = {
-      domain: "model",
-      code: "generation_failed",
-      message: "Coach generation failed",
-      retryable: true,
-    };
+    if (teachingSession) {
+      try {
+        releaseTeachingRun(
+          db,
+          ownerId,
+          teachingSession.sessionRef,
+          teachingSession.version,
+          runRef,
+          null,
+        );
+      } catch {
+        // Preserve the original failure; the guarded release already fails closed.
+      }
+    }
+    const failure = error instanceof AgentRunError
+      ? {
+          domain: "tool",
+          code: error.code,
+          message: error.message,
+          retryable: false,
+        }
+      : {
+          domain: "model",
+          code: "generation_failed",
+          message: "Coach generation failed",
+          retryable: true,
+        };
     const completed = setRun(db, runRef, "failed", "completed", { error: failure, finished: true });
     if (completed) {
       appendEvent(db, runRef, "error", "completed", failure.code, failure.message);
@@ -1217,7 +1307,7 @@ export function getAgentRun(db: SqliteDb, ownerId: string, runRef: string): Agen
     error,
     contexts,
     events,
-    created_at: row.created_at,
+    created_at: sqliteTimestampToWireUtc(row.created_at) ?? row.created_at,
     started_at: sqliteTimestampToWireUtc(row.started_at),
     finished_at: sqliteTimestampToWireUtc(row.finished_at),
   };
@@ -1273,7 +1363,7 @@ export function retryAgentRun(
   }
 
   const row = db.prepare(
-    "SELECT content, context_refs_json, thread_id, attempt FROM coach_agent_runs WHERE run_ref=? AND owner_id=?",
+    "SELECT content, context_refs_json, user_message_id, thread_id, attempt FROM coach_agent_runs WHERE run_ref=? AND owner_id=?",
   ).get(runRef, ownerId) as AnyDict;
 
   const snapshots = parseJsonArray(row.context_refs_json);
@@ -1294,8 +1384,17 @@ export function retryAgentRun(
 
   db.prepare(
     "INSERT INTO coach_agent_runs(run_ref, owner_id, thread_id, parent_run_ref, attempt, status, phase, content, " +
-    "user_message_id, context_refs_json) VALUES(?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, ?)",
-  ).run(newRunRef, ownerId, threadId, runRef, attempt, row.content, JSON.stringify(snapshots, null, 0));
+    "user_message_id, context_refs_json) VALUES(?, ?, ?, ?, ?, 'queued', 'queued', ?, ?, ?)",
+  ).run(
+    newRunRef,
+    ownerId,
+    threadId,
+    runRef,
+    attempt,
+    row.content,
+    row.user_message_id,
+    JSON.stringify(snapshots, null, 0),
+  );
 
   appendEvent(db, newRunRef, "status", "queued", "run_queued", "Coach run queued");
 
