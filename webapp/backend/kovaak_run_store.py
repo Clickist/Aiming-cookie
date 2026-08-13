@@ -113,7 +113,7 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _sqlite_timestamp_to_wire_utc(value: object) -> object:
+def _timestamp_to_wire_utc(value: object) -> object:
     if not isinstance(value, str):
         return value
     text = value.strip()

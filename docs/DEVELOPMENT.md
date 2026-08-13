@@ -122,7 +122,7 @@ $smokeConfig = '{\"identifier\":\"' + $smokeId + '\"}'
 npm.cmd --prefix webapp\frontend run tauri -- dev --no-watch --config $smokeConfig
 ```
 
-该命令会把 Tauri app data、SQLite、Raw Input 和 managed media 根目录隔离到 smoke identifier 下；结束后先正常关闭桌面窗口，确认 Python sidecar 与随机 loopback 端口同时退出。
+该命令会把 Tauri app data、Raw Input 和 managed media 根目录隔离到 smoke identifier 下；结束后先正常关闭桌面窗口，确认 Python sidecar 与随机 loopback 端口同时退出。
 
 Desktop 的打包、签名、公证和更新链路尚未构成稳定发布流程；当前状态与阻塞以 `PROGRESS.md` 为准。
 
@@ -130,7 +130,7 @@ Desktop 的打包、签名、公证和更新链路尚未构成稳定发布流程
 
 真实 Tauri E2E 由 `scripts\run-tauri-e2e.ps1` 统一启动。该脚本会：
 
-- 用临时 Tauri identifier 启动 `tauri dev`，隔离 AppData、SQLite、Raw Input 和 managed media；
+- 用临时 Tauri identifier 启动 `tauri dev`，隔离 AppData、Raw Input 和 managed media；
 - 固定使用仓库 `.venv\Scripts\python.exe`、MSVC Rust toolchain 和当前 checkout 的 Python backend；
 - 通过 Tauri runtime 启动当前 checkout 的 Coach Node sidecar，并把 `COACH_SIDECAR_URL` 注入 Python backend；
 - 开启 WebView2 CDP，把连接信息传给 Playwright；
@@ -174,11 +174,10 @@ KovaaK 本地 ingestion 由 Desktop runtime 在启动时管理：
 
 按改动范围运行最小相关检查；以下命令是仓库当前可用的主要入口：
 
-运行 Web pytest 前，测试入口会在导入 backend 前强制覆盖 `DATABASE_URL` 为唯一的临时 SQLite 路径。PowerShell 手动运行时仍应显式使用临时 DB/root 和不存在的 KovaaK 路径：
+运行 Web pytest 前，测试入口会在导入 backend 前把 `DATA_ROOT` 隔离为唯一的临时目录（backend 以 JSON 文件直接读写，无数据库）。PowerShell 手动运行时仍应显式使用临时 root 和不存在的 KovaaK 路径：
 
 ```powershell
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("aiming_cookie_pytest_" + [guid]::NewGuid().ToString("N"))
-$env:DATABASE_URL = "sqlite+aiosqlite:///" + (Join-Path $testRoot "test.db").Replace("\", "/")
 $env:DATA_ROOT = $testRoot
 $env:KOVAAK_INSTALL_DIR = Join-Path $testRoot "missing-kovaak"
 ```
@@ -265,9 +264,10 @@ git status --short
 | `webapp/backend/worker.py` | 异步分析 worker |
 | `webapp/backend/desktop_runtime.py` | Tauri 管理的本地 API/worker 生命周期 |
 | `webapp/backend/kovaak_ingest.py` | KovaaK Stats / Performance watcher 与稳定文件发现 |
-| `webapp/backend/kovaak_run_store.py` | `KovaaKRun` 本地 SQLite upsert、snapshot 解码和 trace 配对 |
+| `webapp/backend/kovaak_run_store.py` | `KovaaKRun` 本地 JSON 文件读写（`runs/{id}/meta.json`）、snapshot 解码和 trace 配对 |
 | `webapp/backend/contracts.py` | Web/Desktop 共享的分析合同 |
-| `webapp/backend/coach_*` | Coach runtime、编排、服务和持久化 |
+| `webapp/backend/analysis_service.py` | Analysis 服务与编排 |
+| `webapp/backend/provider_store.py` | Provider profile/credential 的 `config/provider.json` 文件存储 |
 | `webapp/frontend/` | Next.js 前端、API client 和桌面适配层 |
 | `webapp/frontend/src-tauri/` | Tauri shell、进程生命周期与 native commands |
 | `webapp/frontend/src-tauri/src/raw_input.rs` | Windows Raw Input、process gate、ring buffer 和本地 snapshot |

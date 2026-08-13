@@ -429,7 +429,7 @@ async def test_session_list_projects_safe_presentation_label_with_training_and_c
     rows = await queue.list_sessions(user_id)
     item = next(row for row in rows if row["id"] == sid)
 
-    expected_training_at = queue.sqlite_timestamp_to_wire_utc(run["created_at"])
+    expected_training_at = queue.timestamp_to_wire_utc(run["created_at"])
     assert item["training_at"] == expected_training_at
     assert item["analysis_completed_at"] == "2026-08-09T09:12:30Z"
     assert item["presentation_label"] == (

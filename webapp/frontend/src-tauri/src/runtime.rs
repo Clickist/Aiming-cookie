@@ -71,10 +71,8 @@ impl RuntimeProcess {
         std::fs::create_dir_all(app_data_dir)
             .map_err(|error| format!("failed to create app data directory: {error}"))?;
 
-        let database_path = app_data_dir.join("aiming_cookie.db");
-        let database_url = format!("sqlite+aiosqlite:///{}", database_path.display());
         let (mut coach_sidecar, coach_sidecar_url) =
-            start_coach_sidecar(layout, app_data_dir, &database_url)?;
+            start_coach_sidecar(layout, app_data_dir)?;
         let token = create_launch_token();
         let mut command = Command::new(&layout.backend_program);
         command
@@ -89,7 +87,6 @@ impl RuntimeProcess {
             .env(WATCH_PARENT_STDIN_ENV, "1")
             .env("DATA_ROOT", app_data_dir)
             .env("VIDEO_TMP_DIR", app_data_dir)
-            .env("DATABASE_URL", database_url)
             .env(COACH_SIDECAR_URL_ENV, &coach_sidecar_url)
             .env(
                 "CORS_ORIGINS",
@@ -481,7 +478,6 @@ fn configure_python_io(command: &mut Command) {
 fn start_coach_sidecar(
     layout: &RuntimeLayout,
     app_data_dir: &Path,
-    database_url: &str,
 ) -> Result<(Child, String), String> {
     let mut command = Command::new(&layout.coach_program);
     if let (Some(pi_source_dir), Some(tsx_loader), Some(sidecar_entry), Some(tsconfig)) = (
@@ -518,7 +514,6 @@ fn start_coach_sidecar(
         .env_remove(TOKEN_ENV)
         .env(COACH_SIDECAR_HOST_ENV, "127.0.0.1")
         .env(COACH_SIDECAR_PORT_ENV, "0")
-        .env("DATABASE_URL", database_url)
         .env("DATA_ROOT", app_data_dir)
         .env(DESKTOP_RUNTIME_CONFIG_ENV, app_data_dir.join(DESKTOP_RUNTIME_CONFIG_FILE))
         .stdin(Stdio::null())
