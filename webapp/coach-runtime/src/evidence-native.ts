@@ -5,10 +5,11 @@
  * all evidence query commands in-process, eliminating the HTTP tool
  * bridge for evidence operations.
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import type { SqliteDb } from "./db.ts";
-import { buildProcessedEventTableCatalog, type EvidenceKeyRegistry } from "./evidence-catalogs.ts";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { getAnalysesDir } from "./app-data.ts";
+import { buildProcessedEventTableCatalog, EvidenceKeyRegistry } from "./evidence-catalogs.ts";
+import { reportAnalysisRead } from "./fs-tools.ts";
 
 // ── Types ──
 
@@ -48,66 +49,34 @@ function registry(): EvidenceKeyRegistry {
 
 // ── Artifact loading ──
 
-let dataRoot: string | null | undefined;
-function getDataRoot(): string | null {
-  if (dataRoot !== undefined) return dataRoot;
-  const env = process.env.DATA_ROOT;
-  if (env) { dataRoot = env; return dataRoot; }
-  // Fallback: match Python's config.resolve_data_root() defaults
-  const home = process.env.USERPROFILE || process.env.HOME || "";
-  const platform = process.platform;
-  if (platform === "win32") {
-    const appData = process.env.APPDATA || (home ? `${home}/AppData/Roaming` : "");
-    dataRoot = appData ? `${appData}/Aiming Cookie` : null;
-  } else if (platform === "darwin") {
-    dataRoot = `${home}/Library/Application Support/Aiming Cookie`;
-  } else {
-    dataRoot = `${home}/.local/share/Aiming Cookie`;
-  }
-  return dataRoot;
-}
-
 type LoadedArtifact = { artifact: AnyDict; analysisRef: string; derivedArtifact: AnyDict };
 
-export function loadArtifact(db: SqliteDb, analysisRef: string, ownerId: string): LoadedArtifact | null {
+export function loadArtifact(analysisRef: string, _ownerId: string): LoadedArtifact | null {
   const match = analysisRef.match(/^analysis:(\d+)$/);
   if (!match) return null;
-  const sessionId = parseInt(match[1], 10);
+  const analysisId = match[1];
 
-  const row = db.prepare(
-    "SELECT user_id, status, result FROM sessions WHERE id = ?",
-  ).get(sessionId) as { user_id: string; status: string; result: string } | undefined;
+  // Read evidence.json directly from the analyses directory.
+  const artifactPath = join(getAnalysesDir(), analysisId, "evidence.json");
+  if (!existsSync(artifactPath)) return null;
 
-  if (!row || row.user_id !== ownerId || row.status !== "done") return null;
-
-  let result: AnyDict;
+  let artifact: AnyDict;
   try {
-    result = JSON.parse(row.result);
+    artifact = JSON.parse(readFileSync(artifactPath, "utf-8"));
   } catch {
     return null;
   }
 
-  const safeRef = result?.evidence?.derived_artifact;
-  if (!safeRef?.artifact_ref || !safeRef?.evidence_revision) return null;
+  // Record the engaged analysis so the enclosing turn can attach the ref.
+  reportAnalysisRead(Number(analysisId));
 
-  const root = getDataRoot();
-  if (!root) return null;
+  // Extract derivedArtifact metadata from the artifact itself.
+  const derivedArtifact = artifact?.derived_artifact ?? {
+    artifact_ref: `analysis:${analysisId}:evidence`,
+    contract_version: artifact?.contract_version ?? "analysis_evidence.v1",
+  };
 
-  const revisionMatch = safeRef.evidence_revision.match(/^sha256:([0-9a-f]{64})$/i);
-  if (!revisionMatch) return null;
-
-  const artifactPath = resolve(
-    root, "sessions", String(sessionId),
-    "derived", "analysis_evidence", "revisions",
-    revisionMatch[1], "artifact.json",
-  );
-
-  try {
-    const raw = readFileSync(artifactPath, "utf-8");
-    return { artifact: JSON.parse(raw), analysisRef, derivedArtifact: safeRef };
-  } catch {
-    return null;
-  }
+  return { artifact, analysisRef, derivedArtifact };
 }
 
 // ── Analysis brief builder (ported from coach_context.build_analysis_brief) ──
@@ -598,10 +567,10 @@ function evidenceFailed(code: string, message: string): NativeResult {
 
 // ── Command implementations ──
 
-type EvidenceCtx = { db: SqliteDb; ownerId: string };
+type EvidenceCtx = { ownerId: string };
 
 function requireArtifact(ctx: EvidenceCtx, analysisRef: string): LoadedArtifact {
-  const loaded = loadArtifact(ctx.db, analysisRef, ctx.ownerId);
+  const loaded = loadArtifact(analysisRef, ctx.ownerId);
   if (!loaded) throw new Error("evidence is unavailable");
   return loaded;
 }
@@ -1373,14 +1342,13 @@ export function isNativeEvidenceCommand(commandName: string): boolean {
 }
 
 export function executeNativeEvidence(
-  db: SqliteDb,
   commandName: string,
   params: AnyDict,
   ownerId: string,
 ): NativeResult {
   const handler = HANDLERS[commandName];
   if (!handler) return evidenceFailed("unknown_command", `${commandName} is not a native evidence command`);
-  const ctx: EvidenceCtx = { db, ownerId };
+  const ctx: EvidenceCtx = { ownerId };
   try {
     return handler(ctx, params);
   } catch (error) {

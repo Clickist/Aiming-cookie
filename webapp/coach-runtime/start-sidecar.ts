@@ -4,6 +4,10 @@ import {
   DEFAULT_SIDECAR_PORT,
   startSidecarServer,
 } from "./src/sidecar-server.ts";
+import { ensureAppDataDirs } from "./src/app-data.ts";
+
+// Ensure app-data directory structure exists before the server starts.
+ensureAppDataDirs();
 
 const port = Number(process.env.COACH_SIDECAR_PORT ?? String(DEFAULT_SIDECAR_PORT));
 const host = process.env.COACH_SIDECAR_HOST ?? DEFAULT_SIDECAR_HOST;

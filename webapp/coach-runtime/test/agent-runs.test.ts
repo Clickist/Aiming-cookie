@@ -1,333 +1,131 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import Database from "better-sqlite3";
-
 import {
   AgentRunError,
-  appendAssistantMessage,
   createAgentRun,
+  decideConfirmation,
   getAgentRun,
-  releaseTeachingRun,
   resumeWaitingRuns,
   retryAgentRun,
+  stopAgentRun,
+  subscribeAgentRun,
+  type AgentRunState,
 } from "../src/agent-runs.ts";
 import { waitForTask } from "../src/task-manager.ts";
 
-function createAgentRunDb(): Database.Database {
-  const db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE coach_threads (
-      id INTEGER PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      kind TEXT NOT NULL DEFAULT 'primary',
-      status TEXT NOT NULL DEFAULT 'active',
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE coach_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      thread_id INTEGER NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      context_refs_json TEXT,
-      context_json TEXT,
-      trace_json TEXT
-    );
-    CREATE TABLE coach_context_refs (
-      context_ref TEXT PRIMARY KEY,
-      thread_id INTEGER NOT NULL,
-      kind TEXT NOT NULL,
-      analysis_session_id INTEGER NOT NULL,
-      comparison_session_id INTEGER,
-      target_ref TEXT,
-      start_ms REAL,
-      end_ms REAL,
-      projection_json TEXT,
-      comparison_projection_json TEXT,
-      status TEXT NOT NULL,
-      attached_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE coach_agent_runs (
-      run_ref TEXT PRIMARY KEY,
-      owner_id TEXT NOT NULL,
-      thread_id INTEGER NOT NULL,
-      parent_run_ref TEXT,
-      attempt INTEGER NOT NULL,
-      status TEXT NOT NULL,
-      phase TEXT NOT NULL,
-      content TEXT NOT NULL,
-      user_message_id INTEGER,
-      context_refs_json TEXT NOT NULL DEFAULT '[]',
-      partial_text TEXT,
-      error_json TEXT,
-      stop_requested INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      started_at TEXT,
-      finished_at TEXT,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE coach_agent_run_events (
-      event_ref TEXT PRIMARY KEY,
-      run_ref TEXT NOT NULL,
-      sequence INTEGER NOT NULL,
-      event_type TEXT NOT NULL,
-      phase TEXT NOT NULL,
-      code TEXT NOT NULL,
-      message TEXT NOT NULL,
-      payload_json TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(run_ref, sequence)
-    );
-    CREATE TABLE provider_profiles (
-      id INTEGER PRIMARY KEY,
-      owner_id TEXT NOT NULL,
-      provider_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      base_url TEXT,
-      model_id TEXT NOT NULL,
-      context_window INTEGER,
-      max_tokens INTEGER,
-      is_default INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE provider_credentials (
-      profile_id INTEGER NOT NULL,
-      owner_id TEXT NOT NULL,
-      credential_json TEXT,
-      needs_reauth INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE teaching_sessions (
-      session_ref TEXT PRIMARY KEY,
-      owner_id TEXT NOT NULL,
-      thread_id INTEGER NOT NULL,
-      state_json TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      active_run_ref TEXT,
-      pending_confirmation_ref TEXT,
-      pause_reason TEXT,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  return db;
-}
-
-test("agent run reads use wire-format UTC timestamps", () => {
-  const db = createAgentRunDb();
-  try {
-    db.prepare("INSERT INTO coach_threads(id, user_id) VALUES(1, 'desktop-local')").run();
-    db.prepare(
-      "INSERT INTO coach_agent_runs(run_ref, owner_id, thread_id, attempt, status, phase, content, " +
-      "context_refs_json, created_at) VALUES('agent_run:timestamp', 'desktop-local', 1, 1, " +
-      "'queued', 'queued', 'test', '[]', '2026-08-13 10:20:30')",
-    ).run();
-
-    const run = getAgentRun(db, "desktop-local", "agent_run:timestamp");
-    assert.equal(run?.created_at, "2026-08-13T10:20:30Z");
-  } finally {
-    db.close();
-  }
+test("createAgentRun returns a queued run with ISO UTC timestamps", () => {
+  const run = createAgentRun("test-owner", "请分析这一局", { sessionId: 1 });
+  assert.equal(run.schema_version, "coach_agent_run.v1");
+  assert.ok(run.run_ref.startsWith("agent_run:"));
+  assert.equal(run.session_id, 1);
+  assert.equal(run.parent_run_ref, null);
+  assert.equal(run.attempt, 1);
+  // The background task runs synchronously up to the first await, so without
+  // a provider.json the run already transitioned to queued-with-waiting by
+  // the time createAgentRun returns.
+  assert.equal(run.status, "queued");
+  assert.equal(run.error?.code, "provider_unconfigured");
+  assert.equal(run.finished_at, null);
+  assert.match(run.created_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  assert.ok(run.created_at.endsWith("Z"));
 });
 
-test("retry reuses the original user message instead of appending a duplicate", async () => {
-  const db = createAgentRunDb();
-  try {
-    db.prepare("INSERT INTO coach_threads(id, user_id) VALUES(1, 'desktop-local')").run();
-    const message = db.prepare(
-      "INSERT INTO coach_messages(thread_id, role, content, context_refs_json) " +
-      "VALUES(1, 'user', '请分析这一局', '[]') RETURNING id",
-    ).get() as { id: number };
-    db.prepare(
-      "INSERT INTO coach_agent_runs(run_ref, owner_id, thread_id, attempt, status, phase, content, " +
-      "user_message_id, context_refs_json, error_json) " +
-      "VALUES('agent_run:parent', 'desktop-local', 1, 1, 'failed', 'completed', ?, ?, '[]', ?)",
-    ).run(
-      "请分析这一局",
-      message.id,
-      JSON.stringify({ domain: "model", code: "turn_failed", message: "failed", retryable: true }),
-    );
-    db.prepare(
-      "INSERT INTO coach_agent_run_events(event_ref, run_ref, sequence, event_type, phase, code, message) " +
-      "VALUES('event:parent', 'agent_run:parent', 1, 'error', 'completed', 'turn_failed', 'failed')",
-    ).run();
-
-    const retried = retryAgentRun(db, "desktop-local", "agent_run:parent");
-    assert.ok(retried);
-    await waitForTask(retried.run_ref);
-
-    const child = db.prepare(
-      "SELECT user_message_id FROM coach_agent_runs WHERE run_ref=?",
-    ).get(retried.run_ref) as { user_message_id: number };
-    const count = db.prepare(
-      "SELECT COUNT(*) AS count FROM coach_messages WHERE thread_id=1 AND role='user'",
-    ).get() as { count: number };
-    assert.equal(child.user_message_id, message.id);
-    assert.equal(count.count, 1);
-  } finally {
-    db.close();
-  }
+test("createAgentRun rejects empty content", () => {
+  assert.throws(
+    () => createAgentRun("test-owner", "  ", { sessionId: 1 }),
+    (error: unknown) => error instanceof AgentRunError && error.code === "invalid_text",
+  );
 });
 
 test("a missing Provider leaves the run queued for automatic recovery", async () => {
-  const db = createAgentRunDb();
-  try {
-    db.prepare("INSERT INTO coach_threads(id, user_id) VALUES(1, 'desktop-local')").run();
+  const created = createAgentRun("test-owner", "等 Provider 配好后继续", { sessionId: 2 });
+  await waitForTask(created.run_ref);
 
-    const created = createAgentRun(db, "desktop-local", "等 Provider 配好后继续", { sessionId: 1 });
-    await waitForTask(created.run_ref);
-
-    const waiting = db.prepare(
-      "SELECT status, phase, error_json, finished_at FROM coach_agent_runs WHERE run_ref=?",
-    ).get(created.run_ref) as {
-      status: string;
-      phase: string;
-      error_json: string;
-      finished_at: string | null;
-    };
-    assert.equal(waiting.status, "queued");
-    assert.equal(waiting.phase, "queued");
-    assert.equal(JSON.parse(waiting.error_json).code, "provider_unconfigured");
-    assert.equal(waiting.finished_at, null);
-    const events = db.prepare(
-      "SELECT code FROM coach_agent_run_events WHERE run_ref=? ORDER BY sequence",
-    ).all(created.run_ref) as Array<{ code: string }>;
-    assert.equal(events.at(-1)?.code, "provider_waiting");
-  } finally {
-    db.close();
-  }
+  const run = getAgentRun("test-owner", created.run_ref);
+  assert.ok(run);
+  assert.equal(run.status, "queued");
+  assert.equal(run.phase, "queued");
+  assert.equal(run.error?.code, "provider_unconfigured");
+  assert.equal(run.finished_at, null);
+  const lastEvent = run.events[run.events.length - 1];
+  assert.equal(lastEvent?.code, "provider_waiting");
 });
 
-test("assistant messages retain the run context used for evidence cards", () => {
-  const db = createAgentRunDb();
-  try {
-    db.prepare("INSERT INTO coach_threads(id, user_id) VALUES(1, 'desktop-local')").run();
-    const context = {
-      schema_version: "coach_turn_context.v1",
-      contexts: [{ analysis_ref: "analysis:13", projection: { analysis_brief: {} } }],
-      benchmark_summary: null,
-    };
-    const snapshots = [{
-      context_ref: "context:test",
-      kind: "analysis",
-      analysis_ref: "analysis:13",
-      comparison_analysis_ref: null,
-      status: "active",
-    }];
-    appendAssistantMessage(db, 1, "evidence summary", [], context, snapshots);
-
-    const assistant = db.prepare(
-      "SELECT context_json, context_refs_json FROM coach_messages " +
-      "WHERE thread_id=1 AND role='assistant' ORDER BY id DESC LIMIT 1",
-    ).get() as { context_json: string; context_refs_json: string } | undefined;
-    assert.ok(assistant);
-    assert.deepEqual(JSON.parse(assistant.context_json), context);
-    assert.deepEqual(JSON.parse(assistant.context_refs_json), snapshots);
-  } finally {
-    db.close();
-  }
+test("getAgentRun returns null for a different owner", () => {
+  const run = createAgentRun("owner-a", "hello", { sessionId: 3 });
+  assert.ok(getAgentRun("owner-a", run.run_ref));
+  assert.equal(getAgentRun("owner-b", run.run_ref), null);
 });
 
-test("Provider recovery resumes the same run without appending its user message again", async () => {
-  const db = createAgentRunDb();
-  try {
-    db.prepare("INSERT INTO coach_threads(id, user_id) VALUES(1, 'desktop-local')").run();
-    const message = db.prepare(
-      "INSERT INTO coach_messages(thread_id, role, content, context_refs_json) " +
-      "VALUES(1, 'user', '继续刚才的问题', '[]') RETURNING id",
-    ).get() as { id: number };
-    db.prepare(
-      "INSERT INTO coach_agent_runs(run_ref, owner_id, thread_id, attempt, status, phase, content, " +
-      "user_message_id, context_refs_json, error_json) " +
-      "VALUES('agent_run:waiting', 'desktop-local', 1, 1, 'queued', 'queued', ?, ?, '[]', ?)",
-    ).run(
-      "继续刚才的问题",
-      message.id,
-      JSON.stringify({
-        domain: "permission",
-        code: "provider_unconfigured",
-        message: "waiting",
-        retryable: true,
-      }),
-    );
-    db.prepare(
-      "INSERT INTO coach_agent_run_events(event_ref, run_ref, sequence, event_type, phase, code, message) " +
-      "VALUES('event:waiting', 'agent_run:waiting', 1, 'status', 'queued', 'provider_waiting', 'waiting')",
-    ).run();
-    db.prepare(
-      "INSERT INTO provider_profiles(id, owner_id, provider_id, name, kind, model_id, is_default) " +
-      "VALUES(1, 'desktop-local', 'unknown-provider', 'Unknown', 'builtin', 'unknown-model', 1)",
-    ).run();
-
-    assert.deepEqual(resumeWaitingRuns(db, "desktop-local"), ["agent_run:waiting"]);
-    await waitForTask("agent_run:waiting");
-
-    const run = db.prepare(
-      "SELECT user_message_id FROM coach_agent_runs WHERE run_ref='agent_run:waiting'",
-    ).get() as { user_message_id: number };
-    const count = db.prepare(
-      "SELECT COUNT(*) AS count FROM coach_messages WHERE thread_id=1 AND role='user'",
-    ).get() as { count: number };
-    assert.equal(run.user_message_id, message.id);
-    assert.equal(count.count, 1);
-  } finally {
-    db.close();
-  }
+test("retryAgentRun on a non-failed run throws retry_not_allowed", () => {
+  const run = createAgentRun("test-owner", "hello retry", { sessionId: 4 });
+  assert.throws(
+    () => retryAgentRun("test-owner", run.run_ref),
+    (error: unknown) => error instanceof AgentRunError && error.code === "retry_not_allowed",
+  );
 });
 
-test("a stale teaching-state update releases its claim and fails explicitly", () => {
-  const db = createAgentRunDb();
-  try {
-    db.prepare(
-      "INSERT INTO teaching_sessions(session_ref, owner_id, thread_id, state_json, version, active_run_ref) " +
-      "VALUES('teaching_session:0123456789abcdef0123456789abcdef', 'desktop-local', 1, ?, 2, 'agent_run:active')",
-    ).run(JSON.stringify({ phase: "teach" }));
-
-    assert.throws(
-      () => releaseTeachingRun(
-        db,
-        "desktop-local",
-        "teaching_session:0123456789abcdef0123456789abcdef",
-        1,
-        "agent_run:active",
-        { phase: "practice_ready" },
-      ),
-      (error: unknown) => error instanceof AgentRunError && error.code === "teaching_state_conflict",
-    );
-
-    const current = db.prepare(
-      "SELECT state_json, version, active_run_ref FROM teaching_sessions",
-    ).get() as { state_json: string; version: number; active_run_ref: string | null };
-    assert.deepEqual(JSON.parse(current.state_json), { phase: "teach" });
-    assert.equal(current.version, 2);
-    assert.equal(current.active_run_ref, null);
-  } finally {
-    db.close();
-  }
+test("retryAgentRun returns null for an unknown run ref", () => {
+  assert.equal(retryAgentRun("test-owner", "agent_run:nonexistent"), null);
 });
 
-test("a stale release clears the current run without overwriting newer teaching state", () => {
-  const db = createAgentRunDb();
-  try {
-    db.prepare(
-      "INSERT INTO teaching_sessions(session_ref, owner_id, thread_id, state_json, version, active_run_ref) " +
-      "VALUES('teaching_session:0123456789abcdef0123456789abcdef', 'desktop-local', 1, ?, 2, 'agent_run:active')",
-    ).run(JSON.stringify({ phase: "paused" }));
+test("decideConfirmation always returns null in the file-based architecture", () => {
+  assert.equal(decideConfirmation("test-owner", "confirmation:any", "confirm"), null);
+  assert.equal(decideConfirmation("test-owner", "confirmation:any", "reject"), null);
+});
 
-    releaseTeachingRun(
-      db,
-      "desktop-local",
-      "teaching_session:0123456789abcdef0123456789abcdef",
-      1,
-      "agent_run:active",
-      null,
-    );
+test("resumeWaitingRuns returns empty when no provider is configured", () => {
+  assert.deepEqual(resumeWaitingRuns("test-owner"), []);
+});
 
-    const current = db.prepare(
-      "SELECT state_json, version, active_run_ref FROM teaching_sessions",
-    ).get() as { state_json: string; version: number; active_run_ref: string | null };
-    assert.deepEqual(JSON.parse(current.state_json), { phase: "paused" });
-    assert.equal(current.version, 2);
-    assert.equal(current.active_run_ref, null);
-  } finally {
-    db.close();
-  }
+test("subscribeAgentRun returns null for an unknown run or a different owner", () => {
+  const run = createAgentRun("owner-sse", "hello", { sessionId: 8 });
+  assert.equal(subscribeAgentRun("test-owner", "agent_run:nonexistent", {}), null);
+  assert.equal(subscribeAgentRun("other-owner", run.run_ref, {}), null);
+});
+
+test("subscribeAgentRun notifies done once the run reaches a terminal status", async () => {
+  const run = createAgentRun("test-owner", "subscribe live", { sessionId: 9 });
+  await waitForTask(run.run_ref);
+  let done: AgentRunState | null = null;
+  const unsubscribe = subscribeAgentRun("test-owner", run.run_ref, {
+    onDone: (state) => {
+      done = state;
+    },
+  });
+  assert.ok(unsubscribe);
+  await stopAgentRun("test-owner", run.run_ref);
+  assert.equal(done?.status, "stopped");
+});
+
+test("subscribeAgentRun unsubscribes before terminal status stops future notifications", async () => {
+  const run = createAgentRun("test-owner", "subscribe cancel", { sessionId: 10 });
+  await waitForTask(run.run_ref);
+  let onDoneCalls = 0;
+  const unsubscribe = subscribeAgentRun("test-owner", run.run_ref, {
+    onDone: () => {
+      onDoneCalls += 1;
+    },
+  });
+  assert.ok(unsubscribe);
+  unsubscribe();
+  await stopAgentRun("test-owner", run.run_ref);
+  await Promise.resolve();
+  assert.equal(onDoneCalls, 0);
+});
+
+test("subscribeAgentRun notifies done when the run is already terminal", async () => {
+  const run = createAgentRun("test-owner", "subscribe terminal", { sessionId: 11 });
+  await waitForTask(run.run_ref);
+  await stopAgentRun("test-owner", run.run_ref);
+  let done: AgentRunState | null = null;
+  const unsubscribe = subscribeAgentRun("test-owner", run.run_ref, {
+    onDone: (state) => {
+      done = state;
+    },
+  });
+  assert.ok(unsubscribe);
+  await Promise.resolve();
+  assert.equal(done?.status, "stopped");
 });

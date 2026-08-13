@@ -42,74 +42,80 @@ function request(
   });
 }
 
-test("POST /v1/agent-runs without DB returns 503", async () => {
+function withServer(fn: (server: http.Server) => Promise<void>): Promise<void> {
   const server = createSidecarServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  try {
+  return new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", async () => {
+      try {
+        await fn(server);
+        resolve();
+      } catch (error) {
+        reject(error);
+      } finally {
+        server.close((err) => {
+          if (err) reject(err);
+        });
+      }
+    });
+  });
+}
+
+test("POST /v1/agent-runs with valid content returns 202", async () => {
+  await withServer(async (server) => {
     const res = await request(server, "POST", "/v1/agent-runs",
       JSON.stringify({ content: "hello", context_refs: [] }),
       { "X-User-Id": "test" });
-    assert.equal(res.statusCode, 503);
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-  }
+    assert.equal(res.statusCode, 202);
+    const body = res.json as { run_ref: string; status: string };
+    assert.ok(body.run_ref.startsWith("agent_run:"));
+    assert.equal(body.status, "queued");
+  });
 });
 
-test("POST /v1/agent-runs/:ref/stop without DB returns 503", async () => {
-  const server = createSidecarServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  try {
+test("POST /v1/agent-runs with empty content returns 400", async () => {
+  await withServer(async (server) => {
+    const res = await request(server, "POST", "/v1/agent-runs",
+      JSON.stringify({ content: "" }),
+      { "X-User-Id": "test" });
+    assert.equal(res.statusCode, 400);
+  });
+});
+
+test("POST /v1/agent-runs/:ref/stop returns 404 for unknown run", async () => {
+  await withServer(async (server) => {
     const res = await request(server, "POST", "/v1/agent-runs/agent_run:test/stop", undefined, { "X-User-Id": "test" });
-    assert.equal(res.statusCode, 503);
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-  }
+    assert.equal(res.statusCode, 404);
+  });
 });
 
-test("POST /v1/agent-runs/:ref/retry without DB returns 503", async () => {
-  const server = createSidecarServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  try {
+test("POST /v1/agent-runs/:ref/retry returns 404 for unknown run", async () => {
+  await withServer(async (server) => {
     const res = await request(server, "POST", "/v1/agent-runs/agent_run:test/retry", undefined, { "X-User-Id": "test" });
-    assert.equal(res.statusCode, 503);
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-  }
+    assert.equal(res.statusCode, 404);
+  });
 });
 
-test("POST /v1/confirmations/:ref/decision without DB returns 503", async () => {
-  const server = createSidecarServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  try {
+test("POST /v1/confirmations/:ref/decision returns 404 for unknown confirmation", async () => {
+  await withServer(async (server) => {
     const res = await request(server, "POST", "/v1/confirmations/confirmation:test/decision",
       JSON.stringify({ decision: "confirm" }),
       { "X-User-Id": "test" });
-    assert.equal(res.statusCode, 503);
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-  }
+    assert.equal(res.statusCode, 404);
+  });
 });
 
-test("POST /v1/agent-runs with invalid body returns 400", async () => {
-  const server = createSidecarServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  try {
+test("POST /v1/agent-runs with invalid JSON returns 400", async () => {
+  await withServer(async (server) => {
     const res = await request(server, "POST", "/v1/agent-runs", "{not-json", { "X-User-Id": "test" });
     assert.equal(res.statusCode, 400);
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-  }
+  });
 });
 
 test("POST /v1/confirmations/:ref/decision with invalid decision returns 400", async () => {
-  const server = createSidecarServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  try {
+  await withServer(async (server) => {
     const res = await request(server, "POST", "/v1/confirmations/confirmation:test/decision",
       JSON.stringify({ decision: "maybe" }),
       { "X-User-Id": "test" });
     assert.equal(res.statusCode, 400);
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-  }
+  });
 });

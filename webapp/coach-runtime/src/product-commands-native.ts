@@ -1,14 +1,13 @@
 /**
- * Native SQLite implementations of read-only product commands.
+ * File-based implementations of read-only product commands.
  *
- * These commands query the same SQLite database that the Python backend owns,
- * eliminating the HTTP tool bridge round-trip for read operations.
- *
- * Each function mirrors the Python implementation's SQL and return shape.
- * Owner filtering is always applied. No security sanitization is performed —
- * this is a single-user desktop app and the data belongs to the user.
+ * These commands read directly from the app-data file system (JSON files),
+ * eliminating SQLite database access for read operations.
  */
-import type { SqliteDb } from "./db.ts";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { getDataRoot, getAnalysesDir, getConfigDir, getTrainingDir } from "./app-data.ts";
+import { reportAnalysisRead } from "./fs-tools.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -19,29 +18,22 @@ export type NativeCommandResult = {
   warning_or_error?: { code: string; message: string };
 };
 
+type AnyDict = Record<string, any>;
+
 type CommandHandler = (
-  db: SqliteDb,
   parameters: Record<string, unknown>,
   ownerId: string,
 ) => NativeCommandResult;
 
-// ── Helpers ────────────────────────────────────────────────────────────
+// ── File helpers ───────────────────────────────────────────────────────
 
-function parseJsonColumn(value: unknown): unknown | null {
-  if (typeof value !== "string") return null;
+function readJsonFile<T = AnyDict>(path: string): T | null {
+  if (!existsSync(path)) return null;
   try {
-    return JSON.parse(value);
+    return JSON.parse(readFileSync(path, "utf-8")) as T;
   } catch {
     return null;
   }
-}
-
-/** Convert SQLite "YYYY-MM-DD HH:MM:SS" timestamp to ISO-8601 with Z suffix. */
-function sqliteTimestampToWireUtc(value: unknown): string | null {
-  if (typeof value !== "string" || !value) return null;
-  // SQLite CURRENT_TIMESTAMP is "YYYY-MM-DD HH:MM:SS" in UTC.
-  // Replace space with T, append Z.
-  return value.includes("T") ? value : value.replace(" ", "T") + "Z";
 }
 
 function requireString(value: unknown, field: string): string {
@@ -75,11 +67,9 @@ function parseRunRef(ref: unknown): number {
 
 // ── Simple commands ────────────────────────────────────────────────────
 
-const calibrationGet: CommandHandler = (db, _params, ownerId) => {
-  const row = db.prepare(
-    "SELECT cm_per_360, fov, updated_at FROM calibration_profiles WHERE owner_id = ?",
-  ).get(ownerId) as Record<string, unknown> | undefined;
-  if (!row) {
+const calibrationGet: CommandHandler = (_params, _ownerId) => {
+  const data = readJsonFile(join(getConfigDir(), "calibration.json"));
+  if (!data) {
     return {
       status: "succeeded",
       result: {
@@ -97,38 +87,31 @@ const calibrationGet: CommandHandler = (db, _params, ownerId) => {
     status: "succeeded",
     result: {
       schema_version: "calibration_profile.v1",
-      configured: true,
+      configured: data.cm_per_360 != null || data.fov != null,
       values: {
-        cm_per_360: row.cm_per_360 as number | null,
-        fov: row.fov as number | null,
+        cm_per_360: data.cm_per_360 ?? null,
+        fov: data.fov ?? null,
       },
       dpi: null,
       sensitivity: null,
       adoption_priority: ["stats", "manual_override", "profile_default", "undetermined"],
-      updated_at: sqliteTimestampToWireUtc(row.updated_at),
+      updated_at: data.updated_at ?? null,
     },
   };
 };
 
-const kovaakConnectionGet: CommandHandler = (db, _params, ownerId) => {
-  const row = db.prepare(
-    "SELECT owner_id, steam_id, connected_at, updated_at FROM kovaak_connections WHERE owner_id = ?",
-  ).get(ownerId) as Record<string, unknown> | undefined;
+const kovaakConnectionGet: CommandHandler = (_params, _ownerId) => {
+  const data = readJsonFile(join(getConfigDir(), "kovaak-connection.json"));
   return {
     status: "succeeded",
     result_ref: "kovaak_connection:current",
-    result: { connection_ref: "kovaak_connection:current", connected: row !== undefined },
+    result: { connection_ref: "kovaak_connection:current", connected: data !== null },
   };
 };
 
-const peripheralProfileGet: CommandHandler = (db, _params, ownerId) => {
-  const row = db.prepare(
-    `SELECT owner_id, grip_type, hand_length_cm, wrist_position, grip_preference,
-            current_mouse_brand, current_mouse_model, current_mousepad, budget,
-            created_at, updated_at
-     FROM peripheral_profiles WHERE owner_id = ?`,
-  ).get(ownerId) as Record<string, unknown> | undefined;
-  if (!row) {
+const peripheralProfileGet: CommandHandler = (_params, ownerId) => {
+  const data = readJsonFile(join(getConfigDir(), "peripheral.json"));
+  if (!data) {
     return {
       status: "succeeded",
       result: { schema_version: "peripheral_profile.v1", configured: false, owner_ref: ownerId },
@@ -141,15 +124,15 @@ const peripheralProfileGet: CommandHandler = (db, _params, ownerId) => {
       configured: true,
       owner_ref: ownerId,
       profile_ref: `peripheral:${ownerId}`,
-      grip_type: row.grip_type ?? null,
-      hand_length_cm: row.hand_length_cm ?? null,
-      wrist_position: row.wrist_position ?? null,
-      grip_preference: row.grip_preference ?? null,
-      current_mouse_brand: row.current_mouse_brand ?? null,
-      current_mouse_model: row.current_mouse_model ?? null,
-      current_mousepad: row.current_mousepad ?? null,
-      budget: row.budget ?? null,
-      updated_at: sqliteTimestampToWireUtc(row.updated_at),
+      grip_type: data.grip_type ?? null,
+      hand_length_cm: data.hand_length_cm ?? null,
+      wrist_position: data.wrist_position ?? null,
+      grip_preference: data.grip_preference ?? null,
+      current_mouse_brand: data.current_mouse_brand ?? null,
+      current_mouse_model: data.current_mouse_model ?? null,
+      current_mousepad: data.current_mousepad ?? null,
+      budget: data.budget ?? null,
+      updated_at: data.updated_at ?? null,
     },
   };
 };
@@ -160,7 +143,7 @@ function navigationOpen(parameters: Record<string, unknown>): NativeCommandResul
   if (!validTargets.includes(target)) {
     return { status: "failed", warning_or_error: { code: "invalid_parameters", message: "unsupported navigation target" } };
   }
-  const event: Record<string, unknown> = { schema_version: "coach_ui_event.v1" };
+  const event: AnyDict = { schema_version: "coach_ui_event.v1" };
   if (target === "history") {
     event.kind = "history";
   } else if (target === "analysis" || target === "analysis_section") {
@@ -194,242 +177,100 @@ function navigationOpen(parameters: Record<string, unknown>): NativeCommandResul
   return { status: "succeeded", result: event };
 }
 
-// ── Medium commands ────────────────────────────────────────────────────
+// ── Analysis & history commands ────────────────────────────────────────
 
-const analysisGet: CommandHandler = (db, params, ownerId) => {
+const analysisGet: CommandHandler = (params, _ownerId) => {
   const analysisId = parseAnalysisRef(params.analysis_ref);
-  const row = db.prepare(
-    `SELECT id, user_id, status, analysis_type, input_mode, kovaak_run_id,
-            error, created_at, started_at, finished_at
-     FROM sessions WHERE id = ?`,
-  ).get(analysisId) as Record<string, unknown> | undefined;
-  if (!row) {
+  const overview = readJsonFile(join(getAnalysesDir(), String(analysisId), "overview.json"));
+  if (!overview) {
     return { status: "failed", warning_or_error: { code: "not_found", message: "Analysis 不存在" } };
   }
-  if (row.user_id !== ownerId) {
-    return { status: "failed", warning_or_error: { code: "forbidden", message: "无权访问此 Analysis" } };
-  }
-  const error = parseJsonColumn(row.error);
-  let safeError = null;
-  if (error && typeof error === "object") {
-    const e = error as Record<string, unknown>;
-    safeError = {};
-    for (const key of ["schema_version", "category", "code", "message", "retryable"]) {
-      if (key in e) (safeError as Record<string, unknown>)[key] = e[key];
-    }
-  }
+  reportAnalysisRead(analysisId);
   return {
     status: "succeeded",
     result_ref: `analysis:${analysisId}`,
     result: {
-      analysis_ref: `analysis:${row.id}`,
-      id: row.id,
-      status: row.status,
-      analysis_type: (row.analysis_type as string) ?? "flicking",
-      input_mode: (row.input_mode as string) ?? "video_fallback",
-      run_ref: row.kovaak_run_id ? `run:${row.kovaak_run_id}` : null,
-      created_at: sqliteTimestampToWireUtc(row.created_at),
-      started_at: sqliteTimestampToWireUtc(row.started_at),
-      finished_at: sqliteTimestampToWireUtc(row.finished_at),
-      error: safeError,
+      analysis_ref: `analysis:${analysisId}`,
+      id: analysisId,
+      status: overview.status ?? "done",
+      analysis_type: overview.analysis_type ?? "flicking",
+      input_mode: overview.input_mode ?? "video_fallback",
+      run_ref: overview.run_ref ?? null,
+      created_at: overview.created_at ?? null,
+      started_at: overview.started_at ?? null,
+      finished_at: overview.finished_at ?? null,
+      error: overview.error ?? null,
     },
   };
 };
 
-const coachSessionList: CommandHandler = (db, params, ownerId) => {
-  const includeArchived = params.include_archived === true;
-  const statuses = includeArchived ? ["active", "archived"] : ["active"];
-  const placeholders = statuses.map(() => "?").join(",");
-  const limit = Math.min(Math.max(typeof params.limit === "number" ? params.limit : 100, 1), 200);
-  const rows = db.prepare(
-    `SELECT t.id, t.user_id, t.kind, t.title, t.status, t.deleted_at,
-            t.created_at, t.updated_at,
-            COUNT(m.id) AS message_count,
-            (SELECT content FROM coach_messages lm
-             WHERE lm.thread_id = t.id ORDER BY lm.id DESC LIMIT 1) AS last_message_preview
-     FROM coach_threads t
-     LEFT JOIN coach_messages m ON m.thread_id = t.id
-     WHERE t.user_id = ? AND t.status IN (${placeholders})
-       AND (t.kind <> 'primary' OR EXISTS (
-         SELECT 1 FROM coach_messages pm WHERE pm.thread_id = t.id))
-     GROUP BY t.id
-     ORDER BY t.updated_at DESC, t.id DESC LIMIT ?`,
-  ).all(ownerId, ...statuses, limit) as Array<Record<string, unknown>>;
-
-  const items = rows.map((row) => {
-    const analysisIds = db.prepare(
-      `SELECT analysis_session_id FROM coach_analysis_refs
-       WHERE thread_id = ? AND status = 'active' AND analysis_session_id IS NOT NULL
-       ORDER BY id`,
-    ).all(row.id) as Array<{ analysis_session_id: number }>;
-    return {
-      id: row.id,
-      user_id: row.user_id,
-      kind: row.kind,
-      title: row.title ?? null,
-      status: row.status,
-      deleted_at: row.deleted_at ?? null,
-      created_at: sqliteTimestampToWireUtc(row.created_at),
-      updated_at: sqliteTimestampToWireUtc(row.updated_at),
-      message_count: row.message_count,
-      last_message_preview: row.last_message_preview ?? null,
-      analysis_session_ids: analysisIds.map((r) => r.analysis_session_id),
-    };
-  });
-  return { status: "succeeded", result: items };
+const coachSessionList: CommandHandler = (_params, _ownerId) => {
+  // Sessions are managed via the REST API (sidecar-coach-data.ts) and
+  // conversations directory. The Coach can use ls/read tools to explore.
+  return { status: "succeeded", result: [] };
 };
 
-const productReadinessGet: CommandHandler = (db, _params, ownerId) => {
-  const productState = db.prepare(
-    "SELECT * FROM product_state WHERE owner_id = ?",
-  ).get(ownerId) as Record<string, unknown> | undefined;
-  const kovaakConnection = db.prepare(
-    "SELECT 1 FROM kovaak_connections WHERE owner_id = ?",
-  ).get(ownerId) !== undefined;
-  const calibration = db.prepare(
-    "SELECT cm_per_360, fov FROM calibration_profiles WHERE owner_id = ?",
-  ).get(ownerId) as Record<string, unknown> | undefined;
-  const peripheral = db.prepare(
-    "SELECT 1 FROM peripheral_profiles WHERE owner_id = ?",
-  ).get(ownerId) !== undefined;
+const productReadinessGet: CommandHandler = (_params, _ownerId) => {
+  const configDir = getConfigDir();
+  const onboarding = readJsonFile(join(configDir, "onboarding.json"));
+  const provider = readJsonFile(join(configDir, "provider.json"));
+  const kovaakConnection = readJsonFile(join(configDir, "kovaak-connection.json"));
+  const calibration = readJsonFile(join(configDir, "calibration.json"));
+  const peripheral = readJsonFile(join(configDir, "peripheral.json"));
   return {
     status: "succeeded",
     result: {
       schema_version: "product_readiness.v1",
-      has_completed_onboarding: productState !== undefined,
-      has_kovaak_connection: kovaakConnection,
-      has_calibration: calibration !== undefined && (calibration.cm_per_360 !== null || calibration.fov !== null),
-      has_peripheral_profile: peripheral,
+      has_completed_onboarding: onboarding?.completed === true,
+      has_provider_configured: provider?.profile != null,
+      has_kovaak_connection: kovaakConnection !== null,
+      has_calibration: calibration !== null && (calibration.cm_per_360 != null || calibration.fov != null),
+      has_peripheral_profile: peripheral !== null,
     },
   };
 };
 
-// ── Complex commands ───────────────────────────────────────────────────
+const historyList: CommandHandler = (_params, _ownerId) => {
+  const analysesDir = getAnalysesDir();
+  let entries: string[];
+  try {
+    entries = readdirSync(analysesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => {
+        const na = parseInt(a, 10);
+        const nb = parseInt(b, 10);
+        return (Number.isFinite(na) && Number.isFinite(nb)) ? nb - na : b.localeCompare(a);
+      });
+  } catch {
+    return { status: "succeeded", result: [] };
+  }
 
-const historyList: CommandHandler = (db, _params, ownerId) => {
-  const rows = db.prepare(
-    `SELECT s.id, s.status, s.created_at, s.finished_at, s.attempts,
-            s.max_attempts, s.llm_cost_cny, s.analysis_type, s.input_mode,
-            s.kovaak_run_id,
-            CASE WHEN json_valid(s.result) THEN COALESCE(
-              json_extract(s.result, '$.deterministic.diagnosis.profile.label'),
-              json_extract(s.result, '$.diagnosis.profile.label')) END AS summary_label,
-            COALESCE(
-              CASE WHEN json_valid(s.input_snapshot_json) THEN json_extract(s.input_snapshot_json, '$.scenario') END,
-              kr.scenario) AS scenario,
-            kr.created_at AS training_at,
-            CASE WHEN json_valid(s.result) THEN json_extract(s.result, '$.evidence.alignment.status') END AS alignment_status,
-            CASE WHEN json_valid(s.result) THEN json_extract(s.result, '$.evidence.coverage') END AS evidence_coverage,
-            kr.trace_state AS run_trace_state
-     FROM sessions AS s
-     LEFT JOIN kovaak_runs AS kr ON kr.id = s.kovaak_run_id AND kr.user_id = s.user_id
-     WHERE s.user_id = ?
-     ORDER BY s.created_at DESC, s.id DESC`,
-  ).all(ownerId) as Array<Record<string, unknown>>;
-
-  const items = rows.map((row) => {
-    const analysisType = (row.analysis_type as string) ?? "flicking";
-    const inputMode = (row.input_mode as string) ?? "video_fallback";
-    return {
-      id: row.id,
-      analysis_ref: `analysis:${row.id}`,
-      run_ref: row.kovaak_run_id ? `run:${row.kovaak_run_id}` : null,
-      status: row.status,
-      created_at: sqliteTimestampToWireUtc(row.created_at),
-      finished_at: sqliteTimestampToWireUtc(row.finished_at),
-      attempts: row.attempts,
-      max_attempts: row.max_attempts,
-      llm_cost_cny: row.llm_cost_cny,
-      summary_label: row.summary_label ?? null,
-      analysis_type: analysisType,
-      input_mode: inputMode,
-      kovaak_run_id: row.kovaak_run_id ?? null,
-      scenario: row.scenario ?? null,
-      training_at: sqliteTimestampToWireUtc(row.training_at),
-      analysis_completed_at: sqliteTimestampToWireUtc(row.finished_at),
-    };
-  });
+  const items: AnyDict[] = [];
+  for (const entry of entries) {
+    const overview = readJsonFile(join(analysesDir, entry, "overview.json"));
+    if (!overview) continue;
+    const id = parseInt(entry, 10);
+    items.push({
+      id: Number.isFinite(id) ? id : entry,
+      analysis_ref: `analysis:${entry}`,
+      run_ref: overview.run_ref ?? null,
+      status: overview.status ?? "done",
+      created_at: overview.created_at ?? null,
+      finished_at: overview.finished_at ?? null,
+      summary_label: overview.summary_label ?? null,
+      analysis_type: overview.analysis_type ?? "flicking",
+      input_mode: overview.input_mode ?? "video_fallback",
+      scenario: overview.scenario ?? null,
+      training_at: overview.training_at ?? null,
+      analysis_completed_at: overview.finished_at ?? null,
+    });
+  }
   return { status: "succeeded", result: items };
 };
 
-const historyTrend: CommandHandler = (db, params, ownerId) => {
-  const metricKey = requireString(params.metric_key, "metric_key");
-  const rows = db.prepare(
-    `SELECT id, result FROM sessions
-     WHERE user_id = ? AND status = 'done' AND result IS NOT NULL
-     ORDER BY created_at DESC, id DESC LIMIT 100`,
-  ).all(ownerId) as Array<{ id: number; result: string }>;
-
-  const parsed = rows
-    .map((r) => ({ id: r.id, result: parseJsonColumn(r.result) as Record<string, unknown> | null }))
-    .filter((r) => r.result !== null && r.result.schema_version === "analysis_result.v2");
-
-  if (parsed.length < 2) {
-    return {
-      status: "succeeded",
-      result: { comparable: false, reason: "insufficient_history" },
-    };
-  }
-
-  const current = parsed[0];
-  for (let i = 1; i < parsed.length; i++) {
-    const baseline = parsed[i];
-    const comparison = compareAnalysisResults(current.result!, baseline.result!, metricKey);
-    if (comparison.comparable) {
-      return {
-        status: "succeeded",
-        result: {
-          ...comparison,
-          current_session_id: current.id,
-          baseline_session_id: baseline.id,
-        },
-      };
-    }
-  }
-  return {
-    status: "succeeded",
-    result: { comparable: false, reason: "no_comparable_baseline", current_session_id: current.id },
-  };
-};
-
-const analysisCompare: CommandHandler = (db, params, ownerId) => {
-  const currentId = parseAnalysisRef(params.current_analysis_ref);
-  const baselineId = parseAnalysisRef(params.baseline_analysis_ref);
-  const metricKey = requireString(params.metric_key, "metric_key");
-
-  const currentRow = db.prepare(
-    "SELECT user_id, status, result FROM sessions WHERE id = ?",
-  ).get(currentId) as Record<string, unknown> | undefined;
-  const baselineRow = db.prepare(
-    "SELECT user_id, status, result FROM sessions WHERE id = ?",
-  ).get(baselineId) as Record<string, unknown> | undefined;
-
-  if (!currentRow || !baselineRow) {
-    return { status: "failed", warning_or_error: { code: "not_found", message: "Analysis 不存在" } };
-  }
-  if (currentRow.user_id !== ownerId || baselineRow.user_id !== ownerId) {
-    return { status: "failed", warning_or_error: { code: "forbidden", message: "无权访问此 Analysis" } };
-  }
-  if (currentRow.status !== "done" || baselineRow.status !== "done") {
-    return { status: "failed", warning_or_error: { code: "analysis_not_ready", message: "Analysis 尚未完成" } };
-  }
-  const currentResult = parseJsonColumn(currentRow.result) as Record<string, unknown> | null;
-  const baselineResult = parseJsonColumn(baselineRow.result) as Record<string, unknown> | null;
-  if (!currentResult || !baselineResult) {
-    return { status: "failed", warning_or_error: { code: "analysis_result_missing", message: "Analysis 结果不可用" } };
-  }
-  const comparison = compareAnalysisResults(currentResult, baselineResult, metricKey);
-  return {
-    status: "succeeded",
-    result: {
-      ...comparison,
-      current_analysis_ref: `analysis:${currentId}`,
-      baseline_analysis_ref: `analysis:${baselineId}`,
-    },
-  };
-};
-
-// ── Comparison logic (ported from history_trends.compare_analysis_results) ──
+// ── Comparison logic (ported from Python history_trends.compare_analysis_results) ──
+// This is pure computation on analysis result objects — no DB access.
 
 const SAFE_IDENTITY_RE = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/;
 const SAFE_SCENARIO_HASH_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
@@ -483,38 +324,38 @@ function safeScenario(value: unknown): string | null {
   return scenario;
 }
 
-function getResultMetric(result: Record<string, unknown>, key: string): Record<string, unknown> | null {
+function getResultMetric(result: AnyDict, key: string): AnyDict | null {
   const det = result.deterministic;
   if (!det || typeof det !== "object") return null;
-  const metrics = (det as Record<string, unknown>).metrics;
+  const metrics = (det as AnyDict).metrics;
   if (!metrics || typeof metrics !== "object") return null;
-  const value = (metrics as Record<string, unknown>)[key];
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  const value = (metrics as AnyDict)[key];
+  return value && typeof value === "object" ? (value as AnyDict) : null;
 }
 
-function analysisVersion(result: Record<string, unknown>): string | null {
+function analysisVersion(result: AnyDict): string | null {
   return "analysis_version" in result ? safeIdentity(result.analysis_version) : null;
 }
 
-function timebaseVersion(result: Record<string, unknown>): string | null {
+function timebaseVersion(result: AnyDict): string | null {
   const snapshot = result.input_snapshot;
   if (!snapshot || typeof snapshot !== "object") return null;
-  const window = (snapshot as Record<string, unknown>).canonical_time_window;
+  const window = (snapshot as AnyDict).canonical_time_window;
   if (!window || typeof window !== "object") return null;
-  const value = (window as Record<string, unknown>).timebase_version;
+  const value = (window as AnyDict).timebase_version;
   return value != null ? safeIdentity(value) : null;
 }
 
-function scenarioResolution(result: Record<string, unknown>): Record<string, unknown> | null {
+function scenarioResolution(result: AnyDict): AnyDict | null {
   const snapshot = result.input_snapshot;
   if (!snapshot || typeof snapshot !== "object") return null;
-  const resolution = (snapshot as Record<string, unknown>).scenario_resolution;
-  return resolution && typeof resolution === "object" ? (resolution as Record<string, unknown>) : null;
+  const resolution = (snapshot as AnyDict).scenario_resolution;
+  return resolution && typeof resolution === "object" ? (resolution as AnyDict) : null;
 }
 
 function validateScenarioResolutionV1(value: unknown): void {
   if (!value || typeof value !== "object") throw new Error("scenario_resolution must be a dict");
-  const obj = value as Record<string, unknown>;
+  const obj = value as AnyDict;
   const keys = new Set(Object.keys(obj));
   for (const f of SCENARIO_RESOLUTION_FIELDS) {
     if (!keys.has(f)) throw new Error("scenario_resolution fields are invalid");
@@ -539,10 +380,10 @@ function validateScenarioResolutionV1(value: unknown): void {
   }
 }
 
-function scenarioResolutionIsInvalid(result: Record<string, unknown>): boolean {
+function scenarioResolutionIsInvalid(result: AnyDict): boolean {
   const snapshot = result.input_snapshot;
   if (!snapshot || typeof snapshot !== "object") return false;
-  const snap = snapshot as Record<string, unknown>;
+  const snap = snapshot as AnyDict;
   const resolution = snap.scenario_resolution;
   if (resolution == null) {
     return snap.schema_version === "analysis_input_snapshot.v3";
@@ -555,36 +396,36 @@ function scenarioResolutionIsInvalid(result: Record<string, unknown>): boolean {
   }
 }
 
-function scenarioHash(result: Record<string, unknown>): string | null {
+function scenarioHash(result: AnyDict): string | null {
   const resolution = scenarioResolution(result);
   if (!resolution) return null;
   const value = resolution.scenario_hash;
   return typeof value === "string" && SAFE_SCENARIO_HASH_RE.test(value) ? value : null;
 }
 
-function scenarioProfileRef(result: Record<string, unknown>): string | null {
+function scenarioProfileRef(result: AnyDict): string | null {
   const resolution = scenarioResolution(result);
   if (!resolution) return null;
   const value = resolution.scenario_profile_ref;
   return typeof value === "string" && SAFE_SCENARIO_PROFILE_REF_RE.test(value) ? value : null;
 }
 
-function scenarioRegistryVersion(result: Record<string, unknown>): string | null {
+function scenarioRegistryVersion(result: AnyDict): string | null {
   const resolution = scenarioResolution(result);
   if (!resolution) return null;
   return safeIdentity(resolution.registry_version);
 }
 
-function scenarioName(result: Record<string, unknown>): string | null {
+function scenarioName(result: AnyDict): string | null {
   const snapshot = result.input_snapshot;
   if (!snapshot || typeof snapshot !== "object") return null;
-  return safeScenario((snapshot as Record<string, unknown>).scenario);
+  return safeScenario((snapshot as AnyDict).scenario);
 }
 
-function scenarioIdentityVersion(result: Record<string, unknown>): string | null {
+function scenarioIdentityVersion(result: AnyDict): string | null {
   const snapshot = result.input_snapshot;
   if (!snapshot || typeof snapshot !== "object") return null;
-  return safeIdentity((snapshot as Record<string, unknown>).scenario_identity_version);
+  return safeIdentity((snapshot as AnyDict).scenario_identity_version);
 }
 
 function fullCoverage(value: unknown): boolean {
@@ -592,48 +433,48 @@ function fullCoverage(value: unknown): boolean {
 }
 
 function hasCompleteSwitchingMetricEvidence(
-  result: Record<string, unknown>,
-  metric: Record<string, unknown>,
+  result: AnyDict,
+  metric: AnyDict,
 ): boolean {
   if (result.analysis_type !== "target_switching") return false;
   const det = result.deterministic;
   if (!det || typeof det !== "object") return false;
-  if ((det as Record<string, unknown>).support_status !== "supported") return false;
+  if ((det as AnyDict).support_status !== "supported") return false;
   if (!TARGET_SWITCHING_COMPARISON_METRICS.has(metric.key as string)) return false;
   const conditionRefs = metric.condition_refs;
   if (!Array.isArray(conditionRefs) || conditionRefs.length !== 1 || conditionRefs[0] !== TARGET_SWITCHING_CHAIN_CONDITION_REF) return false;
   const evidence = result.evidence;
   if (!evidence || typeof evidence !== "object") return false;
-  const coverage = (evidence as Record<string, unknown>).coverage;
+  const coverage = (evidence as AnyDict).coverage;
   return typeof coverage === "number" && Number.isFinite(coverage) && coverage > 0.0 && coverage <= 1.0;
 }
 
 function qualityReason(
-  result: Record<string, unknown>,
-  metric: Record<string, unknown>,
+  result: AnyDict,
+  metric: AnyDict,
 ): string | null {
   if (metric.classification !== "deterministic") return "metric_not_deterministic";
   if (metric.availability !== "available") return "metric_unavailable";
   if (!fullCoverage(metric.coverage)) return "insufficient_metric_coverage";
   const evidence = result.evidence;
   if (!evidence || typeof evidence !== "object") return "insufficient_evidence_coverage";
-  const evidenceObj = evidence as Record<string, unknown>;
+  const evidenceObj = evidence as AnyDict;
   if (!fullCoverage(evidenceObj.coverage) && !hasCompleteSwitchingMetricEvidence(result, metric)) {
     return "insufficient_evidence_coverage";
   }
   const alignmentValue = evidenceObj.alignment;
   const alignment = alignmentValue && typeof alignmentValue === "object"
-    ? (alignmentValue as Record<string, unknown>).status
+    ? (alignmentValue as AnyDict).status
     : null;
   if (alignment !== "aligned" && alignment !== "not_required") return "insufficient_alignment_quality";
   return null;
 }
 
 function familyComparabilityReason(
-  current: Record<string, unknown>,
-  baseline: Record<string, unknown>,
-  currentMetric: Record<string, unknown>,
-  baselineMetric: Record<string, unknown>,
+  current: AnyDict,
+  baseline: AnyDict,
+  currentMetric: AnyDict,
+  baselineMetric: AnyDict,
   missingReason: string,
 ): string | null {
   const currentDet = current.deterministic;
@@ -641,12 +482,12 @@ function familyComparabilityReason(
   if (!currentDet || typeof currentDet !== "object" || !baselineDet || typeof baselineDet !== "object") {
     return missingReason;
   }
-  const currentProfile = safeIdentity((currentDet as Record<string, unknown>).visual_quality_profile_ref);
-  const baselineProfile = safeIdentity((baselineDet as Record<string, unknown>).visual_quality_profile_ref);
+  const currentProfile = safeIdentity((currentDet as AnyDict).visual_quality_profile_ref);
+  const baselineProfile = safeIdentity((baselineDet as AnyDict).visual_quality_profile_ref);
   if (!currentProfile || !baselineProfile) return "visual_quality_profile_missing";
   if (currentProfile !== baselineProfile) return "visual_quality_profile_mismatch";
-  const currentMotion = safeIdentity((currentDet as Record<string, unknown>).scenario_motion_class);
-  const baselineMotion = safeIdentity((baselineDet as Record<string, unknown>).scenario_motion_class);
+  const currentMotion = safeIdentity((currentDet as AnyDict).scenario_motion_class);
+  const baselineMotion = safeIdentity((baselineDet as AnyDict).scenario_motion_class);
   if (!currentMotion || currentMotion !== baselineMotion) return "motion_condition_mismatch";
   const conditionSets: string[][] = [];
   for (const metric of [currentMetric, baselineMetric]) {
@@ -664,15 +505,14 @@ function familyComparabilityReason(
 }
 
 function compareAnalysisResults(
-  current: Record<string, unknown>,
-  baseline: Record<string, unknown>,
+  current: AnyDict,
+  baseline: AnyDict,
   metricKey: string,
-): Record<string, unknown> {
+): AnyDict {
   if (current.schema_version !== "analysis_result.v2" || baseline.schema_version !== "analysis_result.v2") {
     return { comparable: false, reason: "analysis_result_version_mismatch" };
   }
 
-  // Analysis version must match (when either side carries one).
   if ("analysis_version" in current || "analysis_version" in baseline) {
     const cv = analysisVersion(current);
     const bv = analysisVersion(baseline);
@@ -681,13 +521,12 @@ function compareAnalysisResults(
     }
   }
 
-  // Timebase version must match (when either side has a canonical_time_window).
   const currentSnapshot = current.input_snapshot;
   const baselineSnapshot = baseline.input_snapshot;
   const currentHasWindow = currentSnapshot && typeof currentSnapshot === "object" &&
-    "canonical_time_window" in (currentSnapshot as Record<string, unknown>);
+    "canonical_time_window" in (currentSnapshot as AnyDict);
   const baselineHasWindow = baselineSnapshot && typeof baselineSnapshot === "object" &&
-    "canonical_time_window" in (baselineSnapshot as Record<string, unknown>);
+    "canonical_time_window" in (baselineSnapshot as AnyDict);
   if (currentHasWindow || baselineHasWindow) {
     const ct = timebaseVersion(current);
     const bt = timebaseVersion(baseline);
@@ -696,12 +535,10 @@ function compareAnalysisResults(
     }
   }
 
-  // Scenario resolution must be structurally valid.
   if (scenarioResolutionIsInvalid(current) || scenarioResolutionIsInvalid(baseline)) {
     return { comparable: false, reason: "scenario_resolution_invalid" };
   }
 
-  // Build the predicate list (resolution-aware vs. legacy).
   const currentResolution = scenarioResolution(current);
   const baselineResolution = scenarioResolution(baseline);
   type Predicate = [string, string | null, string | null];
@@ -729,7 +566,6 @@ function compareAnalysisResults(
     }
   }
 
-  // Metric lookup and key validation.
   if (safeIdentity(metricKey) === null) {
     return { comparable: false, reason: "metric_key_mismatch" };
   }
@@ -742,7 +578,6 @@ function compareAnalysisResults(
     return { comparable: false, reason: "metric_key_mismatch" };
   }
 
-  // Family-specific comparability (dynamic_clicking / tracking / switching).
   const familyMissingReason = ({
     dynamic_clicking: "dynamic_comparability_missing",
     continuous_tracking: "continuous_tracking_comparability_missing",
@@ -755,18 +590,16 @@ function compareAnalysisResults(
     }
   }
 
-  // Quality checks (classification, availability, coverage, alignment).
   for (const [result, metric] of [
     [current, currentMetric],
     [baseline, baselineMetric],
-  ] as [Record<string, unknown>, Record<string, unknown>][]) {
+  ] as [AnyDict, AnyDict][]) {
     const reason = qualityReason(result, metric);
     if (reason) {
       return { comparable: false, reason };
     }
   }
 
-  // Metric version and unit must match.
   const currentMetricVersion = safeIdentity(currentMetric.metric_version);
   const baselineMetricVersion = safeIdentity(baselineMetric.metric_version);
   if (!currentMetricVersion || currentMetricVersion !== baselineMetricVersion) {
@@ -778,7 +611,6 @@ function compareAnalysisResults(
     return { comparable: false, reason: "metric_unit_mismatch" };
   }
 
-  // Calibration must be present and match.
   const currentCalibration = safeIdentity(currentMetric.calibration_ref);
   const baselineCalibration = safeIdentity(baselineMetric.calibration_ref);
   if (!currentCalibration || !baselineCalibration) {
@@ -788,7 +620,6 @@ function compareAnalysisResults(
     return { comparable: false, reason: "calibration_mismatch" };
   }
 
-  // Value must be finite numbers.
   const currentValue = currentMetric.value;
   const baselineValue = baselineMetric.value;
   if (
@@ -816,104 +647,164 @@ function compareAnalysisResults(
   };
 }
 
+/** Read the full analysis result from the analyses directory. */
+function readAnalysisResult(analysisId: number): AnyDict | null {
+  const dir = join(getAnalysesDir(), String(analysisId));
+  // Try result.json first (full analysis_result.v2), then evidence.json
+  return readJsonFile(join(dir, "result.json")) ?? readJsonFile(join(dir, "evidence.json"));
+}
+
+// ── history.trend ──────────────────────────────────────────────────────
+
+const historyTrend: CommandHandler = (params, _ownerId) => {
+  const metricKey = requireString(params.metric_key, "metric_key");
+  const analysesDir = getAnalysesDir();
+  let entries: string[];
+  try {
+    entries = readdirSync(analysesDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => parseInt(e.name, 10))
+      .filter((n) => Number.isFinite(n))
+      .sort((a, b) => b - a); // newest first
+  } catch {
+    entries = [];
+  }
+
+  const parsed: Array<{ id: number; result: AnyDict }> = [];
+  for (const id of entries.slice(0, 100)) {
+    const result = readAnalysisResult(id);
+    if (result && result.schema_version === "analysis_result.v2") {
+      parsed.push({ id, result });
+    }
+  }
+
+  if (parsed.length < 2) {
+    return {
+      status: "succeeded",
+      result: { comparable: false, reason: "insufficient_history" },
+    };
+  }
+
+  const current = parsed[0];
+  for (let i = 1; i < parsed.length; i++) {
+    const baseline = parsed[i];
+    const comparison = compareAnalysisResults(current.result, baseline.result, metricKey);
+    if (comparison.comparable) {
+      return {
+        status: "succeeded",
+        result: {
+          ...comparison,
+          current_session_id: current.id,
+          baseline_session_id: baseline.id,
+        },
+      };
+    }
+  }
+  return {
+    status: "succeeded",
+    result: { comparable: false, reason: "no_comparable_baseline", current_session_id: current.id },
+  };
+};
+
+// ── analysis.compare ───────────────────────────────────────────────────
+
+const analysisCompare: CommandHandler = (params, _ownerId) => {
+  const currentId = parseAnalysisRef(params.current_analysis_ref);
+  const baselineId = parseAnalysisRef(params.baseline_analysis_ref);
+  const metricKey = requireString(params.metric_key, "metric_key");
+
+  const currentResult = readAnalysisResult(currentId);
+  const baselineResult = readAnalysisResult(baselineId);
+
+  if (!currentResult || !baselineResult) {
+    return { status: "failed", warning_or_error: { code: "not_found", message: "Analysis 不存在" } };
+  }
+  if (!currentResult.schema_version || !baselineResult.schema_version) {
+    return { status: "failed", warning_or_error: { code: "analysis_result_missing", message: "Analysis 结果不可用" } };
+  }
+  reportAnalysisRead(currentId);
+  reportAnalysisRead(baselineId);
+
+  const comparison = compareAnalysisResults(currentResult, baselineResult, metricKey);
+  return {
+    status: "succeeded",
+    result: {
+      ...comparison,
+      current_analysis_ref: `analysis:${currentId}`,
+      baseline_analysis_ref: `analysis:${baselineId}`,
+    },
+  };
+};
+
 // ── run.list ───────────────────────────────────────────────────────────
 
-const runList: CommandHandler = (db, _params, ownerId) => {
-  const rows = db.prepare(
-    `SELECT kr.id, kr.source_key, kr.scenario, kr.trace_state,
-            kr.alignment_state, kr.alignment_summary,
-            kr.finalization_state, kr.video_path, kr.video_state,
-            kr.created_at, kr.updated_at,
-            json_extract(kr.stats_summary, '$.config.FOV') AS stats_fov,
-            json_extract(kr.stats_summary, '$.config.DPI') AS stats_dpi,
-            json_extract(kr.stats_summary, '$.config."Horiz Sens"') AS stats_sensitivity,
-            json_extract(kr.stats_summary, '$.cm_per_360') AS stats_cm_per_360,
-            (SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id = kr.id AND s.user_id = kr.user_id) AS analysis_count
-     FROM kovaak_runs AS kr
-     WHERE kr.user_id = ?
-     ORDER BY kr.created_at DESC, kr.id DESC LIMIT 100`,
-  ).all(ownerId) as Array<Record<string, unknown>>;
+const runList: CommandHandler = (_params, _ownerId) => {
+  const runsDir = join(getDataRoot(), "runs");
+  let entries: string[];
+  try {
+    entries = readdirSync(runsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort((a, b) => {
+        const na = parseInt(a, 10);
+        const nb = parseInt(b, 10);
+        return (Number.isFinite(na) && Number.isFinite(nb)) ? nb - na : b.localeCompare(a);
+      });
+  } catch {
+    return { status: "succeeded", result: [] };
+  }
 
-  const items = rows.map((row) => ({
-    id: row.id,
-    run_ref: `run:${row.id}`,
-    source_key: row.source_key,
-    scenario: row.scenario,
-    trace_state: row.trace_state ?? "none",
-    finalization_state: row.finalization_state ?? "pending",
-    analysis_count: row.analysis_count,
-    stats_calibration: {
-      FOV: row.stats_fov ?? null,
-      DPI: row.stats_dpi ?? null,
-      sensitivity: row.stats_sensitivity ?? null,
-      cm_per_360: row.stats_cm_per_360 ?? null,
-    },
-    created_at: sqliteTimestampToWireUtc(row.created_at),
-    updated_at: sqliteTimestampToWireUtc(row.updated_at),
-  }));
+  const items: AnyDict[] = [];
+  for (const entry of entries.slice(0, 100)) {
+    const meta = readJsonFile(join(runsDir, entry, "meta.json"));
+    if (!meta) continue;
+    const id = parseInt(entry, 10);
+    items.push({
+      id: Number.isFinite(id) ? id : entry,
+      run_ref: `run:${entry}`,
+      source_key: meta.source_key ?? null,
+      scenario: meta.scenario ?? null,
+      trace_state: meta.trace_state ?? "none",
+      finalization_state: meta.finalization_state ?? "pending",
+      stats_calibration: meta.stats_calibration ?? {
+        FOV: null, DPI: null, sensitivity: null, cm_per_360: null,
+      },
+      created_at: meta.created_at ?? null,
+      updated_at: meta.updated_at ?? null,
+    });
+  }
   return { status: "succeeded", result: items };
 };
 
-const runGet: CommandHandler = (db, params, ownerId) => {
+const runGet: CommandHandler = (params, _ownerId) => {
   const runId = parseRunRef(params.run_ref);
-  const row = db.prepare(
-    `SELECT kr.id, kr.source_key, kr.scenario, kr.trace_state,
-            kr.alignment_state, kr.alignment_summary,
-            kr.finalization_state, kr.video_path, kr.video_state,
-            kr.created_at, kr.updated_at,
-            json_extract(kr.stats_summary, '$.config.FOV') AS stats_fov,
-            json_extract(kr.stats_summary, '$.config.DPI') AS stats_dpi,
-            json_extract(kr.stats_summary, '$.config."Horiz Sens"') AS stats_sensitivity,
-            json_extract(kr.stats_summary, '$.cm_per_360') AS stats_cm_per_360,
-            (SELECT COUNT(*) FROM sessions AS s WHERE s.kovaak_run_id = kr.id AND s.user_id = kr.user_id) AS analysis_count
-     FROM kovaak_runs AS kr
-     WHERE kr.id = ? AND kr.user_id = ?`,
-  ).get(runId, ownerId) as Record<string, unknown> | undefined;
-  if (!row) {
+  const meta = readJsonFile(join(getDataRoot(), "runs", String(runId), "meta.json"));
+  if (!meta) {
     return { status: "failed", warning_or_error: { code: "not_found", message: "KovaaK run does not exist" } };
   }
   return {
     status: "succeeded",
-    result_ref: `run:${row.id}`,
+    result_ref: `run:${runId}`,
     result: {
-      id: row.id,
-      run_ref: `run:${row.id}`,
-      source_key: row.source_key,
-      scenario: row.scenario,
-      trace_state: row.trace_state ?? "none",
-      finalization_state: row.finalization_state ?? "pending",
-      analysis_count: row.analysis_count,
-      stats_calibration: {
-        FOV: row.stats_fov ?? null,
-        DPI: row.stats_dpi ?? null,
-        sensitivity: row.stats_sensitivity ?? null,
-        cm_per_360: row.stats_cm_per_360 ?? null,
+      id: runId,
+      run_ref: `run:${runId}`,
+      source_key: meta.source_key ?? null,
+      scenario: meta.scenario ?? null,
+      trace_state: meta.trace_state ?? "none",
+      finalization_state: meta.finalization_state ?? "pending",
+      stats_calibration: meta.stats_calibration ?? {
+        FOV: null, DPI: null, sensitivity: null, cm_per_360: null,
       },
-      created_at: sqliteTimestampToWireUtc(row.created_at),
-      updated_at: sqliteTimestampToWireUtc(row.updated_at),
+      created_at: meta.created_at ?? null,
+      updated_at: meta.updated_at ?? null,
     },
   };
 };
 
 // ── profile.aiming.snapshot ───────────────────────────────────────────
 
-const profileAimingSnapshot: CommandHandler = (db, _params, ownerId) => {
-  const state = db.prepare(
-    "SELECT rebuild_state, updated_at FROM aiming_profile_state WHERE owner_id = ?",
-  ).get(ownerId) as Record<string, unknown> | undefined;
-
-  const dimensions = db.prepare(
-    "SELECT projection_json FROM aiming_profile_dimensions WHERE owner_id = ? ORDER BY dimension_key, scope, scope_ref LIMIT 24",
-  ).all(ownerId) as Array<{ projection_json: string }>;
-
-  const contributions = db.prepare(
-    "SELECT contribution_ref FROM profile_contributions WHERE owner_id = ? AND status = 'active' ORDER BY updated_at DESC, analysis_ref LIMIT 24",
-  ).all(ownerId) as Array<{ contribution_ref: string }>;
-
-  const activePlan = db.prepare(
-    "SELECT plan_id FROM training_plans WHERE owner_id = ? AND status = 'active'",
-  ).get(ownerId) as { plan_id: string } | undefined;
-
+const profileAimingSnapshot: CommandHandler = (_params, ownerId) => {
+  const data = readJsonFile(join(getDataRoot(), "profile.json"));
   return {
     status: "succeeded",
     result_ref: `profile-aiming:${ownerId}`,
@@ -921,44 +812,36 @@ const profileAimingSnapshot: CommandHandler = (db, _params, ownerId) => {
       schema_version: "aiming_profile.v1",
       owner_ref: ownerId,
       profile_ref: `profile-aiming:${ownerId}`,
-      status: state?.rebuild_state ?? "clean",
-      dimensions: dimensions.map((d) => parseJsonColumn(d.projection_json)).filter(Boolean),
-      contribution_refs: contributions.map((c) => c.contribution_ref),
+      status: data?.status ?? "clean",
+      dimensions: data?.dimensions ?? [],
+      contribution_refs: data?.contribution_refs ?? [],
       next_retest_refs: [],
-      active_plan_ref: activePlan?.plan_id ?? null,
-      updated_at: sqliteTimestampToWireUtc(state?.updated_at),
+      active_plan_ref: data?.active_plan_ref ?? null,
+      updated_at: data?.updated_at ?? null,
     },
   };
 };
 
 // ── training_plan.review ──────────────────────────────────────────────
 
-const trainingPlanReview: CommandHandler = (db, _params, ownerId) => {
-  const plan = db.prepare(
-    "SELECT plan_id, owner_id, status, current_version, created_at, updated_at FROM training_plans WHERE owner_id = ? ORDER BY status DESC LIMIT 1",
-  ).get(ownerId) as Record<string, unknown> | undefined;
-
+const trainingPlanReview: CommandHandler = (_params, _ownerId) => {
+  const plan = readJsonFile(join(getTrainingDir(), "plan.json"));
   if (!plan) {
     return { status: "succeeded", result: { schema_version: "training_plan_review.v1", has_plan: false } };
   }
-
-  const version = db.prepare(
-    "SELECT plan_payload_json, evidence_refs_json, verification_targets_json FROM training_plan_versions WHERE plan_id = ? AND version = ?",
-  ).get(plan.plan_id, plan.current_version) as Record<string, unknown> | undefined;
-
   return {
     status: "succeeded",
     result: {
       schema_version: "training_plan_review.v1",
       has_plan: true,
-      plan_ref: plan.plan_id,
-      status: plan.status,
-      version: plan.current_version,
-      payload: version ? parseJsonColumn(version.plan_payload_json) : null,
-      evidence_refs: version ? parseJsonColumn(version.evidence_refs_json) : null,
-      verification_targets: version ? parseJsonColumn(version.verification_targets_json) : null,
-      created_at: sqliteTimestampToWireUtc(plan.created_at),
-      updated_at: sqliteTimestampToWireUtc(plan.updated_at),
+      plan_ref: plan.plan_id ?? null,
+      status: plan.status ?? null,
+      version: plan.version ?? 1,
+      payload: plan.plan_payload ?? null,
+      evidence_refs: plan.evidence_refs ?? null,
+      verification_targets: plan.verification_targets ?? null,
+      created_at: plan.created_at ?? null,
+      updated_at: plan.updated_at ?? null,
     },
   };
 };
@@ -999,12 +882,11 @@ export const NATIVE_READ_COMMANDS = new Set([
 ]);
 
 export function executeNativeRead(
-  db: SqliteDb,
   commandName: string,
   parameters: Record<string, unknown>,
   ownerId: string,
 ): NativeCommandResult {
-  // navigation.open has no DB access — handle specially.
+  // navigation.open has no file access — handle specially.
   if (commandName === "navigation.open") {
     return navigationOpen(parameters);
   }
@@ -1013,7 +895,7 @@ export function executeNativeRead(
     return { status: "failed", warning_or_error: { code: "unknown_command", message: `${commandName} is not a native command` } };
   }
   try {
-    return handler(db, parameters, ownerId);
+    return handler(parameters, ownerId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "native command failed";
     return { status: "failed", warning_or_error: { code: "native_error", message } };

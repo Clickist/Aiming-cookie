@@ -3,7 +3,9 @@ import http from "node:http";
 import test from "node:test";
 
 import { ProviderAuthOperationManager, type PiAuthProvider } from "../src/provider-auth.ts";
+import { createAgentRun, stopAgentRun } from "../src/agent-runs.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
+import { waitForTask } from "../src/task-manager.ts";
 
 function request(
   server: http.Server,
@@ -537,6 +539,56 @@ test("auth sidecar endpoints keep credentials private and take the result only o
     assert.ok(!JSON.stringify(cancelled.json).includes(secret));
   } finally {
     authOperations.dispose();
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("GET /v1/agent-runs/:ref/stream returns 404 for an unknown run", async () => {
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const res = await request(server, "GET", "/v1/agent-runs/agent_run%3Astream-unknown/stream");
+    assert.equal(res.statusCode, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
+test("GET /v1/agent-runs/:ref/stream emits a done event for a stopped run and closes", async () => {
+  const server = createSidecarServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  try {
+    const run = createAgentRun("test-owner", "sse terminal", { sessionId: 31 });
+    await waitForTask(run.run_ref);
+    const stopped = await stopAgentRun("test-owner", run.run_ref);
+    assert.equal(stopped.status, "stopped");
+
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: address.port,
+        method: "GET",
+        path: `/v1/agent-runs/${encodeURIComponent(run.run_ref)}/stream`,
+        headers: { "Connection": "close", "X-User-Id": "test-owner" },
+      }, (res) => {
+        assert.equal(res.statusCode, 200);
+        assert.match(String(res.headers["content-type"]), /text\/event-stream/);
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assert.match(body, /event: done/);
+    assert.match(body, /"status":"stopped"/);
+  } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });

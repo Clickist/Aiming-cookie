@@ -18,9 +18,9 @@
  * with a bounded score summary, matching the Python fallback behaviour.
  */
 import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SqliteDb } from "./db.ts";
+import { getConfigDir } from "./app-data.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -253,34 +253,6 @@ async function fetchAndNormalize(
   }
 }
 
-// ── Record writing (port of Python _records_from_snapshot + write_snapshot) ─
-
-function writeBenchmarkRecords(db: SqliteDb, ownerId: string, catalog: Catalog, difficulties: Record<string, NormalizedDifficulty>): void {
-  const now = observedAt();
-  const insert = db.prepare(
-    "INSERT INTO benchmark_records(" +
-    "user_id, provider, provider_license_note, catalog_version, scenario_id, " +
-    "metric_key, unit, value, observed_at, availability, external_identity_ref, identity_consent" +
-    ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  );
-  const provider = "kovaaks-webapp";
-  const licenseNote = "User-authorized KovaaK benchmark score import.";
-  const catalogVersion = catalog.catalog_version;
-  db.transaction(() => {
-    for (const stage of DIFFICULTIES) {
-      const diff = difficulties[stage];
-      for (const scenario of diff.scenarios) {
-        insert.run(ownerId, provider, licenseNote, catalogVersion,
-          scenario.scenario_id, "score", "points", scenario.score, now, "available", null, 0);
-        insert.run(ownerId, provider, licenseNote, catalogVersion,
-          scenario.scenario_id, "scenario_rank", "rank", scenario.scenario_rank, now, "available", null, 0);
-      }
-      insert.run(ownerId, provider, licenseNote, catalogVersion,
-        `benchmark:viscose-s2:${stage}`, "overall_rank", "rank", diff.overall_rank, now, "available", null, 0);
-    }
-  })();
-}
-
 // ── Steam ID helpers ───────────────────────────────────────────────────
 
 const STEAM_ID_RE = /^\d{17}$/;
@@ -299,7 +271,6 @@ export function isNativeKovaakScoreCommand(commandName: string): boolean {
 }
 
 export async function executeNativeKovaakScore(
-  db: SqliteDb,
   commandName: string,
   params: AnyDict,
   ownerId: string,
@@ -309,7 +280,7 @@ export async function executeNativeKovaakScore(
     return executeLookup(params, temporaryProfileRefs);
   }
   if (commandName === "kovaak_scores.refresh_connected") {
-    return executeRefreshConnected(db, ownerId);
+    return executeRefreshConnected(ownerId);
   }
   return { status: "failed", warning_or_error: { code: "unknown_command", message: `${commandName} is not a kovaak_scores command` } };
 }
@@ -364,14 +335,18 @@ async function executeLookup(
 }
 
 async function executeRefreshConnected(
-  db: SqliteDb,
   ownerId: string,
 ): Promise<NativeScoreResult> {
-  // Read the owner's connected Steam ID.
-  const conn = db.prepare(
-    "SELECT steam_id FROM kovaak_connections WHERE owner_id=?",
-  ).get(ownerId) as { steam_id: string } | undefined;
-  if (!conn) {
+  // Read the owner's connected Steam ID from config file.
+  const connPath = join(getConfigDir(), "kovaak-connection.json");
+  let steamId: string | null = null;
+  if (existsSync(connPath)) {
+    try {
+      const conn = JSON.parse(readFileSync(connPath, "utf-8"));
+      steamId = typeof conn.steam_id === "string" ? conn.steam_id : null;
+    } catch { /* ignore */ }
+  }
+  if (!steamId) {
     return {
       status: "unavailable",
       warning_or_error: { code: "connected_account_unavailable", message: "connect your KovaaK profile first" },
@@ -386,19 +361,12 @@ async function executeRefreshConnected(
     };
   }
 
-  const difficulties = await fetchAndNormalize(conn.steam_id, catalog);
+  const difficulties = await fetchAndNormalize(steamId, catalog);
   if (!difficulties) {
     return {
       status: "unavailable",
       warning_or_error: { code: "kovaak_scores_unavailable", message: "KovaaK scores are temporarily unavailable" },
     };
-  }
-
-  // Write benchmark records to DB (best-effort).
-  try {
-    writeBenchmarkRecords(db, ownerId, catalog, difficulties);
-  } catch {
-    // Record writing failure does not affect the returned summary.
   }
 
   const summary = buildScoreSummary(catalog, difficulties);

@@ -255,6 +255,8 @@ export type CoachRuntimeTurnResponse = {
   error: CoachRuntimeError | null;
   notes: string[];
   tool_events: CoachRuntimeToolEvent[];
+  /** Analysis ids the turn engaged with via file reads (`analysis:{id}`). */
+  analysis_refs: string[];
 };
 
 export type ProviderAuthMode = "api_key" | "oauth" | "ambient";
@@ -387,6 +389,7 @@ export function successResponse(
   schemaVersion: CoachRuntimeTurnSchema = COACH_RUNTIME_TURN_SCHEMA,
   toolEvents: CoachRuntimeToolEvent[] = [],
   runId: string | null = null,
+  analysisRefs: string[] = [],
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
@@ -397,6 +400,7 @@ export function successResponse(
     error: null,
     notes,
     tool_events: toolEvents,
+    analysis_refs: analysisRefs,
   };
 }
 
@@ -407,6 +411,7 @@ export function failureResponse(
   toolEvents: CoachRuntimeToolEvent[] = [],
   partialReply: string | null = null,
   runId: string | null = null,
+  analysisRefs: string[] = [],
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
@@ -417,5 +422,6 @@ export function failureResponse(
     error,
     notes,
     tool_events: toolEvents,
+    analysis_refs: analysisRefs,
   };
 }
