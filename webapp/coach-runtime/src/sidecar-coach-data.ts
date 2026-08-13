@@ -9,14 +9,10 @@
  */
 
 import type http from "node:http";
-import { createHash } from "node:crypto";
 
+import { projectCoachDiagnosticContext } from "./coach-context-projection.ts";
+import { hashCoachContextDescriptor } from "./context-dedupe.ts";
 import { getDb, type SqliteDb } from "./db.ts";
-
-function sqliteTimestampToWireUtc(value: unknown): string | null {
-  if (typeof value !== "string" || !value) return null;
-  return value.includes("T") ? value : value.replace(" ", "T") + "Z";
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -146,7 +142,7 @@ function shapeSession(db: SqliteDb, row: SessionRow): SessionOut {
 }
 
 const SESSION_COLUMNS =
-  "t.id, t.user_id, t.kind, t.title, t.status, t.deleted_at, "
+  "SELECT t.id, t.user_id, t.kind, t.title, t.status, t.deleted_at, "
   + "t.created_at, t.updated_at, COUNT(m.id) AS message_count, "
   + "(SELECT content FROM coach_messages lm WHERE lm.thread_id=t.id ORDER BY lm.id DESC LIMIT 1) AS last_message_preview "
   + "FROM coach_threads t LEFT JOIN coach_messages m ON m.thread_id=t.id";
@@ -471,62 +467,6 @@ function shapeContextRef(row: ContextRefRow): ContextRefOut {
 // Public API — each function takes a db and returns plain objects
 // ---------------------------------------------------------------------------
 
-/** GET /v1/agent-runs/:ref — matches Python coach_agent_runs.get_run(). */
-export function getAgentRun(runRef: string, ownerId: string): Record<string, unknown> | null {
-  const db = getDb();
-  if (!db) return null;
-  const row = db.prepare(
-    "SELECT * FROM coach_agent_runs WHERE run_ref=? AND owner_id=?",
-  ).get(runRef, ownerId) as Record<string, unknown> | undefined;
-  if (!row) return null;
-
-  const contexts = parseJson(row.context_refs_json) ?? [];
-  const error = parseJson(row.error_json);
-
-  const eventRows = db.prepare(
-    "SELECT event_ref, sequence, event_type, phase, code, message, payload_json, created_at "
-      + "FROM coach_agent_run_events WHERE run_ref=? ORDER BY sequence",
-  ).all(runRef) as Array<{
-    event_ref: string;
-    sequence: number;
-    event_type: string;
-    phase: string;
-    code: string;
-    message: string;
-    payload_json: string | null;
-    created_at: string;
-  }>;
-
-  const events = eventRows.map((r) => ({
-    schema_version: "coach_agent_run_event.v1",
-    event_ref: r.event_ref,
-    sequence: r.sequence,
-    type: r.event_type,
-    phase: r.phase,
-    code: r.code,
-    message: r.message,
-    payload: parseJson(r.payload_json),
-    created_at: r.created_at,
-  }));
-
-  return {
-    schema_version: "coach_agent_run.v1",
-    run_ref: row.run_ref,
-    session_id: row.thread_id as number,
-    parent_run_ref: row.parent_run_ref ?? null,
-    attempt: row.attempt as number,
-    status: row.status as string,
-    phase: row.phase as string,
-    partial_text: row.partial_text ?? null,
-    error,
-    contexts,
-    events,
-    created_at: sqliteTimestampToWireUtc(row.created_at),
-    started_at: sqliteTimestampToWireUtc(row.started_at),
-    finished_at: sqliteTimestampToWireUtc(row.finished_at),
-  };
-}
-
 /** GET /v1/sessions — matches Python list_coach_sessions(). */
 export function listCoachSessions(
   ownerId: string,
@@ -700,49 +640,7 @@ const _CONTEXT_KINDS = new Set([
 const _ANALYSIS_REF_RE = /^analysis:([1-9][0-9]*)$/;
 const _SAFE_TARGET_REF_RE = /^[A-Za-z][A-Za-z0-9_.:@-]{1,200}$/;
 
-/**
- * Build a simplified diagnostic context projection from an analysis result.
- *
- * Simplified vs. Python project_coach_diagnostic_context: the Python version
- * runs an extensive allow-list filter over every field (hundreds of lines of
- * validation). This port extracts the key structural fields (schema_version,
- * analysis_ref, diagnosis, evidence) and passes them through without the
- * per-field allow-list scrubbing. The Coach may need to call analysis tools
- * for details that the full projection would have included inline.
- */
-function buildSimplifiedProjection(
-  sessionId: number,
-  result: unknown,
-): Record<string, unknown> {
-  const r = isRecord(result) ? result : {};
-  const schemaVersion = r.schema_version === "analysis_result.v2"
-    ? "analysis_result.v2"
-    : "analysis_result.v1";
-  const deterministic = isRecord(r.deterministic) ? r.deterministic : {};
-  const diagnosis = isRecord(deterministic.diagnosis) ? deterministic.diagnosis : {};
-  return {
-    schema_version: "coach_diagnostic_context.v1",
-    analysis_ref: {
-      analysis_id: `analysis:${sessionId}`,
-      analysis_result_version: schemaVersion,
-      analysis_type: typeof r.analysis_type === "string" ? r.analysis_type : null,
-      input_mode: typeof r.input_mode === "string" ? r.input_mode : "unknown",
-    },
-    diagnosis: {
-      profile: isRecord(diagnosis.profile) ? diagnosis.profile : {},
-      issues: Array.isArray(diagnosis.issues) ? diagnosis.issues : [],
-      summary: isRecord(diagnosis.summary)
-        ? diagnosis.summary
-        : isRecord(deterministic.metrics) ? deterministic.metrics : {},
-      comparison: diagnosis.comparison ?? null,
-      meta: isRecord(diagnosis.meta) ? diagnosis.meta : {},
-    },
-    evidence_summary: { availability: {}, alignment: {} },
-    warnings: [],
-  };
-}
-
-/** POST /v1/context/attach — simplified port of Python attach_context(). */
+/** POST /v1/context/attach. */
 export function attachCoachContext(
   ownerId: string,
   context: {
@@ -786,7 +684,10 @@ export function attachCoachContext(
   }
 
   const threadId = threadIdForRequest(db, ownerId, sessionId);
-  const projection = buildSimplifiedProjection(analysisSessionId, parseJson(session.result));
+  const projection = projectCoachDiagnosticContext(parseJson(session.result), analysisSessionId);
+  if (projection === null) {
+    throw new CoachDataError(409, "context_unavailable");
+  }
 
   // Validate time_range
   let validatedStartMs: number | null = null;
@@ -822,9 +723,14 @@ export function attachCoachContext(
     if (compSession.status !== "done") {
       throw new CoachDataError(409, "analysis_unavailable");
     }
-    comparisonProjectionJson = JSON.stringify(
-      buildSimplifiedProjection(comparisonSessionId, parseJson(compSession.result)),
+    const comparisonProjection = projectCoachDiagnosticContext(
+      parseJson(compSession.result),
+      comparisonSessionId,
     );
+    if (comparisonProjection === null) {
+      throw new CoachDataError(409, "context_unavailable");
+    }
+    comparisonProjectionJson = JSON.stringify(comparisonProjection);
   } else if (comparison_analysis_ref) {
     throw new CoachDataError(400, "invalid_comparison_ref");
   }
@@ -843,17 +749,14 @@ export function attachCoachContext(
     validatedTargetRef = target_ref;
   }
 
-  // Compute dedupe_key (keys in alphabetical order to match Python sort_keys=True)
-  const dedupeKey = createHash("sha256").update(
-    JSON.stringify({
-      analysis_ref,
-      comparison_analysis_ref: comparison_analysis_ref ?? undefined,
-      end_ms: validatedEndMs,
-      kind,
-      start_ms: validatedStartMs,
-      target_ref: validatedTargetRef,
-    }),
-  ).digest("hex");
+  const dedupeKey = hashCoachContextDescriptor({
+    analysis_ref,
+    comparison_analysis_ref: comparison_analysis_ref ?? null,
+    end_ms: validatedEndMs,
+    kind,
+    start_ms: validatedStartMs,
+    target_ref: validatedTargetRef,
+  });
   const contextRef = `context:${dedupeKey.slice(0, 24)}`;
 
   // Check for existing active context

@@ -7,7 +7,6 @@ import {
   createCoachSession,
   deleteCoachSession,
   detachCoachContext,
-  getAgentRun,
   getCoachPrimary,
   listCoachContexts,
   listCoachSessions,
@@ -31,6 +30,7 @@ import type { CoachRuntimeTurnResponse } from "./contracts.ts";
 import {
   AgentRunError,
   createAgentRun,
+  getAgentRun,
   stopAgentRun,
   retryAgentRun,
   decideConfirmation,
@@ -59,6 +59,9 @@ function readRequestBody(req: http.IncomingMessage): Promise<string> {
 function writeJson(res: http.ServerResponse, statusCode: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(statusCode, {
+    "Access-Control-Allow-Headers": "content-type,x-user-id",
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Origin": "*",
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
   });
@@ -175,6 +178,16 @@ export async function handleSidecarRequest(
 ): Promise<void> {
   const host = req.headers.host ?? "127.0.0.1";
   const url = new URL(req.url ?? "/", `http://${host}`);
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Headers": "content-type,x-user-id",
+      "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end();
+    return;
+  }
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     writeJson(res, 200, { ok: true });
@@ -513,7 +526,7 @@ export async function handleSidecarRequest(
       if (db) {
         resumeWaitingRuns(db, ownerId);
       }
-      const result = getAgentRun(runRef, ownerId);
+      const result = db ? getAgentRun(db, ownerId, runRef) : null;
       if (result === null) {
         writeJson(res, 404, { detail: "Coach agent run is unavailable" });
       } else {

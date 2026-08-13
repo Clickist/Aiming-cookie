@@ -965,7 +965,7 @@ function validateV2RunFacts(value: unknown): boolean {
 		return (
 			isRecord(value.facts) &&
 			validateBoundedFactsValue(value.facts) &&
-			Buffer.byteLength(JSON.stringify(value.facts), "utf8") <= 8 * 1024
+			Buffer.byteLength(JSON.stringify(value.facts), "utf8") <= 32 * 1024
 		);
 	}
 	if (value.mode !== "section_refs") return false;
@@ -1121,7 +1121,7 @@ function validatedAnalysisRefVersion(
 	return undefined;
 }
 
-function isCanonicalDiagnosticContext(value: unknown): value is JsonRecord {
+export function isCanonicalDiagnosticContext(value: unknown): value is JsonRecord {
 	if (!isRecord(value)) return false;
 	if (value.schema_version === "coach_diagnostic_context.v3") return validateV3Context(value);
 	if (value.schema_version === "coach_diagnostic_context.v2") return validateV2Context(value);
