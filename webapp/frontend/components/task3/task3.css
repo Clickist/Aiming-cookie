@@ -36,6 +36,7 @@
   padding: 0 12px 0 16px;
   border-bottom: 1px solid var(--outline-variant);
   background: var(--surface);
+  user-select: none;
 }
 
 .task3-logo {
@@ -48,6 +49,44 @@
 
 .task3-toolbar-spacer {
   flex: 1;
+}
+
+.task3-window-controls {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  margin-inline-end: -12px;
+}
+
+.task3-window-control {
+  box-sizing: border-box;
+  display: inline-grid;
+  width: 46px;
+  height: 100%;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font: 500 14px/1 var(--font-ui);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.task3-window-control:hover {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+}
+
+.task3-window-control:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.task3-window-control--close:hover {
+  background: var(--error);
+  color: var(--on-error);
 }
 
 .task3-primary-nav,
@@ -263,11 +302,12 @@
 
 .task3-coach-view {
   display: grid;
-  grid-template-columns: minmax(0, 760px);
+  grid-template-columns: minmax(0, 1fr);
   justify-content: center;
   height: 100%;
   min-height: 0;
   min-width: 0;
+  background: var(--surface-container-low);
 }
 
 .task3-coach-view[data-video-open="true"] {
@@ -279,6 +319,7 @@
   display: flex;
   min-width: 0;
   min-height: 0;
+  justify-content: center;
 }
 
 .task3-coach-view[data-video-open="true"] .task3-coach-conversation {

@@ -1151,10 +1151,14 @@ async function fulfillVideo(route: Route): Promise<void> {
 }
 
 export async function installApiFixtures(page: Page, scenario = apiScenario()): Promise<void> {
-  await page.route("**/api/**", async (route) => {
+  const fulfillFixture = async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const path = url.pathname;
+    const path = url.pathname.replace(/^\/v1\/primary$/, "/api/coach/primary")
+      .replace(/^\/v1\/context$/, "/api/coach/context")
+      .replace(/^\/v1\/context\/attach$/, "/api/coach/context/attach")
+      .replace(/^\/v1\/agent-runs$/, "/api/coach/agent-runs")
+      .replace(/^\/v1\/sessions$/, "/api/coach/sessions");
     const method = request.method();
     let body: unknown;
     if (method !== "GET" && method !== "HEAD") {
@@ -1167,7 +1171,9 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
     const shared = handleReviewApiRequest(scenario, { method, path, body, query: Object.fromEntries(url.searchParams) });
     if (shared.video) return fulfillVideo(route);
     return fulfillJson(route, shared.body, shared.status);
-  });
+  };
+  await page.route("**/api/**", fulfillFixture);
+  await page.route("**/v1/**", fulfillFixture);
 }
 
 export async function installDesktopBridge(page: Page): Promise<void> {

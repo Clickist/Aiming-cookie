@@ -233,7 +233,7 @@ export function SessionRail({
           const open = expandedGroups[key] ?? true;
           return (
             <details className="task7-session-rail__group" key={key} onToggle={(event) => toggleGroup(key, event.currentTarget.open)} open={open}>
-              <summary aria-expanded={open} className="task7-session-rail__group-summary">
+              <summary className="task7-session-rail__group-summary">
                 <span className="task7-session-rail__chevron" aria-hidden="true">{open ? "⌄" : "›"}</span>
                 <span className="task7-session-rail__group-label">{group.label}</span>
                 <span className="task7-session-rail__count">{group.sessions.length}</span>

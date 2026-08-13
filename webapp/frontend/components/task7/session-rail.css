@@ -269,25 +269,6 @@
   font: 600 10px/1 var(--font-mono);
 }
 
-.task7-session-rail__iconbar {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 10px;
-}
-
-.task7-session-rail__scrim {
-  position: fixed;
-  z-index: 40;
-  inset: 48px 0 0;
-  width: 100%;
-  border: 0;
-  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
-  cursor: default;
-}
-
 .task7-session-rail__group {
   border-block-end: 1px solid color-mix(in srgb, var(--outline-variant) 70%, transparent);
 }
@@ -323,6 +304,25 @@
   font-size: 15px;
   line-height: 1;
   text-align: center;
+}
+
+.task7-session-rail__iconbar {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+}
+
+.task7-session-rail__scrim {
+  position: fixed;
+  z-index: 40;
+  inset: 48px 0 0;
+  width: 100%;
+  border: 0;
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+  cursor: default;
 }
 
 .task7-session-rail__group-label {
@@ -547,7 +547,9 @@
   .task7-session-rail__new,
   .task7-session-rail__utility-button,
   .task7-session-rail__search,
-  .task7-session-rail__item-actions {
+  .task7-session-rail__item-actions,
+  .task7-session-rail[data-overlay="true"] {
     transition: none;
+    animation: none;
   }
 }

@@ -21,7 +21,6 @@ import {
   refreshKovaaKConnection,
   retrySession,
   saveKovaaKConnection,
-  startCoachAnalysisSoftStart,
   syncKovaaKScores,
 } from "./api";
 import {
@@ -184,6 +183,111 @@ test("desktop writes are not replayed but release the stale connection for the n
   assert.equal(connectionCalls, 2);
 });
 
+test("desktop sidecar requests retry once after Tauri publishes a replacement URL", async () => {
+  const requests: string[] = [];
+  let connectionCalls = 0;
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async (command: string) => {
+        assert.equal(command, "desktop_runtime_connection");
+        connectionCalls += 1;
+        return connectionCalls === 1
+          ? { baseUrl: "http://127.0.0.1:43127", sidecarUrl: "http://127.0.0.1:43128", token: "stale-token" }
+          : { baseUrl: "http://127.0.0.1:43129", sidecarUrl: "http://127.0.0.1:43130", token: "fresh-token" };
+      },
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.startsWith("http://127.0.0.1:43128")) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify({ contexts: [] }), { status: 200 });
+  }) as typeof fetch;
+
+  await getCoachContexts();
+
+  assert.deepEqual(requests, [
+    "http://127.0.0.1:43128/v1/context",
+    "http://127.0.0.1:43130/v1/context",
+  ]);
+  assert.equal(connectionCalls, 2);
+});
+
+test("desktop sidecar writes are not replayed after a transport failure", async () => {
+  const requests: string[] = [];
+  let connectionCalls = 0;
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => {
+        connectionCalls += 1;
+        return connectionCalls === 1
+          ? { baseUrl: "http://127.0.0.1:43127", sidecarUrl: "http://127.0.0.1:43128", token: "stale-token" }
+          : { baseUrl: "http://127.0.0.1:43129", sidecarUrl: "http://127.0.0.1:43130", token: "fresh-token" };
+      },
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    requests.push(String(input));
+    throw new TypeError("fetch failed");
+  }) as typeof fetch;
+
+  await assert.rejects(createCoachAgentRun("test", []), /temporarily unavailable/i);
+
+  assert.deepEqual(requests, ["http://127.0.0.1:43128/v1/agent-runs"]);
+  assert.equal(connectionCalls, 1);
+});
+
+test("desktop sidecar requests do not replay against an unchanged URL", async () => {
+  const requests: string[] = [];
+  let connectionCalls = 0;
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => {
+        connectionCalls += 1;
+        return connectionCalls < 3
+          ? { baseUrl: "http://127.0.0.1:43127", sidecarUrl: "http://127.0.0.1:43128", token: `token-${connectionCalls}` }
+          : { baseUrl: "http://127.0.0.1:43129", sidecarUrl: "http://127.0.0.1:43130", token: "fresh-token" };
+      },
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.startsWith("http://127.0.0.1:43128")) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify({ contexts: [] }), { status: 200 });
+  }) as typeof fetch;
+
+  await assert.rejects(getCoachContexts(), /temporarily unavailable/i);
+  await getCoachContexts();
+
+  assert.deepEqual(requests, [
+    "http://127.0.0.1:43128/v1/context",
+    "http://127.0.0.1:43130/v1/context",
+  ]);
+  assert.equal(connectionCalls, 3);
+});
+
+test("desktop sidecar requests preserve AbortError without refreshing the connection", async () => {
+  let connectionCalls = 0;
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => {
+        connectionCalls += 1;
+        return { baseUrl: "http://127.0.0.1:43127", sidecarUrl: "http://127.0.0.1:43128", token: "test-token" };
+      },
+    },
+  });
+  const aborted = new DOMException("The operation was aborted", "AbortError");
+  globalThis.fetch = (async () => { throw aborted; }) as typeof fetch;
+
+  await assert.rejects(getCoachContexts(), (error: unknown) => error === aborted);
+  assert.equal(connectionCalls, 1);
+});
+
 test("browser video bytes use the owner-scoped API fetch instead of a bare media URL", async () => {
   const requests: Array<{ input: string; init?: RequestInit }> = [];
   Reflect.set(globalThis, "isTauri", false);
@@ -203,29 +307,6 @@ test("browser video bytes use the owner-scoped API fetch instead of a bare media
   assert.equal(new Headers(requests[0]?.init?.headers).get("X-User-Id"), "dev");
   assert.equal(video.type, "video/mp4");
   assert.equal(video.size, 3);
-});
-
-test("analysis soft start posts only the typed analysis trigger", async () => {
-  const requests: Array<{ input: string; init?: RequestInit }> = [];
-  Reflect.set(globalThis, "isTauri", false);
-  Reflect.set(globalThis, "window", {});
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    requests.push({ input: String(input), init });
-    return new Response(JSON.stringify({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:soft-start", parent_run_ref: null, attempt: 1, status: "succeeded", phase: "completed", partial_text: null, error: null, contexts: [], events: [], created_at: "2026-08-06T00:00:00Z", started_at: "2026-08-06T00:00:00Z", finished_at: "2026-08-06T00:00:00Z" }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }) as typeof fetch;
-
-  const run = await startCoachAnalysisSoftStart(42);
-
-  assert.equal(requests[0]?.input, "/api/coach/analysis-soft-start");
-  assert.equal(requests[0]?.init?.method, "POST");
-  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
-    schema_version: "coach_analysis_soft_start_request.v1",
-    analysis_session_id: 42,
-  });
-  assert.equal(run.run_ref, "coach-run:soft-start");
 });
 
 test("Coach session adapters forward the selected session identity", async () => {

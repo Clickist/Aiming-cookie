@@ -1260,11 +1260,6 @@ export interface CoachAgentRunV1 {
   finished_at: string | null;
 }
 
-export interface CoachAnalysisSoftStartRequestV1 {
-  schema_version: "coach_analysis_soft_start_request.v1";
-  analysis_session_id: number;
-}
-
 export interface CoachConfirmationV1 {
   schema_version: "coach_confirmation.v1";
   confirmation_ref: string;
