@@ -15,8 +15,8 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import queue
-from .config import DESKTOP_LOCAL_PROFILE, HEARTBEAT_INTERVAL_SECONDS
+from . import analysis_output, queue
+from .config import DATA_ROOT, DESKTOP_LOCAL_PROFILE, HEARTBEAT_INTERVAL_SECONDS
 from .contracts import (
     ANALYSIS_RESULT_V2_SCHEMA_VERSION,
     ANALYSIS_VERSION,
@@ -2905,6 +2905,24 @@ async def process_one() -> bool:
                     "aiming profile contribution unavailable session=%s error=%s",
                     sid,
                     type(error).__name__,
+                )
+            try:
+                snapshot_for_output = job.get("input_snapshot") or {}
+                stats_source_path = (
+                    (snapshot_for_output.get("sources") or {}).get("stats") or {}
+                ).get("path")
+                await asyncio.to_thread(
+                    analysis_output.write_progressive_disclosure,
+                    str(DATA_ROOT),
+                    sid,
+                    result,
+                    stats_source_path,
+                )
+            except Exception:
+                log.warning(
+                    "progressive disclosure output failed session=%s",
+                    sid,
+                    exc_info=True,
                 )
         # 视频保留——coach 回放 + 失败重试；用户删除走 History 删除语义。
     except SourceSnapshotChangedError:

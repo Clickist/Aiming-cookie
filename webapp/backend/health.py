@@ -6,20 +6,18 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from . import config, db
+from . import config, file_store
 
 router = APIRouter(tags=["health"])
 log = logging.getLogger(__name__)
 
 
 async def check_db_ready() -> bool:
+    """Data root is writable; the JSON file store has no connection to open."""
     try:
-        conn = await db.get_conn()
-        cursor = await conn.execute("SELECT 1")
-        await cursor.fetchone()
-        return True
+        return file_store.data_root_ready()
     except Exception:
-        log.exception("readyz: database check failed")
+        log.exception("readyz: data root check failed")
         return False
 
 

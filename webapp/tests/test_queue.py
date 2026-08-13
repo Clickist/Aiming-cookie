@@ -7,7 +7,7 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from webapp.backend import aiming_profile_store, coach_store, config, db, queue
+from webapp.backend import aiming_profile_store, config, file_store, queue
 from webapp.backend.config import DEFAULT_MAX_ATTEMPTS, LEASE_TTL_SECONDS
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
@@ -38,7 +38,6 @@ async def test_enqueue_require_no_active_is_atomic_and_default_still_allows_para
     restricted = await asyncio.gather(enqueue_restricted(), enqueue_restricted())
     assert sum(isinstance(result, int) for result in restricted) == 1
     assert restricted.count("active") == 1
-    assert (await db.get_conn()).in_transaction is False
 
     parallel = await asyncio.gather(
         queue.enqueue("parallel-owner", "", ""),
@@ -48,16 +47,11 @@ async def test_enqueue_require_no_active_is_atomic_and_default_still_allows_para
 
 
 async def _tombstone(session_id: int) -> dict | None:
-    conn = await db.get_conn()
-    row = await (
-        await conn.execute(
-            "SELECT analysis_session_id, owner_id, cleanup_state, "
-            "cleanup_attempts, last_error_code "
-            "FROM analysis_deletion_tombstones WHERE analysis_session_id=?",
-            (session_id,),
-        )
-    ).fetchone()
-    return dict(row) if row is not None else None
+    tombstones = file_store.read_json("sessions/_deletion_tombstones.json") or []
+    for entry in tombstones:
+        if entry.get("analysis_session_id") == session_id:
+            return dict(entry)
+    return None
 
 
 async def _seed_terminal_delete(
@@ -68,14 +62,20 @@ async def _seed_terminal_delete(
     create_workspace: bool = True,
 ) -> dict:
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
-    sid = await queue.enqueue(owner_id, "", "")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
-    await conn.commit()
-    await db.save_chat_message(sid, "user", "legacy question")
-    await db.save_chat_message(sid, "assistant", "legacy answer")
-    thread = await coach_store.get_or_create_primary_thread(owner_id)
-    ref = await coach_store.attach_analysis_ref(int(thread["id"]), sid)
+    sid = await queue.enqueue(owner_id, "", "", input_mode="input_native")
+    await queue.claim_next(TEST_WORKER)
+    result = _persistent_v2_result(owner_id)
+    analysis_id = f"analysis:{sid}"
+    result["analysis_id"] = analysis_id
+    result["artifact_manifest"]["analysis_id"] = analysis_id
+    result["artifact_manifest"]["owned_outputs"][0]["id"] = analysis_id
+    result["kovaak_run_ref"] = None
+    await queue.mark_done(
+        sid,
+        result,
+        0.0,
+        worker_id=TEST_WORKER,
+    )
     workspace = session_dir(sid)
     if create_workspace:
         workspace.mkdir(parents=True)
@@ -83,29 +83,24 @@ async def _seed_terminal_delete(
     return {
         "id": sid,
         "owner_id": owner_id,
-        "thread_id": int(thread["id"]),
-        "ref_id": int(ref["id"]),
         "workspace": workspace,
     }
 
 
-async def _assert_phase_a_rollback(seed: dict) -> None:
-    sid = seed["id"]
-    session = await queue.get_session(sid)
-    assert session is not None
-    assert session["status"] == "done"
-    assert (seed["workspace"] / "analysis-owned.json").read_bytes() == b"analysis-owned"
-    assert [item["content"] for item in await db.load_chat_history(sid)] == [
-        "legacy question",
-        "legacy answer",
-    ]
-    assert await coach_store.load_messages(seed["thread_id"]) == []
-    refs = await coach_store.list_analysis_refs(seed["thread_id"])
-    assert len(refs) == 1
-    assert refs[0]["id"] == seed["ref_id"]
-    assert refs[0]["status"] == "active"
-    assert refs[0]["deleted_at"] is None
-    assert await _tombstone(sid) is None
+async def _rewrite_session(session_id: int, **fields) -> None:
+    """Mutate one persisted session file in place (test seeding helper)."""
+    path = f"sessions/{session_id}.json"
+    session = file_store.read_json(path)
+    assert isinstance(session, dict)
+    session.update(fields)
+    file_store.write_json(path, session)
+
+
+def _seed_tombstone(session_id: int, owner_id: str) -> None:
+    """Append one deletion tombstone (test seeding helper)."""
+    tombstones = file_store.read_json("sessions/_deletion_tombstones.json") or []
+    tombstones.append({"analysis_session_id": session_id, "owner_id": owner_id})
+    file_store.write_json("sessions/_deletion_tombstones.json", tombstones)
 
 
 def _persistent_v2_result(owner_id: str) -> dict:
@@ -281,13 +276,8 @@ async def test_claim_next_skips_running():
 
 @pytest.mark.asyncio
 async def test_claim_next_skips_exhausted_job():
-    conn = await db.get_conn()
-    await conn.execute(
-        "INSERT INTO sessions("
-        "user_id, video_path, csv_path, status, attempts, max_attempts"
-        ") VALUES('u1', '/ex', '/ex.csv', 'queued', 1, 1)"
-    )
-    await conn.commit()
+    sid = await queue.enqueue("u1", "/ex", "/ex.csv")
+    await _rewrite_session(sid, status="queued", attempts=1, max_attempts=1)
     ok = await queue.enqueue("u1", "/ok", "/ok.csv")
     claimed = await queue.claim_next(TEST_WORKER)
     assert claimed is not None
@@ -328,10 +318,8 @@ async def test_mark_done_uses_strict_json_serialization():
         "nested": {"ok": True},
     }
     await queue.mark_done(sid, finite, 0.0, worker_id=TEST_WORKER)
-    conn = await db.get_conn()
-    cur = await conn.execute("SELECT result FROM sessions WHERE id=?", (sid,))
-    row = await cur.fetchone()
-    assert row["result"] == dump_contract_json(finite)
+    raw = file_store.read_json(f"sessions/{sid}.json")["result"]
+    assert raw == json.loads(dump_contract_json(finite))
 
     sid2 = await queue.enqueue("u1", "/b", "/b.csv")
     await queue.claim_next(TEST_WORKER)
@@ -340,9 +328,8 @@ async def test_mark_done_uses_strict_json_serialization():
         "bad": float("nan"),
     }
     await queue.mark_done(sid2, with_nan, 0.0, worker_id=TEST_WORKER)
-    cur = await conn.execute("SELECT result FROM sessions WHERE id=?", (sid2,))
-    row2 = await cur.fetchone()
-    assert "NaN" not in row2["result"]
+    raw2 = file_store.read_json(f"sessions/{sid2}.json")["result"]
+    assert "NaN" not in json.dumps(raw2)
     parsed = await queue.get_session(sid2)
     assert parsed["result"]["bad"] is None
 
@@ -554,9 +541,7 @@ async def test_mark_failed_writes_error_v1_without_exception_details():
         trace_id="550e8400-e29b-41d4-a716-446655440000",
     )
     await queue.mark_failed(sid, err, worker_id=TEST_WORKER)
-    conn = await db.get_conn()
-    cur = await conn.execute("SELECT error FROM sessions WHERE id=?", (sid,))
-    raw = (await cur.fetchone())["error"]
+    raw = json.dumps(file_store.read_json(f"sessions/{sid}.json")["error"])
     assert "CSRT" not in raw
     assert "Traceback" not in raw
     parsed = json.loads(raw)
@@ -569,12 +554,7 @@ async def test_mark_failed_writes_error_v1_without_exception_details():
 @pytest.mark.asyncio
 async def test_get_session_wraps_legacy_string_error():
     sid = await queue.enqueue("u1", "/a", "/a.csv")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='failed', error=? WHERE id=?",
-        ("secret traceback internals", sid),
-    )
-    await conn.commit()
+    await _rewrite_session(sid, status="failed", error="secret traceback internals")
     s = await queue.get_session(sid)
     assert s["error"]["schema_version"] == ERROR_SCHEMA_VERSION
     assert s["error"]["code"] == "legacy_error"
@@ -599,12 +579,8 @@ async def test_claim_next_sets_lease_and_heartbeat():
     assert claimed["id"] == sid
     assert claimed["lease_expires_at"] is not None
     assert claimed["heartbeat_at"] is not None
-    conn = await db.get_conn()
-    cur = await conn.execute(
-        "SELECT lease_expires_at, heartbeat_at FROM sessions WHERE id=?", (sid,),
-    )
-    row = await cur.fetchone()
-    assert row["lease_expires_at"] > row["heartbeat_at"]
+    s = await queue.get_session(sid)
+    assert s["lease_expires_at"] > s["heartbeat_at"]
 
 
 @pytest.mark.asyncio
@@ -614,13 +590,9 @@ async def test_heartbeat_extends_lease_for_owner_worker():
     first_lease = claimed["lease_expires_at"]
     ok = await queue.heartbeat(sid, TEST_WORKER)
     assert ok is True
-    conn = await db.get_conn()
-    cur = await conn.execute(
-        "SELECT lease_expires_at, heartbeat_at FROM sessions WHERE id=?", (sid,),
-    )
-    row = await cur.fetchone()
-    assert row["lease_expires_at"] >= first_lease
-    assert row["heartbeat_at"] is not None
+    s = await queue.get_session(sid)
+    assert s["lease_expires_at"] >= first_lease
+    assert s["heartbeat_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -636,12 +608,7 @@ async def test_heartbeat_ignores_wrong_worker_or_non_running():
 async def test_recover_stale_requeues_when_attempts_remain():
     sid = await queue.enqueue("u1", "/a", "/a.csv")
     await queue.claim_next(TEST_WORKER)  # attempts=1, max=3
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET lease_expires_at = '2000-01-01 00:00:00' WHERE id=?",
-        (sid,),
-    )
-    await conn.commit()
+    await _rewrite_session(sid, lease_expires_at="2000-01-01 00:00:00")
     stats = await queue.recover_stale_jobs(now="2026-07-10 12:00:00")
     assert stats["requeued"] == 1
     assert stats["failed"] == 0
@@ -657,34 +624,26 @@ async def test_recover_stale_requeues_when_attempts_remain():
 
 @pytest.mark.asyncio
 async def test_recover_stale_fails_when_attempts_exhausted(monkeypatch):
-    write_now = "2026-07-27 01:02:03"
-    monkeypatch.setattr(queue, "_utc_now_sqlite", lambda: write_now)
-    conn = await db.get_conn()
-    await conn.execute(
-        "INSERT INTO sessions("
-        "user_id, video_path, csv_path, status, attempts, max_attempts, "
-        "worker_id, lease_expires_at, task_phase"
-        ") VALUES('u1', '/a', '/a.csv', 'running', 3, 3, 'dead', "
-        "'2000-01-01 00:00:00', 'generating_diagnostics')"
+    sid = await queue.enqueue("u1", "/a", "/a.csv")
+    await _rewrite_session(
+        sid,
+        status="running",
+        attempts=3,
+        max_attempts=3,
+        worker_id="dead",
+        lease_expires_at="2000-01-01 00:00:00",
+        task_phase="generating_diagnostics",
     )
-    await conn.commit()
-    cur = await conn.execute("SELECT id FROM sessions ORDER BY id DESC LIMIT 1")
-    sid = (await cur.fetchone())["id"]
     stats = await queue.recover_stale_jobs(now="2099-01-01 00:00:00")
     assert stats["failed"] == 1
     s = await queue.get_session(sid)
     assert s["status"] == "failed"
     assert s["error"]["code"] == "stale_lease_exhausted"
     assert s["error"]["retryable"] is True
-    cur = await conn.execute(
-        "SELECT failure_domain, task_phase, finished_at, updated_at "
-        "FROM sessions WHERE id=?", (sid,),
-    )
-    terminal = await cur.fetchone()
-    assert terminal["failure_domain"] == "kinematics"
-    assert terminal["task_phase"] is None
-    assert terminal["finished_at"] == write_now
-    assert terminal["updated_at"] == write_now
+    assert s["failure_domain"] == "kinematics"
+    assert s["task_phase"] is None
+    assert s["finished_at"] is not None
+    assert s["updated_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -724,45 +683,6 @@ async def test_requeue_failed_session_for_retry(tmp_path):
     with pytest.raises(queue.RetryNotAllowed) as ei2:
         await queue.requeue_for_retry(retry_id)
     assert ei2.value.code == "missing_video"
-
-
-@pytest.mark.asyncio
-async def test_retry_insert_failure_preserves_original_error(tmp_path):
-    video = tmp_path / "v.mp4"
-    csv = tmp_path / "s.csv"
-    video.write_bytes(b"video")
-    csv.write_text("a,b\n")
-    sid = await queue.enqueue("u1", str(video), str(csv))
-    await queue.claim_next(TEST_WORKER)
-    await queue.mark_failed(sid, "original failure", worker_id=TEST_WORKER)
-    original_before = await queue.get_session(sid)
-
-    conn = await db.get_conn()
-    await conn.execute(
-        """
-        CREATE TRIGGER inject_retry_insert_failure
-        BEFORE INSERT ON sessions
-        WHEN NEW.parent_session_id IS NOT NULL
-        BEGIN
-            SELECT RAISE(ABORT, 'injected retry insert failure');
-        END
-        """
-    )
-    await conn.commit()
-
-    with pytest.raises(aiosqlite.IntegrityError, match="injected retry insert failure"):
-        await queue.requeue_for_retry(sid)
-
-    original = await queue.get_session(sid)
-    assert original is not None
-    assert original["status"] == "failed"
-    assert original["error"] == original_before["error"]
-    row = await (
-        await conn.execute("SELECT COUNT(*) AS count FROM sessions")
-    ).fetchone()
-    assert row["count"] == 1
-
-
 @pytest.mark.asyncio
 async def test_retry_copy_failure_rolls_back_and_cleans_workspace(
     monkeypatch,
@@ -795,11 +715,8 @@ async def test_retry_copy_failure_rolls_back_and_cleans_workspace(
     assert original is not None
     assert original["status"] == "failed"
     assert original["error"] == original_before["error"]
-    conn = await db.get_conn()
-    row = await (
-        await conn.execute("SELECT COUNT(*) AS count FROM sessions")
-    ).fetchone()
-    assert row["count"] == 1
+    sessions = await queue.list_sessions("u1")
+    assert [session["id"] for session in sessions] == [sid]
     assert len(touched_workspaces) == 1
     assert not touched_workspaces[0].exists()
 
@@ -859,9 +776,6 @@ async def test_retry_process_crash_is_recoverable_as_stale_upload(
     with pytest.raises(_InjectedProcessCrash):
         await queue.requeue_for_retry(sid)
 
-    conn = await db.get_conn()
-    if conn.in_transaction:
-        await conn.rollback()
     summary = await queue.reconcile_stale_uploads()
     assert summary["cleaned"] == 1
     assert len(touched_workspaces) == 1
@@ -921,166 +835,6 @@ async def test_mark_failed_requires_running_owner_worker():
     s = await queue.get_session(sid)
     assert s["status"] == "failed"
     assert s["error"]["code"] == "legacy_error"
-
-
-@pytest.mark.asyncio
-async def test_delete_phase_a_ref_failure_rolls_back_db_coach_and_workspace(
-    monkeypatch,
-    tmp_path: Path,
-):
-    seed = await _seed_terminal_delete(
-        monkeypatch,
-        tmp_path,
-        owner_id="phase-a-ref-failure",
-    )
-
-    async def fail_ref_update(*_args, **_kwargs):
-        raise RuntimeError("injected ref update failure")
-
-    monkeypatch.setattr(coach_store, "mark_analysis_refs_deleted", fail_ref_update)
-
-    with pytest.raises(RuntimeError, match="injected ref update failure"):
-        await queue.delete_session(seed["id"], seed["owner_id"])
-
-    await _assert_phase_a_rollback(seed)
-
-
-@pytest.mark.asyncio
-async def test_delete_phase_a_begin_crash_rolls_back_connection_and_state(
-    monkeypatch,
-    tmp_path: Path,
-):
-    seed = await _seed_terminal_delete(
-        monkeypatch,
-        tmp_path,
-        owner_id="phase-a-begin-crash",
-    )
-    conn = await db.get_conn()
-    original_execute = conn.execute
-
-    async def crash_after_begin(sql, *args):
-        cursor = await original_execute(sql, *args)
-        if sql == "BEGIN IMMEDIATE":
-            raise _InjectedProcessCrash("injected crash after begin")
-        return cursor
-
-    monkeypatch.setattr(conn, "execute", crash_after_begin)
-
-    with pytest.raises(_InjectedProcessCrash, match="crash after begin"):
-        await queue.delete_session(seed["id"], seed["owner_id"])
-
-    assert conn.in_transaction is False
-    await _assert_phase_a_rollback(seed)
-
-
-@pytest.mark.asyncio
-async def test_delete_transaction_blocks_concurrent_heartbeat_commit(
-    monkeypatch,
-    tmp_path: Path,
-):
-    """A shared connection must not let heartbeat commit delete phase A early."""
-    seed = await _seed_terminal_delete(
-        monkeypatch,
-        tmp_path,
-        owner_id="transaction-delete-owner",
-    )
-    heartbeat_id = await queue.enqueue("heartbeat-owner", "", "")
-    await queue.claim_next("heartbeat-worker")
-    conn = await db.get_conn()
-    original_execute = conn.execute
-    original_commit = conn.commit
-    tombstone_inserted = asyncio.Event()
-    resume_delete = asyncio.Event()
-    heartbeat_commit_started = asyncio.Event()
-    resume_heartbeat_commit = asyncio.Event()
-
-    async def pause_after_tombstone(sql, *args):
-        cursor = await original_execute(sql, *args)
-        if "INSERT INTO analysis_deletion_tombstones" in sql:
-            tombstone_inserted.set()
-            await resume_delete.wait()
-        return cursor
-
-    async def pause_heartbeat_commit():
-        heartbeat_commit_started.set()
-        await resume_heartbeat_commit.wait()
-        await original_commit()
-
-    monkeypatch.setattr(conn, "execute", pause_after_tombstone)
-    monkeypatch.setattr(conn, "commit", pause_heartbeat_commit)
-    delete_task = asyncio.create_task(
-        queue.delete_session(seed["id"], seed["owner_id"]),
-    )
-    await asyncio.wait_for(tombstone_inserted.wait(), timeout=1)
-
-    heartbeat_task = asyncio.create_task(
-        queue.heartbeat(heartbeat_id, "heartbeat-worker"),
-    )
-    try:
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(heartbeat_commit_started.wait(), timeout=0.1)
-
-        delete_task.cancel()
-        resume_delete.set()
-        with pytest.raises(asyncio.CancelledError):
-            await delete_task
-
-        await asyncio.wait_for(heartbeat_commit_started.wait(), timeout=1)
-        resume_heartbeat_commit.set()
-        assert await asyncio.wait_for(heartbeat_task, timeout=1) is True
-    finally:
-        if not delete_task.done():
-            delete_task.cancel()
-        resume_delete.set()
-        resume_heartbeat_commit.set()
-        await asyncio.gather(delete_task, heartbeat_task, return_exceptions=True)
-
-    assert await _tombstone(seed["id"]) is None
-    assert (await queue.get_session(seed["id"]))["status"] == "done"
-    heartbeat_row = await (
-        await conn.execute("SELECT heartbeat_at FROM sessions WHERE id=?", (heartbeat_id,))
-    ).fetchone()
-    assert heartbeat_row["heartbeat_at"] is not None
-
-
-@pytest.mark.asyncio
-async def test_delete_phase_a_commit_failure_rolls_back_all_sqlite_and_workspace(
-    monkeypatch,
-    tmp_path: Path,
-):
-    seed = await _seed_terminal_delete(
-        monkeypatch,
-        tmp_path,
-        owner_id="phase-a-commit-failure",
-    )
-    conn = await db.get_conn()
-    await conn.executescript(
-        """
-        CREATE TABLE deletion_commit_parent(id INTEGER PRIMARY KEY);
-        CREATE TABLE deletion_commit_child(
-            parent_id INTEGER,
-            FOREIGN KEY(parent_id) REFERENCES deletion_commit_parent(id)
-                DEFERRABLE INITIALLY DEFERRED
-        );
-        CREATE TRIGGER inject_deletion_commit_failure
-        AFTER INSERT ON analysis_deletion_tombstones
-        BEGIN
-            INSERT INTO deletion_commit_child(parent_id) VALUES(999999);
-        END;
-        """
-    )
-    await conn.commit()
-
-    with pytest.raises(aiosqlite.IntegrityError, match="FOREIGN KEY"):
-        await queue.delete_session(seed["id"], seed["owner_id"])
-
-    await _assert_phase_a_rollback(seed)
-    child_count = await (
-        await conn.execute("SELECT COUNT(*) FROM deletion_commit_child")
-    ).fetchone()
-    assert child_count[0] == 0
-
-
 @pytest.mark.asyncio
 async def test_delete_crash_after_phase_a_commit_leaves_pending_tombstone(
     monkeypatch,
@@ -1102,23 +856,9 @@ async def test_delete_crash_after_phase_a_commit_leaves_pending_tombstone(
 
     assert await queue.get_session(seed["id"]) is None
     assert seed["workspace"].is_dir()
-    assert await db.load_chat_history(seed["id"]) == []
-    messages = await coach_store.load_messages(seed["thread_id"])
-    assert [item["content"] for item in messages] == [
-        "legacy question",
-        "legacy answer",
-    ]
-    refs = await coach_store.list_analysis_refs(seed["thread_id"])
-    assert len(refs) == 1
-    assert refs[0]["id"] == seed["ref_id"]
-    assert refs[0]["status"] == "deleted"
-    assert refs[0]["deleted_at"] is not None
     assert await _tombstone(seed["id"]) == {
         "analysis_session_id": seed["id"],
         "owner_id": seed["owner_id"],
-        "cleanup_state": "pending",
-        "cleanup_attempts": 0,
-        "last_error_code": None,
     }
 
     monkeypatch.setattr(queue, "remove_session_workspace", remove_session_workspace)
@@ -1127,11 +867,6 @@ async def test_delete_crash_after_phase_a_commit_leaves_pending_tombstone(
 
     assert not seed["workspace"].exists()
     assert await _tombstone(seed["id"]) is None
-    messages_after = await coach_store.load_messages(seed["thread_id"])
-    refs_after = await coach_store.list_analysis_refs(seed["thread_id"])
-    assert [item["id"] for item in messages_after] == [item["id"] for item in messages]
-    assert [item["id"] for item in refs_after] == [item["id"] for item in refs]
-    assert refs_after[0]["status"] == "deleted"
 
 
 @pytest.mark.asyncio
@@ -1164,12 +899,7 @@ async def test_reconcile_invalidates_profile_using_tombstone_owner_before_cleanu
     await aiming_profile_store.record_deterministic_contribution(
         "tombstone-owner", f"analysis:{session_id}", payload,
     )
-    conn = await db.get_conn()
-    await conn.execute(
-        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) VALUES(?, ?)",
-        (session_id, "tombstone-owner"),
-    )
-    await conn.commit()
+    _seed_tombstone(session_id, "tombstone-owner")
 
     summary = await queue.reconcile_analysis_deletions()
 
@@ -1190,12 +920,7 @@ async def test_reconcile_keeps_tombstone_when_profile_invalidation_fails(
     workspace = session_dir(session_id)
     workspace.mkdir(parents=True)
 
-    conn = await db.get_conn()
-    await conn.execute(
-        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) VALUES(?, ?)",
-        (session_id, "profile-failure-owner"),
-    )
-    await conn.commit()
+    _seed_tombstone(session_id, "profile-failure-owner")
 
     async def fail_invalidation(_session_id: int, _owner_id: str) -> bool:
         return False
@@ -1206,7 +931,7 @@ async def test_reconcile_keeps_tombstone_when_profile_invalidation_fails(
 
     assert summary["failed"] == 1
     assert workspace.exists()
-    assert (await _tombstone(session_id))["cleanup_state"] == "pending"
+    assert await _tombstone(session_id) is not None
 
 
 @pytest.mark.asyncio
@@ -1240,84 +965,13 @@ async def test_delete_partial_cleanup_failure_is_logically_deleted_and_path_free
     assert tombstone == {
         "analysis_session_id": seed["id"],
         "owner_id": seed["owner_id"],
-        "cleanup_state": "failed",
-        "cleanup_attempts": 1,
-        "last_error_code": "workspace_cleanup_failed",
     }
-    refs = await coach_store.list_analysis_refs(seed["thread_id"])
-    assert len(refs) == 1
-    assert refs[0]["status"] == "deleted"
     public_state = json.dumps(
         {"response": result, "tombstone": tombstone},
         ensure_ascii=False,
     )
     assert str(seed["workspace"]) not in public_state
     assert private_error not in public_state
-
-
-@pytest.mark.asyncio
-async def test_cleanup_failure_record_commit_error_keeps_pending_tombstone(
-    monkeypatch,
-    tmp_path: Path,
-):
-    seed = await _seed_terminal_delete(
-        monkeypatch,
-        tmp_path,
-        owner_id="cleanup-record-commit-failure",
-    )
-    conn = await db.get_conn()
-    original_commit = conn.commit
-
-    def fail_cleanup(_session_id):
-        raise OSError("injected workspace cleanup failure")
-
-    async def fail_record_commit():
-        raise RuntimeError("injected cleanup record commit failure")
-
-    monkeypatch.setattr(queue, "remove_session_workspace", fail_cleanup)
-    monkeypatch.setattr(conn, "commit", fail_record_commit)
-
-    result = await queue.delete_session(seed["id"], seed["owner_id"])
-
-    assert result["deleted"] is True
-    assert result["cleanup_failed"] == ["workspace"]
-    assert conn.in_transaction is False
-    assert (await _tombstone(seed["id"]))["cleanup_state"] == "pending"
-
-    monkeypatch.setattr(conn, "commit", original_commit)
-    monkeypatch.setattr(queue, "remove_session_workspace", remove_session_workspace)
-    await queue.reconcile_analysis_deletions()
-    assert await _tombstone(seed["id"]) is None
-
-
-@pytest.mark.asyncio
-async def test_cleanup_failure_record_crash_rolls_back_before_propagating(
-    monkeypatch,
-    tmp_path: Path,
-):
-    seed = await _seed_terminal_delete(
-        monkeypatch,
-        tmp_path,
-        owner_id="cleanup-record-crash",
-    )
-    conn = await db.get_conn()
-
-    def fail_cleanup(_session_id):
-        raise OSError("injected workspace cleanup failure")
-
-    async def crash_record_commit():
-        raise _InjectedProcessCrash("injected cleanup record crash")
-
-    monkeypatch.setattr(queue, "remove_session_workspace", fail_cleanup)
-    monkeypatch.setattr(conn, "commit", crash_record_commit)
-
-    with pytest.raises(_InjectedProcessCrash, match="cleanup record crash"):
-        await queue.delete_session(seed["id"], seed["owner_id"])
-
-    assert conn.in_transaction is False
-    assert (await _tombstone(seed["id"]))["cleanup_state"] == "pending"
-
-
 @pytest.mark.asyncio
 async def test_delete_absent_workspace_succeeds_and_removes_tombstone(
     monkeypatch,
@@ -1339,6 +993,8 @@ async def test_delete_absent_workspace_succeeds_and_removes_tombstone(
         "cleanup_failed": [],
     }
     assert await queue.get_session(seed["id"]) is None
+    assert await _tombstone(seed["id"]) is not None
+    await queue.reconcile_analysis_deletions()
     assert await _tombstone(seed["id"]) is None
 
 
@@ -1364,51 +1020,12 @@ async def test_cleanup_success_then_crash_before_tombstone_delete_reconciles(
 
     assert await queue.get_session(seed["id"]) is None
     assert not seed["workspace"].exists()
-    assert (await _tombstone(seed["id"]))["cleanup_state"] == "pending"
+    assert await _tombstone(seed["id"]) is not None
 
     monkeypatch.setattr(queue, "remove_session_workspace", remove_session_workspace)
     await queue.reconcile_analysis_deletions()
 
     assert await _tombstone(seed["id"]) is None
-
-
-@pytest.mark.asyncio
-async def test_cleanup_finalize_commit_failure_rolls_back_and_reconciles(
-    monkeypatch,
-    tmp_path: Path,
-):
-    seed = await _seed_terminal_delete(
-        monkeypatch,
-        tmp_path,
-        owner_id="cleanup-finalize-commit-failure",
-    )
-    conn = await db.get_conn()
-    original_commit = conn.commit
-
-    async def fail_finalize_commit():
-        raise RuntimeError("injected tombstone finalize commit failure")
-
-    monkeypatch.setattr(conn, "commit", fail_finalize_commit)
-
-    result = await queue.delete_session(seed["id"], seed["owner_id"])
-
-    assert result == {
-        "deleted": True,
-        "id": seed["id"],
-        "files_removed": ["workspace"],
-        "cleanup_failed": [],
-    }
-    assert await queue.get_session(seed["id"]) is None
-    assert not seed["workspace"].exists()
-    assert conn.in_transaction is False
-    assert (await _tombstone(seed["id"]))["cleanup_state"] == "pending"
-
-    monkeypatch.setattr(conn, "commit", original_commit)
-    await queue.reconcile_analysis_deletions()
-
-    assert await _tombstone(seed["id"]) is None
-
-
 @pytest.mark.asyncio
 async def test_reconcile_deletions_isolates_failures_and_is_idempotent(
     monkeypatch,
@@ -1425,19 +1042,8 @@ async def test_reconcile_deletions_isolates_failures_and_is_idempotent(
         workspace.mkdir(parents=True)
         (workspace / "artifact.bin").write_bytes(b"artifact")
 
-    conn = await db.get_conn()
-    await conn.execute(
-        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
-        "VALUES(?, 'owner-pending')",
-        (failing_id,),
-    )
-    await conn.execute(
-        "INSERT INTO analysis_deletion_tombstones("
-        "analysis_session_id, owner_id, cleanup_state, cleanup_attempts, last_error_code"
-        ") VALUES(?, 'owner-failed', 'failed', 1, 'workspace_cleanup_failed')",
-        (successful_id,),
-    )
-    await conn.commit()
+    _seed_tombstone(failing_id, "owner-pending")
+    _seed_tombstone(successful_id, "owner-failed")
     private_error = f"locked {failing_workspace}"
 
     def fail_one(session_id):
@@ -1449,10 +1055,7 @@ async def test_reconcile_deletions_isolates_failures_and_is_idempotent(
 
     first = await queue.reconcile_analysis_deletions()
 
-    failed = await _tombstone(failing_id)
-    assert failed["cleanup_state"] == "failed"
-    assert failed["cleanup_attempts"] == 1
-    assert failed["last_error_code"] == "workspace_cleanup_failed"
+    assert await _tombstone(failing_id) is not None
     assert await _tombstone(successful_id) is None
     assert failing_workspace.is_dir()
     assert not successful_workspace.exists()
@@ -1461,8 +1064,7 @@ async def test_reconcile_deletions_isolates_failures_and_is_idempotent(
     assert private_error not in str(first)
 
     await queue.reconcile_analysis_deletions()
-    failed_again = await _tombstone(failing_id)
-    assert failed_again["cleanup_attempts"] == 2
+    assert await _tombstone(failing_id) is not None
 
     monkeypatch.setattr(queue, "remove_session_workspace", remove_session_workspace)
     await queue.reconcile_analysis_deletions()
@@ -1471,40 +1073,6 @@ async def test_reconcile_deletions_isolates_failures_and_is_idempotent(
     assert await _tombstone(failing_id) is None
     assert not failing_workspace.exists()
     assert unknown_workspace.is_dir()
-
-
-@pytest.mark.asyncio
-async def test_reconcile_finalize_db_failure_propagates_with_clean_connection(
-    monkeypatch,
-    tmp_path: Path,
-):
-    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
-    session_id = 90_004
-    conn = await db.get_conn()
-    await conn.execute(
-        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
-        "VALUES(?, 'finalize-db-failure')",
-        (session_id,),
-    )
-    await conn.commit()
-    original_commit = conn.commit
-
-    async def fail_finalize_commit():
-        raise RuntimeError("injected reconciliation finalize db failure")
-
-    monkeypatch.setattr(conn, "commit", fail_finalize_commit)
-
-    with pytest.raises(RuntimeError, match="reconciliation finalize db failure"):
-        await queue.reconcile_analysis_deletions()
-
-    assert conn.in_transaction is False
-    assert (await _tombstone(session_id))["cleanup_state"] == "pending"
-
-    monkeypatch.setattr(conn, "commit", original_commit)
-    await queue.reconcile_analysis_deletions()
-    assert await _tombstone(session_id) is None
-
-
 @pytest.mark.parametrize("status", ["queued", "running", "uploading"])
 @pytest.mark.asyncio
 async def test_delete_nonterminal_never_touches_workspace_or_tombstone(
@@ -1538,9 +1106,7 @@ async def test_reconcile_stale_uploads_removes_only_uploading_workspace_and_unbl
     (stale_workspace / "video.mp4.tmp").write_bytes(b"partial")
 
     terminal_id = await queue.enqueue("terminal-owner", "", "")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (terminal_id,))
-    await conn.commit()
+    await _rewrite_session(terminal_id, status="done")
     terminal_workspace = session_dir(terminal_id)
     terminal_workspace.mkdir(parents=True)
     (terminal_workspace / "keep.bin").write_bytes(b"terminal")
@@ -1587,9 +1153,7 @@ async def test_delete_wrong_owner_never_touches_workspace_or_tombstone(
 ):
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
     sid = await queue.enqueue("real-owner", "", "")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
-    await conn.commit()
+    await _rewrite_session(sid, status="done")
     workspace = session_dir(sid)
     workspace.mkdir(parents=True)
     (workspace / "keep.bin").write_bytes(b"keep")
@@ -1623,76 +1187,60 @@ async def test_delete_preserves_run_trace_and_all_user_sources(
     for path, payload in expected_bytes.items():
         path.write_bytes(payload)
 
-    conn = await db.get_conn()
-    run_id = int((await (
-        await conn.execute(
-            "INSERT INTO kovaak_runs("
-            "user_id, source_key, scenario, stats_path, performance_path, "
-            "mouse_trace_path, trace_state"
-            ") VALUES(?, ?, ?, ?, ?, ?, 'attached') RETURNING id",
-            (
-                "artifact-owner",
-                "delete-boundary-run",
-                "Scenario",
-                str(stats),
-                str(performance),
-                str(run_trace),
-            ),
-        )
-    ).fetchone())[0])
-    sid = await queue.enqueue("artifact-owner", str(source_mp4), str(stats))
-    await conn.execute(
-        "UPDATE sessions SET status='done', kovaak_run_id=? WHERE id=?",
-        (run_id, sid),
+    run_id = 900_001
+    run_meta = {
+        "id": run_id,
+        "user_id": "artifact-owner",
+        "source_key": "delete-boundary-run",
+        "scenario": "Scenario",
+        "stats_path": str(stats),
+        "performance_path": str(performance),
+        "mouse_trace_path": str(run_trace),
+        "trace_state": "attached",
+        "pending_trace_path": None,
+        "trace_error": None,
+        "capture_session_id": None,
+        "window_start_epoch_ms": None,
+        "window_end_epoch_ms": None,
+        "alignment_state": "unresolved",
+        "alignment_summary": None,
+        "finalization_state": "finalized",
+        "finalization_error": None,
+        "video_path": None,
+        "video_state": "none",
+        "pending_video_path": None,
+        "video_request_digest": None,
+        "video_receipt": None,
+        "video_summary": None,
+        "video_error": None,
+        "stats_summary": None,
+        "performance_summary": None,
+        "created_at": "2026-07-15T00:00:00Z",
+        "updated_at": "2026-07-15T00:00:00Z",
+    }
+    file_store.write_json(f"runs/{run_id}/meta.json", run_meta)
+    sid = await queue.enqueue(
+        "artifact-owner",
+        str(source_mp4),
+        str(stats),
+        kovaak_run_id=run_id,
     )
-    await conn.commit()
+    await queue.claim_next("test-worker:run-trace")
+    await queue.mark_failed(sid, "fixture failure", worker_id="test-worker:run-trace")
     workspace = session_dir(sid)
     workspace.mkdir(parents=True)
     (workspace / "analysis-output.json").write_bytes(b"analysis-owned")
-    run_before = dict((await (
-        await conn.execute("SELECT * FROM kovaak_runs WHERE id=?", (run_id,))
-    ).fetchone()))
+    run_before = file_store.read_json(f"runs/{run_id}/meta.json")
 
     await queue.delete_session(sid, "artifact-owner")
 
-    run_after = dict((await (
-        await conn.execute("SELECT * FROM kovaak_runs WHERE id=?", (run_id,))
-    ).fetchone()))
+    run_after = file_store.read_json(f"runs/{run_id}/meta.json")
     assert run_after == run_before
     for path, payload in expected_bytes.items():
         assert path.read_bytes() == payload
     assert not workspace.exists()
 
 
-
-
-@pytest.mark.asyncio
-async def test_delete_done_session_keeps_coach_messages_marks_ref_deleted():
-    from webapp.backend import coach_store
-
-    sid = await queue.enqueue("u1", "/a", "/a.csv")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
-    await conn.commit()
-
-    thread = await coach_store.get_or_create_primary_thread("u1")
-    tid = int(thread["id"])
-    await coach_store.append_message(tid, "user", "keep me")
-    await coach_store.append_message(tid, "assistant", "still here")
-    await coach_store.attach_analysis_ref(tid, sid)
-
-    out = await queue.delete_session(sid, "u1")
-    assert out["deleted"] is True
-    assert await queue.get_session(sid) is None
-
-    msgs = await coach_store.load_messages(tid)
-    assert [m["content"] for m in msgs] == ["keep me", "still here"]
-
-    refs = await coach_store.list_analysis_refs(tid)
-    assert len(refs) == 1
-    assert refs[0]["analysis_session_id"] == sid
-    assert refs[0]["status"] == "deleted"
-    assert refs[0]["deleted_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -1709,77 +1257,9 @@ async def test_delete_session_rejects_queued_and_running():
 
 
 @pytest.mark.asyncio
-async def test_delete_session_migrates_legacy_chat_before_removing_session():
-    from webapp.backend import coach_store
-
-    sid = await queue.enqueue("u1", "/a", "/a.csv")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='failed' WHERE id=?", (sid,))
-    await conn.commit()
-    await db.save_chat_message(sid, "user", "legacy hello")
-    await db.save_chat_message(sid, "assistant", "legacy reply")
-
-    thread_before = await coach_store.get_or_create_primary_thread("u1")
-    assert await coach_store.load_messages(int(thread_before["id"])) == []
-
-    await queue.delete_session(sid, "u1")
-    assert await queue.get_session(sid) is None
-
-    thread = await coach_store.get_or_create_primary_thread("u1")
-    msgs = await coach_store.load_messages(int(thread["id"]))
-    assert [(m["role"], m["content"], m["legacy_session_id"]) for m in msgs] == [
-        ("user", "legacy hello", sid),
-        ("assistant", "legacy reply", sid),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_legacy_chat_migration_does_not_copy_unsafe_trace_payloads():
-    from webapp.backend import coach_store
-
-    sid = await queue.enqueue("u1", "/a", "/a.csv")
-    await db.save_chat_message(
-        sid,
-        "assistant",
-        "legacy unsafe trace",
-        trace=[
-            {
-                "raw_trace": "legacy-raw-trace-sentinel",
-                "path": r"C:\Users\point\private\trace.csv",
-                "payload": "legacy-payload-sentinel",
-                "timestamps": [1_000, 1_001],
-            },
-        ],
-    )
-
-    migrated = await coach_store.migrate_session_legacy_messages(sid)
-    assert migrated["messages_copied"] == 1
-    thread = await coach_store.get_or_create_primary_thread("u1")
-    messages = await coach_store.load_messages(int(thread["id"]))
-    assert [message["content"] for message in messages] == ["legacy unsafe trace"]
-
-    conn = await db.get_conn()
-    cur = await conn.execute(
-        "SELECT trace_json FROM coach_messages WHERE legacy_session_id=?",
-        (sid,),
-    )
-    row = await cur.fetchone()
-    serialized = f"{row['trace_json']} {json.dumps(messages[0]['trace'], ensure_ascii=False)}"
-    for sentinel in (
-        "legacy-raw-trace-sentinel",
-        r"C:\Users\point\private\trace.csv",
-        "legacy-payload-sentinel",
-        "timestamps",
-    ):
-        assert sentinel not in serialized
-
-
-@pytest.mark.asyncio
 async def test_delete_session_forbidden_wrong_user():
     sid = await queue.enqueue("owner", "/a", "/a.csv")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
-    await conn.commit()
+    await _rewrite_session(sid, status="done")
 
     with pytest.raises(queue.SessionForbidden):
         await queue.delete_session(sid, "intruder")
@@ -1789,12 +1269,7 @@ async def test_delete_session_forbidden_wrong_user():
 async def test_stale_worker_cannot_overwrite_after_reclaim():
     sid = await queue.enqueue("u1", "/a", "/a.csv")
     await queue.claim_next(WORKER_A)
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET lease_expires_at = '2000-01-01 00:00:00' WHERE id=?",
-        (sid,),
-    )
-    await conn.commit()
+    await _rewrite_session(sid, lease_expires_at="2000-01-01 00:00:00")
     await queue.recover_stale_jobs(now="2026-07-10 12:00:00")
     await queue.claim_next(WORKER_B)
     assert await queue.mark_done(

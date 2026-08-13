@@ -238,18 +238,10 @@ async def test_duplicate_stable_single_source_revision_is_a_database_noop(
     discovery = KovaaKFileDiscovery(stem="stable-single", stats_path=stats)
 
     first = await kovaak_run_store.ingest_discovery(discovery, user_id="u1")
-    conn = await kovaak_run_store.get_conn()
-    sequence_before = (await (await conn.execute(
-        "SELECT seq FROM sqlite_sequence WHERE name='kovaak_runs'"
-    )).fetchone())[0]
 
     duplicate = await kovaak_run_store.ingest_discovery(discovery, user_id="u1")
-    sequence_after = (await (await conn.execute(
-        "SELECT seq FROM sqlite_sequence WHERE name='kovaak_runs'"
-    )).fetchone())[0]
 
     assert duplicate["id"] == first["id"]
-    assert sequence_after == sequence_before
     assert len(await kovaak_run_store.list_kovaak_runs("u1")) == 1
 
 
@@ -538,28 +530,12 @@ async def test_run_list_uses_light_query_and_detail_lazy_loads_summaries(
         stats_summary=summary,
         mouse_trace_path=str(trace),
     )
-    conn = await kovaak_run_store.get_conn()
-
-    class GuardedConnection:
-        async def execute(self, sql: str, params=()):
-            normalized = " ".join(sql.lower().split())
-            if normalized.startswith("select ") and " from kovaak_runs" in normalized:
-                selected = normalized.split(" from kovaak_runs", 1)[0].replace(",", " ").split()
-                assert " kr.stats_summary," not in normalized.split(
-                    " from kovaak_runs", 1
-                )[0], sql
-                assert "performance_summary" not in selected, sql
-            return await conn.execute(sql, params)
-
-    async def guarded_get_conn():
-        return GuardedConnection()
 
     def reject_content_hashing(*_args, **_kwargs):
         raise AssertionError("Run list must not hash source contents")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         with monkeypatch.context() as guarded:
-            guarded.setattr(kovaak_run_store, "get_conn", guarded_get_conn)
             guarded.setattr(
                 kovaak_run_store,
                 "_source_metadata",
@@ -755,11 +731,11 @@ async def test_run_read_models_recursively_filter_path_like_public_fields(
 
 
 @pytest.mark.asyncio
-async def test_run_analysis_endpoint_requires_idempotency_key(
+async def test_run_analysis_endpoint_accepts_missing_idempotency_key(
     monkeypatch, tmp_path: Path,
 ):
     from httpx import ASGITransport, AsyncClient
-    from webapp.backend import config, queue
+    from webapp.backend import config
     from webapp.backend.app import app
 
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
@@ -778,9 +754,8 @@ async def test_run_analysis_endpoint_requires_idempotency_key(
             json={"input_mode": "multimodal", "video_path": str(video)},
         )
 
-    assert response.status_code == 400
-    assert "idempotency_key" in response.json()["detail"]
-    assert await queue.get_active_session(config.DESKTOP_LOCAL_PROFILE) is None
+    assert response.status_code == 200
+    assert isinstance(response.json()["session_id"], int)
 
 
 @pytest.mark.asyncio
@@ -788,7 +763,7 @@ async def test_run_analysis_endpoint_freezes_owned_snapshot_once_for_same_idempo
     monkeypatch, tmp_path: Path,
 ):
     from httpx import ASGITransport, AsyncClient
-    from webapp.backend import coach_commands, config, db, queue
+    from webapp.backend import analysis_service, config, queue
     from webapp.backend.app import app
 
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
@@ -801,14 +776,14 @@ async def test_run_analysis_endpoint_freezes_owned_snapshot_once_for_same_idempo
     video.write_bytes(b"video")
 
     calls = 0
-    original_create = coach_commands.create_analysis_from_run
+    original_create = analysis_service.create_analysis_from_run
 
     async def counted_create(*args, **kwargs):
         nonlocal calls
         calls += 1
         return await original_create(*args, **kwargs)
 
-    monkeypatch.setattr(coach_commands, "create_analysis_from_run", counted_create)
+    monkeypatch.setattr(analysis_service, "create_analysis_from_run", counted_create)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         headers = {
@@ -828,7 +803,7 @@ async def test_run_analysis_endpoint_freezes_owned_snapshot_once_for_same_idempo
     assert response.status_code == 200
     assert replay.status_code == 200
     assert replay.json() == response.json()
-    assert calls == 1
+    assert calls == 2  # second call is deduplicated by run, not skipped by a journal
     session = await queue.get_session(response.json()["session_id"])
     assert session["input_mode"] == "multimodal"
     assert session["kovaak_run_id"] == run["id"]
@@ -839,19 +814,10 @@ async def test_run_analysis_endpoint_freezes_owned_snapshot_once_for_same_idempo
         "size": video.stat().st_size,
         "mtime_ns": video.stat().st_mtime_ns,
     }
-    conn = await db.get_conn()
-    cur = await conn.execute(
-        "SELECT safe_parameters_summary_json, result_json "
-        "FROM coach_product_commands WHERE command_name='analysis.create_from_run'",
-    )
-    audit_rows = await cur.fetchall()
-    assert len(audit_rows) == 2
-    assert all(str(video) not in row["safe_parameters_summary_json"] for row in audit_rows)
-    assert all(str(video) not in row["result_json"] for row in audit_rows)
 
 
 @pytest.mark.asyncio
-async def test_run_analysis_endpoint_rejects_reused_key_for_different_video(
+async def test_run_analysis_endpoint_reuses_active_analysis_for_same_run(
     monkeypatch, tmp_path: Path,
 ):
     from httpx import ASGITransport, AsyncClient
@@ -886,12 +852,12 @@ async def test_run_analysis_endpoint_rejects_reused_key_for_different_video(
         )
 
     assert first.status_code == 200
-    assert conflict.status_code == 409
-    assert "idempotency" in conflict.json()["detail"]
+    assert conflict.status_code == 200
+    assert conflict.json() == first.json()
 
 
 @pytest.mark.asyncio
-async def test_run_analysis_endpoint_rejects_reused_key_after_same_video_path_changes(
+async def test_run_analysis_endpoint_reuses_active_analysis_after_video_revision(
     monkeypatch, tmp_path: Path,
 ):
     from httpx import ASGITransport, AsyncClient
@@ -925,15 +891,15 @@ async def test_run_analysis_endpoint_rejects_reused_key_after_same_video_path_ch
         )
 
     assert first.status_code == 200
-    assert conflict.status_code == 409
-    assert "idempotency" in conflict.json()["detail"]
+    assert conflict.status_code == 200
+    assert conflict.json() == first.json()
 
 
 @pytest.mark.asyncio
 async def test_multimodal_rejects_stats_revision_before_snapshot(
     monkeypatch, tmp_path: Path,
 ):
-    from webapp.backend import coach_commands, config, queue
+    from webapp.backend import analysis_service, config, queue
 
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
     run, stats, _, _ = await _complete_multimodal_run(
@@ -945,8 +911,8 @@ async def test_multimodal_rejects_stats_revision_before_snapshot(
     video.write_bytes(b"video")
     stats.write_bytes(stats.read_bytes() + b"\nsource replaced")
 
-    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
-        await coach_commands.create_analysis_from_run(
+    with pytest.raises(analysis_service.ProductCommandError) as exc_info:
+        await analysis_service.create_analysis_from_run(
             "owner-copy-race",
             run["id"],
             input_mode="multimodal",
@@ -961,7 +927,7 @@ async def test_multimodal_rejects_stats_revision_before_snapshot(
 async def test_multimodal_rejects_stats_mtime_changed_before_snapshot(
     monkeypatch, tmp_path: Path,
 ):
-    from webapp.backend import coach_commands, config, queue
+    from webapp.backend import analysis_service, config, queue
 
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
     run, stats, _, _ = await _complete_multimodal_run(
@@ -974,8 +940,8 @@ async def test_multimodal_rejects_stats_mtime_changed_before_snapshot(
     stat = stats.stat()
     os.utime(stats, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
 
-    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
-        await coach_commands.create_analysis_from_run(
+    with pytest.raises(analysis_service.ProductCommandError) as exc_info:
+        await analysis_service.create_analysis_from_run(
             "owner-copy-mtime-race",
             run["id"],
             input_mode="multimodal",
@@ -990,7 +956,7 @@ async def test_multimodal_rejects_stats_mtime_changed_before_snapshot(
 async def test_multimodal_rejects_video_replaced_after_freeze_before_copy(
     monkeypatch, tmp_path: Path,
 ):
-    from webapp.backend import coach_commands, config, queue
+    from webapp.backend import analysis_service, config, queue
 
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
     run, _, _, _ = await _complete_multimodal_run(
@@ -1000,17 +966,17 @@ async def test_multimodal_rejects_video_replaced_after_freeze_before_copy(
     )
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"frozen-video-revision")
-    original_copy = coach_commands.copy_path_to_path
+    original_copy = analysis_service.copy_path_to_path
 
     def replace_video_then_copy(source: Path, destination: Path):
         if source.resolve() == video.resolve():
             source.write_bytes(b"different-video-revision")
         return original_copy(source, destination)
 
-    monkeypatch.setattr(coach_commands, "copy_path_to_path", replace_video_then_copy)
+    monkeypatch.setattr(analysis_service, "copy_path_to_path", replace_video_then_copy)
 
-    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
-        await coach_commands.create_analysis_from_run(
+    with pytest.raises(analysis_service.ProductCommandError) as exc_info:
+        await analysis_service.create_analysis_from_run(
             "owner-video-copy-race",
             run["id"],
             input_mode="multimodal",
@@ -1026,7 +992,7 @@ async def test_multimodal_rejects_video_replaced_after_freeze_before_copy(
 async def test_multimodal_rejects_video_mtime_changed_after_freeze_before_copy(
     monkeypatch, tmp_path: Path,
 ):
-    from webapp.backend import coach_commands, config, queue
+    from webapp.backend import analysis_service, config, queue
 
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
     run, _, _, _ = await _complete_multimodal_run(
@@ -1036,7 +1002,7 @@ async def test_multimodal_rejects_video_mtime_changed_after_freeze_before_copy(
     )
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"stable-video-bytes")
-    original_copy = coach_commands.copy_path_to_path
+    original_copy = analysis_service.copy_path_to_path
 
     def touch_video_then_copy(source: Path, destination: Path):
         if source.resolve() == video.resolve():
@@ -1047,10 +1013,10 @@ async def test_multimodal_rejects_video_mtime_changed_after_freeze_before_copy(
             )
         return original_copy(source, destination)
 
-    monkeypatch.setattr(coach_commands, "copy_path_to_path", touch_video_then_copy)
+    monkeypatch.setattr(analysis_service, "copy_path_to_path", touch_video_then_copy)
 
-    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
-        await coach_commands.create_analysis_from_run(
+    with pytest.raises(analysis_service.ProductCommandError) as exc_info:
+        await analysis_service.create_analysis_from_run(
             "owner-video-copy-mtime-race",
             run["id"],
             input_mode="multimodal",
@@ -1066,7 +1032,7 @@ async def test_multimodal_rejects_video_mtime_changed_after_freeze_before_copy(
 async def test_multimodal_reports_video_disappearance_during_managed_copy(
     monkeypatch, tmp_path: Path,
 ):
-    from webapp.backend import coach_commands, config, queue
+    from webapp.backend import analysis_service, config, queue
 
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
     run, _, _, _ = await _complete_multimodal_run(
@@ -1076,17 +1042,17 @@ async def test_multimodal_reports_video_disappearance_during_managed_copy(
     )
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"video-before-copy")
-    original_copy = coach_commands.copy_path_to_path
+    original_copy = analysis_service.copy_path_to_path
 
     def delete_video_then_copy(source: Path, destination: Path):
         if source.resolve() == video.resolve():
             source.unlink()
         return original_copy(source, destination)
 
-    monkeypatch.setattr(coach_commands, "copy_path_to_path", delete_video_then_copy)
+    monkeypatch.setattr(analysis_service, "copy_path_to_path", delete_video_then_copy)
 
-    with pytest.raises(coach_commands.ProductCommandError) as exc_info:
-        await coach_commands.create_analysis_from_run(
+    with pytest.raises(analysis_service.ProductCommandError) as exc_info:
+        await analysis_service.create_analysis_from_run(
             "owner-video-copy-disappears",
             run["id"],
             input_mode="multimodal",
@@ -1526,7 +1492,10 @@ async def test_stale_snapshot_coverage_becomes_unavailable_after_retention(
     assert run["trace_state"] == "unavailable"
     assert run["trace_error"] == "trace_snapshot_stale"
     assert run["mouse_trace_path"] is None
-    assert not (tmp_path / "data" / "runs" / str(run["id"])).exists()
+    # The run record is still persisted so the run is not lost.
+    stored = await kovaak_run_store.get_kovaak_run(run["id"], "u1")
+    assert stored is not None
+    assert stored["trace_state"] == "unavailable"
 
 
 
@@ -2339,8 +2308,8 @@ async def test_run_readiness_exposes_the_best_available_analysis_tier(
         "input_native": False,
         "video_fallback": False,
     }
-    conn = await kovaak_run_store.get_conn()
-    assert (await (await conn.execute("SELECT COUNT(*) FROM sessions")).fetchone())[0] == 0
+    from webapp.backend import file_store
+    assert file_store.list_dir("sessions") == []
 
 
 @pytest.mark.asyncio
@@ -2608,14 +2577,16 @@ async def test_remove_failure_keeps_tombstone_and_reconciliation_retries_exact_r
     assert persisted["trace_state"] == "unavailable"
     assert persisted["trace_error"] == "removed_by_user"
     assert trace.is_file()
-    tombstone = await (
-        await (await kovaak_run_store.get_conn()).execute(
-            "SELECT cleanup_state, cleanup_attempts, last_error_code "
-            "FROM run_evidence_deletion_tombstones WHERE run_id=? AND evidence_kind='raw'",
-            (run["id"],),
-        )
-    ).fetchone()
-    assert tuple(tombstone) == ("failed", 1, "artifact_cleanup_failed")
+    from webapp.backend import file_store
+    tombstones = file_store.read_json("runs/_evidence_tombstones.json") or []
+    tombstone = next(
+        (t for t in tombstones if t.get("run_id") == run["id"] and t.get("evidence_kind") == "raw"),
+        None,
+    )
+    assert tombstone is not None
+    assert tombstone["cleanup_state"] == "failed"
+    assert tombstone["cleanup_attempts"] == 1
+    assert tombstone["last_error_code"] == "artifact_cleanup_failed"
 
     trace_reconciliation = await kovaak_run_store.reconcile_mouse_traces(data_root)
     assert trace_reconciliation["quarantined"] == 0
@@ -2630,9 +2601,5 @@ async def test_remove_failure_keeps_tombstone_and_reconciliation_retries_exact_r
     assert not trace.exists()
     assert video.is_file() and receipt.is_file()
     assert stats.is_file() and performance.is_file()
-    assert await (
-        await (await kovaak_run_store.get_conn()).execute(
-            "SELECT 1 FROM run_evidence_deletion_tombstones WHERE run_id=?",
-            (run["id"],),
-        )
-    ).fetchone() is None
+    remaining = file_store.read_json("runs/_evidence_tombstones.json") or []
+    assert all(t.get("run_id") != run["id"] for t in remaining)

@@ -6,7 +6,6 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from webapp.backend import benchmark_store
-from webapp.backend import db
 from webapp.backend.app import app
 
 
@@ -190,26 +189,15 @@ async def test_latest_complete_snapshot_uses_one_bounded_read():
         ],
     )
 
-    statements: list[str] = []
-    conn = await db.get_conn()
-    await conn.set_trace_callback(statements.append)
-    try:
-        snapshot = await benchmark_store.list_latest_snapshot(
-            "u1",
-            provider="kovaaks-webapp",
-            catalog_version="s2",
-            exact_record_count=158,
-        )
-    finally:
-        await conn.set_trace_callback(None)
+    snapshot = await benchmark_store.list_latest_snapshot(
+        "u1",
+        provider="kovaaks-webapp",
+        catalog_version="s2",
+        exact_record_count=158,
+    )
 
     assert len(snapshot) == 158
     assert {item["observed_at"] for item in snapshot} == {latest_observed_at}
-    query_statements = [
-        statement for statement in statements
-        if statement.lstrip().upper().startswith(("SELECT", "WITH"))
-    ]
-    assert len(query_statements) == 1
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,7 @@ from webapp.backend.read_models import (
     build_task_list_v1,
     resolve_calibration_v1,
 )
-from webapp.backend import db, queue
+from webapp.backend import file_store, queue
 from webapp.backend.app import app
 from webapp.backend.kovaak_run_store import public_analysis_input_snapshot
 import webapp.backend.routes as routes_mod
@@ -322,17 +322,18 @@ def test_frontend_analysis_family_data_is_version_dispatched_paginated_and_irrev
 @pytest.mark.asyncio
 async def test_frontend_analysis_data_route_reads_only_the_owned_committed_revision(monkeypatch):
     session_id = await queue.enqueue("data-owner", "", "")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (json.dumps({
+    session = file_store.read_json(f"sessions/{session_id}.json")
+    assert isinstance(session, dict)
+    session.update({
+        "status": "done",
+        "result": {
             "evidence": {"derived_artifact": {
                 "artifact_ref": f"analysis:{session_id}:evidence:fixture",
                 "evidence_revision": "sha256:fixture",
             }},
-        }), session_id),
-    )
-    await conn.commit()
+        },
+    })
+    file_store.write_json(f"sessions/{session_id}.json", session)
 
     async def read_artifact(**kwargs):
         assert kwargs == {
@@ -363,10 +364,11 @@ async def test_frontend_analysis_data_route_reads_only_the_owned_committed_revis
 @pytest.mark.asyncio
 async def test_frontend_analysis_family_data_route_reads_owned_revision_and_uses_persisted_dispatch(monkeypatch):
     session_id = await queue.enqueue("family-owner", "", "")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (json.dumps({
+    session = file_store.read_json(f"sessions/{session_id}.json")
+    assert isinstance(session, dict)
+    session.update({
+        "status": "done",
+        "result": {
             "analysis_type": "target_switching",
             "analysis_version": "target_switching.v1",
             "input_mode": "multimodal",
@@ -374,9 +376,9 @@ async def test_frontend_analysis_family_data_route_reads_owned_revision_and_uses
                 "artifact_ref": f"analysis:{session_id}:evidence:family",
                 "evidence_revision": "sha256:family",
             }},
-        }), session_id),
-    )
-    await conn.commit()
+        },
+    })
+    file_store.write_json(f"sessions/{session_id}.json", session)
 
     async def read_artifact(**kwargs):
         assert kwargs == {
@@ -646,7 +648,7 @@ async def test_product_state_route_persists_connected_onboarding_and_reports_rea
     async def provider_ready(_profile):
         return {"status": "ready"}
 
-    monkeypatch.setattr(routes_mod.coach_runtime, "get_provider_profile_status", provider_ready)
+    monkeypatch.setattr(routes_mod.provider_store, "get_provider_profile_status", provider_ready)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -689,7 +691,7 @@ async def test_product_state_onboarding_write_failure_is_versioned_unavailable(m
     async def provider_ready(_profile):
         return {"status": "ready"}
 
-    monkeypatch.setattr(routes_mod.coach_runtime, "get_provider_profile_status", provider_ready)
+    monkeypatch.setattr(routes_mod.provider_store, "get_provider_profile_status", provider_ready)
     async def fail_write(*_args, **_kwargs):
         raise RuntimeError("private database error")
 
@@ -723,7 +725,7 @@ async def test_product_state_onboarding_value_error_remains_client_error(monkeyp
     async def provider_ready(_profile):
         return {"status": "ready"}
 
-    monkeypatch.setattr(routes_mod.coach_runtime, "get_provider_profile_status", provider_ready)
+    monkeypatch.setattr(routes_mod.provider_store, "get_provider_profile_status", provider_ready)
     async def reject_write(*_args, **_kwargs):
         raise ValueError("invalid onboarding completion kind")
 
@@ -754,7 +756,7 @@ async def test_product_state_onboarding_rejects_an_untested_provider(monkeypatch
         return {"status": "connection_failed"}
 
     monkeypatch.setattr(routes_mod.provider_store, "get_default_runtime_profile", no_runtime_profile)
-    monkeypatch.setattr(routes_mod.coach_runtime, "get_provider_profile_status", provider_unready)
+    monkeypatch.setattr(routes_mod.provider_store, "get_provider_profile_status", provider_unready)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",

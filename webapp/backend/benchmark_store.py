@@ -1,13 +1,14 @@
-"""Owner-scoped, provider-neutral local Benchmark records."""
+"""Owner-scoped, provider-neutral local Benchmark records (JSON file backed)."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 from typing import Any
 
-from .db import get_conn
+from . import file_store
 
+_SCORES_PATH = "training/scores.json"
 _AVAILABILITY = {"available", "stale", "unavailable"}
 _REQUIRED_TEXT = (
     "provider",
@@ -18,6 +19,10 @@ _REQUIRED_TEXT = (
     "unit",
     "observed_at",
 )
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _validate_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -54,105 +59,70 @@ def _validate_record(record: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _load_all() -> list[dict[str, Any]]:
+    data = file_store.read_json(_SCORES_PATH)
+    if data is None:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _save_all(records: list[dict[str, Any]]) -> None:
+    file_store.write_json(_SCORES_PATH, records)
+
+
+def _next_id(records: list[dict[str, Any]]) -> int:
+    return max((r.get("id", 0) for r in records), default=0) + 1
+
+
 async def create_record(user_id: str, record: dict[str, Any]) -> dict:
     value = _validate_record(record)
-    conn = await get_conn()
-    cur = await conn.execute(
-        "INSERT INTO benchmark_records(user_id, provider, provider_license_note, "
-        "catalog_version, scenario_id, metric_key, unit, value, observed_at, "
-        "availability, external_identity_ref, identity_consent) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-        (
-            user_id,
-            value["provider"],
-            value["provider_license_note"],
-            value["catalog_version"],
-            value["scenario_id"],
-            value["metric_key"],
-            value["unit"],
-            value["value"],
-            value["observed_at"],
-            value["availability"],
-            value["external_identity_ref"],
-            1 if value["identity_consent"] else 0,
-        ),
-    )
-    row = await cur.fetchone()
-    await conn.commit()
-    return await get_record(int(row["id"]), user_id)
+    records = _load_all()
+    value["id"] = _next_id(records)
+    value["user_id"] = user_id
+    value["created_at"] = _utc_now()
+    records.append(value)
+    _save_all(records)
+    return await get_record(value["id"], user_id)
 
 
 async def create_records_atomically(
     user_id: str,
     records: list[dict[str, Any]],
 ) -> list[dict]:
-    """Validate the complete snapshot before committing any of its records."""
     if not records:
         raise ValueError("records are required")
     values = [_validate_record(record) for record in records]
-    conn = await get_conn()
-    await conn.execute("BEGIN IMMEDIATE")
-    try:
-        await conn.executemany(
-            "INSERT INTO benchmark_records(user_id, provider, provider_license_note, "
-            "catalog_version, scenario_id, metric_key, unit, value, observed_at, "
-            "availability, external_identity_ref, identity_consent) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    user_id,
-                    value["provider"],
-                    value["provider_license_note"],
-                    value["catalog_version"],
-                    value["scenario_id"],
-                    value["metric_key"],
-                    value["unit"],
-                    value["value"],
-                    value["observed_at"],
-                    value["availability"],
-                    value["external_identity_ref"],
-                    1 if value["identity_consent"] else 0,
-                )
-                for value in values
-            ],
-        )
-        await conn.commit()
-    except BaseException:
-        await conn.rollback()
-        raise
+    existing = _load_all()
+    next_id = _next_id(existing)
+    now = _utc_now()
+    for value in values:
+        value["id"] = next_id
+        next_id += 1
+        value["user_id"] = user_id
+        value["created_at"] = now
+        existing.append(value)
+    _save_all(existing)
     return values
 
 
 async def get_record(record_id: int, user_id: str) -> dict | None:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id, provider, provider_license_note, catalog_version, scenario_id, "
-        "metric_key, unit, value, observed_at, availability, external_identity_ref, "
-        "identity_consent, created_at FROM benchmark_records WHERE id=? AND user_id=?",
-        (record_id, user_id),
-    )
-    row = await cur.fetchone()
-    if row is None:
-        return None
-    out = dict(row)
-    out["identity_consent"] = bool(out["identity_consent"])
-    return out
+    for record in _load_all():
+        if record.get("id") == record_id and record.get("user_id") == user_id:
+            out = dict(record)
+            out["identity_consent"] = bool(out.get("identity_consent"))
+            return out
+    return None
 
 
 async def list_records(user_id: str) -> list[dict]:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id, provider, provider_license_note, catalog_version, scenario_id, "
-        "metric_key, unit, value, observed_at, availability, external_identity_ref, "
-        "identity_consent, created_at FROM benchmark_records WHERE user_id=? "
-        "ORDER BY observed_at DESC, id DESC",
-        (user_id,),
-    )
     records = []
-    for row in await cur.fetchall():
-        out = dict(row)
-        out["identity_consent"] = bool(out["identity_consent"])
+    for record in _load_all():
+        if record.get("user_id") != user_id:
+            continue
+        out = dict(record)
+        out["identity_consent"] = bool(out.get("identity_consent"))
         records.append(out)
+    records.sort(key=lambda r: (r.get("observed_at", ""), r.get("id", 0)), reverse=True)
     return records
 
 
@@ -163,40 +133,30 @@ async def list_latest_snapshot(
     catalog_version: str,
     exact_record_count: int | None = None,
 ) -> list[dict]:
-    """Return one owner-scoped successful import snapshot, never a mixed history."""
-    conn = await get_conn()
-    cur = await conn.execute(
-        "WITH latest_snapshot AS ("
-        "SELECT observed_at FROM benchmark_records "
-        "WHERE user_id=? AND provider=? AND catalog_version=? AND availability='available' "
-        "GROUP BY observed_at "
-        "HAVING ? IS NULL OR COUNT(*)=? "
-        "ORDER BY observed_at DESC LIMIT 1"
-        ") "
-        "SELECT id, provider, provider_license_note, catalog_version, scenario_id, "
-        "metric_key, unit, value, observed_at, availability, external_identity_ref, "
-        "identity_consent, created_at FROM benchmark_records "
-        "WHERE user_id=? AND provider=? AND catalog_version=? "
-        "AND availability='available' "
-        "AND observed_at=(SELECT observed_at FROM latest_snapshot) "
-        "ORDER BY id",
-        (
-            user_id,
-            provider,
-            catalog_version,
-            exact_record_count,
-            exact_record_count,
-            user_id,
-            provider,
-            catalog_version,
-        ),
-    )
-    records = []
-    for row in await cur.fetchall():
-        record = dict(row)
-        record["identity_consent"] = bool(record["identity_consent"])
-        records.append(record)
-    return records
+    all_records = _load_all()
+    matching = [
+        r for r in all_records
+        if r.get("user_id") == user_id
+        and r.get("provider") == provider
+        and r.get("catalog_version") == catalog_version
+        and r.get("availability") == "available"
+    ]
+    if not matching:
+        return []
+    observed_at_values = {}
+    for r in matching:
+        observed_at_values.setdefault(r["observed_at"], []).append(r)
+    sorted_dates = sorted(observed_at_values.keys(), reverse=True)
+    for latest_date in sorted_dates:
+        group = observed_at_values[latest_date]
+        if exact_record_count is None or len(group) == exact_record_count:
+            result = []
+            for record in sorted(group, key=lambda r: r.get("id", 0)):
+                out = dict(record)
+                out["identity_consent"] = bool(out.get("identity_consent"))
+                result.append(out)
+            return result
+    return []
 
 
 def comparable(left: dict, right: dict) -> bool:

@@ -8,7 +8,6 @@ from typing import Any, Mapping
 from . import (
     benchmark_catalog,
     benchmark_store,
-    coach_context_refs,
     kovaak_benchmark_provider,
     kovaak_connection_store,
 )
@@ -180,7 +179,7 @@ async def refresh_connected_score_summary(owner_id: str) -> dict:
     await refresh_connected_snapshot(owner_id)
     catalog = benchmark_catalog.load_catalog()
     return project_score_summary(
-        coach_context_refs.project_benchmark_summary(
+        benchmark_catalog.project_benchmark_summary(
             await benchmark_store.list_latest_snapshot(
                 owner_id,
                 provider="kovaaks-webapp",
@@ -195,4 +194,4 @@ async def project_temporary_snapshot(steam_profile_input: str) -> dict:
     steam_id = kovaak_benchmark_provider.normalize_steam_profile_input(steam_profile_input)
     snapshot = await kovaak_benchmark_provider.fetch_viscose_s2(steam_id)
     records = _records_from_snapshot(snapshot, _observed_at())
-    return project_score_summary(coach_context_refs.project_benchmark_summary(records))
+    return project_score_summary(benchmark_catalog.project_benchmark_summary(records))
