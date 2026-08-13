@@ -191,6 +191,25 @@ async def test_transaction_gate_serializes_normal_concurrent_writes():
 
 
 @pytest.mark.asyncio
+async def test_transaction_gate_removes_done_callback_after_normal_release():
+    class FakeConnection:
+        in_transaction = False
+
+    gate = db._TransactionGate(FakeConnection())
+    task = asyncio.current_task()
+    assert task is not None
+    initial_callbacks = len(task._callbacks or [])
+
+    async def operation() -> None:
+        return None
+
+    for _ in range(25):
+        await gate.run(operation)
+
+    assert len(task._callbacks or []) == initial_callbacks
+
+
+@pytest.mark.asyncio
 async def test_init_schema_migrates_v0_to_v13_transactionally():
     await db.close_conn()
     db_path = _isolated_schema_db_path()

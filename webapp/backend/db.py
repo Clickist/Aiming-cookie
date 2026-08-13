@@ -59,6 +59,7 @@ class _TransactionGate:
 
     def _release(self, task: asyncio.Task) -> None:
         if self._owner is task:
+            task.remove_done_callback(self._rollback_abandoned_transaction)
             self._owner = None
             self._lock.release()
 
@@ -67,9 +68,7 @@ class _TransactionGate:
             await self._conn.rollback()
         await self._conn.close()
         if self._owner is not None:
-            self._owner = None
-            if self._lock.locked():
-                self._lock.release()
+            self._release(self._owner)
 
 
 class _GatedConnection:

@@ -275,16 +275,20 @@ async def analyze_paths(
     csv_size = os.path.getsize(csv_path)
     _require_upload_disk_space(video_size + csv_size)
 
-    sid = await queue.enqueue(
-        user_id,
-        "",
-        "",
-        cm_per_360=request.cm_per_360,
-        fov=request.fov,
-        profile_default=(request.profile_default.model_dump() if request.profile_default else None),
-        manual_override=(request.manual_override.model_dump() if request.manual_override else None),
-        status="uploading",
-    )
+    try:
+        sid = await queue.enqueue(
+            user_id,
+            "",
+            "",
+            cm_per_360=request.cm_per_360,
+            fov=request.fov,
+            profile_default=(request.profile_default.model_dump() if request.profile_default else None),
+            manual_override=(request.manual_override.model_dump() if request.manual_override else None),
+            status="uploading",
+            require_no_active=True,
+        )
+    except queue.ActiveSessionExists as exc:
+        raise HTTPException(429, "已有分析进行中,等完成再提交") from exc
     workspace = session_dir(sid)
     managed_video = workspace / "video.mp4"
     managed_csv = workspace / "stats.csv"
@@ -539,26 +543,30 @@ async def analyze(
 
     _require_upload_disk_space()
 
-    sid = await queue.enqueue(
-        x_user_id,
-        "",
-        "",
-        cm_per_360=cm_per_360,
-        fov=fov,
-        profile_default={
-            "cm_per_360": profile_default_cm_per_360,
-            "fov": profile_default_fov,
-        },
-        manual_override=(
-            {
-                "cm_per_360": manual_override_cm_per_360,
-                "fov": manual_override_fov,
-            }
-            if manual_override_cm_per_360 is not None or manual_override_fov is not None
-            else None
-        ),
-        status="uploading",
-    )
+    try:
+        sid = await queue.enqueue(
+            x_user_id,
+            "",
+            "",
+            cm_per_360=cm_per_360,
+            fov=fov,
+            profile_default={
+                "cm_per_360": profile_default_cm_per_360,
+                "fov": profile_default_fov,
+            },
+            manual_override=(
+                {
+                    "cm_per_360": manual_override_cm_per_360,
+                    "fov": manual_override_fov,
+                }
+                if manual_override_cm_per_360 is not None or manual_override_fov is not None
+                else None
+            ),
+            status="uploading",
+            require_no_active=True,
+        )
+    except queue.ActiveSessionExists as exc:
+        raise HTTPException(429, "已有分析进行中,等完成再提交") from exc
     ws = session_dir(sid)
     ws.mkdir(parents=True, exist_ok=True)
     video_path = ws / f"video{video_ext}"
