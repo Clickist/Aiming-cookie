@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 
 import {
   AgentRunError,
+  appendAssistantMessage,
   createAgentRun,
   getAgentRun,
   releaseTeachingRun,
@@ -29,6 +30,7 @@ function createAgentRunDb(): Database.Database {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       context_refs_json TEXT,
+      context_json TEXT,
       trace_json TEXT
     );
     CREATE TABLE coach_context_refs (
@@ -189,6 +191,36 @@ test("a missing Provider leaves the run queued for automatic recovery", async ()
       "SELECT code FROM coach_agent_run_events WHERE run_ref=? ORDER BY sequence",
     ).all(created.run_ref) as Array<{ code: string }>;
     assert.equal(events.at(-1)?.code, "provider_waiting");
+  } finally {
+    db.close();
+  }
+});
+
+test("assistant messages retain the run context used for evidence cards", () => {
+  const db = createAgentRunDb();
+  try {
+    db.prepare("INSERT INTO coach_threads(id, user_id) VALUES(1, 'desktop-local')").run();
+    const context = {
+      schema_version: "coach_turn_context.v1",
+      contexts: [{ analysis_ref: "analysis:13", projection: { analysis_brief: {} } }],
+      benchmark_summary: null,
+    };
+    const snapshots = [{
+      context_ref: "context:test",
+      kind: "analysis",
+      analysis_ref: "analysis:13",
+      comparison_analysis_ref: null,
+      status: "active",
+    }];
+    appendAssistantMessage(db, 1, "evidence summary", [], context, snapshots);
+
+    const assistant = db.prepare(
+      "SELECT context_json, context_refs_json FROM coach_messages " +
+      "WHERE thread_id=1 AND role='assistant' ORDER BY id DESC LIMIT 1",
+    ).get() as { context_json: string; context_refs_json: string } | undefined;
+    assert.ok(assistant);
+    assert.deepEqual(JSON.parse(assistant.context_json), context);
+    assert.deepEqual(JSON.parse(assistant.context_refs_json), snapshots);
   } finally {
     db.close();
   }
