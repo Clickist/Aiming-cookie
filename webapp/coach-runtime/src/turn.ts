@@ -1,5 +1,6 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendFileSync } from "node:fs";
 
 import {
   COACH_RUNTIME_TURN_SCHEMA,
@@ -269,7 +270,9 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
           if (role === "assistant") {
             const assistant = message as { content?: unknown; stopReason?: unknown };
             const text = extractMessageText(assistant.content);
-            if (assistant.stopReason === "error" || assistant.stopReason === "aborted" || !text.trim()) {
+            const hasToolCalls = Array.isArray(assistant.content)
+              && assistant.content.some((c) => isRecord(c) && c.type === "toolCall");
+            if (assistant.stopReason === "error" || assistant.stopReason === "aborted" || (!text.trim() && !hasToolCalls)) {
               return undefined;
             }
             return proxyTarget.appendMessage(redactMessage(message, secrets));
@@ -284,7 +287,27 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
           const last = messages[messages.length - 1];
           const withoutCurrent =
             last && (last as { role?: unknown }).role === "user" ? messages.slice(0, -1) : messages;
-          return { ...context, messages: withoutCurrent.slice(-MAX_CONTEXT_MESSAGES) };
+          let trimmed = withoutCurrent.slice(-MAX_CONTEXT_MESSAGES);
+          // 对齐到 user/system 边界：截断可能切断 assistant(tool_calls)→tool 的配对，
+          // 孤立开头的 tool 消息会触发 Provider "tool must follow tool_calls" 错误。
+          while (trimmed.length > 0) {
+            const firstRole = (trimmed[0] as { role?: unknown }).role;
+            if (firstRole === "user" || firstRole === "system") break;
+            trimmed = trimmed.slice(1);
+          }
+          try {
+            const seq = trimmed.map((m) => {
+              const role = (m as { role?: unknown }).role;
+              const content = (m as { content?: unknown }).content;
+              const hasToolCalls = Array.isArray(content)
+                && content.some((c) => isRecord(c) && c.type === "toolCall");
+              return hasToolCalls ? `${role}(tool_calls)` : role;
+            }).join(" → ");
+            appendFileSync(join(getDataRoot(), "coach-debug.log"), `${new Date().toISOString()} [buildContext] ${seq}\n`, "utf8");
+          } catch {
+            // best-effort debug
+          }
+          return { ...context, messages: trimmed };
         };
       }
       const value = Reflect.get(proxyTarget, prop, receiver);
@@ -411,6 +434,7 @@ const STOPPED_USER_MESSAGE = "已停止生成。";
 function userFacingErrorMessage(error: unknown, stopped: boolean): string {
   if (stopped) return STOPPED_USER_MESSAGE;
   if (error instanceof ProviderProfileError) return "Provider 配置不可用，请在设置中检查后重试。";
+  if (error instanceof EmptyAssistantReplyError && error.message.trim()) return error.message;
   return "Coach 暂时无法完成回复，请稍后重试。";
 }
 
@@ -680,6 +704,18 @@ export async function runCoachTurn(
     const rawReply = extractAssistantText(replyMessage);
 
     if (rawReply === null) {
+      try {
+        appendFileSync(
+          join(getDataRoot(), "coach-error.log"),
+          `${new Date().toISOString()} [coach-turn] replyMessage=${JSON.stringify(replyMessage)}\n`,
+          "utf8",
+        );
+      } catch {
+        // best-effort
+      }
+    }
+
+    if (rawReply === null) {
       if (isAborted) {
         return failureResponse(
           makeError({
@@ -696,9 +732,12 @@ export async function runCoachTurn(
           analysisRefs,
         );
       }
+      const providerError = isRecord(replyMessage) && typeof replyMessage.errorMessage === "string"
+        ? replyMessage.errorMessage
+        : null;
       throw new EmptyAssistantReplyError(
         isError
-          ? "Provider returned an error response"
+          ? providerError ?? "Provider returned an error response"
           : "Provider returned an empty assistant reply",
       );
     }
@@ -717,6 +756,17 @@ export async function runCoachTurn(
     );
   } catch (error) {
     const stopped = activeRunId !== null && stopRequested.has(activeRunId);
+    // eslint-disable-next-line no-console
+    console.error("[coach-turn] turn failed:", error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : error);
+    try {
+      appendFileSync(
+        join(getDataRoot(), "coach-error.log"),
+        `${new Date().toISOString()} [coach-turn] ${error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error)}\n`,
+        "utf8",
+      );
+    } catch {
+      // Best-effort error capture; never mask the original failure.
+    }
     return failureResponse(
       makeError({
         category: "coach_runtime",

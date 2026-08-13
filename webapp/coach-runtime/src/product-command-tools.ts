@@ -116,6 +116,10 @@ type NativeCommandResult = {
 };
 
 function nativeToToolResult(commandName: string, nativeResult: NativeCommandResult) {
+  const uiEvent = isRecord(nativeResult.result)
+    && nativeResult.result.schema_version === "coach_ui_event.v1"
+    ? nativeResult.result
+    : null;
   const event = {
     type: "product_command" as const,
     command_id: `native:${commandName}:${Date.now()}`,
@@ -123,7 +127,7 @@ function nativeToToolResult(commandName: string, nativeResult: NativeCommandResu
     status: nativeResult.status,
     result_ref: nativeResult.result_ref ?? null,
     audit_ref: "native",
-    ui_event: null,
+    ui_event: uiEvent,
     warning_or_error: nativeResult.warning_or_error ?? null,
   };
   const responseText = JSON.stringify({
