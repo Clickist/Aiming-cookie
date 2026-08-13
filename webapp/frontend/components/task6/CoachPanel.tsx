@@ -55,10 +55,12 @@ type BatchAnalysisIntent = {
 type BatchAnalysisState = "pending" | "starting" | "started" | "failed";
 const ANALYSIS_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
-async function waitForAnalysisCompletion(sessionId: number) {
+async function waitForAnalysisCompletion(sessionId: number, isCurrent: () => boolean) {
   const deadline = Date.now() + ANALYSIS_WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
+    if (!isCurrent()) throw new Error("batch_workflow_cancelled");
     const session = await getSession(sessionId);
+    if (!isCurrent()) throw new Error("batch_workflow_cancelled");
     if (session.status === "done") return session;
     if (session.status === "failed") throw new Error("analysis_failed");
     await new Promise((resolve) => setTimeout(resolve, 750));
@@ -307,12 +309,15 @@ export function CoachPanel({
   const appliedSoftStartRef = useRef<string | null>(null);
   const batchWorkflowRef = useRef(false);
   const batchSessionIdRef = useRef<number | null>(null);
+  const batchWorkflowRevisionRef = useRef(0);
+  const batchWorkflowStartSessionKeyRef = useRef<string | null>(null);
   const refreshRevisionRef = useRef(0);
   const trainingRefreshRevisionRef = useRef(0);
   const optimisticMessageIdRef = useRef(-1);
   const activeSessionKey = draftSession ? "draft" : `session:${sessionId ?? "primary"}`;
   const activeSessionKeyRef = useRef(activeSessionKey);
   const runBySessionRef = useRef(new Map<string, CoachAgentRunV1>());
+  activeSessionKeyRef.current = activeSessionKey;
 
   const refresh = useCallback(async () => {
     if (capability !== "ready") return;
@@ -339,11 +344,24 @@ export function CoachPanel({
   }, [capability, draftSession, sessionId]);
 
   useEffect(() => {
-    activeSessionKeyRef.current = activeSessionKey;
     setRun(runBySessionRef.current.get(activeSessionKey) ?? null);
     setPendingConfirmation(null);
-    if (!batchWorkflowRef.current) {
+    if (batchWorkflowRef.current && batchSessionIdRef.current !== null) {
+      const workflowSessionKey = `session:${batchSessionIdRef.current}`;
+      if (activeSessionKey === workflowSessionKey) {
+        batchWorkflowStartSessionKeyRef.current = workflowSessionKey;
+      } else if (activeSessionKey !== batchWorkflowStartSessionKeyRef.current) {
+        batchWorkflowRevisionRef.current += 1;
+        batchWorkflowRef.current = false;
+        batchSessionIdRef.current = null;
+        batchWorkflowStartSessionKeyRef.current = null;
+        setBatchProposal(null);
+        setBatchState("pending");
+        setBatchOutcome(null);
+      }
+    } else if (!batchWorkflowRef.current) {
       batchSessionIdRef.current = null;
+      batchWorkflowStartSessionKeyRef.current = null;
       setBatchProposal(null);
       setBatchState("pending");
       setBatchOutcome(null);
@@ -386,6 +404,11 @@ export function CoachPanel({
       if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, [refresh]);
+
+  useEffect(() => () => {
+    batchWorkflowRevisionRef.current += 1;
+    batchWorkflowRef.current = false;
+  }, []);
 
   useEffect(() => {
     if (
@@ -682,11 +705,33 @@ export function CoachPanel({
     setBatchState("starting");
     setBatchOutcome(null);
     batchWorkflowRef.current = true;
+    const workflowRevision = ++batchWorkflowRevisionRef.current;
+    batchWorkflowStartSessionKeyRef.current = activeSessionKeyRef.current;
     try {
       const workflowSessionId = batchSessionIdRef.current
         ?? (onEnsureSession ? await onEnsureSession() : sessionId);
       if (workflowSessionId == null) throw new Error("coach_session_unavailable");
       batchSessionIdRef.current = workflowSessionId;
+      const isWorkflowCurrent = () => batchWorkflowRef.current
+        && batchWorkflowRevisionRef.current === workflowRevision
+        && (
+          activeSessionKeyRef.current === `session:${workflowSessionId}`
+          || activeSessionKeyRef.current === batchWorkflowStartSessionKeyRef.current
+        );
+      const stopIfStale = () => {
+        if (isWorkflowCurrent()) return false;
+        if (batchWorkflowRevisionRef.current === workflowRevision) {
+          batchWorkflowRevisionRef.current += 1;
+          batchWorkflowRef.current = false;
+          batchSessionIdRef.current = null;
+          batchWorkflowStartSessionKeyRef.current = null;
+          setBatchProposal(null);
+          setBatchState("pending");
+          setBatchOutcome(null);
+        }
+        return true;
+      };
+      if (stopIfStale()) return;
       const results = await Promise.allSettled(
         readyRuns.map(async (item) => ({
           item,
@@ -697,6 +742,7 @@ export function CoachPanel({
           ),
         })),
       );
+      if (stopIfStale()) return;
       const submissionFailures = results.filter((result) => result.status === "rejected").length;
       const submitted = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
       setBatchOutcome("本地分析已开始，正在等待结果…");
@@ -711,10 +757,11 @@ export function CoachPanel({
       ].filter((item) => Number.isSafeInteger(item.sessionId) && item.sessionId > 0);
       const terminalResults = await Promise.allSettled(
         waitTargets.map(async (item) => {
-          await waitForAnalysisCompletion(item.sessionId);
+          await waitForAnalysisCompletion(item.sessionId, isWorkflowCurrent);
           return item;
         }),
       );
+      if (stopIfStale()) return;
       const terminalFailures = terminalResults.filter((result) => result.status === "rejected").length;
       const analysisRefs = Array.from(new Set([
         ...completedRefs,
@@ -743,12 +790,14 @@ export function CoachPanel({
         })),
       } : current);
 
+      if (stopIfStale()) return;
       const contextResults = await Promise.allSettled(
         analysisRefs.map((analysisRef) => attachCoachContext(
           { kind: "analysis", analysis_ref: analysisRef },
           { sessionId: workflowSessionId },
         )),
       );
+      if (stopIfStale()) return;
       const attachedContexts = contextResults.flatMap(
         (result) => result.status === "fulfilled" ? [result.value.context] : [],
       );
@@ -762,6 +811,7 @@ export function CoachPanel({
         attachedContexts.map((context) => context.context_ref),
         { sessionId: workflowSessionId },
       );
+      if (stopIfStale()) return;
       const optimisticMessageId = optimisticMessageIdRef.current--;
       setContexts(attachedContexts);
       setMessages((current) => [...current, {
@@ -777,11 +827,13 @@ export function CoachPanel({
       setBatchOutcome(null);
       setRun(created);
       batchSessionIdRef.current = null;
+      batchWorkflowStartSessionKeyRef.current = null;
     } catch {
+      if (batchWorkflowRevisionRef.current !== workflowRevision) return;
       setBatchState("failed");
       setBatchOutcome("分析或 Coach 解读未能完整开始；已经完成的本地分析仍会保留，请重试。");
     } finally {
-      batchWorkflowRef.current = false;
+      if (batchWorkflowRevisionRef.current === workflowRevision) batchWorkflowRef.current = false;
     }
   };
 
@@ -827,8 +879,13 @@ export function CoachPanel({
     if (!run) return;
     try {
       setRun(await retryCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId }));
-    } catch {
-      setFeedback("重试未能开始，请稍后再试。");
+    } catch (error) {
+      const contextUnavailable = error instanceof Error
+        && error.name === "ApiError_409"
+        && error.message === "context_unavailable";
+      setFeedback(contextUnavailable
+        ? "原分析上下文已不可用，请重新附加分析后发送新消息。"
+        : "重试未能开始，请稍后再试。");
     }
   };
 
@@ -860,18 +917,22 @@ export function CoachPanel({
   const newTopic = async () => {
     setDraft("");
     setRun(null);
-    try {
-      const active = contexts.filter((context) => context.status === "active");
-      for (const context of active) {
-        await detachCoachContext(context.context_ref, sessionId == null ? {} : { sessionId });
-      }
-      if (active.length) {
+    const active = contexts.filter((context) => context.status === "active");
+    const results = await Promise.allSettled(active.map((context) => detachCoachContext(
+      context.context_ref,
+      sessionId == null ? {} : { sessionId },
+    )));
+    const failureCount = results.filter((result) => result.status === "rejected").length;
+    if (active.length) {
+      if (failureCount === 0) {
         setFeedback("已清除当前会话上下文；历史消息仍保留。");
+      } else if (failureCount < active.length) {
+        setFeedback("部分上下文未能清除，请重试。");
+      } else {
+        setFeedback("未能清除上下文，请重试。");
       }
-      await refresh();
-    } catch {
-      setFeedback("未能清除上下文，请重试。");
     }
+    await refresh();
   };
 
   const headerState = capability === "loading"
@@ -1107,6 +1168,7 @@ export function CoachPanel({
       <footer className="task6-composer">
         <div className="task6-composer-input">
           <textarea
+            aria-label="向 Coach 提问"
             id="coach-draft"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
