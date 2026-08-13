@@ -4,7 +4,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import {
-  attachCoachContext,
   createCoachSession,
   deleteCoachSession,
   getDefaultProviderStatus,
@@ -12,10 +11,10 @@ import {
   listCoachSessions,
   updateCoachSession,
 } from "@/lib/api";
+import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import type { ProviderProfileState } from "@/lib/types";
 import { CoachPanel } from "@/components/task6/CoachPanel";
 import { CoachVideoPane } from "@/components/task7/CoachVideoPane";
-import { GuidanceHost, type GuidanceEventDetail } from "@/components/task7/GuidanceHost";
 import SessionRail, { type SessionRailSession } from "@/components/task7/SessionRail";
 import { startWindowDragging, TauriWindowControls } from "@/components/task3/TauriWindowControls";
 import { Toast } from "@/ui/primitives";
@@ -37,7 +36,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [selectedCoachSessionId, setSelectedCoachSessionId] = useState<number | null>(null);
   const [draftSession, setDraftSession] = useState(false);
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
-  const [guidance, setGuidance] = useState<GuidanceEventDetail | null>(null);
   const [sessionFeedback, setSessionFeedback] = useState<string | null>(null);
   const shellHidden = pathname.startsWith("/onboarding");
   const searchParams = useSearchParams();
@@ -52,11 +50,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (!coachWorkspaceRoute) return undefined;
     const controller = new AbortController();
     void getProductState({ signal: controller.signal })
-      .then((state) => {
+      .then(async (state) => {
         if (controller.signal.aborted) return;
         if (state.availability === "available" && state.onboarding_completed !== true) {
           router.replace("/onboarding");
           return;
+        }
+        if (isDesktopRuntime()) {
+          try { await setDesktopCaptureEnabled(true); } catch { /* best-effort capture restore on restart */ }
         }
         setStartupRouteResolved(true);
       })
@@ -102,20 +103,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     setVideoTarget(null);
   }, [selectedCoachSessionId]);
-
-  useEffect(() => {
-    if (shellHidden) return undefined;
-    const receiveGuidance = (event: Event) => {
-      const detail = (event as CustomEvent<unknown>).detail;
-      if (!detail || typeof detail !== "object") return;
-      const candidate = detail as Partial<GuidanceEventDetail>;
-      if (typeof candidate.run_ref !== "string" || !candidate.intent || typeof candidate.intent !== "object") return;
-      if ((candidate.intent as { schema_version?: unknown }).schema_version !== "guidance_intent.v1") return;
-      setGuidance({ run_ref: candidate.run_ref, intent: candidate.intent as GuidanceEventDetail["intent"] });
-    };
-    window.addEventListener("aiming-cookie:coach-guidance", receiveGuidance);
-    return () => window.removeEventListener("aiming-cookie:coach-guidance", receiveGuidance);
-  }, [shellHidden]);
 
   const reloadCoachSessions = useCallback(async (nextSelectedId?: number | null) => {
     const result = await listCoachSessions();
@@ -236,17 +223,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <div className="task3-coach-conversation">
                   <CoachPanel
                     capability={capability}
-                    currentAnalysisRef={null}
                     draftSession={draftSession}
                     layoutMode="full"
                     onEnsureSession={ensureCoachSession}
                     onOpenVideo={(analysisRef, timeMs = 0) => setVideoTarget({ analysisRef, timeMs })}
-                    onRequestContext={async (analysisRef) => {
-                      await attachCoachContext(
-                        { kind: "analysis", analysis_ref: analysisRef },
-                        selectedCoachSessionId === null ? {} : { sessionId: selectedCoachSessionId },
-                      );
-                    }}
                     pathname={pathname}
                     sessionId={selectedCoachSessionId}
                   />
@@ -257,11 +237,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           )}
         </main>
       </div>
-      <GuidanceHost
-        intent={guidance?.intent ?? null}
-        onIntent={(next) => setGuidance((current) => next && current ? { ...current, intent: next } : null)}
-        runRef={guidance?.run_ref ?? null}
-      />
       {sessionFeedback ? <Toast onClose={() => setSessionFeedback(null)}>{sessionFeedback}</Toast> : null}
     </div>
   );

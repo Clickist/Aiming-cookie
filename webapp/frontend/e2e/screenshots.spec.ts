@@ -63,7 +63,6 @@ async function installCoachCards(page: Page): Promise<void> {
           content: "减速阶段偏长，而且末段出现了反向修正。先看关键数据，再结合视频确认发生的位置。",
           created_at: "2026-08-10T00:00:00Z",
           legacy_session_id: null,
-          context_refs: [],
           cards: [
             { schema_version: "coach_message_card.v1", kind: "metrics", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
             { schema_version: "coach_message_card.v1", kind: "timeline", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },

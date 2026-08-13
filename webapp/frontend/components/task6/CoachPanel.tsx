@@ -3,26 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  attachCoachContext,
   createCoachAgentRun,
-  decideCoachConfirmation,
-  detachCoachContext,
-  analyzeKovaakRun,
   getCoachAgentRun,
-  getCoachContexts,
-  getCoachPrimary,
+  getCoachAgentRunStreamUrl,
+  getCoachSession,
   getCurrentTraining,
-  getSession,
   retryCoachAgentRun,
   stopCoachAgentRun,
 } from "@/lib/api";
-import { openKovaakScenario } from "@/lib/desktop";
-import { presentCoachContext } from "@/lib/contracts";
-import { CoachMessageCards } from "@/components/task7/CoachMessageCards";
+import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
+import { CoachMessageText } from "@/components/task7/CoachMessageText";
 import type {
+  CoachAgentRunEventV1,
   CoachAgentRunV1,
-  CoachConfirmationV1,
-  CoachContextRefV1,
   CoachThreadMessageOut,
   CurrentTrainingItemV1,
   CurrentTrainingV1,
@@ -33,57 +26,6 @@ import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimat
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachLayoutMode = "side-by-side" | "overlay" | "full";
 const COACH_PENDING_INTENT_KEY = "aiming-cookie.ui.coach-pending-intent";
-const SEGMENT_SEEK_PADDING_MS = 2000;
-
-type BatchAnalysisRun = {
-  id: number;
-  run_ref: string;
-  scenario: string | null;
-  created_at: string;
-  readiness_state: "pending_analysis" | "analyzed" | "incomplete_evidence";
-  limitations: string[];
-  analysis_refs: string[];
-  analysis_status?: "done" | "active" | "pending";
-};
-
-type BatchAnalysisIntent = {
-  kind: "batch-analysis";
-  batch_ref?: string;
-  runs: BatchAnalysisRun[];
-};
-
-type BatchAnalysisState = "pending" | "starting" | "started" | "failed";
-const ANALYSIS_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
-
-async function waitForAnalysisCompletion(sessionId: number, isCurrent: () => boolean) {
-  const deadline = Date.now() + ANALYSIS_WAIT_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (!isCurrent()) throw new Error("batch_workflow_cancelled");
-    const session = await getSession(sessionId);
-    if (!isCurrent()) throw new Error("batch_workflow_cancelled");
-    if (session.status === "done") return session;
-    if (session.status === "failed") throw new Error("analysis_failed");
-    await new Promise((resolve) => setTimeout(resolve, 750));
-  }
-  throw new Error("analysis_wait_timeout");
-}
-
-function pageLabel(pathname: string): string {
-  if (pathname.startsWith("/tasks")) return "任务状态";
-  if (pathname.startsWith("/analyze")) return "新建分析";
-  if (pathname.startsWith("/history")) return "历史";
-  if (pathname.startsWith("/settings")) return "设置";
-  return "当前页面";
-}
-
-function confirmationFromPayload(payload: Record<string, unknown> | null): CoachConfirmationV1 | null {
-  const value = payload?.confirmation;
-  if (!value || typeof value !== "object") return null;
-  const candidate = value as Partial<CoachConfirmationV1>;
-  return candidate.schema_version === "coach_confirmation.v1" && typeof candidate.confirmation_ref === "string"
-    ? candidate as CoachConfirmationV1
-    : null;
-}
 
 function capabilityLabel(capability: Exclude<CoachCapability, "loading" | "ready">): string {
   switch (capability) {
@@ -132,10 +74,6 @@ function trainingSummaryItem(training: CurrentTrainingV1): CurrentTrainingItemV1
 
 function validKovaaKItemName(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 120;
-}
-
-function contextLabel(context: ReturnType<typeof presentCoachContext>, prefix: string): string {
-  return context.kind === "analysis" ? `${prefix}${context.label}` : context.label;
 }
 
 type ToolStepState = "done" | "active" | "fail";
@@ -232,85 +170,44 @@ function pendingIntentDraft(value: unknown): string | null {
   return kovaakIntentDraft(value);
 }
 
-function batchAnalysisIntent(value: unknown): BatchAnalysisIntent | null {
-  if (!value || typeof value !== "object") return null;
-  const candidate = value as Partial<BatchAnalysisIntent>;
-  if (candidate.kind !== "batch-analysis" || !Array.isArray(candidate.runs) || candidate.runs.length === 0) {
-    return null;
-  }
-  const runs = candidate.runs.filter((run): run is BatchAnalysisRun => {
-    if (!run || typeof run !== "object") return false;
-    const item = run as Partial<BatchAnalysisRun>;
-    return typeof item.id === "number"
-      && typeof item.run_ref === "string"
-      && (item.scenario === null || typeof item.scenario === "string")
-      && typeof item.created_at === "string"
-      && (item.readiness_state === "pending_analysis" || item.readiness_state === "analyzed" || item.readiness_state === "incomplete_evidence")
-      && Array.isArray(item.limitations) && item.limitations.every((value) => typeof value === "string")
-      && Array.isArray(item.analysis_refs) && item.analysis_refs.every((value) => typeof value === "string")
-      && (item.analysis_status === undefined || item.analysis_status === "done" || item.analysis_status === "active" || item.analysis_status === "pending");
-  });
-  return runs.length
-    ? {
-      kind: "batch-analysis",
-      batch_ref: typeof candidate.batch_ref === "string" && candidate.batch_ref.length <= 120
-        ? candidate.batch_ref
-        : undefined,
-      runs,
-    }
-    : null;
-}
-
 export function CoachPanel({
   capability,
-  currentAnalysisRef,
   draftSession = false,
   sessionId = null,
-  layoutMode = "side-by-side",
+  layoutMode = "full",
   onEnsureSession,
   onClose,
   onOpenVideo,
-  onRequestContext,
   pathname = "/history",
   softStartRun = null,
 }: {
   capability: CoachCapability;
-  currentAnalysisRef: string | null;
   draftSession?: boolean;
   sessionId?: number | null;
   layoutMode?: CoachLayoutMode;
   onEnsureSession?: () => Promise<number | null>;
   onClose?: () => void;
   onOpenVideo?: (analysisRef: string, timeMs?: number) => void;
-  onRequestContext: (analysisRef: string) => Promise<void>;
   pathname?: string;
   softStartRun?: CoachAgentRunV1 | null;
 }) {
-  const [contexts, setContexts] = useState<CoachContextRefV1[]>([]);
   const [messages, setMessages] = useState<CoachThreadMessageOut[]>([]);
   const [draft, setDraft] = useState("");
   const [run, setRun] = useState<CoachAgentRunV1 | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [pendingConfirmation, setPendingConfirmation] = useState<CoachConfirmationV1 | null>(null);
-  const [batchProposal, setBatchProposal] = useState<BatchAnalysisIntent | null>(null);
-  const [batchState, setBatchState] = useState<BatchAnalysisState>("pending");
-  const [batchOutcome, setBatchOutcome] = useState<string | null>(null);
   const [currentTraining, setCurrentTraining] = useState<CurrentTrainingV1 | null>(null);
   const [currentTrainingError, setCurrentTrainingError] = useState(false);
   const [trainingExpanded, setTrainingExpanded] = useState(false);
   const trainingPresence = useAnimatedPresence(trainingExpanded, 180);
   const [launchingScenarioRef, setLaunchingScenarioRef] = useState<string | null>(null);
+  const [analysisSessionIds, setAnalysisSessionIds] = useState<number[]>([]);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
   const stickToBottomRef = useRef(true);
   const seenFeedCountRef = useRef(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const appliedSoftStartRef = useRef<string | null>(null);
-  const batchWorkflowRef = useRef(false);
-  const batchSessionIdRef = useRef<number | null>(null);
-  const batchWorkflowRevisionRef = useRef(0);
-  const batchWorkflowStartSessionKeyRef = useRef<string | null>(null);
   const refreshRevisionRef = useRef(0);
   const trainingRefreshRevisionRef = useRef(0);
   const optimisticMessageIdRef = useRef(-1);
@@ -319,24 +216,26 @@ export function CoachPanel({
   const runBySessionRef = useRef(new Map<string, CoachAgentRunV1>());
   activeSessionKeyRef.current = activeSessionKey;
 
+  // The active run's reads win (streamed live); the session's engaged-analysis
+  // list (persisted from completed runs) is the fallback after the run clears.
+  const defaultAnalysisRef = run?.analysis_refs?.length
+    ? run.analysis_refs[0]
+    : analysisSessionIds.length ? `analysis:${analysisSessionIds[0]}` : null;
+
   const refresh = useCallback(async () => {
     if (capability !== "ready") return;
-    if (draftSession) {
-      setContexts([]);
+    if (draftSession || sessionId == null) {
       setMessages([]);
+      setAnalysisSessionIds([]);
       setLoadError(false);
       return;
     }
     const revision = ++refreshRevisionRef.current;
     try {
-      const request = sessionId == null ? {} : { sessionId };
-      const [contextResult, primary] = await Promise.all([
-        getCoachContexts(request),
-        getCoachPrimary(request),
-      ]);
+      const detail = await getCoachSession(sessionId);
       if (revision !== refreshRevisionRef.current) return;
-      setContexts(contextResult.contexts.filter((context) => context.status !== "detached"));
-      setMessages(primary.messages);
+      setMessages(detail.messages ?? []);
+      setAnalysisSessionIds(detail.analysis_session_ids ?? []);
       setLoadError(false);
     } catch {
       if (revision === refreshRevisionRef.current) setLoadError(true);
@@ -345,27 +244,6 @@ export function CoachPanel({
 
   useEffect(() => {
     setRun(runBySessionRef.current.get(activeSessionKey) ?? null);
-    setPendingConfirmation(null);
-    if (batchWorkflowRef.current && batchSessionIdRef.current !== null) {
-      const workflowSessionKey = `session:${batchSessionIdRef.current}`;
-      if (activeSessionKey === workflowSessionKey) {
-        batchWorkflowStartSessionKeyRef.current = workflowSessionKey;
-      } else if (activeSessionKey !== batchWorkflowStartSessionKeyRef.current) {
-        batchWorkflowRevisionRef.current += 1;
-        batchWorkflowRef.current = false;
-        batchSessionIdRef.current = null;
-        batchWorkflowStartSessionKeyRef.current = null;
-        setBatchProposal(null);
-        setBatchState("pending");
-        setBatchOutcome(null);
-      }
-    } else if (!batchWorkflowRef.current) {
-      batchSessionIdRef.current = null;
-      batchWorkflowStartSessionKeyRef.current = null;
-      setBatchProposal(null);
-      setBatchState("pending");
-      setBatchOutcome(null);
-    }
     setUnreadCount(0);
     stickToBottomRef.current = true;
   }, [activeSessionKey]);
@@ -397,18 +275,10 @@ export function CoachPanel({
 
   useEffect(() => {
     void refresh();
-    const handleContextUpdate = () => void refresh();
-    window.addEventListener("aiming-cookie:coach-context-updated", handleContextUpdate);
     return () => {
-      window.removeEventListener("aiming-cookie:coach-context-updated", handleContextUpdate);
       if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, [refresh]);
-
-  useEffect(() => () => {
-    batchWorkflowRevisionRef.current += 1;
-    batchWorkflowRef.current = false;
-  }, []);
 
   useEffect(() => {
     if (
@@ -437,15 +307,6 @@ export function CoachPanel({
 
   useEffect(() => {
     const applyPendingIntent = (value: unknown) => {
-      const batch = batchAnalysisIntent(value);
-      if (batch) {
-        batchSessionIdRef.current = null;
-        setBatchProposal(batch);
-        setBatchState("pending");
-        setBatchOutcome(null);
-        setDraft("");
-        return;
-      }
       const nextDraft = pendingIntentDraft(value);
       if (nextDraft) setDraft(nextDraft);
     };
@@ -478,34 +339,163 @@ export function CoachPanel({
     };
   }, [isCoachWorkspace]);
 
+  // 实时流式输出：优先走 sidecar SSE（token 级），EventSource 连接失败时回退到轮询。
+  const liveRunRef = run && ["queued", "running"].includes(run.status) ? run.run_ref : null;
+
   useEffect(() => {
-    if (!run || !["queued", "running"].includes(run.status)) return;
+    if (!liveRunRef) return;
     let cancelled = false;
-    const poll = async () => {
+    let eventSource: EventSource | null = null;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let streamActive = false;
+    let finished = false;
+    const runRef = liveRunRef;
+
+    const clearPollTimer = () => {
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const fetchRun = () => getCoachAgentRun(runRef, sessionId == null ? {} : { sessionId });
+
+    const finalizeRun = async () => {
       try {
-        const next = await getCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId });
+        const next = await fetchRun();
         if (cancelled) return;
         setRun(next);
-        const confirmation = next.events
-          .map((event) => confirmationFromPayload(event.payload))
-          .find(Boolean);
-        if (confirmation) setPendingConfirmation(confirmation);
-        if (["queued", "running"].includes(next.status)) {
-          pollRef.current = setTimeout(() => void poll(), 700);
-        } else {
-          await Promise.all([refresh(), refreshCurrentTraining()]);
-          if (next.status === "succeeded") setRun(null);
-        }
+        await Promise.all([refresh(), refreshCurrentTraining()]);
+        if (next.status === "succeeded") setRun(null);
       } catch {
         if (!cancelled) setLoadError(true);
       }
     };
-    pollRef.current = setTimeout(() => void poll(), 400);
+
+    const schedulePoll = () => {
+      if (cancelled) return;
+      clearPollTimer();
+      pollTimer = setTimeout(async () => {
+        try {
+          const next = await fetchRun();
+          if (cancelled) return;
+          setRun(next);
+          if (["queued", "running"].includes(next.status)) {
+            schedulePoll();
+          } else {
+            await Promise.all([refresh(), refreshCurrentTraining()]);
+            if (next.status === "succeeded") setRun(null);
+          }
+        } catch {
+          if (!cancelled) setLoadError(true);
+        }
+      }, 700);
+    };
+
+    const closeStream = () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
+
+    const startPolling = () => {
+      if (cancelled || finished) return;
+      closeStream();
+      streamActive = false;
+      schedulePoll();
+    };
+
+    const setupStream = async () => {
+      if (cancelled) return;
+      if (!isDesktopRuntime()) {
+        // Browser/dev sessions have no sidecar SSE — use the polling fallback.
+        schedulePoll();
+        return;
+      }
+      let es: EventSource;
+      try {
+        const streamUrl = await getCoachAgentRunStreamUrl(runRef);
+        if (cancelled) return;
+        es = new EventSource(streamUrl);
+      } catch {
+        if (!cancelled) schedulePoll();
+        return;
+      }
+      eventSource = es;
+      let opened = false;
+
+      es.onopen = () => {
+        if (cancelled) return;
+        opened = true;
+        streamActive = true;
+        clearPollTimer();
+      };
+
+      es.addEventListener("partial", (event: MessageEvent) => {
+        if (cancelled || !opened) return;
+        try {
+          const data = JSON.parse(event.data) as { text?: unknown };
+          const text = data.text;
+          if (typeof text === "string") {
+            setRun((prev) => (prev ? { ...prev, partial_text: text } : prev));
+          }
+        } catch {
+          // Ignore malformed stream frames.
+        }
+      });
+
+      es.addEventListener("activity", (event: MessageEvent) => {
+        if (cancelled || !opened) return;
+        try {
+          const data = JSON.parse(event.data) as { event?: CoachAgentRunEventV1 };
+          const streamedEvent = data.event;
+          if (streamedEvent) {
+            setRun((prev) => {
+              if (!prev) return prev;
+              if (prev.events.some((item) => item.sequence === streamedEvent.sequence)) return prev;
+              return {
+                ...prev,
+                phase: streamedEvent.phase,
+                events: [...prev.events, streamedEvent],
+              };
+            });
+          }
+        } catch {
+          // Ignore malformed stream frames.
+        }
+      });
+
+      es.addEventListener("done", () => {
+        if (cancelled || finished) return;
+        finished = true;
+        closeStream();
+        streamActive = false;
+        void finalizeRun();
+      });
+
+      es.onerror = () => {
+        if (cancelled || finished) return;
+        // Stream failed or was interrupted: fall back to polling.
+        startPolling();
+      };
+    };
+
+    void setupStream();
+
+    // Safety net: if the stream has not opened shortly after connecting, fall
+    // back to polling instead of hanging on a dead EventSource.
+    pollTimer = setTimeout(() => {
+      if (cancelled || finished) return;
+      if (!streamActive && eventSource) startPolling();
+    }, 1500);
+
     return () => {
       cancelled = true;
-      if (pollRef.current) clearTimeout(pollRef.current);
+      clearPollTimer();
+      closeStream();
     };
-  }, [refresh, refreshCurrentTraining, run, sessionId]);
+  }, [liveRunRef, refresh, refreshCurrentTraining, sessionId]);
 
   const toolSteps = useMemo(() => deriveToolSteps(run), [run]);
   // 对话流条目数：历史消息 + 当前 run 块（流式文字/工具步骤/卡片合记为 1 条）
@@ -544,11 +534,6 @@ export function CoachPanel({
     setUnreadCount(0);
   };
 
-  const visibleContexts = useMemo(
-    () => contexts.map(presentCoachContext),
-    [contexts],
-  );
-  const activeAnalysisRefs = new Set(contexts.filter((item) => item.status === "active").map((item) => item.analysis_ref));
   const summaryItem = currentTraining ? trainingSummaryItem(currentTraining) : null;
   const visibleTrainingItems = currentTraining?.items.slice(0, 3) ?? [];
   const noCurrentPlan = currentTraining?.reason === "no_current_plan";
@@ -659,184 +644,6 @@ export function CoachPanel({
     </section>
   );
 
-  const removeContext = async (contextRef: string) => {
-    try {
-      await detachCoachContext(contextRef, sessionId == null ? {} : { sessionId });
-      setFeedback("已移除上下文；旧消息保留发送时使用的引用。");
-      await refresh();
-    } catch {
-      setFeedback("上下文未能移除，请重试。");
-    }
-  };
-
-  const locateContext = (context: ReturnType<typeof presentCoachContext>) => {
-    const source = contexts.find((item) => item.context_ref === context.contextRef);
-    if (source?.analysis_ref && source.status === "active" && onOpenVideo) {
-      const timeMs = source.time_range_ms?.[0] ?? context.locator?.relative_start_ms ?? 0;
-      const paddedTime = Math.max(0, timeMs - SEGMENT_SEEK_PADDING_MS);
-      onOpenVideo(source.analysis_ref, paddedTime);
-      setFeedback("已在视频中定位");
-      return;
-    }
-    const located = !window.dispatchEvent(new CustomEvent("aiming-cookie:coach-locate", {
-      cancelable: true,
-      detail: context.locator ?? { kind: context.kind },
-    }));
-    setFeedback(located ? "已定位" : "未能定位，请重试。");
-  };
-
-  const startBatchAnalysis = async () => {
-    if (!batchProposal || batchState === "starting") return;
-    const readyRuns = batchProposal.runs.filter(
-      (item) => item.readiness_state !== "incomplete_evidence"
-        && item.analysis_status !== "done"
-        && item.analysis_status !== "active",
-    );
-    const completedRefs = batchProposal.runs
-      .filter((item) => item.analysis_status === "done")
-      .flatMap((item) => item.analysis_refs);
-    const activeTargets = batchProposal.runs
-      .filter((item) => item.analysis_status === "active")
-      .flatMap((item) => item.analysis_refs.map((analysisRef) => ({
-        analysisRef,
-        runId: item.id,
-        sessionId: Number(analysisRef.split(":")[1]),
-      })));
-    setBatchState("starting");
-    setBatchOutcome(null);
-    batchWorkflowRef.current = true;
-    const workflowRevision = ++batchWorkflowRevisionRef.current;
-    batchWorkflowStartSessionKeyRef.current = activeSessionKeyRef.current;
-    try {
-      const workflowSessionId = batchSessionIdRef.current
-        ?? (onEnsureSession ? await onEnsureSession() : sessionId);
-      if (workflowSessionId == null) throw new Error("coach_session_unavailable");
-      batchSessionIdRef.current = workflowSessionId;
-      const isWorkflowCurrent = () => batchWorkflowRef.current
-        && batchWorkflowRevisionRef.current === workflowRevision
-        && (
-          activeSessionKeyRef.current === `session:${workflowSessionId}`
-          || activeSessionKeyRef.current === batchWorkflowStartSessionKeyRef.current
-        );
-      const stopIfStale = () => {
-        if (isWorkflowCurrent()) return false;
-        if (batchWorkflowRevisionRef.current === workflowRevision) {
-          batchWorkflowRevisionRef.current += 1;
-          batchWorkflowRef.current = false;
-          batchSessionIdRef.current = null;
-          batchWorkflowStartSessionKeyRef.current = null;
-          setBatchProposal(null);
-          setBatchState("pending");
-          setBatchOutcome(null);
-        }
-        return true;
-      };
-      if (stopIfStale()) return;
-      const results = await Promise.allSettled(
-        readyRuns.map(async (item) => ({
-          item,
-          response: await analyzeKovaakRun(
-            item.id,
-            { allow_parallel: true },
-            { idempotencyKey: `${batchProposal.batch_ref ?? "analysis-batch"}:${item.run_ref}` },
-          ),
-        })),
-      );
-      if (stopIfStale()) return;
-      const submissionFailures = results.filter((result) => result.status === "rejected").length;
-      const submitted = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-      setBatchOutcome("本地分析已开始，正在等待结果…");
-
-      const waitTargets = [
-        ...activeTargets,
-        ...submitted.map(({ item, response }) => ({
-          analysisRef: `analysis:${response.session_id}`,
-          runId: item.id,
-          sessionId: response.session_id,
-        })),
-      ].filter((item) => Number.isSafeInteger(item.sessionId) && item.sessionId > 0);
-      const terminalResults = await Promise.allSettled(
-        waitTargets.map(async (item) => {
-          await waitForAnalysisCompletion(item.sessionId, isWorkflowCurrent);
-          return item;
-        }),
-      );
-      if (stopIfStale()) return;
-      const terminalFailures = terminalResults.filter((result) => result.status === "rejected").length;
-      const analysisRefs = Array.from(new Set([
-        ...completedRefs,
-        ...terminalResults.flatMap((result) => result.status === "fulfilled" ? [result.value.analysisRef] : []),
-      ]));
-      const completedRunIds = new Set([
-        ...batchProposal.runs.filter((item) => item.analysis_status === "done").map((item) => item.id),
-        ...terminalResults.flatMap((result) => result.status === "fulfilled" ? [result.value.runId] : []),
-      ]);
-      const completedRefsByRun = new Map<number, string[]>();
-      for (const item of batchProposal.runs.filter((item) => item.analysis_status === "done")) {
-        completedRefsByRun.set(item.id, item.analysis_refs);
-      }
-      for (const result of terminalResults) {
-        if (result.status !== "fulfilled") continue;
-        const refs = completedRefsByRun.get(result.value.runId) ?? [];
-        refs.push(result.value.analysisRef);
-        completedRefsByRun.set(result.value.runId, refs);
-      }
-      setBatchProposal((current) => current ? {
-        ...current,
-        runs: current.runs.map((item) => ({
-          ...item,
-          analysis_refs: completedRefsByRun.get(item.id) ?? item.analysis_refs,
-          analysis_status: completedRunIds.has(item.id) ? "done" : item.analysis_status,
-        })),
-      } : current);
-
-      if (stopIfStale()) return;
-      const contextResults = await Promise.allSettled(
-        analysisRefs.map((analysisRef) => attachCoachContext(
-          { kind: "analysis", analysis_ref: analysisRef },
-          { sessionId: workflowSessionId },
-        )),
-      );
-      if (stopIfStale()) return;
-      const attachedContexts = contextResults.flatMap(
-        (result) => result.status === "fulfilled" ? [result.value.context] : [],
-      );
-      if (!attachedContexts.length) throw new Error("analysis_context_unavailable");
-
-      const content = batchProposal.runs.length === 1
-        ? `请分析这次训练：${batchProposal.runs[0].scenario ?? batchProposal.runs[0].run_ref}。先告诉我最需要改的一个问题。`
-        : `请比较并分析这 ${attachedContexts.length} 次训练，先告诉我最需要改的一个问题。`;
-      const created = await createCoachAgentRun(
-        content,
-        attachedContexts.map((context) => context.context_ref),
-        { sessionId: workflowSessionId },
-      );
-      if (stopIfStale()) return;
-      const optimisticMessageId = optimisticMessageIdRef.current--;
-      setContexts(attachedContexts);
-      setMessages((current) => [...current, {
-        id: optimisticMessageId,
-        role: "user",
-        content,
-        created_at: new Date().toISOString(),
-        legacy_session_id: null,
-        context_refs: attachedContexts,
-      }]);
-      setBatchProposal(null);
-      setBatchState(submissionFailures || terminalFailures ? "failed" : "started");
-      setBatchOutcome(null);
-      setRun(created);
-      batchSessionIdRef.current = null;
-      batchWorkflowStartSessionKeyRef.current = null;
-    } catch {
-      if (batchWorkflowRevisionRef.current !== workflowRevision) return;
-      setBatchState("failed");
-      setBatchOutcome("分析或 Coach 解读未能完整开始；已经完成的本地分析仍会保留，请重试。");
-    } finally {
-      if (batchWorkflowRevisionRef.current === workflowRevision) batchWorkflowRef.current = false;
-    }
-  };
-
   const send = async () => {
     const content = draft.trim();
     if (!content || run?.status === "running" || run?.status === "queued") return;
@@ -847,7 +654,6 @@ export function CoachPanel({
         setFeedback("未能创建会话，草稿已保留，请重试。");
         return;
       }
-      const activeContexts = contexts.filter((context) => context.status === "active");
       const optimisticMessageId = optimisticMessageIdRef.current--;
       optimisticId = optimisticMessageId;
       setDraft("");
@@ -858,11 +664,9 @@ export function CoachPanel({
         content,
         created_at: new Date().toISOString(),
         legacy_session_id: null,
-        context_refs: activeContexts,
       }]);
       const created = await createCoachAgentRun(
         content,
-        activeContexts.map((context) => context.context_ref),
         effectiveSessionId == null ? {} : { sessionId: effectiveSessionId },
       );
       setRun(created);
@@ -879,13 +683,8 @@ export function CoachPanel({
     if (!run) return;
     try {
       setRun(await retryCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId }));
-    } catch (error) {
-      const contextUnavailable = error instanceof Error
-        && error.name === "ApiError_409"
-        && error.message === "context_unavailable";
-      setFeedback(contextUnavailable
-        ? "原分析上下文已不可用，请重新附加分析后发送新消息。"
-        : "重试未能开始，请稍后再试。");
+    } catch {
+      setFeedback("重试未能开始，请稍后再试。");
     }
   };
 
@@ -898,43 +697,6 @@ export function CoachPanel({
     }
   };
 
-  const decide = async (decision: "confirm" | "reject") => {
-    if (!pendingConfirmation) return;
-    try {
-      const result = await decideCoachConfirmation(
-        pendingConfirmation.confirmation_ref,
-        decision,
-        sessionId == null ? {} : { sessionId },
-      );
-      setPendingConfirmation(null);
-      await refreshCurrentTraining();
-      setFeedback(result.audit_state === "pending" ? "操作已确认，正在恢复执行。" : decision === "confirm" ? "操作已确认并完成审计。" : "已拒绝操作。");
-    } catch {
-      setFeedback("操作结果暂时无法确认；请刷新状态，系统不会自动重复执行。");
-    }
-  };
-
-  const newTopic = async () => {
-    setDraft("");
-    setRun(null);
-    const active = contexts.filter((context) => context.status === "active");
-    const results = await Promise.allSettled(active.map((context) => detachCoachContext(
-      context.context_ref,
-      sessionId == null ? {} : { sessionId },
-    )));
-    const failureCount = results.filter((result) => result.status === "rejected").length;
-    if (active.length) {
-      if (failureCount === 0) {
-        setFeedback("已清除当前会话上下文；历史消息仍保留。");
-      } else if (failureCount < active.length) {
-        setFeedback("部分上下文未能清除，请重试。");
-      } else {
-        setFeedback("未能清除上下文，请重试。");
-      }
-    }
-    await refresh();
-  };
-
   const headerState = capability === "loading"
     ? { state: "neutral", label: "正在读取" }
     : capability === "ready"
@@ -943,21 +705,14 @@ export function CoachPanel({
         ? { state: "error", label: capabilityLabel(capability) }
         : { state: "warning", label: capabilityLabel(capability) };
 
-  const activeAnalysisContext = visibleContexts.find((context) => context.kind === "analysis" && context.status === "active");
-  const currentAnalysisLabel = activeAnalysisContext?.label ?? (currentAnalysisRef ? "当前分析" : null);
-  const hasAttachedAnalysis = Boolean(activeAnalysisContext);
-
   const suggestionItems = useMemo(() => {
     const base = ["总结最近进步"];
     if (summaryItem?.display_name) {
       base.push(`关于「${summaryItem.display_name}」的训练建议`);
     }
-    if (currentAnalysisLabel) {
-      base.push("这次分析的核心问题是什么");
-    }
-    if (base.length < 2) base.push("今天练什么");
+    base.push("今天练什么");
     return base.slice(0, 3);
-  }, [summaryItem?.display_name, currentAnalysisLabel]);
+  }, [summaryItem?.display_name]);
 
   const header = (
     <header className={["task6-coach-header", layoutMode === "full" ? "task6-coach-full-header" : ""].filter(Boolean).join(" ")}>
@@ -966,35 +721,6 @@ export function CoachPanel({
         <span className="task6-coach-availability" data-state={headerState.state}>{headerState.label}</span>
         <div className="task6-coach-header-actions">
           {onClose ? <IconButton label="关闭 Coach" onClick={onClose} title="关闭 Coach">×</IconButton> : null}
-          {capability === "ready" ? (
-            <IconButton label="清除当前话题上下文" onClick={() => void newTopic()} title="清除当前话题上下文">↺</IconButton>
-          ) : null}
-        </div>
-      </div>
-      <div className="task6-coach-context">
-        {currentAnalysisLabel && !hasAttachedAnalysis ? (
-          <div className="task6-coach-context-line">正在查看的分析：<b>{currentAnalysisLabel}</b></div>
-        ) : !hasAttachedAnalysis ? (
-          <div className="task6-coach-context-line">当前页面：<b>{pageLabel(pathname)}</b>（未附加具体分析）</div>
-        ) : null}
-        <div className="task6-context-list task6-coach-context-attachments">
-          {visibleContexts.length ? (
-            visibleContexts.map((context) => (
-              <span className={["task6-context-chip", context.status === "deleted" ? "" : "task6-context-chip-ref"].filter(Boolean).join(" ")} data-status={context.status} key={context.contextRef}>
-                <button disabled={context.status === "deleted"} onClick={() => locateContext(context)} type="button">{contextLabel(context, "已附加分析：")}</button>
-                <button aria-label={`移除 ${context.label}`} onClick={() => void removeContext(context.contextRef)} type="button">×</button>
-              </span>
-            ))
-          ) : null}
-          {currentAnalysisRef && !activeAnalysisRefs.has(currentAnalysisRef) ? (
-            <button
-              className="task6-context-chip task6-context-chip-add"
-              onClick={() => void onRequestContext(currentAnalysisRef).catch(() => setFeedback("当前 Analysis 未能附加，请重试。"))}
-              type="button"
-            >
-              ＋ 附加当前 Analysis
-            </button>
-          ) : null}
         </div>
       </div>
     </header>
@@ -1047,59 +773,20 @@ export function CoachPanel({
 
       <div className="task6-messages-wrap">
       <section aria-label="Coach 消息" className="task6-messages" onScroll={handleMessagesScroll} ref={messagesRef}>
-        {!batchProposal && messages.length === 0 && !run ? (
-          <Empty title="开始一段 Coach 对话">可以不绑定任何训练记录，也可以附加 1～N 条分析引用。</Empty>
+        {messages.length === 0 && !run ? (
+          <Empty title="开始一段 Coach 对话">可以直接提问训练问题，Coach 会读取你的分析数据。</Empty>
         ) : null}
-        {!batchProposal ? messages.map((message) => {
-          const messageContexts = message.context_refs.map(presentCoachContext);
-          return (
-            <div className="task6-message-entry" data-role={message.role} key={message.id}>
-              <article className="task6-message" data-role={message.role}>
-                <p>{message.content}</p>
-                {messageContexts.length ? (
-                  <div aria-label="本条消息使用的上下文" className="task6-message-contexts">
-                    {messageContexts.map((context) => (
-                      <button disabled={context.status === "deleted"} key={context.contextRef} onClick={() => locateContext(context)} type="button">
-                        {contextLabel(context, "已附加分析：")}{context.status === "deleted" ? "（已删除）" : ""}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </article>
-              {message.role === "assistant" && message.cards?.length ? <CoachMessageCards message={message} onOpenVideo={onOpenVideo} /> : null}
-            </div>
-          );
-        }) : null}
-        {batchProposal ? (
-          <div className="task6-batch-card" role="region" aria-label="批量分析清单">
-            <div className="task6-cfm-head">
-              <div>
-                <div className="task6-cfm-title">分析所选训练</div>
-                <div className="task6-cfm-desc">Coach 会复用已有分析，只为尚未分析且证据完整的训练开始并行分析。</div>
-              </div>
-            </div>
-            <ul className="task6-batch-list">
-              {batchProposal.runs.map((item) => {
-                const label = item.scenario ?? item.run_ref;
-                const status = item.analysis_status === "active"
-                    ? "分析中，等待结果"
-                  : item.analysis_refs.length
-                    ? "已分析，将直接引用"
-                    : item.readiness_state === "pending_analysis" || item.analysis_status === "pending"
-                    ? "待分析"
-                    : "证据不完整，暂不开始";
-                return <li key={item.run_ref}><span>{label}</span><span>{status}</span></li>;
-              })}
-            </ul>
-            {batchOutcome ? <Notice tone={batchState === "failed" ? "warning" : "info"} title="批量分析状态">{batchOutcome}</Notice> : null}
-            {batchState === "pending" ? (
-              <div className="task6-cfm-actions">
-                <Button onClick={() => setBatchProposal(null)} size="compact" variant="ghost">取消</Button>
-                <Button onClick={() => void startBatchAnalysis()} size="compact" variant="secondary">确认并开始</Button>
-              </div>
-            ) : null}
+        {messages.map((message) => (
+          <div className="task6-message-entry" data-role={message.role} key={message.id}>
+            <article className="task6-message" data-role={message.role}>
+              <p>
+                {message.role === "assistant"
+                  ? <CoachMessageText text={message.content} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
+                  : message.content}
+              </p>
+            </article>
           </div>
-        ) : null}
+        ))}
         {run?.partial_text ? (
           <article className="task6-message" data-role="assistant">
             <p>{run.partial_text}<span className="task6-streaming-cursor" /></p>
@@ -1134,23 +821,8 @@ export function CoachPanel({
             </div>
           </div>
         ) : null}
-        {pendingConfirmation ? (
-          <div className="task6-cfm-card">
-            <div className="task6-cfm-head">
-              <div>
-                <div className="task6-cfm-title">确认 Coach 操作</div>
-                <div className="task6-cfm-desc">{pendingConfirmation.impact.message}</div>
-              </div>
-            </div>
-            <div className="task6-cfm-note">拒绝不会改变任何东西。确认后操作不可撤销，但你的 Stats / Performance 源文件永远不会被删除。</div>
-            <div className="task6-cfm-actions">
-              <Button onClick={() => void decide("reject")} size="compact" variant="ghost">拒绝</Button>
-              <Button className="task6-cfm-danger" onClick={() => void decide("confirm")} size="compact" variant="secondary">确认执行</Button>
-            </div>
-          </div>
-        ) : null}
         {run?.status === "stopped" ? <Notice title="生成已停止">已生成的部分内容已保留，可以修改问题后再次发送。</Notice> : null}
-        {!run && !batchProposal ? (
+        {!run ? (
           <div className="task6-suggestions">
             {suggestionItems.map((text) => (
               <button className="task6-suggestion" key={text} onClick={() => setDraft(text)} type="button">{text}</button>
@@ -1158,7 +830,7 @@ export function CoachPanel({
           </div>
         ) : null}
       </section>
-      {unreadCount > 0 && !batchProposal ? (
+      {unreadCount > 0 ? (
         <button className="task6-unread-prompt" onClick={scrollToLatest} type="button">
           ↓ {unreadCount} 条新内容 · 回到底部
         </button>
@@ -1177,7 +849,7 @@ export function CoachPanel({
                 void send();
               }
             }}
-            placeholder={currentAnalysisLabel ? "继续追问这次分析…" : "向 Coach 提问，可以聊训练，也可以让它帮你操作应用…"}
+            placeholder="向 Coach 提问，可以聊训练，也可以让它帮你操作应用…"
             rows={3}
             value={draft}
           />

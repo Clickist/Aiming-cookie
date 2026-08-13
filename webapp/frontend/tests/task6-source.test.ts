@@ -37,27 +37,12 @@ test("Coach availability and empty states keep separate responsive semantics", a
   assert.doesNotMatch(styles, /^\.task6-coach-state\s*\{/m);
 });
 
-test("Coach context is removable and L0 payloads never enter the UI adapter", async () => {
+test("Coach sends and polls agent runs through the shared API adapter", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
-  const contracts = await source("lib/contracts.ts");
-  assert.match(coach, /detachCoachContext/);
   assert.match(coach, /stopCoachAgentRun/);
   assert.match(coach, /retryCoachAgentRun/);
-  assert.match(coach, /decideCoachConfirmation/);
-  assert.match(coach, /已定位/);
-  assert.match(coach, /message\.context_refs/);
-  assert.match(contracts, /presentCoachContext/);
+  assert.match(coach, /getCoachAgentRun/);
   assert.doesNotMatch(coach, /video_path|raw_trace|protobuf|api_key|access_token|refresh_token/);
-
-  assert.match(coach, /cancelable: true/);
-  assert.match(coach, /const located = !window\.dispatchEvent\(/);
-  assert.match(coach, /setFeedback\(located \? "已定位" : "未能定位，请重试。"\)/);
-});
-
-test("Coach retry explains how to recover when the original context is unavailable", async () => {
-  const coach = await source("components/task6/CoachPanel.tsx");
-  assert.match(coach, /error\.message === "context_unavailable"/);
-  assert.match(coach, /原分析上下文已不可用，请重新附加分析后发送新消息。/);
 });
 
 test("Settings route covers Provider, Profile, capture, theme, and Storage", async () => {
@@ -253,11 +238,10 @@ test("Coach reads current training locally and turns shortcut intents into draft
   assert.doesNotMatch(coach, /createTrainingPlan|recordTrainingExecution|recordRetest|completeTraining/);
 });
 
-test("Coach refreshes the visible training plan after a completed run or confirmation", async () => {
+test("Coach refreshes the visible training plan after a completed run", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
   assert.match(coach, /const refreshCurrentTraining = useCallback/);
   assert.match(coach, /await Promise\.all\(\[refresh\(\), refreshCurrentTraining\(\)\]\)/);
-  assert.match(coach, /await refreshCurrentTraining\(\);/);
 });
 
 test("Coach never overlays a training-read error on a valid no-plan response", async () => {
@@ -286,10 +270,13 @@ test("Coach shows a sent user message immediately and restores the draft on fail
   assert.match(panel, /setDraft\(content\)/);
 });
 
-test("Coach sends and polls Provider runs through the shared API adapter", async () => {
+test("Coach sends and streams Provider runs through the shared API adapter", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   assert.match(panel, /const created = await createCoachAgentRun\([\s\S]*?setRun\(created\)/);
-  assert.match(panel, /const next = await getCoachAgentRun\(run\.run_ref[\s\S]*?setRun\(next\)/);
+  // SSE stream replaces the fixed-interval poll; getCoachAgentRun remains the
+  // shared fetch adapter used for finalizing and as the polling fallback.
+  assert.match(panel, /getCoachAgentRun\(runRef/);
+  assert.match(panel, /const next = await fetchRun\(\)[\s\S]*?setRun\(next\)/);
 });
 
 test("Coach keeps each session's active or failed run when switching conversations", async () => {
@@ -299,35 +286,11 @@ test("Coach keeps each session's active or failed run when switching conversatio
   assert.match(panel, /runBySessionRef\.current\.set\(activeSessionKeyRef\.current, run\)/);
 });
 
-test("Coach analysis proposals hide stale messages and generic suggestions", async () => {
+test("Coach shows empty state and suggestions only when there are no messages or runs", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
-  assert.match(panel, /!batchProposal && messages\.length === 0 && !run/);
-  assert.match(panel, /!batchProposal \? messages\.map/);
-  assert.match(panel, /!run && !batchProposal/);
-});
-
-test("Coach analysis proposals wait, attach to a new conversation, and start Provider interpretation", async () => {
-  const panel = await source("components/task6/CoachPanel.tsx");
-  assert.match(panel, /getSession/);
-  assert.match(panel, /await onEnsureSession\(\)/);
-  assert.match(panel, /attachCoachContext/);
-  assert.match(panel, /await createCoachAgentRun\(/);
-  assert.match(panel, /completedRunIds[\s\S]*?analysis_status:[\s\S]*?"done"/);
-});
-
-test("Coach stops a stale batch workflow after switching conversations or unmounting", async () => {
-  const panel = await source("components/task6/CoachPanel.tsx");
-  assert.match(panel, /batchWorkflowRevisionRef/);
-  assert.match(panel, /waitForAnalysisCompletion\(item\.sessionId, isWorkflowCurrent\)/);
-  assert.match(panel, /if \(stopIfStale\(\)\) return/);
-  assert.match(panel, /batchWorkflowRevisionRef\.current \+= 1/);
-});
-
-test("Coach clears all active contexts concurrently and reports partial failure", async () => {
-  const panel = await source("components/task6/CoachPanel.tsx");
-  assert.match(panel, /Promise\.allSettled\(active\.map\(\(context\) => detachCoachContext/);
-  assert.match(panel, /部分上下文未能清除/);
-  assert.match(panel, /未能清除上下文，请重试。/);
+  assert.match(panel, /messages\.length === 0 && !run/);
+  assert.match(panel, /messages\.map/);
+  assert.match(panel, /!run \? \(/);
 });
 
 test("Coach composer has an explicit accessible name", async () => {
@@ -344,31 +307,12 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.doesNotMatch(coach, /task6-training-actions/);
   assert.match(coach, /在 KovaaK 中开始/);
   assert.match(coach, /scenario_profile_ref/);
-  assert.match(coach, /正在查看的分析/);
-  assert.match(coach, /已附加分析：/);
-  assert.doesNotMatch(coach, /引用分析：/);
   assert.match(coach, /正在理解问题和分析上下文/);
   assert.match(coach, /读取已附加分析/);
   assert.match(coach, /尚未绑定可启动的 KovaaK 场景/);
   assert.match(desktop, /scenario_open/);
   assert.match(desktop, /当前网页预览不能启动 KovaaK/);
   assert.doesNotMatch(coach, /steam:\/\//);
-});
-
-test("Coach context controls stay with the context header instead of the composer", async () => {
-  const coach = await source("components/task6/CoachPanel.tsx");
-  const styles = await source("components/task6/task6.css");
-  assert.match(coach, /task6-coach-context-attachments/);
-  assert.doesNotMatch(coach, /task6-composer-attachments/);
-  assert.match(styles, /\.task6-coach-context-attachments[^{]*\{[\s\S]*margin-top:\s*2px/);
-  assert.doesNotMatch(styles, /\.task6-composer-attachments/);
-});
-
-test("Coach does not repeat the attached analysis in the context status line", async () => {
-  const coach = await source("components/task6/CoachPanel.tsx");
-  assert.match(coach, /const hasAttachedAnalysis = Boolean\(activeAnalysisContext\)/);
-  assert.match(coach, /currentAnalysisLabel && !hasAttachedAnalysis/);
-  assert.match(coach, /!hasAttachedAnalysis \? \(/);
 });
 
 test("Coach composer uses a raised input surface without an outer divider", async () => {
@@ -404,10 +348,16 @@ test("Coach current training animates expand and collapse without leaving intera
   assert.match(styles, /prefers-reduced-motion:\s*reduce[\s\S]*\.task6-training-reveal/);
 });
 
-test("Coach renders typed cards beside message bubbles and can open video", async () => {
+test("Coach renders time-point links in assistant messages without legacy attach cards", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
-  assert.match(coach, /CoachMessageCards/);
-  assert.match(coach, /message\.cards/);
-  assert.match(coach, /onOpenVideo/);
-  assert.doesNotMatch(coach, /JSON\.parse\(message\.content\)/);
+  const text = await source("components/task7/CoachMessageText.tsx");
+  assert.match(coach, /CoachMessageText/);
+  assert.match(coach, /defaultAnalysisRef/);
+  assert.match(coach, /analysis_refs/);
+  assert.doesNotMatch(coach, /CoachMessageCards|message\.cards/);
+  assert.match(text, /TIME_POINT_PATTERN/);
+  assert.match(text, /onOpenVideo/);
+  assert.match(text, /task6-time-link/);
+  assert.match(text, /\* 1000/);
 });
+

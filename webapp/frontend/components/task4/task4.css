@@ -13,6 +13,11 @@
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 4px;
+  position: sticky;
+  top: 48px;
+  z-index: 100;
+  background: var(--background);
+  padding: 8px 0;
 }
 
 .task4-page-title-row {
