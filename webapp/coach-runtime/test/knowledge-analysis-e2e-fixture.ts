@@ -86,8 +86,8 @@ function toolResultText(context: unknown, toolName: string): string {
   throw new Error(`missing ${toolName} result`);
 }
 
-function knowledgeQueryFromAnalysis(context: unknown) {
-  const analysis = JSON.parse(toolResultText(context, "get_analysis_summary")) as {
+function knowledgeQueryFromAnalysis(analysisSummary: string) {
+  const analysis = JSON.parse(analysisSummary) as {
     diagnosis?: { issues?: Array<{ signal?: unknown; metric_refs?: unknown }> };
   };
   const issue = analysis.diagnosis?.issues?.[0];
@@ -104,24 +104,17 @@ function knowledgeQueryFromAnalysis(context: unknown) {
   };
 }
 
-export function createAnalysisKnowledgeE2EStream(): StreamFn {
+export function createAnalysisKnowledgeE2EStream(analysisSummary: string): StreamFn {
+  const query = knowledgeQueryFromAnalysis(analysisSummary);
   let callCount = 0;
   return async (_model, context) => {
     callCount += 1;
     if (callCount === 1) {
       return streamAssistant([{
         type: "toolCall",
-        id: "analysis-call",
-        name: "get_analysis_summary",
-        arguments: {},
-      }], "toolUse");
-    }
-    if (callCount === 2) {
-      return streamAssistant([{
-        type: "toolCall",
         id: "knowledge-call",
         name: "get_coach_knowledge",
-        arguments: knowledgeQueryFromAnalysis(context),
+        arguments: query,
       }], "toolUse");
     }
     const result = JSON.parse(toolResultText(context, "get_coach_knowledge")) as {
@@ -144,11 +137,10 @@ export async function runAnalysisKnowledgeE2E(analysisSummary: string) {
     run_id: "analysis-knowledge-e2e",
     user_id: "e2e-owner",
     messages: [{ role: "user", content: "解释当前最优先问题" }],
-    analysis_summary: analysisSummary,
     model: {
       kind: "builtin",
       provider_id: "anthropic",
       model_id: "claude-haiku-4-5",
     },
-  }, { streamFn: createAnalysisKnowledgeE2EStream() });
+  }, { streamFn: createAnalysisKnowledgeE2EStream(analysisSummary) });
 }

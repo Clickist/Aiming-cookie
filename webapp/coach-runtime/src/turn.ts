@@ -1,3 +1,6 @@
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import {
   COACH_RUNTIME_TURN_SCHEMA,
   COACH_RUNTIME_TURN_SCHEMA_V1,
@@ -10,35 +13,24 @@ import {
   type CoachRuntimeTurnResponse,
   type CoachRuntimeTurnSchema,
   type CoachRuntimeToolEvent,
-  type TeachingTurnContract,
 } from "./contracts.ts";
-import { createAnalysisSummaryTool } from "./analysis-summary-tool.ts";
 import { createCoachKnowledgeTool } from "./knowledge-tools.ts";
-import { createSkillLoaderTool, skillsSystemPromptBlock } from "./skill-loader.ts";
 import { createProductCommandTool } from "./product-command-tools.ts";
-import { getDb } from "./db.ts";
-import { createFakeStreamFn } from "./fake-stream.ts";
 import { resolveSystemPrompt } from "./load-system-prompt.ts";
-import { extractRuntimeSecrets, parseProviderProfile, ProviderProfileError, redactRuntimeSecrets } from "./provider-profile.ts";
-import { createModelsStreamFn, resolveProviderModel, type ResolvedProviderModel } from "./provider-models.ts";
-import { loadPiAgent } from "./pi-source.ts";
-import type { StreamFn } from "./stream-openai-compatible.ts";
 import {
-  parseTeachingProviderDraft,
-  parseTeachingTurnContract,
-  teachingEnvelopeInstruction,
-  teachingTurnHoldsState,
-  teachingTurnRequiresLocalFallback,
-} from "./teaching-policy.ts";
+  extractRuntimeSecrets,
+  parseProviderProfile,
+  ProviderProfileError,
+  redactRuntimeSecrets,
+} from "./provider-profile.ts";
+import { resolveProviderModel, type PiModels, type ResolvedProviderModel } from "./provider-models.ts";
+import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
+import { getDataRoot } from "./app-data.ts";
+import { createReadTool, createWriteTool, createLsTool, runScopedAnalysisReads } from "./fs-tools.ts";
+import { extractMessageText } from "./session-repo.ts";
+import type { StreamFn } from "./stream-openai-compatible.ts";
 
-const EMPTY_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
+// ── Types ────────────────────────────────────────────────────────────────
 
 type ParsedRequest = {
   schema_version: CoachRuntimeTurnSchema;
@@ -46,18 +38,19 @@ type ParsedRequest = {
   user_id: string;
   messages: CoachRuntimeMessage[];
   session_id?: string;
-  analysis_summary: string | null;
   system_prompt?: string;
   model: CoachRuntimeProviderProfile;
   tool_bridge?: import("./contracts.ts").CoachToolBridge;
-  teaching_turn?: TeachingTurnContract;
 };
 
 type TurnOptions = {
-  streamFn?: StreamFn;
   onPartial?: (partial: CoachPartialRevision) => Promise<void> | void;
   onActivity?: (activity: CoachActivityUpdate) => Promise<void> | void;
   onComplete?: (timing: CoachTurnTiming) => Promise<void> | void;
+  /** Internal: persistent Coach session for this thread (agent-runs path). */
+  session?: unknown;
+  /** Test seam: inject a fake provider stream (e.g. streamSimple stub) without a network call. */
+  streamFn?: StreamFn;
 };
 
 export type CoachPartialRevision = {
@@ -88,7 +81,7 @@ export type CoachTurnTiming = {
   repair_ms: number;
 };
 
-class EmptyAssistantReplyError extends Error {}
+// ── Abort tracking ───────────────────────────────────────────────────────
 
 const activeTurns = new Map<string, { abort: () => void }>();
 const stopRequested = new Set<string>();
@@ -100,6 +93,8 @@ export function stopCoachTurn(runId: string): boolean {
   active.abort();
   return true;
 }
+
+// ── Request parsing ──────────────────────────────────────────────────────
 
 function parseMessages(raw: unknown): CoachRuntimeMessage[] {
   if (!Array.isArray(raw)) {
@@ -133,13 +128,9 @@ function parseRequest(raw: unknown): ParsedRequest {
   if (sessionId !== undefined && (typeof sessionId !== "string" || !/^coach-thread:[0-9]+$/.test(sessionId))) {
     throw new Error("session_id must be an opaque Coach thread identity");
   }
-  const analysisSummaryValue = raw.analysis_summary;
-  const analysisSummary: string | null =
-    typeof analysisSummaryValue === "string" ? analysisSummaryValue : null;
   const systemPrompt = typeof raw.system_prompt === "string" ? raw.system_prompt : undefined;
   const toolBridge = raw.tool_bridge;
   if (toolBridge !== undefined && !isRecord(toolBridge)) throw new Error("tool_bridge must be an object");
-  const teachingTurn = raw.teaching_turn === undefined ? undefined : parseTeachingTurnContract(raw.teaching_turn);
   const model = parseProviderProfile(raw.model);
 
   return {
@@ -148,13 +139,22 @@ function parseRequest(raw: unknown): ParsedRequest {
     user_id: raw.user_id,
     messages,
     session_id: sessionId,
-    analysis_summary: analysisSummary,
     system_prompt: systemPrompt,
     model,
     tool_bridge: toolBridge as ParsedRequest["tool_bridge"],
-    teaching_turn: teachingTurn,
   };
 }
+
+// ── Conversation helpers ─────────────────────────────────────────────────
+
+const EMPTY_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
 
 function toHistoryMessage(message: CoachRuntimeMessage, model: ResolvedProviderModel["model"]) {
   if (message.role === "user") {
@@ -198,58 +198,205 @@ function splitConversation(messages: CoachRuntimeMessage[], model: ResolvedProvi
     }
   }
   const history = pairedHistory.map((message) => toHistoryMessage(message, model));
-  const prompt = [
-    {
-      role: "user" as const,
-      content: [{ type: "text" as const, text: last.content }],
-      timestamp: Date.now(),
+  return { history, lastMessage: last.content };
+}
+
+// ── Persistent session wrapper ───────────────────────────────────────────
+
+/** Upper bound on context messages so long conversations don't grow unbounded. */
+const MAX_CONTEXT_MESSAGES = 40;
+
+function isMessageEntry(entry: unknown): entry is {
+  type: string;
+  id: string;
+  message: { role: string; content: unknown };
+} {
+  return isRecord(entry) && entry.type === "message" && isRecord(entry.message);
+}
+
+function redactMessage(message: unknown, secrets: string[]): unknown {
+  const content = (message as { content?: unknown })?.content;
+  if (typeof content === "string") {
+    return { ...(message as object), content: redactRuntimeSecrets(content, secrets) };
+  }
+  if (Array.isArray(content)) {
+    return {
+      ...(message as object),
+      content: content.map((block) =>
+        isRecord(block) && block.type === "text" && typeof block.text === "string"
+          ? { ...block, text: redactRuntimeSecrets(block.text, secrets) }
+          : block,
+      ),
+    };
+  }
+  return message;
+}
+
+/**
+ * Wrap a persistent Pi session for harness use.
+ *
+ * - The current user message is already persisted by agent-runs before the
+ *   turn, so the harness's fresh copy of the same prompt is skipped.
+ * - Assistant replies are redacted at the write boundary and failed / empty
+ *   replies are not persisted (mirroring the pre-Pi lifecycle).
+ * - buildContext() drops the trailing current user message and caps the
+ *   window, keeping long conversations bounded.
+ */
+export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
+  const target = session as {
+    appendMessage(message: unknown): Promise<string>;
+    buildContext(options?: unknown): Promise<{ messages: unknown[] }>;
+    getBranch(): Promise<unknown[]>;
+  };
+  return new Proxy(target, {
+    get(proxyTarget, prop, receiver) {
+      if (prop === "appendMessage") {
+        return async (message: unknown): Promise<string | undefined> => {
+          const role = (message as { role?: unknown })?.role;
+          if (role === "user") {
+            const text = extractMessageText((message as { content?: unknown })?.content);
+            const branch = await proxyTarget.getBranch();
+            const last = branch[branch.length - 1];
+            if (
+              isMessageEntry(last) &&
+              last.message.role === "user" &&
+              extractMessageText(last.message.content) === text
+            ) {
+              return last.id;
+            }
+            return proxyTarget.appendMessage(message);
+          }
+          if (role === "assistant") {
+            const assistant = message as { content?: unknown; stopReason?: unknown };
+            const text = extractMessageText(assistant.content);
+            if (assistant.stopReason === "error" || assistant.stopReason === "aborted" || !text.trim()) {
+              return undefined;
+            }
+            return proxyTarget.appendMessage(redactMessage(message, secrets));
+          }
+          return proxyTarget.appendMessage(message);
+        };
+      }
+      if (prop === "buildContext") {
+        return async (options?: unknown) => {
+          const context = await proxyTarget.buildContext(options);
+          const messages = context.messages;
+          const last = messages[messages.length - 1];
+          const withoutCurrent =
+            last && (last as { role?: unknown }).role === "user" ? messages.slice(0, -1) : messages;
+          return { ...context, messages: withoutCurrent.slice(-MAX_CONTEXT_MESSAGES) };
+        };
+      }
+      const value = Reflect.get(proxyTarget, prop, receiver);
+      return typeof value === "function" ? value.bind(proxyTarget) : value;
     },
-  ];
-  return { history, prompt };
+  });
 }
 
-function extractAssistantReply(messages: unknown[]): string {
-  let sawEmptyAssistant = false;
-  let sawErrorAssistant = false;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!isRecord(message) || message.role !== "assistant") continue;
-    if (message.stopReason === "error") {
-      sawErrorAssistant = true;
-      continue;
-    }
-    if (message.stopReason === "aborted") continue;
-    const content = message.content;
-    if (!Array.isArray(content)) continue;
-    const parts = content
-      .filter((block) => isRecord(block) && block.type === "text" && typeof block.text === "string")
-      .map((block) => (block as { text: string }).text);
-    const text = parts.join("").trim();
-    if (text.length > 0) return text;
-    if (message.stopReason === "stop" || message.stopReason === "length") {
-      sawEmptyAssistant = true;
-    }
-  }
-  if (sawEmptyAssistant) throw new EmptyAssistantReplyError("Provider returned an empty assistant reply");
-  if (sawErrorAssistant) throw new EmptyAssistantReplyError("Provider returned an error response");
-  throw new Error("No assistant reply in agent transcript");
+// ── Skills loading ───────────────────────────────────────────────────────
+
+const SOURCE_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "prompts", "skills");
+
+function coachSkillsDir(): string {
+  const resourceRoot = process.env.AIMING_COOKIE_RESOURCE_ROOT?.trim();
+  return resourceRoot ? resolve(resourceRoot, "skills") : SOURCE_SKILLS_DIR;
 }
 
-function extractAssistantPartial(messages: unknown[]): string | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!isRecord(message) || message.role !== "assistant") continue;
-    const content = message.content;
-    if (!Array.isArray(content)) continue;
-    const text = content
-      .filter((block) => isRecord(block) && block.type === "text" && typeof block.text === "string")
-      .map((block) => (block as { text: string }).text)
-      .join("")
-      .trim();
-    if (text.length > 0) return text;
-  }
-  return null;
+/**
+ * The Pi skills loader computes relative paths with forward-slash comparison,
+ * which throws on absolute Windows paths (backslash separators). Wrap the
+ * execution env so every path it returns is forward-slash normalized, and
+ * normalize file-read inputs before delegating. Only the loadSkills call uses
+ * this wrapper; the harness receives the original env.
+ */
+function skillsExecutionEnv(base: Record<string, unknown>): Record<string, unknown> {
+  const forwardSlash = (value: string) => value.replace(/\\/g, "/");
+  const slashPath = (value: unknown) => (typeof value === "string" ? forwardSlash(value) : value);
+  const normalizeResultPath = (result: unknown): unknown => {
+    if (result && typeof result === "object" && (result as { ok?: boolean }).ok === true) {
+      const value = (result as { value?: unknown }).value;
+      if (Array.isArray(value)) {
+        return {
+          ...(result as object),
+          value: value.map((entry) =>
+            entry && typeof entry === "object" && typeof (entry as { path?: unknown }).path === "string"
+              ? { ...entry, path: forwardSlash((entry as { path: string }).path) }
+              : entry,
+          ),
+        };
+      }
+      if (value && typeof value === "object") {
+        const path = (value as { path?: unknown }).path;
+        if (typeof path === "string") {
+          return { ...(result as object), value: { ...(value as object), path: forwardSlash(path) } };
+        }
+      }
+    }
+    return result;
+  };
+  const call = (name: string, args: unknown[]): Promise<unknown> =>
+    (base[name] as (...args: unknown[]) => Promise<unknown>)(...args);
+  return {
+    cwd: forwardSlash(String(base.cwd ?? "")),
+    fileInfo: async (path: unknown, signal?: unknown) =>
+      normalizeResultPath(await call("fileInfo", [slashPath(path), signal])),
+    listDir: async (path: unknown, signal?: unknown) =>
+      normalizeResultPath(await call("listDir", [slashPath(path), signal])),
+    canonicalPath: async (path: unknown, signal?: unknown) =>
+      normalizeResultPath(await call("canonicalPath", [slashPath(path), signal])),
+    readTextFile: (path: unknown, signal?: unknown) => call("readTextFile", [slashPath(path), signal]),
+    readTextLines: (path: unknown, options?: unknown) => call("readTextLines", [slashPath(path), options]),
+    exists: (path: unknown, signal?: unknown) => call("exists", [slashPath(path), signal]),
+  };
 }
+
+// ── Text helpers ─────────────────────────────────────────────────────────
+
+function normalizeUserFacingText(value: string): string {
+  return value
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*(?:[-*+]\s+|\d+[.)、]\s+)/gm, "")
+    .replace(/\*\*/g, "")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .trim();
+}
+
+function safePartialReply(
+  value: string | null,
+  secrets: string[],
+): string | null {
+  const redacted = normalizeUserFacingText(redactRuntimeSecrets(value ?? "", secrets));
+  return redacted || null;
+}
+
+function extractBridgeSecrets(rawRequest: unknown): string[] {
+  if (!isRecord(rawRequest) || !isRecord(rawRequest.tool_bridge)) return [];
+  return [rawRequest.tool_bridge.bearer_token, rawRequest.tool_bridge.desktop_token]
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+// ── Tool event collection ────────────────────────────────────────────────
+
+function collectToolEvents(messages: unknown[]): CoachRuntimeToolEvent[] {
+  const events: CoachRuntimeToolEvent[] = [];
+  for (const message of messages) {
+    if (!isRecord(message) || message.role !== "toolResult" || !isRecord(message.details)) continue;
+    const event = message.details.event;
+    if (isRecord(event) && (event.type === "knowledge" || event.type === "product_command")) {
+      events.push(event as CoachRuntimeToolEvent);
+    }
+  }
+  return events;
+}
+
+// ── Policy ───────────────────────────────────────────────────────────────
+
+const MANDATORY_POLICY =
+  "\n\nMandatory Coach policy: distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never advise ignoring hits, whether a shot hit, or accuracy; write user-facing plain Chinese without exposing canonical timestamps.";
+
+// ── Error helpers ────────────────────────────────────────────────────────
+
+class EmptyAssistantReplyError extends Error {}
 
 function responseSchemaFor(_rawRequest: unknown): CoachRuntimeTurnSchema {
   return COACH_RUNTIME_TURN_SCHEMA;
@@ -267,318 +414,40 @@ function userFacingErrorMessage(error: unknown, stopped: boolean): string {
   return "Coach 暂时无法完成回复，请稍后重试。";
 }
 
-function extractBridgeSecrets(rawRequest: unknown): string[] {
-  if (!isRecord(rawRequest) || !isRecord(rawRequest.tool_bridge)) return [];
-  return [rawRequest.tool_bridge.bearer_token, rawRequest.tool_bridge.desktop_token]
-    .filter((value): value is string => typeof value === "string" && value.length > 0);
-}
+// ── Extract assistant text from a Pi message ──────────────────────────────
 
-const MANDATORY_POLICY = "\n\nMandatory Coach policy: use only registered product tools; when the user asks to delete an Analysis, call run_product_command with analysis.delete so the trusted UI/backend can create confirmation--a prose request to reply with confirmation is not an action; when the user asks about KovaaK scores/成绩/分数, call kovaak_scores.refresh_connected for the connected account, or kovaak_scores.lookup only when the user supplied steam_profile:N; do not substitute history.list or history.trend; when the user explicitly asks to generate a training-plan draft, call training_plan.generate_draft even without attached analysis and report any grounding error from the command; distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never advise ignoring hits, whether a shot hit, or accuracy; write user-facing plain Chinese without exposing canonical timestamps.";
-
-const PROVIDER_CONTEXT_SAFETY_TOKENS = 4096;
-const TOOL_SCHEMA_RESERVE_BYTES = 8 * 1024;
-
-function analysisResultBudgetBytes(
-  contextWindow: number,
-  maxTokens: number,
-  systemPrompt: string,
-  conversation: unknown[],
-): number {
-  const inputBudgetTokens = Math.max(0, contextWindow - maxTokens - PROVIDER_CONTEXT_SAFETY_TOKENS);
-  const knownContextBytes = Buffer.byteLength(systemPrompt, "utf8") +
-    Buffer.byteLength(JSON.stringify(conversation), "utf8") + TOOL_SCHEMA_RESERVE_BYTES;
-  // UTF-8 bytes are a conservative upper bound for tokenizer input tokens.
-  return Math.max(0, inputBudgetTokens - knownContextBytes);
-}
-
-function collectToolEvents(messages: unknown[]): CoachRuntimeToolEvent[] {
-  const events: CoachRuntimeToolEvent[] = [];
-  for (const message of messages) {
-    if (!isRecord(message) || message.role !== "toolResult" || !isRecord(message.details)) continue;
-    const event = message.details.event;
-    if (isRecord(event) && (event.type === "knowledge" || event.type === "product_command")) {
-      events.push(event as CoachRuntimeToolEvent);
-    }
-  }
-  return events;
-}
-
-const METRIC_PARTS = new Set([
-  "accuracy", "correction", "count", "coverage", "decel", "deviation",
-  "distance", "duration", "efficiency", "error", "jitter", "latency", "loss",
-  "overshoot", "path", "ratio", "rate", "reacquisition", "score", "sparc",
-  "speed", "time", "velocity",
-]);
-
-function metricLike(value: string): boolean {
-  return value.split(/[._]/).some((part) => METRIC_PARTS.has(part.toLowerCase()));
-}
-
-function metricAvailable(value: unknown): boolean {
-  if (!isRecord(value)) return true;
-  return !["unavailable", "unsupported", "undetermined", "insufficient_evidence"]
-    .includes(String(value.availability ?? value.status ?? "").toLowerCase());
-}
-
-type RequestedMetricValue = { key: string; value: number };
-
-function requestedSummaryMetricValues(
-  analysisSummary: string | null,
-  userContent: string,
-): RequestedMetricValue[] {
-  if (!analysisSummary || !userContent) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(analysisSummary);
-  } catch {
-    return [];
-  }
-  const projections: unknown[] = [];
-  if (isRecord(parsed) && parsed.schema_version === "coach_turn_context.v1" && Array.isArray(parsed.contexts)) {
-    for (const context of parsed.contexts) {
-      if (!isRecord(context)) continue;
-      projections.push(context.projection);
-      if (context.comparison_projection !== null) projections.push(context.comparison_projection);
-    }
-  } else {
-    projections.push(parsed);
-  }
-  const values = new Map<string, number>();
-  for (const projection of projections) {
-    const diagnosis = isRecord(projection) && isRecord(projection.diagnosis)
-      ? projection.diagnosis : null;
-    const summary = diagnosis && isRecord(diagnosis.summary) ? diagnosis.summary : null;
-    if (summary === null) continue;
-    for (const [key, metric] of Object.entries(summary)) {
-      if (!metricLike(key) || !metricAvailable(metric) || !isRecord(metric) ||
-          typeof metric.value !== "number" || !Number.isFinite(metric.value) ||
-          !userContent.includes(key)) continue;
-      values.set(key, metric.value);
-    }
-  }
-  return [...values].map(([key, value]) => ({ key, value }));
-}
-
-function explicitMetricInstruction(metrics: RequestedMetricValue[]): string {
-  if (metrics.length === 0) return "";
-  const values = metrics.map(({ key, value }) => `${key}=${String(value)}`).join(", ");
-  return `\n\nExplicit available metric request: the attached Analysis contains ${values}. The user named these metrics. Use their actual values first when answering. A missing threshold or baseline limits evaluation only; it does not make the value unavailable. Do not claim these values are unavailable.`;
-}
-
-function normalizeUserFacingText(value: string): string {
-  return value
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*(?:[-*+]\s+|\d+[.)、]\s+)/gm, "")
-    .replace(/\*\*/g, "")
-    .replace(/`([^`\n]+)`/g, "$1")
+function extractAssistantText(message: unknown): string | null {
+  if (!isRecord(message) || message.role !== "assistant") return null;
+  const content = message.content;
+  if (!Array.isArray(content)) return null;
+  const text = content
+    .filter((block) => isRecord(block) && block.type === "text" && typeof block.text === "string")
+    .map((block) => (block as { text: string }).text)
+    .join("")
     .trim();
+  return text.length > 0 ? text : null;
 }
 
-function safeDisplayString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (trimmed.length === 0 || trimmed.length > 200) return null;
-  if (/^(?:[a-z]:[\\/]|[\\/]{2}|\/|~[\\/]|\.\.[\\/]|file:)/i.test(trimmed)) return null;
-  if (/[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return null;
-  if (/(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)\s*[:=]/i.test(value)) return null;
-  if (/\bbearer\s+\S{8,}/i.test(value)) return null;
-  if (/\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{8,}/i.test(value)) return null;
-  return trimmed;
-}
+// ── Main turn function ───────────────────────────────────────────────────
 
-export function diagnosticContextPromptText(
-  parsed: Record<string, unknown>,
-  maxBytes: number,
-): string | null {
-  const analysisRef = isRecord(parsed.analysis_ref) ? parsed.analysis_ref : null;
-  const scenario = isRecord(parsed.scenario) ? parsed.scenario : null;
-  const diagnosis = isRecord(parsed.diagnosis) ? parsed.diagnosis : null;
-
-  const lines: string[] = [
-    "Aiming Cookie has already selected this exact Analysis for the current turn.",
-  ];
-
-  if (analysisRef) {
-    if (typeof analysisRef.analysis_id === "string") {
-      lines.push(`analysis_ref: ${analysisRef.analysis_id}`);
-    }
-    const analysisType = safeDisplayString(analysisRef.analysis_type);
-    if (analysisType) lines.push(`analysis_type: ${analysisType}`);
-  }
-
-  if (scenario) {
-    const displayName = safeDisplayString(scenario.display_name);
-    const aimFamily = safeDisplayString(scenario.aim_family);
-    if (displayName) lines.push(`scenario: ${displayName}`);
-    if (aimFamily) lines.push(`aim_family: ${aimFamily}`);
-  }
-
-  if (diagnosis) {
-    if (isRecord(diagnosis.profile)) {
-      const profileLabel = safeDisplayString(diagnosis.profile.label);
-      if (profileLabel) lines.push(`profile: ${profileLabel}`);
-    }
-    if (Array.isArray(diagnosis.issues)) {
-      const issueLines: string[] = [];
-      for (const issue of diagnosis.issues) {
-        if (!isRecord(issue)) continue;
-        const signal = safeDisplayString(issue.signal);
-        if (!signal) continue;
-        const severity = safeDisplayString(issue.severity);
-        issueLines.push(severity ? `- ${signal} [${severity}]` : `- ${signal}`);
-      }
-      if (issueLines.length > 0) {
-        lines.push(`diagnosis_issues:\n${issueLines.join("\n")}`);
-      }
-    }
-    if (isRecord(diagnosis.summary)) {
-      const issueMetricRefs = new Set<string>();
-      if (Array.isArray(diagnosis.issues)) {
-        for (const issue of diagnosis.issues) {
-          if (!isRecord(issue) || !Array.isArray(issue.metric_refs)) continue;
-          for (const ref of issue.metric_refs) {
-            if (typeof ref === "string") issueMetricRefs.add(ref);
-          }
-        }
-      }
-
-      const metricEntries: Array<{
-        rawKey: string;
-        displayName: string;
-        value: number | string;
-        unit: string | null;
-      }> = [];
-      for (const [key, metric] of Object.entries(diagnosis.summary)) {
-        if (!isRecord(metric) || !metricAvailable(metric)) continue;
-        const val = metric.value;
-        if (val == null) continue;
-        const safeKey = safeDisplayString(key);
-        if (!safeKey) continue;
-        const translatedName = isRecord(metric.definition) && typeof metric.definition.name === "string"
-          ? safeDisplayString(metric.definition.name)
-          : null;
-        const displayName = translatedName || safeKey;
-        if (typeof val === "number" && Number.isFinite(val)) {
-          metricEntries.push({ rawKey: safeKey, displayName, value: val, unit: safeDisplayString(metric.unit) });
-        } else if (typeof val === "string") {
-          const safeVal = safeDisplayString(val);
-          if (safeVal) metricEntries.push({ rawKey: safeKey, displayName, value: safeVal, unit: safeDisplayString(metric.unit) });
-        }
-      }
-
-      if (metricEntries.length > 15) {
-        const prioritized = metricEntries.filter((e) => issueMetricRefs.has(e.rawKey));
-        const rest = metricEntries.filter((e) => !issueMetricRefs.has(e.rawKey)).slice(0, 10);
-        metricEntries.length = 0;
-        metricEntries.push(...prioritized, ...rest);
-      }
-
-      if (metricEntries.length > 0) {
-        const metricLines = metricEntries.map(({ displayName, value, unit }) =>
-          `- ${displayName}: ${String(value)}${unit ? ` (${unit})` : ""}`,
-        );
-        const withoutMetricsBytes = Buffer.byteLength(lines.join("\n"), "utf8");
-        const prefixBytes = Buffer.byteLength("\nMetrics:", "utf8");
-        if (withoutMetricsBytes + prefixBytes < maxBytes) {
-          const fittedLines: string[] = [];
-          let used = withoutMetricsBytes + prefixBytes;
-          for (const line of metricLines) {
-            const lineBytes = Buffer.byteLength(`\n${line}`, "utf8");
-            if (used + lineBytes > maxBytes) break;
-            fittedLines.push(line);
-            used += lineBytes;
-          }
-          if (fittedLines.length > 0) {
-            lines.push(`Metrics:\n${fittedLines.join("\n")}`);
-          }
-        }
-      }
-    }
-  }
-
-  const text = lines.join("\n");
-  return Buffer.byteLength(text, "utf8") <= maxBytes ? text : null;
-}
-
-function hasAttachedAnalysisContext(analysisSummary: string | null): boolean {
-  if (!analysisSummary) return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(analysisSummary);
-  } catch {
-    return false;
-  }
-  if (!isRecord(parsed)) return false;
-  if (parsed.schema_version === "coach_diagnostic_context.v3") {
-    return isRecord(parsed.analysis_ref) &&
-      typeof parsed.analysis_ref.analysis_id === "string";
-  }
-  if (parsed.schema_version !== "coach_turn_context.v1" ||
-      !Array.isArray(parsed.contexts) || parsed.contexts.length === 0) return false;
-  return parsed.contexts.every((context) => isRecord(context) &&
-    typeof context.context_ref === "string" &&
-    /^context:[A-Za-z0-9._:-]+$/.test(context.context_ref) &&
-    typeof context.analysis_ref === "string" &&
-    /^analysis:[1-9][0-9]*$/.test(context.analysis_ref));
-}
-
-function singleAttachedAnalysisInput(
-  analysisSummary: string | null,
-  maxBytes: number,
-): string | null {
-  if (!analysisSummary) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(analysisSummary);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed)) return null;
-  if (parsed.schema_version === "coach_diagnostic_context.v3") {
-    return diagnosticContextPromptText(parsed, maxBytes);
-  }
-  if (parsed.schema_version !== "coach_turn_context.v1" ||
-      !Array.isArray(parsed.contexts) || parsed.contexts.length !== 1) return null;
-  const context = parsed.contexts[0];
-  if (!isRecord(context) || typeof context.context_ref !== "string" ||
-      typeof context.analysis_ref !== "string" || !isRecord(context.projection)) return null;
-  const text = [
-    "Aiming Cookie has already selected this exact Analysis for the current turn.",
-    `context_ref: ${context.context_ref}`,
-    `analysis_ref: ${context.analysis_ref}`,
-    `analysis_projection: ${JSON.stringify(context.projection)}`,
-  ].join("\n");
-  return Buffer.byteLength(text, "utf8") <= maxBytes ? text : null;
-}
-
-function safePartialReply(
-  value: string | null,
-  _request: ParsedRequest,
-  _currentMessages: unknown[],
-  secrets: string[],
-): string | null {
-  const redacted = normalizeUserFacingText(redactRuntimeSecrets(value ?? "", secrets));
-  return redacted || null;
-}
-
-export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {}): Promise<CoachRuntimeTurnResponse> {
+export async function runCoachTurn(
+  rawRequest: unknown,
+  options: TurnOptions = {},
+): Promise<CoachRuntimeTurnResponse> {
   const turnStartedAt = performance.now();
   const responseSchema = responseSchemaFor(rawRequest);
   const responseRunId = isRecord(rawRequest) && typeof rawRequest.run_id === "string"
     ? rawRequest.run_id
     : null;
   const secrets = [...extractRuntimeSecrets(rawRequest), ...extractBridgeSecrets(rawRequest)];
-  let agent: {
-    prompt: (input: unknown) => Promise<void>;
-    abort: () => void;
-    subscribe: (listener: (event: any) => Promise<void> | void) => () => void;
-    state: { messages: unknown[]; tools: Array<{ name: string }> };
-  } | null = null;
+
   let unsubscribe: (() => void) | null = null;
+  const analysisRefs: string[] = [];
+  const recordAnalysisRead = (analysisId: number) => {
+    const ref = `analysis:${analysisId}`;
+    if (!analysisRefs.includes(ref)) analysisRefs.push(ref);
+  };
   let activeRunId: string | null = null;
-  let turnMessageStart = 0;
-  let partialMessageStart = 0;
-  let parsedRequest: ParsedRequest | null = null;
   let partialRevision = 0;
   let activitySequence = 0;
   let lastPartialText: string | null = null;
@@ -593,84 +462,100 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
   let repairMs = 0;
   const providerStarts: number[] = [];
   const toolStarts = new Map<string, number>();
+  let collectedToolEvents: CoachRuntimeToolEvent[] = [];
+
   try {
     const request = parseRequest(rawRequest);
-    parsedRequest = request;
-    const explicitMetrics = requestedSummaryMetricValues(
-      request.analysis_summary,
-      request.messages.at(-1)?.content ?? "",
-    );
     const resolved = await resolveProviderModel(request.model);
-    const { Agent } = (await loadPiAgent()) as {
-      Agent: new (opts: Record<string, unknown>) => {
-        prompt: (input: unknown) => Promise<void>;
-        abort: () => void;
-        subscribe: (listener: (event: any) => Promise<void> | void) => () => void;
-        state: { messages: unknown[]; tools: Array<{ name: string }> };
+    const { history, lastMessage } = splitConversation(request.messages, resolved.model);
+
+    // Load Pi classes
+    const { AgentHarness, InMemorySessionRepo, loadSkills, formatSkillsForSystemPrompt } = (await loadPiAgent()) as {
+      AgentHarness: new (opts: Record<string, unknown>) => InstanceType<typeof Object> & {
+        prompt: (text: string) => Promise<unknown>;
+        subscribe: (listener: (event: any, signal?: AbortSignal) => Promise<void> | void) => () => void;
+        abort: () => Promise<unknown>;
       };
+      InMemorySessionRepo: new () => {
+        create: () => Promise<{
+          appendMessage: (message: unknown) => Promise<string>;
+        }>;
+      };
+      loadSkills: (env: unknown, dirs: string) => Promise<{ skills: unknown[]; diagnostics: unknown[] }>;
+      formatSkillsForSystemPrompt: (skills: unknown[]) => string;
     };
-    const { history, prompt } = splitConversation(request.messages, resolved.model);
-    turnMessageStart = history.length;
-    partialMessageStart = history.length;
-    const baseStreamFn = options.streamFn ?? createModelsStreamFn(resolved.models);
-    const streamFn: StreamFn = ((model, context, streamOptions) => {
-      providerRounds += 1;
-      providerStarts.push(performance.now());
-      return baseStreamFn(model, context, streamOptions);
-    }) as StreamFn;
+    const { NodeExecutionEnv } = (await loadPiNodeEnv()) as {
+      NodeExecutionEnv: new (opts: { cwd: string }) => unknown;
+    };
+
+    // Create execution environment with cwd pointing to app-data
+    const env = new NodeExecutionEnv({ cwd: getDataRoot() });
+
+    // Load Coach skills (peripheral reference, KovaaK data reference).
+    const skills = (await loadSkills(skillsExecutionEnv(env as Record<string, unknown>), coachSkillsDir())).skills;
+
+    // Use the persistent Coach thread session when the caller provides one
+    // (agent-runs path) so history comes from Session.buildContext(); otherwise
+    // fall back to an in-memory session rebuilt from the request.
+    const session = options.session
+      ? wrapCoachSession(options.session, secrets)
+      : await (async () => {
+          const repo = new InMemorySessionRepo();
+          const memorySession = await repo.create();
+          for (const historyMessage of history.slice(-MAX_CONTEXT_MESSAGES)) {
+            await memorySession.appendMessage(historyMessage);
+          }
+          return memorySession;
+        })();
+
+    // Build system prompt via harness callback: the base prompt plus the
+    // spec-compatible skills block (Pi injects resources into the callback).
+    const systemPrompt = (context: { resources: { skills?: unknown[] } }) => {
+      const skillsBlock = formatSkillsForSystemPrompt(context.resources.skills ?? []);
+      return `${resolveSystemPrompt(request.system_prompt)}\n\n${skillsBlock}\n\n${MANDATORY_POLICY}`;
+    };
+
+    // Build tools: file system tools + knowledge + product commands
+    const dataRoot = getDataRoot();
+    const tools = [
+      createReadTool(dataRoot),
+      createWriteTool(dataRoot),
+      createLsTool(dataRoot),
+      createCoachKnowledgeTool(),
+      createProductCommandTool(request.tool_bridge ?? null, {
+        ownerId: request.user_id,
+      }),
+    ];
+
+    // Allow a test-injected stream to stand in for the resolved provider
+    // stream. The wrapper keeps every other Models method working while
+    // overriding streamSimple, so the harness streams through the fake.
+    const harnessModels: PiModels = options.streamFn
+      ? Object.assign(Object.create(resolved.models), {
+          streamSimple: options.streamFn as PiModels["streamSimple"],
+        })
+      : resolved.models;
+
+    // Create AgentHarness
+    const harness = new AgentHarness({
+      env,
+      session,
+      models: harnessModels,
+      systemPrompt,
+      tools,
+      model: resolved.model,
+      resources: { skills },
+    });
+
+    // Subscribe to events for streaming and tracking
     const publishActivity = async (
       activity: Omit<CoachActivityUpdate, "sequence">,
     ): Promise<void> => {
       if (!options.onActivity) return;
       await options.onActivity({ sequence: ++activitySequence, ...activity });
     };
-    const hasAttachedAnalysis = hasAttachedAnalysisContext(request.analysis_summary);
-    const systemPrompt = `${resolveSystemPrompt(request.system_prompt)}${skillsSystemPromptBlock()}${MANDATORY_POLICY}${request.teaching_turn ? `\n\n${teachingEnvelopeInstruction(request.teaching_turn)}` : ""}${explicitMetricInstruction(explicitMetrics)}`;
-    const maxAnalysisResultBytes = analysisResultBudgetBytes(
-      resolved.model.contextWindow,
-      resolved.model.maxTokens,
-      systemPrompt,
-      [...history, ...prompt],
-    );
-    const attachedAnalysisInput = singleAttachedAnalysisInput(
-      request.analysis_summary,
-      maxAnalysisResultBytes,
-    );
-    if (attachedAnalysisInput !== null) {
-      prompt[0].content.push({ type: "text" as const, text: attachedAnalysisInput });
-    }
-    const nativeDb = getDb();
-    const tools = [
-      createAnalysisSummaryTool(request.analysis_summary, { maxResultBytes: maxAnalysisResultBytes }),
-      createCoachKnowledgeTool(),
-      createSkillLoaderTool(),
-    ];
-    // Product command tool: native reads go to SQLite directly, writes/evidence
-    // still go through the HTTP bridge. If no bridge is available, only native
-    // reads work.
-    tools.push(createProductCommandTool(request.tool_bridge ?? null, {
-      db: nativeDb,
-      ownerId: request.user_id,
-      ...(hasAttachedAnalysis ? {
-        excludedCommands: ["run.list", "analysis.create_from_run"],
-      } : {}),
-    }));
-    agent = new Agent({
-      streamFn,
-      sessionId: request.session_id,
-      initialState: {
-        systemPrompt,
-        model: resolved.model,
-        tools,
-        messages: history,
-      },
-    });
 
-    const publishPartial = async (
-      text: string | null,
-      currentMessages: unknown[],
-      force = false,
-    ): Promise<void> => {
+    const publishPartial = async (text: string | null, force = false): Promise<void> => {
       if (!options.onPartial || text === null || text === lastPartialText) return;
       const now = performance.now();
       const sentenceBoundary = /[。！？.!?]$/.test(text);
@@ -687,19 +572,33 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       });
     };
 
-    unsubscribe = agent.subscribe(async (event) => {
+    unsubscribe = harness.subscribe(async (event) => {
       const now = performance.now();
-      if (event.type === "message_start" && event.message?.role === "assistant") {
+      const eventType: string = event.type;
+
+      if (eventType === "before_provider_request") {
+        providerRounds += 1;
+        providerStarts.push(now);
         firstProviderEventMs ??= Math.max(0, Math.round(now - turnStartedAt));
+        return;
+      }
+
+      if (eventType === "message_start" && isRecord(event.message) && event.message.role === "assistant") {
         await publishActivity({ kind: "thinking", state: "started" });
-      } else if (event.type === "message_end" && event.message?.role === "assistant") {
+        return;
+      }
+
+      if (eventType === "message_end" && isRecord(event.message) && event.message.role === "assistant") {
         const providerStartedAt = providerStarts.shift();
         if (providerStartedAt !== undefined) {
           const roundMs = Math.max(0, Math.round(now - providerStartedAt));
           providerRoundMs.push(roundMs);
           providerMs += roundMs;
         }
-      } else if (event.type === "tool_execution_start") {
+        return;
+      }
+
+      if (eventType === "tool_execution_start") {
         toolStarts.set(event.toolCallId, now);
         const commandName = isRecord(event.args) && typeof event.args.command_name === "string"
           ? event.args.command_name.slice(0, 96)
@@ -711,7 +610,10 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
           tool_name: event.toolName,
           command_name: commandName,
         });
-      } else if (event.type === "tool_execution_end") {
+        return;
+      }
+
+      if (eventType === "tool_execution_end") {
         const toolStartedAt = toolStarts.get(event.toolCallId);
         if (toolStartedAt !== undefined) {
           toolMs += Math.max(0, now - toolStartedAt);
@@ -723,28 +625,38 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
           tool_call_id: event.toolCallId,
           tool_name: event.toolName,
         });
+        // Collect tool result events for the response
+        if (isRecord(event.result) && isRecord(event.result.details)) {
+          const detailEvent = event.result.details.event;
+          if (isRecord(detailEvent) && (detailEvent.type === "knowledge" || detailEvent.type === "product_command")) {
+            collectedToolEvents.push(detailEvent as CoachRuntimeToolEvent);
+          }
+        }
+        return;
       }
-      if (
-        event.type !== "message_update" ||
-        event.assistantMessageEvent?.type !== "text_delta"
-      ) return;
-      firstTextDeltaMs ??= Math.max(0, Math.round(now - turnStartedAt));
-      if (request.teaching_turn) return;
-      const currentMessages = agent?.state.messages.slice(turnMessageStart) ?? [event.message];
-      await publishPartial(
-        safePartialReply(extractAssistantPartial([event.message]), request, currentMessages, secrets),
-        currentMessages,
-      );
+
+      if (eventType === "message_update" && isRecord(event.assistantMessageEvent) && event.assistantMessageEvent.type === "text_delta") {
+        firstTextDeltaMs ??= Math.max(0, Math.round(now - turnStartedAt));
+        const partialText = extractAssistantText(event.message);
+        await publishPartial(safePartialReply(partialText, secrets));
+        return;
+      }
     });
 
+    // Register abort handler
     if (activeTurns.has(request.run_id)) {
       throw new Error("Duplicate active Coach run id");
     }
     activeRunId = request.run_id;
-    activeTurns.set(request.run_id, { abort: () => agent?.abort() });
+    activeTurns.set(request.run_id, { abort: () => { void harness.abort(); } });
 
-    await agent.prompt(prompt);
-    let currentMessages = agent.state.messages.slice(turnMessageStart);
+    // Run the turn. Analysis reads (read/ls tools and native product commands)
+    // are reported only to this turn's collector, so concurrent turns cannot
+    // pollute each other's analysis_refs.
+    const replyMessage = await runScopedAnalysisReads(recordAnalysisRead, () =>
+      harness.prompt(lastMessage),
+    );
+
     if (stopRequested.has(request.run_id)) {
       return failureResponse(
         makeError({
@@ -755,24 +667,53 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
         }),
         [],
         request.schema_version,
-        collectToolEvents(currentMessages),
-        safePartialReply(extractAssistantPartial(currentMessages), request, currentMessages, secrets),
+        collectedToolEvents,
+        lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
         request.run_id,
+        analysisRefs,
       );
     }
-    const rawReply = redactRuntimeSecrets(extractAssistantReply(currentMessages), secrets);
-    let reply = normalizeUserFacingText(rawReply);
-    if (request.teaching_turn) {
-      const draft = parseTeachingProviderDraft(rawReply);
-      reply = normalizeUserFacingText(draft !== null ? draft.text : rawReply);
+
+    // Extract reply text
+    const isAborted = isRecord(replyMessage) && replyMessage.stopReason === "aborted";
+    const isError = isRecord(replyMessage) && replyMessage.stopReason === "error";
+    const rawReply = extractAssistantText(replyMessage);
+
+    if (rawReply === null) {
+      if (isAborted) {
+        return failureResponse(
+          makeError({
+            category: "coach_runtime",
+            code: "stopped",
+            message: STOPPED_USER_MESSAGE,
+            retryable: true,
+          }),
+          [],
+          request.schema_version,
+          collectedToolEvents,
+          lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
+          request.run_id,
+          analysisRefs,
+        );
+      }
+      throw new EmptyAssistantReplyError(
+        isError
+          ? "Provider returned an error response"
+          : "Provider returned an empty assistant reply",
+      );
     }
-    await publishPartial(reply, currentMessages, true);
+
+    const redactedReply = redactRuntimeSecrets(rawReply, secrets);
+    const reply = normalizeUserFacingText(redactedReply);
+    await publishPartial(reply, true);
+
     return successResponse(
       reply,
       [],
       request.schema_version,
-      collectToolEvents(currentMessages),
+      collectedToolEvents,
       request.run_id,
+      analysisRefs,
     );
   } catch (error) {
     const stopped = activeRunId !== null && stopRequested.has(activeRunId);
@@ -785,18 +726,10 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       }),
       [],
       responseSchema,
-      agent === null ? [] : collectToolEvents(agent.state.messages.slice(turnMessageStart)),
-      agent === null
-        ? null
-        : parsedRequest === null
-          ? null
-          : safePartialReply(
-            extractAssistantPartial(agent.state.messages.slice(partialMessageStart)),
-            parsedRequest,
-            agent.state.messages.slice(turnMessageStart),
-            secrets,
-          ),
+      collectedToolEvents,
+      lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
       responseRunId,
+      analysisRefs,
     );
   } finally {
     unsubscribe?.();
@@ -827,11 +760,4 @@ export async function runCoachTurn(rawRequest: unknown, options: TurnOptions = {
       });
     }
   }
-}
-
-export async function runCoachTurnWithFakeStream(
-  rawRequest: unknown,
-  replyText?: string,
-): Promise<CoachRuntimeTurnResponse> {
-  return runCoachTurn(rawRequest, { streamFn: createFakeStreamFn(replyText) });
 }

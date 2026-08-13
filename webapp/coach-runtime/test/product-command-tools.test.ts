@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type { CoachToolBridge } from "../src/contracts.ts";
@@ -7,6 +10,19 @@ import {
   createProductCommandTool,
 } from "../src/product-command-tools.ts";
 import { isNativeWriteCommand } from "../src/product-commands-write.ts";
+import { isNativePythonAnalysisCommand } from "../src/python-analysis.ts";
+
+// Native commands read from the app-data file system. Point DATA_ROOT at a
+// throwaway directory before any command executes (getDataRoot caches on the
+// first call), and let each test write the fixture files it needs.
+const dataRoot = mkdtempSync(join(tmpdir(), "coach-product-command-"));
+process.env.DATA_ROOT = dataRoot;
+
+function writeFixture(relativePath: string, content: unknown): void {
+  const absolutePath = join(dataRoot, ...relativePath.split("/"));
+  mkdirSync(join(absolutePath, ".."), { recursive: true });
+  writeFileSync(absolutePath, JSON.stringify(content), "utf8");
+}
 
 const BEARER = "bridge-bearer-secret-sentinel";
 const DESKTOP = "desktop-secret-sentinel";
@@ -100,217 +116,159 @@ test("turn-scoped exclusions remove discovery commands from the model tool", asy
   );
 });
 
-test("analysis.get accepts the public command-route result shape", async () => {
-  const originalFetch = globalThis.fetch;
-  const routeResult = {
-    schema_version: "coach_product_command_result.v1",
-    command_id: "command:analysis:6",
+test("analysis.get returns the native overview with a safe audit event", async () => {
+  writeFixture("analyses/6/overview.json", {
+    status: "done",
+    analysis_type: "flicking",
+    input_mode: "multimodal",
+    run_ref: "run:52326",
+    created_at: "2026-08-08T16:10:09+08:00",
+    started_at: "2026-08-08T16:10:10+08:00",
+    finished_at: "2026-08-08T16:10:20+08:00",
+    error: null,
+  });
+
+  const result = await createProductCommandTool(null).execute("analysis-get", {
+    command_name: "analysis.get",
+    parameters: { analysis_ref: "analysis:6" },
+  });
+
+  const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+  assert.equal(parsed.schema_version, "coach_product_command_result.v1");
+  assert.equal(parsed.status, "succeeded");
+  assert.equal(parsed.audit_ref, "native");
+  assert.match(String(parsed.command_id), /^native:analysis\.get:/);
+  assert.equal(parsed.result_ref, "analysis:6");
+  // Native reads never carry bridge confirmation metadata.
+  assert.ok(!Object.hasOwn(parsed, "confirmation"));
+  assert.equal((parsed.result as { analysis_ref: string }).analysis_ref, "analysis:6");
+  assert.equal((parsed.result as { run_ref: string }).run_ref, "run:52326");
+
+  assert.deepEqual(result.details.event, {
+    type: "product_command",
+    command_id: parsed.command_id,
+    command_name: "analysis.get",
     status: "succeeded",
     result_ref: "analysis:6",
-    audit_ref: "audit:analysis:6",
+    audit_ref: "native",
     ui_event: null,
-    confirmation: null,
     warning_or_error: null,
-    result: {
-      analysis_ref: "analysis:6",
-      id: 6,
-      status: "done",
-      analysis_type: "flicking",
-      input_mode: "multimodal",
-      run_ref: "run:52326",
-      created_at: "2026-08-08T16:10:09+08:00",
-      started_at: "2026-08-08T16:10:10+08:00",
-      finished_at: "2026-08-08T16:10:20+08:00",
-      error: null,
-    },
-  };
-  globalThis.fetch = (async () => new Response(JSON.stringify(routeResult), { status: 200 })) as typeof fetch;
-  try {
-    const result = await createProductCommandTool(bridge()).execute("analysis-get", {
-      command_name: "analysis.get",
-      parameters: { analysis_ref: "analysis:6" },
-    });
+  });
+});
 
-    const { confirmation: _confirmation, ...providerResult } = routeResult;
-    assert.equal(result.content[0]?.text, JSON.stringify(providerResult));
-    assert.ok(!Object.hasOwn(JSON.parse(result.content[0]?.text ?? "{}"), "confirmation"));
-    assert.deepEqual(result.details.event, {
-      type: "product_command",
-      command_id: "command:analysis:6",
-      command_name: "analysis.get",
-      status: "succeeded",
-      result_ref: "analysis:6",
-      audit_ref: "audit:analysis:6",
-      ui_event: null,
-      warning_or_error: null,
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
+test("native generate_draft writes a draft and never exposes confirmation metadata", async () => {
+  const result = await createProductCommandTool(null).execute("plan-draft", {
+    command_name: "training_plan.generate_draft",
+    parameters: { plan_payload: { title: "Test" } },
+  });
+
+  const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+  assert.equal(parsed.schema_version, "coach_product_command_result.v1");
+  assert.equal(parsed.status, "succeeded");
+  assert.match(String(parsed.command_id), /^command:[a-f0-9]{32}$/);
+  assert.match(String(parsed.audit_ref), /^audit:[a-f0-9]{32}$/);
+  assert.match(String(parsed.result_ref), /^plan:/);
+  // Native writes carry no confirmation metadata to the Provider.
+  assert.ok(!JSON.stringify(result).includes("confirmation_ref"));
+  assert.ok(!JSON.stringify(result).includes("confirmation:local-only"));
+  assert.equal(result.details.event.status, "succeeded");
+});
+
+test("KovaaK score lookup validates the profile reference shape natively", async () => {
+  const tool = createProductCommandTool(null);
+  const result = await tool.execute("lookup", {
+    command_name: "kovaak_scores.lookup",
+    parameters: { profile_ref: "steam_profile:1" },
+  });
+
+  // No bridge/HTTP request: the native lookup reports the turn-scoped profile
+  // is unavailable and never echoes the profile ref or any score payload.
+  const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+  assert.equal(parsed.audit_ref, "native");
+  assert.equal(parsed.status, "unavailable");
+  assert.equal((parsed.warning_or_error as { code: string }).code, "temporary_profile_unavailable");
+  assert.ok(!JSON.stringify(result).includes("steam_profile:1"));
+
+  for (const parameters of [
+    { profile_ref: "https://steamcommunity.com/profiles/76561199033719938" },
+    { profile_ref: "76561199033719938" },
+    { profile_ref: "steam_profile:0" },
+    { profile_ref: "steam_profile:1", extra: "field" },
+    { profile_ref: { ref: "steam_profile:1" } },
+    { profile_ref: ["steam_profile:1"] },
+  ]) {
+    await assert.rejects(
+      tool.execute("lookup-rejected", { command_name: "kovaak_scores.lookup", parameters }),
+      /unsupported fields/,
+    );
   }
 });
 
-test("pending confirmation metadata stays local while the Provider receives only the safe command result", async () => {
-  const originalFetch = globalThis.fetch;
-  const routeResult = {
-    schema_version: "coach_product_command_result.v1",
-    command_id: "command:plan-draft",
-    status: "needs_confirmation",
-    result_ref: null,
-    result: null,
-    ui_event: null,
-    confirmation: {
-      schema_version: "coach_product_command_confirmation.v1",
-      confirmation_ref: "confirmation:local-only",
-      command_name: "training_plan.generate_draft",
-    },
-    warning_or_error: { code: "confirmation_required", message: "User confirmation required" },
-    audit_ref: "audit:plan-draft",
-  };
-  globalThis.fetch = (async () => new Response(JSON.stringify(routeResult), { status: 200 })) as typeof fetch;
-  try {
-    const result = await createProductCommandTool(bridge()).execute("plan-draft", {
-      command_name: "training_plan.generate_draft",
-      parameters: { plan_payload: { title: "Test" } },
-    });
+test("KovaaK connected-account refresh validates an empty parameter object natively", async () => {
+  const tool = createProductCommandTool(null);
+  const result = await tool.execute("refresh", { command_name: "kovaak_scores.refresh_connected", parameters: {} });
 
-    assert.equal(result.details.event.status, "needs_confirmation");
-    assert.ok(!result.content[0]?.text.includes("confirmation_ref"));
-    assert.ok(!result.content[0]?.text.includes("confirmation:local-only"));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
+  // No connected Steam account in the fixture data root: native refresh
+  // reports unavailable without making a network request.
+  const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+  assert.equal(parsed.audit_ref, "native");
+  assert.equal(parsed.status, "unavailable");
+  assert.equal((parsed.warning_or_error as { code: string }).code, "connected_account_unavailable");
 
-test("KovaaK score lookup only forwards a bridge-issued profile reference", async () => {
-  const originalFetch = globalThis.fetch;
-  const requests: Array<Record<string, unknown>> = [];
-  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return new Response(JSON.stringify(commandResult()), { status: 200 });
-  }) as typeof fetch;
-  try {
-    const tool = createProductCommandTool(bridge());
-    await tool.execute("lookup", {
-      command_name: "kovaak_scores.lookup",
-      parameters: { profile_ref: "steam_profile:1" },
-    });
-    assert.deepEqual(requests, [{
-      command_name: "kovaak_scores.lookup",
-      parameters: { profile_ref: "steam_profile:1" },
-    }]);
-
-    for (const parameters of [
-      { profile_ref: "https://steamcommunity.com/profiles/76561199033719938" },
-      { profile_ref: "76561199033719938" },
-      { profile_ref: "steam_profile:0" },
-      { profile_ref: "steam_profile:1", extra: "field" },
-      { profile_ref: { ref: "steam_profile:1" } },
-      { profile_ref: ["steam_profile:1"] },
-    ]) {
-      await assert.rejects(
-        tool.execute("lookup-rejected", { command_name: "kovaak_scores.lookup", parameters }),
-        /unsupported fields/,
-      );
-    }
-    assert.equal(requests.length, 1);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("KovaaK connected-account refresh accepts exactly an empty parameter object", async () => {
-  const originalFetch = globalThis.fetch;
-  const requests: Array<Record<string, unknown>> = [];
-  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return new Response(JSON.stringify(commandResult()), { status: 200 });
-  }) as typeof fetch;
-  try {
-    const tool = createProductCommandTool(bridge());
-    await tool.execute("refresh", { command_name: "kovaak_scores.refresh_connected", parameters: {} });
-    assert.deepEqual(requests, [{ command_name: "kovaak_scores.refresh_connected", parameters: {} }]);
-
-    for (const parameters of [
-      { profile_ref: "steam_profile:1" },
-      { url: "https://steamcommunity.com/profiles/76561199033719938" },
-      { steam_id: "76561199033719938" },
-      { nested: {} },
-    ]) {
-      await assert.rejects(
-        tool.execute("refresh-rejected", { command_name: "kovaak_scores.refresh_connected", parameters }),
-        /unsupported fields/,
-      );
-    }
-    assert.equal(requests.length, 1);
-  } finally {
-    globalThis.fetch = originalFetch;
+  for (const parameters of [
+    { profile_ref: "steam_profile:1" },
+    { url: "https://steamcommunity.com/profiles/76561199033719938" },
+    { steam_id: "76561199033719938" },
+    { nested: {} },
+  ]) {
+    await assert.rejects(
+      tool.execute("refresh-rejected", { command_name: "kovaak_scores.refresh_connected", parameters }),
+      /unsupported fields/,
+    );
   }
 });
 
 test("KovaaK score command events retain no profile reference or score payload", async () => {
-  const originalFetch = globalThis.fetch;
-  const scorePayload = { total_records: 78, completed: 18 };
-  globalThis.fetch = (async () => new Response(JSON.stringify({
-    schema_version: "coach_product_command_result.v1",
-    command_id: "command:kovaak:1",
-    status: "succeeded",
-    result_ref: "kovaak_scores:temporary:1",
-    audit_ref: "audit:kovaak:1",
-    result: scorePayload,
-    ui_event: { result: scorePayload },
-    warning_or_error: { scorePayload },
-  }), { status: 200 })) as typeof fetch;
-  try {
-    const result = await createProductCommandTool(bridge()).execute("lookup", {
-      command_name: "kovaak_scores.lookup",
-      parameters: { profile_ref: "steam_profile:1" },
-    });
-    assert.deepEqual(result.details.event, {
-      type: "product_command",
-      command_id: "command:kovaak:1",
-      command_name: "kovaak_scores.lookup",
-      status: "succeeded",
-      result_ref: "kovaak_scores:temporary:1",
-      audit_ref: "audit:kovaak:1",
-      ui_event: null,
-      warning_or_error: null,
-    });
-    assert.ok(!JSON.stringify(result.details.event).includes("steam_profile:1"));
-    assert.ok(!JSON.stringify(result.details.event).includes("total_records"));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  const result = await createProductCommandTool(null).execute("lookup", {
+    command_name: "kovaak_scores.lookup",
+    parameters: { profile_ref: "steam_profile:1" },
+  });
+
+  const event = result.details.event as Record<string, unknown>;
+  assert.equal(event.type, "product_command");
+  assert.equal(event.command_name, "kovaak_scores.lookup");
+  assert.equal(event.status, "unavailable");
+  assert.equal(event.audit_ref, "native");
+  assert.ok(!("result" in event), "trace event must not carry the score payload");
+  assert.ok(!JSON.stringify(result.details.event).includes("steam_profile:1"));
+  assert.ok(!JSON.stringify(result.details.event).includes("total_records"));
+  assert.ok(!JSON.stringify(result.details.event).includes("overall_rank"));
 });
 
-test("guided teaching facts are registered as write commands", async () => {
-  const originalFetch = globalThis.fetch;
-  const requests: Array<Record<string, unknown>> = [];
-  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return new Response(JSON.stringify(commandResult()), { status: 200 });
-  }) as typeof fetch;
-  try {
-    const tool = createProductCommandTool(bridge());
-    const cases = [
-      ["training_plan.item.add", { plan_ref: "plan:1", item_payload: { title: "Practice" } }],
-      ["training_plan.execution.record", { item_ref: "item:1", scenario_ref: "scenario:1", run_refs: [] }],
-      ["training_plan.retest.record", { item_ref: "item:1", kind: "matched", run_refs: [] }],
-    ] as const;
+test("guided teaching facts are registered as native write commands", async () => {
+  writeFixture("training/plan.json", {
+    plan_id: "plan:1",
+    status: "active",
+    version: 1,
+    items: [],
+  });
 
-    for (const [command_name, parameters] of cases) {
-      assert.ok(PRODUCT_COMMAND_NAMES.includes(command_name));
-      await tool.execute("first", { command_name, parameters });
-      await tool.execute("second", { command_name, parameters });
-    }
+  const tool = createProductCommandTool(null);
+  const cases = [
+    ["training_plan.item.add", { plan_ref: "plan:1", item_payload: { title: "Practice" } }],
+    ["training_plan.execution.record", { item_ref: "item:1", scenario_ref: "scenario:1", run_refs: [], completion_status: "completed" }],
+    ["training_plan.retest.record", { item_ref: "item:1", kind: "matched", expected_metric_ref: "metric:sparc", expected_direction: "down", result: "improved", analysis_refs: [] }],
+  ] as const;
 
-    assert.equal(requests.length, 6);
-    for (let index = 0; index < requests.length; index += 2) {
-      assert.equal(requests[index].command_name, requests[index + 1].command_name);
-      assert.equal(requests[index].idempotency_key, requests[index + 1].idempotency_key);
-      assert.match(String(requests[index].idempotency_key), /^turn:[a-f0-9]{64}$/);
-    }
-  } finally {
-    globalThis.fetch = originalFetch;
+  for (const [command_name, parameters] of cases) {
+    assert.ok(PRODUCT_COMMAND_NAMES.includes(command_name));
+    assert.ok(isNativeWriteCommand(command_name), `${command_name} should be native`);
+    const result = await tool.execute("first", { command_name, parameters });
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+    assert.equal(parsed.schema_version, "coach_product_command_result.v1");
+    assert.equal(parsed.status, "succeeded");
+    assert.match(String(parsed.command_id), /^command:[a-f0-9]{32}$/);
+    assert.match(String(parsed.audit_ref), /^audit:[a-f0-9]{32}$/);
   }
 });
 
@@ -334,9 +292,10 @@ test("product command passes parameters through to bridge without TS-side filter
   try {
     const tool = createProductCommandTool(bridge());
     // FORBIDDEN_KEYS filtering was removed — Python bridge validates server-side.
+    // analysis.retry still routes through the bridge (not yet native).
     const result = await tool.execute("call", {
-      command_name: "analysis.create_from_run",
-      parameters: { run_ref: "run:7", note: "https://example.com" },
+      command_name: "analysis.retry",
+      parameters: { session_id: 7, note: "https://example.com" },
     });
     assert.equal(fetchCalls, 1);
     assert.ok(result);
@@ -357,13 +316,14 @@ test("write calls use stable turn-local idempotency and never return bridge secr
   }) as typeof fetch;
   try {
     const tool = createProductCommandTool(bridge());
+    // analysis.retry still routes through the bridge (not yet native).
     const first = await tool.execute("call-1", {
-      command_name: "analysis.create_from_run",
-      parameters: { run_ref: "run:7", options: { b: 2, a: 1 } },
+      command_name: "analysis.retry",
+      parameters: { session_id: 7, scope: { b: 2, a: 1 } },
     });
     await tool.execute("call-2", {
-      command_name: "analysis.create_from_run",
-      parameters: { options: { a: 1, b: 2 }, run_ref: "run:7" },
+      command_name: "analysis.retry",
+      parameters: { scope: { a: 1, b: 2 }, session_id: 7 },
     });
 
     assert.equal(requests.length, 2);
@@ -383,8 +343,9 @@ test("write calls use stable turn-local idempotency and never return bridge secr
   }
 });
 
-test("analysis creation is registered as a native write", () => {
-  assert.equal(isNativeWriteCommand("analysis.create_from_run"), true);
+test("analysis creation is native via the Python REST API (not a native write)", () => {
+  assert.equal(isNativeWriteCommand("analysis.create_from_run"), false);
+  assert.equal(isNativePythonAnalysisCommand("analysis.create_from_run"), true);
 });
 
 test("product commands forward a bounded exact instruction quote", async () => {
@@ -397,8 +358,10 @@ test("product commands forward a bounded exact instruction quote", async () => {
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   try {
+    // analysis.retry still routes through the bridge (not yet native), so the
+    // instruction quote forwarding contract is exercised there.
     const result = await createProductCommandTool(bridge()).execute("direct-delete", {
-      command_name: "analysis.delete",
+      command_name: "analysis.retry",
       parameters: { analysis_ref: "analysis:3" },
       instruction_quote: "delete this analysis",
     });
@@ -409,139 +372,132 @@ test("product commands forward a bounded exact instruction quote", async () => {
   }
 });
 
-test("guided teaching facts pass through to bridge without TS-side security filtering", async () => {
-  const originalFetch = globalThis.fetch;
-  let fetchCalls = 0;
-  globalThis.fetch = (async () => {
-    fetchCalls += 1;
-    return new Response(JSON.stringify(commandResult()), { status: 200 });
-  }) as typeof fetch;
-  try {
-    const tool = createProductCommandTool(bridge());
-    // Security filtering (FORBIDDEN_KEYS) was removed — the Python bridge
-    // validates parameters server-side via _TOOL_BRIDGE_PAYLOAD_KEYS.
-    const result = await tool.execute("call", {
-      command_name: "training_plan.item.add",
-      parameters: { authority: "coach" },
-    });
-    assert.equal(fetchCalls, 1);
-    assert.ok(result);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test("guided teaching facts execute as native writes without TS-side filtering", async () => {
+  writeFixture("training/plan.json", {
+    plan_id: "plan:1",
+    status: "saved",
+    version: 1,
+    items: [],
+  });
+
+  const tool = createProductCommandTool(null);
+  // Extra params reach the native handler untouched (no TS-side security
+  // filtering); the handler reads the fields it needs and ignores the rest.
+  const result = await tool.execute("call", {
+    command_name: "training_plan.item.add",
+    parameters: { plan_ref: "plan:1", item_payload: { title: "Practice" }, authority: "coach" },
+  });
+  const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+  assert.equal(parsed.status, "succeeded");
+  assert.match(String(parsed.command_id), /^command:[a-f0-9]{32}$/);
+  assert.equal(result.details.event.type, "product_command");
 });
 
 test("provider receives the bounded result while the trace event retains only its audit projection", async () => {
-  const originalFetch = globalThis.fetch;
-  const fullResult = {
-    schema_version: "coach_product_command_result.v1",
-    command_id: "command:events:1",
-    status: "succeeded",
-    result_ref: "analysis:7:events:page:1",
-    audit_ref: "audit:events:1",
-    result: {
-      analysis_ref: "analysis:7",
-      event_refs: ["event:analysis:7:shot:1"],
-      records: [{ event_ref: "event:analysis:7:shot:1", event_kind: "shot", start_ms: 120 }],
-      next_cursor: "cursor:opaque-events-page-2",
-    },
-  };
-  globalThis.fetch = (async () => new Response(JSON.stringify(fullResult), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  })) as typeof fetch;
-  try {
-    const result = await createProductCommandTool(bridge()).execute("events-page-1", {
-      command_name: "analysis.events.list" as typeof PRODUCT_COMMAND_NAMES[number],
-      parameters: { analysis_ref: "analysis:7", scope: "whole_run", event_kinds: ["shot"], limit: 20 },
-    });
+  writeFixture("analyses/7/evidence.json", {
+    schema_version: "analysis_evidence.v1",
+    evidence_segments: [],
+    event_bundles: [{
+      bundle_ref: "bundle:1",
+      events: [{
+        event_id: "event:analysis:7:shot:1",
+        event_kind: "shot",
+        start_ms: 120,
+        end_ms: 140,
+        attributes: {},
+      }],
+    }],
+    metric_records: [],
+  });
 
-    assert.equal(result.content[0]?.text, JSON.stringify(fullResult));
-    assert.deepEqual(result.details.event, {
-      type: "product_command",
-      command_id: "command:events:1",
-      command_name: "analysis.events.list",
-      status: "succeeded",
-      result_ref: "analysis:7:events:page:1",
-      audit_ref: "audit:events:1",
-      ui_event: null,
-      warning_or_error: null,
-    });
-    assert.ok(JSON.stringify(result.details.event).includes("analysis:7:events:page:1"));
-    assert.ok(!JSON.stringify(result.details.event).includes("next_cursor"));
-    assert.ok(!JSON.stringify(result.details.event).includes("opaque-events-page-2"));
-    assert.ok(!("result" in result.details.event));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  const result = await createProductCommandTool(null).execute("events-page-1", {
+    command_name: "analysis.events.list" as typeof PRODUCT_COMMAND_NAMES[number],
+    parameters: { analysis_ref: "analysis:7", scope: "whole_run", event_kinds: ["shot"], limit: 20 },
+  });
+
+  const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+  assert.equal(parsed.status, "succeeded");
+  assert.equal(parsed.audit_ref, "native");
+  assert.equal(parsed.result_ref, "analysis:7:events:0");
+  // The Provider sees the full bounded result (records); the trace event
+  // retains only the audit projection.
+  assert.deepEqual(result.details.event, {
+    type: "product_command",
+    command_id: parsed.command_id,
+    command_name: "analysis.events.list",
+    status: "succeeded",
+    result_ref: "analysis:7:events:0",
+    audit_ref: "native",
+    ui_event: null,
+    warning_or_error: null,
+  });
+  assert.ok(!("result" in result.details.event));
+  assert.ok(!JSON.stringify(result.details.event).includes("event:analysis:7:shot:1"));
+  assert.ok(!JSON.stringify(result.details.event).includes("next_cursor"));
 });
 
 test("guided teaching facts retain only safe audit projections in the trace", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => new Response(JSON.stringify({
-    ...commandResult(),
-    result: { item_ref: "item:1", private_note: "do not trace this" },
-  }), { status: 200 })) as typeof fetch;
-  try {
-    const tool = createProductCommandTool(bridge());
-    const cases = [
-      ["training_plan.item.add", { plan_ref: "plan:1", item_payload: { title: "Practice" } }],
-      ["training_plan.execution.record", { item_ref: "item:1", scenario_ref: "scenario:1", run_refs: [] }],
-      ["training_plan.retest.record", { item_ref: "item:1", kind: "matched", run_refs: [] }],
-    ] as const;
+  writeFixture("training/plan.json", {
+    plan_id: "plan:1",
+    status: "saved",
+    version: 1,
+    items: [],
+  });
 
-    for (const [command_name, parameters] of cases) {
-      const result = await tool.execute("call", { command_name, parameters });
-      assert.deepEqual(result.details.event, {
-        type: "product_command",
-        command_id: "command:1",
-        command_name,
-        status: "succeeded",
-        result_ref: "analysis:7",
-        audit_ref: "audit:1",
-        ui_event: { schema_version: "coach_ui_event.v1", kind: "analysis", analysis_ref: "analysis:7" },
-        warning_or_error: null,
-      });
-      assert.ok(!JSON.stringify(result.details.event).includes("private_note"));
-    }
-  } finally {
-    globalThis.fetch = originalFetch;
+  const tool = createProductCommandTool(null);
+  const cases = [
+    ["training_plan.item.add", { plan_ref: "plan:1", item_payload: { title: "Practice" } }],
+    ["training_plan.execution.record", { item_ref: "item:1", scenario_ref: "scenario:1", run_refs: [], completion_status: "completed" }],
+    ["training_plan.retest.record", { item_ref: "item:1", kind: "matched", expected_metric_ref: "metric:sparc", expected_direction: "down", result: "improved", analysis_refs: [] }],
+  ] as const;
+
+  for (const [command_name, parameters] of cases) {
+    const result = await tool.execute("call", { command_name, parameters });
+    const event = result.details.event as Record<string, unknown>;
+    assert.equal(event.type, "product_command");
+    assert.equal(event.command_name, command_name);
+    assert.equal(event.status, "succeeded");
+    assert.match(String(event.command_id), /^command:[a-f0-9]{32}$/);
+    assert.match(String(event.audit_ref), /^audit:[a-f0-9]{32}$/);
+    assert.ok(!("result" in event), "trace event must not carry the write payload");
+    assert.ok(!JSON.stringify(event).includes("private_note"));
   }
 });
 
-test("model-supplied authorization and confirmation fields are never forwarded", async () => {
-  const originalFetch = globalThis.fetch;
-  let body: Record<string, unknown> = {};
-  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
-    body = JSON.parse(String(init?.body));
-    return new Response(JSON.stringify(commandResult()), { status: 200 });
-  }) as typeof fetch;
-  try {
-    const tool = createProductCommandTool(bridge());
-    await tool.execute("call", {
-      command_name: "training_plan.activate",
-      parameters: { plan_ref: "plan:one" },
-      request_basis: "coach_inferred",
-      confirmation_ref: "confirmation:one",
-    } as never);
-    assert.ok(!("request_basis" in body));
-    assert.ok(!("confirmation_ref" in body));
-    assert.ok(!("owner_id" in body));
-    assert.ok(!("risk" in body));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test("model-supplied authorization and confirmation fields never reach a native command", async () => {
+  writeFixture("training/plan.json", {
+    plan_id: "plan:one",
+    status: "saved",
+    version: 1,
+    items: [],
+  });
+
+  const result = await createProductCommandTool(null).execute("call", {
+    command_name: "training_plan.activate",
+    parameters: { plan_ref: "plan:one" },
+    request_basis: "coach_inferred",
+    confirmation_ref: "confirmation:one",
+  } as never);
+
+  const serialized = JSON.stringify(result);
+  assert.ok(!serialized.includes("request_basis"));
+  assert.ok(!serialized.includes("confirmation_ref"));
+  assert.ok(!serialized.includes("confirmation:one"));
+  assert.ok(!serialized.includes("owner_id"));
+  assert.ok(!serialized.includes("risk"));
+  assert.equal((JSON.parse(result.content[0]?.text ?? "{}") as { status: string }).status, "succeeded");
 });
 
 test("bridge failures and invalid statuses fail closed without echoing secrets", async () => {
   const originalFetch = globalThis.fetch;
   try {
     const tool = createProductCommandTool(bridge());
+    // analysis.retry still routes through the bridge (not yet native).
     globalThis.fetch = (async () => {
       throw new Error(`${BEARER} ${DESKTOP}`);
     }) as typeof fetch;
     await assert.rejects(
-      tool.execute("call", { command_name: "run.list", parameters: {} }),
+      tool.execute("call", { command_name: "analysis.retry", parameters: { analysis_ref: "analysis:3" } }),
       (error: Error) => error.message === "Product command bridge request failed" && !error.message.includes(BEARER),
     );
 
@@ -551,7 +507,7 @@ test("bridge failures and invalid statuses fail closed without echoing secrets",
       status: "made_up_status",
     }), { status: 200 })) as typeof fetch;
     await assert.rejects(
-      tool.execute("call", { command_name: "run.list", parameters: {} }),
+      tool.execute("call", { command_name: "analysis.retry", parameters: { analysis_ref: "analysis:3" } }),
       /invalid result/,
     );
   } finally {
