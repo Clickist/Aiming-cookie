@@ -26,20 +26,18 @@ test("History and Settings use a centered bounded consumption width", async () =
   assert.match(settingsStyles, /\.task6-settings-layout\s*\{[\s\S]*max-width:\s*1040px[\s\S]*margin:\s*0 auto/);
 });
 
-test("Coach owns optional message cards and a center video pane", async () => {
-  const [shell, panel, cards, videoPane] = await Promise.all([
+test("Coach opens a center video pane from time-link analysis refs", async () => {
+  const [shell, panel, videoPane] = await Promise.all([
     source("components/task3/AppShell.tsx"),
     source("components/task6/CoachPanel.tsx"),
-    source("components/task7/CoachMessageCards.tsx"),
     source("components/task7/CoachVideoPane.tsx"),
   ]);
   assert.match(shell, /<CoachVideoPane/);
   assert.match(shell, /videoTarget/);
   assert.match(shell, /onOpenVideo=/);
-  assert.match(panel, /<CoachMessageCards/);
   assert.match(panel, /onOpenVideo/);
-  assert.match(cards, /message\.cards/);
-  assert.doesNotMatch(cards, /JSON\.parse\(message\.content\)|dangerouslySetInnerHTML/);
+  assert.match(panel, /analysis_refs/);
+  assert.doesNotMatch(panel, /CoachMessageCards|message\.cards/);
   assert.match(videoPane, /getSession/);
   assert.match(videoPane, /presentAnalysisWorkspace/);
   assert.match(videoPane, /<VideoView/);

@@ -13,9 +13,9 @@ import {
   getCurrentTraining,
   getAnalysisFamilyData,
   getAnalysisVideoBlob,
-  getCoachContexts,
-  getCoachPrimary,
+  getCoachSession,
   createCoachAgentRun,
+  listCoachSessions,
   listCustomProviderModels,
   listSessions,
   refreshKovaaKConnection,
@@ -202,14 +202,14 @@ test("desktop sidecar requests retry once after Tauri publishes a replacement UR
     const url = String(input);
     requests.push(url);
     if (url.startsWith("http://127.0.0.1:43128")) throw new TypeError("fetch failed");
-    return new Response(JSON.stringify({ contexts: [] }), { status: 200 });
+    return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
   }) as typeof fetch;
 
-  await getCoachContexts();
+  await listCoachSessions();
 
   assert.deepEqual(requests, [
-    "http://127.0.0.1:43128/v1/context",
-    "http://127.0.0.1:43130/v1/context",
+    "http://127.0.0.1:43128/v1/sessions",
+    "http://127.0.0.1:43130/v1/sessions",
   ]);
   assert.equal(connectionCalls, 2);
 });
@@ -233,7 +233,7 @@ test("desktop sidecar writes are not replayed after a transport failure", async 
     throw new TypeError("fetch failed");
   }) as typeof fetch;
 
-  await assert.rejects(createCoachAgentRun("test", []), /temporarily unavailable/i);
+  await assert.rejects(createCoachAgentRun("test"), /temporarily unavailable/i);
 
   assert.deepEqual(requests, ["http://127.0.0.1:43128/v1/agent-runs"]);
   assert.equal(connectionCalls, 1);
@@ -257,15 +257,15 @@ test("desktop sidecar requests do not replay against an unchanged URL", async ()
     const url = String(input);
     requests.push(url);
     if (url.startsWith("http://127.0.0.1:43128")) throw new TypeError("fetch failed");
-    return new Response(JSON.stringify({ contexts: [] }), { status: 200 });
+    return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
   }) as typeof fetch;
 
-  await assert.rejects(getCoachContexts(), /temporarily unavailable/i);
-  await getCoachContexts();
+  await assert.rejects(listCoachSessions(), /temporarily unavailable/i);
+  await listCoachSessions();
 
   assert.deepEqual(requests, [
-    "http://127.0.0.1:43128/v1/context",
-    "http://127.0.0.1:43130/v1/context",
+    "http://127.0.0.1:43128/v1/sessions",
+    "http://127.0.0.1:43130/v1/sessions",
   ]);
   assert.equal(connectionCalls, 3);
 });
@@ -284,7 +284,7 @@ test("desktop sidecar requests preserve AbortError without refreshing the connec
   const aborted = new DOMException("The operation was aborted", "AbortError");
   globalThis.fetch = (async () => { throw aborted; }) as typeof fetch;
 
-  await assert.rejects(getCoachContexts(), (error: unknown) => error === aborted);
+  await assert.rejects(listCoachSessions(), (error: unknown) => error === aborted);
   assert.equal(connectionCalls, 1);
 });
 
@@ -318,16 +318,13 @@ test("Coach session adapters forward the selected session identity", async () =>
     return new Response(JSON.stringify({}), { status: 200 });
   }) as typeof fetch;
 
-  await getCoachPrimary({ sessionId: 17 });
-  await getCoachContexts({ sessionId: 17 });
-  await createCoachAgentRun("先看稳定性", [], { sessionId: 17 });
+  await getCoachSession(17);
+  await createCoachAgentRun("先看稳定性", { sessionId: 17 });
 
-  assert.equal(requests[0]?.input, "/api/coach/primary?session_id=17");
-  assert.equal(requests[1]?.input, "/api/coach/context?session_id=17");
-  assert.deepEqual(JSON.parse(String(requests[2]?.init?.body)), {
+  assert.equal(requests[0]?.input, "/api/coach/sessions/17");
+  assert.deepEqual(JSON.parse(String(requests[1]?.init?.body)), {
     schema_version: "coach_agent_run_request.v1",
     content: "先看稳定性",
-    context_refs: [],
     session_id: 17,
   });
 });
@@ -343,7 +340,7 @@ test("structured API errors expose the server message instead of object coercion
   })) as typeof fetch;
 
   await assert.rejects(
-    () => createCoachAgentRun("test", []),
+    () => createCoachAgentRun("test"),
     (error: unknown) => error instanceof Error
       && error.name === "ApiError_503"
       && error.message === "Coach Provider is not configured",

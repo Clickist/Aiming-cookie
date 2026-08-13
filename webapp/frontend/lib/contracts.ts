@@ -779,7 +779,7 @@ export function presentRunInspector(run: KovaaKRunListItem): RunInspectorPresent
       label: presentRecordLabel({
         scenario: run.scenario,
         trainingAt: run.created_at,
-        analysisCompletedAt: null,
+        analysisCompletedAt: run.analysis_completed_at,
       }),
       scenario: run.scenario ?? "未知场景",
       createdAt: run.created_at,
@@ -857,10 +857,18 @@ export interface CoachContextPresentation {
 export function presentCoachContext(
   context: CoachContextRefV1,
 ): CoachContextPresentation {
+  const kindLabels: Record<string, string> = {
+    analysis: "分析记录",
+    comparison: "对比分析",
+    issue: "问题定位",
+    time_range: "时间区间",
+    metric: "指标",
+    evidence_segment: "证据片段",
+  };
   return {
     contextRef: context.context_ref,
     kind: context.kind,
-    label: context.label,
+    label: context.label ?? context.analysis_ref ?? kindLabels[context.kind] ?? context.context_ref,
     status: context.status,
     locator: context.locator ?? null,
   };
