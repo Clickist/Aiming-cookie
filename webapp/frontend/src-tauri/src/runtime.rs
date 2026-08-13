@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::capture_coordinator::CaptureControlConnection;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(800);
 const TOKEN_ENV: &str = "AIMING_COOKIE_DESKTOP_TOKEN";
 const WATCH_PARENT_STDIN_ENV: &str = "AIMING_COOKIE_WATCH_PARENT_STDIN";
 const CAPTURE_CONTROL_ADDRESS_ENV: &str = "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_ADDR";
@@ -208,11 +208,21 @@ impl RuntimeProcess {
     }
 
     pub fn shutdown(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            terminate_process_tree(&mut child);
+        let mut children: Vec<Child> = Vec::new();
+        if let Some(child) = self.child.take() {
+            children.push(child);
         }
-        if let Some(mut coach_sidecar) = self.coach_sidecar.take() {
-            terminate_process_tree(&mut coach_sidecar);
+        if let Some(coach_sidecar) = self.coach_sidecar.take() {
+            children.push(coach_sidecar);
+        }
+        // Terminate Python and the Coach runtime concurrently so shutdown
+        // latency is the slowest child, not their sum.
+        let handles: Vec<_> = children
+            .into_iter()
+            .map(|mut child| std::thread::spawn(move || terminate_process_tree(&mut child)))
+            .collect();
+        for handle in handles {
+            let _ = handle.join();
         }
     }
 }

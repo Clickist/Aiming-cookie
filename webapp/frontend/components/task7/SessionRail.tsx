@@ -46,9 +46,10 @@ export interface SessionRailProps {
 function sessionTitle(session: SessionRailSession): string {
   const title = session.title?.trim();
   if (title && title !== "新对话") return title;
+  const preview = session.lastMessagePreview?.trim() || session.last_message_preview?.trim();
+  if (title === "新对话" && !preview) return "新对话"; // 草稿态：还没有消息，保持"新对话"
   return session.label?.trim() || session.name?.trim() || session.summary?.trim()
-    || session.lastMessagePreview?.trim() || session.last_message_preview?.trim()
-    || "未命名对话";
+    || preview || "未命名对话";
 }
 
 function isArchived(session: SessionRailSession): boolean {
@@ -237,7 +238,7 @@ export function SessionRail({
                 {!session.summary && (session.lastMessagePreview || session.last_message_preview) ? <span className="task7-session-rail__session-summary">{session.lastMessagePreview || session.last_message_preview}</span> : null}
                 {date ? <time className="task7-session-rail__session-date" dateTime={session.updatedAt || session.updated_at || session.createdAt || session.created_at || undefined}>{date}</time> : null}
               </button>
-              {session.kind !== "primary" && (onArchiveSession || onSoftDeleteSession) ? (
+              {session.id !== "draft" && (onArchiveSession || onSoftDeleteSession) ? (
                 <span className="task7-session-rail__item-actions">
                   {onArchiveSession ? <button aria-label={`归档 ${title}`} className="task7-session-rail__item-action" onClick={(event) => { event.stopPropagation(); onArchiveSession(session); }} type="button">归档</button> : null}
                   {onSoftDeleteSession ? <button aria-label={`删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); onSoftDeleteSession(session); }} type="button">删除</button> : null}

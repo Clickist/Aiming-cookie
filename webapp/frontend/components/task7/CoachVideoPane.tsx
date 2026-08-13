@@ -12,6 +12,8 @@ function analysisIdFromRef(value: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+const presentationCache = new Map<number, AnalysisWorkspacePresentation>();
+
 export function CoachVideoPane({
   analysisRef,
   initialTimeMs = 0,
@@ -38,11 +40,20 @@ export function CoachVideoPane({
     }
     setLoading(true);
     setFailed(false);
+    const cached = presentationCache.get(analysisId);
+    if (cached) {
+      setPresentation(cached);
+      setLoading(false);
+      return;
+    }
     try {
       const session = await getSession(analysisId, { signal });
       const next = presentAnalysisWorkspace(session);
       if (!next) throw new Error("analysis_presentation_unavailable");
-      if (!signal.aborted) setPresentation(next);
+      if (!signal.aborted) {
+        presentationCache.set(analysisId, next);
+        setPresentation(next);
+      }
     } catch {
       if (!signal.aborted) {
         setPresentation(null);

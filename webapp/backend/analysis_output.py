@@ -70,6 +70,19 @@ def _build_overview(session_id: int, result: dict) -> dict:
     evidence = result.get("evidence") or {}
     snapshot = result.get("input_snapshot") or {}
     scenario_block = result.get("scenario") or {}
+    timeline = deterministic.get("timeline") or []
+
+    issues = diagnosis.get("issues") or []
+    enriched_issues: list[object] = []
+    for issue in issues:
+        if isinstance(issue, dict):
+            enriched = dict(issue)
+            anchors = _time_anchors_for_issue(issue, timeline)
+            if anchors:
+                enriched["time_anchors"] = anchors
+            enriched_issues.append(enriched)
+        else:
+            enriched_issues.append(issue)
 
     return {
         "analysis_ref": result.get("analysis_id") or f"analysis:{session_id}",
@@ -79,7 +92,7 @@ def _build_overview(session_id: int, result: dict) -> dict:
         "status": "done",
         "completed_at": result.get("completed_at"),
         "diagnosis": {
-            "issues": list(diagnosis.get("issues") or []),
+            "issues": enriched_issues,
             "headline": _build_headline(diagnosis),
         },
         "metrics_summary": {
@@ -103,6 +116,52 @@ def _build_overview(session_id: int, result: dict) -> dict:
             "limitations": list(deterministic.get("limitations") or []),
         },
     }
+
+
+def _time_anchors_for_issue(issue: dict, timeline: list) -> list[dict]:
+    """从 issue 的 event_refs 解析出对应事件的视频时间锚点列表。
+
+    每个锚点带 ``ms``（peak_ms 优先，退化 relative_ms）以及该 issue 关注的
+    metric（metric_refs）在对应事件上的值，Coach 据此比较哪个时间点最典型。
+    event_ref 形如 ``analysis:{session_id}:event:{event_kind}:{number}``；
+    timeline 事件的 ``id`` 形如 ``flick:1``（后缀 ``:{number}`` 对应）。
+    """
+    event_refs = issue.get("event_refs") or []
+    metric_refs = issue.get("metric_refs") or []
+    anchors: list[dict] = []
+    for ref in event_refs:
+        if not isinstance(ref, str):
+            continue
+        parts = ref.split(":")
+        if len(parts) < 4:
+            continue
+        number = parts[-1]
+        for event in timeline:
+            if not isinstance(event, dict):
+                continue
+            eid = event.get("id")
+            if not isinstance(eid, str) or not eid.endswith(f":{number}"):
+                continue
+            ms = None
+            for key in ("peak_ms", "relative_ms"):
+                value = event.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    ms = float(value)
+                    break
+            if ms is None:
+                continue
+            anchor: dict = {"ms": ms}
+            metrics = event.get("metrics") or {}
+            if isinstance(metrics, dict):
+                for mref in metric_refs:
+                    if not isinstance(mref, str) or mref not in metrics:
+                        continue
+                    value = metrics[mref]
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        anchor[mref] = float(value)
+            anchors.append(anchor)
+            break
+    return anchors
 
 
 def _build_headline(diagnosis: dict) -> str:
