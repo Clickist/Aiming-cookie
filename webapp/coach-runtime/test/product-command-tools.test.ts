@@ -6,6 +6,7 @@ import {
   PRODUCT_COMMAND_NAMES,
   createProductCommandTool,
 } from "../src/product-command-tools.ts";
+import { isNativeWriteCommand } from "../src/product-commands-write.ts";
 
 const BEARER = "bridge-bearer-secret-sentinel";
 const DESKTOP = "desktop-secret-sentinel";
@@ -380,6 +381,10 @@ test("write calls use stable turn-local idempotency and never return bridge secr
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("analysis creation is registered as a native write", () => {
+  assert.equal(isNativeWriteCommand("analysis.create_from_run"), true);
 });
 
 test("product commands forward a bounded exact instruction quote", async () => {

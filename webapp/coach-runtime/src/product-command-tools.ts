@@ -209,6 +209,7 @@ export function createProductCommandTool(
       }
 
       // Native write commands: execute DB mutations directly, skip the HTTP bridge.
+      // Analysis creation freezes the same v3 input contract for the Python worker.
       if (db !== null && isNativeWriteCommand(params.command_name)) {
         let idempotencyKey = params.idempotency_key;
         if (!idempotencyKey && bridge) {
