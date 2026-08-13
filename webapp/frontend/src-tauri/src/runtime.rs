@@ -21,6 +21,8 @@ const CAPTURE_CONTROL_SECRET_ENV: &str = "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_S
 const COACH_SIDECAR_HOST_ENV: &str = "COACH_SIDECAR_HOST";
 const COACH_SIDECAR_PORT_ENV: &str = "COACH_SIDECAR_PORT";
 const COACH_SIDECAR_URL_ENV: &str = "COACH_SIDECAR_URL";
+const DESKTOP_RUNTIME_CONFIG_ENV: &str = "AIMING_COOKIE_DESKTOP_RUNTIME_CONFIG";
+const DESKTOP_RUNTIME_CONFIG_FILE: &str = "desktop-runtime.json";
 const SUPERVISOR_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RESTART_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_RESTART_ATTEMPTS: u8 = 3;
@@ -168,11 +170,18 @@ impl RuntimeProcess {
             return Err(error);
         }
 
+        let python_base_url = format!("http://127.0.0.1:{port}");
+        // The sidecar starts before the Python backend reports its port, so
+        // publish the address through a config file the sidecar reads lazily.
+        if let Err(error) = write_desktop_runtime_config(app_data_dir, &python_base_url, &token) {
+            eprintln!("[desktop-runtime] warning: {error}");
+        }
+
         Ok(Self {
             child: Some(child),
             coach_sidecar: Some(coach_sidecar),
             connection: RuntimeConnection {
-                base_url: format!("http://127.0.0.1:{port}"),
+                base_url: python_base_url,
                 token,
                 sidecar_url: coach_sidecar_url,
             },
@@ -511,6 +520,7 @@ fn start_coach_sidecar(
         .env(COACH_SIDECAR_PORT_ENV, "0")
         .env("DATABASE_URL", database_url)
         .env("DATA_ROOT", app_data_dir)
+        .env(DESKTOP_RUNTIME_CONFIG_ENV, app_data_dir.join(DESKTOP_RUNTIME_CONFIG_FILE))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -570,6 +580,30 @@ fn start_coach_sidecar(
     }
 
     Ok((child, url))
+}
+
+#[derive(Serialize)]
+struct DesktopRuntimeConfig {
+    python_base_url: String,
+    python_token: String,
+}
+
+fn write_desktop_runtime_config(
+    app_data_dir: &Path,
+    python_base_url: &str,
+    python_token: &str,
+) -> Result<(), String> {
+    let config = DesktopRuntimeConfig {
+        python_base_url: python_base_url.to_string(),
+        python_token: python_token.to_string(),
+    };
+    let serialized = serde_json::to_vec_pretty(&config)
+        .map_err(|error| format!("failed to serialize desktop runtime config: {error}"))?;
+    std::fs::write(
+        app_data_dir.join(DESKTOP_RUNTIME_CONFIG_FILE),
+        serialized,
+    )
+    .map_err(|error| format!("failed to write desktop runtime config: {error}"))
 }
 
 fn file_url(path: &Path) -> Result<String, String> {
@@ -747,8 +781,8 @@ mod tests {
     use super::{
         configure_python_io, create_launch_token, development_runtime_layout, file_url,
         packaged_runtime_layout, parse_readiness_line, parse_sidecar_readiness_line,
-        redact_secrets, restart_is_allowed, RuntimeConnection, RuntimeProcess,
-        MAX_RESTART_ATTEMPTS,
+        redact_secrets, restart_is_allowed, write_desktop_runtime_config, RuntimeConnection,
+        RuntimeProcess, MAX_RESTART_ATTEMPTS,
     };
     use std::path::Path;
 
@@ -913,6 +947,25 @@ mod tests {
 
         let error = packaged_runtime_layout(&temp).unwrap_err();
         assert!(error.contains("packaged backend runtime is missing"));
+
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn desktop_runtime_config_round_trips_python_address() {
+        let temp = std::env::temp_dir().join(format!(
+            "aiming-cookie-runtime-config-{}",
+            create_launch_token()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        write_desktop_runtime_config(&temp, "http://127.0.0.1:43127", "test-token").unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(temp.join("desktop-runtime.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(parsed["python_base_url"], "http://127.0.0.1:43127");
+        assert_eq!(parsed["python_token"], "test-token");
 
         std::fs::remove_dir_all(temp).unwrap();
     }

@@ -1102,7 +1102,7 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
   }
   if (path === "/api/coach/primary") return response(scenario.coachPrimary);
   if (path === "/api/current-training" && method === "GET") return response(scenario.currentTraining);
-  if (path === "/api/coach/agent-runs" && method === "POST") return response({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:1", parent_run_ref: null, attempt: 1, status: "running", phase: "text_generation", partial_text: "正在整理证据", error: null, contexts: COACH_CONTEXTS.contexts, events: [], created_at: NOW, started_at: NOW, finished_at: null });
+  if (path === "/api/coach/agent-runs" && method === "POST") return response({ schema_version: "coach_agent_run.v1", run_ref: "coach-run:1", parent_run_ref: null, attempt: 1, status: "running", phase: "text_generation", partial_text: "正在整理证据", error: null, analysis_refs: [], events: [], created_at: NOW, started_at: NOW, finished_at: null });
   if (path === "/api/analyze" || path === "/api/desktop/analyze-paths") return response({ session_id: 42 });
   return response({ detail: { code: "fixture_route_missing", message: `${method} ${path}` } }, 501);
 }

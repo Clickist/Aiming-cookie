@@ -471,7 +471,6 @@ export function SettingsWorkspace() {
               <span className="task6-settings-section-title">LLM Provider</span>
             </div>
             <Panel className="task6-provider-panel">
-              <p className="task6-muted">密钥只会提交到本地 credential store；界面不会回显已有密钥。</p>
               {profiles.map((profile) => {
                 const authModes = catalog?.providers.find((provider) => provider.provider_id === profile.provider_id)?.auth_modes
                   ?? (isCustomProviderKind(profile.kind) ? ["api_key" as const] : []);
@@ -746,7 +745,6 @@ export function SettingsWorkspace() {
                   </div>
                 </dl>
               ) : null}
-              <p className="task6-muted">Windows 不会弹出 Raw Input 系统授权框；下面的勾选和按钮就是本应用的明确授权。授权后仅在 KovaaK 运行时采集 Raw Input，并维护最近 300 秒的 KovaaK 窗口回放，数据只保存在本机。</p>
               {desktop && capture?.capture_enabled === false ? (
                 <label className="task6-consent">
                   <input checked={captureConsent} onChange={(event) => setCaptureConsent(event.target.checked)} type="checkbox" />

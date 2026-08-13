@@ -7,7 +7,6 @@ import {
   ANALYSIS_FAMILY_TRACKING,
   CURRENT_TRAINING_NO_PLAN,
   CURRENT_TRAINING_PAUSED,
-  COACH_CONTEXTS,
   RUN_MULTIMODAL,
   RUN_NATIVE,
   RUN_PENDING_MULTIMODAL,
@@ -196,42 +195,6 @@ test.describe("release interaction polish", () => {
     await expect(diagnosis).toBeFocused();
     await diagnosis.press("ArrowLeft");
     await expect(data).toBeFocused();
-  });
-
-  test("Coach locator is acknowledged only by the active Analysis workspace", async ({ page }) => {
-    await installApiFixtures(page);
-    await page.goto("/history");
-    const contextButton = page.locator(".task6-context-chip > button").first();
-    await expect(contextButton).toHaveText(`已附加分析：${COACH_CONTEXTS.contexts[0]!.label}`);
-    await contextButton.click();
-    const feedback = page.locator(".ac-toast__body");
-    await expect(feedback).toHaveText("未能定位，请重试。");
-    await expect(feedback).not.toHaveText("已定位");
-
-    await page.goto("/analysis/42");
-    await expect(page.getByRole("tab", { name: "诊断" })).toBeVisible();
-    await expect(contextButton).toHaveText(`已附加分析：${COACH_CONTEXTS.contexts[0]!.label}`);
-    await contextButton.click();
-    await expect(feedback).toHaveText("已定位");
-    const acknowledged = await page.evaluate(() => !window.dispatchEvent(new CustomEvent(
-      "aiming-cookie:coach-locate",
-      { cancelable: true, detail: { view: "video", relative_start_ms: 500 } },
-    )));
-    expect(acknowledged).toBe(true);
-    await expect(page.getByRole("tab", { name: "视频" })).toHaveAttribute("aria-selected", "true");
-
-    const invalid = await page.evaluate(() => window.dispatchEvent(new CustomEvent(
-      "aiming-cookie:coach-locate",
-      { cancelable: true, detail: { view: "unknown", relative_start_ms: -1 } },
-    )));
-    expect(invalid).toBe(true);
-
-    await page.goto("/history");
-    const afterUnmount = await page.evaluate(() => window.dispatchEvent(new CustomEvent(
-      "aiming-cookie:coach-locate",
-      { cancelable: true, detail: { view: "video", relative_start_ms: 500 } },
-    )));
-    expect(afterUnmount).toBe(true);
   });
 
   test("Coach keeps current training readable and turns safe shortcuts into drafts", async ({ page }) => {

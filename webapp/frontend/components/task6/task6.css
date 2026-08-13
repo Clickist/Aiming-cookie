@@ -1,5 +1,3 @@
-@import "../task7/coach-message-cards.css";
-
 /* Settings + Coach — OpenDesign board styling mapped to app tokens */
 
 /* Board token aliases for clarity (map to existing app tokens) */
@@ -1202,6 +1200,39 @@
   border-top: 1px dashed var(--outline-v);
   font-size: 11px;
   color: var(--fg2);
+}
+
+/* Time links in Coach messages（@12.3s → 点击跳转视频） */
+
+.task6-time-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  line-height: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: filter 150ms ease;
+}
+
+.task6-time-link:hover {
+  filter: brightness(0.88);
+}
+
+.task6-time-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+.task6-time-link--static,
+.task6-time-link--static:hover {
+  filter: none;
+  color: var(--primary);
+  text-decoration: none;
+  cursor: default;
 }
 
 /* Tool execution timeline（逐步时间线：done/active/fail） */

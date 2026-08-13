@@ -761,6 +761,9 @@ export interface KovaaKRunListItem {
   video_quality: KovaaKRunVideoQuality;
   limitations: string[];
   stats_calibration?: KovaaKRunStatsCalibration | null;
+  analysis_completed_at?: string | null;
+  presentation_label?: string | null;
+  training_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1077,6 +1080,7 @@ export interface CoachThreadOut {
   updated_at: string;
 }
 
+/** Legacy attach-era card contract; the file-based Coach never populates it. */
 export interface CoachMessageCardV1 {
   schema_version: "coach_message_card.v1";
   kind: "metrics" | "timeline" | "evidence";
@@ -1091,7 +1095,9 @@ export interface CoachThreadMessageOut {
   content: string;
   created_at: string;
   legacy_session_id: number | null;
-  context_refs: CoachContextRefV1[];
+  /** Legacy attach-era field; always absent in the file-based architecture. */
+  context_refs?: CoachContextRefV1[];
+  /** Legacy attach-era field; always absent in the file-based architecture. */
   cards?: CoachMessageCardV1[];
 }
 
@@ -1217,27 +1223,6 @@ export interface ProductReadinessV1 {
   blocking_reasons: string[];
 }
 
-export type GuidanceIntentKind =
-  | "execute_command"
-  | "request_confirmation"
-  | "ui_navigation"
-  | "user_action_required"
-  | "wait_for_state"
-  | "completed"
-  | "blocked";
-
-export interface GuidanceIntentV1 {
-  schema_version: "guidance_intent.v1";
-  intent_id: string;
-  kind: GuidanceIntentKind;
-  goal: string;
-  target?: { target_id: string; safe_prefill: Record<string, string> } | null;
-  command_result_ref?: string | null;
-  precondition?: Record<string, unknown> | null;
-  completion_condition?: Record<string, unknown> | null;
-  recovery?: Record<string, unknown> | null;
-}
-
 export interface CoachAgentRunV1 {
   schema_version: "coach_agent_run.v1";
   run_ref: string;
@@ -1253,7 +1238,8 @@ export interface CoachAgentRunV1 {
     message: string;
     retryable: boolean;
   } | null;
-  contexts: CoachContextRefV1[];
+  /** Analysis refs (`analysis:{id}`) the run engaged with via file reads. */
+  analysis_refs: string[];
   events: CoachAgentRunEventV1[];
   created_at: string;
   started_at: string | null;

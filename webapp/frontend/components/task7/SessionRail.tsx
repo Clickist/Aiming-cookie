@@ -43,19 +43,22 @@ export interface SessionRailProps {
   className?: string;
 }
 
-const UNASSOCIATED_SCENARIO = "未关联场景";
-const UNASSOCIATED_GROUP = "__unassociated__";
-
 function sessionTitle(session: SessionRailSession): string {
-  return session.title?.trim() || session.label?.trim() || session.name?.trim() || session.summary?.trim() || "未命名对话";
-}
-
-function sessionScenario(session: SessionRailSession): string {
-  return session.scenario?.trim() || session.scenarioName?.trim() || UNASSOCIATED_SCENARIO;
+  const title = session.title?.trim();
+  if (title && title !== "新对话") return title;
+  return session.label?.trim() || session.name?.trim() || session.summary?.trim()
+    || session.lastMessagePreview?.trim() || session.last_message_preview?.trim()
+    || "未命名对话";
 }
 
 function isArchived(session: SessionRailSession): boolean {
   return session.archived ?? session.isArchived ?? (session.status === "archived" || session.status === "deleted" || Boolean(session.deletedAt || session.deleted_at));
+}
+
+function sessionTimestamp(session: SessionRailSession): number {
+  const value = session.updatedAt || session.updated_at || session.createdAt || session.created_at;
+  if (!value) return 0;
+  return new Date(value).getTime() || 0;
 }
 
 function sessionDate(session: SessionRailSession): string | null {
@@ -81,7 +84,6 @@ export function SessionRail({
   className,
 }: SessionRailProps) {
   const [query, setQuery] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [narrow, setNarrow] = useState(false);
   const [manuallyCollapsed, setManuallyCollapsed] = useState(false);
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -89,34 +91,23 @@ export function SessionRail({
   const searchRef = useRef<HTMLInputElement>(null);
   const toggleButtonRef = useRef<HTMLButtonElement>(null);
 
-  const groups = useMemo(() => {
+  const visible = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
-    const visible = sessions.filter((session) => {
-      if (isArchived(session)) return false;
-      if (!normalizedQuery) return true;
-      return [sessionTitle(session), sessionScenario(session), session.summary, session.lastMessage, session.lastMessagePreview, session.last_message_preview]
-        .filter(Boolean)
-        .some((value) => value!.toLocaleLowerCase().includes(normalizedQuery));
-    });
-    const grouped = new Map<string, { label: string; sessions: SessionRailSession[] }>();
-    visible.forEach((session) => {
-      const label = sessionScenario(session);
-      const key = label === UNASSOCIATED_SCENARIO ? UNASSOCIATED_GROUP : label;
-      const group = grouped.get(key) || { label, sessions: [] };
-      group.sessions.push(session);
-      grouped.set(key, group);
-    });
-    return [...grouped.entries()];
+    return sessions
+      .filter((session) => {
+        if (isArchived(session)) return false;
+        if (!normalizedQuery) return true;
+        return [sessionTitle(session), session.summary, session.lastMessage, session.lastMessagePreview, session.last_message_preview]
+          .filter(Boolean)
+          .some((value) => value!.toLocaleLowerCase().includes(normalizedQuery));
+      })
+      .sort((a, b) => sessionTimestamp(b) - sessionTimestamp(a));
   }, [query, sessions]);
 
   const handleSearch = (event: ChangeEvent<HTMLInputElement>) => {
     const nextQuery = event.target.value;
     setQuery(nextQuery);
     onSearchChange?.(nextQuery);
-  };
-
-  const toggleGroup = (key: string, open: boolean) => {
-    setExpandedGroups((current) => ({ ...current, [key]: open }));
   };
 
   useEffect(() => {
@@ -229,44 +220,30 @@ export function SessionRail({
           </label>
 
           <nav aria-label="会话列表" className="task7-session-rail__list">
-        {groups.length ? groups.map(([key, group]) => {
-          const open = expandedGroups[key] ?? true;
+        {visible.length ? visible.map((session) => {
+          const title = sessionTitle(session);
+          const date = sessionDate(session);
+          const current = currentSessionId !== null && String(currentSessionId) === String(session.id);
           return (
-            <details className="task7-session-rail__group" key={key} onToggle={(event) => toggleGroup(key, event.currentTarget.open)} open={open}>
-              <summary className="task7-session-rail__group-summary">
-                <span className="task7-session-rail__chevron" aria-hidden="true">{open ? "⌄" : "›"}</span>
-                <span className="task7-session-rail__group-label">{group.label}</span>
-                <span className="task7-session-rail__count">{group.sessions.length}</span>
-              </summary>
-              <div className="task7-session-rail__group-items" role="list">
-                {group.sessions.map((session) => {
-                  const title = sessionTitle(session);
-                  const date = sessionDate(session);
-                  const current = currentSessionId !== null && String(currentSessionId) === String(session.id);
-                  return (
-                    <div className="task7-session-rail__item" data-current={current || undefined} key={String(session.id)} role="listitem">
-                      <button
-                        aria-current={current ? "page" : undefined}
-                        className="task7-session-rail__session"
-                        onClick={() => onSelectSession?.(session)}
-                        type="button"
-                      >
-                        <span className="task7-session-rail__session-title">{title}</span>
-                        {session.summary && session.summary !== title ? <span className="task7-session-rail__session-summary">{session.summary}</span> : null}
-                        {!session.summary && (session.lastMessagePreview || session.last_message_preview) ? <span className="task7-session-rail__session-summary">{session.lastMessagePreview || session.last_message_preview}</span> : null}
-                        {date ? <time className="task7-session-rail__session-date" dateTime={session.updatedAt || session.updated_at || session.createdAt || session.created_at || undefined}>{date}</time> : null}
-                      </button>
-                      {session.kind !== "primary" && (onArchiveSession || onSoftDeleteSession) ? (
-                        <span className="task7-session-rail__item-actions">
-                          {onArchiveSession ? <button aria-label={`归档 ${title}`} className="task7-session-rail__item-action" onClick={(event) => { event.stopPropagation(); onArchiveSession(session); }} type="button">归档</button> : null}
-                          {onSoftDeleteSession ? <button aria-label={`删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); onSoftDeleteSession(session); }} type="button">删除</button> : null}
-                        </span>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </details>
+            <div className="task7-session-rail__item" data-current={current || undefined} key={String(session.id)} role="listitem">
+              <button
+                aria-current={current ? "page" : undefined}
+                className="task7-session-rail__session"
+                onClick={() => onSelectSession?.(session)}
+                type="button"
+              >
+                <span className="task7-session-rail__session-title">{title}</span>
+                {session.summary && session.summary !== title ? <span className="task7-session-rail__session-summary">{session.summary}</span> : null}
+                {!session.summary && (session.lastMessagePreview || session.last_message_preview) ? <span className="task7-session-rail__session-summary">{session.lastMessagePreview || session.last_message_preview}</span> : null}
+                {date ? <time className="task7-session-rail__session-date" dateTime={session.updatedAt || session.updated_at || session.createdAt || session.created_at || undefined}>{date}</time> : null}
+              </button>
+              {session.kind !== "primary" && (onArchiveSession || onSoftDeleteSession) ? (
+                <span className="task7-session-rail__item-actions">
+                  {onArchiveSession ? <button aria-label={`归档 ${title}`} className="task7-session-rail__item-action" onClick={(event) => { event.stopPropagation(); onArchiveSession(session); }} type="button">归档</button> : null}
+                  {onSoftDeleteSession ? <button aria-label={`删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); onSoftDeleteSession(session); }} type="button">删除</button> : null}
+                </span>
+              ) : null}
+            </div>
           );
         }) : <p className="task7-session-rail__empty">{query ? "没有匹配的会话" : "还没有会话"}</p>}
           </nav>

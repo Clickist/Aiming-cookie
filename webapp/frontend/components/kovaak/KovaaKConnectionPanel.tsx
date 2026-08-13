@@ -325,7 +325,6 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
             <dt>Steam ID</dt>
             <dd>保存在本机，不回显</dd>
           </dl>
-          <p className="kovaak-disclaimer">成绩只是 Coach 的参考之一，不会替代本地分析结论；不提供排行榜、社交比较或历史曲线。</p>
 
           <div className="kovaak-scores-layout" id="kovaak-scores-list">
             <div className="kovaak-score-list">

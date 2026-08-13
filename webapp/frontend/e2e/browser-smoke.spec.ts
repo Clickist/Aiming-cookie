@@ -268,7 +268,6 @@ test.describe("Task 7 browser smoke", () => {
             content: "我把这次减速问题和证据放在下面。",
             created_at: "2026-08-10T00:00:00Z",
             legacy_session_id: null,
-            context_refs: [],
             cards: [
               { schema_version: "coach_message_card.v1", kind: "metrics", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
               { schema_version: "coach_message_card.v1", kind: "timeline", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },

@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
-  attachCoachContext,
   getHistoryAnalysisDetail,
   getHistoryRun,
   getHistorySessions,
@@ -23,12 +22,6 @@ import { RunInspector } from "./RunInspector";
 
 type RefreshState = "idle" | "loading" | "unavailable";
 type RunDiscoveryState = "loading" | "available" | "browser_unavailable" | "service_unavailable";
-const COACH_PENDING_INTENT_KEY = "aiming-cookie.ui.coach-pending-intent";
-
-function publishCoachIntent(intent: unknown): void {
-  window.sessionStorage.setItem(COACH_PENDING_INTENT_KEY, JSON.stringify(intent));
-  window.dispatchEvent(new CustomEvent("aiming-cookie:coach-draft", { detail: intent }));
-}
 
 function sessionTone(status: string): "neutral" | "info" | "success" | "warning" | "error" {
   if (status === "done") return "success";
@@ -113,18 +106,11 @@ function runRecordBadge(run: KovaaKRunListItem) {
 function RunRow({
   run,
   onInspect,
-  onCoachAnalysis,
-  onToggle,
-  selected,
 }: {
   run: KovaaKRunListItem;
   onInspect: (run: KovaaKRunListItem) => void;
-  onCoachAnalysis: (run: KovaaKRunListItem) => void;
-  onToggle: (run: KovaaKRunListItem, selected: boolean) => void;
-  selected: boolean;
 }) {
   const isPending = run.readiness_state === "pending_analysis";
-  const canSelect = run.readiness_state !== "incomplete_evidence";
   const evidence = [
     { label: "Stats", state: historyEvidenceState(sourceState(run, "stats")) },
     { label: "Performance", state: historyEvidenceState(sourceState(run, "performance")) },
@@ -135,15 +121,6 @@ function RunRow({
     <div
       className="task4-rowline"
     >
-      <label className="task4-row-select">
-        <input
-          aria-label={`选择训练 ${run.scenario ?? run.run_ref}`}
-          checked={selected}
-          disabled={!canSelect}
-          onChange={(event) => onToggle(run, event.target.checked)}
-          type="checkbox"
-        />
-      </label>
       <div className="task4-row-main">
         <div className="task4-row-title">
           <span className="task4-name">{presentRecordLabel({
@@ -166,11 +143,7 @@ function RunRow({
         </div>
       </div>
       <div className="task4-row-actions">
-        {isPending ? (
-          <Button onClick={() => onCoachAnalysis(run)} size="compact" variant="secondary">让 Coach 分析</Button>
-        ) : (
-          <Button onClick={() => onInspect(run)} size="compact" variant="ghost">查看 Run</Button>
-        )}
+        <Button onClick={() => onInspect(run)} size="compact" variant="ghost">查看 Run</Button>
       </div>
     </div>
   );
@@ -178,17 +151,12 @@ function RunRow({
 
 function AnalysisRow({
   onLoadDetail,
-  onToggle,
-  selected,
   session,
 }: {
   session: SessionListItem;
   onLoadDetail: (id: number) => void;
-  onToggle: (analysisRef: string, selected: boolean) => void;
-  selected: boolean;
 }) {
   const tone = sessionTone(session.status);
-  const canAttach = session.status === "done";
   const recordLabel = presentRecordLabel({
     scenario: session.scenario,
     trainingAt: session.training_at,
@@ -196,15 +164,6 @@ function AnalysisRow({
   });
   return (
     <div className="task4-rowline">
-      <label className="task4-row-select">
-        <input
-          aria-label={`选择分析 ${recordLabel}`}
-          checked={selected}
-          disabled={!canAttach}
-          onChange={(event) => onToggle(session.analysis_ref, event.target.checked)}
-          type="checkbox"
-        />
-      </label>
       <div className="task4-row-main">
         <div className="task4-row-title">
           <span className="task4-name">{recordLabel}</span>
@@ -268,10 +227,6 @@ export function HistoryClient() {
   const [detail, setDetail] = useState<SessionStatus | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
-  const [selectedAnalysisRefs, setSelectedAnalysisRefs] = useState<Set<string>>(() => new Set());
-  const [selectedRunIds, setSelectedRunIds] = useState<Set<number>>(() => new Set());
-  const [attachState, setAttachState] = useState<"idle" | "attaching">("idle");
-  const [attachError, setAttachError] = useState<string | null>(null);
 
   const loadHistory = useCallback(async (initial = false) => {
     setRefresh("loading");
@@ -299,102 +254,6 @@ export function HistoryClient() {
   }, [loadHistory]);
 
   const sections = useMemo(() => buildHistorySections({ runs, sessions }), [runs, sessions]);
-
-  const toggleAnalysisSelection = (analysisRef: string, selected: boolean) => {
-    setSelectedAnalysisRefs((current) => {
-      const next = new Set(current);
-      if (selected) next.add(analysisRef);
-      else next.delete(analysisRef);
-      return next;
-    });
-    setAttachError(null);
-  };
-
-  const attachSelectedAnalyses = async () => {
-    const analysisRefs = Array.from(selectedAnalysisRefs);
-    if (!analysisRefs.length || attachState === "attaching") return;
-    setAttachState("attaching");
-    setAttachError(null);
-    const results = await Promise.allSettled(
-      analysisRefs.map((analysisRef) => attachCoachContext({ kind: "analysis", analysis_ref: analysisRef })),
-    );
-    const failed = results.filter((result) => result.status === "rejected").length;
-    if (failed > 0) {
-      setAttachState("idle");
-      setAttachError(`${failed} 条分析未能引用，请重试。`);
-      return;
-    }
-    setSelectedAnalysisRefs(new Set());
-    setAttachState("idle");
-    router.push("/");
-  };
-
-  const askCoachToAnalyze = (run: KovaaKRunListItem) => {
-    publishCoachIntent({
-      kind: "batch-analysis",
-      batch_ref: `analysis:${run.run_ref}`,
-      runs: [{
-        id: run.id,
-        run_ref: run.run_ref,
-        scenario: run.scenario,
-        created_at: run.created_at,
-        readiness_state: run.readiness_state,
-        limitations: run.limitations,
-        analysis_refs: [],
-        analysis_status: "pending",
-      }],
-    });
-    router.push("/");
-  };
-
-  const toggleRunSelection = (run: KovaaKRunListItem, selected: boolean) => {
-    setSelectedRunIds((current) => {
-      const next = new Set(current);
-      if (selected) next.add(run.id);
-      else next.delete(run.id);
-      return next;
-    });
-  };
-
-  const sendSelectedRunsToCoach = () => {
-    const selected = runs.filter((run) => selectedRunIds.has(run.id));
-    if (!selected.length) return;
-    const analysisRefsByRun = new Map<number, string[]>();
-    const analysisStatusByRun = new Map<number, "done" | "active" | "pending">();
-    for (const session of sessions) {
-      if (session.kovaak_run_id === null) continue;
-      if (session.status === "done") {
-        const refs = analysisRefsByRun.get(session.kovaak_run_id) ?? [];
-        refs.push(session.analysis_ref);
-        analysisRefsByRun.set(session.kovaak_run_id, refs);
-        analysisStatusByRun.set(session.kovaak_run_id, "done");
-      } else if (
-        (session.status === "queued" || session.status === "running")
-        && analysisStatusByRun.get(session.kovaak_run_id) !== "done"
-      ) {
-        const refs = analysisRefsByRun.get(session.kovaak_run_id) ?? [];
-        refs.push(session.analysis_ref);
-        analysisRefsByRun.set(session.kovaak_run_id, refs);
-        analysisStatusByRun.set(session.kovaak_run_id, "active");
-      }
-    }
-    publishCoachIntent({
-      kind: "batch-analysis",
-      batch_ref: `analysis-batch:${Date.now()}`,
-      runs: selected.map((run) => ({
-        id: run.id,
-        run_ref: run.run_ref,
-        scenario: run.scenario,
-        created_at: run.created_at,
-        readiness_state: run.readiness_state,
-        limitations: run.limitations,
-        analysis_refs: analysisRefsByRun.get(run.id) ?? [],
-        analysis_status: analysisStatusByRun.get(run.id) ?? "pending",
-      })),
-    });
-    setSelectedRunIds(new Set());
-    router.push("/");
-  };
 
   const inspect = async (run: KovaaKRunListItem) => {
     setSelectedRun(run);
@@ -439,30 +298,13 @@ export function HistoryClient() {
           <div className="task4-page-title">历史</div>
         </div>
         <div className="task4-page-actions">
-          <Button
-            disabled={selectedRunIds.size === 0}
-            onClick={sendSelectedRunsToCoach}
-            size="compact"
-            variant="primary"
-          >
-            交给 Coach（{selectedRunIds.size}）
-          </Button>
-          <Button
-            disabled={selectedAnalysisRefs.size === 0 || attachState === "attaching"}
-            onClick={() => void attachSelectedAnalyses()}
-            size="compact"
-            variant="primary"
-          >
-            {attachState === "attaching" ? "正在引用…" : `引用所选分析（${selectedAnalysisRefs.size}）`}
-          </Button>
           <Button onClick={() => void loadHistory()} size="compact" variant="ghost">刷新</Button>
         </div>
       </div>
 
-      {attachError ? <Notice tone="warning" title="分析引用失败">{attachError}</Notice> : null}
       {refresh === "unavailable" ? <Notice tone="warning" title="刷新暂时不可用">保留当前已读取内容；恢复本地服务后可以重试。</Notice> : null}
       {runDiscovery === "browser_unavailable" ? <Notice tone="info" title="Run 发现仅在桌面应用可用">浏览器可以查看分析记录；要查看自动采集的 Run，请在桌面应用中打开 History。</Notice> : null}
-      {runDiscovery === "service_unavailable" ? <Notice tone="warning" title="Run 暂时不可用">桌面服务没有返回训练 Run；这不是“没有记录”。恢复服务后可以刷新。</Notice> : null}
+      {runDiscovery === "service_unavailable" ? <Notice tone="warning" title="Run 暂时不可用">桌面服务没有返回训练 Run；这不是"没有记录"。恢复服务后可以刷新。</Notice> : null}
 
       <section className="task4-sec" aria-labelledby="pending-title">
         <div className="task4-sec-head">
@@ -476,11 +318,8 @@ export function HistoryClient() {
             {sections.pendingRuns.map((run) => (
               <RunRow
                 key={run.run_ref}
-                onCoachAnalysis={askCoachToAnalyze}
                 onInspect={(item) => void inspect(item)}
-                onToggle={toggleRunSelection}
                 run={run}
-                selected={selectedRunIds.has(run.id)}
               />
             ))}
           </div>
@@ -499,11 +338,8 @@ export function HistoryClient() {
             {sections.runRecords.map((run) => (
               <RunRow
                 key={run.run_ref}
-                onCoachAnalysis={askCoachToAnalyze}
                 onInspect={(item) => void inspect(item)}
-                onToggle={toggleRunSelection}
                 run={run}
-                selected={selectedRunIds.has(run.id)}
               />
             ))}
           </div>
@@ -525,8 +361,6 @@ export function HistoryClient() {
               <AnalysisRow
                 key={session.analysis_ref}
                 onLoadDetail={loadDetail}
-                onToggle={toggleAnalysisSelection}
-                selected={selectedAnalysisRefs.has(session.analysis_ref)}
                 session={session}
               />
             ))}

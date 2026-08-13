@@ -19,12 +19,12 @@ test("SessionRail stays a prop-driven, client-only surface", async () => {
   assert.doesNotMatch(component, /fetch\(/);
 });
 
-test("SessionRail includes grouped navigation, search, and keyboard semantics", async () => {
+test("SessionRail includes flat time-sorted navigation, search, and keyboard semantics", async () => {
   const component = await source("components/task7/SessionRail.tsx");
   const styles = await source("components/task7/session-rail.css");
-  assert.match(component, /<details/);
-  assert.doesNotMatch(component, /<summary[^>]*aria-expanded/);
-  assert.match(component, /UNASSOCIATED_SCENARIO/);
+  assert.match(component, /sessionTimestamp/);
+  assert.match(component, /\.sort\(/);
+  assert.doesNotMatch(component, /UNASSOCIATED_SCENARIO|<details/);
   assert.match(component, /type="search"/);
   assert.match(component, /aria-current=\{current \? "page"/);
   assert.match(component, /aria-label="训练历史"/);

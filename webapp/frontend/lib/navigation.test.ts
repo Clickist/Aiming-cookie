@@ -4,8 +4,6 @@ import { test } from "node:test";
 import {
   analysisHref,
   analysisIdFromLocation,
-  resolveGuidanceTarget,
-  validateGuidancePrefill,
 } from "./navigation";
 
 test("analysis navigation uses the static shell query route", () => {
@@ -19,19 +17,4 @@ test("analysis route parser accepts the static shell and legacy dynamic route", 
   assert.equal(analysisIdFromLocation("/analysis/43", ""), 43);
   assert.equal(analysisIdFromLocation("/analysis", "?id=0"), null);
   assert.equal(analysisIdFromLocation("/history", "?id=42"), null);
-});
-
-test("guidance navigation resolves only registered semantic targets", () => {
-  assert.equal(resolveGuidanceTarget("settings.provider_auth")?.route, "/settings");
-  assert.equal(resolveGuidanceTarget("training.current")?.route, "/");
-  assert.equal(resolveGuidanceTarget("desktop.capture_control")?.sectionId, "capture");
-  assert.equal(resolveGuidanceTarget("javascript:alert(1)"), null);
-  assert.equal(resolveGuidanceTarget("#capture"), null);
-});
-
-test("guidance safe-prefill accepts bounded opaque refs only", () => {
-  assert.deepEqual(validateGuidancePrefill("history.runs", { run_ref: "run:42" }), { run_ref: "run:42" });
-  assert.deepEqual(validateGuidancePrefill("settings.provider_auth", {}), {});
-  assert.equal(validateGuidancePrefill("history.runs", { run_ref: "C:\\secret.txt" }), null);
-  assert.equal(validateGuidancePrefill("history.runs", { url: "https://example.test" }), null);
 });

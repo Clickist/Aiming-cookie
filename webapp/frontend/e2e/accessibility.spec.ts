@@ -161,7 +161,6 @@ test.describe("Task 7 accessibility", () => {
             content: "结合时间线和视频看这次减速。",
             created_at: "2026-08-10T00:00:00Z",
             legacy_session_id: null,
-            context_refs: [],
             cards: [
               { schema_version: "coach_message_card.v1", kind: "timeline", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
               { schema_version: "coach_message_card.v1", kind: "evidence", analysis_ref: "analysis:42", target_ref: null, time_range_ms: [1200, 1800] },
