@@ -479,8 +479,8 @@ def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
         "stats_calibration": _public_stats_calibration(run),
         "stats_summary": _public_summary(run.get("stats_summary")),
         "performance_summary": _public_summary(run.get("performance_summary")),
-        "created_at": kovaak_run_store._sqlite_timestamp_to_wire_utc(run.get("created_at")),
-        "updated_at": kovaak_run_store._sqlite_timestamp_to_wire_utc(run.get("updated_at")),
+        "created_at": kovaak_run_store._timestamp_to_wire_utc(run.get("created_at")),
+        "updated_at": kovaak_run_store._timestamp_to_wire_utc(run.get("updated_at")),
     }
 
 

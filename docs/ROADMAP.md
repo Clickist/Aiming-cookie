@@ -101,7 +101,7 @@ OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成，Raw In
 1. RefleK Task 6A backend History/evidence read model 与 comparability 已完成；Task 6B 与正式 frontend 继续 deferred；
 2. Pi coding-agent、AgentHarness/skills/prompt/filesystem harness 的上游 Windows 全仓失败不属于当前产品 Gate；若未来采纳对应 capability，先明确范围和验证方式；
 3. Frontend reconstruction Task 1–7 已完成并归档；新的 UI、Landing 或发布工程按当前任务、相关合同和测试推进，不能直接复用已归档结论；
-4. Analysis deletion/reconciliation Task 1–3 已完成并归档；terminal Analysis 的 SQLite logical delete、managed workspace cleanup 与 startup/API Gate 已闭合；
+4. Analysis deletion/reconciliation Task 1–3 已完成并归档；terminal Analysis 的本地文件删除（删 `sessions/{id}.json`、`analyses/{id}/` 输出目录与 workspace）、managed workspace cleanup 与 startup/API Gate 已闭合；
 5. Windows Desktop pre-frontend Task 1–2 已完成并归档；后续切片按当前任务和验证结果决定；
 6. 保持每次改动范围小且可验证；新增数据可靠性工作先明确合同和测试，再直接按当前任务施工。
 7. 自动采集局部合同已由 [`archive/superpowers/specs/2026-07-17-automatic-run-capture-design.md`](archive/superpowers/specs/2026-07-17-automatic-run-capture-design.md) 冻结；Capture Coordinator、Run Finalizer、Run-owned evidence、pending Run readiness 与 Storage/recovery 的实施证据见 completed [`archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md`](archive/completed/plans/2026-07-19-automatic-run-finalization-v1.md)。AMD/Intel 保持未验证且不在 v1 承诺支持；正式前端已实现的 capability 消费继续由合同测试和真实 product-path Gate 保护。
