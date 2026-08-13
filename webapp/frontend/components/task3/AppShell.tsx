@@ -118,6 +118,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  useEffect(() => {
+    const handleSessionUpdated = () => {
+      void reloadCoachSessions();
+    };
+    window.addEventListener("aiming-cookie:coach-session-updated", handleSessionUpdated);
+    return () => window.removeEventListener("aiming-cookie:coach-session-updated", handleSessionUpdated);
+  }, [reloadCoachSessions]);
+
   const handleNewCoachSession = () => {
     setDraftSession(true);
     setSelectedCoachSessionId(null);
@@ -188,11 +196,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         {keepSessionRailMounted ? (
           <SessionRail
             className={settingsRoute ? "task7-session-rail--route-hidden" : undefined}
-            currentSessionId={selectedCoachSessionId}
+            currentSessionId={draftSession ? "draft" : selectedCoachSessionId}
             onArchiveSession={(session) => void handleArchiveCoachSession(session)}
             onHistory={() => router.push("/history")}
             onNewSession={handleNewCoachSession}
             onSelectSession={(session) => {
+              if (session.id === "draft") return; // 当前草稿，点击无操作
               setDraftSession(false);
               setSelectedCoachSessionId(Number(session.id));
               router.push(`/s?sessionId=${session.id}`);
@@ -200,7 +209,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             onSettings={() => router.push("/settings")}
             onSoftDeleteSession={(session) => void handleDeleteCoachSession(session)}
             providerStatus={capability === "ready" ? "ready" : capability === "loading" ? "loading" : capability === "unavailable" ? "unavailable" : "waiting"}
-            sessions={coachSessions}
+            sessions={draftSession ? [{ id: "draft", title: "新对话", kind: "conversation" }, ...coachSessions] : coachSessions}
           />
         ) : null}
         <main

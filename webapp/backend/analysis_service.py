@@ -14,10 +14,13 @@ It is the extracted live subset of the old ``coach_commands`` module.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
+
+log = logging.getLogger(__name__)
 
 from . import history_trends, kovaak_run_store, queue
 from .kovaak_run_projection import public_kovaak_run
@@ -465,6 +468,7 @@ async def create_analysis_from_run(
             remove_session_workspace(session_id)
         finally:
             await queue.abort_uploading_session(session_id, owner_id)
+        log.exception("input snapshot setup failed run_id=%s session_id=%s", run_id, session_id)
         raise ProductCommandError(
             "input_setup_failed",
             "无法建立分析输入快照",

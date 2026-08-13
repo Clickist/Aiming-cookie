@@ -8,6 +8,7 @@ import {
   getCoachAgentRunStreamUrl,
   getCoachSession,
   getCurrentTraining,
+  listSessions,
   retryCoachAgentRun,
   stopCoachAgentRun,
 } from "@/lib/api";
@@ -91,21 +92,53 @@ const TOOL_COMMAND_LABELS: Record<string, string> = {
   get_analysis_summary: "读取已附加分析",
   get_coach_knowledge: "查阅训练知识",
   run_product_command: "查询产品数据",
+  // 文件系统工具
+  read: "读取文件",
+  write: "写入文件",
+  ls: "浏览文件",
+  // 训练记录与分析
   "run.list": "查询训练记录",
   "run.get": "读取训练详情",
   "history.list": "查询历史训练",
   "history.trend": "分析近期趋势",
   "analysis.get": "读取分析结果",
   "analysis.compare": "比较分析结果",
-  "analysis.evidence.list": "读取分析证据",
-  "analysis.events.list": "读取事件记录",
-  "analysis.events.filter": "筛选事件记录",
-  "analysis.outcomes.timeline": "比较历史表现",
+  "analysis.create_from_run": "开始分析",
   "analysis.retry": "重新分析",
-  "kovaak_scores.refresh_connected": "刷新 KovaaK 成绩",
+  "analysis.delete": "删除分析",
+  // 证据与事件
+  "analysis.evidence.list": "读取分析证据",
+  "analysis.evidence.signal_window": "查看信号片段",
+  "analysis.evidence.compare": "比较证据",
+  "analysis.run_facts.get": "读取训练事实",
+  "analysis.outcomes.timeline": "比较历史表现",
+  "analysis.metrics.distribution": "查看指标分布",
+  "analysis.events.list": "读取事件记录",
+  "analysis.events.get": "读取事件详情",
+  "analysis.events.rank": "事件排序",
+  "analysis.events.filter": "筛选事件记录",
+  "analysis.events.aggregate": "聚合事件",
+  "analysis.events.co_occurrence": "事件共现",
+  "analysis.events.sequence": "事件序列",
+  // 训练计划
+  "training_plan.generate_draft": "生成训练计划",
+  "training_plan.save": "保存训练计划",
+  "training_plan.activate": "启用训练计划",
+  "training_plan.pause": "暂停训练计划",
+  "training_plan.adjust": "调整训练计划",
+  "training_plan.review": "回顾训练计划",
   "training_plan.item.add": "更新训练安排",
   "training_plan.execution.record": "记录训练执行",
   "training_plan.retest.record": "记录复测结果",
+  // 画像与成绩
+  "profile.aiming.snapshot": "查询瞄准画像",
+  "kovaak_scores.lookup": "查询 KovaaK 成绩",
+  "kovaak_scores.refresh_connected": "刷新 KovaaK 成绩",
+  "eloshapes.query": "查询鼠标尺寸",
+  "peripheral_profile.get": "查询外设偏好",
+  "peripheral_profile.update": "更新外设偏好",
+  "product.readiness.get": "检查产品状态",
+  "navigation.open": "打开界面",
 };
 
 function deriveToolSteps(run: CoachAgentRunV1 | null): ToolStep[] {
@@ -150,6 +183,42 @@ function deriveToolSteps(run: CoachAgentRunV1 | null): ToolStep[] {
     });
   }
   return steps;
+}
+
+/**
+ * Extract the latest `navigation.open` video_time UI event from a run's event
+ * list. The Coach-side contract carries the coach_ui_event on the tool event's
+ * `payload.ui_event` (or the payload itself when the result is flattened).
+ * Returns null when no unhandled video_time target is present.
+ */
+function videoTimeTargetFromRun(run: CoachAgentRunV1 | null): {
+  analysisRef: string;
+  timeMs: number;
+  eventKey: string;
+} | null {
+  if (!run) return null;
+  for (const event of run.events) {
+    const payload = event.payload;
+    if (!payload || typeof payload !== "object") continue;
+    const candidate = (payload as Record<string, unknown>).ui_event ?? payload;
+    if (
+      candidate
+      && typeof candidate === "object"
+      && (candidate as Record<string, unknown>).schema_version === "coach_ui_event.v1"
+      && (candidate as Record<string, unknown>).kind === "video_time"
+    ) {
+      const analysisRef = (candidate as Record<string, unknown>).analysis_ref;
+      const timeMs = (candidate as Record<string, unknown>).time_ms;
+      if (typeof analysisRef === "string" && typeof timeMs === "number" && Number.isFinite(timeMs)) {
+        return {
+          analysisRef,
+          timeMs,
+          eventKey: `${event.event_ref ?? event.sequence}:${analysisRef}:${timeMs}`,
+        };
+      }
+    }
+  }
+  return null;
 }
 
 function kovaakIntentDraft(value: unknown): string | null {
@@ -234,7 +303,15 @@ export function CoachPanel({
     try {
       const detail = await getCoachSession(sessionId);
       if (revision !== refreshRevisionRef.current) return;
-      setMessages(detail.messages ?? []);
+      setMessages((current) => {
+        const optimistic = current.filter((message) => message.id < 0);
+        const backendMessages = detail.messages ?? [];
+        const backendKeys = new Set(backendMessages.map((message) => `${message.role} ${message.content}`));
+        const uniqueOptimistic = optimistic.filter(
+          (message) => !backendKeys.has(`${message.role} ${message.content}`),
+        );
+        return [...uniqueOptimistic, ...backendMessages];
+      });
       setAnalysisSessionIds(detail.analysis_session_ids ?? []);
       setLoadError(false);
     } catch {
@@ -255,6 +332,53 @@ export function CoachPanel({
       runBySessionRef.current.delete(activeSessionKeyRef.current);
     }
   }, [run]);
+
+  // Coach's `navigation.open` may emit a video_time UI event; forward it to the
+  // video pane exactly once per event so streaming and polling both resolve it.
+  const handledVideoEventsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!onOpenVideo) return;
+    const target = videoTimeTargetFromRun(run);
+    if (!target || handledVideoEventsRef.current.has(target.eventKey)) return;
+    handledVideoEventsRef.current.add(target.eventKey);
+    onOpenVideo(target.analysisRef, target.timeMs);
+  }, [onOpenVideo, run]);
+
+  // Analyses this discussion engaged with: the live run's reads win, the
+  // session's persisted list is the fallback after the run clears.
+  const discussionAnalysisIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const ref of run?.analysis_refs ?? []) {
+      const match = /^analysis:([1-9][0-9]*)$/.exec(ref);
+      if (match) ids.add(Number(match[1]));
+    }
+    for (const id of analysisSessionIds) ids.add(id);
+    return [...ids];
+  }, [analysisSessionIds, run?.analysis_refs]);
+
+  // Backend session id == analysis id in the file-based architecture, so the
+  // sessions list can supply the scenario name for the discussion tag. Fetch is
+  // best-effort; without a name the tag falls back to the analysis ref.
+  const [analysisScenarios, setAnalysisScenarios] = useState<Record<number, string | null>>({});
+  const discussionAnalysisKey = discussionAnalysisIds.join(",");
+  useEffect(() => {
+    if (!discussionAnalysisKey) {
+      setAnalysisScenarios({});
+      return;
+    }
+    let cancelled = false;
+    void listSessions()
+      .then((response) => {
+        if (cancelled) return;
+        const map: Record<number, string | null> = {};
+        for (const item of response.sessions) map[item.id] = item.scenario ?? null;
+        setAnalysisScenarios(map);
+      })
+      .catch(() => {
+        if (!cancelled) setAnalysisScenarios({});
+      });
+    return () => { cancelled = true; };
+  }, [discussionAnalysisKey]);
 
   const refreshCurrentTraining = useCallback(async () => {
     const revision = ++trainingRefreshRevisionRef.current;
@@ -670,6 +794,8 @@ export function CoachPanel({
         effectiveSessionId == null ? {} : { sessionId: effectiveSessionId },
       );
       setRun(created);
+      // 会话标题会随第一条消息更新，通知 AppShell 刷新侧栏列表。
+      window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
     } catch (error) {
       if (optimisticId !== null) {
         setMessages((current) => current.filter((message) => message.id !== optimisticId));
@@ -773,6 +899,21 @@ export function CoachPanel({
 
       <div className="task6-messages-wrap">
       <section aria-label="Coach 消息" className="task6-messages" onScroll={handleMessagesScroll} ref={messagesRef}>
+        {discussionAnalysisIds.length > 0 ? (
+          <div aria-label="本次讨论的分析" className="task6-suggestions" role="region">
+            <span>本次讨论</span>
+            {discussionAnalysisIds.map((id) => (
+              <button
+                className="task6-suggestion"
+                key={id}
+                onClick={() => onOpenVideo?.(`analysis:${id}`, 0)}
+                type="button"
+              >
+                {analysisScenarios[id] ?? `分析 #${id}`}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {messages.length === 0 && !run ? (
           <Empty title="开始一段 Coach 对话">可以直接提问训练问题，Coach 会读取你的分析数据。</Empty>
         ) : null}
