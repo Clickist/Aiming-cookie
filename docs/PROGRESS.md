@@ -10,6 +10,7 @@
 
 ## Implementation Status
 
+- **Architecture rewrite complete**（SQLite → JSON 文件）：canonical 数据以 JSON 文件直接保存在 `DATA_ROOT` 下——`runs/{id}/meta.json`（KovaaKRun）、`sessions/{id}.json`（Analysis Session/job）、`analyses/{session_id}/`（渐进式披露）、`training/`、`config/`、`profile.json`。Coach 用 Pi `JsonlSessionRepo` 把对话持久化为 `conversations/{id}.jsonl`，并直接读写文件系统；SQLite、Python `coach_*` 代理层与 context-attach 机制已移除。
 - Documentation has been realigned with the above contract; the retired OpenDesign handoff and historical superpowers materials are reference-only.
 - Backend automatic tier selection, Run readiness, server-side Analysis tier selection, first-launch routing, and mandatory onboarding UI are implemented and covered by the focused validation below.
 - Desktop Coach requests now use the Node sidecar directly. Python remains the local Analysis API/ingestion/worker runtime; it is not a desktop Coach request proxy.
@@ -17,15 +18,16 @@
 
 ## Verification
 
-- Python full suite: 1682 passed, 5 skipped; the focused DB/queue/routes/Coach command suite also passed 231 tests.
-- Coach runtime TypeScript suite: 188 passed, 2 skipped; Node native Analysis includes 9 focused tests covering all three input tiers, Python worker v3 snapshot reads, cleanup, and auto-discovered KovaaK path derivation.
+- Python full suite: 1154 passed, 5 skipped; the backend suite `pytest webapp/tests` passed 635, 3 skipped. The architecture rewrite removed the SQLite / `coach_*` proxy-era tests.
+- Coach runtime TypeScript suite: 152 tests, 150 passed, 2 skipped; Node native Analysis covers all three input tiers, Python worker v3 snapshot reads, cleanup, and auto-discovered KovaaK path derivation.
 - Frontend unit/contracts: 179 passed; frontend type-check passed.
-- Rust/Tauri MSVC: fmt, check, clippy passed; tests 92 passed, 7 field-only tests ignored.
+- Rust/Tauri MSVC: fmt, check, clippy passed; tests 93 passed, 0 failed, 7 field-only tests ignored.
 - `desktop-coach-provider.spec.ts` now exercises the product UI and observes `/v1/agent-runs`, but the real Provider field test was not rerun in this cleanup. Its skip is not counted as passing validation.
 - `git diff --check` passed. Full Python, production browser Playwright, real Tauri, real KovaaK, hardware, and Provider field checks remain to be reported separately if run.
 
 ## 2026-08-13 Session Changes
 
+- Completed the authorized SQLite → JSON-file architecture rewrite: removed `db.py`/SQLite, the Python `coach_*` proxy modules, and the context-attach mechanism; Coach now reads/writes `DATA_ROOT` directly and persists conversations via Pi `JsonlSessionRepo`.
 - Made Analysis Session reservation atomic across Python upload/import and Node `analysis.create_from_run`, with failed input setup removing the reservation and workspace.
 - Implemented Node-native Run-to-Analysis input freezing with `multimodal > input_native > video_fallback`, canonical v3 snapshots, worker-readable fingerprints, scenario resolution, and auto-discovered KovaaK path reuse.
 - Fixed Agent Run retry message reuse, Provider-wait recovery, TeachingSession stale-CAS handling, canonical context projection, Python-compatible context dedupe keys, and duplicate Agent Run readers.

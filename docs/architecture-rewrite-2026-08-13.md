@@ -30,6 +30,18 @@ Tauri (Rust) — 保留 Raw Input、WGC 窗口录制、Capture Coordinator、Med
 
 ```text
 app-data/
+  runs/
+    {id}/
+      meta.json           ← KovaaKRun metadata（Python 写）
+      trace-{uuid}.bin    ← Run-owned mouse trace（Raw window extract）
+    _counter.json         ← run id 计数器
+    _evidence_tombstones.json   ← Run evidence 删除 tombstone
+    _incomplete_tombstones.json ← 未完成采集删除 tombstone
+  sessions/
+    {id}.json             ← Analysis Session/job（Python 写）
+    {id}/                 ← managed workspace（上传输入副本、视频 alias 等）
+    _counter.json         ← session id 计数器
+    _deletion_tombstones.json   ← Analysis 删除 tombstone
   analyses/{id}/
     overview.json       ← 诊断概览（Coach 日常读这个，≤32KB）
     metrics.json        ← 完整指标分布
@@ -40,21 +52,21 @@ app-data/
   profile.json          ← 用户画像
   training/
     plan.json           ← 当前训练计划
-    history.jsonl       ← 训练历史
+    scores.json         ← KovaaK benchmark records
   conversations/
     {id}.jsonl          ← 对话记录（Pi JSONL 格式）
   config/
     provider.json       ← Provider 配置 + API key（明文 local-first）
+    onboarding.json     ← 首次启动 onboarding 状态
     settings.json       ← 应用设置
-  raw/
-    run_{id}/
-      trace.bin         ← Raw Input 二进制（仅 Python 读）
+  raw-input/
+    buffer.bin          ← Raw Input 采集缓冲区（Rust 写）
 ```
 
 **Coach 文件系统权限：**
-- 读：`analyses/`, `profile.json`, `training/`, `conversations/`, `config/provider.json`
+- 读：`analyses/`, `profile.json`, `training/`, `conversations/`, `config/`, `runs/`, `sessions/`
 - 写：`profile.json`, `training/`, `conversations/`
-- 不能写：`analyses/`（Python 后端写）、`raw/`（Rust 写）
+- 不能写：`analyses/`（Python 后端写）、`raw-input/`（Rust 写）
 - 不能删除用户文件（系统提示词限制）
 
 ## 4. 废弃清单

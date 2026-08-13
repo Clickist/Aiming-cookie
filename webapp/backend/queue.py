@@ -75,10 +75,6 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _utc_now_sqlite() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
 def _parse_utc(value: str | None) -> datetime | None:
     if not value or not str(value).strip():
         return None
@@ -91,7 +87,7 @@ def _parse_utc(value: str | None) -> datetime | None:
     return None
 
 
-def sqlite_timestamp_to_wire_utc(value: str | None) -> str | None:
+def timestamp_to_wire_utc(value: str | None) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
@@ -657,7 +653,7 @@ async def list_storage_sessions(user_id: str) -> list[dict]:
         {
             "session_id": s["id"],
             "status": s.get("status"),
-            "created_at": sqlite_timestamp_to_wire_utc(s.get("created_at")) or "",
+            "created_at": timestamp_to_wire_utc(s.get("created_at")) or "",
             "workspace_bytes": workspace_size_bytes(s["id"]),
         }
         for s in _all_sessions(user_id)
@@ -668,8 +664,8 @@ async def list_sessions(user_id: str) -> list[dict]:
     out: list[dict] = []
     for session in _all_sessions(user_id):
         item = dict(session)
-        item["created_at"] = sqlite_timestamp_to_wire_utc(item.get("created_at")) or ""
-        item["finished_at"] = sqlite_timestamp_to_wire_utc(item.get("finished_at"))
+        item["created_at"] = timestamp_to_wire_utc(item.get("created_at")) or ""
+        item["finished_at"] = timestamp_to_wire_utc(item.get("finished_at"))
         snapshot = item.get("input_snapshot")
         snapshot_scenario = snapshot.get("scenario") if isinstance(snapshot, dict) else None
         item["scenario"] = snapshot_scenario if snapshot_scenario is not None else item.get("run_scenario")
@@ -722,7 +718,7 @@ def _resolve_training_at(item: dict) -> str | None:
     run = kovaak_run_store._load_run(int(run_id))
     if run is None:
         return None
-    return sqlite_timestamp_to_wire_utc(run.get("created_at"))
+    return timestamp_to_wire_utc(run.get("created_at"))
 
 
 def _resolve_summary_label(item: dict) -> str | None:
@@ -874,7 +870,7 @@ async def get_task_rows(task_ref: str, user_id: str) -> list[dict]:
 def _task_row(session: dict) -> dict:
     item = dict(session)
     for key in ("created_at", "started_at", "finished_at", "training_at"):
-        item[key] = sqlite_timestamp_to_wire_utc(item.get(key))
+        item[key] = timestamp_to_wire_utc(item.get(key))
     snapshot = item.get("input_snapshot")
     if isinstance(snapshot, dict):
         item["scenario"] = snapshot.get("scenario")
@@ -966,10 +962,10 @@ async def get_session(session_id: int) -> Optional[dict]:
     if session is None:
         return None
     d = dict(session)
-    d["created_at"] = sqlite_timestamp_to_wire_utc(d.get("created_at")) or ""
-    d["started_at"] = sqlite_timestamp_to_wire_utc(d.get("started_at"))
-    d["finished_at"] = sqlite_timestamp_to_wire_utc(d.get("finished_at"))
-    d["training_at"] = sqlite_timestamp_to_wire_utc(d.get("training_at"))
+    d["created_at"] = timestamp_to_wire_utc(d.get("created_at")) or ""
+    d["started_at"] = timestamp_to_wire_utc(d.get("started_at"))
+    d["finished_at"] = timestamp_to_wire_utc(d.get("finished_at"))
+    d["training_at"] = timestamp_to_wire_utc(d.get("training_at"))
     snapshot = d.get("input_snapshot")
     if not isinstance(snapshot, dict):
         d["input_snapshot"] = None

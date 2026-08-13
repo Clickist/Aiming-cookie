@@ -41,7 +41,6 @@ async def test_runtime_process_binds_dynamic_port_and_serves_health(tmp_path) ->
         "AIMING_COOKIE_WATCH_PARENT_STDIN": "1",
         "DATA_ROOT": str(tmp_path / "data"),
         "VIDEO_TMP_DIR": str(tmp_path / "data"),
-        "DATABASE_URL": f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}",
     })
     process = await asyncio.create_subprocess_exec(
         sys.executable,

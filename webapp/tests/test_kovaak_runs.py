@@ -70,8 +70,8 @@ async def _complete_multimodal_run(
 
 
 def test_sqlite_run_timestamps_are_explicit_utc_on_public_projection():
-    assert kovaak_run_store._sqlite_timestamp_to_wire_utc("2026-08-08 08:10:09") == "2026-08-08T08:10:09Z"
-    assert kovaak_run_store._sqlite_timestamp_to_wire_utc("2026-08-08T08:10:09Z") == "2026-08-08T08:10:09Z"
+    assert kovaak_run_store._timestamp_to_wire_utc("2026-08-08 08:10:09") == "2026-08-08T08:10:09Z"
+    assert kovaak_run_store._timestamp_to_wire_utc("2026-08-08T08:10:09Z") == "2026-08-08T08:10:09Z"
 
 
 @pytest.mark.asyncio

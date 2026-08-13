@@ -45,7 +45,7 @@ Desktop Client (Next.js UI in Tauri)
 这些属于已经采用的架构基线：
 
 - 本地路径导入由 native picker 发起；源文件不被修改，运行时复制到 managed workspace；
-- Desktop 可自动发现 KovaaK Stats / Performance，并将解析后的 `KovaaKRun` metadata 保存在本地 SQLite；源文件仍由用户拥有；
+- Desktop 可自动发现 KovaaK Stats / Performance，并将解析后的 `KovaaKRun` metadata 保存在本地 JSON 文件（`runs/{id}/meta.json`）；源文件仍由用户拥有；
 - Node Coach product command 可以基于 owner-scoped `KovaaKRun` 原子预留 Analysis Session、冻结 Run 输入并将 Session 推入 `queued`；canonical Run finalization、Analysis 文件生命周期、确定性分析和 terminal result 仍归 Local Analysis Runtime / Python worker 所有；
 - Windows Raw Input 由 Tauri native layer opt-in 启用，只在检测到 KovaaK 进程时采集相对 `dx/dy`、时间戳和鼠标按钮；非 Windows 明确返回 unsupported；
 - native layer 不改变鼠标设备 polling rate。Windows 上报进入 canonical trace 前按整数毫秒归一化：同一毫秒内所有运动报告的 `dx/dy` 分别求和为至多一条运动记录，按钮状态边沿按接收顺序作为例外单独保留，因此 canonical 运动序列最高 1000 Hz；不补零、不做 deadzone/低通滤波，也不把亚毫秒路径形状写成产品事实；
@@ -185,7 +185,7 @@ KovaaKRun
 约束：
 
 - Run 没有视频、没有 Raw 或 evidence 尚不完整时也可以存在；Analysis Session 可以引用 Run，但 Run 不反向拥有 Analysis Session；
-- Stats / Performance 原始文件保持用户所有，本地数据库只保存绝对路径、解析摘要和稳定 source key；Aiming Cookie 不自动复制、搬迁或删除这些源文件；
+- Stats / Performance 原始文件保持用户所有，本地 `runs/{id}/meta.json` 只保存绝对路径、解析摘要和稳定 source key；Aiming Cookie 不自动复制、搬迁或删除这些源文件；
 - Raw Input trace 是 Run 的本地 managed artifact，不是云端 artifact；没有有效 Performance 时间锚时不得伪造配对；
 - 自动录制并按 Challenge window 切出的 MP4 是 Run-owned managed artifact；它不随 terminal Analysis 删除。手动导入 MP4 仍按用户源文件与 Analysis-owned managed copy 的既有边界处理；
 - 一条 canonical Performance Challenge window 只生成一条 Run；连续多局必须分别 finalization，重复 watcher observation 必须幂等；
@@ -197,18 +197,18 @@ KovaaKRun
 
 ### 4.1 Canonical store
 
-- 本地 SQLite 是 Desktop v1 的 canonical structured store；
-- app-owned SQLite connection 必须开启 foreign-key enforcement；Provider profile/credential、
-  Training Plan/version/transition 等声明的关系约束不能只停留在 DDL 文本中，也不能接受
-  新的 orphan child row；
+- canonical 结构化数据以 JSON 文件直接保存在 `DATA_ROOT` 下：`runs/{id}/meta.json`
+  （KovaaKRun）、`sessions/{id}.json`（Analysis Session/job）、`analyses/`（渐进式披露结果）、
+  `training/`、`config/`、`profile.json`；不再使用 SQLite；
+- JSON 文件是唯一事实源，不与任何第二份数据库双写；Coach 对话由 Pi `JsonlSessionRepo`
+  持久化为 `conversations/{id}.jsonl`；
 - Coach command journal 的 `(owner, command_name, idempotency_key)` 记录一旦建立，
-  `parameters_digest` 不得被后到写入替换；应用层先查后写即使发生竞态也必须在 SQLite
-  写入点返回稳定 conflict；同 digest 的后到 reservation claimant 必须 replay 已有记录，
+  `parameters_digest` 不得被后到写入替换；应用层先查后写即使发生竞态也必须在写入点
+  返回稳定 conflict；同 digest 的后到 reservation claimant 必须 replay 已有记录，
   不能再次执行副作用；confirmed write 的 reservation conflict 必须回滚 confirmation 消费；
-- JSON/JSONL 只作为交换、调试或兼容格式，不与 SQLite 形成双写事实源；
 - 不建立账号型云同步；跨设备迁移使用显式导出 / 导入，任何未来远端备份都必须先由新的产品决策重新冻结；
-- migration 必须可测试、幂等，并由批准的 plan 冻结；事务型 migration helper 不得使用会
-  隐式提交外层事务的执行方式，失败时必须保留原异常并允许真实 rollback，不能留下半迁移状态。
+- 文件写入、删除与崩溃恢复必须可测试、幂等，并按 tombstone / reconciliation 顺序收敛，
+  失败时不得留下半写入状态或 orphan workspace。
 
 ### 4.2 Managed workspace
 
@@ -219,7 +219,7 @@ KovaaKRun
 - 删除 terminal analysis 时删除其 managed inputs/artifacts；
 - 不删除用户原始源文件；
 - 删除 terminal Analysis 不删除 Run-owned Raw trace 或自动 MP4；
-- DB 状态与文件删除必须具备可恢复顺序（例如 commit 后清理、tombstone 或 reconciliation）；
+- 记录状态与文件删除必须具备可恢复顺序（例如提交后清理、tombstone 或 reconciliation）；
 - 崩溃后可识别和回收 orphan/partial workspace；
 - KovaaKRun 的源文件可能由用户在应用外移动或删除；UI 必须表达 source unavailable，不能把路径失效当作分析成功；
 - Raw Input trace 与 Run metadata 的保留、删除和孤儿清理不能从当前实现默认值推导，必须有明确合同；
@@ -252,7 +252,7 @@ Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 
 
 - v1 只接入一份随产品发布并经过审核的 versioned course catalog。它冻结 39 组两阶段项目配对、来源课程分类和可选 exact local ScenarioProfile ref；它不是第二套 Scenario Registry，也不能用外部名称替代本地 hash。外部作者、课程代号和阶段名称属于内部 provenance，不作为用户侧功能名称；
 - Steam Profile URL 或 17 位 ID 必须由用户明确提交并同意使用。用户可在本地 owner scope 保存一个规范化的本人 Steam ID，用于后续显式手动刷新；它独立于 Benchmark snapshot，删除连接不删除既有成绩。聊天中提交的临时 Profile 仅存于当前 turn 的内存绑定，既不写入 Benchmark、消息、trace、audit、confirmation 或 Training Plan，也不影响用户历史成绩。两类身份均不得进入 LLM Provider 请求、Coach context、普通日志、公开导出或遥测；临时输入在到达 LLM 前必须替换为只在 loopback bridge 内有效的 opaque ref。
-- KovaaK 网页后端没有稳定公开 API 合同。同步必须设置超时，完整校验两个阶段各 39 个已知且无重复的场景，并在单一 SQLite 事务中写入现有 `benchmark_records`。任一阶段失败时不写半份快照，保留上次成功数据，且不影响 Analysis、History 或 Coach 可用性；
+- KovaaK 网页后端没有稳定公开 API 合同。同步必须设置超时，完整校验两个阶段各 39 个已知且无重复的场景，并原子写入现有 `training/scores.json`（benchmark records）。任一阶段失败时不写半份快照，保留上次成功数据，且不影响 Analysis、History 或 Coach 可用性；
 - Coach 只接收 versioned、去身份、大小受限的成绩摘要：课程版本、同步时间、完成度、项目名称、最高分、项目档位和待检查顺序。分数只帮助选择先检查哪个项目或难度；具体动作问题仍必须来自当前 Analysis 和 Registry；
 - 较低阶段仍按现有 exact Analysis、Training Plan item、执行确认与 matched retest 完成教学。只有已注册、带 exact metric/version/conditions 证据的 improvement policy 得出的确认复测结果，或用户明确确认一次主观结果为 improved 时，Coach 才可建议对应的更高阶段项目；当前 Analysis metric 的任意非零 delta 不自动构成 improved/worsened。该建议是下一次压力测试和新基线，不是迁移已成功；
 - 更高阶段项目没有 reviewed exact hash / analyzer contract 时只能显示项目名称级建议，不能生成正式 Training Plan item、可比 Analysis 或迁移结论。获得 exact identity 后继续复用现有 11 字段 plan item 和 confirmation，不新增课程进度状态机。
@@ -285,7 +285,7 @@ Analysis 删除后，以上 Analysis/Evidence refs 返回 unavailable/deleted �
 - Coach 知识是随产品版本发布、受 Git review 的只读产品资产，不属于任何 owner、Analysis、对话或 Provider；
 - 一份 versioned Registry 是 Python 与 Pi TypeScript runtime 的 canonical knowledge source，禁止在两种语言中各自维护正文副本；
 - Markdown 研究、理论、社区和处方材料只作为来源证据与编辑审查输入，不在运行时由模型直接读取或整份注入上下文；
-- SQLite 只持久化历史对话实际使用的 registry/entry/version/source refs，不复制 Registry 正文，也不与静态 asset 双写；
+- Analysis 结果 JSON 只携带实际使用的 registry/entry/version/source refs，不复制 Registry 正文，也不与静态 asset 双写；
 - metric 定义、运动学机制、诊断适用范围、学术研究、社区 cue、处方/verification、Tracking 和身体/张力候选假设均可进入 Registry，但必须保留 source level、最高 claim、limitations 与 counterevidence；
 - 身体、张力、握持、灵敏度和硬件内容在没有直接传感器或可比实验时只能作为 `experimental` 候选假设，不得生成 measured/deterministic root cause；
 - Registry capability 采用严格递增前缀：`explanation_only` → `diagnosis_support` → `candidate_experiment` → `scenario_prescription`。消费者必须显式请求所需 capability；Provider 可自然组织表达，但不得把低权限 entry 提升为诊断、实验或处方；
@@ -328,7 +328,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 
 - pinned Pi 的 built-in provider/model catalog 是产品 catalog；Aiming Cookie 不维护第二份 provider/model allow-list，所有 Pi 支持的 built-in 必须被动态暴露并接通为可选项；
 - 自定义 profile 使用显式 `OpenAI-compatible` 或 `Anthropic-compatible` 协议，至少保存 provider name、base URL、API key 配置状态和 model ID；协议不得从 URL 文本猜测。Anthropic-compatible 的 base URL 是服务根地址，Pi 负责附加 `/v1` 路径；历史输入末尾的 `/v1` 在保存和运行时规范化为根地址。连接前可以用对应协议短暂读取模型列表，但 API key 不得进入公开响应、日志或浏览器存储；当前 owner/profile 的 selected provider/model 是本地 canonical selection；
-- API key 可以作为 local-first 权衡明文持久化在 app-owned 本地 SQLite/config；OS secure store 可以作为后续增强，但不是实现或发布前置条件；
+- API key 可以作为 local-first 权衡明文持久化在 app-owned 本地 `config/provider.json`；OS secure store 可以作为后续增强，但不是实现或发布前置条件；
 - UI/API 允许 set/replace/delete/read credential；本地应用中 API key 可读回以便用户确认配置。仍返回 `configured`、`auth_mode`、`credential_source`、`needs_reauth`、`last_test` 等状态；
 - auth/refresh operation 对 credential 状态的完成写入必须绑定其启动时 revision；旧 operation 的成功 credential 或失败 `needs_reauth` 标记都不得覆盖、污染用户随后替换的新 credential；
 - `LLM_PROVIDER` 与 `kovaak_tracker/coach/providers.json` 只保留为旧环境/配置兼容入口，不得继续充当 provider/model 事实源；迁移必须保留显式选择，不能把 obsolete `deepseek-chat` 静默改写为其它 model；
@@ -347,10 +347,10 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - 自动录屏只允许捕获 KovaaK 应用窗口，不得捕获完整桌面、其它应用窗口或系统通知；
 - 自动视频主路径必须保持 WGC surface、颜色转换和硬件编码在 GPU 路径内；硬件编码不可用、适配器不匹配或视频队列背压时独立降级，不得静默回退到会影响 Raw Input 或游戏的持续 CPU 编码；
 - Raw Input trace、MP4、原始 CSV/protobuf 和私有 parser payload 不进入 Provider 请求或普通日志；Coach 只可在 L1-L3 合同内消费本地 broker 返回的 bounded 规范化结果；
-- Desktop loopback API 限制为 host/origin 暴露；开发阶段可使用简单固定 token，正式发布前再加随机 launch-scoped token；
+- Desktop loopback API 限制为 host/origin 暴露；每次启动由 Tauri 生成随机高熵 launch-scoped token（`AIMING_COOKIE_DESKTOP_TOKEN`），不持久化、不写普通日志；
 - Web 预览只允许在受控环境访问，不把外部 VPN/SSO/代理访问控制包装成产品账号；
 - 所有 artifact、Coach 和 History 读写统一校验本地 profile、稳定引用和 capability；
-- provider secret 不进入 AnalysisResult、Coach context/message、普通日志、诊断或导出。app-owned 本地 SQLite/config 按 local-first 合同明文持久化，API key 可读回以便用户确认。OAuth/API key 状态必须可恢复且可审计。
+- provider secret 不进入 AnalysisResult、Coach context/message、普通日志、诊断或导出。app-owned 本地 `config/provider.json` 按 local-first 合同明文持久化，API key 可读回以便用户确认。OAuth/API key 状态必须可恢复且可审计。
 - 查询、导航和用户在当前指令中明确要求的已注册产品操作可以直接执行，不因删除、覆盖或其它 consequential classification 另加第二次确认；
 - Coach 主动推断或提议、但用户当前消息没有明确要求的 consequential operation，必须先说明影响并获得确认；
 - credential/secret 输入、Provider OAuth/device-code 交互、系统与隐私权限、文件选择、现实训练和主观事实不注册为 Agent 可执行操作，只能由可信 UI 接收并由 Coach 等待验证；所有 Agent 操作和 guidance 结果都要保留安全、可审计的结果。
