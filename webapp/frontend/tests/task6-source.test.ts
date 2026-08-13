@@ -54,6 +54,12 @@ test("Coach context is removable and L0 payloads never enter the UI adapter", as
   assert.match(coach, /setFeedback\(located \? "已定位" : "未能定位，请重试。"\)/);
 });
 
+test("Coach retry explains how to recover when the original context is unavailable", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  assert.match(coach, /error\.message === "context_unavailable"/);
+  assert.match(coach, /原分析上下文已不可用，请重新附加分析后发送新消息。/);
+});
+
 test("Settings route covers Provider, Profile, capture, theme, and Storage", async () => {
   const page = await source("app/settings/page.tsx");
   const settings = await source("components/task6/SettingsWorkspace.tsx");
@@ -280,6 +286,12 @@ test("Coach shows a sent user message immediately and restores the draft on fail
   assert.match(panel, /setDraft\(content\)/);
 });
 
+test("Coach sends and polls Provider runs through the shared API adapter", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /const created = await createCoachAgentRun\([\s\S]*?setRun\(created\)/);
+  assert.match(panel, /const next = await getCoachAgentRun\(run\.run_ref[\s\S]*?setRun\(next\)/);
+});
+
 test("Coach keeps each session's active or failed run when switching conversations", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   assert.match(panel, /runBySessionRef/);
@@ -301,6 +313,26 @@ test("Coach analysis proposals wait, attach to a new conversation, and start Pro
   assert.match(panel, /attachCoachContext/);
   assert.match(panel, /await createCoachAgentRun\(/);
   assert.match(panel, /completedRunIds[\s\S]*?analysis_status:[\s\S]*?"done"/);
+});
+
+test("Coach stops a stale batch workflow after switching conversations or unmounting", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /batchWorkflowRevisionRef/);
+  assert.match(panel, /waitForAnalysisCompletion\(item\.sessionId, isWorkflowCurrent\)/);
+  assert.match(panel, /if \(stopIfStale\(\)\) return/);
+  assert.match(panel, /batchWorkflowRevisionRef\.current \+= 1/);
+});
+
+test("Coach clears all active contexts concurrently and reports partial failure", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /Promise\.allSettled\(active\.map\(\(context\) => detachCoachContext/);
+  assert.match(panel, /部分上下文未能清除/);
+  assert.match(panel, /未能清除上下文，请重试。/);
+});
+
+test("Coach composer has an explicit accessible name", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  assert.match(panel, /<textarea[\s\S]*?aria-label="向 Coach 提问"/);
 });
 
 test("Coach training actions distinguish plan context from a reviewed KovaaK launch", async () => {
@@ -341,9 +373,21 @@ test("Coach does not repeat the attached analysis in the context status line", a
 
 test("Coach composer uses a raised input surface without an outer divider", async () => {
   const styles = await source("components/task6/task6.css");
+  const header = styles.match(/\.task6-coach-header\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+  const training = styles.match(/\.task6-current-training\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+  const panel = styles.match(/\.task6-coach-panel\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+  const messagesWrap = styles.match(/\.task6-messages-wrap\s*\{([\s\S]*?)\}/)?.[1] ?? "";
   const composer = styles.match(/\.task6-composer\s*\{([\s\S]*?)\}/)?.[1] ?? "";
   const input = styles.match(/\.task6-composer-input\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+  assert.doesNotMatch(header, /border-bottom/);
+  assert.doesNotMatch(training, /border-bottom/);
+  assert.match(styles, /\.task6-coach-header::after,[\s\S]*\.task6-current-training::after/);
+  assert.match(styles, /inset-inline:\s*calc\(-1 \* max\(14px, calc\(\(100% - var\(--task6-coach-content-width\)\) \/ 2\)\)\)/);
   assert.doesNotMatch(composer, /border-top/);
+  assert.match(panel, /padding-inline:\s*max\(14px, calc\(\(100% - var\(--task6-coach-content-width\)\) \/ 2\)\)/);
+  assert.match(messagesWrap, /width:\s*100%/);
+  assert.match(composer, /width:\s*100%/);
+  assert.match(composer, /background:\s*var\(--s-low\)/);
   assert.match(input, /background:\s*var\(--s-high\)/);
 });
 

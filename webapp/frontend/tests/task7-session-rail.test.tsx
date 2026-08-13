@@ -23,6 +23,7 @@ test("SessionRail includes grouped navigation, search, and keyboard semantics", 
   const component = await source("components/task7/SessionRail.tsx");
   const styles = await source("components/task7/session-rail.css");
   assert.match(component, /<details/);
+  assert.doesNotMatch(component, /<summary[^>]*aria-expanded/);
   assert.match(component, /UNASSOCIATED_SCENARIO/);
   assert.match(component, /type="search"/);
   assert.match(component, /aria-current=\{current \? "page"/);
@@ -34,7 +35,7 @@ test("SessionRail includes grouped navigation, search, and keyboard semantics", 
   assert.match(styles, /prefers-reduced-motion/);
 });
 
-test("SessionRail follows the OpenDesign narrow and footer contract", async () => {
+test("SessionRail follows the active narrow and footer contract", async () => {
   const component = await source("components/task7/SessionRail.tsx");
   const styles = await source("components/task7/session-rail.css");
   assert.match(component, /task7-session-rail__footer/);
@@ -49,6 +50,8 @@ test("SessionRail follows the OpenDesign narrow and footer contract", async () =
   assert.match(component, /训练历史/);
   assert.match(component, /系统设置/);
   assert.match(styles, /--task7-rail-width:\s*56px/);
+  assert.match(styles, /data-collapsed/);
+  assert.match(styles, /task7-session-rail__iconbar/);
   assert.match(styles, /@media \(max-width: 1119px\)/);
   assert.match(styles, /data-overlay="true"/);
   assert.match(styles, /color-mix\(in srgb, var\(--on-surface\) 12%, transparent\)/);
