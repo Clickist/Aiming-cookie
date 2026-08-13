@@ -126,10 +126,43 @@ npm.cmd --prefix webapp\frontend run tauri -- dev --no-watch --config $smokeConf
 
 Desktop 的打包、签名、公证和更新链路尚未构成稳定发布流程；当前状态与阻塞以 `PROGRESS.md` 为准。
 
+### 真实 Tauri E2E
+
+真实 Tauri E2E 由 `scripts\run-tauri-e2e.ps1` 统一启动。该脚本会：
+
+- 用临时 Tauri identifier 启动 `tauri dev`，隔离 AppData、SQLite、Raw Input 和 managed media；
+- 固定使用仓库 `.venv\Scripts\python.exe`、MSVC Rust toolchain 和当前 checkout 的 Python backend；
+- 通过 Tauri runtime 启动当前 checkout 的 Coach Node sidecar，并把 `COACH_SIDECAR_URL` 注入 Python backend；
+- 开启 WebView2 CDP，把连接信息传给 Playwright；
+- 测试结束后只清理本次创建的隔离 AppData、临时 KovaaK 目录和 runner 临时配置/日志。
+
+常用命令：
+
+```powershell
+# 桌面基础能力矩阵：runtime connection、sidecar health、fixture-backed UI/API、媒体等
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\run-tauri-e2e.ps1 -Spec desktop-matrix.spec.ts
+
+# 默认桌面 E2E 集合
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\run-tauri-e2e.ps1
+```
+
+`desktop-coach-provider.spec.ts` 是真实 Provider field test。它只在已经通过产品 UI 完成 Provider 配置的 Tauri 会话中运行，并要求显式设置 `AIMING_COOKIE_TAURI_PROVIDER_READY=1`；标准隔离 runner 每次创建并清理新的 profile，不读取或复制开发者 DB 中的 Provider credential，也不会把该 field test 计入默认或 `-Spec desktop-coach-provider.spec.ts` 的通过结果。
+
+注意事项：
+
+- 这些命令验证的是 `tauri dev` product path，不等于已验证安装包、签名、updater 或 clean-machine release。
+- `desktop-coach-provider.spec.ts` 会发起真实 Provider 请求；需要当前隔离 Tauri profile 已通过产品 UI 配置并测试 Provider，且外部 Provider 当前可达。
+- 脚本依赖 `webapp\frontend\fixtures\task7-video.mp4`；缺失时会在启动前失败。
+- Tauri `beforeDevCommand` 使用 `localhost:3000`。如果已有无关服务占用 3000，先确认并释放端口；不要让 runner 连接到旧前端。
+- 不要把 `desktop-coach-provider.spec.ts` 的 skip 计为 Provider 通过；缺少 `AIMING_COOKIE_TAURI_CDP_URL` 或显式 readiness gate 时它只表明 field test 未运行。
+- 若 WebView 能访问 `/healthz` 但 Coach run 失败，优先看 Provider status、credential、上游网络和 sidecar `/v1/agent-runs` error；这通常不是 Python 分析管线问题。
+- 若 Node `--import` 在 Windows 报 `ERR_UNSUPPORTED_ESM_URL_SCHEME`，使用下文 Coach runtime focused tests 的 `pathToFileURL()` 写法。
+
 KovaaK 本地 ingestion 由 Desktop runtime 在启动时管理：
 
-- Windows 默认从 KovaaK 安装目录推导 `FPSAimTrainer/stats` 与 `FPSAimTrainer/performances`；
-- 可用 `KOVAAK_INSTALL_DIR`、`KOVAAK_STATS_DIR`、`KOVAAK_PERFORMANCE_DIR` 覆盖路径；
+- Windows 默认通过 Steam 注册表、`libraryfolders.vdf` 和 KovaaK app manifest 自动发现安装目录，再推导 `FPSAimTrainer/stats` 与 `FPSAimTrainer/performances`；正常用户不需要配置路径；
+- Node 原生 `analysis.create_from_run` 复用已落库 Run 的绝对 `stats_path` / `performance_path`，并从 `stats_path` 所在目录定位本地场景定义，不重复实现 Steam 扫描；
+- `KOVAAK_INSTALL_DIR`、`KOVAAK_STATS_DIR`、`KOVAAK_PERFORMANCE_DIR` 只作为显式覆盖和测试隔离项；
 - `KOVAAK_WATCH_POLL_SECONDS` 控制 watcher 轮询间隔；
 - Windows Raw Input 默认关闭，可用 `AIMING_COOKIE_RAW_INPUT_ENABLED=1` 做开发启动 opt-in，正式产品必须通过带说明的 UI 授权；
 - `KovaaKRun` 由 `GET /api/kovaak-runs` 和 `GET /api/kovaak-runs/{id}` 读取，接口受 Desktop launch token 保护；

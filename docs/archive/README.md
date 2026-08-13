@@ -13,6 +13,7 @@
 - [`reviews/`](reviews/)：按日期保存的历史审阅快照；
 - [`history/`](history/)：从活跃进度文档拆出的逐日研发流水；
 - [`design-references/`](design-references/)：旧 prompt、mockup 和设计参考，不是可执行视觉事实源。
+- [`history/2026-08-12-coach-architecture-handoff.md`](history/2026-08-12-coach-architecture-handoff.md)：Coach 直连 Node sidecar 的架构交接与 E2E 背景，仅供追溯；当前启动流程和状态分别以 [`../DEVELOPMENT.md`](../DEVELOPMENT.md) 与 [`../PROGRESS.md`](../PROGRESS.md) 为准。
 
 `docs/superpowers/assessments/` 中的 assessment 是调研证据和某一时点的判断，不是产品、架构或当前实现 authority；耐久结论必须吸收到对应活跃事实源后才生效。
 

@@ -40,12 +40,13 @@ Desktop Client (Next.js UI in Tauri)
 
 ### 2.1 Desktop
 
-当前 Desktop 技术基线是 Tauri 2 + Next.js WebView + 本地 Python runtime。Tauri 管理本次启动的 Python API/worker 生命周期，并通过 native command 向前端提供动态 loopback 地址和 launch-scoped token。
+当前 Desktop 技术基线是 Tauri 2 + Next.js WebView + 本地 Node Coach sidecar + Python Analysis runtime。Tauri 管理本次启动的两个本地 runtime：WebView 的 Coach 会话、上下文和 Agent Run 直接调用 Node sidecar；普通 Analysis API、KovaaK ingestion 与 worker 仍由 Python runtime 承担。Tauri 通过 native command 向前端提供动态 loopback 连接信息。
 
 这些属于已经采用的架构基线：
 
 - 本地路径导入由 native picker 发起；源文件不被修改，运行时复制到 managed workspace；
 - Desktop 可自动发现 KovaaK Stats / Performance，并将解析后的 `KovaaKRun` metadata 保存在本地 SQLite；源文件仍由用户拥有；
+- Node Coach product command 可以基于 owner-scoped `KovaaKRun` 原子预留 Analysis Session、冻结 Run 输入并将 Session 推入 `queued`；canonical Run finalization、Analysis 文件生命周期、确定性分析和 terminal result 仍归 Local Analysis Runtime / Python worker 所有；
 - Windows Raw Input 由 Tauri native layer opt-in 启用，只在检测到 KovaaK 进程时采集相对 `dx/dy`、时间戳和鼠标按钮；非 Windows 明确返回 unsupported；
 - native layer 不改变鼠标设备 polling rate。Windows 上报进入 canonical trace 前按整数毫秒归一化：同一毫秒内所有运动报告的 `dx/dy` 分别求和为至多一条运动记录，按钮状态边沿按接收顺序作为例外单独保留，因此 canonical 运动序列最高 1000 Hz；不补零、不做 deadzone/低通滤波，也不把亚毫秒路径形状写成产品事实；
 - 自动采集启用后，Capture Coordinator 在 KovaaK 进程 gate 内持续采集 Raw，并将 WGC 的 KovaaK 窗口 GPU surface 交给同适配器的硬件编码器；压缩码流只保留最近 300 秒的有界瞬态回放缓冲。系统不假装拥有实时 Challenge start/end 事件，而是在稳定 Stats / Performance 到达后按 canonical Challenge wall window 事后生成 Run-owned evidence；仅 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4，`Pause Count > 0` 的暂停局 fail closed，只保留 partial/unavailable evidence，不把 Raw/Performance 声明为 canonical aligned；
@@ -53,7 +54,7 @@ Desktop Client (Next.js UI in Tauri)
 - Desktop 模式的本地 API 只监听 loopback，并要求本次启动 token；
 - token 不持久化、不写普通日志，也不应传播给无关子进程；
 - Tauri 退出时必须终止其管理的 runtime 进程树；
-- Desktop UI 通过共享 versioned contracts 调用本地 runtime。
+- Desktop UI 通过共享 versioned contracts 调用两个本地 runtime；桌面 Coach 产品路径不得再以 Python 作为 Node sidecar 的请求中转。
 
 尚未稳定的打包、签名、公证、自动更新、Python distribution 和跨平台生命周期策略属于 Roadmap/后续 plan，不在本文伪装成已解决。
 
