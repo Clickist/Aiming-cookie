@@ -52,7 +52,7 @@ Desktop Client (Next.js UI in Tauri)
 - 自动采集启用后，Capture Coordinator 在 KovaaK 进程 gate 内持续采集 Raw，并将 WGC 的 KovaaK 窗口 GPU surface 交给同适配器的硬件编码器；压缩码流只保留最近 300 秒的有界瞬态回放缓冲。系统不假装拥有实时 Challenge start/end 事件，而是在稳定 Stats / Performance 到达后按 canonical Challenge wall window 事后生成 Run-owned evidence；仅 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4，`Pause Count > 0` 的暂停局 fail closed，只保留 partial/unavailable evidence，不把 Raw/Performance 声明为 canonical aligned；
 - L0 Raw Input trace 与私有 parser payload 不上传云端或进入 Coach 请求；run metadata 与本地解析结果只能通过版本化、字段白名单化且有预算上限的 L1-L3 投影进入用户已选择的 Provider；
 - Desktop 模式的本地 API 只监听 loopback，并要求本次启动 token；
-- token 不持久化、不写普通日志，也不应传播给无关子进程；
+- token 不写普通日志；
 - Tauri 退出时必须终止其管理的 runtime 进程树；
 - Desktop UI 通过共享 versioned contracts 调用两个本地 runtime；桌面 Coach 产品路径不得再以 Python 作为 Node sidecar 的请求中转。
 
@@ -310,17 +310,15 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 - workspace、filesystem、shell、network 和 secret 权限遵循最小授权；
 - 无 LLM 或 Coach 不可用时，确定性诊断闭环仍完整。
 
-### 5.1 Product command authority and guided workflows
+### 5.1 Product command authority
 
-- Pi 负责把当前自然语言消息解释为已注册 command intent，但不能提交或修改 `authorization_source`、owner、confirmation、grant 或审计元数据；
-- Pi 对明确指令必须提供当前消息中的精确 instruction quote。可信 backend 校验消息引用、quote、命令、参数、stable ref、owner/thread、expiry 与 bridge 后，才签发 turn-scoped `instruction_grant.v1` 并赋予 `explicit_user_request`；grant 只允许同一命令和参数 digest 使用；
-- 当前消息明确要求的已注册产品操作，包括删除等 consequential operation，可直接执行；Coach 主动提议或推断的 consequential operation 仍以 `coach_inferred` 创建现有 confirmation；歧义参数先澄清，不猜目标；
-- grant 不是业务越权令牌。命令处理器仍独立执行 ownership、capability、state transition、stable-ref reachability、idempotency、audit、privacy 和 result redaction；
-- secret/credential 输入、OAuth/device-code 交互、系统/隐私权限、文件选择、现实训练和主观事实不进入 Agent execution。Coach 只能生成受限 guidance intent，导航到可信 UI、预填非敏感值、等待并从 canonical state 验证；
-- `product_readiness.v1` 只从既有 Provider、capture、KovaaK、Run、Analysis/task、Training Plan、Storage 与 TeachingSession 事实源派生，不持久化为第二套状态；
-- `guidance_intent.v1` 只允许 `execute_command`、`request_confirmation`、`ui_navigation`、`user_action_required`、`wait_for_state`、`completed` 与 `blocked`。UI target 必须语义化且 allow-listed，不得包含 URL、DOM selector、script、path、secret 或任意 Tauri invoke；
-- 前端只有一个 GuidanceHost，复用现有 AppShell、routes、Settings/onboarding controls、stores 和 adapters。它不模拟点击、不复制业务 handler，也不建立通用自动化或 workflow store；
-- deterministic workflow compiler 只按 readiness 与已注册操作选择下一步；Pi 仍是唯一 Agent runtime，Training Plan、TeachingSession 和 Agent run/event 仍是各自现有事实源。
+- 用户当前消息明确、无歧义要求的已注册产品操作（包括删除等 consequential operation）直接执行，不因操作有后果而另加第二次确认；
+- Coach 主动推断或提议、但用户当前消息没有明确要求的 consequential operation，必须先说明影响并获得确认；
+- 命令处理器独立执行 ownership、capability、state transition、stable-ref reachability、idempotency 和 audit 校验；
+- secret/credential 输入、OAuth/device-code 交互、系统/隐私权限、文件选择、现实训练和主观事实不进入 Agent execution，只能由可信 UI 接收并由 Coach 等待验证；
+- 不存在 shell、filesystem、任意 HTTP、任意 Tauri invoke 或模拟输入等通用权限；产品操作通过已注册的 typed command 扩展。
+
+Guidance 层只做确定性的产品编排（引导用户到正确的 UI 控件、预填非敏感值、等待并验证状态），不是第二个 Agent runtime。
 
 ### 5.2 Provider、model 与认证
 
@@ -331,7 +329,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - pinned Pi 的 built-in provider/model catalog 是产品 catalog；Aiming Cookie 不维护第二份 provider/model allow-list，所有 Pi 支持的 built-in 必须被动态暴露并接通为可选项；
 - 自定义 profile 使用显式 `OpenAI-compatible` 或 `Anthropic-compatible` 协议，至少保存 provider name、base URL、API key 配置状态和 model ID；协议不得从 URL 文本猜测。Anthropic-compatible 的 base URL 是服务根地址，Pi 负责附加 `/v1` 路径；历史输入末尾的 `/v1` 在保存和运行时规范化为根地址。连接前可以用对应协议短暂读取模型列表，但 API key 不得进入公开响应、日志或浏览器存储；当前 owner/profile 的 selected provider/model 是本地 canonical selection；
 - API key 可以作为 local-first 权衡明文持久化在 app-owned 本地 SQLite/config；OS secure store 可以作为后续增强，但不是实现或发布前置条件；
-- UI/API 只允许 set/replace/delete credential，并返回 `configured`、`auth_mode`、`credential_source`、`needs_reauth`、`last_test` 等状态，不得读回 secret；
+- UI/API 允许 set/replace/delete/read credential；本地应用中 API key 可读回以便用户确认配置。仍返回 `configured`、`auth_mode`、`credential_source`、`needs_reauth`、`last_test` 等状态；
 - auth/refresh operation 对 credential 状态的完成写入必须绑定其启动时 revision；旧 operation 的成功 credential 或失败 `needs_reauth` 标记都不得覆盖、污染用户随后替换的新 credential；
 - `LLM_PROVIDER` 与 `kovaak_tracker/coach/providers.json` 只保留为旧环境/配置兼容入口，不得继续充当 provider/model 事实源；迁移必须保留显式选择，不能把 obsolete `deepseek-chat` 静默改写为其它 model；
 - active Coach turn 只能使用 owner 当前 selected local profile；Analysis worker 不得加载 Provider 或生成 narration，新 `analysis_result.v2` 只保留 `not_requested` / `null` 兼容 envelope，旧 v1/unversioned narration 继续可读；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；
@@ -349,10 +347,10 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - 自动录屏只允许捕获 KovaaK 应用窗口，不得捕获完整桌面、其它应用窗口或系统通知；
 - 自动视频主路径必须保持 WGC surface、颜色转换和硬件编码在 GPU 路径内；硬件编码不可用、适配器不匹配或视频队列背压时独立降级，不得静默回退到会影响 Raw Input 或游戏的持续 CPU 编码；
 - Raw Input trace、MP4、原始 CSV/protobuf 和私有 parser payload 不进入 Provider 请求或普通日志；Coach 只可在 L1-L3 合同内消费本地 broker 返回的 bounded 规范化结果；
-- Desktop loopback API 继续使用高熵、launch-scoped token，并限制 host/origin/接口暴露；这是本地进程安全，不是用户登录；
+- Desktop loopback API 限制为 host/origin 暴露；开发阶段可使用简单固定 token，正式发布前再加随机 launch-scoped token；
 - Web 预览只允许在受控环境访问，不把外部 VPN/SSO/代理访问控制包装成产品账号；
 - 所有 artifact、Coach 和 History 读写统一校验本地 profile、稳定引用和 capability；
-- Provider API key、OAuth access/refresh token、Desktop launch token 和其它 secret 即使允许保存在 app-owned 本地 SQLite/config，也不得进入 AnalysisResult、Coach context/message、普通日志、diagnostics、crash report 或 export；
+- provider secret 不进入 AnalysisResult、Coach context/message、普通日志、诊断或导出。app-owned 本地 SQLite/config 按 local-first 合同明文持久化，API key 可读回以便用户确认。OAuth/API key 状态必须可恢复且可审计。
 - 查询、导航和用户在当前指令中明确要求的已注册产品操作可以直接执行，不因删除、覆盖或其它 consequential classification 另加第二次确认；
 - Coach 主动推断或提议、但用户当前消息没有明确要求的 consequential operation，必须先说明影响并获得确认；
 - credential/secret 输入、Provider OAuth/device-code 交互、系统与隐私权限、文件选择、现实训练和主观事实不注册为 Agent 可执行操作，只能由可信 UI 接收并由 Coach 等待验证；所有 Agent 操作和 guidance 结果都要保留安全、可审计的结果。

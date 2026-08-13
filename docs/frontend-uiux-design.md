@@ -6,7 +6,7 @@
 >
 > **不包含：** 具体视觉值、组件库、代码结构、收费额度、后端 schema 和施工步骤。本文本身不授权编码；实施按当前任务、上游合同、代码和测试推进。
 >
-> **完整 Coach 数据边界：** 完整 Coach 的 aim-family 范围、证据分层与后续 Gate 可参考 [`superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)。本文只规定其前端可见性，不能把尚未通过的 family Gate 写成当前已实现能力。
+> **完整 Coach 数据边界：** 完整 Coach 的 aim-family 范围、证据分层与后续 Gate 可参考 [`archive/superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md`](archive/superpowers/specs/2026-07-20-complete-coach-analysis-context-design.md)。本文只规定其前端可见性，不能把尚未通过的 family Gate 写成当前已实现能力。
 
 > **2026-08-10 IA 同步：** Coach 为默认主工作区；`/` 为 Coach 首页，`/s?sessionId=<id>` 为指定会话；左侧 Session rail 为唯一主导航，用户可见一级消费面只有 Coach、History 与 Settings。Tasks 与独立 Analysis 页面退役，旧 URL 只跳转 History；Analysis 数据对象和可复用数据/视频组件继续作为内部能力保留。桌面最小内容宽度为 `1180px`，不维护更窄窗口的第二套布局；History 与 Settings 的内容最大宽度为 `1040px` 并居中。旧侧栏和独立报告页文字仅保留为决策演进记录，不得据此恢复页面。
 >
@@ -711,8 +711,8 @@ Desktop 与 Web 使用同一套产品结构、术语、视觉语言和页面职�
 
 页面职责、信息优先级、联动、input mode、evidence、生命周期、状态规则和低保真重建边界已经冻结：
 
-- 正式局部设计合同：[`superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)；
-- 自动采集、Run 选择与存储合同：[`superpowers/specs/2026-07-17-automatic-run-capture-design.md`](superpowers/specs/2026-07-17-automatic-run-capture-design.md)；
+- 正式局部设计合同：[`archive/superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md`](archive/superpowers/specs/2026-07-13-frontend-product-reconstruction-design.md)；
+- 自动采集、Run 选择与存储合同：[`archive/superpowers/specs/2026-07-17-automatic-run-capture-design.md`](archive/superpowers/specs/2026-07-17-automatic-run-capture-design.md)；
 - 已完成的 tests-first 施工合同：[`archive/completed/plans/2026-07-13-frontend-product-reconstruction.md`](archive/completed/plans/2026-07-13-frontend-product-reconstruction.md)。
 
 原 prototype 只提供过能力接线证据，不作为正式设计起点；它已在 frontend reconstruction Task 1 经点点确认范围后删除。Task 2–7 已按本设计合同逐项授权、实现并完成当前 Browser/Desktop 自动化验收；正式产品路由、capability adapters 与 Tauri/runtime 均已存在。后续不得恢复 prototype，也不得把已完成 plan 当作新增 UI 或发布工程的授权入口。

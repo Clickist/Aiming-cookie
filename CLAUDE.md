@@ -80,7 +80,9 @@
 ## 6. 轻量开发流程
 
 - 不要求安装或使用 superpowers 系列 skill，也不要求 active plan/Task 才能开工；
+- `docs/archive/superpowers/` 下的已归档设计合同只供历史追溯，不构成当前开发约束或开工门槛；
 - 普通任务按当前请求、相关 PRD/Architecture、代码和测试推进，先说明假设、计划和成功标准；
+- 安全约束按"本地单用户桌面应用"尺度设计；不做云服务级的多租户隔离、token 鉴权或数据脱敏，除非有对应的真实风险；
 - 保持改动小而可验证，完成后报告 changed files、验证结果、未运行检查、剩余风险和 `git status`。
 
 ## 7. 文档治理规则
@@ -90,7 +92,7 @@
 - 代码入口和命令写入 `docs/DEVELOPMENT.md`，不写入 Agent Contract。
 - 易变化的测试数字、当前 commit、日期化交接和详细 review 放入 Progress；过期后移入 archive history。
 - active spec 只描述尚需长期引用的局部合同；实施完成且结论已回写上游后移入 `docs/archive/retired/specs/`。
-- `docs/superpowers/plans/` 与 `docs/superpowers/specs/` 作为可选设计参考和历史记录维护，不构成施工授权或流程门槛。
+- `docs/archive/superpowers/` 保存已归档的设计合同与实施计划，只供历史追溯，不构成施工授权、流程门槛或当前开发约束。
 - 归档文件尽量保留原正文；若当前结论需要恢复，先核对 PRD、Architecture 与代码，再写回活跃文档。
 - 新增、移动或退役文档时，同步更新 `docs/README.md`、相应索引和活跃文档链接。
 - 若修改本文件，必须将完全相同的内容同步到 `AGENTS.md` 和 `CLAUDE.md`，并用 `cmp -s AGENTS.md CLAUDE.md` 验证。

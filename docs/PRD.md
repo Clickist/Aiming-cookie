@@ -392,8 +392,6 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 | `docs/PROGRESS.md` | 最近完成、当前阻塞、验证与交接快照 |
 | `docs/design-system.md` | 前端视觉 token、组件边界与设计资产治理 |
 | `docs/frontend-uiux-design.md` | 已确认的桌面应用骨架、Coach 消息卡/视频工作区与 Coach-first IA 设计 |
-| `docs/superpowers/specs/README.md` | 局部设计合同参考索引（供追溯和对照，不构成施工流程要求） |
-| `docs/superpowers/plans/README.md` | 历史 implementation plan 索引（历史原文，不构成当前开发流程或授权） |
 | `docs/archive/README.md` | 已退役、冻结和完成资料索引，仅供历史追溯 |
 
 ## 14. 决策日志（关键选择 + 为什么）
