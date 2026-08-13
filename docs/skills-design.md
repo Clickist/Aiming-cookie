@@ -2,7 +2,7 @@
 
 > **状态：active。** 本文档冻结 Coach 把 coaching flow 封装为模块化 skills 的局部设计合同，定义三类 skill、状态管理决策（Route A）、系统提示词更新方向和 `teaching_session.update` 命令设计。
 > **上游：** [`PRD.md`](PRD.md) §5.5（常驻 Coach 是 Agent 操作层）、[`ARCHITECTURE.md`](ARCHITECTURE.md) §4.3（Coach 数据归属）、§5.1（product command authority）。
-> **相关合同：** [`superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md`](superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md)（teaching loop）、[`superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md`](superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md)（problem compilation）。
+> **相关合同：** [`archive/superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md`](archive/superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md)（teaching loop）、[`archive/superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md`](archive/superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md)（problem compilation）。
 
 ## 1. 目标
 
@@ -290,5 +290,5 @@ Skill 直觉（软引导，不是硬性分支）：
 | [`PRD.md`](PRD.md) §5.5 常驻 Coach 是 Agent 操作层 | Skills 是 Coach 自主判断的操作封装，不改变 Agent 操作层定位 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) §4.3 Coach 数据归属 | TeachingSession 仍属于 Coach 层，不替代 Training Plan |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) §5.1 product command authority | `teaching_session.update` 遵循现有授权、确认和审计边界 |
-| [`2026-07-27-coach-guided-teaching-loop-design.md`](superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md) | 带教练习 skill 是该合同的 skill 化封装，不改变 teaching loop 合同 |
-| [`2026-08-06-coach-problem-hypothesis-diagnosis-design.md`](superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md) | 问题定位 skill 是该合同的 skill 化封装，不改变 problem compilation 合同 |
+| [`2026-07-27-coach-guided-teaching-loop-design.md`](archive/superpowers/specs/2026-07-27-coach-guided-teaching-loop-design.md) | 带教练习 skill 是该合同的 skill 化封装，不改变 teaching loop 合同 |
+| [`2026-08-06-coach-problem-hypothesis-diagnosis-design.md`](archive/superpowers/specs/2026-08-06-coach-problem-hypothesis-diagnosis-design.md) | 问题定位 skill 是该合同的 skill 化封装，不改变 problem compilation 合同 |
