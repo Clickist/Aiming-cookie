@@ -1,6 +1,5 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
-aiosqlite>=0.20
 python-multipart>=0.0.9
 pydantic>=2.6
 pytest>=8.0
