@@ -17,6 +17,8 @@ import { CoachPanel } from "@/components/task6/CoachPanel";
 import { CoachVideoPane } from "@/components/task7/CoachVideoPane";
 import { GuidanceHost, type GuidanceEventDetail } from "@/components/task7/GuidanceHost";
 import SessionRail, { type SessionRailSession } from "@/components/task7/SessionRail";
+import { startWindowDragging, TauriWindowControls } from "@/components/task3/TauriWindowControls";
+import { Toast } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachVideoTarget = { analysisRef: string; timeMs: number };
@@ -36,12 +38,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [draftSession, setDraftSession] = useState(false);
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
   const [guidance, setGuidance] = useState<GuidanceEventDetail | null>(null);
+  const [sessionFeedback, setSessionFeedback] = useState<string | null>(null);
   const shellHidden = pathname.startsWith("/onboarding");
   const searchParams = useSearchParams();
   const coachWorkspaceRoute = pathname === "/" || pathname === "/s" || pathname === "/s/";
+  const startupPending = coachWorkspaceRoute && !startupRouteResolved;
   const settingsRoute = pathname.startsWith("/settings");
-  const showSessionRail = !shellHidden && !settingsRoute;
-  const keepSessionRailMounted = !shellHidden;
+  const showSessionRail = !shellHidden && !settingsRoute && !startupPending;
+  const keepSessionRailMounted = !shellHidden && !startupPending;
   const routeSessionId = parseSessionId(searchParams.get("sessionId"));
 
   useEffect(() => {
@@ -148,30 +152,45 @@ export function AppShell({ children }: { children: ReactNode }) {
   const handleArchiveCoachSession = async (session: SessionRailSession) => {
     try {
       await updateCoachSession(Number(session.id), { status: "archived" });
+    } catch {
+      setSessionFeedback("未能归档会话，请重试。");
+      return;
+    }
+    try {
       await reloadCoachSessions(selectedCoachSessionId === Number(session.id) ? null : undefined);
     } catch {
-      // Keep the current selection when an archive request fails.
+      setSessionFeedback("操作已完成，但会话列表暂时未能刷新。");
     }
   };
 
   const handleDeleteCoachSession = async (session: SessionRailSession) => {
     try {
       await deleteCoachSession(Number(session.id));
+    } catch {
+      setSessionFeedback("未能删除会话，请重试。");
+      return;
+    }
+    try {
       await reloadCoachSessions(selectedCoachSessionId === Number(session.id) ? null : undefined);
     } catch {
-      // Keep the current selection when a delete request fails.
+      setSessionFeedback("操作已完成，但会话列表暂时未能刷新。");
     }
   };
 
   if (shellHidden) return <>{children}</>;
-  if (coachWorkspaceRoute && !startupRouteResolved) return null;
 
   return (
     <div className="task3-app">
       <a className="task3-skip-link" href="#main-content">跳到主要内容</a>
-      <header className="task3-toolbar">
+      <header
+        className="task3-toolbar"
+        onMouseDown={(event) => {
+          if (event.button === 0) void startWindowDragging();
+        }}
+      >
         <span className="task3-logo" aria-label="Aiming Cookie">Aiming&nbsp;Cookie</span>
         <div className="task3-toolbar-spacer" />
+        <TauriWindowControls />
       </header>
       <div
         className="task3-workspace"
@@ -203,35 +222,39 @@ export function AppShell({ children }: { children: ReactNode }) {
           id="main-content"
           tabIndex={-1}
         >
-          <div
-            aria-hidden={!coachWorkspaceRoute || undefined}
-            className="task3-coach-view"
-            data-video-open={Boolean(videoTarget) || undefined}
-            style={{ display: coachWorkspaceRoute ? undefined : "none" }}
-          >
-            {coachWorkspaceRoute ? (
-              videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} onClose={() => setVideoTarget(null)} /> : null
-            ) : null}
-            <div className="task3-coach-conversation">
-              <CoachPanel
-                capability={capability}
-                currentAnalysisRef={null}
-                draftSession={draftSession}
-                layoutMode="full"
-                onEnsureSession={ensureCoachSession}
-                onOpenVideo={(analysisRef, timeMs = 0) => setVideoTarget({ analysisRef, timeMs })}
-                onRequestContext={async (analysisRef) => {
-                  await attachCoachContext(
-                    { kind: "analysis", analysis_ref: analysisRef },
-                    selectedCoachSessionId === null ? {} : { sessionId: selectedCoachSessionId },
-                  );
-                }}
-                pathname={pathname}
-                sessionId={selectedCoachSessionId}
-              />
-            </div>
-          </div>
-          {!coachWorkspaceRoute ? <div className="task3-page-view">{children}</div> : null}
+          {startupPending ? null : (
+            <>
+              <div
+                aria-hidden={!coachWorkspaceRoute || undefined}
+                className="task3-coach-view"
+                data-video-open={Boolean(videoTarget) || undefined}
+                style={{ display: coachWorkspaceRoute ? undefined : "none" }}
+              >
+                {coachWorkspaceRoute ? (
+                  videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} onClose={() => setVideoTarget(null)} /> : null
+                ) : null}
+                <div className="task3-coach-conversation">
+                  <CoachPanel
+                    capability={capability}
+                    currentAnalysisRef={null}
+                    draftSession={draftSession}
+                    layoutMode="full"
+                    onEnsureSession={ensureCoachSession}
+                    onOpenVideo={(analysisRef, timeMs = 0) => setVideoTarget({ analysisRef, timeMs })}
+                    onRequestContext={async (analysisRef) => {
+                      await attachCoachContext(
+                        { kind: "analysis", analysis_ref: analysisRef },
+                        selectedCoachSessionId === null ? {} : { sessionId: selectedCoachSessionId },
+                      );
+                    }}
+                    pathname={pathname}
+                    sessionId={selectedCoachSessionId}
+                  />
+                </div>
+              </div>
+              {!coachWorkspaceRoute ? <div className="task3-page-view">{children}</div> : null}
+            </>
+          )}
         </main>
       </div>
       <GuidanceHost
@@ -239,6 +262,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         onIntent={(next) => setGuidance((current) => next && current ? { ...current, intent: next } : null)}
         runRef={guidance?.run_ref ?? null}
       />
+      {sessionFeedback ? <Toast onClose={() => setSessionFeedback(null)}>{sessionFeedback}</Toast> : null}
     </div>
   );
 }

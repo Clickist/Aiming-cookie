@@ -27,7 +27,6 @@ import type {
   CoachSessionOut,
   CoachRuntimeStatusResponse,
   CoachAgentRunV1,
-  CoachAnalysisSoftStartRequestV1,
   CoachConfirmationV1,
   CoachContextListV1,
   CoachContextMutationV1,
@@ -176,14 +175,35 @@ async function apiFetchSidecar(
     // Browser/dev sessions have no sidecar — fall back to the Python backend.
     return apiFetch(path.replace(/^\/v1\//, "/api/coach/"), init, opts);
   }
+  const request = async (connection: Awaited<ReturnType<typeof getDesktopRuntimeConnection>>) => {
+    const headers = new Headers(init.headers);
+    headers.set("X-User-Id", DESKTOP_USER_ID);
+    return fetch(`${connection.sidecarUrl}${path}`, {
+      ...init,
+      headers,
+      signal: opts.signal,
+    });
+  };
   const connection = await getDesktopRuntimeConnection();
-  const headers = new Headers(init.headers);
-  headers.set("X-User-Id", DESKTOP_USER_ID);
-  return fetch(`${connection.sidecarUrl}${path}`, {
-    ...init,
-    headers,
-    signal: opts.signal,
-  });
+  try {
+    return await request(connection);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    resetDesktopRuntimeConnection();
+    if (!isReadRequest(init)) throw new DesktopRuntimeUnavailableError();
+    const replacement = await getDesktopRuntimeConnection();
+    if (replacement.sidecarUrl === connection.sidecarUrl) {
+      resetDesktopRuntimeConnection();
+      throw new DesktopRuntimeUnavailableError();
+    }
+    try {
+      return await request(replacement);
+    } catch (retryError) {
+      resetDesktopRuntimeConnection();
+      if (isAbortError(retryError)) throw retryError;
+      throw new DesktopRuntimeUnavailableError();
+    }
+  }
 }
 
 export interface UploadOptions {
@@ -1107,23 +1127,6 @@ export async function createCoachAgentRun(
         ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
       }),
     },
-    opts,
-  );
-  if (!res.ok) throw await apiError(res);
-  return (await res.json()) as CoachAgentRunV1;
-}
-
-export async function startCoachAnalysisSoftStart(
-  analysisId: number,
-  opts: { signal?: AbortSignal } = {},
-): Promise<CoachAgentRunV1> {
-  const body: CoachAnalysisSoftStartRequestV1 = {
-    schema_version: "coach_analysis_soft_start_request.v1",
-    analysis_session_id: analysisId,
-  };
-  const res = await apiFetch(
-    "/api/coach/analysis-soft-start",
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
     opts,
   );
   if (!res.ok) throw await apiError(res);

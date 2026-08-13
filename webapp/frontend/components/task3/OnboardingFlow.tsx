@@ -31,6 +31,7 @@ import type {
 } from "@/lib/types";
 import { Button, Field, FieldControl, Notice } from "@/ui/primitives";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
+import { startWindowDragging, TauriWindowControls } from "@/components/task3/TauriWindowControls";
 
 type ConnectionState = "idle" | "loading" | "authorizing" | "testing" | "ready" | "failed";
 type OpenMenu = "provider" | "protocol" | "model" | null;
@@ -374,7 +375,16 @@ export function OnboardingFlow() {
 
   return (
     <main className="task3-onboarding" id="main-content">
-      <div className="task3-onboarding-brand">Aiming Cookie</div>
+      <div
+        className="task3-onboarding-brand"
+        onMouseDown={(event) => {
+          if (event.button === 0) void startWindowDragging();
+        }}
+      >
+        <span>Aiming Cookie</span>
+        <div className="task3-toolbar-spacer" />
+        <TauriWindowControls />
+      </div>
       <div className="task3-onboarding-progress" aria-label={`第 ${step} 步，共 3 步`}>
         <span data-active={step === 1 || undefined}>1</span>
         <i />

@@ -30,7 +30,7 @@ test("real Tauri Desktop capability and fixture-backed UI matrix", async () => {
     type TauriInternals = {
       invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
     };
-    type RuntimeConnection = { baseUrl: string; token: string };
+    type RuntimeConnection = { baseUrl: string; token: string; sidecarUrl: string };
     const internals = (window as unknown as { __TAURI_INTERNALS__: TauriInternals }).__TAURI_INTERNALS__;
     const native = await internals.invoke<Record<string, unknown>>("desktop_capture_coordinator_status");
     const runtime = await internals.invoke<RuntimeConnection>("desktop_runtime_connection");
@@ -45,6 +45,8 @@ test("real Tauri Desktop capability and fixture-backed UI matrix", async () => {
     return {
       native,
       runtimeOrigin: new URL(runtime.baseUrl).origin,
+      sidecarOrigin: new URL(runtime.sidecarUrl).origin,
+      sidecarUrl: runtime.sidecarUrl,
       capture: await read("/api/capture-status"),
       storage: await read("/api/storage"),
       tasks: await read("/api/tasks"),
@@ -58,6 +60,9 @@ test("real Tauri Desktop capability and fixture-backed UI matrix", async () => {
   });
 
   expect(actual.runtimeOrigin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  expect(actual.sidecarOrigin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  const sidecarHealth = await fetch(`${actual.sidecarUrl}/healthz`);
+  expect({ status: sidecarHealth.status, body: await sidecarHealth.json() }).toEqual({ status: 200, body: { ok: true } });
   expect(actual.capture.status).toBe(200);
   expect(actual.capture.body).toMatchObject({ schema_version: "capture_status.v1" });
   expect(actual.storage.status).toBe(200);
