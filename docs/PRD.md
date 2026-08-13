@@ -5,7 +5,7 @@
 本节是首发前最后一次产品重定，覆盖本文中与其冲突的旧预览、fallback 和迁移描述：
 
 - Aiming Cookie 是 Provider-backed Agent 产品。首次 onboarding 不允许跳过 Provider；Provider 连接并测试成功、Windows 自动采集授权并启用后，才能进入 Coach、History 和 Settings 主工作区。
-- 首发不迁移或展示安装前已有的 KovaaK Stats/Performance 文件；它们不含 Aiming Cookie 的 Raw Input 与受管 MP4，不进入 Run 或 Analysis。
+- 首发可导入并展示安装前已有的 KovaaK Stats/Performance 文件；它们不含 Aiming Cookie 的 Raw Input 与受管 MP4，作为历史 Run 展示，分析时按 video_fallback（stats-only）路径，不进入 multimodal / input_native。
 - 新训练由 Coach 自动选择最高质量的可用分析路径：`multimodal`（Stats + Performance + Raw Input + managed MP4 + canonical window）→ `input_native`（Stats + Performance + Raw Input + canonical window）→ `video_fallback`（Stats + managed MP4）。用户不手动选择模式。
 - fallback 是正式可用的有限分析，不是伪造的完整结果。每个结果必须显示缺失来源和限制，并提示修复采集以获得更高质量分析；三条路径均不可用时，Coach 说明本局不能分析及下一步。
 - 多局练习中的每个可用 Run 都可独立分析；跨局比较只使用双方共同具备且已验证的指标，不把证据等级差异写成疲劳或瞄准变化。

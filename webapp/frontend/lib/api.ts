@@ -666,7 +666,7 @@ export async function getTask(
 export async function getProviderCatalog(
   opts: { signal?: AbortSignal } = {},
 ): Promise<ProviderCatalogV1> {
-  const res = await apiFetch("/api/providers/catalog", { method: "GET" }, opts);
+  const res = await apiFetchSidecar("/v1/providers/catalog", { method: "GET" }, { signal: opts.signal });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as ProviderCatalogV1;
 }
@@ -674,7 +674,7 @@ export async function getProviderCatalog(
 export async function getProviderAuthCapabilities(
   opts: { signal?: AbortSignal } = {},
 ): Promise<ProviderAuthCapabilitiesV1> {
-  const res = await apiFetch("/api/provider-auth/capabilities", { method: "GET" }, opts);
+  const res = await apiFetchSidecar("/v1/provider-auth/capabilities", { method: "GET" }, { signal: opts.signal });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as ProviderAuthCapabilitiesV1;
 }
@@ -682,7 +682,7 @@ export async function getProviderAuthCapabilities(
 export async function listProviderProfiles(
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderProfileListResponse> {
-  const res = await apiFetch("/api/provider-profiles", { method: "GET" }, opts);
+  const res = await apiFetchSidecar("/v1/provider-profiles", { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as ProviderProfileListResponse;
 }
@@ -690,7 +690,7 @@ export async function listProviderProfiles(
 export async function getDefaultProviderStatus(
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderProfileStatus> {
-  const res = await apiFetch("/api/provider-profiles/status", { method: "GET" }, opts);
+  const res = await apiFetchSidecar("/v1/provider-profiles/status", { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as ProviderProfileStatus;
 }
@@ -699,8 +699,8 @@ export async function listCustomProviderModels(
   input: CustomProviderModelListRequest,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<CustomProviderModelListResponse> {
-  const res = await apiFetch(
-    "/api/provider-profiles/custom/models",
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles/custom/models",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -733,8 +733,8 @@ export async function createProviderProfile(
   profile: ProviderProfileCreate,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderProfile> {
-  const res = await apiFetch(
-    "/api/provider-profiles",
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -751,8 +751,8 @@ export async function updateProviderProfile(
   profile: ProviderProfileCreate,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderProfile> {
-  const res = await apiFetch(
-    `/api/provider-profiles/${profileId}`,
+  const res = await apiFetchSidecar(
+    `/v1/provider-profiles/${profileId}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -768,8 +768,8 @@ export async function testProviderProfile(
   profileId: number,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderProfileStatus> {
-  const res = await apiFetch(
-    `/api/provider-profiles/${profileId}/test`,
+  const res = await apiFetchSidecar(
+    `/v1/provider-profiles/${profileId}/test`,
     { method: "POST" },
     opts,
   );
@@ -782,8 +782,8 @@ export async function authorizeProviderProfile(
   mode: "api_key" | "oauth",
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderAuthOperation> {
-  const res = await apiFetch(
-    `/api/provider-profiles/${profileId}/auth/authorize`,
+  const res = await apiFetchSidecar(
+    `/v1/provider-profiles/${profileId}/auth/authorize`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -795,12 +795,31 @@ export async function authorizeProviderProfile(
   return (await res.json()) as ProviderAuthOperation;
 }
 
+/** Persist the credential from a completed profile-scoped auth operation. */
+export async function takeProviderAuthResult(
+  profileId: number,
+  operationId: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfile> {
+  const res = await apiFetchSidecar(
+    `/v1/provider-profiles/${profileId}/auth/take-result`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation_id: operationId }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfile;
+}
+
 export async function getProviderAuthOperation(
   operationId: string,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderAuthOperation> {
-  const res = await apiFetch(
-    `/api/provider-auth-operations/${encodeURIComponent(operationId)}`,
+  const res = await apiFetchSidecar(
+    `/v1/auth/operations/${encodeURIComponent(operationId)}`,
     { method: "GET" },
     opts,
   );
@@ -814,8 +833,8 @@ export async function submitProviderAuthInput(
   value: string,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderAuthOperation> {
-  const res = await apiFetch(
-    `/api/provider-auth-operations/${encodeURIComponent(operationId)}/input`,
+  const res = await apiFetchSidecar(
+    `/v1/auth/operations/${encodeURIComponent(operationId)}/input`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -831,9 +850,9 @@ export async function cancelProviderAuthOperation(
   operationId: string,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderAuthOperation> {
-  const res = await apiFetch(
-    `/api/provider-auth-operations/${encodeURIComponent(operationId)}/cancel`,
-    { method: "POST" },
+  const res = await apiFetchSidecar(
+    `/v1/auth/operations/${encodeURIComponent(operationId)}`,
+    { method: "DELETE" },
     opts,
   );
   if (!res.ok) throw await apiError(res);
@@ -845,8 +864,8 @@ export async function setProviderApiKey(
   apiKey: string,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderProfile> {
-  const res = await apiFetch(
-    `/api/provider-profiles/${profileId}/auth/api-key`,
+  const res = await apiFetchSidecar(
+    `/v1/provider-profiles/${profileId}/auth/api-key`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -862,8 +881,8 @@ export async function deleteProviderCredential(
   profileId: number,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderProfile> {
-  const res = await apiFetch(
-    `/api/provider-profiles/${profileId}/auth/credential`,
+  const res = await apiFetchSidecar(
+    `/v1/provider-profiles/${profileId}/auth/credential`,
     { method: "DELETE" },
     opts,
   );
@@ -875,8 +894,8 @@ export async function setDefaultProviderProfile(
   profileId: number,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<ProviderProfile> {
-  const res = await apiFetch(
-    `/api/provider-profiles/${profileId}/default`,
+  const res = await apiFetchSidecar(
+    `/v1/provider-profiles/${profileId}/default`,
     { method: "POST" },
     opts,
   );
@@ -888,7 +907,7 @@ export async function deleteProviderProfile(
   profileId: number,
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<{ deleted: boolean; id: number }> {
-  const res = await apiFetch(`/api/provider-profiles/${profileId}`, { method: "DELETE" }, opts);
+  const res = await apiFetchSidecar(`/v1/provider-profiles/${profileId}`, { method: "DELETE" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as { deleted: boolean; id: number };
 }

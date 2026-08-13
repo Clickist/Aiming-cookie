@@ -1,6 +1,8 @@
 import {
   PROVIDER_CATALOG_SCHEMA,
+  isRecord,
   type CoachRuntimeProviderProfile,
+  type CustomProviderModel,
   type ProviderCatalogModel,
   type ProviderCatalogResponse,
   type ProviderCredential,
@@ -94,6 +96,63 @@ export async function listBuiltinProviderCatalog(): Promise<ProviderCatalogRespo
       models: models.getModels(provider.id).map(toCatalogModel),
     })),
   };
+}
+
+const CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
+const CUSTOM_MODEL_MAX_ITEMS = 200;
+
+/**
+ * Read a custom Provider `/models` list without persisting its API key.
+ * Mirrors the removed Python discovery helper; this is a plain HTTP proxy, not
+ * a Pi capability.
+ */
+export async function fetchCustomProviderModels(
+  protocol: "openai-completions" | "anthropic-messages",
+  baseUrl: string,
+  apiKey: string,
+  timeoutMs: number = CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS,
+): Promise<CustomProviderModel[]> {
+  const headers: Record<string, string> =
+    protocol === "anthropic-messages"
+      ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }
+      : { Authorization: `Bearer ${apiKey}` };
+  const normalizedBase =
+    protocol === "anthropic-messages"
+      ? baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/, "")
+      : baseUrl.trim().replace(/\/+$/, "");
+  const modelPath = protocol === "anthropic-messages" ? "/v1/models" : "/models";
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
+  try {
+    const response = await fetch(`${normalizedBase}${modelPath}`, { headers, signal: controller.signal });
+    if (!response.ok) throw new Error("custom provider models request failed");
+    const body = await response.json();
+    if (!isRecord(body) || !Array.isArray(body.data)) {
+      throw new Error("custom provider models response is invalid");
+    }
+    const models: CustomProviderModel[] = [];
+    for (const item of body.data) {
+      if (!isRecord(item)) continue;
+      const modelId = item.id;
+      if (typeof modelId !== "string" || !modelId.trim()) continue;
+      if (models.some((candidate) => candidate.model_id === modelId)) continue;
+      const contextWindow =
+        typeof item.context_window === "number" && Number.isSafeInteger(item.context_window) && item.context_window > 0
+          ? item.context_window
+          : null;
+      const maxTokens =
+        typeof item.max_tokens === "number" && Number.isSafeInteger(item.max_tokens) && item.max_tokens > 0
+          ? item.max_tokens
+          : null;
+      models.push({ model_id: modelId.trim(), context_window: contextWindow, max_tokens: maxTokens });
+      if (models.length === CUSTOM_MODEL_MAX_ITEMS) break;
+    }
+    return models;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function resolveBuiltinProfile(

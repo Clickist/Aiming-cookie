@@ -134,9 +134,9 @@ test.describe("Task 7 browser smoke", () => {
     const testedProfileIds: string[] = [];
     page.on("request", (request) => {
       const path = new URL(request.url()).pathname;
-      if (path === "/api/provider-profiles" && request.method() === "POST") profileWrites.push(`POST ${path}`);
-      if (/^\/api\/provider-profiles\/\d+$/.test(path) && request.method() === "PUT") profileWrites.push(`PUT ${path}`);
-      const testPath = /^\/api\/provider-profiles\/(\d+)\/test$/.exec(path);
+      if (path === "/api/coach/provider-profiles" && request.method() === "POST") profileWrites.push(`POST ${path}`);
+      if (/^\/api\/coach\/provider-profiles\/\d+$/.test(path) && request.method() === "PUT") profileWrites.push(`PUT ${path}`);
+      const testPath = /^\/api\/coach\/provider-profiles\/(\d+)\/test$/.exec(path);
       if (testPath) testedProfileIds.push(testPath[1]);
     });
     await page.goto("/onboarding");
@@ -164,7 +164,7 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByRole("button", { name: "继续" })).toBeVisible();
     await expect(apiKey).toHaveValue("builtin-secret");
     await expect(page.getByRole("button", { name: "GPT-5.4" })).toBeVisible();
-    expect(profileWrites).toEqual(["POST /api/provider-profiles", "PUT /api/provider-profiles/1"]);
+    expect(profileWrites).toEqual(["POST /api/coach/provider-profiles", "PUT /api/coach/provider-profiles/1"]);
     expect(testedProfileIds).toEqual(["1", "1"]);
   });
 

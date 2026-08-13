@@ -756,25 +756,11 @@ async def test_process_one_happy_path():
 
 @pytest.mark.asyncio
 async def test_video_fallback_does_not_read_or_load_selected_provider():
+    """Video fallback analysis never touches Provider setup (owned by Coach)."""
     sid = await queue.enqueue("owner-selected", "/tmp/v.mp4", "/tmp/s.csv")
-    profile = {
-        "profile_id": 7,
-        "provider_id": "custom-selected",
-        "provider_name": "Selected Provider",
-        "kind": "custom_openai_compatible",
-        "base_url": "https://provider.test/v1",
-        "model_id": "selected-model",
-        "credential": {"type": "api_key", "key": "local-only-key"},
-    }
     fake_report = {"diagnosis": {}, "narration": None, "notes": []}
 
     with patch(
-        "webapp.backend.provider_store.get_default_runtime_profile",
-        new=AsyncMock(return_value=profile),
-    ) as get_profile, patch(
-        "webapp.backend.provider_store.runtime_profile_configured",
-        return_value=True,
-    ), patch(
         "webapp.backend.worker.run_analysis",
         return_value=({}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}),
     ), patch(
@@ -783,7 +769,6 @@ async def test_video_fallback_does_not_read_or_load_selected_provider():
     ) as run_report:
         assert await worker.process_one() is True
 
-    get_profile.assert_not_awaited()
     assert len(run_report.call_args.args) == 1
     session = await queue.get_session(sid)
     assert session["result"]["narration"]["status"] == "not_requested"
@@ -1073,8 +1058,6 @@ async def test_process_one_never_loads_narration_backend():
                return_value=({"a": {"med": 1}}, {"fps": 60, "flicks": [],
                                                   "kill_frames": [],
                                                   "corrective_frames": []})), \
-         patch("webapp.backend.provider_store.get_default_runtime_profile",
-               new=AsyncMock(side_effect=RuntimeError("must not read"))) as get_profile, \
          patch("webapp.backend.worker.run_report",
                return_value=fake_report) as mock_report, \
          patch("webapp.backend.worker._delete_video_safely"):
@@ -1086,7 +1069,6 @@ async def test_process_one_never_loads_narration_backend():
     assert s["result"]["narration"]["status"] == "not_requested"
     assert s["result"]["narration"]["text"] is None
     assert len(mock_report.call_args.args) == 1
-    get_profile.assert_not_awaited()
 
 
 def test_build_timeline_combines_peaks_correctives_kills():
@@ -4075,11 +4057,7 @@ async def test_process_one_rejects_managed_video_changed_during_cv(
         managed_video.write_bytes(b"changed-during-cv")
         return {}, {"fps": 60, "flicks": [], "kill_frames": [], "corrective_frames": []}
 
-    provider_lookup = AsyncMock(return_value=None)
     with patch(
-        "webapp.backend.provider_store.get_default_runtime_profile",
-        new=provider_lookup,
-    ), patch(
         "webapp.backend.worker.run_report",
         return_value={"diagnosis": {}, "narration": None, "notes": []},
     ) as report_mock:
@@ -4094,7 +4072,6 @@ async def test_process_one_rejects_managed_video_changed_during_cv(
     assert error["code"] == "source_unavailable"
     assert error["retryable"] is False
     if input_mode == "video_fallback":
-        provider_lookup.assert_not_awaited()
         report_mock.assert_not_called()
 
 

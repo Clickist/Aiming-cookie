@@ -70,7 +70,7 @@ Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享
 - `input_native`：Stats + Performance + Raw Input + canonical window；没有视觉结论；
 - `video_fallback`：Stats + managed MP4；没有 Raw Input provenance 或输入运动学测量。
 
-服务端按 `multimodal > input_native > video_fallback` 选择最高可用路径；三者均不可用时不得创建 Analysis。所有路径都必须冻结 owner-scoped 输入快照，结果必须带 evidence provenance 和 limitations。历史旧结果仍可读，但安装前孤立 Stats/Performance 文件不导入、不展示。
+服务端按 `multimodal > input_native > video_fallback` 选择最高可用路径；三者均不可用时不得创建 Analysis。所有路径都必须冻结 owner-scoped 输入快照，结果必须带 evidence provenance 和 limitations。历史旧结果仍可读，安装前孤立的 Stats/Performance 文件可导入、展示为历史 Run（缺 Raw/MP4，按 video_fallback 分析）。
 
 暂停局是 v1 的明确 fail-closed 分支：当 Stats 表示 `Pause Count > 0` 时，不生成永久 MP4，不把暂停期间的 Raw/Performance 强行标为 canonical aligned，也不把该 Run 宣称为 ready；证据可以保留为 partial/unavailable 供诊断。normal 与 timescale-only（`Pause Count = 0`）继续使用当前永久 MP4 路径。
 
