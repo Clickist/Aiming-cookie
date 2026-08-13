@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { loadPiAi } from "./pi-source.ts";
 import { isRecord, type CoachToolBridge } from "./contracts.ts";
-import type { SqliteDb } from "./db.ts";
 import { NATIVE_READ_COMMANDS, executeNativeRead } from "./product-commands-native.ts";
 import { isNativeEvidenceCommand, executeNativeEvidence } from "./evidence-native.ts";
-import { isNativeWriteCommand, executeNativeWrite, type NativeWriteResult } from "./product-commands-write.ts";
+import { isNativeWriteCommand, executeNativeWrite, isNativeAnalysisDeleteCommand, executeNativeAnalysisDelete, type NativeWriteResult } from "./product-commands-write.ts";
 import { isNativeEloshapesCommand, executeNativeEloshapes } from "./eloshapes-native.ts";
 import { isNativeKovaakScoreCommand, executeNativeKovaakScore } from "./kovaak-scores-native.ts";
+import { isNativePythonAnalysisCommand, executeNativePythonAnalysis } from "./python-analysis.ts";
 
 type TypeBuilder = {
   Literal(value: string): unknown;
@@ -164,9 +164,8 @@ function writeResultToToolResult(commandName: string, result: NativeWriteResult)
 
 export function createProductCommandTool(
   bridge: CoachToolBridge | null,
-  options: ProductCommandToolOptions & { db?: SqliteDb | null; ownerId?: string } = {},
+  options: ProductCommandToolOptions & { ownerId?: string } = {},
 ) {
-  const db = options.db ?? null;
   const ownerId = options.ownerId ?? "";
   if (bridge) validateBridge(bridge);
   const excludedCommands = new Set(options.excludedCommands ?? []);
@@ -196,21 +195,20 @@ export function createProductCommandTool(
         throw new Error("Product command contains unsupported fields");
       }
 
-      // Native read commands: query SQLite directly, skip the HTTP bridge.
-      if (db !== null && NATIVE_READ_COMMANDS.has(params.command_name)) {
-        const nativeResult = executeNativeRead(db, params.command_name, params.parameters, ownerId);
+      // Native read commands: read JSON files directly, skip the HTTP bridge.
+      if (NATIVE_READ_COMMANDS.has(params.command_name)) {
+        const nativeResult = executeNativeRead(params.command_name, params.parameters, ownerId);
         return nativeToToolResult(params.command_name, nativeResult);
       }
 
       // Native evidence commands: read artifact from filesystem, skip the HTTP bridge.
-      if (db !== null && isNativeEvidenceCommand(params.command_name)) {
-        const nativeResult = executeNativeEvidence(db, params.command_name, params.parameters, ownerId);
+      if (isNativeEvidenceCommand(params.command_name)) {
+        const nativeResult = executeNativeEvidence(params.command_name, params.parameters, ownerId);
         return nativeToToolResult(params.command_name, nativeResult);
       }
 
-      // Native write commands: execute DB mutations directly, skip the HTTP bridge.
-      // Analysis creation freezes the same v3 input contract for the Python worker.
-      if (db !== null && isNativeWriteCommand(params.command_name)) {
+      // Native write commands: write JSON files directly, skip the HTTP bridge.
+      if (isNativeWriteCommand(params.command_name)) {
         let idempotencyKey = params.idempotency_key;
         if (!idempotencyKey && bridge) {
           idempotencyKey = stableKey(bridge, params.command_name, params.parameters);
@@ -218,7 +216,33 @@ export function createProductCommandTool(
           // No bridge — generate a stable key scoped to owner + command + params.
           idempotencyKey = `native:${createHash("sha256").update(canonicalJson({ owner: ownerId, commandName: params.command_name, parameters: params.parameters })).digest("hex")}`;
         }
-        const nativeResult = executeNativeWrite(db, params.command_name, params.parameters, ownerId, idempotencyKey);
+        const nativeResult = executeNativeWrite(params.command_name, params.parameters, ownerId, idempotencyKey);
+        return writeResultToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native analysis delete: HTTP DELETE to the Python backend so the session,
+      // managed workspace, and tombstone are removed together, then the local
+      // progressive-disclosure directory is cleaned up.
+      if (isNativeAnalysisDeleteCommand(params.command_name)) {
+        let idempotencyKey = params.idempotency_key;
+        if (!idempotencyKey) {
+          idempotencyKey = `native:${createHash("sha256").update(canonicalJson({ owner: ownerId, commandName: params.command_name, parameters: params.parameters })).digest("hex")}`;
+        }
+        const nativeResult = await executeNativeAnalysisDelete(
+          params.command_name, params.parameters, ownerId, idempotencyKey, signal,
+        );
+        return writeResultToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native Python analysis trigger: HTTP to the Python backend, skip the bridge.
+      if (isNativePythonAnalysisCommand(params.command_name)) {
+        let idempotencyKey = params.idempotency_key;
+        if (!idempotencyKey) {
+          idempotencyKey = `native:${createHash("sha256").update(canonicalJson({ owner: ownerId, commandName: params.command_name, parameters: params.parameters })).digest("hex")}`;
+        }
+        const nativeResult = await executeNativePythonAnalysis(
+          params.command_name, params.parameters, ownerId, idempotencyKey, signal,
+        );
         return writeResultToToolResult(params.command_name, nativeResult);
       }
 
@@ -229,12 +253,12 @@ export function createProductCommandTool(
       }
 
       // Native KovaaK scores: async HTTP call to KovaaK API, skip the HTTP bridge.
-      if (db !== null && isNativeKovaakScoreCommand(params.command_name)) {
+      if (isNativeKovaakScoreCommand(params.command_name)) {
         // temporary_profile_refs are not carried on the Node bridge type yet;
         // kovaak_scores.lookup will return temporary_profile_unavailable until
-        // wired, while refresh_connected works (reads steam_id from DB).
+        // wired, while refresh_connected works (reads steam_id from config).
         const nativeResult = await executeNativeKovaakScore(
-          db, params.command_name, params.parameters, ownerId,
+          params.command_name, params.parameters, ownerId,
         );
         return nativeToToolResult(params.command_name, nativeResult);
       }

@@ -11,8 +11,6 @@ import type { BigIntStats } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { SqliteDb } from "./db.ts";
-
 type AnyDict = Record<string, any>;
 
 type RawJsonInteger = { readonly rawJsonInteger: string };
@@ -620,24 +618,21 @@ function sourceGate(snapshot: AnyDict): {
   return { selectedMode, missing };
 }
 
-export function buildNativeAnalysisInput(db: SqliteDb, runId: number, ownerId: string): NativeAnalysisInput {
-  const run = db.prepare(
-    "SELECT kr.*, "
-    + "CAST(json_extract(kr.stats_summary, '$.source.mtime_ns') AS TEXT) AS stats_mtime_ns_exact, "
-    + "CAST(json_extract(kr.performance_summary, '$.source.mtime_ns') AS TEXT) AS performance_mtime_ns_exact "
-    + "FROM kovaak_runs AS kr WHERE kr.id=? AND kr.user_id=?",
-  ).get(runId, ownerId) as AnyDict | undefined;
+export function buildNativeAnalysisInput(run: AnyDict, runId: number): NativeAnalysisInput {
   if (!run) throw new NativeAnalysisInputError("not_found:KovaaK run does not exist");
 
   const statsSummary = parseObject(run.stats_summary);
   const performanceSummary = parseObject(run.performance_summary);
+  // Extract mtime_ns from parsed summaries (was SQL json_extract in the DB version).
+  const statsMtimeNs = statsSummary?.source?.mtime_ns;
+  const performanceMtimeNs = performanceSummary?.source?.mtime_ns;
   const sources: AnyDict = {};
   const stats = freezeSummarySource(
-    runId, "stats", run.stats_path, statsSummary, run.stats_mtime_ns_exact,
+    runId, "stats", run.stats_path, statsSummary, statsMtimeNs,
   );
   if (stats) sources.stats = stats;
   const performance = freezeSummarySource(
-    runId, "performance", run.performance_path, performanceSummary, run.performance_mtime_ns_exact,
+    runId, "performance", run.performance_path, performanceSummary, performanceMtimeNs,
   );
   if (performance) sources.performance = performance;
   const video = freezeVideo(runId, run.video_path, run.video_state, parseObject(run.video_summary_json));

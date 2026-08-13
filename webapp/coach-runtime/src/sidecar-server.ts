@@ -3,12 +3,9 @@ import http from "node:http";
 import { failureResponse, makeError, type CoachRuntimeTurnSchema, isRecord } from "./contracts.ts";
 import {
   CoachDataError,
-  attachCoachContext,
   createCoachSession,
   deleteCoachSession,
-  detachCoachContext,
-  getCoachPrimary,
-  listCoachContexts,
+  getCoachSessionDetail,
   listCoachSessions,
   ownerIdFromRequest,
   updateCoachSession,
@@ -35,8 +32,8 @@ import {
   retryAgentRun,
   decideConfirmation,
   resumeWaitingRuns,
+  subscribeAgentRun,
 } from "./agent-runs.ts";
-import { getDb } from "./db.ts";
 
 export const DEFAULT_SIDECAR_HOST = "127.0.0.1";
 export const DEFAULT_SIDECAR_PORT = 8765;
@@ -83,6 +80,12 @@ function writeNdjsonFrame(res: http.ServerResponse, frame: unknown): void {
   res.write(`${JSON.stringify(frame)}\n`);
 }
 
+const AGENT_RUN_STREAM_SCHEMA = "coach_agent_run_stream.v1" as const;
+
+function writeSseEvent(res: http.ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 function acceptsNdjson(req: http.IncomingMessage): boolean {
   const accept = req.headers.accept;
   if (typeof accept !== "string") return false;
@@ -127,16 +130,6 @@ function writeCoachDataError(res: http.ServerResponse, error: unknown): void {
   writeJson(res, 500, {
     detail: error instanceof Error ? error.message : "Coach data operation failed",
   });
-}
-
-/** Return the DB or respond 503 if unavailable. Returns null if the response was sent. */
-function requireDb(res: http.ServerResponse): import("better-sqlite3").Database | null {
-  const db = getDb();
-  if (!db) {
-    writeJson(res, 503, { detail: "Database is unavailable" });
-    return null;
-  }
-  return db;
 }
 
 function writeAuthError(res: http.ServerResponse, error: unknown): void {
@@ -399,7 +392,7 @@ export async function handleSidecarRequest(
   }
 
   // ---------------------------------------------------------------------------
-  // Agent run lifecycle routes (Tier 3: async turn execution in Node)
+  // Agent run lifecycle routes
   // ---------------------------------------------------------------------------
 
   if (req.method === "POST" && url.pathname === "/v1/agent-runs") {
@@ -411,20 +404,11 @@ export async function handleSidecarRequest(
         return;
       }
       const content = typeof body.content === "string" ? body.content : "";
-      const contextRefsValue = body.context_refs;
-      const contextRefs = Array.isArray(contextRefsValue)
-        ? contextRefsValue.filter((r): r is string => typeof r === "string")
-        : null;
       const sessionIdValue = body.session_id;
       const sessionId = typeof sessionIdValue === "number" && Number.isInteger(sessionIdValue)
         ? sessionIdValue
         : undefined;
-      const db = requireDb(res);
-      if (!db) return;
-      const result = createAgentRun(db, ownerId, content, {
-        contextRefs,
-        sessionId,
-      });
+      const result = createAgentRun(ownerId, content, { sessionId });
       writeJson(res, 202, result);
     } catch (error) {
       if (error instanceof AgentRunError) {
@@ -443,9 +427,7 @@ export async function handleSidecarRequest(
     try {
       const ownerId = ownerIdFromRequest(req);
       const runRef = decodeURIComponent(agentRunStopMatch[1]);
-      const db = requireDb(res);
-      if (!db) return;
-      const result = await stopAgentRun(db, ownerId, runRef);
+      const result = await stopAgentRun(ownerId, runRef);
       if (result === null) {
         writeJson(res, 404, { detail: "Coach agent run is unavailable" });
       } else {
@@ -462,9 +444,7 @@ export async function handleSidecarRequest(
     try {
       const ownerId = ownerIdFromRequest(req);
       const runRef = decodeURIComponent(agentRunRetryMatch[1]);
-      const db = requireDb(res);
-      if (!db) return;
-      const result = retryAgentRun(db, ownerId, runRef);
+      const result = retryAgentRun(ownerId, runRef);
       if (result === null) {
         writeJson(res, 404, { detail: "Coach agent run is unavailable" });
       } else {
@@ -493,9 +473,7 @@ export async function handleSidecarRequest(
         writeJson(res, 400, { detail: "decision must be confirm or reject" });
         return;
       }
-      const db = requireDb(res);
-      if (!db) return;
-      const result = decideConfirmation(db, ownerId, confirmationRef, decision);
+      const result = decideConfirmation(ownerId, confirmationRef, decision);
       if (result === null) {
         writeJson(res, 404, { detail: "Coach confirmation is unavailable" });
       } else {
@@ -511,22 +489,92 @@ export async function handleSidecarRequest(
     return;
   }
 
-  // ---------------------------------------------------------------------------
-  // Coach data routes (Tier 1+2: direct sidecar reads/writes)
-  // ---------------------------------------------------------------------------
+  const agentRunStreamMatch = url.pathname.match(/^\/v1\/agent-runs\/([^/]+)\/stream$/);
+  if (req.method === "GET" && agentRunStreamMatch) {
+    const ownerId = ownerIdFromRequest(req);
+    const runRef = decodeURIComponent(agentRunStreamMatch[1]);
+    const initial = getAgentRun(ownerId, runRef);
+    if (initial === null) {
+      writeJson(res, 404, { detail: "Coach agent run is unavailable" });
+      return;
+    }
+    // A stream subscriber replaces the GET poll that used to drive
+    // provider-recovery requeue; resume any waiting run before subscribing.
+    resumeWaitingRuns(ownerId);
+    res.writeHead(200, {
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-cache",
+      "Content-Type": "text/event-stream; charset=utf-8",
+      Connection: "keep-alive",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.flushHeaders();
+
+    // Catch a late subscriber up with the current partial text before new
+    // revisions stream in.
+    if (initial.partial_text) {
+      writeSseEvent(res, "partial", {
+        schema_version: AGENT_RUN_STREAM_SCHEMA,
+        type: "partial",
+        text: initial.partial_text,
+      });
+    }
+
+    let closed = false;
+    let unsubscribe: () => void = () => {};
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      unsubscribe();
+      res.end();
+    };
+
+    const subscribed = subscribeAgentRun(ownerId, runRef, {
+      onPartial: (text) => {
+        if (closed) return;
+        writeSseEvent(res, "partial", {
+          schema_version: AGENT_RUN_STREAM_SCHEMA,
+          type: "partial",
+          text,
+        });
+      },
+      onActivity: (event) => {
+        if (closed) return;
+        writeSseEvent(res, "activity", {
+          schema_version: AGENT_RUN_STREAM_SCHEMA,
+          type: "activity",
+          event,
+        });
+      },
+      onDone: (state) => {
+        if (closed) return;
+        writeSseEvent(res, "done", {
+          schema_version: AGENT_RUN_STREAM_SCHEMA,
+          type: "done",
+          status: state.status,
+          run: state,
+        });
+        close();
+      },
+    });
+    if (subscribed === null) {
+      close();
+      return;
+    }
+    unsubscribe = subscribed;
+    res.on("close", close);
+    req.on("close", close);
+    req.on("aborted", close);
+    return;
+  }
 
   const agentRunMatch = url.pathname.match(/^\/v1\/agent-runs\/([^/]+)$/);
   if (req.method === "GET" && agentRunMatch) {
     try {
       const ownerId = ownerIdFromRequest(req);
       const runRef = decodeURIComponent(agentRunMatch[1]);
-      // Polling the persisted run is also the recovery trigger after Provider
-      // settings/authentication become usable again.
-      const db = getDb();
-      if (db) {
-        resumeWaitingRuns(db, ownerId);
-      }
-      const result = db ? getAgentRun(db, ownerId, runRef) : null;
+      resumeWaitingRuns(ownerId);
+      const result = getAgentRun(ownerId, runRef);
       if (result === null) {
         writeJson(res, 404, { detail: "Coach agent run is unavailable" });
       } else {
@@ -538,12 +586,15 @@ export async function handleSidecarRequest(
     return;
   }
 
+  // ---------------------------------------------------------------------------
+  // Coach session routes
+  // ---------------------------------------------------------------------------
+
   if (req.method === "GET" && url.pathname === "/v1/sessions") {
     try {
       const ownerId = ownerIdFromRequest(req);
-      const q = url.searchParams.get("q") ?? undefined;
       const includeArchived = url.searchParams.get("include_archived") === "true";
-      writeJson(res, 200, listCoachSessions(ownerId, { q, includeArchived }));
+      writeJson(res, 200, await listCoachSessions(ownerId, { includeArchived }));
     } catch (error) {
       writeCoachDataError(res, error);
     }
@@ -555,7 +606,7 @@ export async function handleSidecarRequest(
       const ownerId = ownerIdFromRequest(req);
       const body = await parseJsonBody(req);
       const title = isRecord(body) && typeof body.title === "string" ? body.title : undefined;
-      writeJson(res, 201, createCoachSession(ownerId, title));
+      writeJson(res, 201, await createCoachSession(ownerId, title));
     } catch (error) {
       writeCoachDataError(res, error);
     }
@@ -563,7 +614,7 @@ export async function handleSidecarRequest(
   }
 
   const sessionMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)$/);
-  if (sessionMatch && (req.method === "PATCH" || req.method === "DELETE")) {
+  if (sessionMatch && (req.method === "GET" || req.method === "PATCH" || req.method === "DELETE")) {
     try {
       const ownerId = ownerIdFromRequest(req);
       const sessionId = Number(decodeURIComponent(sessionMatch[1]));
@@ -571,8 +622,10 @@ export async function handleSidecarRequest(
         writeJson(res, 400, { detail: "Coach session id is invalid" });
         return;
       }
-      if (req.method === "DELETE") {
-        writeJson(res, 200, deleteCoachSession(ownerId, sessionId));
+      if (req.method === "GET") {
+        writeJson(res, 200, await getCoachSessionDetail(ownerId, sessionId));
+      } else if (req.method === "DELETE") {
+        writeJson(res, 200, await deleteCoachSession(ownerId, sessionId));
       } else {
         const body = await parseJsonBody(req);
         const update: { title?: string; status?: "archived" } = {};
@@ -580,97 +633,7 @@ export async function handleSidecarRequest(
           if (typeof body.title === "string") update.title = body.title;
           if (body.status === "archived") update.status = "archived";
         }
-        writeJson(res, 200, updateCoachSession(ownerId, sessionId, update));
-      }
-    } catch (error) {
-      writeCoachDataError(res, error);
-    }
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/v1/primary") {
-    try {
-      const ownerId = ownerIdFromRequest(req);
-      const sessionIdParam = url.searchParams.get("session_id");
-      const sessionId = sessionIdParam ? Number(sessionIdParam) : undefined;
-      if (sessionId !== undefined && (!Number.isInteger(sessionId) || sessionId <= 0)) {
-        writeJson(res, 400, { detail: "Coach session id is invalid" });
-        return;
-      }
-      writeJson(res, 200, getCoachPrimary(ownerId, sessionId));
-    } catch (error) {
-      writeCoachDataError(res, error);
-    }
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/v1/context/attach") {
-    try {
-      const ownerId = ownerIdFromRequest(req);
-      const sessionIdParam = url.searchParams.get("session_id");
-      const sessionId = sessionIdParam ? Number(sessionIdParam) : undefined;
-      if (sessionId !== undefined && (!Number.isInteger(sessionId) || sessionId <= 0)) {
-        writeJson(res, 400, { detail: "Coach session id is invalid" });
-        return;
-      }
-      const body = await parseJsonBody(req);
-      if (!isRecord(body)) {
-        writeJson(res, 400, { detail: "Request body must be a JSON object" });
-        return;
-      }
-      const result = attachCoachContext(
-        ownerId,
-        {
-          kind: typeof body.kind === "string" ? body.kind : "",
-          analysis_ref: typeof body.analysis_ref === "string" ? body.analysis_ref : "",
-          target_ref: typeof body.target_ref === "string" ? body.target_ref : undefined,
-          start_ms: typeof body.start_ms === "number" ? body.start_ms : undefined,
-          end_ms: typeof body.end_ms === "number" ? body.end_ms : undefined,
-          comparison_analysis_ref: typeof body.comparison_analysis_ref === "string"
-            ? body.comparison_analysis_ref
-            : undefined,
-        },
-        sessionId,
-      );
-      writeJson(res, 200, result);
-    } catch (error) {
-      writeCoachDataError(res, error);
-    }
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/v1/context") {
-    try {
-      const ownerId = ownerIdFromRequest(req);
-      const sessionIdParam = url.searchParams.get("session_id");
-      const sessionId = sessionIdParam ? Number(sessionIdParam) : undefined;
-      if (sessionId !== undefined && (!Number.isInteger(sessionId) || sessionId <= 0)) {
-        writeJson(res, 400, { detail: "Coach session id is invalid" });
-        return;
-      }
-      writeJson(res, 200, listCoachContexts(ownerId, sessionId));
-    } catch (error) {
-      writeCoachDataError(res, error);
-    }
-    return;
-  }
-
-  const detachMatch = url.pathname.match(/^\/v1\/context\/([^/]+)\/detach$/);
-  if (req.method === "POST" && detachMatch) {
-    try {
-      const ownerId = ownerIdFromRequest(req);
-      const contextRef = decodeURIComponent(detachMatch[1]);
-      const sessionIdParam = url.searchParams.get("session_id");
-      const sessionId = sessionIdParam ? Number(sessionIdParam) : undefined;
-      if (sessionId !== undefined && (!Number.isInteger(sessionId) || sessionId <= 0)) {
-        writeJson(res, 400, { detail: "Coach session id is invalid" });
-        return;
-      }
-      const result = detachCoachContext(ownerId, contextRef, sessionId);
-      if (result === null) {
-        writeJson(res, 404, { detail: "Coach context is unavailable" });
-      } else {
-        writeJson(res, 200, result);
+        writeJson(res, 200, await updateCoachSession(ownerId, sessionId, update));
       }
     } catch (error) {
       writeCoachDataError(res, error);
