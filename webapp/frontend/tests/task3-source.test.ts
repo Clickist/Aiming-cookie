@@ -19,6 +19,41 @@ test("app shell exposes an AppBar, skip navigation, a SessionRail, and the Coach
   assert.doesNotMatch(value, /Account/);
 });
 
+test("AppBar hosts the frameless Tauri window controls", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  const controls = await source("components/task3/TauriWindowControls.tsx");
+  const onboarding = await source("components/task3/OnboardingFlow.tsx");
+  const styles = await source("components/task3/task3.css");
+  assert.ok(shell.includes('className="task3-toolbar"'));
+  assert.ok(shell.includes('if (event.button === 0) void startWindowDragging();'));
+  assert.match(shell, /<TauriWindowControls \/>/);
+  assert.match(controls, /@tauri-apps\/api\/window/);
+  assert.match(controls, /getCurrentWindow\(\)/);
+  assert.match(controls, /appWindow\.minimize\(\)/);
+  assert.match(controls, /appWindow\.toggleMaximize\(\)/);
+  assert.match(controls, /appWindow\.close\(\)/);
+  assert.match(controls, /appWindow\.startDragging\(\)/);
+  assert.match(controls, /onMouseDown={stopTitleBarDrag}/);
+  assert.match(controls, /event\.stopPropagation\(\)/);
+  assert.ok(controls.includes('runWindowControl("minimize")'));
+  assert.ok(controls.includes('runWindowControl("toggleMaximize")'));
+  assert.ok(controls.includes('runWindowControl("close")'));
+  assert.match(onboarding, /className="task3-onboarding-brand"/);
+  assert.ok(onboarding.includes('if (event.button === 0) void startWindowDragging();'));
+  assert.match(onboarding, /<TauriWindowControls \/>/);
+  assert.match(styles, /\.task3-window-controls[^{]*\{[\s\S]*align-self:\s*stretch/);
+  assert.match(styles, /\.task3-window-control[^{]*\{[\s\S]*width:\s*46px/);
+  assert.match(styles, /\.task3-window-control--close:hover[^{]*\{[\s\S]*background:\s*var\(--error\)/);
+});
+
+test("frameless startup keeps window controls mounted while product state resolves", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  assert.match(shell, /const startupPending = coachWorkspaceRoute && !startupRouteResolved/);
+  assert.doesNotMatch(shell, /if \(coachWorkspaceRoute && !startupRouteResolved\) return null/);
+  assert.match(shell, /<TauriWindowControls \/>[\s\S]*\{startupPending \? null : \(/);
+  assert.match(shell, /const keepSessionRailMounted = !shellHidden && !startupPending/);
+});
+
 test("AppShell is the only mounted Coach owner on Coach routes", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   const routePage = await source("components/task7/CoachWorkspacePage.tsx");
@@ -58,6 +93,15 @@ test("session selection updates the Coach deep link", async () => {
   assert.match(value, /routeSessionId !== null/);
 });
 
+test("session archive and delete failures surface through the existing Toast", async () => {
+  const value = await source("components/task3/AppShell.tsx");
+  assert.match(value, /import \{ Toast \} from "@\/ui\/primitives"/);
+  assert.match(value, /setSessionFeedback\("未能归档会话，请重试。"\)/);
+  assert.match(value, /setSessionFeedback\("未能删除会话，请重试。"\)/);
+  assert.match(value, /操作已完成，但会话列表暂时未能刷新。/);
+  assert.match(value, /<Toast onClose=\{\(\) => setSessionFeedback\(null\)\}>/);
+});
+
 test("SessionRail is the persistent left navigation without a right Coach sidebar", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   const styles = await source("components/task3/task3.css");
@@ -76,6 +120,8 @@ test("Coach workspace fills the viewport so the composer stays at the bottom", a
   assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\][^{]*\{[\s\S]*height:\s*calc\(100vh - 48px\)/);
   assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\] > \.task3-route-content[^{]*\{[\s\S]*display:\s*flex/);
   assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\] > \.task3-route-content[^{]*\{[\s\S]*flex-direction:\s*column/);
+  assert.match(styles, /\.task3-coach-view[^{]*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(styles, /\.task3-coach-conversation[^{]*\{[\s\S]*justify-content:\s*center/);
 });
 
 test("AppShell keeps the existing Provider read for the SessionRail footer", async () => {
