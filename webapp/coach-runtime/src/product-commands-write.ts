@@ -13,10 +13,16 @@
  * matching the Python dispatch.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, existsSync, linkSync, rmSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import type { SqliteDb } from "./db.ts";
+import {
+  assertFrozenCopy,
+  assertSameFile,
+  buildNativeAnalysisInput,
+  NativeAnalysisInputError,
+} from "./analysis-input-native.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -586,119 +592,156 @@ const analysisRetry: WriteHandler = (db, params, ownerId) => {
 // analysis.create_from_run
 const analysisCreateFromRun: WriteHandler = (db, params, ownerId) => {
   const { id: runId } = parseRef(params.run_ref, "run");
-  // Verify run ownership
-  const run = db.prepare(
-    "SELECT id, scenario, stats_path, performance_path, video_path, video_state, " +
-    "trace_state, mouse_trace_path, stats_summary " +
-    "FROM kovaak_runs WHERE id=? AND user_id=?",
-  ).get(runId, ownerId) as AnyDict | undefined;
-  if (!run) return fail("not_found", "KovaaK run 不存在");
+  const ownedRun = db.prepare(
+    "SELECT id FROM kovaak_runs WHERE id=? AND user_id=?",
+  ).get(runId, ownerId);
+  if (!ownedRun) {
+    const anyOwner = db.prepare("SELECT id FROM kovaak_runs WHERE id=?").get(runId);
+    return anyOwner
+      ? fail("forbidden", "No permission to access this Run")
+      : fail("not_found", "KovaaK run does not exist");
+  }
 
-  // Check for existing completed or active session for this run
   const existing = db.prepare(
-    "SELECT id, status FROM sessions WHERE user_id=? AND kovaak_run_id=? ORDER BY created_at DESC",
+    "SELECT id, status FROM sessions WHERE user_id=? AND kovaak_run_id=? ORDER BY id DESC",
   ).all(ownerId, runId) as Array<{ id: number; status: string }>;
-  const completed = existing.find((s) => s.status === "done");
-  if (completed) {
-    return ok({
-      session_id: completed.id,
-      analysis_ref: `analysis:${completed.id}`,
-      reused: true,
-    }, `analysis:${completed.id}`);
-  }
-  const runActive = existing.find((s) => ["uploading", "queued", "running"].includes(s.status));
-  if (runActive) {
-    return ok({
-      session_id: runActive.id,
-      analysis_ref: `analysis:${runActive.id}`,
-      reused: true,
-    }, `analysis:${runActive.id}`);
-  }
-  // Check no other active session for this owner
-  const activeSession = db.prepare(
-    "SELECT id FROM sessions WHERE user_id=? AND status IN ('uploading', 'queued', 'running') LIMIT 1",
-  ).get(ownerId) as AnyDict | undefined;
-  if (activeSession) {
-    return { status: "failed", result_ref: `analysis:${activeSession.id}`, warning_or_error: { code: "active_analysis", message: "已有其它 Analysis 正在进行" } };
+  const reusable = existing.find((session) => session.status === "done")
+    ?? existing.find((session) => ["uploading", "queued", "running"].includes(session.status));
+  if (reusable) {
+    const analysisRef = `analysis:${reusable.id}`;
+    return ok({ session_id: reusable.id, analysis_ref: analysisRef, reused: true }, analysisRef);
   }
 
-  // Determine input mode from available sources.
-  const hasVideo = run.video_path && existsSync(run.video_path);
-  const hasStats = run.stats_path && existsSync(run.stats_path);
-  const selectedMode = hasVideo && hasStats ? "video_fallback" : hasVideo ? "multimodal" : hasStats ? "video_fallback" : null;
-  if (!selectedMode) {
-    return fail("input_unavailable", "Run has no supported analysis tier");
+  let frozen;
+  try {
+    frozen = buildNativeAnalysisInput(db, runId, ownerId);
+  } catch (error) {
+    if (error instanceof NativeAnalysisInputError) {
+      const [code, ...message] = error.message.split(":");
+      return fail(code || "input_unavailable", message.join(":").trim() || error.message);
+    }
+    throw error;
   }
 
-  // Determine analysis_type from scenario (simplified; Python uses scenario resolution).
-  const scenario = typeof run.scenario === "string" ? run.scenario : "";
-  const analysisType = scenario.toLowerCase().includes("tracking") ? "continuous_tracking"
-    : scenario.toLowerCase().includes("dynamic clicking") || scenario.toLowerCase().includes("patrol") ? "dynamic_clicking"
-    : "flicking";
+  const cmPer360 = typeof params.cm_per_360 === "number" && Number.isFinite(params.cm_per_360)
+    ? params.cm_per_360
+    : null;
+  const fov = typeof params.fov === "number" && Number.isFinite(params.fov) ? params.fov : null;
+  const profileDefault = params.profile_default !== null && typeof params.profile_default === "object"
+    && !Array.isArray(params.profile_default) ? params.profile_default : null;
+  const explicitManualOverride = params.manual_override !== null && typeof params.manual_override === "object"
+    && !Array.isArray(params.manual_override) ? params.manual_override : null;
+  const calibrationRequest = {
+    profile_default: profileDefault,
+    manual_override: explicitManualOverride ?? (
+      cmPer360 !== null || fov !== null ? { cm_per_360: cmPer360, fov } : null
+    ),
+  };
 
-  // Build calibration request from parameters.
-  const cmPer360 = params.cm_per_360 ?? null;
-  const fov = params.fov ?? null;
-  const manualOverride = (cmPer360 !== null || fov !== null) ? { cm_per_360: cmPer360, fov } : null;
-  const calibrationRequest = { profile_default: null, manual_override: manualOverride };
+  const reservation = db.prepare(
+    "INSERT INTO sessions(" +
+    "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, " +
+    "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts, " +
+    "attempt_number, task_state, task_phase, calibration_request_json" +
+    ") SELECT ?, 'uploading', '', '', ?, ?, ?, ?, ?, ?, 0, 3, 1, 'importing', NULL, ? " +
+    "WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE user_id=? " +
+    "AND status IN ('uploading', 'queued', 'running')) RETURNING id",
+  ).get(
+    ownerId,
+    cmPer360,
+    fov,
+    frozen.analysisType,
+    frozen.selectedMode,
+    runId,
+    frozen.snapshotJson,
+    JSON.stringify(calibrationRequest),
+    ownerId,
+  ) as { id: number } | undefined;
+  if (!reservation) {
+    const nowReusable = db.prepare(
+      "SELECT id FROM sessions WHERE user_id=? AND kovaak_run_id=? " +
+      "AND status IN ('uploading', 'queued', 'running') ORDER BY id DESC LIMIT 1",
+    ).get(ownerId, runId) as { id: number } | undefined;
+    if (nowReusable) {
+      const analysisRef = `analysis:${nowReusable.id}`;
+      return ok({ session_id: nowReusable.id, analysis_ref: analysisRef, reused: true }, analysisRef);
+    }
+    const active = db.prepare(
+      "SELECT id FROM sessions WHERE user_id=? AND status IN ('uploading', 'queued', 'running') LIMIT 1",
+    ).get(ownerId) as { id: number } | undefined;
+    return {
+      status: "failed",
+      result_ref: active ? `analysis:${active.id}` : undefined,
+      warning_or_error: { code: "active_analysis", message: "Another Analysis is already active" },
+    };
+  }
 
-  // Create session row with status='queued' (file copy happens synchronously below).
-  const newSessionId = db.transaction(() => {
-    const row = db.prepare(
-      "INSERT INTO sessions(" +
-      "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, " +
-      "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts, " +
-      "attempt_number, task_state, calibration_request_json" +
-      ") VALUES(?, 'queued', ?, ?, ?, ?, ?, ?, ?, NULL, 0, 3, 1, 'queued', ?) RETURNING id",
-    ).get(
-      ownerId,
-      "", "",  // paths set after workspace copy below
-      cmPer360, fov, analysisType,
-      selectedMode, runId,
-      JSON.stringify(calibrationRequest),
-    ) as AnyDict;
-    const sid = row.id;
-    db.prepare("UPDATE sessions SET task_group_ref=? WHERE id=?").run(`task:${sid}`, sid);
-    return sid;
-  })();
-
-  // Copy video and stats files to session workspace.
-  const workspace = sessionDir(newSessionId);
+  const sessionId = reservation.id;
+  db.prepare("UPDATE sessions SET task_group_ref=? WHERE id=?").run(`task:${sessionId}`, sessionId);
+  const workspace = sessionDir(sessionId);
   let managedVideo = "";
   let managedCsv = "";
   try {
-    if (hasVideo) {
-      const videoDest = resolve(workspace, "video.mp4");
+    if (frozen.selectedMode === "multimodal" || frozen.selectedMode === "video_fallback") {
+      if (!frozen.videoPath || !frozen.videoFingerprint) {
+        throw new NativeAnalysisInputError("source_unavailable: video identity missing");
+      }
       mkdirSync(workspace, { recursive: true });
-      copyFileSync(run.video_path, videoDest);
-      managedVideo = videoDest;
+      managedVideo = resolve(workspace, "video.mp4");
+      linkSync(frozen.videoPath, managedVideo);
+      assertSameFile(managedVideo, frozen.videoPath);
+      assertFrozenCopy(managedVideo, frozen.videoFingerprint);
     }
-    if (selectedMode === "video_fallback" && hasStats) {
-      const statsDest = resolve(workspace, "stats.csv");
+    if (frozen.selectedMode === "video_fallback") {
       mkdirSync(workspace, { recursive: true });
-      copyFileSync(run.stats_path, statsDest);
-      managedCsv = statsDest;
+      managedCsv = resolve(workspace, "stats.csv");
+      copyFileSync(frozen.statsPath, managedCsv);
+      assertFrozenCopy(managedCsv, frozen.statsFingerprint);
     }
-    // Update session with managed workspace paths.
-    db.prepare(
-      "UPDATE sessions SET video_path=?, csv_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-    ).run(managedVideo || null, managedCsv || null, newSessionId);
-  } catch {
-    // Clean up on failure: remove workspace and abort the session.
-    try {
-      removeSessionWorkspace(newSessionId);
-    } catch { /* best-effort */ }
-    db.prepare(
-      "UPDATE sessions SET status='failed', task_state='failed', updated_at=CURRENT_TIMESTAMP WHERE id=?",
-    ).run(newSessionId);
-    return fail("input_setup_failed", "无法建立分析输入快照");
+    const transitioned = db.prepare(
+      "UPDATE sessions SET status='queued', task_state='queued', " +
+      "task_phase='preparing_training_record', video_path=?, csv_path=?, " +
+      "updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND status='uploading'",
+    ).run(managedVideo, managedCsv, sessionId, ownerId);
+    if (transitioned.changes !== 1) {
+      throw new NativeAnalysisInputError("upload_state_lost: Analysis input state is no longer valid");
+    }
+  } catch (error) {
+    const cleanupWorkspace = db.transaction(() => {
+      const current = db.prepare(
+        "SELECT status FROM sessions WHERE id=? AND user_id=?",
+      ).get(sessionId, ownerId) as { status: string } | undefined;
+      if (!current) return true;
+      if (current.status === "uploading") {
+        db.prepare("DELETE FROM sessions WHERE id=? AND user_id=? AND status='uploading'")
+          .run(sessionId, ownerId);
+        return true;
+      }
+      if (current.status === "queued") {
+        db.prepare(
+          "UPDATE sessions SET status='failed', task_state='failed', updated_at=CURRENT_TIMESTAMP " +
+          "WHERE id=? AND user_id=? AND status='queued'",
+        ).run(sessionId, ownerId);
+        return true;
+      }
+      return false;
+    })();
+    if (cleanupWorkspace) {
+      try { removeSessionWorkspace(sessionId); } catch { /* best-effort */ }
+    }
+    if (error instanceof NativeAnalysisInputError) {
+      const [code, ...message] = error.message.split(":");
+      return fail(code || "input_setup_failed", message.join(":").trim() || error.message);
+    }
+    return fail("input_setup_failed", "Could not prepare the Analysis input snapshot");
   }
 
-  const analysisRef = `analysis:${newSessionId}`;
+  const analysisRef = `analysis:${sessionId}`;
   return ok({
-    session_id: newSessionId,
+    session_id: sessionId,
     analysis_ref: analysisRef,
-    input_mode: selectedMode,
+    input_mode: frozen.selectedMode,
+    limitations: frozen.limitations,
   }, analysisRef, {
     schema_version: "coach_ui_event.v1",
     kind: "analysis",
