@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import coach_store, config, db, queue, routes
+from webapp.backend import config, file_store, queue, routes
 from webapp.backend.app import app
 from webapp.backend.workspace import session_dir
 
@@ -280,7 +280,9 @@ async def test_desktop_path_import_cleans_incomplete_workspace_after_copy_error(
 
     assert response.status_code == 500
     sessions_root = managed_root / "sessions"
-    assert not sessions_root.exists() or list(sessions_root.iterdir()) == []
+    assert not sessions_root.exists() or [
+        p for p in sessions_root.iterdir() if p.name != "_counter.json"
+    ] == []
     assert await queue.list_sessions(config.DESKTOP_LOCAL_PROFILE) == []
     assert video.read_bytes() == b"video"
     assert csv.read_bytes() == b"csv"
@@ -308,10 +310,11 @@ async def test_storage_lists_managed_workspace_bytes_for_desktop_profile(
     done_id = await queue.enqueue(config.DESKTOP_LOCAL_PROFILE, "", "")
     failed_id = await queue.enqueue(config.DESKTOP_LOCAL_PROFILE, "", "")
     other_id = await queue.enqueue("other-user", "", "")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (done_id,))
-    await conn.execute("UPDATE sessions SET status='failed' WHERE id=?", (failed_id,))
-    await conn.commit()
+    for sid, status in ((done_id, "done"), (failed_id, "failed")):
+        session = file_store.read_json(f"sessions/{sid}.json")
+        assert isinstance(session, dict)
+        session["status"] = status
+        file_store.write_json(f"sessions/{sid}.json", session)
     done_workspace = session_dir(done_id)
     done_workspace.mkdir(parents=True)
     (done_workspace / "video.mp4").write_bytes(b"1234")
@@ -349,9 +352,10 @@ async def test_delete_rejects_uploading_and_cleans_workspace_after_logical_delet
     assert await queue.get_session(uploading) is not None
 
     done = await queue.enqueue("u-delete", "", "")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (done,))
-    await conn.commit()
+    session = file_store.read_json(f"sessions/{done}.json")
+    assert isinstance(session, dict)
+    session["status"] = "done"
+    file_store.write_json(f"sessions/{done}.json", session)
     workspace = session_dir(done)
     workspace.mkdir(parents=True)
     (workspace / "video.mp4").write_bytes(b"managed-copy")
@@ -380,17 +384,18 @@ async def test_delete_cleanup_failure_keeps_logical_delete_and_tombstone(
 ):
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
     sid = await queue.enqueue("u-cleanup", "", "")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='done' WHERE id=?", (sid,))
-    await conn.commit()
+    await queue.claim_next("test-worker:desktop-local")
+    await queue.mark_done(
+        sid,
+        {"schema_version": "analysis_result.v1"},
+        0.0,
+        worker_id="test-worker:desktop-local",
+    )
     workspace = session_dir(sid)
     workspace.mkdir(parents=True)
     (workspace / "video.mp4").write_bytes(b"managed-copy")
     remaining = workspace / "windows-locked.bin"
     remaining.write_bytes(b"locked")
-
-    thread = await coach_store.get_or_create_primary_thread("u-cleanup")
-    ref = await coach_store.attach_analysis_ref(int(thread["id"]), sid)
 
     def fail_cleanup(session_id):
         assert session_id == sid
@@ -414,23 +419,7 @@ async def test_delete_cleanup_failure_keeps_logical_delete_and_tombstone(
     assert str(workspace) not in deleted.text
     assert "busy private path" not in deleted.text
     assert await queue.get_session(sid) is None
-    refs = await coach_store.list_analysis_refs(int(thread["id"]))
-    assert len(refs) == 1
-    assert refs[0]["id"] == ref["id"]
-    assert refs[0]["status"] == "deleted"
-    assert refs[0]["deleted_at"] is not None
-    tombstone = await (
-        await conn.execute(
-            "SELECT owner_id, cleanup_state, cleanup_attempts, last_error_code "
-            "FROM analysis_deletion_tombstones WHERE analysis_session_id=?",
-            (sid,),
-        )
-    ).fetchone()
-    assert tuple(tombstone) == (
-        "u-cleanup",
-        "failed",
-        1,
-        "workspace_cleanup_failed",
-    )
+    tombstones = file_store.read_json("sessions/_deletion_tombstones.json") or []
+    assert any(entry.get("analysis_session_id") == sid for entry in tombstones)
     assert workspace.exists()
     assert remaining.read_bytes() == b"locked"

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -152,4 +154,144 @@ def scenario_by_name(
     for pair in source["pairs"]:
         if pair[difficulty]["scenario_name"] == scenario_name:
             return pair, pair[difficulty]
+    return None
+
+
+# ── Benchmark summary projection ────────────────────────────────────────
+#
+# Migrated from the deleted coach_context_refs module (2026-08-13 rewrite);
+# projects one complete KovaaK snapshot for /api/kovaak-scores.
+
+BENCHMARK_SUMMARY_SCHEMA_VERSION = "coach_benchmark_summary.v1"
+_BENCHMARK_PROVIDER = "kovaaks-webapp"
+_BENCHMARK_REVIEW_CANDIDATE_LIMIT = 8
+
+
+def _finite_nonnegative(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def _rank(value: object) -> int | None:
+    number = _finite_nonnegative(value)
+    if number is None or not number.is_integer() or number > 9:
+        return None
+    return int(number)
+
+
+def _observed_at(value: object) -> str | None:
+    if not isinstance(value, str) or len(value) > 40:
+        return None
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return value
+
+
+def project_benchmark_summary(records: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Project one complete KovaaK snapshot without exposing identity or provider payloads."""
+    try:
+        catalog = load_catalog()
+    except ValueError:
+        return None
+    scenario_lookup = {
+        item["scenario_id"]: (difficulty, item["scenario_name"])
+        for difficulty in ("easier", "medium")
+        for pair in catalog["pairs"]
+        for item in [pair[difficulty]]
+    }
+    expected_metric_keys = {"score", "scenario_rank", "overall_rank"}
+    snapshots: dict[str, list[Mapping[str, Any]]] = {}
+    for record in records:
+        if (
+            record.get("provider") != _BENCHMARK_PROVIDER
+            or record.get("catalog_version") != catalog["catalog_version"]
+            or record.get("metric_key") not in expected_metric_keys
+        ):
+            continue
+        observed_at = _observed_at(record.get("observed_at"))
+        if observed_at is None:
+            continue
+        snapshots.setdefault(observed_at, []).append(record)
+
+    for observed_at in sorted(snapshots, reverse=True):
+        metrics: dict[tuple[str, str], float] = {}
+        valid = True
+        for record in snapshots[observed_at]:
+            scenario_id = record.get("scenario_id")
+            metric_key = record.get("metric_key")
+            if not isinstance(scenario_id, str) or not isinstance(metric_key, str):
+                valid = False
+                break
+            if metric_key == "overall_rank":
+                if scenario_id not in {
+                    "benchmark:viscose-s2:easier", "benchmark:viscose-s2:medium",
+                }:
+                    valid = False
+                    break
+            elif scenario_id not in scenario_lookup:
+                valid = False
+                break
+            value = _finite_nonnegative(record.get("value"))
+            key = (scenario_id, metric_key)
+            if value is None or key in metrics:
+                valid = False
+                break
+            metrics[key] = value
+        if not valid:
+            continue
+
+        scenarios: list[dict[str, Any]] = []
+        for difficulty in ("easier", "medium"):
+            for pair in catalog["pairs"]:
+                scenario = pair[difficulty]
+                scenario_id = scenario["scenario_id"]
+                score = metrics.get((scenario_id, "score"))
+                rank = _rank(metrics.get((scenario_id, "scenario_rank")))
+                if score is None or rank is None:
+                    valid = False
+                    break
+                scenarios.append({
+                    "difficulty": difficulty,
+                    "scenario_name": scenario["scenario_name"],
+                    "category": pair["category"],
+                    "subcategory": pair["subcategory"],
+                    "score": score,
+                    "scenario_rank": rank,
+                })
+            if not valid:
+                break
+        ranks = {
+            difficulty: _rank(metrics.get((f"benchmark:viscose-s2:{difficulty}", "overall_rank")))
+            for difficulty in ("easier", "medium")
+        }
+        if not valid or any(rank is None for rank in ranks.values()) or len(metrics) != 158:
+            continue
+        candidates = sorted(
+            scenarios,
+            key=lambda item: (item["scenario_rank"], item["score"], item["difficulty"], item["scenario_name"]),
+        )[:_BENCHMARK_REVIEW_CANDIDATE_LIMIT]
+        return {
+            "schema_version": BENCHMARK_SUMMARY_SCHEMA_VERSION,
+            "catalog_ref": catalog["catalog_ref"],
+            "catalog_version": catalog["catalog_version"],
+            "observed_at": observed_at,
+            "completion": {
+                difficulty: {
+                    "completed": sum(
+                        1
+                        for item in scenarios
+                        if item["difficulty"] == difficulty and item["score"] > 0
+                    ),
+                    "required": 39,
+                }
+                for difficulty in ("easier", "medium")
+            },
+            "provisional_ranks": ranks,
+            "scenarios": scenarios,
+            "review_candidates": [dict(item) for item in candidates],
+        }
     return None

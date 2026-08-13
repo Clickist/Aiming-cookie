@@ -143,9 +143,6 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
         async def drain(self) -> None:
             events.append("capture-release-drain")
 
-    async def close_conn() -> None:
-        events.append("db-close")
-
     def fake_print(*args, **kwargs) -> None:
         events.append("ready")
 
@@ -176,7 +173,6 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
         "CaptureExitReleaseTracker",
         FakeCaptureExitReleaseTracker,
     )
-    monkeypatch.setattr(desktop_runtime.db, "close_conn", close_conn)
     monkeypatch.setattr("builtins.print", fake_print)
 
     task = asyncio.create_task(desktop_runtime.run_runtime(stop_event=stop))
@@ -204,7 +200,6 @@ async def test_runtime_starts_api_and_worker_before_ready_then_shuts_both_down(
         "api-stop",
         "worker-stop",
         "finalizer-shutdown",
-        "db-close",
     ]
     assert events.index("capture-monitor-stop") < events.index("capture-release-drain")
     assert events.index("capture-release-drain") < events.index("ingestion-stop")

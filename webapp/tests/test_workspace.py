@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from webapp.backend import config, db, queue
+from webapp.backend import config, file_store, queue
 from webapp.backend.config import MAX_CSV_BYTES, UPLOAD_CHUNK_SIZE
 from webapp.backend.workspace import (
     InvalidSessionId,
@@ -70,9 +70,8 @@ async def test_delete_session_removes_workspace_directory(monkeypatch):
     root = Path(tempfile.mkdtemp(prefix="ac_ws_del_"))
     monkeypatch.setattr(config, "DATA_ROOT", root)
     sid = await queue.enqueue("u1", "/a", "/a.csv")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='failed' WHERE id=?", (sid,))
-    await conn.commit()
+    await queue.claim_next("test-worker:workspace")
+    await queue.mark_failed(sid, "fixture failure", worker_id="test-worker:workspace")
 
     ws = session_dir(sid)
     ws.mkdir(parents=True, exist_ok=True)
@@ -82,14 +81,8 @@ async def test_delete_session_removes_workspace_directory(monkeypatch):
 
     assert not ws.exists()
     assert await queue.get_session(sid) is None
-    tombstone = await (
-        await conn.execute(
-            "SELECT analysis_session_id FROM analysis_deletion_tombstones "
-            "WHERE analysis_session_id=?",
-            (sid,),
-        )
-    ).fetchone()
-    assert tombstone is None
+    tombstones = file_store.read_json("sessions/_deletion_tombstones.json") or []
+    assert any(entry.get("analysis_session_id") == sid for entry in tombstones)
 
 
 class _ChunkedFakeUpload:

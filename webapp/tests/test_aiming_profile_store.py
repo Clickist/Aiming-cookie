@@ -5,7 +5,7 @@ import copy
 import pytest
 
 from webapp.backend import aiming_profile_store as store
-from webapp.backend import db
+from webapp.backend import file_store
 
 
 def _contribution(*, value: float, confidence: str = "high") -> dict:
@@ -295,14 +295,11 @@ async def test_contribution_revisions_tombstone_deleted_analysis_and_rebuild_pro
     profile = await store.get_profile_snapshot("owner-a")
     assert profile["dimensions"][0]["current_metric_value"] == 0.7
     assert (await store.list_contributions("owner-a"))[1]["status"] == "invalidated"
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE aiming_profile_state SET rebuild_state='pending' WHERE owner_id='owner-a'",
-    )
-    await conn.execute(
-        "DELETE FROM aiming_profile_dimensions WHERE owner_id='owner-a'",
-    )
-    await conn.commit()
+    doc = file_store.read_json("profile.json")
+    assert isinstance(doc, dict)
+    doc["state"]["owner-a"] = {"rebuild_state": "pending", "updated_at": doc["state"].get("owner-a", {}).get("updated_at")}
+    doc["dimensions"] = []
+    file_store.write_json("profile.json", doc)
     assert (await store.reconcile_profiles()) == {"owners_rebuilt": 1}
     assert (await store.get_profile_snapshot("owner-a"))["dimensions"][0]["current_metric_value"] == 0.7
 

@@ -1,4 +1,4 @@
-"""Owner-scoped, deterministic aiming profile persistence.
+"""Owner-scoped, deterministic aiming profile persistence (JSON file backed).
 
 The store accepts only validated deterministic contributions.  It deliberately
 does not expose a generic write method for Coach/LLM output.
@@ -9,14 +9,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import re
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from typing import Any
 
-from .db import get_conn
+from . import file_store
+
+log = logging.getLogger(__name__)
 
 
 class ProfileError(Exception):
@@ -80,6 +84,12 @@ _NATIVE_STATIC_PROFILE_METRIC_KEYS = {
     "corrective_count": "static_clicking.corrective_count",
     "peak_speed": "static_clicking.peak_speed",
 }
+
+_PROFILE_PATH = "profile.json"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _text(value: Any, field: str, *, max_length: int = 256) -> str:
@@ -339,7 +349,10 @@ def build_contribution_from_analysis_result(result: Mapping[str, Any]) -> dict[s
 
 
 def _dimension_included(item: Mapping[str, Any]) -> bool:
-    return item["comparability"] == "comparable" and item["confidence"] in {"high", "medium"}
+    return (
+        item.get("comparability") == "comparable"
+        and item.get("confidence") in {"high", "medium"}
+    )
 
 
 def _dedupe(values: Sequence[str]) -> list[str]:
@@ -348,36 +361,54 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 
 def _projection(group: list[dict[str, Any]], key: tuple[str, str, str]) -> dict[str, Any]:
     values = [item for item in group if _dimension_included(item["dimension"])]
-    if not values:
-        raise AssertionError("empty profile group")
-    first = values[0]
-    latest = values[-1]
-    direction = first["dimension"]["expected_direction"]
-    directions = {item["dimension"]["expected_direction"] for item in values}
-    trend = "unknown"
+    metric_values = [item["dimension"]["metric_value"] for item in values]
+    sorted_values = sorted(metric_values)
+    if not sorted_values:
+        return {
+            "dimension_key": key[0],
+            "scope": key[1],
+            "scope_ref": key[2],
+            "observation_count": 0,
+            "metric_values": [],
+            "metric_summary": {},
+            "current_metric_value": None,
+            "trend_direction": "unknown",
+            "analysis_refs": [],
+            "supporting_metric_refs": [],
+            "counterexample_refs": [],
+            "candidate_hypothesis_refs": [],
+            "limitations": ["no_comparable_observations"],
+        }
+    n = len(sorted_values)
+    mid = n // 2
+    if n % 2 == 0:
+        median = (sorted_values[mid - 1] + sorted_values[mid]) / 2
+    else:
+        median = sorted_values[mid]
+    import statistics
+    has_change_policy = any(
+        item["dimension"].get("metric_change_policy") for item in values
+    )
     limitations: list[str] = []
-    if len(values) > 1 and len(directions) == 1 and direction in {"lower_better", "higher_better"}:
-        before = float(first["dimension"]["metric_value"])
-        after = float(latest["dimension"]["metric_value"])
-        if after == before:
-            trend = "stable"
-        else:
-            limitations.append("metric_change_policy_missing")
-    if len(values) < 2:
-        limitations.append("insufficient_comparable_history")
-    if len(directions) > 1:
-        limitations.append("expected_direction_conflict")
-    confidence = "high" if all(item["dimension"]["confidence"] == "high" for item in values) else "medium"
+    if not has_change_policy:
+        limitations.append("metric_change_policy_missing")
+    elif n < 3:
+        limitations.append("insufficient_observations")
     return {
         "dimension_key": key[0],
         "scope": key[1],
         "scope_ref": key[2],
-        "current_metric_value": latest["dimension"]["metric_value"],
-        "unit": latest["dimension"]["unit"],
-        "expected_direction": direction if len(directions) == 1 else "comparison_only",
-        "trend_direction": trend,
-        "confidence": confidence,
-        "observation_count": len(values),
+        "observation_count": n,
+        "metric_values": metric_values,
+        "metric_summary": {
+            "min": min(metric_values),
+            "max": max(metric_values),
+            "mean": statistics.mean(metric_values),
+            "median": median,
+            "stdev": statistics.stdev(metric_values) if n > 1 else 0.0,
+        },
+        "current_metric_value": metric_values[-1] if metric_values else None,
+        "trend_direction": "unknown",
         "analysis_refs": _dedupe([item["analysis_ref"] for item in values]),
         "supporting_metric_refs": _dedupe([ref for item in values for ref in item["dimension"]["supporting_metric_refs"]]),
         "counterexample_refs": _dedupe([ref for item in values for ref in item["dimension"]["counterexample_refs"]]),
@@ -386,45 +417,57 @@ def _projection(group: list[dict[str, Any]], key: tuple[str, str, str]) -> dict[
     }
 
 
-async def _rebuild_owner(conn: Any, owner_id: str) -> None:
-    await conn.execute(
-        "INSERT INTO aiming_profile_state(owner_id, rebuild_state) VALUES(?, 'pending') "
-        "ON CONFLICT(owner_id) DO UPDATE SET rebuild_state='pending', updated_at=CURRENT_TIMESTAMP",
-        (owner_id,),
-    )
-    cur = await conn.execute(
-        "SELECT c.analysis_ref, r.payload_json FROM profile_contributions c "
-        "JOIN profile_contribution_revisions r ON r.owner_id=c.owner_id "
-        "AND r.analysis_ref=c.analysis_ref AND r.revision=c.current_revision "
-        "WHERE c.owner_id=? AND c.status='active' ORDER BY c.created_at, c.analysis_ref",
-        (owner_id,),
-    )
+# ---- File-backed persistence ----
+
+def _load_profile_doc() -> dict[str, Any]:
+    data = file_store.read_json(_PROFILE_PATH)
+    if data is None:
+        return {"contributions": {}, "tombstones": [], "dimensions": [], "state": {}}
+    data.setdefault("contributions", {})
+    data.setdefault("tombstones", [])
+    data.setdefault("dimensions", [])
+    data.setdefault("state", {})
+    return data
+
+
+def _save_profile_doc(doc: dict[str, Any]) -> None:
+    file_store.write_json(_PROFILE_PATH, doc)
+
+
+def _rebuild_owner(doc: dict[str, Any], owner_id: str) -> None:
+    doc["state"][owner_id] = {"rebuild_state": "pending", "updated_at": _utc_now()}
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
-    for row in await cur.fetchall():
+    for analysis_ref, contrib in doc["contributions"].items():
+        if contrib.get("status") != "active":
+            continue
+        if contrib.get("owner_id") != owner_id:
+            continue
+        revisions = contrib.get("revisions", [])
+        if not revisions:
+            continue
+        latest = max(revisions, key=lambda r: r.get("revision", 0))
         try:
-            payload = json.loads(row["payload_json"])
+            payload = latest.get("payload")
+            if isinstance(payload, str):
+                payload = json.loads(payload)
         except (TypeError, json.JSONDecodeError) as exc:
             raise InvalidProfileContribution("stored profile contribution is malformed") from exc
-        for dimension in payload["dimensions"]:
+        if not isinstance(payload, dict):
+            continue
+        for dimension in payload.get("dimensions", []):
             if _dimension_included(dimension):
                 key = (dimension["dimension_key"], dimension["scope"], dimension["scope_ref"])
-                groups[key].append({"analysis_ref": row["analysis_ref"], "dimension": dimension})
-    await conn.execute("DELETE FROM aiming_profile_dimensions WHERE owner_id=?", (owner_id,))
+                groups[key].append({"analysis_ref": analysis_ref, "dimension": dimension})
+    doc["dimensions"] = []
     for key in sorted(groups):
         projection = _projection(groups[key], key)
-        await conn.execute(
-            "INSERT INTO aiming_profile_dimensions(owner_id, dimension_key, scope, scope_ref, projection_json) "
-            "VALUES(?, ?, ?, ?, ?)",
-            (owner_id, key[0], key[1], key[2], _json(projection)),
-        )
-    await conn.execute(
-        "UPDATE aiming_profile_state SET rebuild_state='clean', updated_at=CURRENT_TIMESTAMP WHERE owner_id=?",
-        (owner_id,),
-    )
-
-
-def _contribution_ref(row: Mapping[str, Any]) -> str:
-    return str(row["contribution_ref"])
+        doc["dimensions"].append({
+            "dimension_key": key[0],
+            "scope": key[1],
+            "scope_ref": key[2],
+            "projection": projection,
+        })
+    doc["state"][owner_id] = {"rebuild_state": "clean", "updated_at": _utc_now()}
 
 
 async def record_deterministic_contribution(
@@ -435,59 +478,42 @@ async def record_deterministic_contribution(
     normalized = _validate_contribution(owner_id, analysis_ref, payload)
     encoded = _json(normalized)
     digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-    conn = await get_conn()
     async with _WRITE_LOCK:
-        await conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = await (
-                await conn.execute(
-                    "SELECT contribution_ref, current_revision, status FROM profile_contributions "
-                    "WHERE owner_id=? AND analysis_ref=?", (owner_id, analysis_ref),
-                )
-            ).fetchone()
-            if row is None:
-                contribution_ref = f"profile-contribution:{uuid.uuid4().hex}"
-                revision = 1
-                await conn.execute(
-                    "INSERT INTO profile_contributions(owner_id, analysis_ref, contribution_ref, current_revision, status) "
-                    "VALUES(?, ?, ?, 1, 'active')",
-                    (owner_id, analysis_ref, contribution_ref),
-                )
-            else:
-                contribution_ref = _contribution_ref(row)
-                revision = int(row["current_revision"])
-                old = await (
-                    await conn.execute(
-                        "SELECT payload_digest FROM profile_contribution_revisions WHERE owner_id=? AND analysis_ref=? AND revision=?",
-                        (owner_id, analysis_ref, revision),
-                    )
-                ).fetchone()
-                if old is not None and old["payload_digest"] == digest and row["status"] == "active":
-                    await conn.execute("COMMIT")
-                    return {
-                        "contribution_ref": contribution_ref,
-                        "analysis_ref": analysis_ref,
-                        "revision": revision,
-                        "status": "active",
-                        "idempotent": True,
-                        "included_in_current_profile": any(_dimension_included(item) for item in normalized["dimensions"]),
-                    }
-                revision += 1
-                await conn.execute(
-                    "UPDATE profile_contributions SET current_revision=?, status='active', updated_at=CURRENT_TIMESTAMP "
-                    "WHERE owner_id=? AND analysis_ref=?",
-                    (revision, owner_id, analysis_ref),
-                )
-            await conn.execute(
-                "INSERT INTO profile_contribution_revisions(owner_id, analysis_ref, revision, payload_json, payload_digest) "
-                "VALUES(?, ?, ?, ?, ?)",
-                (owner_id, analysis_ref, revision, encoded, digest),
-            )
-            await _rebuild_owner(conn, owner_id)
-            await conn.commit()
-        except Exception:
-            await conn.execute("ROLLBACK")
-            raise
+        doc = _load_profile_doc()
+        contrib = doc["contributions"].get(analysis_ref)
+        if contrib is None:
+            contribution_ref = f"profile-contribution:{uuid.uuid4().hex}"
+            revision = 1
+            contrib = {
+                "contribution_ref": contribution_ref,
+                "owner_id": owner_id,
+                "current_revision": 1,
+                "status": "active",
+                "revisions": [],
+                "created_at": _utc_now(),
+                "updated_at": _utc_now(),
+            }
+            doc["contributions"][analysis_ref] = contrib
+        else:
+            contribution_ref = contrib["contribution_ref"]
+            revision = int(contrib["current_revision"])
+            old_revisions = [r for r in contrib.get("revisions", []) if r.get("revision") == revision]
+            if old_revisions and old_revisions[0].get("payload_digest") == digest and contrib["status"] == "active":
+                return {
+                    "contribution_ref": contribution_ref,
+                    "analysis_ref": analysis_ref,
+                    "revision": revision,
+                    "status": "active",
+                    "idempotent": True,
+                    "included_in_current_profile": any(_dimension_included(item) for item in normalized["dimensions"]),
+                }
+            revision += 1
+            contrib["current_revision"] = revision
+            contrib["status"] = "active"
+        contrib["revisions"].append({"revision": revision, "payload": normalized, "payload_digest": digest})
+        contrib["updated_at"] = _utc_now()
+        _rebuild_owner(doc, owner_id)
+        _save_profile_doc(doc)
     return {
         "contribution_ref": contribution_ref,
         "analysis_ref": analysis_ref,
@@ -500,29 +526,26 @@ async def record_deterministic_contribution(
 
 async def list_contributions(owner_id: str) -> list[dict[str, Any]]:
     owner_id = _owner(owner_id)
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT contribution_ref, analysis_ref, current_revision, status, created_at, updated_at "
-        "FROM profile_contributions WHERE owner_id=? ORDER BY created_at, analysis_ref", (owner_id,),
-    )
-    rows = await cur.fetchall()
+    doc = _load_profile_doc()
     result: list[dict[str, Any]] = []
-    for row in rows:
-        revision = await (
-            await conn.execute(
-                "SELECT payload_json FROM profile_contribution_revisions WHERE owner_id=? AND analysis_ref=? AND revision=?",
-                (owner_id, row["analysis_ref"], row["current_revision"]),
-            )
-        ).fetchone()
+    for analysis_ref, contrib in sorted(doc["contributions"].items(), key=lambda x: (x[1].get("created_at", ""), x[0])):
+        revisions = contrib.get("revisions", [])
+        latest = max(revisions, key=lambda r: r.get("revision", 0)) if revisions else None
         included = False
-        if revision is not None:
-            payload = json.loads(revision["payload_json"])
-            included = any(_dimension_included(item) for item in payload["dimensions"])
+        if latest:
+            payload = latest.get("payload")
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if isinstance(payload, dict):
+                included = any(_dimension_included(item) for item in payload.get("dimensions", []))
         result.append({
-            "contribution_ref": row["contribution_ref"], "analysis_ref": row["analysis_ref"],
-            "revision": int(row["current_revision"]), "status": row["status"],
-            "included_in_current_profile": included and row["status"] == "active",
-            "created_at": row["created_at"], "updated_at": row["updated_at"],
+            "contribution_ref": contrib["contribution_ref"],
+            "analysis_ref": analysis_ref,
+            "revision": int(contrib["current_revision"]),
+            "status": contrib["status"],
+            "included_in_current_profile": included and contrib["status"] == "active",
+            "created_at": contrib.get("created_at"),
+            "updated_at": contrib.get("updated_at"),
         })
     return result
 
@@ -530,158 +553,138 @@ async def list_contributions(owner_id: str) -> list[dict[str, Any]]:
 async def get_contribution(owner_id: str, contribution_ref: str) -> dict[str, Any]:
     owner_id = _owner(owner_id)
     contribution_ref = _ref(contribution_ref, "contribution_ref", "profile-contribution")
-    conn = await get_conn()
-    row = await (
-        await conn.execute(
-            "SELECT contribution_ref, analysis_ref, current_revision, status, created_at, updated_at "
-            "FROM profile_contributions WHERE owner_id=? AND contribution_ref=?",
-            (owner_id, contribution_ref),
-        )
-    ).fetchone()
-    if row is None:
-        other = await (
-            await conn.execute("SELECT 1 FROM profile_contributions WHERE contribution_ref=?", (contribution_ref,))
-        ).fetchone()
-        if other is not None:
-            raise ProfileForbidden(contribution_ref)
-        raise ProfileNotFound(contribution_ref)
-    revision = await (
-        await conn.execute(
-            "SELECT payload_json FROM profile_contribution_revisions WHERE owner_id=? AND analysis_ref=? AND revision=?",
-            (owner_id, row["analysis_ref"], row["current_revision"]),
-        )
-    ).fetchone()
-    return {
-        "contribution_ref": row["contribution_ref"], "analysis_ref": row["analysis_ref"],
-        "revision": int(row["current_revision"]), "status": row["status"],
-        "payload": json.loads(revision["payload_json"]) if revision else None,
-        "created_at": row["created_at"], "updated_at": row["updated_at"],
-    }
+    doc = _load_profile_doc()
+    for analysis_ref, contrib in doc["contributions"].items():
+        if contrib["contribution_ref"] == contribution_ref:
+            if contrib.get("owner_id") != owner_id:
+                raise ProfileForbidden("contribution owner mismatch")
+            revisions = contrib.get("revisions", [])
+            latest = max(revisions, key=lambda r: r.get("revision", 0)) if revisions else None
+            payload = None
+            if latest:
+                payload = latest.get("payload")
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+            return {
+                "contribution_ref": contribution_ref,
+                "analysis_ref": analysis_ref,
+                "revision": int(contrib["current_revision"]),
+                "status": contrib["status"],
+                "payload": payload,
+                "created_at": contrib.get("created_at"),
+                "updated_at": contrib.get("updated_at"),
+            }
+    raise ProfileNotFound(contribution_ref)
 
 
 async def invalidate_analysis_contribution(owner_id: str, analysis_ref: str, *, reason: str) -> dict[str, Any]:
     owner_id = _owner(owner_id)
     analysis_ref = _ref(analysis_ref, "analysis_ref", "analysis")
     reason = _text(reason, "reason", max_length=160)
-    conn = await get_conn()
     async with _WRITE_LOCK:
-        await conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = await (
-                await conn.execute(
-                    "SELECT contribution_ref, current_revision, status FROM profile_contributions "
-                    "WHERE owner_id=? AND analysis_ref=?", (owner_id, analysis_ref),
-                )
-            ).fetchone()
-            if row is None:
-                other = await (
-                    await conn.execute("SELECT 1 FROM profile_contributions WHERE analysis_ref=?", (analysis_ref,))
-                ).fetchone()
-                if other is not None:
-                    raise ProfileForbidden(analysis_ref)
-                raise ProfileNotFound(analysis_ref)
-            tombstone = await (
-                await conn.execute(
-                    "SELECT tombstone_ref FROM profile_contribution_tombstones WHERE owner_id=? AND analysis_ref=? "
-                    "AND invalidated_revision=?", (owner_id, analysis_ref, row["current_revision"]),
-                )
-            ).fetchone()
-            if row["status"] == "invalidated" and tombstone is not None:
-                await conn.execute("COMMIT")
-                return {
-                    "contribution_ref": row["contribution_ref"], "analysis_ref": analysis_ref,
-                    "revision": int(row["current_revision"]), "status": "invalidated",
-                    "tombstone_ref": tombstone["tombstone_ref"], "idempotent": True,
-                }
-            tombstone_ref = tombstone["tombstone_ref"] if tombstone else f"profile-tombstone:{uuid.uuid4().hex}"
-            await conn.execute(
-                "INSERT OR IGNORE INTO profile_contribution_tombstones "
-                "(tombstone_ref, owner_id, analysis_ref, invalidated_revision, reason) VALUES(?, ?, ?, ?, ?)",
-                (tombstone_ref, owner_id, analysis_ref, row["current_revision"], reason),
-            )
-            await conn.execute(
-                "UPDATE profile_contributions SET status='invalidated', updated_at=CURRENT_TIMESTAMP "
-                "WHERE owner_id=? AND analysis_ref=?", (owner_id, analysis_ref),
-            )
-            await conn.execute(
-                "DELETE FROM profile_contribution_revisions WHERE owner_id=? AND analysis_ref=?",
-                (owner_id, analysis_ref),
-            )
-            await _rebuild_owner(conn, owner_id)
-            await conn.commit()
-        except Exception:
-            await conn.execute("ROLLBACK")
-            raise
+        doc = _load_profile_doc()
+        contrib = doc["contributions"].get(analysis_ref)
+        if contrib is None:
+            raise ProfileNotFound(analysis_ref)
+        existing_tombstone = None
+        for t in doc.get("tombstones", []):
+            if t.get("analysis_ref") == analysis_ref and t.get("invalidated_revision") == contrib["current_revision"]:
+                existing_tombstone = t
+                break
+        if contrib["status"] == "invalidated" and existing_tombstone is not None:
+            return {
+                "contribution_ref": contrib["contribution_ref"],
+                "analysis_ref": analysis_ref,
+                "revision": int(contrib["current_revision"]),
+                "status": "invalidated",
+                "tombstone_ref": existing_tombstone["tombstone_ref"],
+                "idempotent": True,
+            }
+        tombstone_ref = existing_tombstone["tombstone_ref"] if existing_tombstone else f"profile-tombstone:{uuid.uuid4().hex}"
+        if existing_tombstone is None:
+            doc["tombstones"].append({
+                "tombstone_ref": tombstone_ref,
+                "analysis_ref": analysis_ref,
+                "invalidated_revision": int(contrib["current_revision"]),
+                "reason": reason,
+            })
+        contrib["status"] = "invalidated"
+        contrib["updated_at"] = _utc_now()
+        _rebuild_owner(doc, owner_id)
+        _save_profile_doc(doc)
     return {
-        "contribution_ref": row["contribution_ref"], "analysis_ref": analysis_ref,
-        "revision": int(row["current_revision"]), "status": "invalidated",
-        "tombstone_ref": tombstone_ref, "idempotent": False,
+        "contribution_ref": contrib["contribution_ref"],
+        "analysis_ref": analysis_ref,
+        "revision": int(contrib["current_revision"]),
+        "status": "invalidated",
+        "tombstone_ref": tombstone_ref,
+        "idempotent": False,
     }
 
 
 async def get_profile_snapshot(owner_id: str) -> dict[str, Any]:
     owner_id = _owner(owner_id)
-    conn = await get_conn()
-    state = await (
-        await conn.execute("SELECT rebuild_state, updated_at FROM aiming_profile_state WHERE owner_id=?", (owner_id,))
-    ).fetchone()
-    cur = await conn.execute(
-        "SELECT projection_json FROM aiming_profile_dimensions WHERE owner_id=? "
-        "ORDER BY dimension_key, scope, scope_ref LIMIT 24", (owner_id,),
-    )
-    dimensions = [json.loads(row["projection_json"]) for row in await cur.fetchall()]
-    cur = await conn.execute(
-        "SELECT contribution_ref FROM profile_contributions WHERE owner_id=? AND status='active' "
-        "ORDER BY updated_at DESC, analysis_ref LIMIT 24", (owner_id,),
-    )
-    contribution_refs = [row["contribution_ref"] for row in await cur.fetchall()]
-    active_plan = await (
-        await conn.execute(
-            "SELECT plan_id FROM training_plans WHERE owner_id=? AND status='active'",
-            (owner_id,),
-        )
-    ).fetchone()
-    next_retest_refs: list[str] = []
-    if active_plan is not None:
-        cur = await conn.execute(
-            "SELECT item_payload_json FROM training_plan_items WHERE owner_id=? AND plan_id=? "
-            "AND status IN ('planned', 'active') ORDER BY item_ref LIMIT 12",
-            (owner_id, active_plan["plan_id"]),
-        )
-        for row in await cur.fetchall():
-            payload = json.loads(row["item_payload_json"])
-            next_retest_refs.extend((
-                payload["matched_retest_ref"],
-                payload["near_transfer_retest_ref"],
-            ))
+    doc = _load_profile_doc()
+    state = doc.get("state", {}).get(owner_id, {})
+    dimensions = [d["projection"] for d in doc.get("dimensions", [])[:24]]
+    contribution_refs = [
+        c["contribution_ref"]
+        for c in sorted(
+            (c for c in doc["contributions"].values() if c.get("status") == "active"),
+            key=lambda c: (c.get("updated_at", ""), c.get("contribution_ref", "")),
+            reverse=True,
+        )[:24]
+    ]
+    active_plan_ref, next_retest_refs = await _training_plan_projection(owner_id)
     return {
         "schema_version": "aiming_profile.v1",
         "owner_ref": owner_id,
         "profile_ref": f"profile-aiming:{owner_id}",
-        "status": state["rebuild_state"] if state else "clean",
+        "status": state.get("rebuild_state", "clean"),
         "dimensions": dimensions,
         "contribution_refs": contribution_refs,
-        "next_retest_refs": _dedupe(next_retest_refs)[:24],
-        "active_plan_ref": active_plan["plan_id"] if active_plan else None,
-        "updated_at": state["updated_at"] if state else None,
+        "next_retest_refs": next_retest_refs,
+        "active_plan_ref": active_plan_ref,
+        "updated_at": state.get("updated_at"),
     }
 
 
+async def _training_plan_projection(owner_id: str) -> tuple[str | None, list[str]]:
+    """Resolve the owner's active training plan and its pending retest refs."""
+    try:
+        from . import training_plan_store
+
+        plans = await training_plan_store.list_plans(owner_id, status="active")
+        if not plans:
+            return None, []
+        plan_ref = plans[0]["plan_id"]
+        items = await training_plan_store.list_plan_items(owner_id, plan_ref)
+        seen: set[str] = set()
+        next_retest_refs: list[str] = []
+        for item in items:
+            for ref_key in ("matched_retest_ref", "near_transfer_retest_ref"):
+                ref = item.get(ref_key)
+                if isinstance(ref, str) and ref and ref not in seen:
+                    seen.add(ref)
+                    next_retest_refs.append(ref)
+        return plan_ref, next_retest_refs
+    except Exception:
+        log.warning("training plan projection unavailable owner=%s", owner_id)
+        return None, []
+
+
 async def reconcile_profiles() -> dict[str, int]:
-    conn = await get_conn()
     async with _WRITE_LOCK:
-        cur = await conn.execute("SELECT owner_id FROM aiming_profile_state WHERE rebuild_state='pending' ORDER BY owner_id")
-        owners = [row["owner_id"] for row in await cur.fetchall()]
+        doc = _load_profile_doc()
+        owners = [
+            owner_id for owner_id, state in doc.get("state", {}).items()
+            if state.get("rebuild_state") == "pending"
+        ]
         if not owners:
             return {"owners_rebuilt": 0}
-        await conn.execute("BEGIN IMMEDIATE")
-        try:
-            for owner_id in owners:
-                await _rebuild_owner(conn, owner_id)
-            await conn.commit()
-        except Exception:
-            await conn.execute("ROLLBACK")
-            raise
+        for owner_id in owners:
+            _rebuild_owner(doc, owner_id)
+        _save_profile_doc(doc)
     return {"owners_rebuilt": len(owners)}
 
 

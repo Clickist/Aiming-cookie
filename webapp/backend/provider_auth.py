@@ -480,7 +480,7 @@ async def _finish_operation(
             operation.profile_id, operation.owner_id,
         )
         if runtime_profile is not None:
-            from .coach_runtime import redact_provider_secrets
+            from .provider_store import redact_provider_secrets
 
             operation.error["message"] = redact_provider_secrets(
                 str(operation.error.get("message", "认证操作失败")),

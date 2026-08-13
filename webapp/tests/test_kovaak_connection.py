@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import benchmark_catalog, benchmark_store, coach_context_refs, coach_store, kovaak_benchmark_service, kovaak_connection_store
+from webapp.backend import benchmark_catalog, benchmark_store, kovaak_benchmark_service, kovaak_connection_store
 from webapp.backend.app import app
 
 
@@ -160,8 +160,6 @@ async def test_switching_connection_waits_for_refresh_and_stales_the_old_snapsho
 
     connection = await kovaak_connection_store.get_connection("u1")
     records = await benchmark_store.list_records("u1")
-    thread = await coach_store.get_or_create_primary_thread("u1")
-    bundle, _ = await coach_context_refs.build_context_bundle(int(thread["id"]), None)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -173,7 +171,6 @@ async def test_switching_connection_waits_for_refresh_and_stales_the_old_snapsho
     assert connection["steam_id"] == replacement_id
     assert len(records) == 158
     assert {record["availability"] for record in records} == {"stale"}
-    assert bundle["benchmark_summary"] is None
     assert scores.status_code == 200, scores.text
     assert scores.json() == {
         "schema_version": "kovaak_scores.v1",

@@ -5,7 +5,7 @@ import json
 import pytest
 
 from kovaak_tracker.analysis_evidence import build_page_descriptor_v1
-from webapp.backend import config, db, evidence_store, queue
+from webapp.backend import config, evidence_store, file_store, queue
 
 
 def _artifact(analysis_ref: str) -> dict:
@@ -38,9 +38,7 @@ def _artifact(analysis_ref: str) -> dict:
 async def test_atomic_artifact_write_and_owner_revision_bound_read(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
     sid = await queue.enqueue("owner:1", "", "")
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='running', worker_id='worker:1' WHERE id=?", (sid,))
-    await conn.commit()
+    await queue.claim_next("worker:1")
 
     ref = evidence_store.write_analysis_evidence_artifact(
         session_id=sid,
@@ -57,11 +55,10 @@ async def test_atomic_artifact_write_and_owner_revision_bound_read(monkeypatch, 
         "analysis_id": f"analysis:{sid}",
         "evidence": {"derived_artifact": ref},
     }
-    await conn.execute(
-        "UPDATE sessions SET status='done', worker_id=NULL, result=? WHERE id=?",
-        (json.dumps(result), sid),
-    )
-    await conn.commit()
+    session = file_store.read_json(f"sessions/{sid}.json")
+    assert isinstance(session, dict)
+    session.update({"status": "done", "worker_id": None, "result": result})
+    file_store.write_json(f"sessions/{sid}.json", session)
 
     loaded = await evidence_store.read_analysis_evidence_artifact(
         owner_id="owner:1",
@@ -101,12 +98,10 @@ async def test_artifact_v2_write_read_preserves_actual_contract_version(monkeypa
     )
     assert ref["contract_version"] == "analysis_evidence_artifact.v2"
 
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (json.dumps({"evidence": {"derived_artifact": ref}}), sid),
-    )
-    await conn.commit()
+    session = file_store.read_json(f"sessions/{sid}.json")
+    assert isinstance(session, dict)
+    session.update({"status": "done", "result": {"evidence": {"derived_artifact": ref}}})
+    file_store.write_json(f"sessions/{sid}.json", session)
 
     assert await evidence_store.read_analysis_evidence_artifact(
         owner_id="owner:1",
@@ -147,9 +142,8 @@ async def test_nonterminal_or_deleted_analysis_cannot_read_artifact(monkeypatch,
             evidence_revision=ref["evidence_revision"],
         )
 
-    conn = await db.get_conn()
-    await conn.execute("UPDATE sessions SET status='failed' WHERE id=?", (sid,))
-    await conn.commit()
+    await queue.claim_next("worker:1")
+    await queue.mark_failed(sid, "fixture failure", worker_id="worker:1")
     await queue.delete_session(sid, "owner:1")
     assert not evidence_store.analysis_evidence_root(sid).exists()
     with pytest.raises(evidence_store.EvidenceAccessError, match="not found"):
@@ -214,21 +208,17 @@ async def test_outcome_page_reader_revalidates_owner_revision_and_query(
         owner_id="owner:1",
         artifact=artifact,
     )
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (
-            json.dumps(
-                {
-                    "schema_version": "analysis_result.v2",
-                    "analysis_id": f"analysis:{sid}",
-                    "evidence": {"derived_artifact": ref},
-                }
-            ),
-            sid,
-        ),
-    )
-    await conn.commit()
+    session = file_store.read_json(f"sessions/{sid}.json")
+    assert isinstance(session, dict)
+    session.update({
+        "status": "done",
+        "result": {
+            "schema_version": "analysis_result.v2",
+            "analysis_id": f"analysis:{sid}",
+            "evidence": {"derived_artifact": ref},
+        },
+    })
+    file_store.write_json(f"sessions/{sid}.json", session)
     descriptor = build_page_descriptor_v1(
         owner_id="owner:1",
         analysis_ref=f"analysis:{sid}",

@@ -793,7 +793,7 @@ def build_capture_status_v1(
         explicit_permission = None
     if explicit_permission is not None:
         permission = explicit_permission
-    elif raw_state in {"capturing", "finalizing"} and enabled:
+    elif enabled:
         permission = "granted"
     else:
         permission = "not_determined"

@@ -8,11 +8,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from . import coach_confirmations, config, queue
+from . import config, queue
 from .auth import require_desktop_token
 from .health import router as health_router
 from .routes import router
-from .db import init_schema
 
 
 log = logging.getLogger(__name__)
@@ -20,15 +19,7 @@ log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """生产启动时 init schema。测试用 fixture init,不依赖 lifespan。"""
-    await init_schema()
-    confirmation_reconciliation = await coach_confirmations.reconcile_pending_confirmations()
-    log.info(
-        "confirmation audit reconciliation processed=%s completed=%s failed=%s",
-        confirmation_reconciliation["processed"],
-        confirmation_reconciliation["completed"],
-        confirmation_reconciliation["failed"],
-    )
+    """启动时执行 reconciliation（DB schema 初始化已移除）。"""
     reconciliation = await queue.reconcile_analysis_deletions()
     error_code = (
         "workspace_cleanup_failed"

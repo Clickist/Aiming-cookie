@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -14,8 +15,10 @@ from .contracts import (
     LEGACY_ANALYSIS_VERSION,
     validate_scenario_resolution_v1,
 )
-from .db import get_conn
+from . import file_store
 from .workspace import session_dir
+
+log = logging.getLogger(__name__)
 
 
 _SAFE_SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -403,26 +406,36 @@ def build_matched_dynamic_baseline(
     return {"comparable": False, "reason": "no_comparable_baseline"}
 
 
+def _read_done_session_results(user_id: str) -> list[tuple[int, dict]]:
+    """Read completed v2 analysis results from file-based sessions."""
+    baselines: list[tuple[int, dict]] = []
+    for p in file_store.list_dir("sessions", "*.json"):
+        try:
+            int(p.stem)
+        except ValueError:
+            continue
+        try:
+            session = file_store.read_json(f"sessions/{p.name}")
+        except (OSError, ValueError):
+            log.warning("skipping unreadable session %s", f"sessions/{p.name}")
+            continue
+        if session is None:
+            continue
+        if session.get("user_id") != user_id or session.get("status") != "done":
+            continue
+        result = session.get("result")
+        if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
+            baselines.append((int(session["id"]), result))
+    baselines.sort(key=lambda x: x[0], reverse=True)
+    return baselines[:100]
+
+
 async def matched_dynamic_baseline_for_user(
     user_id: str,
     current: dict,
     metric_keys: list[str],
 ) -> dict:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id, result FROM sessions WHERE user_id=? AND status='done' "
-        "AND result IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 100",
-        (user_id,),
-    )
-    rows = await cur.fetchall()
-    baselines: list[tuple[int, dict]] = []
-    for row in rows:
-        try:
-            result = json.loads(row["result"])
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
-            baselines.append((int(row["id"]), result))
+    baselines = _read_done_session_results(user_id)
     return build_matched_dynamic_baseline(current, baselines, metric_keys)
 
 
@@ -467,21 +480,7 @@ async def matched_tracking_baseline_for_user(
     current: dict,
     metric_keys: list[str],
 ) -> dict:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id, result FROM sessions WHERE user_id=? AND status='done' "
-        "AND result IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 100",
-        (user_id,),
-    )
-    rows = await cur.fetchall()
-    baselines: list[tuple[int, dict]] = []
-    for row in rows:
-        try:
-            result = json.loads(row["result"])
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
-            baselines.append((int(row["id"]), result))
+    baselines = _read_done_session_results(user_id)
     return build_matched_tracking_baseline(current, baselines, metric_keys)
 
 
@@ -533,21 +532,7 @@ async def matched_target_switching_baseline_for_user(
     current: dict,
     metric_keys: list[str],
 ) -> dict:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id, result FROM sessions WHERE user_id=? AND status='done' "
-        "AND result IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 100",
-        (user_id,),
-    )
-    rows = await cur.fetchall()
-    baselines: list[tuple[int, dict]] = []
-    for row in rows:
-        try:
-            result = json.loads(row["result"])
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
-            baselines.append((int(row["id"]), result))
+    baselines = _read_done_session_results(user_id)
     return build_matched_target_switching_baseline(current, baselines, metric_keys)
 
 
@@ -973,21 +958,7 @@ async def analysis_history_detail(session: dict) -> dict[str, object]:
 
 
 async def recent_trend_for_user(user_id: str, metric_key: str) -> dict:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id, result FROM sessions WHERE user_id=? AND status='done' "
-        "AND result IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 100",
-        (user_id,),
-    )
-    rows = await cur.fetchall()
-    parsed: list[tuple[int, dict]] = []
-    for row in rows:
-        try:
-            result = json.loads(row["result"])
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(result, dict) and result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
-            parsed.append((int(row["id"]), result))
+    parsed = _read_done_session_results(user_id)
     if len(parsed) < 2:
         return {"comparable": False, "reason": "insufficient_history"}
     current_id, current = parsed[0]
