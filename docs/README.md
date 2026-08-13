@@ -27,6 +27,7 @@
 - 开发与验证：`DEVELOPMENT.md`，再进入相关代码目录。
 - 当前施工：按当前任务说明、相关事实源、代码和测试推进；`superpowers/plans/` 仅作为可选参考，不构成开工门槛。
 - full-worktree 合同修复已完成；范围、逐 Task 验收与最终矩阵见 [`archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md`](archive/completed/plans/2026-07-30-full-worktree-contract-remediation-v1.md)。真实现场与发行 Gate 不因自动化通过而闭合。
+- 2026-08-12 Coach 架构交接草稿已归档到 [`archive/history/2026-08-12-coach-architecture-handoff.md`](archive/history/2026-08-12-coach-architecture-handoff.md)；当前 E2E 启动流程以 `DEVELOPMENT.md` 为准，当前验证状态以 `PROGRESS.md` 为准。
 - 局部设计：需要时参考 [`superpowers/specs/README.md`](superpowers/specs/README.md) 及其中的设计材料；它们不构成施工流程要求。
 - Coach 代办与引导：相关 ProductReadiness、GuidanceIntent、用户步骤和前端 GuidanceHost 设计见 [`superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md`](superpowers/specs/2026-08-10-coach-product-operator-guided-workflows-design.md)，按当前任务和代码/测试需要参考。
 - Coach Skills 架构：三类 skill（引导/执行/教学）、Route A 状态管理决策、系统提示词更新方向与 `teaching_session.update` 命令设计见 [`skills-design.md`](skills-design.md)。

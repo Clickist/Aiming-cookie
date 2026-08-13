@@ -36,6 +36,7 @@ artifacts/
 # vendored pi (third_party/pi) — never commit installed deps
 third_party/pi/node_modules/
 third_party/pi/**/node_modules/
+webapp/coach-runtime/node_modules/
 
 # session recordings under data/ stay tracked (override *.mp4 above)
 !data/*.mp4

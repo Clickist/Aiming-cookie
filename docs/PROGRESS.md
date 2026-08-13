@@ -1,6 +1,6 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-08-11. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
+> Updated: 2026-08-13. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
 
 ## Current Product Direction
 
@@ -12,15 +12,28 @@
 
 - Documentation has been realigned with the above contract; the retired OpenDesign handoff and historical superpowers materials are reference-only.
 - Backend automatic tier selection, Run readiness, server-side Analysis tier selection, first-launch routing, and mandatory onboarding UI are implemented and covered by the focused validation below.
-- Real Tauri, KovaaK, hardware, Provider, installer/signing/updater/download, and cross-vendor capture validation remain release gates. Automated checks do not close those gates.
+- Desktop Coach requests now use the Node sidecar directly. Python remains the local Analysis API/ingestion/worker runtime; it is not a desktop Coach request proxy.
+- Real Tauri Provider, KovaaK field capture, hardware load, packaged installer/signing/updater/download, clean-machine onboarding, and cross-vendor capture validation remain release gates.
 
 ## Verification
 
-- Python backend test suite (source-selection, Coach command, DB, Run, capability, capture finalizer, context injection): approximately 400+ passed, including known pre-existing failures.
-- Coach runtime TypeScript tests (turn, teaching-policy, product-command-tools, system-prompt-and-tools, fake-stream): approximately 120+ passed.
-- Frontend unit, contract, and source tests: approximately 50+ passed.
-- Production Next build and browser smoke E2E: passing.
-- `AGENTS.md`/`CLAUDE.md` parity and `git diff --check` passed.
+- Python full suite: 1682 passed, 5 skipped; the focused DB/queue/routes/Coach command suite also passed 231 tests.
+- Coach runtime TypeScript suite: 188 passed, 2 skipped; Node native Analysis includes 9 focused tests covering all three input tiers, Python worker v3 snapshot reads, cleanup, and auto-discovered KovaaK path derivation.
+- Frontend unit/contracts: 179 passed; frontend type-check passed.
+- Rust/Tauri MSVC: fmt, check, clippy passed; tests 92 passed, 7 field-only tests ignored.
+- `desktop-coach-provider.spec.ts` now exercises the product UI and observes `/v1/agent-runs`, but the real Provider field test was not rerun in this cleanup. Its skip is not counted as passing validation.
+- `git diff --check` passed. Full Python, production browser Playwright, real Tauri, real KovaaK, hardware, and Provider field checks remain to be reported separately if run.
+
+## 2026-08-13 Session Changes
+
+- Made Analysis Session reservation atomic across Python upload/import and Node `analysis.create_from_run`, with failed input setup removing the reservation and workspace.
+- Implemented Node-native Run-to-Analysis input freezing with `multimodal > input_native > video_fallback`, canonical v3 snapshots, worker-readable fingerprints, scenario resolution, and auto-discovered KovaaK path reuse.
+- Fixed Agent Run retry message reuse, Provider-wait recovery, TeachingSession stale-CAS handling, canonical context projection, Python-compatible context dedupe keys, and duplicate Agent Run readers.
+- Kept the desktop Coach product adapter on Node sidecar routes and removed the unused frontend Python soft-start adapter. Browser-only fallback and Python Analysis routes remain compatibility surfaces.
+- Hardened frontend sidecar reconnection, stale batch workflows, context clearing, frameless window controls, and SessionRail contract preservation.
+- Added product-path Provider E2E coverage without copying credentials from a developer DB; the real Provider field run remains open.
+
+This validation does not prove packaged release readiness. It does not cover installer packaging, signing, updater, clean-machine onboarding, real KovaaK four-source field capture, long-running hardware load, or cross-vendor GPU behavior.
 
 ## 2026-08-11 Session Changes
 
