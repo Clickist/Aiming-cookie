@@ -991,20 +991,30 @@ async def create_analysis_from_run(
         raise ProductCommandError("input_unavailable", "Run has no supported analysis tier", kind="unavailable")
     snapshot["source_requirements_version"] = "automatic_quality_tier.v1"
 
-    session_id = await queue.enqueue(
-        owner_id,
-        "",
-        "",
-        cm_per_360=cm_per_360,
-        fov=fov,
-        profile_default=dict(profile_default) if isinstance(profile_default, Mapping) else None,
-        manual_override=dict(manual_override) if isinstance(manual_override, Mapping) else None,
-        analysis_type=_analysis_type_for_snapshot(snapshot),
-        input_mode=selected_mode,
-        kovaak_run_id=run_id,
-        input_snapshot=snapshot,
-        status="uploading",
-    )
+    try:
+        session_id = await queue.enqueue(
+            owner_id,
+            "",
+            "",
+            cm_per_360=cm_per_360,
+            fov=fov,
+            profile_default=dict(profile_default) if isinstance(profile_default, Mapping) else None,
+            manual_override=dict(manual_override) if isinstance(manual_override, Mapping) else None,
+            analysis_type=_analysis_type_for_snapshot(snapshot),
+            input_mode=selected_mode,
+            kovaak_run_id=run_id,
+            input_snapshot=snapshot,
+            status="uploading",
+            require_no_active=not allow_parallel,
+        )
+    except queue.ActiveSessionExists as exc:
+        active = await queue.get_active_session(owner_id)
+        raise ProductCommandError(
+            "active_analysis",
+            "已有 Analysis 正在进行",
+            kind="unavailable",
+            result_ref=f"analysis:{active['id']}" if active is not None else None,
+        ) from exc
     try:
         managed_video = ""
         managed_csv = ""

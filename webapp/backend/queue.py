@@ -37,6 +37,10 @@ _LEGACY_RESULT_KEYS = frozenset(
 _INPUT_MODES = frozenset({"input_native", "multimodal", "video_fallback"})
 
 
+class ActiveSessionExists(RuntimeError):
+    pass
+
+
 def sqlite_timestamp_to_wire_utc(value: str | None) -> str | None:
     """SQLite CURRENT_TIMESTAMP (UTC) → YYYY-MM-DDTHH:MM:SSZ."""
     if value is None:
@@ -118,6 +122,7 @@ async def enqueue(
     input_snapshot: dict | None = None,
     profile_default: dict | None = None,
     manual_override: dict | None = None,
+    require_no_active: bool = False,
 ) -> int:
     if input_mode not in _INPUT_MODES:
         raise ValueError(f"unsupported input_mode: {input_mode}")
@@ -138,30 +143,42 @@ async def enqueue(
     initial_task_state = "importing" if status == "uploading" else (
         "queued" if status == "queued" else status
     )
-    cur = await conn.execute(
+    insert_sql = (
         "INSERT INTO sessions("
         "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, "
         "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts, "
         "task_group_ref, attempt_number, task_state, calibration_request_json"
-        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, 1, ?, ?) RETURNING id",
-        (
-            user_id,
-            status,
-            video_path,
-            csv_path,
-            cm_per_360,
-            fov,
-            analysis_type,
-            input_mode,
-            kovaak_run_id,
-            json.dumps(input_snapshot, ensure_ascii=False, separators=(",", ":"))
-            if input_snapshot is not None else None,
-            DEFAULT_MAX_ATTEMPTS,
-            initial_task_state,
-            json.dumps(calibration_request, ensure_ascii=False, separators=(",", ":")),
-        ),
+        ") "
     )
+    values_sql = "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, 1, ?, ?"
+    parameters = (
+        user_id,
+        status,
+        video_path,
+        csv_path,
+        cm_per_360,
+        fov,
+        analysis_type,
+        input_mode,
+        kovaak_run_id,
+        json.dumps(input_snapshot, ensure_ascii=False, separators=(",", ":"))
+        if input_snapshot is not None else None,
+        DEFAULT_MAX_ATTEMPTS,
+        initial_task_state,
+        json.dumps(calibration_request, ensure_ascii=False, separators=(",", ":")),
+    )
+    if require_no_active:
+        values_sql += (
+            " WHERE NOT EXISTS ("
+            "SELECT 1 FROM sessions WHERE user_id=? "
+            "AND status IN ('uploading', 'queued', 'running'))"
+        )
+        parameters += (user_id,)
+    cur = await conn.execute(f"{insert_sql}{values_sql} RETURNING id", parameters)
     row = await cur.fetchone()
+    if row is None:
+        await conn.rollback()
+        raise ActiveSessionExists("owner already has an active analysis")
     session_id = row["id"]
     await conn.execute(
         "UPDATE sessions SET task_group_ref=? WHERE id=?",

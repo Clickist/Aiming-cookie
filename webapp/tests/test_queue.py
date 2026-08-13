@@ -25,6 +25,28 @@ class _InjectedProcessCrash(BaseException):
     pass
 
 
+@pytest.mark.asyncio
+async def test_enqueue_require_no_active_is_atomic_and_default_still_allows_parallel():
+    async def enqueue_restricted():
+        try:
+            return await queue.enqueue(
+                "atomic-owner", "", "", require_no_active=True,
+            )
+        except queue.ActiveSessionExists:
+            return "active"
+
+    restricted = await asyncio.gather(enqueue_restricted(), enqueue_restricted())
+    assert sum(isinstance(result, int) for result in restricted) == 1
+    assert restricted.count("active") == 1
+    assert (await db.get_conn()).in_transaction is False
+
+    parallel = await asyncio.gather(
+        queue.enqueue("parallel-owner", "", ""),
+        queue.enqueue("parallel-owner", "", ""),
+    )
+    assert len(set(parallel)) == 2
+
+
 async def _tombstone(session_id: int) -> dict | None:
     conn = await db.get_conn()
     row = await (
