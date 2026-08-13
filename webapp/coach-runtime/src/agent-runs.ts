@@ -438,16 +438,21 @@ function loadOrAppendUserMessage(
   })();
 }
 
-function appendAssistantMessage(
+export function appendAssistantMessage(
   db: SqliteDb,
   threadId: number,
   content: string,
   trace: CoachRuntimeToolEvent[],
+  context: AnyDict,
+  snapshots: AnyDict[],
 ): void {
   const traceJson = trace.length > 0 ? JSON.stringify(trace, null, 0) : null;
+  const contextJson = JSON.stringify(context, null, 0);
+  const contextRefsJson = JSON.stringify(snapshots, null, 0);
   db.prepare(
-    "INSERT INTO coach_messages(thread_id, role, content, trace_json) VALUES(?, 'assistant', ?, ?)",
-  ).run(threadId, content, traceJson);
+    "INSERT INTO coach_messages(thread_id, role, content, trace_json, context_json, context_refs_json) " +
+    "VALUES(?, 'assistant', ?, ?, ?, ?)",
+  ).run(threadId, content, traceJson, contextJson, contextRefsJson);
   db.prepare("UPDATE coach_threads SET updated_at=CURRENT_TIMESTAMP WHERE id=?").run(threadId);
 }
 
@@ -1060,7 +1065,7 @@ async function runAgentTurn(
       }
 
       // Persist assistant message
-      appendAssistantMessage(db, threadId, redactedReply, toolEvents);
+      appendAssistantMessage(db, threadId, redactedReply, toolEvents, bundle, snapshots);
       appendEvent(db, runRef, "text", "text_generation", "text_available", "Coach response text is available");
 
       const completed = setRun(db, runRef, "succeeded", "completed", {
