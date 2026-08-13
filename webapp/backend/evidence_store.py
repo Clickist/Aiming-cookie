@@ -15,7 +15,7 @@ from kovaak_tracker.analysis_evidence import (
     validate_analysis_evidence_artifact,
 )
 
-from . import db
+from . import file_store
 from .workspace import session_dir
 
 
@@ -220,23 +220,21 @@ async def read_analysis_evidence_artifact(
     if not session_text.isdigit():
         raise EvidenceAccessError("analysis ref is invalid")
     session_id = int(session_text)
-    conn = await db.get_conn()
-    row = await (
-        await conn.execute(
-            "SELECT user_id, status, result FROM sessions WHERE id=?",
-            (session_id,),
-        )
-    ).fetchone()
-    if row is None:
+    session = file_store.read_json(f"sessions/{session_id}.json")
+    if session is None:
         raise EvidenceAccessError("analysis not found")
-    if row["user_id"] != owner_id:
+    if session.get("user_id") != owner_id:
         raise EvidenceAccessError("analysis owner mismatch")
-    if row["status"] != "done":
+    if session.get("status") != "done":
         raise EvidenceAccessError("analysis is not terminal")
-    try:
-        result = json.loads(row["result"] or "null")
-    except json.JSONDecodeError as exc:
-        raise EvidenceIntegrityError("analysis result is malformed") from exc
+    result = session.get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError as exc:
+            raise EvidenceIntegrityError("analysis result is malformed") from exc
+    if result is None:
+        result = {}
     stored_ref = ((result or {}).get("evidence") or {}).get("derived_artifact")
     if not isinstance(stored_ref, dict):
         raise EvidenceAccessError("analysis has no committed evidence artifact")

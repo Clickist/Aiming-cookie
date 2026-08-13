@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from webapp.backend import coach_store, db, history_trends, kovaak_run_store, queue
+from webapp.backend import file_store, history_trends, kovaak_run_store, queue
 from webapp.backend.app import app
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_V2_SCHEMA_VERSION,
@@ -250,6 +250,15 @@ def _private_history_snapshot(run: dict, stats: Path, trace: Path) -> dict:
     }
 
 
+async def _seed_done(session_id: int, **fields) -> None:
+    """Mark a session done and merge extra persisted fields in place."""
+    session = file_store.read_json(f"sessions/{session_id}.json")
+    assert isinstance(session, dict)
+    session["status"] = "done"
+    session.update(fields)
+    file_store.write_json(f"sessions/{session_id}.json", session)
+
+
 async def _seed_v2_history_analysis(
     tmp_path: Path,
     *,
@@ -291,18 +300,15 @@ async def _seed_v2_history_analysis(
         include_mp4=include_mp4,
         mp4_evidence_availability=mp4_evidence_availability,
     )
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', video_path=?, input_snapshot_json=?, result=? "
-        "WHERE id=?",
-        (
-            str(video),
-            json.dumps(private_snapshot, ensure_ascii=False, separators=(",", ":")),
-            dump_contract_json(result),
-            sid,
-        ),
-    )
-    await conn.commit()
+    session = file_store.read_json(f"sessions/{sid}.json")
+    assert isinstance(session, dict)
+    session.update({
+        "status": "done",
+        "video_path": str(video),
+        "input_snapshot": private_snapshot,
+        "result": result,
+    })
+    file_store.write_json(f"sessions/{sid}.json", session)
     if remove_video:
         video.unlink()
     return sid, run, stats, trace, video
@@ -344,12 +350,7 @@ async def test_list_sessions_newest_first_owner_only():
 async def test_list_sessions_omits_full_result():
     sid = await queue.enqueue("u1", "/a", "/a.csv")
     v1 = _v1_result_with_profile_label("标签")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (dump_contract_json(v1), sid),
-    )
-    await conn.commit()
+    await _seed_done(sid, result=v1)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -368,12 +369,7 @@ async def test_list_sessions_summary_label_from_profile():
     sid = await queue.enqueue("u1", "/a", "/a.csv")
     label = "减速不足型"
     v1 = _v1_result_with_profile_label(label)
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (dump_contract_json(v1), sid),
-    )
-    await conn.commit()
+    await _seed_done(sid, result=v1)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -428,12 +424,7 @@ async def test_session_list_projects_safe_presentation_label_with_training_and_c
             "scenario": "1wall 6targets small",
         },
     )
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', finished_at=? WHERE id=?",
-        ("2026-08-09 09:12:30", sid),
-    )
-    await conn.commit()
+    await _seed_done(sid, finished_at="2026-08-09 09:12:30")
 
     rows = await queue.list_sessions(user_id)
     item = next(row for row in rows if row["id"] == sid)
@@ -451,28 +442,11 @@ async def test_session_list_projects_safe_presentation_label_with_training_and_c
 @pytest.mark.asyncio
 async def test_queue_list_sessions_never_selects_full_result_blob(monkeypatch):
     sid = await queue.enqueue("u_light", "/private/video.mp4", "/private/stats.csv")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (json.dumps({"sentinel": "FULL_RESULT_MUST_NOT_BE_READ"}), sid),
-    )
-    await conn.commit()
-
-    class GuardedConnection:
-        async def execute(self, sql: str, params=()):
-            normalized = " ".join(sql.lower().split())
-            if normalized.startswith("select ") and " from sessions" in normalized:
-                selected = normalized.split(" from sessions", 1)[0].replace(",", " ")
-                assert "result" not in selected.split(), sql
-            return await conn.execute(sql, params)
-
-    async def guarded_get_conn():
-        return GuardedConnection()
-
-    monkeypatch.setattr(queue, "get_conn", guarded_get_conn)
+    await _seed_done(sid, result={"sentinel": "FULL_RESULT_MUST_NOT_BE_READ"})
     rows = await queue.list_sessions("u_light")
 
     assert [row["id"] for row in rows] == [sid]
+    assert all("result" not in row for row in rows)
 
 
 @pytest.mark.asyncio
@@ -554,12 +528,10 @@ async def test_analysis_list_exposes_light_source_trace_and_mode_read_model(
 async def test_analysis_detail_treats_non_object_snapshot_as_unavailable():
     user_id = "u_non_object_snapshot"
     sid = await queue.enqueue(user_id, "", "")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET input_snapshot_json=? WHERE id=?",
-        ("[1]", sid),
-    )
-    await conn.commit()
+    session = file_store.read_json(f"sessions/{sid}.json")
+    assert isinstance(session, dict)
+    session["input_snapshot"] = [1]
+    file_store.write_json(f"sessions/{sid}.json", session)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -791,7 +763,7 @@ async def test_history_trend_api_omits_values_for_insufficient_history():
 
 
 @pytest.mark.asyncio
-async def test_delete_session_removes_row_chat_and_preserves_source_files():
+async def test_delete_terminal_analysis_preserves_source_files():
     tmp = Path(tempfile.gettempdir()) / "aiming_cookie_test"
     tmp.mkdir(parents=True, exist_ok=True)
     video = tmp / "del_video.mp4"
@@ -800,14 +772,8 @@ async def test_delete_session_removes_row_chat_and_preserves_source_files():
     csv.write_bytes(b"csv")
 
     sid = await queue.enqueue("u1", str(video), str(csv))
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='failed' WHERE id=?",
-        (sid,),
-    )
-    await conn.commit()
-    await db.save_chat_message(sid, "user", "hello")
-    await db.save_chat_message(sid, "assistant", "hi")
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_failed(sid, "fixture failure", worker_id=TEST_WORKER)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -824,16 +790,6 @@ async def test_delete_session_removes_row_chat_and_preserves_source_files():
     assert body["cleanup_failed"] == []
 
     assert await queue.get_session(sid) is None
-    history = await db.load_chat_history(sid)
-    assert history == []
-
-    thread = await coach_store.get_or_create_primary_thread("u1")
-    msgs = await coach_store.load_messages(int(thread["id"]))
-    assert [(m["role"], m["content"]) for m in msgs] == [
-        ("user", "hello"),
-        ("assistant", "hi"),
-    ]
-
     assert video.read_bytes() == b"vid"
     assert csv.read_bytes() == b"csv"
 
@@ -856,12 +812,11 @@ async def test_delete_terminal_analysis_preserves_run_owned_video(tmp_path: Path
     run_video = tmp_path / "runs" / str(run["id"]) / "video-owned.mp4"
     run_video.parent.mkdir(parents=True)
     run_video.write_bytes(b"run-owned-video")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE kovaak_runs SET video_path=?, video_state='attached' WHERE id=?",
-        (str(run_video.resolve()), run["id"]),
-    )
-    await conn.commit()
+    run_meta = file_store.read_json(f"runs/{run['id']}/meta.json")
+    assert isinstance(run_meta, dict)
+    run_meta["video_path"] = str(run_video.resolve())
+    run_meta["video_state"] = "attached"
+    file_store.write_json(f"runs/{run['id']}/meta.json", run_meta)
 
     sid = await queue.enqueue(
         user_id,
@@ -885,11 +840,7 @@ async def test_delete_terminal_analysis_preserves_run_owned_video(tmp_path: Path
     analysis_video = analysis_workspace / "video.mp4"
     os.link(run_video, analysis_video)
     (analysis_workspace / "result.json").write_bytes(b"analysis-owned")
-    await conn.execute(
-        "UPDATE sessions SET status='done', video_path=? WHERE id=?",
-        (str(analysis_video.resolve()), sid),
-    )
-    await conn.commit()
+    await _seed_done(sid, video_path=str(analysis_video.resolve()))
     assert analysis_video.samefile(run_video)
 
     async with AsyncClient(

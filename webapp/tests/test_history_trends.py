@@ -4,11 +4,26 @@ import json
 
 import pytest
 
-from webapp.backend import history_trends
-from webapp.backend.db import get_conn
+from webapp.backend import file_store, history_trends
 
 
 _MISSING = object()
+
+_seed_counter = 0
+
+
+async def _seed_done_session(user_id: str, payload: dict) -> None:
+    """Write a minimal done Analysis session file for read-model tests."""
+    global _seed_counter
+    _seed_counter += 1
+    sid = 900_000 + _seed_counter
+    file_store.write_json(f"sessions/{sid}.json", {
+        "id": sid,
+        "user_id": user_id,
+        "status": "done",
+        "input_mode": payload.get("input_mode", "input_native"),
+        "result": payload,
+    })
 
 
 def result(
@@ -635,13 +650,8 @@ def test_compare_rejects_analysis_and_timebase_version_mismatches():
 
 @pytest.mark.asyncio
 async def test_recent_trend_uses_newest_comparable_baseline_only():
-    conn = await get_conn()
     for value, mode in ((8.0, "input_native"), (99.0, "multimodal"), (10.0, "input_native")):
-        await conn.execute(
-            "INSERT INTO sessions(user_id, status, result, input_mode) VALUES(?, 'done', ?, ?)",
-            ("u1", json.dumps(result(value=value, mode=mode)), mode),
-        )
-    await conn.commit()
+        await _seed_done_session("u1", result(value=value, mode=mode))
 
     trend = await history_trends.recent_trend_for_user("u1", "distance")
     assert trend["comparable"] is True
@@ -654,12 +664,7 @@ async def test_recent_trend_omits_values_with_fewer_than_two_results():
     empty = await history_trends.recent_trend_for_user("u1", "distance")
     assert empty == {"comparable": False, "reason": "insufficient_history"}
 
-    conn = await get_conn()
-    await conn.execute(
-        "INSERT INTO sessions(user_id, status, result, input_mode) VALUES(?, 'done', ?, ?)",
-        ("u1", json.dumps(result()), "input_native"),
-    )
-    await conn.commit()
+    await _seed_done_session("u1", result())
 
     single = await history_trends.recent_trend_for_user("u1", "distance")
     assert single == {"comparable": False, "reason": "insufficient_history"}
@@ -667,17 +672,12 @@ async def test_recent_trend_omits_values_with_fewer_than_two_results():
 
 @pytest.mark.asyncio
 async def test_recent_trend_omits_values_when_no_comparable_baseline():
-    conn = await get_conn()
     for item in (
         result(mode="multimodal", value=8.0),
         result(version="native.v2", value=9.0),
         result(value=10.0),
     ):
-        await conn.execute(
-            "INSERT INTO sessions(user_id, status, result, input_mode) VALUES(?, 'done', ?, ?)",
-            ("u1", json.dumps(item), item["input_mode"]),
-        )
-    await conn.commit()
+        await _seed_done_session("u1", item)
 
     trend = await history_trends.recent_trend_for_user("u1", "distance")
 

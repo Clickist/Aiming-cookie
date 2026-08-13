@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
@@ -280,7 +281,12 @@ async def test_plan_items_executions_and_both_retest_kinds_are_owner_scoped_appe
             "notes": "动作更容易控制",
         },
     )
-    assert '"felt_control":"easier"' in structured["user_feedback"]
+    feedback = (
+        json.loads(structured["user_feedback"])
+        if isinstance(structured["user_feedback"], str)
+        else structured["user_feedback"]
+    )
+    assert feedback["felt_control"] == "easier"
 
     with pytest.raises(store.PlanForbidden):
         await store.list_plan_items("owner-b", draft["plan_id"])

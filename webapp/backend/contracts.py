@@ -4,6 +4,11 @@ import json
 import math
 import os
 import re
+from collections.abc import Mapping
+from typing import Any
+from urllib.parse import urlsplit
+
+from kovaak_tracker.metric_definitions import get_metric_definition
 
 from .source_requirements import validate_source_requirements
 
@@ -1333,3 +1338,215 @@ def coerce_error_v1(stored_error: str | dict | None) -> dict | None:
     if schema_version == ERROR_SCHEMA_VERSION:
         return _validate_error_v1(parsed)
     raise UnsupportedContractVersion(schema_version)
+
+
+# ── Analysis result metric-definition projection ───────────────────────
+#
+# Migrated from the deleted coach_context module (2026-08-13 rewrite).
+# Adds catalog display definitions to public result metric objects. Read-only
+# projection: the stored analysis result is not mutated.
+
+_MISSING = object()
+_METRIC_FIELDS = frozenset(
+    {
+        "value",
+        "unit",
+        "provenance",
+        "metric_version",
+        "classification",
+        "min",
+        "max",
+        "mean",
+        "median",
+        "med",
+        "p25",
+        "p50",
+        "p75",
+        "p90",
+        "std",
+        "iqr",
+        "count",
+        "n",
+        "score",
+        "status",
+        "key",
+        "availability",
+        "sample_count",
+        "coverage",
+        "limitations",
+        "outlier_method",
+        "outlier_refs",
+        "sample_refs",
+        "definition",
+    }
+)
+_NETWORK_URL_PREFIX = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+
+
+def _contains_sensitive_text(value: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|"
+            r"client[_-]?secret|password|secret)\s*[:=]|\bbearer\s+\S{8,}|"
+            r"\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{8,}|"
+            r"(?:raw[\s_-]*trace|target[\s_-]*inference|"
+            r"sensitivity[\s_-]*heuristic|external[\s_-]*progress|"
+            r"benchmark|payload)",
+            value,
+        )
+    )
+
+
+def _is_network_url(value: str) -> bool:
+    candidate = value.strip()
+    if _NETWORK_URL_PREFIX.match(candidate):
+        return True
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return True
+    return bool(parsed.scheme and parsed.netloc)
+
+
+def _is_forbidden_key(key: object) -> bool:
+    compact = re.sub(r"[^a-z0-9]", "", str(key).casefold())
+    if compact == "path" or compact.endswith("path") or compact.endswith("paths"):
+        return True
+    if any(
+        marker in compact
+        for marker in (
+            "apikey",
+            "accesstoken",
+            "refreshtoken",
+            "clientsecret",
+            "credential",
+            "authorization",
+            "password",
+            "secret",
+        )
+    ):
+        return True
+    if compact.startswith("rawinput") and compact != "rawinput":
+        return True
+    if any(
+        marker in compact
+        for marker in (
+            "targetinference",
+            "sensitivity",
+            "heuristic",
+            "benchmark",
+            "external",
+            "progress",
+            "payload",
+            "rawtrace",
+            "tracepoints",
+        )
+    ):
+        return True
+    return compact in {
+        "dx",
+        "dy",
+        "button",
+        "buttons",
+        "points",
+        "trace",
+        "trajectory",
+        "timestamp",
+        "timestamps",
+        "timestampsample",
+        "timestampsamples",
+        "sample",
+        "samples",
+        "rawsample",
+        "rawsamples",
+    }
+
+
+def _safe_scalar(value: object) -> object:
+    if value is None or isinstance(value, bool) or isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else _MISSING
+    if isinstance(value, str):
+        return (
+            value
+            if not _is_absolute_path(value)
+            and not _is_network_url(value)
+            and not _contains_sensitive_text(value)
+            else _MISSING
+        )
+    return _MISSING
+
+
+def _safe_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item
+        for item in value
+        if isinstance(item, str) and _safe_scalar(item) is not _MISSING
+    ]
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _resolve_metric_definition(
+    metric_key: str,
+) -> dict[str, object] | None:
+    """Return only display fields from the unified metric catalog."""
+    if not metric_key:
+        return None
+    defn = get_metric_definition(metric_key)
+    if defn is None:
+        return None
+    result: dict[str, object] = {}
+    for field in ("name", "description"):
+        value = defn.get(field)
+        if isinstance(value, str) and value:
+            result[field] = value
+    return result or None
+
+
+def _project_metric_definition_map(metrics: Mapping[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    for metric_key, metric in metrics.items():
+        if not isinstance(metric, Mapping):
+            projected[metric_key] = metric
+            continue
+        projected_metric = dict(metric)
+        projected_metric.pop("definition", None)
+        definition = _resolve_metric_definition(str(metric_key))
+        if definition is not None:
+            projected_metric["definition"] = definition
+        projected[metric_key] = projected_metric
+    return projected
+
+
+def project_analysis_result_metric_definitions(
+    analysis_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Add catalog display definitions to public result metric objects.
+
+    This is a read-time projection: the stored analysis result is not
+    mutated, and all fields outside the two public metric containers are
+    preserved as-is.
+    """
+    projected = dict(analysis_result)
+    deterministic = analysis_result.get("deterministic")
+    if not isinstance(deterministic, Mapping):
+        return projected
+    projected_deterministic = dict(deterministic)
+    metrics = deterministic.get("metrics")
+    if isinstance(metrics, Mapping):
+        projected_deterministic["metrics"] = _project_metric_definition_map(metrics)
+    diagnosis = deterministic.get("diagnosis")
+    if isinstance(diagnosis, Mapping):
+        projected_diagnosis = dict(diagnosis)
+        summary = diagnosis.get("summary")
+        if isinstance(summary, Mapping):
+            projected_diagnosis["summary"] = _project_metric_definition_map(summary)
+        projected_deterministic["diagnosis"] = projected_diagnosis
+    projected["deterministic"] = projected_deterministic
+    return projected

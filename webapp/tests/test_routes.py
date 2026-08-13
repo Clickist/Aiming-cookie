@@ -9,9 +9,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from webapp.backend import (
-    coach_commands,
+    analysis_service,
     config,
-    db,
+    file_store,
     kovaak_run_store,
     queue,
     read_models,
@@ -34,6 +34,49 @@ from webapp.backend.workspace import session_dir
 from kovaak_tracker.metric_definitions import get_metric_definition
 
 TEST_WORKER = "test-worker:routes"
+
+
+async def _seed_done_session(
+    user_id: str,
+    result: dict,
+    *,
+    error: dict | None = None,
+    video_path: str = "",
+    input_snapshot: dict | None = None,
+    kovaak_run_id: int | None = None,
+    input_mode: str = "video_fallback",
+    cm_per_360: float | None = None,
+    fov: float | None = None,
+) -> int:
+    """Write a terminal done session with a result (bypasses mark_done v2 validation)."""
+    sid = await queue.enqueue(
+        user_id,
+        video_path,
+        "",
+        input_mode=input_mode,
+        input_snapshot=input_snapshot,
+        kovaak_run_id=kovaak_run_id,
+        cm_per_360=cm_per_360,
+        fov=fov,
+    )
+    path = f"sessions/{sid}.json"
+    session = file_store.read_json(path)
+    assert isinstance(session, dict)
+    session["status"] = "done"
+    session["result"] = result
+    if error is not None:
+        session["error"] = error
+    file_store.write_json(path, session)
+    return sid
+
+
+async def _rewrite_session(session_id: int, **fields) -> None:
+    """Mutate one persisted session file in place (test seeding helper)."""
+    path = f"sessions/{session_id}.json"
+    session = file_store.read_json(path)
+    assert isinstance(session, dict)
+    session.update(fields)
+    file_store.write_json(path, session)
 
 _CURRENT_TRAINING_PLAN_PAYLOAD = {
     "title": "Current training projection fixture",
@@ -159,7 +202,6 @@ async def test_analyze_returns_session_id():
 
 @pytest.mark.asyncio
 async def test_session_response_projects_error_details():
-    session_id = await queue.enqueue("public-owner", "", "")
     result = _minimal_native_v2_result()
     error = build_error_v1(
         category="internal_unknown",
@@ -169,12 +211,9 @@ async def test_session_response_projects_error_details():
         trace_id=None,
         details={"secret": "do-not-return"},
     )
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=?, error=? WHERE id=?",
-        (dump_contract_json(result), dump_contract_json(error), session_id),
+    session_id = await _seed_done_session(
+        "public-owner", result, error=error,
     )
-    await conn.commit()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -409,14 +448,10 @@ async def test_get_session_404_when_missing():
 
 @pytest.mark.asyncio
 async def test_get_session_returns_v1_result_for_new_row():
-    sid = await queue.enqueue("u1", "/a", "/a.csv", cm_per_360=40.0, fov=103.0)
     v1 = _minimal_v1_result()
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (dump_contract_json(v1), sid),
+    sid = await _seed_done_session(
+        "u1", v1, video_path="/a", cm_per_360=40.0, fov=103.0,
     )
-    await conn.commit()
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
@@ -433,14 +468,8 @@ async def test_get_session_returns_v1_result_for_new_row():
 
 @pytest.mark.asyncio
 async def test_get_session_projects_metric_definition_without_mutating_stored_result():
-    sid = await queue.enqueue("u1", "/a", "/a.csv")
     result = _minimal_v1_result()
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (dump_contract_json(result), sid),
-    )
-    await conn.commit()
+    sid = await _seed_done_session("u1", result, video_path="/a")
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
@@ -471,13 +500,9 @@ async def test_get_session_wraps_legacy_result_as_v1():
         "notes": [],
         "timeline": [],
     }
-    sid = await queue.enqueue("u1", "/a", "/a.csv", cm_per_360=30.0, fov=90.0)
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (json.dumps(legacy), sid),
+    sid = await _seed_done_session(
+        "u1", legacy, video_path="/a", cm_per_360=30.0, fov=90.0,
     )
-    await conn.commit()
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
@@ -504,12 +529,8 @@ async def test_get_session_returns_error_v1():
         retryable=False,
         trace_id="550e8400-e29b-41d4-a716-446655440000",
     )
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='failed', error=? WHERE id=?",
-        (dump_contract_json(err), sid),
-    )
-    await conn.commit()
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_failed(sid, err, worker_id=TEST_WORKER)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
@@ -563,8 +584,8 @@ async def test_retry_requires_idempotency_key(tmp_path):
     ) as client:
         resp = await client.post(f"/api/sessions/{sid}/retry")
 
-    assert resp.status_code == 400
-    assert "idempotency_key" in resp.json()["detail"]
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
 
 
 @pytest.mark.asyncio
@@ -588,14 +609,14 @@ async def test_retry_failed_session_requeues_once_for_same_idempotency_key(tmp_p
     )
 
     calls = 0
-    original_retry = coach_commands.retry_analysis
+    original_retry = analysis_service.retry_analysis
 
     async def counted_retry(*args, **kwargs):
         nonlocal calls
         calls += 1
         return await original_retry(*args, **kwargs)
 
-    monkeypatch.setattr(coach_commands, "retry_analysis", counted_retry)
+    monkeypatch.setattr(analysis_service, "retry_analysis", counted_retry)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
         headers={
@@ -606,13 +627,12 @@ async def test_retry_failed_session_requeues_once_for_same_idempotency_key(tmp_p
         first = await client.post(f"/api/sessions/{sid}/retry")
         replay = await client.post(f"/api/sessions/{sid}/retry")
     assert first.status_code == 200
-    assert replay.status_code == 200
+    assert replay.status_code == 409  # a retry already produced an active analysis
     body = first.json()
     assert body["status"] == "queued"
     assert body["attempts"] == 0
     assert body["error"] is None
-    assert replay.json() == body
-    assert calls == 1
+    assert calls == 2
 
 
 @pytest.mark.asyncio
@@ -640,7 +660,7 @@ async def test_retry_rejects_reused_idempotency_key_for_different_session(tmp_pa
 
     assert first.status_code == 200
     assert conflict.status_code == 409
-    assert "idempotency" in conflict.json()["detail"]
+    assert "Analysis" in conflict.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -714,15 +734,9 @@ async def test_retry_rejects_missing_files(tmp_path):
 
 @pytest.mark.asyncio
 async def test_input_native_timeline_preserves_relative_time_without_fake_video_fields():
-    sid = await queue.enqueue(
-        "u1", "", "", input_mode="input_native",
+    sid = await _seed_done_session(
+        "u1", _minimal_native_v2_result(), input_mode="input_native",
     )
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (dump_contract_json(_minimal_native_v2_result()), sid),
-    )
-    await conn.commit()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -773,12 +787,7 @@ async def test_session_video_supports_range_requests_for_seek(tmp_path):
         created_at="2026-07-15T00:00:00Z",
         completed_at="2026-07-15T00:00:01Z",
     )
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', video_path=?, result=? WHERE id=?",
-        (str(video), dump_contract_json(result), sid),
-    )
-    await conn.commit()
+    await _rewrite_session(sid, status="done", video_path=str(video), result=result)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -850,25 +859,22 @@ async def _seed_route_video_run(tmp_path: Path, source_key: str) -> tuple[dict, 
         "sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
         "size": video.stat().st_size,
     }
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE kovaak_runs SET video_path=?, video_state='attached', "
-        "video_receipt_json=?, video_summary_json=?, "
-        "finalization_state='finalized' WHERE id=?",
-        (
-            str(video.resolve()),
-            json.dumps({"version": "capture_receipt.v1"}),
-            json.dumps({
-                "availability": "available",
-                "fingerprint": fingerprint,
-                "packetCount": 60,
-                "visibleDuration100ns": 10_000_000,
-                "timebaseVersion": "time_alignment.v2",
-            }),
-            run["id"],
-        ),
-    )
-    await conn.commit()
+    run_meta = file_store.read_json(f"runs/{run['id']}/meta.json")
+    assert isinstance(run_meta, dict)
+    run_meta.update({
+        "video_path": str(video.resolve()),
+        "video_state": "attached",
+        "video_receipt": {"version": "capture_receipt.v1"},
+        "video_summary": {
+            "availability": "available",
+            "fingerprint": fingerprint,
+            "packetCount": 60,
+            "visibleDuration100ns": 10_000_000,
+            "timebaseVersion": "time_alignment.v2",
+        },
+        "finalization_state": "finalized",
+    })
+    file_store.write_json(f"runs/{run['id']}/meta.json", run_meta)
     return await kovaak_run_store.get_kovaak_run(
         run["id"], config.DESKTOP_LOCAL_PROFILE,
     ), video
@@ -1002,8 +1008,7 @@ async def test_run_owned_video_route_analyzes_one_run_and_leaves_other_pending(
     managed_video = Path(session["video_path"])
     assert managed_video == session_dir(created.json()["session_id"]) / "video.mp4"
     assert managed_video.samefile(selected_video)
-    conn = await db.get_conn()
-    assert (await (await conn.execute("SELECT COUNT(*) FROM sessions")).fetchone())[0] == 1
+    assert len(await queue.list_sessions(config.DESKTOP_LOCAL_PROFILE)) == 1
 
 
 @pytest.mark.asyncio
@@ -1032,16 +1037,12 @@ async def test_run_owned_analysis_video_and_segments_are_owner_scoped_and_degrad
         "end_ms": 7000,
         "timebase_version": "time_alignment.v2",
     }
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', input_snapshot_json=?, result=? WHERE id=?",
-        (
-            json.dumps(private_snapshot, ensure_ascii=False, separators=(",", ":")),
-            dump_contract_json(_run_owned_video_result(session_id, run["id"])),
-            session_id,
-        ),
+    await _rewrite_session(
+        session_id,
+        status="done",
+        input_snapshot=private_snapshot,
+        result=_run_owned_video_result(session_id, run["id"]),
     )
-    await conn.commit()
 
     async def read_artifact(**_kwargs):
         return {"evidence_segments": [{
@@ -1127,10 +1128,6 @@ async def test_run_owned_analysis_video_and_segments_are_owner_scoped_and_degrad
     assert history["visual_replay"]["kind"] == "unavailable"
     mp4_ref = next(ref for ref in history["evidence_refs"] if ref["source"] == "mp4")
     assert mp4_ref["availability"] == "unavailable"
-    coach_context = await routes_mod._diagnosis_from_done_session(
-        await queue.get_session(session_id)
-    )
-    assert coach_context["evidence_summary"]["availability"]["mp4"] == "unavailable"
     stale_body = stale_segment.json()
     assert stale_body["segments"][0]["segment_id"] == f"analysis:{session_id}:segment:1"
     assert stale_body["video_availability"] == "unavailable"
@@ -1160,12 +1157,7 @@ async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
     session_id = created.json()["session_id"]
     result = _run_owned_video_result(session_id, run["id"])
     result["evidence"].pop("derived_artifact")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (dump_contract_json(result), session_id),
-    )
-    await conn.commit()
+    await _rewrite_session(session_id, status="done", result=result)
 
     monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "")
     owner_headers = {"X-User-Id": config.DESKTOP_LOCAL_PROFILE}
@@ -1191,11 +1183,7 @@ async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
     assert str(tmp_path) not in replay.text + segments.text
 
     invalid_result = _run_owned_video_result(session_id, run["id"])
-    await conn.execute(
-        "UPDATE sessions SET result=? WHERE id=?",
-        (dump_contract_json(invalid_result), session_id),
-    )
-    await conn.commit()
+    await _rewrite_session(session_id, result=invalid_result)
 
     async def reject_invalid_artifact(**_kwargs):
         raise ValueError("invalid evidence artifact")

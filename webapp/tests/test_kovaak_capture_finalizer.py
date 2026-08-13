@@ -14,7 +14,7 @@ from kovaak_tracker.performance_parser import (
     PerformanceData,
     PerformanceHeader,
 )
-from webapp.backend import kovaak_run_store
+from webapp.backend import file_store, kovaak_run_store
 from webapp.backend.kovaak_capture_finalizer import (
     KovaaKCaptureFinalizer,
 )
@@ -451,8 +451,7 @@ async def test_stats_and_performance_orders_converge_on_one_idempotent_video_run
     request = client.export_calls[0]
     assert request["end_epoch_ms"] - request["start_epoch_ms"] == expected_duration_ms
     assert len(await kovaak_run_store.list_kovaak_runs("u1")) == 1
-    conn = await kovaak_run_store.get_conn()
-    assert (await (await conn.execute("SELECT COUNT(*) FROM sessions")).fetchone())[0] == 0
+    assert file_store.list_dir("sessions") == []
 
 
 @pytest.mark.parametrize("first_kind", ["stats", "performance"])
@@ -493,16 +492,11 @@ async def test_watcher_consumes_missing_source_once_then_finalizes_counterpart_o
     first_result = await asyncio.gather(tasks[-1], return_exceptions=True)
     await asyncio.sleep(0)
     assert isinstance(first_result[0], NonRetryableIngestionError)
-    conn = await kovaak_run_store.get_conn()
-    sequence_after_first = (await (await conn.execute(
-        "SELECT seq FROM sqlite_sequence WHERE name='kovaak_runs'"
-    )).fetchone())[0]
+    runs_before = len(await kovaak_run_store.list_kovaak_runs("u1"))
 
     assert watcher.scan_once() == []
     assert len(tasks) == 1
-    assert (await (await conn.execute(
-        "SELECT seq FROM sqlite_sequence WHERE name='kovaak_runs'"
-    )).fetchone())[0] == sequence_after_first
+    assert len(await kovaak_run_store.list_kovaak_runs("u1")) == runs_before
 
     counterpart.write_bytes(b"stable-counterpart")
     assert len(watcher.scan_once()) == 1
@@ -820,12 +814,9 @@ async def test_video_coverage_gap_invalidates_canonical_run_evidence(
     assert raw.read_bytes() == raw_source
     assert stats.read_bytes() == b"stats"
     assert performance.read_bytes() == b"performance"
-    conn = await kovaak_run_store.get_conn()
-    assert (await (await conn.execute(
-        "SELECT COUNT(*) FROM run_evidence_deletion_tombstones WHERE run_id=?",
-        (run["id"],),
-    )).fetchone())[0] == 0
-    assert (await (await conn.execute("SELECT COUNT(*) FROM sessions")).fetchone())[0] == 0
+    tombstones = file_store.read_json("runs/_evidence_tombstones.json") or []
+    assert all(t.get("run_id") != run["id"] for t in tombstones)
+    assert file_store.list_dir("sessions") == []
 
 
 @pytest.mark.asyncio
@@ -867,14 +858,15 @@ async def test_video_coverage_gap_cleanup_failure_reconciles_exact_managed_raw(
     assert run["trace_state"] == "unavailable"
     assert kovaak_run_store.derive_run_readiness(run)["state"] == "incomplete_evidence"
     assert len(managed) == 1 and managed[0].is_file()
-    conn = await kovaak_run_store.get_conn()
-    tombstone = await (await conn.execute(
-        "SELECT cleanup_state, cleanup_attempts, last_error_code "
-        "FROM run_evidence_deletion_tombstones "
-        "WHERE run_id=? AND evidence_kind='raw'",
-        (run["id"],),
-    )).fetchone()
-    assert tuple(tombstone) == ("failed", 1, "artifact_cleanup_failed")
+    tombstones = file_store.read_json("runs/_evidence_tombstones.json") or []
+    tombstone = next(
+        (t for t in tombstones if t.get("run_id") == run["id"] and t.get("evidence_kind") == "raw"),
+        None,
+    )
+    assert tombstone is not None
+    assert tombstone["cleanup_state"] == "failed"
+    assert tombstone["cleanup_attempts"] == 1
+    assert tombstone["last_error_code"] == "artifact_cleanup_failed"
 
     monkeypatch.setattr(
         kovaak_run_store, "_unlink_run_evidence_artifact", original_unlink,
@@ -1188,7 +1180,6 @@ async def test_vertical_slice_keeps_consecutive_normal_and_timescale_runs_separa
         assert "path" not in json.dumps(public, ensure_ascii=False)
     assert len(await kovaak_run_store.list_kovaak_runs("u1")) == 2
     assert all(path.read_bytes() == contents for path, contents in source_bytes.items())
-    assert (await kovaak_run_store.get_conn()).in_transaction is False
 
 
 @pytest.mark.asyncio

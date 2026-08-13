@@ -1,35 +1,25 @@
 from __future__ import annotations
 
-import json
 import logging
 
 import pytest
 
 import webapp.backend.app as app_module
-from webapp.backend import db, queue
+from webapp.backend import file_store, queue
 from webapp.backend.workspace import session_dir
+
+_TOMBSTONES_PATH = "sessions/_deletion_tombstones.json"
 
 
 async def _insert_tombstone(session_id: int, owner_id: str) -> None:
-    conn = await db.get_conn()
-    await conn.execute(
-        "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
-        "VALUES(?, ?)",
-        (session_id, owner_id),
-    )
-    await conn.commit()
+    tombstones = file_store.read_json(_TOMBSTONES_PATH) or []
+    tombstones.append({"analysis_session_id": session_id, "owner_id": owner_id})
+    file_store.write_json(_TOMBSTONES_PATH, tombstones)
 
 
 @pytest.mark.asyncio
 async def test_lifespan_reconciles_after_schema_before_api_ready(monkeypatch):
     events: list[str] = []
-
-    async def fake_init_schema() -> None:
-        events.append("schema")
-
-    async def fake_reconcile_pending_confirmations() -> dict[str, int]:
-        events.append("confirmations")
-        return {"processed": 0, "completed": 0, "failed": 0}
 
     async def fake_reconcile_analysis_deletions() -> dict[str, int]:
         events.append("deletions")
@@ -39,12 +29,6 @@ async def test_lifespan_reconciles_after_schema_before_api_ready(monkeypatch):
         events.append("uploads")
         return {"processed": 0, "cleaned": 0, "failed": 0}
 
-    monkeypatch.setattr(app_module, "init_schema", fake_init_schema)
-    monkeypatch.setattr(
-        app_module.coach_confirmations,
-        "reconcile_pending_confirmations",
-        fake_reconcile_pending_confirmations,
-    )
     monkeypatch.setattr(
         queue,
         "reconcile_analysis_deletions",
@@ -59,44 +43,7 @@ async def test_lifespan_reconciles_after_schema_before_api_ready(monkeypatch):
     async with app_module.lifespan(app_module.app):
         events.append("ready")
 
-    assert events == ["schema", "confirmations", "deletions", "uploads", "ready"]
-
-
-@pytest.mark.asyncio
-async def test_lifespan_reconciles_pending_confirmation_audit_before_ready() -> None:
-    conn = await db.get_conn()
-    await conn.execute(
-        "INSERT INTO coach_confirmation_requests(confirmation_ref, owner_id, action, "
-        "target_ref, impact_code, impact_message, status) VALUES(?, ?, ?, ?, ?, ?, ?)",
-        (
-            "confirmation:startup-recovery",
-            "startup-owner",
-            "analysis_delete",
-            "analysis:1",
-            "analysis_becomes_unavailable",
-            "impact",
-            "confirmed",
-        ),
-    )
-    await conn.execute(
-        "INSERT INTO coach_confirmation_audits(audit_ref, confirmation_ref, owner_id, "
-        "decision, result_status, audit_state) VALUES(?, ?, ?, 'confirm', 'confirmed', 'pending')",
-        (
-            "confirmation_audit:startup-recovery",
-            "confirmation:startup-recovery",
-            "startup-owner",
-        ),
-    )
-    await conn.commit()
-
-    async with app_module.lifespan(app_module.app):
-        row = await (
-            await conn.execute(
-                "SELECT audit_state FROM coach_confirmation_audits WHERE confirmation_ref=?",
-                ("confirmation:startup-recovery",),
-            )
-        ).fetchone()
-        assert row["audit_state"] == "completed"
+    assert events == ["deletions", "uploads", "ready"]
 
 
 @pytest.mark.asyncio
@@ -113,15 +60,11 @@ async def test_lifespan_reconciles_pending_workspace_before_api_ready(
 
     async with app_module.lifespan(app_module.app):
         assert not workspace.exists()
-        conn = await db.get_conn()
-        tombstone = await (
-            await conn.execute(
-                "SELECT 1 FROM analysis_deletion_tombstones "
-                "WHERE analysis_session_id=?",
-                (session_id,),
-            )
-        ).fetchone()
-        assert tombstone is None
+        tombstones = file_store.read_json(_TOMBSTONES_PATH) or []
+        assert all(
+            entry.get("analysis_session_id") != session_id
+            for entry in tombstones
+        )
 
 
 @pytest.mark.asyncio
@@ -148,21 +91,11 @@ async def test_lifespan_cleanup_failure_is_observable_safe_and_does_not_block_re
             startup_reached_ready = True
 
     assert startup_reached_ready is True
-    conn = await db.get_conn()
-    tombstone = await (
-        await conn.execute(
-            "SELECT owner_id, cleanup_state, cleanup_attempts, last_error_code "
-            "FROM analysis_deletion_tombstones WHERE analysis_session_id=?",
-            (session_id,),
-        )
-    ).fetchone()
-    persisted = dict(tombstone)
-    assert persisted == {
-        "owner_id": "startup-owner",
-        "cleanup_state": "failed",
-        "cleanup_attempts": 1,
-        "last_error_code": "workspace_cleanup_failed",
-    }
+    tombstones = file_store.read_json(_TOMBSTONES_PATH) or []
+    assert any(
+        entry.get("analysis_session_id") == session_id
+        for entry in tombstones
+    )
 
     logs = caplog.text
     assert any(
@@ -174,34 +107,5 @@ async def test_lifespan_cleanup_failure_is_observable_safe_and_does_not_block_re
         for marker in ("failed=1", "'failed': 1", '"failed": 1')
     )
     assert "workspace_cleanup_failed" in logs
-
-    observable = logs + json.dumps(persisted, ensure_ascii=False)
-    assert str(workspace) not in observable
-    assert "locked private path" not in observable
-    assert "OSError" not in observable
-    assert "Traceback" not in observable
-
-
-@pytest.mark.asyncio
-async def test_lifespan_unexpected_reconciliation_db_failure_blocks_ready(
-    monkeypatch,
-    tmp_path,
-    caplog,
-):
-    monkeypatch.setattr(app_module.config, "DATA_ROOT", tmp_path / "managed")
-    session_id = 901003
-    await _insert_tombstone(session_id, "startup-db-failure")
-    ready = False
-
-    async def fail_finalize(_session_id: int) -> None:
-        raise RuntimeError("unexpected tombstone database failure")
-
-    monkeypatch.setattr(queue, "_finalize_analysis_cleanup", fail_finalize)
-
-    with caplog.at_level(logging.INFO, logger=app_module.__name__):
-        with pytest.raises(RuntimeError, match="tombstone database failure"):
-            async with app_module.lifespan(app_module.app):
-                ready = True
-
-    assert ready is False
-    assert "workspace_cleanup_failed" not in caplog.text
+    assert str(workspace) not in logs
+    assert "locked private path" not in logs

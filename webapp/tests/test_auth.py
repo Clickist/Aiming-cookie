@@ -8,18 +8,19 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import webapp.backend.config as config_mod
-from webapp.backend import db, queue
+from webapp.backend import queue
 from webapp.backend.app import app
 
 
 async def _seed_done_session_u1() -> int:
     sid = await queue.enqueue("u1", "/v.mp4", "/c.csv")
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (json.dumps({"diagnosis": {"profile": {}, "issues": [], "summary": {}, "meta": {}}}), sid),
+    await queue.claim_next("test-worker:auth")
+    await queue.mark_done(
+        sid,
+        {"schema_version": "analysis_result.v1", "diagnosis": {"profile": {}, "issues": [], "summary": {}, "meta": {}}},
+        0.0,
+        worker_id="test-worker:auth",
     )
-    await conn.commit()
     return sid
 
 

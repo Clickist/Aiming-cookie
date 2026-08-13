@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 
 from kovaak_tracker import scenario_profiles
-from webapp.backend import config, db, evidence_store, queue, worker
+from webapp.backend import config, evidence_store, file_store, queue, worker
 from webapp.backend.contracts import (
     ANALYSIS_RESULT_SCHEMA_VERSION,
     ANALYSIS_RESULT_V2_SCHEMA_VERSION,
@@ -926,13 +926,6 @@ async def test_process_one_normalizes_non_finite_values_before_persisting():
          patch("webapp.backend.worker.run_report", return_value=fake_report), \
          patch("webapp.backend.worker._delete_video_safely"):
         await worker.process_one()
-
-    from webapp.backend import db
-    conn = await db.get_conn()
-    cur = await conn.execute("SELECT result FROM sessions WHERE id=?", (sid,))
-    row = await cur.fetchone()
-    raw_json = row["result"]
-    assert "NaN" not in raw_json
 
     s = await queue.get_session(sid)
     med = s["result"]["deterministic"]["diagnosis"]["summary"]["sparc"]["med"]
@@ -2413,11 +2406,10 @@ async def test_outcome_only_legacy_flat_calibration_is_frozen_into_result_and_te
         input_snapshot=snapshot,
     )
     # Simulate a pre-calibration-request job that only has legacy flat columns.
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET calibration_request_json=NULL WHERE id=?", (sid,),
-    )
-    await conn.commit()
+    session = file_store.read_json(f"sessions/{sid}.json")
+    assert isinstance(session, dict)
+    session["calibration_request"] = None
+    file_store.write_json(f"sessions/{sid}.json", session)
 
     parsed_stats = MagicMock(cm_per_360=None, fov=None)
     with patch(
@@ -2773,76 +2765,6 @@ def test_tracking_worker_adapter_requires_one_target_and_passes_only_validated_c
     visual["local_samples"]["target.2.position"] = visual["local_samples"]["target.1.position"]
     with pytest.raises(ValueError, match="unambiguous"):
         worker.run_continuous_tracking_analysis(job, visual)
-
-
-def test_tracking_public_result_projects_profile_and_analyzer_to_coach_context():
-    from webapp.backend.coach_context import project_coach_diagnostic_context
-
-    snapshot = _native_v2_snapshot()
-    snapshot["schema_version"] = "analysis_input_snapshot.v3"
-    snapshot["scenario_resolution"] = _scenario_resolution(
-        manifest_status="active",
-        dispatch="allowed",
-        aim_family="continuous_tracking",
-        allowed_analyzers=["continuous_tracking.v1"],
-    )
-    snapshot["scenario_resolution"]["allowed_metric_families"] = [
-        "continuous_tracking"
-    ]
-    job = {
-        "id": 123,
-        "user_id": "u1",
-        "analysis_type": "continuous_tracking",
-        "input_mode": "multimodal",
-        "kovaak_run_id": 42,
-        "input_snapshot": snapshot,
-        "video_path": "managed.mp4",
-    }
-    result = worker._build_continuous_tracking_result_v2(
-        job,
-        {
-            "support_status": "supported",
-            "scenario_motion_class": "predictable",
-            "metrics": {},
-            "processed_rows": [],
-            "comparison": None,
-            "limitations": [],
-        },
-        {
-            "safe_summary": {
-                "target_coverage": 1.0,
-                "crosshair_coverage": 1.0,
-            },
-        },
-        created_at="2026-07-22T00:00:00Z",
-        completed_at="2026-07-22T00:01:00Z",
-    )
-    result["evidence"]["derived_artifact"] = {
-        "artifact_ref": "analysis:123:evidence:abc",
-        "evidence_revision": "sha256:abc",
-        "contract_version": "analysis_evidence_artifact.v1",
-        "checksum_sha256": "abc",
-        "size_bytes": 1,
-    }
-
-    context = project_coach_diagnostic_context(result)
-
-    assert result["scenario"] == {
-        "scenario_profile_ref": "scenario:static.fixture@1",
-        "analyzer_refs": ["continuous_tracking.v1"],
-        "support_status": "supported",
-        "limitations": [],
-    }
-    assert context["schema_version"] == "coach_diagnostic_context.v2"
-    assert context["scenario"] == {
-        **result["scenario"],
-        "display_name": "Tile Frenzy",
-        "aim_family": "continuous_tracking",
-    }
-    assert "processed_rows" not in json.dumps(result)
-    assert "local_samples" not in json.dumps(result)
-
-
 def test_dynamic_worker_adapter_uses_raw_clicks_and_visual_numeric_signals():
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"
@@ -4479,12 +4401,10 @@ async def test_get_session_still_reads_v1_and_unversioned_legacy_results(
             "notes": [],
             "timeline": [],
         }
-    conn = await db.get_conn()
-    await conn.execute(
-        "UPDATE sessions SET status='done', result=? WHERE id=?",
-        (json.dumps(stored_result), sid),
-    )
-    await conn.commit()
+    session_file = file_store.read_json(f"sessions/{sid}.json")
+    assert isinstance(session_file, dict)
+    session_file.update({"status": "done", "result": stored_result})
+    file_store.write_json(f"sessions/{sid}.json", session_file)
 
     session = await queue.get_session(sid)
 

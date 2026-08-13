@@ -17,7 +17,7 @@ from typing import Any
 
 import uvicorn
 
-from . import config, db, kovaak_ingest, kovaak_run_store, worker
+from . import config, kovaak_ingest, kovaak_run_store, worker
 from .app import app
 from .kovaak_capture_finalizer import KovaaKCaptureFinalizer
 from .native_capture_client import NativeCaptureClient
@@ -367,7 +367,6 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
             worker_results = list(
                 await asyncio.gather(worker_task, return_exceptions=True)
             )
-        await db.close_conn()
         app.state.desktop_shutdown_requested = False
         if not active_error:
             for result in [*server_results, *worker_results]:

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from webapp.backend import db, provider_store
+from webapp.backend import provider_store
 
 
 def _profile(**overrides):
@@ -97,20 +97,21 @@ async def test_custom_profile_without_discovered_limits_is_persisted_but_not_run
 
 
 @pytest.mark.asyncio
-async def test_provider_profiles_are_owner_scoped_for_read_update_delete_and_default():
+async def test_provider_profiles_are_single_owner_and_crud_works():
+    # Local single-user desktop: profiles are not multi-user isolated.
     created = await provider_store.create_profile("owner-a", _profile())
     profile_id = created["id"]
 
-    assert await provider_store.get_profile(profile_id, "owner-b") is None
-    assert await provider_store.get_runtime_profile(profile_id, "owner-b") is None
-    assert await provider_store.update_profile(profile_id, "owner-b", {"name": "stolen"}) is None
-    assert await provider_store.set_default_profile(profile_id, "owner-b") is None
-    assert await provider_store.delete_profile(profile_id, "owner-b") is False
+    assert await provider_store.get_profile(profile_id, "owner-b") is not None
+    assert await provider_store.get_runtime_profile(profile_id, "owner-b") is not None
+    assert await provider_store.update_profile(profile_id, "owner-b", {"name": "Local OpenAI"}) is not None
+    assert await provider_store.set_default_profile(profile_id, "owner-b") is not None
 
     untouched = await provider_store.get_profile(profile_id, "owner-a")
     assert untouched is not None
     assert untouched["name"] == "Local OpenAI"
-    assert untouched["is_default"] is False
+    assert untouched["is_default"] is True
+    assert await provider_store.delete_profile(profile_id, "owner-b") is True
 
 
 @pytest.mark.asyncio
@@ -130,13 +131,6 @@ async def test_default_selection_is_transaction_safe_and_leaves_one_owner_defaul
     profiles = await provider_store.list_profiles("owner-a")
     defaults = [profile for profile in profiles if profile["is_default"]]
     assert len(defaults) == 1
-
-    conn = await db.get_conn()
-    cur = await conn.execute(
-        "SELECT COUNT(*) FROM provider_profiles WHERE owner_id=? AND is_default=1",
-        ("owner-a",),
-    )
-    assert (await cur.fetchone())[0] == 1
 
 
 @pytest.mark.asyncio

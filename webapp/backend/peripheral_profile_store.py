@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
-from .db import get_conn
+from . import file_store
 
+_PERIPHERAL_PATH = "config/peripheral.json"
 _GRIP_TYPES = frozenset({"fingertip", "fingertip_claw", "claw", "claw_palm", "palm"})
 _WRIST_POSITIONS = frozenset({"suspended", "on_pad"})
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _profile(owner_id: str, row: dict[str, Any] | None) -> dict[str, Any]:
@@ -13,30 +19,23 @@ def _profile(owner_id: str, row: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "schema_version": "peripheral_profile.v1",
         "configured": configured,
-        "grip_type": row["grip_type"] if row else None,
-        "hand_length_cm": row["hand_length_cm"] if row else None,
-        "wrist_position": row["wrist_position"] if row else None,
-        "grip_preference": row["grip_preference"] if row else None,
-        "current_mouse_brand": row["current_mouse_brand"] if row else None,
-        "current_mouse_model": row["current_mouse_model"] if row else None,
-        "current_mousepad": row["current_mousepad"] if row else None,
-        "budget": row["budget"] if row else None,
-        "updated_at": row["updated_at"] if row else None,
+        "grip_type": row.get("grip_type") if row else None,
+        "hand_length_cm": row.get("hand_length_cm") if row else None,
+        "wrist_position": row.get("wrist_position") if row else None,
+        "grip_preference": row.get("grip_preference") if row else None,
+        "current_mouse_brand": row.get("current_mouse_brand") if row else None,
+        "current_mouse_model": row.get("current_mouse_model") if row else None,
+        "current_mousepad": row.get("current_mousepad") if row else None,
+        "budget": row.get("budget") if row else None,
+        "updated_at": row.get("updated_at") if row else None,
     }
 
 
 async def get_profile(owner_id: str) -> dict[str, Any]:
-    conn = await get_conn()
-    cursor = await conn.execute(
-        "SELECT grip_type, hand_length_cm, wrist_position, grip_preference, "
-        "current_mouse_brand, current_mouse_model, current_mousepad, budget, updated_at "
-        "FROM peripheral_profiles WHERE owner_id=?",
-        (owner_id,),
-    )
-    row = await cursor.fetchone()
-    if row is None:
+    data = file_store.read_json(_PERIPHERAL_PATH)
+    if data is None:
         return _profile(owner_id, None)
-    return _profile(owner_id, dict(row))
+    return _profile(owner_id, data)
 
 
 _ALLOWED_FIELDS = frozenset({
@@ -72,29 +71,8 @@ async def update_profile(owner_id: str, updates: dict[str, Any]) -> dict[str, An
     if not validated:
         raise ValueError("at least one field must be provided")
 
-    conn = await get_conn()
-    cursor = await conn.execute(
-        "SELECT grip_type, hand_length_cm, wrist_position, grip_preference, "
-        "current_mouse_brand, current_mouse_model, current_mousepad, budget "
-        "FROM peripheral_profiles WHERE owner_id=?",
-        (owner_id,),
-    )
-    existing = await cursor.fetchone()
-    merged: dict[str, Any] = dict(existing) if existing else {}
-    merged.update(validated)
-
-    columns = [
-        "grip_type", "hand_length_cm", "wrist_position", "grip_preference",
-        "current_mouse_brand", "current_mouse_model", "current_mousepad", "budget",
-    ]
-    placeholders = ", ".join(f"{c}=?" for c in columns)
-    values = [merged.get(c) for c in columns]
-
-    await conn.execute(
-        f"INSERT INTO peripheral_profiles(owner_id, {', '.join(columns)}) "
-        f"VALUES(?, {', '.join('?' * len(columns))}) "
-        f"ON CONFLICT(owner_id) DO UPDATE SET {placeholders}, updated_at=CURRENT_TIMESTAMP",
-        (owner_id, *values, *values),
-    )
-    await conn.commit()
+    existing = file_store.read_json(_PERIPHERAL_PATH) or {}
+    existing.update(validated)
+    existing["updated_at"] = _utc_now()
+    file_store.write_json(_PERIPHERAL_PATH, existing)
     return await get_profile(owner_id)

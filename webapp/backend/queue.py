@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -19,8 +20,7 @@ from .contracts import (
     normalize_json_value,
     validate_analysis_result_v2_for_persistence,
 )
-from . import coach_store, history_trends
-from .db import get_conn
+from . import file_store, history_trends
 from .read_models import build_record_presentation_label
 from .workspace import (
     copy_path_to_path,
@@ -36,13 +36,62 @@ _LEGACY_RESULT_KEYS = frozenset(
 )
 _INPUT_MODES = frozenset({"input_native", "multimodal", "video_fallback"})
 
+_QUEUE_LOCK = asyncio.Lock()
+_SESSIONS_DIR = "sessions"
+_COUNTER_PATH = "sessions/_counter.json"
+_ONBOARDING_PATH = "config/onboarding.json"
+_ANALYSES_TOMBSTONES = "sessions/_deletion_tombstones.json"
+
 
 class ActiveSessionExists(RuntimeError):
     pass
 
 
+class RetryNotAllowed(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class SessionNotFound(Exception):
+    pass
+
+
+class SessionForbidden(Exception):
+    pass
+
+
+class SessionNotDeletable(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+# ---- timestamp helpers ----
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _utc_now_sqlite() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_utc(value: str | None) -> datetime | None:
+    if not value or not str(value).strip():
+        return None
+    s = str(value).strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s.rstrip("Z").replace("T", " "), fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
 def sqlite_timestamp_to_wire_utc(value: str | None) -> str | None:
-    """SQLite CURRENT_TIMESTAMP (UTC) → YYYY-MM-DDTHH:MM:SSZ."""
     if value is None:
         return None
     if not isinstance(value, str):
@@ -57,6 +106,66 @@ def sqlite_timestamp_to_wire_utc(value: str | None) -> str | None:
     if "T" in s and not s.endswith("Z"):
         return f"{s}Z"
     return s
+
+
+def _lease_expiry() -> str:
+    base = datetime.now(timezone.utc)
+    return (base + timedelta(seconds=LEASE_TTL_SECONDS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ---- session file I/O ----
+
+def _session_path(session_id: int) -> str:
+    return f"{_SESSIONS_DIR}/{session_id}.json"
+
+
+def _next_session_id() -> int:
+    data = file_store.read_json(_COUNTER_PATH)
+    if data is None:
+        # Scan existing session files for the max id
+        max_id = 0
+        for p in file_store.list_dir(_SESSIONS_DIR, "*.json"):
+            try:
+                max_id = max(max_id, int(p.stem))
+            except ValueError:
+                continue
+        data = {"next_id": max_id + 1}
+    next_id = int(data.get("next_id", 1))
+    data["next_id"] = next_id + 1
+    file_store.write_json(_COUNTER_PATH, data)
+    return next_id
+
+
+def _load_session(session_id: int) -> dict | None:
+    return file_store.read_json(_session_path(session_id))
+
+
+def _save_session(session: dict) -> None:
+    file_store.write_json(_session_path(session["id"]), session)
+
+
+def _delete_session_file(session_id: int) -> None:
+    file_store.delete_file(_session_path(session_id))
+
+
+def _all_sessions(user_id: str | None = None) -> list[dict]:
+    sessions = []
+    for p in file_store.list_dir(_SESSIONS_DIR, "*.json"):
+        try:
+            int(p.stem)
+        except ValueError:
+            continue
+        try:
+            data = file_store.read_json(f"{_SESSIONS_DIR}/{p.name}")
+        except (OSError, ValueError):
+            log.warning("skipping unreadable session %s", f"{_SESSIONS_DIR}/{p.name}")
+            continue
+        if data is None:
+            continue
+        if user_id is None or data.get("user_id") == user_id:
+            sessions.append(data)
+    sessions.sort(key=lambda s: (s.get("created_at", ""), s.get("id", 0)), reverse=True)
+    return sessions
 
 
 def _should_coerce_analysis_result(stored: dict) -> bool:
@@ -94,25 +203,7 @@ def _coerce_or_normalize_v1_read(
         return out
 
 
-def _utc_now_sqlite() -> str:
-    """UTC wall time as SQLite CURRENT_TIMESTAMP shape: YYYY-MM-DD HH:MM:SS."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _parse_sqlite_utc(value: str | None) -> datetime | None:
-    if not value or not str(value).strip():
-        return None
-    s = str(value).strip().replace("T", " ").rstrip("Z")
-    try:
-        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
-def _lease_expiry_sqlite(now: str | None = None) -> str:
-    base = _parse_sqlite_utc(now) or datetime.now(timezone.utc)
-    return (base + timedelta(seconds=LEASE_TTL_SECONDS)).strftime("%Y-%m-%d %H:%M:%S")
-
+# ---- public API ----
 
 async def enqueue(
     user_id: str, video_path: str, csv_path: str,
@@ -126,13 +217,10 @@ async def enqueue(
 ) -> int:
     if input_mode not in _INPUT_MODES:
         raise ValueError(f"unsupported input_mode: {input_mode}")
-    conn = await get_conn()
     if kovaak_run_id is not None:
-        cur = await conn.execute(
-            "SELECT id FROM kovaak_runs WHERE id=? AND user_id=?",
-            (kovaak_run_id, user_id),
-        )
-        if await cur.fetchone() is None:
+        from . import kovaak_run_store
+        run = await kovaak_run_store.get_kovaak_run(kovaak_run_id, user_id)
+        if run is None:
             raise PermissionError("kovaak run is not owned by this user")
     if manual_override is None and (cm_per_360 is not None or fov is not None):
         manual_override = {"cm_per_360": cm_per_360, "fov": fov}
@@ -140,195 +228,145 @@ async def enqueue(
         "profile_default": dict(profile_default) if isinstance(profile_default, dict) else None,
         "manual_override": dict(manual_override) if isinstance(manual_override, dict) else None,
     }
-    initial_task_state = "importing" if status == "uploading" else (
-        "queued" if status == "queued" else status
-    )
-    insert_sql = (
-        "INSERT INTO sessions("
-        "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, "
-        "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts, "
-        "task_group_ref, attempt_number, task_state, calibration_request_json"
-        ") "
-    )
-    values_sql = "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, 1, ?, ?"
-    parameters = (
-        user_id,
-        status,
-        video_path,
-        csv_path,
-        cm_per_360,
-        fov,
-        analysis_type,
-        input_mode,
-        kovaak_run_id,
-        json.dumps(input_snapshot, ensure_ascii=False, separators=(",", ":"))
-        if input_snapshot is not None else None,
-        DEFAULT_MAX_ATTEMPTS,
-        initial_task_state,
-        json.dumps(calibration_request, ensure_ascii=False, separators=(",", ":")),
-    )
-    if require_no_active:
-        values_sql += (
-            " WHERE NOT EXISTS ("
-            "SELECT 1 FROM sessions WHERE user_id=? "
-            "AND status IN ('uploading', 'queued', 'running'))"
+    async with _QUEUE_LOCK:
+        if require_no_active:
+            for s in _all_sessions(user_id):
+                if s.get("status") in ("uploading", "queued", "running"):
+                    raise ActiveSessionExists("owner already has an active analysis")
+        now = _utc_now()
+        session_id = _next_session_id()
+        initial_task_state = "importing" if status == "uploading" else (
+            "queued" if status == "queued" else status
         )
-        parameters += (user_id,)
-    cur = await conn.execute(f"{insert_sql}{values_sql} RETURNING id", parameters)
-    row = await cur.fetchone()
-    if row is None:
-        await conn.rollback()
-        raise ActiveSessionExists("owner already has an active analysis")
-    session_id = row["id"]
-    await conn.execute(
-        "UPDATE sessions SET task_group_ref=? WHERE id=?",
-        (f"task:{session_id}", session_id),
-    )
-    await conn.commit()
+        session = {
+            "id": session_id,
+            "user_id": user_id,
+            "status": status,
+            "video_path": video_path,
+            "csv_path": csv_path,
+            "cm_per_360": cm_per_360,
+            "fov": fov,
+            "analysis_type": analysis_type,
+            "input_mode": input_mode,
+            "kovaak_run_id": kovaak_run_id,
+            "input_snapshot": input_snapshot,
+            "result": None,
+            "error": None,
+            "llm_cost_cny": 0,
+            "attempts": 0,
+            "max_attempts": DEFAULT_MAX_ATTEMPTS,
+            "worker_id": None,
+            "lease_expires_at": None,
+            "heartbeat_at": None,
+            "started_at": None,
+            "finished_at": None,
+            "created_at": now,
+            "updated_at": now,
+            "task_group_ref": f"task:{session_id}",
+            "parent_session_id": None,
+            "attempt_number": 1,
+            "task_state": initial_task_state,
+            "task_phase": None,
+            "failure_domain": None,
+            "partial_outcome": None,
+            "calibration_request": calibration_request,
+            "calibration_snapshot": None,
+        }
+        _save_session(session)
     return session_id
 
 
 async def finish_upload(session_id: int) -> bool:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "UPDATE sessions SET status='queued', task_state='queued', "
-        "task_phase='preparing_training_record', updated_at=CURRENT_TIMESTAMP "
-        "WHERE id=? AND status='uploading'",
-        (session_id,),
-    )
-    await conn.commit()
-    return cur.rowcount > 0
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None or session.get("status") != "uploading":
+            return False
+        session["status"] = "queued"
+        session["task_state"] = "queued"
+        session["task_phase"] = "preparing_training_record"
+        session["updated_at"] = _utc_now()
+        _save_session(session)
+    return True
 
 
 async def claim_next(worker_id: str) -> Optional[dict]:
-    """Atomically claim the next queued job with attempts remaining + lease."""
-    conn = await get_conn()
-    await conn.execute("BEGIN IMMEDIATE")
-    try:
-        cur = await conn.execute(
-            "SELECT id FROM sessions WHERE status='queued' "
-            "AND attempts < max_attempts "
-            "ORDER BY created_at LIMIT 1"
-        )
-        row = await cur.fetchone()
-        if row is None:
-            await conn.execute("COMMIT")
+    async with _QUEUE_LOCK:
+        candidates = [
+            s for s in _all_sessions()
+            if s.get("status") == "queued"
+            and int(s.get("attempts", 0)) < int(s.get("max_attempts", DEFAULT_MAX_ATTEMPTS))
+        ]
+        if not candidates:
             return None
-        sid = row["id"]
-        now = _utc_now_sqlite()
-        lease_exp = _lease_expiry_sqlite(now)
-        await conn.execute(
-            "UPDATE sessions SET status='running', task_state='running', "
-            "task_phase='preparing_training_record', "
-            "attempts = attempts + 1, "
-            "worker_id = ?, "
-            "started_at = COALESCE(started_at, ?), "
-            "heartbeat_at = ?, "
-            "lease_expires_at = ?, "
-            "updated_at = ? "
-            "WHERE id=?",
-            (worker_id, now, now, lease_exp, now, sid),
-        )
-        cur = await conn.execute(
-            "SELECT id, user_id, video_path, csv_path, cm_per_360, fov, analysis_type, "
-            "input_mode, kovaak_run_id, input_snapshot_json, task_group_ref, "
-            "parent_session_id, attempt_number, task_state, task_phase, failure_domain, "
-            "partial_outcome_json, calibration_request_json, calibration_snapshot_json, "
-            "created_at, attempts, max_attempts, worker_id, started_at, "
-            "lease_expires_at, heartbeat_at "
-            "FROM sessions WHERE id=?",
-            (sid,),
-        )
-        claimed = await cur.fetchone()
-        await conn.execute("COMMIT")
-        if not claimed:
-            return None
-        result = dict(claimed)
-        raw_snapshot = result.pop("input_snapshot_json", None)
-        result["input_snapshot"] = decode_input_snapshot_json(raw_snapshot)
-        raw_calibration = result.pop("calibration_request_json", None)
-        try:
-            result["calibration_request"] = (
-                json.loads(raw_calibration) if raw_calibration else None
-            )
-        except (TypeError, json.JSONDecodeError):
-            result["calibration_request"] = None
-        return result
-    except Exception:
-        await conn.execute("ROLLBACK")
-        raise
+        # FIFO: pick the oldest queued job (created_at, then id ascending).
+        candidate = min(candidates, key=lambda s: (s.get("created_at", ""), s.get("id", 0)))
+        if not isinstance(candidate.get("input_snapshot"), dict):
+            candidate["input_snapshot"] = None
+        now = _utc_now()
+        lease_exp = _lease_expiry()
+        candidate["status"] = "running"
+        candidate["task_state"] = "running"
+        candidate["task_phase"] = "preparing_training_record"
+        candidate["attempts"] = int(candidate.get("attempts", 0)) + 1
+        candidate["worker_id"] = worker_id
+        if not candidate.get("started_at"):
+            candidate["started_at"] = now
+        candidate["heartbeat_at"] = now
+        candidate["lease_expires_at"] = lease_exp
+        candidate["updated_at"] = now
+        _save_session(candidate)
+        return candidate
 
 
 async def heartbeat(session_id: int, worker_id: str) -> bool:
-    """Extend lease if session is running and owned by worker_id. True if updated."""
-    conn = await get_conn()
-    now = _utc_now_sqlite()
-    lease_exp = _lease_expiry_sqlite(now)
-    cur = await conn.execute(
-        "UPDATE sessions SET heartbeat_at = ?, lease_expires_at = ?, "
-        "updated_at = ? "
-        "WHERE id = ? AND status = 'running' AND worker_id = ?",
-        (now, lease_exp, now, session_id, worker_id),
-    )
-    await conn.commit()
-    return cur.rowcount > 0
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None:
+            return False
+        if session.get("status") != "running" or session.get("worker_id") != worker_id:
+            return False
+        now = _utc_now()
+        session["heartbeat_at"] = now
+        session["lease_expires_at"] = _lease_expiry()
+        session["updated_at"] = now
+        _save_session(session)
+    return True
 
 
 async def recover_stale_jobs(now: str | None = None) -> dict:
-    """Requeue or fail running jobs whose lease expired (or legacy no-lease stale).
-
-    Returns ``{"requeued": int, "failed": int}``.
-    """
-    write_now_s = _utc_now_sqlite()
-    now_s = now or write_now_s
-    now_dt = _parse_sqlite_utc(now_s) or datetime.now(timezone.utc)
-    stale_before = (now_dt - timedelta(seconds=LEASE_TTL_SECONDS)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    conn = await get_conn()
-    await conn.execute("BEGIN IMMEDIATE")
     requeued = 0
     failed = 0
-    try:
-        cur = await conn.execute(
-            "SELECT id, attempts, max_attempts, lease_expires_at, "
-            "started_at, updated_at FROM sessions WHERE status = 'running'"
-        )
-        rows = await cur.fetchall()
-        for row in rows:
-            sid = row["id"]
-            lease = row["lease_expires_at"]
-            if lease is not None and str(lease).strip():
-                is_stale = str(lease) < now_s
+    async with _QUEUE_LOCK:
+        now_dt = datetime.now(timezone.utc)
+        for session in _all_sessions():
+            if session.get("status") != "running":
+                continue
+            lease = session.get("lease_expires_at")
+            if lease:
+                is_stale = str(lease) < _utc_now()
             else:
-                # Legacy running rows without lease: treat as stale if
-                # started_at/updated_at older than TTL.
-                anchor = row["updated_at"] or row["started_at"]
-                is_stale = (
-                    anchor is not None
-                    and str(anchor).strip() != ""
-                    and str(anchor) < stale_before
-                )
+                anchor = session.get("updated_at") or session.get("started_at")
+                if anchor:
+                    anchor_dt = _parse_utc(anchor)
+                    is_stale = anchor_dt is not None and (now_dt - anchor_dt).total_seconds() > LEASE_TTL_SECONDS
+                else:
+                    is_stale = False
             if not is_stale:
                 continue
-
-            attempts = int(row["attempts"] or 0)
-            max_attempts = int(row["max_attempts"] or DEFAULT_MAX_ATTEMPTS)
+            attempts = int(session.get("attempts", 0))
+            max_attempts = int(session.get("max_attempts", DEFAULT_MAX_ATTEMPTS))
             if attempts < max_attempts:
-                await conn.execute(
-                    "UPDATE sessions SET status = 'queued', task_state='queued', "
-                    "task_phase='preparing_training_record', "
-                    "worker_id = NULL, lease_expires_at = NULL, "
-                    "heartbeat_at = NULL, finished_at = NULL, "
-                    "updated_at = ? WHERE id = ?",
-                    (write_now_s, sid),
-                )
+                session["status"] = "queued"
+                session["task_state"] = "queued"
+                session["task_phase"] = "preparing_training_record"
+                session["worker_id"] = None
+                session["lease_expires_at"] = None
+                session["heartbeat_at"] = None
+                session["finished_at"] = None
+                session["updated_at"] = _utc_now()
+                _save_session(session)
                 requeued += 1
-                log.warning(
-                    "stale job requeued session_id=%s attempts=%s/%s",
-                    sid, attempts, max_attempts,
-                )
+                log.warning("stale job requeued session_id=%s", session["id"])
             else:
                 err = build_error_v1(
                     category="local_cv_runtime",
@@ -337,134 +375,91 @@ async def recover_stale_jobs(now: str | None = None) -> dict:
                     retryable=True,
                     trace_id=None,
                 )
-                await conn.execute(
-                    "UPDATE sessions SET status = 'failed', task_state='failed', "
-                    "task_phase=NULL, error = ?, failure_domain='kinematics', "
-                    "worker_id = NULL, lease_expires_at = NULL, "
-                    "heartbeat_at = NULL, finished_at = ?, updated_at = ? "
-                    "WHERE id = ?",
-                    (dump_contract_json(err), write_now_s, write_now_s, sid),
-                )
+                session["status"] = "failed"
+                session["task_state"] = "failed"
+                session["task_phase"] = None
+                session["error"] = err
+                session["failure_domain"] = "kinematics"
+                session["worker_id"] = None
+                session["lease_expires_at"] = None
+                session["heartbeat_at"] = None
+                session["finished_at"] = _utc_now()
+                session["updated_at"] = _utc_now()
+                _save_session(session)
                 failed += 1
-                log.warning(
-                    "stale job failed (attempts exhausted) session_id=%s", sid,
-                )
-        await conn.execute("COMMIT")
-    except Exception:
-        await conn.execute("ROLLBACK")
-        raise
+                log.warning("stale job failed session_id=%s", session["id"])
     return {"requeued": requeued, "failed": failed}
 
 
-class RetryNotAllowed(Exception):
-    """Raised when requeue_for_retry cannot proceed."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
-class SessionNotFound(Exception):
-    """Raised when delete_session targets a missing session."""
-
-
-class SessionForbidden(Exception):
-    """Raised when delete_session user_id does not own the session."""
-
-
-class SessionNotDeletable(Exception):
-    """Raised when delete_session targets queued or running session."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
 async def requeue_for_retry(session_id: int) -> dict:
-    """Create a new attempt from a failed session and copy its managed inputs."""
-    conn = await get_conn()
-    new_id: int | None = None
-    await conn.execute("BEGIN IMMEDIATE")
-    try:
-        cur = await conn.execute(
-            "SELECT * FROM sessions WHERE id = ?",
-            (session_id,),
-        )
-        row = await cur.fetchone()
-        if row is None:
-            await conn.execute("COMMIT")
+    async with _QUEUE_LOCK:
+        source = _load_session(session_id)
+        if source is None:
             raise RetryNotAllowed("not_found", "session 不存在")
-        if row["status"] != "failed":
-            await conn.execute("COMMIT")
+        if source["status"] != "failed":
             raise RetryNotAllowed(
                 "invalid_status",
-                f"仅 failed 状态可重试，当前为 {row['status']}",
+                f"仅 failed 状态可重试，当前为 {source['status']}",
             )
-        cur = await conn.execute(
-            "SELECT 1 FROM sessions WHERE parent_session_id=? LIMIT 1",
-            (session_id,),
-        )
-        if await cur.fetchone() is not None:
-            await conn.execute("COMMIT")
-            raise RetryNotAllowed(
-                "invalid_status", "this failed attempt already has a retry attempt",
-            )
-        cur = await conn.execute(
-            "SELECT id FROM sessions WHERE user_id=? "
-            "AND status IN ('uploading', 'queued', 'running') LIMIT 1",
-            (row["user_id"],),
-        )
-        if await cur.fetchone() is not None:
-            await conn.execute("COMMIT")
-            raise RetryNotAllowed(
-                "active_analysis", "已有其它 Analysis 正在进行",
-            )
-        input_mode = row["input_mode"] or "video_fallback"
+        # Check no existing retry
+        for s in _all_sessions(source["user_id"]):
+            if s.get("parent_session_id") == session_id:
+                raise RetryNotAllowed("invalid_status", "this failed attempt already has a retry attempt")
+        # Check no active
+        for s in _all_sessions(source["user_id"]):
+            if s.get("status") in ("uploading", "queued", "running"):
+                raise RetryNotAllowed("active_analysis", "已有其它 Analysis 正在进行")
+
+        input_mode = source.get("input_mode") or "video_fallback"
         if input_mode == "video_fallback":
-            video_path = row["video_path"] or ""
-            csv_path = row["csv_path"] or ""
+            video_path = source.get("video_path") or ""
+            csv_path = source.get("csv_path") or ""
             if not video_path or not os.path.isfile(video_path):
-                await conn.execute("COMMIT")
                 raise RetryNotAllowed("missing_video", "输入视频已不存在，请重新上传分析")
             if not csv_path or not os.path.isfile(csv_path):
-                await conn.execute("COMMIT")
                 raise RetryNotAllowed("missing_csv", "输入 CSV 已不存在，请重新上传分析")
-        elif decode_input_snapshot_json(row["input_snapshot_json"]) is None:
-            await conn.execute("COMMIT")
+        elif not isinstance(source.get("input_snapshot"), dict):
             raise RetryNotAllowed("missing_snapshot", "分析输入快照不存在，请重新提交分析")
-        source = dict(row)
+
         parent_group = source.get("task_group_ref") or f"task:{session_id}"
-        next_attempt = int(source.get("attempt_number") or 1) + 1
-        cur = await conn.execute(
-            "INSERT INTO sessions("
-            "user_id, status, video_path, csv_path, cm_per_360, fov, analysis_type, "
-            "input_mode, kovaak_run_id, input_snapshot_json, attempts, max_attempts, "
-            "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
-            "calibration_request_json"
-            ") VALUES(?, 'uploading', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, "
-            "'retrying', 'preparing_training_record', ?) RETURNING id",
-            (
-                source["user_id"], source.get("video_path"), source.get("csv_path"),
-                source.get("cm_per_360"), source.get("fov"), source.get("analysis_type"),
-                source.get("input_mode"), source.get("kovaak_run_id"),
-                source.get("input_snapshot_json"), source.get("max_attempts") or DEFAULT_MAX_ATTEMPTS,
-                parent_group, session_id, next_attempt, source.get("calibration_request_json"),
-            ),
-        )
-        new_id = int((await cur.fetchone())["id"])
-        await conn.execute("COMMIT")
-    except RetryNotAllowed:
-        raise
-    except Exception:
-        await conn.execute("ROLLBACK")
-        if new_id is not None:
-            try:
-                remove_session_workspace(new_id)
-            except OSError:
-                pass
-        raise
+        next_attempt = int(source.get("attempt_number", 1)) + 1
+        now = _utc_now()
+        new_id = _next_session_id()
+        new_session = {
+            "id": new_id,
+            "user_id": source["user_id"],
+            "status": "uploading",
+            "video_path": source.get("video_path"),
+            "csv_path": source.get("csv_path"),
+            "cm_per_360": source.get("cm_per_360"),
+            "fov": source.get("fov"),
+            "analysis_type": source.get("analysis_type"),
+            "input_mode": source.get("input_mode"),
+            "kovaak_run_id": source.get("kovaak_run_id"),
+            "input_snapshot": source.get("input_snapshot"),
+            "result": None,
+            "error": None,
+            "llm_cost_cny": 0,
+            "attempts": 0,
+            "max_attempts": source.get("max_attempts", DEFAULT_MAX_ATTEMPTS),
+            "worker_id": None,
+            "lease_expires_at": None,
+            "heartbeat_at": None,
+            "started_at": None,
+            "finished_at": None,
+            "created_at": now,
+            "updated_at": now,
+            "task_group_ref": parent_group,
+            "parent_session_id": session_id,
+            "attempt_number": next_attempt,
+            "task_state": "retrying",
+            "task_phase": "preparing_training_record",
+            "failure_domain": None,
+            "partial_outcome": None,
+            "calibration_request": source.get("calibration_request"),
+            "calibration_snapshot": None,
+        }
+        _save_session(new_session)
 
     try:
         copied_video = None
@@ -476,28 +471,25 @@ async def requeue_for_retry(session_id: int) -> dict:
             if input_mode == "video_fallback" and source.get("csv_path"):
                 copied_csv = session_dir(new_id) / "stats.csv"
                 copy_path_to_path(Path(source["csv_path"]), copied_csv)
-        await conn.execute("BEGIN IMMEDIATE")
-        cur = await conn.execute(
-            "UPDATE sessions SET status='queued', video_path=?, csv_path=?, "
-            "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='uploading'",
-            (
-                str(copied_video) if copied_video else source.get("video_path"),
-                str(copied_csv) if copied_csv else source.get("csv_path"),
-                new_id,
-            ),
-        )
-        if cur.rowcount != 1:
-            raise RuntimeError("retry attempt reservation was lost")
-        await conn.execute("COMMIT")
+        async with _QUEUE_LOCK:
+            session = _load_session(new_id)
+            if session is None or session["status"] != "uploading":
+                raise RuntimeError("retry attempt reservation was lost")
+            if copied_video:
+                session["video_path"] = str(copied_video)
+            if copied_csv:
+                session["csv_path"] = str(copied_csv)
+            session["status"] = "queued"
+            session["updated_at"] = _utc_now()
+            _save_session(session)
     except Exception:
-        if conn.in_transaction:
-            await conn.execute("ROLLBACK")
         try:
             remove_session_workspace(new_id)
         except OSError:
             pass
         await abort_uploading_session(new_id, source["user_id"])
         raise
+
     s = await get_session(new_id)
     if s is None:
         raise RetryNotAllowed("not_found", "session 不存在")
@@ -507,66 +499,59 @@ async def requeue_for_retry(session_id: int) -> dict:
 async def mark_done(
     session_id: int, result: dict, llm_cost: float, *, worker_id: str,
 ) -> bool:
-    conn = await get_conn()
-    row = None
-    if result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
-        cur = await conn.execute(
-            "SELECT user_id, analysis_type, input_mode, kovaak_run_id FROM sessions "
-            "WHERE id=? AND status='running' AND worker_id=?",
-            (session_id, worker_id),
-        )
-        row = await cur.fetchone()
-        if row is None:
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None:
             return False
-        run_id = row["kovaak_run_id"]
-        result = validate_analysis_result_v2_for_persistence(
-            result,
-            owner_id=row["user_id"],
-            analysis_id=f"analysis:{session_id}",
-            analysis_type=row["analysis_type"] or "flicking",
-            input_mode=row["input_mode"] or "video_fallback",
-            kovaak_run_ref=f"run:{run_id}" if run_id is not None else None,
-            require_local_profile=row["user_id"] == DESKTOP_LOCAL_PROFILE,
-        )
-    partial_outcome = None
-    calibration_snapshot = None
-    if isinstance(result.get("input_snapshot"), dict):
-        candidate = result["input_snapshot"].get("calibration")
-        if isinstance(candidate, dict):
-            calibration_snapshot = candidate
-    if (
-        row is not None
-        and row["input_mode"] == "multimodal"
-        and isinstance(result.get("evidence"), dict)
-        and isinstance(result["evidence"].get("availability"), dict)
-        and result["evidence"]["availability"].get("mp4") in {
-            "unavailable", "missing", "not_present",
-        }
-        and isinstance(result.get("deterministic"), dict)
-        and result["deterministic"].get("status") in {"available", "limited"}
-    ):
-        partial_outcome = {
-            "status": "partial",
-            "native_preserved": True,
-            "visual_status": "unavailable",
-            "reason_code": "video_unavailable",
-        }
-    cur = await conn.execute(
-        "UPDATE sessions SET status='done', task_state='done', task_phase=NULL, "
-        "partial_outcome_json=?, calibration_snapshot_json=?, result=?, llm_cost_cny=?, "
-        "lease_expires_at=NULL, heartbeat_at=NULL, worker_id=NULL, "
-        "finished_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
-        "WHERE id=? AND status='running' AND worker_id=?",
-        (
-            json.dumps(partial_outcome, ensure_ascii=False, separators=(",", ":"))
-            if partial_outcome else None,
-            json.dumps(calibration_snapshot, ensure_ascii=False, separators=(",", ":"))
-            if calibration_snapshot else None,
-            dump_contract_json(result), llm_cost, session_id, worker_id,
-        ),
-    )
-    await conn.commit()
-    return cur.rowcount > 0
+        if session.get("status") != "running" or session.get("worker_id") != worker_id:
+            return False
+        if result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
+            run_id = session.get("kovaak_run_id")
+            result = validate_analysis_result_v2_for_persistence(
+                result,
+                owner_id=session["user_id"],
+                analysis_id=f"analysis:{session_id}",
+                analysis_type=session.get("analysis_type") or "flicking",
+                input_mode=session.get("input_mode") or "video_fallback",
+                kovaak_run_ref=f"run:{run_id}" if run_id is not None else None,
+                require_local_profile=session["user_id"] == DESKTOP_LOCAL_PROFILE,
+            )
+        partial_outcome = None
+        calibration_snapshot = None
+        if isinstance(result.get("input_snapshot"), dict):
+            candidate = result["input_snapshot"].get("calibration")
+            if isinstance(candidate, dict):
+                calibration_snapshot = candidate
+        if (
+            session.get("input_mode") == "multimodal"
+            and isinstance(result.get("evidence"), dict)
+            and isinstance(result["evidence"].get("availability"), dict)
+            and result["evidence"]["availability"].get("mp4") in {
+                "unavailable", "missing", "not_present",
+            }
+            and isinstance(result.get("deterministic"), dict)
+            and result["deterministic"].get("status") in {"available", "limited"}
+        ):
+            partial_outcome = {
+                "status": "partial",
+                "native_preserved": True,
+                "visual_status": "unavailable",
+                "reason_code": "video_unavailable",
+            }
+        session["status"] = "done"
+        session["task_state"] = "done"
+        session["task_phase"] = None
+        session["partial_outcome"] = partial_outcome
+        session["calibration_snapshot"] = calibration_snapshot
+        session["result"] = result
+        session["llm_cost_cny"] = llm_cost
+        session["lease_expires_at"] = None
+        session["heartbeat_at"] = None
+        session["worker_id"] = None
+        session["finished_at"] = _utc_now()
+        session["updated_at"] = _utc_now()
+        _save_session(session)
+    return True
 
 
 async def mark_failed(
@@ -576,64 +561,50 @@ async def mark_failed(
     worker_id: str,
     failure_domain: str | None = None,
 ) -> bool:
-    if isinstance(error, dict):
-        payload = dump_contract_json(error)
-    else:
-        payload = error
-    conn = await get_conn()
-    cur = await conn.execute(
-        "UPDATE sessions SET status='failed', task_state='failed', "
-        "task_phase=NULL, failure_domain=COALESCE(?, failure_domain), error=?, "
-        "lease_expires_at=NULL, heartbeat_at=NULL, worker_id=NULL, "
-        "finished_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
-        "WHERE id=? AND status='running' AND worker_id=?",
-        (failure_domain, payload, session_id, worker_id),
-    )
-    await conn.commit()
-    return cur.rowcount > 0
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None:
+            return False
+        if session.get("status") != "running" or session.get("worker_id") != worker_id:
+            return False
+        session["status"] = "failed"
+        session["task_state"] = "failed"
+        session["task_phase"] = None
+        if failure_domain is not None:
+            session["failure_domain"] = failure_domain
+        session["error"] = error
+        session["lease_expires_at"] = None
+        session["heartbeat_at"] = None
+        session["worker_id"] = None
+        session["finished_at"] = _utc_now()
+        session["updated_at"] = _utc_now()
+        _save_session(session)
+    return True
 
 
 async def add_llm_cost(session_id: int, delta: float) -> None:
-    """Legacy compatibility accumulator for historical CNY cost records.
-
-    Active selected-provider turns do not call this without a provider-specific
-    usage and currency contract; existing rows remain readable.
-    """
-    conn = await get_conn()
-    await conn.execute(
-        "UPDATE sessions SET llm_cost_cny = COALESCE(llm_cost_cny, 0) + ?, "
-        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-        (delta, session_id),
-    )
-    await conn.commit()
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None:
+            return
+        session["llm_cost_cny"] = float(session.get("llm_cost_cny", 0) or 0) + delta
+        session["updated_at"] = _utc_now()
+        _save_session(session)
 
 
 async def get_active_session(user_id: str) -> Optional[dict]:
-    """Return one active owner-scoped Analysis for command conflict reporting."""
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT * FROM sessions WHERE user_id=? AND status IN ('uploading', 'queued', 'running') "
-        "ORDER BY id DESC LIMIT 1",
-        (user_id,),
-    )
-    row = await cur.fetchone()
-    return dict(row) if row else None
+    for s in _all_sessions(user_id):
+        if s.get("status") in ("uploading", "queued", "running"):
+            return s
+    return None
 
 
 async def get_run_analysis_states(user_id: str, run_id: int) -> list[dict]:
-    """Return existing Analysis rows for one owner-scoped Run.
-
-    This is intentionally a small projection used by batch submission to make
-    repeated confirmations idempotent without introducing a second analysis
-    registry.
-    """
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id, status, kovaak_run_id FROM sessions "
-        "WHERE user_id=? AND kovaak_run_id=? ORDER BY id DESC",
-        (user_id, run_id),
-    )
-    return [dict(row) for row in await cur.fetchall()]
+    return [
+        {"id": s["id"], "status": s.get("status"), "kovaak_run_id": s.get("kovaak_run_id")}
+        for s in _all_sessions(user_id)
+        if s.get("kovaak_run_id") == run_id
+    ]
 
 
 async def has_active(user_id: str) -> bool:
@@ -643,158 +614,73 @@ async def has_active(user_id: str) -> bool:
 async def set_session_input_paths(
     session_id: int, user_id: str, video_path: str, csv_path: str,
 ) -> bool:
-    """Set only managed workspace paths for an uploading owner-scoped session."""
-    conn = await get_conn()
-    cur = await conn.execute(
-        "UPDATE sessions SET video_path=?, csv_path=? "
-        "WHERE id=? AND user_id=? AND status='uploading'",
-        (video_path, csv_path, session_id, user_id),
-    )
-    await conn.commit()
-    return cur.rowcount == 1
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None or session.get("user_id") != user_id or session.get("status") != "uploading":
+            return False
+        session["video_path"] = video_path
+        session["csv_path"] = csv_path
+        _save_session(session)
+    return True
 
 
 async def abort_uploading_session(session_id: int, user_id: str) -> bool:
-    """Discard an incomplete owner-scoped upload after managed-workspace cleanup."""
-    conn = await get_conn()
-    cur = await conn.execute(
-        "DELETE FROM sessions WHERE id=? AND user_id=? AND status='uploading'",
-        (session_id, user_id),
-    )
-    await conn.commit()
-    return cur.rowcount == 1
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None or session.get("user_id") != user_id or session.get("status") != "uploading":
+            return False
+        _delete_session_file(session_id)
+    return True
 
 
 async def reconcile_stale_uploads() -> dict[str, int]:
-    """Remove startup-left managed upload workspaces before unlocking owners."""
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id FROM sessions WHERE status='uploading' ORDER BY id",
-    )
-    session_ids = [int(row["id"]) for row in await cur.fetchall()]
     cleaned = 0
     failed = 0
-
-    for session_id in session_ids:
-        try:
-            remove_session_workspace(session_id)
-        except OSError:
-            failed += 1
-            continue
-
-        cur = await conn.execute(
-            "DELETE FROM sessions WHERE id=? AND status='uploading'",
-            (session_id,),
-        )
-        await conn.commit()
-        cleaned += cur.rowcount
-
-    return {
-        "processed": len(session_ids),
-        "cleaned": cleaned,
-        "failed": failed,
-    }
+    processed = 0
+    async with _QUEUE_LOCK:
+        for session in _all_sessions():
+            if session.get("status") != "uploading":
+                continue
+            processed += 1
+            try:
+                remove_session_workspace(session["id"])
+            except OSError:
+                failed += 1
+                continue
+            _delete_session_file(session["id"])
+            cleaned += 1
+    return {"processed": processed, "cleaned": cleaned, "failed": failed}
 
 
 async def list_storage_sessions(user_id: str) -> list[dict]:
-    """Return per-session managed storage accounting for one local profile."""
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT id, status, created_at FROM sessions WHERE user_id=? "
-        "ORDER BY created_at DESC, id DESC",
-        (user_id,),
-    )
-    rows = await cur.fetchall()
     return [
         {
-            "session_id": int(row["id"]),
-            "status": row["status"],
-            "created_at": sqlite_timestamp_to_wire_utc(row["created_at"]) or "",
-            "workspace_bytes": workspace_size_bytes(row["id"]),
+            "session_id": s["id"],
+            "status": s.get("status"),
+            "created_at": sqlite_timestamp_to_wire_utc(s.get("created_at")) or "",
+            "workspace_bytes": workspace_size_bytes(s["id"]),
         }
-        for row in rows
+        for s in _all_sessions(user_id)
     ]
 
 
 async def list_sessions(user_id: str) -> list[dict]:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT s.id, s.status, s.created_at, s.finished_at, s.attempts, "
-        "s.max_attempts, s.llm_cost_cny, s.analysis_type, s.input_mode, "
-        "s.kovaak_run_id, "
-        "CASE WHEN json_valid(s.result) THEN COALESCE("
-        "json_extract(s.result, '$.deterministic.diagnosis.profile.label'), "
-        "json_extract(s.result, '$.diagnosis.profile.label')) END AS summary_label, "
-        "COALESCE(CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.scenario') END, kr.scenario) AS scenario, "
-        "kr.created_at AS training_at, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.stats.path') END AS snapshot_stats_path, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.stats.fingerprint.sha256') END "
-        "AS snapshot_stats_sha256, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.stats.fingerprint.size') END "
-        "AS snapshot_stats_size, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.stats.fingerprint.mtime_ns') END "
-        "AS snapshot_stats_mtime_ns, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.performance.path') END "
-        "AS snapshot_performance_path, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.performance.fingerprint.sha256') END "
-        "AS snapshot_performance_sha256, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.performance.fingerprint.size') END "
-        "AS snapshot_performance_size, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.performance.fingerprint.mtime_ns') END "
-        "AS snapshot_performance_mtime_ns, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.video.path') END AS snapshot_video_path, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.video.fingerprint.sha256') END "
-        "AS snapshot_video_sha256, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.video.fingerprint.size') END "
-        "AS snapshot_video_size, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.sources.video.fingerprint.mtime_ns') END "
-        "AS snapshot_video_mtime_ns, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.trace.path') END AS snapshot_trace_path, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.trace.fingerprint.sha256') END "
-        "AS snapshot_trace_sha256, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.trace.fingerprint.size') END "
-        "AS snapshot_trace_size, "
-        "CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.trace.fingerprint.mtime_ns') END "
-        "AS snapshot_trace_mtime_ns, "
-        "CASE WHEN json_valid(s.result) THEN "
-        "json_extract(s.result, '$.evidence.alignment.status') END AS alignment_status, "
-        "CASE WHEN json_valid(s.result) THEN "
-        "json_extract(s.result, '$.evidence.coverage') END AS evidence_coverage, "
-        "kr.trace_state AS run_trace_state "
-        "FROM sessions AS s LEFT JOIN kovaak_runs AS kr "
-        "ON kr.id=s.kovaak_run_id AND kr.user_id=s.user_id "
-        "WHERE s.user_id=? ORDER BY s.created_at DESC, s.id DESC",
-        (user_id,),
-    )
-    rows = await cur.fetchall()
     out: list[dict] = []
-    for row in rows:
-        item = dict(row)
+    for session in _all_sessions(user_id):
+        item = dict(session)
         item["created_at"] = sqlite_timestamp_to_wire_utc(item.get("created_at")) or ""
         item["finished_at"] = sqlite_timestamp_to_wire_utc(item.get("finished_at"))
-        item["training_at"] = sqlite_timestamp_to_wire_utc(item.get("training_at"))
+        snapshot = item.get("input_snapshot")
+        snapshot_scenario = snapshot.get("scenario") if isinstance(snapshot, dict) else None
+        item["scenario"] = snapshot_scenario if snapshot_scenario is not None else item.get("run_scenario")
+        _flatten_snapshot_sources(item, snapshot)
+        item["training_at"] = _resolve_training_at(item)
+        item["summary_label"] = _resolve_summary_label(item)
         projected = history_trends.analysis_list_item(item)
         projected["training_at"] = item["training_at"]
-        projected["analysis_completed_at"] = projected["finished_at"]
+        projected["analysis_completed_at"] = projected.get("finished_at")
         projected["presentation_label"] = build_record_presentation_label(
-            scenario=projected["scenario"],
+            scenario=projected.get("scenario"),
             training_at=projected["training_at"],
             analysis_completed_at=projected["analysis_completed_at"],
         )
@@ -802,119 +688,90 @@ async def list_sessions(user_id: str) -> list[dict]:
     return out
 
 
-async def _rollback_without_masking(conn) -> None:
-    if not conn.in_transaction:
+def _flatten_snapshot_sources(item: dict, snapshot: object) -> None:
+    """Copy frozen input-snapshot source fields onto the row for read projections."""
+    if not isinstance(snapshot, dict):
         return
-    try:
-        await conn.execute("ROLLBACK")
-    except Exception:
-        pass
+    top_trace = snapshot.get("trace")
+    if isinstance(top_trace, dict):
+        _flatten_snapshot_source(item, "trace", top_trace)
+    sources = snapshot.get("sources")
+    if not isinstance(sources, dict):
+        return
+    for kind in ("stats", "performance", "video", "trace"):
+        _flatten_snapshot_source(item, kind, sources.get(kind))
 
 
-async def _finalize_analysis_cleanup(session_id: int) -> None:
-    conn = await get_conn()
-    try:
-        await conn.execute(
-            "DELETE FROM analysis_deletion_tombstones WHERE analysis_session_id=?",
-            (session_id,),
+def _flatten_snapshot_source(item: dict, kind: str, source: object) -> None:
+    if not isinstance(source, dict):
+        return
+    path = source.get("path")
+    fingerprint = source.get("fingerprint")
+    if isinstance(path, str):
+        item[f"snapshot_{kind}_path"] = path
+    if isinstance(fingerprint, dict):
+        item[f"snapshot_{kind}_size"] = fingerprint.get("size")
+        item[f"snapshot_{kind}_mtime_ns"] = fingerprint.get("mtime_ns")
+
+
+def _resolve_training_at(item: dict) -> str | None:
+    run_id = item.get("kovaak_run_id")
+    if run_id is None:
+        return None
+    from . import kovaak_run_store
+    run = kovaak_run_store._load_run(int(run_id))
+    if run is None:
+        return None
+    return sqlite_timestamp_to_wire_utc(run.get("created_at"))
+
+
+def _resolve_summary_label(item: dict) -> str | None:
+    result = item.get("result")
+    if not isinstance(result, dict):
+        return None
+    diagnosis = result.get("diagnosis")
+    if not isinstance(diagnosis, dict):
+        deterministic = result.get("deterministic")
+        diagnosis = (
+            deterministic.get("diagnosis")
+            if isinstance(deterministic, dict)
+            else None
         )
-        await conn.commit()
-    except BaseException:
-        await _rollback_without_masking(conn)
-        raise
-
-
-async def _record_analysis_cleanup_failure(session_id: int) -> None:
-    conn = await get_conn()
-    try:
-        await conn.execute(
-            "UPDATE analysis_deletion_tombstones "
-            "SET cleanup_state='failed', cleanup_attempts=cleanup_attempts + 1, "
-            "last_error_code='workspace_cleanup_failed', "
-            "updated_at=CURRENT_TIMESTAMP WHERE analysis_session_id=?",
-            (session_id,),
-        )
-        await conn.commit()
-    except BaseException as exc:
-        await _rollback_without_masking(conn)
-        if not isinstance(exc, Exception):
-            raise
-
-
-async def _invalidate_profile_for_deleted_analysis(
-    session_id: int, user_id: str,
-) -> bool:
-    try:
-        from . import aiming_profile_store
-
-        await aiming_profile_store.invalidate_analysis_contribution(
-            user_id,
-            f"analysis:{session_id}",
-            reason="analysis_deleted",
-        )
-    except aiming_profile_store.ProfileNotFound:
-        return True
-    except Exception as exc:
-        # Deletion remains authoritative; startup reconciliation retries the
-        # profile tombstone without blocking source/workspace cleanup.
-        log.warning(
-            "profile contribution invalidation unavailable session=%s error=%s",
-            session_id,
-            type(exc).__name__,
-        )
-        return False
-    return True
+    if not isinstance(diagnosis, dict):
+        return None
+    profile = diagnosis.get("profile")
+    if isinstance(profile, dict) and isinstance(profile.get("label"), str):
+        return profile["label"]
+    return None
 
 
 async def delete_session(session_id: int, user_id: str) -> dict:
-    conn = await get_conn()
-    try:
-        await conn.execute("BEGIN IMMEDIATE")
-        cur = await conn.execute(
-            "SELECT id, user_id, status FROM sessions WHERE id=?",
-            (session_id,),
-        )
-        row = await cur.fetchone()
-        if row is None:
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None:
             raise SessionNotFound()
-        if row["user_id"] != user_id:
+        if session.get("user_id") != user_id:
             raise SessionForbidden()
-        status = row["status"] or ""
+        status = session.get("status") or ""
         if status not in ("done", "failed"):
             raise SessionNotDeletable(
                 code="active",
                 message="分析进行中，请等完成或失败后再删除",
             )
+        _delete_session_file(session_id)
+        # Record tombstone
+        tombstones = file_store.read_json(_ANALYSES_TOMBSTONES) or []
+        tombstones.append({"analysis_session_id": session_id, "owner_id": user_id})
+        file_store.write_json(_ANALYSES_TOMBSTONES, tombstones)
 
-        await coach_store.migrate_session_legacy_messages(
-            session_id, conn=conn,
-        )
-        await coach_store.mark_analysis_refs_deleted(
-            session_id, conn=conn,
-        )
-        await conn.execute(
-            "INSERT INTO analysis_deletion_tombstones(analysis_session_id, owner_id) "
-            "VALUES(?, ?)",
-            (session_id, user_id),
-        )
-        await conn.execute(
-            "DELETE FROM chat_messages WHERE session_id=?",
-            (session_id,),
-        )
-        await conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
-        await conn.execute("COMMIT")
-    except BaseException:
-        await _rollback_without_masking(conn)
-        raise
-
-    profile_invalidated = await _invalidate_profile_for_deleted_analysis(
-        session_id, user_id,
-    )
+    try:
+        await _invalidate_profile_for_deleted_analysis(session_id, user_id)
+    except Exception as exc:
+        log.warning("profile invalidation unavailable session=%s error=%s", session_id, type(exc).__name__)
 
     try:
         workspace_removed = remove_session_workspace(session_id)
     except OSError:
-        await _record_analysis_cleanup_failure(session_id)
         return {
             "deleted": True,
             "id": session_id,
@@ -922,11 +779,6 @@ async def delete_session(session_id: int, user_id: str) -> dict:
             "cleanup_failed": ["workspace"],
         }
 
-    if profile_invalidated:
-        try:
-            await _finalize_analysis_cleanup(session_id)
-        except Exception:
-            pass
     return {
         "deleted": True,
         "id": session_id,
@@ -935,53 +787,62 @@ async def delete_session(session_id: int, user_id: str) -> dict:
     }
 
 
+async def _invalidate_profile_for_deleted_analysis(
+    session_id: int, user_id: str,
+) -> bool:
+    try:
+        from . import aiming_profile_store
+        await aiming_profile_store.invalidate_analysis_contribution(
+            user_id,
+            f"analysis:{session_id}",
+            reason="analysis_deleted",
+        )
+    except aiming_profile_store.ProfileNotFound:
+        return True
+    except Exception as exc:
+        log.warning("profile contribution invalidation unavailable session=%s error=%s", session_id, type(exc).__name__)
+        return False
+    return True
+
+
 async def reconcile_analysis_deletions() -> dict[str, int]:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT analysis_session_id, owner_id FROM analysis_deletion_tombstones "
-        "ORDER BY analysis_session_id",
-    )
-    tombstones = [
-        (int(row["analysis_session_id"]), str(row["owner_id"]))
-        for row in await cur.fetchall()
-    ]
+    tombstones = file_store.read_json(_ANALYSES_TOMBSTONES) or []
     cleaned = 0
     failed = 0
-
-    for session_id, owner_id in tombstones:
+    remaining = []
+    for entry in tombstones:
+        session_id = entry.get("analysis_session_id")
+        owner_id = entry.get("owner_id")
+        if session_id is None or owner_id is None:
+            continue
         if not await _invalidate_profile_for_deleted_analysis(session_id, owner_id):
             failed += 1
+            remaining.append(entry)
             continue
         try:
             remove_session_workspace(session_id)
         except OSError:
-            await _record_analysis_cleanup_failure(session_id)
             failed += 1
+            remaining.append(entry)
             continue
-
-        await _finalize_analysis_cleanup(session_id)
         cleaned += 1
+    file_store.write_json(_ANALYSES_TOMBSTONES, remaining)
 
+    # Rebuild profile contributions from completed sessions
     try:
-        conn = await get_conn()
-        cur = await conn.execute(
-            "SELECT id, user_id, result FROM sessions WHERE status='done' AND result IS NOT NULL "
-            "ORDER BY id",
-        )
-        rows = await cur.fetchall()
         from . import aiming_profile_store
-
-        for row in rows:
+        for session in _all_sessions():
+            if session.get("status") != "done" or session.get("result") is None:
+                continue
             try:
-                parsed = json.loads(row["result"])
                 payload = aiming_profile_store.build_contribution_from_analysis_result(
-                    parsed
+                    session["result"]
                 )
                 if payload is not None:
                     await aiming_profile_store.record_deterministic_contribution(
-                        str(row["user_id"]), f"analysis:{row['id']}", payload,
+                        str(session["user_id"]), f"analysis:{session['id']}", payload,
                     )
-            except (TypeError, ValueError, json.JSONDecodeError):
+            except (TypeError, ValueError):
                 continue
         await aiming_profile_store.reconcile_profiles()
     except Exception as exc:
@@ -994,66 +855,32 @@ async def reconcile_analysis_deletions() -> dict[str, int]:
     }
 
 
-def _task_row_from_db(row) -> dict:
-    item = dict(row)
-    for json_key, public_key in (
-        ("error", "error"),
-        ("result", "result"),
-        ("partial_outcome_json", "partial_outcome_json"),
-        ("calibration_request_json", "calibration_request"),
-        ("calibration_snapshot_json", "calibration_snapshot"),
-    ):
-        raw_value = item.get(json_key)
-        if json_key in {"error", "result"}:
-            try:
-                item[public_key] = json.loads(raw_value) if raw_value else None
-            except (TypeError, json.JSONDecodeError):
-                item[public_key] = raw_value
-        else:
-            try:
-                item[public_key] = json.loads(raw_value) if raw_value else None
-            except (TypeError, json.JSONDecodeError):
-                item[public_key] = None
-        if public_key != json_key:
-            item.pop(json_key, None)
-    for key in ("created_at", "started_at", "finished_at", "training_at"):
-        item[key] = sqlite_timestamp_to_wire_utc(item.get(key))
-    return item
-
-
 async def list_task_rows(user_id: str) -> list[dict]:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT s.id, s.user_id, s.status, s.analysis_type, s.input_mode, s.kovaak_run_id, "
-        "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
-        "failure_domain, partial_outcome_json, error, result, calibration_request_json, "
-        "calibration_snapshot_json, s.created_at, s.started_at, s.finished_at, "
-        "COALESCE(CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.scenario') END, kr.scenario) AS scenario, "
-        "kr.created_at AS training_at "
-        "FROM sessions AS s LEFT JOIN kovaak_runs AS kr ON kr.id=s.kovaak_run_id "
-        "AND kr.user_id=s.user_id WHERE s.user_id=? ORDER BY s.created_at DESC, s.id DESC",
-        (user_id,),
-    )
-    return [_task_row_from_db(row) for row in await cur.fetchall()]
+    rows = []
+    for session in _all_sessions(user_id):
+        rows.append(_task_row(session))
+    return rows
 
 
 async def get_task_rows(task_ref: str, user_id: str) -> list[dict]:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT s.id, s.user_id, s.status, s.analysis_type, s.input_mode, s.kovaak_run_id, "
-        "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
-        "failure_domain, partial_outcome_json, error, result, calibration_request_json, "
-        "calibration_snapshot_json, s.created_at, s.started_at, s.finished_at, "
-        "COALESCE(CASE WHEN json_valid(s.input_snapshot_json) THEN "
-        "json_extract(s.input_snapshot_json, '$.scenario') END, kr.scenario) AS scenario, "
-        "kr.created_at AS training_at "
-        "FROM sessions AS s LEFT JOIN kovaak_runs AS kr ON kr.id=s.kovaak_run_id "
-        "AND kr.user_id=s.user_id WHERE s.user_id=? AND s.task_group_ref=? "
-        "ORDER BY s.attempt_number, s.id",
-        (user_id, task_ref),
-    )
-    return [_task_row_from_db(row) for row in await cur.fetchall()]
+    rows = []
+    for session in _all_sessions(user_id):
+        if session.get("task_group_ref") == task_ref:
+            rows.append(_task_row(session))
+    rows.sort(key=lambda r: (r.get("attempt_number", 1), r.get("id", 0)))
+    return rows
+
+
+def _task_row(session: dict) -> dict:
+    item = dict(session)
+    for key in ("created_at", "started_at", "finished_at", "training_at"):
+        item[key] = sqlite_timestamp_to_wire_utc(item.get(key))
+    snapshot = item.get("input_snapshot")
+    if isinstance(snapshot, dict):
+        item["scenario"] = snapshot.get("scenario")
+    else:
+        item["scenario"] = None
+    return item
 
 
 async def set_task_phase(
@@ -1062,60 +889,54 @@ async def set_task_phase(
     *,
     worker_id: str | None = None,
 ) -> bool:
-    conn = await get_conn()
-    where = "id=?"
-    parameters: list[object] = [session_id]
-    if worker_id is not None:
-        where += " AND status='running' AND worker_id=?"
-        parameters.append(worker_id)
-    cur = await conn.execute(
-        f"UPDATE sessions SET task_phase=?, task_state='running', updated_at=CURRENT_TIMESTAMP "
-        f"WHERE {where}",
-        [phase, *parameters],
-    )
-    await conn.commit()
-    return cur.rowcount == 1
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None:
+            return False
+        if worker_id is not None:
+            if session.get("status") != "running" or session.get("worker_id") != worker_id:
+                return False
+        session["task_phase"] = phase
+        session["task_state"] = "running"
+        session["updated_at"] = _utc_now()
+        _save_session(session)
+    return True
 
 
 async def set_failure_domain(session_id: int, failure_domain: str) -> bool:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "UPDATE sessions SET failure_domain=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-        (failure_domain, session_id),
-    )
-    await conn.commit()
-    return cur.rowcount == 1
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None:
+            return False
+        session["failure_domain"] = failure_domain
+        session["updated_at"] = _utc_now()
+        _save_session(session)
+    return True
 
 
 async def get_product_state(user_id: str) -> dict:
-    """Read owner-scoped onboarding and existence flags without private fields."""
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT onboarding_completed, onboarding_completion_kind "
-        "FROM product_state WHERE owner_id=?",
-        (user_id,),
-    )
-    row = await cur.fetchone()
-    cur = await conn.execute(
-        "SELECT COUNT(*) AS count FROM kovaak_runs WHERE user_id=?", (user_id,),
-    )
-    run_count = int((await cur.fetchone())["count"])
-    cur = await conn.execute(
-        "SELECT COUNT(*) AS count FROM sessions WHERE user_id=? AND status <> 'uploading'",
-        (user_id,),
-    )
-    analysis_count = int((await cur.fetchone())["count"])
+    onboarding = file_store.read_json(_ONBOARDING_PATH) or {}
+    sessions = _all_sessions(user_id)
+    run_count = 0
+    try:
+        from . import kovaak_run_store
+        run_count = len(await kovaak_run_store.list_kovaak_run_summaries(user_id))
+    except Exception:
+        pass
+    analysis_count = sum(1 for s in sessions if s.get("status") != "uploading")
     pending_runs = False
     if run_count:
-        from . import kovaak_run_store
-
-        for run in await kovaak_run_store.list_kovaak_run_summaries(user_id):
-            if run.get("readiness_state") in {"pending_analysis", "incomplete_evidence"}:
-                pending_runs = True
-                break
+        try:
+            from . import kovaak_run_store
+            for run in await kovaak_run_store.list_kovaak_run_summaries(user_id):
+                if run.get("readiness_state") in {"pending_analysis", "incomplete_evidence"}:
+                    pending_runs = True
+                    break
+        except Exception:
+            pass
     return {
-        "onboarding_completed": bool(row and row["onboarding_completed"]),
-        "onboarding_completion_kind": row["onboarding_completion_kind"] if row else None,
+        "onboarding_completed": bool(onboarding.get("onboarding_completed")),
+        "onboarding_completion_kind": onboarding.get("onboarding_completion_kind"),
         "has_pending_runs": pending_runs,
         "has_runs": run_count > 0,
         "has_analyses": analysis_count > 0,
@@ -1132,85 +953,48 @@ async def set_onboarding_state(
         raise ValueError("onboarding can only be marked completed")
     if completion_kind not in {"connected", "legacy"}:
         raise ValueError("invalid onboarding completion kind")
-    conn = await get_conn()
-    await conn.execute(
-        "INSERT INTO product_state(owner_id, onboarding_completed, onboarding_completion_kind) "
-        "VALUES(?, 1, ?) ON CONFLICT(owner_id) DO UPDATE SET "
-        "onboarding_completed=1, onboarding_completion_kind=excluded.onboarding_completion_kind, "
-        "updated_at=CURRENT_TIMESTAMP",
-        (user_id, completion_kind),
-    )
-    await conn.commit()
+    file_store.write_json(_ONBOARDING_PATH, {
+        "onboarding_completed": True,
+        "onboarding_completion_kind": completion_kind,
+        "updated_at": _utc_now(),
+    })
     return await get_product_state(user_id)
 
 
 async def get_session(session_id: int) -> Optional[dict]:
-    conn = await get_conn()
-    cur = await conn.execute(
-        "SELECT s.id, s.user_id, s.status, s.video_path, s.csv_path, s.analysis_type, s.input_mode, "
-        "s.kovaak_run_id, s.input_snapshot_json, s.result, s.error, "
-        "llm_cost_cny, cm_per_360, fov, attempts, max_attempts, worker_id, "
-        "task_group_ref, parent_session_id, attempt_number, task_state, task_phase, "
-        "failure_domain, partial_outcome_json, calibration_request_json, "
-        "calibration_snapshot_json, "
-        "s.started_at, s.finished_at, s.created_at, s.updated_at, kr.scenario AS run_scenario, "
-        "kr.created_at AS training_at "
-        "FROM sessions AS s LEFT JOIN kovaak_runs AS kr ON kr.id=s.kovaak_run_id "
-        "AND kr.user_id=s.user_id WHERE s.id=?",
-        (session_id,),
-    )
-    row = await cur.fetchone()
-    if row is None:
+    session = _load_session(session_id)
+    if session is None:
         return None
-    d = dict(row)
-    d["input_snapshot"] = decode_input_snapshot_json(d.get("input_snapshot_json"))
-    d.pop("input_snapshot_json", None)
-    for json_key, public_key in (
-        ("partial_outcome_json", "partial_outcome"),
-        ("calibration_request_json", "calibration_request"),
-        ("calibration_snapshot_json", "calibration_snapshot"),
-    ):
-        raw_value = d.pop(json_key, None)
-        try:
-            d[public_key] = json.loads(raw_value) if raw_value else None
-        except (TypeError, json.JSONDecodeError):
-            d[public_key] = None
+    d = dict(session)
     d["created_at"] = sqlite_timestamp_to_wire_utc(d.get("created_at")) or ""
     d["started_at"] = sqlite_timestamp_to_wire_utc(d.get("started_at"))
     d["finished_at"] = sqlite_timestamp_to_wire_utc(d.get("finished_at"))
     d["training_at"] = sqlite_timestamp_to_wire_utc(d.get("training_at"))
     snapshot = d.get("input_snapshot")
+    if not isinstance(snapshot, dict):
+        d["input_snapshot"] = None
+        snapshot = None
     snapshot_scenario = snapshot.get("scenario") if isinstance(snapshot, dict) else None
     d["scenario"] = snapshot_scenario if snapshot_scenario is not None else d.get("run_scenario")
-    d["analysis_completed_at"] = d["finished_at"]
+    d["analysis_completed_at"] = d.get("finished_at")
     d["presentation_label"] = build_record_presentation_label(
-        scenario=d["scenario"],
-        training_at=d["training_at"],
-        analysis_completed_at=d["analysis_completed_at"],
+        scenario=d.get("scenario"),
+        training_at=d.get("training_at"),
+        analysis_completed_at=d.get("analysis_completed_at"),
     )
 
     raw_result = d.get("result")
     if raw_result:
-        try:
-            parsed = json.loads(raw_result)
-        except (json.JSONDecodeError, TypeError):
-            log.warning(
-                "sessions.result JSON decode failed session_id=%s", session_id,
+        if isinstance(raw_result, dict) and _should_coerce_analysis_result(raw_result):
+            d["result"] = _coerce_or_normalize_v1_read(
+                raw_result,
+                cm_per_360=d.get("cm_per_360"),
+                fov=d.get("fov"),
+                created_at=d.get("created_at"),
+                updated_at=d.get("updated_at"),
             )
+        elif not isinstance(raw_result, dict):
             d["result"] = None
-        else:
-            if isinstance(parsed, dict) and _should_coerce_analysis_result(parsed):
-                row_created = sqlite_timestamp_to_wire_utc(d.get("created_at"))
-                row_updated = sqlite_timestamp_to_wire_utc(d.get("updated_at"))
-                d["result"] = _coerce_or_normalize_v1_read(
-                    parsed,
-                    cm_per_360=d.get("cm_per_360"),
-                    fov=d.get("fov"),
-                    created_at=row_created,
-                    updated_at=row_updated,
-                )
-            else:
-                d["result"] = parsed
     else:
         d["result"] = None
 
