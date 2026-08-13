@@ -871,8 +871,8 @@ export interface ProviderProfile {
   credential_configured: boolean;
   has_api_key: boolean;
   status: ProviderProfileState;
-  created_at: string;
-  updated_at: string;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface ProviderProfileListResponse {
@@ -926,16 +926,20 @@ export type ProviderAuthEvent =
   | { type: "progress"; message: string };
 
 export interface ProviderAuthOperation {
-  operation_id: string;
-  profile_id: number;
+  id: string;
   action: "login" | "refresh";
+  provider_id: string;
   mode: "api_key" | "oauth" | null;
   status: "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | "timed_out" | "interrupted";
+  prompt: ProviderAuthPrompt | null;
   prompts: ProviderAuthPrompt[];
   events: ProviderAuthEvent[];
+  result_available: boolean;
+  created_at: number;
+  updated_at: number;
+  expires_at: number;
+  terminal_at: number | null;
   error: PublicReadModelError | null;
-  created_at: string;
-  expires_at: string;
 }
 
 export interface DesktopCaptureCoordinatorStatus {

@@ -16,7 +16,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 
 完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留不可跳过的 Provider + 采集授权 onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化，不包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
 
-当前分析策略是 Coach 自动选择 `multimodal > input_native > video_fallback`。三种路径分别表示完整多源、输入证据优先和视频证据优先；不提供用户 mode selector。只有三条路径均不可用时才不创建 Analysis，由 Coach 说明缺失来源和修复动作。安装前已有的 Stats/Performance 文件不导入、不展示。
+当前分析策略是 Coach 自动选择 `multimodal > input_native > video_fallback`。三种路径分别表示完整多源、输入证据优先和视频证据优先；不提供用户 mode selector。只有三条路径均不可用时才不创建 Analysis，由 Coach 说明缺失来源和修复动作。安装前已有的 Stats/Performance 文件可导入、展示为历史 Run。
 
 ## 2. 当前施工优先级
 

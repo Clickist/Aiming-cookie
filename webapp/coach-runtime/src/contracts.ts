@@ -306,6 +306,12 @@ export type ProviderCatalogResponse = {
   providers: ProviderCatalogEntry[];
 };
 
+export type CustomProviderModel = {
+  model_id: string;
+  context_window: number | null;
+  max_tokens: number | null;
+};
+
 export type ProviderProfileStatus =
   | "unconfigured"
   | "ready"

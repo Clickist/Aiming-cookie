@@ -936,7 +936,10 @@ function analysisFamilyPage(
 
 /** Shared by Playwright's adapter and the local Next.js review route. */
 export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApiRequest): ReviewApiResponse {
-  const { method, path } = request;
+  const { method, path: rawPath } = request;
+  // The sidecar browser fallback routes /v1/provider* through /api/coach/provider*;
+  // normalize it back so the fixture handlers stay in one place.
+  const path = rawPath.replace(/^\/api\/coach\/provider/, "/api/provider");
   const failureStatus = scenario.failures[`${method} ${path}`] ?? scenario.failures[path];
   if (failureStatus) return response({ detail: { code: "fixture_unavailable", message: "Fixture service unavailable" } }, failureStatus);
   if (path === "/api/product-state" && method === "GET") return response(scenario.productState);
@@ -1158,7 +1161,8 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
       .replace(/^\/v1\/context$/, "/api/coach/context")
       .replace(/^\/v1\/context\/attach$/, "/api/coach/context/attach")
       .replace(/^\/v1\/agent-runs$/, "/api/coach/agent-runs")
-      .replace(/^\/v1\/sessions$/, "/api/coach/sessions");
+      .replace(/^\/v1\/sessions$/, "/api/coach/sessions")
+      .replace(/^\/v1\/provider/, "/api/coach/provider");
     const method = request.method();
     let body: unknown;
     if (method !== "GET" && method !== "HEAD") {

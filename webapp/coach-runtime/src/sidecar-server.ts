@@ -16,6 +16,7 @@ import {
 } from "./provider-auth.ts";
 import { getProviderProfileStatus, testProviderConnection } from "./provider-profile.ts";
 import { listBuiltinProviderCatalog } from "./provider-models.ts";
+import { handleProviderProfileRequest } from "./provider-profiles.ts";
 import {
   runCoachTurn,
   stopCoachTurn,
@@ -187,7 +188,10 @@ export async function handleSidecarRequest(
     return;
   }
 
-  if (req.method === "GET" && url.pathname === "/v1/auth/capabilities") {
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v1/auth/capabilities" || url.pathname === "/v1/provider-auth/capabilities")
+  ) {
     try {
       writeJson(res, 200, await authOperations.capabilities());
     } catch (error) {
@@ -244,7 +248,7 @@ export async function handleSidecarRequest(
 
   if (
     req.method === "GET" &&
-    (url.pathname === "/v1/catalog" || url.pathname === "/v0/providers/catalog")
+    (url.pathname === "/v1/catalog" || url.pathname === "/v0/providers/catalog" || url.pathname === "/v1/providers/catalog")
   ) {
     try {
       writeJson(res, 200, await listBuiltinProviderCatalog());
@@ -640,6 +644,8 @@ export async function handleSidecarRequest(
     }
     return;
   }
+
+  if (await handleProviderProfileRequest(req, res, url, authOperations)) return;
 
   writeJson(res, 404, { ok: false, error: "not_found" });
 }
