@@ -20,6 +20,18 @@ test("Tauri embeds the static export and enables the NSIS bundle", async () => {
   assert.deepEqual(config.bundle.targets, ["nsis"]);
 });
 
+test("Tauri package uses the app toolbar instead of a native title bar", async () => {
+  const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
+  const capability = JSON.parse(await source("src-tauri/capabilities/default.json"));
+  assert.equal(config.app.windows[0].decorations, false);
+  assert.deepEqual(capability.permissions.filter((permission: string) => permission.startsWith("core:window:")), [
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+  ]);
+});
+
 test("Next production build is a static export", async () => {
   const config = await source("next.config.ts");
   assert.match(config, /output:\s*"export"/);

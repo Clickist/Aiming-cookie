@@ -71,7 +71,8 @@ impl RuntimeProcess {
 
         let database_path = app_data_dir.join("aiming_cookie.db");
         let database_url = format!("sqlite+aiosqlite:///{}", database_path.display());
-        let (mut coach_sidecar, coach_sidecar_url) = start_coach_sidecar(layout, app_data_dir, &database_url)?;
+        let (mut coach_sidecar, coach_sidecar_url) =
+            start_coach_sidecar(layout, app_data_dir, &database_url)?;
         let token = create_launch_token();
         let mut command = Command::new(&layout.backend_program);
         command
@@ -87,7 +88,7 @@ impl RuntimeProcess {
             .env("DATA_ROOT", app_data_dir)
             .env("VIDEO_TMP_DIR", app_data_dir)
             .env("DATABASE_URL", database_url)
-            .env(COACH_SIDECAR_URL_ENV, coach_sidecar_url)
+            .env(COACH_SIDECAR_URL_ENV, &coach_sidecar_url)
             .env(
                 "CORS_ORIGINS",
                 "http://localhost:3000,http://tauri.localhost,tauri://localhost",
@@ -468,7 +469,11 @@ fn configure_python_io(command: &mut Command) {
         .env("PYTHONIOENCODING", "utf-8");
 }
 
-fn start_coach_sidecar(layout: &RuntimeLayout, app_data_dir: &Path, database_url: &str) -> Result<(Child, String), String> {
+fn start_coach_sidecar(
+    layout: &RuntimeLayout,
+    app_data_dir: &Path,
+    database_url: &str,
+) -> Result<(Child, String), String> {
     let mut command = Command::new(&layout.coach_program);
     if let (Some(pi_source_dir), Some(tsx_loader), Some(sidecar_entry), Some(tsconfig)) = (
         &layout.pi_source_dir,
