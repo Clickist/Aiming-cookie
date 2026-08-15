@@ -156,7 +156,7 @@ def test_tracking_candidate_advice_uses_matched_baseline_and_row_evidence():
         for item in advice
     )
     assert [item["knowledge_entry_refs"] for item in advice] == [
-        ["knowledge:tracking.predictable-speed-matching@2"],
+        ["knowledge:tracking.predictable-speed-matching@3"],
         ["knowledge:tracking.reactive-change-response@2"],
         ["knowledge:tracking.reactive-change-response@2"],
         ["knowledge:tracking.reactive-change-response@2"],

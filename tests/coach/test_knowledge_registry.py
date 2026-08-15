@@ -324,7 +324,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-08-15.v7"
+    assert result["registry_version"] == "2026-08-16.v8"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -874,3 +874,151 @@ def test_v4_migration_audit_accounts_for_v3_and_nine_new_entries():
     assert {
         row["target_entry_ref"] for row in audit["new_entries"]
     } == {f"knowledge:{entry_id}@1" for entry_id in _RAWINPUT_V4_ENTRY_IDS}
+
+
+_X76_WIKI_V8_NEW_ENTRY_IDS = {
+    "community.bardpill-accuracy-anchored-progression",
+    "community.speed-vs-evasive-switching",
+    "community.reading-vs-execution-decomposition",
+    "community.accuracy-multiplied-scoring",
+    "community.edge-tracking-underaim",
+    "community.overshoot-sensitivity-trigger",
+    "community.vrt-response-floor",
+    "community.target-angular-demand-math",
+    "community.strafe-relative-speed-ladder",
+}
+
+_X76_WIKI_V8_RECALL_QUERIES = {
+    "community.bardpill-accuracy-anchored-progression": {
+        "issue_signal": "speed up accuracy down",
+    },
+    "community.speed-vs-evasive-switching": {
+        "issue_signal": "switch transition slow",
+    },
+    "community.reading-vs-execution-decomposition": {
+        "issue_signal": "post change error high",
+    },
+    "community.accuracy-multiplied-scoring": {
+        "issue_signal": "score up acc down",
+    },
+    "community.edge-tracking-underaim": {
+        "issue_signal": "tracking lag high",
+    },
+    "community.overshoot-sensitivity-trigger": {
+        "metric_refs": ["metric:reverse_ratio"],
+    },
+    "community.vrt-response-floor": {
+        "metric_refs": ["metric:reacquisition_time"],
+    },
+    "community.target-angular-demand-math": {
+        "topic": "sensitivity",
+    },
+    "community.strafe-relative-speed-ladder": {
+        "issue_signal": "movement telemetry unavailable",
+    },
+}
+
+_V8_FOLD_IN_VERSIONS = {
+    "hypothesis.tension-management": 4,
+    "community.qiluno.confirmation-timing-schools": 2,
+    "community.qiluno.reset-as-continuity": 2,
+    "dynamic.speed-matching-and-reading": 3,
+    "tracking.predictable-speed-matching": 3,
+    "community.adaptive-mouse-grip": 2,
+    "community.difficulty-refinement-and-stress-test": 2,
+    "community.score-farming-context": 2,
+    "community.aim-trainer-transfer": 2,
+    "static.flicking-terminal-control": 3,
+    "dynamic.click-error-and-acquisition": 3,
+    "switching.transition-and-arrival": 3,
+}
+
+
+def test_v8_adds_x76_wiki_knowledge_with_schema_and_validator_agreement():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v8.json").read_text(encoding="utf-8"))
+
+    Draft202012Validator.check_schema(schema)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(packaged),
+        key=lambda error: list(error.path),
+    )
+    assert errors == [], [error.message for error in errors[:5]]
+    loaded = registry.load_registry(registry_version="2026-08-16.v8")
+    assert loaded == registry.validate_registry(packaged)
+    assert registry.load_registry()["registry_version"] == "2026-08-16.v8"
+    assert registry.MAX_RESULTS == 8
+    assert len(loaded["entries"]) == 36
+
+    sources = {source["source_ref"]: source for source in loaded["sources"]}
+    wiki = sources["community.x76-wiki"]
+    assert wiki["source_level"] == "community_organization"
+    assert wiki["retrieved_at"] == "2026-08-15"
+    assert "https://x76.gg/wiki/" in wiki["locator"]
+    assert (
+        "88614b2c6627141c29c18f8c3239f4196b8bd1988b12660995812cf5613bc081"
+        in wiki["locator"]
+    )
+    assert loaded["signal_aliases"]["score up acc down"] == "score up accuracy down"
+
+    entries = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    assert _X76_WIKI_V8_NEW_ENTRY_IDS <= set(entries)
+    for entry_id in (
+        "community.bardpill-accuracy-anchored-progression",
+        "community.speed-vs-evasive-switching",
+    ):
+        assert entries[entry_id]["supported_uses"] == [
+            "explanation_only", "diagnosis_support", "candidate_experiment",
+            "scenario_prescription",
+        ]
+        assert entries[entry_id]["scenario_prescription"] != "not_applicable"
+    for entry_id in (
+        "community.edge-tracking-underaim",
+        "community.vrt-response-floor",
+        "community.target-angular-demand-math",
+        "community.strafe-relative-speed-ladder",
+    ):
+        entry = entries[entry_id]
+        assert entry["supported_uses"] == ["explanation_only"]
+        for name in (
+            "cue", "dose_guardrail", "matched_retest", "near_transfer_retest",
+            "stop_adjust_rule", "scenario_prescription",
+        ):
+            assert name not in entry
+
+    # community_organization source ceiling: wiki-cited sections stay at
+    # community_practice or below.
+    for entry in loaded["entries"]:
+        section_values = [entry["definition"], entry["scope"], entry["expected_direction"]]
+        section_values.extend(entry["mechanisms"])
+        for section_value in section_values:
+            if "community.x76-wiki" in section_value["source_refs"]:
+                assert section_value["claim_level"] in {
+                    "community_practice", "experimental",
+                }
+
+
+def test_v8_x76_entries_are_retrievable_by_signal_metric_or_topic():
+    loaded = registry.load_registry(registry_version="2026-08-16.v8")
+    for entry_id, query in _X76_WIKI_V8_RECALL_QUERIES.items():
+        results = registry.query_registry(loaded, **query)
+        assert entry_id in [item["entry_id"] for item in results], (entry_id, query)
+
+
+def test_v8_fold_ins_bump_entry_versions_and_cite_the_wiki_source():
+    loaded = registry.load_registry(registry_version="2026-08-16.v8")
+    entries = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    for entry_id, version in _V8_FOLD_IN_VERSIONS.items():
+        entry = entries[entry_id]
+        assert entry["entry_version"] == version, entry_id
+        assert "community.x76-wiki" in entry["sources"], entry_id
+        assert any(
+            ".x76-" in section["section_ref"] for section in entry["mechanisms"]
+        ), entry_id
+
+
+def test_v8_remains_backward_compatible_with_v7():
+    previous = registry.load_registry(registry_version="2026-08-15.v7")
+    assert previous["registry_version"] == "2026-08-15.v7"
+    assert len(previous["entries"]) == 27
