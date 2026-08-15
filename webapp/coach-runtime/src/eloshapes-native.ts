@@ -25,7 +25,7 @@ export type NativeCommandResult = {
 
 const _dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(_dirname, "..", "..", "..");
-const CATALOG_PATH = resolve(
+export const CATALOG_PATH = resolve(
   REPO_ROOT,
   "artifacts", "eloshapes", "snapshots",
   "eloshapes_mouse_catalog_2026-07-31T211736Z.json",
@@ -46,8 +46,10 @@ let _mappingCache: Map<number, AnyDict> | null = null;
 function loadCatalog(): AnyDict[] {
   if (_catalogCache !== null) return _catalogCache;
   if (!existsSync(CATALOG_PATH)) {
-    _catalogCache = [];
-    return _catalogCache;
+    // Confirmed absent on this call — do not cache: caching the empty array
+    // would keep every later query catalog_unavailable even after the
+    // snapshot appears (Bug 9 of the 2026-08-16 deep test).
+    return [];
   }
   const raw = readFileSync(CATALOG_PATH, "utf-8");
   _catalogCache = JSON.parse(raw) as AnyDict[];

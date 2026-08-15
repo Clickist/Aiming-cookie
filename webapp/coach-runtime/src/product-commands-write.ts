@@ -107,6 +107,16 @@ function fail(code: string, message: string): HandlerResult {
   return { status: "failed", warning_or_error: { code, message } };
 }
 
+// Handler-thrown messages are forwarded to the Provider only when they stay
+// bounded and cannot carry a filesystem path or credential (e.g. Node fs
+// errors embed absolute paths). Everything else degrades to the generic text.
+const HANDLER_MESSAGE_MAX = 200;
+const HANDLER_MESSAGE_PATH = /\\|(?:[A-Za-z]:[\\/]|\/(?:Users|home|tmp|var|temp)\b)/i;
+
+function isSafeHandlerMessage(message: string): boolean {
+  return message.length > 0 && message.length <= HANDLER_MESSAGE_MAX && !HANDLER_MESSAGE_PATH.test(message);
+}
+
 function safePlan(plan: AnyDict): AnyDict {
   const keys = [
     "plan_id", "plan_ref", "status", "version", "version_ref",
@@ -1003,6 +1013,10 @@ export function executeNativeWrite(
       handlerResult = { status: "failed", warning_or_error: { code: "forbidden", message: message.slice("forbidden:".length) } };
     } else if (message.startsWith("invalid_transition:")) {
       handlerResult = { status: "failed", warning_or_error: { code: "invalid_training_plan", message: message.slice("invalid_transition:".length) } };
+    } else if (isSafeHandlerMessage(message)) {
+      // Surface the real reason (e.g. "plan_payload is required") so the model
+      // can self-correct; only bounded, path/secret-free messages pass (Bug 2).
+      handlerResult = { status: "failed", warning_or_error: { code: "internal_error", message } };
     } else {
       handlerResult = { status: "failed", warning_or_error: { code: "internal_error", message: "product command could not be completed" } };
     }
