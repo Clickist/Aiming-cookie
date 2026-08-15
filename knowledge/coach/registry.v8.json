@@ -916,6 +916,23 @@
         "mechanisms",
         "cue"
       ]
+    },
+    {
+      "source_ref": "research.fitts-speed-accuracy",
+      "source_level": "academic_peer_reviewed",
+      "title": "The information capacity of the human motor system in controlling the amplitude of movement",
+      "author_or_org": "Fitts",
+      "published_at": "1954-01-01",
+      "retrieved_at": "2026-08-16",
+      "locator": "Journal of Experimental Psychology 1954; task10-assessment section 6.3",
+      "applicability": [
+        "static_clicking",
+        "dynamic_clicking"
+      ],
+      "supports_sections": [
+        "mechanisms",
+        "limitations"
+      ]
     }
   ],
   "entries": [
@@ -938,7 +955,7 @@
         "metric:decel_frac",
         "metric:path_efficiency",
         "metric:reverse_ratio",
-        "metric:settle_time_ms",
+        "metric:settle_duration_ms",
         "metric:sparc"
       ],
       "family_scope": [
@@ -959,7 +976,7 @@
         "source_refs": [
           "product.complete-coach-spec"
         ],
-        "text": "Input-derived terminal control describes settling and corrections after a static flick; it is not target-relative error without a reliable target track."
+        "text": "Input-derived terminal control describes settling and corrections after a static flick; it is not target-relative error without a reliable target track. Whole-movement path geometry (path efficiency) enters only as indirect input-side context for this evaluation, not as a settling measure itself."
       },
       "scope": {
         "section_ref": "static.flicking-terminal-control.scope",
@@ -1104,8 +1121,7 @@
       "metric_refs": [
         "metric:normalized_click_error",
         "metric:acquisition_time_ms",
-        "metric:target_state_outcome",
-        "metric:click_pacing"
+        "metric:dynamic_clicking.target_state_accuracy"
       ],
       "family_scope": [
         "dynamic_clicking"
@@ -1626,7 +1642,7 @@
     },
     {
       "entry_id": "tracking.reactive-change-response",
-      "entry_version": 2,
+      "entry_version": 3,
       "status": "active",
       "category": "observation_definition",
       "topics": [
@@ -1642,8 +1658,7 @@
       "metric_refs": [
         "metric:change_response",
         "metric:loss_count",
-        "metric:reacquisition_time",
-        "metric:post_change_stability"
+        "metric:reacquisition_time"
       ],
       "family_scope": [
         "reactive_tracking"
@@ -1770,7 +1785,7 @@
     },
     {
       "entry_id": "tracking.control-smoothness",
-      "entry_version": 2,
+      "entry_version": 3,
       "status": "active",
       "category": "observation_definition",
       "topics": [
@@ -1819,7 +1834,7 @@
         "source_refs": [
           "product.complete-coach-spec"
         ],
-        "text": "Do not optimize a smoothness score if accuracy or coverage worsens; intermittent correction can be task-appropriate."
+        "text": "Do not optimize a smoothness score if accuracy or coverage worsens; intermittent correction can be task-appropriate. Retrieval that arrives through input-native flick metrics (decel_frac, path_efficiency, reverse_ratio) lands at the explanation layer only: those metrics cannot satisfy the visual prerequisites above, so they never license diagnosis_support for this entry."
       },
       "expected_direction": {
         "section_ref": "tracking.control-smoothness.direction",
@@ -1861,7 +1876,8 @@
         "Do not call every correction bad."
       ],
       "limitations": [
-        "Short signals can make spectral measures unstable."
+        "Short signals can make spectral measures unstable.",
+        "Input-native metric retrieval is explanation-only here; a baseline tracking analysis without visual-pipeline metrics cannot open a diagnosis-support use of this entry."
       ],
       "counterevidence": [
         "Lower correction burden with worse error or coverage is not improvement."
@@ -2093,7 +2109,7 @@
     },
     {
       "entry_id": "switching.selection-observable-only",
-      "entry_version": 2,
+      "entry_version": 3,
       "status": "active",
       "category": "limitation",
       "topics": [
@@ -2105,7 +2121,7 @@
         "selection evidence unavailable"
       ],
       "metric_refs": [
-        "metric:selection_error"
+        "metric:target_switching.selection_error_ratio"
       ],
       "family_scope": [
         "target_switching"
@@ -2358,7 +2374,7 @@
             "research.mouse-fatigue",
             "research.retention-transfer"
           ],
-          "text": "Stop the experiment for discomfort or when matched and near-transfer evidence do not support it."
+          "text": "Stop the experiment for discomfort or when matched-retest evidence does not support it."
         }
       ],
       "sources": [
@@ -5180,6 +5196,93 @@
       ],
       "supported_uses": [
         "explanation_only"
+      ]
+    },
+    {
+      "entry_id": "research.speed-precision.fitts",
+      "entry_version": 1,
+      "status": "active",
+      "category": "observation_definition",
+      "topics": [
+        "speed_precision",
+        "fitts",
+        "throughput_comparison"
+      ],
+      "signals": [
+        "throughput below reference"
+      ],
+      "metric_refs": [
+        "metric:throughput"
+      ],
+      "family_scope": [
+        "static_clicking",
+        "dynamic_clicking"
+      ],
+      "observation_refs": [
+        "metric.throughput",
+        "event.matched_retest"
+      ],
+      "quality_prerequisites": [
+        "same_metric_version",
+        "matched_reference_available"
+      ],
+      "definition": {
+        "section_ref": "research.speed-precision.fitts.definition",
+        "claim_level": "deterministic_rule",
+        "source_refs": [
+          "product.complete-coach-spec"
+        ],
+        "text": "Throughput is a Fitts-normalized speed-accuracy composite over the player's flicks; a below-reference reading means combined speed-accuracy efficiency is lower than the matched reference under the same metric version, an outcome-level comparison, not a cause."
+      },
+      "scope": {
+        "section_ref": "research.speed-precision.fitts.scope",
+        "claim_level": "deterministic_rule",
+        "source_refs": [
+          "product.complete-coach-spec"
+        ],
+        "text": "Interpret only against a matched reference with the same scenario, input mode, and metric version; it is a comparison, never an absolute speed or skill threshold."
+      },
+      "expected_direction": {
+        "section_ref": "research.speed-precision.fitts.direction",
+        "claim_level": "deterministic_rule",
+        "source_refs": [
+          "product.complete-coach-spec"
+        ],
+        "text": "comparison_only"
+      },
+      "mechanisms": [
+        {
+          "section_ref": "research.speed-precision.fitts.mechanism",
+          "claim_level": "research_supported",
+          "source_refs": [
+            "research.fitts-speed-accuracy"
+          ],
+          "text": "Fitts's law ties movement time to movement amplitude and target width, so a throughput index normalizes speed by task difficulty; a below-reference value says the player traded speed and accuracy less efficiently on comparable tasks, without identifying which half moved."
+        }
+      ],
+      "alternative_explanations": [
+        "reference session had easier target spacing or timing",
+        "the player deliberately favored accuracy that session",
+        "threshold fluctuation within uncalibrated noise"
+      ],
+      "forbidden_inferences": [
+        "Do not read throughput as reaction speed or raw hand speed.",
+        "Do not infer a bodily cause from the input-derived index.",
+        "Do not use it as an absolute skill ranking across players."
+      ],
+      "limitations": [
+        "Thresholds are uncalibrated; without target width data the index stays a relative comparison."
+      ],
+      "counterevidence": [
+        "A matched run with equal throughput on the same scenario weakens the below-reference reading."
+      ],
+      "sources": [
+        "product.complete-coach-spec",
+        "research.fitts-speed-accuracy"
+      ],
+      "supported_uses": [
+        "explanation_only",
+        "diagnosis_support"
       ]
     }
   ]
