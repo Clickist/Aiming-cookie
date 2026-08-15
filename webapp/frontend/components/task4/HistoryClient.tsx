@@ -3,25 +3,24 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import {
-  getHistoryAnalysisDetail,
-  getHistoryRun,
-  getHistorySessions,
-  listKovaakRuns,
-} from "@/lib/api";
+import { getHistorySessions, listKovaakRuns } from "@/lib/api";
 import { isDesktopRuntime } from "@/lib/desktop";
 import {
+  buildCoachAnalysisDraft,
   buildHistorySections,
+  COACH_PENDING_INTENT_KEY,
+  formatHistoryDate,
   getHistoryStatusText,
   presentRecordLabel,
 } from "@/lib/contracts";
-import type { KovaaKRunItem, KovaaKRunListItem, SessionListItem, SessionStatus } from "@/lib/types";
-import { Button, Dialog, Drawer, Empty, ErrorState, IconButton, Loading, Notice, Status } from "@/ui/primitives";
-
-import { RunInspector } from "./RunInspector";
+import type { KovaaKRunListItem, SessionListItem } from "@/lib/types";
+import { Button, Empty, ErrorState, IconButton, Notice } from "@/ui/primitives";
 
 type RefreshState = "idle" | "loading" | "unavailable";
 type RunDiscoveryState = "loading" | "available" | "browser_unavailable" | "service_unavailable";
+
+/** 「让 Coach 分析」一次最多引用的训练条数（分析逐条串行进行）。 */
+const MAX_SELECTED_RUNS = 5;
 
 function sessionTone(status: string): "neutral" | "info" | "success" | "warning" | "error" {
   if (status === "done") return "success";
@@ -58,23 +57,6 @@ function historyEvidenceState(state: string | undefined): string | undefined {
     : getHistoryStatusText(state);
 }
 
-function formatHistoryDate(iso: string | null | undefined): string {
-  if (!iso) return "时间未知";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const now = new Date();
-  const isSameDay = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const time = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  if (isSameDay(date, now)) return `今天 ${time}`;
-  if (isSameDay(date, yesterday)) return `昨天 ${time}`;
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  return `${month}月${day}日 ${time}`;
-}
-
 function EvidenceChip({ label, state }: { label: string; state: string | undefined }) {
   const normalized = state ?? "missing";
   let chipState: "ok" | "part" | "miss" | "bad" = "miss";
@@ -105,10 +87,14 @@ function runRecordBadge(run: KovaaKRunListItem) {
 
 function RunRow({
   run,
-  onInspect,
+  disabled,
+  onToggle,
+  selected,
 }: {
   run: KovaaKRunListItem;
-  onInspect: (run: KovaaKRunListItem) => void;
+  disabled?: boolean;
+  onToggle?: (run: KovaaKRunListItem) => void;
+  selected?: boolean;
 }) {
   const isPending = run.readiness_state === "pending_analysis";
   const evidence = [
@@ -142,19 +128,32 @@ function RunRow({
           ))}
         </div>
       </div>
-      <div className="task4-row-actions">
-        <Button onClick={() => onInspect(run)} size="compact" variant="ghost">查看 Run</Button>
-      </div>
+      {onToggle ? (
+        <div className="task4-row-actions">
+          <input
+            aria-label={`选择 ${run.scenario ?? "未知场景"}（${formatHistoryDate(run.created_at)}）`}
+            checked={Boolean(selected)}
+            disabled={disabled}
+            onChange={() => onToggle(run)}
+            title={disabled ? "证据不足以分析" : undefined}
+            type="checkbox"
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function AnalysisRow({
-  onLoadDetail,
+  disabled,
+  onToggle,
+  selected,
   session,
 }: {
+  disabled?: boolean;
+  onToggle?: (session: SessionListItem) => void;
+  selected?: boolean;
   session: SessionListItem;
-  onLoadDetail: (id: number) => void;
 }) {
   const tone = sessionTone(session.status);
   const recordLabel = presentRecordLabel({
@@ -180,9 +179,18 @@ function AnalysisRow({
           <span>摘要：{session.summary_label ?? "暂无摘要"}</span>
         </div>
       </div>
-      <div className="task4-row-actions">
-        <Button onClick={() => onLoadDetail(session.id)} size="compact" variant="secondary">查看摘要</Button>
-      </div>
+      {onToggle ? (
+        <div className="task4-row-actions">
+          <input
+            aria-label={`选择分析 ${session.scenario ?? "未知场景"}（${formatHistoryDate(session.training_at ?? session.created_at)}）`}
+            checked={Boolean(selected)}
+            disabled={disabled}
+            onChange={() => onToggle(session)}
+            title={disabled ? "分析未完成，暂无结果可讨论" : undefined}
+            type="checkbox"
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -222,11 +230,10 @@ export function HistoryClient() {
   const [refresh, setRefresh] = useState<RefreshState>("loading");
   const [runDiscovery, setRunDiscovery] = useState<RunDiscoveryState>("loading");
   const [initialError, setInitialError] = useState(false);
-  const [selectedRun, setSelectedRun] = useState<KovaaKRunItem | KovaaKRunListItem | null>(null);
-  const [detailId, setDetailId] = useState<number | null>(null);
-  const [detail, setDetail] = useState<SessionStatus | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState(false);
+  const [selectedRunIds, setSelectedRunIds] = useState<number[]>([]);
+  const [selectedAnalysisIds, setSelectedAnalysisIds] = useState<number[]>([]);
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+  const selectedCount = selectedRunIds.length + selectedAnalysisIds.length;
 
   const loadHistory = useCallback(async (initial = false) => {
     setRefresh("loading");
@@ -255,22 +262,47 @@ export function HistoryClient() {
 
   const sections = useMemo(() => buildHistorySections({ runs, sessions }), [runs, sessions]);
 
-  const inspect = async (run: KovaaKRunListItem) => {
-    setSelectedRun(run);
-    if (!run.id) return;
-    const detail = await getHistoryRun(run.id).catch(() => null);
-    if (detail) setSelectedRun(detail);
+  const toggleRun = (run: KovaaKRunListItem) => {
+    if (selectedRunIds.includes(run.id)) {
+      setSelectionNotice(null);
+      setSelectedRunIds(selectedRunIds.filter((id) => id !== run.id));
+    } else if (selectedCount >= MAX_SELECTED_RUNS) {
+      setSelectionNotice(`最多同时选 ${MAX_SELECTED_RUNS} 条一起交给 Coach。`);
+    } else {
+      setSelectionNotice(null);
+      setSelectedRunIds([...selectedRunIds, run.id]);
+    }
   };
 
-  const loadDetail = async (id: number) => {
-    setDetailId(id);
-    setDetail(null);
-    setDetailLoading(true);
-    setDetailError(false);
-    const result = await getHistoryAnalysisDetail(id).catch(() => null);
-    if (!result) setDetailError(true);
-    else setDetail(result);
-    setDetailLoading(false);
+  const toggleAnalysis = (session: SessionListItem) => {
+    if (selectedAnalysisIds.includes(session.id)) {
+      setSelectionNotice(null);
+      setSelectedAnalysisIds(selectedAnalysisIds.filter((id) => id !== session.id));
+    } else if (selectedCount >= MAX_SELECTED_RUNS) {
+      setSelectionNotice(`最多同时选 ${MAX_SELECTED_RUNS} 条一起交给 Coach。`);
+    } else {
+      setSelectionNotice(null);
+      setSelectedAnalysisIds([...selectedAnalysisIds, session.id]);
+    }
+  };
+
+  // 「让 Coach 分析」：把勾选的训练拼成话术交给 Coach 输入框，用户发送后
+  // 由 Coach 走 analysis.create_from_run 逐条触发（后端按 tier 自动降级）。
+  // intent query 让 AppShell 在没有进行中的会话时用新草稿承接这个新意图。
+  const startCoachAnalysis = () => {
+    const draft = buildCoachAnalysisDraft({
+      runs: runs.filter((run) => selectedRunIds.includes(run.id)),
+      analyses: sessions
+        .filter((session) => selectedAnalysisIds.includes(session.id))
+        .map((session) => ({
+          run_ref: session.analysis_ref,
+          scenario: session.scenario ?? null,
+          created_at: session.training_at ?? session.created_at ?? null,
+        })),
+    });
+    if (!draft) return;
+    window.sessionStorage.setItem(COACH_PENDING_INTENT_KEY, JSON.stringify({ draft }));
+    router.push("/?intent=coach-analysis");
   };
 
   if (initialError && runs.length === 0 && sessions.length === 0) {
@@ -298,6 +330,11 @@ export function HistoryClient() {
           <div className="task4-page-title">历史</div>
         </div>
         <div className="task4-page-actions">
+          {selectedCount > 0 ? (
+            <Button onClick={startCoachAnalysis} size="compact" variant="primary">
+              让 Coach 分析{selectedCount > 1 ? `（${selectedCount}）` : ""}
+            </Button>
+          ) : null}
           <Button onClick={() => void loadHistory()} size="compact" variant="ghost">刷新</Button>
         </div>
       </div>
@@ -311,6 +348,7 @@ export function HistoryClient() {
           <h2 id="pending-title" className="task4-sec-title">待分析训练</h2>
           <span className="task4-sec-count">{sections.pendingRuns.length}</span>
         </div>
+        {selectionNotice ? <Notice tone="info">{selectionNotice}</Notice> : null}
         {sections.pendingRuns.length === 0 ? (
           <RunSectionState kind="pending" runDiscovery={runDiscovery} />
         ) : (
@@ -318,28 +356,9 @@ export function HistoryClient() {
             {sections.pendingRuns.map((run) => (
               <RunRow
                 key={run.run_ref}
-                onInspect={(item) => void inspect(item)}
+                onToggle={toggleRun}
                 run={run}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="task4-sec" aria-labelledby="runs-title">
-        <div className="task4-sec-head">
-          <h2 id="runs-title" className="task4-sec-title">训练记录</h2>
-          <span className="task4-sec-count">{sections.runRecords.length}</span>
-        </div>
-        {sections.runRecords.length === 0 ? (
-          <RunSectionState kind="records" runDiscovery={runDiscovery} />
-        ) : (
-          <div className="task4-panel">
-            {sections.runRecords.map((run) => (
-              <RunRow
-                key={run.run_ref}
-                onInspect={(item) => void inspect(item)}
-                run={run}
+                selected={selectedRunIds.includes(run.id)}
               />
             ))}
           </div>
@@ -359,8 +378,10 @@ export function HistoryClient() {
           <div className="task4-panel">
             {sections.analysisRecords.map((session) => (
               <AnalysisRow
+                disabled={session.status !== "done"}
                 key={session.analysis_ref}
-                onLoadDetail={loadDetail}
+                onToggle={toggleAnalysis}
+                selected={selectedAnalysisIds.includes(session.id)}
                 session={session}
               />
             ))}
@@ -368,38 +389,27 @@ export function HistoryClient() {
         )}
       </section>
 
-      <Drawer
-        onClose={() => setSelectedRun(null)}
-        open={Boolean(selectedRun)}
-        title={selectedRun ? `训练记录详情 · ${selectedRun.scenario ?? "未知场景"}` : "训练记录详情"}
-      >
-        {selectedRun ? <RunInspector run={selectedRun} /> : null}
-      </Drawer>
-
-      <Dialog onClose={() => setDetailId(null)} open={detailId !== null} title="分析摘要">
-        {detailId !== null ? (
-          detailLoading ? (
-            <Loading>正在按需加载摘要</Loading>
-          ) : detailError ? (
-            <ErrorState title="分析详情暂时不可用">
-              <p>原列表仍保留，稍后可以重试。</p>
-              <Button onClick={() => void loadDetail(detailId)} variant="secondary">重试</Button>
-            </ErrorState>
-          ) : detail ? (
-            <div className="task4-detail-summary">
-              <Status tone={sessionTone(detail.status)}>{sessionStatus(detail.status)}</Status>
-              <p>完整 Diagnosis、Video、Data 由 Analysis workspace 负责。</p>
-              {detail.history ? (
-                <dl className="task4-facts">
-                  <div><dt>场景</dt><dd>{detail.history.scenario ?? "未知场景"}</dd></div>
-                  <div><dt>来源</dt><dd>{Object.values(detail.history.source_availability).some((value) => value !== "available") ? "部分可用" : "可用"}</dd></div>
-                  <div><dt>视频回放</dt><dd>{detail.history.visual_replay.seekable ? "可用" : "不可用"}</dd></div>
-                </dl>
-              ) : <p className="task4-muted">当前没有可用的安全摘要投影。</p>}
-            </div>
-          ) : null
-        ) : null}
-      </Dialog>
+      <section className="task4-sec" aria-labelledby="runs-title">
+        <div className="task4-sec-head">
+          <h2 id="runs-title" className="task4-sec-title">训练记录</h2>
+          <span className="task4-sec-count">{sections.runRecords.length}</span>
+        </div>
+        {sections.runRecords.length === 0 ? (
+          <RunSectionState kind="records" runDiscovery={runDiscovery} />
+        ) : (
+          <div className="task4-panel">
+            {sections.runRecords.map((run) => (
+              <RunRow
+                disabled={run.supported_input_modes.length === 0}
+                key={run.run_ref}
+                onToggle={toggleRun}
+                run={run}
+                selected={selectedRunIds.includes(run.id)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

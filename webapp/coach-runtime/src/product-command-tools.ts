@@ -3,7 +3,7 @@ import { loadPiAi } from "./pi-source.ts";
 import { isRecord, type CoachToolBridge } from "./contracts.ts";
 import { NATIVE_READ_COMMANDS, executeNativeRead } from "./product-commands-native.ts";
 import { isNativeEvidenceCommand, executeNativeEvidence } from "./evidence-native.ts";
-import { isNativeWriteCommand, executeNativeWrite, isNativeAnalysisDeleteCommand, executeNativeAnalysisDelete, type NativeWriteResult } from "./product-commands-write.ts";
+import { isNativeWriteCommand, executeNativeWrite, isNativeAnalysisDeleteCommand, executeNativeAnalysisDelete, isNativeAnalysisRetryCommand, executeNativeAnalysisRetry, type NativeWriteResult } from "./product-commands-write.ts";
 import { isNativeEloshapesCommand, executeNativeEloshapes } from "./eloshapes-native.ts";
 import { isNativeKovaakScoreCommand, executeNativeKovaakScore } from "./kovaak-scores-native.ts";
 import { isNativePythonAnalysisCommand, executeNativePythonAnalysis } from "./python-analysis.ts";
@@ -23,7 +23,8 @@ export const PRODUCT_COMMAND_NAMES = [
   "analysis.compare", "navigation.open", "analysis.create_from_run", "analysis.retry", "analysis.delete",
   "training_plan.generate_draft", "training_plan.save", "training_plan.activate",
   "training_plan.pause", "training_plan.adjust", "training_plan.review", "training_plan.item.add",
-  "training_plan.execution.record", "training_plan.retest.record",
+  "training_plan.execution.record", "training_plan.retest.record", "teaching_session.update",
+  "scenario_memory.set",
   "analysis.metrics.distribution", "analysis.evidence.list", "analysis.evidence.signal_window",
   "analysis.evidence.compare", "analysis.run_facts.get", "analysis.outcomes.timeline",
   "analysis.events.list", "analysis.events.get", "analysis.events.rank",
@@ -31,7 +32,6 @@ export const PRODUCT_COMMAND_NAMES = [
   "analysis.events.sequence", "profile.aiming.snapshot",
   "product.readiness.get",
   "kovaak_scores.lookup", "kovaak_scores.refresh_connected",
-  "teaching_session.update",
   "eloshapes.query", "peripheral_profile.get", "peripheral_profile.update",
 ] as const;
 type ProductCommandName = typeof PRODUCT_COMMAND_NAMES[number];
@@ -80,7 +80,11 @@ function hasExactKeys(parameters: Record<string, unknown>, keys: string[]): bool
 function hasValidCommandParameters(commandName: ProductCommandName, parameters: Record<string, unknown>): boolean {
   if (commandName === "kovaak_scores.lookup") {
     return hasExactKeys(parameters, ["profile_ref"]) &&
-      typeof parameters.profile_ref === "string" && /^steam_profile:[1-9]\d*$/.test(parameters.profile_ref);
+      typeof parameters.profile_ref === "string" && (
+        /^steam_profile:[1-9]\d*$/.test(parameters.profile_ref) ||
+        /^\d{17}$/.test(parameters.profile_ref) ||
+        /^https:\/\/steamcommunity\.com\/profiles\/\d{17}\/?$/.test(parameters.profile_ref)
+      );
   }
   if (commandName === "kovaak_scores.refresh_connected") return hasExactKeys(parameters, []);
   return true;
@@ -178,7 +182,7 @@ export function createProductCommandTool(
   return {
     name: "run_product_command",
     label: "Run product command",
-    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。不要猜测 ref，只用已返回的 ref。写操作需用户授权。不得提交路径、URL、credential 或任意 payload。",
+    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。查 KovaaK 成绩：kovaak_scores.lookup 的 profile_ref 传用户提供的 17 位 Steam ID 或 steamcommunity.com 主页链接。不要猜测 ref，只用已返回的 ref。不得提交路径、credential 或任意 payload。",
     parameters: Type.Object({
       command_name: commandSchema,
       parameters: Type.Object({}, { additionalProperties: true }),
@@ -250,6 +254,19 @@ export function createProductCommandTool(
         return writeResultToToolResult(params.command_name, nativeResult);
       }
 
+      // Native analysis retry: HTTP POST to the Python backend so the failed
+      // session is re-enqueued through the shared product command handler.
+      if (isNativeAnalysisRetryCommand(params.command_name)) {
+        let idempotencyKey = params.idempotency_key;
+        if (!idempotencyKey) {
+          idempotencyKey = `native:${createHash("sha256").update(canonicalJson({ owner: ownerId, commandName: params.command_name, parameters: params.parameters })).digest("hex")}`;
+        }
+        const nativeResult = await executeNativeAnalysisRetry(
+          params.command_name, params.parameters, ownerId, idempotencyKey, signal,
+        );
+        return writeResultToToolResult(params.command_name, nativeResult);
+      }
+
       // Native eloshapes query: read artifact files, skip the HTTP bridge.
       if (isNativeEloshapesCommand(params.command_name)) {
         const nativeResult = executeNativeEloshapes(params.command_name, params.parameters);
@@ -258,9 +275,9 @@ export function createProductCommandTool(
 
       // Native KovaaK scores: async HTTP call to KovaaK API, skip the HTTP bridge.
       if (isNativeKovaakScoreCommand(params.command_name)) {
-        // temporary_profile_refs are not carried on the Node bridge type yet;
-        // kovaak_scores.lookup will return temporary_profile_unavailable until
-        // wired, while refresh_connected works (reads steam_id from config).
+        // lookup takes the user-provided 17-digit Steam ID or steamcommunity
+        // profile URL directly (or a turn-scoped steam_profile ref when the
+        // caller supplies one); refresh_connected reads steam_id from config.
         const nativeResult = await executeNativeKovaakScore(
           params.command_name, params.parameters, ownerId,
         );

@@ -156,6 +156,7 @@ test.describe("release interaction polish", () => {
   });
 
   test("History query Run ref selects the matching pending Run in Analyze", async ({ page }) => {
+    test.skip(true, "Analyze 抽屉与 run 查询参数入口已移除；待 History→Coach 新流程稳定后重写");
     await installDesktopBridge(page);
     await installApiFixtures(page, apiScenario({ runs: [RUN_PENDING_MULTIMODAL, RUN_PENDING_NATIVE] }));
     await page.goto(`/analyze?run=${encodeURIComponent(RUN_NATIVE.run_ref)}`);
@@ -170,6 +171,7 @@ test.describe("release interaction polish", () => {
   });
 
   test("Analysis Tabs implement roving focus and tabpanel relationships without decorative motion", async ({ page }) => {
+    test.skip(true, "Analysis Tabs 已随独立页面下线；roving-focus 断言待 Coach 卡片形态稳定后重写");
     await installApiFixtures(page);
     await page.goto("/analysis/42");
 
@@ -256,6 +258,7 @@ test.describe("release interaction polish", () => {
   });
 
   test("side-by-side Coach stays viewport-bound while the analysis page scrolls", async ({ page }) => {
+    test.skip(true, "side-by-side 分析页布局已下线；Coach 三栏形态断言待新 IA 稳定后重写");
     await page.setViewportSize({ width: 1178, height: 920 });
     await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
     await installApiFixtures(page);

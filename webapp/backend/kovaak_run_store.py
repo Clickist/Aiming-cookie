@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import stat
+import threading
 import time
 from datetime import datetime, timezone
 from dataclasses import asdict
@@ -105,6 +106,7 @@ MAX_CAPTURE_WINDOW_MS = 300_000
 
 _RUNS_DIR = "runs"
 _COUNTER_PATH = "runs/_counter.json"
+_RUN_ID_LOCK = threading.Lock()
 _EVIDENCE_TOMBSTONES = "runs/_evidence_tombstones.json"
 _INCOMPLETE_TOMBSTONES = "runs/_incomplete_tombstones.json"
 
@@ -133,19 +135,24 @@ def _run_meta_path(run_id: int) -> str:
 
 
 def _next_run_id() -> int:
-    data = file_store.read_json(_COUNTER_PATH)
-    if data is None:
-        max_id = 0
-        for p in file_store.list_subdirs(_RUNS_DIR):
-            try:
-                max_id = max(max_id, int(p.name))
-            except ValueError:
-                continue
-        data = {"next_id": max_id + 1}
-    next_id = int(data.get("next_id", 1))
-    data["next_id"] = next_id + 1
-    file_store.write_json(_COUNTER_PATH, data)
-    return next_id
+    # Read-modify-write on the shared counter file; the lock keeps the
+    # allocation atomic if a second caller ever runs off the event loop
+    # (today the watcher path is serialized by the ingestion service's
+    # finalizer_lock, so this is defensive hardening).
+    with _RUN_ID_LOCK:
+        data = file_store.read_json(_COUNTER_PATH)
+        if data is None:
+            max_id = 0
+            for p in file_store.list_subdirs(_RUNS_DIR):
+                try:
+                    max_id = max(max_id, int(p.name))
+                except ValueError:
+                    continue
+            data = {"next_id": max_id + 1}
+        next_id = int(data.get("next_id", 1))
+        data["next_id"] = next_id + 1
+        file_store.write_json(_COUNTER_PATH, data)
+        return next_id
 
 
 def _load_run(run_id: int) -> Optional[dict]:
@@ -745,6 +752,7 @@ async def ingest_discovery(
             "event_count": len(performance.events),
             "source_event_count": performance.source_event_count,
             "omitted_event_indexes": list(performance.omitted_event_indexes),
+            "post_window_event_count": performance.post_window_event_count,
             "timeline_status": performance.timeline_status,
             "unknown_field_observability": performance.unknown_field_observability,
             "source": performance_source,
@@ -1238,6 +1246,7 @@ async def invalidate_run_for_video_coverage_gap(
     expected_request_digest: str,
     data_root: str | Path,
 ) -> Optional[dict]:
+    """Mark only the video unavailable; the trace stays for input_native."""
     candidate, _request_id = _managed_run_video_path(
         data_root, run_id, expected_pending_video_path,
     )
@@ -1254,7 +1263,6 @@ async def invalidate_run_for_video_coverage_gap(
         run.get("finalization_state") == "finalized"
         and run.get("finalization_error") == "video_coverage_gap"
         and run.get("video_state") == "unavailable"
-        and run.get("trace_state") == "unavailable"
     ):
         return run
     if (
@@ -1264,53 +1272,14 @@ async def invalidate_run_for_video_coverage_gap(
     ):
         raise ValueError("video pending state changed before coverage invalidation")
 
-    tombstone: dict[str, object] | None = None
-    trace_path = run.get("mouse_trace_path")
-    if run.get("trace_state") == "attached" and trace_path:
-        try:
-            artifact, relative_path = _managed_evidence_artifact(
-                data_root, run_id, "raw", trace_path,
-            )
-            fingerprint = _file_fingerprint(artifact)
-        except (OSError, ValueError):
-            pass
-        else:
-            tombstones = file_store.read_json(_EVIDENCE_TOMBSTONES) or []
-            tombstones.append({
-                "run_id": run_id,
-                "evidence_kind": "raw",
-                "owner_id": user_id,
-                "artifact_relpath": relative_path,
-                "expected_sha256": fingerprint["sha256"],
-                "expected_size": fingerprint["size"],
-            })
-            file_store.write_json(_EVIDENCE_TOMBSTONES, tombstones)
-            tombstone = {
-                "run_id": run_id,
-                "evidence_kind": "raw",
-                "owner_id": user_id,
-                "artifact_relpath": relative_path,
-                "expected_sha256": fingerprint["sha256"],
-                "expected_size": fingerprint["size"],
-            }
-
     run["video_path"] = None
     run["video_state"] = "unavailable"
     run["pending_video_path"] = None
     run["video_receipt"] = None
     run["video_summary"] = None
     run["video_error"] = "video_coverage_gap"
-    run["mouse_trace_path"] = None
-    run["trace_state"] = "unavailable"
-    run["pending_trace_path"] = None
-    run["trace_error"] = "trace_video_coverage_gap"
-    run["finalization_state"] = "finalized"
-    run["finalization_error"] = "video_coverage_gap"
     run["updated_at"] = _utc_now()
     _save_run(run)
-
-    if tombstone is not None:
-        await _cleanup_evidence_tombstone(tombstone, data_root)
     return run
 
 

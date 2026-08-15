@@ -242,9 +242,23 @@ async def test_exit_release_requires_the_same_finalizing_session_after_process_e
 
 
 @pytest.mark.asyncio
-async def test_exit_release_does_not_release_a_live_kovaak_session(tmp_path: Path) -> None:
+async def test_exit_release_releases_finalizing_session_after_fast_kovaak_restart(
+    tmp_path: Path,
+) -> None:
     client = FakeNativeCaptureClient(tmp_path / "data")
     client.phase = "finalizing"
+    finalizer = _finalizer(tmp_path, client)
+
+    assert await finalizer.finalizing_capture_session() == "session-1"
+    assert await finalizer.release_capture_session("session-1") is True
+    assert client.release_calls == ["session-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["capturing", "degraded", "waiting_for_kovaak"])
+async def test_exit_release_requires_finalizing_phase(tmp_path: Path, phase: str) -> None:
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    client.phase = phase
     finalizer = _finalizer(tmp_path, client)
 
     assert await finalizer.finalizing_capture_session() is None
@@ -764,7 +778,7 @@ async def test_positive_bot_life_limit_still_uses_terminal_stats_event(
 
 
 @pytest.mark.asyncio
-async def test_video_coverage_gap_invalidates_canonical_run_evidence(
+async def test_video_coverage_gap_keeps_trace_and_marks_video_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -796,85 +810,29 @@ async def test_video_coverage_gap_invalidates_canonical_run_evidence(
     duplicate = await finalizer.finalize(discovery)
 
     assert run["id"] == duplicate["id"]
-    assert run["trace_state"] == "unavailable"
-    assert run["mouse_trace_path"] is None
+    assert run["trace_state"] == "attached"
     assert run["pending_trace_path"] is None
-    assert run["trace_error"] == "trace_video_coverage_gap"
+    assert run["trace_error"] is None
     assert run["video_state"] == "unavailable"
     assert run["video_error"] == "video_coverage_gap"
     assert run["finalization_state"] == "finalized"
     assert kovaak_run_store.derive_run_readiness(run) == {
-        "ready": False,
-        "state": "incomplete_evidence",
-        "input_native": False,
+        "ready": True,
+        "state": "pending_analysis",
+        "input_native": True,
         "video_fallback": False,
     }
     assert len(client.export_calls) == 1
-    assert list((tmp_path / "data" / "runs" / str(run["id"])).glob("trace-*.bin")) == []
+    managed = list((tmp_path / "data" / "runs" / str(run["id"])).glob("trace-*.bin"))
+    assert len(managed) == 1 and managed[0].is_file()
+    assert run["mouse_trace_path"] is not None
+    assert Path(run["mouse_trace_path"]).is_file()
     assert raw.read_bytes() == raw_source
     assert stats.read_bytes() == b"stats"
     assert performance.read_bytes() == b"performance"
     tombstones = file_store.read_json("runs/_evidence_tombstones.json") or []
     assert all(t.get("run_id") != run["id"] for t in tombstones)
     assert file_store.list_dir("sessions") == []
-
-
-@pytest.mark.asyncio
-async def test_video_coverage_gap_cleanup_failure_reconciles_exact_managed_raw(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from webapp.backend import config
-
-    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
-    _configure_parsers(monkeypatch, time_limit=1.0)
-    stats = tmp_path / "Scenario Stats.csv"
-    performance = tmp_path / "Scenario Performance.perf"
-    stats.write_bytes(b"stats")
-    performance.write_bytes(b"performance")
-    raw = tmp_path / "raw.bin"
-    kovaak_run_store.write_mouse_snapshot(raw, [
-        {"timestamp_ms": 1_500, "dx": 2, "dy": 3, "buttons": 0},
-    ])
-    original_unlink = kovaak_run_store._unlink_run_evidence_artifact
-
-    def fail_unlink(_path: Path) -> int:
-        raise OSError("injected cleanup failure")
-
-    monkeypatch.setattr(kovaak_run_store, "_unlink_run_evidence_artifact", fail_unlink)
-    run = await _finalizer(
-        tmp_path,
-        FakeNativeCaptureClient(
-            tmp_path / "data", terminal_code="capture_coverage_gap",
-        ),
-        raw_snapshot=raw,
-    ).finalize(KovaaKFileDiscovery(
-        stem="coverage-gap-cleanup",
-        stats_path=stats,
-        performance_path=performance,
-    ))
-
-    managed = list((tmp_path / "data" / "runs" / str(run["id"])).glob("trace-*.bin"))
-    assert run["trace_state"] == "unavailable"
-    assert kovaak_run_store.derive_run_readiness(run)["state"] == "incomplete_evidence"
-    assert len(managed) == 1 and managed[0].is_file()
-    tombstones = file_store.read_json("runs/_evidence_tombstones.json") or []
-    tombstone = next(
-        (t for t in tombstones if t.get("run_id") == run["id"] and t.get("evidence_kind") == "raw"),
-        None,
-    )
-    assert tombstone is not None
-    assert tombstone["cleanup_state"] == "failed"
-    assert tombstone["cleanup_attempts"] == 1
-    assert tombstone["last_error_code"] == "artifact_cleanup_failed"
-
-    monkeypatch.setattr(
-        kovaak_run_store, "_unlink_run_evidence_artifact", original_unlink,
-    )
-    assert await kovaak_run_store.reconcile_run_evidence_deletions(
-        tmp_path / "data"
-    ) == {"completed": 1, "failed": 0}
-    assert not managed[0].exists()
 
 
 @pytest.mark.asyncio
@@ -1026,6 +984,48 @@ async def test_over_300_second_window_fails_before_native_export(
     assert run["video_state"] == "unavailable"
     assert run["video_error"] == "video_window_invalid"
     assert run["finalization_state"] == "finalized"
+
+
+@pytest.mark.asyncio
+async def test_invalid_video_window_keeps_trace_for_input_native(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    _configure_parsers(monkeypatch, time_limit=301.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": 150_000, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
+
+    run = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="window-invalid",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+
+    assert client.export_calls == []
+    assert run["video_state"] == "unavailable"
+    assert run["video_error"] == "video_window_invalid"
+    assert run["finalization_state"] == "finalized"
+    assert run["trace_state"] == "attached"
+    assert run["trace_error"] is None
+    managed = list((tmp_path / "data" / "runs" / str(run["id"])).glob("trace-*.bin"))
+    assert len(managed) == 1 and managed[0].is_file()
+    assert kovaak_run_store.derive_run_readiness(run) == {
+        "ready": True,
+        "state": "pending_analysis",
+        "input_native": True,
+        "video_fallback": False,
+    }
 
 
 @pytest.mark.asyncio

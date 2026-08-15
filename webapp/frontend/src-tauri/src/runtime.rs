@@ -71,8 +71,7 @@ impl RuntimeProcess {
         std::fs::create_dir_all(app_data_dir)
             .map_err(|error| format!("failed to create app data directory: {error}"))?;
 
-        let (mut coach_sidecar, coach_sidecar_url) =
-            start_coach_sidecar(layout, app_data_dir)?;
+        let (mut coach_sidecar, coach_sidecar_url) = start_coach_sidecar(layout, app_data_dir)?;
         let token = create_launch_token();
         let mut command = Command::new(&layout.backend_program);
         command
@@ -525,7 +524,10 @@ fn start_coach_sidecar(
         .env(COACH_SIDECAR_HOST_ENV, "127.0.0.1")
         .env(COACH_SIDECAR_PORT_ENV, "0")
         .env("DATA_ROOT", app_data_dir)
-        .env(DESKTOP_RUNTIME_CONFIG_ENV, app_data_dir.join(DESKTOP_RUNTIME_CONFIG_FILE))
+        .env(
+            DESKTOP_RUNTIME_CONFIG_ENV,
+            app_data_dir.join(DESKTOP_RUNTIME_CONFIG_FILE),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -604,11 +606,8 @@ fn write_desktop_runtime_config(
     };
     let serialized = serde_json::to_vec_pretty(&config)
         .map_err(|error| format!("failed to serialize desktop runtime config: {error}"))?;
-    std::fs::write(
-        app_data_dir.join(DESKTOP_RUNTIME_CONFIG_FILE),
-        serialized,
-    )
-    .map_err(|error| format!("failed to write desktop runtime config: {error}"))
+    std::fs::write(app_data_dir.join(DESKTOP_RUNTIME_CONFIG_FILE), serialized)
+        .map_err(|error| format!("failed to write desktop runtime config: {error}"))
 }
 
 fn file_url(path: &Path) -> Result<String, String> {

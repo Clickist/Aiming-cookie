@@ -204,6 +204,40 @@ def test_event_timestamp_is_half_up_quantized_and_end_exclusive():
             parse_performance_bytes(header + field(2, 2, rejected))
 
 
+def test_post_window_events_are_dropped_and_counted():
+    profile = b"".join([field(1, 5, f32(1.0)), field(10, 5, f32(1.0))])
+    header = field(1, 2, field(5, 2, profile))
+    in_window = b"".join(
+        [field(1, 5, f32(0.5)), field(2, 2, field(1, 0, 1))]
+    )
+    post_window = b"".join(
+        [field(1, 5, f32(1.5)), field(2, 2, field(1, 0, 2))]
+    )
+
+    parsed = parse_performance_bytes(
+        b"".join([header, field(2, 2, in_window), field(2, 2, post_window)])
+    )
+
+    assert [event.timestamp_ms for event in parsed.events] == [500]
+    assert [event.source_event_index for event in parsed.events] == [0]
+    assert parsed.source_event_count == 2
+    assert parsed.post_window_event_count == 1
+    assert parsed.timeline_status == "complete"
+
+
+def test_events_entirely_outside_window_are_rejected():
+    profile = b"".join([field(1, 5, f32(1.0)), field(10, 5, f32(1.0))])
+    header = field(1, 2, field(5, 2, profile))
+    post_window = b"".join(
+        [field(1, 5, f32(1.5)), field(2, 2, field(1, 0, 2))]
+    )
+
+    with pytest.raises(PerformanceParseError, match="half-open"):
+        parse_performance_bytes(
+            b"".join([header, field(2, 2, post_window), field(2, 2, post_window)])
+        )
+
+
 def test_unknown_payload_is_omitted_but_keeps_its_source_order_hole():
     unknown_payload = b"".join(
         [

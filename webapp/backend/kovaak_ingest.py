@@ -10,12 +10,15 @@ import logging
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
 _PERFORMANCE_SUFFIXES = {".perf"}
 _SUFFIX_RE = re.compile(r"\s+(?:stats|performance)$", re.IGNORECASE)
+_RETRY_ATTEMPT_LIMIT = 5
+# Match the 10-minute MAX_SNAPSHOT_SPAN_MS retention that ends trace_pending retries.
+_RETRY_WINDOW_SECONDS = 10 * 60.0
 log = logging.getLogger(__name__)
 
 
@@ -57,6 +60,12 @@ class _FileState:
     size: int
     mtime_ns: int
     stable_scans: int = 1
+
+
+@dataclass
+class _RetryBudget:
+    failures: int = 0
+    first_failure_monotonic: float = field(default_factory=time.monotonic)
 
 
 def is_stats_path(path: str | Path) -> bool:
@@ -110,6 +119,9 @@ class KovaaKDirectoryWatcher:
         self._states: dict[Path, _FileState] = {}
         self._emitted: set[tuple[tuple[Path, int, int], ...]] = set()
         self._pending: set[tuple[tuple[Path, int, int], ...]] = set()
+        self._retry_budgets: dict[
+            tuple[tuple[Path, int, int], ...], _RetryBudget
+        ] = {}
         self._emission_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -153,6 +165,10 @@ class KovaaKDirectoryWatcher:
                 key for key in self._emitted
                 if all(revision in current_revisions for revision in key)
             }
+            self._retry_budgets = {
+                key: budget for key, budget in self._retry_budgets.items()
+                if all(revision in current_revisions for revision in key)
+            }
 
         grouped: dict[str, dict[str, Path]] = {}
         for path in stable_paths:
@@ -177,7 +193,7 @@ class KovaaKDirectoryWatcher:
                 result = self.callback(discovery)
             except Exception as error:
                 if _is_retryable(error):
-                    self._release(key)
+                    self._release_or_give_up(key, discovery.stem, error)
                 else:
                     self._mark_emitted(key)
                 if isinstance(error, NonRetryableIngestionError):
@@ -204,10 +220,42 @@ class KovaaKDirectoryWatcher:
         with self._emission_lock:
             self._pending.discard(key)
 
+    def _release_or_give_up(
+        self,
+        key: tuple[tuple[Path, int, int], ...],
+        stem: str,
+        error: BaseException,
+    ) -> None:
+        """Return a retryable failure to the queue, or stop after too many."""
+        with self._emission_lock:
+            budget = self._retry_budgets.get(key)
+            if budget is None:
+                budget = _RetryBudget()
+                self._retry_budgets[key] = budget
+            budget.failures += 1
+            exhausted = (
+                budget.failures >= _RETRY_ATTEMPT_LIMIT
+                or time.monotonic() - budget.first_failure_monotonic
+                >= _RETRY_WINDOW_SECONDS
+            )
+            self._pending.discard(key)
+            if not exhausted:
+                return
+            self._emitted.add(key)
+            del self._retry_budgets[key]
+            failures = budget.failures
+        log.warning(
+            "KovaaK ingestion gave up on %s after %d failed attempts: %s",
+            stem,
+            failures,
+            error,
+        )
+
     def _mark_emitted(self, key: tuple[tuple[Path, int, int], ...]) -> None:
         with self._emission_lock:
             self._pending.discard(key)
             self._emitted.add(key)
+            self._retry_budgets.pop(key, None)
 
     def _complete_when_ready(
         self,
@@ -225,7 +273,7 @@ class KovaaKDirectoryWatcher:
                 done.result()  # type: ignore[union-attr]
             except BaseException as error:
                 if _is_retryable(error):
-                    self._release(key)
+                    self._release_or_give_up(key, discovery.stem, error)
                 else:
                     self._mark_emitted(key)
                 if isinstance(error, NonRetryableIngestionError):

@@ -18,6 +18,8 @@ test("Tauri embeds the static export and enables the NSIS bundle", async () => {
   assert.equal(config.build.frontendDist, "../out");
   assert.equal(config.bundle.active, true);
   assert.deepEqual(config.bundle.targets, ["nsis"]);
+  assert.equal(config.app.windows.length, 1);
+  assert.equal(config.app.windows[0].label, "main");
 });
 
 test("Tauri package uses the app toolbar instead of a native title bar", async () => {
@@ -76,4 +78,12 @@ test("Windows packaging keeps signing explicit and resource builds source-indepe
   assert.match(runtimeScript, /PyInstaller/);
   assert.match(runtimeScript, /--compile/);
   assert.match(runtimeScript, /coach-system\.md/);
+});
+
+test("desktop startup is single-instance and focuses the existing main window", async () => {
+  const rustSource = await source("src-tauri/src/lib.rs");
+  assert.match(rustSource, /tauri_plugin_single_instance::init/);
+  assert.match(rustSource, /get_webview_window\("main"\)/);
+  assert.match(rustSource, /window\.show\(\)/);
+  assert.match(rustSource, /window\.set_focus\(\)/);
 });

@@ -136,5 +136,27 @@ test("components consume semantic CSS tokens and preserve accessibility states",
   assert.match(css, /:focus-visible/);
   assert.match(css, /:disabled|\[aria-disabled="true"\]/);
   assert.match(css, /prefers-reduced-motion/);
-  assert.match(css, /transition-duration:\s*0/);
+  assert.doesNotMatch(css, /transition-duration:\s*0ms\s*!important/);
+});
+
+test("shared motion uses the approved curves and accessible press feedback", () => {
+  const css = readFileSync(join(frontendRoot, "ui", "theme.css"), "utf8");
+
+  assert.match(css, /--ease-out:\s*cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
+  assert.match(css, /--ease-in-out:\s*cubic-bezier\(0\.77, 0, 0\.175, 1\)/);
+  assert.match(css, /--ease-drawer:\s*cubic-bezier\(0\.32, 0\.72, 0, 1\)/);
+  assert.match(css, /--duration-press:\s*160ms/);
+  assert.match(css, /--duration-dialog:\s*180ms/);
+  assert.match(css, /--duration-surface:\s*200ms/);
+  assert.match(css, /\.ac-button:active[^}]+\.ac-icon-button:active[^}]+transform:\s*scale\(0\.97\)/s);
+  assert.match(css, /prefers-reduced-motion:\s*reduce[\s\S]+transition-property:\s*opacity, color, background-color, border-color/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce[\s\S]+\.ac-toast[\s\S]+transform:\s*none/);
+});
+
+test("dialog and toast motion is state-driven and compositor-friendly", () => {
+  const css = readFileSync(join(frontendRoot, "ui", "theme.css"), "utf8");
+
+  assert.match(css, /\.ac-toast\[data-state="closed"\][^{]*\{[^}]*opacity:\s*0[^}]*transform:\s*translateY\(100%\)/s);
+  assert.match(css, /\.ac-dialog\[data-state="closed"\][^{]*\{[^}]*opacity:\s*0[^}]*transform:\s*translate\(-50%, -50%\) scale\(0\.97\)/s);
+  assert.doesNotMatch(css, /\.ac-(?:toast|dialog)[^}]*transition:[^;}]*(?:height|width|margin|padding|top|left)/s);
 });

@@ -11,10 +11,9 @@ async function source(relativePath: string): Promise<string> {
 test("history page is a light list and does not render full result payloads or benchmark UI", async () => {
   const value = await source("components/task4/HistoryClient.tsx");
   assert.match(value, /getHistorySessions/);
-  assert.match(value, /getHistoryAnalysisDetail/);
   assert.match(value, /historyEvidenceState/);
-  assert.match(value, /detail\.history/);
-  assert.match(value, /visual_replay/);
+  // 摘要 Dialog 已移除：不再按需加载完整分析投影。
+  assert.doesNotMatch(value, /getHistoryAnalysisDetail|detail\.history|visual_replay/);
   assert.doesNotMatch(value, /Benchmark|Plotly|result\.deterministic|video_url/);
 });
 
@@ -46,11 +45,33 @@ test("history keeps refresh and Coach return without batch attach", async () => 
   assert.match(styles, /@media \(min-width: 840px\) and \(max-width: 1159px\)[\s\S]*\.task3-workspace\[data-coach-open="true"\] \.task4-page-head[\s\S]*width:\s*calc\(100% - var\(--task3-coach-width, 360px\)\);[\s\S]*flex-wrap:\s*wrap;/);
 });
 
-test("history and run inspector do not expose path or raw trace fields", async () => {
-  const value = await source("components/task4/RunInspector.tsx");
-  assert.doesNotMatch(value, /stats_source_ref|performance_source_ref|trace_artifact_ref|trace_error/);
-  assert.match(value, /data-operation=\"manage_storage\"/);
-  assert.match(value, /disabled variant=\"secondary\"/);
+test("history hands multi-selected runs and analyses to the Coach via the pending-intent draft", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  // 待分析、训练记录、分析记录共用选择集（上限 5）
+  assert.match(value, /const MAX_SELECTED_RUNS = 5;/);
+  assert.match(value, /selectedCount >= MAX_SELECTED_RUNS/);
+  assert.match(value, /const selectedCount = selectedRunIds\.length \+ selectedAnalysisIds\.length;/);
+  // 无任何可用 tier 的训练记录禁用勾选；未完成的分析不可选
+  assert.match(value, /disabled=\{run\.supported_input_modes\.length === 0\}/);
+  assert.match(value, /disabled=\{session\.status !== "done"\}/);
+  // 「让 Coach 分析」拼话术交给 Coach 输入框，用户发送后逐条处理
+  assert.match(value, /buildCoachAnalysisDraft\(\{/);
+  assert.match(value, /sessionStorage\.setItem\(COACH_PENDING_INTENT_KEY/);
+  assert.match(value, /让 Coach 分析/);
+  // 详情抽屉与摘要弹窗已移除：入口按钮不再存在
+  assert.doesNotMatch(value, /查看 Run/);
+  assert.doesNotMatch(value, /查看摘要/);
+  assert.doesNotMatch(value, /RunInspector/);
+  assert.doesNotMatch(value, /getHistoryAnalysisDetail/);
+});
+
+test("history sections order pending first, analyses second, run records last", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  const pendingAt = value.indexOf('id="pending-title"');
+  const analysisAt = value.indexOf('id="analysis-title"');
+  const runsAt = value.indexOf('id="runs-title"');
+  assert.ok(pendingAt !== -1 && analysisAt !== -1 && runsAt !== -1, "all three sections must exist");
+  assert.ok(pendingAt < analysisAt && analysisAt < runsAt, "section order must be pending → analysis → runs");
 });
 
 test("history never promotes an analysis summary into the scenario title", async () => {
@@ -63,5 +84,5 @@ test("History keeps Analysis consumption local", async () => {
   const value = await source("components/task4/HistoryClient.tsx");
   assert.doesNotMatch(value, /analysisHref\(/);
   assert.doesNotMatch(value, /href=\{[^}]*\/analysis/);
-  assert.match(value, /onLoadDetail\(session\.id\)/);
+  assert.doesNotMatch(value, /onLoadDetail/);
 });

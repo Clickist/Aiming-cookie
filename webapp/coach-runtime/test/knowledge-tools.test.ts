@@ -53,6 +53,51 @@ test("unknown knowledge query returns an empty bounded result", () => {
   assert.deepEqual(result.entries, []);
 });
 
+test("baseline metric queries hit knowledge entries in every ref shape", () => {
+  // baseline 档没有诊断 signal；实测指标名直接按 metric 检索即可命中：
+  // bare（sparc）、family 前缀（static_clicking.corrective_count /
+  // continuous_tracking.sparc）与 metric: 前缀都归一到同一批条目。
+  const bare = getCoachKnowledge({ metric_refs: ["sparc"] });
+  assert.ok(bare.entries.length >= 1);
+  assert.ok(bare.entries.some((entry) => entry.metric_refs.includes("metric:sparc")));
+
+  const familyPrefixed = getCoachKnowledge({
+    metric_refs: ["static_clicking.corrective_count"],
+  });
+  assert.ok(familyPrefixed.entries.some(
+    (entry) => entry.entry_ref === "knowledge:static.flicking-terminal-control@2",
+  ));
+
+  const trackingBySparc = getCoachKnowledge({
+    metric_refs: ["continuous_tracking.sparc"],
+  });
+  assert.ok(trackingBySparc.entries.some(
+    (entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@2",
+  ));
+
+  const canonical = getCoachKnowledge({ metric_refs: ["metric:sparc"] });
+  assert.deepEqual(
+    canonical.entries.map((entry) => entry.entry_ref),
+    bare.entries.map((entry) => entry.entry_ref),
+  );
+});
+
+test("baseline deceleration metrics reach the tracking control-smoothness entry", () => {
+  // v7 为 tracking.control-smoothness 补挂了基础档指标标签，使 baseline 追踪分析
+  // 讲 decel/path 时能借到对应知识条目（此前只有视觉管线指标可查）。
+  for (const metric of ["decel_frac", "path_efficiency", "reverse_ratio"]) {
+    const result = getCoachKnowledge({ metric_refs: [metric] });
+    assert.ok(
+      result.entries.some((entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@2"),
+      `bare ${metric} should hit tracking.control-smoothness`,
+    );
+  }
+  const familyPrefixed = getCoachKnowledge({ metric_refs: ["continuous_tracking.decel_frac"] });
+  assert.ok(familyPrefixed.entries.some(
+    (entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@2",
+  ));
+});
+
 test("knowledge event preserves every source returned with a projected entry", async () => {
   const query = {
     entry_ref: "knowledge:tracking.control-smoothness@2",
@@ -93,9 +138,9 @@ test("knowledge event accepts v5 differential-intake evidence", async () => {
     supported_use: "candidate_experiment",
   });
   const parsed = JSON.parse(output.content[0]?.text ?? "null");
-  assert.equal(parsed.registry_version, "2026-08-06.v6");
+  assert.equal(parsed.registry_version, "2026-08-15.v7");
   assert.equal(output.details.event.type, "knowledge");
-  assert.equal(output.details.event.registry_version, "2026-08-06.v6");
+  assert.equal(output.details.event.registry_version, "2026-08-15.v7");
   assert.ok(output.details.event.entry_refs.includes(
     "knowledge:hypothesis.input-latency-differential-intake@1",
   ));

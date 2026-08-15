@@ -14,7 +14,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
 	type ExecutionEnv,
@@ -66,7 +66,9 @@ function fileInfoFromStats(
 	const kind = fileKindFromStats(stats);
 	if (!kind) return err(new FileError("invalid", "Unsupported file type", path));
 	return ok({
-		name: path.replace(/\/+$/, "").split("/").pop() ?? path,
+		// basename is path-separator aware; split("/") never matches on Windows
+		// backslash paths, which silently breaks name-based lookups (skills).
+		name: basename(path) || path,
 		path,
 		kind,
 		size: stats.size,

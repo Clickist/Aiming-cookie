@@ -99,6 +99,9 @@ test("product command allowlist includes every bounded evidence query", () => {
   assert.ok(PRODUCT_COMMAND_NAMES.includes("analysis.delete"));
   assert.ok(PRODUCT_COMMAND_NAMES.includes("kovaak_scores.lookup"));
   assert.ok(PRODUCT_COMMAND_NAMES.includes("kovaak_scores.refresh_connected"));
+  // teaching_session.update is rebuilt as a native write command backed by
+  // teaching/session.json (see product-commands-write.ts).
+  assert.ok(PRODUCT_COMMAND_NAMES.includes("teaching_session.update"));
 });
 
 test("turn-scoped exclusions remove discovery commands from the model tool", async () => {
@@ -174,28 +177,56 @@ test("native generate_draft writes a draft and never exposes confirmation metada
   assert.equal(result.details.event.status, "succeeded");
 });
 
-test("KovaaK score lookup validates the profile reference shape natively", async () => {
+test("KovaaK score lookup accepts literal Steam IDs and profile URLs", async () => {
   const tool = createProductCommandTool(null);
   const result = await tool.execute("lookup", {
     command_name: "kovaak_scores.lookup",
     parameters: { profile_ref: "steam_profile:1" },
   });
 
-  // No bridge/HTTP request: the native lookup reports the turn-scoped profile
-  // is unavailable and never echoes the profile ref or any score payload.
+  // Opaque refs without a turn-scoped map still report unavailable and never
+  // echo the profile ref or any score payload.
   const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
   assert.equal(parsed.audit_ref, "native");
   assert.equal(parsed.status, "unavailable");
   assert.equal((parsed.warning_or_error as { code: string }).code, "temporary_profile_unavailable");
   assert.ok(!JSON.stringify(result).includes("steam_profile:1"));
 
+  // A literal 17-digit Steam ID or a steamcommunity profile URL pasted by the
+  // user is wired straight through to the benchmark endpoint (here stubbed to
+  // fail, proving the request left the building instead of being rejected).
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+  globalThis.fetch = (async (url) => {
+    requestedUrls.push(String(url));
+    return new Response("upstream down", { status: 503 });
+  }) as typeof fetch;
+  try {
+    for (const profile_ref of [
+      "76561199033719938",
+      "https://steamcommunity.com/profiles/76561199033719938",
+      "https://steamcommunity.com/profiles/76561199033719938/",
+    ]) {
+      const literal = await tool.execute("lookup-literal", {
+        command_name: "kovaak_scores.lookup",
+        parameters: { profile_ref },
+      });
+      const literalParsed = JSON.parse(literal.content[0]?.text ?? "{}") as Record<string, unknown>;
+      assert.equal(literalParsed.status, "unavailable");
+      assert.equal((literalParsed.warning_or_error as { code: string }).code, "kovaak_scores_unavailable");
+    }
+    assert.ok(requestedUrls.length > 0, "benchmark endpoint should have been called");
+    assert.ok(requestedUrls.every((url) => url.includes("steamId=76561199033719938")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
   for (const parameters of [
-    { profile_ref: "https://steamcommunity.com/profiles/76561199033719938" },
-    { profile_ref: "76561199033719938" },
     { profile_ref: "steam_profile:0" },
     { profile_ref: "steam_profile:1", extra: "field" },
     { profile_ref: { ref: "steam_profile:1" } },
     { profile_ref: ["steam_profile:1"] },
+    { profile_ref: "not-a-steam-input" },
   ]) {
     await assert.rejects(
       tool.execute("lookup-rejected", { command_name: "kovaak_scores.lookup", parameters }),
@@ -282,60 +313,61 @@ test("product tool documents the reachable Evidence query chain", () => {
   assert.match(description, /field_catalog/);
 });
 
-test("product command passes parameters through to bridge without TS-side filtering", async () => {
+test("analysis.retry executes natively and never routes through the bridge", async () => {
+  writeFixture("desktop-runtime.json", { python_base_url: "http://127.0.0.1:9999", python_token: "python-token" });
   const originalFetch = globalThis.fetch;
-  let fetchCalls = 0;
-  globalThis.fetch = (async () => {
-    fetchCalls += 1;
-    return new Response(JSON.stringify(commandResult()), { status: 200 });
+  const urls: string[] = [];
+  globalThis.fetch = (async (url) => {
+    urls.push(String(url));
+    return new Response(JSON.stringify({ id: 7, status: "queued" }), { status: 200 });
   }) as typeof fetch;
   try {
     const tool = createProductCommandTool(bridge());
-    // FORBIDDEN_KEYS filtering was removed — Python bridge validates server-side.
-    // analysis.retry still routes through the bridge (not yet native).
+    // Even with a bridge configured, analysis.retry goes straight to the
+    // Python backend's retry route — the bridge endpoint is never called.
     const result = await tool.execute("call", {
       command_name: "analysis.retry",
-      parameters: { session_id: 7, note: "https://example.com" },
+      parameters: { analysis_ref: "analysis:7" },
     });
-    assert.equal(fetchCalls, 1);
-    assert.ok(result);
+    assert.deepEqual(urls, ["http://127.0.0.1:9999/api/sessions/7/retry"]);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+    assert.equal(parsed.status, "succeeded");
+    assert.equal(result.details.event.type, "product_command");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("write calls use stable turn-local idempotency and never return bridge secrets", async () => {
+test("native retry idempotency is stable per owner+command+parameters and never echoes secrets", async () => {
+  writeFixture("desktop-runtime.json", { python_base_url: "http://127.0.0.1:9999", python_token: "python-token" });
   const originalFetch = globalThis.fetch;
-  const requests: Array<{ url: string; init: RequestInit; body: Record<string, unknown> }> = [];
+  const requests: Array<{ url: string; headers: Record<string, string> }> = [];
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-    requests.push({ url: String(url), init: init ?? {}, body: JSON.parse(String(init?.body)) });
-    return new Response(JSON.stringify(commandResult()), {
+    requests.push({ url: String(url), headers: init?.headers as Record<string, string> });
+    return new Response(JSON.stringify({ id: 7, status: "queued" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   }) as typeof fetch;
   try {
     const tool = createProductCommandTool(bridge());
-    // analysis.retry still routes through the bridge (not yet native).
     const first = await tool.execute("call-1", {
       command_name: "analysis.retry",
-      parameters: { session_id: 7, scope: { b: 2, a: 1 } },
+      parameters: { analysis_ref: "analysis:7" },
     });
     await tool.execute("call-2", {
       command_name: "analysis.retry",
-      parameters: { scope: { a: 1, b: 2 }, session_id: 7 },
+      parameters: { analysis_ref: "analysis:7" },
     });
 
     assert.equal(requests.length, 2);
-    assert.equal(requests[0].url, bridge().endpoint);
-    assert.equal((requests[0].init.headers as Record<string, string>).Authorization, `Bearer ${BEARER}`);
-    assert.equal((requests[0].init.headers as Record<string, string>)["X-Aiming-Cookie-Desktop-Token"], DESKTOP);
-    assert.equal(requests[0].body.idempotency_key, requests[1].body.idempotency_key);
-    assert.match(String(requests[0].body.idempotency_key), /^turn:[a-f0-9]{64}$/);
-    assert.ok(!("request_basis" in requests[0].body));
-    assert.ok(!("confirmation_ref" in requests[0].body));
-    assert.equal(first.details.event.type, "product_command");
-    assert.match(first.content[0]?.text ?? "", /path_efficiency/);
+    assert.equal(requests[0].url, "http://127.0.0.1:9999/api/sessions/7/retry");
+    assert.equal(requests[0].headers["Idempotency-Key"], requests[1].headers["Idempotency-Key"]);
+    assert.match(String(requests[0].headers["Idempotency-Key"]), /^native:[a-f0-9]{64}$/);
+    assert.equal(requests[0].headers["X-User-Id"], "desktop-local");
+    // The bridge credentials are not carried on the native request, and the
+    // tool result never echoes either secret.
+    assert.ok(!("Authorization" in requests[0].headers));
     assert.ok(!JSON.stringify(first).includes(BEARER));
     assert.ok(!JSON.stringify(first).includes(DESKTOP));
   } finally {
@@ -348,29 +380,10 @@ test("analysis creation is native via the Python REST API (not a native write)",
   assert.equal(isNativePythonAnalysisCommand("analysis.create_from_run"), true);
 });
 
-test("product commands forward a bounded exact instruction quote", async () => {
-  const originalFetch = globalThis.fetch;
-  const requests: Record<string, unknown>[] = [];
-  globalThis.fetch = (async (_url, init) => {
-    requests.push(JSON.parse(String(init?.body)));
-    return new Response(JSON.stringify({
-      ...commandResult(), authorization_source: "explicit_user_request",
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
-  }) as typeof fetch;
-  try {
-    // analysis.retry still routes through the bridge (not yet native), so the
-    // instruction quote forwarding contract is exercised there.
-    const result = await createProductCommandTool(bridge()).execute("direct-delete", {
-      command_name: "analysis.retry",
-      parameters: { analysis_ref: "analysis:3" },
-      instruction_quote: "delete this analysis",
-    });
-    assert.equal(requests[0]?.instruction_quote, "delete this analysis");
-    assert.equal(result.details.event.authorization_source, "explicit_user_request");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
+// The bridge-only contracts (bounded instruction_quote forwarding, bridge
+// fail-closed status validation) were removed when analysis.retry — the last
+// bridge-routed command — went native; no registered command reaches the
+// bridge transport anymore.
 
 test("guided teaching facts execute as native writes without TS-side filtering", async () => {
   writeFixture("training/plan.json", {
@@ -488,28 +501,25 @@ test("model-supplied authorization and confirmation fields never reach a native 
   assert.equal((JSON.parse(result.content[0]?.text ?? "{}") as { status: string }).status, "succeeded");
 });
 
-test("bridge failures and invalid statuses fail closed without echoing secrets", async () => {
+test("native retry fails closed on backend errors without echoing secrets", async () => {
+  writeFixture("desktop-runtime.json", { python_base_url: "http://127.0.0.1:9999", python_token: "python-token" });
   const originalFetch = globalThis.fetch;
   try {
     const tool = createProductCommandTool(bridge());
-    // analysis.retry still routes through the bridge (not yet native).
+    // A transport failure that leaks bridge secrets in its message must not
+    // surface them: the native path swallows the error and reports a bounded
+    // failure code instead.
     globalThis.fetch = (async () => {
       throw new Error(`${BEARER} ${DESKTOP}`);
     }) as typeof fetch;
-    await assert.rejects(
-      tool.execute("call", { command_name: "analysis.retry", parameters: { analysis_ref: "analysis:3" } }),
-      (error: Error) => error.message === "Product command bridge request failed" && !error.message.includes(BEARER),
-    );
-
-    // Invalid status is still rejected by safeCommandEvent validation.
-    globalThis.fetch = (async () => new Response(JSON.stringify({
-      ...commandResult(),
-      status: "made_up_status",
-    }), { status: 200 })) as typeof fetch;
-    await assert.rejects(
-      tool.execute("call", { command_name: "analysis.retry", parameters: { analysis_ref: "analysis:3" } }),
-      /invalid result/,
-    );
+    const result = await tool.execute("call", {
+      command_name: "analysis.retry",
+      parameters: { analysis_ref: "analysis:3" },
+    });
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+    assert.equal(parsed.status, "failed");
+    assert.ok(!JSON.stringify(result).includes(BEARER));
+    assert.ok(!JSON.stringify(result).includes(DESKTOP));
   } finally {
     globalThis.fetch = originalFetch;
   }

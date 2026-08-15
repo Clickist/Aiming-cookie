@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -57,10 +58,17 @@ def write_progressive_disclosure(
 # --- helpers ---------------------------------------------------------------
 
 def _write_json(path: Path, data: object) -> None:
-    path.write_text(
+    """Write atomically — Coach reads these files directly mid-write.
+
+    Mirrors file_store.write_json: a crash mid-write must never leave a
+    truncated JSON document behind for the Coach's file reads.
+    """
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(
         json.dumps(_sanitize_json_value(data), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    os.replace(tmp_path, path)
 
 
 def _build_overview(session_id: int, result: dict) -> dict:
@@ -234,7 +242,9 @@ def _write_evidence(analyses_dir: Path, session_id: int, result: dict) -> None:
     except Exception:
         return
     if artifact_file.exists():
-        shutil.copy2(artifact_file, analyses_dir / "evidence.json")
+        tmp_artifact = analyses_dir / ".evidence.json.tmp"
+        shutil.copy2(artifact_file, tmp_artifact)
+        os.replace(tmp_artifact, analyses_dir / "evidence.json")
 
 
 def _write_stats(analyses_dir: Path, stats_path: str) -> None:
