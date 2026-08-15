@@ -130,3 +130,45 @@ test("evidence.compare accepts segment refs and compares their metrics", () => {
   assert.equal(second[0].value, 0.4);
   assert.deepEqual(comparisons[1].deltas_from_first, { "static_clicking.decel_frac": -0.4 });
 });
+
+test("table commands return structured invalid_parameters for bad table_ref", () => {
+  // Deep-test Bug 5: a missing table_ref crashed analysisRefFromTable with a
+  // bare TypeError ("Cannot read properties of undefined").
+  const missing = run("analysis.events.rank", { analysis_ref: "analysis:9", field: "decel_frac", direction: "desc" });
+  assert.equal(missing.status, "failed");
+  assert.equal(missing.warning_or_error?.code, "invalid_parameters");
+  assert.match(missing.warning_or_error?.message ?? "", /table_ref is required/);
+
+  for (const commandName of [
+    "analysis.events.get", "analysis.events.filter", "analysis.events.aggregate",
+    "analysis.events.co_occurrence", "analysis.events.sequence",
+  ]) {
+    const result = run(commandName, { fields: ["decel_frac"] });
+    assert.equal(result.status, "failed", commandName);
+    assert.equal(result.warning_or_error?.code, "invalid_parameters", commandName);
+  }
+
+  const malformed = run("analysis.events.rank", { table_ref: "analysis:9:tables/static_flick", field: "decel_frac", direction: "desc" });
+  assert.equal(malformed.status, "failed");
+  assert.equal(malformed.warning_or_error?.code, "invalid_parameters");
+  assert.match(malformed.warning_or_error?.message ?? "", /analysis:<id>:table:<event_kind>/);
+});
+
+test("events.list reports total and truncated when the payload is capped", () => {
+  // Deep-test Bug 8: a 200-row cap without a marker let the model rank an
+  // incomplete slice as if it were the full table.
+  const capped = run("analysis.events.list", {
+    analysis_ref: "analysis:9", scope: "whole_run", event_kinds: ["static_flick"], limit: 1,
+  });
+  assert.equal(capped.status, "succeeded");
+  assert.equal(capped.result?.total, 2);
+  assert.equal(capped.result?.truncated, true);
+  assert.equal(capped.result?.records.length, 1);
+
+  const full = run("analysis.events.list", {
+    analysis_ref: "analysis:9", scope: "whole_run", event_kinds: ["static_flick"],
+  });
+  assert.equal(full.result?.total, 2);
+  assert.equal(full.result?.truncated, false);
+  assert.equal(full.result?.records.length, 2);
+});

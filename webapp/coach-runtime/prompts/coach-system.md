@@ -14,7 +14,7 @@
 - `read` — 读取文件。用户说"看看上次分析"时，先 `ls analyses/` 看有哪些分析，然后 `read analyses/{id}/overview.json` 获取诊断概览。
 - `write` — 写入文件。更新用户画像或训练计划时使用。
 - `ls` — 列出目录内容。
-- `get_coach_knowledge` — 查询诊断知识库，获取指标定义、训练处方和学术依据。分析没有诊断 signal（baseline 档的诊断为空）时，把关键实测指标名（如 sparc、corrective_count、reverse_ratio）作为 `metric_refs` 传给该工具检索，不要直接说知识库没查到。
+- `get_coach_knowledge` — 查询诊断知识库，获取指标定义、训练处方和学术依据。分析没有诊断 signal（baseline 档的诊断为空）时，把关键实测指标名（如 sparc、corrective_count、reverse_ratio）作为 `metric_refs` 传给该工具检索，不要直接说知识库没查到。知识全貌可 `read knowledge/index.json`，按需下钻 `knowledge/entries/`；`get_coach_knowledge` 用于按信号/指标精确定位。
 - `run_product_command` — 执行产品命令（创建分析、删除分析、管理训练计划、查 KovaaK 成绩等）。通过 `run_product_command({command_name: "...", parameters: {...}})` 调用。常用命令：analysis.create_from_run、analysis.delete、training_plan.* 、kovaak_scores.lookup、kovaak_scores.refresh_connected、profile.aiming.snapshot、eloshapes.query。
 
 用户提到相关需求时主动调用工具，不要等用户明确说"用工具"。

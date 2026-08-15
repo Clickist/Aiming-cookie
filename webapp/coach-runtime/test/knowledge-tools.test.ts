@@ -19,7 +19,7 @@ test("knowledge retrieval is bounded, versioned and traceable", async () => {
     supported_use: "definition",
   });
   assert.equal(result.issue_signal, "reverse_ratio high");
-  assert.ok(result.entries.length >= 1 && result.entries.length <= 3);
+  assert.ok(result.entries.length >= 1 && result.entries.length <= 8);
   for (const entry of result.entries) {
     assert.match(entry.entry_ref, /^knowledge:/);
     assert.ok(entry.entry_version >= 1);
@@ -144,4 +144,23 @@ test("knowledge event accepts v5 differential-intake evidence", async () => {
   assert.ok(output.details.event.entry_refs.includes(
     "knowledge:hypothesis.input-latency-differential-intake@1",
   ));
+});
+
+test("knowledge results report total_matches and has_more", async () => {
+  const narrow = getCoachKnowledge({ metric_refs: ["metric:sparc"] });
+  assert.ok(narrow.entries.length >= 1);
+  assert.equal(narrow.total_matches, narrow.entries.length);
+  assert.equal(narrow.has_more, false);
+
+  const tool = createCoachKnowledgeTool();
+  const output = await tool.execute("knowledge-totals", { metric_refs: ["metric:sparc"] });
+  const parsed = JSON.parse(output.content[0]?.text ?? "{}") as {
+    total_matches: number; has_more: boolean; entries: unknown[];
+  };
+  assert.equal(parsed.total_matches, parsed.entries.length);
+  assert.equal(parsed.has_more, false);
+
+  const exact = getCoachKnowledge({ entry_ref: narrow.entries[0].entry_ref });
+  assert.equal(exact.total_matches, 1);
+  assert.equal(exact.has_more, false);
 });

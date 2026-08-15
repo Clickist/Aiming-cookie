@@ -4,6 +4,7 @@ import {
   entryRef,
   loadKnowledgeRegistry,
   queryKnowledgeRegistry,
+  queryKnowledgeRegistryWithTotals,
   type KnowledgeEntry,
   type KnowledgeEntryV2,
   type KnowledgeQuery,
@@ -141,12 +142,15 @@ export function getCoachKnowledge(query: KnowledgeQuery) {
     ? registry.signal_aliases[query.issue_signal.trim()] ?? query.issue_signal.trim()
     : null;
   const supportedUse = query.supported_use?.trim();
-  const entries = queryKnowledgeRegistry(registry, query).map((entry) => projectEntry(entry, supportedUse));
+  const outcome = queryKnowledgeRegistryWithTotals(registry, query);
+  const entries = outcome.entries.map((entry) => projectEntry(entry, supportedUse));
   return {
     schema_version: "coach_knowledge_result.v1",
     registry_version: registry.registry_version,
     topic: query.topic?.trim() || null,
     issue_signal: canonicalSignal || null,
+    total_matches: outcome.total_matches,
+    has_more: entries.length < outcome.total_matches,
     entries,
   };
 }
@@ -155,7 +159,7 @@ export function createCoachKnowledgeTool() {
   return {
     name: "get_coach_knowledge",
     label: "Get coaching knowledge",
-    description: "优先按 registry version 加 exact entry ref 获取知识；否则按 topic、diagnostic signal 或 metric 受限检索最多三条投影。metric_refs 直接传分析里的指标名（bare、family 前缀或 metric: 前缀均可），分析没有诊断 signal（如 baseline 档）时用关键实测指标检索。知识不能替代测量或确定性诊断。",
+    description: "优先按 registry version 加 exact entry ref 获取知识；否则按 topic、diagnostic signal 或 metric 受限检索最多八条投影（total_matches 报告命中总数，has_more 为 true 时可用更窄条件继续收敛）。metric_refs 直接传分析里的指标名（bare、family 前缀或 metric: 前缀均可），分析没有诊断 signal（如 baseline 档）时用关键实测指标检索。知识不能替代测量或确定性诊断。",
     parameters: Type.Object({
       registry_version: Type.Optional(Type.String({ maxLength: 80 })),
       entry_ref: Type.Optional(Type.String({ maxLength: 200 })),

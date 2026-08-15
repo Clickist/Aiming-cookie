@@ -106,16 +106,20 @@ test("eloshapes.query executes against the bundled catalog snapshot", () => {
   assert.equal(query.returned, 5);
 });
 
-test("eloshapes.query filters unknown parameter keys", () => {
+test("eloshapes.query rejects unknown parameter keys", () => {
+  // Deep-test Bug 6: unknown filters were silently dropped, answering a
+  // different question than the one asked. They now fail structurally and
+  // never echo the rejected value.
   const result = executeNativeEloshapes("eloshapes.query", {
     weight_max: 55,
     path: "C:/secret",
     limit: 3,
   });
-  assert.equal(result.status, "succeeded");
-  const query = result.result as Record<string, unknown>;
-  assert.equal(query.returned, 3);
-  assert.ok(!JSON.stringify(query).includes("C:/secret"));
+  assert.equal(result.status, "failed");
+  assert.equal(result.warning_or_error?.code, "invalid_parameters");
+  assert.match(result.warning_or_error?.message ?? "", /"path"/);
+  assert.match(result.warning_or_error?.message ?? "", /weight_max/);
+  assert.ok(!JSON.stringify(result).includes("C:/secret"));
 });
 
 test("profile.aiming.snapshot reads the owner aiming profile", () => {

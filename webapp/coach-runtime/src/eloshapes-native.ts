@@ -124,9 +124,21 @@ export function executeNativeEloshapes(
     "side_curvature", "hump_placement", "hand_compatibility",
     "brand_search", "model_search", "limit",
   ]);
+  // Unknown filters must be rejected, not silently dropped: a dropped filter
+  // answers a different question than the one asked (Bug 6).
+  const unknownKeys = Object.keys(params).filter((key) => !allowed.has(key));
+  if (unknownKeys.length > 0) {
+    return {
+      status: "failed",
+      warning_or_error: {
+        code: "invalid_parameters",
+        message: `unsupported filters: ${unknownKeys.map((key) => `"${key}"`).join(", ")}; allowed: ${[...allowed].join(", ")}`,
+      },
+    };
+  }
   const filtered: AnyDict = {};
   for (const [key, value] of Object.entries(params)) {
-    if (allowed.has(key) && value !== null && value !== undefined) {
+    if (value !== null && value !== undefined) {
       filtered[key] = value;
     }
   }
