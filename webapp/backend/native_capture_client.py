@@ -346,18 +346,29 @@ class NativeCaptureClient:
             or end_epoch_ms <= start_epoch_ms
         ):
             raise ValueError("native capture export request is invalid")
-        response = self._request(
-            {
-                "type": "exportReplay",
-                "secret": self._secret,
-                "requestId": request_id,
-                "runId": run_id,
-                "captureSessionId": capture_session_id,
-                "startEpochMs": start_epoch_ms,
-                "endEpochMs": end_epoch_ms,
-            },
-            "exportReplayResult",
-        )
+        for attempt in range(3):
+            try:
+                response = self._request(
+                    {
+                        "type": "exportReplay",
+                        "secret": self._secret,
+                        "requestId": request_id,
+                        "runId": run_id,
+                        "captureSessionId": capture_session_id,
+                        "startEpochMs": start_epoch_ms,
+                        "endEpochMs": end_epoch_ms,
+                    },
+                    "exportReplayResult",
+                )
+                break
+            except NativeCaptureRetryableError as error:
+                if attempt < 2 and error.code in {
+                    "capture_unavailable",
+                    "capture_control_unavailable",
+                    "capture_control_response_lost",
+                }:
+                    continue
+                raise
         response = _exact_object(
             response,
             {

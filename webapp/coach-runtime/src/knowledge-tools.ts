@@ -155,7 +155,7 @@ export function createCoachKnowledgeTool() {
   return {
     name: "get_coach_knowledge",
     label: "Get coaching knowledge",
-    description: "优先按 registry version 加 exact entry ref 获取知识；否则按 topic、diagnostic signal 或 metric 受限检索最多三条投影。知识不能替代测量或确定性诊断。",
+    description: "优先按 registry version 加 exact entry ref 获取知识；否则按 topic、diagnostic signal 或 metric 受限检索最多三条投影。metric_refs 直接传分析里的指标名（bare、family 前缀或 metric: 前缀均可），分析没有诊断 signal（如 baseline 档）时用关键实测指标检索。知识不能替代测量或确定性诊断。",
     parameters: Type.Object({
       registry_version: Type.Optional(Type.String({ maxLength: 80 })),
       entry_ref: Type.Optional(Type.String({ maxLength: 200 })),

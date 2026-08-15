@@ -187,7 +187,7 @@ def test_candidate_knowledge_refs_only_annotate_an_existing_analyzer_fact():
         metric_refs=["metric:post_change_error"],
     )
 
-    assert refs.registry_version == "2026-08-06.v6"
+    assert refs.registry_version == "2026-08-15.v7"
     assert 1 <= len(refs.entry_refs) <= 3
     assert all(ref.startswith("knowledge:") for ref in refs.entry_refs)
     assert not hasattr(refs, "severity")
@@ -212,7 +212,7 @@ def test_static_registry_backed_issue_carries_exact_observation_and_knowledge_re
 
     issue = diagnosis.issues[0]
     assert issue.observation_ref == "metric.terminal_control"
-    assert issue.knowledge_registry_version == "2026-08-06.v6"
+    assert issue.knowledge_registry_version == "2026-08-15.v7"
     assert issue.knowledge_entry_refs == [
         "knowledge:static.flicking-terminal-control@2"
     ]

@@ -4,7 +4,6 @@ import asyncio
 import json
 from pathlib import Path
 
-import aiosqlite
 import pytest
 
 from webapp.backend import aiming_profile_store, config, file_store, queue

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import test from "node:test";
 const dataRoot = mkdtempSync(join(tmpdir(), "coach-read-"));
 process.env.DATA_ROOT = dataRoot;
 
+import { executeNativeEloshapes } from "../src/eloshapes-native.ts";
 import { executeNativeRead } from "../src/product-commands-native.ts";
 
 test("run.get returns a Run summary from meta.json", () => {
@@ -87,4 +88,64 @@ test("calibration.get returns unconfigured when file is absent", () => {
   assert.equal(result.status, "succeeded");
   const profile = result.result as Record<string, unknown>;
   assert.equal(profile.configured, false);
+});
+
+test("eloshapes.query executes against the bundled catalog snapshot", () => {
+  const result = executeNativeEloshapes("eloshapes.query", {
+    weight_max: 60,
+    size_category: ["medium"],
+    limit: 5,
+  });
+  assert.equal(result.status, "succeeded", JSON.stringify(result.warning_or_error));
+  const query = result.result as Record<string, unknown>;
+  assert.equal(query.schema_version, "eloshapes_query.v1");
+  assert.equal(query.snapshot_source, "eloshapes_mouse_catalog_2026-07-31T211736Z");
+  // The catalog ships with the repo, so a bounded weight filter must produce
+  // real matches — not an empty or unbounded result.
+  assert.ok(typeof query.total_matches === "number" && query.total_matches > 0);
+  assert.equal(query.returned, 5);
+});
+
+test("eloshapes.query filters unknown parameter keys", () => {
+  const result = executeNativeEloshapes("eloshapes.query", {
+    weight_max: 55,
+    path: "C:/secret",
+    limit: 3,
+  });
+  assert.equal(result.status, "succeeded");
+  const query = result.result as Record<string, unknown>;
+  assert.equal(query.returned, 3);
+  assert.ok(!JSON.stringify(query).includes("C:/secret"));
+});
+
+test("profile.aiming.snapshot reads the owner aiming profile", () => {
+  writeFileSync(join(dataRoot, "profile.json"), JSON.stringify({
+    status: "active",
+    dimensions: [{ dimension: "flicking", level: "developing" }],
+    contribution_refs: ["analysis:7"],
+    active_plan_ref: "plan:1",
+    updated_at: "2026-08-14T00:00:00Z",
+  }));
+  const result = executeNativeRead("profile.aiming.snapshot", {}, "owner-snap");
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(result.result, {
+    schema_version: "aiming_profile.v1",
+    owner_ref: "owner-snap",
+    profile_ref: "profile-aiming:owner-snap",
+    status: "active",
+    dimensions: [{ dimension: "flicking", level: "developing" }],
+    contribution_refs: ["analysis:7"],
+    next_retest_refs: [],
+    active_plan_ref: "plan:1",
+    updated_at: "2026-08-14T00:00:00Z",
+  });
+});
+
+test("profile.aiming.snapshot returns a clean profile when unset", () => {
+  rmSync(join(dataRoot, "profile.json"), { force: true });
+  const result = executeNativeRead("profile.aiming.snapshot", {}, "owner-clean");
+  assert.equal(result.status, "succeeded");
+  const profile = result.result as Record<string, unknown>;
+  assert.equal(profile.status, "clean");
+  assert.deepEqual(profile.dimensions, []);
 });

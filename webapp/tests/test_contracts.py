@@ -525,6 +525,67 @@ def test_contract_allows_confirmed_local_dynamic_baseline_without_exact_profile(
     assert validate_scenario_resolution_v1(resolution) == resolution
 
 
+def test_contract_allows_name_heuristic_tracking_baseline_candidate():
+    resolution = _unknown_scenario_resolution()
+    resolution.update({
+        "classification_source": "name_heuristic",
+        "classification_confidence": "candidate",
+        "aim_family": "continuous_tracking",
+        "allowed_analyzers": ["continuous_tracking.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": [
+            "scenario_name_is_a_candidate_not_an_identity",
+            "exact_visual_profile_unavailable",
+        ],
+    })
+
+    assert validate_scenario_resolution_v1(resolution) == resolution
+
+
+def test_contract_allows_family_default_static_baseline_dispatch():
+    resolution = _unknown_scenario_resolution()
+    resolution["display_name"] = None
+    resolution.update({
+        "classification_source": "family_default",
+        "classification_confidence": "unknown",
+        "aim_family": "static_clicking",
+        "allowed_analyzers": ["static_clicking.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": ["scenario_family_unresolved"],
+    })
+
+    assert validate_scenario_resolution_v1(resolution) == resolution
+
+
+def test_contract_allows_inactive_manifest_profile_baseline_dispatch():
+    resolution = _unknown_scenario_resolution()
+    resolution.update({
+        "scenario_profile_ref": "scenario:static.example@1",
+        "classification_source": "reviewed_registry",
+        "classification_confidence": "confirmed",
+        "profile_status": "active",
+        "reviewed_at": "2026-07-20T00:00:00Z",
+        "source_refs": ["review:scenario-static-example"],
+        "manifest_status": "pending_gate",
+        "fixture_ref": "fixture:scenario-static-example",
+        "review_source_ref": "review:scenario-static-example",
+        "manifest_reviewed_at": "2026-07-20T00:00:00Z",
+        "family_gate_refs": ["gate:static-clicking"],
+        "aim_family": "target_switching",
+        "allowed_analyzers": ["target_switching.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": ["exact_manifest_gate_inactive_visual_claims_unavailable"],
+    })
+
+    assert validate_scenario_resolution_v1(resolution) == resolution
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

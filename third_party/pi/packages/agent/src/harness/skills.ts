@@ -366,8 +366,11 @@ function basenameEnvPath(path: string): string {
 }
 
 function relativeEnvPath(root: string, path: string): string {
-	const normalizedRoot = root.replace(/\/+$/, "");
-	const normalizedPath = path.replace(/\/+$/, "");
+	// Normalize to forward slashes first: Windows backslash paths never match
+	// the `${root}/` prefix below, and `ignore` requires POSIX-style paths.
+	const toForward = (value: string) => value.replace(/\/+$/, "").replace(/\\/g, "/");
+	const normalizedRoot = toForward(root);
+	const normalizedPath = toForward(path);
 	if (normalizedPath === normalizedRoot) return "";
 	return normalizedPath.startsWith(`${normalizedRoot}/`)
 		? normalizedPath.slice(normalizedRoot.length + 1)

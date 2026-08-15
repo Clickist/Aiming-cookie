@@ -10,9 +10,10 @@
  * kovaak_connections, fetches scores, optionally writes records to
  * benchmark_records, and returns a bounded summary.
  *
- * kovaak_scores.lookup — takes a temporary steam_profile:N reference,
- * resolves it to a Steam ID via the temporary_profile_refs map supplied by
- * the caller (the turn bridge), fetches scores, and returns a bounded summary.
+ * kovaak_scores.lookup — accepts a literal 17-digit Steam ID or a
+ * steamcommunity.com profile URL pasted by the user (preferred path), or a
+ * temporary steam_profile:N reference resolved via the optional
+ * temporary_profile_refs map, fetches scores, and returns a bounded summary.
  *
  * If the HTTP call or normalization fails, returns an `unavailable` result
  * with a bounded score summary, matching the Python fallback behaviour.
@@ -256,7 +257,7 @@ async function fetchAndNormalize(
 // ── Steam ID helpers ───────────────────────────────────────────────────
 
 const STEAM_ID_RE = /^\d{17}$/;
-const STEAM_PROFILE_URL_RE = /^https:\/\/steamcommunity\.com\/profiles\/(\d{17})\/$/;
+const STEAM_PROFILE_URL_RE = /^https:\/\/steamcommunity\.com\/profiles\/(\d{17})\/?$/;
 
 function normalizeSteamProfileInput(value: string): string | null {
   if (STEAM_ID_RE.test(value)) return value;
@@ -290,28 +291,31 @@ async function executeLookup(
   temporaryProfileRefs?: Map<string, string>,
 ): Promise<NativeScoreResult> {
   const profileRef = params.profile_ref;
-  if (typeof profileRef !== "string" || !/^steam_profile:[1-9]\d*$/.test(profileRef)) {
+  if (typeof profileRef !== "string") {
     return { status: "failed", warning_or_error: { code: "invalid_parameters", message: "kovaak_scores.lookup accepts only profile_ref" } };
   }
 
-  // Resolve the temporary profile_ref to a Steam ID.
-  const steamId = temporaryProfileRefs?.get(profileRef);
-  if (!steamId) {
-    return {
-      status: "unavailable",
-      warning_or_error: {
-        code: "temporary_profile_unavailable",
-        message: "this temporary profile is not available in the current Coach turn",
-      },
-    };
+  // Preferred path: a literal Steam ID or profile URL provided by the user.
+  let normalizedId = normalizeSteamProfileInput(profileRef);
+
+  // Legacy path: an opaque steam_profile:N ref resolved through the optional
+  // turn-scoped map (kept for callers that still supply one).
+  if (!normalizedId && /^steam_profile:[1-9]\d*$/.test(profileRef)) {
+    const steamId = temporaryProfileRefs?.get(profileRef);
+    if (!steamId) {
+      return {
+        status: "unavailable",
+        warning_or_error: {
+          code: "temporary_profile_unavailable",
+          message: "this temporary profile is not available in the current Coach turn",
+        },
+      };
+    }
+    normalizedId = normalizeSteamProfileInput(steamId);
   }
 
-  const normalizedId = normalizeSteamProfileInput(steamId);
   if (!normalizedId) {
-    return {
-      status: "unavailable",
-      warning_or_error: { code: "kovaak_scores_unavailable", message: "KovaaK scores are temporarily unavailable" },
-    };
+    return { status: "failed", warning_or_error: { code: "invalid_parameters", message: "profile_ref must be a 17-digit Steam ID, a steamcommunity profile URL, or a steam_profile ref" } };
   }
 
   const catalog = loadCatalog();
@@ -331,7 +335,7 @@ async function executeLookup(
   }
 
   const summary = buildScoreSummary(catalog, difficulties);
-  return { status: "succeeded", result_ref: "kovaak_scores:temporary", result: summary };
+  return { status: "succeeded", result_ref: "kovaak_scores:lookup", result: summary };
 }
 
 async function executeRefreshConnected(

@@ -47,6 +47,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("Tasks unavailable differs from an empty task list", async ({ page }) => {
+    test.skip(true, "Tasks 页面已下线（legacy URL redirect → /history）；任务失败态无对应页面");
     await installApiFixtures(page, apiScenario({ failures: { "/api/tasks": 503 } }));
     await page.goto("/tasks");
     await expect(page.locator('.ac-state[role="alert"]')).toContainText("任务状态暂时不可用");
@@ -61,6 +62,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("capture permission and alignment failures stay adjacent to their source", async ({ page }) => {
+    test.skip(true, "/analyze 页面已移除且不保留 redirect（browser-smoke「legacy Tasks and Analysis URLs redirect」已注明）；Run 来源状态 UI 待新 IA 稳定后重写");
     await installDesktopBridge(page);
     await installApiFixtures(page, apiScenario({
       capture: { ...CAPTURE_STATUS, raw_input_permission: "denied", runtime_health: "degraded" },
@@ -83,6 +85,7 @@ test.describe("Task 7 failure matrix", () => {
     ["running", "Analysis 正在生成确定性结果"],
   ] as const) {
     test(`Analysis ${status} uses an explicit processing state`, async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
       await installApiFixtures(page, apiScenario({ analysis: analysisSession({ status, result: null }) }));
       await page.goto("/analysis/42");
       await expect(page.getByText(copy)).toBeVisible();
@@ -91,6 +94,7 @@ test.describe("Task 7 failure matrix", () => {
   }
 
   test("retryable Analysis failure remains actionable", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
     await installApiFixtures(page, apiScenario({
       analysis: analysisSession({
         status: "failed",
@@ -112,6 +116,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("partial Analysis preserves native results and marks video unavailable", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
     await installApiFixtures(page, apiScenario({
       analysis: partialAnalysisSession(),
       evidenceSegments: UNAVAILABLE_EVIDENCE_SEGMENTS,
@@ -124,6 +129,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("video fallback requests managed playback when EvidenceSegment overlays are unavailable", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
     await installApiFixtures(page, apiScenario({
       analysis: seekableMp4Analysis(),
       failures: { "/api/sessions/42/evidence-segments": 404 },
@@ -144,6 +150,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("EvidenceSegment failure stays local to the timeline and retry preserves the player", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
     await installApiFixtures(page, apiScenario({ analysis: seekableMp4Analysis() }));
     let segmentRequests = 0;
     await page.route("**/api/sessions/42/evidence-segments", async (route) => {
@@ -171,6 +178,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("an empty EvidenceSegment response remains an empty timeline state", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
     await installApiFixtures(page, apiScenario({ analysis: seekableMp4Analysis() }));
     await page.route("**/api/sessions/42/evidence-segments", async (route) => {
       await route.fulfill({
@@ -189,6 +197,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("Desktop managed video preserves the handler route segments", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
     await installDesktopBridge(page);
     await installApiFixtures(page, apiScenario({ analysis: seekableMp4Analysis() }));
     let requestedUrl = "";
@@ -215,6 +224,7 @@ test.describe("Task 7 failure matrix", () => {
   });
 
   test("deleted Analysis reference is unavailable rather than empty", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
     await installApiFixtures(page, apiScenario({ failures: { "/api/sessions/42": 404 } }));
     await page.goto("/analysis/42");
     await expect(page.locator('.ac-state[role="alert"]')).toContainText("这条 Analysis 已删除或不可用");

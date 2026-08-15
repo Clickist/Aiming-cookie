@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useId,
   useRef,
@@ -221,11 +222,7 @@ export function useAnimatedPresence(open: boolean, exitMs: number): { present: b
       });
     } else {
       setState("closed");
-      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        setPresent(false);
-      } else {
-        timer = window.setTimeout(() => setPresent(false), exitMs);
-      }
+      timer = window.setTimeout(() => setPresent(false), getPresenceExitMs(exitMs));
     }
     return () => {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
@@ -234,6 +231,10 @@ export function useAnimatedPresence(open: boolean, exitMs: number): { present: b
   }, [exitMs, open]);
 
   return { present, state };
+}
+
+function getPresenceExitMs(exitMs: number): number {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 120 : exitMs;
 }
 
 function useModalInteraction(open: boolean, onClose: () => void, containerId: string) {
@@ -305,6 +306,7 @@ export function Drawer({ open, onClose, title, children, side = "right" }: Drawe
         data-side={side}
         data-state={presence.state}
         id={id}
+        inert={!open || undefined}
         role="dialog"
       >
         <header className="ac-drawer__header">
@@ -328,20 +330,49 @@ export interface ToastProps extends Omit<HTMLAttributes<HTMLDivElement>, "onClos
 
 export function Toast({ tone = "neutral", live = "polite", closeLabel = "关闭通知", onClose, className, children, ...props }: ToastProps) {
   const onCloseRef = useRef(onClose);
+  const closeTimerRef = useRef<number | undefined>(undefined);
+  const dismissingRef = useRef(false);
+  const [open, setOpen] = useState(false);
+  const presence = useAnimatedPresence(open, 200);
+
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
+  const requestClose = useCallback(() => {
+    if (dismissingRef.current) return;
+    dismissingRef.current = true;
+    setOpen(false);
+    closeTimerRef.current = window.setTimeout(() => onCloseRef.current?.(), getPresenceExitMs(200));
+  }, []);
+
+  useEffect(() => {
+    setOpen(true);
+    return () => {
+      if (closeTimerRef.current !== undefined) window.clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (!onCloseRef.current) return undefined;
-    const timer = window.setTimeout(() => onCloseRef.current?.(), 5_000);
+    const timer = window.setTimeout(requestClose, 5_000);
     return () => window.clearTimeout(timer);
-  }, [children]);
+  }, [children, requestClose]);
+
+  if (!presence.present) return null;
 
   return (
-    <div {...props} aria-live={live} className={["ac-toast", className].filter(Boolean).join(" ")} data-tone={tone} role={live === "assertive" ? "alert" : "status"}>
+    <div
+      {...props}
+      aria-hidden={!open || undefined}
+      aria-live={live}
+      className={["ac-toast", className].filter(Boolean).join(" ")}
+      data-state={presence.state}
+      data-tone={tone}
+      role={live === "assertive" ? "alert" : "status"}
+    >
       <div className="ac-toast__body">{children}</div>
-      {onClose ? <IconButton className="ac-toast__close" label={closeLabel} onClick={onClose} size="compact">×</IconButton> : null}
+      {onClose ? <IconButton className="ac-toast__close" label={closeLabel} onClick={requestClose} size="compact">×</IconButton> : null}
     </div>
   );
 }
@@ -369,12 +400,22 @@ export interface DialogProps {
 export function Dialog({ open, onClose, title, children, footer }: DialogProps) {
   const id = useId().replaceAll(":", "");
   const titleId = `${id}-title`;
-  useModalInteraction(open, onClose, id);
-  if (!open) return null;
+  const presence = useAnimatedPresence(open, 180);
+  useModalInteraction(open && presence.present, onClose, id);
+  if (!presence.present) return null;
   return (
     <>
-      <div className="ac-dialog-backdrop" onMouseDown={onClose} />
-      <section aria-labelledby={titleId} aria-modal="true" className="ac-dialog" id={id} role="dialog">
+      <div className="ac-dialog-backdrop" data-state={presence.state} onMouseDown={open ? onClose : undefined} />
+      <section
+        aria-hidden={!open || undefined}
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="ac-dialog"
+        data-state={presence.state}
+        id={id}
+        inert={!open || undefined}
+        role="dialog"
+      >
         <header className="ac-dialog__header">
           <h2 id={titleId}>{title}</h2>
           <button aria-label="Close" className="ac-dialog__close" onClick={onClose} type="button">×</button>

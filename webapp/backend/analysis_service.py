@@ -14,8 +14,10 @@ It is the extracted live subset of the old ``coach_commands`` module.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -112,8 +114,235 @@ async def get_analysis(owner_id: str, analysis_id: int) -> dict[str, Any]:
     return _safe_analysis(session)
 
 
+def _challenge_button_samples_held(
+    snapshot: Mapping[str, Any],
+) -> int | None:
+    """Count canonical in-window Raw samples with the fire button held.
+
+    The button field is a per-millisecond state bitmask (bit 0 = fire), so a
+    sustained hold emits one held sample per ms — exactly the fire-mode signal
+    the challenge-shape classifier reads. Any decode/read failure means "no
+    Raw signal", never a failed analysis.
+    """
+    trace = snapshot.get("trace")
+    window = snapshot.get("canonical_time_window")
+    if not isinstance(trace, Mapping) or not isinstance(window, Mapping):
+        return None
+    path = trace.get("path")
+    start_ms = window.get("start_ms")
+    end_ms = window.get("end_ms")
+    if (
+        not isinstance(path, str)
+        or not isinstance(start_ms, int) or isinstance(start_ms, bool)
+        or not isinstance(end_ms, int) or isinstance(end_ms, bool)
+        or end_ms <= start_ms
+    ):
+        return None
+    from .kovaak_snapshot_codec import decode_mouse_snapshot_bytes
+
+    try:
+        points = decode_mouse_snapshot_bytes(Path(path).read_bytes())
+    except (OSError, ValueError):
+        return None
+    held = 0
+    for point in points:
+        if start_ms <= point["timestamp_ms"] < end_ms and point["buttons"] & 1:
+            held += 1
+    return held
+
+
+def _challenge_shape_for_run(
+    run: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Bounded, path-free shape facts: Stats kills, challenge duration and,
+    when the run has a Raw trace, the in-window held-button sample count."""
+    stats_summary = run.get("stats_summary")
+    kills = stats_summary.get("kill_count") if isinstance(stats_summary, Mapping) else None
+    window = snapshot.get("canonical_time_window")
+    duration_ms = window.get("duration_ms") if isinstance(window, Mapping) else None
+    if (
+        not isinstance(kills, int) or isinstance(kills, bool) or kills < 0
+        or not isinstance(duration_ms, int) or isinstance(duration_ms, bool)
+        or duration_ms <= 0
+    ):
+        return None
+    shape: dict[str, Any] = {
+        "schema_version": "scenario_challenge_shape.v1",
+        "kills": kills,
+        "duration_ms": duration_ms,
+    }
+    button_samples_held = _challenge_button_samples_held(snapshot)
+    if button_samples_held is not None:
+        shape["button_samples_held"] = button_samples_held
+    return shape
+
+
+SCENARIO_OVERRIDES_SCHEMA_VERSION = "scenario_overrides.v1"
+SCENARIO_OVERRIDES_MAX_ENTRIES = 5000
+SCENARIO_OVERRIDES_MAX_BYTES = 1024 * 1024
+_SCENARIO_OVERRIDE_HASH_RE = re.compile(r"[0-9a-f]{64}")
+_SCENARIO_OVERRIDE_FAMILIES = {
+    "static_clicking", "dynamic_clicking", "continuous_tracking", "target_switching",
+}
+
+
+def _load_scenario_overrides() -> dict[str, dict[str, Any]]:
+    """Read user-confirmed scenario family memories from the app-data config dir.
+
+    The file is written by the Coach sidecar (``scenario_memory.set``) after the
+    user confirms a scenario's aim family once. Malformed entries are skipped
+    individually; a wrong top-level shape means "no memory", never a failed
+    analysis.
+    """
+    from . import config
+
+    path = config.DATA_ROOT / "config" / "scenario-overrides.json"
+    try:
+        raw_bytes = path.read_bytes()
+    except OSError:
+        return {}
+    if len(raw_bytes) > SCENARIO_OVERRIDES_MAX_BYTES:
+        return {}
+    try:
+        raw = json.loads(raw_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    entries = raw.get("overrides") if isinstance(raw, Mapping) else None
+    if (
+        not isinstance(raw, Mapping)
+        or raw.get("schema_version") != SCENARIO_OVERRIDES_SCHEMA_VERSION
+        or not isinstance(entries, Mapping)
+        or len(entries) > SCENARIO_OVERRIDES_MAX_ENTRIES
+    ):
+        return {}
+    overrides: dict[str, dict[str, Any]] = {}
+    for scenario_hash, entry in entries.items():
+        note = entry.get("note") if isinstance(entry, Mapping) else None
+        if (
+            not isinstance(scenario_hash, str)
+            or not _SCENARIO_OVERRIDE_HASH_RE.fullmatch(scenario_hash)
+            or not isinstance(entry, Mapping)
+            or set(entry) - {"aim_family", "confirmed_by", "note", "updated_at"}
+            or entry.get("aim_family") not in _SCENARIO_OVERRIDE_FAMILIES
+            or (
+                note is not None
+                and (
+                    not isinstance(note, str)
+                    or len(note) > 200
+                    or any(ord(char) < 32 for char in note)
+                )
+            )
+        ):
+            continue
+        overrides[scenario_hash] = dict(entry)
+    return overrides
+
+
+def _apply_scenario_override_resolution(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Apply the user-confirmed family memory above the heuristic chain.
+
+    Exact reviewed hashes keep priority (a resolution with a profile ref is
+    never replaced); the override beats the `.sce`, challenge-shape and name
+    layers. It routes the confirmed family baseline pipeline — confidence
+    confirmed, descriptive claims only — and never establishes scenario
+    identity or visual claims.
+    """
+    resolution = snapshot.get("scenario_resolution")
+    if not isinstance(resolution, Mapping) or resolution.get("scenario_profile_ref"):
+        return snapshot
+    scenario_hash = resolution.get("scenario_hash")
+    if not isinstance(scenario_hash, str):
+        return snapshot
+    override = _load_scenario_overrides().get(scenario_hash)
+    if override is None:
+        return snapshot
+    from kovaak_tracker.scenario_profiles import (
+        _FAMILY_BASELINE_LIMITATIONS,
+        _family_baseline_resolution,
+    )
+
+    next_resolution = _family_baseline_resolution(
+        scenario_hash=scenario_hash,
+        display_name=resolution.get("display_name"),
+        registry_version=resolution["registry_version"],
+        manifest_version=resolution["manifest_version"],
+        aim_family=override["aim_family"],
+        classification_source="scenario_override",
+        classification_confidence="confirmed",
+        target_motion={"model": "unknown", "target_count_model": "unknown"},
+        limitations=[
+            "scenario_override_is_a_user_confirmed_family_not_an_identity",
+            *_FAMILY_BASELINE_LIMITATIONS,
+        ],
+    )
+    next_snapshot = dict(snapshot)
+    next_snapshot["scenario_resolution"] = next_resolution
+    return next_snapshot
+
+
+def _apply_challenge_shape_resolution(
+    run: Mapping[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Let the Stats-derived challenge shape refine name/default identifications.
+
+    Exact hashes and `.sce` structure keep priority: the shape layer only
+    replaces name-keyword or unresolved-default resolutions, and only when it
+    reaches a verdict (the middle kill-density band stays undecided).
+    """
+    resolution = snapshot.get("scenario_resolution")
+    if (
+        not isinstance(resolution, Mapping)
+        or resolution.get("classification_source")
+        not in {"name_heuristic", "family_default"}
+    ):
+        return snapshot
+    shape = _challenge_shape_for_run(run, snapshot)
+    if shape is None:
+        return snapshot
+    from kovaak_tracker.scenario_profiles import resolve_scenario_profile
+
+    scenario_hash = resolution.get("scenario_hash")
+    scenario = snapshot.get("scenario")
+    refined = resolve_scenario_profile(
+        scenario_hash if isinstance(scenario_hash, str) else None,
+        scenario if isinstance(scenario, str) else None,
+        challenge_shape=shape,
+    )
+    if refined.get("classification_source") != "challenge_shape":
+        return snapshot
+    next_snapshot = dict(snapshot)
+    next_snapshot["scenario_challenge_shape"] = shape
+    next_snapshot["scenario_resolution"] = refined
+    return next_snapshot
+
+
+async def _run_may_be_reclassified(owner_id: str, run_id: int) -> bool:
+    """True when the user-confirmed scenario memory may reclassify a done Run.
+
+    Cheap pre-check that keeps the done-analysis reuse fast path untouched:
+    only a run whose Performance scenario hash has an override entry needs the
+    fresh snapshot comparison; every other repeat call stays a pure reuse.
+    """
+    run = await kovaak_run_store.get_kovaak_run(run_id, owner_id)
+    if run is None:
+        return False
+    performance_summary = run.get("performance_summary")
+    header = (
+        performance_summary.get("header")
+        if isinstance(performance_summary, Mapping)
+        else None
+    )
+    scenario_hash = header.get("scenario_hash") if isinstance(header, Mapping) else None
+    return (
+        isinstance(scenario_hash, str)
+        and scenario_hash in _load_scenario_overrides()
+    )
+
+
 def _analysis_type_for_snapshot(snapshot: Mapping[str, Any]) -> str:
-    """Keep the persisted request type aligned with the reviewed dispatch family."""
+    """Keep the persisted request type aligned with the identified dispatch family."""
     resolution = snapshot.get("scenario_resolution")
     if not isinstance(resolution, Mapping):
         return "flicking"
@@ -128,7 +357,7 @@ def _analysis_type_for_snapshot(snapshot: Mapping[str, Any]) -> str:
             in (resolution.get("allowed_analyzers") or [])
             else "flicking"
         ),
-    }.get(family, "flicking")
+    }.get(family, "input_kinematics")
 
 
 def _matches_frozen_copy(
@@ -256,7 +485,12 @@ async def create_analysis_from_run(
     """
     existing = await queue.get_run_analysis_states(owner_id, run_id)
     completed = next((item for item in existing if item.get("status") == "done"), None)
-    if completed is not None:
+    # A done analysis is the reusable answer for this Run unless the
+    # user-confirmed scenario memory may have reclassified it since.
+    reclassified = (
+        completed is not None and await _run_may_be_reclassified(owner_id, run_id)
+    )
+    if completed is not None and not reclassified:
         session_id = int(completed["id"])
         return {
             "session_id": session_id,
@@ -292,6 +526,24 @@ async def create_analysis_from_run(
         snapshot = await kovaak_run_store.build_analysis_input_snapshot(run_id, owner_id)
     except (LookupError, ValueError) as exc:
         raise ProductCommandError("input_unavailable", str(exc), kind="unavailable") from exc
+    snapshot = _apply_scenario_override_resolution(snapshot)
+    snapshot = _apply_challenge_shape_resolution(run, snapshot)
+    if reclassified:
+        # The override leaves the done analysis stale only when it changes the
+        # dispatch: a same-family confirmation (or an exact reviewed hash
+        # keeping priority) keeps the done analysis as this Run's answer.
+        completed_session = await queue.get_session(int(completed["id"]))
+        if (
+            completed_session is not None
+            and completed_session.get("analysis_type")
+            == _analysis_type_for_snapshot(snapshot)
+        ):
+            session_id = int(completed["id"])
+            return {
+                "session_id": session_id,
+                "analysis_ref": f"analysis:{session_id}",
+                "reused": True,
+            }
 
     run_video = snapshot["sources"].get("video")
     run_video_source = None

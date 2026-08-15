@@ -68,6 +68,8 @@ export type CoachActivityUpdate = {
   tool_call_id?: string;
   tool_name?: string;
   command_name?: string;
+  /** coach_ui_event carried by product commands (e.g. video_time navigation). */
+  ui_event?: Record<string, unknown>;
 };
 
 export type CoachTurnTiming = {
@@ -316,6 +318,35 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
   });
 }
 
+/**
+ * Append the turn's user message to the persistent session unless the branch
+ * already ends with the same user text. Retried runs replay the original
+ * content, and the failed attempt already persisted it — without this check
+ * every retry would duplicate the user message in history and Provider
+ * context. Mirrors the wrapped-session dedup so the pre-turn persist and the
+ * harness persist cannot double-write.
+ */
+export async function appendUserMessageOnce(session: unknown, text: string): Promise<void> {
+  const target = session as {
+    appendMessage(message: unknown): Promise<string>;
+    getBranch(): Promise<unknown[]>;
+  };
+  const branch = await target.getBranch();
+  const last = branch[branch.length - 1];
+  if (
+    isMessageEntry(last) &&
+    last.message.role === "user" &&
+    extractMessageText(last.message.content) === text
+  ) {
+    return;
+  }
+  await target.appendMessage({
+    role: "user",
+    content: [{ type: "text", text }],
+    timestamp: Date.now(),
+  });
+}
+
 // ── Skills loading ───────────────────────────────────────────────────────
 
 const SOURCE_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "prompts", "skills");
@@ -515,7 +546,7 @@ export async function runCoachTurn(
     // Create execution environment with cwd pointing to app-data
     const env = new NodeExecutionEnv({ cwd: getDataRoot() });
 
-    // Load Coach skills (peripheral reference, KovaaK data reference).
+    // Load Coach skills (peripheral reference, KovaaK data reference, teaching).
     const skills = (await loadSkills(skillsExecutionEnv(env as Record<string, unknown>), coachSkillsDir())).skills;
 
     // Use the persistent Coach thread session when the caller provides one
@@ -643,18 +674,28 @@ export async function runCoachTurn(
           toolMs += Math.max(0, now - toolStartedAt);
           toolStarts.delete(event.toolCallId);
         }
+        // Product command results carry a coach_ui_event (e.g. video_time)
+        // that must ride the activity so the frontend can act on it live.
+        const detailEvent = isRecord(event.result) && isRecord(event.result.details)
+          ? event.result.details.event
+          : null;
+        const commandUiEvent = isRecord(detailEvent) && detailEvent.type === "product_command" && isRecord(detailEvent.ui_event)
+          ? detailEvent.ui_event
+          : undefined;
+        const commandName = isRecord(detailEvent) && typeof detailEvent.command_name === "string"
+          ? detailEvent.command_name
+          : undefined;
         await publishActivity({
           kind: "tool",
           state: event.isError ? "failed" : "completed",
           tool_call_id: event.toolCallId,
           tool_name: event.toolName,
+          ...(commandName ? { command_name: commandName } : {}),
+          ...(commandUiEvent ? { ui_event: commandUiEvent } : {}),
         });
         // Collect tool result events for the response
-        if (isRecord(event.result) && isRecord(event.result.details)) {
-          const detailEvent = event.result.details.event;
-          if (isRecord(detailEvent) && (detailEvent.type === "knowledge" || detailEvent.type === "product_command")) {
-            collectedToolEvents.push(detailEvent as CoachRuntimeToolEvent);
-          }
+        if (isRecord(detailEvent) && (detailEvent.type === "knowledge" || detailEvent.type === "product_command")) {
+          collectedToolEvents.push(detailEvent as CoachRuntimeToolEvent);
         }
         return;
       }

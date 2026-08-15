@@ -137,10 +137,16 @@
   transition: opacity 120ms ease-out, transform 120ms ease-out;
 }
 
-.evidenceSummary:hover .evidenceTooltip,
 .evidenceSummary:focus-within .evidenceTooltip {
   opacity: 1;
   transform: translateY(0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .evidenceSummary:hover .evidenceTooltip {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .evidenceChip {
@@ -257,11 +263,18 @@
   transition: opacity 120ms ease-out, transform 120ms ease-out;
 }
 
-.profileLabel:hover .profileTooltip,
 .profileLabel:focus-within .profileTooltip {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .profileLabel:hover .profileTooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
 }
 
 .issueSection,
@@ -940,6 +953,22 @@
   pointer-events: none;
 }
 
+.videoTierNote {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  margin: 0;
+  max-width: min(420px, calc(100% - 20px));
+  background: color-mix(in srgb, black 80%, transparent);
+  color: color-mix(in srgb, white 94%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 4px 10px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
 .segmentDrawer {
   position: absolute;
   top: 10px;
@@ -1111,12 +1140,20 @@
   transition: opacity 120ms ease-out, transform 120ms ease-out;
 }
 
-.volumeControl:hover .volumePopover,
 .volumeControl:focus-within .volumePopover {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: translate(-50%, 0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .volumeControl:hover .volumePopover {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
+  }
 }
 
 .volumeIcon {
@@ -1489,13 +1526,13 @@
 
 @media (prefers-reduced-motion: reduce) {
   .evidenceTooltip,
-  .profileTooltip,
-  .playerBarBtn,
-  .volumePopover,
-  .switchRow,
-  .distributionBar,
-  .legendChip,
-  .metricRow {
-    transition: none;
+  .profileTooltip {
+    transition: opacity 120ms ease;
+    transform: none;
+  }
+
+  .volumePopover {
+    transition: opacity 120ms ease;
+    transform: translate(-50%, 0);
   }
 }

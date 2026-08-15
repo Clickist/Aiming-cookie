@@ -19,13 +19,22 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
 pub const FRAME_PIXEL_BYTES: usize = 4;
-pub const DEFAULT_FRAME_QUEUE_CAPACITY: usize = 8;
-pub const DEFAULT_WRITER_QUEUE_CAPACITY: usize = 4;
+// 硬件帧队列的元素是 WGC 表面引用 + 空像素元数据（bgra8 为空），CPU 侧
+// 每元素约 150B；持有的 GPU 表面数受 WGC frame pool（2 个 buffer）约束，
+// 不随本容量增长。60fps 下 32 帧 ≈ 533ms 余量，覆盖 GPU 瞬时挤压。
+pub const DEFAULT_FRAME_QUEUE_CAPACITY: usize = 32;
+// 写入队列的元素是完整未压缩 BGRA FrameSample（1080p 约 8.3MB/帧），
+// 不是压缩 packet：8 槽在 1080p 下峰值约 66MB，放大到 32 会到 ~260MB，
+// 故只取 2 倍余量（60fps 下约 133ms）。
+pub const DEFAULT_WRITER_QUEUE_CAPACITY: usize = 8;
 pub const DEFAULT_HARDWARE_EVENT_QUEUE_CAPACITY: usize = 32;
 pub const DEFAULT_RECORDING_FPS_NUMERATOR: u32 = 60;
 pub const DEFAULT_RECORDING_FPS_DENOMINATOR: u32 = 1;
 pub const REPLAY_MAX_DURATION_100NS: i64 = 300 * 10_000_000;
 pub const REPLAY_MAX_BYTES: usize = 384 * 1024 * 1024;
+// 导出窗口内容忍的时间线缺口：丢 1 帧（60fps 下 16.7ms）不应废掉整个
+// 导出，缺口由前一 sample 的时长自然吸收；超过 100ms 仍按 CoverageGap 失败。
+pub const REPLAY_TOLERATED_GAP_100NS: i64 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -412,6 +421,8 @@ struct ReplaySnapshot {
     start_offset_100ns: i64,
     end_offset_100ns: i64,
     total_bytes: usize,
+    // 窗口内被容忍（≤ REPLAY_TOLERATED_GAP_100NS）的缺口数。
+    tolerated_gaps: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -452,6 +463,9 @@ pub struct ReplayExportReceipt {
     pub packet_count: usize,
     pub encoded_bytes: usize,
     pub reencoded_frames: u64,
+    // 窗口内被容忍（≤ REPLAY_TOLERATED_GAP_100NS）的缺口数；仅留在
+    // Rust 侧，控制协议与落盘 receipt 的形状保持不变。
+    pub tolerated_coverage_gaps: u64,
     pub capture_clock: CaptureClockMetadata,
 }
 
@@ -492,6 +506,7 @@ struct ReplayMp4Plan {
     media_duration: u32,
     edit_media_time: i64,
     mdat_payload_size: u32,
+    tolerated_gaps: u64,
 }
 
 fn annex_b_start_code(bytes: &[u8], offset: usize) -> Option<usize> {
@@ -707,6 +722,7 @@ fn prepare_replay_mp4(input: &ReplayMuxInput) -> Result<ReplayMp4Plan, ReplayExp
     let mut encoded_bytes = 0usize;
     let mut mdat_payload_size = 0u64;
     let mut covered_until = snapshot.decode_start_100ns;
+    let mut tolerated_gaps = 0u64;
     for (index, packet) in snapshot.packets.iter().enumerate() {
         if packet.pts_100ns < snapshot.decode_start_100ns || packet.duration_100ns <= 0 {
             return Err(replay_export_failure(
@@ -721,10 +737,14 @@ fn prepare_replay_mp4(input: &ReplayMuxInput) -> Result<ReplayMp4Plan, ReplayExp
             ));
         }
         if packet.pts_100ns > covered_until {
-            return Err(replay_export_failure(
-                ReplayExportFailureKind::CoverageGap,
-                "replay snapshot contains a packet coverage gap",
-            ));
+            if packet.pts_100ns - covered_until > REPLAY_TOLERATED_GAP_100NS {
+                return Err(replay_export_failure(
+                    ReplayExportFailureKind::CoverageGap,
+                    "replay snapshot contains a packet coverage gap",
+                ));
+            }
+            // 小缺口由前一 sample 的时长（next.pts - pts）自然吸收。
+            tolerated_gaps += 1;
         }
         covered_until = covered_until.max(
             packet
@@ -813,6 +833,7 @@ fn prepare_replay_mp4(input: &ReplayMuxInput) -> Result<ReplayMp4Plan, ReplayExp
                 "MP4 media payload exceeds the v1 file limit",
             )
         })?,
+        tolerated_gaps,
     })
 }
 
@@ -1105,6 +1126,7 @@ fn write_prepared_replay_mp4(
         packet_count: input.snapshot.packets.len(),
         encoded_bytes: input.snapshot.total_bytes,
         reencoded_frames: 0,
+        tolerated_coverage_gaps: plan.tolerated_gaps,
         capture_clock: input.capture_clock,
     })
 }
@@ -1184,6 +1206,17 @@ fn create_replay_partial_file(
         ReplayExportFailureKind::IoFailure,
         "replay MP4 could not reserve a unique partial file",
     ))
+}
+
+// [capture-export] 诊断：mux 线程 panic 还原为可读消息打到 stderr，
+// 避免导出线程静默死亡被误判为通道断开。
+#[cfg(windows)]
+fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic payload".to_string())
 }
 
 #[cfg(windows)]
@@ -1331,12 +1364,16 @@ impl EncodedReplayBuffer {
         let mut packets = Vec::new();
         let mut total_bytes = 0usize;
         let mut covered_until = decode_start_100ns;
+        let mut tolerated_gaps = 0u64;
         for packet in self.packets.iter().skip(keyframe_index) {
             if packet.pts_100ns >= requested_end_100ns {
                 break;
             }
             if packet.pts_100ns > covered_until {
-                return Err(ReplayBufferError::CoverageGap);
+                if packet.pts_100ns - covered_until > REPLAY_TOLERATED_GAP_100NS {
+                    return Err(ReplayBufferError::CoverageGap);
+                }
+                tolerated_gaps += 1;
             }
             covered_until = covered_until.max(
                 packet
@@ -1360,6 +1397,7 @@ impl EncodedReplayBuffer {
             start_offset_100ns: requested_start_100ns - decode_start_100ns,
             end_offset_100ns: requested_end_100ns - decode_start_100ns,
             total_bytes,
+            tolerated_gaps,
         })
     }
 
@@ -3757,7 +3795,11 @@ fn run_wgc_window_capture(
                         output_path,
                         response,
                     } => {
+                        eprintln!(
+                            "[capture-export] worker: command received start={requested_start_100ns} end={requested_end_100ns}"
+                        );
                         if export_join.is_some() {
+                            eprintln!("[capture-export] worker: busy reject");
                             let _ = response.send(Err(replay_export_failure(
                                 ReplayExportFailureKind::ExportBusy,
                                 "another hardware replay export is still finalizing",
@@ -3782,12 +3824,58 @@ fn run_wgc_window_capture(
                                 });
                             match input {
                                 Ok(input) => {
+                                    eprintln!(
+                                        "[capture-export] worker: mux spawning path={}",
+                                        output_path.display()
+                                    );
                                     export_join = Some(thread::spawn(move || {
-                                        let result = export_replay_mp4_file(input, output_path);
-                                        let _ = response.send(result);
+                                        let mux_started = std::time::Instant::now();
+                                        eprintln!("[capture-export] mux: begin");
+                                        let result =
+                                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                                                || export_replay_mp4_file(input, output_path),
+                                            ));
+                                        let outcome = match result {
+                                            Ok(Ok(receipt)) => {
+                                                eprintln!(
+                                                    "[capture-export] mux: ok packets={} elapsed_ms={}",
+                                                    receipt.packet_count,
+                                                    mux_started.elapsed().as_millis()
+                                                );
+                                                Ok(receipt)
+                                            }
+                                            Ok(Err(error)) => {
+                                                eprintln!(
+                                                    "[capture-export] mux: failed kind={:?} {} elapsed_ms={}",
+                                                    error.kind,
+                                                    error.message,
+                                                    mux_started.elapsed().as_millis()
+                                                );
+                                                Err(error)
+                                            }
+                                            Err(panic) => {
+                                                eprintln!(
+                                                    "[capture-export] mux: PANICKED: {}",
+                                                    panic_message(panic)
+                                                );
+                                                Err(replay_export_failure(
+                                                    ReplayExportFailureKind::IoFailure,
+                                                    "hardware replay export panicked",
+                                                ))
+                                            }
+                                        };
+                                        if response.send(outcome).is_err() {
+                                            eprintln!(
+                                                "[capture-export] mux: response channel closed before delivery"
+                                            );
+                                        }
                                     }))
                                 }
                                 Err(error) => {
+                                    eprintln!(
+                                        "[capture-export] worker: input build failed kind={:?}",
+                                        error.kind
+                                    );
                                     let _ = response.send(Err(error));
                                 }
                             }
@@ -3889,6 +3977,13 @@ mod tests {
         });
         state.queue.lock().unwrap().first_system_relative_time_100ns = Some(1);
         assert!(state.epoch_window_to_replay_pts(1, 2).is_err());
+    }
+
+    #[test]
+    fn default_frame_queue_capacity_covers_half_a_second_at_recording_fps() {
+        // 帧队列丢帧余量契约：60fps 下至少 0.5s（30 帧）缓冲。
+        let frames_per_second = DEFAULT_RECORDING_FPS_NUMERATOR / DEFAULT_RECORDING_FPS_DENOMINATOR;
+        assert!(DEFAULT_FRAME_QUEUE_CAPACITY >= frames_per_second as usize / 2);
     }
 
     #[cfg(windows)]
@@ -4194,6 +4289,7 @@ mod tests {
             start_offset_100ns: 50,
             end_offset_100ns: 250,
             total_bytes: 17,
+            tolerated_gaps: 0,
         }
     }
 
@@ -4313,6 +4409,7 @@ mod tests {
             start_offset_100ns: 220 * 10_000_000,
             end_offset_100ns: 230 * 10_000_000,
             total_bytes: 6,
+            tolerated_gaps: 0,
         };
         let (mp4, _) = build_replay_mp4(&replay_mux_input(snapshot)).unwrap();
         let elst = mp4_path(&mp4, &[*b"moov", *b"trak", *b"edts", *b"elst"]);
@@ -4354,6 +4451,74 @@ mod tests {
         assert_eq!(
             build_replay_mp4(&reordered).unwrap_err().kind,
             ReplayExportFailureKind::UnsupportedPacketTiming
+        );
+    }
+
+    #[test]
+    fn replay_mux_tolerates_small_coverage_gaps_and_reports_them() {
+        let gapped = ReplaySnapshot {
+            packets: vec![
+                Arc::new(replay_packet(
+                    200,
+                    100,
+                    true,
+                    Arc::from([0, 0, 0, 1, 0x65, 0x11]),
+                )),
+                Arc::new(replay_packet(
+                    500_000,
+                    100,
+                    false,
+                    Arc::from([0, 0, 0, 1, 0x41, 0x22]),
+                )),
+            ],
+            requested_start_100ns: 250,
+            requested_end_100ns: 500_100,
+            decode_start_100ns: 200,
+            start_offset_100ns: 50,
+            end_offset_100ns: 499_900,
+            total_bytes: 12,
+            tolerated_gaps: 1,
+        };
+        let (mp4, receipt) = build_replay_mp4(&replay_mux_input(gapped)).unwrap();
+        assert_eq!(receipt.packet_count, 2);
+        assert_eq!(receipt.tolerated_coverage_gaps, 1);
+        // 缺口由前一 sample 的时长吸收，时间线不塌陷。
+        let stts = mp4_path(
+            &mp4,
+            &[*b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"stts"],
+        );
+        assert_eq!(read_be_u32(stts, 4), 2);
+        assert_eq!(read_be_u32(stts, 8), 1);
+        assert_eq!(read_be_u32(stts, 12), 499_800);
+
+        let oversized = ReplaySnapshot {
+            packets: vec![
+                Arc::new(replay_packet(
+                    200,
+                    100,
+                    true,
+                    Arc::from([0, 0, 0, 1, 0x65, 0x11]),
+                )),
+                Arc::new(replay_packet(
+                    2_000_000,
+                    100,
+                    false,
+                    Arc::from([0, 0, 0, 1, 0x41, 0x22]),
+                )),
+            ],
+            requested_start_100ns: 250,
+            requested_end_100ns: 2_000_100,
+            decode_start_100ns: 200,
+            start_offset_100ns: 50,
+            end_offset_100ns: 1_999_900,
+            total_bytes: 12,
+            tolerated_gaps: 0,
+        };
+        assert_eq!(
+            build_replay_mp4(&replay_mux_input(oversized))
+                .unwrap_err()
+                .kind,
+            ReplayExportFailureKind::CoverageGap
         );
     }
 
@@ -4497,10 +4662,45 @@ mod tests {
             Err(ReplayBufferError::IncompleteCoverage)
         );
 
-        let mut gap = EncodedReplayBuffer::with_limits(1_000, 100).unwrap();
+        let mut gap = EncodedReplayBuffer::with_limits(2_000_000, 100).unwrap();
         gap.push(small_replay_packet(0, 100, true)).unwrap();
-        gap.push(small_replay_packet(200, 100, false)).unwrap();
-        assert_eq!(gap.snapshot(0, 300), Err(ReplayBufferError::CoverageGap));
+        gap.push(small_replay_packet(1_000_300, 100, false))
+            .unwrap();
+        assert_eq!(
+            gap.snapshot(0, 1_000_400),
+            Err(ReplayBufferError::CoverageGap)
+        );
+    }
+
+    #[test]
+    fn replay_snapshot_tolerates_gaps_within_the_export_tolerance() {
+        let mut replay = EncodedReplayBuffer::with_limits(4_000_000, 200).unwrap();
+        for pts in [0, 100, 300, 200_000, 2_000_000] {
+            replay
+                .push(small_replay_packet(pts, 100, pts == 0))
+                .unwrap();
+        }
+
+        // 无缺口窗口不计数。
+        let seamless = replay.snapshot(0, 200).unwrap();
+        assert_eq!(seamless.packets.len(), 2);
+        assert_eq!(seamless.tolerated_gaps, 0);
+
+        // 100ns 的缺口（丢 1 帧）被容忍并计数，导出继续。
+        let dropped = replay.snapshot(0, 400).unwrap();
+        assert_eq!(dropped.packets.len(), 3);
+        assert_eq!(dropped.tolerated_gaps, 1);
+
+        // 窗口内多个 ≤100ms 缺口累计计数。
+        let both = replay.snapshot(0, 200_100).unwrap();
+        assert_eq!(both.packets.len(), 4);
+        assert_eq!(both.tolerated_gaps, 2);
+
+        // 超过 100ms 容差的缺口仍然失败。
+        assert_eq!(
+            replay.snapshot(0, 2_000_100),
+            Err(ReplayBufferError::CoverageGap)
+        );
     }
 
     #[test]

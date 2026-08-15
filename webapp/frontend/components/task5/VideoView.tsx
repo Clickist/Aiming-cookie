@@ -257,7 +257,27 @@ export function VideoView({
     return (
       <div className={styles.videoView}>
         <Empty title="没有可用视觉证据">
-          这条 input-native Analysis 只包含输入运动学与事件对齐，不显示空播放器，也不推断视觉结论。
+          本局没有录制视频：这条 input-native Analysis 只包含输入运动学与事件对齐，不显示空播放器，也不推断视觉结论。
+        </Empty>
+      </div>
+    );
+  }
+
+  if (presentation.video.kind === "unavailable") {
+    if (presentation.family.status === "supported") {
+      return (
+        <div className={styles.videoView}>
+          <Notice tone="warning" title="视觉证据当前不可用">
+            原生分析结果仍然保留。视频可能已被手动移除，或本地媒体服务暂时不可用。
+          </Notice>
+          <Button onClick={() => void loadEvidence()} variant="secondary">重试视觉证据</Button>
+        </div>
+      );
+    }
+    return (
+      <div className={styles.videoView}>
+        <Empty title="本档分析基于输入数据">
+          本档分析不消费视觉测量；本局没有可附加的回放视频，这不代表证据被移除。
         </Empty>
       </div>
     );
@@ -299,6 +319,9 @@ export function VideoView({
           src={videoUrl}
         />
         <span className={styles.playerBadge}>{timeText}{activeSegment ? ` · ${activeSegment.title_key ?? activeSegment.segment_id}` : ""}</span>
+        {presentation.family.status !== "supported" ? (
+          <p className={styles.videoTierNote}>本档分析基于输入数据，视频回放仍可观看；回放不参与视觉测量结论。</p>
+        ) : null}
         {drawerOpen ? (
           <div className={styles.segmentDrawer} ref={drawerRef} tabIndex={-1}>
             <header>

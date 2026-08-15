@@ -43,6 +43,11 @@ test("SessionRail follows the active narrow and footer contract", async () => {
   assert.match(component, /onCollapsedChange/);
   assert.match(component, /Escape/);
   assert.match(component, /trapOverlayFocus/);
+  assert.match(component, /type OverlayState = "closed" \| "opening" \| "open" \| "closing"/);
+  assert.match(component, /toggleRail\(true\)/);
+  assert.match(component, /closeOverlay\(true\)/);
+  assert.match(component, /prefers-reduced-motion: reduce[\s\S]*\? 120 : 200/);
+  assert.match(component, /inert=\{overlayState === "closing" \|\| undefined\}/);
   assert.match(component, /title="收起\/展开会话栏"/);
   assert.match(component, /type="button">←<\/button>/);
   assert.match(component, /type="button">→<\/button>/);
@@ -53,7 +58,12 @@ test("SessionRail follows the active narrow and footer contract", async () => {
   assert.match(styles, /data-collapsed/);
   assert.match(styles, /task7-session-rail__iconbar/);
   assert.match(styles, /@media \(max-width: 1119px\)/);
-  assert.match(styles, /data-overlay="true"/);
+  assert.match(styles, /data-overlay-state/);
+  assert.doesNotMatch(styles, /@keyframes task7-session-rail-slide-in/);
+  assert.match(styles, /transition:\s*transform var\(--duration-surface, 200ms\) var\(--ease-out/);
+  assert.match(styles, /data-motion="instant"/);
+  assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)/);
+  assert.match(styles, /prefers-reduced-motion: reduce[\s\S]*duration-reduced-motion, 120ms/);
   assert.match(styles, /color-mix\(in srgb, var\(--on-surface\) 12%, transparent\)/);
   assert.match(styles, /data-overlay="true"\][^{]*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
 });
