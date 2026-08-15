@@ -47,12 +47,12 @@ def _read_frozen_source_bytes(kind: str, source: object) -> bytes:
         raise SourceSnapshotChangedError(
             f"source_unavailable: {kind} changed while reading"
         )
-    actual = {
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "size": len(data),
-        "mtime_ns": after.st_mtime_ns,
-    }
-    if actual != expected:
+    actual_sha = hashlib.sha256(data).hexdigest()
+    # Content identity is sha256 + size. mtime_ns is not stable to
+    # sub-microsecond on every filesystem (2026-08-16 deep test: drift between
+    # time windows while sha/size stayed identical), so a mtime drift is an
+    # auxiliary signal, not a revision change.
+    if actual_sha != expected["sha256"] or len(data) != expected["size"]:
         raise SourceSnapshotChangedError(f"source_unavailable: {kind} revision changed")
     return data
 

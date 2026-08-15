@@ -177,6 +177,21 @@ test("native generate_draft writes a draft and never exposes confirmation metada
   assert.equal(result.details.event.status, "succeeded");
 });
 
+test("native write failures surface the handler's real error message", async () => {
+  // Deep-test Bug 2: generate_draft without plan_payload reported a generic
+  // "product command could not be completed", so the model could not self-correct.
+  const result = await createProductCommandTool(null).execute("draft-missing-payload", {
+    command_name: "training_plan.generate_draft",
+    parameters: { analysis_ref: "analysis:6", plan_type: "static_clicking", focus: "terminal control" },
+  });
+
+  const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+  assert.equal(parsed.status, "failed");
+  const warning = parsed.warning_or_error as { code: string; message: string };
+  assert.equal(warning.code, "internal_error");
+  assert.match(warning.message, /plan_payload is required/);
+});
+
 test("KovaaK score lookup accepts literal Steam IDs and profile URLs", async () => {
   const tool = createProductCommandTool(null);
   const result = await tool.execute("lookup", {

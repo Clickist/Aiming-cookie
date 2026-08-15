@@ -9,7 +9,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile, writeFile, readdir } from "node:fs/promises";
-import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
+import { dirname, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
 
 import { loadPiAi } from "./pi-source.ts";
 
@@ -23,6 +23,29 @@ const { Type } = (await loadPiAi()) as unknown as { Type: TypeBuilder };
 
 function resolveToCwd(path: string, cwd: string): string {
   return isAbsolute(path) ? path : resolvePath(cwd, path);
+}
+
+// ── Coach-managed product state guard ──────────────────────────────────
+//
+// These files are the on-disk state of the native write commands in
+// product-commands-write.ts. Hand-writing them via the raw `write` tool
+// bypasses every contract (plan_id/status/version, phase transitions,
+// override schema) and desyncs the product commands (Bug 4 of the 2026-08-16
+// deep test). The write tool refuses them and points at the product command.
+const PROTECTED_STATE_FILES: ReadonlyMap<string, string> = new Map([
+  ["training/plan.json", "training_plan.*"],
+  ["training/history.jsonl", "training_plan.execution.record / training_plan.retest.record"],
+  ["teaching/session.json", "teaching_session.update"],
+  ["config/scenario-overrides.json", "scenario_memory.set"],
+  ["config/calibration.json", "calibration.save / calibration.delete"],
+  ["config/peripheral.json", "peripheral_profile.update"],
+  ["config/kovaak-connection.json", "kovaak.connection.disconnect"],
+]);
+
+function protectedStateFile(absolutePath: string, cwd: string): { relative: string; command: string } | null {
+  const relativePath = relative(cwd, absolutePath).split(sep).join("/");
+  const command = PROTECTED_STATE_FILES.get(relativePath);
+  return command ? { relative: relativePath, command } : null;
 }
 
 // ── Analysis read tracking ──────────────────────────────────────────────
@@ -125,6 +148,13 @@ export function createWriteTool(cwd: string) {
     ) {
       if (signal?.aborted) throw new Error("Operation aborted");
       const absolutePath = resolveToCwd(path, cwd);
+      const protectedFile = protectedStateFile(absolutePath, cwd);
+      if (protectedFile) {
+        throw new Error(
+          `Refusing to write ${protectedFile.relative}: it is product state managed by ${protectedFile.command}. ` +
+          `Use run_product_command with that command instead of the write tool.`,
+        );
+      }
       try {
         const { mkdir } = await import("node:fs/promises");
         await mkdir(dirname(absolutePath), { recursive: true });
