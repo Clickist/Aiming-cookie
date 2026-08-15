@@ -157,11 +157,11 @@ def test_tracking_candidate_advice_uses_matched_baseline_and_row_evidence():
     )
     assert [item["knowledge_entry_refs"] for item in advice] == [
         ["knowledge:tracking.predictable-speed-matching@3"],
-        ["knowledge:tracking.reactive-change-response@2"],
-        ["knowledge:tracking.reactive-change-response@2"],
-        ["knowledge:tracking.reactive-change-response@2"],
-        ["knowledge:tracking.control-smoothness@2"],
-        ["knowledge:tracking.control-smoothness@2"],
+        ["knowledge:tracking.reactive-change-response@3"],
+        ["knowledge:tracking.reactive-change-response@3"],
+        ["knowledge:tracking.reactive-change-response@3"],
+        ["knowledge:tracking.control-smoothness@3"],
+        ["knowledge:tracking.control-smoothness@3"],
     ]
     assert [item["observation_ref"] for item in advice] == [
         "episode.tracking",
