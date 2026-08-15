@@ -177,19 +177,16 @@ test("native generate_draft writes a draft and never exposes confirmation metada
   assert.equal(result.details.event.status, "succeeded");
 });
 
-test("native write failures surface the handler's real error message", async () => {
-  // Deep-test Bug 2: generate_draft without plan_payload reported a generic
-  // "product command could not be completed", so the model could not self-correct.
-  const result = await createProductCommandTool(null).execute("draft-missing-payload", {
-    command_name: "training_plan.generate_draft",
-    parameters: { analysis_ref: "analysis:6", plan_type: "static_clicking", focus: "terminal control" },
-  });
-
-  const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
-  assert.equal(parsed.status, "failed");
-  const warning = parsed.warning_or_error as { code: string; message: string };
-  assert.equal(warning.code, "internal_error");
-  assert.match(warning.message, /plan_payload is required/);
+test("generate_draft without plan_payload is rejected naming the missing field", async () => {
+  // Deep-test Bug 2 follow-up: the parameter contract now rejects the wrong
+  // shape up front with the field name, so the model can self-correct.
+  await assert.rejects(
+    createProductCommandTool(null).execute("draft-missing-payload", {
+      command_name: "training_plan.generate_draft",
+      parameters: { analysis_ref: "analysis:6", plan_type: "static_clicking", focus: "terminal control" },
+    }),
+    /plan_payload/,
+  );
 });
 
 test("KovaaK score lookup accepts literal Steam IDs and profile URLs", async () => {
@@ -326,6 +323,85 @@ test("product tool documents the reachable Evidence query chain", () => {
   assert.match(description, /analysis\.events\.list/);
   assert.match(description, /table_ref/);
   assert.match(description, /field_catalog/);
+});
+
+test("product tool documents parameter shape essentials", () => {
+  const description = createProductCommandTool(bridge()).description;
+  assert.match(description, /analysis:<id>:table:<event_kind>/);
+  assert.match(description, /predicates/);
+  assert.match(description, /plan_payload/);
+  assert.match(description, /weight_max/);
+});
+
+test("analysis.events.* rejects malformed parameters with the allowed field list", async () => {
+  const tool = createProductCommandTool(null);
+  const rejections: Array<[string, Record<string, unknown>, RegExp]> = [
+    [
+      "analysis.events.filter",
+      { table_ref: "analysis:9:table:static_flick", field: "path_efficiency", operator: "lt", value: 0.7 },
+      /predicates/,
+    ],
+    [
+      "analysis.events.filter",
+      { table_ref: "analysis:9:table:static_flick", predicates: [{ conditions: [{ field: "path_efficiency", operator: "lt", value: 0.7 }] }] },
+      /predicates\[0\].*unsupported key "conditions"/,
+    ],
+    [
+      "analysis.events.rank",
+      { table_ref: "analysis:9:table:static_flick", field: "decel_frac", direction: "descending" },
+      /direction must be one of asc, desc/,
+    ],
+    [
+      "analysis.events.list",
+      { analysis_ref: "analysis:9", scope: "run" },
+      /scope must be one of whole_run, evidence_segment/,
+    ],
+    [
+      "analysis.events.list",
+      { analysis_ref: "analysis-nine" },
+      /analysis_ref must be "analysis:<id>"/,
+    ],
+    [
+      "analysis.events.aggregate",
+      { table_ref: "analysis:9:table:static_flick", fields: ["decel_frac"], group: "quality" },
+      /does not accept "group".*allowed fields/,
+    ],
+    [
+      "analysis.events.get",
+      { table_ref: "analysis:9:table:static_flick" },
+      /event_ref must be a non-empty string/,
+    ],
+    [
+      "analysis.events.co_occurrence",
+      { table_ref: "analysis:9:table:static_flick", left: { conditions: [] }, right: { field: "decel_frac", operator: "gt", value: 0.5 }, relation: "same_event" },
+      /left has unsupported key "conditions"/,
+    ],
+  ];
+  for (const [command_name, parameters, pattern] of rejections) {
+    await assert.rejects(
+      tool.execute("schema", { command_name, parameters }),
+      pattern,
+      `${command_name}: ${JSON.stringify(parameters)}`,
+    );
+  }
+});
+
+test("eloshapes.query and generate_draft reject unknown fields with the allowed list", async () => {
+  const tool = createProductCommandTool(null);
+  await assert.rejects(
+    tool.execute("elo", {
+      command_name: "eloshapes.query",
+      parameters: { hand_size: "large", grip: "claw", max_weight_g: 60 },
+    }),
+    /does not accept "hand_size", "grip", "max_weight_g".*weight_max/,
+  );
+  await assert.rejects(
+    tool.execute("draft", {
+      command_name: "training_plan.generate_draft",
+      parameters: { plan_payload: { title: "T" }, plan_type: "static_clicking" },
+    }),
+    /does not accept "plan_type".*plan_payload/,
+  );
 });
 
 test("analysis.retry executes natively and never routes through the bridge", async () => {
