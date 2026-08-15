@@ -286,7 +286,7 @@ _TRACKING_CANDIDATES = (
         "tracking lag high",
         "metric:phase_lag",
         "absolute_higher",
-        "knowledge:tracking.predictable-speed-matching@2",
+        "knowledge:tracking.predictable-speed-matching@3",
         "episode.tracking",
     ),
     (

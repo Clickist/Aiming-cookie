@@ -1210,27 +1210,27 @@ async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
     ("knowledge_ref", "scenario_profile_ref", "practice_condition"),
     [
         (
-            "knowledge:static.flicking-terminal-control@2",
+            "knowledge:static.flicking-terminal-control@3",
             "scenario:static.1wall_6targets_small@1",
             "保持完全相同的静态场景条件，只测试一个终点控制提示。",
         ),
         (
-            "knowledge:dynamic.click-error-and-acquisition@2",
+            "knowledge:dynamic.click-error-and-acquisition@3",
             "scenario:dynamic.pasu_small_reload@1",
             "保持完全相同的动态场景条件，每次只改变一个易于辨认的运动变量。",
         ),
         (
-            "knowledge:dynamic.speed-matching-and-reading@2",
+            "knowledge:dynamic.speed-matching-and-reading@3",
             "scenario:dynamic.pasu_small_reload@1",
             "保持相同的动态场景条件，每次只改变一个运动特征。",
         ),
         (
-            "knowledge:tracking.predictable-speed-matching@2",
+            "knowledge:tracking.predictable-speed-matching@3",
             "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
             "保持完全相同的可预测运动条件，只测试稳定的速度匹配。",
         ),
         (
-            "knowledge:switching.transition-and-arrival@2",
+            "knowledge:switching.transition-and-arrival@3",
             "scenario:switching.beants_larger@1",
             "保持完全相同的 beanTS Larger 场景条件；每个训练组只关注切换移动或到达稳定中的一项。",
         ),
@@ -1264,7 +1264,7 @@ async def test_current_training_projection_is_owner_scoped_bounded_and_launch_re
     )
     real_ref = "scenario:static.1wall_6targets_small@1"
     planned_payload = _current_training_item(scenario_profile_ref=real_ref)
-    planned_payload["knowledge_ref"] = "knowledge:static.flicking-terminal-control@2"
+    planned_payload["knowledge_ref"] = "knowledge:static.flicking-terminal-control@3"
     planned = await training_plan_store.add_plan_item(
         "current-training-owner", plan["plan_id"],
         planned_payload,

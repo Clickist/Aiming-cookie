@@ -29,6 +29,7 @@ function registryFiles(): Map<string, string> {
     ["2026-08-06.v5", join(registry, "registry.v5.json")],
     ["2026-08-06.v6", join(registry, "registry.v6.json")],
     ["2026-08-15.v7", join(registry, "registry.v7.json")],
+    ["2026-08-16.v8", join(registry, "registry.v8.json")],
   ]);
 }
 const MAX_REGISTRY_BYTES = 512 * 1024;
@@ -797,7 +798,7 @@ export function validateKnowledgeRegistry(raw: unknown): KnowledgeRegistry {
 }
 
 const cached = new Map<string, KnowledgeRegistry>();
-export function loadKnowledgeRegistry(registryVersion = "2026-08-15.v7"): KnowledgeRegistry {
+export function loadKnowledgeRegistry(registryVersion = "2026-08-16.v8"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
   const registryFile = registryFiles().get(registryVersion);

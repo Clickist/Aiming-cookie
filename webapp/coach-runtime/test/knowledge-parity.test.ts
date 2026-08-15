@@ -80,3 +80,19 @@ test("TypeScript and Python reject the same duplicate-section corpus", () => {
     assert.equal(runPython(script, malformed, cwd, "stdin"), false, cwd);
   }
 });
+
+test("TypeScript and Python agree on the registry version and result cap", () => {
+  const registry = loadKnowledgeRegistry();
+  const script = [
+    "import json",
+    "from kovaak_tracker.coach.knowledge_registry import MAX_RESULTS,load_registry",
+    "r=load_registry()",
+    "print(json.dumps([r['registry_version'], MAX_RESULTS]))",
+  ].join(";");
+  for (const cwd of [REPO_ROOT, PACKAGE_ROOT]) {
+    const [pyVersion, pyMaxResults] = runPython(script, null, cwd) as string[];
+    assert.equal(pyVersion, registry.registry_version, cwd);
+    assert.equal(pyVersion, "2026-08-16.v8", cwd);
+    assert.equal(pyMaxResults, 8, cwd);
+  }
+});

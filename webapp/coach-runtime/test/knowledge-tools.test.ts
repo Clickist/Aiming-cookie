@@ -65,7 +65,7 @@ test("baseline metric queries hit knowledge entries in every ref shape", () => {
     metric_refs: ["static_clicking.corrective_count"],
   });
   assert.ok(familyPrefixed.entries.some(
-    (entry) => entry.entry_ref === "knowledge:static.flicking-terminal-control@2",
+    (entry) => entry.entry_ref === "knowledge:static.flicking-terminal-control@3",
   ));
 
   const trackingBySparc = getCoachKnowledge({
@@ -138,9 +138,9 @@ test("knowledge event accepts v5 differential-intake evidence", async () => {
     supported_use: "candidate_experiment",
   });
   const parsed = JSON.parse(output.content[0]?.text ?? "null");
-  assert.equal(parsed.registry_version, "2026-08-15.v7");
+  assert.equal(parsed.registry_version, "2026-08-16.v8");
   assert.equal(output.details.event.type, "knowledge");
-  assert.equal(output.details.event.registry_version, "2026-08-15.v7");
+  assert.equal(output.details.event.registry_version, "2026-08-16.v8");
   assert.ok(output.details.event.entry_refs.includes(
     "knowledge:hypothesis.input-latency-differential-intake@1",
   ));
