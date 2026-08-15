@@ -1959,7 +1959,7 @@ def test_analysis_service_skips_challenge_shape_in_the_undecided_band():
     assert "scenario_challenge_shape" not in refined
 
 
-_OVERRIDE_HASH = "0123456789abcdef" * 4
+_OVERRIDE_HASH = "0123456789abcdef" * 2
 
 
 def _write_scenario_overrides(overrides: dict) -> None:

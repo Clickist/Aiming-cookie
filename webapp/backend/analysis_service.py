@@ -181,7 +181,7 @@ def _challenge_shape_for_run(
 SCENARIO_OVERRIDES_SCHEMA_VERSION = "scenario_overrides.v1"
 SCENARIO_OVERRIDES_MAX_ENTRIES = 5000
 SCENARIO_OVERRIDES_MAX_BYTES = 1024 * 1024
-_SCENARIO_OVERRIDE_HASH_RE = re.compile(r"[0-9a-f]{64}")
+_SCENARIO_OVERRIDE_HASH_RE = re.compile(r"[0-9a-f]{32}")
 _SCENARIO_OVERRIDE_FAMILIES = {
     "static_clicking", "dynamic_clicking", "continuous_tracking", "target_switching",
 }
@@ -655,7 +655,18 @@ async def create_analysis_from_run(
         elif uses_video and run_video_source is not None:
             video_destination = workspace / "video.mp4"
             workspace.mkdir(parents=True, exist_ok=True)
-            os.link(run_video_source, video_destination)
+            # Re-analysis of an already-analysed run may retry into a workspace that
+            # still holds a prior (partial) freeze; os.link is not idempotent. Reuse an
+            # existing matching hard link instead of failing with FileExistsError.
+            if not (
+                video_destination.exists()
+                and _matches_frozen_hard_link(
+                    video_destination, run_video_source, run_video_fingerprint,
+                )
+            ):
+                if video_destination.exists():
+                    video_destination.unlink()
+                os.link(run_video_source, video_destination)
             if not _matches_frozen_hard_link(
                 video_destination,
                 run_video_source,

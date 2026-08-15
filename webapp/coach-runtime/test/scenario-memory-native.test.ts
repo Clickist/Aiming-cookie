@@ -25,7 +25,7 @@ function setCommand(params: Record<string, unknown>, owner = "owner-a") {
   return executeNativeWrite("scenario_memory.set", params, owner);
 }
 
-const HASH = "0123456789abcdef".repeat(4);
+const HASH = "0123456789abcdef".repeat(2);
 
 test("scenario_memory.set is registered and creates config/scenario-overrides.json", () => {
   resetOverrides();
