@@ -13,6 +13,7 @@ import {
   stopCoachAgentRun,
 } from "@/lib/api";
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
+import { COACH_PENDING_INTENT_KEY } from "@/lib/contracts";
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
 import type {
   CoachAgentRunEventV1,
@@ -26,7 +27,6 @@ import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimat
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachLayoutMode = "side-by-side" | "overlay" | "full";
-const COACH_PENDING_INTENT_KEY = "aiming-cookie.ui.coach-pending-intent";
 
 function capabilityLabel(capability: Exclude<CoachCapability, "loading" | "ready">): string {
   switch (capability) {

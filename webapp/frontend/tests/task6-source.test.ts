@@ -151,6 +151,16 @@ test("Settings refreshes native capture status while it is open", async () => {
   assert.match(settings, /window\.clearInterval\(timer\)/);
 });
 
+test("Settings capture status only turns unavailable after consecutive failed polls", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  assert.match(settings, /CAPTURE_UNAVAILABLE_POLL_LIMIT = 3/);
+  assert.match(settings, /next\.availability === "unavailable"/);
+  assert.match(settings, /unavailableStreak \+= 1/);
+  // 未达阈值直接 return：单次/两次瞬时失败保留上一个已知良好状态。
+  assert.match(settings, /if \(unavailableStreak < CAPTURE_UNAVAILABLE_POLL_LIMIT\) return/);
+  assert.match(settings, /unavailableStreak = 0/);
+});
+
 test("Coach is the main workspace instead of a closable sidebar", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   assert.match(shell, /<CoachPanel/);
@@ -205,6 +215,9 @@ test("Settings hosts the KovaaK connection surface without adding a Benchmark ro
 test("Settings keeps its narrow tooltip inside the viewport and removes unreachable mobile nav animation", async () => {
   const styles = await source("components/task6/task6.css");
   assert.match(styles, /\.task6-info-tooltip\s*{[^}]*left:\s*0;[^}]*right:\s*auto;/s);
+  assert.doesNotMatch(styles, /task6-settings-open/);
+  assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)\s*\{[^}]*\.task6-info-trigger:hover[^}]*\}[^}]*\.task6-info:hover \.task6-info-tooltip\s*\{[^}]*\}\s*\}/);
+  assert.match(styles, /\.task6-info:focus-within \.task6-info-tooltip/);
   const narrow = styles.slice(
     styles.indexOf("@media (max-width: 839px)"),
     styles.indexOf("@media (prefers-reduced-motion: reduce)"),
@@ -343,8 +356,10 @@ test("Coach current training animates expand and collapse without leaving intera
   assert.match(coach, /data-state=\{trainingPresence\.state\}/);
   assert.match(coach, /aria-hidden=\{!trainingExpanded \|\| undefined\}/);
   assert.match(coach, /inert=\{!trainingExpanded \|\| undefined\}/);
-  assert.match(styles, /\.task6-training-reveal\s*\{[\s\S]*grid-template-rows:\s*0fr;[\s\S]*opacity:\s*0;[\s\S]*translateY\(-4px\)/);
-  assert.match(styles, /\.task6-training-reveal\[data-state="open"\]\s*\{[\s\S]*grid-template-rows:\s*1fr;[\s\S]*opacity:\s*1;[\s\S]*translateY\(0\)/);
+  assert.match(styles, /\.task6-training-reveal\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-4px\)[\s\S]*transition:\s*opacity 180ms var\(--ease-out/);
+  assert.doesNotMatch(styles, /grid-template-rows/);
+  assert.match(styles, /\.task6-training-reveal\[data-state="open"\]\s*\{[\s\S]*opacity:\s*1;[\s\S]*translateY\(0\)/);
+  assert.match(styles, /\.task6-training-reveal\[data-state="closed"\]\s*\{[\s\S]*position:\s*absolute;[\s\S]*pointer-events:\s*none;/);
   assert.match(styles, /prefers-reduced-motion:\s*reduce[\s\S]*\.task6-training-reveal/);
 });
 

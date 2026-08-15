@@ -1991,7 +1991,7 @@ def test_native_projection_keeps_registry_backed_static_issue_without_legacy_tea
 
     issue = diagnosis["issues"][0]
     assert issue["observation_ref"] == "metric.terminal_control"
-    assert issue["knowledge_registry_version"] == "2026-08-06.v6"
+    assert issue["knowledge_registry_version"] == "2026-08-15.v7"
     assert issue["knowledge_entry_refs"] == [
         "knowledge:static.flicking-terminal-control@2"
     ]
@@ -2547,6 +2547,95 @@ async def test_process_one_local_dynamic_baseline_keeps_native_facts_without_sta
     assert "target_relative_facts_unavailable" in result["deterministic"]["limitations"]
 
 
+@pytest.mark.asyncio
+async def test_process_one_exact_tracking_without_video_runs_baseline_kinematics():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "b2ae4a24b710e36afc6e57c61f590ab4",
+        display_name="WHJ SmoothStrafeSphere Easy",
+    )
+    job = {
+        "id": 123,
+        "user_id": "u1",
+        "analysis_type": "continuous_tracking",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result, calls, native_mock, cv_mock = await _capture_mode_result(
+        job,
+        native_result=_native_v2_adapter_result(),
+    )
+
+    assert calls == ["native"]
+    native_mock.assert_called_once()
+    cv_mock.assert_not_called()
+    assert result["analysis_version"] == "continuous_tracking.baseline.v1"
+    assert result["analysis_type"] == "continuous_tracking"
+    assert result["scenario"]["aim_family"] == "continuous_tracking"
+    assert result["scenario"]["support_status"] == "partial"
+    assert "continuous_tracking_baseline_without_exact_visual_profile" in (
+        result["deterministic"]["limitations"]
+    )
+
+
+def test_clicking_baseline_result_attaches_managed_video_replay_reference():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Air Angelic 4 Voltaic Easy",
+        challenge_shape={
+            "schema_version": "scenario_challenge_shape.v1",
+            "kills": 0,
+            "duration_ms": 30_000,
+            "button_samples_held": 17_273,
+        },
+    )
+    job = {
+        "id": 130,
+        "user_id": "u1",
+        "analysis_type": "continuous_tracking",
+        "input_mode": "multimodal",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "/managed/session/130/video.mp4",
+        "csv_path": "",
+        "cm_per_360": None,
+        "fov": None,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result = worker._build_clicking_baseline_result_v2(
+        job,
+        _native_v2_adapter_result(),
+        created_at="2026-07-13T12:00:00Z",
+        completed_at="2026-07-13T12:01:00Z",
+        video_availability="available",
+    )
+
+    assert result["analysis_version"] == "continuous_tracking.baseline.v1"
+    # 回放引用沿用 exact 管线的 video 证据投影结构；不做视觉测量。
+    mp4 = result["evidence"]["sources"]["mp4"]
+    assert mp4["source"] == "mp4"
+    assert mp4["availability"] == "available"
+    assert mp4["artifact_ref"] == "analysis:130:video"
+    manifest_entry = next(
+        entry for entry in result["artifact_manifest"]["external_inputs"]
+        if entry["id"] == "analysis:130:video"
+    )
+    assert manifest_entry["kind"] == "mp4"
+    assert manifest_entry["availability"] == "available"
+    assert manifest_entry["managed"] is True
+
+
 def test_exact_packaged_static_v3_snapshot_dispatches_native_flicking():
     snapshot = _native_v2_snapshot()
     snapshot["schema_version"] = "analysis_input_snapshot.v3"
@@ -2654,6 +2743,72 @@ Category=SemiAuto
         {"analysis_type": "flicking", "input_snapshot": snapshot},
         "input_native",
     ) == "static_clicking.baseline.v1"
+
+
+def test_exact_packaged_tracking_without_video_degrades_to_input_native_baseline():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "b2ae4a24b710e36afc6e57c61f590ab4",
+        display_name="WHJ SmoothStrafeSphere Easy",
+    )
+
+    assert worker._scenario_dispatch(
+        {"analysis_type": "continuous_tracking", "input_snapshot": snapshot},
+        "input_native",
+    ) == "continuous_tracking.baseline.v1"
+    assert worker._scenario_dispatch(
+        {"analysis_type": "continuous_tracking", "input_snapshot": snapshot},
+        "multimodal",
+    ) == "continuous_tracking.v1"
+
+
+def test_name_heuristic_switching_without_video_dispatches_baseline_kinematics():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Bounceshot Switch",
+    )
+
+    assert worker._scenario_dispatch(
+        {"analysis_type": "target_switching", "input_snapshot": snapshot},
+        "input_native",
+    ) == "target_switching.baseline.v1"
+    # Name candidates never enter the calibrated visual pipeline.
+    assert worker._scenario_dispatch(
+        {"analysis_type": "target_switching", "input_snapshot": snapshot},
+        "multimodal",
+    ) == "target_switching.baseline.v1"
+    assert worker._scenario_dispatch(
+        {"analysis_type": "target_switching", "input_snapshot": snapshot},
+        "video_fallback",
+    ) == "outcome_only"
+
+
+def test_challenge_shape_tracking_dispatches_baseline_without_visual_pipeline():
+    snapshot = _native_v2_snapshot()
+    snapshot["schema_version"] = "analysis_input_snapshot.v3"
+    snapshot["scenario_resolution"] = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Air Angelic 4 Voltaic Easy",
+        challenge_shape={
+            "schema_version": "scenario_challenge_shape.v1",
+            "kills": 0,
+            "duration_ms": 30_000,
+            "button_samples_held": 17_273,
+        },
+    )
+
+    assert worker._scenario_dispatch(
+        {"analysis_type": "continuous_tracking", "input_snapshot": snapshot},
+        "input_native",
+    ) == "continuous_tracking.baseline.v1"
+    # 形态候选不进标定视觉管线；multimodal 档出 baseline + 可回放视频。
+    assert worker._scenario_dispatch(
+        {"analysis_type": "continuous_tracking", "input_snapshot": snapshot},
+        "multimodal",
+    ) == "continuous_tracking.baseline.v1"
 
 
 def test_tracking_worker_adapter_requires_one_target_and_passes_only_validated_changes():
@@ -2944,7 +3099,7 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
         assert issue["signal"] == "dynamic click error high"
         assert "severity" not in issue and "prescriptions" not in issue
         assert issue["observation_ref"] == "event.dynamic_click"
-        assert issue["knowledge_registry_version"] == "2026-08-06.v6"
+        assert issue["knowledge_registry_version"] == "2026-08-15.v7"
         assert issue["knowledge_entry_refs"] == [
             "knowledge:dynamic.click-error-and-acquisition@2"
         ]

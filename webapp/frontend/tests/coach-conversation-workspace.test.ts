@@ -44,9 +44,9 @@ test("Coach opens a center video pane from time-link analysis refs", async () =>
 });
 
 test("legacy Tasks and Analysis URLs are compatibility redirects", async () => {
+  // /analyze 页面已整体移除（History 承接分析入口），不再保留 redirect。
   const routes = await Promise.all([
     source("app/tasks/page.tsx"),
-    source("app/analyze/page.tsx"),
     source("app/analysis/page.tsx"),
     source("app/analysis/[analysisId]/page.tsx"),
   ]);

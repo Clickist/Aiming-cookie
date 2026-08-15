@@ -5,7 +5,6 @@ import {
   buildHistorySections,
   getHistoryStatusText,
   getTrendPresentation,
-  presentRunInspector,
 } from "../lib/contracts";
 import type { KovaaKRunListItem, SessionListItem } from "../lib/types";
 
@@ -112,32 +111,4 @@ test("trend presentation is fail-closed and never fabricates PB or percent chang
     summary: "当前 12% · 基线 10% · 差异 +2%",
     value: 12,
   });
-});
-
-test("run inspector projects five levels without paths or internal identifiers", () => {
-  const inspector = presentRunInspector(run({
-    trace_error: "C:\\Users\\private\\trace.bin",
-    stats_source_ref: "C:\\secret\\stats.csv",
-  } as Partial<KovaaKRunListItem>));
-  assert.equal(inspector.identity.scenario, "1wall6targets");
-  assert.equal(inspector.evidence.raw.availability, "可用");
-  assert.equal(inspector.capabilities.modes[0]?.code, "input_native");
-  assert.equal(inspector.operations.includes("manage_storage"), true);
-  assert.doesNotMatch(JSON.stringify(inspector), /C:\\|Users|trace\.bin|stats\.csv|run:1/);
-});
-
-test("run inspector preserves finalization, resolved alignment, and source coverage", () => {
-  const inspector = presentRunInspector(run({
-    finalization_state: "finalized",
-    alignment: { state: "resolved", coverage: 0.75, duration_ms: 1_000 },
-    trace_quality: { state: "attached", availability: "available", alignment_status: null, coverage: null },
-    video_quality: {
-      availability: "available",
-      coverage: { visible_duration_ms: 800 },
-    },
-  }));
-  assert.equal(inspector.identity.finalization, "已完成");
-  assert.equal(inspector.evidence.raw.alignment, "aligned");
-  assert.equal(inspector.evidence.raw.coverage, 0.75);
-  assert.equal(inspector.evidence.video.coverage, 0.8);
 });

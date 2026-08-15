@@ -101,6 +101,19 @@ const LIMITATION_PRESENTATION_TEXT: Record<string, string> = {
   "Unknown or multi-target scenarios remain fail-closed.": "未知场景或多目标布局不生成此类结论。",
   "Unknown hashes and concurrent target layouts are not classified by this entry.": "未知场景或多目标布局不生成此类结论。",
   alignment_latency_reported_separately: "对齐延迟单独报告，不等同于跟随滞后。",
+  scenario_name_is_a_candidate_not_an_identity: "场景名称只是识别候选，不构成场景身份。",
+  challenge_shape_is_a_statistical_candidate_not_an_identity: "按击杀密度识别训练大类，只是统计候选，不构成场景身份。",
+  scenario_override_is_a_user_confirmed_family_not_an_identity: "训练大类由用户确认，不构成场景身份。",
+  scenario_family_unresolved: "未能识别训练大类；按 static clicking 基础运动学分析处理。",
+  exact_manifest_gate_inactive_visual_claims_unavailable: "精确场景审核门未激活，不提供视觉测量结论。",
+  exact_visual_profile_unavailable: "缺少精确视觉档案，不做目标相对测量。",
+  target_relative_facts_unavailable: "缺少目标相对事实（误差、目标身份或速度）。",
+  outcome_association_unavailable: "命中关联不可用。",
+  scenario_prescription_unavailable: "场景专属训练处方不可用。",
+  static_clicking_baseline_without_exact_visual_profile: "基础分析缺少精确视觉档案，不含目标相对结论。",
+  dynamic_clicking_baseline_without_exact_visual_profile: "基础分析缺少精确视觉档案，不含目标相对结论。",
+  continuous_tracking_baseline_without_exact_visual_profile: "基础分析缺少精确视觉档案，不含目标相对结论。",
+  target_switching_baseline_without_exact_visual_profile: "基础分析缺少精确视觉档案，不含目标相对结论。",
 };
 
 const OBSERVATION_REF_RE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
@@ -193,6 +206,16 @@ function presentPriorityReason(value: string): string | null {
 }
 
 function presentLimitation(value: string): string {
+  const fireMode = /^challenge_shape_fire_mode_kills_(\d+)_button_samples_held_(\d+)_button_samples_per_kill_(inf|[0-9.]+)$/.exec(value);
+  if (fireMode) {
+    const perKill = fireMode[3] === "inf" ? "∞" : fireMode[3];
+    return `形态判定依据（开火模式）：${fireMode[1]} 次击杀 / 按住采样 ${fireMode[2]} 点（每杀 ${perKill}）。`;
+  }
+  const densityFallback = /^challenge_shape_kill_density_kills_(\d+)_duration_ms_(\d+)$/.exec(value);
+  if (densityFallback) {
+    const seconds = Math.round(Number(densityFallback[2]) / 1000);
+    return `形态判定依据（无 Raw 弱判据）：${densityFallback[1]} 次击杀 / ${seconds} 秒。`;
+  }
   return LIMITATION_PRESENTATION_TEXT[value]
     ?? presentDisplayText(value, "当前合同未提供可展示的限制说明");
 }
@@ -658,6 +681,125 @@ export function buildRunAnalysisRequest(input: {
   };
 }
 
+/** 历史时间展示：今天/昨天/M月d日 + HH:mm。 */
+export function formatHistoryDate(iso: string | null | undefined): string {
+  if (!iso) return "时间未知";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const now = new Date();
+  const isSameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const time = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  if (isSameDay(date, now)) return `今天 ${time}`;
+  if (isSameDay(date, yesterday)) return `昨天 ${time}`;
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  return `${month}月${day}日 ${time}`;
+}
+
+/** Coach 分析话术里单条场景名的长度上限；超长截断，run_ref 始终完整保留。 */
+const COACH_DRAFT_SCENARIO_MAX = 24;
+/** CoachPanel pending intent 消费的 draft 上限（见 CoachPanel pendingIntentDraft）。 */
+const COACH_DRAFT_MAX_LENGTH = 240;
+
+export interface CoachAnalysisDraftRun {
+  run_ref: string;
+  scenario: string | null;
+  created_at: string | null;
+}
+
+/** sessionStorage key：跨页面把「让 Coach 分析」话术交给 Coach 输入框（CoachPanel 消费）。 */
+export const COACH_PENDING_INTENT_KEY = "aiming-cookie.ui.coach-pending-intent";
+
+/**
+ * 生成「让 Coach 分析」按钮填充进 Coach 输入框的话术。勾选 run 让 Coach 触发
+ * 分析（run_ref 定位），勾选已完成分析让 Coach 直接读结果讨论（analysis ref
+ * 定位）。场景名超长截断；整体超出 intent 上限时退化为「时间（ref）」形式
+ * （UI 上限 5 条时退化形式不会超限）。
+ */
+export function buildCoachAnalysisDraft(input: {
+  runs: ReadonlyArray<CoachAnalysisDraftRun>;
+  analyses: ReadonlyArray<CoachAnalysisDraftRun>;
+}): string {
+  const { runs, analyses } = input;
+  if (runs.length === 0 && analyses.length === 0) return "";
+  const describe = (item: CoachAnalysisDraftRun, ref: string, withScenario: boolean): string => {
+    const scenario = (item.scenario ?? "").trim();
+    const name = scenario.length > COACH_DRAFT_SCENARIO_MAX
+      ? `${scenario.slice(0, COACH_DRAFT_SCENARIO_MAX)}…`
+      : scenario;
+    const when = formatHistoryDate(item.created_at);
+    return withScenario && name
+      ? `${name}，${when}（${ref}）`
+      : `${when}（${ref}）`;
+  };
+  const runRefs = runs.map((run) => run.run_ref);
+  const analysisRefs = analyses.map((analysis) => analysis.run_ref);
+  const parts: string[] = [];
+  if (runs.length > 0) {
+    const lead = runs.length === 1 ? "请分析我这局训练：" : "请分析我这几局训练：";
+    parts.push(`${lead}${runs.map((run, i) => describe(run, runRefs[i], true)).join("；")}`);
+  }
+  if (analyses.length > 0) {
+    const lead = analyses.length === 1 ? "请结合这份分析：" : "请结合这几份分析：";
+    parts.push(`${lead}${analyses.map((analysis, i) => describe(analysis, analysisRefs[i], true)).join("；")}`);
+  }
+  const tail = "，讲讲主要问题和改进方向。";
+  const draft = `${parts.join("，")}${tail}`;
+  if (draft.length <= COACH_DRAFT_MAX_LENGTH) return draft;
+  const degraded: string[] = [];
+  if (runs.length > 0) {
+    const lead = runs.length === 1 ? "请分析我这局训练：" : "请分析我这几局训练：";
+    degraded.push(`${lead}${runs.map((run, i) => describe(run, runRefs[i], false)).join("；")}`);
+  }
+  if (analyses.length > 0) {
+    const lead = analyses.length === 1 ? "请结合这份分析：" : "请结合这几份分析：";
+    degraded.push(`${lead}${analyses.map((analysis, i) => describe(analysis, analysisRefs[i], false)).join("；")}`);
+  }
+  return `${degraded.join("，")}${tail}`;
+}
+
+/**
+ * 分析完成自动开讲：Analysis 首次观察到 done 时，AppShell 用这句话为该分析
+ * 创建 Coach run（analysis ref 定位，Coach 工具自行读取分析结果）。内容与
+ * 「让 Coach 分析」话术同构，不承载分析结论本身。
+ */
+export function buildAnalysisAutoTeachContent(analysisRef: string): string {
+  return `请结合这份分析：${analysisRef}，讲讲主要问题和改进方向。`;
+}
+
+/**
+ * localStorage 标记：每个 Analysis 只自动开讲一次（AppShell 消费；防刷新/重进
+ * 重复触发）。这不是后端幂等事实源，仅是前端去重标记。
+ */
+export const ANALYSIS_AUTO_TEACH_KEY = "aiming-cookie.analysis-auto-teach";
+/** AnalysisWorkspace 在活体观察到 done 转换时派发的事件名。 */
+export const ANALYSIS_AUTO_TEACH_EVENT = "aiming-cookie:analysis-auto-teach";
+
+/** 读取已自动开讲的 analysis ref 集合（损坏数据按空集处理）。 */
+export function readAutoTaughtAnalyses(storage: Storage | null | undefined): Set<string> {
+  if (!storage) return new Set();
+  try {
+    const raw = JSON.parse(storage.getItem(ANALYSIS_AUTO_TEACH_KEY) ?? "[]");
+    return new Set(Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** 把 analysis ref 讇为已自动开讲；写失败静默（去重尽力而为）。 */
+export function markAnalysisAutoTaught(storage: Storage | null | undefined, analysisRef: string): void {
+  if (!storage) return;
+  const done = readAutoTaughtAnalyses(storage);
+  done.add(analysisRef);
+  try {
+    storage.setItem(ANALYSIS_AUTO_TEACH_KEY, JSON.stringify([...done]));
+  } catch {
+    // 本地去重标记写失败不影响开讲本身。
+  }
+}
+
 export interface HistorySections {
   pendingRuns: KovaaKRunListItem[];
   runRecords: KovaaKRunListItem[];
@@ -726,100 +868,6 @@ export function getTrendPresentation(trend: HistoryTrend): TrendPresentation {
     comparable: true,
     summary: `当前 ${current}${baseline ? ` · 基线 ${baseline}` : ""}${delta ? ` · 差异 ${delta}` : ""}`,
     value: trend.current,
-  };
-}
-
-export interface RunInspectorPresentation {
-  identity: {
-    label: string;
-    scenario: string;
-    createdAt: string;
-    finalization: string;
-  };
-  evidence: Record<string, {
-    availability: string;
-    coverage: number | null;
-    alignment: string;
-  }>;
-  capabilities: {
-    modes: Array<{ code: InputMode; available: boolean; reason: string | null }>;
-  };
-  operations: string[];
-}
-
-export function presentRunInspector(run: KovaaKRunListItem): RunInspectorPresentation {
-  const evidence = run.evidence_availability;
-  const alignment = run.alignment.state === "resolved"
-    ? "aligned"
-    : typeof run.alignment.status === "string"
-      ? run.alignment.status
-    : run.trace_quality.alignment_status ?? "unknown";
-  const alignmentCoverage = typeof run.alignment.coverage === "number"
-    && Number.isFinite(run.alignment.coverage)
-    && run.alignment.coverage >= 0
-    && run.alignment.coverage <= 1
-    ? run.alignment.coverage
-    : null;
-  const visibleDuration = typeof run.video_quality.coverage?.visible_duration_ms === "number"
-    ? run.video_quality.coverage.visible_duration_ms
-    : null;
-  const alignmentDuration = typeof run.alignment.duration_ms === "number"
-    && Number.isFinite(run.alignment.duration_ms)
-    && run.alignment.duration_ms > 0
-    ? run.alignment.duration_ms
-    : null;
-  const videoCoverage = typeof visibleDuration === "number"
-    && Number.isFinite(visibleDuration)
-    && visibleDuration >= 0
-    && alignmentDuration !== null
-    ? Math.min(1, visibleDuration / alignmentDuration)
-    : null;
-  return {
-    identity: {
-      label: presentRecordLabel({
-        scenario: run.scenario,
-        trainingAt: run.created_at,
-        analysisCompletedAt: run.analysis_completed_at,
-      }),
-      scenario: run.scenario ?? "未知场景",
-      createdAt: run.created_at,
-      finalization: getHistoryStatusText(run.finalization_state),
-    },
-    evidence: {
-      stats: {
-        availability: getHistoryStatusText(evidence.stats ?? run.source_availability.stats),
-        coverage: null,
-        alignment,
-      },
-      performance: {
-        availability: getHistoryStatusText(evidence.performance ?? run.source_availability.performance),
-        coverage: null,
-        alignment,
-      },
-      raw: {
-        availability: getHistoryStatusText(evidence.raw ?? run.trace_quality.availability),
-        coverage: run.trace_quality.coverage ?? alignmentCoverage,
-        alignment,
-      },
-      video: {
-        availability: getHistoryStatusText(evidence.mp4 ?? evidence.video ?? run.source_availability.mp4),
-        coverage: videoCoverage,
-        alignment,
-      },
-    },
-    capabilities: {
-      modes: (["input_native", "multimodal", "video_fallback"] as InputMode[]).map((code) => ({
-        code,
-        available: run.supported_input_modes.includes(code),
-        reason: run.supported_input_modes.includes(code) ? null : run.limitations[0] ?? "后端合同未提供该模式",
-      })),
-    },
-    operations: [
-      "start_analysis",
-      "view_source",
-      "manage_storage",
-      ...(run.analysis_count > 0 ? ["view_analysis"] : []),
-    ],
   };
 }
 

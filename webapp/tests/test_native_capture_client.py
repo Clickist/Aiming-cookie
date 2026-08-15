@@ -140,6 +140,97 @@ def test_native_status_retries_lost_transport_without_retrying_forever(
     assert calls == 3
 
 
+def _export_response() -> dict:
+    return {
+        "type": "exportReplayResult",
+        "ok": True,
+        "requestDigest": "b" * 64,
+        "captureSessionId": "session-1",
+        "requestedStartEpochMs": 1_000,
+        "requestedEndEpochMs": 2_000,
+        "replay": {
+            "requestedStart100ns": 10,
+            "requestedEnd100ns": 20,
+            "decodeStart100ns": 0,
+            "visibleDuration100ns": 10,
+            "decodePreroll100ns": 10,
+            "packetCount": 1,
+            "encodedBytes": 2,
+            "reencodedFrames": 0,
+            "captureClock": {
+                "utcEpochMs": 1_000,
+                "qpcNs": 1,
+                "clockSource": "utc_epoch_ms+qpc+wgc_system_relative_time",
+                "timebaseVersion": "time_alignment.v2",
+            },
+        },
+        "file": {"size": 2, "digest": "c" * 64},
+    }
+
+
+def test_native_export_retries_lost_transport_without_retrying_forever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = NativeCaptureClient("127.0.0.1:1234", "a" * 64)
+    calls = 0
+
+    def recover(_request: dict, _expected_type: str) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise NativeCaptureRetryableError("capture_control_unavailable")
+        return _export_response()
+
+    monkeypatch.setattr(client, "_request", recover)
+    result = client.export_replay(
+        request_id="request-1",
+        run_id=7,
+        capture_session_id="session-1",
+        start_epoch_ms=1_000,
+        end_epoch_ms=2_000,
+    )
+    assert result["requestDigest"] == "b" * 64
+    assert calls == 2
+
+    calls = 0
+
+    def remain_lost(_request: dict, _expected_type: str) -> dict:
+        nonlocal calls
+        calls += 1
+        raise NativeCaptureRetryableError("capture_control_response_lost")
+
+    monkeypatch.setattr(client, "_request", remain_lost)
+    with pytest.raises(NativeCaptureRetryableError) as exc_info:
+        client.export_replay(
+            request_id="request-1",
+            run_id=7,
+            capture_session_id="session-1",
+            start_epoch_ms=1_000,
+            end_epoch_ms=2_000,
+        )
+    assert exc_info.value.code == "capture_control_response_lost"
+    assert calls == 3
+
+    calls = 0
+
+    def stay_busy(_request: dict, _expected_type: str) -> dict:
+        nonlocal calls
+        calls += 1
+        raise NativeCaptureRetryableError("capture_export_busy")
+
+    monkeypatch.setattr(client, "_request", stay_busy)
+    with pytest.raises(NativeCaptureRetryableError) as exc_info:
+        client.export_replay(
+            request_id="request-1",
+            run_id=7,
+            capture_session_id="session-1",
+            start_epoch_ms=1_000,
+            end_epoch_ms=2_000,
+        )
+    assert exc_info.value.code == "capture_export_busy"
+    assert calls == 1
+
+
 def test_native_client_export_and_release_never_send_paths() -> None:
     export_response = {
         "type": "exportReplayResult",

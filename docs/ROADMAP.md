@@ -32,7 +32,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 8. 保持 native import、managed storage、launch token、runtime lifecycle、KovaaK watcher 和 Raw Input opt-in 的既有能力；Windows Steam 多库发现、50-file bound 与 launch-token descendant isolation 已完成自动化和本机 Gate；
 9. 保持已完成的正式前端应用骨架、不可跳过的 Provider + Windows 采集授权 onboarding、分析工作区、Coach sidebar 与 Settings；继续用真实 product-path Gate 验证其消费的 capability，Provider 失效时保留可恢复状态并引导 Settings；
 10. Frontend reconstruction Task 1–7 已完成并归档；后续 UI 功能或发布改动按当前任务、稳定 capability 和真实 product-path Gate 推进，UI 仍不反向定义后端合同。
-11. 完成有限 KovaaK 训练项目的本地手动成绩同步、去身份 Coach 摘要和现有 TeachingSession 的较低阶段→matched retest→较高阶段建议接线；本地已连接账号可供后续手动刷新，Coach 可做不持久化的单回合临时查询。前端按当前任务实现 onboarding / Settings 输入和最小成绩视图，不建立独立 Benchmark 页面，也不在用户侧突出外部作者、课程代号或阶段体系。
+11. 完成有限 KovaaK 训练项目的本地手动成绩同步、去身份 Coach 摘要和重建后的 guided teaching（`teaching/session.json` 状态 + `teaching` skill + `teaching_session.update` native 写命令）的较低阶段→matched retest→较高阶段建议接线；本地已连接账号可供后续手动刷新，Coach 可做不持久化的单回合临时查询。前端按当前任务实现 onboarding / Settings 输入和最小成绩视图，不建立独立 Benchmark 页面，也不在用户侧突出外部作者、课程代号或阶段体系。
 
 ### P0 — 冻结本地数据可靠性合同
 

@@ -28,6 +28,7 @@ function registryFiles(): Map<string, string> {
     ["2026-07-29.v4", join(registry, "registry.v4.json")],
     ["2026-08-06.v5", join(registry, "registry.v5.json")],
     ["2026-08-06.v6", join(registry, "registry.v6.json")],
+    ["2026-08-15.v7", join(registry, "registry.v7.json")],
   ]);
 }
 const MAX_REGISTRY_BYTES = 512 * 1024;
@@ -796,7 +797,7 @@ export function validateKnowledgeRegistry(raw: unknown): KnowledgeRegistry {
 }
 
 const cached = new Map<string, KnowledgeRegistry>();
-export function loadKnowledgeRegistry(registryVersion = "2026-08-06.v6"): KnowledgeRegistry {
+export function loadKnowledgeRegistry(registryVersion = "2026-08-15.v7"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
   const registryFile = registryFiles().get(registryVersion);
@@ -833,6 +834,21 @@ function clean(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+// Metric queries arrive in the shapes callers actually see: bare analysis
+// metric names ("sparc"), family-prefixed result keys
+// ("static_clicking.sparc"), or the canonical registry ref form
+// ("metric:sparc"). Normalize both sides so every shape hits the same refs.
+const METRIC_REF_PREFIX = "metric:";
+const METRIC_FAMILY_PREFIX = /^(?:static_clicking|dynamic_clicking|continuous_tracking|target_switching|movement_aiming)\./;
+
+export function normalizeMetricRef(value: string): string {
+  let result = value.trim();
+  if (result.startsWith(METRIC_REF_PREFIX)) {
+    result = result.slice(METRIC_REF_PREFIX.length);
+  }
+  return result.replace(METRIC_FAMILY_PREFIX, "");
+}
+
 export function queryKnowledgeRegistry(registry: KnowledgeRegistry, query: KnowledgeQuery): KnowledgeEntry[] {
   const requestedRegistryVersion = clean(query.registry_version);
   if (requestedRegistryVersion && requestedRegistryVersion !== registry.registry_version) {
@@ -846,7 +862,11 @@ export function queryKnowledgeRegistry(registry: KnowledgeRegistry, query: Knowl
   }
   const topic = clean(query.topic);
   const signal = clean(query.issue_signal);
-  const metrics = new Set((query.metric_refs ?? []).filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()));
+  const metrics = new Set(
+    (query.metric_refs ?? [])
+      .filter((item) => typeof item === "string" && item.trim())
+      .map((item) => normalizeMetricRef(item)),
+  );
   const supportedUse = clean(query.supported_use);
   if (!topic && !signal && metrics.size === 0 && !supportedUse) throw new KnowledgeRegistryError("at least one query condition is required");
   if (!topic && !signal && metrics.size === 0) return [];
@@ -856,7 +876,7 @@ export function queryKnowledgeRegistry(registry: KnowledgeRegistry, query: Knowl
     .map((entry) => {
       let score = 0;
       if (canonical && entry.signals.includes(canonical)) score += 16;
-      if (metrics.size && entry.metric_refs.some((metric) => metrics.has(metric))) score += 8;
+      if (metrics.size && entry.metric_refs.some((metric) => metrics.has(normalizeMetricRef(metric)))) score += 8;
       if (topic && entry.topics.includes(topic)) score += 4;
       if (supportedUse && entry.supported_uses.includes(supportedUse)) score += 2;
       return { entry, score };

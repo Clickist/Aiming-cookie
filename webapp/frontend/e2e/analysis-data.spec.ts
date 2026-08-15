@@ -47,6 +47,7 @@ async function expectSvgToKeepViewBoxRatio(svg: Locator) {
 }
 
 test("Analysis Data renders its bounded input-native projection", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   await installApiFixtures(page, apiScenario());
   await page.goto("/analysis/42");
   await page.getByRole("tab", { name: "数据" }).click();
@@ -58,6 +59,7 @@ test("Analysis Data renders its bounded input-native projection", async ({ page 
 });
 
 test("Analysis Data labels partial deterministic metrics as descriptive", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   const base = analysisSession();
   if (!base.result || base.result.schema_version !== "analysis_result.v2") {
     throw new Error("Analysis Data fixture requires AnalysisResultV2");
@@ -82,6 +84,7 @@ test("Analysis Data labels partial deterministic metrics as descriptive", async 
 });
 
 test("Analysis Data translates and deduplicates shared limitations", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   const base = analysisSession();
   if (!base.result || base.result.schema_version !== "analysis_result.v2") {
     throw new Error("Analysis Data fixture requires AnalysisResultV2");
@@ -134,6 +137,7 @@ test("Analysis Data translates and deduplicates shared limitations", async ({ pa
 });
 
 test("Tracking Data renders real windows and keeps response timing observational", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   await installApiFixtures(page, apiScenario({
     analysis: familyAnalysis("continuous_tracking", "multimodal"),
     analysisData: ANALYSIS_DATA_TRACKING,
@@ -147,6 +151,7 @@ test("Tracking Data renders real windows and keeps response timing observational
 });
 
 test("Switching Data renders each complete chain and its four bounded metrics", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   await installApiFixtures(page, apiScenario({
     analysis: familyAnalysis("target_switching", "multimodal"),
     analysisFamilyData: ANALYSIS_FAMILY_SWITCHING,
@@ -158,6 +163,7 @@ test("Switching Data renders each complete chain and its four bounded metrics", 
 });
 
 test("native Flicking keeps real rows while video seek remains unavailable", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   await installApiFixtures(page, apiScenario({
     analysis: familyAnalysis("static_clicking", "input_native"),
     analysisFamilyData: ANALYSIS_FAMILY_FLICKING,
@@ -173,6 +179,7 @@ test("native Flicking keeps real rows while video seek remains unavailable", asy
 });
 
 test("Data charts preserve their geometry while Coach resizes the workspace", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   await page.setViewportSize({ width: 1280, height: 820 });
   await installApiFixtures(page, apiScenario());
   await page.goto("/analysis/42");
@@ -202,6 +209,7 @@ test("Data charts preserve their geometry while Coach resizes the workspace", as
 });
 
 test("Tracking charts use the full card width when formal metrics are absent", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   await page.setViewportSize({ width: 1280, height: 820 });
   await installApiFixtures(page, apiScenario({
     analysis: familyAnalysis("continuous_tracking", "multimodal"),
@@ -229,6 +237,7 @@ test("Tracking charts use the full card width when formal metrics are absent", a
 });
 
 test("video-fallback Flicking stays unavailable without replacing generic metrics", async ({ page }) => {
+    test.skip(true, "独立 Analysis 页面已随 2026-08-10 Coach-first IA 下线（/analysis/:id 仅 redirect → /history）；等价断言待 Coach 卡片/History 详情稳定后按新 IA 重写");
   await installApiFixtures(page, apiScenario({
     analysis: familyAnalysis("static_clicking", "video_fallback"),
     analysisFamilyData: ANALYSIS_FAMILY_FLICKING_UNAVAILABLE,

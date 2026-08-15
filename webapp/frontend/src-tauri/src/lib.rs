@@ -53,7 +53,17 @@ fn desktop_capture_coordinator_set_enabled(
 pub fn run() {
     let managed_media = Arc::new(media_protocol::ManagedMediaProtocol::default());
     let media_handler = Arc::clone(&managed_media);
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+    builder
         .register_uri_scheme_protocol("aiming-cookie-media", move |_context, request| {
             media_handler.response(request)
         })
