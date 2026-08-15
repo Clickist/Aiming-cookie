@@ -6,7 +6,7 @@ from math import isfinite
 from typing import Any, Mapping
 
 
-_TRANSITION_ENTRY_REF = "knowledge:switching.transition-and-arrival@2"
+_TRANSITION_ENTRY_REF = "knowledge:switching.transition-and-arrival@3"
 
 
 def _number(value: Any) -> float | None:

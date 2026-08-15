@@ -390,3 +390,59 @@ test("query totals report matches beyond the result cap", () => {
     /registry version does not match/,
   );
 });
+
+test("v8 adds the x76 wiki community batch as the default registry", () => {
+  const registry = loadKnowledgeRegistry();
+  assert.equal(registry.registry_version, "2026-08-16.v8");
+  assert.equal(registry.entries.length, 36);
+  assert.ok(registry.sources.some((source) => source.source_ref === "community.x76-wiki"));
+
+  const scoring = registry.entries.find(
+    (entry) => entry.entry_id === "community.accuracy-multiplied-scoring",
+  );
+  if (!scoring) throw new Error("missing v8 scoring entry");
+  assert.deepEqual(scoring.signals, ["score up accuracy down"]);
+  assert.deepEqual(scoring.supported_uses, ["explanation_only", "diagnosis_support"]);
+
+  const strafe = registry.entries.find(
+    (entry) => entry.entry_id === "community.strafe-relative-speed-ladder",
+  );
+  if (!strafe) throw new Error("missing v8 strafe entry");
+  assert.deepEqual(strafe.supported_uses, ["explanation_only"]);
+  assert.equal(strafe.cue, undefined);
+
+  const bardpill = registry.entries.find(
+    (entry) => entry.entry_id === "community.bardpill-accuracy-anchored-progression",
+  );
+  if (!bardpill) throw new Error("missing v8 bardpill entry");
+  assert.deepEqual(bardpill.supported_uses, [
+    "explanation_only", "diagnosis_support", "candidate_experiment", "scenario_prescription",
+  ]);
+  assert.notEqual(bardpill.scenario_prescription, "not_applicable");
+
+  // The alias registered for the scoring shape resolves through the query path.
+  const aliased = queryKnowledgeRegistry(registry, { issue_signal: "score up acc down" });
+  assert.ok(aliased.some((entry) => entry.entry_id === "community.accuracy-multiplied-scoring"));
+
+  // Fold-ins bumped their entry versions and kept unique ids.
+  for (const entryId of ["static.flicking-terminal-control", "switching.transition-and-arrival"]) {
+    const entry = registry.entries.find((item) => item.entry_id === entryId);
+    if (!entry) throw new Error(`missing ${entryId}`);
+    assert.equal(entry.entry_version, 3);
+  }
+  // Only the fold-in entries were bumped; the other 15 v7 refs survive unchanged.
+  const v7 = loadKnowledgeRegistry("2026-08-15.v7");
+  const survivors = new Set(v7.entries.map(entryRef)).intersection(new Set(registry.entries.map(entryRef)));
+  assert.equal(survivors.size, 15);
+  for (const entry of v7.entries) {
+    const bumped = [
+      "hypothesis.tension-management", "community.qiluno.confirmation-timing-schools",
+      "community.qiluno.reset-as-continuity", "dynamic.speed-matching-and-reading",
+      "tracking.predictable-speed-matching", "community.adaptive-mouse-grip",
+      "community.difficulty-refinement-and-stress-test", "community.score-farming-context",
+      "community.aim-trainer-transfer", "static.flicking-terminal-control",
+      "dynamic.click-error-and-acquisition", "switching.transition-and-arrival",
+    ].includes(entry.entry_id);
+    assert.equal(survivors.has(entryRef(entry)), !bumped);
+  }
+});

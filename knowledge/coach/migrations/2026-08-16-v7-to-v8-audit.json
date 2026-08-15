@@ -1,0 +1,170 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-08-15.v7",
+  "target_registry_version": "2026-08-16.v8",
+  "generated_at": "2026-08-16",
+  "source_ref": "community.x76-wiki",
+  "source_locator": "https://x76.gg/wiki/; archive INDEX.md SHA-256 88614b2c6627141c29c18f8c3239f4196b8bd1988b12660995812cf5613bc081",
+  "claim_discipline": "community_organization source, so every section from this batch is stored at community_practice or lower; all text is paraphrased, never verbatim (robots: use=reference, ai-train=no)",
+  "source_articles": [
+    {"article": "bardpill", "url": "https://x76.gg/wiki/bardpill/", "sha256": "7d3d7c17b795e2735ff9bdba1b07751731f2eb1ef28a06d3a22563948e145e02", "used_by": ["community.bardpill-accuracy-anchored-progression@1"]},
+    {"article": "speed-switching", "url": "https://x76.gg/wiki/speed-switching/", "sha256": "0fedeb5d4adc85be8cae174deae0fddaede497d306edc1c973f8aed125989564", "used_by": ["community.speed-vs-evasive-switching@1"]},
+    {"article": "switching", "url": "https://x76.gg/wiki/switching/", "sha256": "f1b0f0ec8470b5d8735a2317414fc4dae1ba16d7b0bd16dcf7f7644a52e6adbe", "used_by": ["community.speed-vs-evasive-switching@1"]},
+    {"article": "dodge-guide", "url": "https://x76.gg/wiki/dodge-guide/", "sha256": "9e7136725f0d567260e62c9f373e868842e68382983cfebb2fcf690bdad71d1c", "used_by": ["community.reading-vs-execution-decomposition@1"]},
+    {"article": "acc-based-scoring", "url": "https://x76.gg/wiki/acc-based-scoring/", "sha256": "64cc24ec90362853efb82065c9abc6bd5afe3fe2b95b44073633d99a4967c3d5", "used_by": ["community.accuracy-multiplied-scoring@1"]},
+    {"article": "edge-tracking", "url": "https://x76.gg/wiki/edge-tracking/", "sha256": "7fe68aa18e3eb90fcb0b05158e0b31735007a82a76ac0235fe4ebf696be8bc32", "used_by": ["community.edge-tracking-underaim@1"]},
+    {"article": "over-flicking", "url": "https://x76.gg/wiki/over-flicking/", "sha256": "12d1e0b9fa61d3deb8c264525b043449f1c8dd7d8e193e4fa0f45797fa849829", "used_by": ["community.overshoot-sensitivity-trigger@1"]},
+    {"article": "vrt", "url": "https://x76.gg/wiki/vrt/", "sha256": "b5406b58c70c8c622c2d6beee27cd65a31a05d915f03c2cb3218331db620e285", "used_by": ["community.vrt-response-floor@1"]},
+    {"article": "reactivity", "url": "https://x76.gg/wiki/reactivity/", "sha256": "6dc4c23bc24de27dd19016797aa1cb7e4e0a6502ef2ce424ee34e254a30f2af8", "used_by": ["community.vrt-response-floor@1"]},
+    {"article": "angles-guide", "url": "https://x76.gg/wiki/angles-guide/", "sha256": "fbbfac4dbc306162a4e926bc38157a7d11917edabd4e8a838ec77733a73cf3e4", "used_by": ["community.target-angular-demand-math@1"]},
+    {"article": "strafe-aim-guide", "url": "https://x76.gg/wiki/strafe-aim-guide/", "sha256": "ee54be384a4582428b89c7847efe309ce8dc4d84219db800a1a1f607dbbc1226", "used_by": ["community.strafe-relative-speed-ladder@1"]},
+    {"article": "tensing", "url": "https://x76.gg/wiki/tensing/", "sha256": "adc3a26f3023525fadcb62ec1a42f5551d7e47e90e79d91c1a86a718ddba6c5a", "used_by": ["hypothesis.tension-management@4"]},
+    {"article": "hit-confirming", "url": "https://x76.gg/wiki/hit-confirming/", "sha256": "8a907d35982b810eff63efd60c21d1415caec24a093b55fe2e8183290290570b", "used_by": ["community.qiluno.confirmation-timing-schools@2"]},
+    {"article": "mouse-resetting", "url": "https://x76.gg/wiki/mouse-resetting/", "sha256": "0817fcdd4eed939334eef15de231394b550de4c67c08c745de79429f7ed5aa3c", "used_by": ["community.qiluno.reset-as-continuity@2"]},
+    {"article": "chasing", "url": "https://x76.gg/wiki/chasing/", "sha256": "ce7b384f4d8294b5785f06dee3bd862201051b6ab5b5676983ed85658876da72", "used_by": ["dynamic.speed-matching-and-reading@3", "tracking.predictable-speed-matching@3"]},
+    {"article": "trailing", "url": "https://x76.gg/wiki/trailing/", "sha256": "36050be1b3c49b3552bb800844d2c0192e77134a405413b9d0818aba30988822", "used_by": ["dynamic.speed-matching-and-reading@3", "tracking.predictable-speed-matching@3"]},
+    {"article": "leading", "url": "https://x76.gg/wiki/leading/", "sha256": "70d1a3ef9ec92765d52403866641b07869134782074e8bca925d06722e69333a", "used_by": ["dynamic.speed-matching-and-reading@3", "tracking.predictable-speed-matching@3"]},
+    {"article": "mouse-grip", "url": "https://x76.gg/wiki/mouse-grip/", "sha256": "b0150f073df85a57580bab3d87c8971b2236cbc65aeed965668b9ce39203f56f", "used_by": ["community.adaptive-mouse-grip@2"]},
+    {"article": "claw-grip", "url": "https://x76.gg/wiki/claw-grip/", "sha256": "34e55435c0469969b6a1a7a41a17732b7ff8359b8cf79fce9023860032f959fb", "used_by": ["community.adaptive-mouse-grip@2"]},
+    {"article": "palm-grip", "url": "https://x76.gg/wiki/palm-grip/", "sha256": "169f3a63db6d835d529574bb1dbfd286f9dfb721726eea40fb811f16b79d2d28", "used_by": ["community.adaptive-mouse-grip@2"]},
+    {"article": "fingertip-grip", "url": "https://x76.gg/wiki/fingertip-grip/", "sha256": "8a0884d82bee21bfca0ac7b900e6f825e942257e474bc7d0063c67b549048c4b", "used_by": ["community.adaptive-mouse-grip@2"]},
+    {"article": "timescale", "url": "https://x76.gg/wiki/timescale/", "sha256": "1fa625508cd2164fa0176ac1379b4d1319fd0a4b7d43b02f6cb33d78d2e7fcbc", "used_by": ["community.difficulty-refinement-and-stress-test@2", "community.score-farming-context@2"]},
+    {"article": "cheesing", "url": "https://x76.gg/wiki/cheesing/", "sha256": "2645bddababf7b28e55fb4c782250b9aba035f9e5917ab27accb9eb5558a6d16", "used_by": ["community.score-farming-context@2"]},
+    {"article": "bot", "url": "https://x76.gg/wiki/bot/", "sha256": "45da48da2048899a16f477202e850cdf0dea36921b7ba2f70a767660f1164200", "used_by": ["static.flicking-terminal-control@3", "dynamic.click-error-and-acquisition@3", "dynamic.speed-matching-and-reading@3", "tracking.predictable-speed-matching@3", "switching.transition-and-arrival@3"]},
+    {"article": "scenario", "url": "https://x76.gg/wiki/scenario/", "sha256": "251d6170ebdfd1169b31724816dea22b2f806de595038ca45b8c6ea581ffbf37", "used_by": ["static.flicking-terminal-control@3", "dynamic.click-error-and-acquisition@3", "dynamic.speed-matching-and-reading@3", "tracking.predictable-speed-matching@3", "switching.transition-and-arrival@3"]},
+    {"article": "ql-startup", "url": "https://x76.gg/wiki/ql-startup/", "sha256": "c595db556697c0bdcc6df48c111f77fd46c81cef46ac9a8db2cbc12d79009cdc", "used_by": ["community.aim-trainer-transfer@2"]}
+  ],
+  "new_entries": [
+    {
+      "target_entry_ref": "knowledge:community.bardpill-accuracy-anchored-progression@1",
+      "source_articles": ["bardpill"],
+      "reason": "Named training method with a single explicit dial (pace gated on kept accuracy); baseline Stats plus matched retest already observe everything it needs, so it enters at full capability including scenario prescription."
+    },
+    {
+      "target_entry_ref": "knowledge:community.speed-vs-evasive-switching@1",
+      "source_articles": ["speed-switching", "switching"],
+      "reason": "Switching-family subtype taxonomy (transition rate vs durable-target re-tracking) that lets prescriptions target the right scenario variant; also absorbs the TTK-to-family-lean heuristic."
+    },
+    {
+      "target_entry_ref": "knowledge:community.reading-vs-execution-decomposition@1",
+      "source_articles": ["dodge-guide"],
+      "reason": "Reading/execution split plus the trainer boundary (bots neither react nor adapt) constrains attribution for reactive and dynamic families: trainer data cannot measure the reading half."
+    },
+    {
+      "target_entry_ref": "knowledge:community.accuracy-multiplied-scoring@1",
+      "source_articles": ["acc-based-scoring"],
+      "reason": "Scoring-rule semantics making the score-up-accuracy-down shape interpretable from Stats alone; registered the signal plus an alias so query_registry retrieves it."
+    },
+    {
+      "target_entry_ref": "knowledge:community.edge-tracking-underaim@1",
+      "source_articles": ["edge-tracking"],
+      "reason": "Deliberate trailing-edge placement as an alternative explanation for tracking-lag shapes; explanation_only because target-relative geometry is unavailable in baseline data."
+    },
+    {
+      "target_entry_ref": "knowledge:community.overshoot-sensitivity-trigger@1",
+      "source_articles": ["over-flicking"],
+      "reason": "High-frequency community trigger (persistent visual overshoot on a long-unchanged sensitivity) feeding the existing single-variable sensitivity experiment; visual overshoot stays user-reported only."
+    },
+    {
+      "target_entry_ref": "knowledge:community.vrt-response-floor@1",
+      "source_articles": ["vrt", "reactivity"],
+      "reason": "Physiological response floor under reactivity; expectation management so near-floor reacquisition times are not read as large trainable deficits."
+    },
+    {
+      "target_entry_ref": "knowledge:community.target-angular-demand-math@1",
+      "source_articles": ["angles-guide"],
+      "reason": "Only the hand-speed-to-cm/360 conversion half is actionable (input plus settings); the target-angular-rate half is recorded as a limitation because target geometry is unavailable."
+    },
+    {
+      "target_entry_ref": "knowledge:community.strafe-relative-speed-ladder@1",
+      "source_articles": ["strafe-aim-guide"],
+      "reason": "Relative-speed ordering of strafe-aim forms, promoted from deferred on user confirmation; explanation_only and bound to the movement outcome-only boundary."
+    }
+  ],
+  "migrated_entries": [
+    {
+      "source_entry_ref": "knowledge:hypothesis.tension-management@3",
+      "target_entry_ref": "knowledge:hypothesis.tension-management@4",
+      "action": "community_fold_in",
+      "fold_in_articles": ["tensing"],
+      "reason": "Brief tension is part of aiming itself (a fast flick needs a moment of it); the skill is tense-when-needed, release-otherwise — refines the release-cue framing without changing the experiment contract."
+    },
+    {
+      "source_entry_ref": "knowledge:community.qiluno.confirmation-timing-schools@1",
+      "target_entry_ref": "knowledge:community.qiluno.confirmation-timing-schools@2",
+      "action": "community_fold_in",
+      "fold_in_articles": ["hit-confirming"],
+      "reason": "Adds hit confirming (briefly verifying crosshair lock before the click) as a third named school alongside settled-click and deceleration-click."
+    },
+    {
+      "source_entry_ref": "knowledge:community.qiluno.reset-as-continuity@1",
+      "target_entry_ref": "knowledge:community.qiluno.reset-as-continuity@2",
+      "action": "community_fold_in",
+      "fold_in_articles": ["mouse-resetting"],
+      "reason": "Conditions the reset habit: low cm/360 makes frequent resets a real requirement, done at natural pauses so the next flick never runs out of pad."
+    },
+    {
+      "source_entry_ref": "knowledge:dynamic.speed-matching-and-reading@2",
+      "target_entry_ref": "knowledge:dynamic.speed-matching-and-reading@3",
+      "action": "community_fold_in",
+      "fold_in_articles": ["chasing", "trailing", "leading", "bot", "scenario"],
+      "reason": "Maps user vocabulary (chasing/trailing/leading) onto lagging correction, phase lag, and deliberate lead; adds that scenario bot parameters fix the speed-matching and reading demand being drilled."
+    },
+    {
+      "source_entry_ref": "knowledge:tracking.predictable-speed-matching@2",
+      "target_entry_ref": "knowledge:tracking.predictable-speed-matching@3",
+      "action": "community_fold_in",
+      "fold_in_articles": ["chasing", "trailing", "leading", "bot", "scenario"],
+      "reason": "Same term mapping for the tracking family plus bot-parameter demand conditioning for steady segments."
+    },
+    {
+      "source_entry_ref": "knowledge:community.adaptive-mouse-grip@1",
+      "target_entry_ref": "knowledge:community.adaptive-mouse-grip@2",
+      "action": "community_fold_in",
+      "fold_in_articles": ["mouse-grip", "claw-grip", "palm-grip", "fingertip-grip"],
+      "reason": "Frames palm/claw/fingertip as one stability-versus-mobility spectrum fitted by hand size, mouse shape, and sensitivity."
+    },
+    {
+      "source_entry_ref": "knowledge:community.difficulty-refinement-and-stress-test@1",
+      "target_entry_ref": "knowledge:community.difficulty-refinement-and-stress-test@2",
+      "action": "community_fold_in",
+      "fold_in_articles": ["timescale"],
+      "reason": "Timescale as a concrete difficulty dial: slow to learn a pattern, fast to pressure reaction."
+    },
+    {
+      "source_entry_ref": "knowledge:community.score-farming-context@1",
+      "target_entry_ref": "knowledge:community.score-farming-context@2",
+      "action": "community_fold_in",
+      "fold_in_articles": ["timescale", "cheesing"],
+      "reason": "Files timescale-based score inflation under cheesing: number up, carried-over skill not."
+    },
+    {
+      "source_entry_ref": "knowledge:community.aim-trainer-transfer@1",
+      "target_entry_ref": "knowledge:community.aim-trainer-transfer@2",
+      "action": "community_fold_in",
+      "fold_in_articles": ["ql-startup"],
+      "reason": "Adds lightning-gun duels as a concrete human-opponent tracking mode — practice against targets that react and adapt."
+    },
+    {
+      "source_entry_ref": "knowledge:static.flicking-terminal-control@2",
+      "target_entry_ref": "knowledge:static.flicking-terminal-control@3",
+      "action": "community_fold_in",
+      "fold_in_articles": ["bot", "scenario"],
+      "reason": "Bot size, count, and placement fix the precision and volume a static scenario drills; scenario configuration, not only the player, can change the demand."
+    },
+    {
+      "source_entry_ref": "knowledge:dynamic.click-error-and-acquisition@2",
+      "target_entry_ref": "knowledge:dynamic.click-error-and-acquisition@3",
+      "action": "community_fold_in",
+      "fold_in_articles": ["bot", "scenario"],
+      "reason": "Bot movement speed and pattern set the acquisition and click-timing demand a dynamic scenario trains."
+    },
+    {
+      "source_entry_ref": "knowledge:switching.transition-and-arrival@2",
+      "target_entry_ref": "knowledge:switching.transition-and-arrival@3",
+      "action": "community_fold_in",
+      "fold_in_articles": ["bot", "scenario"],
+      "reason": "Bot survivability and dodge pattern name which switching subtype a scenario drills, linking the observation entry to the new subtype taxonomy."
+    }
+  ]
+}
