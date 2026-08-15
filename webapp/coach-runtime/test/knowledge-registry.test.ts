@@ -394,7 +394,7 @@ test("query totals report matches beyond the result cap", () => {
 test("v8 adds the x76 wiki community batch as the default registry", () => {
   const registry = loadKnowledgeRegistry();
   assert.equal(registry.registry_version, "2026-08-16.v8");
-  assert.equal(registry.entries.length, 36);
+  assert.equal(registry.entries.length, 37);
   assert.ok(registry.sources.some((source) => source.source_ref === "community.x76-wiki"));
 
   const scoring = registry.entries.find(
@@ -420,6 +420,15 @@ test("v8 adds the x76 wiki community batch as the default registry", () => {
   ]);
   assert.notEqual(bardpill.scenario_prescription, "not_applicable");
 
+  // Audit M2: the restored throughput entry serves the emitted signal.
+  const fitts = registry.entries.find(
+    (entry) => entry.entry_id === "research.speed-precision.fitts",
+  );
+  if (!fitts) throw new Error("missing v8 fitts entry");
+  assert.deepEqual(fitts.signals, ["throughput below reference"]);
+  const throughput = queryKnowledgeRegistry(registry, { issue_signal: "throughput low" });
+  assert.ok(throughput.some((entry) => entry.entry_id === "research.speed-precision.fitts"));
+
   // The alias registered for the scoring shape resolves through the query path.
   const aliased = queryKnowledgeRegistry(registry, { issue_signal: "score up acc down" });
   assert.ok(aliased.some((entry) => entry.entry_id === "community.accuracy-multiplied-scoring"));
@@ -433,7 +442,7 @@ test("v8 adds the x76 wiki community batch as the default registry", () => {
   // Only the fold-in entries were bumped; the other 15 v7 refs survive unchanged.
   const v7 = loadKnowledgeRegistry("2026-08-15.v7");
   const survivors = new Set(v7.entries.map(entryRef)).intersection(new Set(registry.entries.map(entryRef)));
-  assert.equal(survivors.size, 15);
+  assert.equal(survivors.size, 12);
   for (const entry of v7.entries) {
     const bumped = [
       "hypothesis.tension-management", "community.qiluno.confirmation-timing-schools",
@@ -442,6 +451,8 @@ test("v8 adds the x76 wiki community batch as the default registry", () => {
       "community.difficulty-refinement-and-stress-test", "community.score-farming-context",
       "community.aim-trainer-transfer", "static.flicking-terminal-control",
       "dynamic.click-error-and-acquisition", "switching.transition-and-arrival",
+      "tracking.control-smoothness", "tracking.reactive-change-response",
+      "switching.selection-observable-only",
     ].includes(entry.entry_id);
     assert.equal(survivors.has(entryRef(entry)), !bumped);
   }

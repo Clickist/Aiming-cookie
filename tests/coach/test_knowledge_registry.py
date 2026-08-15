@@ -916,6 +916,9 @@ _X76_WIKI_V8_RECALL_QUERIES = {
     "community.strafe-relative-speed-ladder": {
         "issue_signal": "movement telemetry unavailable",
     },
+    "research.speed-precision.fitts": {
+        "issue_signal": "throughput below reference",
+    },
 }
 
 _V8_FOLD_IN_VERSIONS = {
@@ -949,7 +952,7 @@ def test_v8_adds_x76_wiki_knowledge_with_schema_and_validator_agreement():
     assert loaded == registry.validate_registry(packaged)
     assert registry.load_registry()["registry_version"] == "2026-08-16.v8"
     assert registry.MAX_RESULTS == 8
-    assert len(loaded["entries"]) == 36
+    assert len(loaded["entries"]) == 37
 
     sources = {source["source_ref"]: source for source in loaded["sources"]}
     wiki = sources["community.x76-wiki"]
@@ -1004,6 +1007,52 @@ def test_v8_x76_entries_are_retrievable_by_signal_metric_or_topic():
     for entry_id, query in _X76_WIKI_V8_RECALL_QUERIES.items():
         results = registry.query_registry(loaded, **query)
         assert entry_id in [item["entry_id"] for item in results], (entry_id, query)
+
+
+_V8_CONSISTENCY_FIX_VERSIONS = {
+    "tracking.control-smoothness": 3,
+    "tracking.reactive-change-response": 3,
+    "switching.selection-observable-only": 3,
+}
+
+
+def test_v8_consistency_fixes_from_the_2026_08_16_audit():
+    loaded = registry.load_registry(registry_version="2026-08-16.v8")
+    entries = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    for entry_id, version in _V8_CONSISTENCY_FIX_VERSIONS.items():
+        assert entries[entry_id]["entry_version"] == version, entry_id
+
+    wire = json.dumps(loaded, ensure_ascii=False)
+    # M4: the static settle token matches the pipeline's real static key
+    assert "metric:settle_time_ms" not in wire
+    static = entries["static.flicking-terminal-control"]
+    assert "metric:settle_duration_ms" in static["metric_refs"]
+    # M5: path geometry is documented as indirect context
+    assert "indirect" in static["definition"]["text"].lower()
+    # M1: input-native retrieval stays explanation-only for control smoothness
+    control = entries["tracking.control-smoothness"]
+    assert "explanation layer only" in control["scope"]["text"]
+    assert "explanation-only" in " ".join(control["limitations"]).lower()
+    # M3: the stop rule relies on matched retest only
+    tension_stop = entries["hypothesis.tension-management"]["stop_adjust_rule"][0]["text"]
+    assert "matched-retest" in tension_stop and "near-transfer" not in tension_stop
+    # M7: dead or drifted tokens are gone or renamed
+    assert "metric:click_pacing" not in wire
+    assert "metric:post_change_stability" not in wire
+    assert "metric:target_state_outcome" not in wire
+    assert "metric:target_switching.selection_error_ratio" in wire
+    assert "metric:dynamic_clicking.target_state_accuracy" in wire
+
+    # M2: alias canonicals never dangle (v1->v2 contraction left one behind)
+    active_signals = {
+        signal
+        for entry in loaded["entries"] if entry["status"] == "active"
+        for signal in entry["signals"]
+    }
+    assert set(loaded["signal_aliases"].values()) <= active_signals
+    fitts = entries["research.speed-precision.fitts"]
+    assert fitts["supported_uses"] == ["explanation_only", "diagnosis_support"]
+    assert fitts["expected_direction"]["text"] == "comparison_only"
 
 
 def test_v8_fold_ins_bump_entry_versions_and_cite_the_wiki_source():

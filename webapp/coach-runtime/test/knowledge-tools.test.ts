@@ -72,7 +72,7 @@ test("baseline metric queries hit knowledge entries in every ref shape", () => {
     metric_refs: ["continuous_tracking.sparc"],
   });
   assert.ok(trackingBySparc.entries.some(
-    (entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@2",
+    (entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@3",
   ));
 
   const canonical = getCoachKnowledge({ metric_refs: ["metric:sparc"] });
@@ -88,19 +88,19 @@ test("baseline deceleration metrics reach the tracking control-smoothness entry"
   for (const metric of ["decel_frac", "path_efficiency", "reverse_ratio"]) {
     const result = getCoachKnowledge({ metric_refs: [metric] });
     assert.ok(
-      result.entries.some((entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@2"),
+      result.entries.some((entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@3"),
       `bare ${metric} should hit tracking.control-smoothness`,
     );
   }
   const familyPrefixed = getCoachKnowledge({ metric_refs: ["continuous_tracking.decel_frac"] });
   assert.ok(familyPrefixed.entries.some(
-    (entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@2",
+    (entry) => entry.entry_ref === "knowledge:tracking.control-smoothness@3",
   ));
 });
 
 test("knowledge event preserves every source returned with a projected entry", async () => {
   const query = {
-    entry_ref: "knowledge:tracking.control-smoothness@2",
+    entry_ref: "knowledge:tracking.control-smoothness@3",
     supported_use: "candidate_experiment",
   };
   const result = getCoachKnowledge(query);
