@@ -894,7 +894,7 @@ const SCENARIO_OVERRIDES_SCHEMA = "scenario_overrides.v1";
 const SCENARIO_OVERRIDE_FAMILIES = new Set([
   "static_clicking", "dynamic_clicking", "continuous_tracking", "target_switching",
 ]);
-const SCENARIO_HASH_RE = /^[0-9a-f]{64}$/;
+const SCENARIO_HASH_RE = /^[0-9a-f]{32}$/;
 const SCENARIO_OVERRIDE_MAX_ENTRIES = 5000;
 
 function scenarioOverridesPath(): string {
@@ -907,7 +907,7 @@ const scenarioMemorySet: WriteHandler = (params, _ownerId) => {
   const aimFamily = params.aim_family;
   const note = params.note;
   if (typeof scenarioHash !== "string" || !SCENARIO_HASH_RE.test(scenarioHash)) {
-    return fail("invalid_scenario_memory", "scenario_hash must be 64 lowercase hex characters");
+    return fail("invalid_scenario_memory", "scenario_hash must be 32 lowercase hex characters");
   }
   if (typeof aimFamily !== "string" || !SCENARIO_OVERRIDE_FAMILIES.has(aimFamily)) {
     return fail(
