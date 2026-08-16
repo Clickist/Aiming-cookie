@@ -5,46 +5,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAnalysisEvidenceSegments, getAnalysisVideoBlob } from "@/lib/api";
 import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { getManagedVideoUrl, isDesktopRuntime } from "@/lib/desktop";
-import type { FrontendEvidenceSegmentV1, FrontendEvidenceSegmentsV1, TimelineEvent } from "@/lib/types";
+import type { FrontendEvidenceSegmentV1, FrontendEvidenceSegmentsV1 } from "@/lib/types";
 import { Badge, Button, Empty, Loading, Notice } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
 
 const SEGMENT_SEEK_PADDING_MS = 2000;
 
-function eventTimeMs(event: TimelineEvent): number | null {
-  if (typeof event.relative_ms === "number") return event.relative_ms;
-  if (typeof event.time_s === "number") return event.time_s * 1000;
-  return null;
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function eventLabel(type: string): string {
-  return {
-    flick: "甩枪",
-    kill: "击杀",
-    kills: "击杀",
-    miss: "未命中",
-    shotsHit: "命中",
-    shotsMissed: "未命中",
-    shotsFired: "开枪",
-    damageDone: "造成伤害",
-    damagePossible: "理论伤害",
-    score: "得分",
-    peak: "速度峰值",
-    corrective: "修正",
-  }[type] ?? type;
-}
-
-function eventColorVar(type: string): string {
-  if (type === "kill") return "var(--event-kill)";
-  if (type === "miss") return "var(--event-miss)";
-  if (type === "corrective") return "var(--event-corrective)";
-  if (type === "peak") return "var(--event-peak)";
-  return "var(--on-surface-variant)";
 }
 
 export function VideoView({
@@ -74,8 +43,6 @@ export function VideoView({
   const [segmentsLoading, setSegmentsLoading] = useState(presentation.video.kind === "seekable");
   const [segmentsFailed, setSegmentsFailed] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
-  const [selectedEvent, setSelectedEvent] = useState<number | null>(null);
-  const [activeTypes, setActiveTypes] = useState<string[]>(() => Array.from(new Set(presentation.timeline.map((event) => event.type))));
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(1);
@@ -157,15 +124,12 @@ export function VideoView({
 
   const segmentRows = segments?.segments ?? [];
   const issueEventRefs = selectedIssue === null ? [] : presentation.issues[selectedIssue]?.eventRefs ?? [];
-  const visibleEvents = useMemo(() => presentation.timeline.filter((event) => activeTypes.includes(event.type)), [activeTypes, presentation.timeline]);
   const inferredEnd = Math.max(
     1,
-    ...presentation.timeline.map((event) => eventTimeMs(event) ?? 0),
     ...segmentRows.map((segment) => segment.playback.relative_end_ms ?? 0),
   );
   const timelineMax = Math.max(durationMs, inferredEnd);
   const activeSegment = segmentRows.find((segment) => segment.segment_id === selectedSegment) ?? null;
-  const activeEvent = selectedEvent === null ? null : presentation.timeline[selectedEvent] ?? null;
 
   const seek = (timeMs: number) => {
     const next = clamp(timeMs, 0, timelineMax);
@@ -212,7 +176,6 @@ export function VideoView({
 
   const openSegment = (segment: FrontendEvidenceSegmentV1) => {
     onSelectSegment(segment.segment_id);
-    setSelectedEvent(null);
     setDrawerOpen(true);
     if (typeof segment.playback.relative_start_ms === "number") {
       const paddedStart = Math.max(0, segment.playback.relative_start_ms - SEGMENT_SEEK_PADDING_MS);
@@ -220,27 +183,19 @@ export function VideoView({
     }
   };
 
-  const openEvent = (index: number) => {
-    setSelectedEvent(index);
-    onSelectSegment(null);
-    const time = eventTimeMs(presentation.timeline[index]);
-    if (time !== null) seek(time);
-  };
-
   const closeOverlay = useCallback(() => {
     onSelectSegment(null);
-    setSelectedEvent(null);
     setDrawerOpen(false);
   }, [onSelectSegment]);
 
   useEffect(() => {
-    if (!activeSegment && !activeEvent && !drawerOpen) return undefined;
+    if (!activeSegment && !drawerOpen) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeOverlay();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [activeEvent, activeSegment, drawerOpen, closeOverlay]);
+  }, [activeSegment, drawerOpen, closeOverlay]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -456,36 +411,7 @@ export function VideoView({
               />
             );
           }) : null}
-          {visibleEvents.map((event) => {
-            const index = presentation.timeline.indexOf(event);
-            const time = eventTimeMs(event);
-            if (time === null) return null;
-            return (
-              <button
-                aria-label={`${eventLabel(event.type)} ${Math.round(time)} 毫秒`}
-                className={styles.timelineEvent}
-                data-event={event.type}
-                key={`${event.type}-${time}-${index}`}
-                onClick={() => openEvent(index)}
-                style={{ insetInlineStart: `${(time / timelineMax) * 100}%`, background: eventColorVar(event.type) }}
-                type="button"
-              />
-            );
-          })}
           <div className={styles.timelineCursor} style={{ insetInlineStart: `${cursorLeft}%` }} />
-          {activeEvent ? (
-            <div className={styles.eventPopover} style={{ insetInlineStart: `${cursorLeft}%` }}>
-              <header>
-                <span>当前事件 · {eventLabel(activeEvent.type)}</span>
-                <button className={styles.drawerClose} onClick={() => setSelectedEvent(null)} type="button">✕</button>
-              </header>
-              <div className={styles.eventPopoverTime}>{formatRelativeTime(eventTimeMs(activeEvent) ?? 0)}</div>
-              <div className={styles.eventPopoverBody}>
-                {activeEvent.label ? <p>{activeEvent.label}</p> : null}
-                <p>来源：{activeEvent.source ?? "未提供"}</p>
-              </div>
-            </div>
-          ) : null}
           <input
             aria-label="分析时间轴"
             className={styles.timelineInput}
@@ -498,26 +424,6 @@ export function VideoView({
           />
           <span className={styles.timelineTimeLeft}>{formatRelativeTime(0)}</span>
           <span className={styles.timelineTimeRight}>{formatRelativeTime(timelineMax)}</span>
-        </div>
-
-        <div className={styles.timelineLegend}>
-          {Array.from(new Set(presentation.timeline.map((event) => event.type))).map((type) => {
-            const active = activeTypes.includes(type);
-            return (
-              <button
-                aria-pressed={active}
-                className={styles.legendChip}
-                data-event={type}
-                key={type}
-                onClick={() => setActiveTypes((current) => active ? current.filter((item) => item !== type) : [...current, type])}
-                type="button"
-              >
-                <i style={{ background: eventColorVar(type) }} />
-                {eventLabel(type)}
-              </button>
-            );
-          })}
-          {activeTypes.length === 0 ? <span className={styles.legendChipOff}>全部（已关闭，避免噪声）</span> : null}
         </div>
       </section>
     </div>
