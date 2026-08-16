@@ -2,15 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getAnalysisEvidenceSegments, getAnalysisVideoBlob } from "@/lib/api";
+import { getAnalysisVideoBlob } from "@/lib/api";
 import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { getManagedVideoUrl, isDesktopRuntime } from "@/lib/desktop";
-import type { FrontendEvidenceSegmentV1, FrontendEvidenceSegmentsV1 } from "@/lib/types";
-import { Badge, Button, Empty, Loading, Notice } from "@/ui/primitives";
+import { Button, Empty, Loading, Notice } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
-
-const SEGMENT_SEEK_PADDING_MS = 2000;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -20,57 +17,29 @@ export function VideoView({
   analysisId,
   currentTimeMs,
   onCurrentTimeChange,
-  onSelectSegment,
   presentation,
-  selectedIssue,
-  selectedSegment,
 }: {
   analysisId: number;
   currentTimeMs: number;
   onCurrentTimeChange: (timeMs: number) => void;
-  onSelectSegment: (segmentId: string | null) => void;
   presentation: AnalysisWorkspacePresentation;
-  selectedIssue: number | null;
-  selectedSegment: string | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const drawerRef = useRef<HTMLDivElement>(null);
   const objectUrlRef = useRef<string | null>(null);
-  const [segments, setSegments] = useState<FrontendEvidenceSegmentsV1 | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(presentation.video.kind === "seekable");
   const [loadFailed, setLoadFailed] = useState(false);
-  const [segmentsLoading, setSegmentsLoading] = useState(presentation.video.kind === "seekable");
-  const [segmentsFailed, setSegmentsFailed] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const lastAudibleVolumeRef = useRef(1);
-
-  const loadSegments = useCallback(async () => {
-    setSegmentsLoading(true);
-    setSegmentsFailed(false);
-    setSegments(null);
-    try {
-      setSegments(await getAnalysisEvidenceSegments(analysisId));
-    } catch {
-      setSegments(null);
-      setSegmentsFailed(true);
-    } finally {
-      setSegmentsLoading(false);
-    }
-  }, [analysisId]);
 
   const loadEvidence = useCallback(async () => {
     if (presentation.video.kind === "native-only") return;
     setLoading(true);
     setLoadFailed(false);
-    setSegments(null);
-    setSegmentsLoading(false);
-    setSegmentsFailed(false);
     if (presentation.video.kind !== "seekable") {
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
@@ -99,8 +68,7 @@ export function VideoView({
       return;
     }
     setLoading(false);
-    await loadSegments();
-  }, [loadSegments, analysisId, presentation.video.kind]);
+  }, [analysisId, presentation.video.kind]);
 
   useEffect(() => {
     void loadEvidence();
@@ -122,14 +90,7 @@ export function VideoView({
     video.muted = muted;
   }, [muted, volume, videoUrl]);
 
-  const segmentRows = segments?.segments ?? [];
-  const issueEventRefs = selectedIssue === null ? [] : presentation.issues[selectedIssue]?.eventRefs ?? [];
-  const inferredEnd = Math.max(
-    1,
-    ...segmentRows.map((segment) => segment.playback.relative_end_ms ?? 0),
-  );
-  const timelineMax = Math.max(durationMs, inferredEnd);
-  const activeSegment = segmentRows.find((segment) => segment.segment_id === selectedSegment) ?? null;
+  const timelineMax = Math.max(durationMs, 1);
 
   const seek = (timeMs: number) => {
     const next = clamp(timeMs, 0, timelineMax);
@@ -173,29 +134,6 @@ export function VideoView({
     lastAudibleVolumeRef.current = volume;
     setMuted(true);
   };
-
-  const openSegment = (segment: FrontendEvidenceSegmentV1) => {
-    onSelectSegment(segment.segment_id);
-    setDrawerOpen(true);
-    if (typeof segment.playback.relative_start_ms === "number") {
-      const paddedStart = Math.max(0, segment.playback.relative_start_ms - SEGMENT_SEEK_PADDING_MS);
-      seek(paddedStart);
-    }
-  };
-
-  const closeOverlay = useCallback(() => {
-    onSelectSegment(null);
-    setDrawerOpen(false);
-  }, [onSelectSegment]);
-
-  useEffect(() => {
-    if (!activeSegment && !drawerOpen) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeOverlay();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [activeSegment, drawerOpen, closeOverlay]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -246,7 +184,7 @@ export function VideoView({
     );
   }
 
-  if (loading) return <Loading>正在读取本地视频与证据片段</Loading>;
+  if (loading) return <Loading>正在读取本地视频</Loading>;
 
   if (loadFailed || !videoUrl) {
     return (
@@ -281,55 +219,7 @@ export function VideoView({
           ref={videoRef}
           src={videoUrl}
         />
-        <span className={styles.playerBadge}>{timeText}{activeSegment ? ` · ${activeSegment.title_key ?? activeSegment.segment_id}` : ""}</span>
-        {drawerOpen ? (
-          <div className={styles.segmentDrawer} ref={drawerRef} tabIndex={-1}>
-            <header>
-              <span>证据片段</span>
-              <Badge tone="neutral">{segmentRows.length}</Badge>
-              <button className={styles.drawerClose} onClick={() => setDrawerOpen(false)} type="button">✕</button>
-            </header>
-            <div className={styles.segmentDrawerBody}>
-              {segmentsLoading ? <Loading>正在读取证据片段</Loading> : null}
-              {segmentsFailed ? (
-                <Notice tone="warning" title="证据片段暂时不可用">
-                  视频仍可播放；片段恢复后可以重试读取。
-                  <Button onClick={() => void loadSegments()} size="compact" variant="secondary">重试证据片段</Button>
-                </Notice>
-              ) : null}
-              {!segmentsLoading && !segmentsFailed && segmentRows.length === 0 ? (
-                <Empty title="没有可用证据片段">此 Analysis 没有返回可定位的片段。</Empty>
-              ) : null}
-              {segmentRows.map((segment) => {
-                const selected = segment.segment_id === selectedSegment;
-                const related = issueEventRefs.some((ref) => segment.event_refs.includes(ref));
-                return (
-                  <button
-                    className={styles.segmentCard}
-                    data-related={related || undefined}
-                    data-selected={selected || undefined}
-                    key={segment.segment_id}
-                    onClick={() => openSegment(segment)}
-                    type="button"
-                  >
-                    <div className={styles.segmentTop}>
-                      <span style={{ color: "var(--event-peak)" }}>●</span>
-                      <span>{segment.title_key ?? segment.segment_id}</span>
-                      {selected ? <Badge tone="neutral">正在播放</Badge> : null}
-                    </div>
-                    <div className={styles.segmentMeta}>
-                      <span>{formatRelativeTime(segment.playback.relative_start_ms ?? 0)} – {formatRelativeTime(segment.playback.relative_end_ms ?? timelineMax)}</span>
-                      {segment.source_coverage !== null ? <span>覆盖 {Math.round(segment.source_coverage * 100)}%</span> : null}
-                      {segment.confidence !== null ? <span>置信度 {Math.round(segment.confidence * 100)}%</span> : null}
-                    </div>
-                    {segment.rank_reason ? <div className={styles.segmentMeta}>{segment.rank_reason}</div> : null}
-                  </button>
-                );
-              })}
-            </div>
-            <div className={styles.segmentDrawerFoot}>本地回放，不上传；Coach 可引用但不读取视频内容</div>
-          </div>
-        ) : null}
+        <span className={styles.playerBadge}>{timeText}</span>
       </section>
 
       <div className={styles.playerBar}>
@@ -344,13 +234,6 @@ export function VideoView({
           type="button"
         >
           {speed}×
-        </button>
-        <button
-          className={`${styles.playerBarBtn} ${styles.playerBarEvidence}`}
-          onClick={() => setDrawerOpen((current) => !current)}
-          type="button"
-        >
-          证据片段 {segmentRows.length}
         </button>
         <div className={styles.volumeControl}>
           <button
@@ -394,23 +277,6 @@ export function VideoView({
         <div className={styles.timeline}>
           <div className={styles.timelineTrack} />
           <div className={styles.timelineProgress} style={{ width: `${progress}%` }} />
-          {!segmentsLoading && !segmentsFailed ? segmentRows.map((segment) => {
-            const start = segment.playback.relative_start_ms;
-            const end = segment.playback.relative_end_ms;
-            if (start === null || end === null) return null;
-            const related = issueEventRefs.some((ref) => segment.event_refs.includes(ref));
-            return (
-              <button
-                aria-label={`证据片段 ${segment.title_key ?? segment.segment_id}`}
-                className={styles.timelineSegment}
-                data-related={related || undefined}
-                key={segment.segment_id}
-                onClick={() => openSegment(segment)}
-                style={{ insetInlineStart: `${(start / timelineMax) * 100}%`, width: `${Math.max(0.4, ((end - start) / timelineMax) * 100)}%` }}
-                type="button"
-              />
-            );
-          }) : null}
           <div className={styles.timelineCursor} style={{ insetInlineStart: `${cursorLeft}%` }} />
           <input
             aria-label="分析时间轴"
