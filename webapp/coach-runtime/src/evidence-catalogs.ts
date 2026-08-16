@@ -728,6 +728,41 @@ export const GENERIC_STATIC_EVIDENCE_EXTENSION_V1: EvidenceExtension = {
   segment_kinds: [],
 };
 
+const GENERIC_AIM_FAMILY_METRIC_KEYS = [
+  "click_count", "hit_clicks", "miss_clicks", "no_target_clicks",
+  "miss_distance_deg", "miss_vector_x_deg", "miss_vector_y_deg",
+  "kill_residual_distance_deg", "kill_pairing_rate", "frame_coverage",
+];
+
+export const GENERIC_AIM_FAMILIES_EVIDENCE_EXTENSION_V1: EvidenceExtension = {
+  schema_version: "analysis_evidence_extension.v1",
+  extension_ref: "generic-aim-families@1",
+  channel_keys: [],
+  event_kinds: {
+    generic_switch_episode: [
+      "from_kill_ms", "kill_index", "first_click_ms", "transition_ms",
+      "target_track_ref",
+    ],
+  },
+  metric_keys: [
+    ...GENERIC_AIM_FAMILY_METRIC_KEYS.map(
+      (key) => `dynamic_clicking.generic.${key}`,
+    ),
+    "dynamic_clicking.generic.target_speed_deg_per_s",
+    ...GENERIC_AIM_FAMILY_METRIC_KEYS.map(
+      (key) => `switching.generic.${key}`,
+    ),
+    "switching.generic.episode_count",
+    "switching.generic.transition_time_ms",
+    "tracking.generic.coverage",
+    "tracking.generic.error_median_deg",
+    "tracking.generic.error_p90_deg",
+    "tracking.generic.in_target_ratio",
+    "tracking.generic.loss_count",
+  ],
+  segment_kinds: [],
+};
+
 // ── Core sets ──
 
 const CORE_CHANNELS = new Set([
@@ -762,6 +797,7 @@ const ALL_EXTENSIONS: EvidenceExtension[] = [
   CONTINUOUS_TRACKING_EVIDENCE_EXTENSION_V1,
   TARGET_SWITCHING_EVIDENCE_EXTENSION_V1,
   GENERIC_STATIC_EVIDENCE_EXTENSION_V1,
+  GENERIC_AIM_FAMILIES_EVIDENCE_EXTENSION_V1,
 ];
 
 export class EvidenceKeyRegistry {
