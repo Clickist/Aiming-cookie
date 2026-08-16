@@ -26,8 +26,8 @@ GENERIC_STATIC_VISUAL_RESULT_SCHEMA = "generic_static_visual_result.v1"
 GENERIC_STATIC_ASSOCIATION_SCHEMA = "generic_static_association.v1"
 
 # Detection knobs (real-scenario spike measurements, 2026-08-16).
-HYPOTHESIS_SAMPLE_FRAMES = 25
-HYPOTHESIS_SAMPLE_MAX_WIDTH = 640
+HYPOTHESIS_SAMPLE_FRAMES = 40
+HYPOTHESIS_SAMPLE_MAX_WIDTH = 960
 FRAME_BUDGET_PER_SECOND = 240
 FRAME_BUDGET_CAP = 250_000
 BLOB_MIN_AREA_RATIO = 2e-5
@@ -429,6 +429,7 @@ def associate_generic_static_clicks_v1(
     deg_per_px: float | None,
     hit_lookback_ms: float = HIT_LOOKBACK_MS,
     allow_degraded_hit_position: bool = True,
+    kill_pair_forward_ms: float = KILL_PAIR_WINDOW_MS,
 ) -> dict:
     """Geometric hit/miss per raw click plus kill pairing and residuals."""
     tracks = [
@@ -542,7 +543,7 @@ def associate_generic_static_clicks_v1(
             if (
                 -KILL_PAIR_BACK_WINDOW_MS
                 <= track["death_ms"] - kill_ms
-                <= KILL_PAIR_WINDOW_MS
+                <= kill_pair_forward_ms
             )
         ]
         if candidates:
