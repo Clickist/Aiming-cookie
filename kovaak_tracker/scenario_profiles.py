@@ -86,6 +86,12 @@ CHALLENGE_SHAPE_MIN_DURATION_MS = 15_000
 CHALLENGE_SHAPE_TRACKING_MIN_BUTTON_SAMPLES_PER_KILL = 100.0
 CHALLENGE_SHAPE_CLICKING_MAX_BUTTON_SAMPLES_PER_KILL = 50.0
 CHALLENGE_SHAPE_TRACKING_MIN_ZERO_KILL_BUTTON_SAMPLES = 500
+# Hold-fire while switching (patCircleSwitch 226 samples/kill, Target
+# Switching 360 128) lands in the tracking hold band, but real
+# tracking-with-kills maps sit at 26-34 kills/min (AscendedTracking) while
+# hold-fire clicking runs 53-72/min: rapid kills prove the button is held
+# for a clicking challenge, not a tracking one.
+CHALLENGE_SHAPE_RAPID_KILLS_PER_MINUTE = 45.0
 CHALLENGE_SHAPE_FALLBACK_MAX_TRACKING_KILLS = 6
 
 
@@ -738,8 +744,13 @@ def classify_challenge_shape_v1(
             }
         button_samples_per_kill = button_samples_held / kills
         if button_samples_per_kill > CHALLENGE_SHAPE_TRACKING_MIN_BUTTON_SAMPLES_PER_KILL:
-            shape_class = "tracking_candidate"
-            basis = "fire_mode_hold"
+            kills_per_minute = kills / (duration_ms / 60_000)
+            if kills_per_minute >= CHALLENGE_SHAPE_RAPID_KILLS_PER_MINUTE:
+                shape_class = "clicking_candidate"
+                basis = "fire_mode_hold_rapid_kills"
+            else:
+                shape_class = "tracking_candidate"
+                basis = "fire_mode_hold"
         elif button_samples_per_kill < CHALLENGE_SHAPE_CLICKING_MAX_BUTTON_SAMPLES_PER_KILL:
             shape_class = "clicking_candidate"
             basis = "fire_mode_tap"
