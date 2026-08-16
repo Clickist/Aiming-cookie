@@ -64,6 +64,29 @@ _METRIC_FAMILIES = {
     "outcome", "input_kinematics", "static_clicking", "dynamic_clicking",
     "continuous_tracking", "target_switching",
 }
+# Families with a baseline analyzer pipeline; any scenario resolving to one of
+# these dispatches at least its input-kinematics baseline analysis.
+_FAMILY_PIPELINE_FAMILIES = {
+    "static_clicking", "dynamic_clicking", "continuous_tracking", "target_switching",
+}
+_FAMILY_BASELINE_LIMITATIONS = [
+    "exact_visual_profile_unavailable",
+    "target_relative_facts_unavailable",
+    "outcome_association_unavailable",
+    "scenario_prescription_unavailable",
+]
+# Challenge-shape v1: the winning discriminator is the FIRE MODE read from
+# the Raw Input button bitmask (state samples, not edges). Real runs: tapping
+# classes spend 16–27 held samples per kill, sustained-fire tracking 426–445,
+# zero-kill pure tracking 12k–17k held samples. Kill density alone was refuted
+# (a 34–39 kill tracking map overlaps the 43-kill clicking floor), so without
+# raw input only the unambiguous ≤6-kill corner stays decidable.
+CHALLENGE_SHAPE_SCHEMA_VERSION = "scenario_challenge_shape.v1"
+CHALLENGE_SHAPE_MIN_DURATION_MS = 15_000
+CHALLENGE_SHAPE_TRACKING_MIN_BUTTON_SAMPLES_PER_KILL = 100.0
+CHALLENGE_SHAPE_CLICKING_MAX_BUTTON_SAMPLES_PER_KILL = 50.0
+CHALLENGE_SHAPE_TRACKING_MIN_ZERO_KILL_BUTTON_SAMPLES = 500
+CHALLENGE_SHAPE_FALLBACK_MAX_TRACKING_KILLS = 6
 
 
 def _normalized_scenario_name(value: str) -> str:
@@ -565,15 +588,18 @@ def active_scenario_profile_refs(
     return registry_refs & manifest_refs
 
 
-def _outcome_only_resolution(
+def _family_baseline_resolution(
     *,
     scenario_hash: str | None,
     display_name: str | None,
     registry_version: str,
     manifest_version: str,
-    classification_source: str = "unknown",
-    classification_confidence: str = "unknown",
-    limitations: list[str] | None = None,
+    aim_family: str,
+    classification_source: str,
+    classification_confidence: str,
+    target_motion: Mapping[str, str],
+    subdomains: Sequence[str] = (),
+    limitations: Sequence[str] = (),
 ) -> dict[str, Any]:
     return {
         "schema_version": RESOLUTION_SCHEMA_VERSION,
@@ -593,18 +619,240 @@ def _outcome_only_resolution(
         "review_source_ref": None,
         "manifest_reviewed_at": None,
         "family_gate_refs": [],
-        "aim_family": "unknown",
-        "subdomains": [],
-        "target_motion": {
-            "model": "unknown",
-            "target_count_model": "unknown",
-        },
-        "allowed_analyzers": [],
-        "allowed_metric_families": [],
-        "claim_ceiling": "outcome_only",
-        "family_analyzer_dispatch": "none",
-        "limitations": limitations or ["No reviewed exact scenario hash is available."],
+        "aim_family": aim_family,
+        "subdomains": list(subdomains),
+        "target_motion": dict(target_motion),
+        "allowed_analyzers": [f"{aim_family}.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": list(limitations),
     }
+
+
+def _family_from_display_name(display_name: str) -> str | None:
+    """Best-effort family candidate from scenario-name keywords.
+
+    The result is a candidate only: it routes the family baseline pipeline but
+    never establishes scenario identity or any visual claim.
+    """
+    normalized = _normalized_scenario_name(display_name)
+    if not normalized:
+        return None
+    if "strafe" in normalized or "track" in normalized:
+        return "continuous_tracking"
+    if "switch" in normalized:
+        return "target_switching"
+    if "pasu" in normalized or ("reload" in normalized and "no reload" not in normalized):
+        return "dynamic_clicking"
+    return "static_clicking"
+
+
+def _name_candidate_family(
+    entries: Sequence[Mapping[str, Any]],
+    safe_display_name: str | None,
+) -> str:
+    """Family for a name-only candidate: unique reviewed name match, else keywords."""
+    if safe_display_name is not None:
+        candidates = [
+            entry for entry in entries
+            if entry["status"] == "active"
+            and entry["display_name"].casefold() == safe_display_name.casefold()
+        ]
+        if (
+            len(candidates) == 1
+            and candidates[0]["aim_family"] in _FAMILY_PIPELINE_FAMILIES
+        ):
+            return candidates[0]["aim_family"]
+    return (_family_from_display_name(safe_display_name)
+            if safe_display_name is not None else None) or "static_clicking"
+
+
+def _valid_challenge_shape_descriptor(value: object) -> dict[str, Any] | None:
+    """Accept only bounded, path-free Stats/Raw-derived shape facts.
+
+    ``button_samples_held`` is optional: present when the run has a Raw trace
+    (canonical per-ms samples with the fire button held), absent for
+    historical runs.
+    """
+    if (
+        not isinstance(value, Mapping)
+        or set(value) - {"schema_version", "kills", "duration_ms", "button_samples_held"}
+        or value.get("schema_version") != CHALLENGE_SHAPE_SCHEMA_VERSION
+    ):
+        return None
+    kills = value.get("kills")
+    duration_ms = value.get("duration_ms")
+    button_samples_held = value.get("button_samples_held")
+    if (
+        not isinstance(kills, int) or isinstance(kills, bool) or not 0 <= kills <= 1_000_000
+        or not isinstance(duration_ms, int) or isinstance(duration_ms, bool)
+        or not 1 <= duration_ms <= 86_400_000
+        or (
+            button_samples_held is not None
+            and (
+                not isinstance(button_samples_held, int)
+                or isinstance(button_samples_held, bool)
+                or not 0 <= button_samples_held <= 100_000_000
+            )
+        )
+    ):
+        return None
+    shape = {
+        "schema_version": CHALLENGE_SHAPE_SCHEMA_VERSION,
+        "kills": kills,
+        "duration_ms": duration_ms,
+    }
+    if button_samples_held is not None:
+        shape["button_samples_held"] = button_samples_held
+    return shape
+
+
+def classify_challenge_shape_v1(
+    kills: int,
+    duration_ms: int,
+    button_samples_held: int | None = None,
+) -> dict[str, Any] | None:
+    """Fire-mode shape verdict; None in the undecided band or short runs.
+
+    With Raw input the verdict reads the button bitmask: sustained fire (many
+    held samples per kill, or heavy fire with zero kills) marks tracking;
+    tapping marks clicking. Without Raw input only the unambiguous ≤6-kill
+    corner is decidable (kill density was refuted as a separator).
+    Verdicts are statistical candidates only — they route the family baseline
+    pipeline, never visual claims or scenario identity.
+    """
+    if duration_ms < CHALLENGE_SHAPE_MIN_DURATION_MS:
+        return None
+    if button_samples_held is not None:
+        if kills == 0:
+            if button_samples_held < CHALLENGE_SHAPE_TRACKING_MIN_ZERO_KILL_BUTTON_SAMPLES:
+                return None
+            return {
+                "shape_class": "tracking_candidate",
+                "basis": "zero_kill_sustained_fire",
+                "kills": kills,
+                "duration_ms": duration_ms,
+                "button_samples_held": button_samples_held,
+                "button_samples_per_kill": None,
+            }
+        button_samples_per_kill = button_samples_held / kills
+        if button_samples_per_kill > CHALLENGE_SHAPE_TRACKING_MIN_BUTTON_SAMPLES_PER_KILL:
+            shape_class = "tracking_candidate"
+            basis = "fire_mode_hold"
+        elif button_samples_per_kill < CHALLENGE_SHAPE_CLICKING_MAX_BUTTON_SAMPLES_PER_KILL:
+            shape_class = "clicking_candidate"
+            basis = "fire_mode_tap"
+        else:
+            return None
+        return {
+            "shape_class": shape_class,
+            "basis": basis,
+            "kills": kills,
+            "duration_ms": duration_ms,
+            "button_samples_held": button_samples_held,
+            "button_samples_per_kill": round(button_samples_per_kill, 2),
+        }
+    if kills <= CHALLENGE_SHAPE_FALLBACK_MAX_TRACKING_KILLS:
+        return {
+            "shape_class": "tracking_candidate",
+            "basis": "kill_density_fallback",
+            "kills": kills,
+            "duration_ms": duration_ms,
+            "button_samples_held": None,
+            "button_samples_per_kill": None,
+        }
+    return None
+
+
+def _challenge_shape_summary_limitation(verdict: Mapping[str, Any]) -> str:
+    """Machine-readable verdict basis; the frontend renders it in Chinese."""
+    held = verdict.get("button_samples_held")
+    if held is None:
+        return (
+            f"challenge_shape_kill_density_kills_{verdict['kills']}"
+            f"_duration_ms_{verdict['duration_ms']}"
+        )
+    per_kill = verdict.get("button_samples_per_kill")
+    per_kill_text = "inf" if per_kill is None else per_kill
+    return (
+        f"challenge_shape_fire_mode_kills_{verdict['kills']}"
+        f"_button_samples_held_{held}"
+        f"_button_samples_per_kill_{per_kill_text}"
+    )
+
+
+def _challenge_shape_resolution(
+    *,
+    scenario_hash: str | None,
+    display_name: str | None,
+    registry_version: str,
+    manifest_version: str,
+    aim_family: str,
+    verdict: Mapping[str, Any],
+) -> dict[str, Any]:
+    return _family_baseline_resolution(
+        scenario_hash=scenario_hash,
+        display_name=display_name,
+        registry_version=registry_version,
+        manifest_version=manifest_version,
+        aim_family=aim_family,
+        classification_source="challenge_shape",
+        classification_confidence="candidate",
+        target_motion={"model": "unknown", "target_count_model": "unknown"},
+        limitations=[
+            "challenge_shape_is_a_statistical_candidate_not_an_identity",
+            _challenge_shape_summary_limitation(verdict),
+            *_FAMILY_BASELINE_LIMITATIONS,
+        ],
+    )
+
+
+def _name_candidate_resolution(
+    *,
+    scenario_hash: str | None,
+    display_name: str | None,
+    registry_version: str,
+    manifest_version: str,
+    aim_family: str,
+) -> dict[str, Any]:
+    return _family_baseline_resolution(
+        scenario_hash=scenario_hash,
+        display_name=display_name,
+        registry_version=registry_version,
+        manifest_version=manifest_version,
+        aim_family=aim_family,
+        classification_source="name_heuristic",
+        classification_confidence="candidate",
+        target_motion={"model": "unknown", "target_count_model": "unknown"},
+        limitations=[
+            "scenario_name_is_a_candidate_not_an_identity",
+            *_FAMILY_BASELINE_LIMITATIONS,
+        ],
+    )
+
+
+def _family_default_resolution(
+    *,
+    scenario_hash: str | None,
+    display_name: str | None,
+    registry_version: str,
+    manifest_version: str,
+) -> dict[str, Any]:
+    return _family_baseline_resolution(
+        scenario_hash=scenario_hash,
+        display_name=display_name,
+        registry_version=registry_version,
+        manifest_version=manifest_version,
+        aim_family="static_clicking",
+        classification_source="family_default",
+        classification_confidence="unknown",
+        target_motion={"model": "unknown", "target_count_model": "unknown"},
+        limitations=[
+            "scenario_family_unresolved",
+            *_FAMILY_BASELINE_LIMITATIONS,
+        ],
+    )
 
 
 def _dynamic_baseline_resolution(
@@ -615,41 +863,18 @@ def _dynamic_baseline_resolution(
     manifest_version: str,
     target_count_model: str,
 ) -> dict[str, Any]:
-    return {
-        "schema_version": RESOLUTION_SCHEMA_VERSION,
-        "scenario_hash": scenario_hash,
-        "display_name": display_name,
-        "registry_version": registry_version,
-        "manifest_version": manifest_version,
-        "scenario_profile_ref": None,
-        "classification_source": "local_scenario_definition",
-        "classification_confidence": "confirmed",
-        "profile_status": "unknown",
-        "reviewed_at": None,
-        "source_refs": [],
-        "supersedes": [],
-        "manifest_status": "unlisted",
-        "fixture_ref": None,
-        "review_source_ref": None,
-        "manifest_reviewed_at": None,
-        "family_gate_refs": [],
-        "aim_family": "dynamic_clicking",
-        "subdomains": ["reactive", "control"],
-        "target_motion": {
-            "model": "reactive",
-            "target_count_model": target_count_model,
-        },
-        "allowed_analyzers": ["dynamic_clicking.baseline.v1"],
-        "allowed_metric_families": ["outcome", "input_kinematics"],
-        "claim_ceiling": "descriptive_only",
-        "family_analyzer_dispatch": "allowed",
-        "limitations": [
-            "exact_visual_profile_unavailable",
-            "target_relative_facts_unavailable",
-            "outcome_association_unavailable",
-            "scenario_prescription_unavailable",
-        ],
-    }
+    return _family_baseline_resolution(
+        scenario_hash=scenario_hash,
+        display_name=display_name,
+        registry_version=registry_version,
+        manifest_version=manifest_version,
+        aim_family="dynamic_clicking",
+        classification_source="local_scenario_definition",
+        classification_confidence="confirmed",
+        subdomains=["reactive", "control"],
+        target_motion={"model": "reactive", "target_count_model": target_count_model},
+        limitations=_FAMILY_BASELINE_LIMITATIONS,
+    )
 
 
 def _static_baseline_resolution(
@@ -660,41 +885,18 @@ def _static_baseline_resolution(
     manifest_version: str,
     target_count_model: str,
 ) -> dict[str, Any]:
-    return {
-        "schema_version": RESOLUTION_SCHEMA_VERSION,
-        "scenario_hash": scenario_hash,
-        "display_name": display_name,
-        "registry_version": registry_version,
-        "manifest_version": manifest_version,
-        "scenario_profile_ref": None,
-        "classification_source": "local_scenario_definition",
-        "classification_confidence": "confirmed",
-        "profile_status": "unknown",
-        "reviewed_at": None,
-        "source_refs": [],
-        "supersedes": [],
-        "manifest_status": "unlisted",
-        "fixture_ref": None,
-        "review_source_ref": None,
-        "manifest_reviewed_at": None,
-        "family_gate_refs": [],
-        "aim_family": "static_clicking",
-        "subdomains": ["precision", "control"],
-        "target_motion": {
-            "model": "static",
-            "target_count_model": target_count_model,
-        },
-        "allowed_analyzers": ["static_clicking.baseline.v1"],
-        "allowed_metric_families": ["outcome", "input_kinematics"],
-        "claim_ceiling": "descriptive_only",
-        "family_analyzer_dispatch": "allowed",
-        "limitations": [
-            "exact_visual_profile_unavailable",
-            "target_relative_facts_unavailable",
-            "outcome_association_unavailable",
-            "scenario_prescription_unavailable",
-        ],
-    }
+    return _family_baseline_resolution(
+        scenario_hash=scenario_hash,
+        display_name=display_name,
+        registry_version=registry_version,
+        manifest_version=manifest_version,
+        aim_family="static_clicking",
+        classification_source="local_scenario_definition",
+        classification_confidence="confirmed",
+        subdomains=["precision", "control"],
+        target_motion={"model": "static", "target_count_model": target_count_model},
+        limitations=_FAMILY_BASELINE_LIMITATIONS,
+    )
 
 
 def resolve_scenario_profile(
@@ -704,8 +906,16 @@ def resolve_scenario_profile(
     registry: Mapping[str, Any] | None = None,
     manifest: Mapping[str, Any] | None = None,
     behavior_descriptor: Mapping[str, Any] | None = None,
+    challenge_shape: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Resolve only reviewed exact hashes; display names remain non-dispatching hints."""
+    """Identify the aim family and dispatch its pipeline for any scenario.
+
+    Resolution levels: exact reviewed hash (fast lane to the calibrated full
+    analysis), local `.sce` structure, the Stats-derived challenge shape, a
+    display-name candidate, or the unresolved default. Unreviewed identity only
+    withholds visual and target-relative claims — it never blocks the family
+    baseline pipeline.
+    """
     data = validate_registry(registry) if registry is not None else load_registry()
     launch_manifest = (
         validate_launch_manifest(manifest, registry=data)
@@ -751,22 +961,43 @@ def resolve_scenario_profile(
                     "single" if descriptor["bot_count"] == 1 else "concurrent"
                 ),
             )
-        candidates = [
-            entry for entry in data["entries"]
-            if entry["status"] == "active" and safe_display_name
-            and entry["display_name"].casefold() == safe_display_name.casefold()
-        ]
-        if len(candidates) == 1:
-            return _outcome_only_resolution(
+        shape = _valid_challenge_shape_descriptor(challenge_shape)
+        shape_verdict = (
+            classify_challenge_shape_v1(
+                shape["kills"],
+                shape["duration_ms"],
+                shape.get("button_samples_held"),
+            )
+            if shape is not None
+            else None
+        )
+        if shape_verdict is not None:
+            if shape_verdict["shape_class"] == "tracking_candidate":
+                shape_family = "continuous_tracking"
+            else:
+                # The shape confirms a clicking class; the name only refines
+                # which clicking family. A tracking name contradicts the
+                # measured shape, so it degrades to the static default.
+                shape_family = _name_candidate_family(data["entries"], safe_display_name)
+                if shape_family == "continuous_tracking":
+                    shape_family = "static_clicking"
+            return _challenge_shape_resolution(
                 scenario_hash=safe_hash,
                 display_name=safe_display_name,
                 registry_version=data["registry_version"],
                 manifest_version=launch_manifest["manifest_version"],
-                classification_source="name_heuristic",
-                classification_confidence="candidate",
-                limitations=["Display-name matching is only a review candidate, not a scenario identity."],
+                aim_family=shape_family,
+                verdict=shape_verdict,
             )
-        return _outcome_only_resolution(
+        if safe_display_name is not None:
+            return _name_candidate_resolution(
+                scenario_hash=safe_hash,
+                display_name=safe_display_name,
+                registry_version=data["registry_version"],
+                manifest_version=launch_manifest["manifest_version"],
+                aim_family=_name_candidate_family(data["entries"], safe_display_name),
+            )
+        return _family_default_resolution(
             scenario_hash=safe_hash,
             display_name=safe_display_name,
             registry_version=data["registry_version"],
@@ -779,8 +1010,78 @@ def resolve_scenario_profile(
     manifest_status = manifest_entry["status"] if manifest_entry else "unlisted"
     dispatch_allowed = profile["status"] == "active" and manifest_status == "active"
     limitations = list(profile["limitations"])
-    if not dispatch_allowed:
-        limitations.append("The launch manifest is not active; family-specific analysis is unavailable.")
+    if dispatch_allowed:
+        return {
+            "schema_version": RESOLUTION_SCHEMA_VERSION,
+            "scenario_hash": profile["scenario_hash"],
+            "display_name": safe_display_name or profile["display_name"],
+            "registry_version": data["registry_version"],
+            "manifest_version": launch_manifest["manifest_version"],
+            "scenario_profile_ref": profile_ref,
+            "classification_source": profile["taxonomy_source"],
+            "classification_confidence": "confirmed",
+            "profile_status": profile["status"],
+            "reviewed_at": profile["reviewed_at"],
+            "source_refs": list(profile["source_refs"]),
+            "supersedes": list(profile["supersedes"]),
+            "manifest_status": manifest_status,
+            "fixture_ref": manifest_entry["fixture_ref"] if manifest_entry else None,
+            "review_source_ref": (
+                manifest_entry["review_source_ref"] if manifest_entry else None
+            ),
+            "manifest_reviewed_at": (
+                manifest_entry["reviewed_at"] if manifest_entry else None
+            ),
+            "family_gate_refs": (
+                list(manifest_entry["family_gate_refs"]) if manifest_entry else []
+            ),
+            "aim_family": profile["aim_family"],
+            "subdomains": list(profile["subdomains"]),
+            "target_motion": dict(profile["target_motion"]),
+            "allowed_analyzers": list(profile["allowed_analyzers"]),
+            "allowed_metric_families": list(profile["allowed_metric_families"]),
+            "claim_ceiling": "family_specific",
+            "family_analyzer_dispatch": "allowed",
+            "limitations": limitations,
+        }
+    # The manifest gate withholds the calibrated visual/full analysis only; the
+    # reviewed family still routes the baseline input-kinematics pipeline.
+    if profile["aim_family"] in _FAMILY_PIPELINE_FAMILIES:
+        limitations.append("exact_manifest_gate_inactive_visual_claims_unavailable")
+        return {
+            "schema_version": RESOLUTION_SCHEMA_VERSION,
+            "scenario_hash": profile["scenario_hash"],
+            "display_name": safe_display_name or profile["display_name"],
+            "registry_version": data["registry_version"],
+            "manifest_version": launch_manifest["manifest_version"],
+            "scenario_profile_ref": profile_ref,
+            "classification_source": profile["taxonomy_source"],
+            "classification_confidence": "confirmed",
+            "profile_status": profile["status"],
+            "reviewed_at": profile["reviewed_at"],
+            "source_refs": list(profile["source_refs"]),
+            "supersedes": list(profile["supersedes"]),
+            "manifest_status": manifest_status,
+            "fixture_ref": manifest_entry["fixture_ref"] if manifest_entry else None,
+            "review_source_ref": (
+                manifest_entry["review_source_ref"] if manifest_entry else None
+            ),
+            "manifest_reviewed_at": (
+                manifest_entry["reviewed_at"] if manifest_entry else None
+            ),
+            "family_gate_refs": (
+                list(manifest_entry["family_gate_refs"]) if manifest_entry else []
+            ),
+            "aim_family": profile["aim_family"],
+            "subdomains": list(profile["subdomains"]),
+            "target_motion": dict(profile["target_motion"]),
+            "allowed_analyzers": [f"{profile['aim_family']}.baseline.v1"],
+            "allowed_metric_families": ["outcome", "input_kinematics"],
+            "claim_ceiling": "descriptive_only",
+            "family_analyzer_dispatch": "allowed",
+            "limitations": limitations,
+        }
+    limitations.append("The launch manifest is not active; family-specific analysis is unavailable.")
     return {
         "schema_version": RESOLUTION_SCHEMA_VERSION,
         "scenario_hash": profile["scenario_hash"],
@@ -810,14 +1111,14 @@ def resolve_scenario_profile(
         "target_motion": dict(profile["target_motion"]),
         "allowed_analyzers": list(profile["allowed_analyzers"]),
         "allowed_metric_families": list(profile["allowed_metric_families"]),
-        "claim_ceiling": "family_specific" if dispatch_allowed else "outcome_only",
-        "family_analyzer_dispatch": "allowed" if dispatch_allowed else "none",
+        "claim_ceiling": "outcome_only",
+        "family_analyzer_dispatch": "none",
         "limitations": limitations,
     }
 
 
 __all__ = [
-    "MANIFEST_PATH", "MANIFEST_SCHEMA_VERSION", "REGISTRY_PATH", "REGISTRY_SCHEMA_VERSION",
-    "RESOLUTION_SCHEMA_VERSION", "ScenarioProfileError", "active_scenario_profile_refs", "load_launch_manifest", "load_registry",
+    "CHALLENGE_SHAPE_SCHEMA_VERSION", "MANIFEST_PATH", "MANIFEST_SCHEMA_VERSION", "REGISTRY_PATH", "REGISTRY_SCHEMA_VERSION",
+    "RESOLUTION_SCHEMA_VERSION", "ScenarioProfileError", "active_scenario_profile_refs", "classify_challenge_shape_v1", "load_launch_manifest", "load_registry",
     "parse_local_scenario_behavior_descriptor", "resolve_scenario_profile", "scenario_profile_ref", "validate_launch_manifest", "validate_registry",
 ]

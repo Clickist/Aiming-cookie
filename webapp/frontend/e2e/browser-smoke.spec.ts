@@ -207,7 +207,8 @@ test.describe("Task 7 browser smoke", () => {
   test("legacy Tasks and Analysis URLs redirect to History", async ({ page }) => {
     await installDesktopBridge(page);
     await installApiFixtures(page);
-    for (const path of ["/tasks", "/analyze", "/analysis", "/analysis/42", "/analysis?id=42"]) {
+    // /analyze 页面已移除（History 承接分析入口），不再保留 redirect。
+    for (const path of ["/tasks", "/analysis", "/analysis/42", "/analysis?id=42"]) {
       await page.goto(path);
       await expect(page).toHaveURL(/\/history$/);
       await expect(page.getByRole("heading", { name: "分析记录" })).toBeVisible();
@@ -224,8 +225,9 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByRole("heading", { name: "训练记录" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "分析记录" })).toBeVisible();
     await expect(page.locator(".task4-sec-count")).toHaveText(["1", "1", "1"]);
-    await page.getByRole("button", { name: "查看摘要" }).click();
-    await expect(page.getByRole("dialog", { name: "分析摘要" })).toBeVisible();
+    // 摘要 Dialog 已移除：列表不再提供详情入口，也不链接到 Analysis workspace。
+    await expect(page.getByRole("button", { name: "查看摘要" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "查看 Run" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: /Analysis/ })).toHaveCount(0);
   });
 
@@ -237,7 +239,8 @@ test.describe("Task 7 browser smoke", () => {
 
     const statePanels = page.locator(".task4-sec > .ac-state.task4-panel.task4-state-panel");
     await expect(statePanels).toHaveCount(3);
-    await expect(statePanels.nth(2).getByText("还没有分析记录", { exact: true })).toBeVisible();
+    // 区块顺序为 待分析训练 → 分析记录 → 训练记录：分析空态是第二个面板。
+    await expect(statePanels.nth(1).getByText("还没有分析记录", { exact: true })).toBeVisible();
 
     const layout = await statePanels.evaluateAll((panels) => panels.map((panel) => {
       const element = panel as HTMLElement;

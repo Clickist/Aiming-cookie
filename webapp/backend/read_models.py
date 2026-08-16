@@ -25,7 +25,7 @@ CURRENT_TRAINING_SCHEMA_VERSION = "current_training.v1"
 # Registry entries and stored plan revisions are immutable. Localize only the
 # reviewed public projection, keyed by the stable knowledge and scenario refs.
 _CURRENT_TRAINING_ZH_CN = {
-    "knowledge:static.flicking-terminal-control@2": {
+    "knowledge:static.flicking-terminal-control@3": {
         "scenario_profile_ref": "scenario:static.1wall_6targets_small@1",
         "practice_condition": "保持完全相同的静态场景条件，只测试一个终点控制提示。",
         "cue": "只使用一个动作效果提示：先受控地到达目标，再让点击跟随已经稳定的瞄点。",
@@ -35,7 +35,7 @@ _CURRENT_TRAINING_ZH_CN = {
         ),
         "review_date": "下一次可比训练后复查。",
     },
-    "knowledge:dynamic.click-error-and-acquisition@2": {
+    "knowledge:dynamic.click-error-and-acquisition@3": {
         "scenario_profile_ref": "scenario:dynamic.pasu_small_reload@1",
         "practice_condition": "保持完全相同的动态场景条件，每次只改变一个易于辨认的运动变量。",
         "cue": (
@@ -47,7 +47,7 @@ _CURRENT_TRAINING_ZH_CN = {
         ),
         "review_date": "下一次可比训练后复查。",
     },
-    "knowledge:dynamic.speed-matching-and-reading@2": {
+    "knowledge:dynamic.speed-matching-and-reading@3": {
         "scenario_profile_ref": "scenario:dynamic.pasu_small_reload@1",
         "practice_condition": "保持相同的动态场景条件，每次只改变一个运动特征。",
         "cue": (
@@ -60,7 +60,7 @@ _CURRENT_TRAINING_ZH_CN = {
         ),
         "review_date": "下一次可比训练后复查。",
     },
-    "knowledge:tracking.predictable-speed-matching@2": {
+    "knowledge:tracking.predictable-speed-matching@3": {
         "scenario_profile_ref": "scenario:tracking.whj_smooth_strafe_sphere_easy@1",
         "practice_condition": "保持完全相同的可预测运动条件，只测试稳定的速度匹配。",
         "cue": (
@@ -71,7 +71,7 @@ _CURRENT_TRAINING_ZH_CN = {
         ),
         "review_date": "下一次可比训练后复查。",
     },
-    "knowledge:switching.transition-and-arrival@2": {
+    "knowledge:switching.transition-and-arrival@3": {
         "scenario_profile_ref": "scenario:switching.beants_larger@1",
         "practice_condition": (
             "保持完全相同的 beanTS Larger 场景条件；"

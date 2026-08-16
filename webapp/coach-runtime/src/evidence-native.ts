@@ -248,6 +248,21 @@ function analysisRefFromTable(tableRef: string): string {
   return match ? match[1] : tableRef;
 }
 
+const TABLE_REF_RE = /^analysis:\d+:table:[A-Za-z0-9_]+$/;
+
+/**
+ * Structured table_ref validation for the processed-table commands. Keeps a
+ * missing/malformed table_ref from reaching analysisRefFromTable as undefined
+ * (bare TypeError, Bug 5) and names the expected shape.
+ */
+export function tableRefStructureError(tableRef: unknown): string | null {
+  if (typeof tableRef !== "string" || tableRef.length === 0) return "table_ref is required";
+  if (!TABLE_REF_RE.test(tableRef)) {
+    return 'table_ref must be "analysis:<id>:table:<event_kind>" as returned by analysis.events.list';
+  }
+  return null;
+}
+
 // ── Segment / event / metric projection ──
 
 const SEGMENT_FIELDS = [
@@ -357,6 +372,44 @@ function downsamplePoints(points: number[][], limit: number): number[][] {
 }
 
 // ── Predicate matching (ported from _predicate_matches / _matching_events) ──
+
+const PREDICATE_OPERATORS = new Set(["eq", "lt", "lte", "gt", "gte", "between", "available", "unavailable"]);
+
+/**
+ * Structural validation for query predicates. Returns a human-readable error
+ * for malformed predicates (unknown keys, wrong operator/value shape) so
+ * callers reject with invalid_parameters instead of silently matching every
+ * row. `label` names the offending position, e.g. "predicates[0]".
+ */
+export function predicateStructureError(predicate: unknown, label: string): string | null {
+  if (!predicate || typeof predicate !== "object" || Array.isArray(predicate)) {
+    return `${label} must be an object like {field, operator, value}`;
+  }
+  const record = predicate as AnyDict;
+  for (const key of Object.keys(record)) {
+    if (key !== "field" && key !== "operator" && key !== "value") {
+      return `${label} has unsupported key "${key}"; predicates use {field, operator, value}`;
+    }
+  }
+  if (typeof record.field !== "string" || record.field.length === 0) {
+    return `${label}.field must be a non-empty string`;
+  }
+  const operator = record.operator;
+  if (typeof operator !== "string" || !PREDICATE_OPERATORS.has(operator)) {
+    return `${label}.operator must be one of ${[...PREDICATE_OPERATORS].join(", ")}`;
+  }
+  if (operator === "between") {
+    const value = record.value;
+    if (!Array.isArray(value) || value.length !== 2 || !value.every((item) => typeof item === "number" && Number.isFinite(item))) {
+      return `${label}.value must be a [min, max] number pair for operator "between"`;
+    }
+    return null;
+  }
+  if (operator !== "available" && operator !== "unavailable" && record.value === undefined) {
+    return `${label}.value is required for operator "${operator}"`;
+  }
+  return null;
+}
 
 const EVENT_VALUE_MISSING = Symbol("missing");
 
@@ -832,11 +885,17 @@ function cmdEventsList(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   events.sort((a, b) =>
     (a.start_ms ?? 0) - (b.start_ms ?? 0) || (a.end_ms ?? 0) - (b.end_ms ?? 0) || String(a.event_id).localeCompare(String(b.event_id)),
   );
+  // Report truncation explicitly: a silently truncated payload invited the
+  // model to rank from an incomplete slice (Bug 8).
+  const total = events.length;
+  const truncated = total > limit;
   events = events.slice(0, limit);
 
   return evidenceResult(`${ref}:events:0`, {
     analysis_ref: ref,
     scope,
+    total,
+    truncated,
     records: events.map(safeEvent),
     event_refs: events.map((e) => e.event_id),
   });
@@ -845,6 +904,8 @@ function cmdEventsList(ctx: EvidenceCtx, params: AnyDict): NativeResult {
 // 7. analysis.events.get
 function cmdEventsGet(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   const tableRef = params.table_ref;
+  const tableRefIssue = tableRefStructureError(tableRef);
+  if (tableRefIssue) return evidenceFailed("invalid_parameters", tableRefIssue);
   const eventRef = params.event_ref;
   const analysisRef = analysisRefFromTable(tableRef);
   const { artifact } = requireArtifact(ctx, analysisRef);
@@ -861,6 +922,8 @@ function cmdEventsGet(ctx: EvidenceCtx, params: AnyDict): NativeResult {
 // 8. analysis.events.rank
 function cmdEventsRank(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   const tableRef = params.table_ref;
+  const tableRefIssue = tableRefStructureError(tableRef);
+  if (tableRefIssue) return evidenceFailed("invalid_parameters", tableRefIssue);
   const field = params.field;
   const direction = params.direction;
   const predicates: AnyDict[] = params.predicates ?? [];
@@ -909,7 +972,18 @@ function cmdEventsRank(ctx: EvidenceCtx, params: AnyDict): NativeResult {
 // 9. analysis.events.filter
 function cmdEventsFilter(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   const tableRef = params.table_ref;
+  const tableRefIssue = tableRefStructureError(tableRef);
+  if (tableRefIssue) return evidenceFailed("invalid_parameters", tableRefIssue);
   const predicates: AnyDict[] = params.predicates ?? [];
+  // An empty or malformed predicate list must never degrade to "match every
+  // row" — that reported a full-table match as a filtered answer (Bug 1).
+  if (!Array.isArray(predicates) || predicates.length === 0) {
+    return evidenceFailed("invalid_parameters", "predicates must be a non-empty array of {field, operator, value} objects (at least one predicate)");
+  }
+  for (let i = 0; i < predicates.length; i++) {
+    const error = predicateStructureError(predicates[i], `predicates[${i}]`);
+    if (error) return evidenceFailed("invalid_parameters", error);
+  }
   const limit = Math.min(Math.max(params.limit ?? LIST_MAX, 1), LIST_MAX);
   const analysisRef = analysisRefFromTable(tableRef);
   const { artifact } = requireArtifact(ctx, analysisRef);
@@ -934,6 +1008,8 @@ function cmdEventsFilter(ctx: EvidenceCtx, params: AnyDict): NativeResult {
 // 10. analysis.events.aggregate
 function cmdEventsAggregate(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   const tableRef = params.table_ref;
+  const tableRefIssue = tableRefStructureError(tableRef);
+  if (tableRefIssue) return evidenceFailed("invalid_parameters", tableRefIssue);
   const fields: string[] = params.fields ?? [];
   const groupBy: string | null = params.group_by ?? null;
   if (!Array.isArray(fields) || fields.length < 1 || fields.length > 8) {
@@ -965,10 +1041,16 @@ function cmdEventsAggregate(ctx: EvidenceCtx, params: AnyDict): NativeResult {
 // 11. analysis.events.co_occurrence
 function cmdEventsCoOccurrence(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   const tableRef = params.table_ref;
+  const tableRefIssue = tableRefStructureError(tableRef);
+  if (tableRefIssue) return evidenceFailed("invalid_parameters", tableRefIssue);
   const left: AnyDict = params.left;
   const right: AnyDict = params.right;
   const relation = params.relation;
   if (relation !== "same_event") return evidenceFailed("invalid_parameters", "relation must be same_event");
+  for (const [label, predicate] of [["left", left], ["right", right]] as const) {
+    const error = predicateStructureError(predicate, label);
+    if (error) return evidenceFailed("invalid_parameters", error);
+  }
   const analysisRef = analysisRefFromTable(tableRef);
   const { artifact } = requireArtifact(ctx, analysisRef);
   try {
@@ -1006,6 +1088,8 @@ function cmdEventsCoOccurrence(ctx: EvidenceCtx, params: AnyDict): NativeResult 
 // 12. analysis.events.sequence
 function cmdEventsSequence(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   const tableRef = params.table_ref;
+  const tableRefIssue = tableRefStructureError(tableRef);
+  if (tableRefIssue) return evidenceFailed("invalid_parameters", tableRefIssue);
   const fields: string[] = params.fields ?? [];
   const mode = params.mode;
   if (!Array.isArray(fields) || fields.length < 1 || fields.length > 4) {
@@ -1101,7 +1185,9 @@ function cmdEvidenceCompare(ctx: EvidenceCtx, params: AnyDict): NativeResult {
   const rows: AnyDict[] = [];
 
   for (const ref of refs) {
-    const loaded = requireArtifact(ctx, ref);
+    // Segment/event refs must be normalized to their analysis ref before
+    // loading: loadArtifact only resolves analysis:N (Bug 3).
+    const loaded = requireArtifact(ctx, analysisRefFromEvent(analysisRefFromSegment(ref)));
     const { artifact, derivedArtifact } = loaded;
 
     let segment: AnyDict | null = null;

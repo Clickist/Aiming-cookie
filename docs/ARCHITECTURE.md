@@ -76,7 +76,7 @@ Web 形态可以运行 Next.js + FastAPI + worker + Coach sidecar，用于共享
 
 Raw Input 解决的是输入运动学事实源；目标/准星相对误差、视觉反应时刻和场景证据仍需经过本地 MP4 预处理、统一时间窗口和质量 Gate。首发目标覆盖 static/dynamic clicking、continuous tracking 与 target switching；各 family 只能消费其已验证的事实与指标。没有玩家移动遥测的 movement aiming 保持 outcome-only，不能由输入或结果反推移动机制。
 
-场景 family 路由与精确 ScenarioProfile 是两层独立合同。Run finalization 可以从同名本地 `.sce` 及已冻结的 Challenge 事实生成有界、无路径和无原文的 `scenario_behavior_descriptor.v1`，据此确认 family 并选择对应的 baseline analyzer；名称匹配只产生不调度的候选。exact reviewed profile 仍是完整视觉/场景分析的唯一许可，不能因 family 相同跨 hash 复用。baseline 只能消费 Raw Input、Stats、Performance 等原生已验证事实，必须显式保留缺少目标相对几何、命中关联、目标身份/速度和场景处方的 limitations；证据不足的场景保持 unknown/outcome-only，而不是猜测。
+场景 family 路由与精确 ScenarioProfile 是两层独立合同。任何场景都按多级识别进入大类管线（2026-08-15 决策）：exact reviewed hash 是已知图的精确加速通道；用户+Coach 确认的持久场景记忆（`scenario_override`，存于 app-data `config/scenario-overrides.json`，由 `scenario_memory.set` 在用户确认一次后按场景哈希写入，confidence confirmed 但只授予该 family 的 baseline）优先于 `.sce` 结构、挑战形态与名称各层；Run finalization 可以从同名本地 `.sce` 及已冻结的 Challenge 事实生成有界、无路径和无原文的 `scenario_behavior_descriptor.v1`，据此确认 static/dynamic family；由冻结 Stats/Raw 事实派生的挑战形态（`challenge_shape`，candidate 级统计判据，判据数值由代码与测试维护）在名称候选之上再给出一层大类候选；场景名关键词只产生标记为 `name_heuristic`/candidate 的大类候选，不构成场景身份；全部识别失败时落到 static clicking 基础分析并标记 `scenario_family_unresolved`。exact reviewed profile 仍是完整视觉/场景分析（目标相对误差、目标身份或速度、命中关联、场景处方）的唯一许可，不能因 family 相同跨 hash 复用；manifest gate 未激活的已审核 hash 与所有非 exact 识别都降级为该 family 的 baseline analyzer。baseline 只能消费 Raw Input、Stats、Performance 等原生已验证事实，必须显式保留缺少目标相对几何、命中关联、目标身份/速度和场景处方的 limitations；确无任何可分析数据（如 movement aiming 缺玩家移动遥测）的场景保持 outcome-only，而不是猜测。
 
 Raw Input snapshot 的采样语义必须随格式版本识别。`ACRI v1` 保持历史逐报告 trace 的只读兼容；新的 1 ms canonical 运动归一化使用 `ACRI v2`。现存滚动 v1 snapshot 在继续采集前必须确定性迁移为 v2，迁移需保持每毫秒 X/Y 净位移、按钮边沿及其顺序；不得把 v1 与 v2 记录混装后标为单一语义。Analysis 可继续消费相同的 `timestamp_ms/dx/dy/buttons` 记录形状，但 provenance 必须保留实际 snapshot format version。
 
@@ -240,13 +240,13 @@ Coach 是用户关系层，不属于某个 analysis session：
 
 Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 或训练事实：
 
-- 每个 owner / primary Coach thread 最多一条 active `TeachingSession`；它只保存当前 lesson 的受限状态、版本、当前 run 锁、待确认引用和可重建的 `TeachingTurnContract`，不保存 Raw、路径、Provider secret 或未经确认的训练结果；
-- `TeachingSession` 的候选解释、cue、单一变更变量和 retest intent 是教学过程状态。Training Plan item、execution 和 retest 仍是独立、owner-scoped 的正式事实，只有绑定当前用户明确陈述的 trusted instruction grant 或现有 trusted confirmation 可写入；
-- 每次 Agent run 绑定一个不可变 `TeachingTurnContract` snapshot。它只允许一个下一教学动作和一个用户问题；重试必须重放原 contract，不能从聊天文本重新猜阶段；
-- session 的推进、confirmed-fact reconciliation、可比性判定、暂停和不适停止由本地 store 校验和执行。当前实现中 LLM 通过 `teaching_session.update` 命令直接驱动阶段推进和内容更新，store 强制字段白名单与 transition 合法性；planner 级校验在后续迭代中加强。Provider 不能声明完成、绕过 store 校验选择状态转移或把候选机制升级为测量事实；
+- 每个 owner 只有一份 guided teaching 状态（`teaching/session.json`，schema `coach_teaching_session.v1`）；它只保存当前阶段、当前 lesson 的受限字段（观察、候选解释、cue、单一变更变量、练习引用）、已完成课程历史和暂停原因，不保存 Raw、路径、Provider secret 或未经确认的训练结果；
+- teaching session 的候选解释、cue、单一变更变量和 retest intent 是教学过程状态。Training Plan item、execution 和 retest 仍是独立、owner-scoped 的正式事实，只有绑定当前用户明确陈述的 trusted instruction grant 或现有 trusted confirmation 可写入；
+- 教学流程由 `teaching` skill 在提示词层承载：闭环各阶段、单变量原则和推进纪律写在 SKILL.md，每步推进都通过 `teaching_session.update` 落盘。`TeachingTurnContract` 类型仅作字段参考，不要求 per-run 快照；
+- session 的推进、暂停和不适停止由 `teaching_session.update` 写入口校验和执行：该命令是 coach-runtime 的 native 写命令，原子写 `teaching/session.json`，并按 teaching-policy 强制阶段转移合法性与 lesson 字段白名单；没有 planner、确认机制或合同快照。Provider 不能声明完成、绕过写入口校验选择状态转移或把候选机制升级为测量事实；
 - Analysis/history 是 metric comparability 与 meaningful-change policy 的唯一事实源。没有按 exact metric/version/conditions 注册的重复测量误差、worthwhile change 与必要 guardrail 时，非零 delta 必须保持 inconclusive；Profile 只能将精确相等的可比值显示为 stable，不能把任意非零差异显示为 improving/deteriorating；
 - ratio 的数学等价展示可以保留其原单位语义（例如有明确来源的 ratio 显示为百分比）。本地 validator 拦截的是无来源的语义扩展、好坏评价、发生频率或因果解释，而不是等价格式本身；
-- 删除 Analysis 只会令 session 中对应 evidence ref unavailable；不会删除 session、消息或已经确认的训练事实。若 session 无法继续安全教学，planner 必须回到 intake / unresolved，而非猜测替代证据。
+- 删除 Analysis 只会令 session 中对应 evidence ref unavailable；不会删除 session、消息或已经确认的训练事实。若 session 无法继续安全教学，教学流程必须回到 intake / unresolved，而非猜测替代证据。
 
 ### 4.3.1 有限 KovaaK 成绩同步与训练阶段进阶
 

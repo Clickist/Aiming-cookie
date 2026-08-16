@@ -5,15 +5,16 @@
  * eliminating SQLite database access for write operations.
  *
  * Commands that require the Python analysis worker (analysis.retry) and
- * complex session management (teaching_session.update, coach.session.*,
- * coach.context.detach) are NOT native — they delegate to the Python backend
- * bridge or the REST API. analysis.create_from_run is native via the Python
- * REST API (see python-analysis.ts).
+ * complex session management (coach.session.*, coach.context.detach) are NOT
+ * native — they delegate to the Python backend bridge or the REST API.
+ * analysis.create_from_run is native via the Python REST API (see
+ * python-analysis.ts); teaching_session.update is native below.
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { getAnalysesDir, getConfigDir, getTrainingDir } from "./app-data.ts";
+import { getAnalysesDir, getConfigDir, getTeachingDir, getTrainingDir } from "./app-data.ts";
+import { isTeachingPhase, isTeachingPhaseTransitionAllowed } from "./teaching-policy.ts";
 import { getPythonBackendConfig } from "./python-backend.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -43,9 +44,10 @@ type WriteHandler = (params: AnyDict, ownerId: string) => HandlerResult;
 
 // ── Native write command set ───────────────────────────────────────────
 //
-// Commands NOT listed here (analysis.retry, teaching_session.update,
-// coach.session.*, coach.context.detach) fall through to the Python backend
-// bridge. analysis.create_from_run is handled natively in python-analysis.ts.
+// Commands NOT listed here (coach.session.*, coach.context.detach) fall
+// through to the Python backend bridge.
+// analysis.create_from_run is handled natively in python-analysis.ts and
+// analysis.retry natively below.
 
 export const NATIVE_WRITE_COMMANDS = new Set<string>([
   "training_plan.generate_draft",
@@ -56,6 +58,8 @@ export const NATIVE_WRITE_COMMANDS = new Set<string>([
   "training_plan.item.add",
   "training_plan.execution.record",
   "training_plan.retest.record",
+  "teaching_session.update",
+  "scenario_memory.set",
   "calibration.save",
   "calibration.delete",
   "peripheral_profile.update",
@@ -101,6 +105,16 @@ function ok(result: unknown, resultRef?: string, uiEvent?: AnyDict | null): Hand
 
 function fail(code: string, message: string): HandlerResult {
   return { status: "failed", warning_or_error: { code, message } };
+}
+
+// Handler-thrown messages are forwarded to the Provider only when they stay
+// bounded and cannot carry a filesystem path or credential (e.g. Node fs
+// errors embed absolute paths). Everything else degrades to the generic text.
+const HANDLER_MESSAGE_MAX = 200;
+const HANDLER_MESSAGE_PATH = /\\|(?:[A-Za-z]:[\\/]|\/(?:Users|home|tmp|var|temp)\b)/i;
+
+function isSafeHandlerMessage(message: string): boolean {
+  return message.length > 0 && message.length <= HANDLER_MESSAGE_MAX && !HANDLER_MESSAGE_PATH.test(message);
 }
 
 function safePlan(plan: AnyDict): AnyDict {
@@ -365,6 +379,128 @@ export async function executeNativeAnalysisDelete(
   };
 }
 
+// ── analysis.retry (native) ────────────────────────────────────────────
+//
+// Like analysis.delete, retry must go through the Python backend so the
+// failed session is re-enqueued by the shared product command handler
+// (queue state, idempotency and session status stay consistent).
+
+const ANALYSIS_RETRY_TIMEOUT_MS = 15_000;
+
+export function isNativeAnalysisRetryCommand(commandName: string): boolean {
+  return commandName === "analysis.retry";
+}
+
+export async function executeNativeAnalysisRetry(
+  commandName: string,
+  params: AnyDict,
+  ownerId: string,
+  idempotencyKey: string,
+  signal?: AbortSignal,
+): Promise<NativeWriteResult> {
+  const commandId = newCommandId();
+  const auditRef = newAuditRef();
+
+  if (commandName !== "analysis.retry") {
+    return {
+      status: "failed",
+      command_id: commandId,
+      audit_ref: auditRef,
+      warning_or_error: { code: "unknown_command", message: `${commandName} is not an analysis retry command` },
+    };
+  }
+
+  let ref: string;
+  let analysisId: string;
+  try {
+    ref = requireString(params.analysis_ref, "analysis_ref");
+    const match = ref.match(/^analysis:(\d+)$/);
+    if (!match) throw new Error("invalid analysis_ref");
+    analysisId = match[1];
+  } catch (error) {
+    return {
+      status: "failed",
+      command_id: commandId,
+      audit_ref: auditRef,
+      warning_or_error: {
+        code: "internal_error",
+        message: error instanceof Error ? error.message : "analysis.retry 参数无效",
+      },
+    };
+  }
+
+  const python = getPythonBackendConfig();
+  if (!python) {
+    return {
+      status: "failed",
+      command_id: commandId,
+      audit_ref: auditRef,
+      result_ref: ref,
+      warning_or_error: { code: "python_backend_unavailable", message: "Python 分析后端未就绪，请稍后重试" },
+    };
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${python.baseUrl}/api/sessions/${analysisId}/retry`, {
+      method: "POST",
+      headers: {
+        "X-Aiming-Cookie-Desktop-Token": python.token,
+        "X-User-Id": ownerId || "desktop-local",
+        "Idempotency-Key": idempotencyKey,
+      },
+      signal: signal ?? AbortSignal.timeout(ANALYSIS_RETRY_TIMEOUT_MS),
+    });
+  } catch {
+    return {
+      status: "failed",
+      command_id: commandId,
+      audit_ref: auditRef,
+      result_ref: ref,
+      warning_or_error: { code: "retry_failed", message: "Analysis 重试失败" },
+    };
+  }
+
+  if (response.ok) {
+    let session: AnyDict | null = null;
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === "object") session = body as AnyDict;
+    } catch {
+      // Non-JSON body — report the retry without session details.
+    }
+    return {
+      status: "succeeded",
+      command_id: commandId,
+      audit_ref: auditRef,
+      result_ref: ref,
+      result: {
+        analysis_ref: ref,
+        retried: true,
+        session_id: typeof session?.id === "number" ? session.id : Number(analysisId),
+        session_status: typeof session?.status === "string" ? session.status : null,
+      },
+    };
+  }
+
+  let detail = "";
+  try {
+    detail = await response.text();
+  } catch {
+    // Non-text error body — fall through to the generic message.
+  }
+  return {
+    status: "failed",
+    command_id: commandId,
+    audit_ref: auditRef,
+    result_ref: ref,
+    warning_or_error: {
+      code: response.status === 404 ? "not_found" : "retry_failed",
+      message: detail ? `Analysis 重试失败: ${detail}` : "Analysis 重试失败",
+    },
+  };
+}
+
 // ── Training plan commands ─────────────────────────────────────────────
 
 function planPath(): string {
@@ -597,6 +733,231 @@ const trainingPlanRetestRecord: WriteHandler = (params, _ownerId) => {
   return ok(record, retestRef);
 };
 
+// ── Teaching session commands ─────────────────────────────────────────
+//
+// Guided teaching state is one owner-scoped JSON file, teaching/session.json.
+// teaching_session.update is the single write entry point: it validates the
+// phase transition (teaching-policy) and the restricted lesson fields, then
+// writes directly — no confirmation round-trip by product decision.
+
+const TEACHING_SESSION_SCHEMA = "coach_teaching_session.v1";
+const TEACHING_LESSON_TEXT_FIELDS = ["observation", "hypothesis", "cue", "single_variable"] as const;
+const TEACHING_LESSON_PATH_OR_URL = /(?:https?:\/\/|file:(?:\/\/)?|(?:^|[\s"'`([{=,:])[A-Za-z]:[\\/]|\\\\)/i;
+const TEACHING_LESSON_UNSAFE_TEXT = /\b(?:api[_-]?key|authorization|credential|token|raw_trace|payload)\b/i;
+const TEACHING_PHASES_THAT_COMPLETED_A_LESSON = new Set(["revise", "follow_up"]);
+
+function sessionPath(): string {
+  return join(getTeachingDir(), "session.json");
+}
+
+function readTeachingSession(): AnyDict | null {
+  return readJsonFile(sessionPath());
+}
+
+function writeTeachingSession(session: AnyDict): void {
+  writeJsonFile(sessionPath(), session);
+}
+
+function teachingSessionProjection(session: AnyDict): AnyDict {
+  return {
+    schema_version: session.schema_version,
+    phase: session.phase,
+    lesson: session.lesson,
+    completed_lessons: session.completed_lessons,
+    paused_reason: session.paused_reason,
+    created_at: session.created_at,
+    updated_at: session.updated_at,
+  };
+}
+
+// teaching_session.update
+const teachingSessionUpdate: WriteHandler = (params, _ownerId) => {
+  const updates = params.updates;
+  if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+    return fail("invalid_teaching_session", "updates must be an object with phase, lesson or paused_reason");
+  }
+  const updateKeys = Object.keys(updates);
+  if (updateKeys.length === 0) {
+    return fail("invalid_teaching_session", "updates must contain at least one field");
+  }
+  for (const key of updateKeys) {
+    if (key !== "phase" && key !== "lesson" && key !== "paused_reason") {
+      return fail("invalid_teaching_session", `updates contains unsupported field: ${key}`);
+    }
+  }
+
+  let nextPhase: string | null = null;
+  if ("phase" in updates) {
+    if (!isTeachingPhase(updates.phase)) {
+      return fail("invalid_teaching_session", "phase is invalid");
+    }
+    nextPhase = updates.phase as string;
+  }
+
+  const lessonUpdates: AnyDict = {};
+  if ("lesson" in updates) {
+    const rawLesson = updates.lesson;
+    if (!rawLesson || typeof rawLesson !== "object" || Array.isArray(rawLesson)) {
+      return fail("invalid_teaching_session", "lesson must be an object");
+    }
+    const lessonKeys = Object.keys(rawLesson);
+    if (lessonKeys.length === 0) {
+      return fail("invalid_teaching_session", "lesson must contain at least one field");
+    }
+    for (const key of lessonKeys) {
+      if (key !== "practice_refs" && !TEACHING_LESSON_TEXT_FIELDS.includes(key as typeof TEACHING_LESSON_TEXT_FIELDS[number])) {
+        return fail("invalid_teaching_session", `lesson contains unsupported field: ${key}`);
+      }
+    }
+    for (const key of TEACHING_LESSON_TEXT_FIELDS) {
+      if (!(key in rawLesson)) continue;
+      const value = rawLesson[key];
+      if (value !== null && (typeof value !== "string" || value.length === 0 || value.length > 480 ||
+          TEACHING_LESSON_PATH_OR_URL.test(value) || TEACHING_LESSON_UNSAFE_TEXT.test(value))) {
+        return fail("invalid_teaching_session", `lesson.${key} is invalid`);
+      }
+      lessonUpdates[key] = value;
+    }
+    if ("practice_refs" in rawLesson) {
+      const refs = rawLesson.practice_refs;
+      if (!Array.isArray(refs) || refs.length > 8 ||
+          refs.some((ref: unknown) => typeof ref !== "string" || ref.length === 0 || ref.length > 160)) {
+        return fail("invalid_teaching_session", "lesson.practice_refs is invalid");
+      }
+      lessonUpdates.practice_refs = refs;
+    }
+  }
+
+  let pausedReason: string | null | undefined;
+  if ("paused_reason" in updates) {
+    const value = updates.paused_reason;
+    if (value !== null && (typeof value !== "string" || value.length === 0 || value.length > 480)) {
+      return fail("invalid_teaching_session", "paused_reason is invalid");
+    }
+    pausedReason = value;
+  }
+
+  const existing = readTeachingSession();
+  const now = nowIso();
+
+  if (!existing) {
+    if (nextPhase === null) {
+      return fail("invalid_teaching_session", "phase is required when creating a teaching session");
+    }
+    if (nextPhase !== "intake") {
+      return fail("invalid_teaching_transition", `cannot create a teaching session in ${nextPhase}; expected intake`);
+    }
+    const session: AnyDict = {
+      schema_version: TEACHING_SESSION_SCHEMA,
+      phase: nextPhase,
+      lesson: Object.keys(lessonUpdates).length > 0 ? lessonUpdates : null,
+      completed_lessons: [],
+      paused_reason: pausedReason ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+    writeTeachingSession(session);
+    return ok(teachingSessionProjection(session), "teaching_session:current");
+  }
+
+  if (nextPhase !== null && nextPhase !== existing.phase) {
+    const fromPhase = isTeachingPhase(existing.phase) ? existing.phase : "intake";
+    if (!isTeachingPhaseTransitionAllowed(fromPhase, nextPhase)) {
+      return fail("invalid_teaching_transition", `cannot move the teaching session from ${existing.phase} to ${nextPhase}`);
+    }
+  }
+
+  const session: AnyDict = { ...existing };
+  // Returning to intake starts a new lesson: a loop that reached revise or
+  // follow_up archives the current lesson; any other restart drops it.
+  if (nextPhase === "intake" && existing.phase !== "intake") {
+    if (!Array.isArray(session.completed_lessons)) session.completed_lessons = [];
+    if (TEACHING_PHASES_THAT_COMPLETED_A_LESSON.has(existing.phase as string) && session.lesson) {
+      session.completed_lessons.push({ lesson: session.lesson, phase: existing.phase, completed_at: now });
+    }
+    session.lesson = null;
+  }
+  if (nextPhase !== null) session.phase = nextPhase;
+  if (Object.keys(lessonUpdates).length > 0) {
+    session.lesson = { ...(session.lesson ?? {}), ...lessonUpdates };
+  }
+  if (pausedReason !== undefined) {
+    session.paused_reason = pausedReason;
+  } else if (nextPhase !== null && nextPhase !== existing.phase && nextPhase !== "paused" &&
+             (existing.phase === "paused" || existing.phase === "stopped_for_discomfort")) {
+    session.paused_reason = null;
+  }
+  session.updated_at = now;
+  writeTeachingSession(session);
+  return ok(teachingSessionProjection(session), "teaching_session:current");
+};
+
+// ── Scenario memory command ───────────────────────────────────────────
+//
+// Scenario family memory is one owner-scoped JSON file,
+// config/scenario-overrides.json. scenario_memory.set is the Coach's single
+// write entry point after the user confirms a scenario's aim family once;
+// the Python read side applies it above the heuristic identification chain
+// (exact reviewed hashes keep priority).
+
+const SCENARIO_OVERRIDES_SCHEMA = "scenario_overrides.v1";
+const SCENARIO_OVERRIDE_FAMILIES = new Set([
+  "static_clicking", "dynamic_clicking", "continuous_tracking", "target_switching",
+]);
+const SCENARIO_HASH_RE = /^[0-9a-f]{32}$/;
+const SCENARIO_OVERRIDE_MAX_ENTRIES = 5000;
+
+function scenarioOverridesPath(): string {
+  return join(getConfigDir(), "scenario-overrides.json");
+}
+
+// scenario_memory.set
+const scenarioMemorySet: WriteHandler = (params, _ownerId) => {
+  const scenarioHash = params.scenario_hash;
+  const aimFamily = params.aim_family;
+  const note = params.note;
+  if (typeof scenarioHash !== "string" || !SCENARIO_HASH_RE.test(scenarioHash)) {
+    return fail("invalid_scenario_memory", "scenario_hash must be 32 lowercase hex characters");
+  }
+  if (typeof aimFamily !== "string" || !SCENARIO_OVERRIDE_FAMILIES.has(aimFamily)) {
+    return fail(
+      "invalid_scenario_memory",
+      `aim_family must be one of ${[...SCENARIO_OVERRIDE_FAMILIES].sort().join(", ")}`,
+    );
+  }
+  if (note !== undefined && note !== null && (typeof note !== "string" || note.length > 200)) {
+    return fail("invalid_scenario_memory", "note must be a string of at most 200 characters");
+  }
+  const existing = readJsonFile(scenarioOverridesPath());
+  const existingOverrides = existing && typeof existing === "object" && !Array.isArray(existing)
+    && existing.overrides && typeof existing.overrides === "object" && !Array.isArray(existing.overrides)
+    ? existing.overrides as AnyDict
+    : {};
+  const overrides: AnyDict = { ...existingOverrides };
+  const trimmedNote = typeof note === "string" ? note.trim() : "";
+  overrides[scenarioHash] = {
+    aim_family: aimFamily,
+    confirmed_by: "user",
+    note: trimmedNote || null,
+    updated_at: nowIso(),
+  };
+  if (Object.keys(overrides).length > SCENARIO_OVERRIDE_MAX_ENTRIES) {
+    return fail("invalid_scenario_memory", "scenario memory exceeds the entry limit");
+  }
+  writeJsonFile(scenarioOverridesPath(), {
+    schema_version: SCENARIO_OVERRIDES_SCHEMA,
+    overrides,
+  });
+  return ok({
+    schema_version: SCENARIO_OVERRIDES_SCHEMA,
+    scenario_hash: scenarioHash,
+    aim_family: aimFamily,
+    confirmed_by: "user",
+    note: overrides[scenarioHash].note,
+    updated_at: overrides[scenarioHash].updated_at,
+  }, `scenario_override:${scenarioHash}`);
+};
+
 // ── Handler registry ──────────────────────────────────────────────────
 
 const HANDLERS: Record<string, WriteHandler> = {
@@ -612,6 +973,8 @@ const HANDLERS: Record<string, WriteHandler> = {
   "training_plan.item.add": trainingPlanItemAdd,
   "training_plan.execution.record": trainingPlanExecutionRecord,
   "training_plan.retest.record": trainingPlanRetestRecord,
+  "teaching_session.update": teachingSessionUpdate,
+  "scenario_memory.set": scenarioMemorySet,
 };
 
 export function isNativeWriteCommand(commandName: string): boolean {
@@ -650,6 +1013,10 @@ export function executeNativeWrite(
       handlerResult = { status: "failed", warning_or_error: { code: "forbidden", message: message.slice("forbidden:".length) } };
     } else if (message.startsWith("invalid_transition:")) {
       handlerResult = { status: "failed", warning_or_error: { code: "invalid_training_plan", message: message.slice("invalid_transition:".length) } };
+    } else if (isSafeHandlerMessage(message)) {
+      // Surface the real reason (e.g. "plan_payload is required") so the model
+      // can self-correct; only bounded, path/secret-free messages pass (Bug 2).
+      handlerResult = { status: "failed", warning_or_error: { code: "internal_error", message } };
     } else {
       handlerResult = { status: "failed", warning_or_error: { code: "internal_error", message: "product command could not be completed" } };
     }

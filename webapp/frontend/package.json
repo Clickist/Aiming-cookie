@@ -12,7 +12,7 @@
     "type-check": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:contracts",
     "test:unit": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs --test lib/*.test.ts mocks/*.test.ts",
-    "test:contracts": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs --test tests/*.test.ts",
+    "test:contracts": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs --test tests/*.test.{ts,tsx}",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:update": "npm run build && playwright test --update-snapshots",
     "tauri": "tauri"

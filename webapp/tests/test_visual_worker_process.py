@@ -467,3 +467,21 @@ async def test_parent_restores_typed_errors_and_terminates_cancelled_child(monke
 
     assert blocked.terminated is True
     assert blocked.killed is False
+
+
+@pytest.mark.asyncio
+async def test_parent_fails_bounded_and_kills_a_hung_visual_child(monkeypatch) -> None:
+    # The consume loop is serial, so a hung CV child must hit a timeout,
+    # be terminated, and surface as a bounded error — not block forever.
+    hung = _FakeProcess({"ok": True, "result": {}}, block=True)
+
+    async def hung_subprocess(*_args, **_kwargs):
+        return hung
+
+    monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", hung_subprocess)
+    monkeypatch.setattr(worker, "VISUAL_WORKER_TIMEOUT_SECONDS", 0.05)
+
+    with pytest.raises(RuntimeError, match="visual_preprocessing_timeout"):
+        await worker.run_visual_preprocessing_isolated({"id": 10})
+
+    assert hung.terminated is True

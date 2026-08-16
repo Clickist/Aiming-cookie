@@ -4,6 +4,8 @@ import test from "node:test";
 import type { TeachingTurnContract } from "../src/contracts.ts";
 import {
   fallbackForTeachingTurn,
+  isTeachingPhase,
+  isTeachingPhaseTransitionAllowed,
   parseTeachingProviderDraft,
   parseTeachingTurnContract,
   planTeachingTurn,
@@ -405,4 +407,49 @@ test("a revise turn without a deterministic decision holds its lesson state", ()
       },
     })), true, comparability);
   }
+});
+
+test("teaching session phase transitions follow the guided loop", () => {
+  assert.ok(isTeachingPhase("intake"));
+  assert.ok(!isTeachingPhase("resting"));
+  assert.ok(!isTeachingPhase(null));
+
+  const loop = [
+    "intake", "hypothesize", "teach", "await_teach_back", "practice_ready",
+    "await_execution_confirmation", "retest_ready", "await_retest_confirmation", "revise",
+  ] as const;
+  for (let i = 0; i < loop.length - 1; i++) {
+    assert.ok(
+      isTeachingPhaseTransitionAllowed(loop[i], loop[i + 1]),
+      `${loop[i]} -> ${loop[i + 1]}`,
+    );
+  }
+
+  // No skipping ahead, no invented states.
+  assert.ok(!isTeachingPhaseTransitionAllowed("intake", "practice_ready"));
+  assert.ok(!isTeachingPhaseTransitionAllowed("intake", "revise"));
+  assert.ok(!isTeachingPhaseTransitionAllowed("teach", "await_retest_confirmation"));
+  assert.ok(!isTeachingPhaseTransitionAllowed("revise", "await_teach_back"));
+
+  // Lesson-only updates keep the current phase.
+  assert.ok(isTeachingPhaseTransitionAllowed("teach", "teach"));
+
+  // One step back to re-teach, follow-up questions and repair stay local.
+  assert.ok(isTeachingPhaseTransitionAllowed("await_teach_back", "teach_back_repair"));
+  assert.ok(isTeachingPhaseTransitionAllowed("teach_back_repair", "teach"));
+  assert.ok(isTeachingPhaseTransitionAllowed("practice_ready", "teach"));
+  assert.ok(isTeachingPhaseTransitionAllowed("revise", "follow_up"));
+
+  // Any active phase may pause; a paused session may resume to any active phase.
+  for (const phase of loop) {
+    assert.ok(isTeachingPhaseTransitionAllowed(phase, "paused"), `${phase} -> paused`);
+    assert.ok(isTeachingPhaseTransitionAllowed("paused", phase), `paused -> ${phase}`);
+  }
+  assert.ok(isTeachingPhaseTransitionAllowed("paused", "paused"));
+  assert.ok(!isTeachingPhaseTransitionAllowed("paused", "stopped_for_discomfort"));
+
+  // Discomfort only restarts the loop.
+  assert.ok(isTeachingPhaseTransitionAllowed("practice_ready", "stopped_for_discomfort"));
+  assert.ok(isTeachingPhaseTransitionAllowed("stopped_for_discomfort", "intake"));
+  assert.ok(!isTeachingPhaseTransitionAllowed("stopped_for_discomfort", "practice_ready"));
 });

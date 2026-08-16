@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { loadPiAi } from "./pi-source.ts";
 import { isRecord, type CoachToolBridge } from "./contracts.ts";
 import { NATIVE_READ_COMMANDS, executeNativeRead } from "./product-commands-native.ts";
-import { isNativeEvidenceCommand, executeNativeEvidence } from "./evidence-native.ts";
-import { isNativeWriteCommand, executeNativeWrite, isNativeAnalysisDeleteCommand, executeNativeAnalysisDelete, type NativeWriteResult } from "./product-commands-write.ts";
+import { isNativeEvidenceCommand, executeNativeEvidence, predicateStructureError } from "./evidence-native.ts";
+import { isNativeWriteCommand, executeNativeWrite, isNativeAnalysisDeleteCommand, executeNativeAnalysisDelete, isNativeAnalysisRetryCommand, executeNativeAnalysisRetry, type NativeWriteResult } from "./product-commands-write.ts";
 import { isNativeEloshapesCommand, executeNativeEloshapes } from "./eloshapes-native.ts";
 import { isNativeKovaakScoreCommand, executeNativeKovaakScore } from "./kovaak-scores-native.ts";
 import { isNativePythonAnalysisCommand, executeNativePythonAnalysis } from "./python-analysis.ts";
@@ -23,7 +23,8 @@ export const PRODUCT_COMMAND_NAMES = [
   "analysis.compare", "navigation.open", "analysis.create_from_run", "analysis.retry", "analysis.delete",
   "training_plan.generate_draft", "training_plan.save", "training_plan.activate",
   "training_plan.pause", "training_plan.adjust", "training_plan.review", "training_plan.item.add",
-  "training_plan.execution.record", "training_plan.retest.record",
+  "training_plan.execution.record", "training_plan.retest.record", "teaching_session.update",
+  "scenario_memory.set",
   "analysis.metrics.distribution", "analysis.evidence.list", "analysis.evidence.signal_window",
   "analysis.evidence.compare", "analysis.run_facts.get", "analysis.outcomes.timeline",
   "analysis.events.list", "analysis.events.get", "analysis.events.rank",
@@ -31,7 +32,6 @@ export const PRODUCT_COMMAND_NAMES = [
   "analysis.events.sequence", "profile.aiming.snapshot",
   "product.readiness.get",
   "kovaak_scores.lookup", "kovaak_scores.refresh_connected",
-  "teaching_session.update",
   "eloshapes.query", "peripheral_profile.get", "peripheral_profile.update",
 ] as const;
 type ProductCommandName = typeof PRODUCT_COMMAND_NAMES[number];
@@ -77,13 +77,155 @@ function hasExactKeys(parameters: Record<string, unknown>, keys: string[]): bool
   return received.length === keys.length && keys.every((key) => Object.hasOwn(parameters, key));
 }
 
-function hasValidCommandParameters(commandName: ProductCommandName, parameters: Record<string, unknown>): boolean {
-  if (commandName === "kovaak_scores.lookup") {
-    return hasExactKeys(parameters, ["profile_ref"]) &&
-      typeof parameters.profile_ref === "string" && /^steam_profile:[1-9]\d*$/.test(parameters.profile_ref);
+// ── Strict parameter contracts ─────────────────────────────────────────
+//
+// The 2026-08-16 deep test showed that a fully open `parameters` object makes
+// wrong shapes either silently ignored (false-positive answers) or opaque
+// errors the model cannot self-correct. The command families below get an
+// explicit contract: unknown fields are rejected with the allowed list.
+// Requiredness/format of table_ref stays in evidence-native so a missing
+// table_ref reaches the model as a structured invalid_parameters result.
+
+const ELOSHAPES_FILTER_KEYS = [
+  "weight_max", "size_category", "shape", "front_flare",
+  "side_curvature", "hump_placement", "hand_compatibility",
+  "brand_search", "model_search", "limit",
+] as const;
+
+const EVENTS_LIST_SCOPE = new Set(["whole_run", "evidence_segment"]);
+const EVENTS_RANK_DIRECTION = new Set(["asc", "desc"]);
+const ANALYSIS_REF_RE = /^analysis:\d+$/;
+
+function unsupportedKeysError(
+  parameters: Record<string, unknown>,
+  allowed: readonly string[],
+  commandName: string,
+): string | null {
+  const unknown = Object.keys(parameters).filter((key) => !allowed.includes(key));
+  if (unknown.length === 0) return null;
+  return `unsupported fields: ${commandName} does not accept ${unknown.map((key) => `"${key}"`).join(", ")}; allowed fields: ${allowed.join(", ")}`;
+}
+
+function requiredStringError(value: unknown, field: string): string | null {
+  return typeof value === "string" && value.length > 0 ? null : `unsupported fields: ${field} must be a non-empty string`;
+}
+
+function optionalNumberError(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  return typeof value === "number" && Number.isFinite(value) ? null : `unsupported fields: ${field} must be a number`;
+}
+
+function stringArrayError(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length === 0 || !value.every((item) => typeof item === "string" && item.length > 0)) {
+    return `unsupported fields: ${field} must be a non-empty array of strings`;
   }
-  if (commandName === "kovaak_scores.refresh_connected") return hasExactKeys(parameters, []);
-  return true;
+  return null;
+}
+
+function predicatesError(value: unknown, field: string, required: boolean): string | null {
+  if (value === undefined || value === null) {
+    return required ? `unsupported fields: ${field} is required — an array of {field, operator, value} predicates (at least one)` : null;
+  }
+  if (!Array.isArray(value) || (required && value.length === 0)) {
+    return `unsupported fields: ${field} must be a non-empty array of {field, operator, value} predicates`;
+  }
+  for (let i = 0; i < value.length; i++) {
+    const error = predicateStructureError(value[i], `${field}[${i}]`);
+    if (error) return `unsupported fields: ${error}`;
+  }
+  return null;
+}
+
+function eventsCommandError(commandName: ProductCommandName, parameters: Record<string, unknown>): string | null {
+  if (commandName === "analysis.events.list") {
+    const unknown = unsupportedKeysError(parameters, ["analysis_ref", "scope", "segment_ref", "event_kinds", "limit"], commandName);
+    if (unknown) return unknown;
+    if (typeof parameters.analysis_ref !== "string" || !ANALYSIS_REF_RE.test(parameters.analysis_ref)) {
+      return 'unsupported fields: analysis_ref must be "analysis:<id>"';
+    }
+    if (parameters.scope !== undefined && parameters.scope !== null && !EVENTS_LIST_SCOPE.has(parameters.scope as string)) {
+      return `unsupported fields: scope must be one of ${[...EVENTS_LIST_SCOPE].join(", ")}`;
+    }
+    return stringArrayError(parameters.event_kinds, "event_kinds") ?? optionalNumberError(parameters.limit, "limit");
+  }
+  if (commandName === "analysis.events.get") {
+    const unknown = unsupportedKeysError(parameters, ["table_ref", "event_ref"], commandName);
+    if (unknown) return unknown;
+    // table_ref requiredness/format is validated natively so the model gets
+    // the structured invalid_parameters result (Bug 5).
+    return requiredStringError(parameters.event_ref, "event_ref");
+  }
+  if (commandName === "analysis.events.rank") {
+    const unknown = unsupportedKeysError(parameters, ["table_ref", "field", "direction", "predicates", "limit"], commandName);
+    if (unknown) return unknown;
+    if (parameters.direction !== undefined && parameters.direction !== null && !EVENTS_RANK_DIRECTION.has(parameters.direction as string)) {
+      return `unsupported fields: direction must be one of ${[...EVENTS_RANK_DIRECTION].join(", ")}`;
+    }
+    return requiredStringError(parameters.field, "field")
+      ?? predicatesError(parameters.predicates, "predicates", false)
+      ?? optionalNumberError(parameters.limit, "limit");
+  }
+  if (commandName === "analysis.events.filter") {
+    const unknown = unsupportedKeysError(parameters, ["table_ref", "predicates", "limit"], commandName);
+    if (unknown) return unknown;
+    return predicatesError(parameters.predicates, "predicates", true) ?? optionalNumberError(parameters.limit, "limit");
+  }
+  if (commandName === "analysis.events.aggregate") {
+    const unknown = unsupportedKeysError(parameters, ["table_ref", "fields", "group_by"], commandName);
+    if (unknown) return unknown;
+    return stringArrayError(parameters.fields, "fields");
+  }
+  if (commandName === "analysis.events.co_occurrence") {
+    const unknown = unsupportedKeysError(parameters, ["table_ref", "left", "right", "relation"], commandName);
+    if (unknown) return unknown;
+    // left/right are single predicates, not arrays.
+    for (const label of ["left", "right"] as const) {
+      const error = predicateStructureError(parameters[label], label);
+      if (error) return `unsupported fields: ${error}`;
+    }
+    return null;
+  }
+  // analysis.events.sequence
+  const unknown = unsupportedKeysError(parameters, ["table_ref", "fields", "mode"], commandName);
+  if (unknown) return unknown;
+  return stringArrayError(parameters.fields, "fields");
+}
+
+/** Returns a rejection message for invalid parameters, or null when valid. */
+function commandParameterError(commandName: ProductCommandName, parameters: Record<string, unknown>): string | null {
+  if (commandName === "kovaak_scores.lookup") {
+    if (!hasExactKeys(parameters, ["profile_ref"])) return 'unsupported fields: kovaak_scores.lookup takes exactly "profile_ref"';
+    if (typeof parameters.profile_ref !== "string" ||
+        !(
+          /^steam_profile:[1-9]\d*$/.test(parameters.profile_ref) ||
+          /^\d{17}$/.test(parameters.profile_ref) ||
+          /^https:\/\/steamcommunity\.com\/profiles\/\d{17}\/?$/.test(parameters.profile_ref)
+        )) {
+      return "unsupported fields: profile_ref must be a steam_profile ref, a 17-digit Steam ID, or a steamcommunity profile URL";
+    }
+    return null;
+  }
+  if (commandName === "kovaak_scores.refresh_connected") {
+    return hasExactKeys(parameters, []) ? null : "unsupported fields: kovaak_scores.refresh_connected takes no parameters";
+  }
+  if (commandName === "eloshapes.query") {
+    return unsupportedKeysError(parameters, ELOSHAPES_FILTER_KEYS, commandName)
+      ?? optionalNumberError(parameters.weight_max, "weight_max")
+      ?? optionalNumberError(parameters.limit, "limit");
+  }
+  if (commandName === "training_plan.generate_draft") {
+    const unknown = unsupportedKeysError(parameters, ["plan_payload", "evidence_refs", "verification_targets"], commandName);
+    if (unknown) return unknown;
+    if (parameters.plan_payload === undefined || typeof parameters.plan_payload !== "object" || Array.isArray(parameters.plan_payload)) {
+      return 'unsupported fields: training_plan.generate_draft requires "plan_payload" (the draft plan object), e.g. {plan_payload: {...}}';
+    }
+    return null;
+  }
+  if (commandName.startsWith("analysis.events.")) {
+    return eventsCommandError(commandName, parameters);
+  }
+  return null;
 }
 
 function safeCommandEvent(result: Record<string, unknown>, commandName: string) {
@@ -178,7 +320,7 @@ export function createProductCommandTool(
   return {
     name: "run_product_command",
     label: "Run product command",
-    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。不要猜测 ref，只用已返回的 ref。写操作需用户授权。不得提交路径、URL、credential 或任意 payload。",
+    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。查 KovaaK 成绩：kovaak_scores.lookup 的 profile_ref 传用户提供的 17 位 Steam ID 或 steamcommunity.com 主页链接。参数形态要点：analysis.events.* 表命令的 table_ref 形如 analysis:<id>:table:<event_kind>（用 events.list 返回的原值），predicates 是 [{field, operator, value}] 数组，operator 取 eq/lt/lte/gt/gte/between/available/unavailable，filter 至少一个谓词；eloshapes.query 只接受 weight_max、size_category、shape、front_flare、side_curvature、hump_placement、hand_compatibility、brand_search、model_search、limit；training_plan.generate_draft 必须传 plan_payload 对象。未知参数会被拒绝并列出允许的字段。不要猜测 ref，只用已返回的 ref。不得提交路径、credential 或任意 payload。",
     parameters: Type.Object({
       command_name: commandSchema,
       parameters: Type.Object({}, { additionalProperties: true }),
@@ -194,9 +336,12 @@ export function createProductCommandTool(
       if (!commandNames.includes(params.command_name)) {
         throw new Error("Product command is not available for this turn");
       }
-      if (!isRecord(params.parameters) ||
-          !hasValidCommandParameters(params.command_name, params.parameters)) {
+      if (!isRecord(params.parameters)) {
         throw new Error("Product command contains unsupported fields");
+      }
+      const parameterError = commandParameterError(params.command_name, params.parameters);
+      if (parameterError) {
+        throw new Error(parameterError);
       }
 
       // Native read commands: read JSON files directly, skip the HTTP bridge.
@@ -250,6 +395,19 @@ export function createProductCommandTool(
         return writeResultToToolResult(params.command_name, nativeResult);
       }
 
+      // Native analysis retry: HTTP POST to the Python backend so the failed
+      // session is re-enqueued through the shared product command handler.
+      if (isNativeAnalysisRetryCommand(params.command_name)) {
+        let idempotencyKey = params.idempotency_key;
+        if (!idempotencyKey) {
+          idempotencyKey = `native:${createHash("sha256").update(canonicalJson({ owner: ownerId, commandName: params.command_name, parameters: params.parameters })).digest("hex")}`;
+        }
+        const nativeResult = await executeNativeAnalysisRetry(
+          params.command_name, params.parameters, ownerId, idempotencyKey, signal,
+        );
+        return writeResultToToolResult(params.command_name, nativeResult);
+      }
+
       // Native eloshapes query: read artifact files, skip the HTTP bridge.
       if (isNativeEloshapesCommand(params.command_name)) {
         const nativeResult = executeNativeEloshapes(params.command_name, params.parameters);
@@ -258,9 +416,9 @@ export function createProductCommandTool(
 
       // Native KovaaK scores: async HTTP call to KovaaK API, skip the HTTP bridge.
       if (isNativeKovaakScoreCommand(params.command_name)) {
-        // temporary_profile_refs are not carried on the Node bridge type yet;
-        // kovaak_scores.lookup will return temporary_profile_unavailable until
-        // wired, while refresh_connected works (reads steam_id from config).
+        // lookup takes the user-provided 17-digit Steam ID or steamcommunity
+        // profile URL directly (or a turn-scoped steam_profile ref when the
+        // caller supplies one); refresh_connected reads steam_id from config.
         const nativeResult = await executeNativeKovaakScore(
           params.command_name, params.parameters, ownerId,
         );

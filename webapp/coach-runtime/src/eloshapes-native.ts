@@ -25,7 +25,7 @@ export type NativeCommandResult = {
 
 const _dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(_dirname, "..", "..", "..");
-const CATALOG_PATH = resolve(
+export const CATALOG_PATH = resolve(
   REPO_ROOT,
   "artifacts", "eloshapes", "snapshots",
   "eloshapes_mouse_catalog_2026-07-31T211736Z.json",
@@ -46,8 +46,10 @@ let _mappingCache: Map<number, AnyDict> | null = null;
 function loadCatalog(): AnyDict[] {
   if (_catalogCache !== null) return _catalogCache;
   if (!existsSync(CATALOG_PATH)) {
-    _catalogCache = [];
-    return _catalogCache;
+    // Confirmed absent on this call — do not cache: caching the empty array
+    // would keep every later query catalog_unavailable even after the
+    // snapshot appears (Bug 9 of the 2026-08-16 deep test).
+    return [];
   }
   const raw = readFileSync(CATALOG_PATH, "utf-8");
   _catalogCache = JSON.parse(raw) as AnyDict[];
@@ -122,9 +124,21 @@ export function executeNativeEloshapes(
     "side_curvature", "hump_placement", "hand_compatibility",
     "brand_search", "model_search", "limit",
   ]);
+  // Unknown filters must be rejected, not silently dropped: a dropped filter
+  // answers a different question than the one asked (Bug 6).
+  const unknownKeys = Object.keys(params).filter((key) => !allowed.has(key));
+  if (unknownKeys.length > 0) {
+    return {
+      status: "failed",
+      warning_or_error: {
+        code: "invalid_parameters",
+        message: `unsupported filters: ${unknownKeys.map((key) => `"${key}"`).join(", ")}; allowed: ${[...allowed].join(", ")}`,
+      },
+    };
+  }
   const filtered: AnyDict = {};
   for (const [key, value] of Object.entries(params)) {
-    if (allowed.has(key) && value !== null && value !== undefined) {
+    if (value !== null && value !== undefined) {
       filtered[key] = value;
     }
   }

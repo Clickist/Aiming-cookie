@@ -1,4 +1,5 @@
 import { loadPiAi } from "../src/pi-source.ts";
+import { materializeKnowledgeDir } from "../src/knowledge-materialize.ts";
 import type { StreamFn } from "../src/stream-openai-compatible.ts";
 import { runCoachTurn } from "../src/turn.ts";
 
@@ -86,52 +87,49 @@ function toolResultText(context: unknown, toolName: string): string {
   throw new Error(`missing ${toolName} result`);
 }
 
-function knowledgeQueryFromAnalysis(analysisSummary: string) {
+function issueSignalFromAnalysis(analysisSummary: string) {
   const analysis = JSON.parse(analysisSummary) as {
-    diagnosis?: { issues?: Array<{ signal?: unknown; metric_refs?: unknown }> };
+    diagnosis?: { issues?: Array<{ signal?: unknown }> };
   };
   const issue = analysis.diagnosis?.issues?.[0];
   if (!issue || typeof issue.signal !== "string") throw new Error("analysis has no issue signal");
-  const metricRefs = Array.isArray(issue.metric_refs)
-    ? issue.metric_refs
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => value.startsWith("metric:") ? value : `metric:${value}`)
-    : [];
-  return {
-    issue_signal: issue.signal,
-    metric_refs: metricRefs,
-    supported_use: "explanation_only",
+  return issue.signal;
+}
+
+function refsForSignal(indexText: string, signal: string) {
+  const index = JSON.parse(indexText) as {
+    entries?: Array<{ entry_ref?: unknown; signals?: unknown }>;
   };
+  return (index.entries ?? [])
+    .filter((entry) => Array.isArray(entry.signals) && entry.signals.includes(signal))
+    .map((entry) => entry.entry_ref)
+    .filter((value): value is string => typeof value === "string");
 }
 
 export function createAnalysisKnowledgeE2EStream(analysisSummary: string): StreamFn {
-  const query = knowledgeQueryFromAnalysis(analysisSummary);
+  const signal = issueSignalFromAnalysis(analysisSummary);
   let callCount = 0;
   return async (_model, context) => {
     callCount += 1;
     if (callCount === 1) {
       return streamAssistant([{
         type: "toolCall",
-        id: "knowledge-call",
-        name: "get_coach_knowledge",
-        arguments: query,
+        id: "read-knowledge-index",
+        name: "read",
+        arguments: { path: "knowledge/index.json" },
       }], "toolUse");
     }
-    const result = JSON.parse(toolResultText(context, "get_coach_knowledge")) as {
-      entries?: Array<{ entry_ref?: unknown }>;
-    };
-    const refs = (result.entries ?? [])
-      .map((entry) => entry.entry_ref)
-      .filter((value): value is string => typeof value === "string");
-    if (refs.length === 0) throw new Error("knowledge retrieval returned no entries");
+    const refs = refsForSignal(toolResultText(context, "read"), signal);
+    if (refs.length === 0) throw new Error(`knowledge index has no entry for signal ${signal}`);
     return streamAssistant([{
       type: "text",
-      text: `已根据当前 Analysis 检索 ${refs.join(", ")}`,
+      text: `已根据当前 Analysis 在知识库找到 ${refs.join(", ")}`,
     }], "stop");
   };
 }
 
 export async function runAnalysisKnowledgeE2E(analysisSummary: string) {
+  materializeKnowledgeDir();
   return runCoachTurn({
     schema_version: "coach_runtime_turn.v1",
     run_id: "analysis-knowledge-e2e",

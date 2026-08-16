@@ -9,12 +9,19 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const CONTROL_MAX_MESSAGE_BYTES: usize = 16 * 1024;
 const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const CONTROL_EXPORT_TIMEOUT: Duration = Duration::from_secs(60);
+// 退出收尾时等待在途控制连接（最重的是 60s 导出）的硬上限；
+// 超过即放弃剩余连接，保证进程退出永远不会被单个连接卡死。
+const CONTROL_CONNECTION_JOIN_TIMEOUT: Duration = Duration::from_secs(65);
 const MONITOR_INTERVAL: Duration = Duration::from_millis(500);
+// 进入 Finalizing 后，若 Python 侧的 release 迟迟未到（控制通道被导出占用、
+// 时序竞态等），超过该阈值强制释放采集源并回落到 WaitingForKovaak。
+// 必须大于桌面后端的 release 硬 grace（30s），留出正常 release 的窗口。
+const FINALIZING_STALE_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -707,6 +714,7 @@ pub struct CaptureCoordinatorState {
     raw_input: Arc<RawInputState>,
     window_capture: Arc<Mutex<WindowCaptureState>>,
     status: Mutex<CaptureCoordinatorStatus>,
+    finalizing_since: Mutex<Option<Instant>>,
     shutdown: Arc<AtomicBool>,
     monitor: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Option<ControlServer>>,
@@ -728,6 +736,7 @@ impl CaptureCoordinatorState {
             raw_input,
             window_capture,
             status: Mutex::new(CaptureCoordinatorStatus::disabled()),
+            finalizing_since: Mutex::new(None),
             shutdown: Arc::new(AtomicBool::new(false)),
             monitor: Mutex::new(None),
             control: Mutex::new(None),
@@ -851,6 +860,10 @@ impl CaptureCoordinatorState {
         if !current.enabled {
             return;
         }
+        if current.phase == CapturePhase::Finalizing && self.release_stale_finalizing() {
+            // 本轮已强制回落，下一轮按新状态重新评估采集。
+            return;
+        }
         if !process_present {
             if matches!(
                 current.phase,
@@ -941,8 +954,50 @@ impl CaptureCoordinatorState {
 
     fn replace_status(&self, replacement: CaptureCoordinatorStatus) {
         if let Ok(mut status) = self.status.lock() {
+            let enters_finalizing = status.phase != CapturePhase::Finalizing
+                && replacement.phase == CapturePhase::Finalizing;
+            let exits_finalizing = status.phase == CapturePhase::Finalizing
+                && replacement.phase != CapturePhase::Finalizing;
+            if status.phase != replacement.phase {
+                eprintln!(
+                    "[capture-export] phase {:?} -> {:?} session={:?}",
+                    status.phase, replacement.phase, replacement.capture_session_id
+                );
+            }
             *status = replacement;
+            if enters_finalizing || exits_finalizing {
+                drop(status);
+                if let Ok(mut since) = self.finalizing_since.lock() {
+                    *since = if enters_finalizing {
+                        Some(Instant::now())
+                    } else {
+                        None
+                    };
+                }
+            }
         }
+    }
+
+    // 进入 Finalizing 后若 release 迟迟未到（控制通道被导出占用或时序竞态），
+    // 强制释放采集源并回落到 WaitingForKovaak，让后续每局都能重新采集。
+    fn release_stale_finalizing(&self) -> bool {
+        let stale = self
+            .finalizing_since
+            .lock()
+            .ok()
+            .and_then(|since| *since)
+            .map(|since| since.elapsed() >= FINALIZING_STALE_TIMEOUT)
+            .unwrap_or(false);
+        if !stale {
+            return false;
+        }
+        let _ = self.raw_input.set_enabled(false);
+        if let Ok(mut capture) = self.window_capture.lock() {
+            capture.stop();
+        }
+        let (process_present, _hwnd) = find_kovaak_window().unwrap_or((false, None));
+        self.replace_status(CaptureCoordinatorStatus::after_release(process_present));
+        true
     }
 
     fn disable(&self) -> Result<(), String> {
@@ -974,19 +1029,36 @@ impl CaptureCoordinatorState {
     }
 
     fn handle_export(&self, request: ExportReplayRequest) -> Result<ReceiptRecord, String> {
+        let started = Instant::now();
+        eprintln!(
+            "[capture-export] handle_export: id={} run={} session={}",
+            request.request_id, request.run_id, request.capture_session_id
+        );
         let status = self.status();
         if !matches!(
             status.phase,
             CapturePhase::Capturing | CapturePhase::Finalizing
         ) {
+            eprintln!(
+                "[capture-export] handle_export: phase={:?} rejects export",
+                status.phase
+            );
             return Err("capture_unavailable".to_string());
         }
         if status.capture_session_id.as_deref() != Some(request.capture_session_id.as_str()) {
+            eprintln!(
+                "[capture-export] handle_export: session mismatch current={:?} requested={}",
+                status.capture_session_id, request.capture_session_id
+            );
             return Err("capture_session_mismatch".to_string());
         }
         let paths = managed_export_paths(&self.data_root, request.run_id, &request.request_id)?;
         let placeholder = ReceiptRecord::placeholder(&request);
         if paths.mp4.exists() || paths.receipt.exists() {
+            eprintln!(
+                "[capture-export] handle_export: artifacts already exist, revalidating {}",
+                paths.mp4.display()
+            );
             return match ReceiptRecord::read_matching(&paths, &placeholder) {
                 Ok(true) => ReceiptRecord::read(&paths.receipt),
                 Ok(false) => Err("existing capture artifact is incomplete".to_string()),
@@ -1001,13 +1073,25 @@ impl CaptureCoordinatorState {
             let (start_100ns, end_100ns) = capture
                 .epoch_window_to_replay_pts(request.start_epoch_ms, request.end_epoch_ms)
                 .map_err(|_| "capture_window_invalid".to_string())?;
+            eprintln!(
+                "[capture-export] handle_export: pts window {}..{} path={}",
+                start_100ns,
+                end_100ns,
+                paths.mp4.display()
+            );
             capture
                 .request_replay_export(start_100ns, end_100ns, paths.mp4.clone())
                 .map_err(|error| replay_failure_code(error.kind).to_string())?
         };
+        eprintln!("[capture-export] handle_export: queued, waiting for mux worker");
         let receipt = self.wait_for_export(receiver)?;
         let record = ReceiptRecord::from_export(&request, receipt, &paths.mp4)?;
         record.write_atomic(&paths.receipt)?;
+        eprintln!(
+            "[capture-export] handle_export: receipt published {} elapsed_ms={}",
+            paths.receipt.display(),
+            started.elapsed().as_millis()
+        );
         Ok(record)
     }
 
@@ -1038,19 +1122,38 @@ impl CaptureCoordinatorState {
         >,
     ) -> Result<ReplayExportReceipt, String> {
         let deadline = std::time::Instant::now() + CONTROL_EXPORT_TIMEOUT;
+        let started = std::time::Instant::now();
+        eprintln!("[capture-export] wait_for_export: begin");
         loop {
             if self.shutdown.load(Ordering::Acquire) {
+                eprintln!("[capture-export] wait_for_export: cancelled by shutdown");
                 return Err("capture_export_cancelled".to_string());
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
+                eprintln!("[capture-export] wait_for_export: timed out");
                 return Err("capture_export_timed_out".to_string());
             }
             match receiver.recv_timeout(remaining.min(Duration::from_millis(50))) {
-                Ok(Ok(receipt)) => return Ok(receipt),
-                Ok(Err(error)) => return Err(replay_failure_code(error.kind).to_string()),
+                Ok(Ok(receipt)) => {
+                    eprintln!(
+                        "[capture-export] wait_for_export: receipt packets={} elapsed_ms={}",
+                        receipt.packet_count,
+                        started.elapsed().as_millis()
+                    );
+                    return Ok(receipt);
+                }
+                Ok(Err(error)) => {
+                    eprintln!(
+                        "[capture-export] wait_for_export: mux failed kind={:?} elapsed_ms={}",
+                        error.kind,
+                        started.elapsed().as_millis()
+                    );
+                    return Err(replay_failure_code(error.kind).to_string());
+                }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    eprintln!("[capture-export] wait_for_export: mux worker dropped the channel");
                     return Err("capture_export_failed".to_string());
                 }
             }
@@ -1106,6 +1209,44 @@ struct ControlServer {
     connection: CaptureControlConnection,
     shutdown: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
+    connection_joins: Arc<Mutex<Vec<JoinHandle<()>>>>,
+}
+
+// [capture-export] 诊断：GUI 子进程里 panic 输出通常进不了日志，
+// catch_unwind 后用本函数还原 panic 消息打到 stderr。
+fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic payload".to_string())
+}
+
+// 记录在途连接线程；已完成的句柄立即清理，避免长会话下无限增长。
+fn track_control_connection_thread(
+    connection_joins: &Mutex<Vec<JoinHandle<()>>>,
+    join: JoinHandle<()>,
+) {
+    if let Ok(mut joins) = connection_joins.lock() {
+        joins.retain(|join| !join.is_finished());
+        joins.push(join);
+    }
+}
+
+// 在 deadline 前等待每个在途连接收尾（导出最长 60s），超时的连接放弃
+// 等待（句柄丢弃即脱离，线程随进程退出），保证退出不卡死。
+fn join_control_connections(connection_joins: &Mutex<Vec<JoinHandle<()>>>, deadline: Instant) {
+    let Ok(mut joins) = connection_joins.lock() else {
+        return;
+    };
+    for join in joins.drain(..) {
+        while !join.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        if join.is_finished() {
+            let _ = join.join();
+        }
+    }
 }
 
 impl ControlServer {
@@ -1128,16 +1269,50 @@ impl ControlServer {
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
         let thread_connection = connection.clone();
+        let connection_joins = Arc::new(Mutex::new(Vec::new()));
+        let thread_connection_joins = Arc::clone(&connection_joins);
         let join = thread::Builder::new()
             .name("aiming-cookie-capture-control".to_string())
             .spawn(move || {
                 while !thread_shutdown.load(Ordering::Acquire) {
                     match listener.accept() {
-                        Ok((stream, _)) => handle_control_connection(
-                            stream,
-                            &thread_connection.secret,
-                            coordinator.clone(),
-                        ),
+                        Ok((stream, _)) => {
+                            // 每个连接独立线程处理：导出（最长 60s）不再独占
+                            // accept 循环，status / release 始终能及时响应。
+                            eprintln!(
+                                "[capture-export] accept: {}",
+                                stream
+                                    .peer_addr()
+                                    .map(|address| address.to_string())
+                                    .unwrap_or_else(|_| "?".to_string())
+                            );
+                            let secret = thread_connection.secret.clone();
+                            let coordinator = coordinator.clone();
+                            match thread::Builder::new()
+                                .name("aiming-cookie-capture-connection".to_string())
+                                .spawn(move || {
+                                    let result = std::panic::catch_unwind(
+                                        std::panic::AssertUnwindSafe(|| {
+                                            handle_control_connection(stream, &secret, coordinator);
+                                        }),
+                                    );
+                                    if let Err(panic) = result {
+                                        eprintln!(
+                                            "[capture-export] connection thread panicked: {}",
+                                            panic_message(panic)
+                                        );
+                                    }
+                                }) {
+                                Ok(join) => {
+                                    track_control_connection_thread(&thread_connection_joins, join)
+                                }
+                                // spawn 失败时请求尚未读取即丢弃连接：
+                                // 对端 recv 表现为 10053 断连，必须显式记录。
+                                Err(error) => {
+                                    eprintln!("[capture-export] connection spawn failed: {error}");
+                                }
+                            }
+                        }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(20));
                         }
@@ -1150,6 +1325,7 @@ impl ControlServer {
             connection,
             shutdown,
             join: Some(join),
+            connection_joins,
         })
     }
 
@@ -1162,6 +1338,11 @@ impl ControlServer {
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
+        // 先 join accept 线程保证不再有新连接，再等待在途连接收尾。
+        join_control_connections(
+            &self.connection_joins,
+            Instant::now() + CONTROL_CONNECTION_JOIN_TIMEOUT,
+        );
     }
 }
 
@@ -1170,11 +1351,14 @@ fn handle_control_connection(
     secret: &str,
     coordinator: Weak<CaptureCoordinatorState>,
 ) {
+    let started = Instant::now();
+    eprintln!("[capture-export] conn: reading request");
     let _ = stream.set_read_timeout(Some(CONTROL_READ_TIMEOUT));
     let request =
         read_control_line(&mut stream).and_then(|line| parse_control_request(&line, secret));
     let response = match request {
         Ok(request) => {
+            eprintln!("[capture-export] conn: request accepted: {request:?}");
             let response_type = response_type_for_request(&request);
             let result = match request {
                 ControlRequest::Status => coordinator
@@ -1234,14 +1418,42 @@ fn handle_control_connection(
                             })
                     }),
             };
-            result.unwrap_or_else(|code| control_error_response(response_type, &code))
+            result.unwrap_or_else(|code| {
+                eprintln!("[capture-export] conn: request failed: {code}");
+                control_error_response(response_type, &code)
+            })
         }
-        Err(code) => control_error_response("controlError", &code),
+        Err(code) => {
+            eprintln!("[capture-export] conn: request rejected: {code}");
+            control_error_response("controlError", &code)
+        }
     };
-    if let Ok(payload) = serde_json::to_vec(&response) {
-        let _ = stream.write_all(&payload);
-        let _ = stream.write_all(b"\n");
-        let _ = stream.flush();
+    match serde_json::to_vec(&response) {
+        Ok(payload) => {
+            eprintln!(
+                "[capture-export] conn: writing response type={} ok={} bytes={} elapsed_ms={}",
+                response
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?"),
+                response
+                    .get("ok")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                payload.len(),
+                started.elapsed().as_millis()
+            );
+            let write = stream
+                .write_all(&payload)
+                .and_then(|()| stream.write_all(b"\n"))
+                .and_then(|()| stream.flush());
+            if let Err(error) = write {
+                eprintln!("[capture-export] conn: response write failed: {error}");
+            }
+        }
+        Err(error) => {
+            eprintln!("[capture-export] conn: response serialize failed: {error}");
+        }
     }
 }
 
@@ -1521,8 +1733,9 @@ fn is_current_kovaak_window(_hwnd: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        control_error_response, managed_export_paths, monitor_start_failure_status,
-        parse_control_request, read_control_line, replay_failure_code, response_type_for_request,
+        control_error_response, join_control_connections, managed_export_paths,
+        monitor_start_failure_status, parse_control_request, read_control_line,
+        replay_failure_code, response_type_for_request, track_control_connection_thread,
         CaptureCoordinatorStatus, CapturePhase, CaptureSourceState, CaptureSourceStatus,
         ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord,
         CONTROL_MAX_MESSAGE_BYTES,
@@ -1835,6 +2048,48 @@ mod tests {
             FileFingerprint::from_bytes(&bytes),
         );
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn control_shutdown_waits_for_inflight_connections_but_never_blocks_forever() {
+        let joins = std::sync::Mutex::new(Vec::new());
+        let finished = std::thread::spawn(|| {});
+        track_control_connection_thread(&joins, finished);
+        let stalled = std::thread::spawn(|| std::thread::sleep(std::time::Duration::from_secs(5)));
+        track_control_connection_thread(&joins, stalled);
+        assert_eq!(joins.lock().expect("tracked joins").len(), 2);
+
+        let started = std::time::Instant::now();
+        join_control_connections(&joins, started + std::time::Duration::from_millis(200));
+        // stalled 连接超时后被放弃，等待时间以 deadline 为硬上限。
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert!(joins.lock().expect("drained joins").is_empty());
+    }
+
+    #[test]
+    fn control_connection_tracking_drops_finished_handles_to_stay_bounded() {
+        let joins = std::sync::Mutex::new(Vec::new());
+        let short = std::thread::spawn(|| {});
+        track_control_connection_thread(&joins, short);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !joins
+            .lock()
+            .expect("tracked joins")
+            .first()
+            .expect("tracked handle")
+            .is_finished()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "tracked connection never finished"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let stalled = std::thread::spawn(|| std::thread::sleep(std::time::Duration::from_secs(5)));
+        track_control_connection_thread(&joins, stalled);
+        // 已完成的句柄在下一次记录时被清理，只剩活跃连接。
+        assert_eq!(joins.lock().expect("live joins").len(), 1);
     }
 
     #[test]

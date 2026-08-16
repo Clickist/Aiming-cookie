@@ -151,40 +151,44 @@
 
 ### 5.7 输入与分析模式
 
-产品不再让用户在分析模式之间选择。历史记录仍可展示旧 mode，但新 Run 只进入固定多源 pipeline：
+产品不让用户在分析模式之间选择。新 Run 由服务端按证据可用性自动选择最高质量路径（2026-08-10 决策，取代 2026-08-09 的固定多源决定）；历史记录仍可展示旧 mode：
 
 | 模式 | 必需输入 | 主要产出 | 视频作用 |
 |---|---|---|---|
-| **固定多源 multimodal** | KovaaK Run（Stats + Performance）+ Windows Raw Input + managed MP4 + canonical window | Provider-backed Coach 消费完整来源；视觉失败保留 Run failed/incomplete 记录，不生成替代分析 | 用于可点击回放和证据定位，不覆盖输入事实 |
+| **multimodal**（最高可用时） | KovaaK Run（Stats + Performance）+ Windows Raw Input + managed MP4 + canonical window | Provider-backed Coach 消费完整来源 | 用于可点击回放和证据定位，不覆盖输入事实 |
+| **input_native** | KovaaK Run（Stats + Performance）+ Windows Raw Input + canonical window | 基础 native 分析 + Coach；视觉类结论标注不可用 | 无视频；不得声称视觉证据 |
+| **video_fallback** | Stats + managed MP4（首发导入的安装前文件走 stats-only 兼容路径） | 正式可用的有限分析 | 有限视觉证据；必须显示缺失来源与限制 |
 
 规则：
 
-- 新 Run 统一要求 `Stats + Performance + Raw Input + MP4 + canonical window`；MP4 必须已经明确对应当前 Challenge，缺任一来源时不入队；
+- 新 Run 按 `multimodal > input_native > video_fallback` 自动降级选择，用户不手动选择模式；三档均不可用时 Coach 说明本局不能分析及下一步。MP4 必须已经明确对应当前 Challenge 才可作为该档来源；
+- fallback 是正式可用的有限分析，不是伪造的完整结果；每个结果必须显示缺失来源和限制，并提示修复采集以获得更高质量分析；
 - Raw Input 只记录相对 `dx/dy`、时间戳和鼠标按钮；不采集键盘或桌面绝对坐标；
 - Aiming Cookie 不修改鼠标硬件 polling rate；无论设备以何种 polling rate 上报，Raw Input 的 canonical 运动时间粒度固定为 1 ms、最高 1000 Hz。同一毫秒内的 `dx/dy` 分别累加为至多一条运动记录，不生成补零记录；鼠标按钮按下/抬起边沿不受该上限约束并保持顺序。该归一化保留每毫秒 X/Y 净位移，但有意不保留亚毫秒路径形状；产品不得把它描述为硬件 polling rate 测量或亚毫秒运动证据；
 - Raw Input 默认关闭，首次开启必须明确告知用户本地采集范围、用途和关闭方式；
-- 缺 MP4、Raw Input、Performance 或 canonical window 时只保留 incomplete Run；不能生成替代分析，也不能伪造目标相对误差、视觉反应时刻或视频证据；
+- 缺 MP4 时进入 input_native；缺 Raw Input 或 MP4 时进入 video_fallback；任一档都不能伪造目标相对误差、视觉反应时刻或视频证据——低层路径只能声明其来源实际支撑的结论；
 - Performance / Stats 负责场景身份、挑战时间、击杀/命中事件和可用的目标配置；Raw Input 负责输入运动学；视频主要负责直观回放、问题定位和可验证的视觉证据；
 - 自动采集不能依赖不存在的实时 Challenge hook；应用在 KovaaK 进程 gate 内连续采集 Raw，并把仅 KovaaK 窗口的硬件编码码流保留在最近 300 秒的有界回放缓冲中，再用稳定 Stats / Performance 事后把连续多局切成独立 Run；300 秒按墙上时间计算，但 v1 仅对 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 Run-owned MP4；检测到 `Pause Count > 0` 时保留可诊断的 partial/unavailable evidence，不生成永久 MP4，也不把 Raw/Performance 标记为 canonical aligned；超出该范围或任一来源覆盖不完整时明确降级，不伪造完整 Raw / MP4；
 - 单次只产生一条可分析 Run 时默认选中并等待用户确认；产生多条时用户必须选择一条开始分析，其余保留在 History 的待分析训练中，不进入 Tasks、不合并、不自动删除；
-- 无法可靠对齐多个来源时，保留 Run 的 incomplete/failed 记录并说明缺失原因，不把推断写成测量；固定多源分析的视觉校验失败不得生成 native 或 video fallback 替代结果；
-- 新 KovaaK 场景应优先由本机可验证的场景结构和已冻结的 Challenge 配置自动识别训练类型；场景名称只能作为候选提示，不能单独决定分析器。训练类型识别与精确场景档案/视觉标定分离：前者允许进入该类型已验证的基础 native 分析，后者才解锁目标相对误差、目标身份或速度、命中关联和场景专属训练处方。结构证据不足时保留训练记录并说明限制，不得借用相似场景的精确结论或把未知类型伪装成可诊断结果；
-- 非 Windows 平台必须明确显示 Raw Input 不可用；由于固定多源合同缺少 Raw Input 时不创建新的 Analysis。
+- 无法可靠对齐多个来源时，保留 Run 的 incomplete/failed 记录并说明缺失原因，不把推断写成测量；multimodal 的视觉校验失败按层级降级到 input_native，不生成伪造的视觉结论；
+- 新 KovaaK 场景按多级识别自动进入对应大类分析管线（2026-08-15 决策）：exact reviewed hash 走精确加速通道，本机可验证的场景结构（同名 `.sce` 及冻结 Challenge 配置）确认 static/dynamic，其后由冻结 Stats/Raw 事实派生的挑战形态（challenge_shape，candidate 级统计判据）给出大类候选，再由场景名关键词给出大类候选（strafe/track→continuous tracking、switch→target switching、pasu/reload→dynamic clicking，未命中默认 static clicking 基础分析），全部失败时按 static clicking 基础运动学分析处理并标记 family 未解析。任何一级识别都不因「未审核」阻塞大类分析；但场景名称与统计形态永远只是候选提示（不构成场景身份），精确场景档案/视觉标定仍是大类内视觉测量、目标相对误差、目标身份或速度、命中关联和场景专属处方的唯一许可，缺少精确标定时必须显式保留相应 limitations，不得借用相似场景的精确结论；
+- 非 Windows 平台必须明确显示 Raw Input 不可用；新 Run 自动进入 video_fallback（或 stats-only 导入路径）并显示相应限制。
 
 ### Current Coach Run analysis gate
 
-New Run-based Analysis created from the Coach flow uses one fixed `multimodal`
-contract. A Run is analysis-ready only when Stats, Performance (`.perf`), Raw
-Input, managed KovaaK-window video, and a resolved canonical time window are all
-available and valid. The source gate returns bounded missing-source codes and
-never exposes paths or raw payloads.
+New Run-based Analysis created from the Coach flow is tiered automatically by
+the server: `multimodal` requires Stats, Performance (`.perf`), Raw Input,
+managed KovaaK-window video, and a resolved canonical time window;
+`input_native` drops the managed-video requirement; `video_fallback` runs on
+Stats with managed MP4 (imported pre-install files use the stats-only compat
+path). The source gate returns bounded missing-source codes and never exposes
+paths or raw payloads.
 
-Capture-pending and analysis-ready are separate states. A Run with incomplete
-sources remains retained as a pending/incomplete capture record with explicit
-missing reasons; it is not enqueued and cannot silently become input-native or
-video-fallback. Existing historical Analysis rows and their recorded modes
-remain readable, but those modes are not new Run creation choices in the
-Coach-first pipeline.
+Capture-pending and analysis-ready are separate states. A Run with no usable
+tier remains retained as a pending/incomplete capture record with explicit
+missing reasons; it is not enqueued. Existing historical Analysis rows and
+their recorded modes remain readable, but the tier is chosen by the server,
+not by the user.
 
 ## 6. 核心体验流程
 
@@ -336,7 +340,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 
 **技术预览成功**：
 - 自动采集能够把连续 KovaaK Challenge 事后切成独立 Run；单局默认确认、多局选一条，其余待分析 Run 可在 History 找回；
-- 只有同时满足 `Stats + Performance + Raw Input + MP4 + canonical window` 的 Run 才能进入固定 multimodal Analysis；缺任一来源只保留失败/待补齐记录；
+- 新 Run 由服务端按 `multimodal > input_native > video_fallback` 自动选择最高可用路径；完全无可用来源时只保留失败/待补齐记录；
 - 异常退出不会留下无法恢复的永久进行中状态，失败可识别、可恢复或可重试；
 - 无 LLM 时确定性测量、候选观察和规则化 prescription 仍完整可用；
 - 分析和相关 managed 文件按规则删除，且不级联删除 Coach 消息或长期档案；
@@ -346,7 +350,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 当前、客观的 Go/No-Go Gates 只在 `docs/ROADMAP.md` 维护。
 
 **产品成功**：
-- v1 阶段：首发四类目标 aim family（static clicking、dynamic clicking、continuous tracking、target switching）均通过各自分析、质量与知识 Gate；Provider onboarding 和固定多源采集门槛清晰，留存和反馈质量高
+- v1 阶段：首发四类目标 aim family（static clicking、dynamic clicking、continuous tracking、target switching）均通过各自分析、质量与知识 Gate；Provider onboarding 和自动层级采集门槛清晰，留存和反馈质量高
 - 用户认可诊断准确（"这说的就是我"）+ Coach 能从完整动作数据中主动发现规律、反例和优先问题（"比我自己看指标和规则报告懂多了"）
 - B 阶段：Coach 能基于证据给出针对性训练方法，用户愿意执行并完成复测，长期档案能够支持后续调整
 - C 阶段：外设推荐被用户认为相关、透明且可忽略；联盟收入来自有帮助的推荐，不以牺牲诊断信任或训练效果为代价
@@ -355,8 +359,8 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - 分析稳定（失败率可接受，具体阈值待真实数据校准）
 - 性能（本地 CV ~160s 可接受）
 - 指标可信（用户跨次比较有意义）
-- 固定 multimodal Run 必须同时具备 Raw Input、Performance、Stats、MP4 与 canonical window；target-relative claims 仅在本地预处理的视觉质量 Gate 通过后生成；Coach 能明确区分四类证据
-- 没有 Raw Input、非 Windows 或用户拒绝授权时，不创建新的 Analysis，只保留 Run 的缺失原因
+- multimodal 档的 Run 必须同时具备 Raw Input、Performance、Stats、MP4 与 canonical window；target-relative claims 仅在本地预处理的视觉质量 Gate 通过后生成；Coach 能明确区分四类证据
+- 没有 Raw Input、非 Windows 或用户拒绝授权时，新 Run 自动进入 video_fallback（或 stats-only 导入路径）并显示相应限制，不伪造缺失来源的结论
 - Raw Input 的采集范围、授权状态、关闭方式和本地保留边界对用户清楚可见
 - 自动录屏只捕获 KovaaK 窗口，Raw/MP4/Stats/Performance 的时间轴可追溯；连续多局不会被错误合并
 
@@ -413,6 +417,8 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - **常驻 Coach 是 Agent 操作层**：provider 可用时 agent 可随时进入、调用稳定的应用工具，减少用户对多页面流程的记忆负担；项目内 Pi 源码是 Coach runtime 基线，项目可直接修改且不承诺跟随上游升级；已有可用的 workspace、权限或 sandbox 能力优先保留，不无证据重写
 - **持久表现档案 + 上下文衔接**：支撑长教练关系体验；窗口顶满后的 session 衔接另研究，不在本条锁实现
 - **自动证据层级 Coach 分析**（2026-08-10，取代 2026-08-09 的固定多源决定）：新 Run 由服务端按 `multimodal > input_native > video_fallback` 自动选择最高可用路径；三档都必须按来源分层并显示 limitations，不把单一来源过度解释为完整视觉测量。
+- **场景分派泛化：任何图走大类管线**（2026-08-15）：删除「仅 4 个精确审核 hash 可完整分析，其余一律 outcome-only」的白名单门槛。任何场景按多级识别进入对应大类分析管线（exact hash 加速通道 → `.sce` 结构 → 挑战形态候选（challenge_shape）→ 名称关键词候选 → static clicking 兜底并标记 family 未解析）；识别来源（exact_reviewed / structure_verified / challenge_shape / name_heuristic / family_default）随结果分层展示。精确视觉标定仍是大类内视觉结论的唯一许可：名称与统计形态只是候选、不构成身份，缺精确标定走 baseline 运动学分析并显式保留 limitations；确无可分析数据（如 movement aiming 无移动遥测）才保持 outcome-only。分析完成且 Provider 可用时自动为该分析开讲一次（每个 Analysis 一次，用户可无视）。
+- **类型知识的最终裁判是用户+Coach**（2026-08-15）：多因素分类保持灵活，由 Coach 结合图名、指标形态与对话上下文判断；Coach 发现类型标注可疑（形态与标注矛盾、用户纠正、缩写歧义如 1w4ts = one wall four targets small 而非 switching）时向用户确认一次，确认结果按场景哈希经 `scenario_memory.set` 写入持久记忆（`config/scenario-overrides.json`），终身有效并进入识别链高位（仅次于 exact 审核识别，覆盖 `.sce`/形态/名称各层）。该层只授予用户确认的大类 baseline，不构成场景身份或视觉结论许可。用户纠正改变了某一局的类型时，Coach 提议并经同意用正确类型重新分析该局：同一 Run 可保留多条分析，已 done 的分析仅在分类记忆改变其大类分派时才让位给新分析（同 family 确认或 exact 审核优先时仍复用旧分析，不产生重复）。
 - **Raw Input canonical 运动上限固定为 1000 Hz**（2026-08-04）：不改变鼠标硬件 polling rate；native layer 继续接收 Windows Raw Input，但进入 canonical trace 前按 1 ms 聚合运动增量。同毫秒 `dx/dy` 分别求和，按钮边沿按顺序单独保留，因此不会因限频丢失每毫秒 X/Y 净位移或点击边沿；亚毫秒路径形状明确不属于产品分析事实。新语义必须版本化，旧 trace 保持只读兼容，不允许在同一未标版本中混用两种采样语义。
 - **自动采集统一主路径**（2026-07-18，2026-07-19 暂停裁决）：应用不依赖实时 Challenge hook，而是在 KovaaK 进程 gate 内统一采集 Raw Input，并以硬件编码维护仅 KovaaK 窗口最近 300 秒的有界回放缓冲；Stats / Performance 到达后按 Challenge 时间窗事后切成独立 Run。v1 仅为 `Pause Count = 0` 的 normal/timescale-only Challenge 生成永久 MP4；`Pause Count > 0` 的暂停局 fail closed，证据只能保留为 partial/unavailable，不能声明 canonical Raw/Performance 对齐。超过 300 秒、长时间中断或来源覆盖不完整时明确降级。Analysis 最低条件为 `Stats AND (MP4 OR (Raw + Performance))`；单局确认、多局选一条，其余保留待分析；手动 `MP4 + Stats` 是独立 fallback。
 - **Run-owned evidence 由用户手动管理**（2026-07-17）：自动 Raw 和自动切分 MP4 随 Run 保存，不随 Analysis 删除。Settings 显示分类占用，用户可分别移除大体积 evidence；不静默自动清理、不自动删除最旧 Run，也不连带删除 Run metadata、Analysis 或用户源文件。

@@ -3,6 +3,11 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
 export type SessionRailId = string | number;
+type OverlayState = "closed" | "opening" | "open" | "closing";
+
+function overlayExitDurationMs(): number {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 120 : 200;
+}
 
 export interface SessionRailSession {
   id: SessionRailId;
@@ -87,10 +92,15 @@ export function SessionRail({
   const [query, setQuery] = useState("");
   const [narrow, setNarrow] = useState(false);
   const [manuallyCollapsed, setManuallyCollapsed] = useState(false);
-  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [overlayState, setOverlayState] = useState<OverlayState>("closed");
+  const [overlayMotion, setOverlayMotion] = useState<"animated" | "instant">("animated");
   const railRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const toggleButtonRef = useRef<HTMLButtonElement>(null);
+  const overlayFrameRef = useRef<number | null>(null);
+  const overlayTimerRef = useRef<number | null>(null);
+  const overlayVisible = overlayState !== "closed";
+  const overlayOpen = overlayState === "opening" || overlayState === "open";
 
   const visible = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -115,16 +125,55 @@ export function SessionRail({
     const media = window.matchMedia("(max-width: 1119px)");
     const sync = () => {
       setNarrow(media.matches);
-      if (!media.matches) setOverlayOpen(false);
+      if (!media.matches) {
+        if (overlayFrameRef.current !== null) window.cancelAnimationFrame(overlayFrameRef.current);
+        if (overlayTimerRef.current !== null) window.clearTimeout(overlayTimerRef.current);
+        setOverlayState("closed");
+      }
     };
     sync();
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
   }, []);
 
-  const toggleRail = () => {
+  const openOverlay = (instant = false) => {
+    if (overlayFrameRef.current !== null) window.cancelAnimationFrame(overlayFrameRef.current);
+    if (overlayTimerRef.current !== null) window.clearTimeout(overlayTimerRef.current);
+    setOverlayMotion(instant ? "instant" : "animated");
+    if (instant) {
+      setOverlayState("open");
+      overlayFrameRef.current = window.requestAnimationFrame(() => setOverlayMotion("animated"));
+      return;
+    }
+    setOverlayState("opening");
+    overlayFrameRef.current = window.requestAnimationFrame(() => {
+      overlayFrameRef.current = window.requestAnimationFrame(() => setOverlayState("open"));
+    });
+  };
+
+  const closeOverlay = (instant = false) => {
+    if (overlayFrameRef.current !== null) window.cancelAnimationFrame(overlayFrameRef.current);
+    if (overlayTimerRef.current !== null) window.clearTimeout(overlayTimerRef.current);
+    setOverlayMotion(instant ? "instant" : "animated");
+    if (instant) {
+      setOverlayState("closed");
+      overlayFrameRef.current = window.requestAnimationFrame(() => {
+        setOverlayMotion("animated");
+        toggleButtonRef.current?.focus();
+      });
+      return;
+    }
+    setOverlayState("closing");
+    overlayTimerRef.current = window.setTimeout(() => {
+      setOverlayState("closed");
+      window.requestAnimationFrame(() => toggleButtonRef.current?.focus());
+    }, overlayExitDurationMs());
+  };
+
+  const toggleRail = (instant = false) => {
     if (narrow) {
-      setOverlayOpen((open) => !open);
+      if (overlayOpen) closeOverlay(instant);
+      else openOverlay(instant);
       return;
     }
     setManuallyCollapsed((collapsed) => {
@@ -134,8 +183,8 @@ export function SessionRail({
     });
   };
 
-  const openRail = (focusSearch = false) => {
-    if (narrow) setOverlayOpen(true);
+  const openRail = (focusSearch = false, instant = false) => {
+    if (narrow) openOverlay(instant);
     else if (manuallyCollapsed) {
       setManuallyCollapsed(false);
       onCollapsedChange?.(false);
@@ -143,22 +192,22 @@ export function SessionRail({
     if (focusSearch) window.requestAnimationFrame(() => searchRef.current?.focus());
   };
 
-  const closeOverlay = () => {
-    setOverlayOpen(false);
-    window.requestAnimationFrame(() => toggleButtonRef.current?.focus());
-  };
-
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.ctrlKey && event.key === "\\") {
         event.preventDefault();
-        toggleRail();
+        toggleRail(true);
       }
-      if (event.key === "Escape" && overlayOpen) closeOverlay();
+      if (event.key === "Escape" && overlayOpen) closeOverlay(true);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [narrow, overlayOpen]);
+
+  useEffect(() => () => {
+    if (overlayFrameRef.current !== null) window.cancelAnimationFrame(overlayFrameRef.current);
+    if (overlayTimerRef.current !== null) window.clearTimeout(overlayTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (overlayOpen) window.requestAnimationFrame(() => toggleButtonRef.current?.focus());
@@ -183,18 +232,22 @@ export function SessionRail({
   const collapsed = narrow || manuallyCollapsed;
   return (
     <>
-      {narrow && overlayOpen ? <button aria-label="关闭会话栏" className="task7-session-rail__scrim" onClick={closeOverlay} type="button" /> : null}
+      {narrow && overlayVisible ? <button aria-label="关闭会话栏" className="task7-session-rail__scrim" data-motion={overlayMotion} data-state={overlayState} onClick={() => closeOverlay()} type="button" /> : null}
       <aside
         aria-label="会话"
+        aria-hidden={overlayState === "closing" || undefined}
         aria-modal={overlayOpen || undefined}
         className={railClassName}
         data-collapsed={collapsed || undefined}
-        data-overlay={overlayOpen || undefined}
+        data-motion={overlayMotion}
+        data-overlay={overlayVisible || undefined}
+        data-overlay-state={overlayVisible ? overlayState : undefined}
+        inert={overlayState === "closing" || undefined}
         onKeyDown={trapOverlayFocus}
         ref={railRef}
         role={overlayOpen ? "dialog" : undefined}
       >
-        {collapsed && !overlayOpen ? (
+        {collapsed && !overlayVisible ? (
           <div className="task7-session-rail__iconbar" aria-label="会话栏快捷操作">
             <button aria-label="展开会话栏" className="task7-session-rail__icon-button" onClick={() => openRail()} ref={toggleButtonRef} title="收起/展开会话栏" type="button">→</button>
             <button aria-label="新建对话" className="task7-session-rail__icon-button" onClick={onNewSession} title="新建对话" type="button">+</button>
@@ -209,7 +262,7 @@ export function SessionRail({
                 <span aria-hidden="true" className="task7-session-rail__new-icon">+</span>
                 <span>新建对话</span>
               </button>
-              <button aria-label="收起/展开会话栏" className="task7-session-rail__collapse" onClick={toggleRail} ref={toggleButtonRef} title="收起/展开会话栏" type="button">←</button>
+              <button aria-label="收起/展开会话栏" className="task7-session-rail__collapse" onClick={() => toggleRail()} ref={toggleButtonRef} title="收起/展开会话栏" type="button">←</button>
             </div>
           </div>
 

@@ -284,7 +284,7 @@ def test_narrate_diagnosis_end_to_end_mock():
     tool_result_content = backend.calls[1]["messages"][-1]["content"][0]["content"]
     parsed = json.loads(tool_result_content)
     assert parsed["signal"] == "sparc low"
-    assert parsed["registry_version"] == "2026-08-06.v6"
+    assert parsed["registry_version"] == "2026-08-16.v8"
     assert 1 <= len(parsed["entries"]) <= 3
     assert parsed["community"] in parsed["cues"]
     assert all(entry["entry_ref"].startswith("knowledge:") for entry in parsed["entries"])
@@ -496,3 +496,39 @@ def test_max_tokens_truncation_discards_narration():
     out = run_agent_loop(backend, "sys", "{}", tools, max_turns=4)
     assert out["narration"] is None
     assert out["stop_reason"] == "max_tokens"
+
+
+def test_alias_mapped_pipeline_signals_resolve_through_fetch_knowledge():
+    """Audit M2: a signal advice.py emits that the alias layer references must
+    be hittable through the coach_fetch_knowledge tool, and no alias canonical
+    may dangle without a declaring entry."""
+    from kovaak_tracker.advice import _SIGNAL_METRICS
+    from kovaak_tracker.coach.knowledge_registry import load_registry
+    from kovaak_tracker.coach.agent_tools import make_fetch_knowledge
+
+    data = load_registry()
+    alias_keys = set(data["signal_aliases"])
+    alias_values = set(data["signal_aliases"].values())
+    active_signals = {
+        signal
+        for entry in data["entries"] if entry["status"] == "active"
+        for signal in entry["signals"]
+    }
+    assert alias_values <= active_signals
+
+    fetch = make_fetch_knowledge()
+    mapped = [
+        signal for signal in _SIGNAL_METRICS
+        if signal in alias_keys or signal in alias_values
+    ]
+    assert mapped  # the invariant is only meaningful for mapped signals
+    for signal in mapped:
+        result = fetch(signal)
+        assert "error" not in result, signal
+    throughput = fetch("throughput below reference")
+    assert "error" not in throughput
+    assert throughput["signal"] == "throughput below reference"
+    assert any(
+        entry["entry_ref"] == "knowledge:research.speed-precision.fitts@1"
+        for entry in throughput["entries"]
+    )
