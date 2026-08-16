@@ -716,7 +716,8 @@
 }
 
 .task6-coach-header::after,
-.task6-current-training::after {
+.task6-current-training::after,
+.task6-discussion-bar::after {
   position: absolute;
   inset-inline: calc(-1 * max(14px, calc((100% - var(--task6-coach-content-width)) / 2)));
   inset-block-end: 0;
@@ -1417,6 +1418,16 @@
 .task6-suggestion:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
+}
+
+/* 本次讨论常驻条：吸顶不随对话流滚动，项目名按钮打开左侧视频 */
+
+.task6-discussion-bar {
+  position: relative;
+  flex: none;
+  width: 100%;
+  padding: 8px 14px;
+  background: var(--s-low);
 }
 
 /* Composer */
