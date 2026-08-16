@@ -34,7 +34,6 @@ function registryFiles(): Map<string, string> {
 }
 const MAX_REGISTRY_BYTES = 512 * 1024;
 const MAX_ENTRIES = 512;
-const MAX_RESULTS = 8;
 const MAX_TEXT_LENGTH = 4_000;
 const MAX_LIST_LENGTH = 64;
 const STATUSES = new Set(["active", "retired"]);
@@ -226,15 +225,6 @@ export type KnowledgeRegistry = {
   sources?: KnowledgeSourceV2[];
   entries: KnowledgeEntry[];
 };
-export type KnowledgeQuery = {
-  registry_version?: string;
-  entry_ref?: string;
-  topic?: string;
-  issue_signal?: string;
-  metric_refs?: string[];
-  supported_use?: string;
-};
-
 export class KnowledgeRegistryError extends Error {}
 
 function keysEqual(value: Record<string, unknown>, expected: Set<string>): boolean {
@@ -829,86 +819,4 @@ export function resolveKnowledgeEntry(registryVersion: string, reference: string
   const entry = loadKnowledgeRegistry(registryVersion).entries.find((item) => entryRef(item) === reference);
   if (!entry) throw new KnowledgeRegistryError("unknown knowledge entry");
   return structuredClone(entry);
-}
-
-function clean(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-// Metric queries arrive in the shapes callers actually see: bare analysis
-// metric names ("sparc"), family-prefixed result keys
-// ("static_clicking.sparc"), or the canonical registry ref form
-// ("metric:sparc"). Normalize both sides so every shape hits the same refs.
-const METRIC_REF_PREFIX = "metric:";
-const METRIC_FAMILY_PREFIX = /^(?:static_clicking|dynamic_clicking|continuous_tracking|target_switching|movement_aiming)\./;
-
-export function normalizeMetricRef(value: string): string {
-  let result = value.trim();
-  if (result.startsWith(METRIC_REF_PREFIX)) {
-    result = result.slice(METRIC_REF_PREFIX.length);
-  }
-  return result.replace(METRIC_FAMILY_PREFIX, "");
-}
-
-export type KnowledgeQueryOutcome = {
-  entries: KnowledgeEntry[];
-  /** Active entries with score > 0 for the query, before the result cap. */
-  total_matches: number;
-};
-
-function scoredKnowledgeQuery(
-  registry: KnowledgeRegistry,
-  query: KnowledgeQuery,
-): { exact: KnowledgeEntry[] } | { ranked: Array<{ entry: KnowledgeEntry; score: number }> } {
-  const reference = clean(query.entry_ref);
-  if (reference) {
-    const entry = registry.entries.find((item) => entryRef(item) === reference);
-    if (!entry) throw new KnowledgeRegistryError("unknown knowledge entry");
-    return { exact: [entry] };
-  }
-  const topic = clean(query.topic);
-  const signal = clean(query.issue_signal);
-  const metrics = new Set(
-    (query.metric_refs ?? [])
-      .filter((item) => typeof item === "string" && item.trim())
-      .map((item) => normalizeMetricRef(item)),
-  );
-  const supportedUse = clean(query.supported_use);
-  if (!topic && !signal && metrics.size === 0 && !supportedUse) throw new KnowledgeRegistryError("at least one query condition is required");
-  if (!topic && !signal && metrics.size === 0) return { ranked: [] };
-  const canonical = signal ? registry.signal_aliases[signal] ?? signal : undefined;
-  return {
-    ranked: registry.entries
-      .filter((entry) => entry.status === "active")
-      .map((entry) => {
-        let score = 0;
-        if (canonical && entry.signals.includes(canonical)) score += 16;
-        if (metrics.size && entry.metric_refs.some((metric) => metrics.has(normalizeMetricRef(metric)))) score += 8;
-        if (topic && entry.topics.includes(topic)) score += 4;
-        if (supportedUse && entry.supported_uses.includes(supportedUse)) score += 2;
-        return { entry, score };
-      })
-      .filter(({ score }) => score > 0)
-      .sort((left, right) => right.score - left.score || left.entry.entry_id.localeCompare(right.entry.entry_id) || right.entry.entry_version - left.entry.entry_version),
-  };
-}
-
-export function queryKnowledgeRegistryWithTotals(
-  registry: KnowledgeRegistry,
-  query: KnowledgeQuery,
-): KnowledgeQueryOutcome {
-  const requestedRegistryVersion = clean(query.registry_version);
-  if (requestedRegistryVersion && requestedRegistryVersion !== registry.registry_version) {
-    throw new KnowledgeRegistryError("registry version does not match loaded registry");
-  }
-  const outcome = scoredKnowledgeQuery(registry, query);
-  if ("exact" in outcome) return { entries: outcome.exact.map((entry) => structuredClone(entry)), total_matches: 1 };
-  return {
-    entries: outcome.ranked.slice(0, MAX_RESULTS).map(({ entry }) => structuredClone(entry)),
-    total_matches: outcome.ranked.length,
-  };
-}
-
-export function queryKnowledgeRegistry(registry: KnowledgeRegistry, query: KnowledgeQuery): KnowledgeEntry[] {
-  return queryKnowledgeRegistryWithTotals(registry, query).entries;
 }
