@@ -162,11 +162,6 @@ function safeNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-/** Performance counter types that never earn a video-timeline marker. */
-const VIDEO_TIMELINE_DROPPED_TYPES = new Set([
-  "shotsFired", "damageDone", "damagePossible", "score",
-]);
-
 function presentTimelineEvent(value: unknown): TimelineEvent | null {  const item = record(value);
   if (Object.keys(item).length === 0) return null;
   const type = safeString(item.type)
@@ -560,18 +555,6 @@ export function presentAnalysisWorkspace(session: SessionStatus): AnalysisWorksp
     timeline: Array.isArray(result.deterministic.timeline)
       ? result.deterministic.timeline.slice(0, 500).flatMap((event) => {
         const projected = presentTimelineEvent(event);
-        // Performance counter ticks are score bookkeeping, not navigation
-        // anchors: six series stack on the same instants every second and
-        // drown the movement/outcome markers (and can push them past the
-        // 500-event cap). Keep outcome moments, drop counters and the
-        // redundant fired-superset of hit+missed.
-        if (
-          projected
-          && projected.source === "performance"
-          && VIDEO_TIMELINE_DROPPED_TYPES.has(projected.type)
-        ) {
-          return [];
-        }
         return projected ? [projected] : [];
       })
       : [],
