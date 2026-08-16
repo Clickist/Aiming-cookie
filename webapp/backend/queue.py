@@ -210,6 +210,7 @@ async def enqueue(
     profile_default: dict | None = None,
     manual_override: dict | None = None,
     require_no_active: bool = False,
+    video_receipt: dict | None = None,
 ) -> int:
     if input_mode not in _INPUT_MODES:
         raise ValueError(f"unsupported input_mode: {input_mode}")
@@ -246,6 +247,7 @@ async def enqueue(
             "input_mode": input_mode,
             "kovaak_run_id": kovaak_run_id,
             "input_snapshot": input_snapshot,
+            "video_receipt": video_receipt,
             "result": None,
             "error": None,
             "llm_cost_cny": 0,
