@@ -563,6 +563,10 @@ def public_analysis_input_snapshot(snapshot: dict) -> dict:
         public_snapshot["scenario_behavior_descriptor"] = _sanitize_public_value(
             snapshot.get("scenario_behavior_descriptor")
         )
+    if "scenario_challenge_shape" in snapshot:
+        public_snapshot["scenario_challenge_shape"] = _sanitize_public_value(
+            snapshot.get("scenario_challenge_shape")
+        )
     if "calibration" in snapshot:
         public_snapshot["calibration"] = _sanitize_public_value(
             snapshot.get("calibration")

@@ -130,7 +130,7 @@ class KovaaKCaptureFinalizer:
             log.warning("capture shutdown release returned an unexpected status")
 
     async def finalizing_capture_session(self) -> str | None:
-        """Return the exited native session that is still retaining its replay buffer."""
+        """Return the finalizing session still retaining its replay buffer."""
         if self._native_client is None:
             return None
         try:
@@ -142,14 +142,17 @@ class KovaaKCaptureFinalizer:
         capture_session_id = status.get("captureSessionId")
         if (
             status.get("phase") != "finalizing"
-            or status.get("kovaakProcessPresent") is not False
             or not isinstance(capture_session_id, str)
         ):
             return None
         return capture_session_id
 
     async def release_capture_session(self, capture_session_id: str) -> bool:
-        """Release one exited session, preserving a live KovaaK session's pre-roll."""
+        """Release one finalizing session; live capturing sessions keep their pre-roll.
+
+        phase=finalizing is only entered after the owning KovaaK process
+        exits, so a fast-restarted KovaaK process does not block the release.
+        """
         if self._native_client is None:
             return False
         try:
@@ -159,7 +162,6 @@ class KovaaKCaptureFinalizer:
             return False
         if (
             status.get("phase") != "finalizing"
-            or status.get("kovaakProcessPresent") is not False
             or status.get("captureSessionId") != capture_session_id
         ):
             return False
@@ -243,6 +245,13 @@ class KovaaKCaptureFinalizer:
             run = await kovaak_run_store.mark_run_video_unavailable(
                 run["id"], self._user_id, "video_window_invalid",
             ) or run
+            run, trace_pending = await self._attach_trace_snapshot(
+                run, None, require_coverage=False,
+            )
+            if trace_pending is not None:
+                # The video window is terminally invalid; a trace that
+                # cannot attach now must not hot-loop the finalized run.
+                trace_pending = None
             return await self._finish_or_retry_trace(
                 run, trace_pending, "video_window_invalid",
             )
@@ -386,13 +395,16 @@ class KovaaKCaptureFinalizer:
                 error.code, "video_capture_unavailable",
             )
             if error.code == "capture_coverage_gap":
-                return await kovaak_run_store.invalidate_run_for_video_coverage_gap(
+                run = await kovaak_run_store.invalidate_run_for_video_coverage_gap(
                     run["id"],
                     self._user_id,
                     expected_pending_video_path=video_path,
                     expected_request_digest=request_digest,
                     data_root=self._data_root,
                 ) or run
+                return await self._finish_or_retry_trace(
+                    run, trace_pending, video_error,
+                )
             run = await kovaak_run_store.mark_run_video_unavailable(
                 run["id"],
                 self._user_id,
@@ -440,6 +452,7 @@ class KovaaKCaptureFinalizer:
         self,
         run: dict,
         raw_snapshot_receipt: dict[str, object] | None,
+        *, require_coverage: bool = True,
     ) -> tuple[dict, RetryableIngestionError | None]:
         try:
             attached = await kovaak_run_store.attach_mouse_trace_snapshot_window(
@@ -447,7 +460,7 @@ class KovaaKCaptureFinalizer:
                 user_id=self._user_id,
                 raw_input_snapshot_path=self._raw_input_snapshot_path,
                 raw_snapshot_receipt=raw_snapshot_receipt,
-                require_coverage=True,
+                require_coverage=require_coverage,
             )
         except RetryableIngestionError as error:
             current = await kovaak_run_store.get_kovaak_run(

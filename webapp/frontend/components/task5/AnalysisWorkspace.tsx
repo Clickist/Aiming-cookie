@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getSession, retrySession } from "@/lib/api";
 import {
+  ANALYSIS_AUTO_TEACH_EVENT,
   getAnalysisViewState,
   presentAnalysisWorkspace,
   type AnalysisViewState,
@@ -164,6 +165,26 @@ export function AnalysisWorkspace() {
     const timer = window.setInterval(() => void load(false), 2000);
     return () => window.clearInterval(timer);
   }, [load, loadWarning, session?.status]);
+
+  // 分析完成自动开讲：只在「本页活体观察到」同一 Analysis 的非终态 → done
+  // 转换时派发一次事件（AppShell 在 Provider 可用时创建 Coach run）。直接打开
+  // 已完成的分析不触发，避免翻旧记录时重复开讲。
+  const prevStatusRef = useRef<{ id: number | null; status: string | null }>({ id: null, status: null });
+  useEffect(() => {
+    const status = session?.status ?? null;
+    const previous = prevStatusRef.current;
+    prevStatusRef.current = { id: analysisId, status };
+    if (
+      status === "done" && analysisId !== null
+      && previous.id === analysisId
+      && previous.status !== null && previous.status !== "done"
+      && typeof window !== "undefined"
+    ) {
+      window.dispatchEvent(new CustomEvent(ANALYSIS_AUTO_TEACH_EVENT, {
+        detail: { analysis_ref: `analysis:${analysisId}` },
+      }));
+    }
+  }, [analysisId, session?.status]);
 
   const viewState = getAnalysisViewState({
     loading,

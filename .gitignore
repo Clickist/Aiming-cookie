@@ -45,3 +45,9 @@ webapp/coach-runtime/node_modules/
 webapp/frontend/mock-*.log
 webapp/frontend/*.err.log
 webapp/frontend/*.out.log
+
+# local desktop runtime data (runs, sessions, conversations, teaching state)
+app-data/
+
+# local research material (YouTube reference downloads)
+viscose-youtube/

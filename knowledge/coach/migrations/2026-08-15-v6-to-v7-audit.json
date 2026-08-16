@@ -1,0 +1,29 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-08-06.v6",
+  "target_registry_version": "2026-08-15.v7",
+  "generated_at": "2026-08-15",
+  "migrated_entries": [
+    {
+      "source_entry_ref": "knowledge:tracking.control-smoothness@2",
+      "target_entry_ref": "knowledge:tracking.control-smoothness@2",
+      "action": "metric_refs_added",
+      "added_metric_refs": [
+        "metric:decel_frac",
+        "metric:path_efficiency",
+        "metric:reverse_ratio"
+      ],
+      "reason": "Baseline (input_native) analysis exposes deceleration and path metrics; these are the exact signals the control-smoothness entry explains, so Coach can now retrieve this entry when a baseline tracking analysis has no visual-pipeline metrics to query on."
+    },
+    {
+      "source_entry_ref": "knowledge:static.flicking-terminal-control@2",
+      "target_entry_ref": "knowledge:static.flicking-terminal-control@2",
+      "action": "metric_refs_added",
+      "added_metric_refs": [
+        "metric:decel_frac",
+        "metric:path_efficiency"
+      ],
+      "reason": "Terminal control is deceleration control; adding the two deceleration-path baseline metrics lets the entry be retrieved from a baseline static analysis too, not only from exact-pipeline signals."
+    }
+  ]
+}

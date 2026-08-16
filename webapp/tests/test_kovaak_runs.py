@@ -1778,7 +1778,7 @@ def test_public_analysis_input_snapshot_preserves_scenario_identity_version():
 
 
 @pytest.mark.asyncio
-async def test_analysis_input_snapshot_freezes_unknown_exact_hash_without_name_dispatch(
+async def test_analysis_input_snapshot_freezes_unreviewed_hash_as_name_candidate(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -1818,12 +1818,451 @@ async def test_analysis_input_snapshot_freezes_unknown_exact_hash_without_name_d
     assert resolution["scenario_hash"] == "observed-but-unreviewed-hash"
     assert resolution["display_name"] == "Same Display Name"
     assert resolution["scenario_profile_ref"] is None
-    assert resolution["classification_source"] == "unknown"
-    assert resolution["family_analyzer_dispatch"] == "none"
-    assert resolution["claim_ceiling"] == "outcome_only"
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["aim_family"] == "static_clicking"
+    assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
     public = kovaak_run_store.public_analysis_input_snapshot(snapshot)
     assert public["scenario_resolution"] == resolution
     assert str(tmp_path) not in json.dumps(public)
+
+
+def _shape_refine_run() -> dict:
+    return {
+        "stats_summary": {"kill_count": 0},
+        "performance_summary": {"header": {"scenario_hash": "unreviewed-hash"}},
+    }
+
+
+def _shape_refine_snapshot(resolution: dict) -> dict:
+    return {
+        "schema_version": "analysis_input_snapshot.v3",
+        "scenario": "Air Angelic 4 Voltaic Easy",
+        "scenario_resolution": resolution,
+        "canonical_time_window": {
+            "schema_version": "canonical_time_window.v1",
+            "start_ms": 0,
+            "end_ms": 30_000,
+            "duration_ms": 30_000,
+        },
+    }
+
+
+def test_challenge_button_samples_held_counts_in_window_held_samples(tmp_path: Path):
+    from webapp.backend import analysis_service
+    from webapp.backend.kovaak_snapshot_codec import write_mouse_snapshot
+
+    trace_path = tmp_path / "trace.acri"
+    write_mouse_snapshot(trace_path, [
+        {"timestamp_ms": 0, "dx": 1, "dy": 0, "buttons": 0},
+        {"timestamp_ms": 1, "dx": 0, "dy": 1, "buttons": 1},
+        {"timestamp_ms": 2, "dx": 1, "dy": 1, "buttons": 1},
+        {"timestamp_ms": 3, "dx": 0, "dy": 0, "buttons": 0},
+        {"timestamp_ms": 900, "dx": 2, "dy": 0, "buttons": 1},  # 窗外不计
+    ])
+    snapshot = {
+        "trace": {"availability": "available", "path": str(trace_path)},
+        "canonical_time_window": {"start_ms": 0, "end_ms": 10, "duration_ms": 10},
+    }
+
+    # canonical 解码后按住状态同时出现在按钮状态点与移动点上：
+    # 窗内 held = t=1 的状态点+移动点、t=2 的移动点共 3 个；t=900 在窗外不计。
+    assert analysis_service._challenge_button_samples_held(snapshot) == 3
+    shape = analysis_service._challenge_shape_for_run(
+        {"stats_summary": {"kill_count": 39}}, snapshot,
+    )
+    assert shape["button_samples_held"] == 3
+
+    # trace 缺失/不可解码时安静退化为无 raw 信号。
+    assert analysis_service._challenge_button_samples_held(
+        {"canonical_time_window": snapshot["canonical_time_window"]},
+    ) is None
+    assert analysis_service._challenge_button_samples_held({
+        "trace": {"availability": "available", "path": str(tmp_path / "missing.acri")},
+        "canonical_time_window": snapshot["canonical_time_window"],
+    }) is None
+
+
+def test_analysis_service_refines_name_candidates_with_challenge_shape():
+    from webapp.backend import analysis_service
+    from kovaak_tracker import scenario_profiles
+
+    name_resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash", display_name="Air Angelic 4 Voltaic Easy",
+    )
+    assert name_resolution["classification_source"] == "name_heuristic"
+    snapshot = _shape_refine_snapshot(name_resolution)
+    # 该合成 run 无 trace → 无按住采样，0 杀走无 raw 弱判据（kill_density_fallback）。
+
+    refined = analysis_service._apply_challenge_shape_resolution(
+        _shape_refine_run(), snapshot,
+    )
+
+    assert refined["scenario_resolution"]["classification_source"] == "challenge_shape"
+    assert refined["scenario_resolution"]["aim_family"] == "continuous_tracking"
+    assert refined["scenario_challenge_shape"] == {
+        "schema_version": "scenario_challenge_shape.v1",
+        "kills": 0,
+        "duration_ms": 30_000,
+    }
+    # 原快照不被就地修改。
+    assert snapshot["scenario_resolution"]["classification_source"] == "name_heuristic"
+    assert "scenario_challenge_shape" not in snapshot
+
+    from webapp.backend import kovaak_run_projection
+    public = kovaak_run_projection.public_analysis_input_snapshot(refined)
+    assert public["scenario_challenge_shape"] == refined["scenario_challenge_shape"]
+
+
+def test_analysis_service_keeps_exact_and_local_definitions_over_challenge_shape():
+    from webapp.backend import analysis_service
+    from kovaak_tracker import scenario_profiles
+
+    exact = scenario_profiles.resolve_scenario_profile(
+        "b2ae4a24b710e36afc6e57c61f590ab4",
+        display_name="WHJ SmoothStrafeSphere Easy",
+    )
+    unchanged = analysis_service._apply_challenge_shape_resolution(
+        _shape_refine_run(), _shape_refine_snapshot(exact),
+    )
+    assert unchanged["scenario_resolution"] == exact
+    assert "scenario_challenge_shape" not in unchanged
+
+    local_definition = dict(exact, classification_source="local_scenario_definition")
+    kept = analysis_service._apply_challenge_shape_resolution(
+        _shape_refine_run(), _shape_refine_snapshot(local_definition),
+    )
+    assert kept["scenario_resolution"] == local_definition
+
+
+def test_analysis_service_skips_challenge_shape_in_the_undecided_band():
+    from webapp.backend import analysis_service
+    from kovaak_tracker import scenario_profiles
+
+    name_resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash", display_name="Air Angelic 4 Voltaic Easy",
+    )
+    # 无 trace、34-39 杀区间（密度判据已推翻）→ 诚实不判定，保持名称层结果。
+    run = {"stats_summary": {"kill_count": 39}}
+    snapshot = _shape_refine_snapshot(name_resolution)
+    snapshot["canonical_time_window"] = {
+        **snapshot["canonical_time_window"],
+        "end_ms": 90_000,
+        "duration_ms": 90_000,
+    }
+
+    refined = analysis_service._apply_challenge_shape_resolution(run, snapshot)
+
+    assert refined["scenario_resolution"] == name_resolution
+    assert "scenario_challenge_shape" not in refined
+
+
+_OVERRIDE_HASH = "0123456789abcdef" * 2
+
+
+def _write_scenario_overrides(overrides: dict) -> None:
+    from webapp.backend import config as backend_config
+
+    config_dir = backend_config.DATA_ROOT / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "scenario-overrides.json").write_text(
+        json.dumps({
+            "schema_version": "scenario_overrides.v1",
+            "overrides": overrides,
+        }),
+        encoding="utf-8",
+    )
+
+
+def test_scenario_override_beats_name_and_shape_layers():
+    from webapp.backend import analysis_service
+    from webapp.backend.contracts import validate_scenario_resolution_v1
+    from kovaak_tracker import scenario_profiles
+
+    name_resolution = scenario_profiles.resolve_scenario_profile(
+        _OVERRIDE_HASH, display_name="Air Angelic 4 Voltaic Easy",
+    )
+    assert name_resolution["classification_source"] == "name_heuristic"
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {
+            "aim_family": "static_clicking",
+            "confirmed_by": "user",
+            "note": "1w4ts = one wall four targets small",
+            "updated_at": "2026-08-15T00:00:00Z",
+        },
+    })
+    snapshot = _shape_refine_snapshot(name_resolution)
+
+    overridden = analysis_service._apply_scenario_override_resolution(snapshot)
+
+    resolution = overridden["scenario_resolution"]
+    assert resolution["classification_source"] == "scenario_override"
+    assert resolution["aim_family"] == "static_clicking"
+    assert resolution["classification_confidence"] == "confirmed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
+    assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    # 识别链后续层（challenge shape）不再覆盖 override。
+    shaped = analysis_service._apply_challenge_shape_resolution(
+        _shape_refine_run(), overridden,
+    )
+    assert shaped["scenario_resolution"]["classification_source"] == "scenario_override"
+    assert "scenario_challenge_shape" not in shaped
+    # 新来源通过 frozen contracts 校验，并驱动该 family 的 analysis_type。
+    validate_scenario_resolution_v1(resolution)
+    assert analysis_service._analysis_type_for_snapshot(overridden) == "static_clicking"
+    # 原快照不被就地修改。
+    assert snapshot["scenario_resolution"]["classification_source"] == "name_heuristic"
+
+
+def test_exact_reviewed_hash_beats_scenario_override():
+    from webapp.backend import analysis_service
+    from kovaak_tracker import scenario_profiles
+
+    exact = scenario_profiles.resolve_scenario_profile(
+        "b2ae4a24b710e36afc6e57c61f590ab4",
+        display_name="WHJ SmoothStrafeSphere Easy",
+    )
+    _write_scenario_overrides({
+        "b2ae4a24b710e36afc6e57c61f590ab4": {
+            "aim_family": "static_clicking",
+            "confirmed_by": "user",
+            "note": None,
+            "updated_at": "2026-08-15T00:00:00Z",
+        },
+    })
+
+    unchanged = analysis_service._apply_scenario_override_resolution(
+        _shape_refine_snapshot(exact),
+    )
+
+    assert unchanged["scenario_resolution"] == exact
+
+
+def test_scenario_override_miss_or_bad_entry_falls_back_to_the_original_chain():
+    from webapp.backend import analysis_service
+    from kovaak_tracker import scenario_profiles
+
+    name_resolution = scenario_profiles.resolve_scenario_profile(
+        _OVERRIDE_HASH, display_name="Air Angelic 4 Voltaic Easy",
+    )
+    # 未写入 override 文件 → 原链不变。
+    untouched = analysis_service._apply_scenario_override_resolution(
+        _shape_refine_snapshot(name_resolution),
+    )
+    assert untouched["scenario_resolution"] == name_resolution
+
+    # 命中但条目不合法（family 越界）→ 该条目被跳过，仍落原链。
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {"aim_family": "movement_aiming", "confirmed_by": "user"},
+    })
+    skipped = analysis_service._apply_scenario_override_resolution(
+        _shape_refine_snapshot(name_resolution),
+    )
+    assert skipped["scenario_resolution"] == name_resolution
+
+    # note 超长同理被跳过。
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {"aim_family": "static_clicking", "note": "x" * 201},
+    })
+    skipped_note = analysis_service._apply_scenario_override_resolution(
+        _shape_refine_snapshot(name_resolution),
+    )
+    assert skipped_note["scenario_resolution"] == name_resolution
+
+
+async def _override_ready_run(tmp_path: Path, *, owner: str) -> dict:
+    """A complete Run whose Performance hash is _OVERRIDE_HASH (no override file yet)."""
+    stats = tmp_path / f"{owner}-Stats.csv"
+    performance = tmp_path / f"{owner}-Performance.perf"
+    trace = tmp_path / f"{owner}-trace.bin"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    kovaak_run_store.write_mouse_snapshot(trace, [
+        {"timestamp_ms": 1_000, "dx": 1, "dy": 2, "buttons": 0},
+    ])
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=owner,
+        source_key=f"{owner}-run",
+        scenario="Complete test scenario",
+        stats_path=str(stats),
+        performance_path=str(performance),
+        mouse_trace_path=str(trace),
+        stats_summary={
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+        },
+        performance_summary={
+            "source": kovaak_run_store._source_metadata(
+                performance, kovaak_run_store.PERFORMANCE_PARSER_VERSION,
+            ),
+            "header": {"scenario_hash": _OVERRIDE_HASH},
+        },
+    )
+    run = await kovaak_run_store.set_run_alignment(
+        run["id"],
+        owner,
+        state="resolved",
+        summary={
+            "start_ms": 1_000,
+            "end_ms": 2_000,
+            "duration_ms": 1_000,
+            "start_source": "test_start",
+            "end_source": "test_end",
+            "timebase_version": "time_alignment.v2",
+            "warnings": [],
+        },
+        start_epoch_ms=1_000,
+        end_epoch_ms=2_000,
+    ) or run
+    return run
+
+
+def _mark_session_done(session_id: int) -> None:
+    from webapp.backend import queue
+
+    session = queue._load_session(session_id)
+    assert isinstance(session, dict)
+    session["status"] = "done"
+    queue._save_session(session)
+
+
+@pytest.mark.asyncio
+async def test_create_from_run_enqueues_the_override_family(
+    monkeypatch, tmp_path: Path,
+):
+    """先写 override 再 create_from_run：入队 snapshot 的 resolution 用 override family。"""
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {
+            "aim_family": "target_switching",
+            "confirmed_by": "user",
+            "note": "1w4ts = one wall four targets small",
+            "updated_at": "2026-08-15T00:00:00Z",
+        },
+    })
+    owner = "owner-override-create"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    created = await analysis_service.create_analysis_from_run(
+        owner,
+        run["id"],
+        managed_video_source=video,
+    )
+
+    session = await queue.get_session(created["session_id"])
+    resolution = session["input_snapshot"]["scenario_resolution"]
+    assert resolution["classification_source"] == "scenario_override"
+    assert resolution["aim_family"] == "target_switching"
+    # 名称层本会把 Complete test scenario 判成 static_clicking；override 改写了入队类型。
+    assert session["analysis_type"] == "target_switching"
+
+
+@pytest.mark.asyncio
+async def test_reclassified_done_analysis_creates_a_new_session(
+    monkeypatch, tmp_path: Path,
+):
+    """类型被 override 改变的 done Run：create_from_run 新建新 session 而非复用旧的。"""
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-reclassify"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    first = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    first_session = await queue.get_session(first["session_id"])
+    assert first_session["analysis_type"] == "static_clicking"
+    _mark_session_done(first["session_id"])
+
+    # 用户纠正为 target_switching → set 记忆 → 再 create 应按新类型新建。
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {"aim_family": "target_switching", "confirmed_by": "user"},
+    })
+    second = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+
+    assert second["session_id"] != first["session_id"]
+    assert "reused" not in second
+    second_session = await queue.get_session(second["session_id"])
+    resolution = second_session["input_snapshot"]["scenario_resolution"]
+    assert resolution["classification_source"] == "scenario_override"
+    assert second_session["analysis_type"] == "target_switching"
+    # 旧分析保持不动，成为该 run 的历史版本。
+    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "static_clicking"
+
+
+@pytest.mark.asyncio
+async def test_override_matching_the_done_family_keeps_the_reuse(
+    monkeypatch, tmp_path: Path,
+):
+    """override 命中但 family 与 done 分析一致：仍复用，不产生重复分析。"""
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-same-family"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    first = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    assert (await queue.get_session(first["session_id"]))["analysis_type"] == "static_clicking"
+    _mark_session_done(first["session_id"])
+
+    # 用户确认的类型与现有分析一致（static_clicking）→ 复用旧的。
+    _write_scenario_overrides({
+        _OVERRIDE_HASH: {"aim_family": "static_clicking", "confirmed_by": "user"},
+    })
+    again = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+
+    assert again["reused"] is True
+    assert again["session_id"] == first["session_id"]
+    assert len(await queue.get_run_analysis_states(owner, run["id"])) == 1
+
+
+@pytest.mark.asyncio
+async def test_repeat_create_without_override_reuses_without_freezing(
+    monkeypatch, tmp_path: Path,
+):
+    """无 override 的普通重复调用：走快速复用，不重建输入快照（零冻结开销）。"""
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-fast-reuse"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    first = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    _mark_session_done(first["session_id"])
+
+    async def _boom_snapshot(*_args, **_kwargs):
+        raise AssertionError("fast reuse must not rebuild the input snapshot")
+
+    monkeypatch.setattr(kovaak_run_store, "build_analysis_input_snapshot", _boom_snapshot)
+    repeat = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+
+    assert repeat["reused"] is True
+    assert repeat["session_id"] == first["session_id"]
+    assert len(await queue.get_run_analysis_states(owner, run["id"])) == 1
 
 
 @pytest.mark.asyncio

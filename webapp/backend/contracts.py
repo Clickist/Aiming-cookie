@@ -646,7 +646,8 @@ def validate_scenario_resolution_v1(value: object) -> dict:
     classification_source = value.get("classification_source")
     if classification_source not in {
         "reviewed_registry", "official_metadata", "unknown", "name_heuristic",
-        "user_declaration", "local_scenario_definition",
+        "user_declaration", "local_scenario_definition", "family_default",
+        "challenge_shape", "scenario_override",
     }:
         raise ValueError("scenario_resolution.classification_source is invalid")
     confidence = value.get("classification_confidence")
@@ -794,18 +795,29 @@ def validate_scenario_resolution_v1(value: object) -> dict:
         ):
             raise ValueError("scenario_resolution active dispatch is inconsistent")
     elif dispatch == "allowed":
+        # Baseline family dispatch: the identified family pipeline runs on
+        # native facts without exact visual calibration. It is granted by a
+        # verified local scenario definition, the Stats-derived challenge
+        # shape, a name-only family candidate, the unresolved default, a
+        # user-confirmed scenario override, or a reviewed profile whose
+        # manifest gate is not active (exact-review provenance kept, visual
+        # claims withheld).
         if not (
-            manifest_status == "unlisted"
-            and profile_ref is None
-            and classification_source == "local_scenario_definition"
-            and confidence == "confirmed"
-            and profile_status == "unknown"
-            and aim_family in {"static_clicking", "dynamic_clicking"}
+            manifest_status != "active"
+            and aim_family in {
+                "static_clicking", "dynamic_clicking",
+                "continuous_tracking", "target_switching",
+            }
             and claim_ceiling == "descriptive_only"
             and allowed_analyzers == [f"{aim_family}.baseline.v1"]
             and allowed_metric_families == ["outcome", "input_kinematics"]
             and limitations
         ):
+            raise ValueError("scenario_resolution baseline dispatch is inconsistent")
+        if profile_ref is None and classification_source not in {
+            "local_scenario_definition", "name_heuristic", "family_default",
+            "challenge_shape", "scenario_override",
+        }:
             raise ValueError("scenario_resolution baseline dispatch is inconsistent")
     elif dispatch != "none":
         raise ValueError("scenario_resolution dispatch is invalid")

@@ -57,6 +57,44 @@ const TEACHING_ACTIONS = new Set<TeachingAction>([
   "practice", "await_execution_confirmation", "prepare_retest", "await_retest_confirmation",
   "revise", "ask_follow_up", "pause", "stop_for_discomfort",
 ]);
+
+/**
+ * Phase transitions allowed for `teaching_session.update`.
+ *
+ * The loop runs intake → hypothesize → teach → teach-back → practice →
+ * execution confirmation → retest → retest confirmation → revise/follow_up.
+ * Deviations are limited to the local repair/restart moves the loop needs:
+ * one step back to re-teach, a follow-up question, a pause from any active
+ * phase, a discomfort stop, and a fresh lesson (back to intake). A paused
+ * session may resume to any active phase; a discomfort stop only restarts.
+ */
+const TEACHING_PHASE_TRANSITIONS: Readonly<Record<TeachingPhase, readonly TeachingPhase[]>> = {
+  intake: ["hypothesize", "follow_up", "paused", "stopped_for_discomfort"],
+  hypothesize: ["teach", "intake", "follow_up", "paused", "stopped_for_discomfort"],
+  teach: ["await_teach_back", "practice_ready", "follow_up", "paused", "stopped_for_discomfort"],
+  await_teach_back: ["teach_back_repair", "practice_ready", "teach", "paused", "stopped_for_discomfort"],
+  teach_back_repair: ["await_teach_back", "teach", "practice_ready", "paused", "stopped_for_discomfort"],
+  practice_ready: ["await_execution_confirmation", "teach", "follow_up", "paused", "stopped_for_discomfort"],
+  await_execution_confirmation: ["retest_ready", "practice_ready", "paused", "stopped_for_discomfort"],
+  retest_ready: ["await_retest_confirmation", "practice_ready", "paused", "stopped_for_discomfort"],
+  await_retest_confirmation: ["revise", "retest_ready", "practice_ready", "paused", "stopped_for_discomfort"],
+  revise: ["follow_up", "intake", "hypothesize", "practice_ready", "paused", "stopped_for_discomfort"],
+  follow_up: ["intake", "hypothesize", "revise", "paused", "stopped_for_discomfort"],
+  paused: [
+    "intake", "hypothesize", "teach", "await_teach_back", "teach_back_repair",
+    "practice_ready", "await_execution_confirmation", "retest_ready",
+    "await_retest_confirmation", "revise", "follow_up",
+  ],
+  stopped_for_discomfort: ["intake"],
+};
+
+export function isTeachingPhase(value: unknown): value is TeachingPhase {
+  return typeof value === "string" && PHASES.has(value as TeachingPhase);
+}
+
+export function isTeachingPhaseTransitionAllowed(from: TeachingPhase, to: TeachingPhase): boolean {
+  return from === to || TEACHING_PHASE_TRANSITIONS[from].includes(to);
+}
 const ALLOWED_KEYS = new Set([
   "schema_version", "session_ref", "session_version", "phase", "observation", "primary_candidate",
   "alternatives", "cue", "changed_variable", "active_item_ref", "prepared_plan_ref", "prepared_item", "question_kind", "question", "allowed_command",

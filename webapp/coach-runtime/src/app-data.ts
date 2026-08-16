@@ -17,7 +17,7 @@ export function getDataRoot(): string {
   return cachedDataRoot;
 }
 
-const APP_DATA_SUBDIRS = ["analyses", "conversations", "training", "config"] as const;
+const APP_DATA_SUBDIRS = ["analyses", "conversations", "training", "teaching", "config"] as const;
 
 export function ensureAppDataDirs(): void {
   const root = getDataRoot();
@@ -39,6 +39,10 @@ export function getAnalysesDir(): string {
 
 export function getTrainingDir(): string {
   return join(getDataRoot(), "training");
+}
+
+export function getTeachingDir(): string {
+  return join(getDataRoot(), "teaching");
 }
 
 export function getConfigDir(): string {

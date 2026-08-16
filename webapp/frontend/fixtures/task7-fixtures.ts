@@ -1193,7 +1193,7 @@ export async function installDesktopBridge(page: Page): Promise<void> {
     fixtureWindow.isTauri = true;
     fixtureWindow.__TAURI_INTERNALS__ = {
       invoke: async (command, args) => {
-        if (command === "desktop_runtime_connection") return { baseUrl: origin, token: "task7-fixture-token" };
+        if (command === "desktop_runtime_connection") return { baseUrl: origin, token: "task7-fixture-token", sidecarUrl: origin };
         if (command === "desktop_capture_coordinator_status" || command === "desktop_capture_coordinator_set_enabled") {
           return {
             enabled: true,

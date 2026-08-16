@@ -213,3 +213,25 @@ def test_build_progress_report_plan_narration_best_effort(tmp_path):
     rep = build_progress_report(p, {"linearity": {"med": 0.18}}, backend=_Boom())
     assert rep.plan is not None
     assert any("不可用" in n for n in rep.notes)
+
+
+def test_build_report_survives_visualization_import_failure(monkeypatch):
+    # The deterministic report must not die when the numpy/plotly stack is
+    # unavailable: figures degrade to {} with a note instead.
+    import sys
+    monkeypatch.setitem(sys.modules, "kovaak_tracker.coach.visualization", None)
+    r = build_report(_summary(), None, {"cm_per_360": 48.0}, backend=None)
+    assert r.diagnosis is not None
+    assert r.figures == {}
+    assert any("图表不可用" in n for n in r.notes)
+
+
+def test_build_report_survives_agent_import_failure(monkeypatch):
+    # backend=None never touches the agent stack; even with it sabotaged the
+    # deterministic report (with figures) is produced untouched.
+    import sys
+    monkeypatch.setitem(sys.modules, "kovaak_tracker.coach.agent", None)
+    r = build_report(_summary(), None, {"cm_per_360": 48.0}, backend=None)
+    assert r.narration is None
+    assert "radar" in r.figures
+    assert r.notes == []

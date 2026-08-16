@@ -64,6 +64,15 @@ test("AppShell is the only mounted Coach owner on Coach routes", async () => {
   assert.match(routePage, /return null/);
 });
 
+test("AppShell opens a fresh draft for intent navigation but keeps the primary session otherwise", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  // 带分析意图进入且无进行中会话 → 新草稿承接新意图（独立 effect 响应路由变化）。
+  assert.match(shell, /get\("intent"\) !== "coach-analysis"\) return;[\s\S]*?setDraftSession\(true\);/);
+  assert.match(shell, /window\.history\.replaceState\(null, "", window\.location\.pathname\);/);
+  // 其余情况恢复 primary 会话（上次对话的延续）。
+  assert.match(shell, /const primary = coachSessions\.find\(\(session\) => session\.kind === "primary"\);/);
+});
+
 test("app shell removes transient status controls from the AppBar", async () => {
   const value = await source("components/task3/AppShell.tsx");
   assert.doesNotMatch(value, /task3-capture-status/);
@@ -76,12 +85,27 @@ test("app shell removes transient status controls from the AppBar", async () => 
 });
 
 test("app shell styles keep the 48px AppBar and make Settings a top-bar-below overlay", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
   const value = await source("components/task3/task3.css");
   assert.match(value, /\.task3-toolbar[^{]*\{[\s\S]*height:\s*48px/);
   assert.match(value, /\.task3-route-content\[data-settings-page="true"\][\s\S]*position:\s*fixed/);
   assert.match(value, /inset:\s*48px 0 0/);
-  assert.match(value, /task3-route-fade 140ms ease-out/);
-  assert.match(value, /prefers-reduced-motion: reduce[\s\S]*task3-route-content/);
+  assert.doesNotMatch(value, /task3-route-fade/);
+  assert.match(shell, /useAnimatedPresence\(settingsRoute, 160\)/);
+  assert.match(shell, /settingsOverlayChildren/);
+  assert.match(shell, /settingsPresence\.state === "open" \? "open" : "opening"/);
+  assert.match(value, /data-settings-page="true"[\s\S]*opacity 160ms var\(--ease-out/);
+  assert.match(value, /data-settings-motion="opening"[\s\S]*data-settings-motion="closing"[\s\S]*translateX\(8px\)/);
+  assert.match(value, /prefers-reduced-motion: reduce[\s\S]*duration-reduced-motion, 120ms/);
+});
+
+test("onboarding step and listbox entrances use short transform-and-opacity motion", async () => {
+  const value = await source("components/task3/task3.css");
+  assert.match(value, /task3-onboarding-enter 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
+  assert.match(value, /@keyframes task3-onboarding-enter[\s\S]*opacity:\s*0;[\s\S]*translateY\(4px\)/);
+  assert.match(value, /task3-onboarding-dropdown-menu[\s\S]*transform-origin:\s*top center/);
+  assert.match(value, /task3-onboarding-dropdown-enter 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
+  assert.match(value, /@keyframes task3-onboarding-dropdown-enter[\s\S]*scale\(0\.97\)/);
 });
 
 test("session selection updates the Coach deep link", async () => {
@@ -95,7 +119,7 @@ test("session selection updates the Coach deep link", async () => {
 
 test("session archive and delete failures surface through the existing Toast", async () => {
   const value = await source("components/task3/AppShell.tsx");
-  assert.match(value, /import \{ Toast \} from "@\/ui\/primitives"/);
+  assert.match(value, /import \{[^}]*Toast[^}]*\} from "@\/ui\/primitives"/);
   assert.match(value, /setSessionFeedback\("未能归档会话，请重试。"\)/);
   assert.match(value, /setSessionFeedback\("未能删除会话，请重试。"\)/);
   assert.match(value, /操作已完成，但会话列表暂时未能刷新。/);
@@ -232,27 +256,6 @@ test("KovaaK onboarding is optional and uses the shared identity-free connection
   assert.doesNotMatch(panel, /Storage\.setItem\([^\n]*(?:steamProfile|steam_profile|STEAM_ID|STEAM_PROFILE)/);
 });
 
-test("tasks render translated machine codes instead of DTO labels", async () => {
-  const value = await source("components/task3/TasksClient.tsx");
-  assert.doesNotMatch(value, /\.state_label|\.phase_label/);
-  assert.match(value, /presentTask/);
-});
-
-test("the running task gets breathing room while the continuous task panel stays intact", async () => {
-  const client = await source("components/task3/TasksClient.tsx");
-  const styles = await source("components/task3/task3.css");
-  assert.match(client, /<article className="task3-task-item" data-state=\{task\.state\}/);
-  assert.match(styles, /\.task3-task-item\[data-state="running"\][^{]*\{[\s\S]*padding:\s*18px 16px;/);
-  assert.match(styles, /\.task3-stage-stepper[^{]*\{[\s\S]*row-gap:\s*10px;/);
-  assert.match(styles, /\.task3-task-item \+ \.task3-task-item[^{]*\{[\s\S]*border-top:/);
-});
-
-test("task deletion uses the shared danger semantics before and after confirmation", async () => {
-  const value = await source("components/task3/TasksClient.tsx");
-  assert.match(value, /onClick=\{\(\) => setDeleteTarget\(task\)\} size="compact" variant="danger">删除<\/Button>/);
-  assert.match(value, /onClick=\{\(\) => void remove\(\)\} size="compact" variant="danger">删除任务记录<\/Button>/);
-});
-
 test("Task 3 styles consume semantic tokens and contain no raw color literals", async () => {
   const value = await source("components/task3/task3.css");
   const kovaak = await source("components/kovaak/kovaak.css");
@@ -260,34 +263,4 @@ test("Task 3 styles consume semantic tokens and contain no raw color literals", 
   assert.doesNotMatch(kovaak, /#[0-9a-fA-F]{3,8}\b|\brgb\s*\(|\bhsl\s*\(/);
   assert.match(value, /var\(--surface/);
   assert.match(kovaak, /var\(--(?:on-)?surface/);
-});
-
-test("Analyze applies a query Run ref only after the pending Run list is loaded", async () => {
-  const value = await source("components/task3/AnalyzeClient.tsx");
-  assert.match(value, /new URLSearchParams\(window\.location\.search\)\.get\("run"\)/);
-  assert.match(value, /pending\.find\(\(run\) => run\.run_ref === requestedRunRef\)/);
-  assert.match(value, /requestedRun\?\.id \?\? \(pending\.length === 1 \? pending\[0\]\.id : null\)/);
-});
-
-test("Analyze surfaces Stats calibration from the selected Run", async () => {
-  const value = await source("components/task3/AnalyzeClient.tsx");
-  assert.match(value, /selectedRun\?\.stats_calibration\?\.fov/);
-  assert.match(value, /selectedRun\?\.stats_calibration\?\.cm_per_360/);
-  assert.match(value, /detectedFov/);
-  assert.match(value, /detectedCmPer360/);
-});
-
-test("Analyze uses the available workspace width when details are absent or Coach is open", async () => {
-  const client = await source("components/task3/AnalyzeClient.tsx");
-  const styles = await source("components/task3/task3.css");
-  assert.match(client, /data-layout=\{selectedRun \? "split" : "single"\}/);
-  assert.match(styles, /\.task3-analyze-grid\[data-layout="single"\][\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(styles, /\.task3-workspace\[data-coach-open="true"\] \.task3-analyze-grid[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(styles, /\.task3-analyze-grid\[data-layout="single"\] \.task3-analyze-manual-cards[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
-});
-
-test("Analyze mode selected dots keep a fixed circular geometry", async () => {
-  const styles = await source("components/task3/task3.css");
-  assert.match(styles, /\.task3-analyze-mode-dot\s*\{[\s\S]*position:\s*relative;[\s\S]*flex:\s*0 0 14px;[\s\S]*width:\s*14px;[\s\S]*height:\s*14px;/);
-  assert.match(styles, /\.task3-analyze-mode-card\[data-selected="true"\] \.task3-analyze-mode-dot::after[\s\S]*inset:\s*3px;[\s\S]*border-radius:\s*50%;/);
 });

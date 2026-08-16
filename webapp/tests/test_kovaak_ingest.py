@@ -190,6 +190,65 @@ def test_watcher_retries_after_async_callback_future_fails(tmp_path: Path):
     assert watcher.scan_once() == []
 
 
+def test_watcher_stops_retrying_after_consecutive_failures(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    attempts = []
+
+    def always_fail(discovery):
+        attempts.append(discovery)
+        raise RuntimeError("deterministic ingestion failure")
+
+    watcher = KovaaKDirectoryWatcher(tmp_path, always_fail, stable_scans=1)
+    (tmp_path / "1wall Stats.csv").write_text("stats", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger="webapp.backend.kovaak_ingest")
+
+    for _ in range(8):
+        watcher.scan_once()
+
+    assert len(attempts) == 5
+    gave_up = [
+        record for record in caplog.records
+        if "gave up" in record.getMessage()
+    ]
+    assert len(gave_up) == 1
+    assert "1wall" in gave_up[0].getMessage()
+    assert "deterministic ingestion failure" in gave_up[0].getMessage()
+
+    emitted = []
+    watcher.callback = emitted.append
+    (tmp_path / "2wall Stats.csv").write_text("stats-2", encoding="utf-8")
+
+    discoveries = watcher.scan_once()
+
+    assert [item.stats_path for item in discoveries] == [tmp_path / "2wall Stats.csv"]
+    assert watcher.scan_once() == []
+    assert len(attempts) == 5
+
+
+def test_watcher_stops_retrying_when_retry_window_expires(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from webapp.backend import kovaak_ingest
+
+    attempts = []
+
+    def always_fail(_discovery):
+        attempts.append(1)
+        raise RuntimeError("still failing")
+
+    monkeypatch.setattr(kovaak_ingest, "_RETRY_WINDOW_SECONDS", 0.0)
+    watcher = KovaaKDirectoryWatcher(tmp_path, always_fail, stable_scans=1)
+    (tmp_path / "1wall Stats.csv").write_text("stats", encoding="utf-8")
+
+    watcher.scan_once()
+    watcher.scan_once()
+
+    assert len(attempts) == 1
+
+
 def test_watcher_expected_async_state_logs_without_traceback(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,

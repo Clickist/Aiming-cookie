@@ -2,6 +2,8 @@
 param(
     [string]$RepoRoot,
     [int]$CdpPort = 0,
+    [string]$SeedProfileDir,
+    [int[]]$SeedAnalysisVideo = @(),
     [string[]]$Spec = @("desktop-matrix.spec.ts", "desktop-managed-media.spec.ts", "interaction-polish.spec.ts")
 )
 
@@ -68,6 +70,27 @@ $kovaakIsolationPath = Join-Path $RepoRoot ".tauri-e2e-kovaak-$runTag"
 $configOverridePath = Join-Path $RepoRoot ".tauri-e2e-config-$runTag.json"
 $tauriLogPath = Join-Path $RepoRoot ".tauri-e2e-log-$runTag.txt"
 @{ identifier = $identifier } | ConvertTo-Json -Compress | Set-Content -LiteralPath $configOverridePath
+
+if ($SeedProfileDir) {
+    $seedRoot = (Resolve-Path -LiteralPath $SeedProfileDir).Path
+    $seedDb = Join-Path $seedRoot "aiming_cookie.db"
+    if (-not (Test-Path -LiteralPath $seedDb -PathType Leaf)) { throw "Seed profile database is missing: $seedDb" }
+    New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
+    Copy-Item -LiteralPath $seedDb -Destination (Join-Path $appDataDir "aiming_cookie.db")
+    foreach ($analysisId in $SeedAnalysisVideo) {
+        if ($analysisId -le 0) { throw "Seed Analysis id must be positive: $analysisId" }
+        $sourceAnalysisDir = Join-Path $seedRoot "sessions\$analysisId"
+        $sourceVideo = Join-Path $sourceAnalysisDir "video.mp4"
+        if (-not (Test-Path -LiteralPath $sourceVideo -PathType Leaf)) { throw "Seed Analysis video is missing: $sourceVideo" }
+        $videoDir = Join-Path $appDataDir "sessions\$analysisId"
+        New-Item -ItemType Directory -Path $videoDir -Force | Out-Null
+        Copy-Item -LiteralPath $sourceVideo -Destination (Join-Path $videoDir "video.mp4")
+        $sourceDerived = Join-Path $sourceAnalysisDir "derived"
+        if (Test-Path -LiteralPath $sourceDerived -PathType Container) {
+            Copy-Item -LiteralPath $sourceDerived -Destination $videoDir -Recurse
+        }
+    }
+}
 
 # --- Environment for Tauri + Python backend ---
 $env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
