@@ -599,6 +599,18 @@ def test_challenge_shape_classifier_reads_fire_mode_from_button_samples():
         "shape_class"
     ] == "tracking_candidate"  # AirAngelic 0 杀 17273 采样
     assert scenario_profiles.classify_challenge_shape_v1(0, 60_000, 100) is None
+    # 按住转火实测（2026-08-16）：patCircleSwitch 226 采样/杀但 53 杀/分钟、
+    # Target Switching 360 Static 128/杀 65 杀/分钟——按住节奏落在追踪带，
+    # 但击杀节奏证明是点击类挑战，护栏判回 clicking。
+    assert scenario_profiles.classify_challenge_shape_v1(53, 60_000, 12_010)[
+        "shape_class"
+    ] == "clicking_candidate"
+    assert scenario_profiles.classify_challenge_shape_v1(53, 60_000, 12_010)[
+        "basis"
+    ] == "fire_mode_hold_rapid_kills"
+    assert scenario_profiles.classify_challenge_shape_v1(65, 60_000, 8_354)[
+        "shape_class"
+    ] == "clicking_candidate"
 
 
 def test_challenge_shape_fire_mode_keeps_the_undecided_band():
