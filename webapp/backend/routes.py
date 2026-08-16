@@ -554,6 +554,11 @@ def _session_status_response(s: dict, *, history: dict | None = None) -> Session
         presentation_label=s.get("presentation_label"),
         training_at=s.get("training_at"),
         analysis_completed_at=s.get("analysis_completed_at"),
+        task_phase=(
+            s.get("task_phase")
+            if s.get("status") == "running" and isinstance(s.get("task_phase"), str)
+            else None
+        ),
         history=history,
     )
 

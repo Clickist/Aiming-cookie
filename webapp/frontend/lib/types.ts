@@ -376,6 +376,7 @@ export interface SessionStatus {
   presentation_label?: string | null;
   training_at?: string | null;
   analysis_completed_at?: string | null;
+  task_phase?: string | null;
   history: AnalysisHistoryDetail | null;
 }
 
