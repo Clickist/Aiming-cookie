@@ -2120,12 +2120,14 @@ async def _override_ready_run(tmp_path: Path, *, owner: str) -> dict:
     return run
 
 
-def _mark_session_done(session_id: int) -> None:
+def _mark_session_done(session_id: int, result: dict | None = None) -> None:
     from webapp.backend import queue
 
     session = queue._load_session(session_id)
     assert isinstance(session, dict)
     session["status"] = "done"
+    if result is not None:
+        session["result"] = result
     queue._save_session(session)
 
 
@@ -2263,6 +2265,41 @@ async def test_repeat_create_without_override_reuses_without_freezing(
     assert repeat["reused"] is True
     assert repeat["session_id"] == first["session_id"]
     assert len(await queue.get_run_analysis_states(owner, run["id"])) == 1
+
+
+@pytest.mark.asyncio
+async def test_outcome_only_done_analysis_rebuilds_instead_of_reusing(
+    monkeypatch, tmp_path: Path,
+):
+    """done 但版本是 outcome_only 降级的旧分析（老包残留）：重建而非复用空结果。"""
+    from webapp.backend import analysis_service, config, queue
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-outcome-only-rebuild"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    first = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    _mark_session_done(
+        first["session_id"], result={"analysis_version": "scenario_outcome_only.v1"},
+    )
+
+    second = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    assert second["session_id"] != first["session_id"]
+    assert "reused" not in second
+
+    # 重建出的正常分析成为新的复用答案，不会无限重建。
+    _mark_session_done(second["session_id"])
+    third = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    assert third["reused"] is True
+    assert third["session_id"] == second["session_id"]
 
 
 @pytest.mark.asyncio

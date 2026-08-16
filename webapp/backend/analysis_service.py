@@ -25,6 +25,7 @@ from typing import Any, Literal
 log = logging.getLogger(__name__)
 
 from . import history_trends, kovaak_run_store, queue
+from .contracts import SCENARIO_OUTCOME_ONLY_VERSION
 from .kovaak_run_projection import public_kovaak_run
 from .source_requirements import validate_source_requirements
 from .workspace import copy_path_to_path, remove_session_workspace, session_dir
@@ -484,9 +485,19 @@ async def create_analysis_from_run(
     of the selected tier.
     """
     existing = await queue.get_run_analysis_states(owner_id, run_id)
-    completed = next((item for item in existing if item.get("status") == "done"), None)
     # A done analysis is the reusable answer for this Run unless the
-    # user-confirmed scenario memory may have reclassified it since.
+    # user-confirmed scenario memory may have reclassified it since. An
+    # outcome-only degradation is never the answer: a code upgrade can change
+    # what the Run should dispatch to, so those rebuild instead of pinning
+    # the empty pre-upgrade result.
+    completed = next(
+        (
+            item for item in existing
+            if item.get("status") == "done"
+            and item.get("analysis_version") != SCENARIO_OUTCOME_ONLY_VERSION
+        ),
+        None,
+    )
     reclassified = (
         completed is not None and await _run_may_be_reclassified(owner_id, run_id)
     )
