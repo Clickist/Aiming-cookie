@@ -31,12 +31,13 @@ SHAPE_SIGNATURES = {
                  "min_area": 400.0},
 }
 
-# Hypothesis acceptance: enough classified evidence, sane counts and sizes.
-# Frame coverage is deliberately NOT a gate — single-target short-lived
-# scenarios sit at ~9% while detecting perfectly (proposal §3.1.1).
+# Hypothesis acceptance: enough classified evidence, sane sizes, consistent
+# shape. Frame coverage and per-frame presence are deliberately NOT gates —
+# single-target short-lived scenarios (switching) legitimately show zero
+# targets in most sampled frames (proposal §3.1.1).
 MIN_DETECTIONS = 8
 MIN_SHAPE_CONSISTENCY = 0.8
-MEDIAN_COUNT_RANGE = (1, 16)
+MAX_MEDIAN_BLOB_COUNT = 16
 MEDIAN_AREA_RANGE = (30.0, 0.02)
 HUE_PEAK_MIN_PIXEL_SHARE = 0.05 / 100.0
 HUE_PEAK_MIN_BIN_SHARE = 0.4
@@ -337,9 +338,7 @@ def score_color_hypothesis(
     rejections: list[str] = []
     if detection_count < MIN_DETECTIONS:
         rejections.append("insufficient_detections")
-    if not (
-        MEDIAN_COUNT_RANGE[0] <= median_count <= MEDIAN_COUNT_RANGE[1]
-    ):
+    if median_count > MAX_MEDIAN_BLOB_COUNT:
         rejections.append("median_blob_count_out_of_range")
     if not (
         MEDIAN_AREA_RANGE[0] <= median_area <= median_area_limit

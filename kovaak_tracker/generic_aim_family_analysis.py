@@ -23,6 +23,9 @@ GENERIC_TRACKING_ANALYSIS_VERSION = "tracking.generic_visual.v1"
 TRACKING_SAMPLE_MS = 50.0
 TRACKING_MAX_INTERP_GAP_MS = 120.0
 TRACKING_GATE_MIN_COVERAGE = 0.5
+# Circle-switch targets are small and spawn fast: the tracker registers
+# their death noticeably after the Stats kill timestamp.
+SWITCHING_KILL_PAIR_FORWARD_MS = 400.0
 
 GENERIC_DYNAMIC_ASSOCIATION_SCHEMA = "generic_dynamic_association.v1"
 GENERIC_SWITCHING_ASSOCIATION_SCHEMA = "generic_switching_association.v1"
@@ -150,31 +153,53 @@ def associate_generic_switching_v1(
     viewport_size: Sequence[int],
     deg_per_px: float | None,
 ) -> dict:
-    """Kill-bounded switch episodes: transition time and first-shot latency."""
-    association = associate_generic_static_clicks_v1(
-        analysis_ref=analysis_ref,
-        generic_visual_result=generic_visual_result,
-        click_times_ms=click_times_ms,
-        kill_records=kill_records,
-        viewport_size=viewport_size,
-        deg_per_px=deg_per_px,
-    )
-    tracks = generic_visual_result["tracks"]
-    kills = sorted(
+    """Kill-bounded switch episodes: transition time and first-shot latency.
+
+    Under hold-fire (kills vastly outnumber button rising edges — circle
+    switches are played with the button held) per-click outcomes are
+    meaningless, so they are dropped with a limitation and the transition is
+    measured kill → next kill. Small fast-spawning switch targets also die
+    on the tracker noticeably after the Stats kill, so the pairing window
+    stretches forward.
+    """
+    kills_sorted = sorted(
         (int(kill["canonical_time_ms"]), int(kill["kill_index"]))
         for kill in kill_records
     )
+    held_fire = 4 * len(click_times_ms) < len(kills_sorted)
+    association = associate_generic_static_clicks_v1(
+        analysis_ref=analysis_ref,
+        generic_visual_result=generic_visual_result,
+        click_times_ms=(() if held_fire else click_times_ms),
+        kill_records=kill_records,
+        viewport_size=viewport_size,
+        deg_per_px=deg_per_px,
+        kill_pair_forward_ms=SWITCHING_KILL_PAIR_FORWARD_MS,
+    )
+    if held_fire:
+        association["click_outcomes"] = []
+        association["limitations"] = list(dict.fromkeys([
+            *association["limitations"],
+            "held_fire_click_outcomes_unavailable",
+        ]))
+    tracks = generic_visual_result["tracks"]
     clicks = sorted(click_times_ms)
     episodes: list[dict] = []
-    for index, (kill_ms, kill_index) in enumerate(kills):
+    for index, (kill_ms, kill_index) in enumerate(kills_sorted):
         next_kill_ms = (
-            kills[index + 1][0] if index + 1 < len(kills) else None
+            kills_sorted[index + 1][0] if index + 1 < len(kills_sorted) else None
         )
-        first_click = next(
-            (click for click in clicks if click > kill_ms), None,
-        )
-        if first_click is None:
-            continue
+        if held_fire:
+            if next_kill_ms is None:
+                continue
+            transition_end = next_kill_ms
+        else:
+            first_click = next(
+                (click for click in clicks if click > kill_ms), None,
+            )
+            if first_click is None:
+                continue
+            transition_end = first_click
         next_target = None
         for track in tracks:
             if track["birth_ms"] > kill_ms and (
@@ -188,14 +213,15 @@ def associate_generic_switching_v1(
             "event_id": f"{analysis_ref}:generic-switch-episode:{index + 1}",
             "from_kill_ms": kill_ms,
             "kill_index": kill_index,
-            "first_click_ms": first_click,
-            "transition_ms": first_click - kill_ms,
+            "first_click_ms": transition_end,
+            "transition_ms": transition_end - kill_ms,
             "next_target_track_ref": (
                 next_target["track_ref"] if next_target else None
             ),
         })
     association["schema_version"] = GENERIC_SWITCHING_ASSOCIATION_SCHEMA
     association["switch_episodes"] = episodes
+    association["held_fire"] = held_fire
     return association
 
 
