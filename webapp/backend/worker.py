@@ -24,6 +24,7 @@ from .contracts import (
     DYNAMIC_CLICKING_ANALYSIS_VERSION,
     NATIVE_ANALYSIS_VERSION,
     TARGET_SWITCHING_ANALYSIS_VERSION,
+    SCENARIO_OUTCOME_ONLY_VERSION,
     build_analysis_result_v2,
     build_artifact_manifest_v2,
     build_error_v1,
@@ -34,7 +35,6 @@ from .read_models import resolve_calibration_v1
 log = logging.getLogger(__name__)
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
-SCENARIO_OUTCOME_ONLY_VERSION = "scenario_outcome_only.v1"
 DYNAMIC_CLICKING_BASELINE_ANALYSIS_VERSION = "dynamic_clicking.baseline.v1"
 STATIC_CLICKING_BASELINE_ANALYSIS_VERSION = "static_clicking.baseline.v1"
 CONTINUOUS_TRACKING_BASELINE_ANALYSIS_VERSION = "continuous_tracking.baseline.v1"
