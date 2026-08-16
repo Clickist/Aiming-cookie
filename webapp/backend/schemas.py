@@ -155,6 +155,7 @@ class SessionStatus(BaseModel):
     presentation_label: Optional[str] = None
     training_at: Optional[str] = None
     analysis_completed_at: Optional[str] = None
+    task_phase: Optional[str] = None
     history: Optional[AnalysisHistoryDetailOut] = None
 
 
