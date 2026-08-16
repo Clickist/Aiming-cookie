@@ -953,22 +953,6 @@
   pointer-events: none;
 }
 
-.videoTierNote {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 2;
-  margin: 0;
-  max-width: min(420px, calc(100% - 20px));
-  background: color-mix(in srgb, black 80%, transparent);
-  color: color-mix(in srgb, white 94%, transparent);
-  font-size: 12px;
-  line-height: 1.5;
-  padding: 4px 10px;
-  border-radius: 4px;
-  pointer-events: none;
-}
-
 .segmentDrawer {
   position: absolute;
   top: 10px;
