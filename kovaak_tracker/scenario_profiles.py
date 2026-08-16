@@ -649,7 +649,9 @@ def _family_from_display_name(display_name: str) -> str | None:
         return "continuous_tracking"
     if "switch" in normalized:
         return "target_switching"
-    if "pasu" in normalized or ("reload" in normalized and "no reload" not in normalized):
+    # "reload" names a miss-magazine penalty, not target motion: only the
+    # pasu family keyword marks moving-target clicking (community review).
+    if "pasu" in normalized:
         return "dynamic_clicking"
     return "static_clicking"
 

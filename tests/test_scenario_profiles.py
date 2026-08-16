@@ -529,6 +529,9 @@ def test_local_scenario_definition_is_not_a_name_fallback_or_path_leak():
         ("Bounceshot Switch", "target_switching"),
         ("1wall5targets_pasu", "dynamic_clicking"),
         ("pasu small reload", "dynamic_clicking"),
+        # reload 是空枪换弹惩罚而非移动靶标记（点点社群校订 2026-08-16）
+        ("1w2ts reload", "static_clicking"),
+        ("1wall 6targets reload", "static_clicking"),
         ("1wall 6targets small", "static_clicking"),
         ("Tile Frenzy", "static_clicking"),
     ],
