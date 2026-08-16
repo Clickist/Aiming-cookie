@@ -376,3 +376,19 @@ test("Coach renders time-point links in assistant messages without legacy attach
   assert.match(text, /\* 1000/);
 });
 
+
+test("Coach pins the discussion analysis bar above the scrolling conversation and opens the video pane", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  const styles = await source("components/task6/task6.css");
+  // 常驻条在滚动区之前渲染（不在对话流里被滚走）
+  const discussionAt = coach.indexOf('aria-label="本次讨论的分析"');
+  const messagesAt = coach.indexOf('aria-label="Coach 消息"');
+  assert.ok(discussionAt !== -1 && messagesAt !== -1, "discussion bar and messages section must exist");
+  assert.ok(discussionAt < messagesAt, "discussion bar must render before the scrolling messages section");
+  assert.match(coach, /task6-discussion-bar task6-suggestions/);
+  // 项目名是按钮：点击打开左侧视频讲解
+  assert.match(coach, /onClick=\{\(\) => onOpenVideo\?\.\(`analysis:\$\{id\}`, 0\)\}/);
+  // 吸顶条样式：flex 收缩为 none，不参与对话滚动
+  assert.match(styles, /\.task6-discussion-bar\s*\{[\s\S]*flex:\s*none;[\s\S]*\}/);
+  assert.match(styles, /\.task6-discussion-bar::after/);
+});
