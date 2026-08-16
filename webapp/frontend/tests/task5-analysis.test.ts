@@ -236,6 +236,11 @@ test("workspace normalizes heterogeneous backend timeline event types", () => {
       relative_ms: 941,
       source: "performance",
     },
+    {
+      payload_type: "shotsMissed",
+      relative_ms: 1_020,
+      source: "performance",
+    },
   ];
 
   assert.deepEqual(
@@ -252,9 +257,9 @@ test("workspace normalizes heterogeneous backend timeline event types", () => {
       {
         frame: null,
         time_s: null,
-        relative_ms: 941,
-        type: "shotsFired",
-        label: "shotsFired",
+        relative_ms: 1_020,
+        type: "shotsMissed",
+        label: "shotsMissed",
         source: "performance",
       },
     ],

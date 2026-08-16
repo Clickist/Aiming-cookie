@@ -51,8 +51,6 @@ test("video view separates no-video and input-data tiers from real evidence loss
   assert.match(video, /本档分析基于输入数据/);
   assert.match(video, /不代表证据被移除/);
   assert.match(video, /presentation\.family\.status === "supported"/);
-  // baseline 档挂上回放后，播放器上说明回放不参与视觉测量。
-  assert.match(video, /视频回放仍可观看；回放不参与视觉测量结论/);
   // 吓人文案只保留给本应消费视觉测量的档位与真实加载失败。
   assert.match(video, /视觉证据当前不可用/);
 });

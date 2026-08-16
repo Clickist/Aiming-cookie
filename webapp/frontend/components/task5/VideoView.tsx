@@ -24,8 +24,16 @@ function clamp(value: number, min: number, max: number): number {
 
 function eventLabel(type: string): string {
   return {
+    flick: "甩枪",
     kill: "击杀",
+    kills: "击杀",
     miss: "未命中",
+    shotsHit: "命中",
+    shotsMissed: "未命中",
+    shotsFired: "开枪",
+    damageDone: "造成伤害",
+    damagePossible: "理论伤害",
+    score: "得分",
     peak: "速度峰值",
     corrective: "修正",
   }[type] ?? type;
@@ -319,9 +327,6 @@ export function VideoView({
           src={videoUrl}
         />
         <span className={styles.playerBadge}>{timeText}{activeSegment ? ` · ${activeSegment.title_key ?? activeSegment.segment_id}` : ""}</span>
-        {presentation.family.status !== "supported" ? (
-          <p className={styles.videoTierNote}>本档分析基于输入数据，视频回放仍可观看；回放不参与视觉测量结论。</p>
-        ) : null}
         {drawerOpen ? (
           <div className={styles.segmentDrawer} ref={drawerRef} tabIndex={-1}>
             <header>
