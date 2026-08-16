@@ -1,6 +1,6 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-08-16. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
+> Updated: 2026-08-17. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
 
 ## Current Product Direction
 
@@ -28,6 +28,10 @@
 - Rust/Tauri MSVC: fmt, check, clippy passed; tests 93 passed, 0 failed, 7 field-only tests ignored.
 - `desktop-coach-provider.spec.ts` now exercises the product UI and observes `/v1/agent-runs`, but the real Provider field test was not rerun in this cleanup. Its skip is not counted as passing validation.
 - `git diff --check` passed. Full Python, production browser Playwright, real Tauri, real KovaaK, hardware, and Provider field checks remain to be reported separately if run.
+
+## 2026-08-17 Session Changes
+
+- **内测用户 bug：outcome_only 残留卡死（主会话实施，`29b65cd`，v0.1.1 分发）**：内测用户的老包（早于 `8c6ddb6`）把跟枪局 Smoothsphere Viscose Easier 误判甩枪家族、产出空 outcome_only 分析，而 `create_analysis_from_run` 的 done 复用快路径会把旧空分析永久当该 run 的答案——升级后也无法重析。修复：outcome_only 版本的 done 分析不再复用、强制按当前分类重建（`queue.get_run_analysis_states` 附带 `analysis_version`，常量上移 contracts）。归因更正：旧包 coach 说「tracking 未开放」是如实描述其构建（当时无家族分派/场景记忆），非 LLM 编造；话术硬规则按点点决策不加。验证：新增复现测试先红后绿、全量 1193/5；当前代码对全新跟枪局三条路径（有轨迹/带视频/无轨迹兜底）均已实测正确。
 
 ## 2026-08-16 Session Changes
 
