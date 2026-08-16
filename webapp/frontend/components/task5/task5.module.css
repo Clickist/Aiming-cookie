@@ -953,103 +953,16 @@
   pointer-events: none;
 }
 
-.segmentDrawer {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  bottom: 10px;
-  width: 268px;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--outline-variant);
-  border-radius: 6px;
-  background: var(--surface);
-  box-shadow: 0 10px 28px color-mix(in srgb, black 35%, transparent);
-  overflow: hidden;
-}
 
-.segmentDrawer > header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--outline-variant);
-  font: 600 13px var(--font-ui);
-  color: var(--on-surface);
-}
 
-.segmentDrawerBody {
-  flex: 1;
-  overflow: auto;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 
-.segmentDrawerFoot {
-  padding: 7px 12px;
-  border-top: 1px solid var(--outline-variant);
-  font-size: 11px;
-  color: var(--on-surface-variant);
-}
 
-.drawerClose {
-  margin-inline-start: auto;
-  border: 0;
-  background: transparent;
-  color: var(--on-surface-variant);
-  cursor: pointer;
-  font-size: 12px;
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-}
 
-.drawerClose:hover {
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-}
 
-.segmentCard {
-  border: 1px solid var(--outline-variant);
-  border-radius: 6px;
-  background: var(--surface);
-  padding: 10px 12px;
-  text-align: start;
-  cursor: pointer;
-}
 
-.segmentCard[data-selected="true"] {
-  border-color: var(--event-peak);
-}
 
-.segmentCard[data-related="true"] {
-  background: var(--primary-container);
-  border-color: var(--primary);
-}
 
-.segmentTop {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--on-surface);
-}
 
-.segmentMeta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 10px;
-  margin-top: 4px;
-  font-size: 11.5px;
-  color: var(--on-surface-variant);
-}
 
 .playerBar {
   display: flex;
@@ -1082,15 +995,6 @@
   color: var(--on-surface);
 }
 
-.playerBarEvidence {
-  flex: 0 0 auto;
-  width: auto;
-  padding: 0 12px;
-  font-size: 11.5px;
-  border: 1px solid var(--outline-variant);
-  color: var(--on-surface);
-  white-space: nowrap;
-}
 
 .volumeControl {
   position: relative;
@@ -1206,22 +1110,7 @@
   background: var(--on-surface-variant);
 }
 
-.timelineSegment {
-  position: absolute;
-  top: 10px;
-  bottom: 18px;
-  z-index: 4;
-  min-width: 4px;
-  border: 0;
-  border-radius: 2px;
-  background: var(--tertiary-container);
-  cursor: pointer;
-  padding: 0;
-}
 
-.timelineSegment[data-related="true"] {
-  background: var(--primary-container);
-}
 
 
 
@@ -1307,9 +1196,6 @@
     min-height: 240px;
   }
 
-  .segmentDrawer {
-    width: 240px;
-  }
 }
 
 /* ── Container queries: 主工作区宽度（Coach 常驻会压缩工作区） ──
@@ -1405,10 +1291,6 @@
     display: none;
   }
 
-  .segmentDrawer {
-    left: 10px;
-    width: auto;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

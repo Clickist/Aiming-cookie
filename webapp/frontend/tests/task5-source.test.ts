@@ -29,14 +29,12 @@ test("legacy analysis route redirects while its reusable workspace assets remain
   assert.doesNotMatch(workspace, /第二条|Benchmark|ReportView/);
 });
 
-test("video view consumes managed URLs and evidence segment anchors", async () => {
+test("video view consumes managed URLs and keeps the timeline seekable", async () => {
   const video = await source("components/task5/VideoView.tsx");
-  assert.match(video, /getAnalysisEvidenceSegments/);
   assert.match(video, /getManagedVideoUrl/);
   assert.match(video, /getAnalysisVideoBlob/);
   assert.match(video, /URL\.createObjectURL/);
   assert.match(video, /URL\.revokeObjectURL/);
-  assert.match(video, /relative_start_ms/);
   assert.match(video, /没有可用视觉证据/);
   assert.match(video, /<video/);
   assert.match(video, /aria-label="分析时间轴"/);
@@ -59,24 +57,6 @@ test("diagnosis suppresses scenario-specific advice when the scenario is not cla
   const diagnosis = await source("components/task5/DiagnosisView.tsx");
   assert.match(diagnosis, /presentation\.family\.status !== "unavailable"/);
   assert.match(diagnosis, /当前场景尚未完成核验/);
-});
-
-test("video view keeps EvidenceSegment failure and retry local to the timeline", async () => {
-  const video = await source("components/task5/VideoView.tsx");
-  assert.match(video, /segmentsLoading/);
-  assert.match(video, /segmentsFailed/);
-  assert.match(video, /loadSegments/);
-  assert.match(video, /证据片段暂时不可用/);
-  assert.match(video, /重试证据片段/);
-  assert.match(video, /没有可用证据片段/);
-});
-
-test("video player keeps the evidence segment control on one line", async () => {
-  const video = await source("components/task5/VideoView.tsx");
-  const styles = await source("components/task5/task5.module.css");
-  assert.match(video, /className=\{`\$\{styles\.playerBarBtn\} \$\{styles\.playerBarEvidence\}`\}[\s\S]*证据片段 \{segmentRows\.length\}/);
-  assert.match(styles, /\.playerBarBtn[^{]*\{[\s\S]*flex:\s*0 0 32px;/);
-  assert.match(styles, /\.playerBarEvidence[^{]*\{[\s\S]*width:\s*auto;[\s\S]*white-space:\s*nowrap;/);
 });
 
 test("analysis header does not repeat the evidence summary", async () => {
