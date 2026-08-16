@@ -65,8 +65,11 @@ def _track_speed_deg_per_s(
     deg_per_px: float | None,
 ) -> float | None:
     path = track.get("path") or []
+    # Real sightings only: degraded crosshair-fallback samples sit pinned at
+    # the viewport center and would flatten every speed to zero.
     before = [
-        point for point in path if float(point["t"]) <= time_ms
+        point for point in path
+        if float(point["t"]) <= time_ms and not point.get("degraded")
     ][-2:]
     if len(before) < 2 or deg_per_px is None:
         return None
@@ -104,16 +107,20 @@ def associate_generic_dynamic_clicks_v1(
     for outcome in association["click_outcomes"]:
         if outcome["outcome"] != "hit":
             continue
-        engaged = _engaged_tracks_at(
-            generic_visual_result["tracks"], outcome["click_time_ms"],
-        )
+        engaged = [
+            track for track in generic_visual_result["tracks"]
+            if track["birth_ms"] <= outcome["click_time_ms"]
+            and track["death_ms"]
+            >= outcome["click_time_ms"] - DYNAMIC_HIT_LOOKBACK_MS
+            and track.get("real_sample_count", track["sample_count"]) >= 1
+        ]
         if not engaged:
             continue
         nearest = min(
             engaged,
             key=lambda track: (
-                (track["x"] - viewport_size[0] / 2.0) ** 2
-                + (track["y"] - viewport_size[1] / 2.0) ** 2
+                (track["end_x"] - viewport_size[0] / 2.0) ** 2
+                + (track["end_y"] - viewport_size[1] / 2.0) ** 2
             ),
         )
         speed = _track_speed_deg_per_s(
@@ -132,16 +139,6 @@ def associate_generic_dynamic_clicks_v1(
             len(ordered) // 2
         ]
     return association
-
-
-def _engaged_tracks_at(
-    tracks: Sequence[Mapping[str, object]], time_ms: int,
-) -> list[Mapping[str, object]]:
-    return [
-        track for track in tracks
-        if track["birth_ms"] <= time_ms
-        and track["death_ms"] >= time_ms - DYNAMIC_HIT_LOOKBACK_MS
-    ]
 
 
 def associate_generic_switching_v1(
