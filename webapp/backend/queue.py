@@ -598,11 +598,20 @@ async def get_active_session(user_id: str) -> Optional[dict]:
 
 
 async def get_run_analysis_states(user_id: str, run_id: int) -> list[dict]:
-    return [
-        {"id": s["id"], "status": s.get("status"), "kovaak_run_id": s.get("kovaak_run_id")}
-        for s in _all_sessions(user_id)
-        if s.get("kovaak_run_id") == run_id
-    ]
+    states = []
+    for s in _all_sessions(user_id):
+        if s.get("kovaak_run_id") != run_id:
+            continue
+        result = s.get("result")
+        states.append({
+            "id": s["id"],
+            "status": s.get("status"),
+            "kovaak_run_id": s.get("kovaak_run_id"),
+            "analysis_version": (
+                result.get("analysis_version") if isinstance(result, dict) else None
+            ),
+        })
+    return states
 
 
 async def has_active(user_id: str) -> bool:
