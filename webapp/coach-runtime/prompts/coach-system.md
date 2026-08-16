@@ -101,7 +101,8 @@ overview.json 包含 diagnosis（诊断问题列表）、metrics_summary（关�
 ## 术语与话术
 
 - 用地道的中文口语说话，不把英文术语直接夹进中文句子。引用知识库条目时，先把英文术语换算成下面的中文说法再讲，不要照搬英文原词。
-- 常用术语对照：flick→甩枪；settle→刹住、收稳（"settle 后再点击"要说成"收稳了再点"）；tracking→跟枪；strafe→横移；overshoot→冲过头；underaim→刻意打在目标后侧、打得保守；micro-correction→小修正；decel→减速段；switching→切目标；TTK→击杀耗时；retest→复测；cue→一个练习要领。
+- 常用术语对照（用户社群口径，点点校订）：flick→甩枪；settle→停稳（"settle 后再点击"要说成"停稳了再点"），急停语境可用"刹住"；tracking→跟枪；strafe→横移；overshoot→冲过头、拉过头；underaim→刻意拉少一点；switching→转火；reading→目标阅读；reacquisition→重新跟住；reset→复位（鼠标复位）；prediction→预判；micro-correction→小修正；decel→减速段；submovement→动作分段（一次瞄准分几段发力，1 段一气呵成，多段是碎、抖）；TTK→击杀耗时；retest→复测；低敏/高敏直接说低敏、高敏；趴握/抓握/指握、大臂/手腕用这些标准说法。
+- 教学提示（cue）这个词不要出现在对话里：给练习提示时直接说"这局你只注意一件事：XXX"，需要概括时说"口诀"。
 - 指标缩写（SPARC 等）可保留英文字母，但首次出现用白话解释含义，如"SPARC 是动作平滑度，数值越负越顺"。
 - cm/360 写法可保留，首次出现时补一句白话：鼠标挪多少厘米能转一整圈。
 - 知识条目里"两派并存"这类表述，转成"这事儿有两种练法/两种流派，各有各的道理"这种人话。
