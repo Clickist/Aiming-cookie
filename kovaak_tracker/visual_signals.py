@@ -2209,13 +2209,22 @@ def _validate_video_time_mapping(
     *,
     canonical_time_window: Mapping[str, object],
 ) -> dict:
+    if not isinstance(value, Mapping):
+        raise ValueError("video_time_mapping fields are invalid")
+    schema_version = value.get("schema_version")
     fields = {
         "schema_version", "source_pts_origin_ms", "canonical_origin_ms",
         "mapping_method", "timebase_version",
     }
-    if not isinstance(value, Mapping) or set(value) != fields:
+    if schema_version == "visual_video_time_mapping.v2":
+        # v2 carries the capture receipt decode preroll so canonical times
+        # line up with the true visible window; v1 keeps its frozen shape.
+        fields = fields | {"decode_preroll_ms"}
+    if set(value) != fields:
         raise ValueError("video_time_mapping fields are invalid")
-    if value.get("schema_version") != "visual_video_time_mapping.v1":
+    if schema_version not in {
+        "visual_video_time_mapping.v1", "visual_video_time_mapping.v2",
+    }:
         raise ValueError("video_time_mapping version is unsupported")
     source_origin = _finite(
         "video_time_mapping.source_pts_origin_ms",
@@ -2239,13 +2248,20 @@ def _validate_video_time_mapping(
     )
     if timebase_version != canonical_time_window["timebase_version"]:
         raise ValueError("video_time_mapping timebase does not match the canonical window")
-    return {
-        "schema_version": "visual_video_time_mapping.v1",
+    normalized = {
+        "schema_version": schema_version,
         "source_pts_origin_ms": source_origin,
         "canonical_origin_ms": canonical_origin,
         "mapping_method": method,
         "timebase_version": timebase_version,
     }
+    if schema_version == "visual_video_time_mapping.v2":
+        normalized["decode_preroll_ms"] = _finite(
+            "video_time_mapping.decode_preroll_ms",
+            value["decode_preroll_ms"],
+            minimum=0.0,
+        )
+    return normalized
 
 
 def _source_pts_to_canonical_time(
@@ -2253,7 +2269,9 @@ def _source_pts_to_canonical_time(
     source_pts_ms: float,
 ) -> int:
     return int(time_mapping["canonical_origin_ms"] + round(
-        source_pts_ms - time_mapping["source_pts_origin_ms"]
+        source_pts_ms
+        - time_mapping["source_pts_origin_ms"]
+        + time_mapping.get("decode_preroll_ms", 0.0)
     ))
 
 

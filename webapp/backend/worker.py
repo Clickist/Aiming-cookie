@@ -53,7 +53,9 @@ VISUAL_WORKER_SHUTDOWN_GRACE_SECONDS = 2.0
 # Upper bound on a single CV child process. The worker's consume loop is
 # serial, so a hung child would otherwise starve every queued analysis.
 VISUAL_WORKER_TIMEOUT_SECONDS = 600.0
-VISUAL_WORKER_JOB_FIELDS = ("id", "kovaak_run_id", "video_path", "input_snapshot")
+VISUAL_WORKER_JOB_FIELDS = (
+    "id", "kovaak_run_id", "video_path", "input_snapshot", "video_receipt",
+)
 VISUAL_WORKER_EVIDENCE_JOB_FIELDS = ("id", "user_id", "input_snapshot")
 
 from .worker_visual_producers import (  # noqa: F401 (re-export for backward compat)
@@ -72,6 +74,7 @@ from .worker_visual_producers import (  # noqa: F401 (re-export for backward com
     _run_owned_visual_video_time_mapping,
     _visual_runtime_selector,
     run_visual_preprocessing,
+    video_decode_preroll_ms,
 )
 
 
@@ -168,6 +171,13 @@ async def _run_visual_worker_request(
 async def run_visual_preprocessing_isolated(job: dict) -> dict:
     """Run reviewed CV outside the API/heartbeat process without changing output."""
     return await _run_visual_worker_request(job)
+
+
+async def run_generic_static_clicking_isolated(job: dict) -> dict:
+    """Run the untrained generic static-clicking detector in the CV child."""
+    return await _run_visual_worker_request(
+        job, postprocess="generic_static_clicking",
+    )
 
 
 async def run_continuous_tracking_pipeline_isolated(job: dict) -> tuple[dict, dict | None]:
@@ -307,6 +317,7 @@ def _maybe_commit_analysis_evidence(
     tracking_result: dict | None = None,
     switching_result: dict | None = None,
     outcome_event_bundle: dict | None = None,
+    generic_visual_result: dict | None = None,
 ) -> dict:
     """Best-effort local L1/L2 projection before the terminal result commit.
 
@@ -470,6 +481,23 @@ def _maybe_commit_analysis_evidence(
                 return result
     else:
         artifact = base_artifact
+        if generic_visual_result is not None:
+            try:
+                artifact, result = _extend_with_generic_static_clicking(
+                    base_artifact,
+                    result,
+                    generic_visual_result,
+                    job=job,
+                    parsed_stats=parsed_stats,
+                    native_result=native_result,
+                )
+            except (ValueError, OSError) as error:
+                log.warning(
+                    "generic static clicking evidence unavailable session=%s error=%s",
+                    job.get("id"),
+                    type(error).__name__,
+                )
+                artifact = base_artifact
         try:
             processed_event_tables = build_processed_event_table_catalog(artifact)
             safe_ref = evidence_store.write_analysis_evidence_artifact(
@@ -1995,6 +2023,7 @@ def _build_clicking_baseline_result_v2(
     created_at: str,
     completed_at: str,
     video_availability: str | None = None,
+    warnings: list[dict] | None = None,
 ) -> dict:
     """Expose input-native movement facts for an auto-classified family task.
 
@@ -2044,12 +2073,180 @@ def _build_clicking_baseline_result_v2(
     }
     result["warnings"] = [
         *result.get("warnings", []),
+        *(warnings or []),
         {"code": f"{aim_family}_baseline"},
     ]
     return result
 
 
 _VIDEO_FALLBACK_SPARC_METRIC_VERSION = "flicking_fair_summary.sparc.v2"
+
+
+def _extend_with_generic_static_clicking(
+    artifact: dict,
+    result: dict,
+    generic_visual_result: dict,
+    *,
+    job: dict,
+    parsed_stats,
+    native_result: dict | None,
+) -> tuple[dict, dict]:
+    """Associate generic visual tracks with clicks/kills and upgrade the result.
+
+    Returns the extended artifact and result when the quality gate passes;
+    a failed gate returns the untouched artifact with an annotated result.
+    """
+    from kovaak_tracker.generic_static_clicking_analysis import (
+        associate_generic_static_clicks_v1,
+        extend_analysis_evidence_with_generic_static_clicking_v1,
+        extract_left_click_rising_edges_v1,
+    )
+
+    snapshot = job.get("input_snapshot") or {}
+    window = artifact["canonical_time_window"]
+    window_start = int(window["start_ms"])
+    window_end = int(window["end_ms"])
+    analysis_ref = artifact["analysis_ref"]
+
+    points = (
+        ((native_result or {}).get("deterministic") or {}).get("trajectory") or {}
+    ).get("points")
+    click_times = (
+        extract_left_click_rising_edges_v1(
+            points, start_ms=window_start, end_ms=window_end,
+        )
+        if isinstance(points, list)
+        else []
+    )
+    kill_records = []
+    for record in artifact.get("normalized_outcome_records") or []:
+        values = record.get("values") if isinstance(record, dict) else None
+        if not isinstance(values, list):
+            continue
+        kill_index = next(
+            (
+                item.get("value")
+                for item in values
+                if isinstance(item, dict)
+                and item.get("metric_key") == "stats.kill.kill_index"
+            ),
+            None,
+        )
+        if isinstance(kill_index, int) and not isinstance(kill_index, bool):
+            kill_records.append({
+                "canonical_time_ms": record["canonical_time_ms"],
+                "kill_index": kill_index,
+            })
+
+    resolution = getattr(parsed_stats, "resolution", None)
+    match = (
+        re.fullmatch(r"\s*([1-9][0-9]*)\s*[xX]\s*([1-9][0-9]*)\s*", resolution)
+        if isinstance(resolution, str)
+        else None
+    )
+    viewport = (
+        [int(match.group(1)), int(match.group(2))]
+        if match
+        else generic_visual_result.get("resolution")
+    )
+    deg_per_px = None
+    fov = getattr(parsed_stats, "fov", None)
+    if (
+        match
+        and isinstance(fov, (int, float))
+        and not isinstance(fov, bool)
+        and fov > 0
+    ):
+        deg_per_px = float(fov) / float(viewport[0])
+
+    association = associate_generic_static_clicks_v1(
+        analysis_ref=analysis_ref,
+        generic_visual_result=generic_visual_result,
+        click_times_ms=click_times,
+        kill_records=kill_records,
+        viewport_size=viewport,
+        deg_per_px=deg_per_px,
+    )
+    if not association["gate"]["passed"]:
+        return artifact, _annotate_result_generic_gate_failed(result, association)
+
+    video_source_ref = (
+        (snapshot.get("sources") or {}).get("video") or {}
+    ).get("artifact_ref")
+    if not isinstance(video_source_ref, str) or not video_source_ref:
+        video_source_ref = f"{analysis_ref}:video"
+    extended = extend_analysis_evidence_with_generic_static_clicking_v1(
+        artifact,
+        generic_visual_result,
+        association,
+        video_source_ref=video_source_ref,
+    )
+    return extended, _upgrade_result_with_generic_visual(result, association)
+
+
+def _generic_visual_summary_fields(association: Mapping[str, object]) -> dict:
+    return {
+        "click_count": association["click_count"],
+        "hit_count": association["hit_count"],
+        "miss_count": association["miss_count"],
+        "no_target_count": association["no_target_count"],
+        "kills_total": association["kills_total"],
+        "kills_paired": association["kills_paired"],
+        "kill_pairing_rate": association["kill_pairing_rate"],
+        "frame_coverage": association["gate"]["frame_coverage"],
+        "gate_passed": association["gate"]["passed"],
+    }
+
+
+def _upgrade_result_with_generic_visual(
+    result: dict, association: Mapping[str, object],
+) -> dict:
+    from kovaak_tracker.generic_static_clicking_analysis import (
+        GENERIC_STATIC_CLICKING_ANALYSIS_VERSION,
+    )
+
+    result = dict(result)
+    deterministic = dict(result.get("deterministic") or {})
+    limitations = [
+        item
+        for item in (deterministic.get("limitations") or [])
+        if item != "target_relative_facts_unavailable"
+    ]
+    limitations.append("generic_visual_limited_validation")
+    deterministic["limitations"] = limitations
+    result["deterministic"] = deterministic
+    result["analysis_version"] = GENERIC_STATIC_CLICKING_ANALYSIS_VERSION
+    scenario = dict(result.get("scenario") or {})
+    scenario["analyzer_refs"] = [GENERIC_STATIC_CLICKING_ANALYSIS_VERSION]
+    scenario["limitations"] = list(limitations)
+    result["scenario"] = scenario
+    result["warnings"] = [
+        *result.get("warnings", []),
+        {"code": "static_clicking_generic_visual"},
+    ]
+    result["generic_visual_summary"] = _generic_visual_summary_fields(association)
+    return result
+
+
+def _annotate_result_generic_gate_failed(
+    result: dict, association: Mapping[str, object],
+) -> dict:
+    result = dict(result)
+    deterministic = dict(result.get("deterministic") or {})
+    limitations = list(dict.fromkeys([
+        *(deterministic.get("limitations") or []),
+        "generic_visual_quality_below_threshold",
+    ]))
+    deterministic["limitations"] = limitations
+    result["deterministic"] = deterministic
+    scenario = dict(result.get("scenario") or {})
+    scenario["limitations"] = list(limitations)
+    result["scenario"] = scenario
+    result["generic_visual_summary"] = {
+        **_generic_visual_summary_fields(association),
+        "gate_reasons": list(association["gate"]["reasons"]),
+    }
+    return result
 
 
 _VIDEO_FALLBACK_METRIC_UNITS = {
@@ -2307,6 +2504,7 @@ async def process_one() -> bool:
         completed_at_iso = _utc_now_iso_z()
         frozen_stats = None
         visual_result = None
+        generic_visual_result = None
         dynamic_result = None
         tracking_result = None
         switching_result = None
@@ -2809,6 +3007,22 @@ async def process_one() -> bool:
                         log.warning("multimodal video validation unavailable session=%s", sid)
                         video_availability = "unavailable"
                         warnings.append({"code": "video_cv_unavailable"})
+            generic_visual_result = None
+            if (
+                input_mode == "multimodal"
+                and scenario_dispatch == STATIC_CLICKING_BASELINE_ANALYSIS_VERSION
+                and job.get("video_path")
+            ):
+                await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
+                try:
+                    generic_visual_result = await run_generic_static_clicking_isolated(job)
+                except Exception as error:
+                    log.warning(
+                        "generic static clicking unavailable session=%s error=%s",
+                        sid,
+                        type(error).__name__,
+                    )
+                    warnings.append({"code": "generic_visual_unavailable"})
             if scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS:
                 # The baseline tier consumes no visual measurement, but the
                 # managed MP4 stays replayable: attach the video evidence
@@ -2824,6 +3038,7 @@ async def process_one() -> bool:
                     created_at=created_at_iso,
                     completed_at=completed_at_iso,
                     video_availability=baseline_video_availability,
+                    warnings=warnings,
                 )
             else:
                 result = _build_native_result_v2(
@@ -2931,7 +3146,14 @@ async def process_one() -> bool:
                 tracking_result=tracking_result,
                 switching_result=switching_result,
                 outcome_event_bundle=outcome_event_bundle,
+                generic_visual_result=generic_visual_result,
             )
+        # Carry the capture receipt preroll so downstream video-relative
+        # times (overview anchors, frontend playback seeks) can correct
+        # for the decode preroll between MP4 PTS 0 and the canonical window.
+        preroll_ms = video_decode_preroll_ms(job)
+        if preroll_ms:
+            result["video_decode_preroll_ms"] = preroll_ms
         marked_done = await queue.mark_done(sid, result, cost, worker_id=WORKER_ID)
         if not marked_done:
             log.warning("lost lease session=%s worker=%s", sid, WORKER_ID)

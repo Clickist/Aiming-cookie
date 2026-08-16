@@ -1021,6 +1021,30 @@ async def get_session_video(
     return FileResponse(video_path, media_type="video/mp4")
 
 
+async def _session_video_decode_preroll_ms(session: dict, user_id: str) -> int:
+    """Capture receipt decode preroll for playback seeks, in whole ms.
+
+    Reads the analysis-result stamp first, then falls back to the Run's
+    video receipt so sessions completed before the stamp still seek right.
+    """
+    stamped = (session.get("result") or {}).get("video_decode_preroll_ms")
+    if (
+        isinstance(stamped, (int, float))
+        and not isinstance(stamped, bool)
+        and stamped >= 0
+    ):
+        return int(round(stamped))
+    from .worker_visual_producers import video_decode_preroll_ms
+
+    run_id = session.get("kovaak_run_id")
+    if isinstance(run_id, int) and not isinstance(run_id, bool):
+        run = await kovaak_run_store.get_kovaak_run(run_id, user_id)
+        preroll = video_decode_preroll_ms(run) if run is not None else None
+        if preroll is not None:
+            return int(round(preroll))
+    return 0
+
+
 @router.get(
     "/sessions/{session_id}/evidence-segments",
     response_model=FrontendEvidenceSegmentsResponse,
@@ -1068,6 +1092,9 @@ async def list_session_evidence_segments(
         raise HTTPException(404, "Evidence 不可用") from None
 
     projected: list[FrontendEvidenceSegment] = []
+    # MP4 PTS 0 sits preroll ms inside the canonical window start; without
+    # this correction every seek lands ~0.1s late.
+    preroll_ms = await _session_video_decode_preroll_ms(s, x_user_id)
     for raw in list(artifact.get("evidence_segments") or [])[:64]:
         if not isinstance(raw, dict):
             continue
@@ -1083,8 +1110,11 @@ async def list_session_evidence_segments(
             and isinstance(focus_start, int)
             and isinstance(focus_end, int)
         ):
-            relative_start = max(0, focus_start - window_start)
-            relative_end = min(window_end - window_start, max(relative_start, focus_end - window_start))
+            relative_start = max(0, focus_start - window_start - preroll_ms)
+            relative_end = min(
+                window_end - window_start - preroll_ms,
+                max(relative_start, focus_end - window_start - preroll_ms),
+            )
         else:
             playback_limitations.append("local_video_seek_unavailable")
         projected.append(FrontendEvidenceSegment(

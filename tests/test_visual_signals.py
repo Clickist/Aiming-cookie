@@ -370,6 +370,58 @@ def test_video_time_mapping_applies_explicit_pts_offset_and_rejects_duplicates()
     ] == [1_020, 1_037]
 
 
+def test_video_time_mapping_v2_applies_decode_preroll_and_keeps_v1_frozen():
+    window = {
+        **_window(),
+        "end_ms": 2_000,
+        "duration_ms": 1_000,
+    }
+    base = {
+        "source_pts_origin_ms": 0.0,
+        "canonical_origin_ms": window["start_ms"],
+        "mapping_method": "run_owned_exact_canonical_clip",
+        "timebase_version": window["timebase_version"],
+    }
+    result = _preprocess(
+        [
+            _frame(0, targets=[_target("red-1", 110, 100, 12)]),
+            _frame(17, targets=[_target("red-1", 114, 100, 12)]),
+        ],
+        canonical_time_window=window,
+        video_time_mapping={
+            "schema_version": "visual_video_time_mapping.v2",
+            **base,
+            "decode_preroll_ms": 121.97,
+        },
+    )
+    assert [
+        sample["canonical_time_ms"]
+        for sample in result["local_samples"]["crosshair.position"]
+    ] == [1_122, 1_139]
+    assert result["video_time_mapping"]["decode_preroll_ms"] == pytest.approx(121.97)
+
+    with pytest.raises(ValueError):
+        _preprocess(
+            [_frame(0, targets=[_target("red-1", 110, 100, 12)])],
+            canonical_time_window=window,
+            video_time_mapping={
+                "schema_version": "visual_video_time_mapping.v1",
+                **base,
+                "decode_preroll_ms": 121.97,
+            },
+        )
+    with pytest.raises(ValueError):
+        _preprocess(
+            [_frame(0, targets=[_target("red-1", 110, 100, 12)])],
+            canonical_time_window=window,
+            video_time_mapping={
+                "schema_version": "visual_video_time_mapping.v2",
+                **base,
+                "decode_preroll_ms": -1.0,
+            },
+        )
+
+
 def test_tracks_preserve_crosshair_target_radius_and_known_change_point():
     result = _preprocess([
         _frame(0, crosshair=(100, 100), targets=[_target("red-1", 110, 100, 12)]),
