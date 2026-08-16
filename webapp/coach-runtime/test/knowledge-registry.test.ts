@@ -442,7 +442,7 @@ test("v8 adds the x76 wiki community batch as the default registry", () => {
   // Only the fold-in entries were bumped; the other 15 v7 refs survive unchanged.
   const v7 = loadKnowledgeRegistry("2026-08-15.v7");
   const survivors = new Set(v7.entries.map(entryRef)).intersection(new Set(registry.entries.map(entryRef)));
-  assert.equal(survivors.size, 12);
+  assert.equal(survivors.size, 11);
   for (const entry of v7.entries) {
     const bumped = [
       "hypothesis.tension-management", "community.qiluno.confirmation-timing-schools",
@@ -452,7 +452,7 @@ test("v8 adds the x76 wiki community batch as the default registry", () => {
       "community.aim-trainer-transfer", "static.flicking-terminal-control",
       "dynamic.click-error-and-acquisition", "switching.transition-and-arrival",
       "tracking.control-smoothness", "tracking.reactive-change-response",
-      "switching.selection-observable-only",
+      "switching.selection-observable-only", "community.task-specific-sensitivity",
     ].includes(entry.entry_id);
     assert.equal(survivors.has(entryRef(entry)), !bumped);
   }

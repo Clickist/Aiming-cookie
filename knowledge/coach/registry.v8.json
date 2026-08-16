@@ -2600,13 +2600,15 @@
     },
     {
       "entry_id": "community.task-specific-sensitivity",
-      "entry_version": 1,
+      "entry_version": 2,
       "status": "active",
       "category": "mechanism",
       "topics": [
         "sensitivity",
         "cm_per_360",
-        "settings_experiment"
+        "settings_experiment",
+        "cm360",
+        "dpi"
       ],
       "signals": [],
       "metric_refs": [],
@@ -4223,13 +4225,14 @@
     },
     {
       "entry_id": "community.bardpill-accuracy-anchored-progression",
-      "entry_version": 1,
+      "entry_version": 2,
       "status": "active",
       "category": "training_cue",
       "topics": [
         "static_clicking",
         "accuracy_anchored_progression",
-        "speed_control"
+        "speed_control",
+        "bardpill"
       ],
       "signals": [
         "speed up accuracy down"
@@ -5116,17 +5119,20 @@
     },
     {
       "entry_id": "community.strafe-relative-speed-ladder",
-      "entry_version": 1,
+      "entry_version": 2,
       "status": "active",
       "category": "mechanism",
       "topics": [
         "movement_aiming",
         "outcome_only",
         "strafe_difficulty_ladder",
-        "relative_speed"
+        "relative_speed",
+        "strafe",
+        "scenario_difficulty"
       ],
       "signals": [
-        "movement telemetry unavailable"
+        "movement telemetry unavailable",
+        "strafe scenario harder"
       ],
       "metric_refs": [
         "metric:outcome_totals",
