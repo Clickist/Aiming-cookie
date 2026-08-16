@@ -86,3 +86,14 @@ test("History keeps Analysis consumption local", async () => {
   assert.doesNotMatch(value, /href=\{[^}]*\/analysis/);
   assert.doesNotMatch(value, /onLoadDetail/);
 });
+
+test("history auto-refreshes while runs are still finalizing so video readiness updates without reload", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  // 终态集合之外（discovered/pending/capturing/finalizing/retryable…）证据还会变化
+  assert.match(value, /new Set\(\["finalized", "source_unavailable", "unavailable"\]\)/);
+  assert.match(value, /runs\.some\(\(run\) => !RUN_FINALIZED_STATES\.has\(run\.finalization_state\)\)/);
+  // 有未终态 Run 时轮询刷新，全部终态后停止并清理定时器
+  assert.match(value, /setInterval\(\(\) => void loadHistory\(\), 5000\)/);
+  assert.match(value, /if \(!hasUnfinalizedRuns\) return undefined;/);
+  assert.match(value, /clearInterval\(timer\)/);
+});

@@ -897,23 +897,26 @@ export function CoachPanel({
       {header}
       {trainingSection}
 
+      {/* 本次讨论常驻顶栏：不随对话流滚动，项目名点击打开左侧视频 */}
+      {discussionAnalysisIds.length > 0 ? (
+        <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" role="region">
+          <span>本次讨论</span>
+          {discussionAnalysisIds.map((id) => (
+            <button
+              className="task6-suggestion"
+              key={id}
+              onClick={() => onOpenVideo?.(`analysis:${id}`, 0)}
+              title="打开视频讲解"
+              type="button"
+            >
+              {analysisScenarios[id] ?? `分析 #${id}`}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="task6-messages-wrap">
       <section aria-label="Coach 消息" className="task6-messages" onScroll={handleMessagesScroll} ref={messagesRef}>
-        {discussionAnalysisIds.length > 0 ? (
-          <div aria-label="本次讨论的分析" className="task6-suggestions" role="region">
-            <span>本次讨论</span>
-            {discussionAnalysisIds.map((id) => (
-              <button
-                className="task6-suggestion"
-                key={id}
-                onClick={() => onOpenVideo?.(`analysis:${id}`, 0)}
-                type="button"
-              >
-                {analysisScenarios[id] ?? `分析 #${id}`}
-              </button>
-            ))}
-          </div>
-        ) : null}
         {messages.length === 0 && !run ? (
           <Empty title="开始一段 Coach 对话">可以直接提问训练问题，Coach 会读取你的分析数据。</Empty>
         ) : null}

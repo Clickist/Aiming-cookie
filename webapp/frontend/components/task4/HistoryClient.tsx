@@ -22,6 +22,9 @@ type RunDiscoveryState = "loading" | "available" | "browser_unavailable" | "serv
 /** 「让 Coach 分析」一次最多引用的训练条数（分析逐条串行进行）。 */
 const MAX_SELECTED_RUNS = 5;
 
+/** 视频等证据由后台 finalize；这些终态之外的 Run 证据还会变化，需要继续跟进。 */
+const RUN_FINALIZED_STATES = new Set(["finalized", "source_unavailable", "unavailable"]);
+
 function sessionTone(status: string): "neutral" | "info" | "success" | "warning" | "error" {
   if (status === "done") return "success";
   if (status === "failed") return "error";
@@ -261,6 +264,19 @@ export function HistoryClient() {
   }, [loadHistory]);
 
   const sections = useMemo(() => buildHistorySections({ runs, sessions }), [runs, sessions]);
+
+  // 视频 finalize 在页面停留期间完成（如「视频 −」变 ✓）；有未终态 Run 时轮询，
+  // 就绪后自动更新，不需要用户手动刷新页面。产品 API 无事件流，轮询即刷新机制。
+  const hasUnfinalizedRuns = useMemo(
+    () => runs.some((run) => !RUN_FINALIZED_STATES.has(run.finalization_state)),
+    [runs],
+  );
+
+  useEffect(() => {
+    if (!hasUnfinalizedRuns) return undefined;
+    const timer = window.setInterval(() => void loadHistory(), 5000);
+    return () => window.clearInterval(timer);
+  }, [hasUnfinalizedRuns, loadHistory]);
 
   const toggleRun = (run: KovaaKRunListItem) => {
     if (selectedRunIds.includes(run.id)) {
