@@ -126,7 +126,6 @@ export function AnalysisWorkspace() {
   const [tab, setTab] = useState<WorkspaceTab>("diagnosis");
   const [selectedIssue, setSelectedIssue] = useState<number | null>(null);
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
-  const [selectedSegment, setSelectedSegment] = useState<string | null>(null);
   const [playheadMs, setPlayheadMs] = useState(0);
   const sessionRef = useRef<SessionStatus | null>(cachedSession);
 
@@ -418,10 +417,7 @@ export function AnalysisWorkspace() {
             analysisId={presentation.analysisId}
             currentTimeMs={playheadMs}
             onCurrentTimeChange={setPlayheadMs}
-            onSelectSegment={setSelectedSegment}
             presentation={presentation}
-            selectedIssue={selectedIssue}
-            selectedSegment={selectedSegment}
           />
         ) : null}
         {tab === "data" ? (

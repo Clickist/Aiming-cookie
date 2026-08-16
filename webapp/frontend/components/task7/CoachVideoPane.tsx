@@ -27,7 +27,6 @@ export function CoachVideoPane({
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [playheadMs, setPlayheadMs] = useState(initialTimeMs);
-  const [selectedSegment, setSelectedSegment] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
 
   const load = useCallback(async (signal: AbortSignal) => {
@@ -67,7 +66,6 @@ export function CoachVideoPane({
   useEffect(() => {
     const controller = new AbortController();
     setPlayheadMs(initialTimeMs);
-    setSelectedSegment(null);
     void load(controller.signal);
     return () => controller.abort();
   }, [initialTimeMs, load, revision]);
@@ -93,10 +91,7 @@ export function CoachVideoPane({
             analysisId={presentation.analysisId}
             currentTimeMs={playheadMs}
             onCurrentTimeChange={setPlayheadMs}
-            onSelectSegment={setSelectedSegment}
             presentation={presentation}
-            selectedIssue={null}
-            selectedSegment={selectedSegment}
           />
         ) : null}
       </div>
