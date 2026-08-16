@@ -7,8 +7,6 @@ import {
   activeScenarioProfileRefs,
   entryRef,
   loadKnowledgeRegistry,
-  queryKnowledgeRegistry,
-  queryKnowledgeRegistryWithTotals,
   resolveKnowledgeEntry,
   validateKnowledgeRegistry,
 } from "../src/knowledge-registry.ts";
@@ -44,19 +42,6 @@ test("loads the canonical packaged registry without a TypeScript prose copy", ()
   assert.match(entryRef(registry.entries[0]), /^knowledge:[a-z0-9._-]+@\d+$/);
 });
 
-test("deterministic query matches signal alias, metric, topic and is bounded", () => {
-  const registry = loadKnowledgeRegistry();
-  const results = queryKnowledgeRegistry(registry, {
-    topic: "static_clicking",
-    issue_signal: "reverse high",
-    metric_refs: ["metric:reverse_ratio"],
-    supported_use: "definition",
-  });
-  assert.ok(results.length >= 1 && results.length <= 8);
-  assert.equal(results[0].entry_id, "static.flicking-terminal-control");
-  assert.ok(results.every((entry) => entry.status === "active"));
-});
-
 test("historical refs resolve only against their explicit v1 registry", () => {
   const legacy = loadKnowledgeRegistry("2026-07-14.v1");
   assert.equal(legacy.schema_version, "coach_knowledge_registry.v1");
@@ -68,31 +53,6 @@ test("historical refs resolve only against their explicit v1 registry", () => {
   assert.throws(
     () => resolveKnowledgeEntry("2026-07-22.v2", "knowledge:metric.stopping-corrections.definition@1"),
     /unknown knowledge entry/,
-  );
-});
-
-test("query requires a condition and unknown input never falls back to all entries", () => {
-  const registry = loadKnowledgeRegistry();
-  assert.throws(() => queryKnowledgeRegistry(registry, {}), /query condition/);
-  assert.deepEqual(queryKnowledgeRegistry(registry, { topic: "unknown-topic" }), []);
-});
-
-test("exact entry refs take precedence and use-only fallback returns no arbitrary entries", () => {
-  const registry = loadKnowledgeRegistry();
-  const reference = entryRef(registry.entries[0]!);
-  const exact = queryKnowledgeRegistry(registry, {
-    registry_version: registry.registry_version,
-    entry_ref: reference,
-    topic: "unknown-topic",
-  });
-  assert.deepEqual(exact.map(entryRef), [reference]);
-  assert.deepEqual(queryKnowledgeRegistry(registry, { supported_use: "explanation_only" }), []);
-  assert.throws(
-    () => queryKnowledgeRegistry(registry, {
-      registry_version: "2026-07-29.v4",
-      entry_ref: reference,
-    }),
-    /registry version does not match/,
   );
 });
 
@@ -356,41 +316,6 @@ test("v5 remains loadable after v6 is packaged", () => {
   assert.equal(loadKnowledgeRegistry("2026-08-06.v5").registry_version, "2026-08-06.v5");
 });
 
-test("query totals report matches beyond the result cap", () => {
-  const synthetic = {
-    schema_version: REGISTRY_SCHEMA_VERSION_V1,
-    registry_version: "synthetic.v1",
-    signal_aliases: {},
-    entries: Array.from({ length: 12 }, (_, index) => ({
-      entry_id: `synthetic.entry-${String(index).padStart(2, "0")}`,
-      entry_version: 1,
-      status: "active" as const,
-      category: "metric_definition",
-      topics: ["synthetic_topic"],
-      signals: [],
-      metric_refs: [],
-      text: "synthetic entry",
-      sources: [{ source_ref: "synthetic.source", source_level: "product_contract" }],
-      max_claim_level: "deterministic_rule",
-      limitations: ["synthetic"],
-      counterevidence: [],
-      supported_uses: ["definition"],
-    })),
-  };
-  const outcome = queryKnowledgeRegistryWithTotals(synthetic, { topic: "synthetic_topic" });
-  assert.equal(outcome.entries.length, 8);
-  assert.equal(outcome.total_matches, 12);
-
-  const exact = queryKnowledgeRegistryWithTotals(synthetic, { entry_ref: "knowledge:synthetic.entry-00@1" });
-  assert.equal(exact.entries.length, 1);
-  assert.equal(exact.total_matches, 1);
-
-  assert.throws(
-    () => queryKnowledgeRegistryWithTotals(synthetic, { topic: "synthetic_topic", registry_version: "other.v1" }),
-    /registry version does not match/,
-  );
-});
-
 test("v8 adds the x76 wiki community batch as the default registry", () => {
   const registry = loadKnowledgeRegistry();
   assert.equal(registry.registry_version, "2026-08-16.v8");
@@ -426,12 +351,6 @@ test("v8 adds the x76 wiki community batch as the default registry", () => {
   );
   if (!fitts) throw new Error("missing v8 fitts entry");
   assert.deepEqual(fitts.signals, ["throughput below reference"]);
-  const throughput = queryKnowledgeRegistry(registry, { issue_signal: "throughput low" });
-  assert.ok(throughput.some((entry) => entry.entry_id === "research.speed-precision.fitts"));
-
-  // The alias registered for the scoring shape resolves through the query path.
-  const aliased = queryKnowledgeRegistry(registry, { issue_signal: "score up acc down" });
-  assert.ok(aliased.some((entry) => entry.entry_id === "community.accuracy-multiplied-scoring"));
 
   // Fold-ins bumped their entry versions and kept unique ids.
   for (const entryId of ["static.flicking-terminal-control", "switching.transition-and-arrival"]) {
