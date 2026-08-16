@@ -26,7 +26,7 @@ import {
 import { resolveProviderModel, type PiModels, type ResolvedProviderModel } from "./provider-models.ts";
 import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
 import { getDataRoot } from "./app-data.ts";
-import { createReadTool, createWriteTool, createLsTool, runScopedAnalysisReads } from "./fs-tools.ts";
+import { createReadTool, createWriteTool, createLsTool, explicitAnalysisRefsFromText, runScopedAnalysisReads } from "./fs-tools.ts";
 import { extractMessageText } from "./session-repo.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 
@@ -713,9 +713,17 @@ export async function runCoachTurn(
     activeRunId = request.run_id;
     activeTurns.set(request.run_id, { abort: () => { void harness.abort(); } });
 
-    // Run the turn. Analysis reads (read/ls tools and native product commands)
-    // are reported only to this turn's collector, so concurrent turns cannot
-    // pollute each other's analysis_refs.
+    // Run the turn. Analysis engagement is scoped: explicit "analysis:N"
+    // references in the user's message pin the discussion subject, and native
+    // evidence commands report what they read. Plain file reads (history
+    // comparison during a lecture) stay invisible to the discussion list.
+    for (const id of explicitAnalysisRefsFromText(
+      typeof lastMessage === "string"
+        ? lastMessage
+        : JSON.stringify(lastMessage ?? ""),
+    )) {
+      recordAnalysisRead(id);
+    }
     const replyMessage = await runScopedAnalysisReads(recordAnalysisRead, () =>
       harness.prompt(lastMessage),
     );

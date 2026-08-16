@@ -49,6 +49,14 @@ function errorStatus(error: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
+const TASK_PHASE_COPY: Record<string, string> = {
+  preparing_training_record: "准备训练记录",
+  aligning_input_events: "对齐输入事件",
+  computing_kinematics: "计算运动指标",
+  analyzing_video: "视频分析中：逐帧识别靶子，约需 1-2 分钟（视时长而定）",
+  generating_diagnostics: "生成诊断",
+};
+
 function stateLabel(state: AnalysisViewState): string {
   return {
     loading: "正在读取",
@@ -267,13 +275,18 @@ export function AnalysisWorkspace() {
   }
 
   if (viewState === "queued" || viewState === "running") {
+    const phaseCopy = session?.task_phase ? TASK_PHASE_COPY[session.task_phase] : undefined;
     return (
       <div className={styles.page}>
         <header className={styles.pendingHeader}>
           <Link href="/history">← 返回历史</Link>
           <Badge tone={stateTone(viewState)}>{stateLabel(viewState)}</Badge>
         </header>
-        <Loading>{viewState === "queued" ? "Analysis 正在等待处理" : "Analysis 正在生成确定性结果"}</Loading>
+        <Loading>
+          {viewState === "queued"
+            ? "Analysis 正在等待处理"
+            : phaseCopy ?? "Analysis 正在生成确定性结果"}
+        </Loading>
         <Notice tone="info" title="进度来自真实任务状态">这里不显示推测百分比。可前往任务中心查看当前真实阶段，离开页面不会中断任务。</Notice>
         <Button href="/tasks" variant="secondary">查看任务中心</Button>
       </div>

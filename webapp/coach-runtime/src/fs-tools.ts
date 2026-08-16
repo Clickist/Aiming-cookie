@@ -94,12 +94,19 @@ export function reportAnalysisRead(analysisId: number): void {
   dispatchAnalysisRead(analysisId);
 }
 
-const ANALYSIS_DIR_PATTERN = /(?:^|[\\/])analyses[\\/](\d+)(?:[\\/]|$)/i;
-
-function notifyAnalysisRead(path: string): void {
-  const match = ANALYSIS_DIR_PATTERN.exec(path);
-  if (!match) return;
-  dispatchAnalysisRead(Number(match[1]));
+/**
+ * Analysis ids the user referenced explicitly ("analysis:7"). These pin the
+ * discussion subject: the auto-teach opener and direct questions carry the
+ * ref in the message text, while the model's internal comparison reads of
+ * other analyses must not join the visible discussion list.
+ */
+export function explicitAnalysisRefsFromText(text: string): number[] {
+  const ids: number[] = [];
+  for (const match of text.matchAll(/analysis:([1-9][0-9]*)/g)) {
+    const id = Number(match[1]);
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
 }
 
 export function createReadTool(cwd: string) {
@@ -120,7 +127,6 @@ export function createReadTool(cwd: string) {
       const absolutePath = resolveToCwd(path, cwd);
       try {
         const content = await readFile(absolutePath, "utf8");
-        notifyAnalysisRead(absolutePath);
         return { content: [{ type: "text" as const, text: content }] };
       } catch (error) {
         throw new Error(
@@ -194,7 +200,6 @@ export function createLsTool(cwd: string) {
       const dirPath = resolveToCwd(path || ".", cwd);
       try {
         const entries = await readdir(dirPath, { withFileTypes: true });
-        notifyAnalysisRead(dirPath);
         entries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
         const lines = entries.map((entry) => entry.name + (entry.isDirectory() ? "/" : ""));
         const output = lines.length > 0 ? lines.join("\n") : "(empty directory)";
