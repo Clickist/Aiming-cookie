@@ -244,6 +244,11 @@ $tests = (Get-ChildItem webapp\coach-runtime\test -Filter *.test.ts | Sort-Objec
 node "--import=$loaderUrl" --test @tests
 ```
 
+测试环境注意事项：
+
+- `artifacts/eloshapes/` 未入 git（被 gitignore）；在新 worktree 或干净 checkout 中跑 coach-runtime 测试前，需先从主仓复制该目录，否则 eloshapes 相关测试会因 catalog 缺失失败。
+- standalone 三进程测试（FastAPI + Coach sidecar + worker，不经 Tauri）有两个已知坑：`desktop-runtime.json` 可能残留上次 Tauri 会话的死端口，测前需刷新为本次端口；uvicorn 必须直起（不要 `--reload`，它会丢 `AIMING_COOKIE_DESKTOP_TOKEN` 导致桌面运行时令牌无效）。
+
 文档改动至少运行：
 
 ```bash
