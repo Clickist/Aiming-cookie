@@ -81,11 +81,21 @@ def _build_overview(session_id: int, result: dict) -> dict:
     timeline = deterministic.get("timeline") or []
 
     issues = diagnosis.get("issues") or []
+    preroll_raw = result.get("video_decode_preroll_ms")
+    preroll_ms = (
+        float(preroll_raw)
+        if isinstance(preroll_raw, (int, float))
+        and not isinstance(preroll_raw, bool)
+        and preroll_raw >= 0
+        else None
+    )
     enriched_issues: list[object] = []
     for issue in issues:
         if isinstance(issue, dict):
             enriched = dict(issue)
-            anchors = _time_anchors_for_issue(issue, timeline)
+            anchors = _time_anchors_for_issue(
+                issue, timeline, preroll_ms=preroll_ms,
+            )
             if anchors:
                 enriched["time_anchors"] = anchors
             enriched_issues.append(enriched)
@@ -99,6 +109,11 @@ def _build_overview(session_id: int, result: dict) -> dict:
         "input_mode": result.get("input_mode"),
         "status": "done",
         "completed_at": result.get("completed_at"),
+        **(
+            {"video_decode_preroll_ms": preroll_ms}
+            if preroll_ms is not None
+            else {}
+        ),
         "diagnosis": {
             "issues": enriched_issues,
             "headline": _build_headline(diagnosis),
@@ -126,13 +141,17 @@ def _build_overview(session_id: int, result: dict) -> dict:
     }
 
 
-def _time_anchors_for_issue(issue: dict, timeline: list) -> list[dict]:
+def _time_anchors_for_issue(
+    issue: dict, timeline: list, *, preroll_ms: float | None = None,
+) -> list[dict]:
     """从 issue 的 event_refs 解析出对应事件的视频时间锚点列表。
 
     每个锚点带 ``ms``（peak_ms 优先，退化 relative_ms）以及该 issue 关注的
     metric（metric_refs）在对应事件上的值，Coach 据此比较哪个时间点最典型。
     event_ref 形如 ``analysis:{session_id}:event:{event_kind}:{number}``；
     timeline 事件的 ``id`` 形如 ``flick:1``（后缀 ``:{number}`` 对应）。
+    ``ms`` 是视频播放时间：challenge-relative 值再减去 capture receipt 的
+    decode preroll（MP4 PTS 0 早于 canonical 窗口起点的那段）。
     """
     event_refs = issue.get("event_refs") or []
     metric_refs = issue.get("metric_refs") or []
@@ -158,6 +177,8 @@ def _time_anchors_for_issue(issue: dict, timeline: list) -> list[dict]:
                     break
             if ms is None:
                 continue
+            if preroll_ms is not None:
+                ms = max(0.0, ms - preroll_ms)
             anchor: dict = {"ms": ms}
             metrics = event.get("metrics") or {}
             if isinstance(metrics, dict):

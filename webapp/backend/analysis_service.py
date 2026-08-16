@@ -611,6 +611,7 @@ async def create_analysis_from_run(
             input_snapshot=snapshot,
             status="uploading",
             require_no_active=not allow_parallel,
+            video_receipt=run.get("video_receipt"),
         )
     except queue.ActiveSessionExists as exc:
         active = await queue.get_active_session(owner_id)

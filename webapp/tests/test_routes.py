@@ -1136,6 +1136,81 @@ async def test_run_owned_analysis_video_and_segments_are_owner_scoped_and_degrad
 
 
 @pytest.mark.asyncio
+async def test_evidence_segment_playback_subtracts_decode_preroll(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    run, _run_video = await _seed_route_video_run(tmp_path, "preroll-playback")
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+    ) as client:
+        created = await client.post(
+            f"/api/kovaak-runs/{run['id']}/analyze",
+            headers={"Idempotency-Key": "preroll-playback"},
+            json={"input_mode": "multimodal"},
+        )
+
+    assert created.status_code == 200, created.text
+    session_id = created.json()["session_id"]
+    stamped = {
+        **_run_owned_video_result(session_id, run["id"]),
+        "video_decode_preroll_ms": 121.97,
+    }
+    session = await queue.get_session(session_id)
+    private_snapshot = dict(session["input_snapshot"])
+    private_snapshot["canonical_time_window"] = {
+        "start_ms": 1000,
+        "end_ms": 7000,
+        "timebase_version": "time_alignment.v2",
+    }
+    await _rewrite_session(
+        session_id, status="done", input_snapshot=private_snapshot, result=stamped,
+    )
+
+    async def read_artifact(**_kwargs):
+        return {"evidence_segments": [{
+            "segment_id": f"analysis:{session_id}:segment:1",
+            "analysis_ref": f"analysis:{session_id}",
+            "segment_kind": "flick",
+            "focus_start_ms": 1800,
+            "focus_end_ms": 2200,
+            "title_key": "flick.overshoot",
+            "rank_reason": "representative",
+            "issue_refs": ["issue:overshoot"],
+            "metric_refs": ["metric:decel"],
+            "event_refs": ["flick:1"],
+            "available_channels": ["mp4"],
+            "source_coverage": 1.0,
+            "confidence": 0.9,
+            "limitations": [],
+        }]}
+
+    monkeypatch.setattr(
+        routes_mod.evidence_store,
+        "read_analysis_evidence_artifact",
+        read_artifact,
+    )
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-User-Id": config.DESKTOP_LOCAL_PROFILE},
+    ) as client:
+        segments = await client.get(
+            f"/api/sessions/{session_id}/evidence-segments",
+        )
+
+    assert segments.status_code == 200, segments.text
+    playback = segments.json()["segments"][0]["playback"]
+    # MP4 PTS 0 sits 121.97 ms inside the canonical window start, so seeks
+    # shift left by the preroll instead of landing ~0.12 s late.
+    assert playback["relative_start_ms"] == 678
+    assert playback["relative_end_ms"] == 1078
+
+
+@pytest.mark.asyncio
 async def test_video_fallback_without_derived_segments_keeps_run_owned_playback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

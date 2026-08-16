@@ -393,6 +393,22 @@ def _resolve_reviewed_visual_producer(job: dict) -> dict:
     return dict(producer)
 
 
+def video_decode_preroll_ms(job: dict) -> float | None:
+    """Extract the capture receipt decode preroll in ms, if the job carries it."""
+    receipt = job.get("video_receipt")
+    replay = receipt.get("replay") if isinstance(receipt, Mapping) else None
+    preroll_100ns = (
+        replay.get("decodePreroll100ns") if isinstance(replay, Mapping) else None
+    )
+    if (
+        isinstance(preroll_100ns, bool)
+        or not isinstance(preroll_100ns, int)
+        or preroll_100ns < 0
+    ):
+        return None
+    return preroll_100ns / 10_000.0
+
+
 def _run_owned_visual_video_time_mapping(job: dict) -> dict:
     snapshot = job.get("input_snapshot")
     if not isinstance(snapshot, Mapping):
@@ -439,6 +455,23 @@ def _run_owned_visual_video_time_mapping(job: dict) -> dict:
         "canonical_origin_ms": start_ms,
         "mapping_method": "run_owned_exact_canonical_clip",
         "timebase_version": timebase_version,
+    }
+
+
+def _run_owned_visual_video_time_mapping_v2(job: dict) -> dict:
+    """Build the preroll-carrying mapping for the generic visual producer.
+
+    Requires the capture receipt preroll: without it the visible window origin
+    is unproven, so the caller fails closed instead of guessing an offset.
+    """
+    mapping = _run_owned_visual_video_time_mapping(job)
+    preroll_ms = video_decode_preroll_ms(job)
+    if preroll_ms is None:
+        raise ValueError("video decode preroll is unavailable")
+    return {
+        **mapping,
+        "schema_version": "visual_video_time_mapping.v2",
+        "decode_preroll_ms": preroll_ms,
     }
 
 

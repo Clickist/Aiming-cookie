@@ -8,6 +8,9 @@ import re
 import sys
 from collections.abc import Callable, Mapping
 
+from kovaak_tracker.generic_static_clicking_analysis import (
+    GenericVisualPreprocessingUnavailable,
+)
 from kovaak_tracker.visual_signals import VisualPreprocessingUnavailable
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
@@ -45,6 +48,26 @@ def _configure_opencv_threads() -> None:
     import cv2
 
     cv2.setNumThreads(min(CV_WORKER_THREAD_LIMIT, os.cpu_count() or 1))
+
+
+def _run_generic_static_clicking_job(job: dict) -> dict:
+    """Run the untrained generic static-clicking detector for one Run."""
+    from kovaak_tracker.generic_static_clicking_analysis import (
+        run_generic_static_clicking_detection_v1,
+    )
+    from .worker_visual_producers import _run_owned_visual_video_time_mapping_v2
+
+    snapshot = job.get("input_snapshot") or {}
+    window = snapshot.get("canonical_time_window")
+    if not isinstance(window, dict):
+        raise ValueError("generic static clicking requires a canonical window")
+    mapping = _run_owned_visual_video_time_mapping_v2(job)
+    return run_generic_static_clicking_detection_v1(
+        media_path=str(job["video_path"]),
+        analysis_ref=f"analysis:{job['id']}",
+        canonical_time_window=window,
+        video_time_mapping=mapping,
+    )
 
 
 def _run_visual_job(job: dict) -> dict:
@@ -173,7 +196,9 @@ def execute_request(
             "error": {"kind": "visual_preprocessing_failed", "code": "invalid_request"},
         }
     postprocess = request.get("postprocess")
-    if postprocess not in {None, "continuous_tracking", "target_switching"}:
+    if postprocess not in {
+        None, "continuous_tracking", "target_switching", "generic_static_clicking",
+    }:
         return {
             "ok": False,
             "error": {"kind": "visual_preprocessing_failed", "code": "invalid_request"},
@@ -185,11 +210,22 @@ def execute_request(
             "error": {"kind": "visual_preprocessing_failed", "code": "invalid_request"},
         }
     try:
-        result = (runner or _run_visual_job)(job)
+        if postprocess == "generic_static_clicking":
+            result = _run_generic_static_clicking_job(job)
+        else:
+            result = (runner or _run_visual_job)(job)
     except SourceSnapshotChangedError as error:
         return {
             "ok": False,
             "error": {"kind": "source_snapshot_changed", "code": str(error)},
+        }
+    except GenericVisualPreprocessingUnavailable as error:
+        return {
+            "ok": False,
+            "error": {
+                "kind": "generic_visual_unavailable",
+                "code": error.code,
+            },
         }
     except VisualPreprocessingUnavailable as error:
         return {

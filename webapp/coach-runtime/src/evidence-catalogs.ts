@@ -693,6 +693,41 @@ export const TARGET_SWITCHING_EVIDENCE_EXTENSION_V1: EvidenceExtension = {
   segment_kinds: [],
 };
 
+export const GENERIC_STATIC_EVIDENCE_EXTENSION_V1: EvidenceExtension = {
+  schema_version: "analysis_evidence_extension.v1",
+  extension_ref: "generic-static-clicking@1",
+  channel_keys: [],
+  event_kinds: {
+    generic_target_track: [
+      "birth_ms", "death_ms", "shape", "median_x_px", "median_y_px",
+      "half_width_px", "half_height_px", "sample_count",
+    ],
+    generic_click_outcome: [
+      "click_time_ms", "outcome", "target_track_ref",
+      "miss_vector_x_px", "miss_vector_y_px", "miss_distance_px",
+      "miss_vector_x_deg", "miss_vector_y_deg", "kill_ref",
+    ],
+    generic_kill_residual: [
+      "kill_time_ms", "kill_index", "target_track_ref",
+      "residual_x_px", "residual_y_px", "residual_distance_px",
+      "residual_x_deg", "residual_y_deg",
+    ],
+  },
+  metric_keys: [
+    "static_clicking.generic.click_count",
+    "static_clicking.generic.hit_clicks",
+    "static_clicking.generic.miss_clicks",
+    "static_clicking.generic.no_target_clicks",
+    "static_clicking.generic.miss_distance_deg",
+    "static_clicking.generic.miss_vector_x_deg",
+    "static_clicking.generic.miss_vector_y_deg",
+    "static_clicking.generic.kill_residual_distance_deg",
+    "static_clicking.generic.kill_pairing_rate",
+    "static_clicking.generic.frame_coverage",
+  ],
+  segment_kinds: [],
+};
+
 // ── Core sets ──
 
 const CORE_CHANNELS = new Set([
@@ -726,6 +761,7 @@ const ALL_EXTENSIONS: EvidenceExtension[] = [
   DYNAMIC_CLICKING_EVIDENCE_EXTENSION_V1,
   CONTINUOUS_TRACKING_EVIDENCE_EXTENSION_V1,
   TARGET_SWITCHING_EVIDENCE_EXTENSION_V1,
+  GENERIC_STATIC_EVIDENCE_EXTENSION_V1,
 ];
 
 export class EvidenceKeyRegistry {

@@ -29,6 +29,64 @@ async def test_process_one_empty_returns_false():
     assert await worker.process_one() is False
 
 
+def _video_time_mapping_job_fixture() -> dict:
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 5_000,
+        "end_ms": 6_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    return {
+        "id": 79,
+        "kovaak_run_id": 79,
+        "input_snapshot": {
+            "schema_version": "analysis_input_snapshot.v3",
+            "run_id": 79,
+            "canonical_time_window": window,
+            "sources": {
+                "video": {
+                    "ownership": "run",
+                    "availability": "available",
+                    "format_version": "mp4",
+                    "artifact_ref": "run:79:video:abcdef0123456789",
+                },
+            },
+        },
+        "video_receipt": {"replay": {"decodePreroll100ns": 1_219_700}},
+    }
+
+
+def test_video_time_mapping_v2_carries_receipt_preroll_and_v1_stays_frozen():
+    from webapp.backend.worker_visual_producers import (
+        _run_owned_visual_video_time_mapping,
+        _run_owned_visual_video_time_mapping_v2,
+        video_decode_preroll_ms,
+    )
+
+    job = _video_time_mapping_job_fixture()
+    assert video_decode_preroll_ms(job) == pytest.approx(121.97)
+    mapping = _run_owned_visual_video_time_mapping_v2(job)
+    assert mapping["schema_version"] == "visual_video_time_mapping.v2"
+    assert mapping["decode_preroll_ms"] == pytest.approx(121.97)
+    assert mapping["canonical_origin_ms"] == 5_000
+    # The reviewed-producer path keeps its frozen v1 selector contract.
+    assert _run_owned_visual_video_time_mapping(job)["schema_version"] == (
+        "visual_video_time_mapping.v1"
+    )
+    # Without a receipt preroll the v2 mapping fails closed instead of guessing.
+    with pytest.raises(ValueError):
+        _run_owned_visual_video_time_mapping_v2({**job, "video_receipt": None})
+    with pytest.raises(ValueError):
+        _run_owned_visual_video_time_mapping_v2(
+            {**job, "video_receipt": {"replay": {"decodePreroll100ns": -1}}},
+        )
+
+
 def test_worker_attaches_committed_evidence_before_terminal_result(
     monkeypatch, tmp_path,
 ):
