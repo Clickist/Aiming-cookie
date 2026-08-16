@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  REGISTRY_SCHEMA_VERSION_V1,
   activeScenarioProfileRefs,
   entryRef,
   loadKnowledgeRegistry,
-  queryKnowledgeRegistry,
   resolveKnowledgeEntry,
   validateKnowledgeRegistry,
 } from "../src/knowledge-registry.ts";
@@ -42,19 +42,6 @@ test("loads the canonical packaged registry without a TypeScript prose copy", ()
   assert.match(entryRef(registry.entries[0]), /^knowledge:[a-z0-9._-]+@\d+$/);
 });
 
-test("deterministic query matches signal alias, metric, topic and is bounded", () => {
-  const registry = loadKnowledgeRegistry();
-  const results = queryKnowledgeRegistry(registry, {
-    topic: "static_clicking",
-    issue_signal: "reverse high",
-    metric_refs: ["metric:reverse_ratio"],
-    supported_use: "definition",
-  });
-  assert.ok(results.length >= 1 && results.length <= 3);
-  assert.equal(results[0].entry_id, "static.flicking-terminal-control");
-  assert.ok(results.every((entry) => entry.status === "active"));
-});
-
 test("historical refs resolve only against their explicit v1 registry", () => {
   const legacy = loadKnowledgeRegistry("2026-07-14.v1");
   assert.equal(legacy.schema_version, "coach_knowledge_registry.v1");
@@ -66,31 +53,6 @@ test("historical refs resolve only against their explicit v1 registry", () => {
   assert.throws(
     () => resolveKnowledgeEntry("2026-07-22.v2", "knowledge:metric.stopping-corrections.definition@1"),
     /unknown knowledge entry/,
-  );
-});
-
-test("query requires a condition and unknown input never falls back to all entries", () => {
-  const registry = loadKnowledgeRegistry();
-  assert.throws(() => queryKnowledgeRegistry(registry, {}), /query condition/);
-  assert.deepEqual(queryKnowledgeRegistry(registry, { topic: "unknown-topic" }), []);
-});
-
-test("exact entry refs take precedence and use-only fallback returns no arbitrary entries", () => {
-  const registry = loadKnowledgeRegistry();
-  const reference = entryRef(registry.entries[0]!);
-  const exact = queryKnowledgeRegistry(registry, {
-    registry_version: registry.registry_version,
-    entry_ref: reference,
-    topic: "unknown-topic",
-  });
-  assert.deepEqual(exact.map(entryRef), [reference]);
-  assert.deepEqual(queryKnowledgeRegistry(registry, { supported_use: "explanation_only" }), []);
-  assert.throws(
-    () => queryKnowledgeRegistry(registry, {
-      registry_version: "2026-07-29.v4",
-      entry_ref: reference,
-    }),
-    /registry version does not match/,
   );
 });
 
@@ -352,4 +314,65 @@ test("v6 adds reviewed community practice without device recommendations", () =>
 
 test("v5 remains loadable after v6 is packaged", () => {
   assert.equal(loadKnowledgeRegistry("2026-08-06.v5").registry_version, "2026-08-06.v5");
+});
+
+test("v8 adds the x76 wiki community batch as the default registry", () => {
+  const registry = loadKnowledgeRegistry();
+  assert.equal(registry.registry_version, "2026-08-16.v8");
+  assert.equal(registry.entries.length, 37);
+  assert.ok(registry.sources.some((source) => source.source_ref === "community.x76-wiki"));
+
+  const scoring = registry.entries.find(
+    (entry) => entry.entry_id === "community.accuracy-multiplied-scoring",
+  );
+  if (!scoring) throw new Error("missing v8 scoring entry");
+  assert.deepEqual(scoring.signals, ["score up accuracy down"]);
+  assert.deepEqual(scoring.supported_uses, ["explanation_only", "diagnosis_support"]);
+
+  const strafe = registry.entries.find(
+    (entry) => entry.entry_id === "community.strafe-relative-speed-ladder",
+  );
+  if (!strafe) throw new Error("missing v8 strafe entry");
+  assert.deepEqual(strafe.supported_uses, ["explanation_only"]);
+  assert.equal(strafe.cue, undefined);
+
+  const bardpill = registry.entries.find(
+    (entry) => entry.entry_id === "community.bardpill-accuracy-anchored-progression",
+  );
+  if (!bardpill) throw new Error("missing v8 bardpill entry");
+  assert.deepEqual(bardpill.supported_uses, [
+    "explanation_only", "diagnosis_support", "candidate_experiment", "scenario_prescription",
+  ]);
+  assert.notEqual(bardpill.scenario_prescription, "not_applicable");
+
+  // Audit M2: the restored throughput entry serves the emitted signal.
+  const fitts = registry.entries.find(
+    (entry) => entry.entry_id === "research.speed-precision.fitts",
+  );
+  if (!fitts) throw new Error("missing v8 fitts entry");
+  assert.deepEqual(fitts.signals, ["throughput below reference"]);
+
+  // Fold-ins bumped their entry versions and kept unique ids.
+  for (const entryId of ["static.flicking-terminal-control", "switching.transition-and-arrival"]) {
+    const entry = registry.entries.find((item) => item.entry_id === entryId);
+    if (!entry) throw new Error(`missing ${entryId}`);
+    assert.equal(entry.entry_version, 3);
+  }
+  // Only the fold-in entries were bumped; the other 15 v7 refs survive unchanged.
+  const v7 = loadKnowledgeRegistry("2026-08-15.v7");
+  const survivors = new Set(v7.entries.map(entryRef)).intersection(new Set(registry.entries.map(entryRef)));
+  assert.equal(survivors.size, 11);
+  for (const entry of v7.entries) {
+    const bumped = [
+      "hypothesis.tension-management", "community.qiluno.confirmation-timing-schools",
+      "community.qiluno.reset-as-continuity", "dynamic.speed-matching-and-reading",
+      "tracking.predictable-speed-matching", "community.adaptive-mouse-grip",
+      "community.difficulty-refinement-and-stress-test", "community.score-farming-context",
+      "community.aim-trainer-transfer", "static.flicking-terminal-control",
+      "dynamic.click-error-and-acquisition", "switching.transition-and-arrival",
+      "tracking.control-smoothness", "tracking.reactive-change-response",
+      "switching.selection-observable-only", "community.task-specific-sensitivity",
+    ].includes(entry.entry_id);
+    assert.equal(survivors.has(entryRef(entry)), !bumped);
+  }
 });

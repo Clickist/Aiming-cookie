@@ -3,16 +3,23 @@ progress reports (scope B progress loop). Wires advice + diagnosis +
 visualization + agent (tool-use), with degradation."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ..advice import advise, compare_table
 from ..advice_tracking import advise_tracking, _flatten_metrics
 from .diagnosis import build_diagnosis, CoachReport
-from .visualization import build_figures, build_trend_figure, build_comparison_figure
-from .agent import narrate_diagnosis, narrate_progress, narrate_plan
 from .planning import build_plan
 from .progress import (
     save_session, load_history, build_trend, build_comparison, ProgressReport,
 )
-from .providers import ToolUseBackend
+
+if TYPE_CHECKING:
+    from .providers import ToolUseBackend
+
+# The agent (Provider tool-use) and visualization (numpy/plotly) stacks are
+# imported lazily at their call sites: the deterministic report path
+# (backend=None, as used by the analysis worker) does not functionally depend
+# on them, so an import failure there must degrade the report, not kill it.
 
 
 def _is_tracking_summary(summary) -> bool:
@@ -49,12 +56,18 @@ def build_report(summary, reference_summary=None, meta=None,
         comparison = compare_table(summary, reference_summary) if reference_summary else None
         diagnosis = build_diagnosis(findings, summary, comparison, meta)
 
-    figures = build_figures(diagnosis)
+    figures: dict = {}
+    notes: list[str] = []
+    try:
+        from .visualization import build_figures
+        figures = build_figures(diagnosis)
+    except Exception as e:  # figures are presentation-only; degrade, don't fail
+        notes.append(f"图表不可用: {e}")
 
     narration = None
-    notes: list[str] = []
     if backend is not None:
         try:
+            from .agent import narrate_diagnosis
             narration = narrate_diagnosis(diagnosis, backend)
         except Exception as e:  # narration is best-effort; never block the report
             notes.append(f"讲解不可用: {e}")
@@ -93,21 +106,35 @@ def build_progress_report(history_path, current_summary, ref_summary=None,
     plan_narration = None
     if backend is not None:
         try:
-            progress_narration = narrate_progress(trend, comparison, backend)
+            from .agent import narrate_progress, narrate_plan
         except Exception as e:
-            notes.append(f"进步讲解不可用: {e}")
-        if progress_narration is None and not any("进步讲解不可用" in n for n in notes):
-            notes.append("进步讲解不可用: agent 未在限定轮次内产出文本")
-        try:
-            plan_narration = narrate_plan(plan, backend)
-        except Exception as e:
-            notes.append(f"计划讲解不可用: {e}")
-        if plan_narration is None and not any("计划讲解不可用" in n for n in notes):
-            notes.append("计划讲解不可用: agent 未在限定轮次内产出文本")
+            notes.append(f"讲解不可用: {e}")
+        else:
+            try:
+                progress_narration = narrate_progress(trend, comparison, backend)
+            except Exception as e:
+                notes.append(f"进步讲解不可用: {e}")
+            if progress_narration is None and not any("进步讲解不可用" in n for n in notes):
+                notes.append("进步讲解不可用: agent 未在限定轮次内产出文本")
+            try:
+                plan_narration = narrate_plan(plan, backend)
+            except Exception as e:
+                notes.append(f"计划讲解不可用: {e}")
+            if plan_narration is None and not any("计划讲解不可用" in n for n in notes):
+                notes.append("计划讲解不可用: agent 未在限定轮次内产出文本")
+
+    try:
+        from .visualization import build_trend_figure, build_comparison_figure
+        trend_figure = build_trend_figure(trend)
+        comparison_figure = build_comparison_figure(comparison)
+    except Exception as e:  # presentation-only; degrade, don't fail
+        notes.append(f"图表不可用: {e}")
+        trend_figure = None
+        comparison_figure = None
 
     return ProgressReport(
-        trend_figure=build_trend_figure(trend),
-        comparison_figure=build_comparison_figure(comparison),
+        trend_figure=trend_figure,
+        comparison_figure=comparison_figure,
         comparison_table=comparison,
         progress_narration=progress_narration,
         plan=plan,

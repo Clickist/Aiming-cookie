@@ -106,6 +106,7 @@ class PerformanceData:
     events: tuple[PerformanceEvent, ...] = ()
     source_event_count: int = 0
     omitted_event_indexes: tuple[int, ...] = ()
+    post_window_event_count: int = 0
     timeline_status: str = "complete"
     unknown_field_observability: str = "none"
 
@@ -148,12 +149,15 @@ def parse_performance_bytes(data: bytes) -> PerformanceData:
             source_event_index += 1
         else:
             unknown_status = "detected"
-    _validate_event_bounds(events, header)
+    events, post_window_event_count = _apply_challenge_window_bounds(
+        events, header
+    )
     return PerformanceData(
         header=header,
         events=tuple(events),
         source_event_count=source_event_index,
         omitted_event_indexes=tuple(omitted_event_indexes),
+        post_window_event_count=post_window_event_count,
         timeline_status="partial" if omitted_event_indexes else "complete",
         unknown_field_observability=unknown_status,
     )
@@ -457,21 +461,33 @@ def _merge_observability(current: str, observed: str) -> str:
     return "none"
 
 
-def _validate_event_bounds(
+def _apply_challenge_window_bounds(
     events: list[PerformanceEvent], header: PerformanceHeader
-) -> None:
+) -> tuple[list[PerformanceEvent], int]:
+    """Keep only events inside the half-open Challenge window.
+
+    KovaaK keeps appending target movement after the challenge ends, so
+    post-window events are expected tail data: drop and count them instead
+    of rejecting the whole file.  A file whose parsed events all land after
+    the window is a genuine anomaly and is still rejected.
+    """
     time_limit = header.challenge_profile.time_limit
     timescale = header.challenge_profile.timescale or 1.0
     if not math.isfinite(time_limit) or not math.isfinite(timescale):
         raise PerformanceParseError("Performance profile duration is non-finite")
     if time_limit <= 0 or timescale <= 0:
-        return
+        return events, 0
     duration_ms = int(math.floor((time_limit / timescale) * 1_000.0 + 0.5))
-    for event in events:
-        if event.timestamp_ms is not None and event.timestamp_ms >= duration_ms:
-            raise PerformanceParseError(
-                "event timestamp is outside the half-open Challenge window"
-            )
+    bounded = [
+        event
+        for event in events
+        if event.timestamp_ms is None or event.timestamp_ms < duration_ms
+    ]
+    if events and not bounded:
+        raise PerformanceParseError(
+            "event timestamps are entirely outside the half-open Challenge window"
+        )
+    return bounded, len(events) - len(bounded)
 
 
 def _decode_int32_values(wire_type: int, raw: object) -> list[int]:

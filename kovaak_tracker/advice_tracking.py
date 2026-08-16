@@ -286,7 +286,7 @@ _TRACKING_CANDIDATES = (
         "tracking lag high",
         "metric:phase_lag",
         "absolute_higher",
-        "knowledge:tracking.predictable-speed-matching@2",
+        "knowledge:tracking.predictable-speed-matching@3",
         "episode.tracking",
     ),
     (
@@ -295,7 +295,7 @@ _TRACKING_CANDIDATES = (
         "loss count high",
         "metric:loss_count",
         "higher",
-        "knowledge:tracking.reactive-change-response@2",
+        "knowledge:tracking.reactive-change-response@3",
         "event.loss",
     ),
     (
@@ -304,7 +304,7 @@ _TRACKING_CANDIDATES = (
         "off target long",
         "metric:reacquisition_time",
         "higher",
-        "knowledge:tracking.reactive-change-response@2",
+        "knowledge:tracking.reactive-change-response@3",
         "event.reacquisition",
     ),
     (
@@ -313,7 +313,7 @@ _TRACKING_CANDIDATES = (
         "accel mismatch high",
         "metric:change_response",
         "higher",
-        "knowledge:tracking.reactive-change-response@2",
+        "knowledge:tracking.reactive-change-response@3",
         "event.target_change",
     ),
     (
@@ -322,7 +322,7 @@ _TRACKING_CANDIDATES = (
         "correction burden high",
         "metric:correction_burden",
         "higher",
-        "knowledge:tracking.control-smoothness@2",
+        "knowledge:tracking.control-smoothness@3",
         "metric.smoothness",
     ),
     (
@@ -331,7 +331,7 @@ _TRACKING_CANDIDATES = (
         "sparc low",
         "metric:sparc",
         "lower",
-        "knowledge:tracking.control-smoothness@2",
+        "knowledge:tracking.control-smoothness@3",
         "metric.smoothness",
     ),
 )

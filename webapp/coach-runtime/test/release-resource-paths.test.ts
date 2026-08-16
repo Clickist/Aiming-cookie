@@ -24,7 +24,7 @@ test("release resource root overrides source prompt, Pi metadata, and knowledge 
 
     process.env.AIMING_COOKIE_RESOURCE_ROOT = repoRoot;
     assert.equal(piSourceRoot(), join(repoRoot, "pi"));
-    assert.equal(loadKnowledgeRegistry().registry_version, "2026-08-06.v6");
+    assert.equal(loadKnowledgeRegistry().registry_version, "2026-08-16.v8");
     assert.ok(activeScenarioProfileRefs().has("scenario:static.1wall_6targets_small@1"));
   } finally {
     if (previous === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;

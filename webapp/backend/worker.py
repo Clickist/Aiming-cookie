@@ -37,8 +37,22 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 SCENARIO_OUTCOME_ONLY_VERSION = "scenario_outcome_only.v1"
 DYNAMIC_CLICKING_BASELINE_ANALYSIS_VERSION = "dynamic_clicking.baseline.v1"
 STATIC_CLICKING_BASELINE_ANALYSIS_VERSION = "static_clicking.baseline.v1"
+CONTINUOUS_TRACKING_BASELINE_ANALYSIS_VERSION = "continuous_tracking.baseline.v1"
+TARGET_SWITCHING_BASELINE_ANALYSIS_VERSION = "target_switching.baseline.v1"
+_FAMILY_BASELINE_ANALYSIS_VERSIONS = {
+    STATIC_CLICKING_BASELINE_ANALYSIS_VERSION,
+    DYNAMIC_CLICKING_BASELINE_ANALYSIS_VERSION,
+    CONTINUOUS_TRACKING_BASELINE_ANALYSIS_VERSION,
+    TARGET_SWITCHING_BASELINE_ANALYSIS_VERSION,
+}
+_FAMILY_BASELINE_DISPATCH_FAMILIES = {
+    "static_clicking", "dynamic_clicking", "continuous_tracking", "target_switching",
+}
 VISUAL_WORKER_RESPONSE_LIMIT_BYTES = 64 * 1024 * 1024
 VISUAL_WORKER_SHUTDOWN_GRACE_SECONDS = 2.0
+# Upper bound on a single CV child process. The worker's consume loop is
+# serial, so a hung child would otherwise starve every queued analysis.
+VISUAL_WORKER_TIMEOUT_SECONDS = 600.0
 VISUAL_WORKER_JOB_FIELDS = ("id", "kovaak_run_id", "video_path", "input_snapshot")
 VISUAL_WORKER_EVIDENCE_JOB_FIELDS = ("id", "user_id", "input_snapshot")
 
@@ -100,7 +114,13 @@ async def _run_isolated_analysis_request(payload: dict) -> dict:
         env=build_child_environment(),
     )
     try:
-        stdout, _ = await process.communicate(request)
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(request), timeout=VISUAL_WORKER_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        # Kill the child so it cannot leak, then fail the bounded way.
+        await _stop_visual_worker_process(process)
+        raise RuntimeError("visual_preprocessing_timeout") from None
     except asyncio.CancelledError:
         await _stop_visual_worker_process(process)
         raise
@@ -1384,19 +1404,30 @@ def _scenario_dispatch(job: dict, input_mode: str) -> str:
     ):
         return TARGET_SWITCHING_ANALYSIS_VERSION
     if (
-        resolution.get("manifest_status") == "unlisted"
-        and resolution.get("classification_source") == "local_scenario_definition"
-        and resolution.get("classification_confidence") == "confirmed"
+        resolution.get("manifest_status") == "active"
         and resolution.get("family_analyzer_dispatch") == "allowed"
-        and resolution.get("aim_family") in {"static_clicking", "dynamic_clicking"}
+        and resolution.get("claim_ceiling") == "family_specific"
+        and input_mode == "input_native"
+        and resolution.get("aim_family") in {
+            "dynamic_clicking", "continuous_tracking", "target_switching",
+        }
+        and resolution.get("aim_family")
+        in (resolution.get("allowed_metric_families") or [])
+    ):
+        # No video: degrade the exact-reviewed visual pipeline to the family's
+        # input-kinematics baseline instead of an outcome-only result.
+        return f"{resolution['aim_family']}.baseline.v1"
+    baseline_analyzer = f"{resolution.get('aim_family')}.baseline.v1"
+    if (
+        resolution.get("family_analyzer_dispatch") == "allowed"
         and resolution.get("claim_ceiling") == "descriptive_only"
-        and input_mode in {"input_native", "multimodal"}
-        and f"{resolution.get('aim_family')}.baseline.v1"
-        in (resolution.get("allowed_analyzers") or [])
+        and resolution.get("aim_family") in _FAMILY_BASELINE_DISPATCH_FAMILIES
+        and baseline_analyzer in (resolution.get("allowed_analyzers") or [])
         and set(resolution.get("allowed_metric_families") or [])
         == {"outcome", "input_kinematics"}
+        and input_mode in {"input_native", "multimodal"}
     ):
-        return f"{resolution['aim_family']}.baseline.v1"
+        return baseline_analyzer
     return "outcome_only"
 
 
@@ -1963,18 +1994,22 @@ def _build_clicking_baseline_result_v2(
     *,
     created_at: str,
     completed_at: str,
+    video_availability: str | None = None,
 ) -> dict:
-    """Expose input-native movement facts for an auto-classified dynamic task.
+    """Expose input-native movement facts for an auto-classified family task.
 
     This deliberately reuses the native movement computation but removes the
     static diagnosis layer. Target geometry and outcome association require the
-    exact visual profile path and are not available here.
+    exact visual profile path and are not available here. A managed MP4 stays
+    replayable: ``video_availability`` attaches the video evidence reference
+    (replay only, no visual measurement) the same way the native tier does.
     """
     result = _build_native_result_v2(
         job,
         native_result,
         created_at=created_at,
         completed_at=completed_at,
+        video_availability=video_availability,
     )
     snapshot = job.get("input_snapshot") or {}
     resolution = snapshot.get("scenario_resolution") or {}
@@ -2711,10 +2746,7 @@ async def process_one() -> bool:
             visual_validation = None
             if (
                 input_mode == "multimodal"
-                and scenario_dispatch not in {
-                    DYNAMIC_CLICKING_BASELINE_ANALYSIS_VERSION,
-                    STATIC_CLICKING_BASELINE_ANALYSIS_VERSION,
-                }
+                and scenario_dispatch not in _FAMILY_BASELINE_ANALYSIS_VERSIONS
             ):
                 await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
                 snapshot = job.get("input_snapshot") or {}
@@ -2777,15 +2809,21 @@ async def process_one() -> bool:
                         log.warning("multimodal video validation unavailable session=%s", sid)
                         video_availability = "unavailable"
                         warnings.append({"code": "video_cv_unavailable"})
-            if scenario_dispatch in {
-                DYNAMIC_CLICKING_BASELINE_ANALYSIS_VERSION,
-                STATIC_CLICKING_BASELINE_ANALYSIS_VERSION,
-            }:
+            if scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS:
+                # The baseline tier consumes no visual measurement, but the
+                # managed MP4 stays replayable: attach the video evidence
+                # reference when the workspace video exists.
+                baseline_video_availability = (
+                    ("available" if job.get("video_path") else "unavailable")
+                    if input_mode == "multimodal"
+                    else None
+                )
                 result = _build_clicking_baseline_result_v2(
                     job,
                     native_result,
                     created_at=created_at_iso,
                     completed_at=completed_at_iso,
+                    video_availability=baseline_video_availability,
                 )
             else:
                 result = _build_native_result_v2(

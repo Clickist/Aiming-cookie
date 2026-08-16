@@ -580,9 +580,10 @@ test("workspace projects partial Session 22 findings as descriptive Chinese obse
   ]);
   assert.equal(presentation?.issues[2]?.prescriptions[0]?.reason, "让修正与主动作更连贯地衔接，在减速阶段微调。");
   assert.deepEqual(presentation?.limitations, [
-    "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
+    "缺少目标相对事实（误差、目标身份或速度）。",
     "输入与事件为部分对齐；指标可描述本局，但不应用通用好坏阈值。",
     "仅适用于已审核的精确场景；同名其他场景不在此分类中。",
+    "缺少目标位置证据，不能判断过冲、欠冲或目标误差。",
     "当前合同未提供可展示的限制说明",
   ]);
   assert.doesNotMatch(JSON.stringify(presentation), /\[experimental\]|decel_frac high|reverse_ratio high|submovement two-stage|unknown_internal_limitation|Input-native metrics|不能据此判断|这只描述动作模式|不代表好坏/);

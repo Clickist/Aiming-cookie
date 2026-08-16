@@ -193,7 +193,12 @@ def test_packaged_registry_activates_only_reviewed_launch_hashes():
     )
     assert same_name_unknown["scenario_profile_ref"] is None
     assert same_name_unknown["manifest_status"] == "unlisted"
-    assert same_name_unknown["claim_ceiling"] == "outcome_only"
+    assert same_name_unknown["classification_source"] == "name_heuristic"
+    assert same_name_unknown["classification_confidence"] == "candidate"
+    assert same_name_unknown["aim_family"] == "dynamic_clicking"
+    assert same_name_unknown["allowed_analyzers"] == ["dynamic_clicking.baseline.v1"]
+    assert same_name_unknown["family_analyzer_dispatch"] == "allowed"
+    assert same_name_unknown["claim_ceiling"] == "descriptive_only"
 
     same_name_unknown = scenario_profiles.resolve_scenario_profile(
         "7378a811f430b6072d052a75896afb99",
@@ -202,15 +207,19 @@ def test_packaged_registry_activates_only_reviewed_launch_hashes():
     assert same_name_unknown["scenario_profile_ref"] is None
     assert same_name_unknown["classification_source"] == "name_heuristic"
     assert same_name_unknown["manifest_status"] == "unlisted"
-    assert same_name_unknown["family_analyzer_dispatch"] == "none"
-    assert same_name_unknown["claim_ceiling"] == "outcome_only"
+    assert same_name_unknown["aim_family"] == "static_clicking"
+    assert same_name_unknown["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    assert same_name_unknown["family_analyzer_dispatch"] == "allowed"
+    assert same_name_unknown["claim_ceiling"] == "descriptive_only"
 
     resolution = scenario_profiles.resolve_scenario_profile("sha256:unknown")
     assert resolution["scenario_profile_ref"] is None
-    assert resolution["classification_source"] == "unknown"
+    assert resolution["classification_source"] == "family_default"
     assert resolution["classification_confidence"] == "unknown"
-    assert resolution["family_analyzer_dispatch"] == "none"
-    assert resolution["claim_ceiling"] == "outcome_only"
+    assert resolution["aim_family"] == "static_clicking"
+    assert "scenario_family_unresolved" in resolution["limitations"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
 
 
 def test_beants_larger_switching_activates_only_after_accepted_local_episode_gate():
@@ -302,13 +311,24 @@ def test_beants_larger_switching_activates_only_after_accepted_local_episode_gat
     assert "\\\\users\\\\" not in serialized
 
 
-def test_beants_larger_name_only_stays_fail_closed():
-    assert scenario_profiles.resolve_scenario_profile(
+def test_beants_larger_name_only_routes_a_switching_family_candidate():
+    resolution = scenario_profiles.resolve_scenario_profile(
         None, display_name="beanTS Larger",
-    )["claim_ceiling"] == "outcome_only"
-    assert scenario_profiles.resolve_scenario_profile(
+    )
+    assert resolution["scenario_profile_ref"] is None
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["aim_family"] == "target_switching"
+    assert resolution["allowed_analyzers"] == ["target_switching.baseline.v1"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
+
+    same_name_unknown_hash = scenario_profiles.resolve_scenario_profile(
         "3b42bdfd38a6b194737d650f3f53e8c2", display_name="beanTS Larger",
-    )["family_analyzer_dispatch"] == "none"
+    )
+    assert same_name_unknown_hash["scenario_profile_ref"] is None
+    assert same_name_unknown_hash["aim_family"] == "target_switching"
+    assert same_name_unknown_hash["family_analyzer_dispatch"] == "allowed"
 
 
 def test_exact_active_hash_returns_reviewed_profile_and_allows_dispatch():
@@ -361,12 +381,15 @@ def test_name_only_match_is_candidate_and_never_selects_a_profile():
     assert resolution["scenario_profile_ref"] is None
     assert resolution["classification_source"] == "name_heuristic"
     assert resolution["classification_confidence"] == "candidate"
-    assert resolution["aim_family"] == "unknown"
+    assert resolution["aim_family"] == "static_clicking"
     assert resolution["target_motion"] == {
         "model": "unknown", "target_count_model": "unknown",
     }
-    assert resolution["family_analyzer_dispatch"] == "none"
-    assert resolution["claim_ceiling"] == "outcome_only"
+    assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    assert resolution["allowed_metric_families"] == ["outcome", "input_kinematics"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
+    assert "scenario_name_is_a_candidate_not_an_identity" in resolution["limitations"]
 
 
 def test_local_scenario_definition_routes_reactive_concurrent_hitscan_to_dynamic_baseline():
@@ -498,6 +521,231 @@ def test_local_scenario_definition_is_not_a_name_fallback_or_path_leak():
     ) is None
 
 
+@pytest.mark.parametrize(
+    ("display_name", "aim_family"),
+    [
+        ("WHJ SmoothStrafeSphere Easy", "continuous_tracking"),
+        ("Bouncing Tracking #3", "continuous_tracking"),
+        ("Bounceshot Switch", "target_switching"),
+        ("1wall5targets_pasu", "dynamic_clicking"),
+        ("pasu small reload", "dynamic_clicking"),
+        ("1wall 6targets small", "static_clicking"),
+        ("Tile Frenzy", "static_clicking"),
+    ],
+)
+def test_name_keywords_route_unreviewed_scenarios_to_family_candidates(display_name, aim_family):
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash", display_name=display_name,
+    )
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["aim_family"] == aim_family
+    assert resolution["allowed_analyzers"] == [f"{aim_family}.baseline.v1"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
+    assert "scenario_name_is_a_candidate_not_an_identity" in resolution["limitations"]
+
+
+def test_no_reload_name_does_not_route_to_dynamic_clicking():
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash", display_name="1wall 6targets no reload",
+    )
+    assert resolution["aim_family"] == "static_clicking"
+
+
+def test_unnamed_scenario_defaults_to_static_baseline_with_unresolved_flag():
+    resolution = scenario_profiles.resolve_scenario_profile("unreviewed-hash")
+    assert resolution["classification_source"] == "family_default"
+    assert resolution["classification_confidence"] == "unknown"
+    assert resolution["aim_family"] == "static_clicking"
+    assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert "scenario_family_unresolved" in resolution["limitations"]
+
+
+def _shape(kills: int, duration_ms: int, button_samples_held: int | None = None) -> dict:
+    shape = {
+        "schema_version": "scenario_challenge_shape.v1",
+        "kills": kills,
+        "duration_ms": duration_ms,
+    }
+    if button_samples_held is not None:
+        shape["button_samples_held"] = button_samples_held
+    return shape
+
+
+def test_challenge_shape_classifier_reads_fire_mode_from_button_samples():
+    # 实测 6 局真实数据：点射类每杀 16/27 个按住采样，持续开火追踪 426/445，
+    # 零杀纯追踪 12013/17273。量级差 20 倍以上，判据用开火模式而非击杀密度。
+    assert scenario_profiles.classify_challenge_shape_v1(103, 60_000, 1641) == {
+        "shape_class": "clicking_candidate", "basis": "fire_mode_tap",
+        "kills": 103, "duration_ms": 60_000,
+        "button_samples_held": 1641, "button_samples_per_kill": 15.93,
+    }
+    assert scenario_profiles.classify_challenge_shape_v1(74, 60_000, 2004)[
+        "shape_class"
+    ] == "clicking_candidate"  # Pasu SuperbAim 每杀 27
+    assert scenario_profiles.classify_challenge_shape_v1(39, 90_000, 16594)[
+        "shape_class"
+    ] == "tracking_candidate"  # AscendedTracking90 每杀 426
+    assert scenario_profiles.classify_challenge_shape_v1(34, 60_000, 15153)[
+        "shape_class"
+    ] == "tracking_candidate"  # AscendedTracking v3 每杀 445
+    zero_kill = scenario_profiles.classify_challenge_shape_v1(0, 60_000, 12013)
+    assert zero_kill["shape_class"] == "tracking_candidate"
+    assert zero_kill["basis"] == "zero_kill_sustained_fire"
+    assert zero_kill["button_samples_per_kill"] is None  # VertSmoothness 0 杀
+    assert scenario_profiles.classify_challenge_shape_v1(0, 60_000, 17273)[
+        "shape_class"
+    ] == "tracking_candidate"  # AirAngelic 0 杀 17273 采样
+    assert scenario_profiles.classify_challenge_shape_v1(0, 60_000, 100) is None
+
+
+def test_challenge_shape_fire_mode_keeps_the_undecided_band():
+    # 边界：每杀恰 100 / 恰 50 / 带内 75 均不判定；带外判定；短局不判定。
+    assert scenario_profiles.classify_challenge_shape_v1(2, 20_000, 200) is None
+    assert scenario_profiles.classify_challenge_shape_v1(2, 20_000, 100) is None
+    assert scenario_profiles.classify_challenge_shape_v1(2, 20_000, 150) is None
+    assert scenario_profiles.classify_challenge_shape_v1(2, 20_000, 75)["shape_class"] == (
+        "clicking_candidate"
+    )
+    assert scenario_profiles.classify_challenge_shape_v1(2, 20_000, 300)["shape_class"] == (
+        "tracking_candidate"
+    )
+    assert scenario_profiles.classify_challenge_shape_v1(0, 2_000, 12_013) is None
+
+
+def test_challenge_shape_without_raw_keeps_only_the_pure_tracking_corner():
+    # 击杀密度已被实测推翻（34-39 杀的追踪图与 43 杀的点击图重叠）；
+    # 无 raw 时仅 ≤6 杀的纯追踪可判，其余诚实不判定。
+    assert scenario_profiles.classify_challenge_shape_v1(6, 15_000)["basis"] == (
+        "kill_density_fallback"
+    )
+    assert scenario_profiles.classify_challenge_shape_v1(0, 30_000)["shape_class"] == (
+        "tracking_candidate"
+    )
+    assert scenario_profiles.classify_challenge_shape_v1(34, 90_000) is None
+    assert scenario_profiles.classify_challenge_shape_v1(43, 60_000) is None
+    assert scenario_profiles.classify_challenge_shape_v1(12, 20_000) is None
+    assert scenario_profiles.classify_challenge_shape_v1(3, 2_000) is None
+
+
+def test_challenge_shape_fire_mode_routes_zero_kill_tracking_without_name_keywords():
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Air Angelic 4 Voltaic Easy",
+        challenge_shape=_shape(0, 30_000, 17_273),
+    )
+    assert resolution["classification_source"] == "challenge_shape"
+    assert resolution["classification_confidence"] == "candidate"
+    assert resolution["aim_family"] == "continuous_tracking"
+    assert resolution["allowed_analyzers"] == ["continuous_tracking.baseline.v1"]
+    assert resolution["allowed_metric_families"] == ["outcome", "input_kinematics"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
+    assert (
+        "challenge_shape_fire_mode_kills_0_button_samples_held_17273"
+        "_button_samples_per_kill_inf" in resolution["limitations"]
+    )
+
+
+def test_challenge_shape_fire_mode_separates_high_kill_tracking_from_clicking():
+    # 39 杀的追踪图（旧密度判据会误判/不判）按持续开火正确进入 tracking。
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Air Angelic 4 Voltaic Easy",
+        challenge_shape=_shape(39, 90_000, 16_594),
+    )
+    assert resolution["classification_source"] == "challenge_shape"
+    assert resolution["aim_family"] == "continuous_tracking"
+
+
+def test_challenge_shape_tapping_lets_the_name_refine_the_clicking_family():
+    static = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="1w4ts Voltaic Easy",
+        challenge_shape=_shape(103, 60_000, 1_641),
+    )
+    assert static["classification_source"] == "challenge_shape"
+    assert static["aim_family"] == "static_clicking"
+
+    dynamic = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Pasu SuperbAim",
+        challenge_shape=_shape(74, 60_000, 2_004),
+    )
+    assert dynamic["classification_source"] == "challenge_shape"
+    assert dynamic["aim_family"] == "dynamic_clicking"
+
+    switching = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Bounceshot Switch",
+        challenge_shape=_shape(103, 60_000, 1_641),
+    )
+    assert switching["classification_source"] == "challenge_shape"
+    assert switching["aim_family"] == "target_switching"
+
+
+def test_challenge_shape_tapping_rejects_a_contradicting_tracking_name():
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Bouncing Tracking #3",
+        challenge_shape=_shape(74, 60_000, 2_004),
+    )
+    assert resolution["classification_source"] == "challenge_shape"
+    assert resolution["aim_family"] == "static_clicking"
+
+
+def test_challenge_shape_undecided_fire_mode_falls_back_to_the_name_layer():
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Air Angelic 4 Voltaic Easy",
+        challenge_shape=_shape(2, 20_000, 150),
+    )
+    assert resolution["classification_source"] == "name_heuristic"
+    assert resolution["aim_family"] == "static_clicking"
+
+
+def test_challenge_shape_kill_density_fallback_still_routes_pure_tracking():
+    # 无 raw 的历史局：0-6 杀仍按弱判据进 tracking，依据摘要如实标注 fallback。
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="Air Angelic 4 Voltaic Easy",
+        challenge_shape=_shape(6, 15_000),
+    )
+    assert resolution["classification_source"] == "challenge_shape"
+    assert resolution["aim_family"] == "continuous_tracking"
+    assert (
+        "challenge_shape_kill_density_kills_6_duration_ms_15000"
+        in resolution["limitations"]
+    )
+
+
+def test_challenge_shape_stays_below_the_local_scenario_definition_layer():
+    descriptor = {
+        "schema_version": "scenario_behavior_descriptor.v1",
+        "display_name": "unknown static",
+        "source_sha256": "a" * 64,
+        "bot_count": 2,
+        "reactive_bot_count": 0,
+        "dodge_axes": [],
+        "weapon": {
+            "delivery": "hitscan",
+            "fire_mode": "semi_auto",
+            "shots_per_click": 1,
+            "damage_per_shot": 1.0,
+        },
+    }
+    resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash",
+        display_name="unknown static",
+        behavior_descriptor=descriptor,
+        challenge_shape=_shape(0, 60_000, 12_013),
+    )
+    assert resolution["classification_source"] == "local_scenario_definition"
+    assert resolution["aim_family"] == "static_clicking"
+
+
 def test_same_display_name_with_different_hashes_keeps_distinct_identities():
     first = _profile()
     second = _profile(
@@ -526,7 +774,7 @@ def test_same_display_name_with_different_hashes_keeps_distinct_identities():
 
 
 @pytest.mark.parametrize("status", ["pending_gate", "retired"])
-def test_non_active_manifest_entries_are_outcome_only(status):
+def test_non_active_manifest_entries_keep_family_baseline_dispatch(status):
     profile = _profile(status="retired" if status == "retired" else "active")
     resolution = scenario_profiles.resolve_scenario_profile(
         profile["scenario_hash"], registry=_registry(profile), manifest=_manifest(profile, status=status)
@@ -534,11 +782,15 @@ def test_non_active_manifest_entries_are_outcome_only(status):
 
     assert resolution["classification_confidence"] == "confirmed"
     assert resolution["manifest_status"] == status
-    assert resolution["family_analyzer_dispatch"] == "none"
-    assert resolution["claim_ceiling"] == "outcome_only"
+    assert resolution["aim_family"] == "static_clicking"
+    assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    assert resolution["allowed_metric_families"] == ["outcome", "input_kinematics"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
+    assert "exact_manifest_gate_inactive_visual_claims_unavailable" in resolution["limitations"]
 
 
-def test_unlisted_manifest_is_outcome_only_for_an_exact_reviewed_hash():
+def test_unlisted_manifest_keeps_family_baseline_for_an_exact_reviewed_hash():
     profile = _profile()
     resolution = scenario_profiles.resolve_scenario_profile(
         profile["scenario_hash"], registry=_registry(profile), manifest={
@@ -550,7 +802,10 @@ def test_unlisted_manifest_is_outcome_only_for_an_exact_reviewed_hash():
 
     assert resolution["scenario_profile_ref"] == "scenario:static.example@1"
     assert resolution["manifest_status"] == "unlisted"
-    assert resolution["family_analyzer_dispatch"] == "none"
+    assert resolution["aim_family"] == "static_clicking"
+    assert resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    assert resolution["family_analyzer_dispatch"] == "allowed"
+    assert resolution["claim_ceiling"] == "descriptive_only"
 
 
 def test_registry_rejects_cross_entry_hash_and_multiple_active_versions():

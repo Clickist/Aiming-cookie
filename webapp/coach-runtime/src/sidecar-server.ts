@@ -1,6 +1,7 @@
 import http from "node:http";
 
 import { failureResponse, makeError, type CoachRuntimeTurnSchema, isRecord } from "./contracts.ts";
+import { materializeKnowledgeDir } from "./knowledge-materialize.ts";
 import {
   CoachDataError,
   createCoachSession,
@@ -338,17 +339,19 @@ export async function handleSidecarRequest(
       onPartial: async (partial) => {
         if (
           partial.revision !== lastRevision + 1 ||
-          !partial.text ||
-          partial.text.length > 12_000
+          !partial.text
         ) {
           throw new Error("invalid Coach partial revision");
         }
         lastRevision = partial.revision;
+        // Match the agent-runs SSE path: a long partial is truncated instead
+        // of failing the whole turn.
+        const safeText = partial.text.slice(0, 12_000);
         writeNdjsonFrame(res, {
           schema_version: COACH_RUNTIME_STREAM_SCHEMA,
           type: "partial",
           revision: partial.revision,
-          text: partial.text,
+          text: safeText,
           elapsed_ms: partial.elapsed_ms,
           provider_rounds: partial.provider_rounds,
         });
@@ -691,6 +694,14 @@ export function startSidecarServer(options: {
 } = {}): http.Server {
   const host = options.host ?? DEFAULT_SIDECAR_HOST;
   const port = options.port ?? DEFAULT_SIDECAR_PORT;
+  // Materialize the knowledge REGISTRY into app-data so the Coach's plain
+  // file tools can browse it (knowledge/index.json). Idempotent and bound to
+  // registry_version; a failure must not keep the sidecar from starting.
+  try {
+    materializeKnowledgeDir();
+  } catch (error) {
+    console.error("knowledge materialization failed:", error);
+  }
   const server = createSidecarServer({ authOperations: options.authOperations });
   server.listen(port, host);
   return server;

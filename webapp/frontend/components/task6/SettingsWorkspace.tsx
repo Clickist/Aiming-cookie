@@ -147,6 +147,10 @@ const NAV_ITEMS = [
   { id: "storage", label: "存储" },
 ];
 
+// Consecutive unavailable polls (1s each) before the settings UI leaves the last
+// known good capture status; single blips (~1/1000 polls) must not flash red.
+const CAPTURE_UNAVAILABLE_POLL_LIMIT = 3;
+
 type SettingsSnapshot = {
   profiles: ProviderProfile[];
   catalog: ProviderCatalogV1 | null;
@@ -277,10 +281,18 @@ export function SettingsWorkspace() {
   useEffect(() => {
     if (!desktop) return;
     let disposed = false;
+    let unavailableStreak = 0;
     const pollCaptureStatus = async () => {
       try {
         const next = await getCaptureStatus();
-        if (!disposed) setCapture(next);
+        if (disposed) return;
+        if (next.availability === "unavailable") {
+          unavailableStreak += 1;
+          if (unavailableStreak < CAPTURE_UNAVAILABLE_POLL_LIMIT) return;
+        } else {
+          unavailableStreak = 0;
+        }
+        setCapture(next);
       } catch {
         // Polling is best effort after the initial settings load.
       }

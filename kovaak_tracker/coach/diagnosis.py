@@ -92,9 +92,11 @@ def resolve_candidate_knowledge_refs(
         issue_signal=issue_signal,
         metric_refs=metric_refs,
     )
+    # query_registry is bounded by MAX_RESULTS (8); candidate annotations are
+    # capped at 3 by the frozen diagnosis contract, so keep the top-ranked 3.
     return CandidateKnowledgeRefs(
         registry_version=registry["registry_version"],
-        entry_refs=[entry_ref(entry) for entry in entries],
+        entry_refs=[entry_ref(entry) for entry in entries[:3]],
     )
 
 
@@ -174,7 +176,12 @@ def _build_issues(findings):
         if observation_ref is not None:
             knowledge = resolve_candidate_knowledge_refs(
                 issue_signal=f.signal,
-                metric_refs=list(f.metric_refs),
+                # Registry tokens are "metric:"-prefixed; bare analyzer
+                # metric names would never intersect them.
+                metric_refs=[
+                    ref if ref.startswith("metric:") else f"metric:{ref}"
+                    for ref in f.metric_refs
+                ],
             )
             knowledge_entry_refs = [
                 ref for ref in knowledge.entry_refs

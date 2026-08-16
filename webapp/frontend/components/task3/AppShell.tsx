@@ -1,9 +1,10 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
+  createCoachAgentRun,
   createCoachSession,
   deleteCoachSession,
   getDefaultProviderStatus,
@@ -11,13 +12,19 @@ import {
   listCoachSessions,
   updateCoachSession,
 } from "@/lib/api";
+import {
+  ANALYSIS_AUTO_TEACH_EVENT,
+  buildAnalysisAutoTeachContent,
+  markAnalysisAutoTaught,
+  readAutoTaughtAnalyses,
+} from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
-import type { ProviderProfileState } from "@/lib/types";
+import type { CoachAgentRunV1, ProviderProfileState } from "@/lib/types";
 import { CoachPanel } from "@/components/task6/CoachPanel";
 import { CoachVideoPane } from "@/components/task7/CoachVideoPane";
 import SessionRail, { type SessionRailSession } from "@/components/task7/SessionRail";
 import { startWindowDragging, TauriWindowControls } from "@/components/task3/TauriWindowControls";
-import { Toast } from "@/ui/primitives";
+import { Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachVideoTarget = { analysisRef: string; timeMs: number };
@@ -30,6 +37,10 @@ function parseSessionId(raw: string | null): number | null {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const shellHidden = pathname.startsWith("/onboarding");
+  const coachWorkspaceRoute = pathname === "/" || pathname === "/s" || pathname === "/s/";
+  const settingsRoute = pathname.startsWith("/settings");
   const [capability, setCapability] = useState<CoachCapability>("loading");
   const [startupRouteResolved, setStartupRouteResolved] = useState(false);
   const [coachSessions, setCoachSessions] = useState<SessionRailSession[]>([]);
@@ -37,14 +48,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [draftSession, setDraftSession] = useState(false);
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
   const [sessionFeedback, setSessionFeedback] = useState<string | null>(null);
-  const shellHidden = pathname.startsWith("/onboarding");
-  const searchParams = useSearchParams();
-  const coachWorkspaceRoute = pathname === "/" || pathname === "/s" || pathname === "/s/";
+  const [softStartRun, setSoftStartRun] = useState<CoachAgentRunV1 | null>(null);
+  const settingsChildrenRef = useRef<ReactNode>(null);
+  const settingsPresence = useAnimatedPresence(settingsRoute, 160);
   const startupPending = coachWorkspaceRoute && !startupRouteResolved;
-  const settingsRoute = pathname.startsWith("/settings");
   const showSessionRail = !shellHidden && !settingsRoute && !startupPending;
   const keepSessionRailMounted = !shellHidden && !startupPending;
   const routeSessionId = parseSessionId(searchParams.get("sessionId"));
+  if (settingsRoute) settingsChildrenRef.current = children;
+  const settingsOverlayChildren = settingsRoute ? children : settingsChildrenRef.current;
+  const settingsOverlayVisible = (settingsRoute || settingsPresence.present) && settingsOverlayChildren !== null;
 
   useEffect(() => {
     if (!coachWorkspaceRoute) return undefined;
@@ -88,21 +101,48 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => controller.abort();
   }, [shellHidden]);
 
+  // 带着分析意图（History 的「让 Coach 分析」）进入 Coach 工作区：没有进行中
+  // 的会话时用新草稿承接新意图，避免塞进旧对话；query 即刻清掉防止刷新重复触发。
   useEffect(() => {
-    setSelectedCoachSessionId((current) => {
-      if (draftSession) return null;
-      if (routeSessionId !== null && coachSessions.some((session) => Number(session.id) === routeSessionId)) {
-        return routeSessionId;
-      }
-      if (current !== null && coachSessions.some((session) => Number(session.id) === current)) return current;
-      const primary = coachSessions.find((session) => session.kind === "primary");
-      return primary ? Number(primary.id) : coachSessions[0] ? Number(coachSessions[0].id) : null;
-    });
-  }, [coachSessions, draftSession, routeSessionId]);
+    if (!coachWorkspaceRoute) return;
+    if (new URLSearchParams(window.location.search).get("intent") !== "coach-analysis") return;
+    if (selectedCoachSessionId === null && !draftSession) setDraftSession(true);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [coachWorkspaceRoute, searchParams, selectedCoachSessionId, draftSession]);
+
+  useEffect(() => {
+    if (draftSession) {
+      if (selectedCoachSessionId !== null) setSelectedCoachSessionId(null);
+      return;
+    }
+    if (routeSessionId !== null && coachSessions.some((session) => Number(session.id) === routeSessionId)) {
+      setSelectedCoachSessionId(routeSessionId);
+      return;
+    }
+    if (selectedCoachSessionId !== null && coachSessions.some((session) => Number(session.id) === selectedCoachSessionId)) {
+      return;
+    }
+    // 其余情况恢复 primary 会话（上次对话的延续）。
+    const primary = coachSessions.find((session) => session.kind === "primary");
+    setSelectedCoachSessionId(primary ? Number(primary.id) : coachSessions[0] ? Number(coachSessions[0].id) : null);
+  }, [coachSessions, draftSession, routeSessionId, selectedCoachSessionId]);
 
   useEffect(() => {
     setVideoTarget(null);
   }, [selectedCoachSessionId]);
+
+  useEffect(() => {
+    if (settingsRoute) return;
+    if (document.activeElement instanceof HTMLElement && document.activeElement.closest('[data-settings-page="true"]')) {
+      document.activeElement.blur();
+    }
+  }, [settingsRoute]);
+
+  useEffect(() => {
+    if (settingsRoute || settingsPresence.present || settingsChildrenRef.current === null) return;
+    settingsChildrenRef.current = null;
+    window.requestAnimationFrame(() => document.getElementById("main-content")?.focus());
+  }, [settingsPresence.present, settingsRoute]);
 
   const reloadCoachSessions = useCallback(async (nextSelectedId?: number | null) => {
     const result = await listCoachSessions();
@@ -113,8 +153,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         return nextSelectedId;
       }
       if (current !== null && sessions.some((session) => Number(session.id) === current)) return current;
-      const primary = sessions.find((session) => session.kind === "primary");
-      return primary ? Number(primary.id) : sessions[0] ? Number(sessions[0].id) : null;
+      // 无可恢复会话时返回 null；选中 useEffect 会统一把这种状态落到草稿。
+      return null;
     });
   }, []);
 
@@ -125,6 +165,33 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.addEventListener("aiming-cookie:coach-session-updated", handleSessionUpdated);
     return () => window.removeEventListener("aiming-cookie:coach-session-updated", handleSessionUpdated);
   }, [reloadCoachSessions]);
+
+  // 分析完成自动开讲：AnalysisWorkspace 活体观察到 done 时派发事件；这里在
+  // Provider 可用时为该分析创建一次 Coach run（每个 Analysis 只开讲一次），
+  // 由 CoachPanel 的 softStartRun 承接展示。
+  useEffect(() => {
+    const seen = readAutoTaughtAnalyses(window.localStorage);
+    const handleAutoTeach = async (event: Event) => {
+      const detail = (event as CustomEvent<{ analysis_ref?: unknown }>).detail;
+      const analysisRef = detail?.analysis_ref;
+      if (typeof analysisRef !== "string" || !/^analysis:[1-9][0-9]*$/.test(analysisRef)) return;
+      if (seen.has(analysisRef)) return;
+      seen.add(analysisRef);
+      markAnalysisAutoTaught(window.localStorage, analysisRef);
+      if (capability !== "ready") return;
+      try {
+        const run = await createCoachAgentRun(buildAnalysisAutoTeachContent(analysisRef));
+        setSoftStartRun(run);
+        setSelectedCoachSessionId((current) => (current === run.session_id ? current : run.session_id));
+        setSessionFeedback("分析完成，Coach 已开始讲解。");
+        window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
+      } catch {
+        setSessionFeedback("Coach 自动开讲未开始；可稍后在 Coach 里手动发起。");
+      }
+    };
+    window.addEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);
+    return () => window.removeEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);
+  }, [capability]);
 
   const handleNewCoachSession = () => {
     setDraftSession(true);
@@ -213,9 +280,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           />
         ) : null}
         <main
+          aria-hidden={settingsRoute || undefined}
           className="task3-route-content"
-          data-settings-page={settingsRoute || undefined}
-          id="main-content"
+          id={settingsRoute ? undefined : "main-content"}
           tabIndex={-1}
         >
           {startupPending ? null : (
@@ -238,13 +305,28 @@ export function AppShell({ children }: { children: ReactNode }) {
                     onOpenVideo={(analysisRef, timeMs = 0) => setVideoTarget({ analysisRef, timeMs })}
                     pathname={pathname}
                     sessionId={selectedCoachSessionId}
+                    softStartRun={softStartRun}
                   />
                 </div>
               </div>
-              {!coachWorkspaceRoute ? <div className="task3-page-view">{children}</div> : null}
+              {!coachWorkspaceRoute && !settingsRoute ? <div className="task3-page-view">{children}</div> : null}
             </>
           )}
         </main>
+        {settingsOverlayVisible ? (
+          <main
+            aria-hidden={!settingsRoute || undefined}
+            className="task3-route-content"
+            data-settings-motion={settingsRoute
+              ? settingsPresence.state === "open" ? "open" : "opening"
+              : "closing"}
+            data-settings-page="true"
+            id={settingsRoute ? "main-content" : undefined}
+            tabIndex={-1}
+          >
+            {settingsOverlayChildren}
+          </main>
+        ) : null}
       </div>
       {sessionFeedback ? <Toast onClose={() => setSessionFeedback(null)}>{sessionFeedback}</Toast> : null}
     </div>

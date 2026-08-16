@@ -19,7 +19,8 @@ import type {
 } from "./contracts.ts";
 import { extractRuntimeSecrets, redactRuntimeSecrets } from "./provider-profile.ts";
 import { loadProfile } from "./provider-store.ts";
-import { runCoachTurn, stopCoachTurn } from "./turn.ts";
+import type { StreamFn } from "./stream-openai-compatible.ts";
+import { appendUserMessageOnce, runCoachTurn, stopCoachTurn } from "./turn.ts";
 import { startTask, stopTask, waitForTask, isTaskActive } from "./task-manager.ts";
 import {
   ensureSession,
@@ -90,6 +91,8 @@ interface RunRecord {
   threadId: number;
   content: string;
   stopRequested: boolean;
+  /** Test seam: fake provider stream, threaded to runCoachTurn. */
+  streamFn?: StreamFn;
   events: AgentRunEvent[];
   listeners: Set<AgentRunListener>;
 }
@@ -237,11 +240,9 @@ async function runAgentTurn(
     const priorMessages = await readSessionMessages(threadId);
 
     // Persist the user message before the turn so it survives early failures.
-    await session.appendMessage({
-      role: "user",
-      content: [{ type: "text", text: content }],
-      timestamp: Date.now(),
-    });
+    // Retried runs replay the same content — append only when the branch does
+    // not already end with it, or each retry duplicates the user message.
+    await appendUserMessageOnce(session, content);
 
     // Build the turn request
     const turnRequest: AnyDict = {
@@ -260,6 +261,7 @@ async function runAgentTurn(
     // the current user message and the (redacted) assistant reply.
     const response = await runCoachTurn(turnRequest, {
       session,
+      streamFn: record.streamFn,
       onPartial: async (partial) => {
         if (signal.aborted) return;
         const safeText = partial.text.slice(0, 12_000);
@@ -280,7 +282,7 @@ async function runAgentTurn(
           record.state.phase = "text_generation";
         }
         const payload: AnyDict = {};
-        for (const key of ["sequence", "kind", "state", "tool_call_id", "tool_name", "command_name"] as const) {
+        for (const key of ["sequence", "kind", "state", "tool_call_id", "tool_name", "command_name", "ui_event"] as const) {
           if (activity[key] !== undefined) (payload as AnyDict)[key] = activity[key];
         }
         const event = appendEvent(
@@ -376,6 +378,7 @@ export function createAgentRun(
   options: {
     contextRefs?: string[] | null;
     sessionId?: number;
+    streamFn?: StreamFn;
   } = {},
 ): AgentRunState {
   if (!content || !content.trim()) {
@@ -408,6 +411,7 @@ export function createAgentRun(
     threadId,
     content: safeContent,
     stopRequested: false,
+    streamFn: options.streamFn,
     events: [],
     listeners: new Set(),
   };
@@ -539,6 +543,7 @@ export function retryAgentRun(ownerId: string, runRef: string): AgentRunState | 
     threadId: record.threadId,
     content: record.content,
     stopRequested: false,
+    streamFn: record.streamFn,
     events: [],
     listeners: new Set(),
   };

@@ -106,7 +106,9 @@ def build_dynamic_clicking_candidate_advice(
 
         knowledge = resolve_candidate_knowledge_refs(
             issue_signal=signal,
-            metric_refs=[metric_key],
+            # Registry tokens are "metric:"-prefixed; the family-qualified
+            # pipeline key would never intersect them.
+            metric_refs=[f"metric:{row_field}"],
         )
         candidates.append({
             "signal": signal,

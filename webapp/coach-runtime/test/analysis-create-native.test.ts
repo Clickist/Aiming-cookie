@@ -8,7 +8,7 @@ import test from "node:test";
 const dataRoot = mkdtempSync(join(tmpdir(), "coach-write-"));
 process.env.DATA_ROOT = dataRoot;
 
-import { executeNativeWrite, executeNativeAnalysisDelete } from "../src/product-commands-write.ts";
+import { executeNativeWrite, executeNativeAnalysisDelete, executeNativeAnalysisRetry } from "../src/product-commands-write.ts";
 
 function ensureDirs(): void {
   for (const sub of ["config", "training", "analyses"]) {
@@ -112,6 +112,71 @@ test("analysis.delete removes the Python session and the analyses directory", as
     assert.equal(result.status, "succeeded");
     assert.ok(!existsSync(analysisDir));
     assert.equal(requests[0]?.url, "http://127.0.0.1:9999/api/sessions/42");
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(runtimeConfig, { force: true });
+  }
+});
+
+test("analysis.retry re-enqueues the failed session through the Python backend", async () => {
+  ensureDirs();
+  const runtimeConfig = join(dataRoot, "desktop-runtime.json");
+  writeFileSync(
+    runtimeConfig,
+    JSON.stringify({ python_base_url: "http://127.0.0.1:9999", python_token: "test-token" }),
+  );
+
+  const originalFetch = globalThis.fetch;
+  const requests: { url: string; method?: string; headers?: HeadersInit }[] = [];
+  globalThis.fetch = (async (url, init) => {
+    requests.push({ url: String(url), method: init?.method, headers: init?.headers });
+    return new Response(JSON.stringify({ id: 42, status: "queued" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    const result = await executeNativeAnalysisRetry(
+      "analysis.retry", { analysis_ref: "analysis:42" }, "owner-a", "idem-key-1",
+    );
+    assert.equal(result.status, "succeeded");
+    assert.equal(requests[0]?.url, "http://127.0.0.1:9999/api/sessions/42/retry");
+    assert.equal(requests[0]?.method, "POST");
+    const headers = requests[0]?.headers as Record<string, string>;
+    assert.equal(headers["Idempotency-Key"], "idem-key-1");
+    const payload = result.result as Record<string, unknown>;
+    assert.equal(payload.analysis_ref, "analysis:42");
+    assert.equal(payload.retried, true);
+    assert.equal(payload.session_id, 42);
+    assert.equal(payload.session_status, "queued");
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(runtimeConfig, { force: true });
+  }
+});
+
+test("analysis.retry maps a missing session to not_found and bad refs to internal_error", async () => {
+  ensureDirs();
+  const runtimeConfig = join(dataRoot, "desktop-runtime.json");
+  writeFileSync(
+    runtimeConfig,
+    JSON.stringify({ python_base_url: "http://127.0.0.1:9999", python_token: "test-token" }),
+  );
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("session 不存在", { status: 404 })) as typeof fetch;
+  try {
+    const missing = await executeNativeAnalysisRetry(
+      "analysis.retry", { analysis_ref: "analysis:42" }, "owner-a", "idem-key-2",
+    );
+    assert.equal(missing.status, "failed");
+    assert.equal(missing.warning_or_error?.code, "not_found");
+
+    const invalid = await executeNativeAnalysisRetry(
+      "analysis.retry", { analysis_ref: "not-a-ref" }, "owner-a", "idem-key-3",
+    );
+    assert.equal(invalid.status, "failed");
+    assert.equal(invalid.warning_or_error?.code, "internal_error");
   } finally {
     globalThis.fetch = originalFetch;
     rmSync(runtimeConfig, { force: true });

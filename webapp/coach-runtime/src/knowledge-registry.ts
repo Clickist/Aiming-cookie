@@ -28,11 +28,12 @@ function registryFiles(): Map<string, string> {
     ["2026-07-29.v4", join(registry, "registry.v4.json")],
     ["2026-08-06.v5", join(registry, "registry.v5.json")],
     ["2026-08-06.v6", join(registry, "registry.v6.json")],
+    ["2026-08-15.v7", join(registry, "registry.v7.json")],
+    ["2026-08-16.v8", join(registry, "registry.v8.json")],
   ]);
 }
 const MAX_REGISTRY_BYTES = 512 * 1024;
 const MAX_ENTRIES = 512;
-const MAX_RESULTS = 3;
 const MAX_TEXT_LENGTH = 4_000;
 const MAX_LIST_LENGTH = 64;
 const STATUSES = new Set(["active", "retired"]);
@@ -224,15 +225,6 @@ export type KnowledgeRegistry = {
   sources?: KnowledgeSourceV2[];
   entries: KnowledgeEntry[];
 };
-export type KnowledgeQuery = {
-  registry_version?: string;
-  entry_ref?: string;
-  topic?: string;
-  issue_signal?: string;
-  metric_refs?: string[];
-  supported_use?: string;
-};
-
 export class KnowledgeRegistryError extends Error {}
 
 function keysEqual(value: Record<string, unknown>, expected: Set<string>): boolean {
@@ -796,7 +788,7 @@ export function validateKnowledgeRegistry(raw: unknown): KnowledgeRegistry {
 }
 
 const cached = new Map<string, KnowledgeRegistry>();
-export function loadKnowledgeRegistry(registryVersion = "2026-08-06.v6"): KnowledgeRegistry {
+export function loadKnowledgeRegistry(registryVersion = "2026-08-16.v8"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
   const registryFile = registryFiles().get(registryVersion);
@@ -827,42 +819,4 @@ export function resolveKnowledgeEntry(registryVersion: string, reference: string
   const entry = loadKnowledgeRegistry(registryVersion).entries.find((item) => entryRef(item) === reference);
   if (!entry) throw new KnowledgeRegistryError("unknown knowledge entry");
   return structuredClone(entry);
-}
-
-function clean(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-export function queryKnowledgeRegistry(registry: KnowledgeRegistry, query: KnowledgeQuery): KnowledgeEntry[] {
-  const requestedRegistryVersion = clean(query.registry_version);
-  if (requestedRegistryVersion && requestedRegistryVersion !== registry.registry_version) {
-    throw new KnowledgeRegistryError("registry version does not match loaded registry");
-  }
-  const reference = clean(query.entry_ref);
-  if (reference) {
-    const entry = registry.entries.find((item) => entryRef(item) === reference);
-    if (!entry) throw new KnowledgeRegistryError("unknown knowledge entry");
-    return [structuredClone(entry)];
-  }
-  const topic = clean(query.topic);
-  const signal = clean(query.issue_signal);
-  const metrics = new Set((query.metric_refs ?? []).filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()));
-  const supportedUse = clean(query.supported_use);
-  if (!topic && !signal && metrics.size === 0 && !supportedUse) throw new KnowledgeRegistryError("at least one query condition is required");
-  if (!topic && !signal && metrics.size === 0) return [];
-  const canonical = signal ? registry.signal_aliases[signal] ?? signal : undefined;
-  return registry.entries
-    .filter((entry) => entry.status === "active")
-    .map((entry) => {
-      let score = 0;
-      if (canonical && entry.signals.includes(canonical)) score += 16;
-      if (metrics.size && entry.metric_refs.some((metric) => metrics.has(metric))) score += 8;
-      if (topic && entry.topics.includes(topic)) score += 4;
-      if (supportedUse && entry.supported_uses.includes(supportedUse)) score += 2;
-      return { entry, score };
-    })
-    .filter(({ score }) => score > 0)
-    .sort((left, right) => right.score - left.score || left.entry.entry_id.localeCompare(right.entry.entry_id) || right.entry.entry_version - left.entry.entry_version)
-    .slice(0, MAX_RESULTS)
-    .map(({ entry }) => structuredClone(entry));
 }

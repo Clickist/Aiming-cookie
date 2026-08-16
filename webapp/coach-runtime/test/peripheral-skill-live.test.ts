@@ -63,8 +63,9 @@ test("coach calls get_peripheral_reference when user provides grip info", { skip
   }, {
     onActivity: (activity) => {
       const a = activity as Record<string, unknown>;
-      if (a.kind === "tool_start" || a.kind === "tool_end") {
-        toolEvents.push({ type: a.kind as string, tool_name: a.tool_name as string | undefined });
+      // Coach activities are kind:"tool" with state started/completed/failed.
+      if (a.kind === "tool" && (a.state === "started" || a.state === "completed")) {
+        toolEvents.push({ type: `tool_${a.state}`, tool_name: a.tool_name as string | undefined });
       }
     },
   });
