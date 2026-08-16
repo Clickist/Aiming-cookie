@@ -483,7 +483,7 @@ def _maybe_commit_analysis_evidence(
         artifact = base_artifact
         if generic_visual_result is not None:
             try:
-                artifact, result = _extend_with_generic_static_clicking(
+                artifact, result = _extend_with_generic_visual(
                     base_artifact,
                     result,
                     generic_visual_result,
@@ -493,7 +493,7 @@ def _maybe_commit_analysis_evidence(
                 )
             except (ValueError, OSError) as error:
                 log.warning(
-                    "generic static clicking evidence unavailable session=%s error=%s",
+                    "generic visual evidence unavailable session=%s error=%s",
                     job.get("id"),
                     type(error).__name__,
                 )
@@ -2082,7 +2082,7 @@ def _build_clicking_baseline_result_v2(
 _VIDEO_FALLBACK_SPARC_METRIC_VERSION = "flicking_fair_summary.sparc.v2"
 
 
-def _extend_with_generic_static_clicking(
+def _extend_with_generic_visual(
     artifact: dict,
     result: dict,
     generic_visual_result: dict,
@@ -2091,12 +2091,13 @@ def _extend_with_generic_static_clicking(
     parsed_stats,
     native_result: dict | None,
 ) -> tuple[dict, dict]:
-    """Associate generic visual tracks with clicks/kills and upgrade the result.
+    """Associate generic visual tracks per family and upgrade the result.
 
     Returns the extended artifact and result when the quality gate passes;
     a failed gate returns the untouched artifact with an annotated result.
     """
     from kovaak_tracker.generic_static_clicking_analysis import (
+        GENERIC_STATIC_CLICKING_ANALYSIS_VERSION,
         associate_generic_static_clicks_v1,
         extend_analysis_evidence_with_generic_static_clicking_v1,
         extract_left_click_rising_edges_v1,
@@ -2107,6 +2108,7 @@ def _extend_with_generic_static_clicking(
     window_start = int(window["start_ms"])
     window_end = int(window["end_ms"])
     analysis_ref = artifact["analysis_ref"]
+    aim_family = (snapshot.get("scenario_resolution") or {}).get("aim_family")
 
     points = (
         ((native_result or {}).get("deterministic") or {}).get("trajectory") or {}
@@ -2159,52 +2161,111 @@ def _extend_with_generic_static_clicking(
     ):
         deg_per_px = float(fov) / float(viewport[0])
 
-    association = associate_generic_static_clicks_v1(
-        analysis_ref=analysis_ref,
-        generic_visual_result=generic_visual_result,
-        click_times_ms=click_times,
-        kill_records=kill_records,
-        viewport_size=viewport,
-        deg_per_px=deg_per_px,
+    if aim_family == "static_clicking" or aim_family is None:
+        association = associate_generic_static_clicks_v1(
+            analysis_ref=analysis_ref,
+            generic_visual_result=generic_visual_result,
+            click_times_ms=click_times,
+            kill_records=kill_records,
+            viewport_size=viewport,
+            deg_per_px=deg_per_px,
+        )
+        if not association["gate"]["passed"]:
+            return (
+                artifact,
+                _annotate_result_generic_gate_failed(result, association),
+            )
+        video_source_ref = _video_source_ref(snapshot, analysis_ref)
+        extended = extend_analysis_evidence_with_generic_static_clicking_v1(
+            artifact,
+            generic_visual_result,
+            association,
+            video_source_ref=video_source_ref,
+        )
+        return extended, _upgrade_result_with_generic_visual(
+            result, association, version=GENERIC_STATIC_CLICKING_ANALYSIS_VERSION,
+        )
+
+    from kovaak_tracker.generic_aim_family_analysis import (
+        associate_generic_dynamic_clicks_v1,
+        associate_generic_switching_v1,
+        associate_generic_tracking_v1,
+        extend_analysis_evidence_with_generic_family_v1,
+        generic_family_analysis_version,
     )
+
+    version = generic_family_analysis_version(aim_family)
+    if version is None:
+        raise ValueError(f"unsupported generic aim family: {aim_family}")
+    if aim_family == "continuous_tracking":
+        association = associate_generic_tracking_v1(
+            analysis_ref=analysis_ref,
+            generic_visual_result=generic_visual_result,
+            canonical_time_window=window,
+            viewport_size=viewport,
+            deg_per_px=deg_per_px,
+        )
+    elif aim_family == "dynamic_clicking":
+        association = associate_generic_dynamic_clicks_v1(
+            analysis_ref=analysis_ref,
+            generic_visual_result=generic_visual_result,
+            click_times_ms=click_times,
+            kill_records=kill_records,
+            viewport_size=viewport,
+            deg_per_px=deg_per_px,
+        )
+    else:
+        association = associate_generic_switching_v1(
+            analysis_ref=analysis_ref,
+            generic_visual_result=generic_visual_result,
+            click_times_ms=click_times,
+            kill_records=kill_records,
+            viewport_size=viewport,
+            deg_per_px=deg_per_px,
+        )
     if not association["gate"]["passed"]:
         return artifact, _annotate_result_generic_gate_failed(result, association)
+    extended = extend_analysis_evidence_with_generic_family_v1(
+        artifact,
+        generic_visual_result,
+        association,
+        aim_family=aim_family,
+        video_source_ref=_video_source_ref(snapshot, analysis_ref),
+    )
+    return extended, _upgrade_result_with_generic_visual(
+        result, association, version=version,
+    )
 
+
+def _video_source_ref(snapshot: dict, analysis_ref: str) -> str:
     video_source_ref = (
         (snapshot.get("sources") or {}).get("video") or {}
     ).get("artifact_ref")
     if not isinstance(video_source_ref, str) or not video_source_ref:
         video_source_ref = f"{analysis_ref}:video"
-    extended = extend_analysis_evidence_with_generic_static_clicking_v1(
-        artifact,
-        generic_visual_result,
-        association,
-        video_source_ref=video_source_ref,
-    )
-    return extended, _upgrade_result_with_generic_visual(result, association)
+    return video_source_ref
 
 
 def _generic_visual_summary_fields(association: Mapping[str, object]) -> dict:
-    return {
-        "click_count": association["click_count"],
-        "hit_count": association["hit_count"],
-        "miss_count": association["miss_count"],
-        "no_target_count": association["no_target_count"],
-        "kills_total": association["kills_total"],
-        "kills_paired": association["kills_paired"],
-        "kill_pairing_rate": association["kill_pairing_rate"],
-        "frame_coverage": association["gate"]["frame_coverage"],
-        "gate_passed": association["gate"]["passed"],
+    summary = {
+        key: association[key]
+        for key in (
+            "click_count", "hit_count", "miss_count", "no_target_count",
+            "kills_total", "kills_paired", "kill_pairing_rate", "coverage",
+        )
+        if key in association
     }
+    summary["frame_coverage"] = association["gate"]["frame_coverage"]
+    summary["gate_passed"] = association["gate"]["passed"]
+    return summary
 
 
 def _upgrade_result_with_generic_visual(
-    result: dict, association: Mapping[str, object],
+    result: dict,
+    association: Mapping[str, object],
+    *,
+    version: str,
 ) -> dict:
-    from kovaak_tracker.generic_static_clicking_analysis import (
-        GENERIC_STATIC_CLICKING_ANALYSIS_VERSION,
-    )
-
     result = dict(result)
     deterministic = dict(result.get("deterministic") or {})
     limitations = [
@@ -2215,14 +2276,14 @@ def _upgrade_result_with_generic_visual(
     limitations.append("generic_visual_limited_validation")
     deterministic["limitations"] = limitations
     result["deterministic"] = deterministic
-    result["analysis_version"] = GENERIC_STATIC_CLICKING_ANALYSIS_VERSION
+    result["analysis_version"] = version
     scenario = dict(result.get("scenario") or {})
-    scenario["analyzer_refs"] = [GENERIC_STATIC_CLICKING_ANALYSIS_VERSION]
+    scenario["analyzer_refs"] = [version]
     scenario["limitations"] = list(limitations)
     result["scenario"] = scenario
     result["warnings"] = [
         *result.get("warnings", []),
-        {"code": "static_clicking_generic_visual"},
+        {"code": "generic_visual"},
     ]
     result["generic_visual_summary"] = _generic_visual_summary_fields(association)
     return result
@@ -3010,7 +3071,7 @@ async def process_one() -> bool:
             generic_visual_result = None
             if (
                 input_mode == "multimodal"
-                and scenario_dispatch == STATIC_CLICKING_BASELINE_ANALYSIS_VERSION
+                and scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS
                 and job.get("video_path")
             ):
                 await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)

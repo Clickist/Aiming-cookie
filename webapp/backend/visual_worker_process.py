@@ -51,7 +51,7 @@ def _configure_opencv_threads() -> None:
 
 
 def _run_generic_static_clicking_job(job: dict) -> dict:
-    """Run the untrained generic static-clicking detector for one Run."""
+    """Run the untrained generic aim-family detector for one Run."""
     from kovaak_tracker.generic_static_clicking_analysis import (
         run_generic_static_clicking_detection_v1,
     )
@@ -61,6 +61,7 @@ def _run_generic_static_clicking_job(job: dict) -> dict:
     window = snapshot.get("canonical_time_window")
     if not isinstance(window, dict):
         raise ValueError("generic static clicking requires a canonical window")
+    aim_family = (snapshot.get("scenario_resolution") or {}).get("aim_family")
     mapping = _run_owned_visual_video_time_mapping_v2(job)
     return run_generic_static_clicking_detection_v1(
         media_path=str(job["video_path"]),

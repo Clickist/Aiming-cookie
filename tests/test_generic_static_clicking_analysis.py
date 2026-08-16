@@ -325,3 +325,30 @@ def test_detection_end_to_end_uses_preroll_and_rebuilds_tracks(tmp_path):
     assert association["kills_paired"] == 1
     residual = association["kill_residuals"][0]
     assert residual["residual_px"]["distance"] == pytest.approx(0.0, abs=3.0)
+
+
+def test_moving_target_keeps_one_track_with_the_velocity_gate():
+    frames = []
+    for index in range(30):
+        frames.append(_detection(
+            1_000 + 17 * index,
+            [
+                _blob(100.0 + 8.0 * index, 200.0),
+                _blob(100.0 + 2.0 * index, 400.0),
+            ],
+        ))
+    tracks = build_stationary_target_tracks_v1(
+        frames, analysis_ref="analysis:1",
+        merge_radius_px=24.0, max_gap_ms=200.0,
+    )
+    assert len(tracks) == 2
+    fast = max(tracks, key=lambda track: track["end_x"])
+    slow = min(tracks, key=lambda track: track["end_x"])
+    assert fast["sample_count"] == 30
+    assert slow["sample_count"] == 30
+    assert fast["end_x"] == pytest.approx(100.0 + 8.0 * 29, abs=2.0)
+    assert fast["birth_ms"] == 1_000
+    assert fast["death_ms"] == 1_000 + 17 * 29
+    # The bounded path series keeps the motion for family metric layers.
+    assert fast["path"][0]["t"] == 1_000
+    assert fast["path"][-1]["x"] == pytest.approx(100.0 + 8.0 * 29, abs=2.0)

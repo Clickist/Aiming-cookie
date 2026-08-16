@@ -35,6 +35,8 @@ TRACK_MERGE_RADIUS_PX = 24.0
 TRACK_MAX_GAP_MS = 200.0
 TRACK_SHRINK_GUARD = 0.5
 TRACK_FRAGMENT_REBIND_MS = 150.0
+TRACK_VELOCITY_MARGIN_PX = 12.0
+TRACK_PATH_MAX_POINTS = 240
 TRACK_MIN_SAMPLES = 2
 HIT_MARGIN_PX = 10.0
 # The shape-classified detector drops motion-blurred blobs, so a target's
@@ -42,6 +44,10 @@ HIT_MARGIN_PX = 10.0
 # click. The engaged window must look back across the whole flick, not just
 # a few frames (spike §2.4 failure mode 1).
 HIT_LOOKBACK_MS = 200.0
+# Moving targets leave the crosshair faster than the smear cuts their
+# track, so the dynamic-clicking layer uses a tighter lookback.
+DYNAMIC_HIT_LOOKBACK_MS = 100.0
+HIT_POSITION_MAX_GAP_MS = 120.0
 KILL_PAIR_BACK_WINDOW_MS = 200.0
 KILL_PAIR_WINDOW_MS = 250.0
 
@@ -96,6 +102,7 @@ def run_generic_static_clicking_detection_v1(
     analysis_ref: str,
     canonical_time_window: Mapping[str, object],
     video_time_mapping: Mapping[str, object],
+    crosshair_exemption: bool = True,
 ) -> dict:
     """Detect stationary targets across the whole clip under one hypothesis.
 
@@ -197,7 +204,8 @@ def run_generic_static_clicking_detection_v1(
             if not window_start <= canonical_ms < window_end:
                 continue
             result = detect_generic_targets(
-                frame, native_hypothesis, crosshair_exemption=True,
+                frame, native_hypothesis,
+                crosshair_exemption=crosshair_exemption,
             )
             if result["targets"]:
                 frames_with_detection += 1
@@ -247,9 +255,11 @@ def build_stationary_target_tracks_v1(
 ) -> list[dict]:
     """Organize detections into stationary birth/death tracks.
 
-    No per-frame identity: a detection extends the nearest open track when it
-    lands within ``merge_radius_px`` of that track's median position and keeps
-    at least half its median area (death animations shrink and fragment).
+    No per-frame identity: a detection extends the open track whose
+    velocity-predicted position it lands closest to, inside an adaptive gate
+    (``merge_radius_px`` for stationary targets, widened by predicted travel
+    for moving ones), and keeps at least half its last area (death animations
+    shrink and fragment; degraded crosshair samples bypass that guard).
     Tracks silent for ``max_gap_ms`` close with their last stable frame.
     """
     open_tracks: list[dict] = []
@@ -260,25 +270,48 @@ def build_stationary_target_tracks_v1(
             track["_pending"] = False
         for target in frame["targets"]:
             best: dict | None = None
-            best_distance = merge_radius_px
+            best_distance: float | None = None
             for track in open_tracks:
-                # Match against the last sample: stationary targets keep their
-                # position, and fragments never extend a track (shrink guard),
-                # so the last sample is always a full-size sighting. Degraded
-                # crosshair-covered samples bypass the shrink guard — the
-                # aimed target must survive its own approach smear.
-                distance = max(
-                    abs(target["x"] - track["last_x"]),
-                    abs(target["y"] - track["last_y"]),
+                gap_ms = time_ms - track["last_ms"]
+                if gap_ms <= 0:
+                    continue
+                # Stationary targets keep their position, so a zero-velocity
+                # track predicts "same place" and the gate collapses to
+                # merge_radius_px; a moving target's gate grows with its
+                # predicted travel, keeping one identity across the motion.
+                predicted_x = track["last_x"] + track["vx"] * gap_ms
+                predicted_y = track["last_y"] + track["vy"] * gap_ms
+                gate = max(
+                    merge_radius_px,
+                    math.hypot(track["vx"], track["vy"]) * gap_ms
+                    + TRACK_VELOCITY_MARGIN_PX,
                 )
-                if distance < best_distance and (
-                    target["shape"] == "degraded"
-                    or target["area"] >= TRACK_SHRINK_GUARD * track["last_area"]
+                distance = max(
+                    abs(target["x"] - predicted_x),
+                    abs(target["y"] - predicted_y),
+                )
+                if distance >= gate:
+                    continue
+                if (
+                    target["shape"] != "degraded"
+                    and target["area"]
+                    < TRACK_SHRINK_GUARD * track["last_area"]
                 ):
+                    continue
+                if best_distance is None or distance < best_distance:
                     best = track
                     best_distance = distance
             if best is not None:
-                best["samples"].append(target)
+                gap_ms = time_ms - best["last_ms"]
+                best["vx"] = (
+                    0.3 * (target["x"] - best["last_x"]) / gap_ms
+                    + 0.7 * best["vx"]
+                )
+                best["vy"] = (
+                    0.3 * (target["y"] - best["last_y"]) / gap_ms
+                    + 0.7 * best["vy"]
+                )
+                best["samples"].append({**target, "t": time_ms})
                 best["last_ms"] = time_ms
                 best["last_x"] = target["x"]
                 best["last_y"] = target["y"]
@@ -289,10 +322,12 @@ def build_stationary_target_tracks_v1(
                 "track_ref": None,
                 "birth_ms": time_ms,
                 "last_ms": time_ms,
-                "samples": [target],
+                "samples": [{**target, "t": time_ms}],
                 "last_x": target["x"],
                 "last_y": target["y"],
                 "last_area": target["area"],
+                "vx": 0.0,
+                "vy": 0.0,
                 "_pending": True,
             })
         still_open: list[dict] = []
@@ -338,6 +373,15 @@ def build_stationary_target_tracks_v1(
             "real_sample_count": sum(
                 1 for sample in samples if sample["shape"] != "degraded"
             ),
+            "path": [
+                {
+                    "t": sample["t"],
+                    "x": sample["x"],
+                    "y": sample["y"],
+                    "degraded": sample["shape"] == "degraded",
+                }
+                for sample in samples
+            ][::max(1, math.ceil(len(samples) / TRACK_PATH_MAX_POINTS))],
         })
     tracks.sort(key=lambda track: (track["birth_ms"], track["x"], track["y"]))
     for index, track in enumerate(tracks, 1):
@@ -383,6 +427,8 @@ def associate_generic_static_clicks_v1(
     kill_records: Sequence[Mapping[str, object]],
     viewport_size: Sequence[int],
     deg_per_px: float | None,
+    hit_lookback_ms: float = HIT_LOOKBACK_MS,
+    allow_degraded_hit_position: bool = True,
 ) -> dict:
     """Geometric hit/miss per raw click plus kill pairing and residuals."""
     tracks = [
@@ -404,40 +450,77 @@ def associate_generic_static_clicks_v1(
         return [
             track for track in tracks
             if track["birth_ms"] <= time_ms
-            and track["death_ms"] >= time_ms - HIT_LOOKBACK_MS
+            and track["death_ms"] >= time_ms - hit_lookback_ms
         ]
 
-    def _hit(track: Mapping[str, object]) -> bool:
+    def _position_at(
+        track: Mapping[str, object], time_ms: int, *, for_hit: bool,
+    ) -> tuple[float, float]:
+        # Stationary tracks keep their position, so the dwell median is the
+        # position; a moving track's box must be tested where it actually was
+        # at the click, via its bounded path series. Real sightings win over
+        # degraded crosshair-fallback samples: the crosshair graphic sits on
+        # the aimed target and corrupts its mask, so the trusted geometry is
+        # the last clear sighting right before the click. Static clicking
+        # keeps the degraded fallback (the approach smear eats every real
+        # sighting for ~150 ms before the click); moving-target families
+        # drop it — there a degraded center sample is more likely crosshair
+        # noise than the aimed target.
+        path = track.get("path") or []
+        best_real = None
+        best_any = None
+        real_gap = HIT_POSITION_MAX_GAP_MS
+        any_gap = HIT_POSITION_MAX_GAP_MS
+        for point in path:
+            gap = abs(float(point["t"]) - time_ms)
+            if gap <= any_gap:
+                best_any = point
+                any_gap = gap
+            if gap <= real_gap and not point.get("degraded"):
+                best_real = point
+                real_gap = gap
+        best = best_real
+        if best is None and (not for_hit or allow_degraded_hit_position):
+            best = best_any
+        if best is None:
+            return float(track["x"]), float(track["y"])
+        return float(best["x"]), float(best["y"])
+
+    def _hit(track: Mapping[str, object], time_ms: int) -> bool:
+        target_x, target_y = _position_at(track, time_ms, for_hit=True)
         return (
-            abs(track["x"] - crosshair_x) <= track["half_width_px"] + HIT_MARGIN_PX
-            and abs(track["y"] - crosshair_y) <= track["half_height_px"] + HIT_MARGIN_PX
+            abs(target_x - crosshair_x)
+            <= track["half_width_px"] + HIT_MARGIN_PX
+            and abs(target_y - crosshair_y)
+            <= track["half_height_px"] + HIT_MARGIN_PX
         )
 
     click_outcomes: list[dict] = []
     miss_vectors: list[dict] = []
     for index, click_ms in enumerate(click_times_ms, 1):
         engaged = _engaged(click_ms)
-        hitting = [track for track in engaged if _hit(track)]
+        hitting = [track for track in engaged if _hit(track, click_ms)]
         outcome: dict = {
             "event_id": f"{analysis_ref}:generic-click:{index}",
             "click_time_ms": click_ms,
             "outcome": "hit" if hitting else ("miss" if engaged else "no_target"),
         }
         if not hitting and engaged:
-            nearest = min(
-                engaged,
-                key=lambda track: (
-                    (track["x"] - crosshair_x) ** 2
-                    + (track["y"] - crosshair_y) ** 2
-                ),
+            def _distance_at(track: Mapping[str, object]) -> float:
+                target_x, target_y = _position_at(track, click_ms, for_hit=False)
+                return (
+                    (target_x - crosshair_x) ** 2
+                    + (target_y - crosshair_y) ** 2
+                ) ** 0.5
+
+            nearest = min(engaged, key=_distance_at)
+            nearest_x, nearest_y = _position_at(
+                nearest, click_ms, for_hit=False,
             )
             vector_px = {
-                "x": nearest["x"] - crosshair_x,
-                "y": nearest["y"] - crosshair_y,
-                "distance": (
-                    (nearest["x"] - crosshair_x) ** 2
-                    + (nearest["y"] - crosshair_y) ** 2
-                ) ** 0.5,
+                "x": nearest_x - crosshair_x,
+                "y": nearest_y - crosshair_y,
+                "distance": _distance_at(nearest),
             }
             outcome["miss_vector_px"] = vector_px
             if deg_per_px is not None:
@@ -720,6 +803,12 @@ def extend_analysis_evidence_with_generic_static_clicking_v1(
         return max(window_start, min(window_end - 1, int(time_ms)))
 
     events: list[dict] = []
+    detector = generic_visual_result.get("detector")
+    detector_confidence = (
+        float(detector.get("shape_consistency", 0.0))
+        if isinstance(detector, Mapping)
+        else 0.0
+    )
     for track in generic_visual_result["tracks"]:
         events.append({
             "event_id": track["track_ref"],
@@ -728,9 +817,7 @@ def extend_analysis_evidence_with_generic_static_clicking_v1(
             "end_ms": _clamp(track["death_ms"]),
             "actor_refs": [],
             "source_refs": [video_source_ref],
-            "confidence": float(
-                generic_visual_result["detector"].get("shape_consistency", 0.0),
-            ),
+            "confidence": detector_confidence,
             "attributes": {
                 "birth_ms": int(track["birth_ms"]),
                 "death_ms": int(track["death_ms"]),
