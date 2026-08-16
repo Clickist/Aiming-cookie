@@ -15,7 +15,6 @@ import {
   type CoachRuntimeTurnSchema,
   type CoachRuntimeToolEvent,
 } from "./contracts.ts";
-import { createCoachKnowledgeTool } from "./knowledge-tools.ts";
 import { createProductCommandTool } from "./product-command-tools.ts";
 import { resolveSystemPrompt } from "./load-system-prompt.ts";
 import {
@@ -576,7 +575,6 @@ export async function runCoachTurn(
       createReadTool(dataRoot),
       createWriteTool(dataRoot),
       createLsTool(dataRoot),
-      createCoachKnowledgeTool(),
       createProductCommandTool(request.tool_bridge ?? null, {
         ownerId: request.user_id,
       }),
