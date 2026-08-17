@@ -39,11 +39,13 @@ function seekableMp4Analysis() {
 }
 
 test.describe("Task 7 failure matrix", () => {
-  test("product state service failure is not rendered as first-use empty state", async ({ page }) => {
+  test("product state service failure does not block the Coach workspace", async ({ page }) => {
     await installApiFixtures(page, apiScenario({ failures: { "/api/product-state": 503 } }));
     await page.goto("/");
-    await expect(page.locator('.ac-state[role="alert"]')).toContainText("暂时无法读取本地产品状态");
-    await expect(page.getByText("没有把读取失败当成空数据。", { exact: false })).toBeVisible();
+    // 启动门失败放行：工作区照常渲染，不把失败当成首次使用空态。
+    await expect(page.locator(".task6-messages")).toBeVisible();
+    await expect(page.getByLabel("Coach 消息").getByText("先稳定接近目标时的减速节奏，再复测同一场景。", { exact: true })).toBeVisible();
+    await expect(page.locator("#coach-draft")).toBeVisible();
   });
 
   test("Tasks unavailable differs from an empty task list", async ({ page }) => {

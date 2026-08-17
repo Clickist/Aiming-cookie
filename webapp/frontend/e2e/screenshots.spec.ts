@@ -93,7 +93,7 @@ test.describe("Coach-first desktop screenshot baselines", () => {
   test("Coach conversation 1280 dark", async ({ page }) => {
     await prepare(page, { theme: "dark", width: 1280, height: 820 });
     await page.goto("/");
-    await expect(page.getByText("Aiming Coach", { exact: true })).toBeVisible();
+    await expect(page.getByText("Aiming Cookie", { exact: true })).toBeVisible();
     await expect(page).toHaveScreenshot("coach-conversation-1280-dark.png", { animations: "disabled" });
   });
 
@@ -154,6 +154,6 @@ test.describe("Coach-first desktop screenshot baselines", () => {
     await prepare(page, { theme: "system", width: 1280, height: 820, scenario: apiScenario({ productState: PRODUCT_STATE }) });
     await page.goto("/");
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByText("Aiming Coach", { exact: true })).toBeVisible();
+    await expect(page.getByText("Aiming Cookie", { exact: true })).toBeVisible();
   });
 });

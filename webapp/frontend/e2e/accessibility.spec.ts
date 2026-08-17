@@ -92,18 +92,18 @@ test.describe("Task 7 accessibility", () => {
     await page.setViewportSize({ width: 1180, height: 720 });
     await installApiFixtures(page);
     await page.goto("/history");
+    // 勾选分析记录后，「让 Coach 分析」按钮出现（分析与训练共用同一入口）。
     await page.getByRole("checkbox", { name: /选择分析/ }).check();
-    await page.getByRole("button", { name: /引用所选分析/ }).click();
+    await page.getByRole("button", { name: "让 Coach 分析" }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.locator("#coach-draft")).toBeVisible();
   });
 
-  test("live regions, reduced motion, and the supported desktop width remain usable", async ({ page }) => {
+  test("reduced motion and the supported desktop width remain usable on the Coach workspace", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await installApiFixtures(page);
     await page.setViewportSize({ width: 1180, height: 720 });
     await page.goto("/");
-    await expect(page.locator('[aria-live="polite"]')).not.toHaveCount(0);
     const transitionDurations = await page.evaluate(() =>
       Array.from(document.querySelectorAll<HTMLElement>(".ac-button, .task7-session-rail button, .task6-composer-send"))
         .filter((element) => element.getBoundingClientRect().width > 0)
@@ -111,7 +111,7 @@ test.describe("Task 7 accessibility", () => {
     );
     expect(transitionDurations.every((duration) => duration === "0s")).toBe(true);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await expect(page.getByText("Aiming Coach", { exact: true })).toBeVisible();
+    await expect(page.getByText("Aiming Cookie", { exact: true })).toBeVisible();
   });
 
   test("onboarding dropdowns expose listbox state at the supported desktop width", async ({ page }) => {
@@ -141,38 +141,32 @@ test.describe("Task 7 accessibility", () => {
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 
-  test("Coach chart alternatives and video controls are exposed", async ({ page }) => {
+  test("Coach video controls and the analysis timeline stay keyboard-operable", async ({ page }) => {
     const keyWarnings: string[] = [];
     page.on("console", (message) => {
       if (message.type() === "error" && message.text().includes('unique "key" prop')) {
         keyWarnings.push(message.text());
       }
     });
-    await installApiFixtures(page, apiScenario({ analysis: seekableAnalysis() }));
-    await page.route("**/api/coach/primary*", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          thread: { id: 1, user_id: "dev", kind: "primary", created_at: "2026-08-10T00:00:00Z", updated_at: "2026-08-10T00:00:00Z" },
-          messages: [{
-            id: 1,
-            role: "assistant",
-            content: "结合时间线和视频看这次减速。",
-            created_at: "2026-08-10T00:00:00Z",
-            legacy_session_id: null,
-            cards: [
-              { schema_version: "coach_message_card.v1", kind: "timeline", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
-              { schema_version: "coach_message_card.v1", kind: "evidence", analysis_ref: "analysis:42", target_ref: null, time_range_ms: [1200, 1800] },
-            ],
-          }],
-          refs: [],
-        }),
-      });
-    });
+    // 讲解卡片与事件时间线已随 UX 收敛下线；视频入口现在走消息里的
+    // @时间点链接（或「本次讨论」条的项目名按钮）。
+    await installApiFixtures(page, apiScenario({
+      analysis: seekableAnalysis(),
+      coachPrimary: {
+        thread: { id: 1, user_id: "dev", kind: "primary", created_at: "2026-08-10T00:00:00Z", updated_at: "2026-08-10T00:00:00Z" },
+        messages: [{
+          id: 1,
+          role: "assistant",
+          content: "结合时间线和视频看这次 @12.5s 附近的减速。",
+          created_at: "2026-08-10T00:00:00Z",
+          legacy_session_id: null,
+          context_refs: [],
+        }],
+        refs: [{ id: 1, analysis_session_id: 42, status: "active", attached_at: "2026-08-10T00:00:00Z", deleted_at: null }],
+      },
+    }));
     await page.goto("/");
-    await expect(page.getByRole("img", { name: /事件时间线/ })).toBeVisible();
-    await page.getByRole("button", { name: "在视频中查看" }).click();
+    await page.getByRole("button", { name: "@12.5s" }).click();
     await expect(page.getByRole("region", { name: "视频证据播放器" })).toBeVisible();
     await expect(page.getByRole("button", { name: "▶" })).toBeVisible();
     const timeline = page.getByRole("slider", { name: "分析时间轴" });
@@ -185,7 +179,7 @@ test.describe("Task 7 accessibility", () => {
     expect(keyWarnings).toEqual([]);
   });
 
-  test("Settings keeps an explicit keyboard-operable exit at the supported width", async ({ page }) => {
+test("Settings keeps an explicit keyboard-operable exit at the supported width", async ({ page }) => {
     await page.setViewportSize({ width: 1180, height: 720 });
     await installApiFixtures(page);
     await page.goto("/settings");

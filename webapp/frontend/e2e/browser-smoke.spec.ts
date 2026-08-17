@@ -257,42 +257,31 @@ test.describe("Task 7 browser smoke", () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 
-  test("Coach renders Analysis cards and opens video beside the conversation", async ({ page }) => {
-    await installApiFixtures(page, apiScenario({ analysis: seekableAnalysis() }));
-    await page.route("**/api/coach/primary*", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          thread: { id: 1, user_id: "dev", kind: "primary", created_at: "2026-08-10T00:00:00Z", updated_at: "2026-08-10T00:00:00Z" },
-          messages: [{
-            id: 1,
-            role: "assistant",
-            content: "我把这次减速问题和证据放在下面。",
-            created_at: "2026-08-10T00:00:00Z",
-            legacy_session_id: null,
-            cards: [
-              { schema_version: "coach_message_card.v1", kind: "metrics", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
-              { schema_version: "coach_message_card.v1", kind: "timeline", analysis_ref: "analysis:42", target_ref: null, time_range_ms: null },
-              { schema_version: "coach_message_card.v1", kind: "evidence", analysis_ref: "analysis:42", target_ref: null, time_range_ms: [1200, 1800] },
-            ],
-          }],
-          refs: [{ id: 1, analysis_session_id: 42, status: "active", attached_at: "2026-08-10T00:00:00Z", deleted_at: null }],
-        }),
-      });
-    });
+  test("Coach opens the video pane beside the conversation from a time-point link", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({
+      analysis: seekableAnalysis(),
+      coachPrimary: {
+        thread: { id: 1, user_id: "dev", kind: "primary", created_at: "2026-08-10T00:00:00Z", updated_at: "2026-08-10T00:00:00Z" },
+        messages: [{
+          id: 1,
+          role: "assistant",
+          content: "我把这次减速问题放在 @1.2s 的证据里。",
+          created_at: "2026-08-10T00:00:00Z",
+          legacy_session_id: null,
+          context_refs: [],
+        }],
+        refs: [{ id: 1, analysis_session_id: 42, status: "active", attached_at: "2026-08-10T00:00:00Z", deleted_at: null }],
+      },
+    }));
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "关键数据" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "事件时间线" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "视频证据" })).toBeVisible();
-    await page.getByRole("button", { name: "在视频中查看" }).click();
+    await page.getByRole("button", { name: "@1.2s" }).click();
     await expect(page.getByRole("region", { name: "Coach 视频讲解" })).toBeVisible();
     await expect(page.getByRole("region", { name: "视频证据播放器" })).toBeVisible();
     await page.getByRole("button", { name: "关闭视频讲解" }).click();
     await expect(page.getByRole("region", { name: "Coach 视频讲解" })).toBeHidden();
   });
 
-  test("Coach supports the primary conversation as the main workspace", async ({ page }) => {
+test("Coach supports the primary conversation as the main workspace", async ({ page }) => {
     await installApiFixtures(page);
     await page.goto("/");
     await expect(page.getByLabel("Coach 消息").getByText("先稳定接近目标时的减速节奏，再复测同一场景。", { exact: true })).toBeVisible();
