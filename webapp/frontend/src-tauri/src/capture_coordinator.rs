@@ -1124,10 +1124,13 @@ impl CaptureCoordinatorState {
         let deadline = std::time::Instant::now() + CONTROL_EXPORT_TIMEOUT;
         let started = std::time::Instant::now();
         eprintln!("[capture-export] wait_for_export: begin");
+        let mut draining = false;
         loop {
-            if self.shutdown.load(Ordering::Acquire) {
-                eprintln!("[capture-export] wait_for_export: cancelled by shutdown");
-                return Err("capture_export_cancelled".to_string());
+            if self.shutdown.load(Ordering::Acquire) && !draining {
+                draining = true;
+                eprintln!(
+                    "[capture-export] wait_for_export: shutdown requested, draining in-flight mux until receipt or export timeout"
+                );
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
