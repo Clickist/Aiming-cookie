@@ -16,8 +16,15 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use tauri::{Manager, State};
 use window_capture::{WindowCaptureState, WindowCaptureStatus, DEFAULT_FRAME_QUEUE_CAPACITY};
+
+// GUI 进程没有控制台；spawn 控制台程序（cmd/powershell）时若不加此标志，
+// Windows 会为子进程新建控制台窗口——安装版导出诊断包时黑窗一闪，引发用户恐慌。
+#[cfg(windows)]
+const NO_CHILD_WINDOW: u32 = 0x0800_0000; // CREATE_NO_WINDOW
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +56,7 @@ fn host_version() -> Option<String> {
     #[cfg(windows)]
     let output = std::process::Command::new("cmd")
         .args(["/C", "ver"])
+        .creation_flags(NO_CHILD_WINDOW)
         .output()
         .ok()?;
     #[cfg(target_os = "macos")]
@@ -76,6 +84,7 @@ fn gpu_names() -> Vec<String> {
                 "-Command",
                 "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; (Get-CimInstance Win32_VideoController).Name",
             ])
+            .creation_flags(NO_CHILD_WINDOW)
             .output();
         return match output {
             Ok(output) => String::from_utf8_lossy(&output.stdout)
