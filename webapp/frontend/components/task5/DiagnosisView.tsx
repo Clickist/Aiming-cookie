@@ -1,4 +1,5 @@
-import type { AnalysisMetricPresentation, AnalysisWorkspacePresentation } from "@/lib/contracts";
+import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
+import { metricDescription, metricLabel, metricReference } from "@/lib/metric-format";
 import { Badge, Button, Empty, Notice, Status } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
@@ -21,18 +22,6 @@ function formatMetricValue(value: number | string | null, unit: string | null): 
   if (unit === "percent") return `${shown}%`;
   if (unit === "dimensionless" || unit === "ratio") return String(shown);
   return `${shown}${unit ? ` ${unit}` : ""}`;
-}
-
-function metricReference(metric: AnalysisMetricPresentation): string {
-  return metric.referenceKey ?? metric.key;
-}
-
-function metricLabel(metric: AnalysisMetricPresentation): string {
-  return metric.definition?.name ?? metricReference(metric);
-}
-
-function metricDescription(metric: AnalysisMetricPresentation): string | null {
-  return metric.definition?.description ?? null;
 }
 
 function IssueBody({

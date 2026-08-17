@@ -1304,6 +1304,33 @@
   background: var(--error);
 }
 
+/* 当前动作的橙点自身闪烁（原有 ::after 光环脉冲保留，双保险更醒目） */
+@keyframes task6-tool-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.task6-tool-step[data-state="active"] .task6-tool-dot {
+  animation: task6-tool-blink 1.1s ease-in-out infinite;
+}
+
+/* 用户取消：原橙点变灰点 */
+.task6-tool-step[data-state="stopped"] .task6-tool-dot {
+  border-color: var(--fg2);
+  background: var(--fg2);
+}
+
+.task6-tool-eta {
+  align-self: flex-start;
+  margin-top: 2px;
+  color: var(--fg2);
+  font: 400 11px/1.3 var(--font-ui);
+}
+
+.task6-tool-done-count .task6-tool-meta {
+  color: var(--fg2);
+}
+
 .task6-tool-body {
   display: flex;
   flex-direction: column;
@@ -1513,10 +1540,105 @@
   outline-offset: 2px;
 }
 
-.task6-composer-status {
-  min-height: 18px;
-  margin-top: 6px;
+/* Composer model picker: pill anchored bottom-left, menu pops upward */
+
+.task6-composer-input:has(.task6-composer-model) textarea {
+  padding-right: 196px;
+}
+
+.task6-composer-model-wrap {
+  position: absolute;
+  right: 48px;
+  bottom: 8px;
+}
+
+.task6-composer-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 136px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--fg2);
+  font: 400 12px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.task6-composer-model:hover {
+  background: var(--s-cont);
+  color: var(--fg);
+}
+
+.task6-composer-model:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.task6-composer-model:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.task6-composer-model-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task6-composer-model-caret {
+  flex: none;
+  font-size: 10px;
+}
+
+.task6-composer-model-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 228px;
+  max-width: 320px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--outline-v);
+  border-radius: 8px;
+  background: var(--s-high);
+}
+
+.task6-composer-model-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: 400 13px/1.3 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.task6-composer-model-item:hover {
+  background: var(--s-cont);
+}
+
+.task6-composer-model-item[aria-checked="true"] {
+  color: var(--primary);
+}
+
+.task6-composer-model-item:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.task6-composer-model-check {
+  flex: none;
+  color: var(--primary);
   font-size: 12px;
 }
 
@@ -1825,7 +1947,12 @@
     transition: opacity 120ms ease;
   }
 
+  .task6-composer-send {
+    transition: none;
+  }
+
   .task6-streaming-cursor,
+  .task6-tool-step[data-state="active"] .task6-tool-dot,
   .task6-tool-step[data-state="active"] .task6-tool-dot::after {
     animation: none;
   }

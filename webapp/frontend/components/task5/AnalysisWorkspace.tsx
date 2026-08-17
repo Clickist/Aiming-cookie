@@ -78,7 +78,7 @@ function stateTone(state: AnalysisViewState): "neutral" | "info" | "success" | "
   return "neutral";
 }
 
-function evidenceSourceLabel(source: string): string {
+export function evidenceSourceLabel(source: string): string {
   const normalized = source.toLowerCase();
   return EVIDENCE_SOURCE_LABELS[normalized]
     ?? (normalized.includes("raw") ? "Raw Input"

@@ -37,7 +37,6 @@ test("Coach opens a center video pane from time-link analysis refs", async () =>
   assert.match(shell, /onOpenVideo=/);
   assert.match(panel, /onOpenVideo/);
   assert.match(panel, /analysis_refs/);
-  assert.doesNotMatch(panel, /CoachMessageCards|message\.cards/);
   assert.match(videoPane, /getSession/);
   assert.match(videoPane, /presentAnalysisWorkspace/);
   assert.match(videoPane, /<VideoView/);

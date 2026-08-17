@@ -13,8 +13,9 @@ import {
   stopCoachAgentRun,
 } from "@/lib/api";
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
-import { COACH_PENDING_INTENT_KEY } from "@/lib/contracts";
+import { COACH_PENDING_INTENT_KEY, computeAnalysisEtaSeconds } from "@/lib/contracts";
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
+import { CoachModelMenu } from "./CoachModelMenu";
 import type {
   CoachAgentRunEventV1,
   CoachAgentRunV1,
@@ -22,6 +23,7 @@ import type {
   CurrentTrainingItemV1,
   CurrentTrainingV1,
   ProviderProfileState,
+  SessionListItem,
 } from "@/lib/types";
 import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimatedPresence } from "@/ui/primitives";
 
@@ -84,6 +86,8 @@ interface ToolStep {
   label: string;
   meta: string | null;
   state: ToolStepState;
+  /** product command 名（合成步骤为 null）；用于识别需要预估时间的分析类步骤。 */
+  command: string | null;
 }
 
 /* 工具步骤标签：已知 product command 用中文呈现，未知的回退为合同里的 command_name；
@@ -169,6 +173,7 @@ function deriveToolSteps(run: CoachAgentRunV1 | null): ToolStep[] {
             : topic ? "查阅训练知识" : event.message),
         meta: warningMessage ?? (commandName ? null : topic),
         state: (failed ? "fail" : activityState === "started" ? "active" : "done") as ToolStepState,
+        command: commandName,
       });
     });
   const steps = [...stepMap.values()];
@@ -180,6 +185,7 @@ function deriveToolSteps(run: CoachAgentRunV1 | null): ToolStep[] {
         : run.partial_text ? "正在组织回复" : "正在理解问题和分析上下文",
       meta: null,
       state: "active",
+      command: null,
     });
   }
   return steps;
@@ -220,7 +226,6 @@ function videoTimeTargetFromRun(run: CoachAgentRunV1 | null): {
   }
   return null;
 }
-
 function kovaakIntentDraft(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const itemName = (value as { item_name?: unknown }).item_name;
@@ -306,9 +311,9 @@ export function CoachPanel({
       setMessages((current) => {
         const optimistic = current.filter((message) => message.id < 0);
         const backendMessages = detail.messages ?? [];
-        const backendKeys = new Set(backendMessages.map((message) => `${message.role} ${message.content}`));
+        const backendKeys = new Set(backendMessages.map((message) => `${message.role}\x00${message.content}`));
         const uniqueOptimistic = optimistic.filter(
-          (message) => !backendKeys.has(`${message.role} ${message.content}`),
+          (message) => !backendKeys.has(`${message.role}\x00${message.content}`),
         );
         return [...uniqueOptimistic, ...backendMessages];
       });
@@ -359,7 +364,8 @@ export function CoachPanel({
   // Backend session id == analysis id in the file-based architecture, so the
   // sessions list can supply the scenario name for the discussion tag. Fetch is
   // best-effort; without a name the tag falls back to the analysis ref.
-  const [analysisScenarios, setAnalysisScenarios] = useState<Record<number, string | null>>({});
+  type DiscussionAnalysisInfo = { scenario: string | null; runId: number | null };
+  const [analysisScenarios, setAnalysisScenarios] = useState<Record<number, DiscussionAnalysisInfo>>({});
   const discussionAnalysisKey = discussionAnalysisIds.join(",");
   useEffect(() => {
     if (!discussionAnalysisKey) {
@@ -370,8 +376,8 @@ export function CoachPanel({
     void listSessions()
       .then((response) => {
         if (cancelled) return;
-        const map: Record<number, string | null> = {};
-        for (const item of response.sessions) map[item.id] = item.scenario ?? null;
+        const map: Record<number, DiscussionAnalysisInfo> = {};
+        for (const item of response.sessions) map[item.id] = { scenario: item.scenario ?? null, runId: item.kovaak_run_id ?? null };
         setAnalysisScenarios(map);
       })
       .catch(() => {
@@ -382,7 +388,9 @@ export function CoachPanel({
 
   // 进行中的分析挂进「本次讨论」条：显示「正在分析：场景名」，完成后由
   // 自动开讲接管变成可点击的视频 chip。有分析在跑时 3s 轮询，空闲 10s。
-  const [pendingAnalyses, setPendingAnalyses] = useState<{ id: number; scenario: string | null }[]>([]);
+  // 同一轮询顺带保存会话快照，供分析步骤的预估耗时计算复用。
+  const [pendingAnalyses, setPendingAnalyses] = useState<{ id: number; scenario: string | null; runId: number | null }[]>([]);
+  const [sessionsSnapshot, setSessionsSnapshot] = useState<SessionListItem[]>([]);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -392,10 +400,11 @@ export function CoachPanel({
       try {
         const response = await listSessions();
         if (cancelled) return;
+        setSessionsSnapshot(response.sessions);
         const pending = response.sessions
           .filter((item) => item.status === "queued" || item.status === "running")
           .sort((a, b) => b.id - a.id)
-          .map((item) => ({ id: item.id, scenario: item.scenario ?? null }));
+          .map((item) => ({ id: item.id, scenario: item.scenario ?? null, runId: item.kovaak_run_id ?? null }));
         setPendingAnalyses(pending);
         fast = pending.length > 0;
       } catch {
@@ -410,6 +419,14 @@ export function CoachPanel({
       if (timer) clearTimeout(timer);
     };
   }, []);
+
+  // 分析类步骤的预估耗时：本机历史已完成分析的实际执行时长中位数
+  // （纯前端启发式，见 computeAnalysisEtaSeconds；无样本时不显示，不编造数字）。
+  const ANALYSIS_ETA_COMMANDS = new Set(["analysis.create_from_run", "analysis.retry"]);
+  const analysisEtaSeconds = useMemo(
+    () => computeAnalysisEtaSeconds(sessionsSnapshot),
+    [sessionsSnapshot],
+  );
 
   const refreshCurrentTraining = useCallback(async () => {
     const revision = ++trainingRefreshRevisionRef.current;
@@ -653,6 +670,9 @@ export function CoachPanel({
   }, [liveRunRef, refresh, refreshCurrentTraining, sessionId]);
 
   const toolSteps = useMemo(() => deriveToolSteps(run), [run]);
+  // 已完成的工具步骤不逐条列，收敛为一行计数；执行中/失败的保持可见。
+  const visibleToolSteps = toolSteps.filter((step) => step.state !== "done");
+  const doneToolStepCount = toolSteps.length - visibleToolSteps.length;
   // 对话流条目数：历史消息 + 当前 run 块（流式文字/工具步骤/卡片合记为 1 条）
   const feedCount = messages.length + (run ? 1 : 0);
 
@@ -939,7 +959,7 @@ export function CoachPanel({
               key={`pending-${item.id}`}
               title="分析完成后可点击打开视频"
             >
-              正在分析：{item.scenario ?? `分析 #${item.id}`}
+              正在分析：{item.scenario ?? `分析 #${item.id}`}{item.runId != null ? ` · run ${item.runId}` : ""}
             </span>
           ))}
           {discussionAnalysisIds.map((id) => (
@@ -950,7 +970,7 @@ export function CoachPanel({
               title="打开视频讲解"
               type="button"
             >
-              {analysisScenarios[id] ?? `分析 #${id}`}
+              {(analysisScenarios[id]?.scenario ?? `分析 #${id}`)}{analysisScenarios[id]?.runId != null ? ` · run ${analysisScenarios[id]?.runId}` : ""}
             </button>
           ))}
         </div>
@@ -974,20 +994,42 @@ export function CoachPanel({
         ))}
         {run?.partial_text ? (
           <article className="task6-message" data-role="assistant">
-            <p>{run.partial_text}<span className="task6-streaming-cursor" /></p>
+            <p>{run.partial_text}{run && ["queued", "running"].includes(run.status) ? <span className="task6-streaming-cursor" /> : null}</p>
           </article>
         ) : null}
-        {toolSteps.length ? (
+        {visibleToolSteps.length || doneToolStepCount || run?.status === "stopped" ? (
           <ol aria-label="工具执行步骤" className="task6-tool-tl">
-            {toolSteps.map((step) => (
-              <li className="task6-tool-step" data-state={step.state} key={step.key}>
+            {visibleToolSteps.map((step) => {
+              const stepState = run?.status === "stopped" ? "stopped" : step.state;
+              return (
+                <li className="task6-tool-step" data-state={stepState} key={step.key}>
+                  <span aria-hidden="true" className="task6-tool-dot" />
+                  <span className="task6-tool-body">
+                    <span className="task6-tool-label">{step.label}</span>
+                    {step.meta ? <span className="task6-tool-meta">{step.meta}</span> : null}
+                    {stepState === "active" && step.command && ANALYSIS_ETA_COMMANDS.has(step.command) && analysisEtaSeconds !== null ? (
+                      <span className="task6-tool-eta">预计约 {analysisEtaSeconds} 秒</span>
+                    ) : null}
+                  </span>
+                </li>
+              );
+            })}
+            {doneToolStepCount > 0 ? (
+              <li className="task6-tool-step task6-tool-done-count" data-state="done">
                 <span aria-hidden="true" className="task6-tool-dot" />
                 <span className="task6-tool-body">
-                  <span className="task6-tool-label">{step.label}</span>
-                  {step.meta ? <span className="task6-tool-meta">{step.meta}</span> : null}
+                  <span className="task6-tool-meta">已完成 {doneToolStepCount} 步</span>
                 </span>
               </li>
-            ))}
+            ) : null}
+            {run?.status === "stopped" ? (
+              <li className="task6-tool-step" data-state="stopped">
+                <span aria-hidden="true" className="task6-tool-dot" />
+                <span className="task6-tool-body">
+                  <span className="task6-tool-label">回答已停止，可重新提问</span>
+                </span>
+              </li>
+            ) : null}
           </ol>
         ) : null}
         {run?.status === "failed" ? (
@@ -1006,7 +1048,6 @@ export function CoachPanel({
             </div>
           </div>
         ) : null}
-        {run?.status === "stopped" ? <Notice title="生成已停止">已生成的部分内容已保留，可以修改问题后再次发送。</Notice> : null}
         {!run ? (
           <div className="task6-suggestions">
             {suggestionItems.map((text) => (
@@ -1038,14 +1079,15 @@ export function CoachPanel({
             rows={3}
             value={draft}
           />
+          <CoachModelMenu
+            disabled={run !== null && ["queued", "running"].includes(run.status)}
+            onError={(message) => setFeedback(message)}
+          />
           {run && ["queued", "running"].includes(run.status) ? (
             <button aria-label="停止生成" className="task6-composer-send" onClick={() => void stop()} type="button" title="停止生成">■</button>
           ) : (
             <button aria-label="发送" className="task6-composer-send" disabled={!draft.trim()} onClick={() => void send()} type="button">↑</button>
           )}
-        </div>
-        <div aria-live="polite" className="task6-composer-status">
-          {run?.phase === "queued" ? "Coach 正在等待开始" : run?.phase === "tool_execution" ? "Coach 正在执行工具" : run?.phase === "text_generation" ? "Coach 正在生成回复" : ""}
         </div>
       </footer>
 

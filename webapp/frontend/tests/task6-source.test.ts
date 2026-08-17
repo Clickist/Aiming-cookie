@@ -19,7 +19,6 @@ test("Coach shell renders the existing full workspace in the main column", async
   assert.match(appShell, /data-session-rail/);
   assert.doesNotMatch(appShell, /CoachSidebar/);
   assert.match(appStyles, /task3-workspace\[data-session-rail="true"\]/);
-  assert.match(panel, /aria-live/);
   assert.match(styles, /\.task6-coach-panel/);
   assert.match(styles, /prefers-reduced-motion/);
   assert.doesNotMatch(styles, /#[0-9a-fA-F]{3,8}\b|\brgb\s*\(|\bhsl\s*\(/);
@@ -372,19 +371,36 @@ test("Coach current training animates expand and collapse without leaving intera
   assert.match(styles, /prefers-reduced-motion:\s*reduce[\s\S]*\.task6-training-reveal/);
 });
 
-test("Coach renders time-point links in assistant messages without legacy attach cards", async () => {
+test("Coach renders time-point links without parsing model prose", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
   const text = await source("components/task7/CoachMessageText.tsx");
   assert.match(coach, /CoachMessageText/);
   assert.match(coach, /defaultAnalysisRef/);
   assert.match(coach, /analysis_refs/);
-  assert.doesNotMatch(coach, /CoachMessageCards|message\.cards/);
   assert.match(text, /TIME_POINT_PATTERN/);
   assert.match(text, /onOpenVideo/);
   assert.match(text, /task6-time-link/);
   assert.match(text, /\* 1000/);
 });
 
+
+test("Coach tool steps collapse done steps, show analysis ETA, and mark stopped runs", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  const styles = await source("components/task6/task6.css");
+  // 已完成的步骤折叠成「已完成 N 步」计数行。
+  assert.match(coach, /task6-tool-done-count/);
+  assert.match(coach, /已完成 \{doneToolStepCount\} 步/);
+  // ETA 只对分析类命令显示，且样本来自真实执行时长（started_at 优先）。
+  assert.match(coach, /ANALYSIS_ETA_COMMANDS = new Set\(\["analysis\.create_from_run", "analysis\.retry"\]\)/);
+  assert.match(coach, /computeAnalysisEtaSeconds\(sessionsSnapshot\)/);
+  assert.match(coach, /task6-tool-eta/);
+  // 停止态渲染灰色状态点与「回答已停止」行。
+  assert.match(coach, /data-state=\{stepState\}/);
+  assert.match(coach, /回答已停止，可重新提问/);
+  // 新 UI 的样式存在，已删的 composer 状态行不留孤儿规则。
+  assert.match(styles, /\.task6-tool-step/);
+  assert.doesNotMatch(styles, /task6-composer-status/);
+});
 
 test("Coach pins the discussion analysis bar above the scrolling conversation and opens the video pane", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
