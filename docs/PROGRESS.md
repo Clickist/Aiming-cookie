@@ -32,6 +32,7 @@
 ## 2026-08-17 Session Changes
 
 - **内测用户 bug：outcome_only 残留卡死（主会话实施，`29b65cd`，v0.1.1 分发）**：内测用户的老包（早于 `8c6ddb6`）把跟枪局 Smoothsphere Viscose Easier 误判甩枪家族、产出空 outcome_only 分析，而 `create_analysis_from_run` 的 done 复用快路径会把旧空分析永久当该 run 的答案——升级后也无法重析。修复：outcome_only 版本的 done 分析不再复用、强制按当前分类重建（`queue.get_run_analysis_states` 附带 `analysis_version`，常量上移 contracts）。归因更正：旧包 coach 说「tracking 未开放」是如实描述其构建（当时无家族分派/场景记忆），非 LLM 编造；话术硬规则按点点决策不加。验证：新增复现测试先红后绿、全量 1193/5；当前代码对全新跟枪局三条路径（有轨迹/带视频/无轨迹兜底）均已实测正确。
+- **v0.1.1 三路阻断级审计 → v0.1.2 修复批（agent team 实施，主会话验收）**：审计（通用 7 维度 workflow + CV 专项 workflow 含连 LLM 纯后端实测 + 采集链路专职 agent）确认：测试矩阵全绿（Python/TS/type-check）、CV 主链路实测健康（54010 → tracking.generic_visual.v1）；问题集中在采集退出路径、CV 静默降级线与旧账。修复四项（均先红后绿）：采集 F1 session mismatch 终态化（`147b0f1`）、F2 关机排干在途导出 receipt（`2a0f2cb`）、switching generic 层键失配（`05462a1`，含生产名驱动的 worker 级测试）、history.trend/compare 改读 sessions 结果（`9f8969a`）；另修内测上报的设置页 capture-status 硬依赖（`a056ea2`，KovaaK 运行时卡加载页）。全量回归 1196/5、coach-runtime 200/2skip、前端 150/0、type-check 干净、cargo check/test 绿。开放项：设置页控制链深层根因（KovaaK 运行时哪一环慢）待运行时复现；审计批次二/三（trace 判死 F3/F4、512 bundle 上限、gate 低杀率、TS 缩写分类、coach CLI 轮询观感等）见审计记录待排期。
 
 ## 2026-08-16 Session Changes
 
