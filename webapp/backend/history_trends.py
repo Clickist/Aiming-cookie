@@ -674,6 +674,7 @@ def analysis_list_item(row: dict) -> dict:
         "run_ref": f"run:{run_id}" if run_id is not None else None,
         "status": row["status"],
         "created_at": row["created_at"],
+        "started_at": row.get("started_at"),
         "finished_at": row.get("finished_at"),
         "attempts": int(row.get("attempts") or 0),
         "max_attempts": int(row.get("max_attempts") or 1),
