@@ -345,7 +345,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - Windows Raw Input 默认关闭，首次启用必须有明确 opt-in 和采集范围说明；
 - Raw Input 只允许 KovaaK process gate 内的相对鼠标输入；不得采集键盘、桌面绝对坐标或其它应用的后台输入；
 - 自动录屏只允许捕获 KovaaK 应用窗口，不得捕获完整桌面、其它应用窗口或系统通知；
-- 自动视频主路径必须保持 WGC surface、颜色转换和硬件编码在 GPU 路径内；硬件编码不可用、适配器不匹配或视频队列背压时独立降级，不得静默回退到会影响 Raw Input 或游戏的持续 CPU 编码；
+- 自动视频主路径必须保持 WGC surface、颜色转换和硬件编码在 GPU 路径内；硬件编码不可用、适配器不匹配或视频队列背压时独立降级；两级硬件编码枚举（全局与采集适配器 LUID）均空或均不适配时，自动路径受控降级到第三级软件编码（Microsoft H264 Encoder MFT，SYNCMFT|SORTANDFILTER）——encoder path 记入诊断包、回放缓冲保持有界、已知边界为编码尾延迟约 267ms；除此之外不得静默回退到其它持续 CPU 编码；
 - Raw Input trace、MP4、原始 CSV/protobuf 和私有 parser payload 不进入 Provider 请求或普通日志；Coach 只可在 L1-L3 合同内消费本地 broker 返回的 bounded 规范化结果；
 - Desktop loopback API 限制为 host/origin 暴露；每次启动由 Tauri 生成随机高熵 launch-scoped token（`AIMING_COOKIE_DESKTOP_TOKEN`），不持久化、不写普通日志；
 - Web 预览只允许在受控环境访问，不把外部 VPN/SSO/代理访问控制包装成产品账号；

@@ -326,7 +326,7 @@ Provider 列表至少显示：
 - Provider profile 与 credential 分开删除；移除 profile 前说明是否同时移除 credential；
 - 未配置 Provider 时，Coach 入口只作为激活入口，可恢复首次 onboarding 或进入 Provider Settings；此时不提供 Coach 对话、解释、长期档案、训练计划或产品命令，也不显示升级、订阅、额度墙或产品登录；
 - 确定性诊断、History 和本地分析不依赖 LLM provider；provider 故障不能让这些页面失败；
-- 第一版不在聊天输入区放模型选择器；切换 provider/model 只在 Settings 中完成，避免每轮对话状态不透明。
+- 聊天输入区提供当前 Provider 内的模型菜单（composer 底部、向上弹出）：切换即更新全局默认 profile 的 model_id 并持久化，Settings 同步显示；切换 Provider 仍只在 Settings 中完成。菜单仅在当前 profile 为内置 Provider 且其固定目录提供至少两个模型时渲染；自定义 Provider 或单模型目录不显示菜单。
 
 ### 3.7 后台 Analysis 状态
 
@@ -544,7 +544,7 @@ Markdown 用户仓库是准确资料的事实载体，不是 Coach 主工作区�
 - 移除不想发送的上下文；
 - 空会话时提供少量与当前页面有关的建议问题。
 
-第一版不做：任意文件附件、图片生成、通用联网搜索入口、模型选择器、Prompt 模板商城和复杂斜杠命令。
+第一版不做：任意文件附件、图片生成、通用联网搜索入口、跨 Provider 的模型选择器、Prompt 模板商城和复杂斜杠命令。
 
 Coach 与内容采用“自然语言或点击 → Coach 编排 → UI 导航/聚焦/安全预填 → 产品命令或用户动作 → 状态验收 → 自动继续”的联动规则：
 
