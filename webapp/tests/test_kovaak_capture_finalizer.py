@@ -907,16 +907,69 @@ async def test_response_loss_does_not_attach_raw_from_a_new_capture_session(
     assert pending["trace_state"] == "pending"
 
     client.capture_session_id = "session-2"
-    client.raw_snapshot_covered_through_epoch_ms = 2_000
-    with pytest.raises(RetryableIngestionError, match="capture_session_mismatch"):
-        await finalizer.finalize(discovery)
+    client.raw_snapshot_capture_session_start_epoch_ms = 2_001
+    mismatched = await finalizer.finalize(discovery)
 
-    unchanged = await kovaak_run_store.get_kovaak_run(pending["id"], "u1")
-    assert client.flush_calls == ["session-1"]
-    assert unchanged["capture_session_id"] == "session-1"
-    assert unchanged["video_state"] == "pending"
-    assert unchanged["trace_state"] == "pending"
-    assert unchanged["mouse_trace_path"] is None
+    assert client.flush_calls == ["session-1", "session-2"]
+    assert mismatched["capture_session_id"] == "session-1"
+    assert mismatched["video_state"] == "unavailable"
+    assert mismatched["video_error"] == "video_capture_session_mismatch"
+    assert mismatched["trace_state"] == "unavailable"
+    assert mismatched["trace_error"] == "trace_raw_window_coverage_gap"
+    assert mismatched["mouse_trace_path"] is None
+
+
+@pytest.mark.asyncio
+async def test_capture_session_mismatch_marks_pending_video_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_parsers(monkeypatch, time_limit=1.0)
+    monkeypatch.setattr(kovaak_run_store, "_now_ms", lambda: 2_001)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": 1_100, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(
+        tmp_path / "data",
+        lose_first_response=True,
+    )
+    client.raw_snapshot_covered_through_epoch_ms = 1_999
+    finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
+    discovery = KovaaKFileDiscovery(
+        stem="session-mismatch-terminal",
+        stats_path=stats,
+        performance_path=performance,
+    )
+
+    with pytest.raises(NativeCaptureRetryableError, match="response_lost"):
+        await finalizer.finalize(discovery)
+    pending = (await kovaak_run_store.list_kovaak_runs("u1"))[0]
+    assert pending["capture_session_id"] == "session-1"
+    assert pending["video_state"] == "pending"
+    assert pending["trace_state"] == "pending"
+
+    run_dir = tmp_path / "data" / "runs" / str(pending["id"])
+    for artifact in run_dir.iterdir():
+        artifact.unlink()
+    client.capture_session_id = "session-2"
+    client.raw_snapshot_capture_session_start_epoch_ms = 2_001
+    run = await finalizer.finalize(discovery)
+
+    assert len(client.export_calls) == 1
+    assert client.flush_calls == ["session-1", "session-2"]
+    assert run["video_state"] == "unavailable"
+    assert run["video_error"] == "video_capture_session_mismatch"
+    assert run["capture_session_id"] == "session-1"
+    assert run["trace_state"] == "unavailable"
+    assert run["trace_error"] == "trace_raw_window_coverage_gap"
+    assert run["mouse_trace_path"] is None
+    assert run["finalization_state"] == "finalized"
+    assert run["finalization_error"] == "video_capture_session_mismatch"
 
 
 @pytest.mark.asyncio
