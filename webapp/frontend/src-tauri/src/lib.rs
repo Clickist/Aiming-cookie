@@ -30,6 +30,7 @@ struct CaptureDiagnosticsBundle {
     host_version: Option<String>,
     processor_identifier: Option<String>,
     processor_count: Option<String>,
+    gpu_names: Vec<String>,
     capture_data_root: String,
     coordinator: CaptureCoordinatorStatus,
     raw_input: RawInputStatus,
@@ -61,6 +62,33 @@ fn host_version() -> Option<String> {
     let value = String::from_utf8_lossy(&output.stdout);
     let value = bounded_diagnostic_text(value.trim());
     (!value.is_empty()).then_some(value)
+}
+
+// WGC 视频采集失败的常见根因是显卡/驱动，诊断包需要 GPU 型号。
+// wmic 在 Win11 24H2 起被移除，走 PowerShell CIM（Win10/11 通用）；
+// 双卡（核显+独显）机型每个适配器一行，全列。
+fn gpu_names() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; (Get-CimInstance Win32_VideoController).Name",
+            ])
+            .output();
+        return match output {
+            Ok(output) => String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| bounded_diagnostic_text(line))
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+    }
+    #[cfg(not(windows))]
+    Vec::new()
 }
 
 #[tauri::command]
@@ -122,6 +150,7 @@ fn desktop_export_capture_diagnostics(
         processor_count: std::env::var("NUMBER_OF_PROCESSORS")
             .ok()
             .map(|value| bounded_diagnostic_text(&value)),
+        gpu_names: gpu_names(),
         capture_data_root: coordinator.diagnostic_data_root(),
         coordinator: coordinator_status,
         raw_input: raw_input.status(),
