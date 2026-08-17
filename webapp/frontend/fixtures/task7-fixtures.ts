@@ -644,6 +644,20 @@ export const PROVIDER_CATALOG: ProviderCatalogV1 = {
   }],
 };
 
+/** Catalog variant with two builtin models so the composer model menu renders. */
+export const PROVIDER_CATALOG_TWO_MODELS: ProviderCatalogV1 = {
+  schema_version: "coach_provider_catalog.v1",
+  providers: [{
+    provider_id: "openai",
+    provider_name: "OpenAI",
+    auth_modes: ["api_key", "oauth"],
+    models: [
+      { model_id: "gpt-5.4", model_name: "GPT-5.4" },
+      { model_id: "gpt-5.4-mini", model_name: "GPT-5.4 Mini" },
+    ],
+  }],
+};
+
 export const PROVIDER_CAPABILITIES: ProviderAuthCapabilitiesV1 = {
   schema_version: "coach_provider_auth_capabilities.v1",
   providers: [{ provider_id: "openai", provider_name: "OpenAI", auth_modes: ["api_key", "oauth"] }],
@@ -862,6 +876,7 @@ export interface ApiScenario {
   coachContexts: CoachContextListV1;
   coachSessions: CoachSessionOut[];
   profiles: ProviderProfileListResponse;
+  catalog: ProviderCatalogV1;
   kovaakConnected: boolean;
   kovaakScores: KovaaKScoresV1;
   failures: Record<string, number>;
@@ -888,6 +903,7 @@ export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
     },
     coachSessions: COACH_SESSIONS.map((session) => ({ ...session })),
     profiles: { profiles: [PROVIDER_PROFILE] },
+    catalog: PROVIDER_CATALOG,
     kovaakConnected: true,
     kovaakScores: KOVAAK_SCORES,
     failures: {},
@@ -948,10 +964,33 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
     scenario.productState = { ...scenario.productState, onboarding_completed: true, onboarding_completion_kind: "connected" };
     return response(scenario.productState);
   }
-  if (path === "/api/providers/catalog") return response(PROVIDER_CATALOG);
+  if (path === "/api/providers/catalog") return response(scenario.catalog);
   if (path === "/api/provider-auth/capabilities") return response(PROVIDER_CAPABILITIES);
   if (path === "/api/provider-profiles/status") return response(scenario.providerStatus);
   if (path === "/api/provider-profiles" && method === "GET") return response(scenario.profiles);
+  if (path === "/api/provider-profiles/model" && method === "POST") {
+    const body = requestBody(request.body);
+    const modelId = typeof body.model_id === "string" ? body.model_id.trim() : "";
+    const profile = scenario.profiles.profiles[0];
+    // 镜像真实 sidecar 的合同校验：schema_version 缺失/错误同样 400，
+    // 避免 e2e 掩盖前端丢字段的合同回归。
+    if (body.schema_version !== "coach_provider_model_switch.v1" || !profile || !modelId) {
+      return response({ detail: "model switch body must include schema_version and a non-empty model_id" }, 400);
+    }
+    const providerModels = scenario.catalog.providers.find((provider) => provider.provider_id === profile.provider_id)?.models ?? [];
+    const model = providerModels.find((candidate) => candidate.model_id === modelId);
+    if (!model) return response({ detail: "所选模型不可用，请选择当前 Provider 目录中的模型" }, 400);
+    profile.model_id = modelId;
+    return response({
+      schema_version: "coach_provider_profile_status.v1",
+      ok: true,
+      status: profile.status,
+      profile: { kind: profile.kind, provider_id: profile.provider_id, model_id: modelId },
+      model,
+      credential_source: "runtime_profile",
+      error: null,
+    });
+  }
   if (path === "/api/provider-profiles" && method === "POST") {
     const body = requestBody(request.body);
     const id = Math.max(0, ...scenario.profiles.profiles.map((profile) => profile.id)) + 1;
@@ -1065,6 +1104,12 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
       const body = requestBody(request.body);
       if (body.status === "archived") session.status = "archived";
       if (typeof body.title === "string") session.title = body.title;
+    } else if (method === "GET") {
+      // CoachPanel 经 getCoachSession 读取会话消息；primary 会话的消息
+      // 来自 coachPrimary 快照，其余会话为空。
+      const primary = scenario.coachPrimary;
+      const messages = primary && Number(primary.thread.id) === session.id ? primary.messages : [];
+      return response({ ...session, messages, analysis_session_ids: session.analysis_session_ids ?? [] });
     }
     return response(session);
   }
@@ -1162,6 +1207,7 @@ export async function installApiFixtures(page: Page, scenario = apiScenario()): 
       .replace(/^\/v1\/context\/attach$/, "/api/coach/context/attach")
       .replace(/^\/v1\/agent-runs$/, "/api/coach/agent-runs")
       .replace(/^\/v1\/sessions$/, "/api/coach/sessions")
+      .replace(/^\/v1\/sessions\/(\d+)$/, "/api/coach/sessions/$1")
       .replace(/^\/v1\/provider/, "/api/coach/provider");
     const method = request.method();
     let body: unknown;

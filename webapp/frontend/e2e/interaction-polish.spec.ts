@@ -12,7 +12,7 @@ import {
   RUN_PENDING_MULTIMODAL,
   RUN_PENDING_NATIVE,
   KOVAAK_SCORES_AVAILABLE,
-  TASKS,
+  PROVIDER_CATALOG_TWO_MODELS,
   apiScenario,
   analysisSession,
   installApiFixtures,
@@ -71,91 +71,42 @@ function familySummaryData(family: "switching" | "flicking") {
 }
 
 test.describe("release interaction polish", () => {
-  test("navigation active state, disabled Coach tooltip, and task dot preserve toolbar geometry", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 820 });
-    await installApiFixtures(page, apiScenario({ tasks: [TASKS[2]] }));
-    await page.goto("/settings");
-
-    await expect(page.getByRole("button", { name: "Coach" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "关闭设置" })).toHaveClass(/active/);
-    await expect(page.locator(".task3-task-nav-dot")).toHaveCount(1);
-
-    const taskLink = page.locator('a[href="/tasks"]');
-    const before = await taskLink.evaluate((node) => {
-      const rect = node.getBoundingClientRect();
-      return [rect.width, rect.height];
-    });
-    await page.goto("/tasks");
-    const after = await taskLink.evaluate((node) => {
-      const rect = node.getBoundingClientRect();
-      return [rect.width, rect.height];
-    });
-    expect(after).toEqual(before);
-    await expect(page.locator('a[href="/tasks"]')).toHaveAttribute("aria-current", "page");
-  });
-
-  test("Coach width presets, pointer drag, and keyboard resize share the workspace width", async ({ page }) => {
+  test("settings exit and session rail geometry stay stable across routes", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
     await installApiFixtures(page);
-    await page.goto("/history");
+    await page.goto("/");
 
-    const sidebar = page.getByRole("complementary", { name: "Coach" });
-    const separator = page.getByRole("separator", { name: "调整 Coach 宽度" });
-    await expect(sidebar).toBeVisible();
+    const settingsNav = page.getByRole("button", { name: "系统设置" });
+    const before = await settingsNav.boundingBox();
+
+    await settingsNav.click();
+    await expect(page).toHaveURL(/\/settings$/);
+    await expect(page.getByRole("button", { name: "退出设置" })).toBeVisible();
+    // 设置页覆盖工作区：Coach 输入区不再暴露。
+    await expect(page.getByRole("button", { name: "发送" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "退出设置" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    const after = await settingsNav.boundingBox();
+    expect(after).toEqual(before);
     await expectNoHorizontalOverflow(page);
-
-    const handle = await separator.boundingBox();
-    expect(handle).not.toBeNull();
-    await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + 100);
-    await page.mouse.down();
-    await page.mouse.move(handle!.x + handle!.width / 2 - 48, handle!.y + 100, { steps: 4 });
-    await page.mouse.up();
-    await expect(separator).toHaveAttribute("aria-valuenow", "408");
-    await expect(sidebar).toHaveCSS("width", "408px");
-
-    await separator.press("ArrowLeft");
-    await expect(separator).toHaveAttribute("aria-valuenow", "392");
-    await expect(sidebar).toHaveCSS("width", "392px");
-    await expectNoHorizontalOverflow(page);
-
-    await page.setViewportSize({ width: 960, height: 640 });
-    await page.getByRole("button", { name: "Coach" }).click();
-    const overlayDialog = page.getByRole("dialog", { name: "Coach" });
-    const overlay = page.locator(".task6-coach-sidebar-wrap");
-    await expect(overlayDialog).toBeVisible();
-    await expectNoHorizontalOverflow(page);
-    await expect(overlay).toHaveAttribute("data-state", "open");
-    await expect(overlay.locator(".task6-coach-sidebar")).toHaveCSS("transition-duration", "0.2s, 0.2s");
-
-    await overlayDialog.getByRole("button", { name: "关闭 Coach", exact: true }).click();
-    await expect(overlay).toHaveAttribute("data-state", "closed");
-    await expect(overlay).toHaveCount(0, { timeout: 500 });
   });
 
-  test("History overlays use focus-safe Dialog and Drawer primitives", async ({ page }) => {
-    await installDesktopBridge(page);
-    await installApiFixtures(page, apiScenario({ runs: [RUN_PENDING_MULTIMODAL, RUN_NATIVE] }));
-    await page.goto("/history");
+test("composer model menu closes on Escape and keeps the trigger reachable", async ({ page }) => {
+    await installApiFixtures(page, apiScenario({ catalog: PROVIDER_CATALOG_TWO_MODELS }));
+    await page.goto("/");
 
-    const confirmTrigger = page.getByRole("button", { name: "开始分析" }).first();
-    await confirmTrigger.click();
-    const confirmDialog = page.getByRole("dialog", { name: "确认这条 Run" });
-    await expect(confirmDialog.getByRole("button", { name: "Close" })).toBeFocused();
+    const pill = page.locator(".task6-composer-model");
+    await expect(pill).toBeVisible();
+    await pill.click();
+    const menu = page.getByRole("menu", { name: "当前 Provider 的模型" });
+    await expect(menu).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(confirmDialog).toBeHidden();
-    await expect(confirmTrigger).toBeFocused();
-
-    const inspectTrigger = page.getByRole("button", { name: "查看 Run" });
-    await inspectTrigger.click();
-    const inspector = page.getByRole("dialog", { name: /Run 详情/ });
-    await expect(inspector.getByRole("button", { name: "Close" })).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(inspector).toBeHidden();
-    await expect(inspectTrigger).toBeFocused();
-
+    await expect(menu).toBeHidden();
+    await expect(pill).toBeFocused();
   });
 
-  test("History query Run ref selects the matching pending Run in Analyze", async ({ page }) => {
+test("History query Run ref selects the matching pending Run in Analyze", async ({ page }) => {
     test.skip(true, "Analyze 抽屉与 run 查询参数入口已移除；待 History→Coach 新流程稳定后重写");
     await installDesktopBridge(page);
     await installApiFixtures(page, apiScenario({ runs: [RUN_PENDING_MULTIMODAL, RUN_PENDING_NATIVE] }));
@@ -201,9 +152,8 @@ test.describe("release interaction polish", () => {
 
   test("Coach keeps current training readable and turns safe shortcuts into drafts", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
-    await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
     await installApiFixtures(page);
-    await page.goto("/history");
+    await page.goto("/");
 
     const training = page.getByRole("region", { name: "当前训练" });
     await expect(training).toContainText("1wall 6targets small");
@@ -242,22 +192,13 @@ test.describe("release interaction polish", () => {
       providerStatus: { profile_id: 1, configured: true, status: "connection_failed", message: "Provider unavailable" },
     }));
     await page.reload();
-    await expect(page.getByRole("complementary", { name: "Coach" })).toBeHidden();
-    await page.getByRole("button", { name: "Coach" }).click();
-    await expect(page.getByRole("complementary", { name: "Coach" })).toBeVisible();
     await expect(page.getByRole("region", { name: "当前训练" })).toContainText("1wall 6targets small");
     await page.getByRole("region", { name: "当前训练" }).getByRole("button", { name: "展开" }).click();
     await expect(page.getByRole("region", { name: "当前训练" }).getByRole("button", { name: "问 Coach" }).first()).toBeDisabled();
-
-    await page.setViewportSize({ width: 960, height: 640 });
-    await expect(page.getByRole("dialog", { name: "Coach" })).toBeHidden();
-    await page.getByRole("button", { name: "Coach" }).click();
-    await expect(page.getByRole("dialog", { name: "Coach" })).toBeVisible();
-    await expect(page.getByRole("dialog", { name: "Coach" }).getByRole("region", { name: "当前训练" })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
-  test("side-by-side Coach stays viewport-bound while the analysis page scrolls", async ({ page }) => {
+test("side-by-side Coach stays viewport-bound while the analysis page scrolls", async ({ page }) => {
     test.skip(true, "side-by-side 分析页布局已下线；Coach 三栏形态断言待新 IA 稳定后重写");
     await page.setViewportSize({ width: 1178, height: 920 });
     await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
@@ -302,9 +243,8 @@ test.describe("release interaction polish", () => {
 
   test("Coach composer keeps a taller draft area with its send action inside", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
-    await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
     await installApiFixtures(page);
-    await page.goto("/history");
+    await page.goto("/");
 
     const composerInput = page.locator(".task6-composer-input");
     const draft = page.locator("#coach-draft");
@@ -326,11 +266,10 @@ test.describe("release interaction polish", () => {
     await expect(composerInput).toHaveCSS("border-top-width", "1px");
   });
 
-  test("no current plan stays a normal empty state without an error overlay", async ({ page }) => {
+test("no current plan stays a normal empty state without an error overlay", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
-    await page.addInitScript(() => localStorage.setItem("aiming-cookie.ui.coach-open", "open"));
     await installApiFixtures(page, apiScenario({ currentTraining: CURRENT_TRAINING_NO_PLAN }));
-    await page.goto("/history");
+    await page.goto("/");
 
     const training = page.getByRole("region", { name: "当前训练" });
     await expect(training).toContainText("还没有当前训练安排");
@@ -341,7 +280,7 @@ test.describe("release interaction polish", () => {
     await expect(page.getByText("当前训练暂不可用")).toHaveCount(0);
   });
 
-  test("KovaaK score actions carry a safe item name into a Coach draft", async ({ page }) => {
+test("KovaaK score actions carry a safe item name into a Coach draft", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
     await installApiFixtures(page, apiScenario({ kovaakScores: KOVAAK_SCORES_AVAILABLE }));
     let coachRunPosts = 0;
@@ -355,26 +294,29 @@ test.describe("release interaction polish", () => {
     const scoreRow = page.locator(".kovaak-score-row").filter({ hasText: "controlsphere" }).first();
     await scoreRow.getByRole("button", { name: "让 Coach 看看" }).click();
     await expect(page).toHaveURL(/\/history$/);
-    await expect(page.getByRole("complementary", { name: "Coach" })).toBeVisible();
+
+    // 意图由 Coach 工作区在挂载时读入草稿，不自动发送。
+    await page.goto("/");
     await expect(page.locator("#coach-draft")).toHaveValue(/controlsphere/);
     expect(coachRunPosts).toBe(0);
   });
 
-  test("Toast has a keyboard close action, auto-dismisses, and reduced motion is immediate", async ({ page }) => {
+test("Toast has a keyboard close action, auto-dismisses, and reduced motion is immediate", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 820 });
-    await installApiFixtures(page);
-    await page.goto("/history");
+    await installApiFixtures(page, apiScenario({ failures: { "DELETE /api/coach/sessions/2": 500 } }));
+    await page.goto("/");
 
-    const removeContext = page.locator('[aria-label^="移除 "]');
-    await removeContext.click();
+    // 会话删除失败经 Toast 呈现（会话列表的删除按钮是当前可触发的失败路径）。
+    const deleteButton = page.getByRole("button", { name: "删除 1wall 6targets 复盘" });
     const toast = page.getByRole("status").filter({ has: page.getByRole("button", { name: "关闭通知" }) });
+    await deleteButton.click();
     await expect(toast).toBeVisible();
     const closeToast = toast.getByRole("button", { name: "关闭通知" });
     await closeToast.focus();
     await closeToast.press("Enter");
     await expect(toast).toBeHidden();
 
-    await removeContext.click();
+    await deleteButton.click();
     await expect(toast).toBeVisible();
     await expect(toast).toBeHidden({ timeout: 6_000 });
 
