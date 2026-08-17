@@ -36,6 +36,10 @@ test("real Tauri capture diagnostics export writes a valid bundle", async () => 
   expect(typeof bundle.generatedAtUtcMs).toBe("number");
   expect(bundle.targetOs).toBe("windows");
   expect(bundle.appVersion).toBeTruthy();
+  // WGC 采集排障依赖 GPU 型号；真实机器至少有一个适配器。
+  const gpuNames = bundle.gpuNames as unknown[] | undefined;
+  expect(Array.isArray(gpuNames), "gpu adapter names").toBe(true);
+  expect(gpuNames!.length).toBeGreaterThan(0);
   expect(typeof bundle.captureDataRoot).toBe("string");
   const coordinator = bundle.coordinator as Record<string, unknown> | undefined;
   expect(coordinator, "coordinator status snapshot").toBeDefined();
