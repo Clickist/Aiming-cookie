@@ -10,6 +10,7 @@ import {
   getDefaultProviderStatus,
   getProductState,
   listCoachSessions,
+  listSessions,
   updateCoachSession,
 } from "@/lib/api";
 import {
@@ -192,6 +193,47 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.addEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);
     return () => window.removeEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);
   }, [capability]);
+
+  // 自动开讲不能依赖用户守在分析页：轮询会话列表，把「本生命周期内
+  // 观察到 running → done」的分析以同一事件派发（防重沿用 localStorage）。
+  // 只触发新鲜转换，翻旧记录不开讲。
+  useEffect(() => {
+    const seenRunning = new Set<number>();
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const response = await listSessions();
+        if (cancelled) return;
+        const finished: number[] = [];
+        for (const item of response.sessions) {
+          if (item.status === "queued" || item.status === "running") {
+            seenRunning.add(item.id);
+          } else if (item.status === "done" && seenRunning.has(item.id)) {
+            seenRunning.delete(item.id);
+            finished.push(item.id);
+          } else {
+            seenRunning.delete(item.id);
+          }
+        }
+        for (const id of finished) {
+          window.dispatchEvent(new CustomEvent(ANALYSIS_AUTO_TEACH_EVENT, {
+            detail: { analysis_ref: `analysis:${id}` },
+          }));
+        }
+      } catch {
+        // 本地 runtime 暂不可达：下一轮重试。
+      } finally {
+        if (!cancelled) timer = setTimeout(tick, 5000);
+      }
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   const handleNewCoachSession = () => {
     setDraftSession(true);

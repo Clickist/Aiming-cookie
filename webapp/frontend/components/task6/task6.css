@@ -1420,6 +1420,18 @@
   outline-offset: 1px;
 }
 
+/* 进行中的分析标签：同款 pill，降对比不可点，完成后换成可点击 chip */
+.task6-suggestion[data-pending="true"] {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.task6-suggestion[data-pending="true"]:hover {
+  background: var(--surface);
+  border-color: var(--outline-v);
+  color: var(--fg);
+}
+
 /* 本次讨论常驻条：吸顶不随对话流滚动，项目名按钮打开左侧视频 */
 
 .task6-discussion-bar {
