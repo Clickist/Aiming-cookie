@@ -165,6 +165,7 @@ class SessionListItem(BaseModel):
     run_ref: Optional[str] = None
     status: str
     created_at: str
+    started_at: Optional[str] = None
     finished_at: Optional[str] = None
     attempts: int
     max_attempts: int
