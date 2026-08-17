@@ -362,6 +362,10 @@ pub enum FrameEnqueueResult {
 #[serde(rename_all = "camelCase")]
 pub enum HardwareEncoderPath {
     MediaFoundationHardwareH264,
+    // 全局硬件枚举为空但按采集适配器 LUID 定点枚举仍命中的硬件路径。
+    MediaFoundationHardwareAdapterLuidH264,
+    // 两层硬件枚举都为空时回退的 CPU 软件编码路径（Microsoft H264 Encoder MFT）。
+    MediaFoundationSoftwareH264,
     #[allow(dead_code)] // Explicit CPU-only baseline; automatic capture rejects it.
     D3dFrameReadbackSinkWriter,
 }
@@ -369,7 +373,9 @@ pub enum HardwareEncoderPath {
 impl HardwareEncoderPath {
     pub fn require_automatic_hardware(self) -> Result<Self, HardwareEncoderFailure> {
         match self {
-            Self::MediaFoundationHardwareH264 => Ok(self),
+            Self::MediaFoundationHardwareH264
+            | Self::MediaFoundationHardwareAdapterLuidH264
+            | Self::MediaFoundationSoftwareH264 => Ok(self),
             Self::D3dFrameReadbackSinkWriter => Err(HardwareEncoderFailure::CpuFallbackDenied),
         }
     }
@@ -2586,20 +2592,45 @@ impl HardwareH264Encoder {
         })?;
         let setup = (|| {
             let (adapter_luid, adapter_identity) = adapter_identity(device)?;
-            let global = enumerate_hardware_h264(None)?;
-            if global.is_empty() {
-                return Err(HardwareEncoderError::new(
-                    HardwareEncoderFailure::HardwareUnavailable,
-                    "no Media Foundation hardware H.264 encoder is available",
-                ));
-            }
-            let candidates = enumerate_hardware_h264(Some(adapter_luid))?;
-            if candidates.is_empty() {
-                return Err(HardwareEncoderError::new(
-                    HardwareEncoderFailure::AdapterMismatch,
-                    "no Media Foundation hardware H.264 encoder matches the capture adapter",
-                ));
-            }
+            let global = enumerate_h264_mfts(None, true)?;
+            let (candidates, path) = if global.is_empty() {
+                // 第二层：全局硬件枚举为空时不再立即失败，先按采集适配器
+                // LUID 定点枚举；命中后走与第一层相同的装配路径。
+                let luid = enumerate_h264_mfts(Some(adapter_luid), true)?;
+                if luid.is_empty() {
+                    return Err(HardwareEncoderError::new(
+                        HardwareEncoderFailure::HardwareUnavailable,
+                        "no Media Foundation hardware H.264 encoder is available",
+                    ));
+                }
+                (
+                    luid,
+                    HardwareEncoderPath::MediaFoundationHardwareAdapterLuidH264,
+                )
+            } else {
+                let luid = enumerate_h264_mfts(Some(adapter_luid), true)?;
+                if luid.is_empty() {
+                    return Err(HardwareEncoderError::new(
+                        HardwareEncoderFailure::AdapterMismatch,
+                        "no Media Foundation hardware H.264 encoder matches the capture adapter",
+                    ));
+                }
+                (luid, HardwareEncoderPath::MediaFoundationHardwareH264)
+            };
+            // 层级选定即写入诊断，后续装配失败时 adapter_identity 与
+            // encoderPath 仍保留，不因编码器初始化失败而丢失。
+            queue
+                .lock()
+                .map_err(|_| {
+                    HardwareEncoderError::new(
+                        HardwareEncoderFailure::EncoderSetupFailure,
+                        "window capture status is unavailable",
+                    )
+                })?
+                .configure_hardware_encoder(adapter_identity, path)
+                .map_err(|failure| {
+                    HardwareEncoderError::new(failure, "hardware policy rejected")
+                })?;
 
             let mut reset_token = 0;
             let mut device_manager = None;
@@ -2803,21 +2834,6 @@ impl HardwareH264Encoder {
                     continue;
                 }
                 let sequence_header = sequence_header(&transform);
-                queue
-                    .lock()
-                    .map_err(|_| {
-                        HardwareEncoderError::new(
-                            HardwareEncoderFailure::EncoderSetupFailure,
-                            "window capture status is unavailable",
-                        )
-                    })?
-                    .configure_hardware_encoder(
-                        adapter_identity.clone(),
-                        HardwareEncoderPath::MediaFoundationHardwareH264,
-                    )
-                    .map_err(|failure| {
-                        HardwareEncoderError::new(failure, "hardware policy rejected")
-                    })?;
                 return Ok(Self {
                     transform,
                     converter,
@@ -3137,6 +3153,809 @@ impl HardwareH264Encoder {
     }
 }
 
+// BT.601 有限范围的 CPU BGRA→NV12 转换。WGC 帧为 B8G8R8A8 交错布局，
+// NV12 为全尺寸 Y 平面 + 2x2 平均的 UV 交错平面；行内计算避免逐行拷贝。
+#[cfg(windows)]
+fn bgra8_to_nv12(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let width = width as usize;
+    let height = height as usize;
+    // 奇数尺寸按 ceil 计算色度平面（MFCalculateImageSize 的 NV12 合同）；
+    // 3/2 的截断公式只对偶数尺寸成立。
+    let chroma_width = width.div_ceil(2);
+    let chroma_height = height.div_ceil(2);
+    let mut nv12 = vec![0u8; width * height + chroma_width * chroma_height * 2];
+    for row in 0..height {
+        for col in 0..width {
+            let offset = (row * width + col) * FRAME_PIXEL_BYTES;
+            let blue = bgra[offset] as u32;
+            let green = bgra[offset + 1] as u32;
+            let red = bgra[offset + 2] as u32;
+            let luma = (66 * red + 129 * green + 25 * blue + 128) / 256 + 16;
+            nv12[row * width + col] = luma.clamp(16, 235) as u8;
+        }
+    }
+    let uv_plane = width * height;
+    for row in (0..height).step_by(2) {
+        for col in (0..width).step_by(2) {
+            let mut red = 0u32;
+            let mut green = 0u32;
+            let mut blue = 0u32;
+            // 奇数宽/高时 2x2 色度块越界：边缘像素复制补齐（窗口尺寸可奇，
+            // 视觉上 1px 的色度边缘复制无感知差异）。
+            for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                let sample_row = (row + dy).min(height - 1);
+                let sample_col = (col + dx).min(width - 1);
+                let offset = (sample_row * width + sample_col) * FRAME_PIXEL_BYTES;
+                blue += bgra[offset] as u32;
+                green += bgra[offset + 1] as u32;
+                red += bgra[offset + 2] as u32;
+            }
+            red /= 4;
+            green /= 4;
+            blue /= 4;
+            let chroma_u =
+                (-38 * red as i32 - 74 * green as i32 + 112 * blue as i32 + 128) / 256 + 128;
+            let chroma_v =
+                (112 * red as i32 - 94 * green as i32 - 18 * blue as i32 + 128) / 256 + 128;
+            let index = uv_plane + (row / 2) * chroma_width * 2 + (col / 2) * 2;
+            nv12[index] = chroma_u.clamp(16, 240) as u8;
+            nv12[index + 1] = chroma_v.clamp(16, 240) as u8;
+        }
+    }
+    nv12
+}
+
+// 软件 H.264 编码器（Microsoft H264 Encoder MFT）第三层回退路径。
+// 与硬件路径的差异：同步 MFT（无 async 事件回调）、输入为 CPU 读回的
+// BGRA→NV12 系统内存帧（MFCreateMemoryBuffer，不设 D3D 设备管理器），
+// ProcessInput 后同步 ProcessOutput 排空。输出合同与硬件路径完全一致：
+// EncodedH264Packet 进 replay、sequence_header（SPS/PPS）进 mux、
+// queue 记录包与层级，下游 replay 导出无感知。
+#[cfg(windows)]
+struct SoftwareH264Encoder {
+    transform: windows::Win32::Media::MediaFoundation::IMFTransform,
+    output_stream_info: windows::Win32::Media::MediaFoundation::MFT_OUTPUT_STREAM_INFO,
+    queue: Arc<Mutex<FrameQueue>>,
+    replay: EncodedReplayBuffer,
+    sequence_header: Vec<u8>,
+    width: u32,
+    height: u32,
+    context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+    staging: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+    _mf_platform: MediaFoundationPlatform,
+}
+
+#[cfg(windows)]
+impl SoftwareH264Encoder {
+    fn new(
+        device: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
+        context: &windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+        width: u32,
+        height: u32,
+        queue: Arc<Mutex<FrameQueue>>,
+    ) -> Result<Self, HardwareEncoderError> {
+        use windows::Win32::Graphics::Direct3D11::{
+            D3D11_CPU_ACCESS_READ, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
+        };
+        use windows::Win32::Graphics::Dxgi::Common::{
+            DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
+        };
+        use windows::Win32::Media::MediaFoundation::{
+            eAVEncH264VProfile_Base, MFMediaType_Video, MFStartup, MFVideoFormat_H264,
+            MFVideoFormat_NV12, MFSTARTUP_FULL, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+            MFT_MESSAGE_NOTIFY_START_OF_STREAM, MF_MT_MPEG2_PROFILE, MF_VERSION,
+        };
+
+        unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::HardwareUnavailable,
+                format!("Media Foundation startup failed: {error}"),
+            )
+        })?;
+        let setup = (|| {
+            let (_, adapter_identity) = adapter_identity(device)?;
+            let candidates = enumerate_h264_mfts(None, false)?;
+            if candidates.is_empty() {
+                return Err(HardwareEncoderError::new(
+                    HardwareEncoderFailure::HardwareUnavailable,
+                    "no Media Foundation software H.264 encoder is available",
+                ));
+            }
+            let input_type = create_video_type(
+                MFMediaType_Video,
+                MFVideoFormat_NV12,
+                width,
+                height,
+                DEFAULT_RECORDING_FPS_NUMERATOR,
+                DEFAULT_RECORDING_FPS_DENOMINATOR,
+                0,
+            )
+            .map_err(|message| {
+                HardwareEncoderError::new(HardwareEncoderFailure::EncoderSetupFailure, message)
+            })?;
+            let output_type = create_video_type(
+                MFMediaType_Video,
+                MFVideoFormat_H264,
+                width,
+                height,
+                DEFAULT_RECORDING_FPS_NUMERATOR,
+                DEFAULT_RECORDING_FPS_DENOMINATOR,
+                8_000_000,
+            )
+            .map_err(|message| {
+                HardwareEncoderError::new(HardwareEncoderFailure::EncoderSetupFailure, message)
+            })?;
+            unsafe {
+                input_type
+                    .SetUINT32(
+                        &windows::Win32::Media::MediaFoundation::MF_MT_INTERLACE_MODE,
+                        windows::Win32::Media::MediaFoundation::MFVideoInterlace_Progressive.0
+                            as u32,
+                    )
+                    .map_err(|error| {
+                        HardwareEncoderError::new(
+                            HardwareEncoderFailure::EncoderSetupFailure,
+                            format!("software MFT NV12 interlace mode setup failed: {error}"),
+                        )
+                    })?;
+                output_type
+                    .SetUINT32(
+                        &windows::Win32::Media::MediaFoundation::MF_MT_INTERLACE_MODE,
+                        windows::Win32::Media::MediaFoundation::MFVideoInterlace_Progressive.0
+                            as u32,
+                    )
+                    .map_err(|error| {
+                        HardwareEncoderError::new(
+                            HardwareEncoderFailure::EncoderSetupFailure,
+                            format!("software MFT H.264 interlace mode setup failed: {error}"),
+                        )
+                    })?;
+                output_type
+                    .SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base.0 as u32)
+                    .map_err(|error| {
+                        HardwareEncoderError::new(
+                            HardwareEncoderFailure::EncoderSetupFailure,
+                            format!("software MFT H.264 Baseline profile setup failed: {error}"),
+                        )
+                    })?;
+            }
+            let staging_description = D3D11_TEXTURE2D_DESC {
+                Width: width,
+                Height: height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                MiscFlags: 0,
+            };
+            let mut staging = None;
+            unsafe { device.CreateTexture2D(&staging_description, None, Some(&mut staging)) }
+                .map_err(|error| {
+                    HardwareEncoderError::new(
+                        HardwareEncoderFailure::EncoderSetupFailure,
+                        format!("software input staging texture creation failed: {error}"),
+                    )
+                })?;
+            let staging = staging.ok_or_else(|| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::EncoderSetupFailure,
+                    "software input staging texture was not returned",
+                )
+            })?;
+            let mut last_rejection = "no candidate was activated".to_string();
+            for activation in candidates {
+                let friendly_name = mft_friendly_name(&activation);
+                let transform: windows::Win32::Media::MediaFoundation::IMFTransform =
+                    match unsafe { activation.ActivateObject() } {
+                        Ok(transform) => transform,
+                        Err(error) => {
+                            last_rejection = format!("{friendly_name}: activation failed: {error}");
+                            continue;
+                        }
+                    };
+                if let Err(error) = unsafe { transform.SetOutputType(0, &output_type, 0) } {
+                    last_rejection =
+                        format!("{friendly_name}: MFT H.264 output type setup failed: {error}");
+                    continue;
+                }
+                if let Err(error) = unsafe { transform.SetInputType(0, &input_type, 0) } {
+                    last_rejection =
+                        format!("{friendly_name}: MFT NV12 input type setup failed: {error}");
+                    continue;
+                }
+                let output_stream_info = match unsafe { transform.GetOutputStreamInfo(0) } {
+                    Ok(info) => info,
+                    Err(error) => {
+                        last_rejection =
+                            format!("{friendly_name}: MFT output stream info failed: {error}");
+                        continue;
+                    }
+                };
+                if let Err(error) =
+                    unsafe { transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0) }
+                {
+                    last_rejection = format!(
+                        "{friendly_name}: MFT begin streaming notification failed: {error}"
+                    );
+                    continue;
+                }
+                if let Err(error) =
+                    unsafe { transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0) }
+                {
+                    last_rejection = format!(
+                        "{friendly_name}: MFT start streaming notification failed: {error}"
+                    );
+                    continue;
+                }
+                let sequence_header = sequence_header(&transform);
+                queue
+                    .lock()
+                    .map_err(|_| {
+                        HardwareEncoderError::new(
+                            HardwareEncoderFailure::EncoderSetupFailure,
+                            "window capture status is unavailable",
+                        )
+                    })?
+                    .configure_hardware_encoder(
+                        adapter_identity.clone(),
+                        HardwareEncoderPath::MediaFoundationSoftwareH264,
+                    )
+                    .map_err(|failure| {
+                        HardwareEncoderError::new(failure, "software policy rejected")
+                    })?;
+                return Ok(Self {
+                    transform,
+                    output_stream_info,
+                    queue,
+                    replay: EncodedReplayBuffer::new(),
+                    sequence_header,
+                    width,
+                    height,
+                    context: context.clone(),
+                    staging,
+                    _mf_platform: MediaFoundationPlatform,
+                });
+            }
+            Err(HardwareEncoderError::new(
+                HardwareEncoderFailure::EncoderSetupFailure,
+                format!(
+                    "no software H.264 MFT accepted NV12 input; \
+                     lastRejection={last_rejection}"
+                ),
+            ))
+        })();
+        if setup.is_err() {
+            unsafe { windows::Win32::Media::MediaFoundation::MFShutdown() }.ok();
+        }
+        setup
+    }
+
+    fn submit_texture(
+        &mut self,
+        source: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+        pts_100ns: i64,
+        duration_100ns: i64,
+    ) -> Result<(), HardwareEncoderError> {
+        use windows::Win32::Graphics::Direct3D11::{D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ};
+        use windows::Win32::Media::MediaFoundation::{MFCreateMemoryBuffer, MFCreateSample};
+
+        // 软件路径逐帧同步排空输出，不需要 async 事件泵；阻塞 Map 等待
+        // CopyResource 完成，fallback 路径不追求 GPU 流水线并行。
+        unsafe { self.context.CopyResource(&self.staging, source) };
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe {
+            self.context
+                .Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+        }
+        .map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::EncoderRuntimeFailure,
+                format!("software input staging map failed: {error}"),
+            )
+        })?;
+        let row_bytes = (self.width as usize)
+            .checked_mul(FRAME_PIXEL_BYTES)
+            .ok_or_else(|| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::InvalidPacket,
+                    "software input row byte size overflow",
+                )
+            })?;
+        let total_bytes = row_bytes.checked_mul(self.height as usize).ok_or_else(|| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::InvalidPacket,
+                "software input frame byte size overflow",
+            )
+        })?;
+        let pixels = if mapped.pData.is_null() || mapped.RowPitch < row_bytes as u32 {
+            Err(HardwareEncoderError::new(
+                HardwareEncoderFailure::InvalidPacket,
+                "software input staging returned an invalid mapping",
+            ))
+        } else if mapped.RowPitch == row_bytes as u32 {
+            let mut pixels = vec![0u8; total_bytes];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    mapped.pData.cast::<u8>(),
+                    pixels.as_mut_ptr(),
+                    total_bytes,
+                );
+            }
+            Ok(pixels)
+        } else {
+            let mut pixels = vec![0u8; total_bytes];
+            for row in 0..self.height as usize {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        (mapped.pData as *const u8).add(row * mapped.RowPitch as usize),
+                        pixels.as_mut_ptr().add(row * row_bytes),
+                        row_bytes,
+                    );
+                }
+            }
+            Ok(pixels)
+        };
+        unsafe { self.context.Unmap(&self.staging, 0) };
+        let pixels = pixels?;
+
+        let nv12 = bgra8_to_nv12(&pixels, self.width, self.height);
+        let buffer = unsafe { MFCreateMemoryBuffer(nv12.len() as u32) }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::EncoderRuntimeFailure,
+                format!("software input buffer creation failed: {error}"),
+            )
+        })?;
+        let mut destination = std::ptr::null_mut();
+        unsafe {
+            buffer.Lock(&mut destination, None, None).map_err(|error| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::EncoderRuntimeFailure,
+                    format!("software input buffer lock failed: {error}"),
+                )
+            })?;
+            std::ptr::copy_nonoverlapping(nv12.as_ptr(), destination, nv12.len());
+            buffer.Unlock().map_err(|error| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::EncoderRuntimeFailure,
+                    format!("software input buffer unlock failed: {error}"),
+                )
+            })?;
+            buffer
+                .SetCurrentLength(nv12.len() as u32)
+                .map_err(|error| {
+                    HardwareEncoderError::new(
+                        HardwareEncoderFailure::EncoderRuntimeFailure,
+                        format!("software input buffer length setup failed: {error}"),
+                    )
+                })?;
+        }
+        let sample = unsafe { MFCreateSample() }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::EncoderRuntimeFailure,
+                format!("software input sample creation failed: {error}"),
+            )
+        })?;
+        unsafe {
+            sample.AddBuffer(&buffer).map_err(|error| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::EncoderRuntimeFailure,
+                    format!("software input sample buffer setup failed: {error}"),
+                )
+            })?;
+            sample.SetSampleTime(pts_100ns).map_err(|error| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::EncoderRuntimeFailure,
+                    format!("software input PTS setup failed: {error}"),
+                )
+            })?;
+            sample.SetSampleDuration(duration_100ns).map_err(|error| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::EncoderRuntimeFailure,
+                    format!("software input duration setup failed: {error}"),
+                )
+            })?;
+            self.transform
+                .ProcessInput(0, &sample, 0)
+                .map_err(|error| {
+                    HardwareEncoderError::new(
+                        HardwareEncoderFailure::EncoderRuntimeFailure,
+                        format!("software H.264 ProcessInput failed: {error}"),
+                    )
+                })?;
+        }
+        self.pump_output()
+    }
+
+    fn pump_output(&mut self) -> Result<(), HardwareEncoderError> {
+        use std::mem::ManuallyDrop;
+        use windows::Win32::Media::MediaFoundation::{
+            MFCreateMemoryBuffer, MFCreateSample, MFT_OUTPUT_DATA_BUFFER,
+            MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
+            MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
+        };
+
+        // 同步 MFT 驱动循环：ProcessOutput 直到 NEED_MORE_INPUT。成功但
+        // 无 sample（NO_SAMPLE 标志）时继续泵取；上限防止病态 MFT 死循环。
+        for _ in 0..1024 {
+            let needs_sample = self.output_stream_info.dwFlags
+                & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)
+                    as u32
+                == 0;
+            let provided_sample = if needs_sample {
+                let sample = unsafe { MFCreateSample() }.map_err(|error| {
+                    HardwareEncoderError::new(
+                        HardwareEncoderFailure::EncoderRuntimeFailure,
+                        format!("software output sample creation failed: {error}"),
+                    )
+                })?;
+                let buffer = unsafe { MFCreateMemoryBuffer(self.output_stream_info.cbSize) }
+                    .map_err(|error| {
+                        HardwareEncoderError::new(
+                            HardwareEncoderFailure::EncoderRuntimeFailure,
+                            format!("software output buffer creation failed: {error}"),
+                        )
+                    })?;
+                unsafe { sample.AddBuffer(&buffer) }.map_err(|error| {
+                    HardwareEncoderError::new(
+                        HardwareEncoderFailure::EncoderRuntimeFailure,
+                        format!("software output buffer setup failed: {error}"),
+                    )
+                })?;
+                Some(sample)
+            } else {
+                None
+            };
+            let mut output = MFT_OUTPUT_DATA_BUFFER {
+                dwStreamID: 0,
+                pSample: ManuallyDrop::new(provided_sample),
+                dwStatus: 0,
+                pEvents: ManuallyDrop::new(None),
+            };
+            let mut status = 0;
+            let process_result = unsafe {
+                self.transform
+                    .ProcessOutput(0, std::slice::from_mut(&mut output), &mut status)
+            };
+            let sample = unsafe { ManuallyDrop::take(&mut output.pSample) };
+            unsafe { ManuallyDrop::drop(&mut output.pEvents) };
+            match process_result {
+                Ok(()) => {
+                    let Some(sample) = sample else {
+                        // 成功但未产出 sample 不是终止条件，继续泵取直到
+                        // NEED_MORE_INPUT 或达到上限。
+                        continue;
+                    };
+                    let packet = self.sample_to_packet(&sample)?;
+                    self.accept_packet(packet)?;
+                }
+                Err(error)
+                    if error.code() == MF_E_TRANSFORM_STREAM_CHANGE
+                        || error.code() == windows::Win32::Media::MediaFoundation::MF_E_TRANSFORM_TYPE_NOT_SET =>
+                {
+                    // SPS/PPS 或输出类型刷新：重读 sequence header 后继续。
+                    self.sequence_header = sequence_header(&self.transform);
+                }
+                Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => {
+                    return Ok(());
+                }
+                Err(error) => {
+                    return Err(HardwareEncoderError::new(
+                        HardwareEncoderFailure::EncoderRuntimeFailure,
+                        format!("software H.264 ProcessOutput failed: {error}"),
+                    ));
+                }
+            }
+        }
+        Err(HardwareEncoderError::new(
+            HardwareEncoderFailure::EncoderRuntimeFailure,
+            "software H.264 output pump exceeded the iteration limit",
+        ))
+    }
+
+    fn sample_to_packet(
+        &self,
+        sample: &windows::Win32::Media::MediaFoundation::IMFSample,
+    ) -> Result<EncodedH264Packet, HardwareEncoderError> {
+        use windows::Win32::Media::MediaFoundation::MFSampleExtension_CleanPoint;
+
+        let buffer = unsafe { sample.ConvertToContiguousBuffer() }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::InvalidPacket,
+                format!("software H.264 access unit buffer conversion failed: {error}"),
+            )
+        })?;
+        let mut data = std::ptr::null_mut();
+        let mut current_length = 0;
+        unsafe { buffer.Lock(&mut data, None, Some(&mut current_length)) }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::InvalidPacket,
+                format!("software H.264 access unit lock failed: {error}"),
+            )
+        })?;
+        let bytes = if data.is_null() || current_length == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(data, current_length as usize).to_vec() }
+        };
+        unsafe { buffer.Unlock() }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::InvalidPacket,
+                format!("software H.264 access unit unlock failed: {error}"),
+            )
+        })?;
+        let pts_100ns = unsafe { sample.GetSampleTime() }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::InvalidPacket,
+                format!("software H.264 packet PTS read failed: {error}"),
+            )
+        })?;
+        let decode_timestamp = unsafe {
+            sample.GetUINT64(
+                &windows::Win32::Media::MediaFoundation::MFSampleExtension_DecodeTimestamp,
+            )
+        }
+        .ok()
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::UnsupportedPacketTiming,
+                "software H.264 decode timestamp exceeds the supported timeline",
+            )
+        })?
+        .unwrap_or(pts_100ns);
+        if decode_timestamp != pts_100ns {
+            return Err(HardwareEncoderError::new(
+                HardwareEncoderFailure::UnsupportedPacketTiming,
+                "reordered H.264 output is unsupported by replay MP4 v1",
+            ));
+        }
+        let duration_100ns = unsafe { sample.GetSampleDuration() }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::InvalidPacket,
+                format!("software H.264 packet duration read failed: {error}"),
+            )
+        })?;
+        Ok(EncodedH264Packet {
+            bytes: bytes.into(),
+            pts_100ns,
+            duration_100ns,
+            keyframe: unsafe { sample.GetUINT32(&MFSampleExtension_CleanPoint) }.unwrap_or(0) != 0,
+        })
+    }
+
+    fn accept_packet(&mut self, packet: EncodedH264Packet) -> Result<(), HardwareEncoderError> {
+        if self.sequence_header.is_empty() {
+            self.sequence_header = sequence_header(&self.transform);
+        }
+        self.replay.push(packet.clone()).map_err(|error| {
+            let failure = match error {
+                ReplayBufferError::ByteOverflow => HardwareEncoderFailure::Backpressure,
+                ReplayBufferError::TimestampRegression => {
+                    HardwareEncoderFailure::UnsupportedPacketTiming
+                }
+                _ => HardwareEncoderFailure::InvalidPacket,
+            };
+            self.record_failure(failure);
+            HardwareEncoderError::new(
+                failure,
+                format!("software replay buffer rejected a packet: {error:?}"),
+            )
+        })?;
+        self.queue
+            .lock()
+            .map_err(|_| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::EncoderRuntimeFailure,
+                    "window capture status is unavailable",
+                )
+            })?
+            .record_hardware_packet(packet.pts_100ns)
+            .map_err(|failure| HardwareEncoderError::new(failure, "invalid software packet"))?;
+        Ok(())
+    }
+
+    fn record_failure(&self, failure: HardwareEncoderFailure) {
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.record_hardware_failure(failure);
+        }
+    }
+
+    fn replay_mux_input(
+        &self,
+        requested_start_100ns: i64,
+        requested_end_100ns: i64,
+        width: u32,
+        height: u32,
+        capture_clock: CaptureClockMetadata,
+    ) -> Result<ReplayMuxInput, ReplayExportFailure> {
+        Ok(ReplayMuxInput {
+            snapshot: self
+                .replay
+                .snapshot(requested_start_100ns, requested_end_100ns)
+                .map_err(replay_buffer_export_failure)?,
+            sequence_header: Arc::from(self.sequence_header.clone()),
+            width,
+            height,
+            capture_clock,
+        })
+    }
+
+    #[cfg(test)]
+    fn packet_count(&self) -> usize {
+        self.replay.status().packet_count
+    }
+
+    #[cfg(test)]
+    fn has_keyframe(&self) -> bool {
+        self.replay.packets.iter().any(|packet| packet.keyframe)
+    }
+
+    #[cfg(test)]
+    fn full_frame_cpu_readback(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SoftwareH264Encoder {
+    fn drop(&mut self) {
+        use windows::core::Interface;
+        use windows::Win32::Media::MediaFoundation::{
+            IMFShutdown, MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_END_STREAMING,
+        };
+
+        unsafe {
+            self.transform
+                .ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0)
+                .ok();
+            self.transform
+                .ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0)
+                .ok();
+        }
+        if let Ok(shutdown) = self.transform.cast::<IMFShutdown>() {
+            unsafe { shutdown.Shutdown() }.ok();
+        }
+    }
+}
+
+// 自动采集编码器封装：硬件路径（第一/二层）或软件路径（第三层）共用
+// 同一装配点与帧驱动协议，下游 replay 导出与诊断无感知具体层级。
+#[cfg(windows)]
+enum AutomaticH264Encoder {
+    Hardware(HardwareH264Encoder),
+    Software(SoftwareH264Encoder),
+}
+
+#[cfg(windows)]
+impl AutomaticH264Encoder {
+    fn new(
+        device: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
+        context: &windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+        width: u32,
+        height: u32,
+        queue: Arc<Mutex<FrameQueue>>,
+    ) -> Result<Self, HardwareEncoderError> {
+        // 只读环境覆盖：强制走第三层软件编码，用于无硬件 MFT 机器的
+        // 实机验证与故障排查（正常采集永远先尝试硬件层）。
+        let forced_software =
+            std::env::var("AIMING_COOKIE_FORCE_SOFTWARE_ENCODER").is_ok_and(|value| value == "1");
+        if forced_software {
+            return Ok(Self::Software(SoftwareH264Encoder::new(
+                device, context, width, height, queue,
+            )?));
+        }
+        match HardwareH264Encoder::new(device, context, width, height, Arc::clone(&queue)) {
+            Ok(encoder) => Ok(Self::Hardware(encoder)),
+            // 硬件编码器不可用（两级硬件枚举都为空）或全局枚举有编码器但
+            // 都不匹配采集适配器（hybrid 机器）时回退软件编码；其余装配
+            // 错误保持原样上报。
+            Err(error)
+                if matches!(
+                    error.failure,
+                    HardwareEncoderFailure::HardwareUnavailable
+                        | HardwareEncoderFailure::AdapterMismatch
+                ) =>
+            {
+                Ok(Self::Software(SoftwareH264Encoder::new(
+                    device, context, width, height, queue,
+                )?))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn drain_events(&mut self) -> Result<(), HardwareEncoderError> {
+        match self {
+            Self::Hardware(encoder) => encoder.drain_events(),
+            Self::Software(_) => Ok(()),
+        }
+    }
+
+    fn accepts_input(&self) -> bool {
+        match self {
+            Self::Hardware(encoder) => encoder.accepts_input,
+            Self::Software(_) => true,
+        }
+    }
+
+    fn submit_capture_frame(
+        &mut self,
+        captured: HardwareCaptureFrame,
+    ) -> Result<(), HardwareEncoderError> {
+        use windows::core::Interface;
+        use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
+        use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
+
+        debug_assert!(
+            captured.encoded_pts_100ns <= captured.sample.system_relative_time_100ns,
+            "derived hardware PTS must not run ahead of its WGC source timestamp"
+        );
+        let surface = captured.frame.Surface().map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::GpuConversionFailure,
+                format!("capture frame surface access failed: {error}"),
+            )
+        })?;
+        let access = surface
+            .cast::<IDirect3DDxgiInterfaceAccess>()
+            .map_err(|error| {
+                HardwareEncoderError::new(
+                    HardwareEncoderFailure::GpuConversionFailure,
+                    format!("capture surface DXGI access failed: {error}"),
+                )
+            })?;
+        let source: ID3D11Texture2D = unsafe { access.GetInterface() }.map_err(|error| {
+            HardwareEncoderError::new(
+                HardwareEncoderFailure::GpuConversionFailure,
+                format!("capture surface texture access failed: {error}"),
+            )
+        })?;
+        let duration = 10_000_000 * DEFAULT_RECORDING_FPS_DENOMINATOR as i64
+            / DEFAULT_RECORDING_FPS_NUMERATOR as i64;
+        match self {
+            Self::Hardware(encoder) => {
+                encoder.submit_texture(&source, captured.encoded_pts_100ns, duration)
+            }
+            Self::Software(encoder) => {
+                encoder.submit_texture(&source, captured.encoded_pts_100ns, duration)
+            }
+        }
+    }
+
+    fn replay_mux_input(
+        &self,
+        requested_start_100ns: i64,
+        requested_end_100ns: i64,
+        width: u32,
+        height: u32,
+        capture_clock: CaptureClockMetadata,
+    ) -> Result<ReplayMuxInput, ReplayExportFailure> {
+        match self {
+            Self::Hardware(encoder) => encoder.replay_mux_input(
+                requested_start_100ns,
+                requested_end_100ns,
+                width,
+                height,
+                capture_clock,
+            ),
+            Self::Software(encoder) => encoder.replay_mux_input(
+                requested_start_100ns,
+                requested_end_100ns,
+                width,
+                height,
+                capture_clock,
+            ),
+        }
+    }
+}
+
 #[cfg(windows)]
 struct HardwareCaptureFrame {
     frame: windows::Graphics::Capture::Direct3D11CaptureFrame,
@@ -3149,47 +3968,6 @@ struct HardwareCaptureFrame {
 // of the D3D immediate context and Media Foundation transform.
 #[cfg(windows)]
 unsafe impl Send for HardwareCaptureFrame {}
-
-#[cfg(windows)]
-fn submit_hardware_capture_frame(
-    encoder: &mut HardwareH264Encoder,
-    captured: HardwareCaptureFrame,
-) -> Result<(), HardwareEncoderError> {
-    use windows::core::Interface;
-    use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
-    use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
-
-    debug_assert!(
-        captured.encoded_pts_100ns <= captured.sample.system_relative_time_100ns,
-        "derived hardware PTS must not run ahead of its WGC source timestamp"
-    );
-    let surface = captured.frame.Surface().map_err(|error| {
-        HardwareEncoderError::new(
-            HardwareEncoderFailure::GpuConversionFailure,
-            format!("capture frame surface access failed: {error}"),
-        )
-    })?;
-    let access = surface
-        .cast::<IDirect3DDxgiInterfaceAccess>()
-        .map_err(|error| {
-            HardwareEncoderError::new(
-                HardwareEncoderFailure::GpuConversionFailure,
-                format!("capture surface DXGI access failed: {error}"),
-            )
-        })?;
-    let source: ID3D11Texture2D = unsafe { access.GetInterface() }.map_err(|error| {
-        HardwareEncoderError::new(
-            HardwareEncoderFailure::GpuConversionFailure,
-            format!("capture surface texture access failed: {error}"),
-        )
-    })?;
-    encoder.submit_texture(
-        &source,
-        captured.encoded_pts_100ns,
-        10_000_000 * DEFAULT_RECORDING_FPS_DENOMINATOR as i64
-            / DEFAULT_RECORDING_FPS_NUMERATOR as i64,
-    )
-}
 
 #[cfg(windows)]
 fn dequeue_if_permitted<T>(
@@ -3262,17 +4040,31 @@ fn adapter_identity(
 }
 
 #[cfg(windows)]
-fn enumerate_hardware_h264(
+fn enumerate_h264_mfts(
     adapter_luid: Option<windows::Win32::Foundation::LUID>,
+    hardware_only: bool,
 ) -> Result<Vec<windows::Win32::Media::MediaFoundation::IMFActivate>, HardwareEncoderError> {
     use std::mem::size_of;
     use windows::Win32::Media::MediaFoundation::{
         MFCreateAttributes, MFMediaType_Video, MFTEnum2, MFVideoFormat_H264, MFVideoFormat_NV12,
         MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_ADAPTER_LUID, MFT_ENUM_FLAG_HARDWARE,
-        MFT_ENUM_FLAG_SORTANDFILTER, MFT_REGISTER_TYPE_INFO,
+        MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT, MFT_REGISTER_TYPE_INFO,
     };
     use windows::Win32::System::Com::CoTaskMemFree;
 
+    let kind = if hardware_only {
+        "hardware"
+    } else {
+        "software"
+    };
+    let flags = if hardware_only {
+        // 硬件层沿用现状：HARDWARE 枚举（async MFT 事件模型驱动）。
+        MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER
+    } else {
+        // 软件层只接受同步 MFT（Microsoft H264 Encoder MFT 即 sync），
+        // 由 ProcessInput/ProcessOutput 同步驱动，不参与 async 事件模型。
+        MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER
+    };
     let input_type = MFT_REGISTER_TYPE_INFO {
         guidMajorType: MFMediaType_Video,
         guidSubtype: MFVideoFormat_NV12,
@@ -3286,13 +4078,13 @@ fn enumerate_hardware_h264(
         unsafe { MFCreateAttributes(&mut attributes, 1) }.map_err(|error| {
             HardwareEncoderError::new(
                 HardwareEncoderFailure::EncoderSetupFailure,
-                format!("hardware MFT adapter attributes creation failed: {error}"),
+                format!("{kind} MFT adapter attributes creation failed: {error}"),
             )
         })?;
         let attributes = attributes.ok_or_else(|| {
             HardwareEncoderError::new(
                 HardwareEncoderFailure::EncoderSetupFailure,
-                "hardware MFT adapter attributes were not returned",
+                format!("{kind} MFT adapter attributes were not returned"),
             )
         })?;
         let bytes = unsafe {
@@ -3304,7 +4096,7 @@ fn enumerate_hardware_h264(
         unsafe { attributes.SetBlob(&MFT_ENUM_ADAPTER_LUID, bytes) }.map_err(|error| {
             HardwareEncoderError::new(
                 HardwareEncoderFailure::EncoderSetupFailure,
-                format!("hardware MFT adapter LUID configuration failed: {error}"),
+                format!("{kind} MFT adapter LUID configuration failed: {error}"),
             )
         })?;
         Some(attributes)
@@ -3316,7 +4108,7 @@ fn enumerate_hardware_h264(
     unsafe {
         MFTEnum2(
             MFT_CATEGORY_VIDEO_ENCODER,
-            MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
+            flags,
             Some(&input_type),
             Some(&output_type),
             attributes.as_ref(),
@@ -3327,7 +4119,7 @@ fn enumerate_hardware_h264(
     .map_err(|error| {
         HardwareEncoderError::new(
             HardwareEncoderFailure::EncoderSetupFailure,
-            format!("hardware H.264 MFT enumeration failed: {error}"),
+            format!("{kind} H.264 MFT enumeration failed: {error}"),
         )
     })?;
     if raw_activations.is_null() || activation_count == 0 {
@@ -3542,8 +4334,10 @@ fn run_wgc_window_capture(
             .CreateCaptureSession(&item)
             .map_err(|error| format!("CreateCaptureSession failed: {error}"))?;
         let recording_failed = Arc::new(AtomicBool::new(false));
-        let mut automatic_hardware_encoder = if recording_path.is_none() {
-            let encoder = HardwareH264Encoder::new(
+        let mut automatic_encoder = if recording_path.is_none() {
+            // 三级回退：全局硬件枚举 → LUID 定点枚举 → 软件 H.264 MFT，
+            // 全部失败才报错；选中的层级与适配器身份已写入队列诊断。
+            let encoder = AutomaticH264Encoder::new(
                 &device,
                 &context,
                 size.Width as u32,
@@ -3554,18 +4348,13 @@ fn run_wgc_window_capture(
                 if let Ok(mut guard) = queue.lock() {
                     guard.record_hardware_failure(error.failure);
                 }
-                format!(
-                    "automatic hardware H.264 initialization failed: {}",
-                    error.message
-                )
+                format!("automatic H.264 initialization failed: {}", error.message)
             })?;
             Some(encoder)
         } else {
             None
         };
-        let (hardware_frame_sender, hardware_frame_receiver) = if automatic_hardware_encoder
-            .is_some()
-        {
+        let (encoder_frame_sender, encoder_frame_receiver) = if automatic_encoder.is_some() {
             let (sender, receiver) = std::sync::mpsc::sync_channel(DEFAULT_FRAME_QUEUE_CAPACITY);
             (Some(sender), Some(receiver))
         } else {
@@ -3615,7 +4404,7 @@ fn run_wgc_window_capture(
         let stop_for_handler = Arc::clone(&stop);
         let sender_for_handler = recording_sender.clone();
         let readback_for_handler = recording_readback.clone();
-        let hardware_frame_sender_for_handler = hardware_frame_sender.clone();
+        let encoder_frame_sender_for_handler = encoder_frame_sender.clone();
         let last_recorded_timestamp_for_handler = Arc::clone(&last_recorded_timestamp);
         let recording_failed_for_handler = Arc::clone(&recording_failed);
         let frame_arrived_token = frame_pool
@@ -3647,7 +4436,7 @@ fn run_wgc_window_capture(
                                 .lock()
                                 .map_err(|_| windows::core::Error::from_win32())?;
                             let result = if sender_for_handler.is_some()
-                                || hardware_frame_sender_for_handler.is_some()
+                                || encoder_frame_sender_for_handler.is_some()
                             {
                                 guard.record_metadata(&sample).map(|_| ())
                             } else {
@@ -3675,7 +4464,7 @@ fn run_wgc_window_capture(
                         if content_size.Width != size.Width || content_size.Height != size.Height {
                             recording_failed_for_handler.store(true, Ordering::Release);
                             if let Ok(mut guard) = queue_for_handler.lock() {
-                                if hardware_frame_sender_for_handler.is_some() {
+                                if encoder_frame_sender_for_handler.is_some() {
                                     guard.record_hardware_failure(
                                         HardwareEncoderFailure::GpuConversionFailure,
                                     );
@@ -3686,7 +4475,7 @@ fn run_wgc_window_capture(
                             return Ok(());
                         }
 
-                        if let Some(sender) = hardware_frame_sender_for_handler.as_ref() {
+                        if let Some(sender) = encoder_frame_sender_for_handler.as_ref() {
                             if frame
                                 .cast::<windows::Win32::System::Com::IAgileObject>()
                                 .is_err()
@@ -3805,12 +4594,12 @@ fn run_wgc_window_capture(
                                 "another hardware replay export is still finalizing",
                             )));
                         } else {
-                            let input = automatic_hardware_encoder
+                            let input = automatic_encoder
                                 .as_ref()
                                 .ok_or_else(|| {
                                     replay_export_failure(
                                         ReplayExportFailureKind::CaptureUnavailable,
-                                        "hardware replay encoder is unavailable",
+                                        "automatic replay encoder is unavailable",
                                     )
                                 })
                                 .and_then(|encoder| {
@@ -3883,18 +4672,17 @@ fn run_wgc_window_capture(
                     }
                 }
             }
-            if let (Some(encoder), Some(receiver)) = (
-                automatic_hardware_encoder.as_mut(),
-                hardware_frame_receiver.as_ref(),
-            ) {
+            if let (Some(encoder), Some(receiver)) =
+                (automatic_encoder.as_mut(), encoder_frame_receiver.as_ref())
+            {
                 let mut failure = None;
                 if let Err(error) = encoder.drain_events() {
                     failure = Some(error.failure);
                 }
                 if let Some(captured) =
-                    dequeue_if_permitted(failure.is_none() && encoder.accepts_input, receiver)
+                    dequeue_if_permitted(failure.is_none() && encoder.accepts_input(), receiver)
                 {
-                    if let Err(error) = submit_hardware_capture_frame(encoder, captured) {
+                    if let Err(error) = encoder.submit_capture_frame(captured) {
                         failure = Some(error.failure);
                     }
                 }
@@ -3905,7 +4693,7 @@ fn run_wgc_window_capture(
                     }
                 }
             }
-            let poll_interval_ms = if hardware_frame_receiver.is_some() {
+            let poll_interval_ms = if encoder_frame_receiver.is_some() {
                 1
             } else {
                 20
@@ -5369,5 +6157,312 @@ mod tests {
         assert!(window_status.writer_submitted_frames > 0);
         assert_eq!(window_status.encoder_errors, 0);
         assert!(mp4_path.is_file());
+    }
+
+    // WARP 设备在无 GPU 的 CI/虚拟机上也存在，软件编码路径不依赖 GPU
+    // 视频处理能力，用 WARP 让测试在任何 Win10+ 环境可复现。
+    #[cfg(windows)]
+    fn warp_bgra_source(
+        width: u32,
+        height: u32,
+    ) -> (
+        windows::Win32::Graphics::Direct3D11::ID3D11Device,
+        windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+        windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+    ) {
+        use windows::Win32::Foundation::HMODULE;
+        use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_11_0};
+        use windows::Win32::Graphics::Direct3D11::{
+            D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, D3D11_BIND_RENDER_TARGET,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
+            D3D11_USAGE_DEFAULT,
+        };
+        use windows::Win32::Graphics::Dxgi::Common::{
+            DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
+        };
+
+        let mut device: Option<ID3D11Device> = None;
+        let mut context: Option<ID3D11DeviceContext> = None;
+        unsafe {
+            D3D11CreateDevice(
+                None,
+                D3D_DRIVER_TYPE_WARP,
+                HMODULE::default(),
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                Some(&[D3D_FEATURE_LEVEL_11_0]),
+                D3D11_SDK_VERSION,
+                Some(&mut device),
+                None,
+                Some(&mut context),
+            )
+        }
+        .expect("WARP D3D11 device should initialize");
+        let device = device.expect("D3D11 device should be returned");
+        let context = context.expect("D3D11 context should be returned");
+        let description = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        let mut source = None;
+        unsafe { device.CreateTexture2D(&description, None, Some(&mut source)) }
+            .expect("GPU BGRA texture should initialize");
+        (
+            device,
+            context,
+            source.expect("GPU BGRA texture should be returned"),
+        )
+    }
+
+    #[cfg(windows)]
+    fn fill_bgra_texture(
+        context: &windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+        texture: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+        width: u32,
+        height: u32,
+        frame_index: u32,
+    ) {
+        let mut pixels = vec![0u8; (width * height * FRAME_PIXEL_BYTES as u32) as usize];
+        for (index, pixel) in pixels.chunks_exact_mut(FRAME_PIXEL_BYTES).enumerate() {
+            let x = (index as u32) % width;
+            pixel[0] = (x * 255 / width).wrapping_add(frame_index) as u8;
+            pixel[1] = 96;
+            pixel[2] = 192;
+            pixel[3] = 255;
+        }
+        unsafe {
+            context.UpdateSubresource(
+                texture,
+                0,
+                None,
+                pixels.as_ptr().cast(),
+                width * FRAME_PIXEL_BYTES as u32,
+                0,
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    fn drive_software_encoder(
+        frames: u32,
+        width: u32,
+        height: u32,
+    ) -> (SoftwareH264Encoder, Arc<Mutex<FrameQueue>>) {
+        let (device, context, source) = warp_bgra_source(width, height);
+        let queue = Arc::new(Mutex::new(
+            FrameQueue::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap(),
+        ));
+        let mut encoder =
+            SoftwareH264Encoder::new(&device, &context, width, height, Arc::clone(&queue))
+                .expect("software H.264 encoder should initialize");
+        let frame_duration = 10_000_000 / 60;
+        for index in 0..frames {
+            fill_bgra_texture(&context, &source, width, height, index);
+            encoder
+                .submit_texture(&source, index as i64 * frame_duration, frame_duration)
+                .expect("software encoder should accept a CPU frame");
+        }
+        (encoder, queue)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn software_h264_mft_enumeration_finds_microsoft_encoder() {
+        let candidates = enumerate_h264_mfts(None, false)
+            .expect("software H.264 MFT enumeration should succeed");
+        assert!(
+            !candidates.is_empty(),
+            "Win10 always ships the in-box Microsoft H.264 Encoder MFT"
+        );
+        let names: Vec<String> = candidates.iter().map(mft_friendly_name).collect();
+        eprintln!("software H.264 MFT candidates: {names:?}");
+        assert!(
+            names
+                .iter()
+                .any(|name| name.to_ascii_uppercase().contains("H264")),
+            "expected an in-box software H.264 encoder MFT, got: {names:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bgra8_to_nv12_uses_bt601_limited_range() {
+        let width = 4u32;
+        let height = 2u32;
+        let mut bgra = vec![0u8; (width * height * FRAME_PIXEL_BYTES as u32) as usize];
+        for (row, blue, green, red) in [(0u32, 0u8, 0u8, 255u8), (1, 255, 0, 0)] {
+            for col in 0..width {
+                let offset = ((row * width + col) * FRAME_PIXEL_BYTES as u32) as usize;
+                bgra[offset] = blue;
+                bgra[offset + 1] = green;
+                bgra[offset + 2] = red;
+                bgra[offset + 3] = 255;
+            }
+        }
+        let nv12 = bgra8_to_nv12(&bgra, width, height);
+        // BT.601 有限范围：Y(红) = (66*255 + 128)/256 + 16 = 82，
+        // Y(蓝) = (25*255 + 128)/256 + 16 = 41。
+        assert_eq!(nv12[0], 82);
+        assert_eq!(nv12[1], 82);
+        assert_eq!(nv12[width as usize], 41);
+        assert_eq!(nv12[width as usize + 1], 41);
+        // 上排红 + 下排蓝的 2x2 均值在 RGB 域 → (127, 0, 127)：
+        // U = (-38*127 + 112*127 + 128)/256 + 128 = 165，
+        // V = (112*127 - 18*127 + 128)/256 + 128 = 175。
+        let uv = (width * height) as usize;
+        assert_eq!(nv12[uv], 165);
+        assert_eq!(nv12[uv + 1], 175);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bgra8_to_nv12_handles_odd_dimensions_without_oob() {
+        // 窗口尺寸可奇（WGC 帧尺寸不保证偶数）；2x2 色度块在右/下边缘
+        // 复制补齐，不得越界读取或写出。
+        let width = 5u32;
+        let height = 3u32;
+        let bgra = vec![128u8; (width * height * FRAME_PIXEL_BYTES as u32) as usize];
+        let nv12 = bgra8_to_nv12(&bgra, width, height);
+        assert_eq!(nv12.len(), 27);
+        // 中灰 (128,128,128)：Y = (66+129+25)*128/256 + 16 = 126，
+        // U = V = (-38-74+112)*128/256 + 128 = 128。
+        assert_eq!(nv12[0], 126);
+        let uv = (width * height) as usize;
+        assert_eq!(nv12[uv], 128);
+        assert_eq!(nv12[uv + 1], 128);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn software_h264_encoder_encodes_synthetic_frames() {
+        let width = 320u32;
+        let height = 240u32;
+        // MFT 有约 16 帧固有管线延迟（feed=N 时输出到 N-16，稳态 1:1），
+        // 120 帧输入保证覆盖窗口内全部输出且尾部仍在缓冲中。
+        let fed = 120u32;
+        let (encoder, queue) = drive_software_encoder(fed, width, height);
+        let status = queue.lock().unwrap().status(false, true);
+        eprintln!("software H.264 synthetic status: {status:?}");
+        assert_eq!(
+            status.encoder_path,
+            Some(HardwareEncoderPath::MediaFoundationSoftwareH264)
+        );
+        assert!(status.adapter_identity.is_some());
+        assert_eq!(status.dropped_packets, 0);
+        assert_eq!(status.encoder_errors, 0);
+        assert_eq!(encoder.packet_count(), status.submitted_packets as usize);
+        assert!(
+            status.submitted_packets >= (fed - 20) as u64,
+            "steady-state output should trail input by the MFT pipeline delay"
+        );
+        assert_eq!(status.first_packet_pts_100ns, Some(0));
+        assert_eq!(encoder.replay.status().coverage_gaps, 0);
+        assert!(
+            encoder.has_keyframe(),
+            "expected H.264 clean-point metadata"
+        );
+        assert!(encoder.full_frame_cpu_readback());
+        assert!(
+            !encoder.sequence_header.is_empty(),
+            "software MFT should expose the SPS/PPS sequence header"
+        );
+        let first = &encoder.replay.packets[0];
+        assert!(
+            first.bytes.starts_with(&[0, 0, 0, 1]) || first.bytes.starts_with(&[0, 0, 1]),
+            "software H.264 access unit is not Annex B: {:02x?}",
+            &first.bytes[..first.bytes.len().min(8)]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn software_replay_mux_writes_valid_mp4() {
+        let width = 320u32;
+        let height = 240u32;
+        let frame_duration = 10_000_000 / 60;
+        // 120 帧输入 + ~16 帧管线延迟 → 输出覆盖 PTS 0..100+，窗口 0..60 安全覆盖。
+        let (encoder, _queue) = drive_software_encoder(120, width, height);
+        let output = std::env::temp_dir().join(format!(
+            "aiming-cookie-software-encoder-{}.mp4",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&output);
+        let input = encoder
+            .replay_mux_input(
+                0,
+                60 * frame_duration,
+                width,
+                height,
+                CaptureClockMetadata {
+                    utc_epoch_ms: 1_700_000_000_000,
+                    qpc_ns: 5_000_000_000,
+                    clock_source: "utc_epoch_ms+qpc+wgc_system_relative_time",
+                    timebase_version: "time_alignment.v2",
+                },
+            )
+            .expect("software replay snapshot should cover the requested window");
+        let receipt = export_replay_mp4_file(input, output.clone())
+            .expect("software replay MP4 should mux without re-encoding");
+        assert_eq!(receipt.visible_duration_100ns, 60 * frame_duration);
+        assert_eq!(receipt.reencoded_frames, 0);
+        let bytes = std::fs::read(&output).expect("software replay MP4 should exist");
+        assert!(!bytes.is_empty());
+        assert_eq!(
+            &bytes[4..8],
+            b"ftyp",
+            "MP4 file should start with an ftyp box"
+        );
+        let _ = std::fs::remove_file(&output);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn force_software_encoder_env_selects_software_path() {
+        use windows::Win32::Foundation::HMODULE;
+        use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_11_0};
+        use windows::Win32::Graphics::Direct3D11::{
+            D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, D3D11_SDK_VERSION,
+        };
+
+        // 只读覆盖环境变量是本测试的私有开关，没有其他测试读取它；
+        // 正常路径（无该变量）仍由真实硬件枚举驱动，见其余 smoke 测试。
+        std::env::set_var("AIMING_COOKIE_FORCE_SOFTWARE_ENCODER", "1");
+        let result = {
+            let mut device: Option<ID3D11Device> = None;
+            let mut context: Option<ID3D11DeviceContext> = None;
+            unsafe {
+                D3D11CreateDevice(
+                    None,
+                    D3D_DRIVER_TYPE_WARP,
+                    HMODULE::default(),
+                    windows::Win32::Graphics::Direct3D11::D3D11_CREATE_DEVICE_FLAG(0),
+                    Some(&[D3D_FEATURE_LEVEL_11_0]),
+                    D3D11_SDK_VERSION,
+                    Some(&mut device),
+                    None,
+                    Some(&mut context),
+                )
+            }
+            .expect("WARP D3D11 device should initialize");
+            let device = device.expect("D3D11 device should be returned");
+            let context = context.expect("D3D11 context should be returned");
+            let queue = Arc::new(Mutex::new(
+                FrameQueue::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap(),
+            ));
+            AutomaticH264Encoder::new(&device, &context, 320, 240, queue)
+        };
+        std::env::remove_var("AIMING_COOKIE_FORCE_SOFTWARE_ENCODER");
+        let encoder = result.expect("forced software encoder should initialize");
+        assert!(matches!(encoder, AutomaticH264Encoder::Software(_)));
     }
 }
