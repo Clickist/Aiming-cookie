@@ -151,6 +151,10 @@ const NAV_ITEMS = [
 // known good capture status; single blips (~1/1000 polls) must not flash red.
 const CAPTURE_UNAVAILABLE_POLL_LIMIT = 3;
 
+// The first settings load must not block on a slow native control channel:
+// after this long the snapshot keeps capture null and the 1 s poller fills it in.
+const CAPTURE_STATUS_FIRST_LOAD_TIMEOUT_MS = 3_000;
+
 type SettingsSnapshot = {
   profiles: ProviderProfile[];
   catalog: ProviderCatalogV1 | null;
@@ -245,8 +249,11 @@ export function SettingsWorkspace() {
       let incompleteResult: IncompleteCaptureItemV1[] = [];
       let runResult: KovaaKRunListItem[] = [];
       if (desktop) {
+        const captureTimeout = new Promise<null>((resolve) => {
+          window.setTimeout(() => resolve(null), CAPTURE_STATUS_FIRST_LOAD_TIMEOUT_MS);
+        });
         const [nextCapture, nextStorage, nextIncomplete, nextRuns] = await Promise.all([
-          getCaptureStatus(),
+          Promise.race([getCaptureStatus(), captureTimeout]),
           getStorage(),
           listIncompleteCaptures(),
           listKovaakRuns(),

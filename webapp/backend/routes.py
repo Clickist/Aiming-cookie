@@ -340,9 +340,12 @@ async def get_capture_status(
         )
         native_status = None
         if config.NATIVE_CAPTURE_CONTROL_ADDR and config.NATIVE_CAPTURE_CONTROL_SECRET:
+            # Status polls must not inherit the 65 s read timeout sized for
+            # replay exports; a slow control link would stall the settings page.
             client = NativeCaptureClient(
                 config.NATIVE_CAPTURE_CONTROL_ADDR,
                 config.NATIVE_CAPTURE_CONTROL_SECRET,
+                read_timeout_seconds=5.0,
             )
             native_status = await asyncio.to_thread(client.status)
         elif bool(config.NATIVE_CAPTURE_CONTROL_ADDR) != bool(
