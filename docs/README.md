@@ -36,6 +36,7 @@
 - 本地已连接 KovaaK 账号与 Coach 查询的实施证据见 [`archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md`](archive/completed/plans/2026-07-30-kovaak-connected-account-and-coach-lookup-v1.md)。
 - Analysis 删除/恢复的实施证据见 completed [`archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md`](archive/completed/plans/2026-07-16-analysis-deletion-reconciliation.md)。
 - 历史设计合同与实施计划已归档至 [`archive/superpowers/`](archive/superpowers/)，仅供追溯参考，不构成当前开发约束。
+- 2026-08-16 的四份研究/评审产物已归档至 [`archive/history/`](archive/history/)：知识库一致性审核 [`knowledge-consistency-audit-2026-08-16.md`](archive/history/knowledge-consistency-audit-2026-08-16.md)、静态 CV GitHub 调研 [`static-cv-github-survey-2026-08-16.md`](archive/history/static-cv-github-survey-2026-08-16.md)、静态 CV 管线提案 [`static-cv-pipeline-proposal-2026-08-16.md`](archive/history/static-cv-pipeline-proposal-2026-08-16.md)、x76 wiki 知识评审 [`x76-wiki-knowledge-review-2026-08-16.md`](archive/history/x76-wiki-knowledge-review-2026-08-16.md)。两份以 registry v7 为基线（当时仅存在于未合并的 feat 分支）；它们只供追溯与引用，不构成当前产品或实现合同。x76 wiki 抓取快照未入仓库。
 - Windows Desktop 前端前置 Gate：Steam 多库 KovaaK bounded discovery 与 launch-token descendant isolation 的实施证据见 completed [`archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md`](archive/completed/plans/2026-07-16-windows-desktop-prefrontend-gates.md)。
 
 ## 专题资料
