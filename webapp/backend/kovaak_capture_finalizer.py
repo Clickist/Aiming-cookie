@@ -295,17 +295,24 @@ class KovaaKCaptureFinalizer:
         capture_session_id = status.get("captureSessionId")
         persisted_capture_session_id = run.get("capture_session_id")
         trace_needs_snapshot = run.get("trace_state") in {"none", "pending"}
-        if (
+        # A capture session the native side no longer holds (e.g. after a
+        # desktop restart) can never be re-exported: its replay buffer is
+        # gone, so the mismatch is terminal for the video instead of a
+        # retryable loop. Already attached video keeps its evidence.
+        video_session_mismatch = (
             isinstance(persisted_capture_session_id, str)
             and capture_session_id != persisted_capture_session_id
-            and (trace_needs_snapshot or run.get("video_state") == "pending")
-        ):
-            await kovaak_run_store.set_run_finalization_state(
-                run["id"], self._user_id, "retryable", "capture_session_mismatch",
+            and run.get("video_state") != "attached"
+            and (
+                trace_needs_snapshot
+                or run.get("video_state") == "pending"
+                or run.get("video_error") == "video_capture_session_mismatch"
             )
-            raise RetryableIngestionError(
-                "capture_session_mismatch", code="capture_session_mismatch",
-            )
+        )
+        if video_session_mismatch and run.get("video_state") == "pending":
+            run = await kovaak_run_store.mark_run_video_unavailable(
+                run["id"], self._user_id, "video_capture_session_mismatch",
+            ) or run
 
         if trace_needs_snapshot:
             snapshot: dict[str, object] | None = None
@@ -323,6 +330,11 @@ class KovaaKCaptureFinalizer:
                     pass
             run, trace_pending = await self._attach_trace_snapshot(
                 run, snapshot,
+            )
+
+        if video_session_mismatch:
+            return await self._finish_or_retry_trace(
+                run, trace_pending, "video_capture_session_mismatch",
             )
 
         if run.get("video_state") == "attached":
