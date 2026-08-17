@@ -8,6 +8,7 @@ export const PROVIDER_AUTH_RESULT_SCHEMA = "coach_provider_auth_result.v1" as co
 export const COACH_DIAGNOSTIC_CONTEXT_V1_SCHEMA = "coach_diagnostic_context.v1" as const;
 export const COACH_DIAGNOSTIC_CONTEXT_V2_SCHEMA = "coach_diagnostic_context.v2" as const;
 export const COACH_DIAGNOSTIC_CONTEXT_V3_SCHEMA = "coach_diagnostic_context.v3" as const;
+export const PROVIDER_MODEL_SWITCH_SCHEMA = "coach_provider_model_switch.v1" as const;
 
 export const FORBIDDEN_TOOL_NAMES = new Set([
   "bash", "shell", "exec", "read", "write", "edit", "read_file",

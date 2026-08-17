@@ -10,6 +10,7 @@
 import http from "node:http";
 
 import {
+  PROVIDER_MODEL_SWITCH_SCHEMA,
   isRecord,
   type CoachRuntimeProviderProfile,
   type CustomProviderModel,
@@ -22,7 +23,7 @@ import {
   ProviderProfileError,
   testProviderConnection,
 } from "./provider-profile.ts";
-import { fetchCustomProviderModels } from "./provider-models.ts";
+import { fetchCustomProviderModels, resolveProviderModel } from "./provider-models.ts";
 import { deleteProfile, loadProfile, saveProfile } from "./provider-store.ts";
 import {
   ProviderAuthOperationManager,
@@ -182,7 +183,9 @@ function coachProfileFromCreate(raw: unknown): CoachRuntimeProviderProfile {
   if (raw.kind === "custom_openai_compatible" || raw.kind === "custom_anthropic_compatible") {
     return parseProviderProfile({
       kind: raw.kind,
-      name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : "自定义 Provider",
+      // The HTTP create contract uses `name` (frontend ProviderProfileCreate);
+      // the runtime profile shape uses `provider_name`.
+      provider_name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : "自定义 Provider",
       provider_id: typeof raw.provider_id === "string" && raw.provider_id.trim() ? raw.provider_id.trim() : undefined,
       base_url: typeof raw.base_url === "string" ? raw.base_url : "",
       model_id: typeof raw.model_id === "string" ? raw.model_id : "",
@@ -338,6 +341,50 @@ export async function handleProviderProfileRequest(
       const profile = coachProfileFromCreate(await readJsonBody(req));
       saveProfile(profile);
       writeJson(res, 201, await projectProfile(profile));
+    } catch (error) {
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/v1/provider-profiles/model") {
+    try {
+      const body = await readJsonBody(req);
+      if (!isRecord(body)
+        || body.schema_version !== PROVIDER_MODEL_SWITCH_SCHEMA
+        || typeof body.model_id !== "string"
+        || !body.model_id.trim()) {
+        writeJson(res, 400, { detail: "model switch body must include schema_version and a non-empty model_id" });
+        return true;
+      }
+      const profile = loadProfile();
+      if (!profile) {
+        writeJson(res, 404, { detail: "Provider profile 不存在" });
+        return true;
+      }
+      // Switch within the current Provider: provider_id and credential are
+      // preserved; only model_id changes.
+      const updated = { ...profile, model_id: body.model_id.trim() };
+      // Reject a model that cannot resolve (builtin: must exist in the pinned
+      // catalog; custom: must still satisfy capability checks) before writing,
+      // so the UI capability stays consistent with what is persisted.
+      try {
+        await resolveProviderModel(updated);
+      } catch (error) {
+        if (error instanceof ProviderProfileError) {
+          // 只有「模型/Provider 不在目录」才提示换模型；profile 状态、
+          // 凭据或能力问题直接透传底层原因，避免误导用户逐个换模型。
+          if (error.code === "unknown_model" || error.code === "unknown_provider") {
+            writeJson(res, 400, { detail: "所选模型不可用，请选择当前 Provider 目录中的模型" });
+          } else {
+            writeJson(res, 400, { detail: error.message });
+          }
+          return true;
+        }
+        throw error;
+      }
+      saveProfile(updated);
+      writeJson(res, 200, await getProviderProfileStatus(updated));
     } catch (error) {
       writeProfileError(res, error);
     }
