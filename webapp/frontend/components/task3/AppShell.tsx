@@ -18,6 +18,8 @@ import {
   buildAnalysisAutoTeachContent,
   markAnalysisAutoTaught,
   readAutoTaughtAnalyses,
+  readLastCoachSessionId,
+  writeLastCoachSessionId,
 } from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import type { CoachAgentRunV1, ProviderProfileState } from "@/lib/types";
@@ -46,6 +48,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [startupRouteResolved, setStartupRouteResolved] = useState(false);
   const [coachSessions, setCoachSessions] = useState<SessionRailSession[]>([]);
   const [selectedCoachSessionId, setSelectedCoachSessionId] = useState<number | null>(null);
+  // 冷启动只尝试恢复一次「上次最后在看的会话」；会话列表未加载前不消耗这次机会。
+  const hasRestoredLastSessionRef = useRef(false);
   const [draftSession, setDraftSession] = useState(false);
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
   const [sessionFeedback, setSessionFeedback] = useState<string | null>(null);
@@ -123,10 +127,26 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (selectedCoachSessionId !== null && coachSessions.some((session) => Number(session.id) === selectedCoachSessionId)) {
       return;
     }
+    // 应用重启后恢复上次最后在看的会话（仅冷启动的首次选择，且列表已加载）。
+    if (!hasRestoredLastSessionRef.current && coachSessions.length > 0) {
+      hasRestoredLastSessionRef.current = true;
+      const lastViewedId = readLastCoachSessionId(window.localStorage);
+      if (lastViewedId !== null && coachSessions.some((session) => Number(session.id) === lastViewedId)) {
+        setSelectedCoachSessionId(lastViewedId);
+        return;
+      }
+    }
     // 其余情况恢复 primary 会话（上次对话的延续）。
     const primary = coachSessions.find((session) => session.kind === "primary");
     setSelectedCoachSessionId(primary ? Number(primary.id) : coachSessions[0] ? Number(coachSessions[0].id) : null);
   }, [coachSessions, draftSession, routeSessionId, selectedCoachSessionId]);
+
+  // 记录当前正在看的会话，供下次启动恢复。
+  useEffect(() => {
+    if (selectedCoachSessionId !== null) {
+      writeLastCoachSessionId(window.localStorage, selectedCoachSessionId);
+    }
+  }, [selectedCoachSessionId]);
 
   useEffect(() => {
     setVideoTarget(null);
@@ -184,10 +204,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         const run = await createCoachAgentRun(buildAnalysisAutoTeachContent(analysisRef));
         setSoftStartRun(run);
         setSelectedCoachSessionId((current) => (current === run.session_id ? current : run.session_id));
-        setSessionFeedback("分析完成，Coach 已开始讲解。");
         window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
       } catch {
-        setSessionFeedback("Coach 自动开讲未开始；可稍后在 Coach 里手动发起。");
+        // 分析完成不再弹 Toast；自动开讲结果由 Coach 面板的动作指示器呈现。
       }
     };
     window.addEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);

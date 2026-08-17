@@ -140,27 +140,30 @@ test("diagnosis profile explanation is available on hover and keyboard focus", a
 
 test("data view consumes the bounded analysis-data projection without a pseudo trend", async () => {
   const data = await source("components/task5/DataView.tsx");
+  const formats = await source("lib/metric-format.ts");
   const styles = await source("components/task5/task5.module.css");
   assert.match(data, /getAnalysisData/);
   assert.match(data, /event_distribution/);
   assert.match(data, /target_relative_error_radius/);
   assert.match(data, /onSelectTime/);
-  assert.match(data, /tracking_fixed_window: "固定跟踪窗口"/);
-  assert.match(data, /tracking_episode: "跟踪片段"/);
-  assert.match(data, /low_confidence: "低可信度观测"/);
+  // 事件/指标标签与格式化在共享 lib/metric-format.ts，DataView 导入复用。
+  assert.match(data, /from "@\/lib\/metric-format"/);
+  assert.match(formats, /tracking_fixed_window: "固定跟踪窗口"/);
+  assert.match(formats, /tracking_episode: "跟踪片段"/);
+  assert.match(formats, /low_confidence: "低可信度观测"/);
   assert.match(data, /共 \$\{radiusPoints\.length\} 个样本/);
-  assert.match(data, /no_target_visible: "个别帧未检测到目标"/);
-  assert.match(data, /return metric\.definition\?\.name \?\? metricReference\(metric\)/);
-  assert.match(data, /return metric\.definition\?\.description \?\? null/);
+  assert.match(formats, /no_target_visible: "个别帧未检测到目标"/);
+  assert.match(formats, /return metric\.definition\?\.name \?\? metricReference\(metric\)/);
+  assert.match(formats, /return metric\.definition\?\.description \?\? null/);
   assert.match(data, /item\.dataset\.metricLabel === selectedMetric/);
-  assert.match(data, /referenceKey === "target_switching\.path_efficiency"/);
-  assert.match(data, /kill: "击杀"/);
-  assert.match(data, /switch_chain: "目标切换链"/);
-  assert.match(data, /transition: "开始切换"/);
-  assert.match(data, /next_target_acquired: "到达下一目标"/);
-  assert.match(data, /settle: "稳定完成"/);
+  assert.match(formats, /referenceKey === "target_switching\.path_efficiency"/);
+  assert.match(formats, /kill: "击杀"/);
+  assert.match(formats, /switch_chain: "目标切换链"/);
+  assert.match(formats, /transition: "开始切换"/);
+  assert.match(formats, /next_target_acquired: "到达下一目标"/);
+  assert.match(formats, /settle: "稳定完成"/);
   assert.doesNotMatch(data, /const METRIC_LABELS/);
-  assert.match(data, /source\.includes\("tracking-analysis"\)/);
+  assert.match(formats, /source\.includes\("tracking-analysis"\)/);
   assert.match(data, /unavailableMetrics/);
   assert.match(data, /<details className=\{styles\.unavailableMetrics\}>/);
   assert.doesNotMatch(data, /metric\.sources\.join\(" \+ "\)/);
@@ -174,19 +177,20 @@ test("data view consumes the bounded analysis-data projection without a pseudo t
 
 test("data view renders bounded family rows without adding a family tab", async () => {
   const data = await source("components/task5/DataView.tsx");
+  const formats = await source("lib/metric-format.ts");
   const workspace = await source("components/task5/AnalysisWorkspace.tsx");
   assert.match(data, /getAnalysisFamilyData/);
   assert.match(data, /frontend_analysis_family_data\.v1/);
   assert.match(data, /switch_chain/);
-  assert.match(data, /tracking_fixed_window/);
-  assert.match(data, /tracking_change_response/);
-  assert.match(data, /static_flick/);
+  assert.match(formats, /tracking_fixed_window/);
+  assert.match(formats, /tracking_change_response/);
+  assert.match(formats, /static_flick/);
   assert.match(data, /切换到新目标耗时/);
   assert.match(data, /到达后稳定耗时/);
-  assert.match(data, /观测到的变向响应/);
+  assert.match(formats, /观测到的变向响应/);
   assert.match(data, /加速阶段|减速阶段|稳定阶段/);
-  assert.match(data, /peak: "速度峰值"/);
-  assert.match(data, /corrective: "修正动作"/);
+  assert.match(formats, /peak: "速度峰值"/);
+  assert.match(formats, /corrective: "修正动作"/);
   assert.match(data, /presentation\.video\.kind === "seekable"/);
   assert.match(data, /加载更多/);
   assert.doesNotMatch(data, /人的反应(?:时间|延迟)/);
