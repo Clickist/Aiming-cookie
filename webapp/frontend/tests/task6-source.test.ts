@@ -161,6 +161,15 @@ test("Settings capture status only turns unavailable after consecutive failed po
   assert.match(settings, /unavailableStreak = 0/);
 });
 
+test("Settings initial load gives up on a slow capture status instead of blocking", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  assert.match(settings, /CAPTURE_STATUS_FIRST_LOAD_TIMEOUT_MS = 3_000/);
+  assert.match(settings, /new Promise<null>\(\(resolve\) => \{\s*window\.setTimeout\(\(\) => resolve\(null\), CAPTURE_STATUS_FIRST_LOAD_TIMEOUT_MS\);/);
+  assert.match(settings, /Promise\.race\(\[getCaptureStatus\(\), captureTimeout\]\)/);
+  // getCaptureStatus() 不再裸等：挂起的控制链最多 3 秒让首屏落地 null，之后由 1s 轮询补状态。
+  assert.doesNotMatch(settings, /Promise\.all\(\[\s*getCaptureStatus\(\),\s*getStorage\(\)/);
+});
+
 test("Coach is the main workspace instead of a closable sidebar", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   assert.match(shell, /<CoachPanel/);

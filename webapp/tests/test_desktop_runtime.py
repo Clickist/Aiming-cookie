@@ -291,6 +291,48 @@ async def test_capture_status_keeps_unexpected_failure_traceback(
 
 
 @pytest.mark.asyncio
+async def test_capture_status_uses_a_short_native_read_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructor_kwargs: dict[str, object] = {}
+
+    class RecordingNativeCaptureClient:
+        def __init__(self, *_args, **kwargs) -> None:
+            constructor_kwargs.update(kwargs)
+
+        def status(self) -> dict:
+            return {
+                "phase": "ready",
+                "enabled": False,
+                "raw": {"state": "ok"},
+                "video": {"state": "ok"},
+            }
+
+    async def no_runs(_user_id: str) -> list[dict]:
+        return []
+
+    monkeypatch.setattr(routes.config, "NATIVE_CAPTURE_CONTROL_ADDR", "127.0.0.1:1")
+    monkeypatch.setattr(routes.config, "NATIVE_CAPTURE_CONTROL_SECRET", "0" * 64)
+    monkeypatch.setattr(routes, "NativeCaptureClient", RecordingNativeCaptureClient)
+    monkeypatch.setattr(
+        routes.kovaak_run_store,
+        "list_kovaak_run_summaries",
+        no_runs,
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(desktop_shutdown_requested=False)),
+    )
+
+    response = await routes.get_capture_status(request=request, _=None)
+
+    assert response.availability == "available"
+    # 默认 65 s 读超时是为 60 s 导出设计的；status 轮询必须显著更短，
+    # 否则慢控制链会把设置页首屏挂住几十秒。connect 超时保持默认 2 s。
+    assert constructor_kwargs.get("read_timeout_seconds") == 5.0
+    assert "connect_timeout_seconds" not in constructor_kwargs
+
+
+@pytest.mark.asyncio
 async def test_finalizer_future_drain_cancels_pending_work_before_db_close() -> None:
     tracker = desktop_runtime.FinalizerFutureTracker()
     started = asyncio.Event()
