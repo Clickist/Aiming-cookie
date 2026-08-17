@@ -380,6 +380,37 @@ export function CoachPanel({
     return () => { cancelled = true; };
   }, [discussionAnalysisKey]);
 
+  // 进行中的分析挂进「本次讨论」条：显示「正在分析：场景名」，完成后由
+  // 自动开讲接管变成可点击的视频 chip。有分析在跑时 3s 轮询，空闲 10s。
+  const [pendingAnalyses, setPendingAnalyses] = useState<{ id: number; scenario: string | null }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      let fast = false;
+      try {
+        const response = await listSessions();
+        if (cancelled) return;
+        const pending = response.sessions
+          .filter((item) => item.status === "queued" || item.status === "running")
+          .sort((a, b) => b.id - a.id)
+          .map((item) => ({ id: item.id, scenario: item.scenario ?? null }));
+        setPendingAnalyses(pending);
+        fast = pending.length > 0;
+      } catch {
+        if (!cancelled) setPendingAnalyses([]);
+      } finally {
+        if (!cancelled) timer = setTimeout(tick, fast ? 3000 : 10000);
+      }
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
   const refreshCurrentTraining = useCallback(async () => {
     const revision = ++trainingRefreshRevisionRef.current;
     try {
@@ -898,9 +929,19 @@ export function CoachPanel({
       {trainingSection}
 
       {/* 本次讨论常驻顶栏：不随对话流滚动，项目名点击打开左侧视频 */}
-      {discussionAnalysisIds.length > 0 ? (
+      {discussionAnalysisIds.length > 0 || pendingAnalyses.length > 0 ? (
         <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" role="region">
           <span>本次讨论</span>
+          {pendingAnalyses.map((item) => (
+            <span
+              className="task6-suggestion"
+              data-pending="true"
+              key={`pending-${item.id}`}
+              title="分析完成后可点击打开视频"
+            >
+              正在分析：{item.scenario ?? `分析 #${item.id}`}
+            </span>
+          ))}
           {discussionAnalysisIds.map((id) => (
             <button
               className="task6-suggestion"
