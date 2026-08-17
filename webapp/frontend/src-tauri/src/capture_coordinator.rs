@@ -38,7 +38,13 @@ pub fn bounded_diagnostic_text(value: &str) -> String {
         .filter(|character| !character.is_control() || *character == '\n' || *character == '\t')
         .collect::<String>();
     if text.len() > 32 * 1024 {
-        text.truncate(32 * 1024);
+        // truncate 只接受 char boundary；错误文本可能含多字节字符（中文路径、
+        // 本地化消息），字节 32K 处落在字符中间会 panic，先回退到边界再截。
+        let mut boundary = 32 * 1024;
+        while !text.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        text.truncate(boundary);
         text.push_str("...");
     }
     text
@@ -1847,6 +1853,11 @@ mod tests {
         assert!(bounded_diagnostic_text(value).contains(r"C:\Program Files\KovaaK"));
         let long = "x".repeat(40 * 1024);
         assert!(bounded_diagnostic_text(&long).len() <= 32 * 1024 + 3);
+        // 3 字节中文字符使字节 32K 处落在字符中间，必须回退到边界而不是 panic。
+        let long_cjk = "袜".repeat(20 * 1024) + "x";
+        let bounded_cjk = bounded_diagnostic_text(&long_cjk);
+        assert!(bounded_cjk.len() <= 32 * 1024 + 3);
+        assert!(bounded_cjk.ends_with("..."));
     }
 
     #[test]
