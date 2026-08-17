@@ -8,7 +8,7 @@ const cdpUrl = process.env.AIMING_COOKIE_TAURI_CDP_URL;
 const tauriPid = Number(process.env.AIMING_COOKIE_TAURI_PID);
 const appUrl = process.env.AIMING_COOKIE_TAURI_APP_URL ?? "http://localhost:3000";
 
-// Live check for the v0.1.3 diagnostics export: invoke the Tauri command
+// Live check for the v0.1.4 diagnostics export: invoke the Tauri command
 // directly (the save dialog itself needs a human) and validate the bundle.
 test("real Tauri capture diagnostics export writes a valid bundle", async () => {
   test.skip(!cdpUrl || !Number.isSafeInteger(tauriPid) || tauriPid <= 0,
