@@ -799,6 +799,57 @@ export function markAnalysisAutoTaught(storage: Storage | null | undefined, anal
   }
 }
 
+/** localStorage 键：应用重启后自动打开上次最后在看的 Coach 会话。 */
+export const LAST_COACH_SESSION_KEY = "aiming-cookie.last-coach-session";
+
+/** 读取上次最后在看的会话 id；损坏/非法数据或存储不可用返回 null。 */
+export function readLastCoachSessionId(storage: Storage | null | undefined): number | null {
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(LAST_COACH_SESSION_KEY);
+    const id = raw ? Number(raw) : NaN;
+    return Number.isInteger(id) && id > 0 ? id : null;
+  } catch {
+    // 存储被禁用（隐私模式等）时静默放弃恢复，与 write 的防御对称。
+    return null;
+  }
+}
+
+/** 记录当前正在看的会话 id；写失败静默（尽力而为）。 */
+export function writeLastCoachSessionId(storage: Storage | null | undefined, sessionId: number): void {
+  if (!storage) return;
+  try {
+    storage.setItem(LAST_COACH_SESSION_KEY, String(sessionId));
+  } catch {
+    // 本地偏好写失败不影响当前会话。
+  }
+}
+
+/**
+ * 分析类步骤的预估耗时：本机历史已完成分析的实际执行时长中位数
+ * （finished_at - started_at；旧会话无 started_at 时退回 created_at），
+ * 向上取整到 5 秒档，无样本或全是排队失真样本时返回 null（不编造数字）。
+ */
+export function computeAnalysisEtaSeconds(
+  sessions: ReadonlyArray<Pick<SessionListItem, "status" | "created_at" | "started_at" | "finished_at">>,
+): number | null {
+  const durations = sessions
+    .filter((item) => item.status === "done" && item.finished_at)
+    .map((item) => {
+      const startAt = item.started_at ?? item.created_at;
+      if (!startAt) return Number.NaN;
+      return (Date.parse(item.finished_at as string) - Date.parse(startAt)) / 1000;
+    })
+    // 排队时间失真样本（无 started_at 的旧会话跨重启排队）与异常值过滤：
+    // 真实分析时长远小于 1 小时。
+    .filter((seconds) => Number.isFinite(seconds) && seconds > 0 && seconds <= 3600);
+  if (durations.length === 0) return null;
+  durations.sort((a, b) => a - b);
+  const mid = Math.floor(durations.length / 2);
+  const median = durations.length % 2 ? durations[mid] : (durations[mid - 1] + durations[mid]) / 2;
+  return Math.max(5, Math.ceil(median / 5) * 5);
+}
+
 export interface HistorySections {
   pendingRuns: KovaaKRunListItem[];
   runRecords: KovaaKRunListItem[];

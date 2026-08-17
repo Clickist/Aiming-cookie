@@ -7,12 +7,16 @@ import { getSession } from "@/lib/api";
 import { presentAnalysisWorkspace, type AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { Button, ErrorState, Loading } from "@/ui/primitives";
 
-function analysisIdFromRef(value: string): number | null {
+export function analysisIdFromRef(value: string): number | null {
   const match = /^analysis:([1-9][0-9]*)$/.exec(value);
   return match ? Number(match[1]) : null;
 }
 
-const presentationCache = new Map<number, AnalysisWorkspacePresentation>();
+/** Shared analysis-presentation cache (video pane and message cards reuse it). */
+export const presentationCache = new Map<number, AnalysisWorkspacePresentation>();
+
+/** Run 号缓存：与 presentation 一并抓取，用于标题区分同名场景的多次训练。 */
+const runIdCache = new Map<number, number | null>();
 
 export function CoachVideoPane({
   analysisRef,
@@ -24,6 +28,7 @@ export function CoachVideoPane({
   onClose: () => void;
 }) {
   const [presentation, setPresentation] = useState<AnalysisWorkspacePresentation | null>(null);
+  const [runId, setRunId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [playheadMs, setPlayheadMs] = useState(initialTimeMs);
@@ -33,6 +38,7 @@ export function CoachVideoPane({
     const analysisId = analysisIdFromRef(analysisRef);
     if (analysisId === null) {
       setPresentation(null);
+      setRunId(null);
       setFailed(true);
       setLoading(false);
       return;
@@ -42,6 +48,7 @@ export function CoachVideoPane({
     const cached = presentationCache.get(analysisId);
     if (cached) {
       setPresentation(cached);
+      setRunId(runIdCache.get(analysisId) ?? null);
       setLoading(false);
       return;
     }
@@ -51,11 +58,14 @@ export function CoachVideoPane({
       if (!next) throw new Error("analysis_presentation_unavailable");
       if (!signal.aborted) {
         presentationCache.set(analysisId, next);
+        runIdCache.set(analysisId, session.kovaak_run_id);
         setPresentation(next);
+        setRunId(session.kovaak_run_id);
       }
     } catch {
       if (!signal.aborted) {
         setPresentation(null);
+        setRunId(null);
         setFailed(true);
       }
     } finally {
@@ -76,6 +86,7 @@ export function CoachVideoPane({
         <div>
           <span>视频讲解</span>
           <h2>{presentation?.scenario ?? "训练视频"}</h2>
+          {runId != null ? <small className="task7-coach-video-pane__run">run {runId}</small> : null}
         </div>
         <button aria-label="关闭视频讲解" className="task7-coach-video-pane__close" onClick={onClose} title="关闭视频讲解" type="button">×</button>
       </header>

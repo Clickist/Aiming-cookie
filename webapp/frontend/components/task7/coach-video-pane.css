@@ -33,6 +33,13 @@
   white-space: nowrap;
 }
 
+.task7-coach-video-pane__run {
+  display: block;
+  margin-top: 2px;
+  color: var(--on-surface-variant);
+  font-size: 10.5px;
+}
+
 .task7-coach-video-pane__close {
   display: inline-grid;
   flex: none;
