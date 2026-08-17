@@ -52,6 +52,7 @@ import type {
   ProviderProfileCreate,
   ProviderProfileListResponse,
   ProviderProfileStatus,
+  ProviderProfileStatusDetail,
   RunEvidenceRemovalResponse,
   SessionStatus,
   SessionListResponse,
@@ -762,6 +763,28 @@ export async function updateProviderProfile(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as ProviderProfile;
+}
+
+/**
+ * Switch the default profile's model within the current Provider. The sidecar
+ * validates the model (builtin: must be in the pinned catalog) before
+ * persisting; the response carries the resolved model with its display name.
+ */
+export async function switchProviderModel(
+  modelId: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfileStatusDetail> {
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles/model",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schema_version: "coach_provider_model_switch.v1", model_id: modelId }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfileStatusDetail;
 }
 
 export async function testProviderProfile(

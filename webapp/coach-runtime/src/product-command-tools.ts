@@ -317,6 +317,7 @@ export function createProductCommandTool(
   const excludedCommands = new Set(options.excludedCommands ?? []);
   const commandNames = PRODUCT_COMMAND_NAMES.filter((name) => !excludedCommands.has(name));
   const commandSchema = Type.Union(commandNames.map((name) => Type.Literal(name)));
+
   return {
     name: "run_product_command",
     label: "Run product command",

@@ -579,6 +579,7 @@ export interface SessionListItem {
   run_ref: string | null;
   status: string;
   created_at: string;
+  started_at?: string | null;
   finished_at: string | null;
   attempts: number;
   max_attempts: number;
@@ -885,6 +886,22 @@ export interface ProviderProfileStatus {
   configured: boolean;
   status: ProviderProfileState;
   message: string;
+}
+
+/** Raw sidecar status detail with the resolved catalog model (model switch response). */
+export interface ProviderProfileStatusDetail {
+  schema_version: "coach_provider_profile_status.v1";
+  ok: boolean;
+  status: ProviderProfileState;
+  profile: Record<string, unknown> | null;
+  model: ProviderCatalogModel | null;
+  credential_source: string | null;
+  error: {
+    category: string;
+    code: string;
+    message: string;
+    retryable: boolean;
+  } | null;
 }
 
 export interface CustomProviderModel {

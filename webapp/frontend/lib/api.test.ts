@@ -21,6 +21,7 @@ import {
   refreshKovaaKConnection,
   retrySession,
   saveKovaaKConnection,
+  switchProviderModel,
   syncKovaaKScores,
 } from "./api";
 import {
@@ -790,4 +791,78 @@ test("provider credential is write-only and is not copied into browser storage",
   assert.equal(created.has_api_key, true);
   assert.equal("api_key" in created, false);
   assert.equal(requests[0]?.input, "/api/coach/provider-profiles");
+});
+
+test("switchProviderModel posts the model switch to the sidecar and returns the resolved model", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async (command: string) => {
+        assert.equal(command, "desktop_runtime_connection");
+        return {
+          baseUrl: "http://127.0.0.1:43127",
+          sidecarUrl: "http://127.0.0.1:43128",
+          token: "test-launch-token",
+        };
+      },
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      schema_version: "coach_provider_profile_status.v1",
+      ok: true,
+      status: "ready",
+      profile: { kind: "builtin", provider_id: "opencode-go", model_id: "deepseek-v4-pro" },
+      model: { model_id: "deepseek-v4-pro", model_name: "DeepSeek V4 Pro", api: "deepseek", provider_id: "opencode-go", base_url: "https://api.example", reasoning: true, input: ["text"], context_window: 131072, max_tokens: 8192 },
+      credential_source: "runtime_profile",
+      error: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const status = await switchProviderModel("deepseek-v4-pro");
+
+  assert.equal(requests[0]?.input, "http://127.0.0.1:43128/v1/provider-profiles/model");
+  assert.equal(requests[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    schema_version: "coach_provider_model_switch.v1",
+    model_id: "deepseek-v4-pro",
+  });
+  assert.equal(status.model?.model_id, "deepseek-v4-pro");
+  assert.equal(status.model?.model_name, "DeepSeek V4 Pro");
+});
+
+test("switchProviderModel rewrites to the coach fallback path in browser sessions", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      schema_version: "coach_provider_profile_status.v1",
+      ok: true,
+      status: "ready",
+      profile: null,
+      model: { model_id: "deepseek-v4-pro", model_name: "DeepSeek V4 Pro", api: "deepseek", provider_id: "opencode-go", base_url: "https://api.example", reasoning: true, input: ["text"], context_window: 131072, max_tokens: 8192 },
+      credential_source: null,
+      error: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  await switchProviderModel("deepseek-v4-pro");
+
+  assert.equal(requests[0]?.input, "/api/coach/provider-profiles/model");
+  assert.equal(requests[0]?.init?.method, "POST");
+});
+
+test("switchProviderModel surfaces the sidecar rejection detail", async () => {
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async () => new Response(JSON.stringify({ detail: "所选模型不可用，请选择当前 Provider 目录中的模型" }), { status: 400 })) as typeof fetch;
+
+  await assert.rejects(
+    switchProviderModel("not-a-real-model"),
+    /所选模型不可用/,
+  );
 });
