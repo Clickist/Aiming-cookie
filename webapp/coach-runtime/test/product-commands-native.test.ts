@@ -153,3 +153,85 @@ test("profile.aiming.snapshot returns a clean profile when unset", () => {
   assert.equal(profile.status, "clean");
   assert.deepEqual(profile.dimensions, []);
 });
+
+// ── history.trend / analysis.compare read results from sessions/{id}.json ──
+// The Python backend persists the full analysis_result.v2 inside the session
+// record; analyses/{id}/ only ever holds disclosure artifacts (overview,
+// metrics, events, evidence). The comparison commands must reach the session
+// result or they can never compare anything.
+
+function writeTrendFixture(): void {
+  const flickingResult = (value: number) => ({
+    schema_version: "analysis_result.v2",
+    analysis_type: "flicking",
+    input_mode: "video_fallback",
+    input_snapshot: {
+      schema_version: "analysis_input_snapshot.v2",
+      scenario: "1wall 6targets small",
+      scenario_identity_version: "kovaak_scenario.v1",
+    },
+    deterministic: {
+      metrics: {
+        "flick.accuracy_percent": {
+          key: "flick.accuracy_percent",
+          value,
+          unit: "percent",
+          availability: "available",
+          coverage: 1.0,
+          metric_version: "native_flicking.v1",
+          classification: "deterministic",
+          calibration_ref: "calibration:stats",
+        },
+      },
+    },
+    evidence: { coverage: 1.0, alignment: { status: "not_required" } },
+  });
+  mkdirSync(join(dataRoot, "sessions"), { recursive: true });
+  const session = (id: number, status: string, result: unknown) => {
+    // history.trend enumerates analyses/{id} directories, so they must exist.
+    mkdirSync(join(dataRoot, "analyses", String(id)), { recursive: true });
+    writeFileSync(join(dataRoot, "sessions", `${id}.json`), JSON.stringify({
+      id, user_id: "owner-a", status, result,
+    }));
+  };
+  session(5, "done", flickingResult(80));
+  session(6, "done", flickingResult(90));
+  session(7, "running", null);
+}
+
+test("history.trend compares analysis results stored in done sessions", () => {
+  writeTrendFixture();
+  const result = executeNativeRead("history.trend", { metric_key: "flick.accuracy_percent" }, "owner-a");
+  assert.equal(result.status, "succeeded");
+  const trend = result.result as Record<string, unknown>;
+  assert.equal(trend.comparable, true);
+  assert.equal(trend.current_session_id, 6);
+  assert.equal(trend.baseline_session_id, 5);
+  assert.equal(trend.current, 90);
+  assert.equal(trend.baseline, 80);
+  assert.equal(trend.delta, 10);
+  assert.equal(trend.percent_change, 12.5);
+});
+
+test("analysis.compare reads both refs from sessions; non-done sessions have no result", () => {
+  writeTrendFixture();
+  const compare = executeNativeRead("analysis.compare", {
+    current_analysis_ref: "analysis:6",
+    baseline_analysis_ref: "analysis:5",
+    metric_key: "flick.accuracy_percent",
+  }, "owner-a");
+  assert.equal(compare.status, "succeeded");
+  const body = compare.result as Record<string, unknown>;
+  assert.equal(body.comparable, true);
+  assert.equal(body.current_analysis_ref, "analysis:6");
+  assert.equal(body.baseline_analysis_ref, "analysis:5");
+  assert.equal(body.delta, 10);
+
+  const running = executeNativeRead("analysis.compare", {
+    current_analysis_ref: "analysis:7",
+    baseline_analysis_ref: "analysis:5",
+    metric_key: "flick.accuracy_percent",
+  }, "owner-a");
+  assert.equal(running.status, "failed");
+  assert.equal(running.warning_or_error?.code, "not_found");
+});

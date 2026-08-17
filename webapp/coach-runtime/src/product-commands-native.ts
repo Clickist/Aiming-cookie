@@ -6,7 +6,7 @@
  */
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { getDataRoot, getAnalysesDir, getConfigDir, getTrainingDir } from "./app-data.ts";
+import { getDataRoot, getAnalysesDir, getConfigDir, getSessionsDir, getTrainingDir } from "./app-data.ts";
 import { reportAnalysisRead } from "./fs-tools.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -647,11 +647,19 @@ function compareAnalysisResults(
   };
 }
 
-/** Read the full analysis result from the analyses directory. */
+/** Read the full analysis result for one analysis id. */
 function readAnalysisResult(analysisId: number): AnyDict | null {
   const dir = join(getAnalysesDir(), String(analysisId));
-  // Try result.json first (full analysis_result.v2), then evidence.json
-  return readJsonFile(join(dir, "result.json")) ?? readJsonFile(join(dir, "evidence.json"));
+  // Full analysis_result.v2 lives in the backend session record; result.json
+  // would win if a writer ever produced it, evidence.json is a last resort.
+  const standalone = readJsonFile(join(dir, "result.json"));
+  if (standalone) return standalone;
+  const session = readJsonFile(join(getSessionsDir(), `${analysisId}.json`));
+  const sessionResult = session?.result;
+  if (session?.status === "done" && sessionResult && typeof sessionResult === "object") {
+    return sessionResult as AnyDict;
+  }
+  return readJsonFile(join(dir, "evidence.json"));
 }
 
 // ── history.trend ──────────────────────────────────────────────────────
