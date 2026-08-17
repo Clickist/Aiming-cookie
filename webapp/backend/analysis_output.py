@@ -204,12 +204,19 @@ def _build_headline(diagnosis: dict) -> str:
 
 
 def _extract_metric_summary(metric: dict) -> dict:
-    return {
+    summary = {
         "value": metric.get("value"),
         "unit": metric.get("unit"),
         "classification": metric.get("classification"),
         "availability": metric.get("availability"),
     }
+    # generic 视觉指标带的知识桥：指向知识条目的 metric_refs。
+    knowledge_refs = metric.get("knowledge_refs")
+    if isinstance(knowledge_refs, list) and knowledge_refs:
+        summary["knowledge_refs"] = [
+            ref for ref in knowledge_refs if isinstance(ref, str)
+        ]
+    return summary
 
 
 def _build_metrics(result: dict) -> dict:
@@ -225,6 +232,11 @@ def _build_metrics(result: dict) -> dict:
             "classification": metric.get("classification"),
             "availability": metric.get("availability"),
         }
+        knowledge_refs = metric.get("knowledge_refs")
+        if isinstance(knowledge_refs, list) and knowledge_refs:
+            entry["knowledge_refs"] = [
+                ref for ref in knowledge_refs if isinstance(ref, str)
+            ]
         distribution = _extract_distribution(metric)
         if distribution:
             entry["distribution"] = distribution

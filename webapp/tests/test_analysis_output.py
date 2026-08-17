@@ -70,3 +70,33 @@ def test_overview_anchor_clamps_at_zero_when_preroll_exceeds_the_event_time():
     )
     anchor = overview["diagnosis"]["issues"][0]["time_anchors"][0]
     assert anchor["ms"] == 0.0
+
+
+def test_metrics_and_summary_carry_the_generic_knowledge_refs():
+    """generic 视觉指标的知识桥必须透传到 metrics.json 和 overview 摘要。"""
+    from webapp.backend.analysis_output import _build_metrics
+
+    result = _result_with_timeline([], []).copy()
+    result["deterministic"]["metrics"] = {
+        "path_length": {"value": 100.0, "unit": "raw_counts"},
+        "tracking.generic.error_median_deg": {
+            "value": 1.5,
+            "unit": "degrees",
+            "metric_version": "generic_aim_families.v1",
+            "classification": "deterministic",
+            "availability": "available",
+            "knowledge_refs": ["metric:tracking_error"],
+        },
+    }
+
+    metrics = _build_metrics(result)
+    assert metrics["tracking.generic.error_median_deg"]["knowledge_refs"] == [
+        "metric:tracking_error",
+    ]
+    # 不带桥的指标保持原形态。
+    assert "knowledge_refs" not in metrics["path_length"]
+
+    overview = _build_overview(9, result)
+    assert overview["metrics_summary"]["tracking.generic.error_median_deg"][
+        "knowledge_refs"
+    ] == ["metric:tracking_error"]

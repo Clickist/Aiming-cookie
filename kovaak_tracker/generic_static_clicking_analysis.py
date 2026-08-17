@@ -26,8 +26,13 @@ GENERIC_STATIC_VISUAL_RESULT_SCHEMA = "generic_static_visual_result.v1"
 GENERIC_STATIC_ASSOCIATION_SCHEMA = "generic_static_association.v1"
 
 # Detection knobs (real-scenario spike measurements, 2026-08-16).
+# Hypothesis sampling must stay at (near-)native width: at 960px the
+# downsampled blobs lose the shape signature (1wall 6targets dropped from
+# 122 classified detections to 0), so the cap only guards 4K+ sources.
 HYPOTHESIS_SAMPLE_FRAMES = 40
-HYPOTHESIS_SAMPLE_MAX_WIDTH = 960
+HYPOTHESIS_SAMPLE_MAX_WIDTH = 1920
+# Matches analysis_evidence._MAX_LIST: event_bundle.v1 rejects longer lists.
+GENERIC_EVENT_BUNDLE_MAX = 512
 FRAME_BUDGET_PER_SECOND = 240
 FRAME_BUDGET_CAP = 250_000
 BLOB_MIN_AREA_RATIO = 2e-5
@@ -884,6 +889,14 @@ def extend_analysis_evidence_with_generic_static_clicking_v1(
             "limitations": [],
         })
     events.sort(key=lambda event: (event["start_ms"], event["event_id"]))
+    # High-fire-rate scenarios exceed the event_bundle.v1 list bound (512,
+    # analysis_evidence._MAX_LIST); truncate with an artifact limitation so
+    # the aggregate metric records survive and the truncation stays honest.
+    if len(events) > GENERIC_EVENT_BUNDLE_MAX:
+        events = events[:GENERIC_EVENT_BUNDLE_MAX]
+        projected.setdefault("limitations", []).append(
+            "generic_event_bundle_truncated",
+        )
     projected["event_bundles"].append({
         "schema_version": "event_bundle.v1",
         "analysis_ref": analysis_ref,

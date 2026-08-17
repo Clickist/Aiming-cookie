@@ -107,10 +107,15 @@ async def _run_isolated_analysis_request(payload: dict) -> dict:
     request = json.dumps(
         payload, ensure_ascii=True, separators=(",", ":"), allow_nan=False,
     ).encode("utf-8")
+    # Under PyInstaller sys.executable is the frozen app itself: it cannot run
+    # "-m module" (the flag is ignored and the full backend would start).
+    # Dispatch to the same one-shot worker via the entry's argv mode instead.
+    if getattr(sys, "frozen", False):
+        worker_argv = [sys.executable, "--visual-worker"]
+    else:
+        worker_argv = [sys.executable, "-m", "webapp.backend.visual_worker_process"]
     process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "webapp.backend.visual_worker_process",
+        *worker_argv,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=None,
@@ -496,6 +501,7 @@ def _maybe_commit_analysis_evidence(
                     "generic visual evidence unavailable session=%s error=%s",
                     job.get("id"),
                     type(error).__name__,
+                    exc_info=error,
                 )
                 artifact = base_artifact
         try:
@@ -2183,7 +2189,11 @@ def _extend_with_generic_visual(
             video_source_ref=video_source_ref,
         )
         return extended, _upgrade_result_with_generic_visual(
-            result, association, version=GENERIC_STATIC_CLICKING_ANALYSIS_VERSION,
+            result,
+            association,
+            version=GENERIC_STATIC_CLICKING_ANALYSIS_VERSION,
+            aim_family="static_clicking",
+            source_ref=video_source_ref,
         )
 
     from kovaak_tracker.generic_aim_family_analysis import (
@@ -2233,7 +2243,11 @@ def _extend_with_generic_visual(
         video_source_ref=_video_source_ref(snapshot, analysis_ref),
     )
     return extended, _upgrade_result_with_generic_visual(
-        result, association, version=version,
+        result,
+        association,
+        version=version,
+        aim_family=aim_family,
+        source_ref=_video_source_ref(snapshot, analysis_ref),
     )
 
 
@@ -2265,6 +2279,8 @@ def _upgrade_result_with_generic_visual(
     association: Mapping[str, object],
     *,
     version: str,
+    aim_family: str,
+    source_ref: str,
 ) -> dict:
     result = dict(result)
     deterministic = dict(result.get("deterministic") or {})
@@ -2275,6 +2291,13 @@ def _upgrade_result_with_generic_visual(
     ]
     limitations.append("generic_visual_limited_validation")
     deterministic["limitations"] = limitations
+    # 把 generic 视觉指标投到 metrics 面（Coach 的讲解读取面）：
+    # metrics.json / overview.metrics_summary 由 deterministic.metrics 物化，
+    # knowledge_refs 显式指向知识条目的 metric_refs，让条目匹配不靠猜。
+    deterministic["metrics"] = {
+        **(deterministic.get("metrics") or {}),
+        **_generic_visual_metric_entries(association, aim_family, source_ref),
+    }
     result["deterministic"] = deterministic
     result["analysis_version"] = version
     scenario = dict(result.get("scenario") or {})
@@ -2287,6 +2310,78 @@ def _upgrade_result_with_generic_visual(
     ]
     result["generic_visual_summary"] = _generic_visual_summary_fields(association)
     return result
+
+
+# generic 指标 → 知识条目 metric_refs 的显式桥。只配语义核对过的映射；
+# 未列出的指标照常投影数字，不带 knowledge_refs。miss_distance 挂
+# normalized_click_error 依赖条目的 comparison_only 语义：同条件对比下
+# 绝对角度与归一化形态等价（目标尺寸恒定）。static 家族不配——该家族
+# 条目明确声明不含 target-relative 误差。
+_GENERIC_METRIC_KNOWLEDGE_REFS: dict[str, list[str]] = {
+    "tracking.generic.error_median_deg": ["metric:tracking_error"],
+    "tracking.generic.error_p90_deg": ["metric:tracking_error"],
+    "tracking.generic.in_target_ratio": ["metric:time_in_radius"],
+    "tracking.generic.loss_count": ["metric:loss_count"],
+    "switching.generic.transition_time_ms": [
+        "metric:target_switching.transition_time_ms",
+    ],
+    "dynamic_clicking.generic.miss_distance_deg": [
+        "metric:normalized_click_error",
+    ],
+    "switching.generic.miss_distance_deg": [
+        "metric:normalized_click_error",
+    ],
+}
+
+
+def _generic_visual_metric_entries(
+    association: Mapping[str, object],
+    aim_family: str,
+    source_ref: str,
+) -> dict[str, dict]:
+    if aim_family == "static_clicking":
+        from kovaak_tracker.generic_static_clicking_analysis import (
+            build_generic_static_metric_records_v1,
+        )
+
+        records = build_generic_static_metric_records_v1(
+            association, source_ref=source_ref,
+        )
+    else:
+        from kovaak_tracker.generic_aim_family_analysis import (
+            build_generic_family_metric_records_v1,
+        )
+
+        records = build_generic_family_metric_records_v1(
+            association, aim_family=aim_family, source_ref=source_ref,
+        )
+    entries: dict[str, dict] = {}
+    for record in records:
+        key = record.get("metric_key")
+        if not isinstance(key, str) or not key:
+            continue
+        # deterministic.metrics 的 v2 持久化合同要求九个必填字段
+        # （key/value/unit/availability/provenance/metric_version/coverage/
+        # classification/limitations），形态对齐 native 指标条目。
+        entry = {
+            "key": key,
+            "value": record.get("value"),
+            "unit": record.get("unit"),
+            "availability": record.get("availability"),
+            "provenance": {
+                "kind": "measured",
+                "sources": [source_ref],
+            },
+            "metric_version": record.get("metric_version"),
+            "coverage": record.get("coverage"),
+            "classification": record.get("classification"),
+            "limitations": ["generic_visual_limited_validation"],
+        }
+        knowledge_refs = _GENERIC_METRIC_KNOWLEDGE_REFS.get(key)
+        if knowledge_refs:
+            entry["knowledge_refs"] = knowledge_refs
+        entries[key] = entry
+    return entries
 
 
 def _annotate_result_generic_gate_failed(
@@ -3069,9 +3164,15 @@ async def process_one() -> bool:
                         video_availability = "unavailable"
                         warnings.append({"code": "video_cv_unavailable"})
             generic_visual_result = None
+            # static_clicking 的正牌 dispatch（native_flicking.v1）也纳入 generic：
+            # 该家族的 exact 视觉档案场景不存在，reviewed 路必失败，没有
+            # generic 兜底的话所有 static 场景都只有输入端运动学。
             if (
                 input_mode == "multimodal"
-                and scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS
+                and (
+                    scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS
+                    or scenario_dispatch == NATIVE_ANALYSIS_VERSION
+                )
                 and job.get("video_path")
             ):
                 await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
