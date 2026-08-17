@@ -4778,3 +4778,132 @@ def test_raw_click_edge_requires_observed_release_before_press():
         "event_ref": "analysis:1:event:raw-shot:1",
         "time_ms": 1_010,
     }]
+
+
+def _switching_generic_ftrack(index: int, path: list[tuple[int, float, float]]) -> dict:
+    xs = [x for _, x, _ in path]
+    ys = [y for _, _, y in path]
+    return {
+        "track_ref": f"analysis:79:generic-target-track:{index}",
+        "birth_ms": path[0][0],
+        "death_ms": path[-1][0],
+        "shape": "sphere",
+        "x": sorted(xs)[len(xs) // 2],
+        "y": sorted(ys)[len(ys) // 2],
+        "end_x": xs[-1],
+        "end_y": ys[-1],
+        "half_width_px": 20.0,
+        "half_height_px": 15.0,
+        "median_area": 900.0,
+        "sample_count": len(path),
+        "real_sample_count": len(path),
+        "path": [{"t": t, "x": x, "y": y} for t, x, y in path],
+    }
+
+
+def _switching_kill_outcome_record(
+    canonical_time_ms: int, kill_index: int, source_event_index: int,
+) -> dict:
+    return {
+        "canonical_time_ms": canonical_time_ms,
+        "source_time": {
+            "clock_domain": "stats_local_time_of_day",
+            "value": 0.0,
+            "unit": "HH:MM:SS.mmm",
+            "precision": "milliseconds",
+        },
+        "source_priority": 10,
+        "source_event_index": source_event_index,
+        "values": [{
+            "metric_key": "stats.kill.kill_index",
+            "value": kill_index,
+            "value_semantics": "aggregate_within_kill_row",
+            "unit": "count",
+        }],
+        "source_refs": ["run:79:stats"],
+    }
+
+
+def test_generic_visual_switching_runs_with_production_target_switching_family():
+    """Production scenario_resolution says "target_switching", not "switching"."""
+    from types import SimpleNamespace
+
+    from kovaak_tracker.analysis_evidence import (
+        build_analysis_evidence_artifact_v1,
+    )
+
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 1_000,
+        "end_ms": 2_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    artifact = build_analysis_evidence_artifact_v1(
+        analysis_ref="analysis:79",
+        canonical_time_window=window,
+        scenario_profile_ref=None,
+        stats=None,
+        performance=None,
+        stats_source_ref="run:79:stats",
+        performance_source_ref="run:79:performance",
+    )
+    artifact["normalized_outcome_records"] = [
+        _switching_kill_outcome_record(1_090, 1, 0),
+        _switching_kill_outcome_record(1_600, 2, 1),
+    ]
+    job = {
+        "id": 79,
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "scenario_resolution": {"aim_family": "target_switching"},
+            "sources": {
+                "video": {"artifact_ref": "run:79:video:abcdef0123456789"},
+            },
+        },
+    }
+    generic_visual_result = {
+        "tracks": [
+            _switching_generic_ftrack(1, [(1_000, 955.0, 543.0), (1_100, 955.0, 543.0)]),
+            _switching_generic_ftrack(2, [(1_560, 700.0, 540.0), (1_700, 700.0, 540.0)]),
+        ],
+        "frame_coverage": 0.9,
+    }
+    native_result = {
+        "deterministic": {
+            "trajectory": {
+                "points": [
+                    {"timestamp_ms": 1_050, "buttons": 1},
+                    {"timestamp_ms": 1_060, "buttons": 0},
+                    {"timestamp_ms": 1_120, "buttons": 1},
+                    {"timestamp_ms": 1_130, "buttons": 0},
+                    {"timestamp_ms": 1_620, "buttons": 1},
+                ],
+            },
+        },
+    }
+    extended, result = worker._extend_with_generic_visual(
+        artifact,
+        {},
+        generic_visual_result,
+        job=job,
+        parsed_stats=SimpleNamespace(resolution="1920x1080", fov=103.0),
+        native_result=native_result,
+    )
+    assert result["analysis_version"] == "switching.generic_visual.v1"
+    assert result["scenario"]["analyzer_refs"] == ["switching.generic_visual.v1"]
+    assert result["generic_visual_summary"]["gate_passed"] is True
+    keys = {record["metric_key"] for record in extended["metric_records"]}
+    assert "switching.generic.episode_count" in keys
+    assert "switching.generic.transition_time_ms" in keys
+    assert not any(key.startswith("target_switching.generic.") for key in keys)
+    kinds = {
+        event["event_kind"]
+        for bundle in extended["event_bundles"]
+        for event in bundle["events"]
+    }
+    assert "generic_switch_episode" in kinds

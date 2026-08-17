@@ -37,9 +37,18 @@ _FAMILY_VERSIONS = {
     "continuous_tracking": GENERIC_TRACKING_ANALYSIS_VERSION,
 }
 
+# Production scenario_resolution names the switching family "target_switching";
+# the generic layers and their "switching.generic." metric keys use the
+# internal name.
+_FAMILY_ALIASES = {"target_switching": "switching"}
+
+
+def _canonical_family(aim_family: str) -> str:
+    return _FAMILY_ALIASES.get(aim_family, aim_family)
+
 
 def generic_family_analysis_version(aim_family: str) -> str | None:
-    return _FAMILY_VERSIONS.get(aim_family)
+    return _FAMILY_VERSIONS.get(_canonical_family(aim_family))
 
 
 def _track_position_at(
@@ -345,6 +354,7 @@ def build_generic_family_metric_records_v1(
         build_generic_static_metric_records_v1,
     )
 
+    aim_family = _canonical_family(aim_family)
     records = []
     if aim_family == "dynamic_clicking":
         base = build_generic_static_metric_records_v1(
@@ -497,6 +507,7 @@ def extend_analysis_evidence_with_generic_family_v1(
         extend_analysis_evidence_with_generic_static_clicking_v1,
     )
 
+    aim_family = _canonical_family(aim_family)
     if aim_family == "continuous_tracking":
         projected = copy.deepcopy(dict(artifact))
         projected["metric_records"].extend(
