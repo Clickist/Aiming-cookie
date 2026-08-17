@@ -29,7 +29,7 @@ import {
   testProviderProfile,
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
-import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
+import { exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import type {
@@ -201,9 +201,22 @@ export function SettingsWorkspace() {
   const [expandedProviders, setExpandedProviders] = useState<Record<number, boolean>>({});
   const [activeNav, setActiveNav] = useState(NAV_ITEMS[0].id);
   const [captureConsent, setCaptureConsent] = useState(false);
+  const [diagnosticExporting, setDiagnosticExporting] = useState(false);
   const previousProviderSelection = useRef<string | null>(null);
 
   const desktop = isDesktopRuntime();
+
+  const exportCaptureDiagnostics = async () => {
+    setDiagnosticExporting(true);
+    try {
+      const path = await exportDesktopCaptureDiagnostics();
+      if (path) setFeedback(`采集诊断包已导出：${path}`);
+    } catch {
+      setFeedback("采集诊断包导出失败，请重试。");
+    } finally {
+      setDiagnosticExporting(false);
+    }
+  };
 
   const customDiscovery = useCustomModelDiscovery({
     baseUrl,
@@ -785,6 +798,14 @@ export function SettingsWorkspace() {
                   >
                     {capture.capture_enabled ? "关闭未来采集" : "授权并启用自动采集"}
                   </Button>
+                </div>
+              ) : null}
+              {desktop ? (
+                <div className="task6-inline-actions" style={{ marginTop: "12px" }}>
+                  <Button disabled={diagnosticExporting} onClick={() => void exportCaptureDiagnostics()} variant="secondary">
+                    {diagnosticExporting ? "正在导出诊断包…" : "导出采集诊断包"}
+                  </Button>
+                  <span className="task6-settings-section-hint">复现问题后立即导出，包含完整 native 错误、环境和采集状态，不包含 Raw 数据或 MP4。</span>
                 </div>
               ) : null}
             </Panel>

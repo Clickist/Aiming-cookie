@@ -2,6 +2,7 @@ use crate::raw_input::{RawInputState, SnapshotBarrierReceipt};
 use crate::window_capture::{CaptureClockMetadata, ReplayExportReceipt, WindowCaptureState};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -9,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CONTROL_MAX_MESSAGE_BYTES: usize = 16 * 1024;
 const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -22,6 +23,26 @@ const MONITOR_INTERVAL: Duration = Duration::from_millis(500);
 // 时序竞态等），超过该阈值强制释放采集源并回落到 WaitingForKovaak。
 // 必须大于桌面后端的 release 硬 grace（30s），留出正常 release 的窗口。
 const FINALIZING_STALE_TIMEOUT: Duration = Duration::from_secs(45);
+const DIAGNOSTIC_EVENT_LIMIT: usize = 64;
+
+fn diagnostic_now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+pub fn bounded_diagnostic_text(value: &str) -> String {
+    let mut text = value
+        .chars()
+        .filter(|character| !character.is_control() || *character == '\n' || *character == '\t')
+        .collect::<String>();
+    if text.len() > 32 * 1024 {
+        text.truncate(32 * 1024);
+        text.push_str("...");
+    }
+    text
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +84,17 @@ pub struct CaptureCoordinatorStatus {
     pub reason: Option<String>,
     pub raw: CaptureSourceStatus,
     pub video: CaptureSourceStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureDiagnosticEvent {
+    pub timestamp_utc_ms: i64,
+    pub phase: CapturePhase,
+    pub reason: Option<String>,
+    pub kovaak_process_present: bool,
+    pub raw_state: CaptureSourceState,
+    pub video_state: CaptureSourceState,
 }
 
 impl CaptureCoordinatorStatus {
@@ -714,6 +746,7 @@ pub struct CaptureCoordinatorState {
     raw_input: Arc<RawInputState>,
     window_capture: Arc<Mutex<WindowCaptureState>>,
     status: Mutex<CaptureCoordinatorStatus>,
+    diagnostic_events: Mutex<VecDeque<CaptureDiagnosticEvent>>,
     finalizing_since: Mutex<Option<Instant>>,
     shutdown: Arc<AtomicBool>,
     monitor: Mutex<Option<JoinHandle<()>>>,
@@ -736,6 +769,14 @@ impl CaptureCoordinatorState {
             raw_input,
             window_capture,
             status: Mutex::new(CaptureCoordinatorStatus::disabled()),
+            diagnostic_events: Mutex::new(VecDeque::from([CaptureDiagnosticEvent {
+                timestamp_utc_ms: diagnostic_now_ms(),
+                phase: CapturePhase::Disabled,
+                reason: None,
+                kovaak_process_present: false,
+                raw_state: CaptureSourceState::Disabled,
+                video_state: CaptureSourceState::Disabled,
+            }])),
             finalizing_since: Mutex::new(None),
             shutdown: Arc::new(AtomicBool::new(false)),
             monitor: Mutex::new(None),
@@ -781,6 +822,17 @@ impl CaptureCoordinatorState {
             })
     }
 
+    pub fn diagnostic_events(&self) -> Vec<CaptureDiagnosticEvent> {
+        self.diagnostic_events
+            .lock()
+            .map(|events| events.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn diagnostic_data_root(&self) -> String {
+        self.data_root.to_string_lossy().into_owned()
+    }
+
     pub fn set_enabled(
         self: &Arc<Self>,
         enabled: bool,
@@ -789,16 +841,17 @@ impl CaptureCoordinatorState {
             self.disable()?;
             return Ok(self.status());
         }
-        {
-            let mut status = self
+        let next_status = {
+            let status = self
                 .status
                 .lock()
                 .map_err(|_| "capture coordinator state is unavailable".to_string())?;
             if status.enabled {
                 return Ok(status.clone());
             }
-            *status = status.after_enable(false, None);
-        }
+            status.after_enable(false, None)
+        };
+        self.replace_status(next_status);
         if let Err(error) = self.start_monitor() {
             self.replace_status(monitor_start_failure_status());
             return Err(error);
@@ -882,17 +935,18 @@ impl CaptureCoordinatorState {
         ) {
             return;
         }
-        if self.raw_input.set_enabled(true).is_err() {
+        if let Err(error) = self.raw_input.set_enabled(true) {
+            let reason = format!("raw_input_unavailable: {}", bounded_diagnostic_text(&error));
             self.replace_status(CaptureCoordinatorStatus {
                 enabled: true,
                 phase: CapturePhase::Error,
                 capture_session_id: None,
                 kovaak_process_present: true,
                 window_handle: hwnd,
-                reason: Some("raw_input_unavailable".to_string()),
+                reason: Some(reason.clone()),
                 raw: CaptureSourceStatus {
                     state: CaptureSourceState::Unavailable,
-                    reason: Some("raw_input_unavailable".to_string()),
+                    reason: Some(reason),
                 },
                 video: current.video,
             });
@@ -933,22 +987,28 @@ impl CaptureCoordinatorState {
                     reason: None,
                 },
             }),
-            Err(_) => self.replace_status(CaptureCoordinatorStatus {
-                enabled: true,
-                phase: CapturePhase::Degraded,
-                capture_session_id: Some(capture_session_id),
-                kovaak_process_present: true,
-                window_handle: Some(hwnd),
-                reason: Some("video_capture_unavailable".to_string()),
-                raw: CaptureSourceStatus {
-                    state: CaptureSourceState::Capturing,
-                    reason: None,
-                },
-                video: CaptureSourceStatus {
-                    state: CaptureSourceState::Degraded,
-                    reason: Some("video_capture_unavailable".to_string()),
-                },
-            }),
+            Err(error) => {
+                let reason = format!(
+                    "video_capture_unavailable: {}",
+                    bounded_diagnostic_text(&error)
+                );
+                self.replace_status(CaptureCoordinatorStatus {
+                    enabled: true,
+                    phase: CapturePhase::Degraded,
+                    capture_session_id: Some(capture_session_id),
+                    kovaak_process_present: true,
+                    window_handle: Some(hwnd),
+                    reason: Some(reason.clone()),
+                    raw: CaptureSourceStatus {
+                        state: CaptureSourceState::Capturing,
+                        reason: None,
+                    },
+                    video: CaptureSourceStatus {
+                        state: CaptureSourceState::Degraded,
+                        reason: Some(reason),
+                    },
+                })
+            }
         }
     }
 
@@ -964,15 +1024,38 @@ impl CaptureCoordinatorState {
                     status.phase, replacement.phase, replacement.capture_session_id
                 );
             }
+            let event = if *status != replacement {
+                Some(CaptureDiagnosticEvent {
+                    timestamp_utc_ms: diagnostic_now_ms(),
+                    phase: replacement.phase,
+                    reason: replacement
+                        .reason
+                        .clone()
+                        .map(|value| bounded_diagnostic_text(&value)),
+                    kovaak_process_present: replacement.kovaak_process_present,
+                    raw_state: replacement.raw.state,
+                    video_state: replacement.video.state,
+                })
+            } else {
+                None
+            };
             *status = replacement;
+            drop(status);
             if enters_finalizing || exits_finalizing {
-                drop(status);
                 if let Ok(mut since) = self.finalizing_since.lock() {
                     *since = if enters_finalizing {
                         Some(Instant::now())
                     } else {
                         None
                     };
+                }
+            }
+            if let Some(event) = event {
+                if let Ok(mut events) = self.diagnostic_events.lock() {
+                    events.push_back(event);
+                    while events.len() > DIAGNOSTIC_EVENT_LIMIT {
+                        events.pop_front();
+                    }
                 }
             }
         }
@@ -1736,12 +1819,12 @@ fn is_current_kovaak_window(_hwnd: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        control_error_response, join_control_connections, managed_export_paths,
-        monitor_start_failure_status, parse_control_request, read_control_line,
-        replay_failure_code, response_type_for_request, track_control_connection_thread,
-        CaptureCoordinatorStatus, CapturePhase, CaptureSourceState, CaptureSourceStatus,
-        ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord,
-        CONTROL_MAX_MESSAGE_BYTES,
+        bounded_diagnostic_text, control_error_response, join_control_connections,
+        managed_export_paths, monitor_start_failure_status, parse_control_request,
+        read_control_line, replay_failure_code, response_type_for_request,
+        track_control_connection_thread, CaptureCoordinatorStatus, CapturePhase,
+        CaptureSourceState, CaptureSourceStatus, ControlRequest, ExportReplayRequest,
+        FileFingerprint, ReceiptRecord, CONTROL_MAX_MESSAGE_BYTES,
     };
     use crate::window_capture::ReplayExportFailureKind;
     use std::fs;
@@ -1756,6 +1839,14 @@ mod tests {
         let waiting = disabled.after_enable(false, None);
         assert_eq!(waiting.phase, CapturePhase::WaitingForKovaak);
         assert!(waiting.enabled);
+    }
+
+    #[test]
+    fn diagnostic_text_keeps_paths_and_is_bounded() {
+        let value = r#"WGC startup failed at C:\Program Files\KovaaK\capture.dll"#;
+        assert!(bounded_diagnostic_text(value).contains(r"C:\Program Files\KovaaK"));
+        let long = "x".repeat(40 * 1024);
+        assert!(bounded_diagnostic_text(&long).len() <= 32 * 1024 + 3);
     }
 
     #[test]

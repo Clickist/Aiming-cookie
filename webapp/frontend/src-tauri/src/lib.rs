@@ -5,14 +5,63 @@ mod runtime;
 mod scenario_launch;
 mod window_capture;
 
-use capture_coordinator::{CaptureCoordinatorState, CaptureCoordinatorStatus};
+use capture_coordinator::{
+    bounded_diagnostic_text, CaptureCoordinatorState, CaptureCoordinatorStatus,
+};
 use raw_input::{RawInputState, RawInputStatus};
 use runtime::{runtime_layout, RuntimeConnection, RuntimeProcess, RuntimeState};
 use scenario_launch::scenario_open;
+use std::fs;
 use std::io;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Manager, State};
 use window_capture::{WindowCaptureState, WindowCaptureStatus, DEFAULT_FRAME_QUEUE_CAPACITY};
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureDiagnosticsBundle {
+    schema_version: &'static str,
+    generated_at_utc_ms: i64,
+    app_version: String,
+    target_os: &'static str,
+    target_arch: &'static str,
+    host_version: Option<String>,
+    processor_identifier: Option<String>,
+    processor_count: Option<String>,
+    capture_data_root: String,
+    coordinator: CaptureCoordinatorStatus,
+    raw_input: RawInputStatus,
+    window_capture: WindowCaptureStatus,
+    events: Vec<capture_coordinator::CaptureDiagnosticEvent>,
+}
+
+fn diagnostic_now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn host_version() -> Option<String> {
+    #[cfg(windows)]
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "ver"])
+        .output()
+        .ok()?;
+    #[cfg(target_os = "macos")]
+    let output = std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()?;
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    let output = return None;
+
+    let value = String::from_utf8_lossy(&output.stdout);
+    let value = bounded_diagnostic_text(value.trim());
+    (!value.is_empty()).then_some(value)
+}
 
 #[tauri::command]
 fn desktop_runtime_connection(state: State<'_, RuntimeState>) -> Result<RuntimeConnection, String> {
@@ -39,6 +88,50 @@ fn desktop_capture_coordinator_status(
     state: State<'_, Arc<CaptureCoordinatorState>>,
 ) -> CaptureCoordinatorStatus {
     state.status()
+}
+
+#[tauri::command]
+fn desktop_export_capture_diagnostics(
+    app: tauri::AppHandle,
+    path: String,
+    coordinator: State<'_, Arc<CaptureCoordinatorState>>,
+    raw_input: State<'_, Arc<RawInputState>>,
+    window_capture: State<'_, Arc<Mutex<WindowCaptureState>>>,
+) -> Result<String, String> {
+    let path = PathBuf::from(path.trim());
+    if !path.is_absolute() {
+        return Err("诊断包保存路径必须是绝对路径".to_string());
+    }
+    let mut coordinator_status = coordinator.status();
+    // The session id is an internal correlation secret and is not needed by support.
+    coordinator_status.capture_session_id = None;
+    let window_status = window_capture
+        .lock()
+        .map_err(|_| "window capture state is unavailable".to_string())?
+        .status();
+    let bundle = CaptureDiagnosticsBundle {
+        schema_version: "capture_diagnostics.v1",
+        generated_at_utc_ms: diagnostic_now_ms(),
+        app_version: app.package_info().version.to_string(),
+        target_os: std::env::consts::OS,
+        target_arch: std::env::consts::ARCH,
+        host_version: host_version(),
+        processor_identifier: std::env::var("PROCESSOR_IDENTIFIER")
+            .ok()
+            .map(|value| bounded_diagnostic_text(&value)),
+        processor_count: std::env::var("NUMBER_OF_PROCESSORS")
+            .ok()
+            .map(|value| bounded_diagnostic_text(&value)),
+        capture_data_root: coordinator.diagnostic_data_root(),
+        coordinator: coordinator_status,
+        raw_input: raw_input.status(),
+        window_capture: window_status,
+        events: coordinator.diagnostic_events(),
+    };
+    let payload =
+        serde_json::to_vec_pretty(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))?;
+    fs::write(&path, payload).map_err(|error| format!("诊断包写入失败: {error}"))?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -117,6 +210,7 @@ pub fn run() {
             desktop_raw_input_status,
             desktop_window_capture_status,
             desktop_capture_coordinator_status,
+            desktop_export_capture_diagnostics,
             desktop_capture_coordinator_set_enabled,
             scenario_open,
         ])

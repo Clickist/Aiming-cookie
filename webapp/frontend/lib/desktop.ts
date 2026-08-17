@@ -1,5 +1,5 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 import type { DesktopCaptureCoordinatorStatus, ScenarioOpenResultV1 } from "./types";
 
@@ -50,6 +50,19 @@ export async function setDesktopCaptureEnabled(
     "desktop_capture_coordinator_set_enabled",
     { enabled },
   );
+}
+
+export async function exportDesktopCaptureDiagnostics(): Promise<string | null> {
+  if (!isDesktopRuntime()) {
+    throw new Error("Capture diagnostics are only available in the desktop app");
+  }
+  const path = await save({
+    title: "导出采集诊断包",
+    defaultPath: "aiming-cookie-capture-diagnostics.json",
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (typeof path !== "string" || !path) return null;
+  return invoke<string>("desktop_export_capture_diagnostics", { path });
 }
 
 export async function openKovaakScenario(
