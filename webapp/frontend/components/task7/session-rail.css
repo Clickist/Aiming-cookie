@@ -583,7 +583,11 @@
   .task7-session-rail__new,
   .task7-session-rail__utility-button,
   .task7-session-rail__search,
-  .task7-session-rail__item-actions {
+  .task7-session-rail__collapse,
+  .task7-session-rail__session,
+  .task7-session-rail__item-action,
+  .task7-session-rail__item-actions,
+  .task7-session-rail__footer-row {
     transition: none;
   }
 
