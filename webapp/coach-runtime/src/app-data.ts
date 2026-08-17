@@ -48,3 +48,8 @@ export function getTeachingDir(): string {
 export function getConfigDir(): string {
   return join(getDataRoot(), "config");
 }
+
+/** Backend-owned session records (sessions/{id}.json); not created eagerly. */
+export function getSessionsDir(): string {
+  return join(getDataRoot(), "sessions");
+}
