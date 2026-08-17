@@ -16,6 +16,8 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(800);
 const TOKEN_ENV: &str = "AIMING_COOKIE_DESKTOP_TOKEN";
 const WATCH_PARENT_STDIN_ENV: &str = "AIMING_COOKIE_WATCH_PARENT_STDIN";
+#[cfg(windows)]
+const NO_CHILD_WINDOW: u32 = 0x0800_0000; // CREATE_NO_WINDOW
 const CAPTURE_CONTROL_ADDRESS_ENV: &str = "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_ADDR";
 const CAPTURE_CONTROL_SECRET_ENV: &str = "AIMING_COOKIE_NATIVE_CAPTURE_CONTROL_SECRET";
 const COACH_SIDECAR_HOST_ENV: &str = "COACH_SIDECAR_HOST";
@@ -528,7 +530,11 @@ fn start_coach_sidecar(
             DESKTOP_RUNTIME_CONFIG_ENV,
             app_data_dir.join(DESKTOP_RUNTIME_CONFIG_FILE),
         )
-        .stdin(Stdio::null())
+        // Same EOF shutdown protocol as the Python runtime: the sidecar
+        // watches this pipe and exits itself, so taskkill stays a fallback
+        // instead of running on every shutdown.
+        .env(WATCH_PARENT_STDIN_ENV, "1")
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     if let Some(resource_root) = &layout.resource_root {
@@ -683,8 +689,7 @@ fn configure_process_group(command: &mut Command) {
 fn configure_process_group(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP | NO_CHILD_WINDOW);
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -760,8 +765,12 @@ fn terminate_process_tree(child: &mut Child) {
         if wait_for_child_exit(child, SHUTDOWN_GRACE) {
             return;
         }
+        use std::os::windows::process::CommandExt;
+        // taskkill is a console executable; without CREATE_NO_WINDOW every
+        // forced shutdown flashes a console window over the closing app.
         let _ = Command::new("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(NO_CHILD_WINDOW)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

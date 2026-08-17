@@ -29,3 +29,16 @@ server.on("error", (error) => {
   );
   process.exitCode = 1;
 });
+
+// Desktop shutdown protocol (mirrors the Python runtime): when the host sets
+// AIMING_COOKIE_WATCH_PARENT_STDIN it owns our stdin pipe and closes it on
+// exit. Treat EOF as "shut down now" so the default path never needs the
+// host's taskkill sweep. Manual dev runs without the flag are unaffected.
+if (process.env.AIMING_COOKIE_WATCH_PARENT_STDIN === "1") {
+  process.stdin.resume();
+  process.stdin.once("end", () => {
+    server.close();
+    server.closeAllConnections?.();
+    process.exit(0);
+  });
+}

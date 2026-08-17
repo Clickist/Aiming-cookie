@@ -2158,12 +2158,18 @@ mod tests {
     #[test]
     fn control_shutdown_waits_for_inflight_connections_but_never_blocks_forever() {
         let joins = std::sync::Mutex::new(Vec::new());
-        let finished = std::thread::spawn(|| {});
+        // track 每次记录都会清理已完成的句柄，finished 线程必须确定性地
+        // 活到两次 track 之后，len 断言才不依赖线程调度时序。
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let finished = std::thread::spawn(move || {
+            let _ = released.recv();
+        });
         track_control_connection_thread(&joins, finished);
         let stalled = std::thread::spawn(|| std::thread::sleep(std::time::Duration::from_secs(5)));
         track_control_connection_thread(&joins, stalled);
         assert_eq!(joins.lock().expect("tracked joins").len(), 2);
 
+        let _ = release.send(());
         let started = std::time::Instant::now();
         join_control_connections(&joins, started + std::time::Duration::from_millis(200));
         // stalled 连接超时后被放弃，等待时间以 deadline 为硬上限。
