@@ -13,11 +13,11 @@ use runtime::{runtime_layout, RuntimeConnection, RuntimeProcess, RuntimeState};
 use scenario_launch::scenario_open;
 use std::fs;
 use std::io;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use tauri::{Manager, State};
 use window_capture::{WindowCaptureState, WindowCaptureStatus, DEFAULT_FRAME_QUEUE_CAPACITY};
 
@@ -86,15 +86,15 @@ fn gpu_names() -> Vec<String> {
             ])
             .creation_flags(NO_CHILD_WINDOW)
             .output();
-        return match output {
+        match output {
             Ok(output) => String::from_utf8_lossy(&output.stdout)
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
-                .map(|line| bounded_diagnostic_text(line))
+                .map(bounded_diagnostic_text)
                 .collect(),
             Err(_) => Vec::new(),
-        };
+        }
     }
     #[cfg(not(windows))]
     Vec::new()
