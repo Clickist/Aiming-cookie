@@ -21,9 +21,10 @@ test.after(() => {
   rmSync(dataRoot, { recursive: true, force: true });
 });
 
-test("read and ls tools stay invisible to the discussion list", async () => {
-  // Plain file reads are the model's internal fetching (history comparison
-  // during a lecture); they must not pin an analysis to 本次讨论.
+test("deep reads of analyses/N/ join the discussion list", async () => {
+  // The model lectures by reading analyses/N/ with read/ls; those reads must
+  // report engagement so 本次讨论 and @time links keep their analysis ref.
+  // Non-analysis paths stay invisible.
   ensureAppDataDirs();
   const dir = join(dataRoot, "analyses", "1");
   mkdirSync(dir, { recursive: true });
@@ -40,7 +41,7 @@ test("read and ls tools stay invisible to the discussion list", async () => {
     await read.execute("call", { path: "conversations/x.txt" });
     const ls = createLsTool(dataRoot);
     await ls.execute("call", { path: "analyses/1" });
-    assert.deepEqual(seen, []);
+    assert.deepEqual(seen, [1, 1, 1]);
   } finally {
     unsubscribe();
   }
