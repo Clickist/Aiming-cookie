@@ -676,6 +676,7 @@ async def list_sessions(user_id: str) -> list[dict]:
     for session in _all_sessions(user_id):
         item = dict(session)
         item["created_at"] = timestamp_to_wire_utc(item.get("created_at")) or ""
+        item["started_at"] = timestamp_to_wire_utc(item.get("started_at"))
         item["finished_at"] = timestamp_to_wire_utc(item.get("finished_at"))
         snapshot = item.get("input_snapshot")
         snapshot_scenario = snapshot.get("scenario") if isinstance(snapshot, dict) else None
