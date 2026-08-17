@@ -4907,3 +4907,84 @@ def test_generic_visual_switching_runs_with_production_target_switching_family()
         for event in bundle["events"]
     }
     assert "generic_switch_episode" in kinds
+    # 投影到 metrics 面：指标值 + 指向知识条目 metric_refs 的显式桥。
+    metrics = result["deterministic"]["metrics"]
+    assert metrics["switching.generic.transition_time_ms"]["knowledge_refs"] == [
+        "metric:target_switching.transition_time_ms",
+    ]
+    # comparison_only 语义下未命中距离可挂点击误差条目（目标尺寸同条件恒定）。
+    assert metrics["switching.generic.miss_distance_deg"]["knowledge_refs"] == [
+        "metric:normalized_click_error",
+    ]
+
+
+def test_generic_visual_upgrade_projects_tracking_metrics_with_knowledge_refs():
+    association = {
+        "coverage": 1.0,
+        "error_median_deg": 1.23,
+        "error_p90_deg": 2.34,
+        "in_target_ratio": 0.56,
+        "loss_count": 3,
+        "gate": {"passed": True, "frame_coverage": 1.0},
+    }
+    result = worker._upgrade_result_with_generic_visual(
+        {
+            "deterministic": {
+                "metrics": {"path_length": {"value": 1.0, "unit": "raw_counts"}},
+                "limitations": ["target_relative_facts_unavailable"],
+            },
+        },
+        association,
+        version="tracking.generic_visual.v1",
+        aim_family="continuous_tracking",
+        source_ref="run:1:video:abcdef0123456789",
+    )
+    metrics = result["deterministic"]["metrics"]
+    # 原有 native 指标不被覆盖。
+    assert metrics["path_length"]["value"] == 1.0
+    assert metrics["tracking.generic.error_median_deg"]["value"] == 1.23
+    assert metrics["tracking.generic.error_median_deg"]["knowledge_refs"] == [
+        "metric:tracking_error",
+    ]
+    assert metrics["tracking.generic.in_target_ratio"]["knowledge_refs"] == [
+        "metric:time_in_radius",
+    ]
+    assert metrics["tracking.generic.loss_count"]["knowledge_refs"] == [
+        "metric:loss_count",
+    ]
+    # coverage 是质量前置，不配知识桥。
+    assert "knowledge_refs" not in metrics["tracking.generic.coverage"]
+    assert "target_relative_facts_unavailable" not in (
+        result["deterministic"]["limitations"]
+    )
+
+
+def test_generic_visual_metric_entries_dispatch_the_static_builder():
+    """static 家族走 static 版指标 builder，其余键形态与 v2 合同一致。"""
+    association = {
+        "gate": {"passed": True, "frame_coverage": 0.95, "kill_pairing_rate": 1.0},
+        "limitations": ["generic_visual_limited_validation"],
+        "click_count": 8,
+        "hit_count": 6,
+        "miss_count": 1,
+        "no_target_count": 1,
+        "deg_per_px": 0.05,
+        "click_outcomes": [
+            {"outcome": "miss", "miss_vector_deg": {"x": 1.0, "y": 0.6, "distance": 1.2}},
+        ],
+        "kill_pairing_rate": 1.0,
+        "kill_residuals": [
+            {"residual_deg": {"x": 0.3, "y": 0.2, "distance": 0.4}},
+        ],
+    }
+    entries = worker._generic_visual_metric_entries(
+        association, "static_clicking", "run:1:video:abcdef0123456789",
+    )
+    assert "static_clicking.generic.click_count" in entries
+    assert "static_clicking.generic.hit_clicks" in entries
+    click_entry = entries["static_clicking.generic.click_count"]
+    assert click_entry["key"] == "static_clicking.generic.click_count"
+    assert click_entry["classification"] == "deterministic"
+    assert click_entry["provenance"]["sources"] == ["run:1:video:abcdef0123456789"]
+    # static 家族的知识桥刻意不配（条目声明 not target-relative）。
+    assert all("knowledge_refs" not in entry for entry in entries.values())
