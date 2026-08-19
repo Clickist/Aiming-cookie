@@ -48,6 +48,7 @@
 - [`coach-community-frontier.md`](coach-community-frontier.md)：社区实践观察；
 - [`coach-prescription-manual.md`](coach-prescription-manual.md)：处方规则说明；
 - [`deployment-guide.md`](deployment-guide.md)：2026-07-10 部署候选调研快照；使用前必须重新核实并通过相关测试与发布 Gate；
+- [`landing-brief.md`](landing-brief.md)：落地页纯内容 brief（2026-08-19 草稿）；视觉交由 Open Design 自由发挥；
 - `superpowers/assessments/`：历史评估证据与决策输入，仅供追溯。
 
 ## 归档边界
