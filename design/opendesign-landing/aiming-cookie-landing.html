@@ -1,17 +1,11 @@
 <!doctype html>
-<!--
-  Aiming Cookie 营销落地页 · 主方向「暖纸面编辑室」
-  基于 web-prototype 种子模板构建；token 绑定 brand-spec.md（源自 DESIGN-cursor.md）。
-  内容合同：docs/landing-brief.md（8 个内容块全覆盖，未增删产品主张）。
--->
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+<html lang="zh-CN"><head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Aiming Cookie · 分数会骗人，数据不会。</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&amp;family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
   <style>
     /* ─── tokens（绑定 brand-spec.md · Light）───────────────────────── */
     :root {
@@ -76,9 +70,7 @@
     /* ─── layout primitives ────────────────────────────────────────── */
     .container { max-width: var(--container); margin-inline: auto; padding-inline: var(--gutter); }
     .section { padding-block: clamp(48px, 8vw, var(--gap-2xl)); }
-    .section + .section { border-top: 1px solid var(--border); }
     .stack { display: flex; flex-direction: column; }
-    .stack > * + * { margin-top: var(--gap-md); }
     .row { display: flex; align-items: center; gap: var(--gap-md); }
     .row-between { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-md); }
     .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--gap-lg); }
@@ -123,9 +115,24 @@
     .topnav-inner { display: flex; align-items: center; justify-content: space-between; padding-block: 14px; }
     .topnav .logo { font-family: var(--font-display); font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
     .topnav nav { display: flex; gap: var(--gap-lg); }
-    .topnav nav a { font-size: 14px; color: var(--muted); }
-    .topnav nav a:hover { color: var(--fg); }
-    @media (max-width: 920px) { .topnav nav { display: none; } }
+    .topnav nav a { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; color: var(--muted); }
+    .topnav nav a:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 5px; }
+    .menu-toggle { display: none; width: 44px; height: 44px; padding: 0; place-items: center; background: transparent; color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius); }
+    .menu-toggle svg { width: 20px; height: 20px; }
+    .topnav .btn {
+      min-height: 38px;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 14px;
+    }
+    @media (max-width: 920px) {
+      .topnav-inner { flex-wrap: wrap; }
+      .topnav .btn { display: none; }
+      .menu-toggle { display: grid; }
+      .topnav nav { display: none; order: 3; width: 100%; padding: 10px 0 4px; border-top: 1px solid var(--border); margin-top: 10px; }
+      .topnav nav[data-open="true"] { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 16px; }
+      .topnav nav a { border-bottom: 1px solid var(--border); }
+    }
     .pagefoot { padding-block: var(--gap-xl); color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); }
     .pagefoot .row-between { flex-wrap: wrap; gap: var(--gap-md); }
 
@@ -140,9 +147,17 @@
       letter-spacing: -0.005em;
       transition: transform 0.05s ease, background 0.15s ease, border-color 0.15s ease;
     }
+    .btn-pill { border-radius: 999px; }
+    .download-cta {
+      margin-top: 24px;
+      min-height: 38px;
+      padding: 8px 16px;
+      font-size: 14px;
+    }
     .btn:active { transform: translateY(1px); }
     .btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
     .btn-primary:hover { background: color-mix(in oklch, var(--accent) 88%, black); }
+    .btn:disabled, .btn[aria-disabled="true"] { cursor: not-allowed; opacity: 0.62; transform: none; }
     .btn-secondary { background: transparent; color: var(--fg); border-color: var(--border); }
     .btn-secondary:hover { border-color: var(--fg); }
     .btn-ghost { background: transparent; color: var(--fg); border-color: transparent; padding-inline: 8px; }
@@ -156,28 +171,25 @@
     .card-rule { background: transparent; border: 0; border-top: 1px solid var(--fg); padding: 24px 0 0; border-radius: 0; }
 
     /* ─── feature cell ─────────────────────────────────────────────── */
+    .feature {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+      column-gap: var(--gap-sm);
+      align-items: center;
+    }
     .feature .feature-mark {
       width: 36px; height: 36px;
       display: grid; place-items: center;
       border: 1px solid var(--border);
       border-radius: 10px;
-      color: var(--fg);
-      margin-bottom: var(--gap-md);
+      color: var(--accent);
+      border-color: var(--accent);
+      margin: 0;
     }
     .feature .feature-mark svg { width: 18px; height: 18px; }
-    .feature h3 { margin-bottom: 6px; }
-    .feature p  { margin: 0; color: var(--muted); font-size: 15px; }
-
-    /* ─── pill / tag ───────────────────────────────────────────────── */
-    .tag {
-      display: inline-flex; align-items: center;
-      padding: 4px 10px;
-      background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      font-size: 12px;
-    }
+    .feature h3 { margin: 0; }
+    .feature p  { grid-column: 1 / -1; align-self: start; margin: var(--gap-sm) 0 0; color: var(--muted); font-size: 15px; }
 
     /* ─── table ────────────────────────────────────────────────────── */
     .ds-table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -185,6 +197,14 @@
     .ds-table th { color: var(--muted); font-weight: 500; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
     .ds-table tbody tr:hover { background: var(--fg-soft); }
     .ds-table .num-col { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+    @media (max-width: 640px) {
+      .ds-table { display: block; }
+      .ds-table thead { display: none; }
+      .ds-table tbody, .ds-table tr, .ds-table td { display: block; width: 100%; }
+      .ds-table tr { padding: 14px 0; border-bottom: 1px solid var(--border); }
+      .ds-table td { border: 0; padding: 3px 0; }
+      .ds-table td:first-child { color: var(--fg); font-weight: 600; }
+    }
 
     /* ─── image / video placeholder ────────────────────────────────── */
     .ph-img {
@@ -209,12 +229,21 @@
     .rule-strong { border: 0; border-top: 1px solid var(--fg); margin: 0; }
 
     /* ─── hero ─────────────────────────────────────────────────────── */
-    .hero          { padding-block: clamp(80px, 12vw, 160px); }
-    .hero-center   { text-align: center; max-width: 34ch; margin-inline: auto; }
+    .hero          { padding-block: clamp(80px, 10vw, 112px); }
+    .hero-center   { text-align: center; max-width: 880px; margin-inline: auto; }
     .hero h1       { margin-bottom: var(--gap-md); }
     .hero .lead    { margin-bottom: var(--gap-lg); margin-inline: auto; }
     .hero-cta      { display: inline-flex; gap: var(--gap-sm); flex-wrap: wrap; }
     .hero-center .hero-cta { justify-content: center; }
+    #metrics { padding-bottom: clamp(56px, 6vw, 64px); }
+    #coach { padding-top: clamp(56px, 6vw, 64px); }
+    #download .stack { margin-top: 24px !important; max-width: 54ch; margin-inline: auto; }
+    #download h2 { position: relative; top: -8px; }
+    @media (min-width: 721px) { .single-line-heading { white-space: nowrap; } }
+
+    @media (max-width: 560px) {
+      :root { --gutter: 20px; }
+    }
 
     /* ─── log row ──────────────────────────────────────────────────── */
     .log-row { display: grid; grid-template-columns: 64px 1fr; gap: var(--gap-lg); padding: 22px 0; border-top: 1px solid var(--border); align-items: baseline; }
@@ -235,6 +264,9 @@
     .loop { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); font-family: var(--font-mono); font-size: 14px; }
     .loop .step { border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px; background: var(--surface); white-space: nowrap; }
     .loop .sep { color: var(--muted); }
+    .progress-summary { text-align: center; }
+    .progress-summary .loop { justify-content: center; }
+    .progress-summary > p { margin-inline: auto !important; }
     .scenario svg { width: 100%; height: auto; margin-top: var(--gap-md); border-top: 1px solid var(--border); padding-top: var(--gap-md); }
     .legend { display: flex; gap: var(--gap-md); font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-top: var(--gap-sm); }
   </style>
@@ -243,14 +275,17 @@
   <header class="topnav" data-od-id="topnav">
     <div class="container topnav-inner">
       <span class="logo">Aiming Cookie</span>
-      <nav>
-        <a href="#contrast">对照</a>
-        <a href="#capture">采集</a>
-        <a href="#metrics">指标</a>
-        <a href="#coach">Coach</a>
-        <a href="#demo">演示</a>
+      <nav id="site-nav" aria-label="主导航" data-open="false">
+        <a href="#contrast" data-od-id="nav-contrast">对照</a>
+        <a href="#capture" data-od-id="nav-capture">采集</a>
+        <a href="#metrics" data-od-id="nav-metrics">指标</a>
+        <a href="#coach" data-od-id="nav-coach">Coach</a>
+        <a href="#demo" data-od-id="nav-demo">演示</a>
       </nav>
-      <a class="btn btn-secondary" href="#download">下载</a>
+      <button class="menu-toggle" type="button" aria-label="打开导航菜单" aria-controls="site-nav" aria-expanded="false" data-od-id="menu-toggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+      </button>
+      <button class="btn btn-secondary" type="button" disabled="" aria-disabled="true" data-od-id="top-download">Windows 版即将开放</button>
     </div>
   </header>
 
@@ -259,25 +294,22 @@
     <!-- 块 1 · Hero -->
     <section class="section hero" data-od-id="hero" id="hero">
       <div class="container hero-center">
-        <p class="eyebrow">KovaaK's 瞄准诊断 + AI 教练 · Windows · 免费</p>
         <h1>分数会骗人，数据不会。</h1>
         <p class="lead">Aiming Cookie 在你训练时读取一手数据——鼠标 Raw Input、录屏、KovaaK Stats——用物理与运动学指标诊断你的瞄准，再由 AI 教练陪你练下去。</p>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="#download">下载 Windows 版</a>
-          <a class="btn btn-ghost btn-arrow" href="#demo">看看它怎么诊断</a>
+          <a class="btn btn-primary btn-arrow" href="#demo">看看它怎么诊断</a>
         </div>
       </div>
-      <div class="container" style="margin-top: var(--gap-2xl);">
-        <div class="ph-img wide" data-od-id="hero-shot" aria-label="产品主界面截图占位">素材占位 · 产品主界面截图：Coach 主工作区（16:9）<br />UI 稳定后重录替换</div>
+      <div class="container" style="margin-top: clamp(48px, 5vw, 64px);">
+        <div class="ph-img wide" data-od-id="hero-shot" aria-label="产品主界面截图占位">素材占位 · 产品主界面截图：Coach 主工作区（16:9）<br>UI 稳定后重录替换</div>
       </div>
     </section>
 
     <!-- 块 2 · 对照：看录像 vs 一手数据 -->
     <section class="section" data-od-id="contrast" id="contrast">
       <div class="container stack" style="gap: 40px;">
-        <div style="max-width: 40ch;">
-          <p class="sec-label">01 · 对照</p>
-          <h2>看录像猜，还是看数据算。</h2>
+        <div style="max-width: 720px;">
+          <h2>不止看训练录像，<br>还有来自鼠标的原始数据。</h2>
           <p class="lead" style="margin-top: var(--gap-md);">社区教练的常规方式，是看你发的训练录像，凭经验分析画面里的行为。我们读的是一手原始数据。</p>
         </div>
         <table class="ds-table" data-od-id="contrast-table">
@@ -306,7 +338,7 @@
             </tr>
           </tbody>
         </table>
-        <p class="h3" style="max-width: 32ch;">一手原始数据，比纯看视频的分析精准一个量级。</p>
+        <p class="h3" style="max-width: 100%;">理论上，Aiming Cookie 比你更了解你的瞄准。</p>
       </div>
     </section>
 
@@ -315,8 +347,7 @@
       <div class="container grid-1-2">
         <div class="stack">
           <div>
-            <p class="sec-label">02 · 采集</p>
-            <h2>你只管练，剩下的它来记。</h2>
+            <h2>Aiming Cookie<br>在后台自动记录</h2>
           </div>
           <div class="stack" style="gap: var(--gap-sm);">
             <p style="margin: 0;">后台自动采集：鼠标操作数据、录屏、KovaaK 自带 Stats / Performance——全程零操作。</p>
@@ -325,54 +356,43 @@
           </div>
           <p class="meta" style="margin: 0;">覆盖 static / dynamic clicking · continuous tracking · target switching</p>
         </div>
-        <div class="ph-img wide" data-od-id="capture-shot" aria-label="无感采集录屏占位">素材占位 · 录屏：KovaaK 练完 → 切回应用，<br />Run 与回放已自动切好（15–30s）</div>
+        <div class="ph-img wide" data-od-id="capture-shot" aria-label="无感采集录屏占位">素材占位 · 录屏：KovaaK 练完 → 切回应用，<br>Run 与回放已自动切好（15–30s）</div>
       </div>
     </section>
 
     <!-- 块 4 · 核心块：分数会骗人 + 长期训练循环 -->
     <section class="section" data-od-id="progress" id="progress">
       <div class="container stack" style="gap: 56px;">
-        <div style="max-width: 40ch;">
-          <p class="sec-label">03 · 核心</p>
-          <h2>分数和能力，是两回事。</h2>
+        <div style="max-width: 800px;">
+          <h2>分数随状态上下波动，<br>我们从数据中精确读出你的进步。</h2>
           <p class="lead" style="margin-top: var(--gap-md);">分数和当天状态强相关，能力指标相对独立。所以复测，我们看能力，不看分数。</p>
         </div>
 
         <div class="grid-2">
           <div class="card scenario" data-od-id="scenario-a">
-            <span class="tag">场景 A</span>
-            <h3 style="margin-top: var(--gap-sm);">分数没涨，但你在进步。</h3>
+            <h3 style="margin-top: var(--gap-sm);">分数没突破，但你在进步</h3>
             <p style="margin: 6px 0 0; color: var(--muted); font-size: 15px;">能力指标在爬升——你确实在变强，只是分数看不出来。</p>
             <svg viewBox="0 0 360 180" role="img" aria-label="示意图：分数平稳波动，能力指标持续上升">
-              <line x1="0" y1="160" x2="360" y2="160" stroke="var(--border)" stroke-width="1" />
-              <path d="M0,140 C60,132 120,118 180,100 C240,82 300,64 360,48 L360,160 L0,160 Z"
-                    fill="color-mix(in oklch, var(--accent) 10%, transparent)" />
-              <path d="M0,140 C60,132 120,118 180,100 C240,82 300,64 360,48"
-                    fill="none" stroke="var(--accent)" stroke-width="2" />
-              <path d="M0,98 L30,90 L60,104 L90,92 L120,100 L150,88 L180,102 L210,94 L240,99 L270,91 L300,103 L330,95 L360,97"
-                    fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" />
+              <line x1="0" y1="160" x2="360" y2="160" stroke="var(--border)" stroke-width="1"></line>
+              <path d="M0,140 C60,132 120,118 180,100 C240,82 300,64 360,48 L360,160 L0,160 Z" fill="color-mix(in oklch, var(--accent) 10%, transparent)"></path>
+              <path d="M0,140 C60,132 120,118 180,100 C240,82 300,64 360,48" fill="none" stroke="var(--accent)" stroke-width="2"></path>
+              <path d="M0,98 L30,90 L60,104 L90,92 L120,100 L150,88 L180,102 L210,94 L240,99 L270,91 L300,103 L330,95 L360,97" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"></path>
             </svg>
-            <div class="legend"><span>—— 能力指标</span><span>- - - 分数</span></div>
+            <div class="legend"><span>—— 能力</span><span>- - - 分数</span></div>
           </div>
           <div class="card scenario" data-od-id="scenario-b">
-            <span class="tag">场景 B</span>
             <h3 style="margin-top: var(--gap-sm);">爆种 ≠ 变强。</h3>
             <p style="margin: 6px 0 0; color: var(--muted); font-size: 15px;">状态爆种分数暴涨，能力指标纹丝不动——状态不是能力。</p>
             <svg viewBox="0 0 360 180" role="img" aria-label="示意图：分数突然暴涨后回落，能力指标平稳">
-              <line x1="0" y1="160" x2="360" y2="160" stroke="var(--border)" stroke-width="1" />
-              <path d="M0,95 C120,92 240,97 360,94 L360,160 L0,160 Z"
-                    fill="color-mix(in oklch, var(--accent) 10%, transparent)" />
-              <path d="M0,95 C120,92 240,97 360,94"
-                    fill="none" stroke="var(--accent)" stroke-width="2" />
-              <path d="M0,120 L40,118 L80,122 L120,116 L160,60 L200,40 L240,70 L280,110 L320,118 L360,115"
-                    fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" />
+              <line x1="0" y1="160" x2="360" y2="160" stroke="var(--border)" stroke-width="1"></line>
+              <path d="M0,95 C120,92 240,97 360,94 L360,160 L0,160 Z" fill="color-mix(in oklch, var(--accent) 10%, transparent)"></path>
+              <path d="M0,95 C120,92 240,97 360,94" fill="none" stroke="var(--accent)" stroke-width="2"></path>
+              <path d="M0,120 L40,118 L80,122 L120,116 L160,60 L200,40 L240,70 L280,110 L320,118 L360,115" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"></path>
             </svg>
-            <div class="legend"><span>—— 能力指标</span><span>- - - 分数</span></div>
+            <div class="legend"><span>—— 能力</span><span>- - - 分数</span></div>
           </div>
         </div>
-        <p class="meta" style="margin: 0;">示意数据 · 正式版使用真实训练数据固化的 mock ｜ 数据需求：同一人、两种日子的分数与能力指标时间序列</p>
-
-        <div class="stack" style="gap: var(--gap-md);">
+        <div class="stack progress-summary" style="gap: var(--gap-md);">
           <div class="loop" data-od-id="training-loop">
             <span class="step">分析</span><span class="sep">→</span>
             <span class="step">训练计划</span><span class="sep">→</span>
@@ -382,37 +402,33 @@
           <p style="margin: 0; color: var(--muted); max-width: 56ch;">社区教练是一次性服务——付一节课，看一个 VOD。Aiming Cookie 常驻在你的电脑上，陪你跑完整个循环。</p>
         </div>
 
-        <div class="band" data-od-id="progress-band">
-          <p>让你更真实、敏锐地感受到自己的进步和改善。</p>
-        </div>
       </div>
     </section>
 
     <!-- 块 5 · 指标与科学 + 手健康标语条 -->
     <section class="section" data-od-id="metrics" id="metrics">
       <div class="container stack" style="gap: 40px;">
-        <div style="max-width: 40ch;">
-          <p class="sec-label">04 · 指标与科学</p>
-          <h2>用运动学的语言，描述你的手。</h2>
+        <div style="max-width: 720px;">
+          <h2>用运动学的指标，<br>描述你的瞄准动作。</h2>
         </div>
         <table class="ds-table" data-od-id="metrics-table">
           <thead>
             <tr>
-              <th>指标</th>
+              <th>部分指标示例</th>
               <th>白话</th>
-              <th>它回答的问题</th>
+              <th>反映的瞄准能力</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td class="num">decel_frac</td>
               <td>减速占比</td>
-              <td>你的甩枪是「一次到位」，还是「冲过头再拉回来」？</td>
+              <td>你的甩枪更多是一步到位还是甩过头再拉回来？</td>
             </tr>
             <tr>
               <td class="num">SPARC</td>
               <td>平滑度</td>
-              <td>你的准星移动有多连贯、多不抖？</td>
+              <td>你的瞄准轨迹有多平滑</td>
             </tr>
             <tr>
               <td class="num">linearity</td>
@@ -422,50 +438,41 @@
             <tr>
               <td class="num">throughput</td>
               <td>信息吞吐</td>
-              <td>单位时间里，你能稳定处理多少瞄准信息？</td>
+              <td>你阅读目标的能力</td>
             </tr>
           </tbody>
         </table>
-        <p class="meta" style="margin: 0;">学术锚点：Balasubramanian 2012 · Fitts' Law · Novak 2002 —— 指标来自运动科学研究，不是拍脑袋。｜ 数据需求：各指标在一次真实 Run 上的数值与解释文案（mock 固化后填入）</p>
-      </div>
-    </section>
-
-    <section class="section" data-od-id="hand-health" style="padding-block: 0;">
-      <div class="container">
-        <div class="band" style="border-bottom: 0;">
-          <p>别人只关心你点得准不准，<br />我们也关心你的手痛不痛。</p>
-        </div>
+        <p class="meta" style="margin: 0;">理论来源：Balasubramanian 2012 · Fitts' Law · Novak 2002</p>
       </div>
     </section>
 
     <!-- 块 6 · Coach 三支柱 -->
     <section class="section" data-od-id="coach" id="coach">
       <div class="container stack" style="gap: 56px;">
-        <div style="max-width: 40ch;">
-          <p class="sec-label">05 · Coach</p>
-          <h2>一位无限耐心的专属私教。</h2>
+        <div style="max-width: 720px;">
+          <h2 class="single-line-heading">一位无限耐心的专属私教。</h2>
         </div>
         <div class="grid-3">
           <div class="feature card-flat" data-od-id="pillar-knowledge">
             <div class="feature-mark">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h10M4 17h16"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 12h10M4 17h16"></path></svg>
             </div>
             <h3>体系化知识</h3>
             <p>散落国内外的瞄准文档和教学视频，被整合成一套体系，并和你的一手数据一一对应——不再是碎片经验。</p>
           </div>
           <div class="feature card-flat" data-od-id="pillar-gear">
             <div class="feature-mark">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7" y="3" width="10" height="18" rx="5"/><path d="M12 7v4"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7" y="3" width="10" height="18" rx="5"></rect><path d="M12 7v4"></path></svg>
             </div>
             <h3>外设经验</h3>
             <p>鼠标与外设的选择建议，来自外设博主的经验。只给建议，不卖货。</p>
           </div>
           <div class="feature card-flat" data-od-id="pillar-coach">
             <div class="feature-mark">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
             </div>
             <h3>专属私教</h3>
-            <p>低分不会被嘲笑，更不会被劝放弃；用白话讲清每个瞄准概念；不计时间成本，时间只属于你一个人；毫无保留，并且鼓励你。</p>
+            <p>低分不会被嘲笑，更不会被劝放弃；用白话讲清每个瞄准概念；不计时间成本，时间只属于你一个人；毫无保留。</p>
           </div>
         </div>
         <p class="h3" data-od-id="coach-punchline">在这里，菜不是问题，不练才是。</p>
@@ -476,10 +483,9 @@
     <section class="section" data-od-id="demo" id="demo">
       <div class="container stack" style="gap: 40px;">
         <div style="max-width: 40ch;">
-          <p class="sec-label">06 · 演示</p>
-          <h2>看 Coach 讲一局真实的训练。</h2>
+          <h2 class="single-line-heading">看 Coach 讲一局真实的训练。</h2>
         </div>
-        <div class="ph-img wide" data-od-id="demo-video" aria-label="演示视频占位">素材占位 · 招牌演示视频：Coach 讲解真实一局（30–90s，带字幕）<br />素材录制中，到位后替换为可播放视频</div>
+        <div class="ph-img wide" data-od-id="demo-video" aria-label="演示视频占位">素材占位 · 招牌演示视频：Coach 讲解真实一局（30–90s，带字幕）<br>素材录制中，到位后替换为可播放视频</div>
         <div data-od-id="demo-steps">
           <article class="log-row">
             <span class="meta">01</span>
@@ -492,7 +498,7 @@
             <span class="meta">02</span>
             <div>
               <h3>指标卡 + 时间线定位</h3>
-              <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">哪一次甩枪冲过了头，哪一段跟枪丢了线，直接指给你看。</p>
+              <p style="margin: 4px 0 0; color: var(--muted); font-size: 14px;">哪一次甩枪冲，哪一段跟枪，问题直接指给你看。</p>
             </div>
           </article>
           <article class="log-row" style="border-bottom: 1px solid var(--border);">
@@ -508,13 +514,12 @@
 
     <!-- 块 8 · 下载与收尾 -->
     <section class="section" data-od-id="download" id="download" style="text-align: center;">
-      <div class="container" style="max-width: 640px;">
-        <h2>今晚练完，就能看到自己的数据。</h2>
-        <p class="lead" style="margin: 16px auto 32px;">Aiming Cookie 是免费的 Windows 桌面应用。</p>
-        <a class="btn btn-primary" href="#" data-od-id="download-cta">下载 Windows 版</a>
+      <div class="container" style="max-width: 720px;">
+        <h2 class="single-line-heading">练一局，向AI教练提问。</h2>
+        <button class="btn btn-primary btn-pill download-cta" type="button" disabled="" aria-disabled="true" data-od-id="download-cta">Windows 版即将开放</button>
         <div class="stack" style="gap: var(--gap-xs); margin-top: var(--gap-lg);">
           <p class="meta" style="margin: 0;">须知：Coach 需要自备 LLM provider——免费的是产品，模型费用属于你与所选 provider 的关系。</p>
-          <p class="meta" style="margin: 0;">数据只留在你的电脑上。【待定 · 待点点确认是否保留】</p>
+          <p class="meta" style="margin: 0;">数据只留在你的电脑上。</p>
         </div>
       </div>
     </section>
@@ -527,5 +532,37 @@
       <span class="meta">简体中文 · Windows 桌面应用 · 免费</span>
     </div>
   </footer>
-</body>
-</html>
+  <script>
+    const menuToggle = document.querySelector('[data-od-id="menu-toggle"]');
+    const siteNav = document.querySelector('#site-nav');
+    const scrollToHash = (event, link) => {
+      const targetId = link.getAttribute('href')?.slice(1);
+      const target = targetId ? document.getElementById(targetId) : null;
+      if (!target) return;
+      event.preventDefault();
+      const offset = document.querySelector('.topnav')?.offsetHeight || 0;
+      window.scrollTo({ top: target.getBoundingClientRect().top + window.scrollY - offset - 12, behavior: 'smooth' });
+      window.history.replaceState(null, '', `#${targetId}`);
+    };
+    if (menuToggle && siteNav) {
+      menuToggle.addEventListener('click', () => {
+        const isOpen = siteNav.dataset.open === 'true';
+        siteNav.dataset.open = String(!isOpen);
+        menuToggle.setAttribute('aria-expanded', String(!isOpen));
+        menuToggle.setAttribute('aria-label', isOpen ? '打开导航菜单' : '关闭导航菜单');
+      });
+      siteNav.querySelectorAll('a').forEach(link => link.addEventListener('click', (event) => {
+        scrollToHash(event, link);
+        siteNav.dataset.open = 'false';
+        menuToggle.setAttribute('aria-expanded', 'false');
+        menuToggle.setAttribute('aria-label', '打开导航菜单');
+      }));
+    }
+    document.querySelector('.hero-cta a[href^="#"]')?.addEventListener('click', (event) => {
+      scrollToHash(event, event.currentTarget);
+    });
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) document.documentElement.classList.add('reduce-motion');
+  </script>
+
+
+</body></html>
