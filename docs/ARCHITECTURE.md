@@ -305,7 +305,7 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 - 通过与 UI 共用的稳定产品命令查询、创建、修改和执行当前本地 profile 可用能力；Coach 不是只读投影，也不得绕过本地 ownership、capability 或确认策略；
 - Coach 对诊断拥有综合判断权：应能检查完整 processed event table 的覆盖、条件分布、支持证据与反例，并明确接受、降低或拒绝规则层候选诊断；它不拥有正式指标重算权，也不能把聊天推断回写成测量事实；
 - 工具调用、失败、确认和结果定位必须形成可见事件；
-- knowledge tool 在所有 v1 turn 中作为只读产品工具可用，不依赖写命令 bridge；实际使用的 registry/entry/version/source refs 进入安全 trace；
+- 知识检索的唯一正文源是 versioned Registry。运行时物化为 `DATA_ROOT/knowledge/index.json` 与 `knowledge/entries/`，Coach 用受限 `read` 按 index 的 signals / metric_refs / topics 定位后再读 entry 全文；不另设第二份知识 store，也不把研究 Markdown 整份注入上下文；
 - 不允许通用 coding-agent 权限无边界暴露给产品用户；
 - workspace、filesystem、shell、network 和 secret 权限遵循最小授权；
 - 无 LLM 或 Coach 不可用时，确定性诊断闭环仍完整。
@@ -316,7 +316,7 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 - Coach 主动推断或提议、但用户当前消息没有明确要求的 consequential operation，必须先说明影响并获得确认；
 - 命令处理器独立执行 ownership、capability、state transition、stable-ref reachability、idempotency 和 audit 校验；
 - secret/credential 输入、OAuth/device-code 交互、系统/隐私权限、文件选择、现实训练和主观事实不进入 Agent execution，只能由可信 UI 接收并由 Coach 等待验证；
-- 不存在 shell、filesystem、任意 HTTP、任意 Tauri invoke 或模拟输入等通用权限；产品操作通过已注册的 typed command 扩展。
+- Coach 可使用受限文件工具读写当前 `DATA_ROOT`（`read` / `ls` / 非受管文件的 `write`），不得逃逸到任意路径，也不得用 `write` 改写受管产品状态（训练计划、教学会话、场景记忆、校准、外设配置、KovaaK 连接）。这些状态必须走已注册 typed product command。不存在 shell、任意 HTTP、任意 Tauri invoke 或模拟输入等通用权限。
 
 Guidance 层只做确定性的产品编排（引导用户到正确的 UI 控件、预填非敏感值、等待并验证状态），不是第二个 Agent runtime。
 
@@ -335,7 +335,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - active Coach turn 只能使用 owner 当前 selected local profile；Analysis worker 不得加载 Provider 或生成 narration，新 `analysis_result.v2` 只保留 `not_requested` / `null` 兼容 envelope，旧 v1/unversioned narration 继续可读；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；
 - provider/model 目录、API key/ambient auth、OAuth/device-code 以及 OpenAI-compatible / Anthropic-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
 - 首次 onboarding 和每次创建 Analysis 前都必须存在已测试的 selected Provider；Provider 后续请求失败时保留已保存记录，由 Coach 显示错误并引导 Settings 修复，不转为本地无 Provider 分析；Provider-to-Provider fallback 暂不启用；
-- Pi coding-agent、shell、filesystem 与通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；
+- Pi coding-agent、shell、通用 workspace tools 属于独立 capability boundary，不因采用 Pi provider/runtime 而自动注册或暴露；产品只注册上述受限 app-data 文件工具与 typed product command；
 - 首次启动以不可跳过的 Provider onboarding 为主路径；Provider 与 Windows Raw Input/窗口回放采集授权、启用都是进入主工作区的硬门槛。后续 Provider 失效不回退 onboarding，Coach 对话提供错误和 Settings 恢复入口。
 
 ## 6. 本地归属与安全

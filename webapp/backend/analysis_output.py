@@ -1,11 +1,10 @@
 """Progressive disclosure JSON output for analysis results.
 
-After an analysis completes and the result is committed to DB, the worker calls
-write_progressive_disclosure() to emit layered JSON documents to
-{DATA_ROOT}/analyses/{session_id}/ so Coach can read them directly from the
-file system without going through the API.
+After an analysis completes, the worker calls write_progressive_disclosure()
+to emit layered JSON documents to {DATA_ROOT}/analyses/{session_id}/ so Coach
+can read them from the file system without going through the API.
 
-See docs/architecture-rewrite-2026-08-13.md §5 for the disclosure format.
+Layout is owned by docs/ARCHITECTURE.md §4.1.
 """
 from __future__ import annotations
 
