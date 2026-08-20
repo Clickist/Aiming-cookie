@@ -324,7 +324,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-08-16.v8"
+    assert result["registry_version"] == "2026-08-20.v9"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -950,7 +950,7 @@ def test_v8_adds_x76_wiki_knowledge_with_schema_and_validator_agreement():
     assert errors == [], [error.message for error in errors[:5]]
     loaded = registry.load_registry(registry_version="2026-08-16.v8")
     assert loaded == registry.validate_registry(packaged)
-    assert registry.load_registry()["registry_version"] == "2026-08-16.v8"
+    assert registry.load_registry()["registry_version"] == "2026-08-20.v9"
     assert registry.MAX_RESULTS == 8
     assert len(loaded["entries"]) == 37
 
@@ -1071,3 +1071,40 @@ def test_v8_remains_backward_compatible_with_v7():
     previous = registry.load_registry(registry_version="2026-08-15.v7")
     assert previous["registry_version"] == "2026-08-15.v7"
     assert len(previous["entries"]) == 27
+
+
+def test_v9_fixes_the_reversed_cm360_direction_wording():
+    loaded = registry.load_registry()
+    assert loaded["registry_version"] == "2026-08-20.v9"
+    assert len(loaded["entries"]) == 37
+
+    by_id = {entry["entry_id"]: entry for entry in loaded["entries"]}
+
+    overshoot = by_id["community.overshoot-sensitivity-trigger"]
+    assert "one recorded higher cm/360" in overshoot["cue"]["text"]
+    force = next(
+        section
+        for section in overshoot["mechanisms"]
+        if section["section_ref"].endswith("force-calibration")
+    )
+    assert "raising cm/360 (lowering sensitivity)" in force["text"]
+
+    reset = by_id["community.qiluno.reset-as-continuity"]
+    fold_in = next(
+        section
+        for section in reset["mechanisms"]
+        if section["section_ref"].endswith("x76-reset-conditions")
+    )
+    assert "higher cm/360 spends more pad per turn" in fold_in["text"]
+
+    task_specific = by_id["community.task-specific-sensitivity"]
+    assert (
+        "a larger value means lower and a smaller value means higher sensitivity"
+        in task_specific["definition"]["text"]
+    )
+
+
+def test_v9_remains_backward_compatible_with_v8():
+    previous = registry.load_registry(registry_version="2026-08-16.v8")
+    assert previous["registry_version"] == "2026-08-16.v8"
+    assert len(previous["entries"]) == 37

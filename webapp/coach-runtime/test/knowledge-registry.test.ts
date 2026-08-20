@@ -316,8 +316,8 @@ test("v5 remains loadable after v6 is packaged", () => {
   assert.equal(loadKnowledgeRegistry("2026-08-06.v5").registry_version, "2026-08-06.v5");
 });
 
-test("v8 adds the x76 wiki community batch as the default registry", () => {
-  const registry = loadKnowledgeRegistry();
+test("v8 adds the x76 wiki community batch", () => {
+  const registry = loadKnowledgeRegistry("2026-08-16.v8");
   assert.equal(registry.registry_version, "2026-08-16.v8");
   assert.equal(registry.entries.length, 37);
   assert.ok(registry.sources.some((source) => source.source_ref === "community.x76-wiki"));
@@ -375,4 +375,41 @@ test("v8 adds the x76 wiki community batch as the default registry", () => {
     ].includes(entry.entry_id);
     assert.equal(survivors.has(entryRef(entry)), !bumped);
   }
+});
+
+test("v9 corrects the reversed cm/360 direction wording as the default registry", () => {
+  const registry = loadKnowledgeRegistry();
+  assert.equal(registry.registry_version, "2026-08-20.v9");
+  assert.equal(registry.entries.length, 37);
+
+  const overshoot = registry.entries.find(
+    (entry) => entry.entry_id === "community.overshoot-sensitivity-trigger",
+  );
+  if (!overshoot || !overshoot.cue) throw new Error("missing overshoot cue");
+  assert.match(overshoot.cue.text, /one recorded higher cm\/360/);
+  const force = overshoot.mechanisms.find((section) =>
+    section.section_ref.endsWith("force-calibration"));
+  if (!force) throw new Error("missing force-calibration mechanism");
+  assert.match(force.text, /raising cm\/360 \(lowering sensitivity\)/);
+
+  const reset = registry.entries.find(
+    (entry) => entry.entry_id === "community.qiluno.reset-as-continuity",
+  );
+  if (!reset) throw new Error("missing reset entry");
+  const foldIn = reset.mechanisms.find((section) =>
+    section.section_ref.endsWith("x76-reset-conditions"));
+  if (!foldIn) throw new Error("missing x76-reset-conditions mechanism");
+  assert.match(foldIn.text, /higher cm\/360 spends more pad per turn/);
+
+  const taskSpecific = registry.entries.find(
+    (entry) => entry.entry_id === "community.task-specific-sensitivity",
+  );
+  if (!taskSpecific) throw new Error("missing task-specific-sensitivity entry");
+  assert.match(
+    taskSpecific.definition.text,
+    /a larger value means lower and a smaller value means higher sensitivity/,
+  );
+
+  // v8 stays loadable as history after v9 is packaged.
+  assert.equal(loadKnowledgeRegistry("2026-08-16.v8").registry_version, "2026-08-16.v8");
 });
