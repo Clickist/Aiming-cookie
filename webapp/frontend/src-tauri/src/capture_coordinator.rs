@@ -19,6 +19,10 @@ const CONTROL_EXPORT_TIMEOUT: Duration = Duration::from_secs(60);
 // 超过即放弃剩余连接，保证进程退出永远不会被单个连接卡死。
 const CONTROL_CONNECTION_JOIN_TIMEOUT: Duration = Duration::from_secs(65);
 const MONITOR_INTERVAL: Duration = Duration::from_millis(500);
+// Snapshot-worker death / sticky snapshot_error leaves capture_healthy false.
+// Wait longer than one snapshot retry (5s) so a transient write failure can
+// recover before we restart the backend.
+const RAW_UNHEALTHY_RESTART_TIMEOUT: Duration = Duration::from_secs(6);
 // 进入 Finalizing 后，若 Python 侧的 release 迟迟未到（控制通道被导出占用、
 // 时序竞态等），超过该阈值强制释放采集源并回落到 WaitingForKovaak。
 // 必须大于桌面后端的 release 硬 grace（30s），留出正常 release 的窗口。
@@ -754,6 +758,7 @@ pub struct CaptureCoordinatorState {
     status: Mutex<CaptureCoordinatorStatus>,
     diagnostic_events: Mutex<VecDeque<CaptureDiagnosticEvent>>,
     finalizing_since: Mutex<Option<Instant>>,
+    raw_unhealthy_since: Mutex<Option<Instant>>,
     shutdown: Arc<AtomicBool>,
     monitor: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Option<ControlServer>>,
@@ -784,6 +789,7 @@ impl CaptureCoordinatorState {
                 video_state: CaptureSourceState::Disabled,
             }])),
             finalizing_since: Mutex::new(None),
+            raw_unhealthy_since: Mutex::new(None),
             shutdown: Arc::new(AtomicBool::new(false)),
             monitor: Mutex::new(None),
             control: Mutex::new(None),
@@ -935,10 +941,11 @@ impl CaptureCoordinatorState {
             }
             return;
         }
-        if matches!(
-            current.phase,
-            CapturePhase::Capturing | CapturePhase::Finalizing
-        ) {
+        if current.phase == CapturePhase::Finalizing {
+            return;
+        }
+        if current.phase == CapturePhase::Capturing {
+            self.recover_unhealthy_raw();
             return;
         }
         if let Err(error) = self.raw_input.set_enabled(true) {
@@ -1089,7 +1096,38 @@ impl CaptureCoordinatorState {
         true
     }
 
+    fn recover_unhealthy_raw(&self) {
+        let healthy = self.raw_input.status().capture_healthy;
+        let should_restart = {
+            let Ok(mut since) = self.raw_unhealthy_since.lock() else {
+                return;
+            };
+            if healthy {
+                *since = None;
+                false
+            } else {
+                let started = since.get_or_insert_with(Instant::now);
+                if started.elapsed() < RAW_UNHEALTHY_RESTART_TIMEOUT {
+                    false
+                } else {
+                    *since = None;
+                    true
+                }
+            }
+        };
+        if !should_restart {
+            return;
+        }
+        // Force-cycle past set_enabled's no-op when enabled is already true.
+        // Video capture is left running; only the raw backend is restarted.
+        let _ = self.raw_input.set_enabled(false);
+        let _ = self.raw_input.set_enabled(true);
+    }
+
     fn disable(&self) -> Result<(), String> {
+        if let Ok(mut since) = self.raw_unhealthy_since.lock() {
+            *since = None;
+        }
         self.raw_input.set_enabled(false)?;
         self.window_capture
             .lock()

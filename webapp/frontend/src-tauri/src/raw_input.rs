@@ -14,9 +14,7 @@ use std::fs::File;
 use std::io;
 #[cfg(windows)]
 use std::io::Write;
-#[cfg(windows)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1092,6 +1090,25 @@ impl WindowsBackend {
     }
 }
 
+fn isolate_invalid_snapshot(path: &Path) -> io::Result<PathBuf> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "snapshot path has no file name",
+            )
+        })?;
+    let isolated = path.with_file_name(format!("{name}.invalid"));
+    fs::rename(path, &isolated)?;
+    Ok(isolated)
+}
+
+fn empty_raw_ring() -> RingBuffer {
+    RingBuffer::new(Duration::from_secs(DEFAULT_BUFFER_MINUTES * 60))
+}
+
 #[cfg(windows)]
 fn snapshot_worker(
     snapshot_path: PathBuf,
@@ -1100,6 +1117,7 @@ fn snapshot_worker(
 ) {
     use std::sync::mpsc::RecvTimeoutError;
 
+    let mut restarted_from_invalid = false;
     let (mut ring, migrated_v1) = match read_snapshot_file(&snapshot_path) {
         Ok(snapshot) => {
             let migrated_v1 = snapshot.version == LEGACY_SNAPSHOT_VERSION;
@@ -1111,13 +1129,15 @@ fn snapshot_worker(
                             "trace_snapshot_invalid",
                             format!("failed to migrate raw input snapshot: {error}"),
                         );
-                        return;
+                        let _ = isolate_invalid_snapshot(&snapshot_path);
+                        restarted_from_invalid = true;
+                        Vec::new()
                     }
                 }
             } else {
                 snapshot.points
             };
-            let mut ring = RingBuffer::new(Duration::from_secs(DEFAULT_BUFFER_MINUTES * 60));
+            let mut ring = empty_raw_ring();
             for point in points {
                 match ring.push(point) {
                     RingPushOutcome::Accepted => {}
@@ -1127,12 +1147,9 @@ fn snapshot_worker(
                     }
                 }
             }
-            (ring, migrated_v1)
+            (ring, migrated_v1 && !restarted_from_invalid)
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => (
-            RingBuffer::new(Duration::from_secs(DEFAULT_BUFFER_MINUTES * 60)),
-            false,
-        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (empty_raw_ring(), false),
         Err(error) => {
             diagnostics.record_snapshot_failure(
                 if error.kind() == io::ErrorKind::InvalidData {
@@ -1142,7 +1159,9 @@ fn snapshot_worker(
                 },
                 format!("failed to read raw input snapshot: {error}"),
             );
-            return;
+            let _ = isolate_invalid_snapshot(&snapshot_path);
+            restarted_from_invalid = true;
+            (empty_raw_ring(), false)
         }
     };
     let expired = ring.prune_before(now_ms() - MAX_SNAPSHOT_SPAN_MS);
@@ -1150,7 +1169,11 @@ fn snapshot_worker(
         diagnostics.record_expired(expired, now_ms() - MAX_SNAPSHOT_SPAN_MS);
         diagnostics.record_buffered_points(ring.len());
     }
-    if migrated_v1 {
+    if restarted_from_invalid {
+        // Write a clean file so capture_healthy can recover without waiting
+        // for the next mouse point; keep running even if the write fails.
+        let _ = write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics);
+    } else if migrated_v1 {
         if write_worker_snapshot(&snapshot_path, &mut ring, &diagnostics).is_err() {
             return;
         }
@@ -2279,6 +2302,20 @@ mod tests {
     }
 
     #[test]
+    fn isolate_invalid_snapshot_renames_the_source_file() {
+        let path = std::env::temp_dir().join(format!(
+            "aiming-cookie-isolate-{}-{}.bin",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::write(&path, b"broken").unwrap();
+        let isolated = isolate_invalid_snapshot(&path).unwrap();
+        assert!(!path.exists());
+        assert_eq!(fs::read(&isolated).unwrap(), b"broken");
+        let _ = fs::remove_file(isolated);
+    }
+
+    #[test]
     fn raw_snapshot_receipt_v2_preserves_bounded_loss_scope() {
         let receipt = SnapshotBarrierReceipt {
             receipt_version: "raw_snapshot_receipt.v2",
@@ -2516,7 +2553,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn snapshot_worker_preserves_v1_file_when_migration_overflows() {
+    fn snapshot_worker_isolates_v1_file_when_migration_overflows() {
         use std::sync::mpsc::sync_channel;
         use std::thread;
 
@@ -2544,20 +2581,26 @@ mod tests {
         legacy_bytes[4] = LEGACY_SNAPSHOT_VERSION;
         fs::write(&path, &legacy_bytes).unwrap();
         let diagnostics = Arc::new(CaptureDiagnostics::new());
-        let (_sender, receiver) = sync_channel(1);
+        let (sender, receiver) = sync_channel(1);
         let worker_path = path.clone();
         let worker_diagnostics = Arc::clone(&diagnostics);
-
-        thread::spawn(move || snapshot_worker(worker_path, receiver, worker_diagnostics))
-            .join()
-            .unwrap();
-
-        assert_eq!(fs::read(&path).unwrap(), legacy_bytes);
-        assert_eq!(
-            diagnostics.status().snapshot_error_code.as_deref(),
-            Some("trace_snapshot_invalid")
-        );
-        let _ = fs::remove_file(path);
+        let worker = thread::spawn(move || {
+            snapshot_worker(worker_path, receiver, worker_diagnostics);
+        });
+        let isolated = path.with_file_name(format!(
+            "{}.invalid",
+            path.file_name().unwrap().to_string_lossy()
+        ));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !isolated.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(fs::read(&isolated).unwrap(), legacy_bytes);
+        assert!(diagnostics.status().snapshot_failures >= 1);
+        drop(sender);
+        worker.join().unwrap();
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&isolated);
     }
 
     #[cfg(windows)]
