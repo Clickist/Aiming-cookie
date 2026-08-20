@@ -1,0 +1,72 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-08-16.v8",
+  "target_registry_version": "2026-08-20.v9",
+  "generated_at": "2026-08-20",
+  "migration_kind": "direction_wording_correction",
+  "summary": "Field report: Coach read a cm/360 increase (32.11 to 35.11) as sensitivity going up and the aim feeling faster. Root cause: three v8 sections wrote the lower-sensitivity experiment as 'lower cm/360' / 'lowering cm/360'. Physically, cm/360 is the centimeters of mouse travel per full 360-degree turn, so a larger value is a lower sensitivity; lowering sensitivity means raising cm/360 (cm/360 = 914.4 / (DPI x Horiz_Sens x yaw), and under Sens Scale 'cm/360' Horiz Sens is the cm/360 value itself, consistent along the whole chain). v9 corrects the three reversed phrasings and relocates the direction fact itself into the task-specific-sensitivity definition (see added_clarifications), so the direction is knowledge-base content served through the unified read entry point rather than a prompt rule. Entry set (37), schema (coach_knowledge_registry.v3), source_refs, claim_levels, and entry versions are unchanged, and every other cm/360 or sensitivity statement in v8 was re-audited for direction and left as is.",
+  "direction_rule": "Larger cm/360 = lower sensitivity (low sens); smaller cm/360 = higher sensitivity (high sens). A lower-sensitivity experiment records a higher cm/360; pad spend per turn scales with cm/360.",
+  "corrected_entries": [
+    {
+      "entry_ref": "knowledge:community.overshoot-sensitivity-trigger@1",
+      "section_ref": "community.overshoot-sensitivity-trigger.cue",
+      "action": "direction_wording_fix",
+      "before": "With overshoot confirmed and settings unchanged, run the existing single-variable sensitivity experiment: one recorded lower cm/360, a short familiarization block, then a matched retest.",
+      "after": "With overshoot confirmed and settings unchanged, run the existing single-variable sensitivity experiment: one recorded higher cm/360, a short familiarization block, then a matched retest.",
+      "reason": "The experiment motivated by this entry's definition is a lower-sensitivity one (cm/360 too fast to control), which is a higher cm/360 value. 'lower cm/360' literally described raising sensitivity and contradicted the same entry's definition."
+    },
+    {
+      "entry_ref": "knowledge:community.overshoot-sensitivity-trigger@1",
+      "section_ref": "community.overshoot-sensitivity-trigger.mechanism.force-calibration",
+      "action": "direction_wording_fix",
+      "before": "A long-unchanged sensitivity paired with persistent overshoot points at flick-force calibration rather than at reading or fatigue; lowering cm/360 shortens the distance each unit of force travels and can restore terminal control.",
+      "after": "A long-unchanged sensitivity paired with persistent overshoot points at flick-force calibration rather than at reading or fatigue; raising cm/360 (lowering sensitivity) shortens the distance each unit of force travels and can restore terminal control.",
+      "reason": "Reversed direction: lowering cm/360 raises sensitivity and lengthens the travel each unit of force produces, which worsens overshoot. Only raising cm/360 (a lower sensitivity) shortens the travel of a given force and restores terminal control."
+    },
+    {
+      "entry_ref": "knowledge:community.qiluno.reset-as-continuity@2",
+      "section_ref": "community.qiluno.reset-as-continuity.mechanism.x76-reset-conditions",
+      "action": "direction_wording_fix",
+      "before": "Community guidance conditions the reset habit: lower cm/360 spends more pad per turn, which makes frequent resets a genuine low-sensitivity requirement rather than a flaw, and the reset belongs in natural pauses between actions so the next flick never runs out of room.",
+      "after": "Community guidance conditions the reset habit: higher cm/360 spends more pad per turn, which makes frequent resets a genuine low-sensitivity requirement rather than a flaw, and the reset belongs in natural pauses between actions so the next flick never runs out of room.",
+      "reason": "Pad spent per full turn equals cm/360, so only a higher value (lower sensitivity) spends more pad and makes frequent resets a genuine low-sensitivity requirement; 'lower cm/360' contradicted the same sentence's low-sensitivity framing."
+    }
+  ],
+  "added_clarifications": [
+    {
+      "entry_ref": "knowledge:community.task-specific-sensitivity@2",
+      "section_ref": "community.task-specific-sensitivity.definition",
+      "action": "direction_clarification_added",
+      "before": "There is no single perfect sensitivity independent of task, technique, and goal; cm/360 is a shared input-mapping unit.",
+      "after": "There is no single perfect sensitivity independent of task, technique, and goal; cm/360 is a shared input-mapping unit. It measures the mouse travel needed for a full 360-degree turn, so a larger value means lower and a smaller value means higher sensitivity.",
+      "reason": "The direction fact was first drafted as a prompt hard rule and rejected in review: it is domain knowledge and belongs in the registry so the unified knowledge read entry point serves it. Appended to this entry's definition, which already introduces cm/360 as the shared unit; source_refs and claim_level stay the entry's existing ones and no other field changes."
+    }
+  ],
+  "audited_unchanged": [
+    {
+      "entry_ref": "knowledge:community.overshoot-sensitivity-trigger@1",
+      "sections": [
+        "community.overshoot-sensitivity-trigger.definition",
+        "community.overshoot-sensitivity-trigger.counterevidence"
+      ],
+      "note": "'lower-sensitivity experiment' and 'at lower sensitivity' speak about sensitivity itself, not the cm/360 value; direction is correct and matches the fixed cue."
+    },
+    {
+      "entry_ref": "knowledge:community.target-angular-demand-math@1",
+      "sections": [
+        "community.target-angular-demand-math.definition",
+        "community.target-angular-demand-math.scope",
+        "community.target-angular-demand-math.mechanism.sens-scaling"
+      ],
+      "note": "Hand speed demanded per degree scales linearly with cm/360: a larger value demands proportionally more hand travel. Mathematically correct; unchanged."
+    },
+    {
+      "entry_ref": "knowledge:community.task-specific-sensitivity@2",
+      "sections": [
+        "community.task-specific-sensitivity.scope",
+        "community.task-specific-sensitivity.mechanism"
+      ],
+      "note": "Scope and mechanism stay direction-neutral tradeoff framing; unchanged. The definition gained the direction sentence recorded under added_clarifications."
+    }
+  ]
+}

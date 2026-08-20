@@ -2049,7 +2049,7 @@ def test_native_projection_keeps_registry_backed_static_issue_without_legacy_tea
 
     issue = diagnosis["issues"][0]
     assert issue["observation_ref"] == "metric.terminal_control"
-    assert issue["knowledge_registry_version"] == "2026-08-16.v8"
+    assert issue["knowledge_registry_version"] == "2026-08-20.v9"
     assert issue["knowledge_entry_refs"] == [
         "knowledge:static.flicking-terminal-control@3"
     ]
@@ -3157,7 +3157,7 @@ async def test_process_one_dynamic_never_falls_back_to_static_and_gates_visual_q
         assert issue["signal"] == "dynamic click error high"
         assert "severity" not in issue and "prescriptions" not in issue
         assert issue["observation_ref"] == "event.dynamic_click"
-        assert issue["knowledge_registry_version"] == "2026-08-16.v8"
+        assert issue["knowledge_registry_version"] == "2026-08-20.v9"
         assert issue["knowledge_entry_refs"] == [
             "knowledge:dynamic.click-error-and-acquisition@3"
         ]
