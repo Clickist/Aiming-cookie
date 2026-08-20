@@ -143,11 +143,15 @@ def run_generic_static_clicking_detection_v1(
         )
         samples: list[np.ndarray] = []
         frame_index = 0
+        # grab() advances without decoding; retrieve() decodes only sampled
+        # frames. The previous read() loop decoded every frame to keep ~40.
         while True:
-            ok, frame = capture.read()
-            if not ok:
+            if not capture.grab():
                 break
             if frame_index % sample_stride == 0 and len(samples) < HYPOTHESIS_SAMPLE_FRAMES:
+                ok, frame = capture.retrieve()
+                if not ok:
+                    break
                 height, width = frame.shape[:2]
                 if width > HYPOTHESIS_SAMPLE_MAX_WIDTH:
                     scale = HYPOTHESIS_SAMPLE_MAX_WIDTH / width
