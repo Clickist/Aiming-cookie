@@ -195,6 +195,26 @@ def _get_analysis_count_for_run(run_id: int, user_id: str) -> int:
             count += 1
     return count
 
+def _analysis_counts_by_run(user_id: str) -> dict[int, int]:
+    """One pass over the sessions directory yielding run_id -> analysis count.
+
+    ``_public_run`` used to rescan every session file per run, making run
+    lists O(runs x sessions). Batch callers pass this map instead.
+    """
+    counts: dict[int, int] = {}
+    for p in file_store.list_dir("sessions", "*.json"):
+        try:
+            int(p.stem)
+        except ValueError:
+            continue
+        session = file_store.read_json(f"sessions/{p.name}")
+        if not session or session.get("user_id") != user_id:
+            continue
+        run_id = session.get("kovaak_run_id")
+        if isinstance(run_id, int):
+            counts[run_id] = counts.get(run_id, 0) + 1
+    return counts
+
 
 def _normalize_scenario_identity(value: str | None) -> str:
     return " ".join((value or "").split()).casefold()
@@ -303,19 +323,27 @@ def _row(row: Any) -> dict:
     return result
 
 
-def _public_run(raw: dict, *, shallow: bool = False) -> dict:
+def _public_run(
+    raw: dict, *, shallow: bool = False, analysis_count: int | None = None,
+) -> dict:
     """Wrap public_kovaak_run with analysis_count injection."""
     run = dict(raw)
-    run["analysis_count"] = _get_analysis_count_for_run(
-        int(run["id"]), str(run.get("user_id", "")),
+    run["analysis_count"] = (
+        analysis_count
+        if analysis_count is not None
+        else _get_analysis_count_for_run(int(run["id"]), str(run.get("user_id", "")))
     )
     return public_kovaak_run(run, shallow=shallow)
 
 
 async def list_kovaak_run_summaries(user_id: str, limit: int = 100) -> list[dict]:
+    runs = _all_runs(user_id)[:max(1, min(limit, 500))]
+    counts = _analysis_counts_by_run(user_id)
     summaries = []
-    for raw in _all_runs(user_id)[:max(1, min(limit, 500))]:
-        public = _public_run(raw, shallow=True)
+    for raw in runs:
+        public = _public_run(
+            raw, shallow=True, analysis_count=counts.get(int(raw["id"]), 0),
+        )
         public.pop("stats_summary", None)
         public.pop("performance_summary", None)
         summaries.append(public)

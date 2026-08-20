@@ -2647,7 +2647,8 @@ def _build_video_fallback_result_v2(
 
 async def process_one() -> bool:
     """处理一个 job。True=处理了(无论成败),False=队列空。"""
-    await queue.recover_stale_jobs()
+    # Stale-lease recovery runs from the idle loop (throttled). Doing it here
+    # made every job start a full sessions-directory scan on top of claim_next's.
     job = await queue.claim_next(WORKER_ID)
     if job is None:
         return False
@@ -3384,6 +3385,7 @@ async def process_one() -> bool:
 
 async def _run_loop_async() -> None:
     """单 event loop 跑消费循环(db._conn 不跨 loop)。"""
+    last_recover: float | None = None
     while True:
         try:
             handled = await process_one()
@@ -3391,10 +3393,13 @@ async def _run_loop_async() -> None:
             log.exception("process_one 异常")
             handled = False
         if not handled:
-            try:
-                await queue.recover_stale_jobs()
-            except Exception:
-                log.exception("idle recover_stale_jobs 失败")
+            now = asyncio.get_running_loop().time()
+            if last_recover is None or now - last_recover >= 15.0:
+                last_recover = now
+                try:
+                    await queue.recover_stale_jobs()
+                except Exception:
+                    log.exception("idle recover_stale_jobs 失败")
             await asyncio.sleep(2)
 
 
