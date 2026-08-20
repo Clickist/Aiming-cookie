@@ -497,23 +497,34 @@ async def requeue_for_retry(session_id: int) -> dict:
 async def mark_done(
     session_id: int, result: dict, llm_cost: float, *, worker_id: str,
 ) -> bool:
+    # Phase 1 (locked): load + lease check + snapshot the fields validation needs.
     async with _QUEUE_LOCK:
         session = _load_session(session_id)
         if session is None:
             return False
         if session.get("status") != "running" or session.get("worker_id") != worker_id:
             return False
-        if result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
-            run_id = session.get("kovaak_run_id")
-            result = validate_analysis_result_v2_for_persistence(
-                result,
-                owner_id=session["user_id"],
-                analysis_id=f"analysis:{session_id}",
-                analysis_type=session.get("analysis_type") or "flicking",
-                input_mode=session.get("input_mode") or "video_fallback",
-                kovaak_run_ref=f"run:{run_id}" if run_id is not None else None,
-                require_local_profile=session["user_id"] == DESKTOP_LOCAL_PROFILE,
-            )
+    if result.get("schema_version") == ANALYSIS_RESULT_V2_SCHEMA_VERSION:
+        run_id = session.get("kovaak_run_id")
+        # Heavy whole-result validation runs outside _QUEUE_LOCK so heartbeat /
+        # claim / enqueue are not serialized behind it. The lease is re-checked
+        # under the lock before any write lands.
+        result = validate_analysis_result_v2_for_persistence(
+            result,
+            owner_id=session["user_id"],
+            analysis_id=f"analysis:{session_id}",
+            analysis_type=session.get("analysis_type") or "flicking",
+            input_mode=session.get("input_mode") or "video_fallback",
+            kovaak_run_ref=f"run:{run_id}" if run_id is not None else None,
+            require_local_profile=session["user_id"] == DESKTOP_LOCAL_PROFILE,
+        )
+    # Phase 2 (locked): re-check the lease, then apply the terminal write.
+    async with _QUEUE_LOCK:
+        session = _load_session(session_id)
+        if session is None:
+            return False
+        if session.get("status") != "running" or session.get("worker_id") != worker_id:
+            return False
         partial_outcome = None
         calibration_snapshot = None
         if isinstance(result.get("input_snapshot"), dict):
@@ -925,23 +936,18 @@ async def set_failure_domain(session_id: int, failure_domain: str) -> bool:
 async def get_product_state(user_id: str) -> dict:
     onboarding = file_store.read_json(_ONBOARDING_PATH) or {}
     sessions = _all_sessions(user_id)
-    run_count = 0
+    run_summaries: list[dict] = []
     try:
         from . import kovaak_run_store
-        run_count = len(await kovaak_run_store.list_kovaak_run_summaries(user_id))
+        run_summaries = await kovaak_run_store.list_kovaak_run_summaries(user_id)
     except Exception:
         pass
+    run_count = len(run_summaries)
     analysis_count = sum(1 for s in sessions if s.get("status") != "uploading")
-    pending_runs = False
-    if run_count:
-        try:
-            from . import kovaak_run_store
-            for run in await kovaak_run_store.list_kovaak_run_summaries(user_id):
-                if run.get("readiness_state") in {"pending_analysis", "incomplete_evidence"}:
-                    pending_runs = True
-                    break
-        except Exception:
-            pass
+    pending_runs = any(
+        run.get("readiness_state") in {"pending_analysis", "incomplete_evidence"}
+        for run in run_summaries
+    )
     return {
         "onboarding_completed": bool(onboarding.get("onboarding_completed")),
         "onboarding_completion_kind": onboarding.get("onboarding_completion_kind"),

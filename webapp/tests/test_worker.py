@@ -1164,7 +1164,7 @@ def test_build_timeline_handles_empty_and_garbage():
 
 
 @pytest.mark.asyncio
-async def test_process_one_runs_recover_before_claim():
+async def test_process_one_claims_without_recovering():
     order: list[str] = []
 
     async def fake_recover(*_a, **_k):
@@ -1178,7 +1178,7 @@ async def test_process_one_runs_recover_before_claim():
     with patch("webapp.backend.queue.recover_stale_jobs", side_effect=fake_recover), \
          patch("webapp.backend.queue.claim_next", side_effect=fake_claim):
         assert await worker.process_one() is False
-    assert order == ["recover", "claim"]
+    assert order == ["claim"]
 
 
 @pytest.mark.asyncio
