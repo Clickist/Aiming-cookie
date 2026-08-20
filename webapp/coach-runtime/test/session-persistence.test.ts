@@ -105,6 +105,23 @@ test("wrapped session redacts assistant replies and skips failures", async () =>
   assert.equal(msgs[1].content, "key is [REDACTED] ok");
 });
 
+test("wrapped session persists assistant text even when the provider errored mid-turn", async () => {
+  const session = await ensureSession(103);
+  await session.appendMessage({ role: "user", content: [{ type: "text", text: "hi" }], timestamp: Date.now() });
+  const wrapped = wrapCoachSession(session, []);
+  // Regression: a stream that errors after emitting text used to be dropped,
+  // so the UI showed a reply the persisted session never kept.
+  await wrapped.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "被中断前已经生成的正文" }],
+    timestamp: Date.now(),
+    stopReason: "error",
+  });
+  const msgs = await readSessionMessages(103);
+  assert.equal(msgs.length, 2);
+  assert.equal(msgs[1].content, "被中断前已经生成的正文");
+});
+
 test("wrapped session truncates buildContext to the recent window", async () => {
   const session = await ensureSession(102);
   for (let i = 0; i < 50; i++) {
