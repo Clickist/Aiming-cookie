@@ -273,7 +273,12 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
             const text = extractMessageText(assistant.content);
             const hasToolCalls = Array.isArray(assistant.content)
               && assistant.content.some((c) => isRecord(c) && c.type === "toolCall");
-            if (assistant.stopReason === "error" || assistant.stopReason === "aborted" || (!text.trim() && !hasToolCalls)) {
+            // A provider stream that errors (or is aborted) mid-turn can still
+            // carry generated text the user already saw streamed. Drop the
+            // message only when it is truly empty; persist any non-empty reply
+            // so what the UI showed survives a restart (2026-08-20 fix for the
+            // text_available-but-jsonl-missing bug).
+            if (!text.trim() && !hasToolCalls) {
               return undefined;
             }
             return proxyTarget.appendMessage(redactMessage(message, secrets));
