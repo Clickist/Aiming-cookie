@@ -352,3 +352,62 @@ def test_moving_target_keeps_one_track_with_the_velocity_gate():
     # The bounded path series keeps the motion for family metric layers.
     assert fast["path"][0]["t"] == 1_000
     assert fast["path"][-1]["x"] == pytest.approx(100.0 + 8.0 * 29, abs=2.0)
+
+
+def test_hypothesis_pass_grabs_unsampled_frames_instead_of_decoding_them(monkeypatch):
+    import numpy as np
+    from kovaak_tracker.generic_static_clicking_analysis import (
+        GenericVisualPreprocessingUnavailable,
+        HYPOTHESIS_SAMPLE_FRAMES,
+        run_generic_static_clicking_detection_v1,
+    )
+
+    total_frames = HYPOTHESIS_SAMPLE_FRAMES * 3
+    counts = {"grab": 0, "retrieve": 0}
+
+    class _FakeCapture:
+        def __init__(self, _path):
+            self._index = 0
+
+        def isOpened(self):
+            return True
+
+        def get(self, _prop):
+            return float(total_frames)
+
+        def grab(self):
+            if self._index >= total_frames:
+                return False
+            counts["grab"] += 1
+            self._index += 1
+            return True
+
+        def retrieve(self):
+            counts["retrieve"] += 1
+            return True, np.zeros((32, 32, 3), dtype=np.uint8)
+
+        def release(self):
+            return None
+
+    import cv2
+    monkeypatch.setattr(cv2, "VideoCapture", _FakeCapture)
+    monkeypatch.setattr(
+        "kovaak_tracker.generic_static_clicking_analysis.select_color_hypothesis",
+        lambda _samples: None,
+    )
+
+    with pytest.raises(GenericVisualPreprocessingUnavailable, match="generic_color_hypothesis_unavailable"):
+        run_generic_static_clicking_detection_v1(
+            media_path="unused.mp4",
+            analysis_ref="analysis:1",
+            canonical_time_window=_WINDOW,
+            video_time_mapping={
+                "schema_version": "visual_video_time_mapping.v2",
+                "offset_ms": 0,
+                "scale": 1.0,
+            },
+        )
+
+    assert counts["grab"] == total_frames
+    assert counts["retrieve"] == HYPOTHESIS_SAMPLE_FRAMES
+    assert counts["retrieve"] < counts["grab"]
