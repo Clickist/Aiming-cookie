@@ -263,19 +263,22 @@ git status --short
 
 | 路径 | 入口或职责 |
 |---|---|
-| `kovaak_tracker/` | 领域分析、flicking/tracking 指标、确定性诊断与报告 |
+| `kovaak_tracker/` | Domain Core：四家族分析、视觉证据、确定性诊断与报告 |
+| `knowledge/` | Coach Knowledge Registry 源文件；sidecar 启动时物化到 app-data `knowledge/` |
 | `webapp/backend/app.py` | FastAPI 应用入口 |
 | `webapp/backend/routes.py` | HTTP 路由与产品 API |
 | `webapp/backend/worker.py` | 异步分析 worker |
 | `webapp/backend/desktop_runtime.py` | Tauri 管理的本地 API/worker 生命周期 |
 | `webapp/backend/kovaak_ingest.py` | KovaaK Stats / Performance watcher 与稳定文件发现 |
-| `webapp/backend/kovaak_run_store.py` | `KovaaKRun` 本地 JSON 文件读写（`runs/{id}/meta.json`）、snapshot 解码和 trace 配对 |
+| `webapp/backend/kovaak_run_store.py` | `KovaaKRun` 本地 JSON（`runs/{id}/meta.json`）、snapshot 解码和 trace 配对 |
+| `webapp/backend/analysis_output.py` | 渐进式披露 `analyses/{session_id}/` |
 | `webapp/backend/contracts.py` | Web/Desktop 共享的分析合同 |
-| `webapp/backend/analysis_service.py` | Analysis 服务与编排 |
-| `webapp/backend/provider_store.py` | Provider profile/credential 的 `config/provider.json` 文件存储 |
+| `webapp/backend/analysis_service.py` | Analysis 服务与编排（含 Coach 触发的 create_from_run） |
+| `webapp/coach-runtime/` | Node Coach sidecar：Pi harness、受限 fs 工具、product commands、JSONL 会话、知识库物化、`config/provider.json` |
 | `webapp/frontend/` | Next.js 前端、API client 和桌面适配层 |
 | `webapp/frontend/src-tauri/` | Tauri shell、进程生命周期与 native commands |
 | `webapp/frontend/src-tauri/src/raw_input.rs` | Windows Raw Input、process gate、ring buffer 和本地 snapshot |
+| `webapp/frontend/src-tauri/src/capture_coordinator.rs` | Capture Coordinator、Run evidence export |
 | `third_party/pi/` | Coach runtime 使用的 Pi 源码基线 |
 | `scripts/` | 开发启动和运行辅助脚本 |
 

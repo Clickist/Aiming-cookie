@@ -6,7 +6,7 @@
 >
 > 使用前先读取 `docs/PRD.md` 与 `docs/ARCHITECTURE.md`，再重新核实法规、供应商、价格、地区可用性与数据义务。未经新的 active plan 批准，不得把本文 checklist 当作当前部署指令。
 >
-> ⚠️ 本文的 SQLite / Postgres / VPS 部署描述对应旧的 Web 服务架构，已随 2026-08-13 架构重写废弃——当前产品是本地桌面应用，数据存 JSON 文件（见 `docs/architecture-rewrite-2026-08-13.md`），本文仅作历史调研参考。
+> ⚠️ 本文的 SQLite / Postgres / VPS 部署描述对应旧的 Web 服务架构，已随 2026-08-13 架构重写废弃——当前产品是本地桌面应用，数据存 JSON 文件（见 [`ARCHITECTURE.md`](ARCHITECTURE.md) §4），本文仅作历史调研参考。
 
 ## 0. 信息来源与可信度
 

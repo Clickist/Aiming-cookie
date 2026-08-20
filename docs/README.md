@@ -18,7 +18,7 @@
 
 核心原则：**上游文档定义”应该是什么”；代码、测试和运行结果定义”现在实际上是什么”。** 两者不一致时记录实现差距，不让任何一方静默覆盖另一方。
 
-> **⚠️ 2026-08-13 架构重写进行中。** 当前正在执行 [`architecture-rewrite-2026-08-13.md`](architecture-rewrite-2026-08-13.md) 中点点授权的全面架构简化。在重写完成前，ARCHITECTURE.md 和 ROADMAP.md 中的旧架构描述仅作历史参考。
+> 2026-08-13 架构重写（SQLite → JSON 文件、Coach 直连 sidecar）已完成。稳定系统合同以 [`ARCHITECTURE.md`](ARCHITECTURE.md) 为准；当时的授权与计划已归档为 [`archive/completed/plans/2026-08-13-architecture-rewrite.md`](archive/completed/plans/2026-08-13-architecture-rewrite.md)。
 
 ## 按任务阅读
 

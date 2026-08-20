@@ -1,6 +1,6 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-08-17. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
+> Updated: 2026-08-20. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
 
 ## Current Product Direction
 
@@ -113,3 +113,11 @@ Full-codebase audit completed across 5 subsystems with ~70 findings. Key fixes a
 - **Video evidence navigation**: added 2-second seek padding so clicking an evidence segment lands slightly before the event, not after.
 - **FOV/DPI/sensitivity KeyError tolerance**: missing optional fields no longer crash analysis or frontend rendering.
 - **Codex review regression fixes**: schema synchronization between frontend contracts and backend DTOs; deletion confirmation flow restored.
+
+## 2026-08-20 Documentation
+
+- 归档已完成的 2026-08-13 架构重写计划到 [`archive/completed/plans/2026-08-13-architecture-rewrite.md`](archive/completed/plans/2026-08-13-architecture-rewrite.md)。`docs/README.md` 不再把 ARCHITECTURE 标成历史参考。
+- `ARCHITECTURE.md` §5 与实现对齐：Coach 使用受限 app-data 文件工具；知识经物化 index 检索，无独立 knowledge tool。推断性 consequential 操作的确认合同仍有效，产品路径 `decideConfirmation` 目前恒 null——记为实现差距，不改合同。
+- `DEVELOPMENT.md` 代码入口补上 `webapp/coach-runtime/`、`knowledge/`、`analysis_output.py`、`capture_coordinator.rs`；删除已不存在的 `provider_store.py`。
+
+未改 PRD。PROGRESS「安装前 Stats/Performance 不导入」与 ARCHITECTURE/ROADMAP「可导入为历史 Run」仍冲突，产品决策未在本会话重开。
