@@ -50,9 +50,12 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 - **Spacing:** 工作区控制区留出清晰呼吸空间；密集数据只在图表/表格内部压缩。可执行间距为 `--space-1`（4px）到 `--space-6`（32px）；页面布局级大间距（≥40px）不受该阶梯约束。
 - **Geometry:** 紧凑、精密、机械感的圆角；避免大面积消费级胶囊化。可执行圆角为 `--radius-sm` / `--radius-md` / `--radius-lg`；控件高度为 `--control-height`（36px）与 `--control-height-compact`（32px）。页面不得再发明 5px 圆角或 13.5px 字号；1-3px 微形状（圆点、进度条端头）不算违规。
 - **Primary scarcity:** `--primary` 只用于真正的 CTA（发送、新建、继续）和 `:focus-visible`。选中态、hover、badge、工具进行中不得用橙色填充或描边；数据可视化与表单 `accent-color` 不受此限。
-- **Enforcement:** 字号/圆角 token 与旧 board 别名层（`--fg`、`--s-high` 等）的废除由 `webapp/frontend/tests/design-system-contract.test.ts` 扫描全部 CSS 强制执行。
-- **Depth:** 依赖 surface ladder 与 hairline，不使用装饰性重阴影。
-- **Motion:** 克制、可中断、尊重 reduced motion；处理态可使用 primary 派生 pulse，但不让动画成为状态的唯一表达。
+- **Enforcement:** 字号/圆角 token、旧 board 别名层（`--fg`、`--s-high` 等）的废除、transition 动效 token、四级字重与阴影 token 由 `webapp/frontend/tests/design-system-contract.test.ts` 扫描全部 CSS 强制执行。
+- **Depth:** 依赖 surface ladder 与 hairline，不使用装饰性重阴影。浮层（菜单/抽屉/对话框/弹层）唯一投影 `--shadow-overlay`；聚焦光环 `--ring`；1px hairline ring 只用于 focus-within 边框强调。
+- **Motion:** 克制、可中断、尊重 reduced motion。transition 时长只有 `--duration-fast`（150ms，状态/hover）、`--duration-surface`（200ms，开闭/进出）与 `--duration-reduced-motion`（120ms，reduced 覆盖），缓动一律 `--ease-out`（大位移抽屉可用 `--ease-drawer`）；裸写 ms/ease/cubic-bezier 禁止。`animation:` 循环（加载/呼吸/光标闪烁）与关键帧时长不受此约束。处理态动画不让动画成为状态的唯一表达。
+- **Status color semantics:** 信息/模式/进行中 = `tertiary-container` 系；预览/降级 = 中性 `surface-container` + `on-surface-variant`；成功 = `event-kill` 文字（透明底+hairline 边）；危险 = `error` 系；`event-*` 只用于数据可视化，不做 chrome 色；身份/选中/hover 一律 surface 阶梯。链接色为中性 `on-surface`。
+- **Button patterns:** 交互按钮统一走 ac-button 形态——高度/圆角/字重用 token；hover：填充变体（primary/danger）`color-mix 90% 暗化`，ghost/默认升一档 surface；active `translateY(1px)`；disabled `opacity: 0.55`；`:focus-visible` 2px primary outline（光环 `--ring`）。
+- **Border semantics:** 分界线与面板边 = 1px `outline-variant`；强调/选中边框 = `outline`；边框不承担 hover 强调（hover 走 surface 阶梯）。
 - **Accessibility:** 正文、状态、图表标注、focus 和 disabled 状态在两种主题下都需可读；颜色不能作为唯一信息载体。
 
 ## 5. Component governance

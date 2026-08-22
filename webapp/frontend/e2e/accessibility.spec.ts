@@ -53,13 +53,13 @@ test.describe("Task 7 accessibility", () => {
     expect(outline.style).not.toBe("none");
   });
 
-  test("desktop pointer target sizes follow the approved 40/36/32 contract", async ({ page }) => {
+  test("desktop pointer target sizes follow the approved 36/32 control-height contract", async ({ page }) => {
     await installApiFixtures(page);
     await page.goto("/settings");
     const failures = await page.evaluate(() => {
       const checks = [
-        { selector: ".ac-button:not([data-size='compact'])", minimum: 40 },
-        { selector: ".ac-button[data-size='compact']", minimum: 36 },
+        { selector: ".ac-button:not([data-size='compact'])", minimum: 36 },
+        { selector: ".ac-button[data-size='compact']", minimum: 32 },
         { selector: ".task3-toolbar a, .task3-toolbar button", minimum: 36 },
         { selector: ".ac-icon-button", minimum: 32 },
       ];
@@ -104,12 +104,21 @@ test.describe("Task 7 accessibility", () => {
     await installApiFixtures(page);
     await page.setViewportSize({ width: 1180, height: 720 });
     await page.goto("/");
-    const transitionDurations = await page.evaluate(() =>
+    const transitions = await page.evaluate(() =>
       Array.from(document.querySelectorAll<HTMLElement>(".ac-button, .task7-session-rail button, .task6-composer-send"))
         .filter((element) => element.getBoundingClientRect().width > 0)
-        .map((element) => getComputedStyle(element).transitionDuration),
+        .map((element) => ({
+          duration: getComputedStyle(element).transitionDuration,
+          property: getComputedStyle(element).transitionProperty,
+        })),
     );
-    expect(transitionDurations.every((duration) => duration === "0s")).toBe(true);
+    // reduced-motion 合同：时长收敛到 120ms 渐隐，属性限定在
+    // opacity/color 系（无位移/尺寸动画）。
+    expect(transitions.every(({ duration }) => duration === "0s" || duration === "0.12s")).toBe(true);
+    const safeProperties = ["opacity", "color", "background-color", "border-color"];
+    expect(transitions.every(({ property }) =>
+      property.split(", ").every((name) => safeProperties.includes(name)),
+    )).toBe(true);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await expect(page.getByText("Aiming Cookie", { exact: true })).toBeVisible();
   });

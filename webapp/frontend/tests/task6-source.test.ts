@@ -364,7 +364,7 @@ test("Coach current training animates expand and collapse without leaving intera
   assert.match(coach, /data-state=\{trainingPresence\.state\}/);
   assert.match(coach, /aria-hidden=\{!trainingExpanded \|\| undefined\}/);
   assert.match(coach, /inert=\{!trainingExpanded \|\| undefined\}/);
-  assert.match(styles, /\.task6-training-reveal\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-4px\)[\s\S]*transition:\s*opacity 180ms var\(--ease-out/);
+  assert.match(styles, /\.task6-training-reveal\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-4px\)[\s\S]*transition:\s*opacity var\(--duration-surface\) var\(--ease-out/);
   assert.doesNotMatch(styles, /grid-template-rows/);
   assert.match(styles, /\.task6-training-reveal\[data-state="open"\]\s*\{[\s\S]*opacity:\s*1;[\s\S]*translateY\(0\)/);
   assert.match(styles, /\.task6-training-reveal\[data-state="closed"\]\s*\{[\s\S]*position:\s*absolute;[\s\S]*pointer-events:\s*none;/);

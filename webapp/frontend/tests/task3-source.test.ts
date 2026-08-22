@@ -101,17 +101,17 @@ test("app shell styles keep the 48px AppBar and make Settings a top-bar-below ov
   assert.match(shell, /useAnimatedPresence\(settingsRoute, 160\)/);
   assert.match(shell, /settingsOverlayChildren/);
   assert.match(shell, /settingsPresence\.state === "open" \? "open" : "opening"/);
-  assert.match(value, /data-settings-page="true"[\s\S]*opacity 160ms var\(--ease-out/);
+  assert.match(value, /data-settings-page="true"[\s\S]*opacity var\(--duration-fast\) var\(--ease-out/);
   assert.match(value, /data-settings-motion="opening"[\s\S]*data-settings-motion="closing"[\s\S]*translateX\(8px\)/);
-  assert.match(value, /prefers-reduced-motion: reduce[\s\S]*duration-reduced-motion, 120ms/);
+  assert.match(value, /prefers-reduced-motion: reduce[\s\S]*duration-reduced-motion\) var\(--ease-out/);
 });
 
 test("onboarding step and listbox entrances use short transform-and-opacity motion", async () => {
   const value = await source("components/task3/task3.css");
-  assert.match(value, /task3-onboarding-enter 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
+  assert.match(value, /task3-onboarding-enter var\(--duration-fast\) var\(--ease-out\)/);
   assert.match(value, /@keyframes task3-onboarding-enter[\s\S]*opacity:\s*0;[\s\S]*translateY\(4px\)/);
   assert.match(value, /task3-onboarding-dropdown-menu[\s\S]*transform-origin:\s*top center/);
-  assert.match(value, /task3-onboarding-dropdown-enter 180ms cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
+  assert.match(value, /task3-onboarding-dropdown-enter var\(--duration-fast\) var\(--ease-out\)/);
   assert.match(value, /@keyframes task3-onboarding-dropdown-enter[\s\S]*scale\(0\.97\)/);
 });
 
