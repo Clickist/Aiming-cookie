@@ -33,8 +33,14 @@ pub const DEFAULT_RECORDING_FPS_DENOMINATOR: u32 = 1;
 pub const REPLAY_MAX_DURATION_100NS: i64 = 300 * 10_000_000;
 pub const REPLAY_MAX_BYTES: usize = 384 * 1024 * 1024;
 // 导出窗口内容忍的时间线缺口：丢 1 帧（60fps 下 16.7ms）不应废掉整个
-// 导出，缺口由前一 sample 的时长自然吸收；超过 100ms 仍按 CoverageGap 失败。
-pub const REPLAY_TOLERATED_GAP_100NS: i64 = 1_000_000;
+// 导出，缺口由前一 sample 的时长自然吸收；超过该阈值仍按 CoverageGap 失败。
+// 软件编码层实测存在 100-250ms 级的编码抖动空洞，100ms 会把整局录制
+// 判死为 capture_coverage_gap（2026-08-21 软编实测），放宽到 250ms。
+pub const REPLAY_TOLERATED_GAP_100NS: i64 = 2_500_000;
+// 软件编码层的输入下采样：跳帧到 30fps，使 CPU 回读+转换+编码只承担
+// 一半负载；均匀跳帧让包间隔保持 ~33ms，远离 CoverageGap 阈值。
+pub const SOFTWARE_INPUT_INTERVAL_100NS: i64 = 10_000_000 / 30;
+pub const SOFTWARE_FRAME_DURATION_100NS: i64 = 10_000_000 / 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -810,7 +816,10 @@ fn prepare_replay_mp4(input: &ReplayMuxInput) -> Result<ReplayMp4Plan, ReplayExp
             "replay snapshot byte count changed after snapshotting",
         ));
     }
-    if covered_until < snapshot.requested_end_100ns {
+    // 与 EncodedReplayBuffer::snapshot 的尾部判定对称：末帧持续显示到
+    // 窗口终点，shortfall ≤ 容忍阈值即覆盖（软编低帧率时尾包距终点
+    // 数十至一百余毫秒属正常）。
+    if snapshot.requested_end_100ns - covered_until > REPLAY_TOLERATED_GAP_100NS {
         return Err(replay_export_failure(
             ReplayExportFailureKind::IncompleteCoverage,
             "replay snapshot ends before the requested window",
@@ -1392,7 +1401,11 @@ impl EncodedReplayBuffer {
                 .ok_or(ReplayBufferError::ByteOverflow)?;
             packets.push(Arc::clone(packet));
         }
-        if covered_until < requested_end_100ns {
+        // 尾部覆盖与内部缺口同一语义：视频帧持续显示到下一帧，最后一个
+        // 包距窗口终点 ≤ 容忍阈值即视为覆盖。软编层帧率可能低于 30fps
+        // （2026-08-21 实测 ~6fps/171ms 间隔），固定采样时长 33ms 会让
+        // 尾包距终点几十至一百余毫秒就被整局判死，与内部缺口判定不对称。
+        if requested_end_100ns - covered_until > REPLAY_TOLERATED_GAP_100NS {
             return Err(ReplayBufferError::IncompleteCoverage);
         }
         Ok(ReplaySnapshot {
@@ -1491,6 +1504,10 @@ pub struct WindowCaptureStatus {
     pub last_encoder_failure: Option<HardwareEncoderFailure>,
     pub first_system_relative_time_100ns: Option<i64>,
     pub last_system_relative_time_100ns: Option<i64>,
+    pub replay_keyframes: u64,
+    pub replay_evicted_packets: u64,
+    pub replay_coverage_gaps: u64,
+    pub replay_bytes: usize,
     pub clock_source: &'static str,
     pub timebase_version: &'static str,
     pub clock_anchor_utc_ms: Option<i64>,
@@ -1517,6 +1534,10 @@ pub struct FrameQueue {
     last_encoder_failure: Option<HardwareEncoderFailure>,
     first_system_relative_time_100ns: Option<i64>,
     last_system_relative_time_100ns: Option<i64>,
+    replay_keyframes: u64,
+    replay_evicted_packets: u64,
+    replay_coverage_gaps: u64,
+    replay_bytes: usize,
 }
 
 impl FrameQueue {
@@ -1547,6 +1568,10 @@ impl FrameQueue {
             last_encoder_failure: None,
             first_system_relative_time_100ns: None,
             last_system_relative_time_100ns: None,
+            replay_keyframes: 0,
+            replay_evicted_packets: 0,
+            replay_coverage_gaps: 0,
+            replay_bytes: 0,
         })
     }
 
@@ -1640,6 +1665,24 @@ impl FrameQueue {
         }
     }
 
+    /// 编码器在每包入重放缓冲后同步累计的重放侧统计，随诊断导出：
+    /// keyframes/字节数用于判断码率与缓冲占用，evicted/coverage_gaps
+    /// 用于定位导出 CoverageGap（缓冲被淘汰或时间线断档）的根因。
+    pub fn record_replay_stats(
+        &mut self,
+        keyframe: bool,
+        byte_len: usize,
+        evicted_packets: u64,
+        coverage_gaps: u64,
+    ) {
+        if keyframe {
+            self.replay_keyframes += 1;
+        }
+        self.replay_bytes = self.replay_bytes.saturating_add(byte_len);
+        self.replay_evicted_packets = evicted_packets;
+        self.replay_coverage_gaps = coverage_gaps;
+    }
+
     pub fn reset(&mut self) {
         self.frames.clear();
         self.metadata_dropped_frames = 0;
@@ -1659,6 +1702,10 @@ impl FrameQueue {
         self.last_encoder_failure = None;
         self.first_system_relative_time_100ns = None;
         self.last_system_relative_time_100ns = None;
+        self.replay_keyframes = 0;
+        self.replay_evicted_packets = 0;
+        self.replay_coverage_gaps = 0;
+        self.replay_bytes = 0;
     }
 
     pub fn status(&self, enabled: bool, recording: bool) -> WindowCaptureStatus {
@@ -1684,6 +1731,10 @@ impl FrameQueue {
             last_encoder_failure: self.last_encoder_failure,
             first_system_relative_time_100ns: self.first_system_relative_time_100ns,
             last_system_relative_time_100ns: self.last_system_relative_time_100ns,
+            replay_keyframes: self.replay_keyframes,
+            replay_evicted_packets: self.replay_evicted_packets,
+            replay_coverage_gaps: self.replay_coverage_gaps,
+            replay_bytes: self.replay_bytes,
             clock_source: "utc_epoch_ms+qpc+wgc_system_relative_time",
             timebase_version: "time_alignment.v2",
             clock_anchor_utc_ms: None,
@@ -3108,6 +3159,14 @@ impl HardwareH264Encoder {
             })?
             .record_hardware_packet(packet.pts_100ns)
             .map_err(|failure| HardwareEncoderError::new(failure, "invalid hardware packet"))?;
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.record_replay_stats(
+                packet.keyframe,
+                packet.bytes.len(),
+                self.replay.evicted_packets,
+                self.replay.coverage_gaps,
+            );
+        }
         Ok(())
     }
 
@@ -3218,6 +3277,9 @@ struct SoftwareH264Encoder {
     queue: Arc<Mutex<FrameQueue>>,
     replay: EncodedReplayBuffer,
     sequence_header: Vec<u8>,
+    // 30fps 下采样：距离上一提交帧不足 SOFTWARE_INPUT_INTERVAL_100NS 的
+    // 输入帧在回读/转换前被丢弃，避免 CPU 编码积压引发帧通道丢弃断档。
+    last_submitted_pts_100ns: Option<i64>,
     width: u32,
     height: u32,
     context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
@@ -3415,6 +3477,7 @@ impl SoftwareH264Encoder {
                     queue,
                     replay: EncodedReplayBuffer::new(),
                     sequence_header,
+                    last_submitted_pts_100ns: None,
                     width,
                     height,
                     context: context.clone(),
@@ -3758,6 +3821,14 @@ impl SoftwareH264Encoder {
             })?
             .record_hardware_packet(packet.pts_100ns)
             .map_err(|failure| HardwareEncoderError::new(failure, "invalid software packet"))?;
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.record_replay_stats(
+                packet.keyframe,
+                packet.bytes.len(),
+                self.replay.evicted_packets,
+                self.replay.coverage_gaps,
+            );
+        }
         Ok(())
     }
 
@@ -3827,6 +3898,18 @@ impl Drop for SoftwareH264Encoder {
 
 // 自动采集编码器封装：硬件路径（第一/二层）或软件路径（第三层）共用
 // 同一装配点与帧驱动协议，下游 replay 导出与诊断无感知具体层级。
+// 软件编码层的输入下采样判定：与上一提交帧间隔达到 interval_100ns 才
+// 接受，否则在回读前丢弃该帧。interval 由调用方按帧通道积压深度放大
+// （见 submit_capture_frame），使包间隔稳定贴住可持续编码节奏。
+#[cfg(windows)]
+fn software_input_accepted(
+    last_submitted_pts_100ns: Option<i64>,
+    pts_100ns: i64,
+    interval_100ns: i64,
+) -> bool {
+    last_submitted_pts_100ns.is_none_or(|last| pts_100ns.saturating_sub(last) >= interval_100ns)
+}
+
 #[cfg(windows)]
 enum AutomaticH264Encoder {
     Hardware(HardwareH264Encoder),
@@ -3888,6 +3971,7 @@ impl AutomaticH264Encoder {
     fn submit_capture_frame(
         &mut self,
         captured: HardwareCaptureFrame,
+        frame_backlog: usize,
     ) -> Result<(), HardwareEncoderError> {
         use windows::core::Interface;
         use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
@@ -3924,7 +4008,28 @@ impl AutomaticH264Encoder {
                 encoder.submit_texture(&source, captured.encoded_pts_100ns, duration)
             }
             Self::Software(encoder) => {
-                encoder.submit_texture(&source, captured.encoded_pts_100ns, duration)
+                // 自适应下采样：基准 30fps；帧通道有积压说明编码吞吐跟不上，
+                // 按积压深度放大接受间隔，让包间隔稳定贴住可持续节奏（积压
+                // n 帧就约每 n+1 帧取 1），避免包间隔随编码完成时刻抖动、
+                // 偶发 >250ms 空洞把导出判死为 capture_coverage_gap
+                // （2026-08-21 实测：固定 33ms 间隔在慢编码下仍按编码节奏
+                // 逐帧全收，间隔抖动无改善）。采样时长保持 1/30s 上限语义，
+                // MP4 stts 由 mux 层按真实相邻间隔吸收。
+                let interval =
+                    SOFTWARE_INPUT_INTERVAL_100NS.saturating_mul(1 + frame_backlog as i64);
+                if !software_input_accepted(
+                    encoder.last_submitted_pts_100ns,
+                    captured.encoded_pts_100ns,
+                    interval,
+                ) {
+                    return Ok(());
+                }
+                encoder.last_submitted_pts_100ns = Some(captured.encoded_pts_100ns);
+                encoder.submit_texture(
+                    &source,
+                    captured.encoded_pts_100ns,
+                    SOFTWARE_FRAME_DURATION_100NS,
+                )
             }
         }
     }
@@ -3953,6 +4058,42 @@ impl AutomaticH264Encoder {
                 capture_clock,
             ),
         }
+    }
+
+    // 导出失败时把缓冲实况打进控制台：首尾 PTS 对比请求窗口，一眼区分
+    // 头部缺 keyframe、尾部滞后（IncompleteCoverage）与中途断档。
+    fn log_replay_status(&self, requested_start_100ns: i64, requested_end_100ns: i64) {
+        let status = match self {
+            Self::Hardware(encoder) => encoder.replay.status(),
+            Self::Software(encoder) => encoder.replay.status(),
+        };
+        let (dropped_packets, encoder_errors) = match self {
+            Self::Hardware(encoder) => encoder
+                .queue
+                .lock()
+                .map(|queue| (queue.dropped_packets, queue.encoder_errors))
+                .ok(),
+            Self::Software(encoder) => encoder
+                .queue
+                .lock()
+                .map(|queue| (queue.dropped_packets, queue.encoder_errors))
+                .ok(),
+        }
+        .unwrap_or((0, 0));
+        eprintln!(
+            "[capture-export] replay buffer: packets={} keyframes={} bytes={} \
+             evicted={} gaps={} dropped={} encoder_errors={} \
+             first_pts={:?} last_pts={:?} window={requested_start_100ns}..{requested_end_100ns}",
+            status.packet_count,
+            status.keyframes,
+            status.total_bytes,
+            status.evicted_packets,
+            status.coverage_gaps,
+            dropped_packets,
+            encoder_errors,
+            status.first_packet_pts_100ns,
+            status.last_packet_pts_100ns,
+        );
     }
 }
 
@@ -4324,7 +4465,9 @@ fn run_wgc_window_capture(
         let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
             &direct3d_device,
             DirectXPixelFormat::B8G8R8A8UIntNormalized,
-            2,
+            // 4 个 buffer：软编路径编码期间持有帧表面，2 buffer 会让 WGC
+            // 帧池枯竭、实际送达率被编码时长封顶（2026-08-21 实测 ~6fps）。
+            4,
             size,
         )
         .map_err(|error| {
@@ -4360,6 +4503,10 @@ fn run_wgc_window_capture(
         } else {
             (None, None)
         };
+        // 编码帧通道的实时积压深度：发送 +1、出队 -1。std mpsc 的 Receiver
+        // 没有 len()，软编层用它自适应放大下采样间隔。
+        let encoder_frame_backlog = Arc::new(AtomicU64::new(0));
+        let encoder_frame_backlog_for_handler = Arc::clone(&encoder_frame_backlog);
         let (recording_sender, recording_join) = if let Some(path) = recording_path {
             let (sender, receiver) = std::sync::mpsc::sync_channel(DEFAULT_WRITER_QUEUE_CAPACITY);
             let (writer_ready_tx, writer_ready_rx) = std::sync::mpsc::sync_channel(1);
@@ -4493,7 +4640,10 @@ fn run_wgc_window_capture(
                                 sample,
                                 encoded_pts_100ns,
                             }) {
-                                Ok(()) => {}
+                                Ok(()) => {
+                                    encoder_frame_backlog_for_handler
+                                        .fetch_add(1, Ordering::Release);
+                                }
                                 Err(std::sync::mpsc::TrySendError::Full(_)) => {
                                     if let Ok(mut guard) = queue_for_handler.lock() {
                                         guard.record_hardware_failure(
@@ -4661,6 +4811,12 @@ fn run_wgc_window_capture(
                                     }))
                                 }
                                 Err(error) => {
+                                    if let Some(encoder) = automatic_encoder.as_ref() {
+                                        encoder.log_replay_status(
+                                            requested_start_100ns,
+                                            requested_end_100ns,
+                                        );
+                                    }
                                     eprintln!(
                                         "[capture-export] worker: input build failed kind={:?}",
                                         error.kind
@@ -4682,7 +4838,8 @@ fn run_wgc_window_capture(
                 if let Some(captured) =
                     dequeue_if_permitted(failure.is_none() && encoder.accepts_input(), receiver)
                 {
-                    if let Err(error) = encoder.submit_capture_frame(captured) {
+                    let backlog = encoder_frame_backlog.fetch_sub(1, Ordering::AcqRel) as usize;
+                    if let Err(error) = encoder.submit_capture_frame(captured, backlog) {
                         failure = Some(error.failure);
                     }
                 }
@@ -4703,6 +4860,19 @@ fn run_wgc_window_capture(
         let _ = session.Close();
         let _ = frame_pool.RemoveFrameArrived(frame_arrived_token);
         let _ = frame_pool.Close();
+        // 停止前排空已积压的编码输入帧：软编 worker 最多积压一个通道深度
+        // （60fps 下 ~0.5s）。若随 stop 直接丢弃，重放缓冲尾部缺失，导出
+        // 以 IncompleteCoverage 判死（2026-08-21 实测：局尾立刻退出游戏）。
+        if let (Some(encoder), Some(receiver)) =
+            (automatic_encoder.as_mut(), encoder_frame_receiver.as_ref())
+        {
+            while let Some(captured) = dequeue_if_permitted(encoder.accepts_input(), receiver) {
+                let backlog = encoder_frame_backlog.fetch_sub(1, Ordering::AcqRel) as usize;
+                if encoder.submit_capture_frame(captured, backlog).is_err() {
+                    break;
+                }
+            }
+        }
         drop(recording_sender);
         if let Some(join) = recording_join {
             match join.join() {
@@ -5288,17 +5458,17 @@ mod tests {
                     Arc::from([0, 0, 0, 1, 0x65, 0x11]),
                 )),
                 Arc::new(replay_packet(
-                    2_000_000,
+                    3_000_000,
                     100,
                     false,
                     Arc::from([0, 0, 0, 1, 0x41, 0x22]),
                 )),
             ],
             requested_start_100ns: 250,
-            requested_end_100ns: 2_000_100,
+            requested_end_100ns: 3_000_100,
             decode_start_100ns: 200,
             start_offset_100ns: 50,
-            end_offset_100ns: 1_999_900,
+            end_offset_100ns: 2_999_900,
             total_bytes: 12,
             tolerated_gaps: 0,
         };
@@ -5443,19 +5613,22 @@ mod tests {
             Err(ReplayBufferError::WindowTooLong)
         );
 
-        let mut incomplete = EncodedReplayBuffer::with_limits(1_000, 100).unwrap();
+        let mut incomplete = EncodedReplayBuffer::with_limits(4_000_000, 100).unwrap();
         incomplete.push(small_replay_packet(0, 100, true)).unwrap();
+        // 尾部 shortfall ≤ 容忍阈值（视频末帧持续显示）视为覆盖。
+        assert!(incomplete.snapshot(0, 2_000_000).is_ok());
+        // 超过容忍阈值（250ms）的尾部缺失仍失败。
         assert_eq!(
-            incomplete.snapshot(0, 200),
+            incomplete.snapshot(0, 3_000_000),
             Err(ReplayBufferError::IncompleteCoverage)
         );
 
-        let mut gap = EncodedReplayBuffer::with_limits(2_000_000, 100).unwrap();
+        let mut gap = EncodedReplayBuffer::with_limits(4_000_000, 100).unwrap();
         gap.push(small_replay_packet(0, 100, true)).unwrap();
-        gap.push(small_replay_packet(1_000_300, 100, false))
+        gap.push(small_replay_packet(2_600_000, 100, false))
             .unwrap();
         assert_eq!(
-            gap.snapshot(0, 1_000_400),
+            gap.snapshot(0, 2_600_100),
             Err(ReplayBufferError::CoverageGap)
         );
     }
@@ -5463,7 +5636,7 @@ mod tests {
     #[test]
     fn replay_snapshot_tolerates_gaps_within_the_export_tolerance() {
         let mut replay = EncodedReplayBuffer::with_limits(4_000_000, 200).unwrap();
-        for pts in [0, 100, 300, 200_000, 2_000_000] {
+        for pts in [0, 100, 300, 200_000, 3_000_000] {
             replay
                 .push(small_replay_packet(pts, 100, pts == 0))
                 .unwrap();
@@ -5479,14 +5652,14 @@ mod tests {
         assert_eq!(dropped.packets.len(), 3);
         assert_eq!(dropped.tolerated_gaps, 1);
 
-        // 窗口内多个 ≤100ms 缺口累计计数。
+        // 窗口内多个 ≤250ms 缺口累计计数。
         let both = replay.snapshot(0, 200_100).unwrap();
         assert_eq!(both.packets.len(), 4);
         assert_eq!(both.tolerated_gaps, 2);
 
-        // 超过 100ms 容差的缺口仍然失败。
+        // 超过 250ms 容差的缺口仍然失败。
         assert_eq!(
-            replay.snapshot(0, 2_000_100),
+            replay.snapshot(0, 3_000_100),
             Err(ReplayBufferError::CoverageGap)
         );
     }
@@ -6464,5 +6637,39 @@ mod tests {
         std::env::remove_var("AIMING_COOKIE_FORCE_SOFTWARE_ENCODER");
         let encoder = result.expect("forced software encoder should initialize");
         assert!(matches!(encoder, AutomaticH264Encoder::Software(_)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn software_input_downsampling_scales_with_frame_backlog() {
+        // 60fps 保留时间戳（~166_667ns 步进）：零积压时下采样到 ~30fps；
+        // 积压 3 帧时接受间隔放大 4 倍，包间隔贴住可持续节奏。
+        let mut last: Option<i64> = None;
+        let mut accepted = 0;
+        for step in 0..60 {
+            let pts = (step as i64) * 10_000_000 / 60;
+            if software_input_accepted(last, pts, SOFTWARE_INPUT_INTERVAL_100NS) {
+                accepted += 1;
+                last = Some(pts);
+            }
+        }
+        assert_eq!(accepted, 30);
+
+        let mut last: Option<i64> = None;
+        let mut accepted = 0;
+        let scaled = SOFTWARE_INPUT_INTERVAL_100NS * 4;
+        for step in 0..60 {
+            let pts = (step as i64) * 10_000_000 / 60;
+            if software_input_accepted(last, pts, scaled) {
+                accepted += 1;
+                last = Some(pts);
+            }
+        }
+        // 4× 间隔 ≈ 133ms ≈ 60fps 输入的 8 帧步长：60 帧接受 8 个。
+        assert_eq!(accepted, 8);
+        // 采样时长与基准采样间隔一致，MP4 stts 由 mux 按真实间隔吸收；
+        // 基准下采样间隔必须远低于导出 CoverageGap 容差。
+        assert_eq!(SOFTWARE_FRAME_DURATION_100NS, SOFTWARE_INPUT_INTERVAL_100NS);
+        const { assert!(SOFTWARE_INPUT_INTERVAL_100NS < REPLAY_TOLERATED_GAP_100NS) };
     }
 }
