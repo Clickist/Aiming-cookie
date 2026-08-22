@@ -322,7 +322,7 @@ test("Toast has a keyboard close action, auto-dismisses, and reduced motion is i
 
     await page.goto("/onboarding");
     const step = page.locator(".task3-onboarding-step");
-    await expect(step).toHaveCSS("animation-duration", "0.18s");
+    await expect(step).toHaveCSS("animation-duration", "0.15s");
     await step.evaluate((element) => element.setAttribute("data-test-step-instance", "provider"));
     await page.getByRole("button", { name: "继续", exact: true }).click();
     await expect(step).not.toHaveAttribute("data-test-step-instance", "provider");

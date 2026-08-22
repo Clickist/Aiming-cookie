@@ -76,7 +76,9 @@ test.describe("Task 7 browser smoke", () => {
     await page.goto("/onboarding");
     let createdProfile: Record<string, unknown> | null = null;
     page.on("request", (request) => {
-      if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/provider-profiles") return;
+      // 浏览器模式走 sidecar fallback：/v1/provider-profiles 实际请求 /api/coach/provider-profiles。
+      const pathname = new URL(request.url()).pathname;
+      if (request.method() !== "POST" || !["/api/provider-profiles", "/api/coach/provider-profiles"].includes(pathname)) return;
       createdProfile = request.postDataJSON() as Record<string, unknown>;
     });
 
