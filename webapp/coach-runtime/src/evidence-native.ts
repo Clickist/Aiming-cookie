@@ -68,7 +68,8 @@ export function loadArtifact(analysisRef: string, _ownerId: string): LoadedArtif
   }
 
   // Record the engaged analysis so the enclosing turn can attach the ref.
-  reportAnalysisRead(Number(analysisId));
+  // Evidence reads pin the discussion subject (video playback flows).
+  reportAnalysisRead(Number(analysisId), true);
 
   // Extract derivedArtifact metadata from the artifact itself.
   const derivedArtifact = artifact?.derived_artifact ?? {

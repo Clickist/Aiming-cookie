@@ -66,3 +66,39 @@ test("session meta unions engaged analysis ids", () => {
   const meta = readConversationMeta(1);
   assert.deepEqual(meta.analysis_session_ids, [1, 2]);
 });
+
+test("reference reads stay out of the discussion subject list", async () => {
+  // 参照性读取（fs 深读等）只算 engagement，不进 analysis_refs；
+  // 主题级上报（创建分析/evidence 视频打开）带 subject=true。
+  const subjects: number[] = [];
+  const engaged: number[] = [];
+  const unsubscribe = subscribeAnalysisReads((id, subject) => {
+    engaged.push(id);
+    if (subject) subjects.push(id);
+  });
+  try {
+    const { reportAnalysisRead } = await import("../src/fs-tools.ts");
+    reportAnalysisRead(7);
+    reportAnalysisRead(8, true);
+    assert.deepEqual(engaged, [7, 8]);
+    assert.deepEqual(subjects, [8]);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("user-facing text extraction drops blank narration separators", async () => {
+  // 模型 narration 块自带 \n\n 头尾：面向用户的拼接必须按块 trim、单换行
+  // 连接并丢弃纯空白块，否则对话气泡出现连续空行。
+  const { extractUserFacingText } = await import("../src/session-repo.ts");
+  const content = [
+    { type: "text", text: "\n\n我先查一下这局训练的记录，然后创建分析。\n\n" },
+    { type: "text", text: "\n\n" },
+    { type: "text", text: "\n\n这局有详细数据，我来创建分析。\n\n" },
+    { type: "thinking", thinking: "invisible" },
+  ];
+  assert.equal(
+    extractUserFacingText(content),
+    "我先查一下这局训练的记录，然后创建分析。\n这局有详细数据，我来创建分析。",
+  );
+});

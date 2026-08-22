@@ -7,7 +7,6 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { getDataRoot, getAnalysesDir, getConfigDir, getSessionsDir, getTrainingDir } from "./app-data.ts";
-import { reportAnalysisRead } from "./fs-tools.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -185,7 +184,8 @@ const analysisGet: CommandHandler = (params, _ownerId) => {
   if (!overview) {
     return { status: "failed", warning_or_error: { code: "not_found", message: "Analysis 不存在" } };
   }
-  reportAnalysisRead(analysisId);
+  // 历史对比读取不算讨论主题：只有用户显式引用、本讨论创建的分析或
+  // evidence 视频打开会挂进「本次讨论」，compare/get 的参照对象不上榜。
   return {
     status: "succeeded",
     result_ref: `analysis:${analysisId}`,
@@ -730,8 +730,6 @@ const analysisCompare: CommandHandler = (params, _ownerId) => {
   if (!currentResult.schema_version || !baselineResult.schema_version) {
     return { status: "failed", warning_or_error: { code: "analysis_result_missing", message: "Analysis 结果不可用" } };
   }
-  reportAnalysisRead(currentId);
-  reportAnalysisRead(baselineId);
 
   const comparison = compareAnalysisResults(currentResult, baselineResult, metricKey);
   return {

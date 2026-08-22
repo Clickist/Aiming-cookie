@@ -464,6 +464,14 @@ function errorCode(error: unknown): string {
   return error instanceof ProviderProfileError ? error.code : "turn_failed";
 }
 
+// 网络类瞬断（undici 的 "terminated"/"fetch failed"、socket/超时等）允许
+// 用户直接重试：这类失败不是对话内容问题，标成不可重试会把一次抖动变成
+// 死局。
+function isTransientProviderError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error ?? "").toLowerCase();
+  return /terminated|fetch failed|econnreset|econnrefused|socket hang up|etimedout|timeout|network/.test(message);
+}
+
 const STOPPED_USER_MESSAGE = "已停止生成。";
 
 function userFacingErrorMessage(error: unknown, stopped: boolean): string {
@@ -479,11 +487,14 @@ function extractAssistantText(message: unknown): string | null {
   if (!isRecord(message) || message.role !== "assistant") return null;
   const content = message.content;
   if (!Array.isArray(content)) return null;
+  // 面向用户的文本按块 trim 后用单换行连接、丢弃纯空白块：模型在工具
+  // 调用间隙输出的 narration 块自带 \n\n 头尾，直接拼接会让对话气泡出现
+  // 连续空行（2026-08-21 实测）。
   const text = content
     .filter((block) => isRecord(block) && block.type === "text" && typeof block.text === "string")
-    .map((block) => (block as { text: string }).text)
-    .join("")
-    .trim();
+    .map((block) => (block as { text: string }).text.trim())
+    .filter((text) => text.length > 0)
+    .join("\n");
   return text.length > 0 ? text : null;
 }
 
@@ -502,7 +513,11 @@ export async function runCoachTurn(
 
   let unsubscribe: (() => void) | null = null;
   const analysisRefs: string[] = [];
-  const recordAnalysisRead = (analysisId: number) => {
+  // 只有「主题级」参与进 analysis_refs（本次讨论挂载/@time 解析/会话 meta）：
+  // 用户显式引用、本讨论创建的分析、evidence 视频打开。历史对比等参照性
+  // 读取（fs 深读、analysis.get/compare）不算主题，避免污染「本次讨论」。
+  const recordAnalysisRead = (analysisId: number, subject = false) => {
+    if (!subject) return;
     const ref = `analysis:${analysisId}`;
     if (!analysisRefs.includes(ref)) analysisRefs.push(ref);
   };
@@ -594,7 +609,9 @@ export async function runCoachTurn(
         })
       : resolved.models;
 
-    // Create AgentHarness
+    // Create AgentHarness. Provider 请求启用 Pi 内建重试（OpenAI SDK 的
+    // 连接/5xx 预流式重试）：代理与上游网络抖动是流中断的常见来源，
+    // maxRetries=0 会让一次瞬断直接终结整轮对话（2026-08-21 实测 terminated）。
     const harness = new AgentHarness({
       env,
       session,
@@ -603,6 +620,7 @@ export async function runCoachTurn(
       tools,
       model: resolved.model,
       resources: { skills },
+      streamOptions: { maxRetries: 2 },
     });
 
     // Subscribe to events for streaming and tracking
@@ -719,15 +737,16 @@ export async function runCoachTurn(
     activeTurns.set(request.run_id, { abort: () => { void harness.abort(); } });
 
     // Run the turn. Analysis engagement is scoped: explicit "analysis:N"
-    // references in the user's message pin the discussion subject, and native
-    // evidence commands report what they read. Plain file reads (history
-    // comparison during a lecture) stay invisible to the discussion list.
+    // references in the user's message pin the discussion subject; analysis
+    // creation and native evidence commands report subjects. Reference reads
+    // (history comparison via file reads, analysis.get/compare) stay out of
+    // the discussion list.
     for (const id of explicitAnalysisRefsFromText(
       typeof lastMessage === "string"
         ? lastMessage
         : JSON.stringify(lastMessage ?? ""),
     )) {
-      recordAnalysisRead(id);
+      recordAnalysisRead(id, true);
     }
     const replyMessage = await runScopedAnalysisReads(recordAnalysisRead, () =>
       harness.prompt(lastMessage),
@@ -748,6 +767,30 @@ export async function runCoachTurn(
         request.run_id,
         analysisRefs,
       );
+    }
+
+    // Provider 流中途断开时，harness 可能 resolve 一条 stopReason=error 且
+    // 带部分正文的消息（而非 throw，2026-08-21 实测两种形态都存在）。
+    // 半截话不能当完整答案交付：按可重试失败返回。已生成正文已由会话层
+    // 持久化，并作为 partial 带回，前端继续展示并允许一键重试。
+    if (isRecord(replyMessage) && replyMessage.stopReason === "error") {
+      const interruptedText = extractAssistantText(replyMessage);
+      if (interruptedText !== null) {
+        return failureResponse(
+          makeError({
+            category: "coach_runtime",
+            code: "provider_stream_interrupted",
+            message: "回复流被中断，已生成的部分已保留，可直接重试。",
+            retryable: true,
+          }),
+          [],
+          request.schema_version,
+          collectedToolEvents,
+          safePartialReply(interruptedText, secrets),
+          request.run_id,
+          analysisRefs,
+        );
+      }
     }
 
     // Extract reply text
@@ -824,7 +867,7 @@ export async function runCoachTurn(
         category: "coach_runtime",
         code: stopped ? "stopped" : errorCode(error),
         message: userFacingErrorMessage(error, stopped),
-        retryable: stopped || error instanceof EmptyAssistantReplyError,
+        retryable: stopped || error instanceof EmptyAssistantReplyError || isTransientProviderError(error),
       }),
       [],
       responseSchema,
