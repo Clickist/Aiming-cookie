@@ -59,9 +59,9 @@
 
 .task6-settings-back {
   flex: none;
-  border: 1px solid var(--outline-variant);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--surface-container-low);
+  background: transparent;
   color: var(--on-surface);
 }
 
