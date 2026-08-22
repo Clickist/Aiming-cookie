@@ -263,7 +263,6 @@
 
 .task7-session-rail__item[data-current="true"] {
   background: var(--surface-container-high);
-  box-shadow: inset 2px 0 0 var(--on-surface);
 }
 
 .task7-session-rail__session {
