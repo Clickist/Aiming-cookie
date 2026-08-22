@@ -35,35 +35,27 @@ test("SessionRail includes flat time-sorted navigation, search, and keyboard sem
   assert.match(styles, /prefers-reduced-motion/);
 });
 
-test("SessionRail follows the active narrow and footer contract", async () => {
+test("SessionRail stays expanded with a persistent footer", async () => {
   const component = await source("components/task7/SessionRail.tsx");
   const styles = await source("components/task7/session-rail.css");
   assert.match(component, /task7-session-rail__footer/);
   assert.match(component, /providerStatus/);
-  assert.match(component, /onCollapsedChange/);
-  assert.match(component, /Escape/);
-  assert.match(component, /trapOverlayFocus/);
-  assert.match(component, /type OverlayState = "closed" \| "opening" \| "open" \| "closing"/);
-  assert.match(component, /toggleRail\(true\)/);
-  assert.match(component, /closeOverlay\(true\)/);
-  assert.match(component, /prefers-reduced-motion: reduce[\s\S]*\? 120 : 200/);
-  assert.match(component, /inert=\{overlayState === "closing" \|\| undefined\}/);
-  assert.match(component, /title="收起\/展开会话栏"/);
-  assert.match(component, /<IconChevronLeft \/>/);
-  assert.match(component, /<IconChevronRight \/>/);
   assert.match(component, /task7-session-rail__footer-label/);
   assert.match(component, /训练历史/);
   assert.match(component, /系统设置/);
-  assert.match(styles, /--task7-rail-width:\s*56px/);
-  assert.match(styles, /data-collapsed/);
-  assert.match(styles, /task7-session-rail__iconbar/);
-  assert.match(styles, /@media \(max-width: 1119px\)/);
-  assert.match(styles, /data-overlay-state/);
+  // 展开态保证：header 始终渲染新建对话，列表与 footer 恒定存在
+  assert.match(component, /task7-session-rail__new/);
+  // 无任何折叠/收起残留
+  assert.doesNotMatch(component, /onCollapsedChange/);
+  assert.doesNotMatch(component, /collapsed/);
+  assert.doesNotMatch(component, /IconChevronLeft|IconChevronRight/);
+  assert.doesNotMatch(component, /收起|展开会话栏/);
+  assert.doesNotMatch(styles, /data-collapsed/);
+  assert.doesNotMatch(styles, /task7-session-rail__iconbar|__icon-button/);
+  assert.doesNotMatch(styles, /data-overlay|-overlay/);
+  assert.doesNotMatch(styles, /max-width: 1119px/);
   assert.doesNotMatch(styles, /@keyframes task7-session-rail-slide-in/);
-  assert.match(styles, /transition:\s*transform var\(--duration-surface\) var\(--ease-out/);
-  assert.match(styles, /data-motion="instant"/);
   assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)/);
-  assert.match(styles, /prefers-reduced-motion: reduce[\s\S]*duration-reduced-motion\) var\(--ease-out/);
-  assert.match(styles, /color-mix\(in srgb, var\(--on-surface\) 12%, transparent\)/);
-  assert.match(styles, /data-overlay="true"\][^{]*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(styles, /prefers-reduced-motion/);
+  assert.match(styles, /--task7-rail-width:\s*288px/);
 });
