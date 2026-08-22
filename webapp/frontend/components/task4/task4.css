@@ -4,73 +4,73 @@
   width: 100%;
   max-width: 1040px;
   margin-inline: auto;
-  padding: 20px 24px 32px;
+  padding: var(--space-5) var(--space-5) var(--space-6);
 }
 
 .task4-page-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 4px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-1);
   position: sticky;
   top: 48px;
   z-index: 100;
   background: var(--background);
-  padding: 8px 0;
+  padding: var(--space-2) 0;
 }
 
 .task4-page-title-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .task4-page-title {
   margin: 0;
   color: var(--on-surface);
-  font: 600 20px/1.25 var(--font-display);
+  font: 600 var(--text-display)/1.25 var(--font-display);
 }
 
 .task4-page-sub {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
+  gap: var(--space-2) var(--space-3);
   margin-top: 0;
-  margin-left: 8px;
+  margin-left: var(--space-2);
   color: var(--on-surface-variant);
-  font-size: 12.5px;
+  font-size: var(--text-caption);
 }
 
 .task4-page-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .task4-sec {
-  margin-top: 24px;
+  margin-top: var(--space-5);
 }
 
 .task4-sec-head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .task4-sec-title {
   margin: 0;
   color: var(--on-surface);
-  font: 600 15px/1.2 var(--font-display);
+  font: 600 var(--text-title)/1.2 var(--font-display);
 }
 
 .task4-sec-count {
   color: var(--on-surface-variant);
-  font: 500 11px var(--font-mono);
+  font: 500 var(--text-micro) var(--font-mono);
 }
 
 .task4-panel {
@@ -81,14 +81,14 @@
 
 .task4-state-panel {
   min-height: 88px;
-  padding: 18px 20px;
+  padding: var(--space-4) var(--space-5);
 }
 
 .task4-rowline {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
 }
 
 .task4-rowline + .task4-rowline {
@@ -122,7 +122,7 @@
 .task4-row-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
   font-weight: 600;
   font-size: var(--text-ui);
@@ -138,10 +138,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
-  margin-top: 3px;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-1);
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.5;
 }
 
@@ -149,7 +149,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 7px;
+  gap: var(--space-2);
 }
 
 /* Selection dot (pending rows) */
@@ -178,13 +178,13 @@
 .task4-ev {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   height: 24px;
-  padding: 0 8px;
+  padding: 0 var(--space-2);
   border: 1px solid var(--outline-variant);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-container-low);
-  font: 500 11.5px var(--font-ui);
+  font: 500 var(--text-micro) var(--font-ui);
   color: var(--on-surface-variant);
   white-space: nowrap;
 }
@@ -217,19 +217,19 @@
 .task4-ev-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 /* Badges aligned with mockup (complement ac-badge) */
 .task4-badge {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   height: 22px;
-  padding: 0 8px;
+  padding: 0 var(--space-2);
   border: 1px solid transparent;
-  border-radius: 4px;
-  font: 500 11.5px var(--font-ui);
+  border-radius: var(--radius-sm);
+  font: 500 var(--text-micro) var(--font-ui);
   white-space: nowrap;
 }
 
@@ -275,9 +275,9 @@
 /* Trend panel */
 .task4-trend-panel {
   display: flex;
-  gap: 18px;
+  gap: var(--space-4);
   align-items: center;
-  padding: 14px 16px;
+  padding: var(--space-4) var(--space-4);
 }
 
 .task4-trend-text {
@@ -288,7 +288,7 @@
 .task4-trend-sub {
   margin-top: 2px;
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 
 .task4-trend-chart {
@@ -298,28 +298,28 @@
 }
 
 .task4-trend-empty {
-  padding: 14px 16px;
+  padding: var(--space-4) var(--space-4);
   color: var(--on-surface-variant);
-  font-size: 12.5px;
+  font-size: var(--text-caption);
 }
 
 /* Inspector body */
 .task4-inspector-body {
   display: grid;
-  gap: 22px;
+  gap: var(--space-5);
   min-height: 0;
   padding: 2px;
 }
 
 .task4-inspector-body section {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .task4-inspector-body h3 {
   margin: 0;
   color: var(--on-surface);
-  font-size: 14px;
+  font-size: var(--text-body);
 }
 
 @media (min-width: 840px) and (max-width: 1159px) {
@@ -331,7 +331,7 @@
 
 @media (max-width: 960px) {
   .task4-page {
-    padding: 16px 16px 24px;
+    padding: var(--space-4) var(--space-4) var(--space-5);
   }
 
   .task4-rowline {
@@ -339,7 +339,7 @@
   }
 
   .task4-sel-dot {
-    margin-top: 4px;
+    margin-top: var(--space-1);
   }
 
   .task4-row-title {
@@ -353,7 +353,7 @@
   .task4-trend-panel {
     flex-direction: column;
     align-items: flex-start;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .task4-trend-chart {
@@ -362,9 +362,9 @@
   }
 
   .task4-row-actions .ac-button:not([data-size="compact"]) {
-    height: 32px;
-    padding: 0 12px;
-    font-size: 12.5px;
+    height: var(--control-height-compact);
+    padding: 0 var(--space-3);
+    font-size: var(--text-caption);
   }
 }
 
@@ -386,7 +386,7 @@
   .task4-rowline {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 10px;
+    gap: var(--space-3);
   }
 
   .task4-row-actions {
@@ -400,6 +400,6 @@
 
 @media (max-width: 560px) {
   .task4-page {
-    padding: 16px;
+    padding: var(--space-4);
   }
 }

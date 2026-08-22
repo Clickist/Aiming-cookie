@@ -81,7 +81,7 @@ a {
 
 .ac-page-shell {
   min-height: 100vh;
-  padding: 24px;
+  padding: var(--space-5);
   background: var(--background);
 }
 
@@ -104,7 +104,7 @@ a {
 
 .ac-button {
   height: var(--control-height);
-  gap: 7px;
+  gap: var(--space-2);
   padding: 0 var(--space-4);
   font-family: var(--font-ui);
   font-size: var(--text-ui);
@@ -191,7 +191,7 @@ a {
 .ac-status {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   height: 22px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
@@ -237,11 +237,11 @@ a {
 
 .ac-notice {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: flex-start;
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-4);
   background: var(--surface-container-low);
   color: var(--on-surface);
   font-size: var(--text-caption);
@@ -285,7 +285,7 @@ a {
 .ac-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--space-1);
 }
 
 .ac-field__label {
@@ -309,7 +309,7 @@ a {
   height: var(--control-height);
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
-  padding: 0 11px;
+  padding: 0 var(--space-3);
   background: var(--surface);
   color: var(--on-surface);
   font-size: var(--text-ui);
@@ -335,7 +335,7 @@ a {
 
 .ac-panel__header,
 .ac-panel__body {
-  padding: 16px;
+  padding: var(--space-4);
 }
 
 .ac-panel__header + .ac-panel__body {
@@ -347,13 +347,13 @@ a {
   align-items: center;
   background: var(--surface-container);
   border-radius: var(--radius-md);
-  padding: 3px;
+  padding: var(--space-1);
   gap: 2px;
 }
 
 .ac-tab {
   height: 30px;
-  padding: 0 14px;
+  padding: 0 var(--space-4);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -380,8 +380,8 @@ a {
 .ac-state {
   display: grid;
   justify-items: start;
-  gap: 8px;
-  padding: 24px;
+  gap: var(--space-2);
+  padding: var(--space-5);
   color: var(--on-surface-variant);
 }
 
@@ -446,7 +446,7 @@ a {
 
 .ac-drawer__header,
 .ac-drawer__body {
-  padding: 16px;
+  padding: var(--space-4);
 }
 
 .ac-drawer__header {
@@ -468,11 +468,11 @@ a {
   z-index: 60;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-3);
   max-width: min(420px, calc(100vw - 48px));
   border: 1px solid var(--outline);
   border-radius: var(--radius-md);
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   background: var(--inverse-surface);
   color: var(--inverse-on-surface);
   opacity: 1;
@@ -528,7 +528,7 @@ a {
 .ac-dialog__header,
 .ac-dialog__body,
 .ac-dialog__footer {
-  padding: 16px;
+  padding: var(--space-4);
 }
 
 .ac-dialog__header,
@@ -536,7 +536,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .ac-dialog__header {
@@ -557,7 +557,7 @@ a {
 
 @media (max-width: 640px) {
   .ac-page-shell {
-    padding: 16px;
+    padding: var(--space-4);
   }
 
   .ac-drawer {

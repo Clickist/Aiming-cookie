@@ -1,29 +1,9 @@
 /* KovaaK connection panel + score list — OpenDesign board styling */
 
 .kovaak-panel {
-  --bg: var(--background);
-  --surface: var(--surface);
-  --s-low: var(--surface-container-low);
-  --s-cont: var(--surface-container);
-  --s-high: var(--surface-container-high);
-  --fg: var(--on-surface);
-  --fg2: var(--on-surface-variant);
-  --primary: var(--primary);
-  --on-primary: var(--on-primary);
-  --p-cont: var(--primary-container);
-  --on-p-cont: var(--on-primary-container);
-  --tertiary: var(--tertiary);
-  --t-cont: var(--tertiary-container);
-  --on-t-cont: var(--on-tertiary-container);
-  --error: var(--error);
-  --e-cont: var(--error-container);
-  --on-e-cont: var(--on-error-container);
-  --outline: var(--outline);
-  --outline-v: var(--outline-variant);
-  --ok: var(--event-kill);
   display: grid;
-  gap: 16px;
-  color: var(--fg);
+  gap: var(--space-4);
+  color: var(--on-surface);
   container-type: inline-size;
   container-name: kovaak;
 }
@@ -35,7 +15,7 @@
 .kovaak-onboarding-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -56,7 +36,7 @@
 }
 
 .kovaak-panel__header h2 {
-  font: 600 15px/1.25 var(--font-display);
+  font: 600 var(--text-title)/1.25 var(--font-display);
 }
 
 .kovaak-panel__header p,
@@ -67,18 +47,18 @@
 .kovaak-disclaimer,
 .kovaak-kv-note,
 .kovaak-module-note {
-  color: var(--fg2);
-  font-size: 12px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
   line-height: 1.5;
 }
 
 .kovaak-connect-form {
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .kovaak-connect-form .ac-field__control {
-  min-height: 38px;
+  min-height: var(--control-height);
 }
 
 .kovaak-connect-form .ac-field__control[data-invalid="true"] {
@@ -87,33 +67,33 @@
 
 .kovaak-consent {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: flex-start;
-  padding: 10px 12px;
-  border: 1px solid var(--outline-v);
-  border-radius: 6px;
-  background: var(--s-low);
-  font-size: 12.5px;
+  padding: var(--space-3) var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-low);
+  font-size: var(--text-caption);
   line-height: 1.55;
-  color: var(--fg);
+  color: var(--on-surface);
   cursor: pointer;
 }
 
 .kovaak-consent input {
   width: 15px;
   height: 15px;
-  margin: 3px 0 0;
+  margin: var(--space-1) 0 0;
   accent-color: var(--primary);
   flex: none;
 }
 
 .kovaak-consent-error {
   display: flex;
-  gap: 7px;
+  gap: var(--space-2);
   align-items: flex-start;
   margin: 0;
   color: var(--error);
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.5;
 }
 
@@ -123,38 +103,38 @@
 }
 
 .kovaak-connection-status strong {
-  font-size: 13px;
-  color: var(--fg);
+  font-size: var(--text-ui);
+  color: var(--on-surface);
 }
 
 .kovaak-stage-summary {
   flex-wrap: wrap;
-  padding: 10px 0;
-  border-block: 1px solid var(--outline-v);
+  padding: var(--space-3) 0;
+  border-block: 1px solid var(--outline-variant);
 }
 
 .kovaak-stage-summary > span {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--fg2);
-  font-size: 12px;
+  gap: var(--space-2);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
 }
 
 .kovaak-stage-summary strong {
-  color: var(--fg);
+  color: var(--on-surface);
   font-family: var(--font-mono);
   font-weight: 600;
 }
 
 .kovaak-score-list {
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .kovaak-score-group {
-  border: 1px solid var(--outline-v);
-  border-radius: 6px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
   background: var(--surface);
   overflow: hidden;
 }
@@ -164,12 +144,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 7px 16px;
-  background: var(--s-low);
-  border-top: 1px solid var(--outline-v);
-  border-bottom: 1px solid var(--outline-v);
-  font: 600 12px var(--font-ui);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-container-low);
+  border-top: 1px solid var(--outline-variant);
+  border-bottom: 1px solid var(--outline-variant);
+  font: 600 var(--text-caption) var(--font-ui);
   letter-spacing: 0.02em;
   text-transform: none;
 }
@@ -180,18 +160,18 @@
 
 .kovaak-score-group h3 span,
 .kovaak-score-group h4 span {
-  color: var(--fg2);
-  font: 500 11px var(--font-mono);
+  color: var(--on-surface-variant);
+  font: 500 var(--text-micro) var(--font-mono);
   letter-spacing: 0;
 }
 
 .kovaak-score-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 16px;
-  font-size: 12.5px;
-  border-top: 1px solid var(--outline-v);
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-caption);
+  border-top: 1px solid var(--outline-variant);
 }
 
 .kovaak-score-row:first-of-type {
@@ -217,20 +197,20 @@
 }
 
 .kovaak-score-name small {
-  font-size: 11px;
+  font-size: var(--text-micro);
 }
 
 .kovaak-score-value {
   width: 72px;
   flex: none;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-caption);
   text-align: right;
-  color: var(--fg);
+  color: var(--on-surface);
 }
 
 .kovaak-score-row[data-completed="false"] .kovaak-score-value {
-  color: var(--fg2);
+  color: var(--on-surface-variant);
 }
 
 .kovaak-score-tier {
@@ -250,24 +230,24 @@
 }
 
 .kovaak-score-note {
-  margin: 4px 0 0;
+  margin: var(--space-1) 0 0;
 }
 
 .kovaak-empty,
 .kovaak-loading {
-  padding: 18px 16px;
+  padding: var(--space-4) var(--space-4);
   text-align: center;
 }
 
 .kovaak-empty-title {
-  font: 600 13px var(--font-display);
-  margin: 0 0 6px;
+  font: 600 var(--text-ui) var(--font-display);
+  margin: 0 0 var(--space-2);
 }
 
 .kovaak-empty p {
   margin: 0;
-  color: var(--fg2);
-  font-size: 12px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
   line-height: 1.5;
 }
 
@@ -276,17 +256,17 @@
 .kovaak-scores-layout {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: 20px;
+  gap: var(--space-5);
   align-items: start;
 }
 
 .kovaak-module h4 {
-  margin: 0 0 6px;
-  font: 600 13px var(--font-display);
+  margin: 0 0 var(--space-2);
+  font: 600 var(--text-ui) var(--font-display);
 }
 
 .kovaak-rank {
-  font: 600 22px var(--font-display);
+  font: 600 var(--text-display) var(--font-display);
 }
 
 .kovaak-skeleton-dot {
@@ -303,7 +283,7 @@
 }
 
 .kovaak-panel[data-context="onboarding"] {
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 /* Skeleton for loading state */
@@ -311,12 +291,12 @@
 .kovaak-skeleton {
   height: 12px;
   border-radius: 3px;
-  background: var(--s-high);
+  background: var(--surface-container-high);
   animation: kovaak-pulse 1.2s ease-in-out infinite;
 }
 
 .kovaak-skeleton + .kovaak-skeleton {
-  margin-top: 8px;
+  margin-top: var(--space-2);
 }
 
 @keyframes kovaak-pulse {
@@ -344,7 +324,7 @@
 .kovaak-score-list--compact .kovaak-score-coach {
   width: 100%;
   text-align: left;
-  margin-top: 4px;
+  margin-top: var(--space-1);
 }
 
 .kovaak-score-list--compact .kovaak-score-coach .ac-button {
@@ -357,29 +337,29 @@
 .kovaak-side-cards {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .kovaak-kv {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 3px 14px;
-  font-size: 12.5px;
+  gap: var(--space-1) var(--space-4);
+  font-size: var(--text-caption);
 }
 
 .kovaak-kv dt {
-  color: var(--fg2);
+  color: var(--on-surface-variant);
   white-space: nowrap;
 }
 
 .kovaak-kv dd {
   margin: 0;
-  color: var(--fg);
+  color: var(--on-surface);
   font-family: var(--font-mono);
 }
 
 .kovaak-kv-note {
-  margin: 8px 0 0;
+  margin: var(--space-2) 0 0;
 }
 
 .kovaak-disclaimer {
@@ -393,26 +373,26 @@
 /* Module (form card) for connect states */
 
 .kovaak-module {
-  border: 1px solid var(--outline-v);
-  border-radius: 6px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
   background: var(--surface);
-  padding: 14px 16px;
+  padding: var(--space-4) var(--space-4);
 }
 
 .kovaak-module .ac-field__control {
   height: 36px;
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 
 .kovaak-module-note {
-  margin: 8px 0 0;
+  margin: var(--space-2) 0 0;
 }
 
 .kovaak-module-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: center;
-  margin-top: 12px;
+  margin-top: var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -427,12 +407,12 @@
 .kovaak-module-read-state {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .kovaak-module-read-state + .kovaak-kv {
-  margin-top: 10px;
+  margin-top: var(--space-3);
 }
 
 /* Responsive — panel-width driven: 窄面板（960 窗口的设置页 / onboarding）堆叠为单列，
@@ -494,7 +474,7 @@
   .kovaak-score-coach {
     width: 100%;
     text-align: left;
-    margin-top: 4px;
+    margin-top: var(--space-1);
   }
 
   .kovaak-score-coach .ac-button {
@@ -507,7 +487,7 @@
   }
 
   .kovaak-consent {
-    gap: 8px;
+    gap: var(--space-2);
   }
 }
 

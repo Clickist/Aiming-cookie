@@ -352,8 +352,8 @@ test("Coach composer uses a raised input surface without an outer divider", asyn
   assert.match(panel, /padding-inline:\s*max\(14px, calc\(\(100% - var\(--task6-coach-content-width\)\) \/ 2\)\)/);
   assert.match(messagesWrap, /width:\s*100%/);
   assert.match(composer, /width:\s*100%/);
-  assert.match(composer, /background:\s*var\(--s-low\)/);
-  assert.match(input, /background:\s*var\(--s-high\)/);
+  assert.match(composer, /background:\s*var\(--surface-container-low\)/);
+  assert.match(input, /background:\s*var\(--surface-container-high\)/);
 });
 
 test("Coach current training animates expand and collapse without leaving interactive hidden content", async () => {

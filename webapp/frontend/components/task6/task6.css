@@ -1,50 +1,27 @@
-/* Settings + Coach — OpenDesign board styling mapped to app tokens */
-
-/* Board token aliases for clarity (map to existing app tokens) */
-.task6-settings-page,
-.task6-coach-sidebar,
-.task6-coach-panel,
-.task6-coach-overlay {
-  --bg: var(--background);
-  --s-low: var(--surface-container-low);
-  --s-cont: var(--surface-container);
-  --s-high: var(--surface-container-high);
-  --s-highest: var(--surface-container-highest);
-  --fg: var(--on-surface);
-  --fg2: var(--on-surface-variant);
-  --p-cont: var(--primary-container);
-  --on-p-cont: var(--on-primary-container);
-  --t-cont: var(--tertiary-container);
-  --on-t-cont: var(--on-tertiary-container);
-  --e-cont: var(--error-container);
-  --on-e-cont: var(--on-error-container);
-  --outline-v: var(--outline-variant);
-  --ok: var(--event-kill);
-  --scrim: rgba(0, 0, 0, 0.32);
-}
+/* Settings + Coach — 统一使用 app tokens（ui/theme.css） */
 
 /* ── Settings page ─────────────────────────────────────────── */
 
 .task6-settings-page {
   min-height: calc(100vh - 48px);
-  padding: 56px 24px 32px;
-  background: var(--bg);
-  color: var(--fg);
+  padding: 56px var(--space-5) var(--space-6);
+  background: var(--background);
+  color: var(--on-surface);
 }
 
 .task6-settings-state-header {
   display: flex;
   align-items: center;
   width: min(100%, 1040px);
-  gap: 8px;
-  margin: 0 auto 20px;
-  color: var(--fg);
+  gap: var(--space-2);
+  margin: 0 auto var(--space-5);
+  color: var(--on-surface);
   font: 600 var(--text-display)/1.25 var(--font-display);
 }
 
 .task6-settings-layout {
   display: flex;
-  gap: 28px;
+  gap: var(--space-6);
   max-width: 1040px;
   margin: 0 auto;
 }
@@ -59,8 +36,8 @@
 }
 
 .task6-settings-nav-title {
-  margin-bottom: 10px;
-  font: 600 20px/1.25 var(--font-display);
+  margin-bottom: var(--space-3);
+  font: 600 var(--text-display)/1.25 var(--font-display);
   opacity: 1;
   transform: translateY(0);
   transition:
@@ -72,8 +49,8 @@
 .task6-settings-nav-title-row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 10px;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
 }
 
 .task6-settings-nav-title-row .task6-settings-nav-title {
@@ -83,7 +60,7 @@
 .task6-settings-back {
   flex: none;
   border: 1px solid var(--outline-variant);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-container-low);
   color: var(--on-surface);
 }
@@ -101,17 +78,17 @@
 
 .task6-settings-nav-link {
   display: block;
-  padding: 7px 10px;
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
-  color: var(--fg2);
+  color: var(--on-surface-variant);
   font-size: var(--text-ui);
   text-decoration: none;
 }
 
 .task6-settings-nav-link[aria-current="true"],
 .task6-settings-nav-link.task6-active {
-  background: var(--s-high);
-  color: var(--fg);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
   font-weight: 600;
 }
 
@@ -122,7 +99,7 @@
 }
 
 .task6-settings-section {
-  margin-top: 24px;
+  margin-top: var(--space-5);
   scroll-margin-top: 68px;
 }
 
@@ -133,37 +110,37 @@
 .task6-settings-section-header {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .task6-settings-section-title {
-  font: 600 15px/1.2 var(--font-display);
+  font: 600 var(--text-title)/1.2 var(--font-display);
 }
 
 .task6-settings-section-hint {
   margin-left: auto;
-  color: var(--fg2);
-  font-size: 12px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
 }
 
 .task6-settings-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
 }
 
 .task6-settings-row + .task6-settings-row,
 .task6-provider-row + .task6-provider-row,
 .task6-storage-row + .task6-storage-row,
 .task6-st-row + .task6-st-row {
-  border-top: 1px solid var(--outline-v);
+  border-top: 1px solid var(--outline-variant);
 }
 
 .task6-provider-row {
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
 }
 
 .task6-provider-main {
@@ -174,32 +151,32 @@
 .task6-provider-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
 .task6-provider-name {
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: var(--text-ui);
 }
 
 .task6-provider-meta {
-  margin: 5px 0 0;
-  color: var(--fg2);
-  font-size: 12px;
+  margin: var(--space-1) 0 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
   line-height: 1.45;
 }
 
 .task6-provider-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
   flex-wrap: wrap;
   margin-left: auto;
 }
 
 .task6-provider-head > .task6-provider-actions {
-  margin-left: 12px;
+  margin-left: var(--space-3);
 }
 
 .task6-provider-actions .ac-field {
@@ -209,42 +186,42 @@
 
 .task6-provider-form {
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
   max-width: 720px;
-  padding-top: 18px;
-  border-top: 1px solid var(--outline-v);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--outline-variant);
 }
 
 .task6-provider-form-title {
   margin: 0;
-  font: 600 14px/1.25 var(--font-display);
+  font: 600 var(--text-body)/1.25 var(--font-display);
 }
 
 .task6-auth-operation {
   display: grid;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 14px;
-  border: 1px solid var(--outline-v);
-  border-radius: 6px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
 .task6-auth-operation-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .task6-auth-operation-title {
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: var(--text-ui);
 }
 
 .task6-inline-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -252,8 +229,8 @@
 .task6-muted,
 .task6-provider-row p,
 .task6-storage-row p {
-  color: var(--fg2);
-  font-size: 12px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
   line-height: 1.5;
 }
 
@@ -266,8 +243,8 @@
 .task6-settings-grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-top: 24px;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
 }
 
 .task6-settings-grid-2 > .task6-settings-section {
@@ -280,21 +257,21 @@
   display: flex;
   flex-direction: column;
   flex: 1;
-  gap: 12px;
+  gap: var(--space-3);
   justify-content: space-between;
 }
 
 .task6-profile-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .task6-profile-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -302,18 +279,18 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   flex: 1;
   min-width: 0;
-  color: var(--fg2);
-  font-size: 12px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
   line-height: 1.5;
 }
 
 .task6-profile-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   margin-left: auto;
 }
 
@@ -333,8 +310,8 @@
   border: 1px solid var(--outline);
   border-radius: 50%;
   background: transparent;
-  color: var(--fg2);
-  font: 700 12px/1 var(--font-ui);
+  color: var(--on-surface-variant);
+  font: 700 var(--text-caption)/1 var(--font-ui);
   cursor: help;
 }
 
@@ -350,13 +327,13 @@
   bottom: calc(100% + 8px);
   z-index: 10;
   width: min(320px, calc(100vw - 48px));
-  padding: 9px 10px;
-  border: 1px solid var(--outline-v);
-  border-radius: 6px;
-  background: var(--s-highest);
-  color: var(--fg);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.5;
   opacity: 0;
   pointer-events: none;
@@ -371,8 +348,8 @@
 
 @media (hover: hover) and (pointer: fine) {
   .task6-info-trigger:hover {
-    border-color: var(--fg2);
-    color: var(--fg);
+    border-color: var(--on-surface-variant);
+    color: var(--on-surface);
   }
 
   .task6-info:hover .task6-info-tooltip {
@@ -386,16 +363,16 @@
 .task6-theme-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .task6-mode-card {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: flex-start;
-  padding: 11px 13px;
-  border: 1px solid var(--outline-v);
-  border-radius: 6px;
+  padding: var(--space-3) var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
   background: var(--surface);
   cursor: pointer;
 }
@@ -403,20 +380,20 @@
 .task6-mode-card[data-selected="true"] {
   border-color: var(--outline);
   box-shadow: inset 0 0 0 1px var(--outline);
-  background: var(--s-high);
+  background: var(--surface-container-high);
 }
 
 .task6-mode-card input {
   width: 14px;
   height: 14px;
-  margin: 3px 0 0;
+  margin: var(--space-1) 0 0;
   accent-color: var(--primary);
   flex: none;
 }
 
 .task6-mode-card-name {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-ui);
 }
 
 /* Status / Capture rows */
@@ -428,11 +405,11 @@
 
 .task6-st-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: flex-start;
-  padding: 8px 0;
-  border-top: 1px solid var(--outline-v);
-  font-size: 12.5px;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--outline-variant);
+  font-size: var(--text-caption);
   line-height: 1.55;
 }
 
@@ -443,14 +420,14 @@
 .task6-st-row dt {
   flex: none;
   width: 150px;
-  color: var(--fg2);
+  color: var(--on-surface-variant);
 }
 
 .task6-st-row dd {
   flex: 1;
   min-width: 0;
   margin: 0;
-  color: var(--fg);
+  color: var(--on-surface);
 }
 
 .task6-st-row dd a,
@@ -471,17 +448,17 @@
 }
 
 .task6-st-row dd .task6-ok {
-  color: var(--ok);
+  color: var(--event-kill);
   font-weight: 600;
 }
 
 .task6-consent {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  margin-top: 12px;
-  color: var(--fg);
-  font-size: 12.5px;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--on-surface);
+  font-size: var(--text-caption);
   line-height: 1.5;
 }
 
@@ -495,8 +472,8 @@
 .task6-storage-bar {
   display: flex;
   height: 8px;
-  border-radius: 4px;
-  background: var(--s-high);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-high);
   overflow: hidden;
 }
 
@@ -505,32 +482,32 @@
 }
 
 .task6-storage-bar > div:first-child {
-  border-radius: 4px 0 0 4px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
 
 .task6-storage-bar > div:last-child {
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .task6-storage-kv {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 3px 14px;
-  margin-top: 12px;
-  font-size: 12.5px;
+  gap: var(--space-1) var(--space-4);
+  margin-top: var(--space-3);
+  font-size: var(--text-caption);
 }
 
 .task6-storage-kv dt {
   display: flex;
   align-items: center;
-  gap: 7px;
-  color: var(--fg2);
+  gap: var(--space-2);
+  color: var(--on-surface-variant);
   white-space: nowrap;
 }
 
 .task6-storage-kv dd {
   margin: 0;
-  color: var(--fg);
+  color: var(--on-surface);
 }
 
 .task6-storage-kv .mono,
@@ -548,8 +525,8 @@
 .task6-storage-row {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(240px, auto);
-  gap: 16px;
-  padding: 16px 0;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
   align-items: flex-start;
 }
 
@@ -558,13 +535,13 @@
 }
 
 .task6-storage-row strong {
-  font-size: 13.5px;
+  font-size: var(--text-ui);
 }
 
 /* Notices in settings */
 
 .task6-settings-notice {
-  margin: 0 0 14px;
+  margin: 0 0 var(--space-4);
 }
 
 .task6-settings-notice:last-child {
@@ -615,7 +592,7 @@
 .task6-coach-scrim {
   position: absolute;
   inset: 0;
-  background: var(--scrim);
+  background: rgba(0, 0, 0, 0.32);
   z-index: 1;
   opacity: 1;
   transition: opacity 200ms cubic-bezier(0.32, 0.72, 0, 1);
@@ -629,7 +606,7 @@
   width: 100%;
   height: 100%;
   background: var(--surface);
-  border-left: 1px solid var(--outline-v);
+  border-left: 1px solid var(--outline-variant);
   z-index: 2;
   opacity: 1;
   transform: translateX(0);
@@ -658,7 +635,7 @@
   bottom: 0;
   width: var(--task6-coach-width, 360px);
   max-width: 100%;
-  box-shadow: -8px 0 24px var(--scrim);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.32);
 }
 
 .task6-coach-sidebar-wrap[data-mode="full"] .task6-coach-sidebar {
@@ -666,7 +643,7 @@
   inset: 0;
   width: 100%;
   border-left: 0;
-  background: var(--bg);
+  background: var(--background);
 }
 
 /* Resizer */
@@ -699,7 +676,7 @@
 
 .task6-resizer:focus-visible {
   outline: none;
-  background: var(--p-cont);
+  background: var(--primary-container);
 }
 
 .task6-coach-sidebar-wrap[data-mode="overlay"] .task6-resizer,
@@ -713,7 +690,7 @@
   position: relative;
   flex: none;
   width: 100%;
-  padding: 12px 14px 10px;
+  padding: var(--space-3) var(--space-4) var(--space-3);
 }
 
 .task6-coach-header::after,
@@ -723,7 +700,7 @@
   inset-inline: calc(-1 * max(14px, calc((100% - var(--task6-coach-content-width)) / 2)));
   inset-block-end: 0;
   height: 1px;
-  background: var(--outline-v);
+  background: var(--outline-variant);
   content: "";
 }
 
@@ -731,12 +708,12 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .task6-coach-title {
-  font: 600 14px/1.25 var(--font-display);
+  font: 600 var(--text-body)/1.25 var(--font-display);
   white-space: nowrap;
 }
 
@@ -744,9 +721,9 @@
   display: inline-flex;
   min-width: 0;
   align-items: flex-start;
-  gap: 5px;
-  color: var(--fg2);
-  font: 500 11px/1.25 var(--font-ui);
+  gap: var(--space-1);
+  color: var(--on-surface-variant);
+  font: 500 var(--text-micro)/1.25 var(--font-ui);
   overflow-wrap: anywhere;
 }
 
@@ -754,14 +731,14 @@
   flex: none;
   width: 6px;
   height: 6px;
-  margin-top: 3px;
+  margin-top: var(--space-1);
   border-radius: 50%;
   background: currentColor;
   content: "";
 }
 
 .task6-coach-availability[data-state="success"] {
-  color: var(--ok);
+  color: var(--event-kill);
 }
 
 .task6-coach-availability[data-state="warning"] {
@@ -783,25 +760,25 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 
 .task6-coach-context {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 9px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 
 .task6-coach-context-line {
-  color: var(--fg2);
-  font-size: 11.5px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
 .task6-coach-context-line b {
-  color: var(--fg);
+  color: var(--on-surface);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -811,7 +788,7 @@
 }
 
 .task6-coach-full-header {
-  background: var(--s-low);
+  background: var(--surface-container-low);
 }
 
 /* Body */
@@ -825,7 +802,7 @@
   min-width: 0;
   flex: 1;
   padding-inline: max(14px, calc((100% - var(--task6-coach-content-width)) / 2));
-  background: var(--s-low);
+  background: var(--surface-container-low);
 }
 
 .task6-coach-body {
@@ -833,10 +810,10 @@
   width: 100%;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 /* Current training */
@@ -845,19 +822,19 @@
   position: relative;
   flex: none;
   width: 100%;
-  padding: 8px 14px;
-  background: var(--s-low);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-container-low);
 }
 
 .task6-current-training-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-height: 24px;
 }
 
 .task6-current-training-title {
-  font: 600 13px/1.25 var(--font-display);
+  font: 600 var(--text-ui)/1.25 var(--font-display);
 }
 
 .task6-current-training-scenario {
@@ -867,39 +844,39 @@
 }
 
 .task6-training-scenario-label {
-  color: var(--fg2);
-  font-size: 11px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
 }
 
 .task6-current-training-scenario strong {
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-weight: 600;
 }
 
 .task6-training-kv {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 3px 10px;
-  margin-top: 6px;
-  font-size: 12px;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--text-caption);
   line-height: 1.55;
 }
 
 .task6-training-kv dt {
-  color: var(--fg2);
+  color: var(--on-surface-variant);
   white-space: nowrap;
 }
 
 .task6-training-kv dd {
   margin: 0;
-  color: var(--fg);
+  color: var(--on-surface);
 }
 
 .task6-training-empty-title {
   min-width: 0;
   overflow: hidden;
-  color: var(--fg2);
-  font: 500 11.5px/1.3 var(--font-ui);
+  color: var(--on-surface-variant);
+  font: 500 var(--text-micro)/1.3 var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -907,8 +884,8 @@
 .task6-training-summary {
   min-width: 0;
   overflow: hidden;
-  color: var(--fg2);
-  font-size: 11.5px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -940,20 +917,20 @@
 }
 
 .task6-training-details {
-  padding-top: 8px;
+  padding-top: var(--space-2);
 }
 
 .task6-training-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .task6-training-item {
-  padding: 10px 12px;
-  border: 1px solid var(--outline-v);
-  border-radius: 6px;
+  padding: var(--space-3) var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -961,16 +938,16 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: var(--text-caption);
 }
 
 .task6-training-item p,
 .task6-training-item small {
-  color: var(--fg2);
-  font-size: 12px;
-  margin: 4px 0 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  margin: var(--space-1) 0 0;
 }
 
 .task6-training-item .ac-button {
@@ -980,25 +957,25 @@
 .task6-training-item-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 
 .task6-training-unavailable {
   display: block;
-  color: var(--fg2);
-  font-size: 11.5px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
 }
 
 .task6-training-toggle {
   margin-left: auto;
   height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--outline-v);
-  border-radius: 4px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--fg2);
-  font: 500 11.5px var(--font-ui);
+  color: var(--on-surface-variant);
+  font: 500 var(--text-micro) var(--font-ui);
   cursor: pointer;
 }
 
@@ -1006,51 +983,51 @@
 
 .task6-coach-contexts {
   flex: none;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--outline-v);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--outline-variant);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .task6-contexts-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-weight: 700;
 }
 
 .task6-context-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .task6-context-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   max-width: 100%;
   height: 26px;
-  padding: 0 10px;
+  padding: 0 var(--space-3);
   border: 0;
-  border-radius: 4px;
-  background: var(--t-cont);
-  color: var(--on-t-cont);
-  font: 500 11.5px var(--font-ui);
+  border-radius: var(--radius-sm);
+  background: var(--tertiary-container);
+  color: var(--on-tertiary-container);
+  font: 500 var(--text-micro) var(--font-ui);
   white-space: nowrap;
 }
 
 .task6-context-chip[data-status="deleted"] {
-  background: var(--s-cont);
-  color: var(--fg2);
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
   text-decoration: line-through;
 }
 
 .task6-context-chip-ref {
-  background: var(--p-cont);
-  color: var(--on-p-cont);
+  background: var(--primary-container);
+  color: var(--on-primary-container);
 }
 
 .task6-context-chip > button {
@@ -1080,7 +1057,7 @@
   height: 15px;
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.12);
-  font-size: 10px;
+  font-size: var(--text-micro);
 }
 
 .task6-context-chip > button:last-child:hover {
@@ -1090,13 +1067,13 @@
 .task6-context-chip-add {
   padding: 0;
   background: transparent;
-  color: var(--fg2);
+  color: var(--on-surface-variant);
   border: 1px dashed var(--outline);
   cursor: pointer;
 }
 
 .task6-context-chip-add:hover {
-  background: var(--s-cont);
+  background: var(--surface-container);
 }
 
 /* Messages */
@@ -1105,10 +1082,10 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .task6-message-entry {
@@ -1141,16 +1118,16 @@
 
 .task6-message[data-role="user"] {
   align-self: flex-end;
-  padding: 8px 12px;
-  background: var(--s-high);
-  color: var(--fg);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
 }
 
 .task6-message[data-role="assistant"] {
   align-self: stretch;
   background: transparent;
   border: 0;
-  color: var(--fg);
+  color: var(--on-surface);
 }
 
 .task6-message p {
@@ -1162,44 +1139,44 @@
 .task6-message-contexts {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--outline-v);
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--outline-variant);
 }
 
 .task6-message-contexts button {
   display: inline-flex;
   align-items: center;
   height: 26px;
-  padding: 0 10px;
+  padding: 0 var(--space-3);
   border: 0;
-  border-radius: 4px;
-  background: var(--t-cont);
-  color: var(--on-t-cont);
-  font: 500 11.5px var(--font-ui);
+  border-radius: var(--radius-sm);
+  background: var(--tertiary-container);
+  color: var(--on-tertiary-container);
+  font: 500 var(--text-micro) var(--font-ui);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .task6-message-contexts button:hover {
-  background: var(--s-high);
-  color: var(--fg);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
 }
 
 .task6-message-contexts button:disabled {
-  background: var(--s-cont);
-  color: var(--fg2);
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
   cursor: not-allowed;
   text-decoration: line-through;
 }
 
 .task6-message-source {
-  margin-top: 7px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--outline-v);
-  font-size: 11px;
-  color: var(--fg2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--outline-variant);
+  font-size: var(--text-micro);
+  color: var(--on-surface-variant);
 }
 
 /* Time links in Coach messages（@12.3s → 点击跳转视频） */
@@ -1240,7 +1217,7 @@
 .task6-tool-tl {
   list-style: none;
   margin: 0;
-  padding: 2px 0 4px;
+  padding: 2px 0 var(--space-1);
   display: flex;
   flex-direction: column;
 }
@@ -1248,10 +1225,10 @@
 .task6-tool-step {
   position: relative;
   display: flex;
-  gap: 9px;
+  gap: var(--space-2);
   align-items: flex-start;
-  padding: 4px 0;
-  font-size: 12px;
+  padding: var(--space-1) 0;
+  font-size: var(--text-caption);
 }
 
 .task6-tool-step:not(:last-child)::before {
@@ -1261,11 +1238,11 @@
   top: 18px;
   bottom: -4px;
   width: 1.5px;
-  background: var(--outline-v);
+  background: var(--outline-variant);
 }
 
 .task6-tool-step[data-state="done"]:not(:last-child)::before {
-  background: var(--ok);
+  background: var(--event-kill);
 }
 
 .task6-tool-dot {
@@ -1273,15 +1250,15 @@
   flex: none;
   width: 8px;
   height: 8px;
-  margin-top: 4px;
+  margin-top: var(--space-1);
   border-radius: 50%;
   border: 1.5px solid var(--outline);
   background: transparent;
 }
 
 .task6-tool-step[data-state="done"] .task6-tool-dot {
-  border-color: var(--ok);
-  background: var(--ok);
+  border-color: var(--event-kill);
+  background: var(--event-kill);
 }
 
 .task6-tool-step[data-state="active"] .task6-tool-dot {
@@ -1296,19 +1273,19 @@
 
 /* 用户取消：原橙点变灰点 */
 .task6-tool-step[data-state="stopped"] .task6-tool-dot {
-  border-color: var(--fg2);
-  background: var(--fg2);
+  border-color: var(--on-surface-variant);
+  background: var(--on-surface-variant);
 }
 
 .task6-tool-eta {
   align-self: flex-start;
   margin-top: 2px;
-  color: var(--fg2);
-  font: 400 11px/1.3 var(--font-ui);
+  color: var(--on-surface-variant);
+  font: 400 var(--text-micro)/1.3 var(--font-ui);
 }
 
 .task6-tool-done-count .task6-tool-meta {
-  color: var(--fg2);
+  color: var(--on-surface-variant);
 }
 
 .task6-tool-body {
@@ -1319,13 +1296,13 @@
 }
 
 .task6-tool-label {
-  color: var(--fg);
+  color: var(--on-surface);
   line-height: 1.5;
 }
 
 .task6-tool-meta {
-  font-size: 11px;
-  color: var(--fg2);
+  font-size: var(--text-micro);
+  color: var(--on-surface-variant);
   line-height: 1.5;
 }
 
@@ -1351,13 +1328,13 @@
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   height: var(--control-height-compact);
-  padding: 0 13px;
-  border: 1px solid var(--outline-v);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
-  background: var(--s-high);
-  color: var(--fg);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
   font: 500 var(--text-caption) var(--font-ui);
   cursor: pointer;
   box-shadow: none;
@@ -1390,25 +1367,25 @@
 .task6-suggestions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 0;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
 }
 
 .task6-suggestion {
-  padding: 6px 10px;
-  border: 1px solid var(--outline-v);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   background: var(--surface);
-  color: var(--fg);
-  font-size: 12px;
+  color: var(--on-surface);
+  font-size: var(--text-caption);
   cursor: pointer;
   transition: background 150ms ease, border-color 150ms ease;
 }
 
 .task6-suggestion:hover {
-  background: var(--s-high);
+  background: var(--surface-container-high);
   border-color: var(--outline);
-  color: var(--fg);
+  color: var(--on-surface);
 }
 
 .task6-suggestion:focus-visible {
@@ -1424,8 +1401,8 @@
 
 .task6-suggestion[data-pending="true"]:hover {
   background: var(--surface);
-  border-color: var(--outline-v);
-  color: var(--fg);
+  border-color: var(--outline-variant);
+  color: var(--on-surface);
 }
 
 /* 本次讨论常驻条：吸顶不随对话流滚动，项目名按钮打开左侧视频 */
@@ -1434,8 +1411,8 @@
   position: relative;
   flex: none;
   width: 100%;
-  padding: 8px 14px;
-  background: var(--s-low);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-container-low);
 }
 
 /* Composer */
@@ -1443,16 +1420,16 @@
 .task6-composer {
   flex: none;
   width: 100%;
-  padding: 10px 12px;
-  background: var(--s-low);
+  padding: var(--space-3) var(--space-3);
+  background: var(--surface-container-low);
 }
 
 .task6-composer-input {
   position: relative;
   min-height: 72px;
-  border: 1px solid var(--outline-v);
+  border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
-  background: var(--s-high);
+  background: var(--surface-container-high);
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
@@ -1467,18 +1444,18 @@
   min-width: 0;
   min-height: 72px;
   max-height: 144px;
-  padding: 12px 52px 12px 12px;
+  padding: var(--space-3) 52px var(--space-3) var(--space-3);
   border: 0;
   border-radius: inherit;
   outline: 0;
   background: transparent;
-  color: var(--fg);
-  font: 400 13px/1.45 var(--font-ui);
+  color: var(--on-surface);
+  font: 400 var(--text-ui)/1.45 var(--font-ui);
   resize: vertical;
 }
 
 .task6-composer-input textarea::placeholder {
-  color: var(--fg2);
+  color: var(--on-surface-variant);
 }
 
 .task6-composer-send {
@@ -1491,7 +1468,7 @@
   border-radius: var(--radius-md);
   background: var(--primary);
   color: var(--on-primary);
-  font-size: 15px;
+  font-size: var(--text-title);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1499,8 +1476,8 @@
 }
 
 .task6-composer-send:disabled {
-  background: var(--s-cont);
-  color: var(--fg2);
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
   cursor: not-allowed;
 }
 
@@ -1524,21 +1501,21 @@
 .task6-composer-model {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   max-width: 136px;
   height: 32px;
-  padding: 0 10px;
+  padding: 0 var(--space-3);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--fg2);
-  font: 400 12px/1 var(--font-ui);
+  color: var(--on-surface-variant);
+  font: 400 var(--text-caption)/1 var(--font-ui);
   cursor: pointer;
 }
 
 .task6-composer-model:hover {
-  background: var(--s-cont);
-  color: var(--fg);
+  background: var(--surface-container);
+  color: var(--on-surface);
 }
 
 .task6-composer-model:disabled {
@@ -1559,7 +1536,7 @@
 
 .task6-composer-model-caret {
   flex: none;
-  font-size: 10px;
+  font-size: var(--text-micro);
 }
 
 .task6-composer-model-menu {
@@ -1570,34 +1547,34 @@
   max-width: 320px;
   max-height: 280px;
   overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--outline-v);
-  border-radius: 8px;
-  background: var(--s-high);
+  padding: var(--space-1);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-high);
 }
 
 .task6-composer-model-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--fg);
-  font: 400 13px/1.3 var(--font-ui);
+  color: var(--on-surface);
+  font: 400 var(--text-ui)/1.3 var(--font-ui);
   text-align: left;
   cursor: pointer;
 }
 
 .task6-composer-model-item:hover {
-  background: var(--s-cont);
+  background: var(--surface-container);
 }
 
 .task6-composer-model-item[aria-checked="true"] {
-  color: var(--fg);
+  color: var(--on-surface);
   font-weight: 600;
 }
 
@@ -1608,7 +1585,7 @@
 
 .task6-composer-model-check {
   flex: none;
-  color: var(--fg);
+  color: var(--on-surface);
 }
 
 /* Empty / error states inside coach */
@@ -1620,7 +1597,7 @@
   gap: var(--space-3);
   min-width: 0;
   padding: var(--space-6) var(--space-4);
-  color: var(--fg);
+  color: var(--on-surface);
   text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -1636,7 +1613,7 @@
 .task6-coach-panel > .task6-coach-state p {
   margin: 0;
   max-width: 28em;
-  color: var(--fg2);
+  color: var(--on-surface-variant);
   font-size: var(--text-ui);
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -1645,70 +1622,70 @@
 /* Challenge action card */
 
 .task6-action-card {
-  border: 1px solid var(--outline-v);
-  border-radius: 8px;
-  background: var(--s-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-low);
   overflow: hidden;
 }
 
 .task6-action-card-head {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: flex-start;
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-3);
 }
 
 .task6-action-card-icon {
   width: 32px;
   height: 32px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  background: var(--s-high);
-  font: 600 13px var(--font-mono);
-  color: var(--fg2);
+  background: var(--surface-container-high);
+  font: 600 var(--text-ui) var(--font-mono);
+  color: var(--on-surface-variant);
 }
 
 .task6-action-card-scenario {
-  font: 600 13px var(--font-display);
-  color: var(--fg);
+  font: 600 var(--text-ui) var(--font-display);
+  color: var(--on-surface);
 }
 
 .task6-action-card-purpose {
   margin-top: 2px;
-  font-size: 11.5px;
-  color: var(--fg2);
+  font-size: var(--text-micro);
+  color: var(--on-surface-variant);
   line-height: 1.5;
 }
 
 .task6-action-card-status {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--outline-v);
-  font-size: 11.5px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--outline-variant);
+  font-size: var(--text-micro);
   line-height: 1.5;
-  background: var(--s-low);
-  color: var(--ok);
+  background: var(--surface-container-low);
+  color: var(--event-kill);
 }
 
 .task6-action-card-status[data-state="busy"] {
-  background: var(--t-cont);
-  color: var(--on-t-cont);
+  background: var(--tertiary-container);
+  color: var(--on-tertiary-container);
 }
 
 .task6-action-card-status[data-state="fail"] {
-  background: var(--e-cont);
-  color: var(--on-e-cont);
+  background: var(--error-container);
+  color: var(--on-error-container);
 }
 
 .task6-action-card-actions {
   display: flex;
-  gap: 8px;
-  padding: 0 12px 11px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .task6-action-card-actions .ac-button {
@@ -1719,84 +1696,84 @@
 
 .task6-error-card {
   border: 1px solid var(--error);
-  border-radius: 8px;
-  background: var(--e-cont);
+  border-radius: var(--radius-lg);
+  background: var(--error-container);
   overflow: hidden;
-  color: var(--on-e-cont);
+  color: var(--on-error-container);
 }
 
 .task6-error-card-head {
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-3);
 }
 
 .task6-error-card-title {
-  font: 600 12.5px var(--font-ui);
+  font: 600 var(--text-caption) var(--font-ui);
 }
 
 .task6-error-card-desc {
-  margin-top: 3px;
-  font-size: 12px;
+  margin-top: var(--space-1);
+  font-size: var(--text-caption);
   line-height: 1.5;
   opacity: 0.82;
 }
 
 .task6-error-card-actions {
   display: flex;
-  gap: 8px;
-  padding: 0 12px 11px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .task6-error-card-actions .ac-button[data-variant="secondary"] {
   background: transparent;
-  border-color: var(--on-e-cont);
-  color: var(--on-e-cont);
+  border-color: var(--on-error-container);
+  color: var(--on-error-container);
 }
 
 .task6-error-card-actions .ac-button[data-variant="ghost"] {
   border-color: transparent;
-  color: var(--on-e-cont);
+  color: var(--on-error-container);
   opacity: 0.7;
 }
 
 /* Confirmation card（对话流内联确认，原稿 cfm-card） */
 
 .task6-cfm-card {
-  border: 1px solid var(--outline-v);
-  border-radius: 8px;
-  background: var(--s-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-low);
   overflow: hidden;
 }
 
 .task6-cfm-head {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3);
 }
 
 .task6-cfm-title {
-  font: 600 12.5px var(--font-ui);
-  color: var(--fg);
+  font: 600 var(--text-caption) var(--font-ui);
+  color: var(--on-surface);
 }
 
 .task6-cfm-desc {
-  margin-top: 3px;
-  color: var(--fg2);
-  font-size: 12px;
+  margin-top: var(--space-1);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
   line-height: 1.5;
 }
 
 .task6-cfm-note {
-  padding: 0 12px 10px;
-  color: var(--fg2);
-  font-size: 11px;
+  padding: 0 var(--space-3) var(--space-3);
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
   line-height: 1.5;
 }
 
 .task6-cfm-actions {
   display: flex;
-  gap: 8px;
-  padding: 0 12px 11px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .task6-cfm-actions .ac-button {
@@ -1809,40 +1786,40 @@
 }
 
 .task6-batch-card {
-  border: 1px solid var(--outline-v);
-  border-radius: 8px;
-  background: var(--s-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-low);
   overflow: hidden;
 }
 
 .task6-batch-list {
   display: grid;
-  gap: 5px;
+  gap: var(--space-1);
   margin: 0;
-  padding: 0 12px 10px;
+  padding: 0 var(--space-3) var(--space-3);
   list-style: none;
-  color: var(--fg2);
-  font-size: 11.5px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
 }
 
 .task6-batch-list li {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .task6-batch-list li span:first-child {
   min-width: 0;
   overflow: hidden;
-  color: var(--fg);
+  color: var(--on-surface);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .task6-batch-list li span:last-child {
   flex: none;
-  color: var(--fg2);
+  color: var(--on-surface-variant);
 }
 
 /* Responsive */
@@ -1884,7 +1861,7 @@
 
   .task6-st-row {
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
   }
 
   .task6-st-row dt {

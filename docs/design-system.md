@@ -47,9 +47,10 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 ## 4. Shared foundations
 
 - **Typography:** UI 使用 Inter + 中文系统 fallback；数据/时间使用 JetBrains Mono；展示字体使用 Outfit + 中文 fallback。可执行字号为 `--text-micro` 到 `--text-display`，定义在 `tokens.ts` 的 `SCALE_TOKENS`。
-- **Spacing:** 工作区控制区留出清晰呼吸空间；密集数据只在图表/表格内部压缩。可执行间距为 `--space-1`（4px）到 `--space-6`（32px）。
-- **Geometry:** 紧凑、精密、机械感的圆角；避免大面积消费级胶囊化。可执行圆角为 `--radius-sm` / `--radius-md` / `--radius-lg`；控件高度为 `--control-height`（36px）与 `--control-height-compact`（32px）。页面不得再发明 5px 圆角或 13.5px 字号。
-- **Primary scarcity:** `--primary` 只用于真正的 CTA（发送、新建、继续）和 `:focus-visible`。选中态、hover、badge、工具进行中不得用橙色填充或描边。
+- **Spacing:** 工作区控制区留出清晰呼吸空间；密集数据只在图表/表格内部压缩。可执行间距为 `--space-1`（4px）到 `--space-6`（32px）；页面布局级大间距（≥40px）不受该阶梯约束。
+- **Geometry:** 紧凑、精密、机械感的圆角；避免大面积消费级胶囊化。可执行圆角为 `--radius-sm` / `--radius-md` / `--radius-lg`；控件高度为 `--control-height`（36px）与 `--control-height-compact`（32px）。页面不得再发明 5px 圆角或 13.5px 字号；1-3px 微形状（圆点、进度条端头）不算违规。
+- **Primary scarcity:** `--primary` 只用于真正的 CTA（发送、新建、继续）和 `:focus-visible`。选中态、hover、badge、工具进行中不得用橙色填充或描边；数据可视化与表单 `accent-color` 不受此限。
+- **Enforcement:** 字号/圆角 token 与旧 board 别名层（`--fg`、`--s-high` 等）的废除由 `webapp/frontend/tests/design-system-contract.test.ts` 扫描全部 CSS 强制执行。
 - **Depth:** 依赖 surface ladder 与 hairline，不使用装饰性重阴影。
 - **Motion:** 克制、可中断、尊重 reduced motion；处理态可使用 primary 派生 pulse，但不让动画成为状态的唯一表达。
 - **Accessibility:** 正文、状态、图表标注、focus 和 disabled 状态在两种主题下都需可读；颜色不能作为唯一信息载体。
