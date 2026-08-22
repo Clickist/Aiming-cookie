@@ -7,6 +7,8 @@ import vm from "node:vm";
 import {
   DARK_TOKENS,
   LIGHT_TOKENS,
+  SCALE_NAMES,
+  SCALE_TOKENS,
   TOKEN_NAMES,
   contrastRatio,
 } from "../ui/tokens";
@@ -62,6 +64,27 @@ test("dark tokens match the approved OpenDesign core palette", () => {
   for (const [role, value] of Object.entries(approvedDarkRoles)) {
     assert.equal(DARK_TOKENS[role as keyof typeof DARK_TOKENS], value, role);
   }
+});
+
+test("scale tokens are theme-independent and declared on :root", () => {
+  assert.deepEqual(SCALE_NAMES.sort(), Object.keys(SCALE_TOKENS).sort());
+  const css = readFileSync(join(frontendRoot, "ui", "theme.css"), "utf8");
+  const rootBlock = css.slice(css.indexOf(":root {"), css.indexOf(":root[data-theme"));
+  for (const name of SCALE_NAMES) {
+    assert.match(rootBlock, new RegExp(`--${name}:\\s*${SCALE_TOKENS[name].replace("(", "\\(")}`));
+  }
+  assert.equal(SCALE_TOKENS["radius-md"], "6px");
+  assert.equal(SCALE_TOKENS["control-height"], "36px");
+  assert.equal(SCALE_TOKENS["text-ui"], "13px");
+});
+
+test("primitives consume the executable scale instead of one-off sizes", () => {
+  const css = readFileSync(join(frontendRoot, "ui", "theme.css"), "utf8");
+  assert.match(css, /\.ac-button\s*\{[\s\S]*height:\s*var\(--control-height\)/);
+  assert.match(css, /\.ac-button\[data-size="compact"\]\s*\{[\s\S]*height:\s*var\(--control-height-compact\)/);
+  assert.match(css, /\.ac-field__control\s*\{[\s\S]*height:\s*var\(--control-height\)/);
+  assert.match(css, /\.ac-button\s*\{[\s\S]*border-radius:\s*var\(--radius-md\)/);
+  assert.match(css, /\.ac-button\s*\{[\s\S]*font-size:\s*var\(--text-ui\)/);
 });
 
 test("executable token names match the approved visual contract", () => {

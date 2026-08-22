@@ -40,9 +40,9 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 6px;
-  background: var(--primary-container);
-  color: var(--on-primary-container);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
   font: 700 10px/1 var(--font-mono);
   letter-spacing: 0.08em;
 }
@@ -70,13 +70,13 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 36px;
+  min-height: var(--control-height);
   padding: 0 13px;
   border: 1px solid var(--primary);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--primary);
   color: var(--on-primary);
-  font-size: 13.5px;
+  font-size: var(--text-ui);
   font-weight: 600;
   transition: filter 150ms ease, transform 150ms ease;
 }
@@ -87,17 +87,16 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: var(--control-height);
+  height: var(--control-height);
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--on-surface-variant);
   cursor: pointer;
-  font: 600 16px/18px "Segoe UI Symbol", var(--font-ui);
+  font: inherit;
   text-align: center;
-  text-rendering: geometricPrecision;
 }
 
 .task7-session-rail__icon-button {
@@ -113,13 +112,13 @@
   .task7-session-rail__collapse:hover,
   .task7-session-rail__icon-button:hover {
     background: var(--surface-container);
-    color: var(--primary);
+    color: var(--on-surface);
   }
 
   .task7-session-rail__iconbar .task7-session-rail__icon-button:hover {
     border-color: var(--outline-variant);
     background: var(--surface-container-high);
-    color: var(--primary);
+    color: var(--on-surface);
   }
 
   .task7-session-rail__new:hover {
@@ -153,7 +152,7 @@
   min-width: 0;
   min-height: 32px;
   padding: 0 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--on-surface-variant);
   font-size: 11.5px;
@@ -172,19 +171,19 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 34px;
+  min-height: var(--control-height-compact);
   margin: 12px 12px 8px;
   padding: 0 9px;
   border: 1px solid var(--outline-variant);
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--on-surface-variant);
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .task7-session-rail__search:focus-within {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 1px var(--primary);
+  border-color: var(--outline);
+  box-shadow: 0 0 0 1px var(--outline);
 }
 
 .task7-session-rail__search-icon {
@@ -310,7 +309,7 @@
 .task7-session-rail__chevron {
   flex: none;
   width: 12px;
-  color: var(--primary);
+  color: var(--on-surface-variant);
   font-size: 15px;
   line-height: 1;
   text-align: center;
@@ -373,12 +372,12 @@
   display: flex;
   align-items: stretch;
   min-width: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
 }
 
 .task7-session-rail__item[data-current="true"] {
-  background: var(--primary-container);
-  box-shadow: inset 2px 0 0 var(--primary);
+  background: var(--surface-container-high);
+  box-shadow: inset 2px 0 0 var(--on-surface);
 }
 
 .task7-session-rail__session {
@@ -389,7 +388,7 @@
   min-width: 0;
   gap: 3px;
   padding: 8px 7px 8px 9px;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--on-surface);
   text-align: start;
@@ -401,7 +400,7 @@
   }
 
   .task7-session-rail__item[data-current="true"] .task7-session-rail__session:hover {
-    background: color-mix(in srgb, var(--primary-container) 78%, var(--surface-container));
+    background: var(--surface-container-highest);
   }
 }
 
@@ -414,14 +413,14 @@
 }
 
 .task7-session-rail__session-title {
-  font-size: 13.5px;
+  font-size: var(--text-ui);
   font-weight: 600;
 }
 
 .task7-session-rail__session-summary,
 .task7-session-rail__session-date {
   color: var(--on-surface-variant);
-  font-size: 11.5px;
+  font-size: var(--text-micro);
   font-weight: 400;
 }
 

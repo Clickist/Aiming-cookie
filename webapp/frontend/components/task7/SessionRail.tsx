@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
+import { IconChevronLeft, IconChevronRight, IconClose, IconHistory, IconPlus, IconSearch, IconSettings } from "@/ui/icons";
+
 export type SessionRailId = string | number;
 type OverlayState = "closed" | "opening" | "open" | "closing";
 
@@ -249,28 +251,28 @@ export function SessionRail({
       >
         {collapsed && !overlayVisible ? (
           <div className="task7-session-rail__iconbar" aria-label="会话栏快捷操作">
-            <button aria-label="展开会话栏" className="task7-session-rail__icon-button" onClick={() => openRail()} ref={toggleButtonRef} title="收起/展开会话栏" type="button">→</button>
-            <button aria-label="新建对话" className="task7-session-rail__icon-button" onClick={onNewSession} title="新建对话" type="button">+</button>
-            <button aria-label="搜索会话" className="task7-session-rail__icon-button" onClick={() => openRail(true)} title="搜索会话" type="button">⌕</button>
-            <button aria-label="训练历史" className="task7-session-rail__icon-button" onClick={onHistory} title="训练历史" type="button">◔</button>
-            <button aria-label="系统设置" className="task7-session-rail__icon-button" onClick={onSettings} title="系统设置" type="button">⚙</button>
+            <button aria-label="展开会话栏" className="task7-session-rail__icon-button" onClick={() => openRail()} ref={toggleButtonRef} title="收起/展开会话栏" type="button"><IconChevronRight /></button>
+            <button aria-label="新建对话" className="task7-session-rail__icon-button" onClick={onNewSession} title="新建对话" type="button"><IconPlus /></button>
+            <button aria-label="搜索会话" className="task7-session-rail__icon-button" onClick={() => openRail(true)} title="搜索会话" type="button"><IconSearch /></button>
+            <button aria-label="训练历史" className="task7-session-rail__icon-button" onClick={onHistory} title="训练历史" type="button"><IconHistory /></button>
+            <button aria-label="系统设置" className="task7-session-rail__icon-button" onClick={onSettings} title="系统设置" type="button"><IconSettings /></button>
           </div>
         ) : <>
           <div className="task7-session-rail__header">
             <div className="task7-session-rail__header-actions">
               <button className="task7-session-rail__new" onClick={onNewSession} type="button">
-                <span aria-hidden="true" className="task7-session-rail__new-icon">+</span>
+                <IconPlus />
                 <span>新建对话</span>
               </button>
-              <button aria-label="收起/展开会话栏" className="task7-session-rail__collapse" onClick={() => toggleRail()} ref={toggleButtonRef} title="收起/展开会话栏" type="button">←</button>
+              <button aria-label="收起/展开会话栏" className="task7-session-rail__collapse" onClick={() => toggleRail()} ref={toggleButtonRef} title="收起/展开会话栏" type="button"><IconChevronLeft /></button>
             </div>
           </div>
 
           <label className="task7-session-rail__search">
-            <span aria-hidden="true" className="task7-session-rail__search-icon">⌕</span>
+            <span aria-hidden="true" className="task7-session-rail__search-icon"><IconSearch /></span>
             <span className="task7-session-rail__sr-only">搜索会话</span>
             <input onChange={handleSearch} placeholder="搜索会话" ref={searchRef} type="search" value={query} />
-            {query ? <button aria-label="清除搜索" className="task7-session-rail__search-clear" onClick={() => { setQuery(""); onSearchChange?.(""); }} type="button">×</button> : null}
+            {query ? <button aria-label="清除搜索" className="task7-session-rail__search-clear" onClick={() => { setQuery(""); onSearchChange?.(""); }} type="button"><IconClose /></button> : null}
           </label>
 
           <nav aria-label="会话列表" className="task7-session-rail__list">
@@ -302,8 +304,8 @@ export function SessionRail({
         }) : <p className="task7-session-rail__empty">{query ? "没有匹配的会话" : "还没有会话"}</p>}
           </nav>
           <footer className="task7-session-rail__footer">
-            <button aria-label="训练历史" className="task7-session-rail__footer-row" onClick={onHistory} type="button"><span className="task7-session-rail__footer-label"><span aria-hidden="true">◔</span><span>训练历史</span></span>{historyCount === null ? null : <span className="task7-session-rail__footer-count">{historyCount}</span>}</button>
-            <button aria-label="系统设置" className="task7-session-rail__footer-row" onClick={onSettings} type="button"><span className="task7-session-rail__footer-label"><span aria-hidden="true">⚙</span><span>系统设置</span></span></button>
+            <button aria-label="训练历史" className="task7-session-rail__footer-row" onClick={onHistory} type="button"><span className="task7-session-rail__footer-label"><IconHistory /><span>训练历史</span></span>{historyCount === null ? null : <span className="task7-session-rail__footer-count">{historyCount}</span>}</button>
+            <button aria-label="系统设置" className="task7-session-rail__footer-row" onClick={onSettings} type="button"><span className="task7-session-rail__footer-label"><IconSettings /><span>系统设置</span></span></button>
           </footer>
         </>}
       </aside>

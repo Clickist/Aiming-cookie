@@ -116,7 +116,7 @@ test("Settings Provider type and auth selects match the shared field height", as
   const theme = await source("ui/theme.css");
   assert.match(settings, /<select className="ac-field__control" onChange=\{\(event\) => \{\s*const nextProviderId/);
   assert.match(settings, /<select className="ac-field__control" onChange=\{\(event\) => setNewAuthMode/);
-  assert.match(theme, /\.ac-field__control\s*\{[\s\S]*height:\s*38px/);
+  assert.match(theme, /\.ac-field__control\s*\{[\s\S]*height:\s*var\(--control-height\)/);
 });
 
 test("Settings auto-detects custom Provider protocols and keeps a fallback choice", async () => {

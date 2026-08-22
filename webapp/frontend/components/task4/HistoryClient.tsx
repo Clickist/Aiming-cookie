@@ -14,6 +14,7 @@ import {
   presentRecordLabel,
 } from "@/lib/contracts";
 import type { KovaaKRunListItem, SessionListItem } from "@/lib/types";
+import { IconChevronLeft } from "@/ui/icons";
 import { Button, Empty, ErrorState, IconButton, Notice } from "@/ui/primitives";
 
 type RefreshState = "idle" | "loading" | "unavailable";
@@ -342,7 +343,7 @@ export function HistoryClient() {
     <div className="task4-page">
       <div className="task4-page-head">
         <div className="task4-page-title-row">
-          <IconButton label="返回 Coach" onClick={() => router.push("/")} size="compact" title="返回 Coach">←</IconButton>
+          <IconButton label="返回 Coach" onClick={() => router.push("/")} size="compact" title="返回 Coach"><IconChevronLeft /></IconButton>
           <div className="task4-page-title">历史</div>
         </div>
         <div className="task4-page-actions">
