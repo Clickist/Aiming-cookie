@@ -693,17 +693,6 @@
   padding: var(--space-3) var(--space-4) var(--space-3);
 }
 
-.task6-coach-header::after,
-.task6-current-training::after,
-.task6-discussion-bar::after {
-  position: absolute;
-  inset-inline: calc(-1 * max(14px, calc((100% - var(--task6-coach-content-width)) / 2)));
-  inset-block-end: 0;
-  height: 1px;
-  background: var(--outline-variant);
-  content: "";
-}
-
 .task6-coach-header-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
