@@ -425,8 +425,19 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
             },
         }
     video_availability, video = _current_video_evidence(run)
-    if video_availability == "available" and video is not None:
+    if video is not None:
         sources["video"] = video
+    else:
+        # 不可用的视频证据也进入快照：availability + reason 让分析结果、
+        # progressive disclosure 与 Coach 能区分“没有录制”与“录制管线
+        # 故障”（如 video_coverage_gap），而不是把事实静默吞掉。
+        sources["video"] = {
+            "artifact_ref": f"run:{run_id}:video",
+            "availability": video_availability,
+            "reason": run.get("video_error")
+            or f"video_state_{run.get('video_state') or 'none'}",
+            "ownership": "run",
+        }
     canonical_time_window = _canonical_time_window_from_run(run)
     performance_summary = run.get("performance_summary")
     performance_header = (
@@ -1263,6 +1274,10 @@ async def mark_run_video_unavailable(
     run["video_error"] = error
     run["updated_at"] = _utc_now()
     _save_run(run)
+    log.warning(
+        "run %s video marked unavailable: %s (capture_session=%s)",
+        run_id, error, run.get("capture_session_id") or "unknown",
+    )
     return run
 
 
@@ -1308,6 +1323,12 @@ async def invalidate_run_for_video_coverage_gap(
     run["video_error"] = "video_coverage_gap"
     run["updated_at"] = _utc_now()
     _save_run(run)
+    log.warning(
+        "run %s video invalidated: video_coverage_gap "
+        "(capture_session=%s, window=%s..%s)",
+        run_id, run.get("capture_session_id") or "unknown",
+        run.get("window_start_epoch_ms"), run.get("window_end_epoch_ms"),
+    )
     return run
 
 
