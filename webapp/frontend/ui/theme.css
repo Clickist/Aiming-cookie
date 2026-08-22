@@ -6,8 +6,9 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
-  --duration-press: 160ms;
-  --duration-dialog: 180ms;
+  --duration-fast: 150ms;
+  --shadow-overlay: 0 8px 24px color-mix(in srgb, var(--on-surface) 14%, transparent);
+  --ring: 0 0 0 3px var(--primary-container);
   --duration-surface: 200ms;
   --duration-reduced-motion: 120ms;
   --space-1: 4px;
@@ -94,7 +95,7 @@ a {
   border-radius: var(--radius-md);
   cursor: pointer;
   text-decoration: none;
-  transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out), color 150ms var(--ease-out), box-shadow 150ms var(--ease-out), transform var(--duration-press) var(--ease-out);
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .ac-button:active:not(:disabled):not([aria-disabled="true"]),
@@ -141,11 +142,15 @@ a {
 }
 
 .ac-button:hover:not(:disabled):not([aria-disabled="true"]) {
-  filter: brightness(0.98);
+  background: var(--surface-container-low);
 }
 
 .ac-button[data-variant="primary"]:hover:not(:disabled):not([aria-disabled="true"]) {
-  filter: brightness(1.05);
+  background: color-mix(in srgb, var(--primary) 90%, var(--on-surface));
+}
+
+.ac-button[data-variant="danger"]:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: color-mix(in srgb, var(--error) 90%, var(--on-surface));
 }
 
 .ac-button[data-variant="ghost"]:hover:not(:disabled):not([aria-disabled="true"]) {
@@ -319,7 +324,7 @@ a {
   cursor: not-allowed;
   background: var(--surface-container);
   color: var(--on-surface-variant);
-  opacity: 0.7;
+  opacity: 0.55;
 }
 
 .ac-panel {
@@ -363,7 +368,7 @@ a {
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 150ms ease-out, color 150ms ease-out, box-shadow 150ms ease-out;
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .ac-tab[aria-selected="true"] {
@@ -507,11 +512,11 @@ a {
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--on-surface);
-  transition: opacity var(--duration-dialog) var(--ease-out), transform var(--duration-dialog) var(--ease-out);
+  transition: opacity var(--duration-surface) var(--ease-out), transform var(--duration-surface) var(--ease-out);
 }
 
 .ac-dialog-backdrop {
-  transition: opacity var(--duration-dialog) var(--ease-out);
+  transition: opacity var(--duration-surface) var(--ease-out);
 }
 
 .ac-dialog-backdrop[data-state="closed"] {

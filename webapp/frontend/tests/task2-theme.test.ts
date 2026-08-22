@@ -168,9 +168,11 @@ test("shared motion uses the approved curves and accessible press feedback", () 
   assert.match(css, /--ease-out:\s*cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
   assert.match(css, /--ease-in-out:\s*cubic-bezier\(0\.77, 0, 0\.175, 1\)/);
   assert.match(css, /--ease-drawer:\s*cubic-bezier\(0\.32, 0\.72, 0, 1\)/);
-  assert.match(css, /--duration-press:\s*160ms/);
-  assert.match(css, /--duration-dialog:\s*180ms/);
+  assert.match(css, /--duration-fast:\s*150ms/);
   assert.match(css, /--duration-surface:\s*200ms/);
+  assert.match(css, /--duration-reduced-motion:\s*120ms/);
+  assert.match(css, /--shadow-overlay:\s*0 8px 24px color-mix\(in srgb, var\(--on-surface\) 14%, transparent\)/);
+  assert.match(css, /--ring:\s*0 0 0 3px var\(--primary-container\)/);
   assert.match(css, /\.ac-button:active[^}]+\.ac-icon-button:active[^}]+transform:\s*scale\(0\.97\)/s);
   assert.match(css, /prefers-reduced-motion:\s*reduce[\s\S]+transition-property:\s*opacity, color, background-color, border-color/);
   assert.match(css, /prefers-reduced-motion:\s*reduce[\s\S]+\.ac-toast[\s\S]+transform:\s*none/);

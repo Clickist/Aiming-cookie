@@ -71,7 +71,7 @@
   color: var(--on-surface-variant);
   cursor: pointer;
   font: 500 var(--text-body)/1 var(--font-ui);
-  transition: background-color 120ms ease-out, color 120ms ease-out;
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .task3-window-control:hover {
@@ -175,8 +175,8 @@
   opacity: 1;
   transform: translateX(0);
   transition:
-    opacity 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
-    transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 
 .task3-workspace[data-settings-route="true"] {
@@ -391,7 +391,7 @@
 }
 
 .task3-onboarding-step {
-  animation: task3-onboarding-enter 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  animation: task3-onboarding-enter var(--duration-fast) var(--ease-out);
 }
 
 @keyframes task3-onboarding-enter {
@@ -445,7 +445,7 @@
 .task3-onboarding-wizard-fields .ac-field__control:focus-visible {
   border-color: var(--primary);
   outline: none;
-  box-shadow: 0 0 0 3px var(--primary-container);
+  box-shadow: var(--ring);
 }
 
 .task3-onboarding-dropdown {
@@ -467,7 +467,7 @@
   font-size: var(--text-title);
   text-align: start;
   cursor: pointer;
-  transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .task3-onboarding-dropdown-trigger::after {
@@ -478,7 +478,7 @@
   border-bottom: 1.5px solid var(--on-surface-variant);
   content: "";
   transform: rotate(45deg) translateY(-2px);
-  transition: transform 150ms ease-out;
+  transition: transform var(--duration-fast) var(--ease-out);
 }
 
 .task3-onboarding-dropdown-trigger[aria-expanded="true"]::after {
@@ -493,7 +493,7 @@
 .task3-onboarding-dropdown-option:focus-visible {
   border-color: var(--primary);
   outline: none;
-  box-shadow: 0 0 0 3px var(--primary-container);
+  box-shadow: var(--ring);
 }
 
 .task3-onboarding-dropdown-trigger:disabled {
@@ -513,9 +513,9 @@
   border: 1px solid var(--outline);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: 0 14px 40px color-mix(in srgb, var(--on-surface) 14%, transparent);
+  box-shadow: var(--shadow-overlay);
   transform-origin: top center;
-  animation: task3-onboarding-dropdown-enter 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  animation: task3-onboarding-dropdown-enter var(--duration-fast) var(--ease-out);
 }
 
 @keyframes task3-onboarding-dropdown-enter {
@@ -679,7 +679,7 @@
 
 .task3-onboarding-primary:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--primary-container);
+  box-shadow: var(--ring);
 }
 
 .task3-onboarding-primary:disabled {
@@ -706,7 +706,7 @@
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 3px;
-  transition: color 150ms ease-out;
+  transition: color var(--duration-fast) var(--ease-out);
 }
 
 .task3-skip-action:hover:not(:disabled) {
@@ -716,7 +716,7 @@
 .task3-skip-action:focus-visible {
   border-radius: 2px;
   outline: none;
-  box-shadow: 0 0 0 2px var(--primary-container);
+  box-shadow: var(--ring);
 }
 
 .task3-skip-action:disabled {
@@ -734,14 +734,14 @@
   border: 1px solid var(--outline);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--on-surface) 12%, transparent);
+  box-shadow: var(--shadow-overlay);
   color: var(--on-surface-variant);
   font-size: var(--text-ui);
   line-height: 1.6;
   opacity: 0;
   pointer-events: none;
   transform: translateX(-50%);
-  transition: opacity 150ms ease-out, visibility 150ms ease-out;
+  transition: opacity var(--duration-fast) var(--ease-out), visibility var(--duration-fast) var(--ease-out);
   visibility: hidden;
 }
 
@@ -897,6 +897,6 @@
   .task3-route-content[data-settings-motion="opening"],
   .task3-route-content[data-settings-motion="closing"] {
     transform: none;
-    transition: opacity var(--duration-reduced-motion, 120ms) linear;
+    transition: opacity var(--duration-reduced-motion) var(--ease-out);
   }
 }

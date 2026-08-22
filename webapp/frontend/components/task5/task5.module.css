@@ -130,11 +130,11 @@
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   background: var(--surface-container-high);
-  box-shadow: 0 6px 18px color-mix(in srgb, black 18%, transparent);
+  box-shadow: var(--shadow-overlay);
   opacity: 0;
   pointer-events: none;
   transform: translateY(-2px);
-  transition: opacity 120ms ease-out, transform 120ms ease-out;
+  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .evidenceSummary:focus-within .evidenceTooltip {
@@ -252,7 +252,7 @@
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   background: var(--surface-container-high);
-  box-shadow: 0 6px 18px color-mix(in srgb, black 18%, transparent);
+  box-shadow: var(--shadow-overlay);
   color: var(--on-surface);
   font-size: var(--text-caption);
   line-height: 1.5;
@@ -260,7 +260,7 @@
   visibility: hidden;
   pointer-events: none;
   transform: translateY(-2px);
-  transition: opacity 120ms ease-out, transform 120ms ease-out;
+  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .profileLabel:focus-within .profileTooltip {
@@ -659,7 +659,7 @@
 
 .distributionBar:disabled {
   cursor: default;
-  opacity: 0.7;
+  opacity: 0.55;
 }
 
 .distributionBar:disabled i {
@@ -749,7 +749,7 @@
 
 .switchRow:disabled {
   cursor: default;
-  opacity: 0.7;
+  opacity: 0.55;
 }
 
 .switchIdx {
@@ -1020,12 +1020,12 @@
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: 0 8px 20px color-mix(in srgb, black 24%, transparent);
+  box-shadow: var(--shadow-overlay);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   transform: translate(-50%, 4px);
-  transition: opacity 120ms ease-out, transform 120ms ease-out;
+  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .volumeControl:focus-within .volumePopover {
@@ -1296,12 +1296,12 @@
 @media (prefers-reduced-motion: reduce) {
   .evidenceTooltip,
   .profileTooltip {
-    transition: opacity 120ms ease;
+    transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: none;
   }
 
   .volumePopover {
-    transition: opacity 120ms ease;
+    transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: translate(-50%, 0);
   }
 }

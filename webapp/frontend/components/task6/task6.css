@@ -41,9 +41,9 @@
   opacity: 1;
   transform: translateY(0);
   transition:
-    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    display 160ms allow-discrete;
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out),
+    display var(--duration-fast) allow-discrete;
 }
 
 .task6-settings-nav-title-row {
@@ -332,13 +332,13 @@
   border-radius: var(--radius-md);
   background: var(--surface-container-highest);
   color: var(--on-surface);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--shadow-overlay);
   font-size: var(--text-caption);
   line-height: 1.5;
   opacity: 0;
   pointer-events: none;
   transform: translateY(2px);
-  transition: opacity 120ms ease-out, transform 120ms ease-out;
+  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .task6-info:focus-within .task6-info-tooltip {
@@ -437,14 +437,14 @@
   color: var(--tertiary);
   text-decoration: none;
   border-bottom: 1px solid transparent;
-  transition: border-color 150ms ease;
+  transition: border-color var(--duration-fast) var(--ease-out);
 }
 
 .task6-st-row dd a:hover,
 .task6-provider-meta a:hover,
 .task6-storage-row a:hover,
 .task6-kovaak-note a:hover {
-  border-bottom-color: var(--tertiary);
+  border-bottom-color: var(--on-surface);
 }
 
 .task6-st-row dd .task6-ok {
@@ -595,7 +595,7 @@
   background: rgba(0, 0, 0, 0.32);
   z-index: 1;
   opacity: 1;
-  transition: opacity 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: opacity var(--duration-surface) var(--ease-drawer);
 }
 
 .task6-coach-sidebar {
@@ -612,20 +612,20 @@
   transform: translateX(0);
   contain: layout paint;
   will-change: transform, opacity;
-  transition: transform 200ms cubic-bezier(0.32, 0.72, 0, 1),
-    opacity 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform var(--duration-surface) var(--ease-drawer),
+    opacity var(--duration-surface) var(--ease-drawer);
 }
 
 .task6-coach-sidebar-wrap[data-state="closed"] .task6-coach-scrim {
   opacity: 0;
   pointer-events: none;
-  transition-duration: 160ms;
+  transition-duration: var(--duration-surface);
 }
 
 .task6-coach-sidebar-wrap[data-state="closed"] .task6-coach-sidebar {
   opacity: 0;
   transform: translateX(16px);
-  transition-duration: 160ms;
+  transition-duration: var(--duration-surface);
 }
 
 .task6-coach-sidebar-wrap[data-mode="overlay"] .task6-coach-sidebar {
@@ -635,7 +635,7 @@
   bottom: 0;
   width: var(--task6-coach-width, 360px);
   max-width: 100%;
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.32);
+  box-shadow: var(--shadow-overlay);
 }
 
 .task6-coach-sidebar-wrap[data-mode="full"] .task6-coach-sidebar {
@@ -657,7 +657,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 150ms ease;
+  transition: background var(--duration-fast) var(--ease-out);
 }
 
 .task6-resizer::after {
@@ -666,7 +666,7 @@
   border-radius: 2px;
   background: var(--outline);
   content: "";
-  transition: background 150ms ease;
+  transition: background var(--duration-fast) var(--ease-out);
 }
 
 .task6-resizer:hover::after,
@@ -894,8 +894,8 @@
   position: relative;
   opacity: 0;
   transform: translateY(-4px);
-  transition: opacity 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
-    transform 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  transition: opacity var(--duration-surface) var(--ease-out),
+    transform var(--duration-surface) var(--ease-out);
   contain: layout paint;
 }
 
@@ -1191,11 +1191,12 @@
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
-  transition: filter 150ms ease;
+  transition: color var(--duration-fast) var(--ease-out);
 }
 
 .task6-time-link:hover {
-  filter: brightness(0.88);
+  filter: none;
+  color: var(--on-surface);
 }
 
 .task6-time-link:focus-visible {
@@ -1343,7 +1344,7 @@
 }
 
 .task6-unread-prompt:hover {
-  filter: brightness(1.06);
+  background: var(--surface-container-highest);
 }
 
 .task6-streaming-cursor {
@@ -1379,7 +1380,7 @@
   color: var(--on-surface);
   font-size: var(--text-caption);
   cursor: pointer;
-  transition: background 150ms ease, border-color 150ms ease;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 
 .task6-suggestion:hover {
@@ -1430,7 +1431,7 @@
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   background: var(--surface-container-high);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .task6-composer-input:focus-within {
@@ -1873,24 +1874,24 @@
   .task6-settings-nav-title {
     transform: none;
     transition:
-      opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
-      display 120ms allow-discrete;
+      opacity var(--duration-reduced-motion) var(--ease-out),
+      display var(--duration-reduced-motion) allow-discrete;
   }
 
   .task6-coach-sidebar,
   .task6-coach-sidebar-wrap[data-mode="overlay"] .task6-coach-sidebar,
   .task6-coach-sidebar-wrap[data-mode="full"] .task6-coach-sidebar {
-    transition: opacity 120ms ease;
+    transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: none !important;
   }
 
   .task6-training-reveal {
-    transition: opacity 120ms ease;
+    transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: none !important;
   }
 
   .task6-message {
-    transition: opacity 120ms ease;
+    transition: opacity var(--duration-reduced-motion) var(--ease-out);
   }
 
   .task6-composer-send {
@@ -1904,7 +1905,7 @@
   }
 
   .task6-info-tooltip {
-    transition: opacity 120ms ease;
+    transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: none;
   }
 }

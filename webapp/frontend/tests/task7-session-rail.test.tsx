@@ -60,10 +60,10 @@ test("SessionRail follows the active narrow and footer contract", async () => {
   assert.match(styles, /@media \(max-width: 1119px\)/);
   assert.match(styles, /data-overlay-state/);
   assert.doesNotMatch(styles, /@keyframes task7-session-rail-slide-in/);
-  assert.match(styles, /transition:\s*transform var\(--duration-surface, 200ms\) var\(--ease-out/);
+  assert.match(styles, /transition:\s*transform var\(--duration-surface\) var\(--ease-out/);
   assert.match(styles, /data-motion="instant"/);
   assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)/);
-  assert.match(styles, /prefers-reduced-motion: reduce[\s\S]*duration-reduced-motion, 120ms/);
+  assert.match(styles, /prefers-reduced-motion: reduce[\s\S]*duration-reduced-motion\) var\(--ease-out/);
   assert.match(styles, /color-mix\(in srgb, var\(--on-surface\) 12%, transparent\)/);
   assert.match(styles, /data-overlay="true"\][^{]*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
 });
