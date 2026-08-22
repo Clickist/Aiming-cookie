@@ -59,3 +59,17 @@ test("SessionRail stays expanded with a persistent footer", async () => {
   assert.match(styles, /prefers-reduced-motion/);
   assert.match(styles, /--task7-rail-width:\s*288px/);
 });
+
+test("SessionRail keeps session rows at equal height with no stray border", async () => {
+  const component = await source("components/task7/SessionRail.tsx");
+  const styles = await source("components/task7/session-rail.css");
+  // 恒定三行（title/summary/date），无 summary 时保持占位，保证所有项等高
+  assert.match(component, /task7-session-rail__session-title/);
+  assert.match(component, /task7-session-rail__session-summary/);
+  assert.match(component, /task7-session-rail__session-date/);
+  assert.match(component, /\{summaryLine\}/);
+  assert.match(component, /aria-hidden=\{!summaryLine \? true : undefined\}/);
+  // 无浏览器默认边框（border:0），避免莫名出现的框
+  assert.match(styles, /\.task7-session-rail__session\s*\{[\s\S]*border:\s*0;[\s\S]*\}/);
+  assert.match(styles, /\.task7-session-rail__session-summary\[aria-hidden="true"\][\s\S]*min-height/);
+});

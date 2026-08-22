@@ -130,6 +130,11 @@ export function SessionRail({
     {visible.length ? visible.map((session) => {
       const title = sessionTitle(session);
       const date = sessionDate(session);
+      const summaryLine = session.summary && session.summary !== title
+        ? session.summary
+        : (!session.summary && (session.lastMessagePreview || session.last_message_preview))
+          ? (session.lastMessagePreview || session.last_message_preview)
+          : "";
       const current = currentSessionId !== null && String(currentSessionId) === String(session.id);
       return (
         <div className="task7-session-rail__item" data-current={current || undefined} key={String(session.id)} role="listitem">
@@ -140,9 +145,8 @@ export function SessionRail({
             type="button"
           >
             <span className="task7-session-rail__session-title">{title}</span>
-            {session.summary && session.summary !== title ? <span className="task7-session-rail__session-summary">{session.summary}</span> : null}
-            {!session.summary && (session.lastMessagePreview || session.last_message_preview) ? <span className="task7-session-rail__session-summary">{session.lastMessagePreview || session.last_message_preview}</span> : null}
-            {date ? <time className="task7-session-rail__session-date" dateTime={session.updatedAt || session.updated_at || session.createdAt || session.created_at || undefined}>{date}</time> : null}
+            <span aria-hidden={!summaryLine ? true : undefined} className="task7-session-rail__session-summary">{summaryLine}</span>
+            <time className="task7-session-rail__session-date" dateTime={session.updatedAt || session.updated_at || session.createdAt || session.created_at || undefined}>{date ?? ""}</time>
           </button>
           {session.id !== "draft" && (onArchiveSession || onSoftDeleteSession) ? (
             <span className="task7-session-rail__item-actions">

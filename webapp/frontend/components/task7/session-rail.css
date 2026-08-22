@@ -273,7 +273,8 @@
   align-items: flex-start;
   min-width: 0;
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-2);
+  padding: var(--space-2);
+  border: 0;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--on-surface);
@@ -291,11 +292,18 @@
 }
 
 .task7-session-rail__session-title,
-.task7-session-rail__session-summary {
+.task7-session-rail__session-summary,
+.task7-session-rail__session-date {
+  width: 100%;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.task7-session-rail__session-summary[aria-hidden="true"] {
+  visibility: hidden;
+  min-height: 17px;
 }
 
 .task7-session-rail__session-title {
