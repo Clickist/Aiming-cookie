@@ -72,6 +72,30 @@ def test_overview_anchor_clamps_at_zero_when_preroll_exceeds_the_event_time():
     assert anchor["ms"] == 0.0
 
 
+def test_overview_exposes_video_evidence_unavailability_reason():
+    # Coach 读 overview.json：录制失败原因必须在这里可见，
+    # 否则只能按“用户没录视频”自顾自降级讲解。
+    unavailable = _result_with_timeline([], [])
+    unavailable["input_snapshot"]["sources"] = {
+        "video": {
+            "artifact_ref": "run:42:video",
+            "availability": "unavailable",
+            "reason": "video_coverage_gap",
+            "ownership": "run",
+        },
+    }
+    overview = _build_overview(9, unavailable)
+    assert overview["video_evidence"] == {
+        "availability": "unavailable",
+        "reason": "video_coverage_gap",
+    }
+
+    # 无视频源或 legacy 结果不输出该键。
+    assert "video_evidence" not in _build_overview(
+        9, _result_with_timeline([], []),
+    )
+
+
 def test_metrics_and_summary_carry_the_generic_knowledge_refs():
     """generic 视觉指标的知识桥必须透传到 metrics.json 和 overview 摘要。"""
     from webapp.backend.analysis_output import _build_metrics

@@ -2322,6 +2322,44 @@ async def test_process_one_input_native_uses_snapshot_sources_without_cv_or_priv
 
 
 @pytest.mark.asyncio
+async def test_process_one_input_native_keeps_unavailable_video_reason():
+    # 录制管线故障（如 video_coverage_gap）的视频证据桩必须保留到公开快照，
+    # disclosure/Coach 才能区分“没有录制”与“录制失败”，而不是静默降级。
+    snapshot = _native_snapshot()
+    snapshot["sources"]["video"] = {
+        "artifact_ref": "run:42:video",
+        "availability": "unavailable",
+        "reason": "video_coverage_gap",
+        "ownership": "run",
+    }
+    job = {
+        "id": 102,
+        "user_id": "u1",
+        "input_mode": "input_native",
+        "kovaak_run_id": 42,
+        "input_snapshot": snapshot,
+        "video_path": "",
+        "csv_path": "",
+        "cm_per_360": 30.0,
+        "fov": 90.0,
+        "created_at": "2026-07-13 12:00:00",
+    }
+
+    result, calls, _native_mock, cv_mock = await _capture_mode_result(
+        job,
+        native_result=_native_adapter_result(),
+    )
+
+    assert calls == ["native"]
+    cv_mock.assert_not_called()
+    video = result["input_snapshot"]["sources"]["video"]
+    assert video["availability"] == "unavailable"
+    assert video["reason"] == "video_coverage_gap"
+    assert "path" not in video and "fingerprint" not in video
+    assert "/db-private/" not in str(video)
+
+
+@pytest.mark.asyncio
 async def test_process_one_v2_native_projects_frozen_window_into_result():
     snapshot = _native_v2_snapshot()
     job = {

@@ -101,6 +101,16 @@ def _build_overview(session_id: int, result: dict) -> dict:
         else:
             enriched_issues.append(issue)
 
+    video_source = (snapshot.get("sources") or {}).get("video")
+    video_evidence: dict[str, object] | None = None
+    if isinstance(video_source, dict):
+        availability = video_source.get("availability")
+        if isinstance(availability, str):
+            video_evidence = {"availability": availability}
+            reason = video_source.get("reason")
+            if isinstance(reason, str) and reason:
+                video_evidence["reason"] = reason
+
     return {
         "analysis_ref": result.get("analysis_id") or f"analysis:{session_id}",
         "scenario": snapshot.get("scenario"),
@@ -111,6 +121,11 @@ def _build_overview(session_id: int, result: dict) -> dict:
         **(
             {"video_decode_preroll_ms": preroll_ms}
             if preroll_ms is not None
+            else {}
+        ),
+        **(
+            {"video_evidence": video_evidence}
+            if video_evidence is not None
             else {}
         ),
         "diagnosis": {

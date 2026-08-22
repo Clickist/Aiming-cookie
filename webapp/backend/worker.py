@@ -150,7 +150,11 @@ async def _run_isolated_analysis_request(payload: dict) -> dict:
             visual_result = response.get("visual_result")
             if isinstance(visual_result, dict):
                 raise ContinuousTrackingAnalysisProcessError(code, visual_result)
-        raise RuntimeError("visual_preprocessing_failed")
+        # 保留子进程的具体 kind/code（如 generic_color_hypothesis_unavailable），
+        # 否则排障只能看到笼统的 visual_preprocessing_failed。
+        raise RuntimeError(
+            f"visual_preprocessing_failed:{kind or 'unknown'}:{code or 'unknown'}"
+        )
     result = response.get("result")
     if not isinstance(result, dict):
         raise RuntimeError("visual_preprocessing_failed")
@@ -1976,7 +1980,15 @@ def _build_native_result_v2(
     if isinstance(calibration, Mapping):
         public_snapshot["calibration"] = dict(calibration)
     if input_mode == "input_native":
-        public_snapshot.get("sources", {}).pop("video", None)
+        # 保留“不可用 + 原因”的视频证据桩（若有）：结果与 disclosure 才能
+        # 区分用户未录制与录制管线故障（如 video_coverage_gap）。
+        video_stub = public_snapshot.get("sources", {}).get("video")
+        if not (
+            isinstance(video_stub, dict)
+            and isinstance(video_stub.get("availability"), str)
+            and video_stub["availability"] != "available"
+        ):
+            public_snapshot.get("sources", {}).pop("video", None)
     elif video_availability is not None:
         video_source = dict(public_snapshot.get("sources", {}).get("video") or {})
         video_source.update({

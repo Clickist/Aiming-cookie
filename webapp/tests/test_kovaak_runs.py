@@ -2789,6 +2789,40 @@ async def test_run_readiness_exposes_the_best_available_analysis_tier(
 
 
 @pytest.mark.asyncio
+async def test_unavailable_video_snapshot_carries_reason(
+    tmp_path: Path,
+):
+    # 录制管线故障的视频证据以“不可用 + 原因”的桩进入分析快照：
+    # 档位门控行为不变（视频档仍不可选），但 reason 经公开快照与
+    # disclosure 保留，供 Coach/前端区分“没有录制”与“录制失败”。
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path,
+        user_id="u1",
+        source_key="video-gap-run",
+    )
+    await kovaak_run_store.mark_run_video_unavailable(
+        run["id"], "u1", "video_coverage_gap",
+    )
+
+    snapshot = await kovaak_run_store.build_analysis_input_snapshot(run["id"], "u1")
+    video = snapshot["sources"]["video"]
+    # video_state=unavailable（非 attached）投影为 not_present，reason 保留故障码。
+    assert video["availability"] == "not_present"
+    assert video["reason"] == "video_coverage_gap"
+    assert video["ownership"] == "run"
+    assert "path" not in video and "fingerprint" not in video
+
+    from webapp.backend.source_requirements import validate_source_requirements
+    gate = validate_source_requirements(snapshot)
+    assert gate["selected_mode"] == "input_native"
+    assert "video_missing" in gate["missing"]
+
+    public = kovaak_run_store.public_analysis_input_snapshot(snapshot)
+    assert public["sources"]["video"]["reason"] == "video_coverage_gap"
+    assert "path" not in public["sources"]["video"]
+
+
+@pytest.mark.asyncio
 async def test_run_owned_video_snapshot_and_public_dto_are_path_free(
     tmp_path: Path,
 ) -> None:
