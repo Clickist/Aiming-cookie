@@ -6,17 +6,17 @@
 
 .page {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
   width: min(840px, 100%);
   margin-inline: auto;
-  padding: 28px;
+  padding: var(--space-6);
 }
 
 .pendingHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .workspace {
@@ -30,7 +30,7 @@
 /* ── Analysis header ─────────────────────────────────────── */
 .analysisHeader {
   flex: none;
-  padding: 14px 24px 12px;
+  padding: var(--space-4) var(--space-5) var(--space-3);
   border-bottom: 1px solid var(--outline-variant);
   background: var(--surface);
 }
@@ -38,39 +38,39 @@
 .headerRow {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
 .backLink {
   flex: none;
   color: var(--on-surface-variant);
-  font-size: 13px;
+  font-size: var(--text-ui);
   text-decoration: none;
   white-space: nowrap;
 }
 
 .backLink:hover {
-  color: var(--primary);
+  color: var(--on-surface);
 }
 
 .headerTitleWrap {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .titleLine {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .titleLine h1 {
   margin: 0;
-  font: 600 16px/1.3 var(--font-display);
+  font: 600 var(--text-title)/1.3 var(--font-display);
   overflow-wrap: anywhere;
 }
 
@@ -78,7 +78,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .statusDot {
@@ -91,7 +91,7 @@
 
 .headerSubline {
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 
 .evidenceSummary {
@@ -112,7 +112,7 @@
 .evidenceTrigger:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .evidenceTooltip {
@@ -123,12 +123,12 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   width: max-content;
   max-width: min(360px, calc(100vw - 48px));
-  padding: 8px;
+  padding: var(--space-2);
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface-container-high);
   box-shadow: 0 6px 18px color-mix(in srgb, black 18%, transparent);
   opacity: 0;
@@ -152,13 +152,13 @@
 .evidenceChip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   height: 24px;
-  padding: 0 8px;
-  border-radius: 4px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--outline-variant);
   background: var(--surface-container-low);
-  font-size: 11.5px;
+  font-size: var(--text-micro);
   color: var(--on-surface-variant);
   white-space: nowrap;
 }
@@ -187,17 +187,17 @@
 }
 
 .titleTabs {
-  margin-top: 10px;
+  margin-top: var(--space-3);
 }
 
 .partialNotice {
-  margin: 12px 24px 0;
+  margin: var(--space-3) var(--space-5) 0;
 }
 
 .view {
   flex: 1;
   min-width: 0;
-  padding: 20px 24px 32px;
+  padding: var(--space-5) var(--space-5) var(--space-6);
   container-type: inline-size;
   container-name: view;
 }
@@ -207,32 +207,32 @@
   max-width: 720px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: var(--space-5);
 }
 
 .diagnosisLead {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .conclusion {
-  font: 600 22px/1.35 var(--font-display);
+  font: 600 var(--text-display)/1.35 var(--font-display);
   color: var(--on-surface);
 }
 
 .profileTag {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
   color: var(--on-surface-variant);
 }
 
 .profileLabel {
   position: relative;
   display: inline-flex;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: help;
 }
 
@@ -248,13 +248,13 @@
   inset-inline-start: 0;
   width: max-content;
   max-width: min(340px, calc(100vw - 48px));
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface-container-high);
   box-shadow: 0 6px 18px color-mix(in srgb, black 18%, transparent);
   color: var(--on-surface);
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.5;
   opacity: 0;
   visibility: hidden;
@@ -282,24 +282,24 @@
 .prescriptionSection {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .sectionHead {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .sectionTitle {
   margin: 0;
-  font: 600 15px/1.2 var(--font-display);
+  font: 600 var(--text-title)/1.2 var(--font-display);
   color: var(--on-surface);
 }
 
 .sectionHint,
 .sectionCount {
-  font-size: 12px;
+  font-size: var(--text-caption);
   color: var(--on-surface-variant);
 }
 
@@ -310,25 +310,25 @@
 .issueList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .issueCard {
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   overflow: hidden;
 }
 
 .issueCard[data-selected="true"] {
-  border-color: var(--primary);
+  border-color: var(--outline);
 }
 
 .issueHead {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -340,34 +340,34 @@
   flex: 1;
   min-width: 0;
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: var(--text-ui);
   overflow-wrap: anywhere;
 }
 
 .issueActions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   margin-inline-start: auto;
   flex-wrap: wrap;
 }
 
 .issueBody {
-  padding: 0 14px 14px;
+  padding: 0 var(--space-4) var(--space-4);
   border-top: 1px solid var(--outline-variant);
 }
 
 .issueBody > p {
-  margin: 10px 0 0;
-  font-size: 12.5px;
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-caption);
   color: var(--on-surface);
 }
 
 .issueCause {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 4px 14px;
-  margin: 12px 0 0;
-  font-size: 12.5px;
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-caption);
 }
 
 .issueCause dt {
@@ -381,52 +381,52 @@
 
 .prescriptionPanel {
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
-  padding: 14px 16px;
+  padding: var(--space-4) var(--space-4);
 }
 
 .prescriptionTitle {
   font-weight: 600;
-  font-size: 13.5px;
-  margin-bottom: 5px;
+  font-size: var(--text-ui);
+  margin-bottom: var(--space-1);
 }
 
 .prescriptionReason {
-  margin: 0 0 8px;
-  font-size: 12.5px;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-caption);
   color: var(--on-surface-variant);
 }
 
 .metricSummaryPanel {
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
-  padding: 2px 16px;
+  padding: 2px var(--space-4);
 }
 
 .metricSummaryEmpty {
   min-height: 112px;
   box-sizing: border-box;
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
 .metricRow {
   display: grid;
   grid-template-columns: 150px 92px 1fr auto;
-  gap: 4px 12px;
+  gap: var(--space-1) var(--space-3);
   align-items: baseline;
   width: 100%;
   border: 0;
   border-top: 1px solid var(--outline-variant);
-  padding: 10px 0;
+  padding: var(--space-3) 0;
   background: transparent;
   color: var(--on-surface);
   text-align: start;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--text-caption);
 }
 
 .metricRow:first-child {
@@ -434,7 +434,7 @@
 }
 
 .metricRow:hover .metricKey {
-  color: var(--primary);
+  color: var(--on-surface);
 }
 
 .metricKey {
@@ -444,7 +444,7 @@
 
 .metricValue {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-ui);
   text-align: right;
 }
 
@@ -453,28 +453,28 @@
 }
 
 .analysisLimitations {
-  margin-top: 8px;
+  margin-top: var(--space-2);
 }
 
 .analysisLimitations ul {
-  margin: 8px 0 0;
-  padding-inline-start: 18px;
+  margin: var(--space-2) 0 0;
+  padding-inline-start: var(--space-4);
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 
 .limitedMetrics {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 8px;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 /* ── Data view ─────────────────────────────────────────────── */
 .dataView {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
   max-width: 1180px;
   margin-inline: auto;
 }
@@ -482,7 +482,7 @@
 .familyDataLayout {
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
-  gap: 20px;
+  gap: var(--space-5);
   align-items: start;
 }
 
@@ -507,7 +507,7 @@
 .detailColumn {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
 }
 
@@ -515,7 +515,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   overflow: hidden;
 }
@@ -530,11 +530,11 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  padding: 7px 16px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
   background: var(--surface-container-low);
   border-top: 1px solid var(--outline-variant);
-  font: 600 12px var(--font-ui);
+  font: 600 var(--text-caption) var(--font-ui);
   color: var(--on-surface);
   letter-spacing: 0.02em;
 }
@@ -544,7 +544,7 @@
 }
 
 .metricGroupHeader span {
-  font: 500 11px var(--font-mono);
+  font: 500 var(--text-micro) var(--font-mono);
   color: var(--on-surface-variant);
 }
 
@@ -557,8 +557,8 @@
 
 .metricOverviewPanel .metricRow {
   grid-template-columns: minmax(140px, 1.1fr) 92px minmax(0, 1.4fr);
-  gap: 2px 12px;
-  padding: 10px 16px;
+  gap: 2px var(--space-3);
+  padding: var(--space-3) var(--space-4);
   min-height: 54px;
   align-content: center;
 }
@@ -576,33 +576,33 @@
 .metricOverviewPanel .metricRow .metricPlain {
   grid-column: 3;
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 
 .chartCard {
   container: chart-card / inline-size;
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .chartGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
 }
 
 .chartTitle {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font: 600 13px var(--font-ui);
+  gap: var(--space-2);
+  font: 600 var(--text-ui) var(--font-ui);
   color: var(--on-surface);
 }
 
@@ -615,7 +615,7 @@
 
 .chartCap {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--text-micro);
   color: var(--on-surface-variant);
   line-height: 1.5;
 }
@@ -623,7 +623,7 @@
 .distributionPlot {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .distributionPlot button {
@@ -634,7 +634,7 @@
   display: grid;
   grid-template-columns: 120px minmax(80px, 1fr) 28px;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-height: 24px;
   border: 0;
   padding: 2px 0;
@@ -642,7 +642,7 @@
   color: var(--on-surface);
   text-align: start;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--text-caption);
 }
 
 .distributionBar i {
@@ -685,21 +685,21 @@
 .errorSeriesAxis {
   display: flex;
   justify-content: space-between;
-  font: 500 9px var(--font-mono);
+  font: 500 var(--text-micro) var(--font-mono);
   color: var(--on-surface-variant);
 }
 
 /* 不可用指标折叠区 */
 .unavailableMetrics {
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-4);
 }
 
 .unavailableMetrics summary {
   cursor: pointer;
-  font: 600 12.5px var(--font-ui);
+  font: 600 var(--text-caption) var(--font-ui);
   color: var(--on-surface);
 }
 
@@ -714,22 +714,22 @@
 /* ── Switching chain ─────────────────────────────────────── */
 .switchChainPanel {
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   overflow: hidden;
-  padding: 4px 0;
+  padding: var(--space-1) 0;
 }
 
 .switchRow {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   width: 100%;
   border: 0;
-  padding: 8px 14px;
+  padding: var(--space-2) var(--space-4);
   background: transparent;
   color: var(--on-surface);
-  font-size: 12px;
+  font-size: var(--text-caption);
   cursor: pointer;
   text-align: start;
 }
@@ -739,11 +739,11 @@
 }
 
 .switchRow[data-slow="true"] {
-  background: var(--primary-container);
+  background: var(--surface-container-high);
 }
 
 .switchRow[data-slow="true"] .switchIdx {
-  color: var(--on-primary-container);
+  color: var(--on-surface);
   font-weight: 600;
 }
 
@@ -816,7 +816,7 @@
   flex: none;
   width: 56px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-micro);
   text-align: right;
   color: var(--on-surface);
 }
@@ -824,15 +824,15 @@
 .switchLegend {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
-  font-size: 11px;
+  gap: var(--space-4);
+  font-size: var(--text-micro);
   color: var(--on-surface-variant);
 }
 
 .switchLegend span {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .switchLegendDot {
@@ -864,30 +864,30 @@
 .familyHighlights {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 /* ── Boundary / info panels ────────────────────────────────── */
 .boundaryPanel {
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
-  padding: 14px 16px;
+  padding: var(--space-4) var(--space-4);
 }
 
 .boundaryTitle {
   font-weight: 600;
-  font-size: 13px;
-  margin-bottom: 8px;
+  font-size: var(--text-ui);
+  margin-bottom: var(--space-2);
   color: var(--on-surface-variant);
 }
 
 .boundaryKv {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 3px 14px;
+  gap: var(--space-1) var(--space-4);
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--text-caption);
 }
 
 .boundaryKv dt {
@@ -903,29 +903,29 @@
 .videoLinks {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .videoLinkRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  font-size: 12.5px;
+  gap: var(--space-3);
+  font-size: var(--text-caption);
 }
 
 /* ── Video view ────────────────────────────────────────────── */
 .videoView {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
   max-width: 1120px;
   margin-inline: auto;
 }
 
 .playerStage {
   position: relative;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: color-mix(in srgb, black 90%, var(--on-surface) 10%);
   aspect-ratio: 16 / 9;
@@ -947,9 +947,9 @@
   z-index: 2;
   background: color-mix(in srgb, black 80%, transparent);
   color: color-mix(in srgb, white 94%, transparent);
-  font: 500 11px var(--font-mono);
-  padding: 4px 8px;
-  border-radius: 4px;
+  font: 500 var(--text-micro) var(--font-mono);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   pointer-events: none;
 }
 
@@ -967,23 +967,23 @@
 .playerBar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--outline-variant);
   border-top: 0;
-  border-radius: 0 0 6px 6px;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
   background: var(--surface);
 }
 
 .playerBarBtn {
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
+  flex: 0 0 var(--control-height-compact);
+  width: var(--control-height-compact);
+  height: var(--control-height-compact);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--on-surface-variant);
-  font-size: 13px;
+  font-size: var(--text-ui);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1012,13 +1012,13 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   width: 44px;
   height: 148px;
   box-sizing: border-box;
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: 0 8px 20px color-mix(in srgb, black 24%, transparent);
   opacity: 0;
@@ -1046,7 +1046,7 @@
 
 .volumeIcon {
   font-family: "Segoe UI Symbol", var(--font-ui);
-  font-size: 15px;
+  font-size: var(--text-title);
   line-height: 1;
 }
 
@@ -1063,13 +1063,13 @@
 .volumeValue {
   min-width: 0;
   color: var(--on-surface-variant);
-  font: 500 11px var(--font-mono);
+  font: 500 var(--text-micro) var(--font-mono);
   text-align: center;
 }
 
 .playerBarTime {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-micro);
   color: var(--on-surface-variant);
 }
 
@@ -1080,7 +1080,7 @@
 .timelineSection {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .timeline {
@@ -1088,7 +1088,7 @@
   height: 52px;
   background: var(--surface-container-low);
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 .timelineTrack {
@@ -1145,7 +1145,7 @@
   position: absolute;
   bottom: 2px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-micro);
   color: var(--on-surface-variant);
 }
 
@@ -1169,19 +1169,19 @@
 /* ── Responsive: viewport chrome（标题区/页边距） ───────────── */
 @media (max-width: 1159px) {
   .analysisHeader {
-    padding: 12px 16px 10px;
+    padding: var(--space-3) var(--space-4) var(--space-3);
   }
 
   .headerRow {
-    gap: 10px;
+    gap: var(--space-3);
   }
 
   .titleLine h1 {
-    font-size: 15px;
+    font-size: var(--text-title);
   }
 
   .view {
-    padding: 14px 16px 20px;
+    padding: var(--space-4) var(--space-4) var(--space-5);
   }
 
   .diagnosisView {
@@ -1220,7 +1220,7 @@
 
   .metricSummaryPanel .metricRow {
     grid-template-columns: 1fr auto;
-    gap: 2px 12px;
+    gap: 2px var(--space-3);
   }
 
   .metricSummaryPanel .metricRow .metricPlain {
@@ -1239,12 +1239,12 @@
   .familyDataLayout[data-family="tracking"],
   .familyDataLayout[data-family="flicking"] {
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
+    gap: var(--space-4);
   }
 
   .switchRow {
-    gap: 10px;
-    padding: 8px 12px;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
   }
 
   .switchIdx {
@@ -1253,7 +1253,7 @@
 
   .switchNum {
     width: 48px;
-    font-size: 11px;
+    font-size: var(--text-micro);
   }
 
   /* 窄窗口下切换链只保留耗时与效率两列关键值 */
@@ -1271,7 +1271,7 @@
 
 @media (max-width: 680px) {
   .page {
-    padding: 16px;
+    padding: var(--space-4);
   }
 
   .issueHead {

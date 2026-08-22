@@ -12,15 +12,15 @@
   align-items: center;
   justify-content: space-between;
   min-height: 54px;
-  gap: 12px;
-  padding: 8px 16px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--outline-variant);
   background: var(--surface);
 }
 
 .task7-coach-video-pane__header span {
   color: var(--on-surface-variant);
-  font-size: 10.5px;
+  font-size: var(--text-micro);
 }
 
 .task7-coach-video-pane__header h2 {
@@ -28,7 +28,7 @@
   margin: 2px 0 0;
   overflow: hidden;
   color: var(--on-surface);
-  font: 600 14px/1.25 var(--font-display);
+  font: 600 var(--text-body)/1.25 var(--font-display);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -37,7 +37,7 @@
   display: block;
   margin-top: 2px;
   color: var(--on-surface-variant);
-  font-size: 10.5px;
+  font-size: var(--text-micro);
 }
 
 .task7-coach-video-pane__close {
@@ -47,11 +47,11 @@
   height: 32px;
   place-items: center;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--on-surface-variant);
   cursor: pointer;
-  font: 500 20px/1 var(--font-ui);
+  font: 500 var(--text-display)/1 var(--font-ui);
 }
 
 .task7-coach-video-pane__close:hover {
@@ -68,5 +68,5 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding: var(--space-4);
 }

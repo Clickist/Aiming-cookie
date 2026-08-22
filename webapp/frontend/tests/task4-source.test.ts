@@ -33,7 +33,7 @@ test("history loading and empty states use the local panel treatment", async () 
   const client = await source("components/task4/HistoryClient.tsx");
   const styles = await source("components/task4/task4.css");
   assert.equal(client.match(/className="task4-panel task4-state-panel"/g)?.length, 2);
-  assert.match(styles, /\.task4-state-panel\s*{[\s\S]*min-height:\s*88px;[\s\S]*padding:\s*18px 20px;/);
+  assert.match(styles, /\.task4-state-panel\s*{[\s\S]*min-height:\s*88px;[\s\S]*padding:\s*var\(--space-4\) var\(--space-5\);/);
 });
 
 test("history keeps refresh and Coach return without batch attach", async () => {

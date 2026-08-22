@@ -15,8 +15,8 @@
   z-index: 100;
   transform: translateY(-160%);
   border: 2px solid var(--primary);
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
   background: var(--surface);
   color: var(--on-surface);
 }
@@ -31,9 +31,9 @@
   z-index: 30;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   height: 48px;
-  padding: 0 12px 0 16px;
+  padding: 0 var(--space-3) 0 var(--space-4);
   border-bottom: 1px solid var(--outline-variant);
   background: var(--surface);
   user-select: none;
@@ -41,7 +41,7 @@
 
 .task3-logo {
   color: var(--on-surface);
-  font: 600 15px/1 var(--font-display);
+  font: 600 var(--text-title)/1 var(--font-display);
   letter-spacing: 0.01em;
   user-select: none;
   white-space: nowrap;
@@ -70,7 +70,7 @@
   background: transparent;
   color: var(--on-surface-variant);
   cursor: pointer;
-  font: 500 14px/1 var(--font-ui);
+  font: 500 var(--text-body)/1 var(--font-ui);
   transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
@@ -202,8 +202,8 @@
 .task3-coach-content {
   display: grid;
   align-content: start;
-  gap: 12px;
-  padding: 24px;
+  gap: var(--space-3);
+  padding: var(--space-5);
 }
 
 .task3-coach-content h2,
@@ -222,7 +222,7 @@
 .task3-page {
   width: min(100%, 1180px);
   margin-inline: auto;
-  padding: 24px;
+  padding: var(--space-5);
 }
 
 .task3-page--narrow {
@@ -233,24 +233,24 @@
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
-  margin-block-end: 12px;
+  gap: var(--space-4);
+  margin-block-end: var(--space-3);
 }
 
 .task3-page-heading h1,
 .task3-onboarding-sheet h1 {
   margin: 2px 0 0;
   color: var(--on-surface);
-  font: 600 20px/1.25 var(--font-display);
+  font: 600 var(--text-display)/1.25 var(--font-display);
   letter-spacing: 0;
 }
 
 .task3-page-heading p,
 .task3-lead {
   max-width: 720px;
-  margin: 3px 0 0;
+  margin: var(--space-1) 0 0;
   color: var(--on-surface-variant);
-  font-size: 12.5px;
+  font-size: var(--text-caption);
 }
 
 .task3-eyebrow {
@@ -265,7 +265,7 @@
 .task3-onboarding-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .task3-opt-in-row > input,
@@ -276,14 +276,14 @@
 .task3-evidence-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   height: 24px;
-  padding: 0 8px;
+  padding: 0 var(--space-2);
   border: 1px solid var(--outline-variant);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-container-low);
   color: var(--on-surface-variant);
-  font-size: 11.5px;
+  font-size: var(--text-micro);
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
@@ -314,14 +314,14 @@
   display: grid;
   min-height: 100vh;
   place-items: center;
-  padding: 24px;
+  padding: var(--space-5);
   background: var(--background);
 }
 
 .task3-startup .ac-state {
   width: min(100%, 520px);
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -329,7 +329,7 @@
   display: grid;
   align-content: start;
   min-height: 100vh;
-  padding: 0 24px 32px;
+  padding: 0 var(--space-5) var(--space-6);
   background: var(--background);
 }
 
@@ -338,11 +338,11 @@
   align-items: center;
   height: 48px;
   margin-inline: -24px;
-  padding-inline: 16px;
+  padding-inline: var(--space-4);
   border-bottom: 1px solid var(--outline-variant);
   background: var(--surface);
   color: var(--on-surface);
-  font-size: 15px;
+  font-size: var(--text-title);
   font-weight: 600;
 }
 
@@ -351,8 +351,8 @@
   align-items: center;
   justify-self: center;
   width: auto;
-  gap: 8px;
-  margin-block: 48px 28px;
+  gap: var(--space-2);
+  margin-block: 48px var(--space-6);
 }
 
 .task3-onboarding-progress span {
@@ -363,7 +363,7 @@
   border-radius: 50%;
   background: var(--surface-container);
   color: var(--on-surface-variant);
-  font-size: 14px;
+  font-size: var(--text-body);
   font-weight: 500;
 }
 
@@ -385,8 +385,8 @@
   justify-self: center;
   gap: 0;
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
-  padding: 24px;
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
   background: var(--surface);
 }
 
@@ -411,31 +411,31 @@
 }
 
 .task3-onboarding-sheet h1 {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
   text-align: center;
-  font-size: 24px;
+  font-size: var(--text-display);
   font-weight: 600;
 }
 
 .task3-onboarding-wizard-fields {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .task3-onboarding-wizard-fields .ac-field {
-  gap: 5px;
+  gap: var(--space-1);
 }
 
 .task3-onboarding-wizard-fields .ac-field__label {
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-weight: 500;
 }
 
 .task3-onboarding-wizard-fields .ac-field__control {
   min-height: 0;
-  padding: 11px 12px;
-  border-radius: 8px;
-  font-size: 15px;
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-title);
 }
 
 .task3-onboarding-wizard-fields .ac-field__control:hover {
@@ -458,13 +458,13 @@
   justify-content: space-between;
   width: 100%;
   min-height: var(--control-height);
-  gap: 10px;
+  gap: var(--space-3);
   border: 1px solid var(--outline);
-  border-radius: 8px;
-  padding: 11px 12px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-3);
   background: var(--surface);
   color: var(--on-surface);
-  font-size: 15px;
+  font-size: var(--text-title);
   text-align: start;
   cursor: pointer;
   transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
@@ -511,7 +511,7 @@
   max-height: 360px;
   overflow: auto;
   border: 1px solid var(--outline);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: 0 14px 40px color-mix(in srgb, var(--on-surface) 14%, transparent);
   transform-origin: top center;
@@ -534,12 +534,12 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  gap: 10px;
+  gap: var(--space-3);
   border: 0;
-  padding: 11px 12px;
+  padding: var(--space-3) var(--space-3);
   background: transparent;
   color: var(--on-surface);
-  font-size: 14px;
+  font-size: var(--text-body);
   text-align: start;
   cursor: pointer;
 }
@@ -556,7 +556,7 @@
 
 .task3-onboarding-dropdown-option small {
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 
 .task3-onboarding-dropdown-option[aria-selected="true"] small {
@@ -565,7 +565,7 @@
 }
 
 .task3-onboarding-dropdown-group {
-  padding-block: 6px;
+  padding-block: var(--space-2);
 }
 
 .task3-onboarding-dropdown-group + .task3-onboarding-dropdown-group {
@@ -573,29 +573,29 @@
 }
 
 .task3-onboarding-dropdown-label {
-  padding: 7px 12px;
+  padding: var(--space-2) var(--space-3);
   color: var(--on-surface-variant);
-  font-size: 12px;
+  font-size: var(--text-caption);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .task3-onboarding-custom-fields {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .task3-custom-model-discovery {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .task3-custom-model-discovery > p {
   margin: 0;
   color: var(--on-surface-variant);
-  font-size: 13px;
+  font-size: var(--text-ui);
 }
 
 .task3-custom-model-discovery > p[data-tone="error"] {
@@ -609,17 +609,17 @@
 .task3-auth-modes {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .task3-auth-modes label {
   display: flex;
   align-items: center;
   min-height: var(--control-height);
-  gap: 8px;
+  gap: var(--space-2);
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
   cursor: pointer;
 }
 
@@ -628,10 +628,10 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-3);
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
-  padding: 14px;
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
   background: var(--surface-container-low);
 }
 
@@ -642,30 +642,30 @@
 .task3-inline-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .task3-onboarding-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .task3-onboarding-wizard-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-top: 24px;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 .task3-onboarding-primary {
   flex: 0 0 auto;
   min-height: var(--control-height);
-  padding: 0 16px;
-  border-radius: 6px;
-  font-size: 14px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--text-body);
   font-weight: 600;
 }
 
@@ -694,7 +694,7 @@
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  margin-inline-start: 8px;
+  margin-inline-start: var(--space-2);
 }
 
 .task3-skip-action {
@@ -702,7 +702,7 @@
   padding: 0;
   background: transparent;
   color: var(--on-surface-variant);
-  font-size: 13px;
+  font-size: var(--text-ui);
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -730,13 +730,13 @@
   bottom: calc(100% + 8px);
   left: 50%;
   width: 280px;
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-3);
   border: 1px solid var(--outline);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: 0 8px 24px color-mix(in srgb, var(--on-surface) 12%, transparent);
   color: var(--on-surface-variant);
-  font-size: 13px;
+  font-size: var(--text-ui);
   line-height: 1.6;
   opacity: 0;
   pointer-events: none;
@@ -764,16 +764,16 @@
   justify-content: center;
   min-width: 0;
   min-height: var(--control-height);
-  padding-inline: 12px;
+  padding-inline: var(--space-3);
   color: var(--on-surface-variant);
-  font-size: 13px;
+  font-size: var(--text-ui);
   text-align: center;
 }
 
 .task3-onboarding-status span {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -802,10 +802,10 @@
 .task3-opt-in-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--space-3);
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
-  padding: 16px;
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
   cursor: pointer;
 }
 
@@ -816,7 +816,7 @@
 
 .task3-opt-in-row span {
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .task3-opt-in-row small {
@@ -825,17 +825,17 @@
 
 @media (max-width: 959px) {
   .task3-page {
-    padding: 16px;
+    padding: var(--space-4);
   }
 }
 
 @media (max-width: 720px) {
   .task3-toolbar {
-    padding-inline: 6px;
+    padding-inline: var(--space-2);
   }
 
   .task3-logo {
-    padding-inline: 6px 10px;
+    padding-inline: var(--space-2) var(--space-3);
   }
 
   .task3-page-heading {
@@ -852,7 +852,7 @@
   }
 
   .task3-onboarding {
-    padding: 0 16px 24px;
+    padding: 0 var(--space-4) var(--space-5);
   }
 
   .task3-onboarding-brand {
@@ -860,7 +860,7 @@
   }
 
   .task3-onboarding-sheet {
-    padding: 18px;
+    padding: var(--space-4);
   }
 
   .task3-onboarding-wizard-actions {
