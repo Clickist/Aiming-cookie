@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getPythonBackendConfig } from "./python-backend.ts";
 import { getAnalysesDir } from "./app-data.ts";
+import { reportAnalysisRead } from "./fs-tools.ts";
 import type { NativeWriteResult } from "./product-commands-write.ts";
 
 type AnyDict = Record<string, any>;
@@ -211,6 +212,9 @@ export async function executeNativePythonAnalysis(
         },
       };
     }
+    // 本讨论创建的分析即讨论主题：挂进「本次讨论」，并让讲课时文中的
+    // @time 链接能解析到这份分析的视频。
+    reportAnalysisRead(sessionId, true);
     return {
       status: "succeeded",
       command_id: commandId,

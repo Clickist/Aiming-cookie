@@ -178,7 +178,7 @@ async function messagesFromSession(session: SessionLike): Promise<SessionMessage
     if (entry.type !== "message" || !isRecord(entry.message)) continue;
     const message = entry.message;
     if (message.role !== "user" && message.role !== "assistant") continue;
-    const content = extractMessageText(message.content);
+    const content = extractUserFacingText(message.content);
     if (message.role === "assistant" && !content.trim()) continue;
     messages.push({
       role: message.role,
@@ -246,6 +246,24 @@ export function extractMessageText(content: unknown): string {
       .filter((block): block is { type: string; text?: unknown } => isRecord(block) && block.type === "text")
       .map((block) => (typeof block.text === "string" ? block.text : ""))
       .join("");
+  }
+  return "";
+}
+
+/**
+ * 面向用户展示的文本提取：按块 trim 后用单换行连接、丢弃纯空白块。
+ * 模型在工具调用间隙输出的 narration 块自带 \n\n 头尾，直接拼接会让
+ * 对话气泡出现连续空行；provider 历史上下文仍用 extractMessageText
+ * 的原始拼接，二者不要混用。
+ */
+export function extractUserFacingText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((block): block is { type: string; text?: unknown } => isRecord(block) && block.type === "text")
+      .map((block) => (typeof block.text === "string" ? block.text.trim() : ""))
+      .filter((text) => text.length > 0)
+      .join("\n");
   }
   return "";
 }

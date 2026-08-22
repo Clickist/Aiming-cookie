@@ -55,7 +55,7 @@ function protectedStateFile(absolutePath: string, cwd: string): { relative: stri
 // analysis to the run/session state. The frontend uses that analysis_ref to
 // turn `@3.4s` time links into video seeks.
 
-type AnalysisReadListener = (analysisId: number) => void;
+type AnalysisReadListener = (analysisId: number, subject: boolean) => void;
 
 const analysisReadListeners = new Set<AnalysisReadListener>();
 
@@ -79,19 +79,26 @@ export function runScopedAnalysisReads<T>(
   return analysisReadScope.run(new Set([listener]), body);
 }
 
-function dispatchAnalysisRead(analysisId: number): void {
+function dispatchAnalysisRead(analysisId: number, subject: boolean): void {
   if (!Number.isSafeInteger(analysisId) || analysisId <= 0) return;
   const scoped = analysisReadScope.getStore();
   if (scoped) {
-    for (const listener of scoped) listener(analysisId);
+    for (const listener of scoped) listener(analysisId, subject);
     return;
   }
-  for (const listener of analysisReadListeners) listener(analysisId);
+  for (const listener of analysisReadListeners) listener(analysisId, subject);
 }
 
-/** Report an analysis id directly (used by native product commands). */
-export function reportAnalysisRead(analysisId: number): void {
-  dispatchAnalysisRead(analysisId);
+/**
+ * Report an analysis id directly (used by native product commands).
+ *
+ * `subject: true` marks discussion-subject engagement (the analysis the user
+ * asked about, one the turn created, or one whose video evidence was opened);
+ * only subject engagement joins the discussion bar. Reference reads such as
+ * history comparison stay `subject: false` so they do not pollute 本次讨论.
+ */
+export function reportAnalysisRead(analysisId: number, subject = false): void {
+  dispatchAnalysisRead(analysisId, subject);
 }
 
 /**
