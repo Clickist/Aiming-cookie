@@ -1441,7 +1441,7 @@
   background: transparent;
   color: var(--on-surface);
   font: 400 var(--text-ui)/1.45 var(--font-ui);
-  resize: vertical;
+  resize: none;
 }
 
 .task6-composer-input textarea::placeholder {
