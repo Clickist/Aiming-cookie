@@ -416,7 +416,7 @@ function TrackingDataView({
                   if (!bounds) return null;
                   const left = 20 + (bounds[0] / timelineMax) * 320;
                   const width = Math.max(4, ((bounds[1] - bounds[0]) / timelineMax) * 320);
-                  return <rect key={`loss-${index}`} fill="var(--primary)" height="16" opacity="0.6" width={width} x={left} y="42" />;
+                  return <rect key={`loss-${index}`} fill="var(--event-peak)" height="16" opacity="0.6" width={width} x={left} y="42" />;
                 })}
                 {reacqRows.map((row, index) => {
                   const bounds = rowBounds(row);
@@ -425,10 +425,10 @@ function TrackingDataView({
                   const width = Math.max(4, ((bounds[1] - bounds[0]) / timelineMax) * 320);
                   return <line key={`reacq-${index}`} stroke="var(--tertiary)" strokeWidth="2" x1={left} x2={left + width} y1="70" y2="70" />;
                 })}
-                <rect fill="var(--primary)" height="10" opacity="0.6" width="10" x="20" y="84" />
-                <text fill="var(--on-surface)" fontSize="10" x="34" y="93">偏离（宽度=持续时间）</text>
+                <rect fill="var(--event-peak)" height="10" opacity="0.6" width="10" x="20" y="84" />
+                <text className={styles.chartText} x="34" y="93">偏离（宽度=持续时间）</text>
                 <line stroke="var(--tertiary)" strokeWidth="2" x1="160" x2="175" y1="89" y2="89" />
-                <text fill="var(--on-surface)" fontSize="10" x="180" y="93">重新捕获延迟</text>
+                <text className={styles.chartText} x="180" y="93">重新捕获延迟</text>
               </svg>
             ) : (
               <p className={styles.chartCap}>本次没有可定位的偏离/重新捕获事件。</p>
@@ -551,16 +551,16 @@ function FlickingDataView({
             {phases && totalPhase > 0 ? (
               <svg className={styles.chartSvg} preserveAspectRatio="xMidYMid meet" viewBox="0 0 360 90">
                 <rect fill="var(--tertiary)" height="40" opacity="0.75" width={(phases.accel / totalPhase) * 320} x="20" y="20" />
-                <rect fill="var(--primary)" height="40" opacity="0.75" width={(phases.decel / totalPhase) * 320} x={20 + (phases.accel / totalPhase) * 320} y="20" />
+                <rect fill="var(--event-peak)" height="40" opacity="0.75" width={(phases.decel / totalPhase) * 320} x={20 + (phases.accel / totalPhase) * 320} y="20" />
                 <rect fill="var(--on-surface-variant)" height="40" opacity="0.75" width={(phases.settle / totalPhase) * 320} x={20 + ((phases.accel + phases.decel) / totalPhase) * 320} y="20" />
-                <text fill="var(--on-tertiary)" fontSize="12" fontWeight="600" textAnchor="middle" x={20 + (phases.accel / totalPhase) * 160} y="45">{Math.round((phases.accel / totalPhase) * 100)}%</text>
-                <text fill="var(--on-primary)" fontSize="12" fontWeight="600" textAnchor="middle" x={20 + (phases.accel / totalPhase) * 320 + (phases.decel / totalPhase) * 160} y="45">{Math.round((phases.decel / totalPhase) * 100)}%</text>
+                <text className={styles.chartTextOnTertiary} textAnchor="middle" x={20 + (phases.accel / totalPhase) * 160} y="45">{Math.round((phases.accel / totalPhase) * 100)}%</text>
+                <text className={styles.chartTextOnPrimary} textAnchor="middle" x={20 + (phases.accel / totalPhase) * 320 + (phases.decel / totalPhase) * 160} y="45">{Math.round((phases.decel / totalPhase) * 100)}%</text>
                 <rect fill="var(--tertiary)" height="8" opacity="0.75" width="8" x="20" y="72" />
-                <text fill="var(--on-surface)" fontSize="10" x="32" y="79">加速 {familyMetricText("accel_duration_ms", phases.accel)}</text>
-                <rect fill="var(--primary)" height="8" opacity="0.75" width="8" x="110" y="72" />
-                <text fill="var(--on-surface)" fontSize="10" x="122" y="79">减速 {familyMetricText("decel_duration_ms", phases.decel)}</text>
+                <text className={styles.chartText} x="32" y="79">加速 {familyMetricText("accel_duration_ms", phases.accel)}</text>
+                <rect fill="var(--event-peak)" height="8" opacity="0.75" width="8" x="110" y="72" />
+                <text className={styles.chartText} x="122" y="79">减速 {familyMetricText("decel_duration_ms", phases.decel)}</text>
                 <rect fill="var(--on-surface-variant)" height="8" opacity="0.75" width="8" x="220" y="72" />
-                <text fill="var(--on-surface)" fontSize="10" x="232" y="79">稳定 {familyMetricText("settle_duration_ms", phases.settle)}</text>
+                <text className={styles.chartText} x="232" y="79">稳定 {familyMetricText("settle_duration_ms", phases.settle)}</text>
               </svg>
             ) : (
               <p className={styles.chartCap}>阶段时序样本不足。</p>
@@ -579,12 +579,12 @@ function FlickingDataView({
                   const height = Math.max(4, (count / Math.max(1, efficiencies.length / 5)) * 90);
                   return <rect key={index} x={20 + index * 32} y={100 - height} width="26" height={height} fill="var(--tertiary)" opacity="0.7" />;
                 })}
-                <text fill="var(--on-surface-variant)" fontSize="9" textAnchor="start" x="20" y="108">60%</text>
-                <text fill="var(--on-surface-variant)" fontSize="9" textAnchor="end" x="340" y="108">100%</text>
+                <text className={styles.chartTextMuted} textAnchor="start" x="20" y="108">60%</text>
+                <text className={styles.chartTextMuted} textAnchor="end" x="340" y="108">100%</text>
                 {medianEff !== null ? (
                   <>
-                    <line stroke="var(--primary)" strokeDasharray="3 2" strokeWidth="1.5" x1={20 + ((medianEff - 0.6) / 0.4) * 320} x2={20 + ((medianEff - 0.6) / 0.4) * 320} y1="10" y2="100" />
-                    <text fill="var(--primary)" fontSize="10" x={24 + ((medianEff - 0.6) / 0.4) * 320} y="16">{Number((medianEff * 100).toFixed(0))}%</text>
+                    <line stroke="var(--event-peak)" strokeDasharray="3 2" strokeWidth="1.5" x1={20 + ((medianEff - 0.6) / 0.4) * 320} x2={20 + ((medianEff - 0.6) / 0.4) * 320} y1="10" y2="100" />
+                    <text className={styles.chartTextEmph} x={24 + ((medianEff - 0.6) / 0.4) * 320} y="16">{Number((medianEff * 100).toFixed(0))}%</text>
                   </>
                 ) : null}
               </svg>

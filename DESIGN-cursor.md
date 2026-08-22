@@ -35,6 +35,15 @@ Mockups, Stitch output, root `DESIGN.md`, design HTML, and other drafts are refe
 - Use a consistent editorial rhythm, container scale, and compact machined radii across themes.
 - Semantic role names should remain stable once the new executable token layer is established. A theme changes token values, not component structure.
 
+### Usage semantics (2026-08 unification)
+
+The executable scales and usage rules live in `docs/design-system.md` and are enforced by `webapp/frontend/tests/design-system-contract.test.ts`. At the intent level:
+
+- Geometry: six-step type scale (`--text-micro..display`), three-step radius scale, 4px spacing grid, two control heights (36/32). Components invent no one-off sizes.
+- Primary stays scarce: true CTAs and `:focus-visible` only. Identity, selection, hover, and badges ride the neutral surface ladder; informational/busy states use tertiary; success reads as event-kill text; `event-*` colors mark data only.
+- Motion: two transition durations (150ms state, 200ms open/close) plus the 120ms reduced-motion override, one easing family. Loops (loading pulses, caret blink) are exempt.
+- Depth: one overlay shadow token and one focus ring token; elevation otherwise comes from surface steps and hairlines.
+
 ### Theme behavior
 
 - The only user-facing choices are **System**, **Light**, and **Dark**.
@@ -102,7 +111,7 @@ All themes expose the identical token names below. Values are intentionally sema
 
 ## Component rules
 
-- Use semantic classes/tokens such as `bg-surface-container`, `text-on-surface`, `border-outline`, and `text-primary` once the new frontend foundation defines them.
+- Consume tokens through CSS custom properties (`var(--surface-container)`, `var(--on-surface)`, `var(--outline-variant)`) from the shared stylesheet; local one-off values are contract violations.
 - Never introduce raw hex/RGB values in components, and never branch a component on the active theme.
 - New visual needs require a semantic token defined in this document and implemented in both palettes before use.
-- The only global active-state glow is the token-derived primary pulse used by the processing pipeline.
+- No decorative active-state glows. Processing and busy states express through color plus text (never color alone); loading loops may use a neutral pulse.

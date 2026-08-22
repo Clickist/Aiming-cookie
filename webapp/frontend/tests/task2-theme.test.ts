@@ -105,6 +105,28 @@ test("primary text roles remain readable in both themes", () => {
   }
 });
 
+test("common chrome text-on-container pairs keep AA contrast in both themes", () => {
+  // design-system.md 的中性化（选中/hover/徽章全走 surface 阶梯）之后，
+  // 这些灰阶配对成了实际承担文字的背景，锁住 4.5 下限。
+  const pairs: Array<[string, string]> = [
+    ["on-surface", "surface-container"],
+    ["on-surface", "surface-container-high"],
+    ["on-surface", "surface-container-highest"],
+    ["on-surface-variant", "surface-container"],
+    ["on-surface-variant", "surface-container-high"],
+    ["on-surface-variant", "surface-container-highest"],
+    ["on-primary-container", "primary-container"],
+    ["on-tertiary-container", "tertiary-container"],
+    ["inverse-on-surface", "inverse-surface"],
+  ];
+  for (const tokens of [LIGHT_TOKENS, DARK_TOKENS]) {
+    for (const [fg, bg] of pairs) {
+      const ratio = contrastRatio(tokens[fg as keyof typeof LIGHT_TOKENS], tokens[bg as keyof typeof LIGHT_TOKENS]);
+      assert.ok(ratio >= 4.5, `${fg} on ${bg} = ${ratio.toFixed(2)} < 4.5`);
+    }
+  }
+});
+
 test("theme preference is local UI storage and the hydration script applies it before paint", () => {
   assert.equal(THEME_STORAGE_KEY, "aiming-cookie.ui.theme");
   const script = createThemeScript();
