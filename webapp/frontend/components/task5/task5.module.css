@@ -613,6 +613,36 @@
   max-width: 100%;
 }
 
+.chartText,
+.chartTextMuted,
+.chartTextEmph {
+  font-size: var(--text-micro);
+}
+
+.chartText {
+  fill: var(--on-surface);
+}
+
+.chartTextMuted {
+  fill: var(--on-surface-variant);
+}
+
+.chartTextEmph {
+  fill: var(--event-peak);
+}
+
+.chartTextOnTertiary {
+  fill: var(--on-tertiary);
+  font-size: var(--text-caption);
+  font-weight: 600;
+}
+
+.chartTextOnPrimary {
+  fill: var(--on-primary);
+  font-size: var(--text-caption);
+  font-weight: 600;
+}
+
 .chartCap {
   margin: 0;
   font-size: var(--text-micro);

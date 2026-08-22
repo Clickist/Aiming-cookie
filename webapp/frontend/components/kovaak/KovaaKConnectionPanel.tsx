@@ -209,8 +209,8 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
             <Status tone="neutral"><span className="kovaak-skeleton-dot" />正在读取成绩…</Status>
             <span className="kovaak-module-note">通常只需几秒，可以继续其它操作</span>
           </div>
-          <div style={{ marginTop: "10px", width: "62%" }}><div className="kovaak-skeleton" /></div>
-          <div style={{ marginTop: "8px", width: "44%" }}><div className="kovaak-skeleton" /></div>
+          <div style={{ marginTop: "var(--space-3)", width: "62%" }}><div className="kovaak-skeleton" /></div>
+          <div style={{ marginTop: "var(--space-2)", width: "44%" }}><div className="kovaak-skeleton" /></div>
         </div>
       </div>
     );
@@ -282,7 +282,7 @@ export function KovaaKConnectionPanel({ context, onContinue, onSkip }: KovaaKCon
     <div className="kovaak-module kovaak-empty">
       <div className="kovaak-empty-title">这个来源还没有可读取的 S2 训练单成绩</div>
       <p>可能是还没有完成训练单项目，或资料未公开。不影响本地分析与 Coach 训练。</p>
-      <div style={{ marginTop: "10px" }}>
+      <div style={{ marginTop: "var(--space-3)" }}>
         <Button disabled={busy} onClick={() => void refresh()} size="compact" variant="ghost">稍后重新读取</Button>
       </div>
     </div>

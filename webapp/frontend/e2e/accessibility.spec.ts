@@ -199,4 +199,53 @@ test("Settings keeps an explicit keyboard-operable exit at the supported width",
     await expect(page).toHaveURL(/\/$/);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
+
+  // 全量 Tab 走查：每个键盘可达的交互元素都必须有可见的 focus 指示
+  //（outline 或 box-shadow ring），不接受“能聚焦但看不出来”。
+  for (const route of ["/", "/settings", "/history"] as const) {
+    test(`keyboard tab traversal keeps focus visible on ${route}`, async ({ page }) => {
+      await page.setViewportSize({ width: 1180, height: 720 });
+      await installApiFixtures(page);
+      await page.goto(route);
+      await page.waitForTimeout(400);
+
+      const probe = () =>
+        page.evaluate(() => {
+          const active = document.activeElement;
+          if (!active || !(active instanceof HTMLElement) || active === document.body) return null;
+          const style = getComputedStyle(active);
+          // focus 指示可以画在元素自身，也可以画在 :focus-within 的外层容器上。
+          let hasOutline = style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) >= 1;
+          let hasRing = style.boxShadow !== "none";
+          let node: HTMLElement | null = active;
+          for (let depth = 0; depth < 4 && node && !(hasOutline || hasRing); depth += 1) {
+            node = node.parentElement;
+            if (!node || node === document.body) break;
+            const ps = getComputedStyle(node);
+            hasOutline ||= ps.outlineStyle !== "none" && Number.parseFloat(ps.outlineWidth) >= 1;
+            hasRing ||= ps.boxShadow !== "none";
+          }
+          const label = (active.getAttribute("aria-label") ?? active.textContent ?? "").trim().slice(0, 40);
+          return {
+            key: `${active.tagName}#${active.id}.${String(active.className).slice(0, 60)}:${label}`,
+            label,
+            ok: hasOutline || hasRing,
+            reason: `outline=${style.outlineStyle}/${style.outlineWidth} shadow=${style.boxShadow}`,
+          };
+        });
+
+      const gaps: Array<{ tag: string; label: string; reason: string }> = [];
+      const seen = new Set<string>();
+      for (let step = 0; step < 60; step += 1) {
+        await page.keyboard.press("Tab");
+        const state = await probe();
+        if (!state) continue;
+        if (seen.has(state.key)) break;
+        seen.add(state.key);
+        if (!state.ok) gaps.push({ tag: state.key, label: state.label, reason: state.reason });
+      }
+      expect(seen.size, `visited only: ${[...seen].join(" | ")}`).toBeGreaterThanOrEqual(5);
+      expect(gaps, JSON.stringify(gaps, null, 1)).toEqual([]);
+    });
+  }
 });

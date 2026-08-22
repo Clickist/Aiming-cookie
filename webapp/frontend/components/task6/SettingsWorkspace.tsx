@@ -544,7 +544,7 @@ export function SettingsWorkspace() {
                         {profile.status === "ready" ? " · 上次测试：可用" : null}
                       </p>
                       {expanded ? (
-                        <div className="task6-provider-actions" style={{ marginTop: "10px", marginLeft: 0, justifyContent: "flex-start" }}>
+                        <div className="task6-provider-actions" style={{ marginTop: "var(--space-3)", marginLeft: 0, justifyContent: "flex-start" }}>
                           {!profile.is_default ? (
                             <Button
                               onClick={() => void setDefaultProviderProfile(profile.id).then(() => refresh(true)).catch(() => setFeedback("默认 Provider 未能更新。"))}
@@ -791,7 +791,7 @@ export function SettingsWorkspace() {
                 </label>
               ) : null}
               {desktop && capture?.capture_enabled != null ? (
-                <div className="task6-inline-actions" style={{ marginTop: "12px" }}>
+                <div className="task6-inline-actions" style={{ marginTop: "var(--space-3)" }}>
                   <Button
                     disabled={!capture.capture_enabled && !captureConsent}
                     onClick={() => void setDesktopCaptureEnabled(!capture.capture_enabled).then(() => refresh(true))}
@@ -802,7 +802,7 @@ export function SettingsWorkspace() {
                 </div>
               ) : null}
               {desktop ? (
-                <div className="task6-inline-actions" style={{ marginTop: "12px" }}>
+                <div className="task6-inline-actions" style={{ marginTop: "var(--space-3)" }}>
                   <Button disabled={diagnosticExporting} onClick={() => void exportCaptureDiagnostics()} variant="secondary">
                     {diagnosticExporting ? "正在导出诊断包…" : "导出采集诊断包"}
                   </Button>
