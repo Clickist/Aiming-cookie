@@ -346,8 +346,11 @@ test("Coach composer uses a raised input surface without an outer divider", asyn
   const input = styles.match(/\.task6-composer-input\s*\{([\s\S]*?)\}/)?.[1] ?? "";
   assert.doesNotMatch(header, /border-bottom/);
   assert.doesNotMatch(training, /border-bottom/);
-  assert.match(styles, /\.task6-coach-header::after,[\s\S]*\.task6-current-training::after/);
-  assert.match(styles, /inset-inline:\s*calc\(-1 \* max\(14px, calc\(\(100% - var\(--task6-coach-content-width\)\) \/ 2\)\)\)/);
+  // 头部三块与底部输入区、面板同一片 surface-container-low：不靠
+  // 延伸发丝线切开，让顶部连贯下来（与 composer 一致）。
+  assert.doesNotMatch(styles, /\.task6-coach-header::after/);
+  assert.doesNotMatch(styles, /\.task6-current-training::after/);
+  assert.doesNotMatch(styles, /\.task6-discussion-bar::after/);
   assert.doesNotMatch(composer, /border-top/);
   assert.match(panel, /padding-inline:\s*max\(14px, calc\(\(100% - var\(--task6-coach-content-width\)\) \/ 2\)\)/);
   assert.match(messagesWrap, /width:\s*100%/);
@@ -415,5 +418,6 @@ test("Coach pins the discussion analysis bar above the scrolling conversation an
   assert.match(coach, /onClick=\{\(\) => onOpenVideo\?\.\(`analysis:\$\{id\}`, 0\)\}/);
   // 吸顶条样式：flex 收缩为 none，不参与对话滚动
   assert.match(styles, /\.task6-discussion-bar\s*\{[\s\S]*flex:\s*none;[\s\S]*\}/);
-  assert.match(styles, /\.task6-discussion-bar::after/);
+  // 吸顶条与整面板同底色，不再有 ::after 发丝线切开
+  assert.doesNotMatch(styles, /\.task6-discussion-bar::after/);
 });
