@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getProviderCatalog, listProviderProfiles, switchProviderModel } from "@/lib/api";
+import { IconCheck, IconChevronDown } from "@/ui/icons";
 import type { ProviderCatalogV1, ProviderProfile } from "@/lib/types";
 
 interface CoachModelMenuProps {
@@ -121,7 +122,7 @@ export function CoachModelMenu({ disabled, onError }: CoachModelMenuProps) {
         type="button"
       >
         <span className="task6-composer-model-label">{currentName}</span>
-        <span aria-hidden="true" className="task6-composer-model-caret">▾</span>
+        <IconChevronDown className="task6-composer-model-caret" />
       </button>
       {open ? (
         <div aria-label="当前 Provider 的模型" className="task6-composer-model-menu" role="menu">
@@ -137,7 +138,7 @@ export function CoachModelMenu({ disabled, onError }: CoachModelMenuProps) {
                 type="button"
               >
                 <span>{displayName(model) ?? model.model_id}</span>
-                {selected ? <span aria-hidden="true" className="task6-composer-model-check">✓</span> : null}
+                {selected ? <IconCheck className="task6-composer-model-check" /> : null}
               </button>
             );
           })}

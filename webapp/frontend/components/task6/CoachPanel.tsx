@@ -25,6 +25,7 @@ import type {
   ProviderProfileState,
   SessionListItem,
 } from "@/lib/types";
+import { IconClose, IconSend, IconStop } from "@/ui/icons";
 import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
@@ -897,7 +898,7 @@ export function CoachPanel({
         <span className="task6-coach-title">Aiming Coach</span>
         <span className="task6-coach-availability" data-state={headerState.state}>{headerState.label}</span>
         <div className="task6-coach-header-actions">
-          {onClose ? <IconButton label="关闭 Coach" onClick={onClose} title="关闭 Coach">×</IconButton> : null}
+          {onClose ? <IconButton label="关闭 Coach" onClick={onClose} title="关闭 Coach"><IconClose /></IconButton> : null}
         </div>
       </div>
     </header>
@@ -1084,9 +1085,9 @@ export function CoachPanel({
             onError={(message) => setFeedback(message)}
           />
           {run && ["queued", "running"].includes(run.status) ? (
-            <button aria-label="停止生成" className="task6-composer-send" onClick={() => void stop()} type="button" title="停止生成">■</button>
+            <button aria-label="停止生成" className="task6-composer-send" onClick={() => void stop()} type="button" title="停止生成"><IconStop /></button>
           ) : (
-            <button aria-label="发送" className="task6-composer-send" disabled={!draft.trim()} onClick={() => void send()} type="button">↑</button>
+            <button aria-label="发送" className="task6-composer-send" disabled={!draft.trim()} onClick={() => void send()} type="button"><IconSend /></button>
           )}
         </div>
       </footer>

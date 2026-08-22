@@ -75,7 +75,7 @@
 
 .task4-panel {
   border: 1px solid var(--outline-variant);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -125,7 +125,7 @@
   gap: 8px;
   min-width: 0;
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: var(--text-ui);
 }
 
 .task4-row-title .task4-name {
@@ -163,7 +163,7 @@
 }
 
 .task4-sel-dot[data-selected="true"] {
-  border-color: var(--primary);
+  border-color: var(--on-surface);
 }
 
 .task4-sel-dot[data-selected="true"]::after {
@@ -171,7 +171,7 @@
   position: absolute;
   inset: 3px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--on-surface);
 }
 
 /* Evidence chips */
@@ -246,8 +246,8 @@
 }
 
 .task4-badge-preview {
-  background: var(--primary-container);
-  color: var(--on-primary-container);
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
 }
 
 .task4-badge-ok {
@@ -294,7 +294,7 @@
 .task4-trend-chart {
   flex: none;
   width: 150px;
-  height: 40px;
+  height: var(--control-height);
 }
 
 .task4-trend-empty {
@@ -358,7 +358,7 @@
 
   .task4-trend-chart {
     width: 100%;
-    height: 40px;
+    height: var(--control-height);
   }
 
   .task4-row-actions .ac-button:not([data-size="compact"]) {

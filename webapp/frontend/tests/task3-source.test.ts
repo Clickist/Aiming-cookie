@@ -73,6 +73,13 @@ test("AppShell opens a fresh draft for intent navigation but keeps the primary s
   assert.match(shell, /const primary = coachSessions\.find\(\(session\) => session\.kind === "primary"\);/);
 });
 
+test("retired AppBar nav and Tasks center styles are gone", async () => {
+  const styles = await source("components/task3/task3.css");
+  assert.doesNotMatch(styles, /\.task3-primary-nav|\.task3-tool-nav|\.t-btn\b|\.t-icon\b|\.task3-tasks-panel|\.task3-task-item|\.task3-stage-stepper/);
+  assert.match(styles, /\.task3-toolbar[^{]*\{[\s\S]*height:\s*48px/);
+  assert.match(styles, /\.task3-mode-badge|\.task3-preview-badge/);
+});
+
 test("app shell removes transient status controls from the AppBar", async () => {
   const value = await source("components/task3/AppShell.tsx");
   assert.doesNotMatch(value, /task3-capture-status/);

@@ -49,8 +49,8 @@ test("SessionRail follows the active narrow and footer contract", async () => {
   assert.match(component, /prefers-reduced-motion: reduce[\s\S]*\? 120 : 200/);
   assert.match(component, /inert=\{overlayState === "closing" \|\| undefined\}/);
   assert.match(component, /title="收起\/展开会话栏"/);
-  assert.match(component, /type="button">←<\/button>/);
-  assert.match(component, /type="button">→<\/button>/);
+  assert.match(component, /<IconChevronLeft \/>/);
+  assert.match(component, /<IconChevronRight \/>/);
   assert.match(component, /task7-session-rail__footer-label/);
   assert.match(component, /训练历史/);
   assert.match(component, /系统设置/);

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { VideoView } from "@/components/task5/VideoView";
 import { getSession } from "@/lib/api";
 import { presentAnalysisWorkspace, type AnalysisWorkspacePresentation } from "@/lib/contracts";
+import { IconClose } from "@/ui/icons";
 import { Button, ErrorState, Loading } from "@/ui/primitives";
 
 export function analysisIdFromRef(value: string): number | null {
@@ -88,7 +89,7 @@ export function CoachVideoPane({
           <h2>{presentation?.scenario ?? "训练视频"}</h2>
           {runId != null ? <small className="task7-coach-video-pane__run">run {runId}</small> : null}
         </div>
-        <button aria-label="关闭视频讲解" className="task7-coach-video-pane__close" onClick={onClose} title="关闭视频讲解" type="button">×</button>
+        <button aria-label="关闭视频讲解" className="task7-coach-video-pane__close" onClick={onClose} title="关闭视频讲解" type="button"><IconClose /></button>
       </header>
       <div className="task7-coach-video-pane__body">
         {loading ? <Loading>正在读取本地视频与证据</Loading> : null}

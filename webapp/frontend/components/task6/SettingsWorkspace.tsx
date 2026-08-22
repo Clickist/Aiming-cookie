@@ -59,6 +59,7 @@ import {
   Status,
   Toast,
 } from "@/ui/primitives";
+import { IconChevronLeft } from "@/ui/icons";
 import { useTheme } from "@/ui/theme";
 
 type ConfirmAction = {
@@ -168,7 +169,7 @@ type SettingsSnapshot = {
 let settingsSnapshot: SettingsSnapshot | null = null;
 
 function SettingsExit({ onExit }: { onExit: () => void }) {
-  return <IconButton className="task6-settings-back" label="退出设置" onClick={onExit} size="compact" title="返回 Coach">←</IconButton>;
+  return <IconButton className="task6-settings-back" label="退出设置" onClick={onExit} size="compact" title="返回 Coach"><IconChevronLeft /></IconButton>;
 }
 
 export function SettingsWorkspace() {

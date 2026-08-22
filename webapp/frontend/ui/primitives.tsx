@@ -15,6 +15,8 @@ import {
 } from "react";
 import Link from "next/link";
 
+import { IconClose } from "./icons";
+
 type Tone = "neutral" | "info" | "success" | "warning" | "error";
 
 type ButtonCommonProps = {
@@ -311,7 +313,7 @@ export function Drawer({ open, onClose, title, children, side = "right" }: Drawe
       >
         <header className="ac-drawer__header">
           <h2 id={titleId}>{title}</h2>
-          <IconButton label="Close" onClick={onClose} size="compact">×</IconButton>
+          <IconButton label="Close" onClick={onClose} size="compact"><IconClose /></IconButton>
         </header>
         <div className="ac-drawer__body">{children}</div>
       </aside>
@@ -372,7 +374,7 @@ export function Toast({ tone = "neutral", live = "polite", closeLabel = "关闭�
       role={live === "assertive" ? "alert" : "status"}
     >
       <div className="ac-toast__body">{children}</div>
-      {onClose ? <IconButton className="ac-toast__close" label={closeLabel} onClick={requestClose} size="compact">×</IconButton> : null}
+      {onClose ? <IconButton className="ac-toast__close" label={closeLabel} onClick={requestClose} size="compact"><IconClose /></IconButton> : null}
     </div>
   );
 }
@@ -418,7 +420,7 @@ export function Dialog({ open, onClose, title, children, footer }: DialogProps) 
       >
         <header className="ac-dialog__header">
           <h2 id={titleId}>{title}</h2>
-          <button aria-label="Close" className="ac-dialog__close" onClick={onClose} type="button">×</button>
+          <button aria-label="Close" className="ac-dialog__close" onClick={onClose} type="button"><IconClose /></button>
         </header>
         <div className="ac-dialog__body">{children}</div>
         {footer ? <footer className="ac-dialog__footer">{footer}</footer> : null}

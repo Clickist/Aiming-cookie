@@ -89,169 +89,6 @@
   color: var(--on-error);
 }
 
-.task3-primary-nav,
-.task3-tool-nav {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.task3-tool-nav {
-  margin-left: auto;
-}
-
-.task3-primary-nav {
-  opacity: 1;
-  transform: translateY(0);
-  transition:
-    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    display 160ms allow-discrete;
-}
-
-.task3-primary-nav a,
-.task3-tool-nav a,
-.task3-toolbar-action {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 36px;
-  gap: 6px;
-  border: 0;
-  border-radius: 6px;
-  padding: 0 12px;
-  background: transparent;
-  color: var(--on-surface-variant);
-  cursor: pointer;
-  font: 500 13px var(--font-ui);
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background-color 150ms ease-out, color 150ms ease-out;
-}
-
-.task3-primary-nav a:first-child {
-  opacity: 1;
-  transform: translateY(0);
-  transition:
-    background-color 150ms ease-out,
-    color 150ms ease-out,
-    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    display 160ms allow-discrete;
-}
-
-@starting-style {
-  .task3-primary-nav,
-  .task3-primary-nav a:first-child {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
-}
-
-.task3-primary-nav a[aria-current="page"],
-.task3-tool-nav a[aria-current="page"],
-.task3-toolbar-action[aria-expanded="true"] {
-  /* Active 导航 = 填充药丸（OpenDesign boards.css .t-btn.active）。
-     border-bottom 宽度为 0：保留合同声明但不渲染下划线。 */
-  border-bottom: 0 solid;
-  border-bottom-color: var(--primary);
-  background: var(--surface-container-high);
-  color: var(--on-surface);
-}
-
-.task3-toolbar-action:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
-}
-
-.task3-toolbar-tooltip {
-  display: inline-flex;
-}
-
-.task3-task-nav-label {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.task3-task-nav-dot {
-  position: absolute;
-  inset-block-start: 50%;
-  inset-inline-start: -12px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--primary);
-  content: "";
-  transform: translateY(-50%);
-}
-
-.task3-toolbar-badge {
-  min-width: 17px;
-  height: 17px;
-  margin-left: 4px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--primary);
-  color: var(--on-primary);
-  font: 600 10px/17px var(--font-mono);
-  text-align: center;
-}
-
-/* AppShell uses the same board-style t-btn / t-icon classes. */
-.t-btn {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 36px;
-  gap: 6px;
-  border: 0;
-  border-radius: 6px;
-  padding: 0 12px;
-  background: transparent;
-  color: var(--on-surface-variant);
-  cursor: pointer;
-  font: 500 13px var(--font-ui);
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background-color 150ms ease-out, color 150ms ease-out;
-}
-
-.t-btn.active {
-  background: var(--surface-container-high);
-  color: var(--on-surface);
-}
-
-.t-icon {
-  box-sizing: border-box;
-  width: 36px;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--on-surface-variant);
-  cursor: pointer;
-  font-size: 15px;
-  transition: background-color 150ms ease-out, color 150ms ease-out;
-}
-
-.t-icon.active {
-  background: var(--primary-container);
-  color: var(--on-primary-container);
-}
-
-.task3-primary-nav a:focus-visible,
-.task3-tool-nav a:focus-visible,
-.task3-toolbar-action:focus-visible,
-.t-btn:focus-visible,
-.t-icon:focus-visible,
-.task3-skip-action:focus-visible,
 .task3-opt-in-row:focus-within {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
@@ -417,10 +254,10 @@
 }
 
 .task3-eyebrow {
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -531,8 +368,8 @@
 }
 
 .task3-onboarding-progress span[data-active="true"] {
-  background: var(--primary);
-  color: var(--on-primary);
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
   font-weight: 600;
 }
 
@@ -620,7 +457,7 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-height: 40px;
+  min-height: var(--control-height);
   gap: 10px;
   border: 1px solid var(--outline);
   border-radius: 8px;
@@ -713,8 +550,8 @@
 }
 
 .task3-onboarding-dropdown-option[aria-selected="true"] {
-  background: var(--primary-container);
-  color: var(--on-primary-container);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
 }
 
 .task3-onboarding-dropdown-option small {
@@ -766,8 +603,7 @@
 }
 
 .task3-custom-model-discovery > p[data-tone="loading"] {
-  color: var(--primary);
-  animation: task3-onboarding-pulse 1.2s ease-in-out infinite;
+  color: var(--on-surface-variant);
 }
 
 .task3-auth-modes {
@@ -779,7 +615,7 @@
 .task3-auth-modes label {
   display: flex;
   align-items: center;
-  min-height: 40px;
+  min-height: var(--control-height);
   gap: 8px;
   border: 1px solid var(--outline-variant);
   border-radius: 6px;
@@ -826,7 +662,7 @@
 
 .task3-onboarding-primary {
   flex: 0 0 auto;
-  min-height: 40px;
+  min-height: var(--control-height);
   padding: 0 16px;
   border-radius: 6px;
   font-size: 14px;
@@ -927,7 +763,7 @@
   align-items: center;
   justify-content: center;
   min-width: 0;
-  min-height: 40px;
+  min-height: var(--control-height);
   padding-inline: 12px;
   color: var(--on-surface-variant);
   font-size: 13px;
@@ -960,24 +796,7 @@
 }
 
 .task3-onboarding-status [data-tone="loading"] {
-  color: var(--primary);
-  animation: task3-onboarding-pulse 1.2s ease-in-out infinite;
-}
-
-.task3-onboarding-status [data-tone="loading"]::before {
-  animation: task3-onboarding-pulse-dot 1.2s ease-in-out infinite;
-}
-
-@keyframes task3-onboarding-pulse {
-  0%,
-  100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-
-@keyframes task3-onboarding-pulse-dot {
-  0%,
-  100% { opacity: 0.6; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.15); }
+  color: var(--on-surface-variant);
 }
 
 .task3-opt-in-row {
@@ -1019,24 +838,6 @@
     padding-inline: 6px 10px;
   }
 
-  .task3-primary-nav a:first-child {
-    display: none;
-    opacity: 0;
-    transform: translateY(-2px);
-    transition:
-      background-color 150ms ease-out,
-      color 150ms ease-out,
-      opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
-      transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
-      display 120ms allow-discrete;
-  }
-
-  .task3-primary-nav a,
-  .task3-tool-nav a,
-  .task3-toolbar-action {
-    padding-inline: 7px;
-  }
-
   .task3-page-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -1048,22 +849,6 @@
     max-width: 90px;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .task3-primary-nav {
-    display: none;
-    opacity: 0;
-    transform: translateY(-2px);
-    transition:
-      opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
-      transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
-      display 120ms allow-discrete;
-  }
-
-  .task3-tool-nav a,
-  .task3-toolbar-action {
-    font-size: 12px;
-    padding-inline: 5px;
   }
 
   .task3-onboarding {
@@ -1090,148 +875,14 @@
   }
 }
 
-/* 任务中心（OpenDesign tasks-1280.html） */
-.task3-tasks-panel {
-  border: 1px solid var(--outline-variant);
-  border-radius: 6px;
-  background: var(--surface);
-}
-
-.task3-task-item {
-  padding: 14px 16px;
-}
-
-.task3-task-item[data-state="running"] {
-  padding: 18px 16px;
-}
-
-.task3-task-item + .task3-task-item {
-  border-top: 1px solid var(--outline-variant);
-}
-
-.task3-task-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.task3-task-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--on-surface);
-}
-
-.task3-task-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--on-surface-variant);
-  white-space: nowrap;
-}
-
-.task3-task-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.task3-task-note {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--on-surface-variant);
-  line-height: 1.5;
-}
-
 .task3-mode-badge {
   background: var(--tertiary-container);
   color: var(--on-tertiary-container);
 }
 
 .task3-preview-badge {
-  background: var(--primary-container);
-  color: var(--on-primary-container);
-}
-
-.task3-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.task3-stage-stepper {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  margin-top: 10px;
-  flex-wrap: wrap;
-  row-gap: 10px;
-}
-
-.task3-task-item[data-state="running"] .task3-stage-stepper {
-  margin-top: 12px;
-}
-
-.task3-task-item[data-state="running"] .task3-task-note {
-  margin-top: 10px;
-}
-
-.task3-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  background: var(--surface-container);
   color: var(--on-surface-variant);
-  white-space: nowrap;
-}
-
-.task3-step[data-done="true"] {
-  color: var(--on-surface);
-}
-
-.task3-step[data-current="true"] {
-  color: var(--on-surface);
-  font-weight: 600;
-}
-
-.task3-step-dot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 1.5px solid var(--outline-variant);
-  background: var(--surface);
-  font-size: 9px;
-}
-
-.task3-step[data-done="true"] .task3-step-dot {
-  background: var(--event-kill);
-  border-color: var(--event-kill);
-  color: var(--on-primary);
-}
-
-.task3-step[data-current="true"] .task3-step-dot {
-  border-color: var(--primary);
-  color: var(--primary);
-}
-
-.task3-step-line {
-  width: 22px;
-  height: 1px;
-  margin: 0 8px;
-  background: var(--outline-variant);
-}
-
-.task3-tasks-global-note {
-  margin-top: 14px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1247,13 +898,5 @@
   .task3-route-content[data-settings-motion="closing"] {
     transform: none;
     transition: opacity var(--duration-reduced-motion, 120ms) linear;
-  }
-
-  .task3-primary-nav,
-  .task3-primary-nav a:first-child {
-    transform: none;
-    transition:
-      opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
-      display 120ms allow-discrete;
   }
 }

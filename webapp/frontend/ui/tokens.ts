@@ -110,6 +110,30 @@ export type TokenName = keyof typeof LIGHT_TOKENS;
 export type ThemeTokens = Record<TokenName, string>;
 export const TOKEN_NAMES = Object.keys(LIGHT_TOKENS) as TokenName[];
 
+/** Theme-independent geometry. Not part of the color table in DESIGN-cursor.md. */
+export const SCALE_TOKENS = {
+  "space-1": "4px",
+  "space-2": "8px",
+  "space-3": "12px",
+  "space-4": "16px",
+  "space-5": "24px",
+  "space-6": "32px",
+  "radius-sm": "4px",
+  "radius-md": "6px",
+  "radius-lg": "8px",
+  "text-micro": "11px",
+  "text-caption": "12px",
+  "text-ui": "13px",
+  "text-body": "14px",
+  "text-title": "15px",
+  "text-display": "20px",
+  "control-height": "36px",
+  "control-height-compact": "32px",
+} as const;
+
+export type ScaleTokenName = keyof typeof SCALE_TOKENS;
+export const SCALE_NAMES = Object.keys(SCALE_TOKENS) as ScaleTokenName[];
+
 function channel(hex: string, offset: number): number {
   return Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
 }
