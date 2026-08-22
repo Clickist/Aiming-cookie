@@ -127,10 +127,12 @@ test("session selection updates the Coach deep link", async () => {
 test("session archive and delete failures surface through the existing Toast", async () => {
   const value = await source("components/task3/AppShell.tsx");
   assert.match(value, /import \{[^}]*Toast[^}]*\} from "@\/ui\/primitives"/);
-  assert.match(value, /setSessionFeedback\("未能归档会话，请重试。"\)/);
-  assert.match(value, /setSessionFeedback\("未能删除会话，请重试。"\)/);
+  assert.match(value, /notifySessionFeedback\("未能归档会话，请重试。"\)/);
+  assert.match(value, /notifySessionFeedback\("未能删除会话，请重试。"\)/);
   assert.match(value, /操作已完成，但会话列表暂时未能刷新。/);
-  assert.match(value, /<Toast onClose=\{\(\) => setSessionFeedback\(null\)\}>/);
+  // seq 兼作重挂载 key 与 onClose 新鲜度校验：迟到的旧关闭不清掉新提示。
+  assert.match(value, /<Toast key=\{sessionFeedback\.seq\}/);
+  assert.match(value, /current && current\.seq === sessionFeedback\.seq \? null : current/);
 });
 
 test("SessionRail is the persistent left navigation without a right Coach sidebar", async () => {

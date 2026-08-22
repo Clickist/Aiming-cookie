@@ -270,7 +270,17 @@ export function CoachPanel({
   const [draft, setDraft] = useState("");
   const [run, setRun] = useState<CoachAgentRunV1 | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ text: string; seq: number } | null>(null);
+  const feedbackSeqRef = useRef(0);
+  // Toast 的关闭是 200ms exit 后的延迟回调：若用户关掉提示后立刻重试
+  // 又失败，迟到的旧 onClose 会把新提示清掉。seq 兼作 Toast 的 key
+  //（同一条消息连续出现也强制重开）与 onClose 的新鲜度校验
+  //（2026-08-22 e2e Toast 二次触发暴露的竞态）。
+  const notify = useCallback((message: string) => {
+    feedbackSeqRef.current += 1;
+    const seq = feedbackSeqRef.current;
+    setFeedback({ text: message, seq });
+  }, []);
   const [currentTraining, setCurrentTraining] = useState<CurrentTrainingV1 | null>(null);
   const [currentTrainingError, setCurrentTrainingError] = useState(false);
   const [trainingExpanded, setTrainingExpanded] = useState(false);
@@ -722,15 +732,15 @@ export function CoachPanel({
   const startTrainingScenario = async (item: CurrentTrainingItemV1) => {
     const scenarioProfileRef = item.scenario_profile_ref;
     if (!scenarioProfileRef) {
-      setFeedback("该训练项目暂时没有可验证的 KovaaK 场景");
+      notify("该训练项目暂时没有可验证的 KovaaK 场景");
       return;
     }
     setLaunchingScenarioRef(scenarioProfileRef);
     try {
       const result = await openKovaakScenario(scenarioProfileRef);
-      setFeedback(result.message);
+      notify(result.message);
     } catch {
-      setFeedback("未能请求打开 KovaaK，请稍后重试");
+      notify("未能请求打开 KovaaK，请稍后重试");
     } finally {
       setLaunchingScenarioRef(null);
     }
@@ -827,7 +837,7 @@ export function CoachPanel({
     try {
       const effectiveSessionId = sessionId ?? (onEnsureSession ? await onEnsureSession() : null);
       if (sessionId === null && onEnsureSession && effectiveSessionId === null) {
-        setFeedback("未能创建会话，草稿已保留，请重试。");
+        notify("未能创建会话，草稿已保留，请重试。");
         return;
       }
       const optimisticMessageId = optimisticMessageIdRef.current--;
@@ -853,7 +863,7 @@ export function CoachPanel({
         setMessages((current) => current.filter((message) => message.id !== optimisticId));
       }
       setDraft(content);
-      setFeedback(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
+      notify(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
     }
   };
 
@@ -862,7 +872,7 @@ export function CoachPanel({
     try {
       setRun(await retryCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId }));
     } catch {
-      setFeedback("重试未能开始，请稍后再试。");
+      notify("重试未能开始，请稍后再试。");
     }
   };
 
@@ -871,7 +881,7 @@ export function CoachPanel({
     try {
       setRun(await stopCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId }));
     } catch {
-      setFeedback("未能停止生成，请重试。");
+      notify("未能停止生成，请重试。");
     }
   };
 
@@ -1082,7 +1092,7 @@ export function CoachPanel({
           />
           <CoachModelMenu
             disabled={run !== null && ["queued", "running"].includes(run.status)}
-            onError={(message) => setFeedback(message)}
+            onError={(message) => notify(message)}
           />
           {run && ["queued", "running"].includes(run.status) ? (
             <button aria-label="停止生成" className="task6-composer-send" onClick={() => void stop()} type="button" title="停止生成"><IconStop /></button>
@@ -1092,7 +1102,11 @@ export function CoachPanel({
         </div>
       </footer>
 
-      {feedback ? <Toast onClose={() => setFeedback(null)}>{feedback}</Toast> : null}
+      {feedback ? (
+        <Toast key={feedback.seq} onClose={() => setFeedback((current) => (current && current.seq === feedback.seq ? null : current))}>
+          {feedback.text}
+        </Toast>
+      ) : null}
     </div>
   );
 }

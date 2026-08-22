@@ -104,19 +104,21 @@ test.describe("Coach-first desktop screenshot baselines", () => {
     await expect(page).toHaveScreenshot("coach-conversation-1920-light.png", { animations: "disabled" });
   });
 
-  test("Coach cards 1280 dark", async ({ page }) => {
+  // 讲解卡片已下线：现行形态是「本次讨论」分析栏（task6-suggestion
+  // 按钮，title=打开视频讲解）+ 点击打开 Coach 视频讲解面板。
+  test("Coach discussion analysis bar 1280 dark", async ({ page }) => {
     await prepare(page, { theme: "dark", width: 1280, height: 820, scenario: apiScenario({ analysis: seekableAnalysis() }) });
     await installCoachCards(page);
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "关键数据" })).toBeVisible();
-    await expect(page).toHaveScreenshot("coach-cards-1280-dark.png", { animations: "disabled" });
+    await expect(page.locator('button[title="打开视频讲解"]')).toBeVisible();
+    await expect(page).toHaveScreenshot("coach-analysis-bar-1280-dark.png", { animations: "disabled" });
   });
 
   test("Coach video workspace 1920 dark", async ({ page }) => {
     await prepare(page, { theme: "dark", width: 1920, height: 1080, scenario: apiScenario({ analysis: seekableAnalysis() }) });
     await installCoachCards(page);
     await page.goto("/");
-    await page.getByRole("button", { name: "在视频中查看" }).click();
+    await page.locator('button[title="打开视频讲解"]').click();
     await expect(page.getByRole("region", { name: "Coach 视频讲解" })).toBeVisible();
     await expect(page).toHaveScreenshot("coach-video-1920-dark.png", { animations: "disabled" });
   });

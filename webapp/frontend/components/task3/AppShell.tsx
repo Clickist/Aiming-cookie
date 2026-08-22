@@ -52,7 +52,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   const hasRestoredLastSessionRef = useRef(false);
   const [draftSession, setDraftSession] = useState(false);
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
-  const [sessionFeedback, setSessionFeedback] = useState<string | null>(null);
+  const [sessionFeedback, setSessionFeedback] = useState<{ text: string; seq: number } | null>(null);
+  const sessionFeedbackSeqRef = useRef(0);
+  // 与 CoachPanel.notify 同款：Toast 关闭是 200ms 后的延迟回调，用户
+  // 关掉提示后立刻重试又失败时，迟到的旧 onClose 会清掉新提示；
+  // seq 兼作重挂载 key 与 onClose 新鲜度校验。
+  const notifySessionFeedback = useCallback((message: string) => {
+    sessionFeedbackSeqRef.current += 1;
+    const seq = sessionFeedbackSeqRef.current;
+    setSessionFeedback({ text: message, seq });
+  }, []);
   const [softStartRun, setSoftStartRun] = useState<CoachAgentRunV1 | null>(null);
   const settingsChildrenRef = useRef<ReactNode>(null);
   const settingsPresence = useAnimatedPresence(settingsRoute, 160);
@@ -276,13 +285,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       await updateCoachSession(Number(session.id), { status: "archived" });
     } catch {
-      setSessionFeedback("未能归档会话，请重试。");
+      notifySessionFeedback("未能归档会话，请重试。");
       return;
     }
     try {
       await reloadCoachSessions(selectedCoachSessionId === Number(session.id) ? null : undefined);
     } catch {
-      setSessionFeedback("操作已完成，但会话列表暂时未能刷新。");
+      notifySessionFeedback("操作已完成，但会话列表暂时未能刷新。");
     }
   };
 
@@ -290,13 +299,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     try {
       await deleteCoachSession(Number(session.id));
     } catch {
-      setSessionFeedback("未能删除会话，请重试。");
+      notifySessionFeedback("未能删除会话，请重试。");
       return;
     }
     try {
       await reloadCoachSessions(selectedCoachSessionId === Number(session.id) ? null : undefined);
     } catch {
-      setSessionFeedback("操作已完成，但会话列表暂时未能刷新。");
+      notifySessionFeedback("操作已完成，但会话列表暂时未能刷新。");
     }
   };
 
@@ -389,7 +398,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           </main>
         ) : null}
       </div>
-      {sessionFeedback ? <Toast onClose={() => setSessionFeedback(null)}>{sessionFeedback}</Toast> : null}
+      {sessionFeedback ? (
+        <Toast key={sessionFeedback.seq} onClose={() => setSessionFeedback((current) => (current && current.seq === sessionFeedback.seq ? null : current))}>
+          {sessionFeedback.text}
+        </Toast>
+      ) : null}
     </div>
   );
 }
