@@ -1,6 +1,6 @@
 [package]
 name = "aiming-cookie-desktop"
-version = "0.1.4"
+version = "0.1.5"
 description = "Aiming Cookie local-first desktop shell"
 authors = ["Aiming Cookie"]
 edition = "2021"
