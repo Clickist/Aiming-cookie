@@ -8,7 +8,7 @@ const cdpUrl = process.env.AIMING_COOKIE_TAURI_CDP_URL;
 const tauriPid = Number(process.env.AIMING_COOKIE_TAURI_PID);
 const appUrl = process.env.AIMING_COOKIE_TAURI_APP_URL ?? "http://localhost:3000";
 
-// Live check for the v0.1.4 diagnostics export: invoke the Tauri command
+// Live check for the v0.1.5 diagnostics export: invoke the Tauri command
 // directly (the save dialog itself needs a human) and validate the bundle.
 test("real Tauri capture diagnostics export writes a valid bundle", async () => {
   test.skip(!cdpUrl || !Number.isSafeInteger(tauriPid) || tauriPid <= 0,
@@ -32,7 +32,7 @@ test("real Tauri capture diagnostics export writes a valid bundle", async () => 
   expect(returned, "command returns the written path").toBe(outPath);
 
   const bundle = JSON.parse(await fs.readFile(outPath, "utf8")) as Record<string, unknown>;
-  expect(bundle.schemaVersion).toBe("capture_diagnostics.v1");
+  expect(bundle.schemaVersion).toBe("capture_diagnostics.v2");
   expect(typeof bundle.generatedAtUtcMs).toBe("number");
   expect(bundle.targetOs).toBe("windows");
   expect(bundle.appVersion).toBeTruthy();
@@ -48,6 +48,13 @@ test("real Tauri capture diagnostics export writes a valid bundle", async () => 
   const events = bundle.events as unknown[] | undefined;
   expect(Array.isArray(events), "diagnostic event ring buffer").toBe(true);
   expect(events!.length).toBeGreaterThan(0);
+  // v2：局末结果的磁盘证据必须随包导出（日志尾部 + run 摘要 + 导出回执），
+  // 否则内测排障还得再问用户一轮。
+  expect(Array.isArray(bundle.recentRuns), "recent run summaries").toBe(true);
+  expect(Array.isArray(bundle.exportReceipts), "export receipt history").toBe(true);
+  for (const receipt of bundle.exportReceipts as Record<string, unknown>[]) {
+    expect(receipt.captureSessionId ?? null).toBeNull();
+  }
 
   await fs.rm(outPath, { force: true });
 });

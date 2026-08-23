@@ -4080,7 +4080,7 @@ impl AutomaticH264Encoder {
                 .ok(),
         }
         .unwrap_or((0, 0));
-        eprintln!(
+        crate::dlog!(
             "[capture-export] replay buffer: packets={} keyframes={} bytes={} \
              evicted={} gaps={} dropped={} encoder_errors={} \
              first_pts={:?} last_pts={:?} window={requested_start_100ns}..{requested_end_100ns}",
@@ -4734,11 +4734,11 @@ fn run_wgc_window_capture(
                         output_path,
                         response,
                     } => {
-                        eprintln!(
+                        crate::dlog!(
                             "[capture-export] worker: command received start={requested_start_100ns} end={requested_end_100ns}"
                         );
                         if export_join.is_some() {
-                            eprintln!("[capture-export] worker: busy reject");
+                            crate::dlog!("[capture-export] worker: busy reject");
                             let _ = response.send(Err(replay_export_failure(
                                 ReplayExportFailureKind::ExportBusy,
                                 "another hardware replay export is still finalizing",
@@ -4763,20 +4763,20 @@ fn run_wgc_window_capture(
                                 });
                             match input {
                                 Ok(input) => {
-                                    eprintln!(
+                                    crate::dlog!(
                                         "[capture-export] worker: mux spawning path={}",
                                         output_path.display()
                                     );
                                     export_join = Some(thread::spawn(move || {
                                         let mux_started = std::time::Instant::now();
-                                        eprintln!("[capture-export] mux: begin");
+                                        crate::dlog!("[capture-export] mux: begin");
                                         let result =
                                             std::panic::catch_unwind(std::panic::AssertUnwindSafe(
                                                 || export_replay_mp4_file(input, output_path),
                                             ));
                                         let outcome = match result {
                                             Ok(Ok(receipt)) => {
-                                                eprintln!(
+                                                crate::dlog!(
                                                     "[capture-export] mux: ok packets={} elapsed_ms={}",
                                                     receipt.packet_count,
                                                     mux_started.elapsed().as_millis()
@@ -4784,7 +4784,7 @@ fn run_wgc_window_capture(
                                                 Ok(receipt)
                                             }
                                             Ok(Err(error)) => {
-                                                eprintln!(
+                                                crate::dlog!(
                                                     "[capture-export] mux: failed kind={:?} {} elapsed_ms={}",
                                                     error.kind,
                                                     error.message,
@@ -4793,7 +4793,7 @@ fn run_wgc_window_capture(
                                                 Err(error)
                                             }
                                             Err(panic) => {
-                                                eprintln!(
+                                                crate::dlog!(
                                                     "[capture-export] mux: PANICKED: {}",
                                                     panic_message(panic)
                                                 );
@@ -4804,7 +4804,7 @@ fn run_wgc_window_capture(
                                             }
                                         };
                                         if response.send(outcome).is_err() {
-                                            eprintln!(
+                                            crate::dlog!(
                                                 "[capture-export] mux: response channel closed before delivery"
                                             );
                                         }
@@ -4817,7 +4817,7 @@ fn run_wgc_window_capture(
                                             requested_end_100ns,
                                         );
                                     }
-                                    eprintln!(
+                                    crate::dlog!(
                                         "[capture-export] worker: input build failed kind={:?}",
                                         error.kind
                                     );

@@ -784,3 +784,38 @@ class _FakeSocket:
 
     def getsockname(self) -> tuple[str, int]:
         return ("127.0.0.1", self._port)
+
+
+def _strip_backend_log_handlers(base_filename: str) -> None:
+    for handler in logging.getLogger().handlers[:]:
+        if getattr(handler, "baseFilename", None) == base_filename:
+            logging.getLogger().removeHandler(handler)
+            handler.close()
+
+
+def test_configure_file_logging_writes_backend_log(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(desktop_runtime.config, "DATA_ROOT", tmp_path)
+    desktop_runtime.configure_file_logging()
+    assert (tmp_path / "logs" / "backend.log").is_file()
+    logging.getLogger("webapp.backend.kovaak_capture_finalizer").warning(
+        "video unavailable: run 54025"
+    )
+    base_filename = str(tmp_path / "logs" / "backend.log")
+    _strip_backend_log_handlers(base_filename)
+    contents = (tmp_path / "logs" / "backend.log").read_text(encoding="utf-8")
+    assert "video unavailable: run 54025" in contents
+    assert "WARNING" in contents
+
+
+def test_configure_file_logging_is_idempotent(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(desktop_runtime.config, "DATA_ROOT", tmp_path)
+    desktop_runtime.configure_file_logging()
+    desktop_runtime.configure_file_logging()
+    base_filename = str(tmp_path / "logs" / "backend.log")
+    matching = [
+        handler
+        for handler in logging.getLogger().handlers
+        if getattr(handler, "baseFilename", None) == base_filename
+    ]
+    assert len(matching) == 1
+    _strip_backend_log_handlers(base_filename)
