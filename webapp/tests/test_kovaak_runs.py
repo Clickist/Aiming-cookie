@@ -2303,6 +2303,44 @@ async def test_outcome_only_done_analysis_rebuilds_instead_of_reusing(
 
 
 @pytest.mark.asyncio
+async def test_stale_tracking_generic_v1_done_analysis_rebuilds(
+    monkeypatch, tmp_path: Path,
+):
+    """done 但版本是 tracking.generic_visual.v1 的旧跟枪分析（虚高算法
+    产物）：重析必须重建拿到 v2 数字，而不是静默复用旧结果。"""
+    from webapp.backend import analysis_service, config
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "managed")
+    owner = "owner-stale-tracking-v1"
+    run = await _override_ready_run(tmp_path, owner=owner)
+    video = tmp_path / f"{owner}-clip.mp4"
+    video.write_bytes(b"video")
+
+    first = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    _mark_session_done(
+        first["session_id"], result={"analysis_version": "tracking.generic_visual.v1"},
+    )
+
+    second = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    assert second["session_id"] != first["session_id"]
+    assert "reused" not in second
+
+    # 重建出的 v2 分析成为新的复用答案，不会无限重建。
+    _mark_session_done(
+        second["session_id"], result={"analysis_version": "tracking.generic_visual.v2"},
+    )
+    third = await analysis_service.create_analysis_from_run(
+        owner, run["id"], managed_video_source=video,
+    )
+    assert third["reused"] is True
+    assert third["session_id"] == second["session_id"]
+
+
+@pytest.mark.asyncio
 async def test_analysis_input_snapshot_freezes_local_dynamic_behavior_descriptor(
     tmp_path: Path,
     monkeypatch,

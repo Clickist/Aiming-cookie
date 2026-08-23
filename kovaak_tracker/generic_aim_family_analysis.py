@@ -18,7 +18,6 @@ from .generic_static_clicking_analysis import (
 
 GENERIC_DYNAMIC_CLICKING_ANALYSIS_VERSION = "dynamic_clicking.generic_visual.v1"
 GENERIC_SWITCHING_ANALYSIS_VERSION = "switching.generic_visual.v1"
-GENERIC_TRACKING_ANALYSIS_VERSION = "tracking.generic_visual.v1"
 
 TRACKING_SAMPLE_MS = 50.0
 TRACKING_MAX_INTERP_GAP_MS = 120.0
@@ -30,6 +29,10 @@ SWITCHING_KILL_PAIR_FORWARD_MS = 400.0
 GENERIC_DYNAMIC_ASSOCIATION_SCHEMA = "generic_dynamic_association.v1"
 GENERIC_SWITCHING_ASSOCIATION_SCHEMA = "generic_switching_association.v1"
 GENERIC_TRACKING_ASSOCIATION_SCHEMA = "generic_tracking_association.v1"
+# v2（2026-08-24）：位置查询过滤 degraded 准星回退点 + in_target 判定
+# 去掉 +10px 余量——v1 指标把跟丢记成完美贴合（run 54030：推断 96.8%
+# vs 真实命中率 36.4%）。升版让 done 复用判定拒绝 v1 旧产物、强制重析。
+GENERIC_TRACKING_ANALYSIS_VERSION = "tracking.generic_visual.v2"
 
 _FAMILY_VERSIONS = {
     "dynamic_clicking": GENERIC_DYNAMIC_CLICKING_ANALYSIS_VERSION,

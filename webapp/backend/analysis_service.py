@@ -25,7 +25,7 @@ from typing import Any, Literal
 log = logging.getLogger(__name__)
 
 from . import history_trends, kovaak_run_store, queue
-from .contracts import SCENARIO_OUTCOME_ONLY_VERSION
+from .contracts import STALE_ANALYSIS_VERSIONS
 from .kovaak_run_projection import public_kovaak_run
 from .source_requirements import validate_source_requirements
 from .workspace import copy_path_to_path, remove_session_workspace, session_dir
@@ -486,15 +486,16 @@ async def create_analysis_from_run(
     """
     existing = await queue.get_run_analysis_states(owner_id, run_id)
     # A done analysis is the reusable answer for this Run unless the
-    # user-confirmed scenario memory may have reclassified it since. An
-    # outcome-only degradation is never the answer: a code upgrade can change
-    # what the Run should dispatch to, so those rebuild instead of pinning
-    # the empty pre-upgrade result.
+    # user-confirmed scenario memory may have reclassified it since. Stale
+    # algorithm versions are never the answer: a code upgrade changed what
+    # the analysis should say (e.g. tracking.generic_visual.v1's inflated
+    # in-target metrics), so those rebuild instead of pinning pre-upgrade
+    # results.
     completed = next(
         (
             item for item in existing
             if item.get("status") == "done"
-            and item.get("analysis_version") != SCENARIO_OUTCOME_ONLY_VERSION
+            and item.get("analysis_version") not in STALE_ANALYSIS_VERSIONS
         ),
         None,
     )
