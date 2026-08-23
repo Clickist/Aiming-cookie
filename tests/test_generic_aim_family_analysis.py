@@ -158,6 +158,37 @@ def test_tracking_error_series_and_gate():
     assert "tracking_coverage_below_threshold" in failed["gate"]["reasons"]
 
 
+def test_tracking_ignores_degraded_crosshair_fallback_positions():
+    """Degraded crosshair-fallback path points must not feed the error series.
+
+    2026-08-24 run 54030 (Controlsphere) showed the failure mode: detection
+    drops exactly when the crosshair loses the target, and the fallback
+    sample pinned at the crosshair made those moments read as perfect
+    tracking (in_target_ratio 96.8% vs a real 36.4% hit rate).
+    """
+    track = _ftrack(
+        1,
+        path=[(1_000, 700.0, 540.0), (1_100, 700.0, 540.0)],
+    )
+    track["path"] = [
+        {"t": 1_000, "x": 700.0, "y": 540.0},
+        {"t": 1_050, "x": 960.0, "y": 540.0, "degraded": True},
+        {"t": 1_100, "x": 700.0, "y": 540.0},
+    ]
+    visual = {"tracks": [track], "frame_coverage": 0.95}
+    association = associate_generic_tracking_v1(
+        analysis_ref="analysis:1",
+        generic_visual_result=visual,
+        canonical_time_window=_WINDOW,
+        viewport_size=[1920, 1080],
+        deg_per_px=DEG_PER_PX,
+    )
+    # With the fallback honored, the t=1_050 sample would sit on the
+    # crosshair (960, 540) with ~0 error and count as in-target.
+    assert association["in_target_ratio"] == 0.0
+    assert association["error_median_deg"] == pytest.approx(260.0 * DEG_PER_PX)
+
+
 def test_family_metric_records_and_evidence_extension():
     visual = {
         "tracks": [

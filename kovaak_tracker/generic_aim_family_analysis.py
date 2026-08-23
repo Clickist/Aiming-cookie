@@ -58,6 +58,12 @@ def _track_position_at(
     best: Mapping[str, object] | None = None
     best_gap = TRACKING_MAX_INTERP_GAP_MS
     for point in path:
+        # Degraded crosshair-fallback samples sit pinned at the viewport
+        # center: honoring them turns every detection drop into "target on
+        # crosshair" and quietly cancels real tracking loss (run 54030:
+        # in_target_ratio 96.8% vs a 36.4% actual hit rate).
+        if point.get("degraded"):
+            continue
         gap = abs(float(point["t"]) - time_ms)
         if gap <= best_gap:
             best = point
