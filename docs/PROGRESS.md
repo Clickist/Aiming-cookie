@@ -32,7 +32,8 @@
 ## 2026-08-24 Session Changes
 
 - **CV 跟枪指标虚高事故（run 54030 Controlsphere）与全量算法审计**：Coach 报「96.8% 时间在判定内/全程没跟丢」vs 真实命中率 36.4%。根因两个，均已修复并用同源重算（同检测产物、同窗口/标定）闭环验证：① tracking generic 的 `_track_position_at` 不过滤 degraded 准星回退点（`1737a6a`）——检测丢失帧被回退成「目标在准星上」，跟丢瞬间记成完美贴合（该局 45.9% 轨迹点是回退伪观测，贡献 30.2pt 虚高）；② tracking 的 in_target 判定照搬 static 层 `+10px` 余量（`16bc35f`，贡献 27pt）——双修后推断贴合度 33.0% vs 真实 36.4%（差 3.4pt、略保守），误差中位 0.038°→0.859°。**static 层的同名 `HIT_MARGIN_PX=10` 是校准值不可删**：run 54029（1wall 6targets small）同法实测 margin=10 判 115 vs 真实 114 命中，margin=0 过杀至 100——泛化时照搬参数没按目标几何重校准才是本次事故的结构教训。
-- **全量 CV 审计结论（static/dynamic/switching generic + reviewed 管线 + 检测层）**：reviewed 管线干净（同帧双采、不可用样本显式排除、`error<=radius` 无余量、identity 歧义 raise、无 degraded 回退）；switching generic 只用 track birth/death 时间戳不消费位置；dynamic generic 复用 static hit 层但 degraded 已显式关闭。低危披露：static 层 miss_vector 允许 degraded 兜底（miss 距离或低估，run 54029 miss=0 未体现）；dynamic generic 无实测锚点局。验证：全量 Python 1206 passed/5 skipped；临时重算脚本已清理。
+- **全量 CV 审计结论（static/dynamic/switching generic + reviewed 管线 + 检测层）**：reviewed 管线干净（同帧双采、不可用样本显式排除、`error<=radius` 无余量、identity 歧义 raise、无 degraded 回退）；switching generic 只用 track birth/death 时间戳不消费位置；dynamic generic 复用 static hit 层但 degraded 已显式关闭。低危披露：static 层 miss_vector 允许 degraded 兜底（miss 距离或低估，run 54029 miss=0 未体现）；dynamic generic 无实测锚点局。
+- **批量对照（10 局存档重算，2026-08-24）**：tracking 修复后 Controlsphere 两局推断 vs 真实命中率 31.3%/33.0% vs 34.1%/36.4%（-2.8/-3.4pt，略保守、方向正确）；Cata IC 一局（检测覆盖仅 0.78 的困难图）29.1% vs 56.4%——旧算法该局为 83.5%（+27pt 虚高、0.038° 同款指纹），修复后宁保守不虚报，属检测层能力边界非判定算法问题；54010/54027/54028 颜色假设不可用与当年一致（从未出过 CV 指标，无回归）。static 四局 +0.9~+8.8pt 系统乐观：margin 扫描（10→3px 仅动 ~1pt）与 degraded 开关（~1pt）证明非单一参数所致，为 generic 检测几何（fixed_viewport_center 假设、3D 靶判定框）与游戏判定的固有差，属兜底层精度特征而非事故同款 bug，未调参。验证：全量 Python 1206 passed/5 skipped；临时重算脚本与缓存已清理。
 - 待办随 v0.1.5 实测收尾：runtime 重建 + 重打包（CV 双修复对用户生效），analysis:18 等旧产物为旧算法结果、重析才会更新。
 
 
