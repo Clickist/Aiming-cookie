@@ -189,6 +189,32 @@ def test_tracking_ignores_degraded_crosshair_fallback_positions():
     assert association["error_median_deg"] == pytest.approx(260.0 * DEG_PER_PX)
 
 
+def test_tracking_in_target_has_no_margin_beyond_observed_size():
+    """In-target judgment uses the observed track box with no extra slack.
+
+    Run 54030 (Controlsphere): the +10px slack alone inflated in-target time
+    from 33.0% to 66.6% while the real hit rate was 36.4% — the median
+    detection box already matches the game's judgment closely.
+    """
+    track = _ftrack(
+        1,
+        # Target parked half a width + 5px off the crosshair: outside the
+        # observed box, inside the old box-plus-10px judgment.
+        path=[(1_000, 985.0, 540.0), (1_100, 985.0, 540.0)],
+        half_width_px=20.0,
+        half_height_px=15.0,
+    )
+    visual = {"tracks": [track], "frame_coverage": 0.95}
+    association = associate_generic_tracking_v1(
+        analysis_ref="analysis:1",
+        generic_visual_result=visual,
+        canonical_time_window=_WINDOW,
+        viewport_size=[1920, 1080],
+        deg_per_px=DEG_PER_PX,
+    )
+    assert association["in_target_ratio"] == 0.0
+
+
 def test_family_metric_records_and_evidence_extension():
     visual = {
         "tracks": [
