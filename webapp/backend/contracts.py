@@ -21,6 +21,14 @@ CONTINUOUS_TRACKING_ANALYSIS_VERSION = "continuous_tracking.v1"
 TARGET_SWITCHING_ANALYSIS_VERSION = "target_switching.v1"
 SCENARIO_OUTCOME_ONLY_VERSION = "scenario_outcome_only.v1"
 LEGACY_ANALYSIS_VERSION = "legacy_unversioned"
+# 这些版本的 done 分析是坏算法/降级产物，永不作为 Run 的复用答案——
+# create_from_run 必须重建。算法修复升版时在此登记被淘汰的版本。
+STALE_ANALYSIS_VERSIONS = frozenset({
+    SCENARIO_OUTCOME_ONLY_VERSION,
+    # 2026-08-24 前的跟枪 generic：degraded 准星回退未过滤 + 判定余量
+    # 虚高（run 54030 推断 96.8% vs 真实命中率 36.4%）。
+    "tracking.generic_visual.v1",
+})
 SUMMARY_TYPE = "flicking"
 ARTIFACT_MANIFEST_SCHEMA_VERSION = "artifact_manifest.v1"
 ARTIFACT_MANIFEST_V2_SCHEMA_VERSION = "artifact_manifest.v2"
