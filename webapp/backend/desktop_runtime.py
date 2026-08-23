@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from logging.handlers import RotatingFileHandler
 from typing import Any
 
 import uvicorn
@@ -154,6 +155,44 @@ def create_server(port: int) -> uvicorn.Server:
         log_config=None,
     )
     return uvicorn.Server(config)
+
+
+BACKEND_LOG_MAX_BYTES = 2_000_000
+BACKEND_LOG_BACKUP_COUNT = 1
+
+
+def configure_file_logging() -> None:
+    """Mirror backend logs (API/finalizer/worker share this process) into
+    ``{DATA_ROOT}/logs/backend.log``.
+
+    The packaged shell pipes stderr only into a GUI process without a
+    console, so without this file every finalizer/ingest failure line is
+    lost on user machines. Never raise here: diagnostics logging must not
+    block runtime startup.
+    """
+    try:
+        log_dir = config.DATA_ROOT / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            log_dir / "backend.log",
+            maxBytes=BACKEND_LOG_MAX_BYTES,
+            backupCount=BACKEND_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        )
+        root = logging.getLogger()
+        if any(
+            isinstance(existing, RotatingFileHandler)
+            and getattr(existing, "baseFilename", None) == handler.baseFilename
+            for existing in root.handlers
+        ):
+            return
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+    except OSError:
+        pass
 
 
 def _bound_port(server: Any) -> int:
@@ -375,6 +414,7 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
 
 
 def main() -> None:
+    configure_file_logging()
     asyncio.run(run_runtime())
 
 

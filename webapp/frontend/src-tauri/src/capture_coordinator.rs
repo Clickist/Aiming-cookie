@@ -1032,9 +1032,11 @@ impl CaptureCoordinatorState {
             let exits_finalizing = status.phase == CapturePhase::Finalizing
                 && replacement.phase != CapturePhase::Finalizing;
             if status.phase != replacement.phase {
-                eprintln!(
+                crate::dlog!(
                     "[capture-export] phase {:?} -> {:?} session={:?}",
-                    status.phase, replacement.phase, replacement.capture_session_id
+                    status.phase,
+                    replacement.phase,
+                    replacement.capture_session_id
                 );
             }
             let event = if *status != replacement {
@@ -1157,32 +1159,35 @@ impl CaptureCoordinatorState {
 
     fn handle_export(&self, request: ExportReplayRequest) -> Result<ReceiptRecord, String> {
         let started = Instant::now();
-        eprintln!(
+        crate::dlog!(
             "[capture-export] handle_export: id={} run={} session={}",
-            request.request_id, request.run_id, request.capture_session_id
+            request.request_id,
+            request.run_id,
+            request.capture_session_id
         );
         let status = self.status();
         if !matches!(
             status.phase,
             CapturePhase::Capturing | CapturePhase::Finalizing
         ) {
-            eprintln!(
+            crate::dlog!(
                 "[capture-export] handle_export: phase={:?} rejects export",
                 status.phase
             );
             return Err("capture_unavailable".to_string());
         }
         if status.capture_session_id.as_deref() != Some(request.capture_session_id.as_str()) {
-            eprintln!(
+            crate::dlog!(
                 "[capture-export] handle_export: session mismatch current={:?} requested={}",
-                status.capture_session_id, request.capture_session_id
+                status.capture_session_id,
+                request.capture_session_id
             );
             return Err("capture_session_mismatch".to_string());
         }
         let paths = managed_export_paths(&self.data_root, request.run_id, &request.request_id)?;
         let placeholder = ReceiptRecord::placeholder(&request);
         if paths.mp4.exists() || paths.receipt.exists() {
-            eprintln!(
+            crate::dlog!(
                 "[capture-export] handle_export: artifacts already exist, revalidating {}",
                 paths.mp4.display()
             );
@@ -1200,7 +1205,7 @@ impl CaptureCoordinatorState {
             let (start_100ns, end_100ns) = capture
                 .epoch_window_to_replay_pts(request.start_epoch_ms, request.end_epoch_ms)
                 .map_err(|_| "capture_window_invalid".to_string())?;
-            eprintln!(
+            crate::dlog!(
                 "[capture-export] handle_export: pts window {}..{} path={}",
                 start_100ns,
                 end_100ns,
@@ -1210,11 +1215,11 @@ impl CaptureCoordinatorState {
                 .request_replay_export(start_100ns, end_100ns, paths.mp4.clone())
                 .map_err(|error| replay_failure_code(error.kind).to_string())?
         };
-        eprintln!("[capture-export] handle_export: queued, waiting for mux worker");
+        crate::dlog!("[capture-export] handle_export: queued, waiting for mux worker");
         let receipt = self.wait_for_export(receiver)?;
         let record = ReceiptRecord::from_export(&request, receipt, &paths.mp4)?;
         record.write_atomic(&paths.receipt)?;
-        eprintln!(
+        crate::dlog!(
             "[capture-export] handle_export: receipt published {} elapsed_ms={}",
             paths.receipt.display(),
             started.elapsed().as_millis()
@@ -1250,23 +1255,23 @@ impl CaptureCoordinatorState {
     ) -> Result<ReplayExportReceipt, String> {
         let deadline = std::time::Instant::now() + CONTROL_EXPORT_TIMEOUT;
         let started = std::time::Instant::now();
-        eprintln!("[capture-export] wait_for_export: begin");
+        crate::dlog!("[capture-export] wait_for_export: begin");
         let mut draining = false;
         loop {
             if self.shutdown.load(Ordering::Acquire) && !draining {
                 draining = true;
-                eprintln!(
+                crate::dlog!(
                     "[capture-export] wait_for_export: shutdown requested, draining in-flight mux until receipt or export timeout"
                 );
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
-                eprintln!("[capture-export] wait_for_export: timed out");
+                crate::dlog!("[capture-export] wait_for_export: timed out");
                 return Err("capture_export_timed_out".to_string());
             }
             match receiver.recv_timeout(remaining.min(Duration::from_millis(50))) {
                 Ok(Ok(receipt)) => {
-                    eprintln!(
+                    crate::dlog!(
                         "[capture-export] wait_for_export: receipt packets={} elapsed_ms={}",
                         receipt.packet_count,
                         started.elapsed().as_millis()
@@ -1274,7 +1279,7 @@ impl CaptureCoordinatorState {
                     return Ok(receipt);
                 }
                 Ok(Err(error)) => {
-                    eprintln!(
+                    crate::dlog!(
                         "[capture-export] wait_for_export: mux failed kind={:?} elapsed_ms={}",
                         error.kind,
                         started.elapsed().as_millis()
@@ -1283,7 +1288,9 @@ impl CaptureCoordinatorState {
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    eprintln!("[capture-export] wait_for_export: mux worker dropped the channel");
+                    crate::dlog!(
+                        "[capture-export] wait_for_export: mux worker dropped the channel"
+                    );
                     return Err("capture_export_failed".to_string());
                 }
             }
@@ -1409,7 +1416,7 @@ impl ControlServer {
                         Ok((stream, _)) => {
                             // 每个连接独立线程处理：导出（最长 60s）不再独占
                             // accept 循环，status / release 始终能及时响应。
-                            eprintln!(
+                            crate::dlog!(
                                 "[capture-export] accept: {}",
                                 stream
                                     .peer_addr()
@@ -1427,7 +1434,7 @@ impl ControlServer {
                                         }),
                                     );
                                     if let Err(panic) = result {
-                                        eprintln!(
+                                        crate::dlog!(
                                             "[capture-export] connection thread panicked: {}",
                                             panic_message(panic)
                                         );
@@ -1439,7 +1446,9 @@ impl ControlServer {
                                 // spawn 失败时请求尚未读取即丢弃连接：
                                 // 对端 recv 表现为 10053 断连，必须显式记录。
                                 Err(error) => {
-                                    eprintln!("[capture-export] connection spawn failed: {error}");
+                                    crate::dlog!(
+                                        "[capture-export] connection spawn failed: {error}"
+                                    );
                                 }
                             }
                         }
@@ -1482,13 +1491,13 @@ fn handle_control_connection(
     coordinator: Weak<CaptureCoordinatorState>,
 ) {
     let started = Instant::now();
-    eprintln!("[capture-export] conn: reading request");
+    crate::dlog!("[capture-export] conn: reading request");
     let _ = stream.set_read_timeout(Some(CONTROL_READ_TIMEOUT));
     let request =
         read_control_line(&mut stream).and_then(|line| parse_control_request(&line, secret));
     let response = match request {
         Ok(request) => {
-            eprintln!("[capture-export] conn: request accepted: {request:?}");
+            crate::dlog!("[capture-export] conn: request accepted: {request:?}");
             let response_type = response_type_for_request(&request);
             let result = match request {
                 ControlRequest::Status => coordinator
@@ -1549,18 +1558,18 @@ fn handle_control_connection(
                     }),
             };
             result.unwrap_or_else(|code| {
-                eprintln!("[capture-export] conn: request failed: {code}");
+                crate::dlog!("[capture-export] conn: request failed: {code}");
                 control_error_response(response_type, &code)
             })
         }
         Err(code) => {
-            eprintln!("[capture-export] conn: request rejected: {code}");
+            crate::dlog!("[capture-export] conn: request rejected: {code}");
             control_error_response("controlError", &code)
         }
     };
     match serde_json::to_vec(&response) {
         Ok(payload) => {
-            eprintln!(
+            crate::dlog!(
                 "[capture-export] conn: writing response type={} ok={} bytes={} elapsed_ms={}",
                 response
                     .get("type")
@@ -1578,11 +1587,11 @@ fn handle_control_connection(
                 .and_then(|()| stream.write_all(b"\n"))
                 .and_then(|()| stream.flush());
             if let Err(error) = write {
-                eprintln!("[capture-export] conn: response write failed: {error}");
+                crate::dlog!("[capture-export] conn: response write failed: {error}");
             }
         }
         Err(error) => {
-            eprintln!("[capture-export] conn: response serialize failed: {error}");
+            crate::dlog!("[capture-export] conn: response serialize failed: {error}");
         }
     }
 }

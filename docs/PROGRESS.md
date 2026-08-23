@@ -29,6 +29,14 @@
 - `desktop-coach-provider.spec.ts` now exercises the product UI and observes `/v1/agent-runs`, but the real Provider field test was not rerun in this cleanup. Its skip is not counted as passing validation.
 - `git diff --check` passed. Full Python, production browser Playwright, real Tauri, real KovaaK, hardware, and Provider field checks remain to be reported separately if run.
 
+## 2026-08-23 Session Changes
+
+- **v0.1.5 内测排障包：一次诊断包定位局末故障**（起因：内测用户（0.1.4，真硬编 RTX 4080）报障来回沟通成本高；0.1.4 诊断包只有「采集时刻」状态，无局末视频/轨迹/终态化证据，且 v0.1.3 已知边界「runtime/Coach 链路日志未入包、跨重启丢第一现场」一直未补）。本批随包携带的既有 HEAD 修复：视频链路软编三根因 + 覆盖判定对称化（`b11c0a2`）、backend 视频证据桩（`33ca51a`）、run 列表性能（`c9c0067`）、Coach 流中断/挂载污染/空行（`bc4a56c`）。0.1.4 用户报障定位结论：采集链路健康，头号嫌疑为 v0.1.4 缺尾部覆盖 ≤250ms 容忍（`IncompleteCoverage` 零容忍判死）。
+- **日志落盘（两端）**：Rust 新增 `diag_log.rs`——`dlog!` 宏 tee（stderr + `{DATA_ROOT}/logs/native.log`，4MB 轮转封顶 2 份），采集协调器/窗口捕获/runtime 的 37 处生产 `eprintln!` 全部替换（安装版 GUI 无控制台，此前 stderr 全丢）；backend `desktop_runtime` 启动挂 `RotatingFileHandler` 写 `logs/backend.log`（2MB×2，API/finalizer/worker 同进程全覆盖，OSError 静默降级不阻断启动，dev 前台 `app:app` 路径不受影响）。
+- **诊断包 v2（`capture_diagnostics.v2`）**：新增 `nativeLogTail`/`backendLogTail`（各 128KB 尾部，截断的首行丢弃）、`recentRuns`（最近 10 个 run 的 `meta.json` 白名单摘要——video/trace/finalization state+error、窗口、场景，不含 user_id/capture_session_id/本地路径）、`exportReceipts`（最近 10 条 `video-*.receipt.json` 按修改时间降序，抹 session id，附 mp4 存在性+大小）。v1 的 coordinator 脱敏语义不变。
+- **验证**：Rust MSVC 115 passed/0 failed（新增 diag_log 5 测 + bundle 收集 3 测）、clippy 干净、fmt 干净；backend `pytest webapp/tests` 635 passed/3 skipped（新增文件日志 2 测）；前端 unit+contracts 172 绿 + type-check 干净；e2e `diagnostics-export-live.spec.ts` 对齐 v2 断言（真机 Tauri 实例跑法不变）。版本 0.1.4 → 0.1.5（Cargo.toml/tauri.conf.json/Cargo.lock），NSIS 构建三重核验通过：release exe（21:22）含 `0.1.5`/`capture_diagnostics.v2`/`native.log`/`backend.log`/`recentRuns` 等新串（`mp4Exists` 因 LLVM 将 9 字节 key 拆为 imm64 内联而搜不到连续序列，属正常；同函数 `mp4Bytes` 在）、`Aiming Cookie_0.1.5_x64-setup.exe`（151MB）为核验后新构建、Next 静态前端随构建产出。
+- **已知边界**：日志只在磁盘滚动（无跨重启聚合），诊断包含尾部即足够；`recentRuns`/`exportReceipts` 上限 10 条，超量以最新为准；安装包未做真机安装回归（发内测后按新诊断包对照回收）。
+
 ## 2026-08-18 Session Changes
 
 - **Coach 对话体验批（点点连夜施工，主会话 workflow review + 修复 + 入档）**：composer 模型菜单（`CoachModelMenu`，内置 Provider 且目录 ≥2 模型才渲染，`bfe3f92`）+ sidecar 模型切换端点 `POST /v1/provider-profiles/model`（`coach_provider_model_switch.v1`：先 `resolveProviderModel` 校验再落盘、凭据不动、错误语义分支——目录问题提示换模型、凭据/能力问题透传原因，`10c6ae6`）+ 工具步骤动作指示器（进行中呼吸点、停止灰点、「已完成 N 步」折叠）+ 分析步骤 ETA（本机已完成分析真实执行时长中位数：会话列表投影补 `started_at`（`19e2208`），`finished_at - started_at` 优先、排队失真样本过滤、5 秒档、无样本不显示；`computeAnalysisEtaSeconds` 纯函数 + 单测）+ 重启恢复上次会话（localStorage 记最后在看的会话，冷启动一次性恢复，失效回退 primary，存储异常静默）+ 指标格式化共享（`lib/metric-format.ts` 提取 DataView 文案，DiagnosisView 同源复用）+ 讨论条「正在分析」/run 号 + 视频面板 run 号 + 自动开讲不再弹 Toast（结果由动作指示器呈现）。设计文档回写模型菜单（含渲染条件）并修正「第一版不做」清单（`跨 Provider 的模型选择器` 仍不做）。

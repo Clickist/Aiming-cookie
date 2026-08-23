@@ -120,7 +120,7 @@ impl RuntimeProcess {
             let stderr_secrets = vec![token.clone(), capture_control.secret.clone()];
             thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    eprintln!(
+                    crate::dlog!(
                         "[desktop-runtime] {}",
                         redact_secrets(&line, &stderr_secrets),
                     );
@@ -172,7 +172,7 @@ impl RuntimeProcess {
         // The sidecar starts before the Python backend reports its port, so
         // publish the address through a config file the sidecar reads lazily.
         if let Err(error) = write_desktop_runtime_config(app_data_dir, &python_base_url, &token) {
-            eprintln!("[desktop-runtime] warning: {error}");
+            crate::dlog!("[desktop-runtime] warning: {error}");
         }
 
         Ok(Self {
@@ -564,7 +564,7 @@ fn start_coach_sidecar(
                     continue;
                 }
             }
-            eprintln!("[coach-sidecar] {line}");
+            crate::dlog!("[coach-sidecar] {line}");
         }
         if !sent_readiness {
             let _ = sender.send(Err("Coach sidecar exited before readiness".to_string()));
