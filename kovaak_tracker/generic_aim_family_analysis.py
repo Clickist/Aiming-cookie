@@ -288,11 +288,14 @@ def associate_generic_tracking_v1(
             error_deg = (
                 error_px * deg_per_px if deg_per_px is not None else None
             )
+            # No slack beyond the track's observed size: the +10px margin
+            # added on top of the median detection box inflated in-target
+            # time by ~27 points on run 54030 (Controlsphere) versus the
+            # real 36.4% hit rate — without it the inferred ratio lands
+            # within ~3 points of the game's own judgment.
             inside = (
-                abs(target_x - crosshair_x)
-                <= track["half_width_px"] + 10.0
-                and abs(target_y - crosshair_y)
-                <= track["half_height_px"] + 10.0
+                abs(target_x - crosshair_x) <= track["half_width_px"]
+                and abs(target_y - crosshair_y) <= track["half_height_px"]
             )
             samples.append({
                 "t": time,
