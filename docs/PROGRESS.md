@@ -29,7 +29,13 @@
 - `desktop-coach-provider.spec.ts` now exercises the product UI and observes `/v1/agent-runs`, but the real Provider field test was not rerun in this cleanup. Its skip is not counted as passing validation.
 - `git diff --check` passed. Full Python, production browser Playwright, real Tauri, real KovaaK, hardware, and Provider field checks remain to be reported separately if run.
 
-## 2026-08-23 Session Changes
+## 2026-08-24 Session Changes
+
+- **CV 跟枪指标虚高事故（run 54030 Controlsphere）与全量算法审计**：Coach 报「96.8% 时间在判定内/全程没跟丢」vs 真实命中率 36.4%。根因两个，均已修复并用同源重算（同检测产物、同窗口/标定）闭环验证：① tracking generic 的 `_track_position_at` 不过滤 degraded 准星回退点（`1737a6a`）——检测丢失帧被回退成「目标在准星上」，跟丢瞬间记成完美贴合（该局 45.9% 轨迹点是回退伪观测，贡献 30.2pt 虚高）；② tracking 的 in_target 判定照搬 static 层 `+10px` 余量（`16bc35f`，贡献 27pt）——双修后推断贴合度 33.0% vs 真实 36.4%（差 3.4pt、略保守），误差中位 0.038°→0.859°。**static 层的同名 `HIT_MARGIN_PX=10` 是校准值不可删**：run 54029（1wall 6targets small）同法实测 margin=10 判 115 vs 真实 114 命中，margin=0 过杀至 100——泛化时照搬参数没按目标几何重校准才是本次事故的结构教训。
+- **全量 CV 审计结论（static/dynamic/switching generic + reviewed 管线 + 检测层）**：reviewed 管线干净（同帧双采、不可用样本显式排除、`error<=radius` 无余量、identity 歧义 raise、无 degraded 回退）；switching generic 只用 track birth/death 时间戳不消费位置；dynamic generic 复用 static hit 层但 degraded 已显式关闭。低危披露：static 层 miss_vector 允许 degraded 兜底（miss 距离或低估，run 54029 miss=0 未体现）；dynamic generic 无实测锚点局。验证：全量 Python 1206 passed/5 skipped；临时重算脚本已清理。
+- 待办随 v0.1.5 实测收尾：runtime 重建 + 重打包（CV 双修复对用户生效），analysis:18 等旧产物为旧算法结果、重析才会更新。
+
+
 
 - **v0.1.5 内测排障包：一次诊断包定位局末故障**（起因：内测用户（0.1.4，真硬编 RTX 4080）报障来回沟通成本高；0.1.4 诊断包只有「采集时刻」状态，无局末视频/轨迹/终态化证据，且 v0.1.3 已知边界「runtime/Coach 链路日志未入包、跨重启丢第一现场」一直未补）。本批随包携带的既有 HEAD 修复：视频链路软编三根因 + 覆盖判定对称化（`b11c0a2`）、backend 视频证据桩（`33ca51a`）、run 列表性能（`c9c0067`）、Coach 流中断/挂载污染/空行（`bc4a56c`）。0.1.4 用户报障定位结论：采集链路健康，头号嫌疑为 v0.1.4 缺尾部覆盖 ≤250ms 容忍（`IncompleteCoverage` 零容忍判死）。
 - **日志落盘（两端）**：Rust 新增 `diag_log.rs`——`dlog!` 宏 tee（stderr + `{DATA_ROOT}/logs/native.log`，4MB 轮转封顶 2 份），采集协调器/窗口捕获/runtime 的 37 处生产 `eprintln!` 全部替换（安装版 GUI 无控制台，此前 stderr 全丢）；backend `desktop_runtime` 启动挂 `RotatingFileHandler` 写 `logs/backend.log`（2MB×2，API/finalizer/worker 同进程全覆盖，OSError 静默降级不阻断启动，dev 前台 `app:app` 路径不受影响）。
