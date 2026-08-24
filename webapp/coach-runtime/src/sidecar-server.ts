@@ -107,8 +107,7 @@ function turnStatusCode(response: { ok: boolean; error: { code?: string } | null
   if (
     response.error?.code === "invalid_profile" ||
     response.error?.code === "unknown_provider" ||
-    response.error?.code === "unknown_model" ||
-    response.error?.code === "unknown_model_capabilities"
+    response.error?.code === "unknown_model"
   ) {
     return 400;
   }

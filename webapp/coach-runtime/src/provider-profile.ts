@@ -11,8 +11,7 @@ import { parseProviderCredential, ProviderAuthRequestError } from "./provider-au
 export type ProviderProfileErrorCode =
   | "invalid_profile"
   | "unknown_provider"
-  | "unknown_model"
-  | "unknown_model_capabilities";
+  | "unknown_model";
 
 export class ProviderProfileError extends Error {
   readonly code: ProviderProfileErrorCode;

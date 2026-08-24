@@ -366,14 +366,14 @@ export async function handleProviderProfileRequest(
       // preserved; only model_id changes.
       const updated = { ...profile, model_id: body.model_id.trim() };
       // Reject a model that cannot resolve (builtin: must exist in the pinned
-      // catalog; custom: must still satisfy capability checks) before writing,
-      // so the UI capability stays consistent with what is persisted.
+      // catalog; custom: must still construct a resolvable provider) before
+      // writing, so the UI capability stays consistent with what is persisted.
       try {
         await resolveProviderModel(updated);
       } catch (error) {
         if (error instanceof ProviderProfileError) {
-          // 只有「模型/Provider 不在目录」才提示换模型；profile 状态、
-          // 凭据或能力问题直接透传底层原因，避免误导用户逐个换模型。
+          // 只有「模型/Provider 不在目录」才提示换模型；profile 状态或
+          // 凭证问题直接透传底层原因，避免误导用户逐个换模型。
           if (error.code === "unknown_model" || error.code === "unknown_provider") {
             writeJson(res, 400, { detail: "所选模型不可用，请选择当前 Provider 目录中的模型" });
           } else {
