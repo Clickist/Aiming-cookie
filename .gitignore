@@ -4,6 +4,7 @@ __pycache__/
 
 # videos (large: user recordings + reference downloads)
 *.mp4
+!design/opendesign-landing/hero-demo.mp4
 
 # throwaway analysis scripts (logic to be promoted into kovaak_tracker/)
 _tmp_*.py
@@ -38,8 +39,10 @@ third_party/pi/node_modules/
 third_party/pi/**/node_modules/
 webapp/coach-runtime/node_modules/
 
-# session recordings under data/ stay tracked (override *.mp4 above)
+# session recordings under data/ stay tracked (override *.mp4
+!design/opendesign-landing/hero-demo.mp4 above)
 !data/*.mp4
+!design/opendesign-landing/hero-demo.mp4
 
 # dev server logs
 webapp/frontend/mock-*.log
