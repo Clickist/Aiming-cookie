@@ -291,11 +291,11 @@ test("POST /v1/provider-profiles/model updates a custom profile model id", async
   });
 });
 
-test("POST /v1/provider-profiles/model rejects a stored profile whose model cannot resolve", async () => {
+test("POST /v1/provider-profiles/model switches a stored profile without discovered capabilities", async () => {
   await withServer(async (server) => {
-    // 走真实创建链路：custom profile 不带 context_window/max_tokens 也能
-    // 创建，但每次模型切换都解析不出能力；切换须拒绝并透传底层原因，
-    // 而不是误导成「模型不可用」，且不得落盘死模型。
+    // 走真实创建链路：custom profile 不带 context_window/max_tokens（端点
+    // /models 未回报）也能创建；默认能力下模型可解析，切换须成功，
+    // 且回退默认值只注入 resolve 层，不得写进落盘文档。
     const created = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
       kind: "custom_openai_compatible",
       name: "Local Lab",
@@ -305,12 +305,16 @@ test("POST /v1/provider-profiles/model rejects a stored profile whose model cann
     }));
     assert.equal(created.statusCode, 201);
     const res = await request(server, "POST", "/v1/provider-profiles/model", MODEL_SWITCH_BODY("custom-model-b"));
-    assert.equal(res.statusCode, 400);
-    assert.equal(
-      (res.json as { detail: string }).detail,
-      "Custom provider did not return verified context_window and max_tokens",
-    );
-    assert.equal(loadProfile()?.model_id, "custom-model-a");
+    assert.equal(res.statusCode, 200);
+    const persisted = loadProfile();
+    assert.ok(persisted);
+    assert.equal(persisted.model_id, "custom-model-b");
+    if (persisted.kind === "custom_openai_compatible") {
+      assert.equal(persisted.context_window, undefined);
+      assert.equal(persisted.max_tokens, undefined);
+    } else {
+      assert.fail("expected a custom_openai_compatible profile");
+    }
   });
 });
 
