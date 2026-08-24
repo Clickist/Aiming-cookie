@@ -196,7 +196,7 @@ test("POST /v1/turn without NDJSON acceptance keeps the JSON response contract",
   }
 });
 
-test("POST /v1/turn reports missing custom model capabilities as a client error", async () => {
+test("POST /v1/turn reports provider profile errors as a client error", async () => {
   const response = {
     schema_version: "coach_runtime_turn.v1" as const,
     run_id: null,
@@ -205,7 +205,7 @@ test("POST /v1/turn reports missing custom model capabilities as a client error"
     partial_reply: null,
     error: {
       category: "provider_profile",
-      code: "unknown_model_capabilities",
+      code: "unknown_model",
       message: "Provider 配置不可用，请在设置中检查后重试。",
       retryable: false,
     },
