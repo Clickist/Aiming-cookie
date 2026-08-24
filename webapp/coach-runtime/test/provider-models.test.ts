@@ -138,19 +138,34 @@ test("custom Anthropic-compatible profile uses Pi's Anthropic Messages adapter w
   assert.ok(!JSON.stringify(status).includes('"credential"'));
 });
 
-test("custom profiles without discovered limits fail closed instead of using invented defaults", async () => {
-  await assert.rejects(
-    resolveProviderModel({
-      kind: "custom_openai_compatible",
-      provider_id: "unknown-limits-provider",
-      provider_name: "Unknown Limits Provider",
-      base_url: "https://provider.example/v1",
-      credential: { type: "api_key", key: SECRET },
-      model_id: "manual-model-id",
-    }),
-    (error: unknown) => error instanceof ProviderProfileError
-      && error.code === "unknown_model_capabilities",
-  );
+test("custom profiles without discovered limits resolve with the Pi default capabilities", async () => {
+  const resolved = await resolveProviderModel({
+    kind: "custom_openai_compatible",
+    provider_id: "unknown-limits-provider",
+    provider_name: "Unknown Limits Provider",
+    base_url: "https://provider.example/v1",
+    credential: { type: "api_key", key: SECRET },
+    model_id: "manual-model-id",
+  });
+
+  // 与 vendored Pi coding-agent 对自定义 provider 的默认能力对保持一致。
+  assert.equal(resolved.model.contextWindow, 128000);
+  assert.equal(resolved.model.maxTokens, 16384);
+});
+
+test("custom profile capability defaults apply per field when only one limit is discovered", async () => {
+  const resolved = await resolveProviderModel({
+    kind: "custom_openai_compatible",
+    provider_id: "partial-limits-provider",
+    provider_name: "Partial Limits Provider",
+    base_url: "https://provider.example/v1",
+    credential: { type: "api_key", key: SECRET },
+    model_id: "manual-model-id",
+    context_window: 65536,
+  });
+
+  assert.equal(resolved.model.contextWindow, 65536);
+  assert.equal(resolved.model.maxTokens, 16384);
 });
 
 test("invalid custom profiles and client-controlled api_key_env fail closed", () => {

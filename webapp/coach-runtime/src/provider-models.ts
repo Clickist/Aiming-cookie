@@ -101,6 +101,12 @@ export async function listBuiltinProviderCatalog(): Promise<ProviderCatalogRespo
 const CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 const CUSTOM_MODEL_MAX_ITEMS = 200;
 
+// Many OpenAI-compatible endpoints (e.g. DeepSeek) omit context_window/max_tokens
+// from their /models response; fall back to the same capability pair the vendored
+// pi coding-agent applies to custom providers (model-registry.ts).
+const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 128_000;
+const CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS = 16_384;
+
 /**
  * Read a custom Provider `/models` list without persisting its API key.
  * Mirrors the removed Python discovery helper; this is a plain HTTP proxy, not
@@ -189,13 +195,6 @@ async function resolveCustomProfile(
   if (!credential || credential.type !== "api_key" || !credential.key) {
     throw new ProviderProfileError("invalid_profile", "Custom provider API key credential is unavailable");
   }
-  if (!Number.isSafeInteger(profile.context_window) || profile.context_window <= 0
-    || !Number.isSafeInteger(profile.max_tokens) || profile.max_tokens <= 0) {
-    throw new ProviderProfileError(
-      "unknown_model_capabilities",
-      "Custom provider did not return verified context_window and max_tokens",
-    );
-  }
   const credentialStore = new SnapshotCredentialStore(profile.provider_id, credential);
   const ai = (await loadPiAi()) as {
     createModels: (options?: { credentials?: SnapshotCredentialStore }) => PiModels;
@@ -223,8 +222,8 @@ async function resolveCustomProfile(
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: profile.context_window,
-    maxTokens: profile.max_tokens,
+    contextWindow: profile.context_window ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: profile.max_tokens ?? CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
   };
   const provider = ai.createProvider({
     id: profile.provider_id,
