@@ -54,3 +54,6 @@ app-data/
 
 # local research material (YouTube reference downloads)
 viscose-youtube/
+
+# wrangler local state
+.wrangler/
