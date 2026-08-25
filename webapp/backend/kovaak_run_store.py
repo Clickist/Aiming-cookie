@@ -922,6 +922,16 @@ async def ingest_discovery(
             }
             else "time_alignment_unavailable"
         )
+        # 判死上下文落日志与 run 记录：诊断包据此区分锚点口径问题与
+        # 其他 fail-closed 原因，无需用户手动翻 CSV/Performance。
+        log.warning(
+            "kovaak run alignment unavailable source_key=%s error_code=%s "
+            "stats_challenge_start=%r performance_challenge_start_utc=%s",
+            source_key,
+            error_code,
+            stats_start,
+            performance.header.challenge_start_utc,
+        )
         run = await set_run_alignment(
             run["id"],
             user_id,
@@ -929,6 +939,10 @@ async def ingest_discovery(
             summary={
                 "timebase_version": "time_alignment.v2",
                 "error_code": error_code,
+                "stats_challenge_start": stats_start,
+                "performance_challenge_start_utc": (
+                    performance.header.challenge_start_utc
+                ),
             },
         ) or run
     if (

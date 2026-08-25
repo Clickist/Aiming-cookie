@@ -172,7 +172,15 @@ def _resolve_start(
     if precise_ms <= 0:
         raise TimeAlignmentError("anchor_conflict: invalid Stats Challenge Start")
     if precise_ms // 1000 != perf_start_ms // 1000:
-        raise TimeAlignmentError("anchor_conflict: Stats and Performance Challenge Start disagree")
+        # 主源制（2026-08-25）：秒桶不一致不再整局判死。偏差 ≤2000ms 时
+        # 放行，Stats 毫秒锚为准，偏差以毫秒写入 warnings 供诊断包定位；
+        # >2000ms 仍视为两个锚点指向不同局，fail-closed。
+        mismatch_ms = precise_ms - perf_start_ms
+        if abs(mismatch_ms) > 2_000:
+            raise TimeAlignmentError(
+                "anchor_conflict: Stats and Performance Challenge Start disagree"
+            )
+        warnings.append(f"anchor_mismatch_ms={mismatch_ms}")
     return (
         precise_ms,
         "stats_challenge_start",
