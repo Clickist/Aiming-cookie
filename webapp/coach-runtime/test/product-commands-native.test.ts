@@ -34,10 +34,50 @@ test("run.get returns a Run summary from meta.json", () => {
     scenario: "1wall 6targets small",
     trace_state: "complete",
     finalization_state: "ready",
-    stats_calibration: { FOV: 103, DPI: 1600, sensitivity: 1.2, cm_per_360: 51 },
+    // stats_calibration 必须自带场景归属（scenario + run_ref）：Coach 模型
+    // 靠它区分「smoothsphere 用 45」和「6targets 用 80」，不能混用。
+    stats_calibration: {
+      FOV: 103, DPI: 1600, sensitivity: 1.2, cm_per_360: 51,
+      scenario: "1wall 6targets small",
+      run_ref: "run:7",
+    },
     created_at: "2026-08-13T10:20:30Z",
     updated_at: "2026-08-13T10:21:30Z",
   });
+});
+
+test("run.list stamps each run's stats_calibration with its own scenario attribution", () => {
+  const scenarios: Array<[string, number, number]> = [
+    ["smoothsphere", 8, 45],
+    ["1wall 6targets small", 9, 80],
+  ];
+  for (const [scenario, id, sensitivity] of scenarios) {
+    const runsDir = join(dataRoot, "runs", String(id));
+    mkdirSync(runsDir, { recursive: true });
+    writeFileSync(join(runsDir, "meta.json"), JSON.stringify({
+      source_key: `source:${id}`,
+      scenario,
+      trace_state: "complete",
+      finalization_state: "ready",
+      stats_calibration: { FOV: 103, DPI: 1600, sensitivity, cm_per_360: 51 },
+      created_at: "2026-08-13T10:20:30Z",
+      updated_at: "2026-08-13T10:21:30Z",
+    }));
+  }
+  // 两个不同场景的 run 必须各自携带自己的归属标注，跨场景混用灵敏度
+  // 在载荷层面就表现为 scenario 不匹配，而不是一个无标注的裸数字。
+  const result = executeNativeRead("run.list", {}, "owner-a");
+  assert.equal(result.status, "succeeded");
+  const items = result.result as Array<Record<string, any>>;
+  const byRef = new Map(items.map((item) => [item.run_ref, item]));
+  assert.deepEqual(
+    byRef.get("run:8").stats_calibration,
+    { FOV: 103, DPI: 1600, sensitivity: 45, cm_per_360: 51, scenario: "smoothsphere", run_ref: "run:8" },
+  );
+  assert.deepEqual(
+    byRef.get("run:9").stats_calibration,
+    { FOV: 103, DPI: 1600, sensitivity: 80, cm_per_360: 51, scenario: "1wall 6targets small", run_ref: "run:9" },
+  );
 });
 
 test("run.get fails when the run does not exist", () => {
@@ -76,6 +116,9 @@ test("calibration.get reads from config/calibration.json", () => {
   assert.equal(result.status, "succeeded");
   const cal = result.result as Record<string, unknown>;
   assert.equal(cal.configured, true);
+  // 全局校准必须带 scope 标注：它是跨场景的设备级基准，不是某个场景
+  // 的局内灵敏度。
+  assert.equal(cal.scope, "device_global");
   assert.deepEqual(cal.values, { cm_per_360: 32.5, fov: 106 });
 });
 
