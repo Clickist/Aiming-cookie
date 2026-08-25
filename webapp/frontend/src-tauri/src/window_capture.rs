@@ -30,6 +30,11 @@ pub const DEFAULT_WRITER_QUEUE_CAPACITY: usize = 8;
 pub const DEFAULT_HARDWARE_EVENT_QUEUE_CAPACITY: usize = 32;
 pub const DEFAULT_RECORDING_FPS_NUMERATOR: u32 = 60;
 pub const DEFAULT_RECORDING_FPS_DENOMINATOR: u32 = 1;
+// 录制 H.264 的目标码率（8Mbps）。媒体类型上的 MF_MT_AVG_BITRATE 只是
+// 名义值，硬件 MFT 普遍忽略它并回落到厂商默认（实测 ~16Mbps）；真正
+// 生效的约束要在 SetOutputType 之前经 ICodecAPI 设置，见
+// rate_control_plans / configure_rate_control。
+pub const DEFAULT_RECORDING_TARGET_BITRATE_BPS: u32 = 8_000_000;
 pub const REPLAY_MAX_DURATION_100NS: i64 = 300 * 10_000_000;
 pub const REPLAY_MAX_BYTES: usize = 384 * 1024 * 1024;
 // 导出窗口内容忍的时间线缺口：丢 1 帧（60fps 下 16.7ms）不应废掉整个
@@ -158,7 +163,7 @@ impl Mp4Writer {
                 height,
                 fps_num,
                 fps_den,
-                8_000_000,
+                DEFAULT_RECORDING_TARGET_BITRATE_BPS,
             )?;
             unsafe {
                 output_type
@@ -356,6 +361,88 @@ fn create_video_type(
 #[cfg(windows)]
 fn pack_u64_pair(first: u32, second: u32) -> u64 {
     ((first as u64) << 32) | second as u64
+}
+
+// H.264 码率约束计划。硬件/软件 MFT 的默认码率控制不受媒体类型上的
+// MF_MT_AVG_BITRATE 约束（实测 ~16Mbps），必须在 SetOutputType 之前经
+// ICodecAPI 显式设置。先试 CBR（均值锁定目标码率），失败再试峰值受限
+// VBR（均值与峰值上限都钉在目标码率，等效不超调）。
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RateControlPlan {
+    Cbr { mean_bps: u32 },
+    PeakConstrainedVbr { mean_bps: u32, max_bps: u32 },
+}
+
+#[cfg(windows)]
+fn rate_control_plans(target_bps: u32) -> Vec<RateControlPlan> {
+    vec![
+        RateControlPlan::Cbr {
+            mean_bps: target_bps,
+        },
+        RateControlPlan::PeakConstrainedVbr {
+            mean_bps: target_bps,
+            max_bps: target_bps,
+        },
+    ]
+}
+
+#[cfg(windows)]
+fn ui4_variant(value: u32) -> windows::Win32::System::Variant::VARIANT {
+    let mut variant = windows::Win32::System::Variant::VARIANT::default();
+    unsafe {
+        let anonymous = &mut variant.Anonymous.Anonymous;
+        anonymous.vt = windows::Win32::System::Variant::VT_UI4;
+        anonymous.Anonymous.ulVal = value;
+    }
+    variant
+}
+
+#[cfg(windows)]
+fn configure_rate_control(
+    codec_api: &windows::Win32::Media::MediaFoundation::ICodecAPI,
+    target_bps: u32,
+) -> Result<(), String> {
+    use windows::Win32::Media::MediaFoundation::{
+        eAVEncCommonRateControlMode_CBR, eAVEncCommonRateControlMode_PeakConstrainedVBR,
+        CODECAPI_AVEncCommonMaxBitRate, CODECAPI_AVEncCommonMeanBitRate,
+        CODECAPI_AVEncCommonRateControlMode,
+    };
+    let mut last_error = "no rate control plan was attempted".to_string();
+    for plan in rate_control_plans(target_bps) {
+        let (mode, mean_bps, max_bps) = match plan {
+            RateControlPlan::Cbr { mean_bps } => (eAVEncCommonRateControlMode_CBR, mean_bps, None),
+            RateControlPlan::PeakConstrainedVbr { mean_bps, max_bps } => (
+                eAVEncCommonRateControlMode_PeakConstrainedVBR,
+                mean_bps,
+                Some(max_bps),
+            ),
+        };
+        let attempt = (|| -> Result<(), String> {
+            unsafe {
+                codec_api
+                    .SetValue(
+                        &CODECAPI_AVEncCommonRateControlMode,
+                        &ui4_variant(mode.0 as u32),
+                    )
+                    .map_err(|error| format!("rate control mode setup failed: {error}"))?;
+                codec_api
+                    .SetValue(&CODECAPI_AVEncCommonMeanBitRate, &ui4_variant(mean_bps))
+                    .map_err(|error| format!("mean bitrate setup failed: {error}"))?;
+                if let Some(max_bps) = max_bps {
+                    codec_api
+                        .SetValue(&CODECAPI_AVEncCommonMaxBitRate, &ui4_variant(max_bps))
+                        .map_err(|error| format!("max bitrate setup failed: {error}"))?;
+                }
+            }
+            Ok(())
+        })();
+        match attempt {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = format!("{plan:?}: {error}"),
+        }
+    }
+    Err(last_error)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2725,7 +2812,7 @@ impl HardwareH264Encoder {
                 height,
                 DEFAULT_RECORDING_FPS_NUMERATOR,
                 DEFAULT_RECORDING_FPS_DENOMINATOR,
-                8_000_000,
+                DEFAULT_RECORDING_TARGET_BITRATE_BPS,
             )
             .map_err(|message| {
                 HardwareEncoderError::new(HardwareEncoderFailure::EncoderSetupFailure, message)
@@ -2815,6 +2902,24 @@ impl HardwareH264Encoder {
                 } {
                     last_rejection =
                         format!("{friendly_name}: MFT D3D manager setup failed: {error}");
+                    continue;
+                }
+                // ICodecAPI 码率约束必须在 SetOutputType 之前生效，否则硬件
+                // MFT 按厂商默认码率编码（实测 ~16Mbps，超标一倍）。
+                let codec_api: windows::Win32::Media::MediaFoundation::ICodecAPI =
+                    match transform.cast() {
+                        Ok(codec_api) => codec_api,
+                        Err(error) => {
+                            last_rejection =
+                                format!("{friendly_name}: MFT ICodecAPI cast failed: {error}");
+                            continue;
+                        }
+                    };
+                if let Err(error) =
+                    configure_rate_control(&codec_api, DEFAULT_RECORDING_TARGET_BITRATE_BPS)
+                {
+                    last_rejection =
+                        format!("{friendly_name}: MFT rate control setup failed: {error}");
                     continue;
                 }
                 if let Err(error) = unsafe { transform.SetOutputType(0, &output_type, 0) } {
@@ -3296,6 +3401,7 @@ impl SoftwareH264Encoder {
         height: u32,
         queue: Arc<Mutex<FrameQueue>>,
     ) -> Result<Self, HardwareEncoderError> {
+        use windows::core::Interface;
         use windows::Win32::Graphics::Direct3D11::{
             D3D11_CPU_ACCESS_READ, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
         };
@@ -3342,7 +3448,7 @@ impl SoftwareH264Encoder {
                 height,
                 DEFAULT_RECORDING_FPS_NUMERATOR,
                 DEFAULT_RECORDING_FPS_DENOMINATOR,
-                8_000_000,
+                DEFAULT_RECORDING_TARGET_BITRATE_BPS,
             )
             .map_err(|message| {
                 HardwareEncoderError::new(HardwareEncoderFailure::EncoderSetupFailure, message)
@@ -3421,6 +3527,24 @@ impl SoftwareH264Encoder {
                             continue;
                         }
                     };
+                // 与硬件路径同一配置点：ICodecAPI 码率约束先于 SetOutputType，
+                // 防止软编 MFT 回落到自身默认码率（历史实测约超标 10 倍）。
+                let codec_api: windows::Win32::Media::MediaFoundation::ICodecAPI =
+                    match transform.cast() {
+                        Ok(codec_api) => codec_api,
+                        Err(error) => {
+                            last_rejection =
+                                format!("{friendly_name}: MFT ICodecAPI cast failed: {error}");
+                            continue;
+                        }
+                    };
+                if let Err(error) =
+                    configure_rate_control(&codec_api, DEFAULT_RECORDING_TARGET_BITRATE_BPS)
+                {
+                    last_rejection =
+                        format!("{friendly_name}: MFT rate control setup failed: {error}");
+                    continue;
+                }
                 if let Err(error) = unsafe { transform.SetOutputType(0, &output_type, 0) } {
                     last_rejection =
                         format!("{friendly_name}: MFT H.264 output type setup failed: {error}");
@@ -4942,6 +5066,45 @@ mod tests {
         // 帧队列丢帧余量契约：60fps 下至少 0.5s（30 帧）缓冲。
         let frames_per_second = DEFAULT_RECORDING_FPS_NUMERATOR / DEFAULT_RECORDING_FPS_DENOMINATOR;
         assert!(DEFAULT_FRAME_QUEUE_CAPACITY >= frames_per_second as usize / 2);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn rate_control_plans_lock_bitrate_to_the_recording_target() {
+        // 码率约束契约：无论走 CBR 还是峰值受限 VBR，均值与峰值上限都
+        // 不得超过录制目标码率，且 CBR 计划优先尝试。
+        let plans = rate_control_plans(DEFAULT_RECORDING_TARGET_BITRATE_BPS);
+        assert_eq!(plans.len(), 2);
+        assert_eq!(
+            plans[0],
+            RateControlPlan::Cbr {
+                mean_bps: DEFAULT_RECORDING_TARGET_BITRATE_BPS
+            }
+        );
+        for plan in &plans {
+            match plan {
+                RateControlPlan::Cbr { mean_bps } => {
+                    assert_eq!(*mean_bps, DEFAULT_RECORDING_TARGET_BITRATE_BPS);
+                }
+                RateControlPlan::PeakConstrainedVbr { mean_bps, max_bps } => {
+                    assert_eq!(*mean_bps, DEFAULT_RECORDING_TARGET_BITRATE_BPS);
+                    assert!(max_bps <= mean_bps);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn ui4_variant_carries_the_value_as_vt_ui4() {
+        let variant = ui4_variant(8_000_000);
+        unsafe {
+            assert_eq!(
+                variant.Anonymous.Anonymous.vt,
+                windows::Win32::System::Variant::VT_UI4
+            );
+            assert_eq!(variant.Anonymous.Anonymous.Anonymous.ulVal, 8_000_000);
+        }
     }
 
     #[cfg(windows)]
