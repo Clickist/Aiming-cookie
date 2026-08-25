@@ -160,6 +160,53 @@ def create_server(port: int) -> uvicorn.Server:
 BACKEND_LOG_MAX_BYTES = 2_000_000
 BACKEND_LOG_BACKUP_COUNT = 1
 
+RUNTIME_LOCK_NAME = ".runtime.lock"
+
+
+def acquire_runtime_lock(data_root: Path) -> bool:
+    """Hold an exclusive OS lock on ``{DATA_ROOT}/.runtime.lock`` for our lifetime.
+
+    The kernel releases it when the process exits (any exit path), so a stale
+    lock can never outlive its owner. A second runtime on the same DATA_ROOT
+    is the strongest known cause of backend.log truncation: two
+    RotatingFileHandler instances rotate the same file out from under each
+    other on Windows. Returns False when a live runtime already holds it.
+    """
+    lock_path = data_root / RUNTIME_LOCK_NAME
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(lock_path, "a+b")
+    try:
+        handle.seek(0)
+        handle.write(f"{os.getpid()}\n".encode("ascii"))
+        handle.flush()
+        handle.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                handle.close()
+                return False
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                handle.close()
+                return False
+    except OSError:
+        with contextlib.suppress(OSError):
+            handle.close()
+        return False
+    # 故意不 close：锁必须活到进程结束（进程退出时内核自动释放句柄与锁）。
+    _RUNTIME_LOCK_HANDLES.append(handle)
+    return True
+
+
+_RUNTIME_LOCK_HANDLES: list[Any] = []
+
 
 def configure_file_logging() -> None:
     """Mirror backend logs (API/finalizer/worker share this process) into
@@ -168,7 +215,9 @@ def configure_file_logging() -> None:
     The packaged shell pipes stderr only into a GUI process without a
     console, so without this file every finalizer/ingest failure line is
     lost on user machines. Never raise here: diagnostics logging must not
-    block runtime startup.
+    block runtime startup. ``delay=True`` reopens the file per record so
+    an externally rotated/locked file self-heals on the next line instead
+    of writing into a renamed handle forever.
     """
     try:
         log_dir = config.DATA_ROOT / "logs"
@@ -178,10 +227,14 @@ def configure_file_logging() -> None:
             maxBytes=BACKEND_LOG_MAX_BYTES,
             backupCount=BACKEND_LOG_BACKUP_COUNT,
             encoding="utf-8",
+            delay=True,
         )
         handler.setFormatter(
             logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
         )
+        # delay 模式下文件要到首条日志才创建；这里主动 touch 保持
+        # 「启动即有 backend.log」的可诊断性（logHealth / 用户找文件）。
+        (log_dir / "backend.log").touch()
         root = logging.getLogger()
         if any(
             isinstance(existing, RotatingFileHandler)
@@ -415,6 +468,14 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
 
 def main() -> None:
     configure_file_logging()
+    if not acquire_runtime_lock(config.DATA_ROOT):
+        log.error(
+            "backend runtime refused to start: another live runtime holds the "
+            "DATA_ROOT lock (%s). A second instance on the same data root "
+            "corrupts rotating log files — close the other instance first.",
+            config.DATA_ROOT,
+        )
+        raise SystemExit(3)
     asyncio.run(run_runtime())
 
 
