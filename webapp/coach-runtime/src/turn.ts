@@ -483,17 +483,15 @@ function userFacingErrorMessage(error: unknown, stopped: boolean): string {
 
 // ── Extract assistant text from a Pi message ──────────────────────────────
 
-// DeepSeek 系推理模型必须显式开思考档（判定口径与 Pi 的 isDeepSeek 一致：
-// provider id 或 baseUrl 命中 deepseek）。不开时 Pi 下发 thinking:disabled，
-// 模型把推理写进正文污染用户可见回复（2026-08-25 内测 onboarding 实测）。
-export function deepSeekThinkingLevel(model: unknown): "high" | undefined {
+// 推理模型默认开次顶级（high）思考档（点点 2026-08-25 拍板）。不传档位时
+// Pi 对 deepseek 系 thinkingFormat 会下发 thinking:disabled，模型转而把
+// 推理"说出声"写进正文污染回复（2026-08-25 内测 onboarding 实测）；显式
+// 开档后 API 把推理分离进独立通道。opencode-go 元数据与 deepseek 同款，
+// 此前靠中转站忽略 disabled 才碰巧正常，显式传档转为明确正确。不支持
+// high 的模型由 Pi 的 clampThinkingLevel 自动落到最近可用档；非推理模型
+// 维持默认 off 不动请求形态。
+export function defaultThinkingLevel(model: unknown): "high" | undefined {
   if (!isRecord(model)) return undefined;
-  const provider = model.provider;
-  const baseUrl = model.baseUrl;
-  const isDeepSeekEndpoint =
-    provider === "deepseek" ||
-    (typeof baseUrl === "string" && baseUrl.includes("deepseek.com"));
-  if (!isDeepSeekEndpoint) return undefined;
   return model.reasoning === true ? "high" : undefined;
 }
 
@@ -631,7 +629,7 @@ export async function runCoachTurn(
     // 过程"说出声"写进正文——回复被内部独白淹没（2026-08-25 内测 onboarding
     // 实测）。显式开思考档，API 才会把推理分离进 reasoning_content。
     // 其余 provider 维持默认（off），不改既有请求形态。
-    const thinkingLevel = deepSeekThinkingLevel(resolved.model);
+    const thinkingLevel = defaultThinkingLevel(resolved.model);
 
     const harness = new AgentHarness({
       env,
