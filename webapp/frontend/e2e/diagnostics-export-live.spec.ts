@@ -32,7 +32,7 @@ test("real Tauri capture diagnostics export writes a valid bundle", async () => 
   expect(returned, "command returns the written path").toBe(outPath);
 
   const bundle = JSON.parse(await fs.readFile(outPath, "utf8")) as Record<string, unknown>;
-  expect(bundle.schemaVersion).toBe("capture_diagnostics.v2");
+  expect(bundle.schemaVersion).toBe("capture_diagnostics.v3");
   expect(typeof bundle.generatedAtUtcMs).toBe("number");
   expect(bundle.targetOs).toBe("windows");
   expect(bundle.appVersion).toBeTruthy();
@@ -55,6 +55,13 @@ test("real Tauri capture diagnostics export writes a valid bundle", async () => 
   for (const receipt of bundle.exportReceipts as Record<string, unknown>[]) {
     expect(receipt.captureSessionId ?? null).toBeNull();
   }
+  // v3：日志健康自检 + coach-error / 轮转日志尾部（缺失时为 null，存在即字符串）。
+  const logHealth = bundle.logHealth as Record<string, unknown> | undefined;
+  expect(logHealth, "log health block").toBeDefined();
+  expect(["number", "object"]).toContain(typeof logHealth!.nativeLogAgeSeconds);
+  expect(["number", "object"]).toContain(typeof logHealth!.backendLogAgeSeconds);
+  expect(["string", "object"]).toContain(typeof (bundle.coachErrorLogTail ?? null));
+  expect(["string", "object"]).toContain(typeof (bundle.backendLogRotatedTail ?? null));
 
   await fs.rm(outPath, { force: true });
 });

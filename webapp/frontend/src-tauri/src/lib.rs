@@ -50,26 +50,182 @@ struct CaptureDiagnosticsBundle {
     backend_log_tail: Option<String>,
     recent_runs: Vec<serde_json::Value>,
     export_receipts: Vec<serde_json::Value>,
+    // v3：内测诊断包定位出判死现场缺上下文——日志健康度（最后一条
+    // 时间戳距今多久，判断采集/后端是否还活着）、coach-error.log 尾部、
+    // backend 轮转日志尾部、分析会话现场（状态/事件尾部/文件年龄——卡住
+    // 的会话无 overview 且文件不更新，一眼可见）、最近 Coach 回合的
+    // stopReason/errorMessage（resolve 形态半句话不写 coach-error.log，
+    // 只存在会话 jsonl 里）。缺失/解析失败给 None/空，不阻塞导出。
+    log_health: LogHealth,
+    coach_error_log_tail: Option<String>,
+    backend_log_rotated_tail: Option<String>,
+    recent_analyses: Vec<RecentAnalysis>,
+    recent_coach_turns: Vec<RecentCoachTurn>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LogHealth {
+    backend_log_age_seconds: Option<i64>,
+    native_log_age_seconds: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecentAnalysis {
+    id: u64,
+    overview_status: Option<String>,
+    completed_at: Option<String>,
+    error_fields: std::collections::BTreeMap<String, String>,
+    newest_file_age_seconds: Option<i64>,
+    files: Vec<String>,
+    events_tail: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecentCoachTurn {
+    conversation_id: u64,
+    title: Option<String>,
+    updated_at: Option<String>,
+    last_stop_reason: Option<String>,
+    last_error_message: Option<String>,
+    jsonl_tail: Option<String>,
 }
 
 const DIAG_LOG_TAIL_BYTES: usize = 128 * 1024;
+const DIAG_ROTATED_LOG_TAIL_BYTES: usize = 64 * 1024;
 const DIAG_RECENT_RUNS_LIMIT: usize = 10;
 const DIAG_EXPORT_RECEIPTS_LIMIT: usize = 10;
+const DIAG_RECENT_ANALYSES_LIMIT: usize = 10;
+const DIAG_RECENT_COACH_TURNS_LIMIT: usize = 3;
+const DIAG_EVENTS_TAIL_BYTES: usize = 4 * 1024;
+const DIAG_COACH_TURN_TAIL_BYTES: usize = 8 * 1024;
 
-/// 读取日志文件尾部；`start > 0` 时丢弃可能被截断的首行，保证 UTF-8 合法。
+/// 读取日志文件尾部；`start > 0` 时优先丢弃被截断的首行，但窗口内整段
+/// 无换行（Coach jsonl 单条 assistant 消息可超窗口大小）时原样返回窗口
+/// ——stopReason 等尾部字段的诊断价值高于首行完整性。
 fn log_tail(path: &PathBuf, max_bytes: usize) -> Option<String> {
     let bytes = fs::read(path).ok()?;
     let start = bytes.len().saturating_sub(max_bytes);
     let text = String::from_utf8_lossy(&bytes[start..]);
     let text: String = if start > 0 {
         match text.find('\n') {
-            Some(newline) => text[newline + 1..].to_string(),
-            None => return Some(String::new()),
+            // 只有当换行后仍有内容才丢弃截断首行；窗口本身是
+            // 「超长行尾巴 + 行尾换行」（Coach jsonl 单条消息超窗口）时
+            // 整窗返回——尾部字段（stopReason 等）的诊断价值优先。
+            Some(newline) if newline + 1 < text.len() => text[newline + 1..].to_string(),
+            _ => text.into_owned(),
         }
     } else {
         text.into_owned()
     };
     Some(text)
+}
+
+/// 日志健康自检：native.log 尾行行首是 epoch ms；backend.log 尾部最后一行
+/// 是 Python asctime 本地时间（`2026-08-25 14:38:17,831`），借本地 UTC
+/// 偏移换算成 epoch 后与导出时刻比对。任一环节缺失/解析失败给 None。
+fn collect_log_health(data_root: &Path, now_ms: i64, local_utc_offset: Option<i64>) -> LogHealth {
+    let logs_dir = data_root.join("logs");
+    let native_age = log_tail(&logs_dir.join("native.log"), DIAG_LOG_TAIL_BYTES)
+        .as_deref()
+        .and_then(last_native_log_epoch_ms)
+        .map(|ms| (now_ms - ms) / 1000);
+    let backend_age = log_tail(&logs_dir.join("backend.log"), DIAG_LOG_TAIL_BYTES)
+        .as_deref()
+        .and_then(last_backend_log_epoch_ms)
+        .zip(local_utc_offset)
+        .map(|(as_utc_ms, offset_ms)| (now_ms - (as_utc_ms - offset_ms)) / 1000);
+    LogHealth {
+        backend_log_age_seconds: backend_age,
+        native_log_age_seconds: native_age,
+    }
+}
+
+/// 本地时区与 UTC 的偏移（毫秒）。chrono/time 不在依赖里，借 PowerShell
+/// 读取（与 gpu_names 同一模式）；失败返回 None → backend 日志年龄给 null。
+fn local_utc_offset_ms() -> Option<i64> {
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "[int][TimeZoneInfo]::Local.GetUtcOffset([DateTimeOffset]::Now).TotalMinutes",
+            ])
+            .creation_flags(NO_CHILD_WINDOW)
+            .output()
+            .ok()?;
+        let minutes: i64 = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .ok()?;
+        Some(minutes * 60_000)
+    }
+    #[cfg(not(windows))]
+    None
+}
+
+fn last_backend_log_epoch_ms(tail: &str) -> Option<i64> {
+    tail.lines().rev().find_map(parse_backend_log_line_epoch_ms)
+}
+
+fn parse_backend_log_line_epoch_ms(line: &str) -> Option<i64> {
+    let digits = |range: std::ops::Range<usize>| line.get(range)?.parse::<i64>().ok();
+    let separators = [
+        (4, b'-'),
+        (7, b'-'),
+        (10, b' '),
+        (13, b':'),
+        (16, b':'),
+        (19, b','),
+    ];
+    if separators
+        .iter()
+        .any(|(index, expected)| line.as_bytes().get(*index) != Some(expected))
+    {
+        return None;
+    }
+    let (year, month, day) = (digits(0..4)?, digits(5..7)?, digits(8..10)?);
+    let (hour, minute, second) = (digits(11..13)?, digits(14..16)?, digits(17..19)?);
+    let millis = digits(20..23)?;
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+        || !(0..=999).contains(&millis)
+    {
+        return None;
+    }
+    Some(
+        ((days_from_civil(year, month, day) * 24 + hour) * 60 + minute) * 60_000
+            + second * 1000
+            + millis,
+    )
+}
+
+/// 公历日期 → 自 1970-01-01 起的天数（Howard Hinnant 的 days_from_civil）。
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = (month + 9) % 12;
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+fn last_native_log_epoch_ms(tail: &str) -> Option<i64> {
+    tail.lines().rev().find_map(parse_native_log_line_epoch_ms)
+}
+
+fn parse_native_log_line_epoch_ms(line: &str) -> Option<i64> {
+    // diag_log 行格式：`{epoch_ms} {message}`；阈值排除行首小数字（非时间戳）。
+    let token = line.split_whitespace().next()?;
+    let value: i64 = token.parse().ok()?;
+    (value > 1_000_000_000_000).then_some(value)
 }
 
 /// 诊断白名单：只导排障需要的终态字段，不含 user_id、capture_session_id
@@ -81,6 +237,7 @@ const RUN_META_FIELDS: &[&str] = &[
     "scenario",
     "source_key",
     "alignment_state",
+    "alignment_summary",
     "window_start_epoch_ms",
     "window_end_epoch_ms",
     "video_state",
@@ -204,6 +361,153 @@ fn diagnostic_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 分析会话现场：analyses/<id>/ 与 sessions/<id>/ 的并集（只有 sessions
+/// 目录、没有 overview 的即进行中/卡住的会话），按 id 降序取最近 N 个。
+/// 「卡在第一步」类故障靠 newestFileAgeSeconds + 无 overview 直接可见。
+fn collect_recent_analyses(data_root: &Path, limit: usize, now_ms: i64) -> Vec<RecentAnalysis> {
+    let numeric_dir_ids = |dir: &Path| -> Vec<u64> {
+        fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter_map(|entry| {
+                        run_id_from_dir_name(entry.file_name().to_string_lossy().trim())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut ids: Vec<u64> = numeric_dir_ids(&data_root.join("analyses"));
+    ids.extend(numeric_dir_ids(&data_root.join("sessions")));
+    ids.sort_unstable_by(|a, b| b.cmp(a));
+    ids.dedup();
+    let mut summaries = Vec::new();
+    for id in ids.into_iter().take(limit) {
+        let analyses_dir = data_root.join("analyses").join(id.to_string());
+        let sessions_dir = data_root.join("sessions").join(id.to_string());
+        if !analyses_dir.is_dir() && !sessions_dir.is_dir() {
+            continue;
+        }
+        let overview = fs::read(analyses_dir.join("overview.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+        let overview_object = overview.as_ref().and_then(|value| value.as_object());
+        let str_field = |key: &str| -> Option<String> {
+            overview_object
+                .and_then(|object| object.get(key))
+                .and_then(|value| value.as_str())
+                .map(|text| text.to_string())
+        };
+        let mut error_fields = std::collections::BTreeMap::new();
+        if let Some(object) = overview_object {
+            for (key, value) in object {
+                if key.contains("error") && value.is_string() {
+                    error_fields
+                        .insert(key.clone(), value.as_str().unwrap_or_default().to_string());
+                }
+            }
+        }
+        let mut files = Vec::new();
+        let mut newest_mtime_ms: Option<i64> = None;
+        for (prefix, dir) in [("", &sessions_dir), ("analyses/", &analyses_dir)] {
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.filter_map(Result::ok) {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    files.push(format!("{prefix}{name}"));
+                    if let Ok(mtime) = entry.metadata().and_then(|meta| meta.modified()) {
+                        let ms = mtime
+                            .duration_since(UNIX_EPOCH)
+                            .map(|duration| duration.as_millis() as i64)
+                            .unwrap_or(0);
+                        newest_mtime_ms =
+                            Some(newest_mtime_ms.map_or(ms, |prev: i64| prev.max(ms)));
+                    }
+                }
+            }
+        }
+        files.sort();
+        summaries.push(RecentAnalysis {
+            id,
+            overview_status: str_field("status"),
+            completed_at: str_field("completed_at"),
+            error_fields,
+            newest_file_age_seconds: newest_mtime_ms.map(|ms| (now_ms - ms) / 1000),
+            files,
+            events_tail: log_tail(&analyses_dir.join("events.json"), DIAG_EVENTS_TAIL_BYTES),
+        });
+    }
+    summaries
+}
+
+/// 最近 Coach 回合：会话 meta + 对应 jsonl 尾部的 stopReason/errorMessage。
+/// resolve 形态的「半句话当完整答案」只记录在 jsonl 的 stopReason 里，
+/// 不写 coach-error.log——没有它，Coach 类报障只能去用户机器翻会话文件。
+fn collect_recent_coach_turns(data_root: &Path, limit: usize) -> Vec<RecentCoachTurn> {
+    let conversations_dir = data_root.join("conversations");
+    let mut entries: Vec<(u64, serde_json::Value)> = fs::read_dir(&conversations_dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let id = name.strip_suffix(".meta.json")?.parse::<u64>().ok()?;
+                    let value =
+                        serde_json::from_slice::<serde_json::Value>(&fs::read(entry.path()).ok()?)
+                            .ok()?;
+                    Some((id, value))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort_unstable_by(|(a, _), (b, _)| b.cmp(a));
+    let coach_dir = conversations_dir.join("--coach--");
+    let mut turns = Vec::new();
+    for (conversation_id, meta) in entries.into_iter().take(limit) {
+        let str_field = |key: &str| -> Option<String> {
+            meta.get(key)
+                .and_then(|value| value.as_str())
+                .map(|text| text.to_string())
+        };
+        let jsonl_name_suffix = format!("_{conversation_id}.jsonl");
+        let jsonl_path = fs::read_dir(&coach_dir).ok().and_then(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|path| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().ends_with(&jsonl_name_suffix))
+                        .unwrap_or(false)
+                })
+        });
+        let jsonl_tail = jsonl_path
+            .as_ref()
+            .and_then(|path| log_tail(path, DIAG_COACH_TURN_TAIL_BYTES));
+        turns.push(RecentCoachTurn {
+            conversation_id,
+            title: str_field("title"),
+            updated_at: str_field("updated_at"),
+            last_stop_reason: jsonl_tail
+                .as_deref()
+                .and_then(|tail| last_json_string_field(tail, "stopReason")),
+            last_error_message: jsonl_tail
+                .as_deref()
+                .and_then(|tail| last_json_string_field(tail, "errorMessage")),
+            jsonl_tail,
+        });
+    }
+    turns
+}
+
+/// 在 jsonl 尾部文本里找最后一次出现的 `"key":"value"` 字符串字段。
+/// 诊断用途，不处理转义（stopReason/errorMessage 的值不含引号）。
+fn last_json_string_field(tail: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\":\"");
+    let start = tail.rfind(&needle)? + needle.len();
+    let rest = &tail[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
 fn host_version() -> Option<String> {
     #[cfg(windows)]
     let output = std::process::Command::new("cmd")
@@ -299,9 +603,10 @@ fn desktop_export_capture_diagnostics(
         .lock()
         .map_err(|_| "window capture state is unavailable".to_string())?
         .status();
+    let now_ms = diagnostic_now_ms();
     let bundle = CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v2",
-        generated_at_utc_ms: diagnostic_now_ms(),
+        schema_version: "capture_diagnostics.v3",
+        generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,
         target_arch: std::env::consts::ARCH,
@@ -328,6 +633,14 @@ fn desktop_export_capture_diagnostics(
         ),
         recent_runs: collect_recent_runs(&data_root, DIAG_RECENT_RUNS_LIMIT),
         export_receipts: collect_export_receipts(&data_root, DIAG_EXPORT_RECEIPTS_LIMIT),
+        log_health: collect_log_health(&data_root, now_ms, local_utc_offset_ms()),
+        coach_error_log_tail: log_tail(&data_root.join("coach-error.log"), DIAG_LOG_TAIL_BYTES),
+        backend_log_rotated_tail: log_tail(
+            &data_root.join("logs").join("backend.log.1"),
+            DIAG_ROTATED_LOG_TAIL_BYTES,
+        ),
+        recent_analyses: collect_recent_analyses(&data_root, DIAG_RECENT_ANALYSES_LIMIT, now_ms),
+        recent_coach_turns: collect_recent_coach_turns(&data_root, DIAG_RECENT_COACH_TURNS_LIMIT),
     };
     let payload =
         serde_json::to_vec_pretty(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))?;
@@ -468,6 +781,12 @@ mod tests {
             Some("aaaa\nbbbb\ncccc\ndddd\n")
         );
         assert_eq!(log_tail(&root.join("missing.log"), 10), None);
+        // 窗口内无换行（超长单行，如 Coach jsonl 的大消息）→ 原样返回窗口而非空串。
+        fs::write(&log, format!("{}\n{}", "h".repeat(30), "x".repeat(20))).expect("write");
+        assert_eq!(log_tail(&log, 10).as_deref(), Some("xxxxxxxxxx"));
+        // 窗口 = 超长行尾巴 + 行尾换行（首个换行在窗口头部）→ 切完仍是整行。
+        fs::write(&log, format!("{}\n{}", "h".repeat(30), "x".repeat(29))).expect("write");
+        assert_eq!(log_tail(&log, 30).as_deref(), Some(&"x".repeat(29)[..]));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -489,6 +808,12 @@ mod tests {
                     "user_id": "user-1",
                     "mouse_trace_path": "C:/trace.bin",
                     "scenario": "test scenario",
+                    "alignment_summary": {
+                        "timebase_version": "time_alignment.v2",
+                        "error_code": "anchor_conflict",
+                        "stats_challenge_start": "01:46:41.321",
+                        "performance_challenge_start_utc": 1_699_897_600_000i64,
+                    },
                 })
                 .to_string(),
             )
@@ -504,7 +829,213 @@ mod tests {
             assert!(!object.contains_key("capture_session_id"));
             assert!(!object.contains_key("user_id"));
             assert!(!object.contains_key("mouse_trace_path"));
+            // v3：判死 run 的对齐摘要（error_code + 两个锚点原始值）进包。
+            assert_eq!(
+                run["alignment_summary"]["error_code"],
+                serde_json::json!("anchor_conflict")
+            );
+            assert_eq!(
+                run["alignment_summary"]["performance_challenge_start_utc"],
+                serde_json::json!(1_699_897_600_000i64)
+            );
         }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn collect_recent_analyses_reports_status_files_and_inflight_sessions() {
+        let root = scratch_data_root("analyses");
+        // 完成的会话：overview + events + 工作区文件
+        for (dir, file, content) in [
+            (
+                root.join("analyses/7"),
+                "overview.json",
+                r#"{"status":"done","completed_at":"2026-08-25T11:00:00Z","source_error":null}"#,
+            ),
+            (
+                root.join("analyses/7"),
+                "events.json",
+                r#"{"event":"created"}{"event":"done"}"#,
+            ),
+            (root.join("sessions/7"), "video.mp4", "x"),
+            // 卡住的会话：只有工作区、无 overview
+            (root.join("sessions/8"), "video.mp4", "x"),
+        ] {
+            fs::create_dir_all(&dir).expect("mkdir");
+            fs::write(dir.join(file), content).expect("write");
+        }
+        let now_ms = diagnostic_now_ms();
+        let mut analyses = collect_recent_analyses(&root, 10, now_ms);
+        analyses.sort_by_key(|item| item.id);
+        assert_eq!(analyses.len(), 2);
+        let done = &analyses[0];
+        assert_eq!(done.id, 7);
+        assert_eq!(done.overview_status.as_deref(), Some("done"));
+        assert_eq!(done.completed_at.as_deref(), Some("2026-08-25T11:00:00Z"));
+        // source_error 是 null（非字符串），不进 error_fields
+        assert!(done.error_fields.is_empty());
+        assert!(done.files.iter().any(|name| name == "analyses/events.json"));
+        assert!(done.events_tail.as_deref().unwrap_or("").contains("done"));
+        let inflight = &analyses[1];
+        assert_eq!(inflight.id, 8);
+        assert_eq!(inflight.overview_status, None);
+        assert_eq!(inflight.events_tail, None);
+        // 文件是刚写的，年龄必须是小的正数
+        let age = inflight.newest_file_age_seconds.expect("age");
+        assert!((0..60).contains(&age), "age {age}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn collect_recent_coach_turns_extracts_stop_reason_and_error() {
+        let root = scratch_data_root("coach");
+        fs::create_dir_all(root.join("conversations/--coach--")).expect("mkdir");
+        fs::write(
+            root.join("conversations/53.meta.json"),
+            r#"{"id":53,"title":"灵敏度","updated_at":"2026-08-25T10:41:00Z"}"#,
+        )
+        .expect("write");
+        fs::write(
+            root.join("conversations/--coach--/2026-08-25T10-40-39-787Z_53.jsonl"),
+            concat!(
+                r#"{"type":"session"}"#,
+                r#"{"type":"message","message":{"role":"user","content":"hi"}}"#,
+                r#"{"type":"message","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"done"}]}}"#,
+            ),
+        )
+        .expect("write");
+        let turns = collect_recent_coach_turns(&root, 3);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].conversation_id, 53);
+        assert_eq!(turns[0].title.as_deref(), Some("灵敏度"));
+        assert_eq!(turns[0].last_stop_reason.as_deref(), Some("stop"));
+        assert_eq!(turns[0].last_error_message, None);
+        // resolve 形态：stopReason=error + errorMessage，必须被尾部提取逮住
+        fs::write(
+            root.join("conversations/--coach--/2026-08-25T10-40-39-787Z_53.jsonl"),
+            r#"{"type":"message","message":{"role":"assistant","stopReason":"error","errorMessage":"terminated"}}"#,
+        )
+        .expect("rewrite");
+        let turns = collect_recent_coach_turns(&root, 3);
+        assert_eq!(turns[0].last_stop_reason.as_deref(), Some("error"));
+        assert_eq!(turns[0].last_error_message.as_deref(), Some("terminated"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn last_json_string_field_handles_missing_and_escaped() {
+        assert_eq!(
+            last_json_string_field(r#"{"stopReason":"stop"}"#, "stopReason"),
+            Some("stop".to_string())
+        );
+        assert_eq!(last_json_string_field("no json here", "stopReason"), None);
+        assert_eq!(last_json_string_field(r#"{"a":1}"#, "stopReason"), None);
+    }
+
+    #[test]
+    fn parse_backend_log_line_epoch_ms_matches_python_asctime() {
+        assert_eq!(
+            parse_backend_log_line_epoch_ms(
+                "2026-08-25 14:38:17,831 INFO webapp.backend.kovaak_run_store message",
+            ),
+            Some(1_787_668_697_831)
+        );
+        assert_eq!(
+            parse_backend_log_line_epoch_ms("2024-02-29 23:59:59,999 WARNING leap"),
+            Some(1_709_251_199_999)
+        );
+        assert_eq!(
+            parse_backend_log_line_epoch_ms("1970-01-01 00:00:00,000"),
+            Some(0)
+        );
+        assert_eq!(parse_backend_log_line_epoch_ms("not a timestamp"), None);
+        assert_eq!(
+            parse_backend_log_line_epoch_ms("2026-13-01 00:00:00,000"),
+            None
+        );
+        // 缺毫秒段（截断行）不算可解析时间戳。
+        assert_eq!(parse_backend_log_line_epoch_ms("2026-08-25 14:38:17"), None);
+    }
+
+    #[test]
+    fn last_line_wins_and_skips_unparseable_lines() {
+        // 尾行无时间戳 → 向前找最近一条可解析行。
+        let backend = "2023-11-13 17:46:40,000 WARNING old\nTRACE tail-without-ts\n";
+        assert_eq!(last_backend_log_epoch_ms(backend), Some(1_699_897_600_000));
+        assert_eq!(last_backend_log_epoch_ms(""), None);
+        assert_eq!(last_backend_log_epoch_ms("garbage\nstill garbage\n"), None);
+        let native = "1750000000000 capture-export: ok\n0 weird line\n";
+        assert_eq!(last_native_log_epoch_ms(native), Some(1_750_000_000_000));
+        assert_eq!(
+            last_native_log_epoch_ms("1_750_000_000_000 old\nabc def\n"),
+            None
+        );
+        assert_eq!(last_native_log_epoch_ms(""), None);
+    }
+
+    #[test]
+    fn collect_log_health_computes_ages_from_scratch_data_root() {
+        let root = scratch_data_root("health");
+        let logs = root.join("logs");
+        fs::create_dir_all(&logs).expect("mkdir");
+        let now_ms = 1_787_669_000_000i64;
+        fs::write(
+            logs.join("native.log"),
+            format!("{} native alive\n", now_ms - 5_000),
+        )
+        .expect("write native");
+        // backend asctime 是本地时间：now-30s 的 epoch + UTC+8 偏移的墙钟。
+        fs::write(
+            logs.join("backend.log"),
+            "2026-08-25 22:42:50,000 INFO webapp.backend alive\n",
+        )
+        .expect("write backend");
+        let health = collect_log_health(&root, now_ms, Some(28_800_000));
+        assert_eq!(health.native_log_age_seconds, Some(5));
+        assert_eq!(health.backend_log_age_seconds, Some(30));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn collect_log_health_missing_logs_or_offset_yield_null() {
+        let root = scratch_data_root("health-missing");
+        fs::create_dir_all(root.join("logs")).expect("mkdir");
+        fs::write(
+            root.join("logs").join("backend.log"),
+            "2026-08-25 22:42:50,000 INFO x\n",
+        )
+        .expect("write backend");
+        // 缺本地偏移 → backend 年龄给 null；缺 native.log → null。
+        let no_offset = collect_log_health(&root, 1_787_669_000_000, None);
+        assert_eq!(no_offset.backend_log_age_seconds, None);
+        assert_eq!(no_offset.native_log_age_seconds, None);
+        let empty_root = scratch_data_root("health-empty");
+        let empty = collect_log_health(&empty_root, 1_787_669_000_000, Some(0));
+        assert_eq!(empty.backend_log_age_seconds, None);
+        assert_eq!(empty.native_log_age_seconds, None);
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&empty_root);
+    }
+
+    #[test]
+    fn v3_tail_fields_read_coach_error_and_rotated_logs() {
+        let root = scratch_data_root("v3-tails");
+        fs::create_dir_all(root.join("logs")).expect("mkdir");
+        fs::write(root.join("coach-error.log"), "coach error line\n").expect("write");
+        fs::write(root.join("logs").join("backend.log.1"), "rotated line\n").expect("write");
+        assert_eq!(
+            log_tail(&root.join("coach-error.log"), DIAG_LOG_TAIL_BYTES).as_deref(),
+            Some("coach error line\n")
+        );
+        assert_eq!(
+            log_tail(
+                &root.join("logs").join("backend.log.1"),
+                DIAG_ROTATED_LOG_TAIL_BYTES,
+            )
+            .as_deref(),
+            Some("rotated line\n")
+        );
+        assert_eq!(log_tail(&root.join("missing-coach-error.log"), 10), None);
         let _ = fs::remove_dir_all(&root);
     }
 
