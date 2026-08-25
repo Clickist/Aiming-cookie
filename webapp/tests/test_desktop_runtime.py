@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -819,3 +820,50 @@ def test_configure_file_logging_is_idempotent(tmp_path, monkeypatch) -> None:
     ]
     assert len(matching) == 1
     _strip_backend_log_handlers(base_filename)
+
+
+def test_acquire_runtime_lock_allows_first_and_refuses_second(tmp_path) -> None:
+    def release() -> None:
+        for handle in desktop_runtime._RUNTIME_LOCK_HANDLES:
+            handle.close()
+        desktop_runtime._RUNTIME_LOCK_HANDLES.clear()
+
+    # 空数据根：第一个 runtime 拿锁成功；显式释放后可再次获取。
+    assert desktop_runtime.acquire_runtime_lock(tmp_path) is True
+    release()
+    assert desktop_runtime.acquire_runtime_lock(tmp_path) is True
+    release()
+
+    # 另一个活进程持锁时：拒绝启动（双开是 backend.log 断流的根因假说）。
+    ready_marker = tmp_path / ".holder-ready"
+    holder2 = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys, time; sys.path.insert(0, r'C:/Users/袜子/Desktop/Aiming-cookie');"
+                "from pathlib import Path;"
+                "from webapp.backend.desktop_runtime import acquire_runtime_lock;"
+                "root = Path(r'%s');"
+                "sys.exit(9) if not acquire_runtime_lock(root) else None;"
+                "(root / '.holder-ready').write_text('ok', encoding='ascii');"
+                "time.sleep(20)"
+            )
+            % (str(tmp_path).replace("\\", "\\\\"),),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    import time as _time
+
+    deadline = _time.monotonic() + 30
+    while not ready_marker.is_file() and _time.monotonic() < deadline:
+        assert holder2.poll() is None, f"holder2 died early with {holder2.returncode}"
+        _time.sleep(0.3)
+    assert ready_marker.is_file(), "holder2 never signalled lock acquisition"
+    assert desktop_runtime.acquire_runtime_lock(tmp_path) is False
+    # 持锁进程死亡后：内核释放锁，新的 runtime 可以启动。
+    holder2.kill()
+    holder2.wait(timeout=30)
+    assert desktop_runtime.acquire_runtime_lock(tmp_path) is True
+    release()
