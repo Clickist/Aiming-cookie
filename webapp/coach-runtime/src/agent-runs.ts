@@ -42,6 +42,8 @@ export type AgentRunState = {
   status: "queued" | "running" | "succeeded" | "failed" | "stopped";
   phase: "queued" | "text_generation" | "tool_execution" | "completed";
   partial_text: string | null;
+  /** Live extended-thinking text (trailing window); null for non-reasoning models. */
+  partial_thinking: string | null;
   error: AnyDict | null;
   events: AgentRunEvent[];
   /** Analysis refs (`analysis:{id}`) the run engaged with via file reads. */
@@ -69,7 +71,7 @@ export type AgentRunEvent = {
  * reaches a terminal status (succeeded/failed/stopped).
  */
 export type AgentRunListener = {
-  onPartial?: (text: string) => void;
+  onPartial?: (text: string, thinking: string | null) => void;
   onActivity?: (event: AgentRunEvent) => void;
   onDone?: (state: AgentRunState) => void;
 };
@@ -166,10 +168,10 @@ function snapshotRun(record: RunRecord): AgentRunState {
   };
 }
 
-function broadcastPartial(record: RunRecord, text: string): void {
+function broadcastPartial(record: RunRecord, text: string, thinking: string | null = null): void {
   for (const listener of record.listeners) {
     try {
-      listener.onPartial?.(text);
+      listener.onPartial?.(text, thinking);
     } catch {
       // A listener (e.g. a closed SSE socket) must not break the run turn.
     }
@@ -264,15 +266,21 @@ async function runAgentTurn(
       streamFn: record.streamFn,
       onPartial: async (partial) => {
         if (signal.aborted) return;
-        const safeText = partial.text.slice(0, 12_000);
-        record.state.partial_text = safeText;
-        appendEvent(record, "text", "text_generation", "text_revision", "Coach response text was revised", {
-          mode: "replace",
-          revision: partial.revision,
-          elapsed_ms: partial.elapsed_ms,
-          provider_rounds: partial.provider_rounds,
-        });
-        broadcastPartial(record, safeText);
+        // Thinking-only revisions carry text: null — they must not wipe the
+        // accumulated partial text nor log a no-op text_revision event; the
+        // broadcast re-sends the latest text so text-only listeners (SSE) keep
+        // a valid string payload.
+        if (partial.text !== null) {
+          record.state.partial_text = partial.text.slice(0, 12_000);
+          appendEvent(record, "text", "text_generation", "text_revision", "Coach response text was revised", {
+            mode: "replace",
+            revision: partial.revision,
+            elapsed_ms: partial.elapsed_ms,
+            provider_rounds: partial.provider_rounds,
+          });
+        }
+        record.state.partial_thinking = partial.thinking_text ? partial.thinking_text.slice(0, 12_000) : null;
+        broadcastPartial(record, record.state.partial_text ?? "", record.state.partial_thinking);
       },
       onActivity: async (activity) => {
         if (signal.aborted) return;
@@ -282,7 +290,7 @@ async function runAgentTurn(
           record.state.phase = "text_generation";
         }
         const payload: AnyDict = {};
-        for (const key of ["sequence", "kind", "state", "tool_call_id", "tool_name", "command_name", "ui_event"] as const) {
+        for (const key of ["sequence", "kind", "state", "tool_call_id", "tool_name", "command_name", "ui_event", "args_preview", "result_preview", "duration_ms"] as const) {
           if (activity[key] !== undefined) (payload as AnyDict)[key] = activity[key];
         }
         const event = appendEvent(
@@ -400,6 +408,7 @@ export function createAgentRun(
       status: "queued",
       phase: "queued",
       partial_text: null,
+      partial_thinking: null,
       error: null,
       events: [],
       analysis_refs: [],
@@ -437,9 +446,10 @@ export function resumeWaitingRuns(ownerId: string): string[] {
     if (code !== "provider_unconfigured" && code !== "provider_reauthentication_required") continue;
     if (isTaskActive(runRef)) continue;
 
-    record.state.error = null;
-    record.state.partial_text = null;
-    record.state.phase = "queued";
+      record.state.error = null;
+      record.state.partial_text = null;
+      record.state.partial_thinking = null;
+      record.state.phase = "queued";
     appendEvent(record, "status", "queued", "provider_requeued", "Coach run requeued after Provider recovery");
 
     startTask(runRef, (signal) => runAgentTurn(runRef, ownerId, record.threadId, record.content, signal));
@@ -533,6 +543,7 @@ export function retryAgentRun(ownerId: string, runRef: string): AgentRunState | 
       status: "queued",
       phase: "queued",
       partial_text: null,
+      partial_thinking: null,
       error: null,
       events: [],
       created_at: now,

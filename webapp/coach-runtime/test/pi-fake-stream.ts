@@ -58,6 +58,13 @@ export async function streamAssistant(
           partial,
         });
         stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: final });
+      } else if (block.type === "thinking") {
+        // Reasoning models stream extended thinking before answer text; the
+        // harness surfaces it as message_update/thinking_delta.
+        const thinking = String(block.thinking ?? "");
+        stream.push({ type: "thinking_start", contentIndex, partial: initial });
+        stream.push({ type: "thinking_delta", contentIndex, delta: thinking, partial: final });
+        stream.push({ type: "thinking_end", contentIndex, content: thinking, partial: final });
       } else if (block.type === "text") {
         const text = String(block.text ?? "");
         stream.push({ type: "text_start", contentIndex, partial: initial });

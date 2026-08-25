@@ -55,7 +55,10 @@ type TurnOptions = {
 
 export type CoachPartialRevision = {
   revision: number;
-  text: string;
+  /** Null on thinking-only revisions (extended thinking streams before any text). */
+  text: string | null;
+  /** Live extended-thinking text (pi thinking_delta), full-replace like text. */
+  thinking_text: string | null;
   elapsed_ms: number;
   provider_rounds: number;
 };
@@ -69,6 +72,12 @@ export type CoachActivityUpdate = {
   command_name?: string;
   /** coach_ui_event carried by product commands (e.g. video_time navigation). */
   ui_event?: Record<string, unknown>;
+  /** Raw agent-core call arguments, JSON-summarized for the UI (pi-style tool blocks). */
+  args_preview?: string;
+  /** Raw agent-core result payload, JSON/text-summarized for the UI. */
+  result_preview?: string;
+  /** Wall time of the tool call in ms (present on completion). */
+  duration_ms?: number;
 };
 
 export type CoachTurnTiming = {
@@ -82,6 +91,25 @@ export type CoachTurnTiming = {
   tool_ms: number;
   repair_ms: number;
 };
+
+// ── Raw passthrough helpers ───────────────────────────────────────────────
+
+/** Compact JSON/text summary of an agent-core value, capped for UI display. */
+function summarizeForUi(value: unknown, limit: number): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      text = String(value);
+    }
+  }
+  if (!text.trim()) return undefined;
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
 
 // ── Abort tracking ───────────────────────────────────────────────────────
 
@@ -535,6 +563,7 @@ export async function runCoachTurn(
   };
   let activeRunId: string | null = null;
   let partialRevision = 0;
+  let thinkingBuffer = "";
   let activitySequence = 0;
   let lastPartialText: string | null = null;
   let lastPartialAt = 0;
@@ -651,11 +680,17 @@ export async function runCoachTurn(
       await options.onActivity({ sequence: ++activitySequence, ...activity });
     };
 
-    const publishPartial = async (text: string | null, force = false): Promise<void> => {
-      if (!options.onPartial || text === null || text === lastPartialText) return;
+    const publishPartial = async (text: string | null, force = false, thinkingChanged = false): Promise<void> => {
+      if (!options.onPartial) return;
+      if (text === null && !thinkingChanged) return;
+      if (text === lastPartialText && !thinkingChanged) return;
       const now = performance.now();
-      const sentenceBoundary = /[。！？.!?]$/.test(text);
-      if (!force && partialRevision > 0 && now - lastPartialAt < 80 && !sentenceBoundary) return;
+      const sentenceBoundary = /[。！？.!?]$/.test(text ?? "");
+      const thinkingOnly = text === null || text === lastPartialText;
+      // Thinking-only revisions stream at a coarser cadence: they carry no new
+      // answer text, so a tight per-token loop would flood the event stream.
+      if (!force && thinkingOnly && now - lastPartialAt < 200) return;
+      if (!force && !thinkingOnly && partialRevision > 0 && now - lastPartialAt < 80 && !sentenceBoundary) return;
       partialRevision += 1;
       lastPartialText = text;
       lastPartialAt = now;
@@ -663,6 +698,7 @@ export async function runCoachTurn(
       await options.onPartial({
         revision: partialRevision,
         text,
+        thinking_text: thinkingBuffer || null,
         elapsed_ms: Math.max(0, Math.round(now - turnStartedAt)),
         provider_rounds: providerRounds,
       });
@@ -705,6 +741,7 @@ export async function runCoachTurn(
           tool_call_id: event.toolCallId,
           tool_name: event.toolName,
           command_name: commandName,
+          args_preview: summarizeForUi(event.args, 400),
         });
         return;
       }
@@ -733,11 +770,27 @@ export async function runCoachTurn(
           tool_name: event.toolName,
           ...(commandName ? { command_name: commandName } : {}),
           ...(commandUiEvent ? { ui_event: commandUiEvent } : {}),
+          ...(toolStartedAt !== undefined ? { duration_ms: Math.max(0, Math.round(now - toolStartedAt)) } : {}),
+          result_preview: summarizeForUi(event.result, 600) ?? (event.isError ? "tool error" : undefined),
         });
         // Collect tool result events for the response
         if (isRecord(detailEvent) && (detailEvent.type === "knowledge" || detailEvent.type === "product_command")) {
           collectedToolEvents.push(detailEvent as CoachRuntimeToolEvent);
         }
+        return;
+      }
+
+      if (
+        eventType === "message_update"
+        && isRecord(event.assistantMessageEvent)
+        && event.assistantMessageEvent.type === "thinking_delta"
+        && typeof event.assistantMessageEvent.delta === "string"
+      ) {
+        // Extended thinking streams as full-replace deltas (like text): keep
+        // only the trailing 8KB so unbounded reasoning can't grow memory or
+        // the SSE payload. Non-reasoning models never emit this event.
+        thinkingBuffer = `${thinkingBuffer}${event.assistantMessageEvent.delta}`.slice(-8_000);
+        await publishPartial(lastPartialText, false, true);
         return;
       }
 
