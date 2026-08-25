@@ -336,21 +336,25 @@ export async function handleSidecarRequest(
     let lastActivitySequence = 0;
     const response = await turnRunner(parsed, {
       onPartial: async (partial) => {
+        // A partial is valid when it carries answer text or live thinking
+        // (thinking-only revisions stream with text: null before the first
+        // text delta).
         if (
           partial.revision !== lastRevision + 1 ||
-          !partial.text
+          !(partial.text || partial.thinking_text)
         ) {
           throw new Error("invalid Coach partial revision");
         }
         lastRevision = partial.revision;
         // Match the agent-runs SSE path: a long partial is truncated instead
         // of failing the whole turn.
-        const safeText = partial.text.slice(0, 12_000);
+        const safeText = partial.text ? partial.text.slice(0, 12_000) : null;
         writeNdjsonFrame(res, {
           schema_version: COACH_RUNTIME_STREAM_SCHEMA,
           type: "partial",
           revision: partial.revision,
           text: safeText,
+          thinking_text: partial.thinking_text ? partial.thinking_text.slice(0, 12_000) : null,
           elapsed_ms: partial.elapsed_ms,
           provider_rounds: partial.provider_rounds,
         });
@@ -516,13 +520,14 @@ export async function handleSidecarRequest(
     });
     res.flushHeaders();
 
-    // Catch a late subscriber up with the current partial text before new
-    // revisions stream in.
-    if (initial.partial_text) {
+    // Catch a late subscriber up with the current partial text (and live
+    // thinking) before new revisions stream in.
+    if (initial.partial_text || initial.partial_thinking) {
       writeSseEvent(res, "partial", {
         schema_version: AGENT_RUN_STREAM_SCHEMA,
         type: "partial",
-        text: initial.partial_text,
+        text: initial.partial_text ?? "",
+        thinking_text: initial.partial_thinking,
       });
     }
 
@@ -536,12 +541,13 @@ export async function handleSidecarRequest(
     };
 
     const subscribed = subscribeAgentRun(ownerId, runRef, {
-      onPartial: (text) => {
+      onPartial: (text, thinking) => {
         if (closed) return;
         writeSseEvent(res, "partial", {
           schema_version: AGENT_RUN_STREAM_SCHEMA,
           type: "partial",
           text,
+          thinking_text: thinking ?? null,
         });
       },
       onActivity: (event) => {

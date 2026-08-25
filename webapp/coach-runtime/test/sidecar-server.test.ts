@@ -88,6 +88,7 @@ test("POST /v1/turn sends a partial NDJSON frame before the final frame when exp
       await options?.onPartial?.({
         revision: 1,
         text: "先显示这段。",
+        thinking_text: null,
         elapsed_ms: 18,
         provider_rounds: 1,
       });
@@ -231,12 +232,14 @@ test("POST /v1/turn fail-closes an invalid partial after a valid NDJSON frame", 
       await options?.onPartial?.({
         revision: 1,
         text: "有效片段。",
+        thinking_text: null,
         elapsed_ms: 10,
         provider_rounds: 1,
       });
       await options?.onPartial?.({
         revision: 3,
         text: "乱序片段。",
+        thinking_text: null,
         elapsed_ms: 11,
         provider_rounds: 1,
       });
