@@ -1,10 +1,12 @@
 /**
- * Coach sidecar routes for the single persisted Provider profile.
+ * Coach sidecar routes for the persisted Provider profiles.
  *
- * The desktop product has one owner and one selected Provider, so all
- * `{id}` path segments are compatibility shims over the single stored
- * `config/provider.json`. Read/write goes through provider-store.ts; model and
- * connection semantics reuse the Pi-backed provider-profile.ts helpers.
+ * `config/provider.json` stores the v2 multi-profile document (see
+ * provider-store.ts). `{id}` path segments address one stored profile;
+ * collection-level semantics (`/status`, `/model` without a `profile_id`)
+ * fall back to the active profile, which is also what Coach turns resolve
+ * against. Model and connection semantics reuse the Pi-backed
+ * provider-profile.ts helpers.
  */
 
 import http from "node:http";
@@ -24,14 +26,21 @@ import {
   testProviderConnection,
 } from "./provider-profile.ts";
 import { fetchCustomProviderModels, resolveProviderModel } from "./provider-models.ts";
-import { deleteProfile, loadProfile, saveProfile } from "./provider-store.ts";
+import {
+  deleteProfileById,
+  findStoredProfile,
+  loadProviderStore,
+  saveProviderStore,
+  setActiveProfileId,
+  type ProviderProfileStore,
+  type StoredProviderProfile,
+} from "./provider-store.ts";
 import {
   ProviderAuthOperationManager,
   ProviderAuthRequestError,
 } from "./provider-auth.ts";
 
-/** Stable pseudo-id for the single stored profile. */
-export const DEFAULT_PROFILE_ID = 1;
+export { DEFAULT_PROFILE_ID } from "./provider-store.ts";
 
 export type ProviderProfileView = {
   id: number;
@@ -144,20 +153,23 @@ function customFields(profile: CoachRuntimeProviderProfile): {
   };
 }
 
-async function projectProfile(profile: CoachRuntimeProviderProfile): Promise<ProviderProfileView> {
-  const status = await getProviderProfileStatus(profile);
-  const fields = customFields(profile);
-  const credential = profile.credential;
+async function projectProfile(
+  entry: StoredProviderProfile,
+  isDefault: boolean,
+): Promise<ProviderProfileView> {
+  const status = await getProviderProfileStatus(entry);
+  const fields = customFields(entry);
+  const credential = entry.credential;
   return {
-    id: DEFAULT_PROFILE_ID,
+    id: entry.id,
     name: fields.provider_name,
-    provider_id: profile.provider_id,
-    kind: profile.kind,
+    provider_id: entry.provider_id,
+    kind: entry.kind,
     base_url: fields.base_url,
-    model_id: profile.model_id,
+    model_id: entry.model_id,
     context_window: fields.context_window,
     max_tokens: fields.max_tokens,
-    is_default: true,
+    is_default: isDefault,
     configured: configuredFromStatus(status),
     credential_configured: credential !== undefined,
     has_api_key: credential?.type === "api_key" && typeof credential.key === "string" && credential.key.length > 0,
@@ -165,6 +177,35 @@ async function projectProfile(profile: CoachRuntimeProviderProfile): Promise<Pro
     created_at: null,
     updated_at: null,
   };
+}
+
+function isActiveProfile(store: ProviderProfileStore, entry: StoredProviderProfile): boolean {
+  return store.active_id === entry.id;
+}
+
+function activeStoredProfile(store: ProviderProfileStore): StoredProviderProfile | undefined {
+  return store.active_id !== null ? findStoredProfile(store, store.active_id) : undefined;
+}
+
+function numericRouteId(id: string): number | null {
+  const parsed = Number(id);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function routeStoredProfile(store: ProviderProfileStore, id: string): StoredProviderProfile | undefined {
+  const numericId = numericRouteId(id);
+  return numericId !== null ? findStoredProfile(store, numericId) : undefined;
+}
+
+/** Replace the stored entry with `id`, keeping its id and list position. */
+function replaceStoredProfile(
+  store: ProviderProfileStore,
+  id: number,
+  profile: CoachRuntimeProviderProfile,
+): StoredProviderProfile {
+  const updated: StoredProviderProfile = { id, ...profile };
+  store.profiles = store.profiles.map((entry) => (entry.id === id ? updated : entry));
+  return updated;
 }
 
 /** Translate the frontend create/update body into a validated Coach profile. */
@@ -289,15 +330,16 @@ export async function handleProviderProfileRequest(
   // Collection and default-status routes take precedence over {id} routes.
   if (req.method === "GET" && pathname === "/v1/provider-profiles/status") {
     try {
-      const profile = loadProfile();
-      if (!profile) {
+      const store = loadProviderStore();
+      const entry = activeStoredProfile(store);
+      if (!entry) {
         writeJson(res, 200, projectStatus(
           { schema_version: "coach_provider_profile_status.v1", ok: false, status: "unconfigured", profile: null, model: null, credential_source: null, error: null },
           null,
         ));
         return true;
       }
-      writeJson(res, 200, projectStatus(await getProviderProfileStatus(profile), DEFAULT_PROFILE_ID));
+      writeJson(res, 200, projectStatus(await getProviderProfileStatus(entry), entry.id));
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -328,8 +370,11 @@ export async function handleProviderProfileRequest(
 
   if (req.method === "GET" && pathname === "/v1/provider-profiles") {
     try {
-      const profile = loadProfile();
-      writeJson(res, 200, { profiles: profile ? [await projectProfile(profile)] : [] });
+      const store = loadProviderStore();
+      const views = await Promise.all(
+        store.profiles.map((entry) => projectProfile(entry, isActiveProfile(store, entry))),
+      );
+      writeJson(res, 200, { profiles: views });
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -338,9 +383,31 @@ export async function handleProviderProfileRequest(
 
   if (req.method === "POST" && pathname === "/v1/provider-profiles") {
     try {
-      const profile = coachProfileFromCreate(await readJsonBody(req));
-      saveProfile(profile);
-      writeJson(res, 201, await projectProfile(profile));
+      const body = await readJsonBody(req);
+      const profile = coachProfileFromCreate(body);
+      // Upsert: a body id addressing an existing profile updates that profile;
+      // anything else appends a new one. Other stored profiles are untouched,
+      // and appending never changes the active profile unless none is set.
+      const requestedId = isRecord(body)
+        && typeof body.id === "number"
+        && Number.isSafeInteger(body.id)
+        && body.id > 0
+        ? body.id
+        : null;
+      const store = loadProviderStore();
+      const existing = requestedId !== null ? findStoredProfile(store, requestedId) : undefined;
+      if (existing) {
+        const updated = replaceStoredProfile(store, existing.id, profile);
+        saveProviderStore(store);
+        writeJson(res, 200, await projectProfile(updated, isActiveProfile(store, updated)));
+        return true;
+      }
+      const entry: StoredProviderProfile = { id: requestedId ?? store.next_id, ...profile };
+      store.profiles.push(entry);
+      store.next_id = Math.max(store.next_id, entry.id + 1);
+      if (store.active_id === null) store.active_id = entry.id;
+      saveProviderStore(store);
+      writeJson(res, 201, await projectProfile(entry, isActiveProfile(store, entry)));
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -357,14 +424,29 @@ export async function handleProviderProfileRequest(
         writeJson(res, 400, { detail: "model switch body must include schema_version and a non-empty model_id" });
         return true;
       }
-      const profile = loadProfile();
-      if (!profile) {
+      // `profile_id` scopes the switch to one stored profile; without it the
+      // active profile (the one Coach turns use) is switched.
+      const profileIdRaw = body.profile_id;
+      const requestedProfileId = profileIdRaw === undefined
+        ? undefined
+        : typeof profileIdRaw === "number" && Number.isSafeInteger(profileIdRaw) && profileIdRaw > 0
+          ? profileIdRaw
+          : null;
+      if (requestedProfileId === null) {
+        writeJson(res, 400, { detail: "profile_id must be a positive integer when supplied" });
+        return true;
+      }
+      const store = loadProviderStore();
+      const entry = requestedProfileId !== undefined
+        ? findStoredProfile(store, requestedProfileId)
+        : activeStoredProfile(store);
+      if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
       }
       // Switch within the current Provider: provider_id and credential are
       // preserved; only model_id changes.
-      const updated = { ...profile, model_id: body.model_id.trim() };
+      const updated = { ...entry, model_id: body.model_id.trim() };
       // Reject a model that cannot resolve (builtin: must exist in the pinned
       // catalog; custom: must still construct a resolvable provider) before
       // writing, so the UI capability stays consistent with what is persisted.
@@ -383,7 +465,8 @@ export async function handleProviderProfileRequest(
         }
         throw error;
       }
-      saveProfile(updated);
+      replaceStoredProfile(store, entry.id, updated);
+      saveProviderStore(store);
       writeJson(res, 200, await getProviderProfileStatus(updated));
     } catch (error) {
       writeProfileError(res, error);
@@ -396,12 +479,13 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "root" && req.method === "GET") {
     try {
-      const profile = loadProfile();
-      if (!profile) {
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
       }
-      writeJson(res, 200, await projectProfile(profile));
+      writeJson(res, 200, await projectProfile(entry, isActiveProfile(store, entry)));
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -411,8 +495,15 @@ export async function handleProviderProfileRequest(
   if (route.action === "root" && req.method === "PUT") {
     try {
       const profile = coachProfileFromCreate(await readJsonBody(req));
-      saveProfile(profile);
-      writeJson(res, 200, await projectProfile(profile));
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
+        writeJson(res, 404, { detail: "Provider profile 不存在" });
+        return true;
+      }
+      const updated = replaceStoredProfile(store, entry.id, profile);
+      saveProviderStore(store);
+      writeJson(res, 200, await projectProfile(updated, isActiveProfile(store, updated)));
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -421,8 +512,18 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "root" && req.method === "DELETE") {
     try {
-      const deleted = deleteProfile();
-      writeJson(res, 200, { deleted, id: DEFAULT_PROFILE_ID });
+      const numericId = numericRouteId(route.id);
+      const store = loadProviderStore();
+      const entry = numericId !== null ? findStoredProfile(store, numericId) : undefined;
+      if (!entry) {
+        writeJson(res, 200, { deleted: false, id: numericId ?? route.id });
+        return true;
+      }
+      // Deleting the active profile promotes the first remaining one; deleting
+      // the last profile clears the active selection.
+      deleteProfileById(store, entry.id);
+      saveProviderStore(store);
+      writeJson(res, 200, { deleted: true, id: entry.id });
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -431,12 +532,15 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "default" && req.method === "POST") {
     try {
-      const profile = loadProfile();
-      if (!profile) {
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
       }
-      writeJson(res, 200, await projectProfile(profile));
+      setActiveProfileId(store, entry.id);
+      saveProviderStore(store);
+      writeJson(res, 200, await projectProfile(entry, true));
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -445,13 +549,14 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "test" && req.method === "POST") {
     try {
-      const profile = loadProfile();
-      if (!profile) {
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
       }
-      const result = await testProviderConnection(profile);
-      writeJson(res, 200, projectStatus(result, DEFAULT_PROFILE_ID));
+      const result = await testProviderConnection(entry);
+      writeJson(res, 200, projectStatus(result, entry.id));
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -460,16 +565,17 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "api-key" && req.method === "PUT") {
     try {
-      const profile = loadProfile();
-      if (!profile) {
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
       }
       const body = await readJsonBody(req);
       const apiKey = isRecord(body) && typeof body.api_key === "string" ? body.api_key : "";
-      const updated = profileWithApiKey(profile, apiKey);
-      saveProfile(updated);
-      writeJson(res, 200, await projectProfile(updated));
+      const updated = replaceStoredProfile(store, entry.id, profileWithApiKey(entry, apiKey));
+      saveProviderStore(store);
+      writeJson(res, 200, await projectProfile(updated, isActiveProfile(store, updated)));
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -478,14 +584,15 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "credential" && req.method === "DELETE") {
     try {
-      const profile = loadProfile();
-      if (!profile) {
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
       }
-      const updated = profileWithoutCredential(profile);
-      saveProfile(updated);
-      writeJson(res, 200, await projectProfile(updated));
+      const updated = replaceStoredProfile(store, entry.id, profileWithoutCredential(entry));
+      saveProviderStore(store);
+      writeJson(res, 200, await projectProfile(updated, isActiveProfile(store, updated)));
     } catch (error) {
       writeProfileError(res, error);
     }
@@ -494,8 +601,9 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "authorize" && req.method === "POST") {
     try {
-      const profile = loadProfile();
-      if (!profile) {
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
       }
@@ -508,7 +616,7 @@ export async function handleProviderProfileRequest(
       const operation = await authOperations.start({
         action: "login",
         mode,
-        provider_id: profile.provider_id,
+        provider_id: entry.provider_id,
       });
       writeJson(res, 202, operation);
     } catch (error) {
@@ -519,8 +627,9 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "take-result" && req.method === "POST") {
     try {
-      const profile = loadProfile();
-      if (!profile) {
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
       }
@@ -531,9 +640,9 @@ export async function handleProviderProfileRequest(
         return true;
       }
       const result = authOperations.takeResult(operationId);
-      const updated = profileWithCredential(profile, result.credential);
-      saveProfile(updated);
-      writeJson(res, 200, await projectProfile(updated));
+      const updated = replaceStoredProfile(store, entry.id, profileWithCredential(entry, result.credential));
+      saveProviderStore(store);
+      writeJson(res, 200, await projectProfile(updated, isActiveProfile(store, updated)));
     } catch (error) {
       writeProfileError(res, error);
     }
