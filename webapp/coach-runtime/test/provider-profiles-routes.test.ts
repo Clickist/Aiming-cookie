@@ -64,6 +64,33 @@ function withServer(run: (server: http.Server) => Promise<void>): Promise<void> 
   });
 }
 
+type ProfileView = {
+  id: number;
+  provider_id: string;
+  model_id: string;
+  is_default: boolean;
+};
+
+async function listedProfiles(server: http.Server): Promise<ProfileView[]> {
+  const res = await request(server, "GET", "/v1/provider-profiles");
+  assert.equal(res.statusCode, 200);
+  return (res.json as { profiles: ProfileView[] }).profiles;
+}
+
+/** Tests share one DATA_ROOT; start from a known empty store. */
+async function clearProfiles(server: http.Server): Promise<void> {
+  for (const profile of await listedProfiles(server)) {
+    const res = await request(server, "DELETE", `/v1/provider-profiles/${profile.id}`);
+    assert.equal(res.statusCode, 200);
+  }
+}
+
+async function createProfile(server: http.Server, body: unknown): Promise<ProfileView> {
+  const res = await request(server, "POST", "/v1/provider-profiles", JSON.stringify(body));
+  assert.equal(res.statusCode, 201);
+  return res.json as ProfileView;
+}
+
 const BUILTIN_BODY = JSON.stringify({
   kind: "builtin",
   provider_id: "opencode-go",
@@ -81,10 +108,10 @@ test("GET /v1/provider-profiles returns an empty list before any profile is save
 
 test("POST /v1/provider-profiles persists a builtin profile and returns the projection", async () => {
   await withServer(async (server) => {
+    await clearProfiles(server);
     const created = await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
     assert.equal(created.statusCode, 201);
     const profile = created.json as Record<string, unknown>;
-    assert.equal(profile.id, 1);
     assert.equal(profile.kind, "builtin");
     assert.equal(profile.provider_id, "opencode-go");
     assert.equal(profile.model_id, "deepseek-v4-flash");
@@ -96,13 +123,73 @@ test("POST /v1/provider-profiles persists a builtin profile and returns the proj
   });
 });
 
-test("GET /v1/provider-profiles/status reports the saved profile", async () => {
+test("POST /v1/provider-profiles appends a second profile and keeps the first active", async () => {
   await withServer(async (server) => {
-    await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
+    await clearProfiles(server);
+    const first = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const second = await createProfile(server, {
+      kind: "custom_openai_compatible",
+      name: "Local Lab",
+      base_url: "https://provider.example/v1",
+      model_id: "custom-model-a",
+      api_key: "custom-key",
+    });
+    assert.notEqual(first.id, second.id);
+
+    const profiles = await listedProfiles(server);
+    assert.equal(profiles.length, 2);
+    assert.equal(profiles[0]?.is_default, true);
+    assert.equal(profiles[1]?.is_default, false);
+    // 添加不改变 active：coach 回合仍解析第一档。
+    assert.equal(loadProfile()?.model_id, "deepseek-v4-flash");
+  });
+});
+
+test("POST /v1/provider-profiles with an id updates that profile only", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const first = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const second = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const updated = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
+      id: second.id,
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-pro",
+    }));
+    assert.equal(updated.statusCode, 200);
+    assert.equal((updated.json as ProfileView).model_id, "deepseek-v4-pro");
+
+    const profiles = await listedProfiles(server);
+    assert.equal(profiles.length, 2);
+    assert.deepEqual(profiles.find((profile) => profile.id === first.id)?.model_id, "deepseek-v4-flash");
+    assert.deepEqual(profiles.find((profile) => profile.id === second.id)?.model_id, "deepseek-v4-pro");
+  });
+});
+
+test("GET /v1/provider-profiles/status reports the active profile", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
     const res = await request(server, "GET", "/v1/provider-profiles/status");
     assert.equal(res.statusCode, 200);
     const status = res.json as Record<string, unknown>;
-    assert.equal(status.profile_id, 1);
+    assert.equal(status.profile_id, created.id);
     assert.equal(status.configured, false);
     assert.equal(status.status, "unconfigured");
   });
@@ -110,8 +197,7 @@ test("GET /v1/provider-profiles/status reports the saved profile", async () => {
 
 test("GET /v1/provider-profiles/status returns an unconfigured projection when nothing is saved", async () => {
   await withServer(async (server) => {
-    // The shared DATA_ROOT may still hold a profile from an earlier test.
-    await request(server, "DELETE", "/v1/provider-profiles/1");
+    await clearProfiles(server);
     const res = await request(server, "GET", "/v1/provider-profiles/status");
     assert.equal(res.statusCode, 200);
     const status = res.json as Record<string, unknown>;
@@ -121,10 +207,15 @@ test("GET /v1/provider-profiles/status returns an unconfigured projection when n
   });
 });
 
-test("PUT /v1/provider-profiles/{id} overwrites the single profile", async () => {
+test("PUT /v1/provider-profiles/{id} updates that profile", async () => {
   await withServer(async (server) => {
-    await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
-    const updated = await request(server, "PUT", "/v1/provider-profiles/1", JSON.stringify({
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const updated = await request(server, "PUT", `/v1/provider-profiles/${created.id}`, JSON.stringify({
       kind: "builtin",
       provider_id: "deepseek",
       model_id: "deepseek-v3",
@@ -136,10 +227,59 @@ test("PUT /v1/provider-profiles/{id} overwrites the single profile", async () =>
   });
 });
 
+test("PUT /v1/provider-profiles/{id} on a missing profile returns 404", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const res = await request(server, "PUT", "/v1/provider-profiles/9999", BUILTIN_BODY);
+    assert.equal(res.statusCode, 404);
+  });
+});
+
+test("POST /v1/provider-profiles/{id}/default switches the active profile", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const first = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const second = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-pro",
+    });
+    const res = await request(server, "POST", `/v1/provider-profiles/${second.id}/default`);
+    assert.equal(res.statusCode, 200);
+    const profile = res.json as ProfileView;
+    assert.equal(profile.id, second.id);
+    assert.equal(profile.is_default, true);
+    assert.equal(loadProfile()?.model_id, "deepseek-v4-pro");
+
+    const statuses = await request(server, "GET", "/v1/provider-profiles/status");
+    assert.equal((statuses.json as { profile_id: number }).profile_id, second.id);
+    const listed = await listedProfiles(server);
+    assert.equal(listed.find((entry) => entry.id === first.id)?.is_default, false);
+    assert.equal(listed.find((entry) => entry.id === second.id)?.is_default, true);
+  });
+});
+
+test("POST /v1/provider-profiles/{id}/default on a missing profile returns 404", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const res = await request(server, "POST", "/v1/provider-profiles/9999/default");
+    assert.equal(res.statusCode, 404);
+  });
+});
+
 test("PUT /v1/provider-profiles/{id}/auth/api-key stores the credential", async () => {
   await withServer(async (server) => {
-    await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
-    const res = await request(server, "PUT", "/v1/provider-profiles/1/auth/api-key", JSON.stringify({
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const res = await request(server, "PUT", `/v1/provider-profiles/${created.id}/auth/api-key`, JSON.stringify({
       api_key: "write-only-key",
     }));
     assert.equal(res.statusCode, 200);
@@ -149,11 +289,42 @@ test("PUT /v1/provider-profiles/{id}/auth/api-key stores the credential", async 
   });
 });
 
+test("PUT /v1/provider-profiles/{id}/auth/api-key only touches the addressed profile", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const first = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const second = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const res = await request(server, "PUT", `/v1/provider-profiles/${second.id}/auth/api-key`, JSON.stringify({
+      api_key: "second-key",
+    }));
+    assert.equal(res.statusCode, 200);
+    // 只有被指定的档写入 credential；active 档保持无凭证。
+    assert.equal(loadProfile()?.credential, undefined);
+    const listed = await request(server, "GET", "/v1/provider-profiles");
+    const profiles = (listed.json as { profiles: Array<{ id: number; is_default: boolean; has_api_key: boolean }> }).profiles;
+    assert.equal(profiles.find((profile) => profile.id === first.id)?.has_api_key, false);
+    assert.equal(profiles.find((profile) => profile.id === second.id)?.has_api_key, true);
+  });
+});
+
 test("DELETE /v1/provider-profiles/{id}/auth/credential removes the stored credential", async () => {
   await withServer(async (server) => {
-    await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
-    await request(server, "PUT", "/v1/provider-profiles/1/auth/api-key", JSON.stringify({ api_key: "k" }));
-    const res = await request(server, "DELETE", "/v1/provider-profiles/1/auth/credential");
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    await request(server, "PUT", `/v1/provider-profiles/${created.id}/auth/api-key`, JSON.stringify({ api_key: "k" }));
+    const res = await request(server, "DELETE", `/v1/provider-profiles/${created.id}/auth/credential`);
     assert.equal(res.statusCode, 200);
     const profile = res.json as Record<string, unknown>;
     assert.equal(profile.credential_configured, false);
@@ -161,20 +332,84 @@ test("DELETE /v1/provider-profiles/{id}/auth/credential removes the stored crede
   });
 });
 
-test("DELETE /v1/provider-profiles/{id} removes the single profile", async () => {
+test("DELETE /v1/provider-profiles/{id} removes the last profile", async () => {
   await withServer(async (server) => {
-    await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
-    const deleted = await request(server, "DELETE", "/v1/provider-profiles/1");
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const deleted = await request(server, "DELETE", `/v1/provider-profiles/${created.id}`);
     assert.equal(deleted.statusCode, 200);
-    assert.deepEqual(deleted.json, { deleted: true, id: 1 });
-    const listed = await request(server, "GET", "/v1/provider-profiles");
-    assert.deepEqual((listed.json as { profiles: unknown[] }).profiles, []);
+    assert.deepEqual(deleted.json, { deleted: true, id: created.id });
+    assert.deepEqual(await listedProfiles(server), []);
+    const status = await request(server, "GET", "/v1/provider-profiles/status");
+    assert.equal((status.json as { profile_id: number | null }).profile_id, null);
+  });
+});
+
+test("DELETE /v1/provider-profiles/{id} of a non-active profile keeps the active one", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const first = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const second = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-pro",
+    });
+    const deleted = await request(server, "DELETE", `/v1/provider-profiles/${second.id}`);
+    assert.deepEqual(deleted.json, { deleted: true, id: second.id });
+    const profiles = await listedProfiles(server);
+    assert.equal(profiles.length, 1);
+    assert.equal(profiles[0]?.id, first.id);
+    assert.equal(profiles[0]?.is_default, true);
+    assert.equal(loadProfile()?.model_id, "deepseek-v4-flash");
+  });
+});
+
+test("DELETE /v1/provider-profiles/{id} of the active profile promotes the first remaining one", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const first = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const second = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-pro",
+    });
+    const deleted = await request(server, "DELETE", `/v1/provider-profiles/${first.id}`);
+    assert.deepEqual(deleted.json, { deleted: true, id: first.id });
+    const profiles = await listedProfiles(server);
+    assert.equal(profiles.length, 1);
+    assert.equal(profiles[0]?.id, second.id);
+    assert.equal(profiles[0]?.is_default, true);
+    assert.equal(loadProfile()?.model_id, "deepseek-v4-pro");
+    const status = await request(server, "GET", "/v1/provider-profiles/status");
+    assert.equal((status.json as { profile_id: number }).profile_id, second.id);
+  });
+});
+
+test("DELETE /v1/provider-profiles/{id} for a missing profile reports deleted=false", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const deleted = await request(server, "DELETE", "/v1/provider-profiles/9999");
+    assert.equal(deleted.statusCode, 200);
+    assert.deepEqual(deleted.json, { deleted: false, id: 9999 });
   });
 });
 
 test("POST /v1/provider-profiles/{id}/test on a missing profile returns 404", async () => {
   await withServer(async (server) => {
-    const res = await request(server, "POST", "/v1/provider-profiles/1/test");
+    await clearProfiles(server);
+    const res = await request(server, "POST", "/v1/provider-profiles/9999/test");
     assert.equal(res.statusCode, 404);
   });
 });
@@ -218,13 +453,15 @@ test("POST /v1/provider-profiles with invalid input returns 400", async () => {
   });
 });
 
-const MODEL_SWITCH_BODY = (modelId: string) => JSON.stringify({
+const MODEL_SWITCH_BODY = (modelId: string, profileId?: number) => JSON.stringify({
   schema_version: "coach_provider_model_switch.v1",
   model_id: modelId,
+  ...(profileId !== undefined ? { profile_id: profileId } : {}),
 });
 
-test("POST /v1/provider-profiles/model switches the default profile model and persists it", async () => {
+test("POST /v1/provider-profiles/model switches the active profile model and persists it", async () => {
   await withServer(async (server) => {
+    await clearProfiles(server);
     await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
     const res = await request(server, "POST", "/v1/provider-profiles/model", MODEL_SWITCH_BODY("deepseek-v4-pro"));
     assert.equal(res.statusCode, 200);
@@ -243,8 +480,13 @@ test("POST /v1/provider-profiles/model switches the default profile model and pe
 
 test("POST /v1/provider-profiles/model keeps the stored credential intact", async () => {
   await withServer(async (server) => {
-    await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
-    await request(server, "PUT", "/v1/provider-profiles/1/auth/api-key", JSON.stringify({ api_key: "keep-me" }));
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    await request(server, "PUT", `/v1/provider-profiles/${created.id}/auth/api-key`, JSON.stringify({ api_key: "keep-me" }));
     const res = await request(server, "POST", "/v1/provider-profiles/model", MODEL_SWITCH_BODY("deepseek-v4-pro"));
     assert.equal(res.statusCode, 200);
     assert.equal((res.json as { credential_source: string | null }).credential_source, "runtime_profile");
@@ -258,6 +500,7 @@ test("POST /v1/provider-profiles/model keeps the stored credential intact", asyn
 
 test("POST /v1/provider-profiles/model rejects a model outside the provider catalog", async () => {
   await withServer(async (server) => {
+    await clearProfiles(server);
     await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
     const res = await request(server, "POST", "/v1/provider-profiles/model", MODEL_SWITCH_BODY("not-a-real-model"));
     assert.equal(res.statusCode, 400);
@@ -271,6 +514,7 @@ test("POST /v1/provider-profiles/model rejects a model outside the provider cata
 
 test("POST /v1/provider-profiles/model updates a custom profile model id", async () => {
   await withServer(async (server) => {
+    await clearProfiles(server);
     const created = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
       kind: "custom_openai_compatible",
       name: "Local Lab",
@@ -291,8 +535,54 @@ test("POST /v1/provider-profiles/model updates a custom profile model id", async
   });
 });
 
+test("POST /v1/provider-profiles/model with profile_id switches that profile and leaves the active one alone", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const first = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const second = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    });
+    const res = await request(
+      server,
+      "POST",
+      "/v1/provider-profiles/model",
+      MODEL_SWITCH_BODY("deepseek-v4-pro", second.id),
+    );
+    assert.equal(res.statusCode, 200);
+    assert.equal((res.json as { model: { model_id: string } | null }).model?.model_id, "deepseek-v4-pro");
+
+    const profiles = await listedProfiles(server);
+    assert.equal(profiles.find((profile) => profile.id === first.id)?.model_id, "deepseek-v4-flash");
+    assert.equal(profiles.find((profile) => profile.id === second.id)?.model_id, "deepseek-v4-pro");
+    // 指定档切换不改变 active：coach 回合仍用第一档。
+    assert.equal(loadProfile()?.model_id, "deepseek-v4-flash");
+  });
+});
+
+test("POST /v1/provider-profiles/model with an invalid profile_id returns 400", async () => {
+  await withServer(async (server) => {
+    const res = await request(server, "POST", "/v1/provider-profiles/model", MODEL_SWITCH_BODY("deepseek-v4-pro", -1));
+    assert.equal(res.statusCode, 400);
+    assert.equal((res.json as { detail: string }).detail, "profile_id must be a positive integer when supplied");
+  });
+});
+
+test("POST /v1/provider-profiles/model with an unknown profile_id returns 404", async () => {
+  await withServer(async (server) => {
+    const res = await request(server, "POST", "/v1/provider-profiles/model", MODEL_SWITCH_BODY("deepseek-v4-pro", 9999));
+    assert.equal(res.statusCode, 404);
+  });
+});
+
 test("POST /v1/provider-profiles/model switches a stored profile without discovered capabilities", async () => {
   await withServer(async (server) => {
+    await clearProfiles(server);
     // 走真实创建链路：custom profile 不带 context_window/max_tokens（端点
     // /models 未回报）也能创建；默认能力下模型可解析，切换须成功，
     // 且回退默认值只注入 resolve 层，不得写进落盘文档。
@@ -320,7 +610,7 @@ test("POST /v1/provider-profiles/model switches a stored profile without discove
 
 test("POST /v1/provider-profiles/model without a saved profile returns 404", async () => {
   await withServer(async (server) => {
-    await request(server, "DELETE", "/v1/provider-profiles/1");
+    await clearProfiles(server);
     const res = await request(server, "POST", "/v1/provider-profiles/model", MODEL_SWITCH_BODY("deepseek-v4-pro"));
     assert.equal(res.statusCode, 404);
   });
@@ -328,6 +618,7 @@ test("POST /v1/provider-profiles/model without a saved profile returns 404", asy
 
 test("POST /v1/provider-profiles/model with an invalid body returns 400", async () => {
   await withServer(async (server) => {
+    await clearProfiles(server);
     await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
     const missingSchema = await request(server, "POST", "/v1/provider-profiles/model", JSON.stringify({ model_id: "deepseek-v4-pro" }));
     assert.equal(missingSchema.statusCode, 400);

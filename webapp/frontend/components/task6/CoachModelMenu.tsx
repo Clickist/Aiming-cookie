@@ -34,7 +34,8 @@ export function CoachModelMenu({ disabled, onError }: CoachModelMenuProps) {
   const loadData = useCallback(async () => {
     try {
       const [profiles, nextCatalog] = await Promise.all([listProviderProfiles(), getProviderCatalog()]);
-      setProfile(profiles.profiles[0] ?? null);
+      // 多档存储下菜单只操作默认档（coach 回合实际解析的档）。
+      setProfile(profiles.profiles.find((entry) => entry.is_default) ?? profiles.profiles[0] ?? null);
       setCatalog(nextCatalog);
       return true;
     } catch {
