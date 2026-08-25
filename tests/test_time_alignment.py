@@ -181,6 +181,64 @@ def test_conflicting_stats_start_fails_closed():
         )
 
 
+def test_anchor_mismatch_within_two_seconds_uses_stats_ms_anchor():
+    # 秒桶差 1（1321ms）：主源制放行，Stats 毫秒锚为准，偏差入 warnings。
+    result = resolve_time_window(
+        performance(),
+        stats_challenge_start="01:46:41.321",
+        local_timezone=LOCAL_TZ,
+    )
+
+    assert result.start_ms == 1_699_897_601_321
+    assert result.start_source == "stats_challenge_start"
+    assert "anchor_mismatch_ms=1321" in result.warnings
+
+
+def test_anchor_mismatch_negative_offset_still_uses_stats_ms_anchor():
+    result = resolve_time_window(
+        performance(),
+        stats_challenge_start="01:46:38.500",
+        local_timezone=LOCAL_TZ,
+    )
+
+    assert result.start_ms == 1_699_897_598_500
+    assert "anchor_mismatch_ms=-1500" in result.warnings
+
+
+def test_anchor_mismatch_at_exactly_two_seconds_passes():
+    result = resolve_time_window(
+        performance(),
+        stats_challenge_start="01:46:42.000",
+        local_timezone=LOCAL_TZ,
+    )
+
+    assert result.start_ms == 1_699_897_602_000
+    assert "anchor_mismatch_ms=2000" in result.warnings
+
+
+def test_anchor_mismatch_just_over_two_seconds_fails_closed():
+    with pytest.raises(TimeAlignmentError, match="anchor_conflict"):
+        resolve_time_window(
+            performance(),
+            stats_challenge_start="01:46:42.001",
+            local_timezone=LOCAL_TZ,
+        )
+
+
+def test_exact_second_match_keeps_no_mismatch_warning():
+    # 秒桶一致（正常亚秒精化）不得追加 anchor_mismatch 警告。
+    result = resolve_time_window(
+        performance(),
+        stats_challenge_start="01:46:40.321",
+        local_timezone=LOCAL_TZ,
+    )
+
+    assert not any(
+        warning.startswith("anchor_mismatch_ms=")
+        for warning in result.warnings
+    )
+
+
 def test_missing_duration_fails_closed():
     with pytest.raises(TimeAlignmentError, match="duration_missing"):
         resolve_time_window(

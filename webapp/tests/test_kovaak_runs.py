@@ -302,6 +302,73 @@ async def test_ingest_forwards_stats_pause_count_to_alignment(tmp_path: Path, mo
 
 
 @pytest.mark.asyncio
+async def test_ingest_alignment_failure_logs_and_stores_anchor_context(
+    tmp_path: Path, monkeypatch, caplog,
+):
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    stats_path = tmp_path / "conflicted Stats.csv"
+    performance_path = tmp_path / "conflicted Performance.perf"
+    stats_path.write_text("stats", encoding="utf-8")
+    performance_path.write_bytes(b"performance")
+    stats = SimpleNamespace(
+        file_name=stats_path.name,
+        scenario="Scenario",
+        summary={
+            "Scenario": "Scenario",
+            "Challenge Start": "01:46:41.321",
+        },
+        config={},
+        kills=pd.DataFrame(),
+    )
+    performance_data = PerformanceData(
+        header=PerformanceHeader(
+            scenario_name="Scenario",
+            challenge_start_utc=1_699_897_600_000,
+            challenge_profile=ChallengeProfile(time_limit=60.0, timescale=1.0),
+        ),
+    )
+    monkeypatch.setattr(kovaak_run_store, "parse_stats_csv", lambda _path: stats)
+    monkeypatch.setattr(
+        kovaak_run_store,
+        "parse_performance_file",
+        lambda _path: performance_data,
+    )
+
+    def fail_closed(*_args, **_kwargs):
+        raise kovaak_run_store.TimeAlignmentError(
+            "anchor_conflict: Stats and Performance Challenge Start disagree"
+        )
+
+    monkeypatch.setattr(kovaak_run_store, "resolve_time_window", fail_closed)
+
+    with caplog.at_level("WARNING", logger="webapp.backend.kovaak_run_store"):
+        run = await kovaak_run_store.ingest_discovery(
+            KovaaKFileDiscovery(
+                stem="conflicted",
+                stats_path=stats_path,
+                performance_path=performance_path,
+            ),
+            user_id="u1",
+        )
+
+    assert run["alignment_state"] == "unavailable"
+    assert run["alignment_summary"] == {
+        "timebase_version": "time_alignment.v2",
+        "error_code": "anchor_conflict",
+        "stats_challenge_start": "01:46:41.321",
+        "performance_challenge_start_utc": 1_699_897_600_000,
+    }
+    warning = caplog.text
+    assert "source_key=conflicted" in warning
+    assert "error_code=anchor_conflict" in warning
+    assert "stats_challenge_start='01:46:41.321'" in warning
+    assert "performance_challenge_start_utc=1699897600000" in warning
+
+
+@pytest.mark.asyncio
 async def test_desktop_runs_api_is_token_protected(monkeypatch):
     from httpx import ASGITransport, AsyncClient
     from webapp.backend import config
