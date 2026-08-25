@@ -4932,8 +4932,8 @@ def test_generic_visual_switching_runs_with_production_target_switching_family()
         parsed_stats=SimpleNamespace(resolution="1920x1080", fov=103.0),
         native_result=native_result,
     )
-    assert result["analysis_version"] == "switching.generic_visual.v1"
-    assert result["scenario"]["analyzer_refs"] == ["switching.generic_visual.v1"]
+    assert result["analysis_version"] == "switching.generic_visual.v2"
+    assert result["scenario"]["analyzer_refs"] == ["switching.generic_visual.v2"]
     assert result["generic_visual_summary"]["gate_passed"] is True
     keys = {record["metric_key"] for record in extended["metric_records"]}
     assert "switching.generic.episode_count" in keys
@@ -5026,3 +5026,209 @@ def test_generic_visual_metric_entries_dispatch_the_static_builder():
     assert click_entry["provenance"]["sources"] == ["run:1:video:abcdef0123456789"]
     # static 家族的知识桥刻意不配（条目声明 not target-relative）。
     assert all("knowledge_refs" not in entry for entry in entries.values())
+
+
+def test_generic_visual_summary_counts_prefer_kovaak_stats_authority():
+    association = {
+        "click_count": 128,
+        "hit_count": 125,
+        "miss_count": 2,
+        "no_target_count": 1,
+        "kills_total": 118,
+        "kills_paired": 118,
+        "kill_pairing_rate": 1.0,
+        "coverage": 0.99,
+        "gate": {"passed": True, "frame_coverage": 0.99, "reasons": []},
+    }
+    stats_counts = {"click_count": 127, "hit_count": 118, "miss_count": 9}
+    summary = worker._generic_visual_summary_fields(association, stats_counts)
+
+    # 头部计数以 KVK stats 为准（内测实测 128/125 vs 127/118）。
+    assert summary["click_count"] == 127
+    assert summary["hit_count"] == 118
+    assert summary["miss_count"] == 9
+    # no_target 是纯 CV 分类概念，无 stats 对应，保留估计值。
+    assert summary["no_target_count"] == 1
+    assert summary["count_source"] == "kovaak_stats"
+    assert summary["cv_estimates"] == {
+        "click_count": 128,
+        "hit_count": 125,
+        "miss_count": 2,
+        "no_target_count": 1,
+    }
+
+    # 无 stats 权威值（旧 CSV/合成 mock）→ 回退 CV 口径，不加口径标注块。
+    fallback = worker._generic_visual_summary_fields(association)
+    assert fallback["click_count"] == 128
+    assert "cv_estimates" not in fallback
+    assert "count_source" not in fallback
+
+
+def test_generic_visual_metric_count_entries_use_stats_authority():
+    association = {
+        "gate": {"passed": True, "frame_coverage": 0.95, "kill_pairing_rate": 1.0},
+        "limitations": ["generic_visual_limited_validation"],
+        "click_count": 8,
+        "hit_count": 6,
+        "miss_count": 1,
+        "no_target_count": 1,
+        "deg_per_px": 0.05,
+        "click_outcomes": [
+            {"outcome": "miss", "miss_vector_deg": {"x": 1.0, "y": 0.6, "distance": 1.2}},
+        ],
+        "kill_pairing_rate": 1.0,
+        "kill_residuals": [
+            {"residual_deg": {"x": 0.3, "y": 0.2, "distance": 0.4}},
+        ],
+    }
+    stats_counts = {"click_count": 7, "hit_count": 5, "miss_count": 2}
+    entries = worker._generic_visual_metric_entries(
+        association,
+        "static_clicking",
+        "run:1:video:abcdef0123456789",
+        stats_counts=stats_counts,
+        stats_source_ref="run:1:stats:aabbccddeeff0011",
+    )
+
+    assert entries["static_clicking.generic.click_count"]["value"] == 7.0
+    assert entries["static_clicking.generic.hit_clicks"]["value"] == 5.0
+    assert entries["static_clicking.generic.miss_clicks"]["value"] == 2.0
+    for key in (
+        "static_clicking.generic.click_count",
+        "static_clicking.generic.hit_clicks",
+        "static_clicking.generic.miss_clicks",
+    ):
+        assert entries[key]["provenance"]["sources"] == [
+            "run:1:stats:aabbccddeeff0011",
+        ]
+    # no_target 无 stats 对应：保留 CV 值与视频溯源。
+    assert entries["static_clicking.generic.no_target_clicks"]["value"] == 1.0
+    assert entries["static_clicking.generic.no_target_clicks"]["provenance"][
+        "sources"
+    ] == ["run:1:video:abcdef0123456789"]
+
+
+def test_kovaak_stats_authoritative_counts_reads_weapon_aggregates():
+    from types import SimpleNamespace
+
+    stats = SimpleNamespace(
+        weapon_aggregates=({"Weapon": "BB Gun", "Shots": 121, "Hits": 114},),
+        kills=pd.DataFrame({"Kill #": range(114)}),
+    )
+    assert worker._kovaak_stats_authoritative_counts(stats) == {
+        "click_count": 121,
+        "hit_count": 114,
+        "miss_count": 7,
+    }
+
+    # 无 weapon 汇总（旧版 CSV / 合成 mock）→ None → 头部计数回退 CV。
+    assert worker._kovaak_stats_authoritative_counts(
+        SimpleNamespace(
+            weapon_aggregates=(),
+            kills=pd.DataFrame({"Kill #": range(3)}),
+        ),
+    ) is None
+    # shots < kills 的矛盾数据不可信 → None。
+    assert worker._kovaak_stats_authoritative_counts(
+        SimpleNamespace(
+            weapon_aggregates=({"Weapon": "BB Gun", "Shots": 2, "Hits": 1},),
+            kills=pd.DataFrame({"Kill #": range(5)}),
+        ),
+    ) is None
+    # 无 kills 表的对象（如测试 SimpleNamespace）→ None。
+    assert worker._kovaak_stats_authoritative_counts(object()) is None
+
+
+def test_generic_visual_static_counts_use_kovaak_stats_authority_end_to_end():
+    from types import SimpleNamespace
+
+    from kovaak_tracker.analysis_evidence import (
+        build_analysis_evidence_artifact_v1,
+    )
+
+    window = {
+        "schema_version": "canonical_time_window.v1",
+        "start_ms": 1_000,
+        "end_ms": 2_000,
+        "duration_ms": 1_000,
+        "window_semantics": "half_open",
+        "timebase_version": "test.v1",
+        "start_source": "fixture",
+        "end_source": "fixture",
+        "warnings": [],
+    }
+    artifact = build_analysis_evidence_artifact_v1(
+        analysis_ref="analysis:80",
+        canonical_time_window=window,
+        scenario_profile_ref=None,
+        stats=None,
+        performance=None,
+        stats_source_ref="run:80:stats:aabbccddeeff0011",
+        performance_source_ref="run:80:performance:aabbccddeeff0011",
+    )
+    artifact["normalized_outcome_records"] = [
+        _switching_kill_outcome_record(1_090, 1, 0),
+        _switching_kill_outcome_record(1_600, 2, 1),
+    ]
+    job = {
+        "id": 80,
+        "input_snapshot": {
+            "canonical_time_window": window,
+            "scenario_resolution": {"aim_family": "static_clicking"},
+            "sources": {
+                "video": {"artifact_ref": "run:80:video:abcdef0123456789"},
+                "stats": {"artifact_ref": "run:80:stats:aabbccddeeff0011"},
+            },
+        },
+    }
+    generic_visual_result = {
+        "tracks": [
+            _switching_generic_ftrack(1, [(1_000, 955.0, 543.0), (1_100, 955.0, 543.0)]),
+            _switching_generic_ftrack(2, [(1_560, 700.0, 540.0), (1_700, 700.0, 540.0)]),
+        ],
+        "frame_coverage": 0.9,
+    }
+    native_result = {
+        "deterministic": {
+            "trajectory": {
+                "points": [
+                    {"timestamp_ms": 1_050, "buttons": 1},
+                    {"timestamp_ms": 1_060, "buttons": 0},
+                    {"timestamp_ms": 1_620, "buttons": 1},
+                ],
+            },
+        },
+    }
+    parsed_stats = SimpleNamespace(
+        resolution="1920x1080",
+        fov=103.0,
+        weapon_aggregates=(
+            {"Weapon": "BB Gun", "Shots": 3, "Hits": 2,
+             "Damage Done": 2.0, "Damage Possible": 3.0},
+        ),
+        kills=pd.DataFrame({"Kill #": [1, 2]}),
+    )
+    extended, result = worker._extend_with_generic_visual(
+        artifact,
+        {},
+        generic_visual_result,
+        job=job,
+        parsed_stats=parsed_stats,
+        native_result=native_result,
+    )
+
+    assert result["analysis_version"] == "static_clicking.generic_visual.v2"
+    summary = result["generic_visual_summary"]
+    assert summary["count_source"] == "kovaak_stats"
+    assert summary["click_count"] == 3
+    assert summary["hit_count"] == 2
+    assert summary["miss_count"] == 1
+    # CV 估计值保留：本例 CV 只识别到 2 次点击，与 stats 的 3 可对比。
+    assert summary["cv_estimates"]["click_count"] == 2
+    metrics = result["deterministic"]["metrics"]
+    assert metrics["static_clicking.generic.click_count"]["value"] == 3.0
+    assert metrics["static_clicking.generic.hit_clicks"]["value"] == 2.0
+    assert metrics["static_clicking.generic.miss_clicks"]["value"] == 1.0
+    assert metrics["static_clicking.generic.click_count"]["provenance"][
+        "sources"
+    ] == ["run:80:stats:aabbccddeeff0011"]

@@ -28,6 +28,11 @@ STALE_ANALYSIS_VERSIONS = frozenset({
     # 2026-08-24 前的跟枪 generic：degraded 准星回退未过滤 + 判定余量
     # 虚高（run 54030 推断 96.8% vs 真实命中率 36.4%）。
     "tracking.generic_visual.v1",
+    # 2026-08-25 前的点击/切换 generic：头部计数指标用 CV 关联层估计
+    # （实测 128/125 vs KVK 真实 127/118），v2 起以 KVK stats 为准。
+    "static_clicking.generic_visual.v1",
+    "dynamic_clicking.generic_visual.v1",
+    "switching.generic_visual.v1",
 })
 SUMMARY_TYPE = "flicking"
 ARTIFACT_MANIFEST_SCHEMA_VERSION = "artifact_manifest.v1"

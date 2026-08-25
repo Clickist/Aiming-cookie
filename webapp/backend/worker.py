@@ -2127,6 +2127,14 @@ def _extend_with_generic_visual(
     window_end = int(window["end_ms"])
     analysis_ref = artifact["analysis_ref"]
     aim_family = (snapshot.get("scenario_resolution") or {}).get("aim_family")
+    # 头部计数口径源：KVK stats 权威数字（shots/kills/misses）+ stats 溯源 ref。
+    stats_counts = _kovaak_stats_authoritative_counts(parsed_stats)
+    stats_source = (snapshot.get("sources") or {}).get("stats")
+    stats_source_ref = (
+        stats_source.get("artifact_ref")
+        if isinstance(stats_source, dict)
+        else None
+    )
 
     points = (
         ((native_result or {}).get("deterministic") or {}).get("trajectory") or {}
@@ -2191,7 +2199,9 @@ def _extend_with_generic_visual(
         if not association["gate"]["passed"]:
             return (
                 artifact,
-                _annotate_result_generic_gate_failed(result, association),
+                _annotate_result_generic_gate_failed(
+                    result, association, stats_counts,
+                ),
             )
         video_source_ref = _video_source_ref(snapshot, analysis_ref)
         extended = extend_analysis_evidence_with_generic_static_clicking_v1(
@@ -2206,6 +2216,8 @@ def _extend_with_generic_visual(
             version=GENERIC_STATIC_CLICKING_ANALYSIS_VERSION,
             aim_family="static_clicking",
             source_ref=video_source_ref,
+            stats_counts=stats_counts,
+            stats_source_ref=stats_source_ref,
         )
 
     from kovaak_tracker.generic_aim_family_analysis import (
@@ -2246,7 +2258,9 @@ def _extend_with_generic_visual(
             deg_per_px=deg_per_px,
         )
     if not association["gate"]["passed"]:
-        return artifact, _annotate_result_generic_gate_failed(result, association)
+        return artifact, _annotate_result_generic_gate_failed(
+            result, association, stats_counts,
+        )
     extended = extend_analysis_evidence_with_generic_family_v1(
         artifact,
         generic_visual_result,
@@ -2260,6 +2274,8 @@ def _extend_with_generic_visual(
         version=version,
         aim_family=aim_family,
         source_ref=_video_source_ref(snapshot, analysis_ref),
+        stats_counts=stats_counts,
+        stats_source_ref=stats_source_ref,
     )
 
 
@@ -2272,15 +2288,60 @@ def _video_source_ref(snapshot: dict, analysis_ref: str) -> str:
     return video_source_ref
 
 
-def _generic_visual_summary_fields(association: Mapping[str, object]) -> dict:
-    summary = {
-        key: association[key]
-        for key in (
-            "click_count", "hit_count", "miss_count", "no_target_count",
-            "kills_total", "kills_paired", "kill_pairing_rate", "coverage",
-        )
-        if key in association
+def _kovaak_stats_authoritative_counts(parsed_stats) -> dict | None:
+    """KVK stats 权威计数（shots/kills/misses）——头部计数指标的口径源。
+
+    v0.1.6 内测实测：CV 关联层口径 128/125 vs KVK 真实 127/118。产品拍板
+    （2026-08-25）头部计数以 stats 为准：click=weapon 汇总 Shots、
+    hit=击杀表行数、miss=Shots−kills。weapon 汇总缺失（旧版 CSV/合成
+    mock）时返回 None，投给 Coach 的计数回退 CV 估计值。
+    """
+    shots_total = 0
+    has_aggregate = False
+    for row in getattr(parsed_stats, "weapon_aggregates", None) or ():
+        if not isinstance(row, dict):
+            return None
+        value = row.get("Shots")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        shots_total += int(value)
+        has_aggregate = True
+    if not has_aggregate:
+        return None
+    kills_table = getattr(parsed_stats, "kills", None)
+    try:
+        kill_count = int(len(kills_table.index))
+    except AttributeError:
+        return None
+    if shots_total <= 0:
+        return None
+    miss_count = shots_total - kill_count
+    if miss_count < 0:
+        return None
+    return {
+        "click_count": shots_total,
+        "hit_count": kill_count,
+        "miss_count": miss_count,
     }
+
+
+def _generic_visual_summary_fields(
+    association: Mapping[str, object],
+    stats_counts: Mapping[str, int] | None = None,
+) -> dict:
+    cv_keys = ("click_count", "hit_count", "miss_count", "no_target_count")
+    summary = {}
+    for key in (*cv_keys, "kills_total", "kills_paired", "kill_pairing_rate", "coverage"):
+        if key not in association:
+            continue
+        # 头部计数指标以 KVK stats 权威值为口径；CV 估计值保留在
+        # cv_estimates 里，口径差异（128/125 vs 127/118）可对比定位。
+        summary[key] = stats_counts[key] if key in (stats_counts or {}) else association[key]
+    if stats_counts:
+        summary["count_source"] = "kovaak_stats"
+        cv_estimates = {key: association[key] for key in cv_keys if key in association}
+        if cv_estimates:
+            summary["cv_estimates"] = cv_estimates
     summary["frame_coverage"] = association["gate"]["frame_coverage"]
     summary["gate_passed"] = association["gate"]["passed"]
     return summary
@@ -2293,6 +2354,8 @@ def _upgrade_result_with_generic_visual(
     version: str,
     aim_family: str,
     source_ref: str,
+    stats_counts: Mapping[str, int] | None = None,
+    stats_source_ref: str | None = None,
 ) -> dict:
     result = dict(result)
     deterministic = dict(result.get("deterministic") or {})
@@ -2308,7 +2371,13 @@ def _upgrade_result_with_generic_visual(
     # knowledge_refs 显式指向知识条目的 metric_refs，让条目匹配不靠猜。
     deterministic["metrics"] = {
         **(deterministic.get("metrics") or {}),
-        **_generic_visual_metric_entries(association, aim_family, source_ref),
+        **_generic_visual_metric_entries(
+            association,
+            aim_family,
+            source_ref,
+            stats_counts=stats_counts,
+            stats_source_ref=stats_source_ref,
+        ),
     }
     result["deterministic"] = deterministic
     result["analysis_version"] = version
@@ -2320,7 +2389,9 @@ def _upgrade_result_with_generic_visual(
         *result.get("warnings", []),
         {"code": "generic_visual"},
     ]
-    result["generic_visual_summary"] = _generic_visual_summary_fields(association)
+    result["generic_visual_summary"] = _generic_visual_summary_fields(
+        association, stats_counts,
+    )
     return result
 
 
@@ -2350,6 +2421,9 @@ def _generic_visual_metric_entries(
     association: Mapping[str, object],
     aim_family: str,
     source_ref: str,
+    *,
+    stats_counts: Mapping[str, int] | None = None,
+    stats_source_ref: str | None = None,
 ) -> dict[str, dict]:
     if aim_family == "static_clicking":
         from kovaak_tracker.generic_static_clicking_analysis import (
@@ -2393,11 +2467,31 @@ def _generic_visual_metric_entries(
         if knowledge_refs:
             entry["knowledge_refs"] = knowledge_refs
         entries[key] = entry
+    # 头部计数指标以 KVK stats 为准（口径源见
+    # _kovaak_stats_authoritative_counts）；no_target 是纯 CV 分类，保留估计值。
+    if stats_counts:
+        stats_suffix_values = {
+            "click_count": stats_counts["click_count"],
+            "hit_clicks": stats_counts["hit_count"],
+            "miss_clicks": stats_counts["miss_count"],
+        }
+        for key, entry in entries.items():
+            suffix = key.rsplit(".", 1)[-1]
+            if ".generic." not in key or suffix not in stats_suffix_values:
+                continue
+            entry["value"] = float(stats_suffix_values[suffix])
+            if isinstance(stats_source_ref, str) and stats_source_ref:
+                entry["provenance"] = {
+                    "kind": "measured",
+                    "sources": [stats_source_ref],
+                }
     return entries
 
 
 def _annotate_result_generic_gate_failed(
-    result: dict, association: Mapping[str, object],
+    result: dict,
+    association: Mapping[str, object],
+    stats_counts: Mapping[str, int] | None = None,
 ) -> dict:
     result = dict(result)
     deterministic = dict(result.get("deterministic") or {})
@@ -2411,7 +2505,7 @@ def _annotate_result_generic_gate_failed(
     scenario["limitations"] = list(limitations)
     result["scenario"] = scenario
     result["generic_visual_summary"] = {
-        **_generic_visual_summary_fields(association),
+        **_generic_visual_summary_fields(association, stats_counts),
         "gate_reasons": list(association["gate"]["reasons"]),
     }
     return result
