@@ -21,7 +21,10 @@ from .generic_visual_detection import (
     select_color_hypothesis,
 )
 
-GENERIC_STATIC_CLICKING_ANALYSIS_VERSION = "static_clicking.generic_visual.v1"
+# v2（2026-08-25）：头部计数指标（click/hit/miss）口径从 CV 关联层估计改为
+# KVK stats 权威数字（worker 投影层替换，实测 128/125 vs 127/118）。升版让
+# done 复用判定拒绝 v1 旧产物、强制重析，旧新口径可区分。
+GENERIC_STATIC_CLICKING_ANALYSIS_VERSION = "static_clicking.generic_visual.v2"
 GENERIC_STATIC_VISUAL_RESULT_SCHEMA = "generic_static_visual_result.v1"
 GENERIC_STATIC_ASSOCIATION_SCHEMA = "generic_static_association.v1"
 

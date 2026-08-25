@@ -16,8 +16,10 @@ from .generic_static_clicking_analysis import (
     associate_generic_static_clicks_v1,
 )
 
-GENERIC_DYNAMIC_CLICKING_ANALYSIS_VERSION = "dynamic_clicking.generic_visual.v1"
-GENERIC_SWITCHING_ANALYSIS_VERSION = "switching.generic_visual.v1"
+# v2（2026-08-25）：与 static_clicking.generic_visual.v2 同因——头部计数指标
+# 口径从 CV 估计改为 KVK stats 权威数字（worker 投影层替换）。
+GENERIC_DYNAMIC_CLICKING_ANALYSIS_VERSION = "dynamic_clicking.generic_visual.v2"
+GENERIC_SWITCHING_ANALYSIS_VERSION = "switching.generic_visual.v2"
 
 TRACKING_SAMPLE_MS = 50.0
 TRACKING_MAX_INTERP_GAP_MS = 120.0
