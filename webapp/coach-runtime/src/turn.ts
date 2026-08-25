@@ -483,6 +483,20 @@ function userFacingErrorMessage(error: unknown, stopped: boolean): string {
 
 // ── Extract assistant text from a Pi message ──────────────────────────────
 
+// DeepSeek 系推理模型必须显式开思考档（判定口径与 Pi 的 isDeepSeek 一致：
+// provider id 或 baseUrl 命中 deepseek）。不开时 Pi 下发 thinking:disabled，
+// 模型把推理写进正文污染用户可见回复（2026-08-25 内测 onboarding 实测）。
+export function deepSeekThinkingLevel(model: unknown): "high" | undefined {
+  if (!isRecord(model)) return undefined;
+  const provider = model.provider;
+  const baseUrl = model.baseUrl;
+  const isDeepSeekEndpoint =
+    provider === "deepseek" ||
+    (typeof baseUrl === "string" && baseUrl.includes("deepseek.com"));
+  if (!isDeepSeekEndpoint) return undefined;
+  return model.reasoning === true ? "high" : undefined;
+}
+
 function extractAssistantText(message: unknown): string | null {
   if (!isRecord(message) || message.role !== "assistant") return null;
   const content = message.content;
@@ -612,6 +626,13 @@ export async function runCoachTurn(
     // Create AgentHarness. Provider 请求启用 Pi 内建重试（OpenAI SDK 的
     // 连接/5xx 预流式重试）：代理与上游网络抖动是流中断的常见来源，
     // maxRetries=0 会让一次瞬断直接终结整轮对话（2026-08-21 实测 terminated）。
+    // DeepSeek 系端点（内置 provider 或自定义 deepseek.com）的推理模型：
+    // 不传思考档时 Pi 会下发 thinking:{type:"disabled"}，模型转而把推理
+    // 过程"说出声"写进正文——回复被内部独白淹没（2026-08-25 内测 onboarding
+    // 实测）。显式开思考档，API 才会把推理分离进 reasoning_content。
+    // 其余 provider 维持默认（off），不改既有请求形态。
+    const thinkingLevel = deepSeekThinkingLevel(resolved.model);
+
     const harness = new AgentHarness({
       env,
       session,
@@ -621,6 +642,7 @@ export async function runCoachTurn(
       model: resolved.model,
       resources: { skills },
       streamOptions: { maxRetries: 2 },
+      ...(thinkingLevel ? { thinkingLevel } : {}),
     });
 
     // Subscribe to events for streaming and tracking
