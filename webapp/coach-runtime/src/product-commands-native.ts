@@ -74,6 +74,9 @@ const calibrationGet: CommandHandler = (_params, _ownerId) => {
       result: {
         schema_version: "calibration_profile.v1",
         configured: false,
+        // scope 标注：这是跨场景的设备级基准，不是任何具体场景的局内
+        // 灵敏度；各场景局内值看 run.list / run.get 的 stats_calibration。
+        scope: "device_global",
         values: { cm_per_360: null, fov: null },
         dpi: null,
         sensitivity: null,
@@ -87,6 +90,7 @@ const calibrationGet: CommandHandler = (_params, _ownerId) => {
     result: {
       schema_version: "calibration_profile.v1",
       configured: data.cm_per_360 != null || data.fov != null,
+      scope: "device_global",
       values: {
         cm_per_360: data.cm_per_360 ?? null,
         fov: data.fov ?? null,
@@ -772,8 +776,15 @@ const runList: CommandHandler = (_params, _ownerId) => {
       scenario: meta.scenario ?? null,
       trace_state: meta.trace_state ?? "none",
       finalization_state: meta.finalization_state ?? "pending",
-      stats_calibration: meta.stats_calibration ?? {
-        FOV: null, DPI: null, sensitivity: null, cm_per_360: null,
+      // 场景归属标注：stats_calibration 里的灵敏度/校准值属于这一局的
+      // 这个场景（scenario + run_ref），只可用于该场景的建议，不能搬到
+      // 别的场景当推荐值。
+      stats_calibration: {
+        ...(meta.stats_calibration ?? {
+          FOV: null, DPI: null, sensitivity: null, cm_per_360: null,
+        }),
+        scenario: meta.scenario ?? null,
+        run_ref: `run:${entry}`,
       },
       created_at: meta.created_at ?? null,
       updated_at: meta.updated_at ?? null,
@@ -798,8 +809,13 @@ const runGet: CommandHandler = (params, _ownerId) => {
       scenario: meta.scenario ?? null,
       trace_state: meta.trace_state ?? "none",
       finalization_state: meta.finalization_state ?? "pending",
-      stats_calibration: meta.stats_calibration ?? {
-        FOV: null, DPI: null, sensitivity: null, cm_per_360: null,
+      // 场景归属标注：同 run.list——这组值属于该局该场景。
+      stats_calibration: {
+        ...(meta.stats_calibration ?? {
+          FOV: null, DPI: null, sensitivity: null, cm_per_360: null,
+        }),
+        scenario: meta.scenario ?? null,
+        run_ref: `run:${runId}`,
       },
       created_at: meta.created_at ?? null,
       updated_at: meta.updated_at ?? null,
