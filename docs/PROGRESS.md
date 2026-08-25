@@ -29,6 +29,13 @@
 - `desktop-coach-provider.spec.ts` now exercises the product UI and observes `/v1/agent-runs`, but the real Provider field test was not rerun in this cleanup. Its skip is not counted as passing validation.
 - `git diff --check` passed. Full Python, production browser Playwright, real Tauri, real KovaaK, hardware, and Provider field checks remain to be reported separately if run.
 
+## 2026-08-25 Session Changes
+
+- **v0.1.7 内测修复包**（起因：08-25 RX 7900 GRE 真硬编用户报障四类——run:79 时间对齐判死整局报废、分析卡第一步无现场、点击计数口径分裂 128/125 vs 真实 127/118、Coach 灵敏度跨场景张冠李戴；另诊断包 v2 覆盖不足导致定位需用户配合取数）。六个主题 commit：`78fa60d` 对齐主源制（Stats 毫秒锚 ±2s 容差放行 + anchor_mismatch_ms 警告，>2s 仍判死且日志带 Stats/Performance 双锚点原始值）、`5f530b7` 点击计数以 KVK stats 为权威口径（CV 估计降级 cv_estimates，static/dynamic/switching 三家族版本升 .v2 入 STALE 强制重建）、`817ae58` 诊断包 v3（logHealth 双日志年龄自检、coach-error/轮转日志尾部、recentRuns 带 alignment_summary 死因、新增 recentAnalyses 分析现场与 recentCoachTurns stopReason/errorMessage——「分析卡住」「Coach 半句话」两类故障从此一个包定位；log_tail 超长单行窗口边界修复：无完整换行时整窗返回）、`7ff3f2d` 硬编/软编 MFT 经 ICodecAPI 真锁 8Mbps（CBR 优先/峰值受限 VBR 回退；v0.1.6 用户实测 16Mbps→本机 NVENC 实测 4.3Mbps、60s 32MB）、`1676219` Coach 灵敏度挂场景归属（stats_calibration 内嵌 scenario+run_ref，calibration.get 标 device_global，prompt 加硬规矩）、`c1d0a91` 防双开锁 + 文件日志 delay 自愈（backend.log 断流双修复；断流最强假说=双后端共用 DATA_ROOT 互卡 RotatingFileHandler 轮转）。
+- **实机验收全过（点点本机 dev + 打包行为验证）**：假局 ±1.5s 放行带警告 / +3s 判死带双锚点；真局 1wall 6targets small 对齐零警告、视频+轨迹双挂载、分析计数 125/116/9 与 KVK 计分板逐位一致；诊断导出 v3 全字段带出（含三会话 stopReason）；Coach 真实 LLM turn 27 步零中断、按场景枚举灵敏度、不乱拍数字。**乌龙澄清**：Windows venv python.exe 是跳板+基础解释器两个 OS 进程，一个逻辑后端天生如此，按 OS 进程数数后端会把 1 数成 2。**关机残留实测**：优雅关闭与 taskkill /F 强杀两路径 app/后端/ sidecar/webview 全零残留（父进程 stdin 看门狗生效）。
+- **验证**：backend `pytest webapp/tests` 642 passed/3 skipped（+1 防双开锁子进程测试）；Rust MSVC 125 passed/0 failed/7 ignored（+3）、clippy/fmt 干净；coach-runtime 217（215 过 2 跳）；前端 tsc 干净。包核验：release exe 含 `capture_diagnostics.v3`、sidecar 含场景标注串、runtime 19:46 全新构建且行为级验证创建 `.runtime.lock`+logs/、`test-packaged-runtime.ps1` 冒烟通过。NSIS 151,315,793 字节，SHA-256 `110acf5ebdd14132df709f99e92985124129ad92b3e46672123890a75cd9f89e`，无签名内测包。
+- **遗留**：logHealth 秒级取整可现小负数（可 clamp）；前端断线聊天停半句需手动刷新；「分析卡第一步」根因待 v3 日志下次复现定位；logHealth 负数与断流自检已上线，后续报障应可自助定位。
+
 ## 2026-08-24 Session Changes
 
 - **v0.1.6 内测修复包**（0.1.5 本机实测闭环后发布）：随包新增三类修复——①CV 跟枪指标双修复（`1737a6a` degraded 准星回退过滤 + `16bc35f` 判定去 +10px 余量，run 54030 推断贴合度 96.8%→33.0%，与真实命中率 36.4% 差 3.4pt，详见下方事故与审计条目）；②重析复用修复（`add1075`：tracking generic 升 v2 + `STALE_ANALYSIS_VERSIONS`，done 旧产物永不作为复用答案——0.1.5 用户重析旧跟枪局即可拿到 v2 数字）；③真实 LLM Coach 实测（08-15 方法复用）验证的既有链路。构建顺序按 0.1.5 补记：先 `build-windows-runtime.ps1` 再 `tauri build`。
