@@ -42,7 +42,7 @@
       --gap-lg: 32px;
       --gap-xl: 56px;
       --gap-2xl: 96px;
-      --container: 1120px;
+      --container: 1280px;
       --gutter: 32px;
 
       --radius: 10px;
@@ -64,6 +64,8 @@
     }
     img, svg { display: block; max-width: 100%; }
     a { color: inherit; text-decoration: none; }
+    .inline-link { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border); transition: color 150ms ease, text-decoration-color 150ms ease; }
+    .inline-link:hover { color: var(--accent); text-decoration-color: var(--accent); }
     button { font: inherit; cursor: pointer; }
     p { text-wrap: pretty; }
     h1, h2, h3, h4 { text-wrap: balance; }
@@ -1011,7 +1013,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7" y="3" width="10" height="18" rx="5"></rect><path d="M12 7v4"></path></svg>
             </div>
             <h3>外设经验</h3>
-            <p>鼠标与外设的选择建议，来自B站外设博主外设点击者（Gearclickist）的经验。只在你主动询问外设建议时，询问并结合你的需求+数据，给出外设建议。</p>
+            <p>鼠标与外设的选择建议，来自B站外设博主<a class="inline-link" href="https://space.bilibili.com/14425468" target="_blank" rel="noopener">外设点击者（Gearclickist）</a>的经验。只在你主动询问外设建议时，询问并结合你的需求+数据，给出外设建议。</p>
           </div>
           <div class="feature card-flat" data-od-id="pillar-coach">
             <div class="feature-mark">
