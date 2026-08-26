@@ -223,7 +223,13 @@ class KovaaKDirectoryWatcher:
     def _handle_error(self, key: tuple[tuple[Path, int, int], ...], stem: str, error: BaseException, phase: str) -> None:
         if _is_retryable(error):
             self._release_or_give_up(key, stem, error)
-            log.warning("KovaaK ingestion retrying stem=%s phase=%s error=%s", stem, phase, error)
+            # OSError 是预期 IO 抖动（文件被占用等），重试窗口内每轮一条，带栈会刷屏；
+            # 其余 retryable 都是意外异常，桌面用户排障只有 backend.log，必须带栈。
+            log.warning(
+                "KovaaK ingestion retrying stem=%s phase=%s error=%s",
+                stem, phase, error,
+                exc_info=None if isinstance(error, OSError) else error,
+            )
         else:
             self._mark_emitted(key)
             code = getattr(error, "code", "non_retryable")

@@ -685,7 +685,8 @@ async def test_ingestion_service_logs_unexpected_future_failure_once(
     ]
     assert len(records) == 1
     assert records[0].levelno == logging.WARNING
-    assert records[0].exc_info is None
+    # 意外异常（非 OSError 的 retryable）必须带堆栈：桌面用户排障只看 backend.log。
+    assert records[0].exc_info is not None
 
 
 @pytest.mark.asyncio
