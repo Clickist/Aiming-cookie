@@ -480,6 +480,17 @@ function collectToolEvents(messages: unknown[]): CoachRuntimeToolEvent[] {
 const MANDATORY_POLICY =
   "\n\nMandatory Coach policy: distinguish measured, deterministic_rule, research_supported, community_consensus, and experimental claims; never invent that an action succeeded; never advise ignoring hits, whether a shot hit, or accuracy; write user-facing plain Chinese without exposing canonical timestamps.";
 
+// 回看引导话术纪律。@X.Xs 只有在对话确有挂载的主题分析时才会被前端渲染成
+// 可点击的视频跳转；纯总结、历史对比类对话没有主题分析挂载，输出的 @标记
+// 是死链接（深读兜底仅覆盖 AI 自己读过的分析）。没有主题时改口述时间点。
+export const TIME_LINK_DISCIPLINE_POLICY =
+  "\n\n回看引导纪律：@X.Xs 时间标记只有在对话确有主题分析挂载时才是可点击的（用户引用了 analysis:N、或本次讨论中创建过分析、打开过它的视频证据）。纯总结、跨局历史对比这类没有主题分析挂载的对话里，不要输出 @X.Xs 回看引导；需要提具体时刻就改用口述时间点（例如「51 秒处」），不要硬造可点击的标记。";
+
+/** Compose the full system prompt from the base prompt and the skills block. */
+export function assembleSystemPrompt(basePrompt: string, skillsBlock: string): string {
+  return `${basePrompt}\n\n${skillsBlock}\n\n${MANDATORY_POLICY}${TIME_LINK_DISCIPLINE_POLICY}`;
+}
+
 // ── Error helpers ────────────────────────────────────────────────────────
 
 class EmptyAssistantReplyError extends Error {}
@@ -553,13 +564,26 @@ export async function runCoachTurn(
 
   let unsubscribe: (() => void) | null = null;
   const analysisRefs: string[] = [];
+  // 非主题深读（fs read/ls 读 analyses/N/ 做历史参照）的 @时间链接兜底列表：
+  // 纯总结/对比类对话里 AI 会按话术写「回看 @51.5s」，但 analysis_refs 只收
+  // 主题级参与、此时为空，前端链接永远点不动。深读引用单列（不代表本次讨论
+  // 的主题），前端在 analysis_refs 找不到视频时用它兜底。
+  const deepReadAnalysisRefs: string[] = [];
   // 只有「主题级」参与进 analysis_refs（本次讨论挂载/@time 解析/会话 meta）：
   // 用户显式引用、本讨论创建的分析、evidence 视频打开。历史对比等参照性
   // 读取（fs 深读、analysis.get/compare）不算主题，避免污染「本次讨论」。
   const recordAnalysisRead = (analysisId: number, subject = false) => {
-    if (!subject) return;
     const ref = `analysis:${analysisId}`;
-    if (!analysisRefs.includes(ref)) analysisRefs.push(ref);
+    if (subject) {
+      if (!analysisRefs.includes(ref)) analysisRefs.push(ref);
+      // 主题确立后，同 id 不再算“非主题回看”。
+      const deepIndex = deepReadAnalysisRefs.indexOf(ref);
+      if (deepIndex !== -1) deepReadAnalysisRefs.splice(deepIndex, 1);
+      return;
+    }
+    if (!analysisRefs.includes(ref) && !deepReadAnalysisRefs.includes(ref)) {
+      deepReadAnalysisRefs.push(ref);
+    }
   };
   let activeRunId: string | null = null;
   let partialRevision = 0;
@@ -625,10 +649,11 @@ export async function runCoachTurn(
 
     // Build system prompt via harness callback: the base prompt plus the
     // spec-compatible skills block (Pi injects resources into the callback).
-    const systemPrompt = (context: { resources: { skills?: unknown[] } }) => {
-      const skillsBlock = formatSkillsForSystemPrompt(context.resources.skills ?? []);
-      return `${resolveSystemPrompt(request.system_prompt)}\n\n${skillsBlock}\n\n${MANDATORY_POLICY}`;
-    };
+    const systemPrompt = (context: { resources: { skills?: unknown[] } }) =>
+      assembleSystemPrompt(
+        resolveSystemPrompt(request.system_prompt),
+        formatSkillsForSystemPrompt(context.resources.skills ?? []),
+      );
 
     // Build tools: file system tools + knowledge + product commands
     const dataRoot = getDataRoot();
@@ -839,6 +864,7 @@ export async function runCoachTurn(
         lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
         request.run_id,
         analysisRefs,
+        deepReadAnalysisRefs,
       );
     }
 
@@ -862,6 +888,7 @@ export async function runCoachTurn(
           safePartialReply(interruptedText, secrets),
           request.run_id,
           analysisRefs,
+          deepReadAnalysisRefs,
         );
       }
     }
@@ -898,6 +925,7 @@ export async function runCoachTurn(
           lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
           request.run_id,
           analysisRefs,
+          deepReadAnalysisRefs,
         );
       }
       const providerError = isRecord(replyMessage) && typeof replyMessage.errorMessage === "string"
@@ -921,6 +949,7 @@ export async function runCoachTurn(
       collectedToolEvents,
       request.run_id,
       analysisRefs,
+      deepReadAnalysisRefs,
     );
   } catch (error) {
     const stopped = activeRunId !== null && stopRequested.has(activeRunId);
@@ -948,6 +977,7 @@ export async function runCoachTurn(
       lastPartialText ? safePartialReply(lastPartialText, secrets) : null,
       responseRunId,
       analysisRefs,
+      deepReadAnalysisRefs,
     );
   } finally {
     unsubscribe?.();

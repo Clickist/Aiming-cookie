@@ -30,6 +30,10 @@ export type ConversationMeta = {
   /** Analysis ids this session engaged with via Coach file reads (frontend
    *  uses them to resolve `@3.4s` time links to video seeks). */
   analysis_session_ids?: number[];
+  /** Non-subject deep-read analysis ids (`analysis:{id}` without a subject):
+   *  history/comparison references the AI read this session. @time-link
+   *  fallback only — these are viewable, but NOT 本次讨论 subjects. */
+  deep_read_analysis_session_ids?: number[];
 };
 
 export type SessionMessage = {
@@ -295,6 +299,9 @@ export function readConversationMeta(threadId: number): ConversationMeta {
           analysis_session_ids: Array.isArray(raw.analysis_session_ids)
             ? raw.analysis_session_ids.filter((value): value is number => Number.isInteger(value) && value > 0)
             : undefined,
+          deep_read_analysis_session_ids: Array.isArray(raw.deep_read_analysis_session_ids)
+            ? raw.deep_read_analysis_session_ids.filter((value): value is number => Number.isInteger(value) && value > 0)
+            : undefined,
         };
       }
     } catch {
@@ -323,6 +330,22 @@ export function updateConversationAnalysisIds(threadId: number, ids: number[]): 
     if (Number.isInteger(id) && id > 0) merged.add(id);
   }
   meta.analysis_session_ids = [...merged].sort((a, b) => a - b);
+  meta.updated_at = new Date().toISOString();
+  writeConversationMeta(threadId, meta);
+}
+
+/**
+ * Union non-subject deep-read analysis ids into the session's @time-link
+ * fallback list — kept separate from analysis_session_ids so 深读旧分析 never
+ * claims to be part of 本次讨论.
+ */
+export function updateConversationDeepReadAnalysisIds(threadId: number, ids: number[]): void {
+  const meta = readConversationMeta(threadId);
+  const merged = new Set(meta.deep_read_analysis_session_ids ?? []);
+  for (const id of ids) {
+    if (Number.isInteger(id) && id > 0) merged.add(id);
+  }
+  meta.deep_read_analysis_session_ids = [...merged].sort((a, b) => a - b);
   meta.updated_at = new Date().toISOString();
   writeConversationMeta(threadId, meta);
 }

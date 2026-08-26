@@ -8,7 +8,7 @@ import test from "node:test";
 const dataRoot = mkdtempSync(join(tmpdir(), "coach-provider-routes-"));
 process.env.DATA_ROOT = dataRoot;
 
-import { loadProfile } from "../src/provider-store.ts";
+import { findStoredProfile, loadProfile, loadProviderStore } from "../src/provider-store.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 
 function request(
@@ -624,5 +624,97 @@ test("POST /v1/provider-profiles/model with an invalid body returns 400", async 
     assert.equal(missingSchema.statusCode, 400);
     const blankModel = await request(server, "POST", "/v1/provider-profiles/model", MODEL_SWITCH_BODY("  "));
     assert.equal(blankModel.statusCode, 400);
+  });
+});
+
+test("PUT /v1/provider-profiles/{id} without api_key keeps the stored credential", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+      api_key: "sk-live-onboarding-key",
+    });
+
+    // OnboardingFlow 重跑连接步骤：预填现有档、不动 key（body 不带 api_key）。
+    const updated = await request(server, "PUT", `/v1/provider-profiles/${created.id}`, JSON.stringify({
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-pro",
+    }));
+    assert.equal(updated.statusCode, 200);
+    assert.equal((updated.json as Record<string, unknown>).model_id, "deepseek-v4-pro");
+    assert.equal((updated.json as Record<string, unknown>).has_api_key, true);
+
+    const stored = findStoredProfile(loadProviderStore(), created.id as number);
+    assert.ok(stored);
+    assert.ok(stored.credential);
+    if (stored.credential.type === "api_key") {
+      assert.equal(stored.credential.key, "sk-live-onboarding-key");
+    } else {
+      assert.fail("expected the stored api_key credential to survive");
+    }
+  });
+});
+
+test("PUT /v1/provider-profiles/{id} keeps a custom profile credential when no key is sent", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "custom_openai_compatible",
+      name: "Local Lab",
+      base_url: "https://provider.example/v1",
+      model_id: "custom-model-a",
+      api_key: "custom-live-key",
+    });
+
+    const updated = await request(server, "PUT", `/v1/provider-profiles/${created.id}`, JSON.stringify({
+      kind: "custom_openai_compatible",
+      name: "Local Lab Renamed",
+      base_url: "https://provider.example/v1",
+      model_id: "custom-model-b",
+    }));
+    assert.equal(updated.statusCode, 200);
+    const profile = updated.json as Record<string, unknown>;
+    assert.equal(profile.name, "Local Lab Renamed");
+    assert.equal(profile.has_api_key, true);
+
+    const stored = findStoredProfile(loadProviderStore(), created.id as number);
+    assert.ok(stored);
+    if (stored.credential && stored.credential.type === "api_key") {
+      assert.equal(stored.credential.key, "custom-live-key");
+    } else {
+      assert.fail("expected the custom api_key credential to survive");
+    }
+  });
+});
+
+test("PUT /v1/provider-profiles/{id} with a new api_key replaces the credential", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+      api_key: "old-key",
+    });
+
+    const updated = await request(server, "PUT", `/v1/provider-profiles/${created.id}`, JSON.stringify({
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+      api_key: "new-key",
+    }));
+    assert.equal(updated.statusCode, 200);
+    assert.equal((updated.json as Record<string, unknown>).has_api_key, true);
+
+    const stored = findStoredProfile(loadProviderStore(), created.id as number);
+    assert.ok(stored?.credential);
+    if (stored.credential.type === "api_key") {
+      assert.equal(stored.credential.key, "new-key");
+    } else {
+      assert.fail("expected an api_key credential");
+    }
   });
 });

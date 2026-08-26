@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createModelsStreamFn,
   listBuiltinProviderCatalog,
+  looksLikeReasoningModelId,
   resolveProviderModel,
   type PiModels,
 } from "../src/provider-models.ts";
@@ -457,4 +458,66 @@ test("expired OAuth profile status reports readiness state without refreshing or
   assert.equal(streamCalls, 0);
   assert.ok(!JSON.stringify(status).includes(SECRET));
   assert.ok(!JSON.stringify(status).includes("refresh-secret"));
+});
+
+test("custom profile reasoning detection is a model_id name heuristic", async () => {
+  // 启发式（大小写不敏感）：reasoner / thinking / qwq 子串；r1、o1、o3、o4 词边界。
+  const hits = [
+    "deepseek-reasoner",
+    "DeepSeek-R1",
+    "r1-0528",
+    "o1",
+    "o3-mini",
+    "o4-mini-2025",
+    "QwQ-32B",
+    "vendor-thinking-preview",
+  ];
+  for (const modelId of hits) {
+    assert.equal(
+      looksLikeReasoningModelId(modelId),
+      true,
+      `expected ${modelId} to be detected as a reasoning model`,
+    );
+  }
+
+  const misses = [
+    "deepseek-chat",
+    "deepseek-v3",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "claude-sonnet-4",
+    "qwen2.5-instruct",
+    "gemini-1.5-pro",
+    "r10",
+    "fixture-model",
+  ];
+  for (const modelId of misses) {
+    assert.equal(
+      looksLikeReasoningModelId(modelId),
+      false,
+      `expected ${modelId} NOT to be detected as a reasoning model`,
+    );
+  }
+});
+
+test("custom OpenAI-compatible reasoning models resolve with reasoning enabled", async () => {
+  const resolved = await resolveProviderModel({
+    kind: "custom_openai_compatible",
+    provider_id: "reasoning-detect-provider",
+    provider_name: "Reasoning Detect Provider",
+    base_url: "https://provider.example/v1",
+    credential: { type: "api_key", key: SECRET },
+    model_id: "deepseek-reasoner",
+  });
+  assert.equal(resolved.model.reasoning, true);
+
+  const plain = await resolveProviderModel({
+    kind: "custom_openai_compatible",
+    provider_id: "plain-custom-provider",
+    provider_name: "Plain Custom Provider",
+    base_url: "https://provider.example/v1",
+    credential: { type: "api_key", key: SECRET },
+    model_id: "deepseek-chat",
+  });
+  assert.equal(plain.model.reasoning, false);
 });
