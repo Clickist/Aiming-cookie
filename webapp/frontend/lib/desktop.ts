@@ -114,6 +114,20 @@ export function pickDesktopCsvPath(): Promise<string | null> {
   return pickSinglePath("选择 KovaaK Stats CSV", "csv");
 }
 
+/** Native folder selection for local KovaaK Stats and Performance locations. */
+export async function pickDesktopDirectory(title: string): Promise<string | null> {
+  if (!isDesktopRuntime()) {
+    throw new Error("Native folder selection is only available in the desktop app");
+  }
+  const selected = await open({
+    title,
+    multiple: false,
+    directory: true,
+    fileAccessMode: "scoped",
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function getManagedVideoUrl(sessionId: number): Promise<string | null> {
   if (!isDesktopRuntime()) return null;
   if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {

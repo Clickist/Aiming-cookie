@@ -20,6 +20,7 @@ import type {
   KovaaKRunItem,
   KovaaKRunListItem,
   KovaaKScoresV1,
+  KovaaKLocalDirectoriesV1,
   ProductStateV1,
   ProviderAuthCapabilitiesV1,
   ProviderCatalogV1,
@@ -859,6 +860,13 @@ export const KOVAAK_SCORES_AVAILABLE: KovaaKScoresV1 = {
   ],
 };
 
+export const KOVAAK_DIRECTORIES: KovaaKLocalDirectoriesV1 = {
+  schema_version: "kovaak_local_directories.v1",
+  stats: { path: null, source: "unavailable", matching_file_count: 0, matching_files: "no_matching_files" },
+  performance: { path: null, source: "unavailable", matching_file_count: 0, matching_files: "no_matching_files" },
+  activation: "not_requested",
+};
+
 export interface ApiScenario {
   productState: ProductStateV1;
   runs: KovaaKRunListItem[];
@@ -879,6 +887,7 @@ export interface ApiScenario {
   catalog: ProviderCatalogV1;
   kovaakConnected: boolean;
   kovaakScores: KovaaKScoresV1;
+  kovaakDirectories: KovaaKLocalDirectoriesV1;
   failures: Record<string, number>;
 }
 
@@ -906,6 +915,7 @@ export function apiScenario(overrides: Partial<ApiScenario> = {}): ApiScenario {
     catalog: PROVIDER_CATALOG,
     kovaakConnected: true,
     kovaakScores: KOVAAK_SCORES,
+    kovaakDirectories: KOVAAK_DIRECTORIES,
     failures: {},
     ...overrides,
   };
@@ -1042,6 +1052,29 @@ export function handleReviewApiRequest(scenario: ApiScenario, request: ReviewApi
   if (path === "/api/kovaak-connection" && method === "DELETE") { scenario.kovaakConnected = false; return response({ deleted: true }); }
   if (path === "/api/kovaak-connection/refresh" && method === "POST") return response({ schema_version: "kovaak_benchmark_sync_result.v1", imported_score_count: scenario.kovaakScores.items.length, difficulty_counts: { easier: 0, medium: 0 }, observed_at: NOW });
   if (path === "/api/kovaak-scores") return response(scenario.kovaakScores);
+  if (path === "/api/kovaak-local-directories" && method === "GET") return response(scenario.kovaakDirectories);
+  if (path === "/api/kovaak-local-directories" && method === "PUT") {
+    const body = requestBody(request.body);
+    const statsDir = typeof body.stats_dir === "string" && body.stats_dir ? body.stats_dir : null;
+    const perfDir = typeof body.performance_dir === "string" && body.performance_dir ? body.performance_dir : null;
+    scenario.kovaakDirectories = {
+      schema_version: "kovaak_local_directories.v1",
+      stats: {
+        path: statsDir,
+        source: "confirmed",
+        matching_file_count: statsDir ? 1 : 0,
+        matching_files: statsDir ? "found" : "no_matching_files",
+      },
+      performance: {
+        path: perfDir,
+        source: "confirmed",
+        matching_file_count: perfDir ? 1 : 0,
+        matching_files: perfDir ? "found" : "no_matching_files",
+      },
+      activation: "activated",
+    };
+    return response(scenario.kovaakDirectories);
+  }
   if (path === "/api/calibration-profile" && method === "GET") return response(CALIBRATION_PROFILE);
   if (path === "/api/capture-status") return response(scenario.capture);
   if (path === "/api/storage") return response(STORAGE);
@@ -1237,6 +1270,7 @@ export async function installDesktopBridge(page: Page): Promise<void> {
     };
     const fixtureWindow = window as unknown as TauriFixtureWindow;
     fixtureWindow.isTauri = true;
+    let dialogOpens = 0;
     fixtureWindow.__TAURI_INTERNALS__ = {
       invoke: async (command, args) => {
         if (command === "desktop_runtime_connection") return { baseUrl: origin, token: "task7-fixture-token", sidecarUrl: origin };
@@ -1269,7 +1303,10 @@ export async function installDesktopBridge(page: Page): Promise<void> {
             message: "已请求打开 KovaaK，请确认目标场景已加载",
           };
         }
-        if (command === "plugin:dialog|open") return "C:\\Task7Fixture\\selected.file";
+        if (command === "plugin:dialog|open") {
+          dialogOpens += 1;
+          return dialogOpens === 1 ? "C:\\Task7Fixture\\KovaaK\\stats" : "C:\\Task7Fixture\\KovaaK\\performances";
+        }
         throw new Error(`Unhandled desktop fixture command: ${command}`);
       },
       convertFileSrc: (path, protocol = "asset") =>

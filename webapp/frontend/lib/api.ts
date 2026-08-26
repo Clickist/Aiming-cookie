@@ -38,6 +38,8 @@ import type {
   KovaaKConnectionDeleteResponseV1,
   KovaaKConnectionSaveRequestV1,
   KovaaKConnectionStatusV1,
+  KovaaKLocalDirectoriesUpdateV1,
+  KovaaKLocalDirectoriesV1,
   KovaaKScoreSyncRequestV1,
   KovaaKScoreSyncResultV1,
   KovaaKScoresV1,
@@ -328,6 +330,36 @@ export async function getKovaakRun(
   return (await res.json()) as KovaaKRunItem;
 }
 
+/** Desktop-only local KovaaK directory configuration. */
+export async function getKovaaKLocalDirectories(
+  opts: { signal?: AbortSignal } = {},
+): Promise<KovaaKLocalDirectoriesV1> {
+  const res = await apiFetch(
+    "/api/kovaak-local-directories",
+    { method: "GET" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKLocalDirectoriesV1;
+}
+
+/** Desktop-only local directory update activates the watcher when the runtime is available. */
+export async function saveKovaaKLocalDirectories(
+  body: KovaaKLocalDirectoriesUpdateV1,
+  opts: { signal?: AbortSignal } = {},
+): Promise<KovaaKLocalDirectoriesV1> {
+  const res = await apiFetch(
+    "/api/kovaak-local-directories",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as KovaaKLocalDirectoriesV1;
+}
 
 /** Desktop-only submission from a path-free persisted Run. */
 export async function analyzeKovaakRun(

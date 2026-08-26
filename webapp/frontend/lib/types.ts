@@ -545,6 +545,31 @@ export interface KovaaKConnectionDeleteResponseV1 {
   deleted: boolean;
 }
 
+/** Local directory status returned only by the desktop-token-protected settings API. */
+export interface KovaaKLocalDirectoryStatusV1 {
+  path: string | null;
+  source: "environment" | "confirmed" | "automatic" | "unavailable";
+  matching_file_count: number;
+  matching_files: "found" | "no_matching_files";
+}
+
+/** Coarse desktop watcher health projected from kovaak_watcher.v1 diagnostics. */
+export type KovaaKWatcherStatusV1 = "no_candidates" | "not_exporting" | "ingesting";
+
+export interface KovaaKLocalDirectoriesV1 {
+  schema_version: "kovaak_local_directories.v1";
+  stats: KovaaKLocalDirectoryStatusV1;
+  performance: KovaaKLocalDirectoryStatusV1;
+  activation: "not_requested" | "activated" | "runtime_unavailable" | "failed";
+  /** null/缺省表示无法判定（runtime 不可用或快照缺失）。 */
+  watcher_status?: KovaaKWatcherStatusV1 | null;
+}
+
+export interface KovaaKLocalDirectoriesUpdateV1 {
+  stats_dir: string;
+  performance_dir: string;
+}
+
 export interface KovaaKScoreStageV1 {
   stage: "easier" | "medium";
   completed: number;

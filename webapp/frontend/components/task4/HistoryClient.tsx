@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { getHistorySessions, listKovaakRuns } from "@/lib/api";
+import { getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
 import { isDesktopRuntime } from "@/lib/desktop";
 import {
   buildCoachAnalysisDraft,
@@ -13,7 +13,7 @@ import {
   getHistoryStatusText,
   presentRecordLabel,
 } from "@/lib/contracts";
-import type { KovaaKRunListItem, SessionListItem } from "@/lib/types";
+import type { KovaaKLocalDirectoriesV1, KovaaKRunListItem, KovaaKWatcherStatusV1, SessionListItem } from "@/lib/types";
 import { IconChevronLeft } from "@/ui/icons";
 import { Button, Empty, ErrorState, IconButton, Notice } from "@/ui/primitives";
 
@@ -234,10 +234,12 @@ export function HistoryClient() {
   const [refresh, setRefresh] = useState<RefreshState>("loading");
   const [runDiscovery, setRunDiscovery] = useState<RunDiscoveryState>("loading");
   const [initialError, setInitialError] = useState(false);
+  const [watcherStatus, setWatcherStatus] = useState<KovaaKWatcherStatusV1 | null>(null);
   const [selectedRunIds, setSelectedRunIds] = useState<number[]>([]);
   const [selectedAnalysisIds, setSelectedAnalysisIds] = useState<number[]>([]);
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
   const selectedCount = selectedRunIds.length + selectedAnalysisIds.length;
+  const allListsEmpty = runs.length === 0 && sessions.length === 0;
 
   const loadHistory = useCallback(async (initial = false) => {
     setRefresh("loading");
@@ -258,7 +260,19 @@ export function HistoryClient() {
       setRefresh("idle");
       setInitialError(false);
     }
-  }, []);
+    // 桌面版空列表本来就会随上方轮询再次进入这里：顺路读 watcher 健康，
+    // 用于区分「没找到目录」和「KovaaK 未导出」两种空态；不新增定时器。
+    if (!canDiscoverRuns) {
+      setWatcherStatus(null);
+    } else if (allListsEmpty) {
+      try {
+        const directories: KovaaKLocalDirectoriesV1 = await getKovaaKLocalDirectories();
+        setWatcherStatus(directories.watcher_status ?? null);
+      } catch {
+        setWatcherStatus(null);
+      }
+    }
+  }, [allListsEmpty]);
 
   useEffect(() => {
     void loadHistory(true);
@@ -266,18 +280,25 @@ export function HistoryClient() {
 
   const sections = useMemo(() => buildHistorySections({ runs, sessions }), [runs, sessions]);
 
-  // 视频 finalize 在页面停留期间完成（如「视频 −」变 ✓）；有未终态 Run 时轮询，
-  // 就绪后自动更新，不需要用户手动刷新页面。产品 API 无事件流，轮询即刷新机制。
-  const hasUnfinalizedRuns = useMemo(
-    () => runs.some((run) => !RUN_FINALIZED_STATES.has(run.finalization_state)),
+  // 桌面版且全部列表为空时，用 watcher 健康区分两种空态并给出下一步；
+  // 加载中、服务不可用、状态未知或已在摄取数据时不显示。
+  const watcherGuidance: KovaaKWatcherStatusV1 | null =
+    runDiscovery === "available" && allListsEmpty && (watcherStatus === "no_candidates" || watcherStatus === "not_exporting")
+      ? watcherStatus
+      : null;
+
+  // 视频 finalize 在页面停留期间完成（如「视频 −」变 ✓）；有未终态 Run 时轮询。
+  // 桌面空列表也需持续发现新完成的本地训练；浏览器没有 Run 发现能力，不轮询。
+  const shouldPollHistory = useMemo(
+    () => isDesktopRuntime() && (runs.length === 0 || runs.some((run) => !RUN_FINALIZED_STATES.has(run.finalization_state))),
     [runs],
   );
 
   useEffect(() => {
-    if (!hasUnfinalizedRuns) return undefined;
+    if (!shouldPollHistory) return undefined;
     const timer = window.setInterval(() => void loadHistory(), 5000);
     return () => window.clearInterval(timer);
-  }, [hasUnfinalizedRuns, loadHistory]);
+  }, [shouldPollHistory, loadHistory]);
 
   const toggleRun = (run: KovaaKRunListItem) => {
     if (selectedRunIds.includes(run.id)) {
@@ -359,6 +380,20 @@ export function HistoryClient() {
       {refresh === "unavailable" ? <Notice tone="warning" title="刷新暂时不可用">保留当前已读取内容；恢复本地服务后可以重试。</Notice> : null}
       {runDiscovery === "browser_unavailable" ? <Notice tone="info" title="Run 发现仅在桌面应用可用">浏览器可以查看分析记录；要查看自动采集的 Run，请在桌面应用中打开 History。</Notice> : null}
       {runDiscovery === "service_unavailable" ? <Notice tone="warning" title="Run 暂时不可用">桌面服务没有返回训练 Run；这不是"没有记录"。恢复服务后可以刷新。</Notice> : null}
+
+      {watcherGuidance === "no_candidates" ? (
+        <Empty className="task4-panel task4-state-panel" title="未找到你的 KovaaK 训练数据">
+          <p>自动发现没有找到可用的 KovaaK 数据目录。</p>
+          <Button onClick={() => router.push("/settings#kovaak-directories")} size="compact" variant="secondary">
+            前往 设置 → KovaaK 本地目录 手动指定
+          </Button>
+        </Empty>
+      ) : null}
+      {watcherGuidance === "not_exporting" ? (
+        <Empty className="task4-panel task4-state-panel" title="KovaaK 未在导出训练数据">
+          <p>请在 KovaaK 中打开 设置 → 其他 → 统计数据输出，选择 Challenge Completion，然后完成一局挑战。</p>
+        </Empty>
+      ) : null}
 
       <section className="task4-sec" aria-labelledby="pending-title">
         <div className="task4-sec-head">

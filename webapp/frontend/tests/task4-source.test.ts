@@ -32,7 +32,8 @@ test("history renders unavailable Run sources as semantic notices", async () => 
 test("history loading and empty states use the local panel treatment", async () => {
   const client = await source("components/task4/HistoryClient.tsx");
   const styles = await source("components/task4/task4.css");
-  assert.equal(client.match(/className="task4-panel task4-state-panel"/g)?.length, 2);
+  // 区块共用空态（RunSectionState）+ 分析记录空态 + watcher 引导卡片两张，共 4 处。
+  assert.equal(client.match(/className="task4-panel task4-state-panel"/g)?.length, 4);
   assert.match(styles, /\.task4-state-panel\s*{[\s\S]*min-height:\s*88px;[\s\S]*padding:\s*var\(--space-4\) var\(--space-5\);/);
 });
 
@@ -87,13 +88,31 @@ test("History keeps Analysis consumption local", async () => {
   assert.doesNotMatch(value, /onLoadDetail/);
 });
 
-test("history auto-refreshes while runs are still finalizing so video readiness updates without reload", async () => {
+test("History polls incomplete runs and desktop empty states, but not browser empty states", async () => {
   const value = await source("components/task4/HistoryClient.tsx");
-  // 终态集合之外（discovered/pending/capturing/finalizing/retryable…）证据还会变化
+  // 终态集合之外（discovered/pending/capturing/finalizing/retryable…）证据还会变化。
   assert.match(value, /new Set\(\["finalized", "source_unavailable", "unavailable"\]\)/);
-  assert.match(value, /runs\.some\(\(run\) => !RUN_FINALIZED_STATES\.has\(run\.finalization_state\)\)/);
-  // 有未终态 Run 时轮询刷新，全部终态后停止并清理定时器
+  assert.match(value, /isDesktopRuntime\(\) && \(runs\.length === 0 \|\| runs\.some\(\(run\) => !RUN_FINALIZED_STATES\.has\(run\.finalization_state\)\)\)/);
+  assert.match(value, /if \(!shouldPollHistory\) return undefined;/);
   assert.match(value, /setInterval\(\(\) => void loadHistory\(\), 5000\)/);
-  assert.match(value, /if \(!hasUnfinalizedRuns\) return undefined;/);
   assert.match(value, /clearInterval\(timer\)/);
+});
+
+test("history distinguishes desktop empty states with watcher guidance instead of new timers", async () => {
+  const value = await source("components/task4/HistoryClient.tsx");
+  // watcher 健康搭既有 loadHistory 轮询的便车，不得引入新的定时器。
+  assert.match(value, /getKovaaKLocalDirectories/);
+  assert.doesNotMatch(value, /setInterval\((?!.*loadHistory)/);
+  // 只有桌面版且全部列表为空、且判定为问题态时才显示；未知/正在摄取不提示。
+  assert.match(
+    value,
+    /runDiscovery === "available" && allListsEmpty && \(watcherStatus === "no_candidates" \|\| watcherStatus === "not_exporting"\)/,
+  );
+  // 状态 a：未找到目录 → 引导去 设置 → KovaaK 本地目录。
+  assert.match(value, /未找到你的 KovaaK 训练数据/);
+  assert.match(value, /settings#kovaak-directories/);
+  // 状态 b： KovaaK 的实际选项是 Challenge Completion（不存在 "Always"）。
+  assert.match(value, /KovaaK 未在导出训练数据/);
+  assert.match(value, /请在 KovaaK 中打开 设置 → 其他 → 统计数据输出，选择 Challenge Completion，然后完成一局挑战。/);
+  assert.doesNotMatch(value, /Always/);
 });

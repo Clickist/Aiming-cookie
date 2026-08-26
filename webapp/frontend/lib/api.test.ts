@@ -8,6 +8,7 @@ import {
   discoverCustomProviderModels,
   deleteKovaaKConnection,
   getKovaaKConnection,
+  getKovaaKLocalDirectories,
   getKovaaKScores,
   getProductReadiness,
   getCurrentTraining,
@@ -21,6 +22,7 @@ import {
   refreshKovaaKConnection,
   retrySession,
   saveKovaaKConnection,
+  saveKovaaKLocalDirectories,
   switchProviderModel,
   syncKovaaKScores,
 } from "./api";
@@ -467,6 +469,46 @@ test("analysis write requests forward their stable idempotency keys", async () =
     new Headers(requests[1]?.init?.headers).get("Idempotency-Key"),
     "retry-key",
   );
+});
+
+test("KovaaK directory adapters are desktop-token protected and return path-free status", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", true);
+  Reflect.set(globalThis, "window", {
+    __TAURI_INTERNALS__: {
+      invoke: async () => ({ baseUrl: "http://127.0.0.1:43127", token: "directory-token" }),
+    },
+  });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    return new Response(JSON.stringify({
+      schema_version: "kovaak_local_directories.v1",
+      stats: { path: null, source: "automatic", matching_file_count: 0, matching_files: "no_matching_files" },
+      performance: { path: null, source: "automatic", matching_file_count: 0, matching_files: "no_matching_files" },
+      activation: "not_requested",
+      watcher_status: "not_exporting",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  const initial = await getKovaaKLocalDirectories();
+  const saved = await saveKovaaKLocalDirectories({
+    stats_dir: "C:\\Users\\player\\KovaaK\\stats",
+    performance_dir: "C:\\Users\\player\\KovaaK\\performances",
+  });
+
+  assert.equal(initial.stats.source, "automatic");
+  // watcher 健康字段原样透传，供 History 空态区分引导卡片。
+  assert.equal(initial.watcher_status, "not_exporting");
+  assert.equal(saved.activation, "not_requested");
+  assert.deepEqual(requests.map(({ input, init }) => ({ input, method: init?.method })), [
+    { input: "http://127.0.0.1:43127/api/kovaak-local-directories", method: "GET" },
+    { input: "http://127.0.0.1:43127/api/kovaak-local-directories", method: "PUT" },
+  ]);
+  assert.equal(new Headers(requests[0]?.init?.headers).get("X-Aiming-Cookie-Desktop-Token"), "directory-token");
+  assert.deepEqual(JSON.parse(String(requests[1]?.init?.body)), {
+    stats_dir: "C:\\Users\\player\\KovaaK\\stats",
+    performance_dir: "C:\\Users\\player\\KovaaK\\performances",
+  });
 });
 
 test("KovaaK scores API helper reads the neutral identity-free contract", async () => {

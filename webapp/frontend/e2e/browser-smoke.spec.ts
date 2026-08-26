@@ -198,6 +198,42 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByRole("tab")).toHaveCount(0);
   });
 
+  test("settings KovaaK local directories pick both folders, save once, and activate", async ({ page }) => {
+    await installApiFixtures(page);
+    await installDesktopBridge(page);
+    await page.goto("/settings");
+
+    const section = page.locator("#kovaak-directories");
+    // 初始：自动未命中时两个目录都可手动选择。
+    const selectButtons = section.getByRole("button", { name: "选择文件夹" });
+    await expect(selectButtons).toHaveCount(2);
+
+    let putPayload: Record<string, unknown> | null = null;
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname !== "/api/kovaak-local-directories") return;
+      if (request.method() !== "PUT") return;
+      putPayload = request.postDataJSON() as Record<string, unknown>;
+    });
+
+    // 只选一个目录时保存保持禁用；两项齐全才允许一次提交。
+    // 按行定位：首次选择后按钮文案会从"选择文件夹"变为"更换文件夹"，文案定位会失配。
+    const rowButton = (index: number) =>
+      section.locator(".kovaak-directory-row").nth(index).getByRole("button");
+    await rowButton(0).click();
+    await expect(section.getByRole("button", { name: "保存并启用" })).toBeDisabled();
+    await rowButton(1).click();
+    await expect(section.getByRole("button", { name: "保存并启用" })).toBeEnabled();
+    await section.getByRole("button", { name: "保存并启用" }).click();
+
+    await expect.poll(() => putPayload).not.toBeNull();
+    expect(putPayload).toEqual({
+      stats_dir: "C:\\Task7Fixture\\KovaaK\\stats",
+      performance_dir: "C:\\Task7Fixture\\KovaaK\\performances",
+    });
+    await expect(section.getByText("已发现 1 个文件")).toHaveCount(2);
+    await expect(section.getByRole("button", { name: "更换文件夹" })).toHaveCount(2);
+  });
+
   test("KovaaK connection remains manageable when only the score read fails", async ({ page }) => {
     await installApiFixtures(page, apiScenario({ failures: { "GET /api/kovaak-scores": 503 } }));
     await page.goto("/settings");
