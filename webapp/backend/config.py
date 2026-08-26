@@ -230,7 +230,7 @@ def _safe_install_directory_name(value: object) -> str | None:
     return value
 
 
-def _discover_kovaak_install_dir() -> Path | None:
+def _discover_kovaak_install_dirs() -> list[Path]:
     libraries: list[Path] = []
     seen_libraries: set[str] = set()
     for root in _windows_steam_roots():
@@ -270,6 +270,11 @@ def _discover_kovaak_install_dir() -> Path | None:
         if key not in seen_installs:
             seen_installs.add(key)
             installs.append(resolved)
+    return installs
+
+
+def _discover_kovaak_install_dir() -> Path | None:
+    installs = _discover_kovaak_install_dirs()
     return installs[0] if len(installs) == 1 else None
 
 
@@ -283,20 +288,64 @@ def resolve_kovaak_install_dir() -> Path | None:
     return None
 
 
-def resolve_kovaak_data_dirs() -> tuple[Path | None, Path | None]:
-    """Return Stats and Performance directories without creating user-owned paths."""
+def resolve_kovaak_data_dir_candidates() -> tuple[list[Path], list[Path]]:
+    """Return all automatic directory candidates when no explicit source wins."""
     stats_override = os.environ.get("KOVAAK_STATS_DIR", "").strip()
     perf_override = os.environ.get("KOVAAK_PERFORMANCE_DIR", "").strip()
-    install = resolve_kovaak_install_dir()
+    install_override = os.environ.get("KOVAAK_INSTALL_DIR", "").strip()
+    if stats_override or perf_override or install_override:
+        stats, performance = resolve_kovaak_data_dirs()
+        return ([stats] if stats else [], [performance] if performance else [])
+    from . import kovaak_directory_store
+
+    confirmed = kovaak_directory_store.get_confirmed_directories()
+    if confirmed is not None:
+        return ([confirmed[0]], [confirmed[1]])
+    if sys.platform != "win32":
+        return ([], [])
+    installs = _discover_kovaak_install_dirs()
+    return (
+        [install / "FPSAimTrainer" / "stats" for install in installs],
+        [install / "FPSAimTrainer" / "performances" for install in installs],
+    )
+
+
+def resolve_kovaak_data_dirs() -> tuple[Path | None, Path | None]:
+    """Return local directories with environment, confirmed, then discovery precedence."""
+    stats_override = os.environ.get("KOVAAK_STATS_DIR", "").strip()
+    perf_override = os.environ.get("KOVAAK_PERFORMANCE_DIR", "").strip()
+    install_override = os.environ.get("KOVAAK_INSTALL_DIR", "").strip()
     stats = Path(stats_override).expanduser().resolve() if stats_override else None
     perf = Path(perf_override).expanduser().resolve() if perf_override else None
-    if install is not None:
-        stats = stats or install / "FPSAimTrainer" / "stats"
-        perf = perf or install / "FPSAimTrainer" / "performances"
-    return stats, perf
+    if install_override:
+        install = resolve_kovaak_install_dir()
+        if install is not None:
+            return (
+                stats or install / "FPSAimTrainer" / "stats",
+                perf or install / "FPSAimTrainer" / "performances",
+            )
+
+    from . import kovaak_directory_store
+
+    confirmed = kovaak_directory_store.get_confirmed_directories()
+    if confirmed is not None:
+        confirmed_stats, confirmed_perf = confirmed
+        stats = stats or confirmed_stats
+        perf = perf or confirmed_perf
+    if stats is not None and perf is not None:
+        return stats, perf
+
+    install = resolve_kovaak_install_dir()
+    if install is None:
+        return stats, perf
+    return (
+        stats or install / "FPSAimTrainer" / "stats",
+        perf or install / "FPSAimTrainer" / "performances",
+    )
 
 
 KOVAAK_STATS_DIR, KOVAAK_PERFORMANCE_DIR = resolve_kovaak_data_dirs()
+KOVAAK_STATS_DIRS, KOVAAK_PERFORMANCE_DIRS = resolve_kovaak_data_dir_candidates()
 KOVAAK_WATCH_POLL_SECONDS = float(os.environ.get("KOVAAK_WATCH_POLL_SECONDS", "1.0"))
 
 # Legacy compatibility inputs only. Active Coach/worker provider selection is

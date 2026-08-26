@@ -380,6 +380,39 @@ def test_windows_discovery_fails_closed_for_multiple_distinct_valid_installs(
     assert config.resolve_kovaak_install_dir() is None
 
 
+def test_windows_multi_install_candidates_expose_every_data_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_root = tmp_path / "steam-one"
+    second_root = tmp_path / "steam-two"
+    first_install = _write_app_manifest(first_root)
+    second_install = _write_app_manifest(second_root)
+    first_install.mkdir(parents=True)
+    second_install.mkdir(parents=True)
+    _write_libraryfolders(first_root, [])
+    _write_libraryfolders(second_root, [])
+    _prepare_windows_discovery(
+        monkeypatch,
+        tmp_path,
+        {
+            (_FakeWinreg.HKEY_CURRENT_USER, _STEAM_HKCU_KEY, "SteamPath"): str(first_root),
+            (_FakeWinreg.HKEY_LOCAL_MACHINE, _STEAM_HKLM_KEY, "InstallPath"): str(second_root),
+        },
+    )
+
+    stats_dirs, performance_dirs = config.resolve_kovaak_data_dir_candidates()
+
+    assert stats_dirs == [
+        first_install / "FPSAimTrainer" / "stats",
+        second_install / "FPSAimTrainer" / "stats",
+    ]
+    assert performance_dirs == [
+        first_install / "FPSAimTrainer" / "performances",
+        second_install / "FPSAimTrainer" / "performances",
+    ]
+
+
 @pytest.mark.parametrize("override_kind", ("stats", "performance"))
 def test_stats_and_performance_overrides_independently_replace_derived_dirs(
     tmp_path: Path,

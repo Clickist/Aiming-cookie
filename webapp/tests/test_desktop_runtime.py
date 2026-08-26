@@ -658,6 +658,8 @@ async def test_ingestion_service_logs_unexpected_future_failure_once(
     stats_dir.mkdir()
     monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIR", stats_dir)
     monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIR", None)
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIRS", [stats_dir])
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIRS", [])
     finalized = asyncio.Event()
 
     class FakeFinalizer:
@@ -669,7 +671,7 @@ async def test_ingestion_service_logs_unexpected_future_failure_once(
         asyncio.get_running_loop(),
         FakeFinalizer(),
     )
-    caplog.set_level(logging.ERROR)
+    caplog.set_level(logging.WARNING, logger="webapp.backend.kovaak_ingest")
 
     (stats_dir / "Broken Stats.csv").write_text("stats", encoding="utf-8")
     assert service._watchers[0].scan_once() == []
@@ -679,9 +681,11 @@ async def test_ingestion_service_logs_unexpected_future_failure_once(
 
     records = [
         record for record in caplog.records
-        if "KovaaK" in record.getMessage() and record.exc_info is not None
+        if "KovaaK" in record.getMessage() and "retrying" in record.getMessage()
     ]
     assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None
 
 
 @pytest.mark.asyncio
@@ -694,6 +698,8 @@ async def test_ingestion_service_treats_waiting_for_sources_as_expected(
     stats_dir.mkdir()
     monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIR", stats_dir)
     monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIR", None)
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIRS", [stats_dir])
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIRS", [])
     finalized = asyncio.Event()
 
     class FakeFinalizer:

@@ -190,7 +190,7 @@ def test_watcher_retries_after_async_callback_future_fails(tmp_path: Path):
     assert watcher.scan_once() == []
 
 
-def test_watcher_stops_retrying_after_consecutive_failures(
+def test_watcher_keeps_retrying_during_retention_window(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ):
@@ -207,14 +207,8 @@ def test_watcher_stops_retrying_after_consecutive_failures(
     for _ in range(8):
         watcher.scan_once()
 
-    assert len(attempts) == 5
-    gave_up = [
-        record for record in caplog.records
-        if "gave up" in record.getMessage()
-    ]
-    assert len(gave_up) == 1
-    assert "1wall" in gave_up[0].getMessage()
-    assert "deterministic ingestion failure" in gave_up[0].getMessage()
+    assert len(attempts) == 8
+    assert not [record for record in caplog.records if "gave up" in record.getMessage()]
 
     emitted = []
     watcher.callback = emitted.append
@@ -222,9 +216,9 @@ def test_watcher_stops_retrying_after_consecutive_failures(
 
     discoveries = watcher.scan_once()
 
-    assert [item.stats_path for item in discoveries] == [tmp_path / "2wall Stats.csv"]
-    assert watcher.scan_once() == []
-    assert len(attempts) == 5
+    # 2wall is new and succeeds; 1wall remains inside its retention window.
+    assert {item.stats_path for item in discoveries} == {tmp_path / "1wall Stats.csv", tmp_path / "2wall Stats.csv"}
+    assert len(attempts) == 8
 
 
 def test_watcher_stops_retrying_when_retry_window_expires(
@@ -288,6 +282,8 @@ def test_desktop_ingestion_bridge_returns_future_to_watcher(tmp_path: Path, monk
     future = Future()
     monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIR", tmp_path)
     monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIR", None)
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_STATS_DIRS", [tmp_path])
+    monkeypatch.setattr(desktop_runtime.config, "KOVAAK_PERFORMANCE_DIRS", [])
 
     class FakeFinalizer:
         async def finalize(self, _discovery):

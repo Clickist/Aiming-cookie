@@ -422,6 +422,32 @@ class KovaaKConnectionDeleteResponse(BaseModel):
     deleted: bool
 
 
+class KovaaKLocalDirectoriesUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stats_dir: str
+    performance_dir: str
+
+
+class KovaaKLocalDirectoryStatus(BaseModel):
+    path: Optional[str] = None
+    source: Literal["environment", "confirmed", "automatic", "unavailable"]
+    matching_file_count: int
+    matching_files: Literal["found", "no_matching_files"]
+
+
+KovaaKWatcherStatus = Literal["no_candidates", "not_exporting", "ingesting"]
+
+
+class KovaaKLocalDirectoriesResponse(BaseModel):
+    schema_version: Literal["kovaak_local_directories.v1"]
+    stats: KovaaKLocalDirectoryStatus
+    performance: KovaaKLocalDirectoryStatus
+    activation: Literal["not_requested", "activated", "runtime_unavailable", "failed"]
+    # 桌面 watcher 健康的粗粒度投影；null/缺省表示当前无法判定（如 runtime 不可用）。
+    watcher_status: Optional[KovaaKWatcherStatus] = None
+
+
 class KovaaKScoreStage(BaseModel):
     stage: Literal["easier", "medium"]
     completed: int
