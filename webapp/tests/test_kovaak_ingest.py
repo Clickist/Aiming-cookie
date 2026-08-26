@@ -221,6 +221,28 @@ def test_watcher_keeps_retrying_during_retention_window(
     assert len(attempts) == 8
 
 
+def test_watcher_expected_os_error_retries_without_traceback(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    def busy(discovery):
+        raise OSError("file is locked")
+
+    watcher = KovaaKDirectoryWatcher(tmp_path, busy, stable_scans=1)
+    (tmp_path / "3wall Stats.csv").write_text("stats", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger="webapp.backend.kovaak_ingest")
+
+    watcher.scan_once()
+
+    retrying = [
+        record for record in caplog.records
+        if "retrying" in record.getMessage()
+    ]
+    assert retrying
+    # OSError 属预期 IO 抖动，单行 warning 即可，避免重试窗口内每轮刷堆栈。
+    assert all(record.exc_info is None for record in retrying)
+
+
 def test_watcher_stops_retrying_when_retry_window_expires(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
