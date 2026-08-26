@@ -269,16 +269,26 @@ export function AppShell({ children }: { children: ReactNode }) {
     router.push("/");
   };
 
-  const ensureCoachSession = useCallback(async () => {
-    try {
-      const session = await createCoachSession();
-      await reloadCoachSessions(session.id);
-      setDraftSession(false);
-      router.push(`/s?sessionId=${session.id}`);
-      return session.id;
-    } catch {
-      return null;
-    }
+  // 并发去重：双 Enter 窗口期内会同时调用 ensureCoachSession，共享同一次
+  // 创建请求，避免一键产生多个空会话；完成或失败后清掉，下次调用重新创建。
+  const ensureSessionInFlightRef = useRef<Promise<number | null> | null>(null);
+  const ensureCoachSession = useCallback((): Promise<number | null> => {
+    if (ensureSessionInFlightRef.current) return ensureSessionInFlightRef.current;
+    const promise = (async () => {
+      try {
+        const session = await createCoachSession();
+        await reloadCoachSessions(session.id);
+        setDraftSession(false);
+        router.push(`/s?sessionId=${session.id}`);
+        return session.id;
+      } catch {
+        return null;
+      } finally {
+        ensureSessionInFlightRef.current = null;
+      }
+    })();
+    ensureSessionInFlightRef.current = promise;
+    return promise;
   }, [reloadCoachSessions, router]);
 
   const handleArchiveCoachSession = async (session: SessionRailSession) => {

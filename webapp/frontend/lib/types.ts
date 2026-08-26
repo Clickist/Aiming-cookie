@@ -1189,6 +1189,8 @@ export interface CoachSessionOut {
   message_count: number;
   last_message_preview: string | null;
   analysis_session_ids: number[];
+  /** 深读跨分析合并进讨论的 session ids；CoachSessionDetail（lib/api.ts）继承本字段。 */
+  deep_read_analysis_session_ids?: number[];
 }
 
 export interface CoachSessionListResponse {
@@ -1287,6 +1289,8 @@ export interface CoachAgentRunV1 {
   } | null;
   /** Analysis refs (`analysis:{id}`) the run engaged with via file reads. */
   analysis_refs: string[];
+  /** 深读命中的附加分析 refs（与另一 agent 约定的合同字段，消费逻辑另行落地）。 */
+  deep_read_analysis_refs?: string[];
   events: CoachAgentRunEventV1[];
   created_at: string;
   started_at: string | null;

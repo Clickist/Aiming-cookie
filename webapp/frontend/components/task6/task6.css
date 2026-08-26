@@ -133,19 +133,9 @@
 }
 
 .task6-settings-row + .task6-settings-row,
-.task6-provider-row + .task6-provider-row,
 .task6-storage-row + .task6-storage-row,
 .task6-st-row + .task6-st-row {
   border-top: 1px solid var(--outline-variant);
-}
-
-.task6-provider-row {
-  padding: var(--space-3) var(--space-4);
-}
-
-.task6-provider-main {
-  flex: 1;
-  min-width: 240px;
 }
 
 .task6-provider-head {
@@ -179,11 +169,6 @@
   margin-left: var(--space-3);
 }
 
-.task6-provider-actions .ac-field {
-  min-width: 180px;
-  max-width: 260px;
-}
-
 .task6-provider-form {
   display: grid;
   gap: var(--space-3);
@@ -195,6 +180,144 @@
 .task6-provider-form-title {
   margin: 0;
   font: 600 var(--text-body)/1.25 var(--font-display);
+}
+
+/* Active Provider picker: one dropdown selects the active profile and the
+   detail card below shows its info and actions. */
+
+.task6-provider-active {
+  position: relative;
+  padding: var(--space-3) var(--space-4);
+}
+
+.task6-provider-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  font: 500 var(--text-ui)/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.task6-provider-picker:hover:not(:disabled),
+.task6-provider-picker[aria-expanded="true"] {
+  border-color: var(--outline);
+}
+
+.task6-provider-picker:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.task6-provider-picker:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.task6-provider-picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task6-provider-picker-caret {
+  flex: none;
+  font-size: var(--text-micro);
+}
+
+.task6-provider-picker-menu {
+  position: absolute;
+  top: calc(100% - var(--space-2));
+  left: var(--space-4);
+  z-index: 20;
+  min-width: min(320px, calc(100% - var(--space-6)));
+  max-height: 280px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-high);
+}
+
+.task6-provider-picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--on-surface);
+  font: 400 var(--text-ui)/1.3 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.task6-provider-picker-item:hover {
+  background: var(--surface-container);
+}
+
+.task6-provider-picker-item[aria-checked="true"] {
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.task6-provider-picker-item:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.task6-provider-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task6-provider-picker-check {
+  flex: none;
+  color: var(--on-surface);
+}
+
+/* Status dot: green = ready, orange = every other state (error / unverified /
+   unconfigured). Token-driven so theme variants stay correct. */
+
+.task6-provider-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--event-peak);
+}
+
+.task6-provider-dot[data-ready="true"] {
+  background: var(--event-kill);
+}
+
+.task6-provider-detail {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task6-provider-detail-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+
+.task6-provider-detail-actions .ac-field {
+  min-width: 180px;
+  max-width: 260px;
 }
 
 .task6-auth-operation {
@@ -227,7 +350,6 @@
 }
 
 .task6-muted,
-.task6-provider-row p,
 .task6-storage-row p {
   color: var(--on-surface-variant);
   font-size: var(--text-caption);
