@@ -415,6 +415,44 @@
   margin-top: var(--space-3);
 }
 
+.kovaak-directories-panel,
+.kovaak-directories-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.kovaak-directory-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-low);
+}
+
+.kovaak-directory-row > div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.kovaak-directory-row strong {
+  font-size: var(--text-ui);
+}
+
+.kovaak-directory-row p {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+.kovaak-directory-row .ac-button {
+  flex: none;
+}
+
 /* Responsive — panel-width driven: 窄面板（960 窗口的设置页 / onboarding）堆叠为单列，
    行内保持 名称/分数/档位 三段，Coach 行操作收为整行次级按钮 */
 
@@ -442,6 +480,11 @@
   .kovaak-score-coach .ac-button {
     width: 100%;
     justify-content: center;
+  }
+
+  .kovaak-directory-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
