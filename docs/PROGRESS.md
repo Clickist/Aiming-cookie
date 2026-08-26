@@ -1,6 +1,14 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-08-26. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
+> Updated: 2026-08-27. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
+
+## 2026-08-27 Session Changes — v0.1.10（未提交）：History 空白修复收尾 + 08-26 报障闭环
+
+- **08-26 两位内测用户报障定案**（v0.1.9 诊断包 (4)/(5)）：**(4) 历史空白** = v0.1.0 起结构性缺陷——Steam 多库发现多份 KovaaK 安装时 fail-closed 返回 None → 零 watcher 且零日志（或用户未开统计导出，两种形态 v0.1.9 诊断不可区分）；捕获/DB/backend 全正常，`runs/` 自始为空。**(5) CV 不工作** = 三因叠加：8/10 run 在未开捕获时打的（无视频无 trace 素材）、唯一一次分析的视觉子进程降级（日志仅 `error=RuntimeError`，v0.1.9 无正文）、分析需 UI 手动触发而用户预期自动。
+- **v0.1.10 修复（本批未提交，另含并行 coach/透传工作流）**：多候选 watcher（发现几套盯几套，不再"唯一才用"）；KovaaK 目录确认 API + Settings 面板（desktop-token 鉴权、原子持久化、热重配）；watcher 快照每 5s 落盘 `diagnostics/kovaak-watcher.json` 并入诊断包 v4；ingest 重试改 10 分钟保留窗口（不再 5 连败永久放弃）；History 桌面版空列表持续 5s 轮询。
+- **本会话收尾（点点拍板）**：onboarding 保持 3 步（目录确认不入 onboarding，`OnboardingFlow.tsx` 已回滚至与 HEAD 零差异）；History 空态按需卡片——`GET /kovaak-local-directories` 响应新增 `watcher_status`（`no_candidates`→引导去 Settings 手动指定；`not_exporting`→引导 KovaaK「设置 → 其他 → 统计数据输出 → Challenge Completion」；`ingesting`→不显示）；PUT handler 的 `service.reconfigure` 包 `asyncio.to_thread`（不再阻塞事件循环数秒）；修正 DeepSeek 幻觉文案「Statistics Export 设为 Always」——KovaaK 实际只有 None/Challenge Completion 两档（官方 wiki/FAQ 核实 + 点点实测中文客户端路径）。
+- **CV 视觉子进程本机复现结论**（(5) 报障）：dev 与 frozen（onedir）模式下正常 run 均跑通（42-48s，排除代码普遍性 bug、双 GPU、Administrator 因素）；实验复现同款症状——视频文件被独占锁时子进程 1s 内优雅返回 `generic_media_unreadable`，父侧坍缩为 `RuntimeError` 且 stderr 零噪音（杀软扫描/写入竞态为最可能诱因；旧 run 缺 `decodePreroll100ns` 的 `value_error`、颜色假设失败次之）。`worker.py` 的 warning 已改带错误正文（本批未提交）。**待拍板**：子进程 stderr PIPE 捕获、类型化异常传播、PTS 前置 sanity check、第二遍解码 `grab()/retrieve()` 优化。
+- **验证**：后端 `pytest tests/test_kovaak_local_directories.py tests/test_kovaak_ingest.py tests/test_desktop_runtime.py tests/test_config.py` 72 passed 1 skipped；routes/contracts 97 passed。前端 type-check 通过、unit 40 pass 0 fail、contracts 182 pass 0 fail。e2e 未真跑（无桌面环境）。发版打包、(4)/(5) 用户复测、worker CV 加固未做。
 
 ## 2026-08-26 Session Changes — Landing SEO 上线
 
