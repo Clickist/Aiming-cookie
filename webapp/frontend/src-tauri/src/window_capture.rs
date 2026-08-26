@@ -486,6 +486,10 @@ pub enum HardwareEncoderFailure {
     InvalidPacket,
     UnsupportedPacketTiming,
     CpuFallbackDenied,
+    // 窗口分辨率偏离采集会话启动尺寸：编码管线按启动尺寸固化，无法在
+    // 会话中途重建（F6）。录制在此诚实终态化并落显式错误码，下一局
+    // start 重置队列后按新尺寸自动恢复。
+    CaptureResizedUnsupported,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1891,6 +1895,19 @@ impl WindowCaptureState {
             status.clock_anchor_qpc_ns = Some(clock.qpc_ns);
         }
         status
+    }
+
+    /// 当前会话录制是否因窗口尺寸漂移被诚实终态化（F6）。供采集协调器在
+    /// Capturing 相位轮询，把 video 子状态降级为显式原因；失败码随队列
+    /// reset 清除，因此下一局 start 自动恢复，不会跨会话粘连。
+    pub fn recording_terminated_by_resize(&self) -> bool {
+        self.queue
+            .lock()
+            .map(|queue| {
+                queue.last_encoder_failure
+                    == Some(HardwareEncoderFailure::CaptureResizedUnsupported)
+            })
+            .unwrap_or(false)
     }
 
     #[allow(dead_code)] // Task 3 native boundary; Run finalization wiring is out of scope.
@@ -4430,6 +4447,13 @@ fn sequence_header(transform: &windows::Win32::Media::MediaFoundation::IMFTransf
     bytes
 }
 
+/// 帧内容尺寸是否偏离采集会话启动尺寸；任一维度变化即视为分辨率漂移，
+/// 当前会话的录制管线按启动尺寸固化，漂移即触发诚实终态化（F6）。
+#[cfg(windows)]
+fn frame_size_drifts_from_session(session: (i32, i32), content: (i32, i32)) -> bool {
+    content != session
+}
+
 #[cfg(windows)]
 fn reserve_recording_timestamp(last: &AtomicI64, timestamp: i64, interval: i64) -> Option<i64> {
     loop {
@@ -4732,16 +4756,29 @@ fn run_wgc_window_capture(
                         ) else {
                             return Ok(());
                         };
-                        if content_size.Width != size.Width || content_size.Height != size.Height {
+                        if frame_size_drifts_from_session(
+                            (size.Width, size.Height),
+                            (content_size.Width, content_size.Height),
+                        ) {
+                            // F6：旧实现在此静默丢弃后续所有帧（含硬件 replay
+                            // 路径），UI 仍显示采集中，局末导出才发现 coverage
+                            // gap。编码管线按启动尺寸固化、无法会话中途重建，
+                            // 改为诚实终态化：旧/新尺寸写入日志并记录显式错误
+                            // 码（诊断包与协调器 video 状态可见）；下一局 start
+                            // 重置队列后按新尺寸自动恢复。
+                            crate::dlog!(
+                                "[capture-resize] recording terminated: session={}x{} frame={}x{} sequence={}",
+                                size.Width,
+                                size.Height,
+                                content_size.Width,
+                                content_size.Height,
+                                sample.sequence
+                            );
                             recording_failed_for_handler.store(true, Ordering::Release);
                             if let Ok(mut guard) = queue_for_handler.lock() {
-                                if encoder_frame_sender_for_handler.is_some() {
-                                    guard.record_hardware_failure(
-                                        HardwareEncoderFailure::GpuConversionFailure,
-                                    );
-                                } else {
-                                    guard.record_encoder_error();
-                                }
+                                guard.record_hardware_failure(
+                                    HardwareEncoderFailure::CaptureResizedUnsupported,
+                                );
                             }
                             return Ok(());
                         }
@@ -5066,6 +5103,50 @@ mod tests {
         // 帧队列丢帧余量契约：60fps 下至少 0.5s（30 帧）缓冲。
         let frames_per_second = DEFAULT_RECORDING_FPS_NUMERATOR / DEFAULT_RECORDING_FPS_DENOMINATOR;
         assert!(DEFAULT_FRAME_QUEUE_CAPACITY >= frames_per_second as usize / 2);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn frame_size_drift_matches_only_dimension_changes() {
+        // F6 决策契约：任一维度偏离会话启动尺寸即终态化，完全一致则继续。
+        assert!(!frame_size_drifts_from_session((1920, 1080), (1920, 1080)));
+        assert!(frame_size_drifts_from_session((1920, 1080), (1280, 1080)));
+        assert!(frame_size_drifts_from_session((1920, 1080), (1920, 720)));
+        assert!(frame_size_drifts_from_session((1920, 1080), (2560, 1440)));
+    }
+
+    #[test]
+    fn resize_termination_surfaces_explicit_code_until_queue_reset() {
+        let state = WindowCaptureState::new(DEFAULT_FRAME_QUEUE_CAPACITY).unwrap();
+        assert!(!state.recording_terminated_by_resize());
+        assert_eq!(state.status().last_encoder_failure, None);
+
+        state
+            .queue
+            .lock()
+            .unwrap()
+            .record_hardware_failure(HardwareEncoderFailure::CaptureResizedUnsupported);
+
+        let status = state.status();
+        assert_eq!(
+            status.last_encoder_failure,
+            Some(HardwareEncoderFailure::CaptureResizedUnsupported)
+        );
+        assert_eq!(status.encoder_errors, 1);
+        assert!(state.recording_terminated_by_resize());
+
+        // 下一局 start 重置队列后不得跨会话粘连。
+        state.queue.lock().unwrap().reset();
+        assert!(!state.recording_terminated_by_resize());
+        assert_eq!(state.status().last_encoder_failure, None);
+    }
+
+    #[test]
+    fn resize_failure_serializes_as_an_explicit_camel_case_code() {
+        assert_eq!(
+            serde_json::to_string(&HardwareEncoderFailure::CaptureResizedUnsupported).unwrap(),
+            "\"captureResizedUnsupported\""
+        );
     }
 
     #[test]

@@ -32,7 +32,7 @@ test("real Tauri capture diagnostics export writes a valid bundle", async () => 
   expect(returned, "command returns the written path").toBe(outPath);
 
   const bundle = JSON.parse(await fs.readFile(outPath, "utf8")) as Record<string, unknown>;
-  expect(bundle.schemaVersion).toBe("capture_diagnostics.v3");
+  expect(bundle.schemaVersion).toBe("capture_diagnostics.v4");
   expect(typeof bundle.generatedAtUtcMs).toBe("number");
   expect(bundle.targetOs).toBe("windows");
   expect(bundle.appVersion).toBeTruthy();
@@ -41,6 +41,8 @@ test("real Tauri capture diagnostics export writes a valid bundle", async () => 
   expect(Array.isArray(gpuNames), "gpu adapter names").toBe(true);
   expect(gpuNames!.length).toBeGreaterThan(0);
   expect(typeof bundle.captureDataRoot).toBe("string");
+  // v4 optionally embeds the watcher-owned snapshot. Missing or malformed source data is null.
+  expect(["object", "undefined"]).toContain(typeof bundle.watcherSnapshot);
   const coordinator = bundle.coordinator as Record<string, unknown> | undefined;
   expect(coordinator, "coordinator status snapshot").toBeDefined();
   // The session id is an internal correlation secret and must be stripped.
