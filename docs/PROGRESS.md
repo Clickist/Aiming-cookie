@@ -1,6 +1,16 @@
 # Aiming Cookie Current Progress
 
-> Updated: 2026-08-20. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
+> Updated: 2026-08-26. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
+
+## 2026-08-26 Session Changes — Landing SEO 上线
+
+- **落地页站内 SEO 基础补全（`design/opendesign-landing/index.html`，经 CF Pages 发布 `design/opendesign-landing` 目录）**：补 title（含品牌「你的瞄准私教」+「基于运动学的 KovaaK's 瞄准诊断与 AI 教练」）、`meta description`/`keywords`/`robots`/`canonical`，Open Graph / Twitter Card，JSON-LD 结构化数据（Organization + WebSite + SoftwareApplication）；新增 `robots.txt`（Allow + 声明 sitemap）与 `sitemap.xml`（收录首页 `https://aimingcookie.com/`）。产品定位表述统一为「基于物理+运动学的 KovaaK's 瞄准诊断 + AI 教练」，不使用「练枪软件」「瞄准训练分析工作台」等错位词。
+- **favicon**：`favicon-64.png`（64×64）、`apple-touch-icon.png`（180×180）、标准 `favicon.ico`（32×32，解决 `/favicon.ico` 被 CF 回退成 HTML 的问题），并保留透明底（alpha）版本符合设计规范。
+- **落地页定位与副本**：主站域名以无 www 的 `https://aimingcookie.com/` 为 canonical / og:url / sitemap loc；`aiming-cookie-landing.html` 与 `index.html` 字节级一致。
+- **Google Search Console**：已验证 `https://aimingcookie.com/` 所有权；URL 检查显示「网址已收录到 Google」「网页已编入索引」「HTTPS 生效」；已请求编入索引。搜索 `aimingcookie` / `aiming cookie` 可搜到官网页面。
+- **百度搜索资源平台**：已验证 `https://www.aimingcookie.com` 所有权（HTML 标签验证——首页插入 `<meta name="baidu-site-verification" content="codeva-zhLqXj6A6t" />`）；站点领域设为「工具服务及在线查询 / 游戏 / 信息技术」；通过 API 主动推送首页 URL（`success:1`，单页站）。主域名 `aimingcookie.com` 由 www 站点代表，百度不区分裸域/wwww 为独立站点，无需重复添加。
+- **未生效的探路改动已回退**：`_redirects`（www→apex）因 CF Pages 不支持跨子域重定向而撤销；文件验证 `baidu_verify_*.html` 因 CF 对 `.html` 路径做 clean-URL 重写（308）未生效，改用 HTML 标签验证并通过，文件已删除。
+- **注意**：百度收录比 Google 慢，新站通常数天至两周进入搜索结果；favicon 在搜索结果的更新依赖 Google 缓存，均不需反复提交。
 
 ## Current Product Direction
 
