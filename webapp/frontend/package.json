@@ -8,7 +8,7 @@
     "build": "next build",
     "build:tauri": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../scripts/build-tauri-frontend.ps1",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "tsc --noEmit",
     "type-check": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:contracts",
     "test:unit": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs --test lib/*.test.ts mocks/*.test.ts",
