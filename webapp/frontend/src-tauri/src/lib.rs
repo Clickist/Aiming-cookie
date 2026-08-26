@@ -15,8 +15,11 @@ use scenario_launch::scenario_open;
 use std::fs;
 use std::io;
 #[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Manager, State};
@@ -61,6 +64,8 @@ struct CaptureDiagnosticsBundle {
     backend_log_rotated_tail: Option<String>,
     recent_analyses: Vec<RecentAnalysis>,
     recent_coach_turns: Vec<RecentCoachTurn>,
+    // v4：watcher 是独立进程，快照只在其正常落盘时可用；读取失败不能阻塞导出。
+    watcher_snapshot: Option<serde_json::Value>,
 }
 
 #[derive(serde::Serialize)]
@@ -101,6 +106,7 @@ const DIAG_RECENT_ANALYSES_LIMIT: usize = 10;
 const DIAG_RECENT_COACH_TURNS_LIMIT: usize = 3;
 const DIAG_EVENTS_TAIL_BYTES: usize = 4 * 1024;
 const DIAG_COACH_TURN_TAIL_BYTES: usize = 8 * 1024;
+static DIAGNOSTIC_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// 读取日志文件尾部；`start > 0` 时优先丢弃被截断的首行，但窗口内整段
 /// 无换行（Coach jsonl 单条 assistant 消息可超窗口大小）时原样返回窗口
@@ -488,24 +494,80 @@ fn collect_recent_coach_turns(data_root: &Path, limit: usize) -> Vec<RecentCoach
             updated_at: str_field("updated_at"),
             last_stop_reason: jsonl_tail
                 .as_deref()
-                .and_then(|tail| last_json_string_field(tail, "stopReason")),
+                .and_then(|tail| last_coach_json_string_field(tail, "stopReason")),
             last_error_message: jsonl_tail
                 .as_deref()
-                .and_then(|tail| last_json_string_field(tail, "errorMessage")),
+                .and_then(|tail| last_coach_json_string_field(tail, "errorMessage")),
             jsonl_tail,
         });
     }
     turns
 }
 
-/// 在 jsonl 尾部文本里找最后一次出现的 `"key":"value"` 字符串字段。
-/// 诊断用途，不处理转义（stopReason/errorMessage 的值不含引号）。
-fn last_json_string_field(tail: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\":\"");
-    let start = tail.rfind(&needle)? + needle.len();
-    let rest = &tail[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+/// Coach jsonl 的尾部可能从半行开始，或包含被截断/恶意内容。只接受完整的
+/// 单行 JSON 记录，按时间倒序取最后一个 assistant message 的字段。
+fn last_coach_json_string_field(tail: &str, key: &str) -> Option<String> {
+    tail.lines().rev().find_map(|line| {
+        let record = serde_json::from_str::<serde_json::Value>(line).ok()?;
+        record.get("message")?.get(key)?.as_str().map(str::to_owned)
+    })
+}
+
+fn collect_watcher_snapshot(data_root: &Path) -> Option<serde_json::Value> {
+    fs::read(data_root.join("diagnostics").join("kovaak-watcher.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+
+fn diagnostic_temp_path(path: &Path) -> PathBuf {
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+    path.with_file_name(format!(
+        ".{file_name}.tmp-{}-{}-{}",
+        std::process::id(),
+        diagnostic_now_ms(),
+        DIAGNOSTIC_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use winapi::um::winbase::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
+
+        let source_wide: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+        let destination_wide: Vec<u16> = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        if unsafe {
+            MoveFileExW(
+                source_wide.as_ptr(),
+                destination_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(source, destination)
+    }
+}
+
+fn atomic_write_diagnostic_bundle(path: &Path, payload: &[u8]) -> io::Result<()> {
+    let temporary_path = diagnostic_temp_path(path);
+    fs::write(&temporary_path, payload)?;
+    match atomic_replace(&temporary_path, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary_path);
+            Err(error)
+        }
+    }
 }
 
 fn host_version() -> Option<String> {
@@ -605,7 +667,7 @@ fn desktop_export_capture_diagnostics(
         .status();
     let now_ms = diagnostic_now_ms();
     let bundle = CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v3",
+        schema_version: "capture_diagnostics.v4",
         generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,
@@ -641,10 +703,12 @@ fn desktop_export_capture_diagnostics(
         ),
         recent_analyses: collect_recent_analyses(&data_root, DIAG_RECENT_ANALYSES_LIMIT, now_ms),
         recent_coach_turns: collect_recent_coach_turns(&data_root, DIAG_RECENT_COACH_TURNS_LIMIT),
+        watcher_snapshot: collect_watcher_snapshot(&data_root),
     };
     let payload =
         serde_json::to_vec_pretty(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))?;
-    fs::write(&path, payload).map_err(|error| format!("诊断包写入失败: {error}"))?;
+    atomic_write_diagnostic_bundle(&path, &payload)
+        .map_err(|error| format!("诊断包写入失败: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -898,9 +962,9 @@ mod tests {
         fs::write(
             root.join("conversations/--coach--/2026-08-25T10-40-39-787Z_53.jsonl"),
             concat!(
-                r#"{"type":"session"}"#,
-                r#"{"type":"message","message":{"role":"user","content":"hi"}}"#,
-                r#"{"type":"message","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"done"}]}}"#,
+                "{\"type\":\"session\"}\n",
+                "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"stop\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\n",
             ),
         )
         .expect("write");
@@ -923,13 +987,63 @@ mod tests {
     }
 
     #[test]
-    fn last_json_string_field_handles_missing_and_escaped() {
-        assert_eq!(
-            last_json_string_field(r#"{"stopReason":"stop"}"#, "stopReason"),
-            Some("stop".to_string())
+    fn coach_jsonl_field_extraction_accepts_only_complete_jsonl_records() {
+        let tail = concat!(
+            "{\"message\":{\"stopReason\":\"old\"}}\n",
+            "{\"message\":{\"stopReason\":\"new\",\"errorMessage\":\"escaped \\\"quote\\\"\"}}\n",
+            r#"{"message":{"stopReason":"hostile"}"#,
         );
-        assert_eq!(last_json_string_field("no json here", "stopReason"), None);
-        assert_eq!(last_json_string_field(r#"{"a":1}"#, "stopReason"), None);
+        assert_eq!(
+            last_coach_json_string_field(tail, "stopReason"),
+            Some("new".to_string())
+        );
+        assert_eq!(
+            last_coach_json_string_field(tail, "errorMessage"),
+            Some("escaped \"quote\"".to_string())
+        );
+        assert_eq!(
+            last_coach_json_string_field("no json here", "stopReason"),
+            None
+        );
+        assert_eq!(
+            last_coach_json_string_field(r#"{"a":1}"#, "stopReason"),
+            None
+        );
+    }
+
+    #[test]
+    fn watcher_snapshot_is_optional_and_must_be_valid_json() {
+        let root = scratch_data_root("watcher-snapshot");
+        let snapshot = root.join("diagnostics/kovaak-watcher.json");
+        assert_eq!(collect_watcher_snapshot(&root), None);
+        fs::create_dir_all(snapshot.parent().expect("parent")).expect("mkdir");
+        fs::write(&snapshot, "not json").expect("write malformed");
+        assert_eq!(collect_watcher_snapshot(&root), None);
+        fs::write(&snapshot, r#"{"state":"watching"}"#).expect("write valid");
+        assert_eq!(
+            collect_watcher_snapshot(&root),
+            Some(serde_json::json!({"state":"watching"}))
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn atomic_diagnostic_write_replaces_existing_bundle_without_temp_artifacts() {
+        let root = scratch_data_root("atomic-write");
+        fs::create_dir_all(&root).expect("mkdir");
+        let destination = root.join("diagnostics.json");
+        fs::write(&destination, "old bundle").expect("seed destination");
+        atomic_write_diagnostic_bundle(&destination, b"new bundle").expect("atomic write");
+        assert_eq!(
+            fs::read(&destination).expect("read destination"),
+            b"new bundle"
+        );
+        assert_eq!(
+            fs::read_dir(&root).expect("read root").count(),
+            1,
+            "temporary diagnostic bundle must not remain"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -28,6 +28,9 @@ const DESKTOP_RUNTIME_CONFIG_FILE: &str = "desktop-runtime.json";
 const SUPERVISOR_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RESTART_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_RESTART_ATTEMPTS: u8 = 3;
+// 后端连续存活超过该稳定期后重启预算清零：预算只约束短期反复崩溃，
+// 不终身累计，长期运行中的偶发崩溃仍能自动恢复。
+const RUNTIME_STABLE_PERIOD: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -239,6 +242,8 @@ struct RuntimeSupervisor {
     launch: RuntimeLaunch,
     shutdown_requested: AtomicBool,
     restart_attempts: Mutex<u8>,
+    // 最近一次成功启动（含重启）时刻；存活超过稳定期即归还重启预算。
+    last_runtime_started_at: Mutex<Option<Instant>>,
     terminal_error: Mutex<Option<String>>,
 }
 
@@ -262,6 +267,8 @@ impl RuntimeState {
             },
             shutdown_requested: AtomicBool::new(false),
             restart_attempts: Mutex::new(0),
+            // 首个 RuntimeProcess 已在调用方成功启动，以当前时刻为稳定期起点。
+            last_runtime_started_at: Mutex::new(Some(Instant::now())),
             terminal_error: Mutex::new(None),
         });
         start_runtime_supervisor(Arc::clone(&supervisor));
@@ -316,8 +323,47 @@ fn start_runtime_supervisor(supervisor: Arc<RuntimeSupervisor>) {
             .and_then(|mut runtime| runtime.as_mut()?.unexpected_exit_reason());
         if let Some(reason) = exit_reason {
             restart_runtime(&supervisor, reason);
+        } else {
+            supervisor.reset_restart_budget_after_stable_run();
         }
     });
+}
+
+impl RuntimeSupervisor {
+    /// 后端存活期间检查稳定期：自最近一次成功启动起存活超过
+    /// RUNTIME_STABLE_PERIOD 且预算已有消耗时清零 restart_attempts，使下一
+    /// 次崩溃重新获得完整重启预算（否则 3 次终身制会让用户只能重启应用）。
+    fn reset_restart_budget_after_stable_run(&self) {
+        let Ok(runtime) = self.runtime.lock() else {
+            return;
+        };
+        if runtime.is_none() {
+            return;
+        }
+        drop(runtime);
+        let Ok(attempts) = self.restart_attempts.lock() else {
+            return;
+        };
+        if *attempts == 0 {
+            return;
+        }
+        let stable_elapsed = self
+            .last_runtime_started_at
+            .lock()
+            .ok()
+            .and_then(|started_at| started_at.map(|started| started.elapsed()));
+        if !restart_budget_reset_due(stable_elapsed, *attempts) {
+            return;
+        }
+        drop(attempts);
+        if let Ok(mut attempts) = self.restart_attempts.lock() {
+            *attempts = 0;
+            crate::dlog!(
+                "[desktop-runtime] backend stable for {}s; restart budget restored",
+                RUNTIME_STABLE_PERIOD.as_secs()
+            );
+        }
+    }
 }
 
 fn restart_runtime(supervisor: &RuntimeSupervisor, exit_reason: String) {
@@ -350,6 +396,10 @@ fn restart_runtime(supervisor: &RuntimeSupervisor, exit_reason: String) {
         &supervisor.launch.capture_control,
     ) {
         Ok(runtime) if !supervisor.shutdown_requested.load(Ordering::SeqCst) => {
+            // 重启成功即刷新稳定期起点，后续 tick 据此归还重启预算。
+            if let Ok(mut started_at) = supervisor.last_runtime_started_at.lock() {
+                *started_at = Some(Instant::now());
+            }
             if let Ok(mut guard) = supervisor.runtime.lock() {
                 let _ = guard.replace(runtime);
             }
@@ -370,6 +420,12 @@ fn restart_runtime(supervisor: &RuntimeSupervisor, exit_reason: String) {
 
 fn restart_is_allowed(shutdown_requested: bool, attempts: u8) -> bool {
     !shutdown_requested && attempts < MAX_RESTART_ATTEMPTS
+}
+
+/// 稳定期重启预算归还决策：预算有消耗且当前运行已稳定超过
+/// RUNTIME_STABLE_PERIOD 才需要清零；无消耗（0 次）时无需动账。
+fn restart_budget_reset_due(stable_elapsed: Option<Duration>, attempts: u8) -> bool {
+    attempts > 0 && stable_elapsed.is_some_and(|elapsed| elapsed >= RUNTIME_STABLE_PERIOD)
 }
 
 fn set_terminal_runtime_error(supervisor: &RuntimeSupervisor, cause: String) {
@@ -794,8 +850,8 @@ mod tests {
     use super::{
         configure_python_io, create_launch_token, development_runtime_layout, file_url,
         packaged_runtime_layout, parse_readiness_line, parse_sidecar_readiness_line,
-        redact_secrets, restart_is_allowed, write_desktop_runtime_config, RuntimeConnection,
-        RuntimeProcess, MAX_RESTART_ATTEMPTS,
+        redact_secrets, restart_budget_reset_due, restart_is_allowed, write_desktop_runtime_config,
+        RuntimeConnection, RuntimeProcess, MAX_RESTART_ATTEMPTS, RUNTIME_STABLE_PERIOD,
     };
     use std::path::Path;
 
@@ -807,8 +863,10 @@ mod tests {
     use std::process::{Command, Stdio};
     #[cfg(unix)]
     use std::thread;
+    // Duration 为重启稳定期纯函数测试服务；Instant 仅进程组测试（unix）使用。
+    use std::time::Duration;
     #[cfg(unix)]
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     #[cfg(unix)]
     #[test]
@@ -1047,6 +1105,83 @@ mod tests {
         assert!(restart_is_allowed(false, MAX_RESTART_ATTEMPTS - 1));
         assert!(!restart_is_allowed(false, MAX_RESTART_ATTEMPTS));
         assert!(!restart_is_allowed(true, 0));
+    }
+
+    #[test]
+    fn restart_budget_reset_requires_a_stable_run_and_consumed_budget() {
+        // 稳定期未满或预算无消耗时不动账；满稳定期且有消耗才归还。
+        assert!(!restart_budget_reset_due(None, MAX_RESTART_ATTEMPTS));
+        assert!(!restart_budget_reset_due(
+            Some(Duration::ZERO),
+            MAX_RESTART_ATTEMPTS
+        ));
+        assert!(!restart_budget_reset_due(Some(RUNTIME_STABLE_PERIOD), 0));
+        assert!(!restart_budget_reset_due(
+            Some(RUNTIME_STABLE_PERIOD - Duration::from_millis(1)),
+            1
+        ));
+        assert!(restart_budget_reset_due(Some(RUNTIME_STABLE_PERIOD), 1));
+        assert!(restart_budget_reset_due(
+            Some(RUNTIME_STABLE_PERIOD + Duration::from_secs(30)),
+            MAX_RESTART_ATTEMPTS
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stable_backend_runtime_restores_the_restart_budget() {
+        use std::net::SocketAddr;
+        use std::path::PathBuf;
+        use std::process::{Command, Stdio};
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Mutex;
+        use std::time::Instant;
+
+        let supervisor_with = |attempts: u8, started_at: Instant| {
+            let child = Command::new("cmd")
+                .args(["/C", "ping -n 30 127.0.0.1 > NUL"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn long-running child");
+            super::RuntimeSupervisor {
+                runtime: Mutex::new(Some(RuntimeProcess {
+                    child: Some(child),
+                    coach_sidecar: None,
+                    connection: RuntimeConnection {
+                        base_url: "http://127.0.0.1:43127".to_string(),
+                        token: "test-token".to_string(),
+                        sidecar_url: "http://127.0.0.1:43128".to_string(),
+                    },
+                })),
+                launch: super::RuntimeLaunch {
+                    layout: development_runtime_layout(Path::new(r"C:\src\Aiming-cookie"), None),
+                    app_data_dir: PathBuf::from(r"C:\src\Aiming-cookie"),
+                    capture_control: crate::capture_coordinator::CaptureControlConnection {
+                        address: SocketAddr::from(([127_u8, 0, 0, 1], 0_u16)),
+                        secret: "test-secret".to_string(),
+                    },
+                },
+                shutdown_requested: AtomicBool::new(false),
+                restart_attempts: Mutex::new(attempts),
+                last_runtime_started_at: Mutex::new(Some(started_at)),
+                terminal_error: Mutex::new(None),
+            }
+        };
+
+        // 存活满稳定期：预算归还，下一次崩溃重新获得完整重启预算。
+        let stable = supervisor_with(MAX_RESTART_ATTEMPTS, Instant::now() - RUNTIME_STABLE_PERIOD);
+        stable.reset_restart_budget_after_stable_run();
+        assert_eq!(*stable.restart_attempts.lock().unwrap(), 0);
+
+        // 刚启动不久：预算保持，短期反复崩溃仍受上限约束。
+        let fresh = supervisor_with(MAX_RESTART_ATTEMPTS, Instant::now());
+        fresh.reset_restart_budget_after_stable_run();
+        assert_eq!(
+            *fresh.restart_attempts.lock().unwrap(),
+            MAX_RESTART_ATTEMPTS
+        );
     }
 
     #[cfg(windows)]

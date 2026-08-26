@@ -233,6 +233,33 @@ fn monitor_start_failure_status() -> CaptureCoordinatorStatus {
     }
 }
 
+/// F6：Capturing 相位检测到录制会话因窗口尺寸漂移被诚实终态化时，仅把
+/// video 子状态降级为显式原因；phase/raw 保持不动，不触发重启流程，下一
+/// 局 release → start 链路自然恢复。非 Capturing 相位（如进程退出后的
+/// Finalizing）不在本链路处理。返回 None 表示无需变更（已降级或非终态化
+/// 事件），保证 tick 幂等、不重复刷事件流。
+fn resized_video_degraded_status(
+    current: &CaptureCoordinatorStatus,
+    recording_terminated_by_resize: bool,
+) -> Option<CaptureCoordinatorStatus> {
+    if current.phase != CapturePhase::Capturing
+        || !recording_terminated_by_resize
+        || current.video.state == CaptureSourceState::Degraded
+    {
+        return None;
+    }
+    Some(CaptureCoordinatorStatus {
+        video: CaptureSourceStatus {
+            state: CaptureSourceState::Degraded,
+            reason: Some(
+                "capture_resized_unsupported: recording pipeline is fixed to the capture session start size"
+                    .to_string(),
+            ),
+        },
+        ..current.clone()
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct CaptureControlConnection {
     pub address: SocketAddr,
@@ -946,6 +973,7 @@ impl CaptureCoordinatorState {
         }
         if current.phase == CapturePhase::Capturing {
             self.recover_unhealthy_raw();
+            self.report_resized_video(&current);
             return;
         }
         if let Err(error) = self.raw_input.set_enabled(true) {
@@ -1096,6 +1124,19 @@ impl CaptureCoordinatorState {
         let (process_present, _hwnd) = find_kovaak_window().unwrap_or((false, None));
         self.replace_status(CaptureCoordinatorStatus::after_release(process_present));
         true
+    }
+
+    // F6 联动：录制会话因窗口尺寸漂移被诚实终态化后，把 video 子状态降级
+    // 为显式原因，运行中的状态与事件流即可见，而不是“静默断流但显示采集中”。
+    fn report_resized_video(&self, current: &CaptureCoordinatorStatus) {
+        let terminated = self
+            .window_capture
+            .lock()
+            .map(|capture| capture.recording_terminated_by_resize())
+            .unwrap_or(false);
+        if let Some(replacement) = resized_video_degraded_status(current, terminated) {
+            self.replace_status(replacement);
+        }
     }
 
     fn recover_unhealthy_raw(&self) {
@@ -1874,9 +1915,9 @@ mod tests {
     use super::{
         bounded_diagnostic_text, control_error_response, join_control_connections,
         managed_export_paths, monitor_start_failure_status, parse_control_request,
-        read_control_line, replay_failure_code, response_type_for_request,
-        track_control_connection_thread, CaptureCoordinatorStatus, CapturePhase,
-        CaptureSourceState, CaptureSourceStatus, ControlRequest, ExportReplayRequest,
+        read_control_line, replay_failure_code, resized_video_degraded_status,
+        response_type_for_request, track_control_connection_thread, CaptureCoordinatorStatus,
+        CapturePhase, CaptureSourceState, CaptureSourceStatus, ControlRequest, ExportReplayRequest,
         FileFingerprint, ReceiptRecord, CONTROL_MAX_MESSAGE_BYTES,
     };
     use crate::window_capture::ReplayExportFailureKind;
@@ -1921,6 +1962,47 @@ mod tests {
         let retry = failed.after_enable(false, None);
         assert!(retry.enabled);
         assert_eq!(retry.phase, CapturePhase::WaitingForKovaak);
+    }
+
+    #[test]
+    fn resized_video_only_degrades_the_video_substate_for_explicit_codes() {
+        let capturing = CaptureCoordinatorStatus {
+            enabled: true,
+            phase: CapturePhase::Capturing,
+            capture_session_id: Some("session-1".to_string()),
+            kovaak_process_present: true,
+            window_handle: Some(1),
+            reason: None,
+            raw: CaptureSourceStatus {
+                state: CaptureSourceState::Capturing,
+                reason: None,
+            },
+            video: CaptureSourceStatus {
+                state: CaptureSourceState::Capturing,
+                reason: None,
+            },
+        };
+
+        // F6：尺寸漂移终态化只降级 video，phase/raw 保持 Capturing（不触发
+        // 重启流程），下一局 release → start 链路自然恢复。
+        let degraded = resized_video_degraded_status(&capturing, true).unwrap();
+        assert_eq!(degraded.phase, CapturePhase::Capturing);
+        assert_eq!(degraded.raw.state, CaptureSourceState::Capturing);
+        assert_eq!(degraded.capture_session_id, capturing.capture_session_id);
+        assert_eq!(degraded.video.state, CaptureSourceState::Degraded);
+        assert!(degraded
+            .video
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.starts_with("capture_resized_unsupported")));
+
+        // 无终态化事件时不产生替换。
+        assert!(resized_video_degraded_status(&capturing, false).is_none());
+        // 幂等：已降级不再重复替换，tick 不刷事件流。
+        assert!(resized_video_degraded_status(&degraded, true).is_none());
+        // 非 Capturing 相位（如进程退出后的 Finalizing）不在此链路处理。
+        let waiting = CaptureCoordinatorStatus::after_release(true);
+        assert!(resized_video_degraded_status(&waiting, true).is_none());
     }
 
     #[test]
