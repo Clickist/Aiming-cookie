@@ -18,10 +18,12 @@ from . import (
     calibration_profile_store,
     config,
     evidence_store,
+    file_store,
     history_trends,
     kovaak_benchmark_provider,
     kovaak_benchmark_service,
     kovaak_connection_store,
+    kovaak_directory_store,
     kovaak_run_store,
     queue,
     training_plan_store,
@@ -58,6 +60,8 @@ from .schemas import (
     KovaaKBenchmarkSyncRequest,
     KovaaKBenchmarkSyncResponse,
     KovaaKConnectionDeleteResponse,
+    KovaaKLocalDirectoriesResponse,
+    KovaaKLocalDirectoriesUpdateRequest,
     KovaaKConnectionSaveRequest,
     KovaaKConnectionStatusResponse,
     KovaaKScoresResponse,
@@ -709,6 +713,127 @@ async def save_kovaak_connection(
 async def delete_kovaak_connection(x_user_id: str = Depends(get_request_user_id)):
     return KovaaKConnectionDeleteResponse(
         deleted=await kovaak_connection_store.delete_connection(x_user_id),
+    )
+
+
+def _kovaak_watcher_health_from_snapshot(snapshot: object) -> Optional[str]:
+    """Project a kovaak_watcher.v1 diagnostics snapshot into coarse UI health."""
+    if not isinstance(snapshot, dict):
+        return None
+    watchers = [item for item in snapshot.get("watchers") or [] if isinstance(item, dict)]
+    if not watchers:
+        # 自动发现失败且用户未确认过目录：运行时根本没有可盯的目录。
+        return "no_candidates"
+    if any(
+        isinstance(item.get("supported_count"), int) and item["supported_count"] > 0
+        for item in watchers
+    ):
+        return "ingesting"
+    # 目录 missing 或尚未识别到任何受支持文件（大概率未开启统计导出）。
+    return "not_exporting"
+
+
+def _current_kovaak_watcher_status(request: Request) -> Optional[str]:
+    """Prefer the live watcher diagnostics; fall back to the persisted snapshot."""
+    snapshot: object = None
+    service = getattr(request.app.state, "kovaak_ingestion_service", None)
+    diagnostics = getattr(service, "diagnostics", None)
+    if callable(diagnostics):
+        try:
+            snapshot = diagnostics()
+        except Exception:
+            log.exception("KovaaK ingestion diagnostics read failed")
+            snapshot = None
+    if snapshot is None:
+        try:
+            snapshot = file_store.read_json("diagnostics/kovaak-watcher.json")
+        except (OSError, ValueError):
+            snapshot = None
+    return _kovaak_watcher_health_from_snapshot(snapshot)
+
+
+def _kovaak_local_directories_response(
+    *,
+    activation: str,
+    watcher_status: Optional[str] = None,
+) -> KovaaKLocalDirectoriesResponse:
+    stats_dir, performance_dir = config.resolve_kovaak_data_dirs()
+    stats_override = os.environ.get("KOVAAK_STATS_DIR", "").strip()
+    performance_override = os.environ.get("KOVAAK_PERFORMANCE_DIR", "").strip()
+    install_override = os.environ.get("KOVAAK_INSTALL_DIR", "").strip()
+    confirmed = kovaak_directory_store.get_confirmed_directories()
+
+    def source_for(*, override: str, directory: FilePath | None) -> str:
+        if override or install_override:
+            return "environment"
+        if confirmed is not None:
+            return "confirmed"
+        return "automatic" if directory is not None else "unavailable"
+
+    return KovaaKLocalDirectoriesResponse(
+        schema_version="kovaak_local_directories.v1",
+        stats=kovaak_directory_store.directory_status(
+            stats_dir,
+            kind="stats",
+            source=source_for(override=stats_override, directory=stats_dir),
+        ),
+        performance=kovaak_directory_store.directory_status(
+            performance_dir,
+            kind="performance",
+            source=source_for(override=performance_override, directory=performance_dir),
+        ),
+        activation=activation,
+        watcher_status=watcher_status,
+    )
+
+
+@router.get("/kovaak-local-directories", response_model=KovaaKLocalDirectoriesResponse)
+async def get_kovaak_local_directories(
+    request: Request,
+    _: None = Depends(require_desktop_token),
+):
+    return _kovaak_local_directories_response(
+        activation="not_requested",
+        watcher_status=_current_kovaak_watcher_status(request),
+    )
+
+
+@router.put("/kovaak-local-directories", response_model=KovaaKLocalDirectoriesResponse)
+async def save_kovaak_local_directories(
+    body: KovaaKLocalDirectoriesUpdateRequest,
+    request: Request,
+    _: None = Depends(require_desktop_token),
+):
+    try:
+        stats_dir, performance_dir = kovaak_directory_store.save_confirmed_directories(
+            body.stats_dir, body.performance_dir,
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+    service = getattr(request.app.state, "kovaak_ingestion_service", None)
+    if service is None:
+        activation = "runtime_unavailable"
+    else:
+        try:
+            # reconfigure 内部 join 每个 watcher 最长 2s，必须放到线程里执行，
+            # 否则会阻塞事件循环上所有并发请求。
+            outcome = await asyncio.to_thread(
+                lambda: service.reconfigure(
+                    stats_dirs=[stats_dir],
+                    performance_dirs=[performance_dir],
+                    source="confirmed",
+                ),
+            )
+            if hasattr(outcome, "__await__"):
+                await outcome
+            activation = "activated"
+        except Exception:
+            log.exception("KovaaK ingestion reconfiguration failed")
+            activation = "failed"
+    return _kovaak_local_directories_response(
+        activation=activation,
+        watcher_status=_current_kovaak_watcher_status(request),
     )
 
 

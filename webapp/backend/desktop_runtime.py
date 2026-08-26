@@ -18,7 +18,7 @@ from typing import Any
 
 import uvicorn
 
-from . import config, kovaak_ingest, kovaak_run_store, worker
+from . import config, file_store, kovaak_ingest, kovaak_run_store, worker
 from .app import app
 from .kovaak_capture_finalizer import KovaaKCaptureFinalizer
 from .native_capture_client import NativeCaptureClient
@@ -367,13 +367,49 @@ def create_kovaak_ingestion_service(
 
         return future
 
+    stats_dirs = list(getattr(config, "KOVAAK_STATS_DIRS", None) or ())
+    if not stats_dirs and config.KOVAAK_STATS_DIR:
+        stats_dirs = [config.KOVAAK_STATS_DIR]
+    performance_dirs = list(getattr(config, "KOVAAK_PERFORMANCE_DIRS", None) or ())
+    if not performance_dirs and config.KOVAAK_PERFORMANCE_DIR:
+        performance_dirs = [config.KOVAAK_PERFORMANCE_DIR]
+
     return kovaak_ingest.KovaaKIngestionService(
-        stats_dir=config.KOVAAK_STATS_DIR,
-        performance_dir=config.KOVAAK_PERFORMANCE_DIR,
+        stats_dir=stats_dirs,
+        performance_dir=performance_dirs,
         callback=on_discovery,
         poll_interval=config.KOVAAK_WATCH_POLL_SECONDS,
         candidate_limit=50,
     )
+
+
+def persist_kovaak_ingestion_diagnostics(
+    ingestion_service: kovaak_ingest.KovaaKIngestionService,
+) -> None:
+    """Persist path-redacted watcher health for a later desktop diagnostics export."""
+    diagnostics = getattr(ingestion_service, "diagnostics", None)
+    if not callable(diagnostics):
+        return
+    snapshot = diagnostics()
+    for watcher in snapshot.get("watchers", []):
+        if isinstance(watcher, dict):
+            watcher.pop("directory", None)
+    file_store.write_json("diagnostics/kovaak-watcher.json", snapshot)
+
+
+async def monitor_kovaak_ingestion_diagnostics(
+    ingestion_service: kovaak_ingest.KovaaKIngestionService,
+    stop_event: asyncio.Event,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            persist_kovaak_ingestion_diagnostics(ingestion_service)
+        except Exception:
+            log.exception("KovaaK ingestion diagnostics snapshot write failed")
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            continue
 
 
 async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
@@ -391,9 +427,11 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     finalizer_futures = FinalizerFutureTracker()
     capture_exit_releases = CaptureExitReleaseTracker()
     capture_exit_task: asyncio.Task[None] | None = None
+    ingestion_diagnostics_task: asyncio.Task[None] | None = None
     ingestion_service = create_kovaak_ingestion_service(
         asyncio.get_running_loop(), finalizer, finalizer_futures,
     )
+    app.state.kovaak_ingestion_service = ingestion_service
 
     try:
         port = await _wait_for_server_start(server, server_task)
@@ -414,6 +452,10 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
                 video_reconciliation,
             )
         ingestion_service.start()
+        persist_kovaak_ingestion_diagnostics(ingestion_service)
+        ingestion_diagnostics_task = asyncio.create_task(
+            monitor_kovaak_ingestion_diagnostics(ingestion_service, shutdown_requested)
+        )
 
         # This is intentionally the runtime's only stdout protocol write.
         print(
@@ -447,8 +489,15 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
             capture_exit_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await capture_exit_task
+        if ingestion_diagnostics_task is not None:
+            ingestion_diagnostics_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ingestion_diagnostics_task
         await capture_exit_releases.drain()
         ingestion_service.stop()
+        with contextlib.suppress(Exception):
+            persist_kovaak_ingestion_diagnostics(ingestion_service)
+        app.state.kovaak_ingestion_service = None
         worker_stop.set()
         await finalizer_futures.drain()
         server.should_exit = True

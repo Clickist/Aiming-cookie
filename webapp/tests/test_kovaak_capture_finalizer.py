@@ -525,6 +525,51 @@ async def test_watcher_consumes_missing_source_once_then_finalizes_counterpart_o
 
 
 @pytest.mark.asyncio
+async def test_desktop_ingestion_slice_persists_a_run_for_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A discovered stable pair becomes a History Run through the real desktop bridge."""
+    import asyncio
+
+    from webapp.backend import config, desktop_runtime
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    _configure_parsers(monkeypatch, time_limit=1.0)
+    stats = tmp_path / "Session Stats.csv"
+    performance = tmp_path / "Session Performance.perf"
+    stats.write_bytes(b"stable-stats")
+    performance.write_bytes(b"stable-performance")
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    finalizer = _finalizer(tmp_path, client)
+    loop = asyncio.get_running_loop()
+    service = desktop_runtime.create_kovaak_ingestion_service(
+        loop,
+        finalizer,
+    )
+    service.reconfigure(
+        stats_dirs=[tmp_path],
+        performance_dirs=[tmp_path],
+        source="confirmed",
+    )
+    watcher = service._watchers[0]
+
+    # First scan observes the files; second scan confirms stability and emits
+    # the pair. Grab the bridge's async future so we can await it deterministically.
+    assert watcher.scan_once() == []
+    discovery = watcher.scan_once()[0]
+    future = watcher.callback(discovery)
+    await asyncio.wrap_future(future)
+
+    runs = await kovaak_run_store.list_kovaak_run_summaries("u1")
+    assert len(runs) == 1
+    assert runs[0]["scenario"] == "Scenario"
+    assert runs[0]["finalization_state"] == "finalized"
+    assert len(client.export_calls) == 1
+
+
+
+@pytest.mark.asyncio
 async def test_pause_fails_closed_before_native_export(tmp_path: Path, monkeypatch) -> None:
     _configure_parsers(monkeypatch, pause_count="1")
     stats = tmp_path / "Scenario Stats.csv"
