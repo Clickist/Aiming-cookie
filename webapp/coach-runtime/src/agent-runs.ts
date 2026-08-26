@@ -27,6 +27,7 @@ import {
   nextSessionIdSync,
   readSessionMessages,
   updateConversationAnalysisIds,
+  updateConversationDeepReadAnalysisIds,
 } from "./session-repo.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -48,6 +49,12 @@ export type AgentRunState = {
   events: AgentRunEvent[];
   /** Analysis refs (`analysis:{id}`) the run engaged with via file reads. */
   analysis_refs: string[];
+  /**
+   * Non-subject deep reads (`analysis:{id}`): history/comparison analyses the
+   * AI read this turn. @time-link fallback for summary/comparison turns where
+   * analysis_refs is empty; these are viewable but NOT 本次讨论 subjects.
+   */
+  deep_read_analysis_refs: string[];
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -319,6 +326,19 @@ async function runAgentTurn(
       if (analysisIds.length > 0) updateConversationAnalysisIds(threadId, analysisIds);
     }
 
+    // Non-subject deep reads ride alongside so summary/comparison turns keep a
+    // @time-link fallback after reload; they never join the subject list.
+    const deepReadAnalysisRefs = response.deep_read_analysis_refs ?? [];
+    record.state.deep_read_analysis_refs = deepReadAnalysisRefs;
+    if (deepReadAnalysisRefs.length > 0) {
+      const deepReadIds: number[] = [];
+      for (const ref of deepReadAnalysisRefs) {
+        const match = /^analysis:([1-9][0-9]*)$/.exec(ref);
+        if (match) deepReadIds.push(Number(match[1]));
+      }
+      if (deepReadIds.length > 0) updateConversationDeepReadAnalysisIds(threadId, deepReadIds);
+    }
+
     if (signal.aborted || record.stopRequested) {
       setRunStatus(record, "stopped", "completed", { finished: true });
       appendEvent(record, "status", "completed", "run_stopped", "Coach run stopped by the user");
@@ -412,6 +432,7 @@ export function createAgentRun(
       error: null,
       events: [],
       analysis_refs: [],
+      deep_read_analysis_refs: [],
       created_at: now,
       started_at: null,
       finished_at: null,

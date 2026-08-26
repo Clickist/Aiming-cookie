@@ -185,6 +185,27 @@ async function resolveBuiltinProfile(
   };
 }
 
+/**
+ * Name-based heuristic for reasoning models on custom OpenAI-compatible /
+ * Anthropic-compatible endpoints. Vendored Pi's pinned catalog cannot cover
+ * third-party endpoints, so custom models carry no `reasoning` metadata —
+ * hardcoding false kept defaultThinkingLevel from raising a thinking level,
+ * and deepseek-reasoner-style models then "think out loud" into the reply
+ * body (2026-08 内测复发). Case-insensitive keyword list, conservative by
+ * design; a false positive is harmless because Pi's clampThinkingLevel
+ * collapses unsupported levels back to an available one for non-reasoning
+ * request shapes.
+ */
+export function looksLikeReasoningModelId(modelId: string): boolean {
+  return (
+    /reasoner/i.test(modelId)
+    || /thinking/i.test(modelId)
+    || /qwq/i.test(modelId)
+    || /\br1\b/i.test(modelId)
+    || /\bo[134]\b/i.test(modelId)
+  );
+}
+
 async function resolveCustomProfile(
   profile: Extract<
     CoachRuntimeProviderProfile,
@@ -213,13 +234,16 @@ async function resolveCustomProfile(
   const api = profile.kind === "custom_anthropic_compatible"
     ? "anthropic-messages"
     : "openai-completions";
+  // reasoning 走 model_id 名称启发式（见 looksLikeReasoningModelId）：
+  // 自定义端点不在 vendored 目录里，没有元数据可查；误判由 Pi 的
+  // clampThinkingLevel 收敛兜底。
   const model: PiModel & { cost: Record<string, number> } = {
     id: profile.model_id,
     name: profile.model_id,
     api,
     provider: profile.provider_id,
     baseUrl: profile.base_url,
-    reasoning: false,
+    reasoning: looksLikeReasoningModelId(profile.model_id),
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: profile.context_window ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,

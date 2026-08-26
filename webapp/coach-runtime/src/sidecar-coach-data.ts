@@ -56,6 +56,8 @@ interface SessionOut {
   message_count: number;
   last_message_preview: string | null;
   analysis_session_ids: number[];
+  /** Non-subject deep-read analyses (@time-link fallback; NOT 本次讨论). */
+  deep_read_analysis_session_ids: number[];
 }
 
 function shapeSession(
@@ -79,6 +81,7 @@ function shapeSession(
     message_count: messages.length,
     last_message_preview: lastEntry ? lastEntry.content.slice(0, 240) : null,
     analysis_session_ids: meta.analysis_session_ids ?? [],
+    deep_read_analysis_session_ids: meta.deep_read_analysis_session_ids ?? [],
   };
 }
 

@@ -258,6 +258,13 @@ export type CoachRuntimeTurnResponse = {
   tool_events: CoachRuntimeToolEvent[];
   /** Analysis ids the turn engaged with via file reads (`analysis:{id}`). */
   analysis_refs: string[];
+  /**
+   * Non-subject deep reads (`analysis:{id}`): analyses the AI read as history
+   * references this turn. Frontend fallback for @time links in summary /
+   * comparison conversations where analysis_refs is empty — viewable, but
+   * they are NOT 本次讨论 subjects.
+   */
+  deep_read_analysis_refs: string[];
 };
 
 export type ProviderAuthMode = "api_key" | "oauth" | "ambient";
@@ -397,6 +404,7 @@ export function successResponse(
   toolEvents: CoachRuntimeToolEvent[] = [],
   runId: string | null = null,
   analysisRefs: string[] = [],
+  deepReadAnalysisRefs: string[] = [],
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
@@ -408,6 +416,7 @@ export function successResponse(
     notes,
     tool_events: toolEvents,
     analysis_refs: analysisRefs,
+    deep_read_analysis_refs: deepReadAnalysisRefs,
   };
 }
 
@@ -419,6 +428,7 @@ export function failureResponse(
   partialReply: string | null = null,
   runId: string | null = null,
   analysisRefs: string[] = [],
+  deepReadAnalysisRefs: string[] = [],
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
@@ -430,5 +440,6 @@ export function failureResponse(
     notes,
     tool_events: toolEvents,
     analysis_refs: analysisRefs,
+    deep_read_analysis_refs: deepReadAnalysisRefs,
   };
 }

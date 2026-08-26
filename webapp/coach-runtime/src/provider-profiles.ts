@@ -494,12 +494,32 @@ export async function handleProviderProfileRequest(
 
   if (route.action === "root" && req.method === "PUT") {
     try {
-      const profile = coachProfileFromCreate(await readJsonBody(req));
+      const body = await readJsonBody(req);
       const store = loadProviderStore();
       const entry = routeStoredProfile(store, route.id);
       if (!entry) {
         writeJson(res, 404, { detail: "Provider profile 不存在" });
         return true;
+      }
+      // PUT 是整档更新，但请求体未携带新凭证（无 api_key 字段或空白）时必须
+      // 保留原 stored credential：OnboardingFlow 重跑连接步骤会预填现有档、
+      // 不重发 key，盲目整档替换会把已存 key 静默抹掉（2026-08 内测实测）。
+      // 显式换 key 走带 api_key 的请求体；清除凭证走 DELETE auth/credential。
+      // OAuth credential 没有可回填的 key，直接按对象挂回。
+      const suppliesApiKey = isRecord(body)
+        && typeof body.api_key === "string"
+        && body.api_key.trim().length > 0;
+      let profile: CoachRuntimeProviderProfile;
+      if (!suppliesApiKey && entry.credential?.type === "api_key") {
+        profile = coachProfileFromCreate({
+          ...(isRecord(body) ? body : {}),
+          api_key: entry.credential.key,
+        });
+      } else {
+        profile = coachProfileFromCreate(body);
+        if (!suppliesApiKey && entry.credential) {
+          profile = profileWithCredential(profile, entry.credential);
+        }
       }
       const updated = replaceStoredProfile(store, entry.id, profile);
       saveProviderStore(store);
