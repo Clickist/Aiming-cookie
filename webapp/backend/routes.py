@@ -787,15 +787,27 @@ def _kovaak_local_directories_response(
     )
 
 
+async def _kovaak_local_directories_response_async(
+    request: Request,
+    *,
+    activation: str,
+) -> KovaaKLocalDirectoriesResponse:
+    # 与 PUT 的 reconfigure 同理：构造响应要做目录解析 + 对两个目录全量
+    # iterdir/stat（含读 watcher 快照 JSON），大 stats 目录或慢盘会阻塞事件循环。
+    return await asyncio.to_thread(
+        lambda: _kovaak_local_directories_response(
+            activation=activation,
+            watcher_status=_current_kovaak_watcher_status(request),
+        ),
+    )
+
+
 @router.get("/kovaak-local-directories", response_model=KovaaKLocalDirectoriesResponse)
 async def get_kovaak_local_directories(
     request: Request,
     _: None = Depends(require_desktop_token),
 ):
-    return _kovaak_local_directories_response(
-        activation="not_requested",
-        watcher_status=_current_kovaak_watcher_status(request),
-    )
+    return await _kovaak_local_directories_response_async(request, activation="not_requested")
 
 
 @router.put("/kovaak-local-directories", response_model=KovaaKLocalDirectoriesResponse)
@@ -831,10 +843,7 @@ async def save_kovaak_local_directories(
         except Exception:
             log.exception("KovaaK ingestion reconfiguration failed")
             activation = "failed"
-    return _kovaak_local_directories_response(
-        activation=activation,
-        watcher_status=_current_kovaak_watcher_status(request),
-    )
+    return await _kovaak_local_directories_response_async(request, activation=activation)
 
 
 @router.post(
