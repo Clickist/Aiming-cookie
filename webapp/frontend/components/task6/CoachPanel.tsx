@@ -287,6 +287,7 @@ export function CoachPanel({
   const trainingPresence = useAnimatedPresence(trainingExpanded, 180);
   const [launchingScenarioRef, setLaunchingScenarioRef] = useState<string | null>(null);
   const [analysisSessionIds, setAnalysisSessionIds] = useState<number[]>([]);
+  const [deepReadAnalysisSessionIds, setDeepReadAnalysisSessionIds] = useState<number[]>([]);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
   const stickToBottomRef = useRef(true);
@@ -296,6 +297,9 @@ export function CoachPanel({
   const refreshRevisionRef = useRef(0);
   const trainingRefreshRevisionRef = useRef(0);
   const optimisticMessageIdRef = useRef(-1);
+  // send 的同步重入锁：setRun(created) 在两次 await 网络往返之后，窗口期内
+  // 第二次 Enter/双击会完整重入并产生重复会话与消息；进入函数即置位，finally 必清。
+  const sendingRef = useRef(false);
   const activeSessionKey = draftSession ? "draft" : `session:${sessionId ?? "primary"}`;
   const activeSessionKeyRef = useRef(activeSessionKey);
   const runBySessionRef = useRef(new Map<string, CoachAgentRunV1>());
@@ -303,15 +307,25 @@ export function CoachPanel({
 
   // The active run's reads win (streamed live); the session's engaged-analysis
   // list (persisted from completed runs) is the fallback after the run clears.
-  const defaultAnalysisRef = run?.analysis_refs?.length
-    ? run.analysis_refs[0]
-    : analysisSessionIds.length ? `analysis:${analysisSessionIds[0]}` : null;
+  // 主题 reads 之后继续回落到深读 refs（取最后一个）：总结/对比类回复深读旧分析
+  // 不属于主题挂载，但回复里的「回看 @51.5s」链接仍需可点。此链只服务 @time
+  // 链接定位；「本次讨论」挂载条保持只消费主题 refs（discussionAnalysisIds）。
+  const topicRunRef = run?.analysis_refs?.length ? run.analysis_refs[0] : null;
+  const topicSessionRef = analysisSessionIds.length ? `analysis:${analysisSessionIds[0]}` : null;
+  const deepReadRunRef = run?.deep_read_analysis_refs?.length
+    ? run.deep_read_analysis_refs[run.deep_read_analysis_refs.length - 1]
+    : null;
+  const deepReadSessionRef = deepReadAnalysisSessionIds.length
+    ? `analysis:${deepReadAnalysisSessionIds[deepReadAnalysisSessionIds.length - 1]}`
+    : null;
+  const defaultAnalysisRef = topicRunRef ?? topicSessionRef ?? deepReadRunRef ?? deepReadSessionRef;
 
   const refresh = useCallback(async () => {
     if (capability !== "ready") return;
     if (draftSession || sessionId == null) {
       setMessages([]);
       setAnalysisSessionIds([]);
+      setDeepReadAnalysisSessionIds([]);
       setLoadError(false);
       return;
     }
@@ -329,6 +343,7 @@ export function CoachPanel({
         return [...uniqueOptimistic, ...backendMessages];
       });
       setAnalysisSessionIds(detail.analysis_session_ids ?? []);
+      setDeepReadAnalysisSessionIds(detail.deep_read_analysis_session_ids ?? []);
       setLoadError(false);
     } catch {
       if (revision === refreshRevisionRef.current) setLoadError(true);
@@ -543,6 +558,18 @@ export function CoachPanel({
 
     const fetchRun = () => getCoachAgentRun(runRef, sessionId == null ? {} : { sessionId });
 
+    // 轮询兜底的有限退避：瞬断不杀轮询（1s→2s→4s…上限 10s），连续失败达到
+    // 上限才放弃并把本地 run 收敛为明确的中断终态；任何一次成功即清零计数、
+    // 恢复正常节奏。
+    const POLL_MAX_FAILURES = 8;
+    const POLL_BASE_INTERVAL_MS = 1000;
+    const POLL_MAX_INTERVAL_MS = 10_000;
+    let pollFailures = 0;
+
+    // 404 表示 run 已不存在（如 sidecar 重启）：立即置中断终态，不再无谓重试。
+    const isMissingRunError = (error: unknown) =>
+      error instanceof Error && error.name === "ApiError_404";
+
     const finalizeRun = async () => {
       try {
         const next = await fetchRun();
@@ -550,18 +577,32 @@ export function CoachPanel({
         setRun(next);
         await Promise.all([refresh(), refreshCurrentTraining()]);
         if (next.status === "succeeded") setRun(null);
-      } catch {
-        if (!cancelled) setLoadError(true);
+      } catch (error) {
+        if (cancelled) return;
+        // 终态确认不能一次失败就丢：run 已消失立即中断收敛，
+        // 其余情况回到轮询路径由退避续拍兜底。
+        if (isMissingRunError(error)) {
+          markInterrupted();
+          return;
+        }
+        pollFailures += 1;
+        if (pollFailures >= POLL_MAX_FAILURES) {
+          markInterrupted();
+          return;
+        }
+        schedulePoll();
       }
     };
 
     const schedulePoll = () => {
       if (cancelled) return;
       clearPollTimer();
+      const delay = Math.min(POLL_BASE_INTERVAL_MS * 2 ** pollFailures, POLL_MAX_INTERVAL_MS);
       pollTimer = setTimeout(async () => {
         try {
           const next = await fetchRun();
           if (cancelled) return;
+          pollFailures = 0;
           setRun(next);
           if (["queued", "running"].includes(next.status)) {
             schedulePoll();
@@ -569,10 +610,20 @@ export function CoachPanel({
             await Promise.all([refresh(), refreshCurrentTraining()]);
             if (next.status === "succeeded") setRun(null);
           }
-        } catch {
-          if (!cancelled) setLoadError(true);
+        } catch (error) {
+          if (cancelled) return;
+          if (isMissingRunError(error)) {
+            markInterrupted();
+            return;
+          }
+          pollFailures += 1;
+          if (pollFailures >= POLL_MAX_FAILURES) {
+            markInterrupted();
+            return;
+          }
+          schedulePoll();
         }
-      }, 700);
+      }, delay);
     };
 
     const closeStream = () => {
@@ -580,6 +631,29 @@ export function CoachPanel({
         eventSource.close();
         eventSource = null;
       }
+    };
+
+    // 断线收敛：本地合成明确的失败终态，解除 composer 锁并给出可见提示；
+    // run_ref 保留，用户可直接点「重试」。
+    const markInterrupted = () => {
+      if (cancelled || finished) return;
+      finished = true;
+      clearPollTimer();
+      closeStream();
+      streamActive = false;
+      setRun((prev) => prev
+        ? {
+          ...prev,
+          status: "failed",
+          error: {
+            domain: "network",
+            code: "run_interrupted",
+            message: "回复已中断：与本地服务的连接断开。",
+            retryable: true,
+          },
+        }
+        : prev);
+      notify("回复已中断");
     };
 
     const startPolling = () => {
@@ -833,6 +907,9 @@ export function CoachPanel({
   const send = async () => {
     const content = draft.trim();
     if (!content || run?.status === "running" || run?.status === "queued") return;
+    // 同步重入锁：必须在任何 await 之前置位，重入直接丢弃。
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     let optimisticId: number | null = null;
     try {
       const effectiveSessionId = sessionId ?? (onEnsureSession ? await onEnsureSession() : null);
@@ -862,8 +939,11 @@ export function CoachPanel({
       if (optimisticId !== null) {
         setMessages((current) => current.filter((message) => message.id !== optimisticId));
       }
-      setDraft(content);
+      // 仅当等待期间用户没有重新输入时才回填，避免覆盖新草稿。
+      setDraft((current) => (current.trim() ? current : content));
       notify(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
+    } finally {
+      sendingRef.current = false;
     }
   };
 
@@ -1081,6 +1161,8 @@ export function CoachPanel({
             id="coach-draft"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
+              // 中文等输入法按 Enter 确认候选词时 isComposing 为 true，不应提交。
+              if (event.nativeEvent.isComposing) return;
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void send();

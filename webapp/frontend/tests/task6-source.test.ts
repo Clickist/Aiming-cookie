@@ -132,7 +132,7 @@ test("Settings auto-detects custom Provider protocols and keeps a fallback choic
   assert.match(settings, /window\.setTimeout\(\(\) => \{/);
   assert.doesNotMatch(settings, /onClick=\{\(\) => void discoverCustomModels\(\)\}/);
   assert.match(settings, /列表中没有需要的 Model ID/);
-  assert.match(settings, /isCustomProviderKind\(profile\.kind\)/);
+  assert.match(settings, /isCustomProviderKind\(activeProfile\.kind\)/);
 });
 
 test("Provider model selection does not reset the API key draft", async () => {
@@ -288,7 +288,8 @@ test("Coach shows a sent user message immediately and restores the draft on fail
   assert.match(panel, /setMessages\(\(current\) => \[\.\.\.current,/);
   assert.match(panel, /role: "user"/);
   assert.match(panel, /message\.id !== optimisticId/);
-  assert.match(panel, /setDraft\(content\)/);
+  // 失败回填仅在等待期间没有重新输入时发生，不覆盖用户新草稿。
+  assert.match(panel, /setDraft\(\(current\) => \(current\.trim\(\) \? current : content\)\)/);
 });
 
 test("Coach sends and streams Provider runs through the shared API adapter", async () => {

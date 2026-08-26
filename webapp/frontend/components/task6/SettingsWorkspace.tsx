@@ -32,6 +32,7 @@ import { presentStorageCategories } from "@/lib/contracts";
 import { exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
+import { KovaaKDirectoriesPanel } from "@/components/kovaak/KovaaKDirectoriesPanel";
 import type {
   CalibrationProfileV1,
   CaptureStatusV1,
@@ -46,7 +47,6 @@ import type {
   StorageResponse,
 } from "@/lib/types";
 import {
-  Badge,
   Button,
   Dialog,
   ErrorState,
@@ -59,7 +59,7 @@ import {
   Status,
   Toast,
 } from "@/ui/primitives";
-import { IconChevronLeft } from "@/ui/icons";
+import { IconCheck, IconChevronDown, IconChevronLeft } from "@/ui/icons";
 import { useTheme } from "@/ui/theme";
 
 type ConfirmAction = {
@@ -144,6 +144,7 @@ const NAV_ITEMS = [
   { id: "profile", label: "Profile" },
   { id: "theme", label: "主题" },
   { id: "capture", label: "自动采集与 Raw Input" },
+  { id: "kovaak-directories", label: "KovaaK 本地目录" },
   { id: "kovaak", label: "KovaaK 成绩" },
   { id: "storage", label: "存储" },
 ];
@@ -199,11 +200,13 @@ export function SettingsWorkspace() {
   const [authPromptValue, setAuthPromptValue] = useState("");
   const [cmPer360, setCmPer360] = useState("");
   const [fov, setFov] = useState("");
-  const [expandedProviders, setExpandedProviders] = useState<Record<number, boolean>>({});
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [switchingProvider, setSwitchingProvider] = useState(false);
   const [activeNav, setActiveNav] = useState(NAV_ITEMS[0].id);
   const [captureConsent, setCaptureConsent] = useState(false);
   const [diagnosticExporting, setDiagnosticExporting] = useState(false);
   const previousProviderSelection = useRef<string | null>(null);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
 
   const desktop = isDesktopRuntime();
 
@@ -336,6 +339,24 @@ export function SettingsWorkspace() {
     return () => window.removeEventListener("hashchange", syncActiveNav);
   }, []);
 
+  useEffect(() => {
+    if (!pickerOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) {
+        setPickerOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [pickerOpen]);
+
   const selectedCatalogProvider = useMemo(
     () => catalog?.providers.find((provider) => provider.provider_id === providerId)
       ?? (providerId ? undefined : catalog?.providers[0]),
@@ -343,6 +364,16 @@ export function SettingsWorkspace() {
   );
   const selectedProviderKey = providerId || selectedCatalogProvider?.provider_id || "";
   const selectedAuthModesKey = selectedCatalogProvider?.auth_modes.join(",") ?? "";
+
+  // 当前使用的档 = 默认档（与 Coach 实际解析一致），无默认时回退第一档。
+  const activeProfile = useMemo(
+    () => profiles.find((profile) => profile.is_default) ?? profiles[0] ?? null,
+    [profiles],
+  );
+  const activeProfileAuthModes = !activeProfile
+    ? []
+    : catalog?.providers.find((provider) => provider.provider_id === activeProfile.provider_id)?.auth_modes
+      ?? (isCustomProviderKind(activeProfile.kind) ? ["api_key" as const] : []);
 
   useEffect(() => {
     if (providerId === "custom") return;
@@ -408,6 +439,23 @@ export function SettingsWorkspace() {
     setAuthOperation(operation);
     setAuthPromptValue("");
     setFeedback("请按 Provider 指引完成授权。");
+  };
+
+  const switchActiveProvider = async (profileId: number) => {
+    if (switchingProvider || profileId === activeProfile?.id) {
+      setPickerOpen(false);
+      return;
+    }
+    setSwitchingProvider(true);
+    try {
+      await setDefaultProviderProfile(profileId);
+      setPickerOpen(false);
+      await refresh(true);
+    } catch {
+      setFeedback("默认 Provider 未能更新。");
+    } finally {
+      setSwitchingProvider(false);
+    }
   };
 
   const submitAuthPrompt = async () => {
@@ -510,104 +558,115 @@ export function SettingsWorkspace() {
               <span className="task6-settings-section-title">LLM Provider</span>
             </div>
             <Panel className="task6-provider-panel">
-              {profiles.map((profile) => {
-                const authModes = catalog?.providers.find((provider) => provider.provider_id === profile.provider_id)?.auth_modes
-                  ?? (isCustomProviderKind(profile.kind) ? ["api_key" as const] : []);
-                const expanded = expandedProviders[profile.id] ?? false;
-                return (
-                  <article className="task6-provider-row" key={profile.id}>
-                    <div className="task6-provider-main">
-                      <div className="task6-provider-head">
-                        <span className="task6-provider-name">{profile.name}</span>
-                        <Status tone={providerStatusTone(profile.status)}>{providerStateLabel(profile.status)}</Status>
-                        {profile.is_default ? <Badge tone="info">默认</Badge> : null}
-                        <span className="task6-provider-actions">
-                          <Button
-                            onClick={() => void testProviderProfile(profile.id).then((status) => setFeedback(status.message)).catch(() => setFeedback("连接测试失败，请检查 Provider 与网络。"))}
-                            size="compact"
-                            variant="ghost"
+              {activeProfile ? (
+                <div className="task6-provider-active" ref={pickerRef}>
+                  <button
+                    aria-expanded={pickerOpen}
+                    aria-haspopup="menu"
+                    className="task6-provider-picker"
+                    disabled={switchingProvider}
+                    onClick={() => setPickerOpen((open) => !open)}
+                    title="选择要使用的 Provider"
+                    type="button"
+                  >
+                    <span className="task6-provider-picker-label">{activeProfile.name}</span>
+                    <IconChevronDown className="task6-provider-picker-caret" />
+                  </button>
+                  {pickerOpen ? (
+                    <div aria-label="切换默认 Provider" className="task6-provider-picker-menu" role="menu">
+                      {profiles.map((entry) => {
+                        const selected = entry.id === activeProfile.id;
+                        return (
+                          <button
+                            aria-checked={selected}
+                            className="task6-provider-picker-item"
+                            key={entry.id}
+                            onClick={() => void switchActiveProvider(entry.id)}
+                            role="menuitemradio"
+                            type="button"
                           >
-                            测试连接
-                          </Button>
-                          <Button
-                            onClick={() => setExpandedProviders((current) => ({ ...current, [profile.id]: !current[profile.id] }))}
-                            size="compact"
-                            variant="ghost"
-                          >
-                            ⋯
-                          </Button>
-                        </span>
-                      </div>
-                      <p className="task6-provider-meta">
-                        {profile.model_id ?? "未指定模型"}
-                        {profile.provider_id ? ` · ${profile.provider_id}` : null}
-                        {profile.status === "ready" ? " · 上次测试：可用" : null}
-                      </p>
-                      {expanded ? (
-                        <div className="task6-provider-actions" style={{ marginTop: "var(--space-3)", marginLeft: 0, justifyContent: "flex-start" }}>
-                          {!profile.is_default ? (
-                            <Button
-                              onClick={() => void setDefaultProviderProfile(profile.id).then(() => refresh(true)).catch(() => setFeedback("默认 Provider 未能更新。"))}
-                              size="compact"
-                              variant="ghost"
-                            >
-                              设为默认
-                            </Button>
-                          ) : null}
-                          {authModes.includes("oauth") ? (
-                            <Button
-                              onClick={() => ask("开始 Provider 授权", "将打开 Provider 支持的 OAuth 或设备码授权流程。", () => startAuthorization(profile.id))}
-                              size="compact"
-                              variant="secondary"
-                            >
-                              重新认证
-                            </Button>
-                          ) : null}
-                          {authModes.includes("api_key") ? (
-                            <>
-                              <Field className="task6-provider-credential-field" label="更换 API key" hint="仅本次提交保存在内存，提交后立即清空。">
-                                <FieldControl
-                                  autoComplete="off"
-                                  onChange={(event) => setCredentialDrafts((current) => ({ ...current, [profile.id]: event.target.value }))}
-                                  type="password"
-                                  value={credentialDrafts[profile.id] ?? ""}
-                                />
-                              </Field>
-                              <Button
-                                disabled={!credentialDrafts[profile.id]}
-                                onClick={() => ask("更换 Provider credential", "现有 credential 将被替换，Coach 连接可能需要重新测试。", async () => {
-                                  await setProviderApiKey(profile.id, credentialDrafts[profile.id] ?? "");
-                                  setCredentialDrafts((current) => ({ ...current, [profile.id]: "" }));
-                                })}
-                                size="compact"
-                                variant="secondary"
-                              >
-                                更换
-                              </Button>
-                            </>
-                          ) : null}
-                          {profile.credential_configured ? (
-                            <Button
-                              onClick={() => ask("移除 Provider credential", "移除或撤销认证后 Coach 将不可用，本地分析不受影响。", async () => { await deleteProviderCredential(profile.id); })}
-                              size="compact"
-                              variant="ghost"
-                            >
-                              移除认证
-                            </Button>
-                          ) : null}
-                          <Button
-                            onClick={() => ask("删除 Provider", "删除此本地 Provider 配置与 credential，不会删除 Analysis。", async () => { await deleteProviderProfile(profile.id); })}
-                            size="compact"
-                            variant="danger"
-                          >
-                            删除
-                          </Button>
-                        </div>
-                      ) : null}
+                            <span aria-hidden="true" className="task6-provider-dot" data-ready={entry.status === "ready"} />
+                            <span className="task6-provider-picker-name">{entry.name}</span>
+                            {selected ? <IconCheck className="task6-provider-picker-check" /> : null}
+                          </button>
+                        );
+                      })}
                     </div>
-                  </article>
-                );
-              })}
+                  ) : null}
+                </div>
+              ) : null}
+              {activeProfile ? (
+                <article className="task6-provider-detail" key={activeProfile.id}>
+                  <div className="task6-provider-head">
+                    <span className="task6-provider-name">{activeProfile.name}</span>
+                    <Status tone={providerStatusTone(activeProfile.status)}>{providerStateLabel(activeProfile.status)}</Status>
+                    <span className="task6-provider-actions">
+                      <Button
+                        onClick={() => void testProviderProfile(activeProfile.id).then((status) => setFeedback(status.message)).catch(() => setFeedback("连接测试失败，请检查 Provider 与网络。"))}
+                        size="compact"
+                        variant="ghost"
+                      >
+                        测试连接
+                      </Button>
+                    </span>
+                  </div>
+                  <p className="task6-provider-meta">
+                    {activeProfile.model_id ?? "未指定模型"}
+                    {activeProfile.provider_id ? ` · ${activeProfile.provider_id}` : null}
+                    {activeProfile.status === "ready" ? " · 上次测试：可用" : null}
+                  </p>
+                  <div className="task6-provider-detail-actions">
+                    {activeProfileAuthModes.includes("oauth") ? (
+                      <Button
+                        onClick={() => ask("开始 Provider 授权", "将打开 Provider 支持的 OAuth 或设备码授权流程。", () => startAuthorization(activeProfile.id))}
+                        size="compact"
+                        variant="secondary"
+                      >
+                        重新认证
+                      </Button>
+                    ) : null}
+                    {activeProfileAuthModes.includes("api_key") ? (
+                      <>
+                        <Field className="task6-provider-credential-field" label="更换 API key" hint="仅本次提交保存在内存，提交后立即清空。">
+                          <FieldControl
+                            autoComplete="off"
+                            onChange={(event) => setCredentialDrafts((current) => ({ ...current, [activeProfile.id]: event.target.value }))}
+                            type="password"
+                            value={credentialDrafts[activeProfile.id] ?? ""}
+                          />
+                        </Field>
+                        <Button
+                          disabled={!credentialDrafts[activeProfile.id]}
+                          onClick={() => ask("更换 Provider credential", "现有 credential 将被替换，Coach 连接可能需要重新测试。", async () => {
+                            await setProviderApiKey(activeProfile.id, credentialDrafts[activeProfile.id] ?? "");
+                            setCredentialDrafts((current) => ({ ...current, [activeProfile.id]: "" }));
+                          })}
+                          size="compact"
+                          variant="secondary"
+                        >
+                          更换
+                        </Button>
+                      </>
+                    ) : null}
+                    {activeProfile.credential_configured ? (
+                      <Button
+                        onClick={() => ask("移除 Provider credential", "移除或撤销认证后 Coach 将不可用，本地分析不受影响。", async () => { await deleteProviderCredential(activeProfile.id); })}
+                        size="compact"
+                        variant="ghost"
+                      >
+                        移除认证
+                      </Button>
+                    ) : null}
+                    <Button
+                      onClick={() => ask("删除 Provider", "删除此本地 Provider 配置与 credential，不会删除 Analysis。", async () => { await deleteProviderProfile(activeProfile.id); })}
+                      size="compact"
+                      variant="danger"
+                    >
+                      删除
+                    </Button>
+                  </div>
+                </article>
+              ) : null}
               {authOperation ? (
                 <section aria-live="polite" className="task6-auth-operation">
                   <div className="task6-auth-operation-head">
@@ -809,6 +868,15 @@ export function SettingsWorkspace() {
                   <span className="task6-settings-section-hint">复现问题后立即导出，包含完整 native 错误、环境和采集状态，不包含 Raw 数据或 MP4。</span>
                 </div>
               ) : null}
+            </Panel>
+          </section>
+
+          <section className="task6-settings-section" id="kovaak-directories">
+            <div className="task6-settings-section-header">
+              <span className="task6-settings-section-title">KovaaK 本地目录</span>
+            </div>
+            <Panel>
+              <KovaaKDirectoriesPanel context="settings" />
             </Panel>
           </section>
 
