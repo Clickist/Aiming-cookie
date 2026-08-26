@@ -3289,7 +3289,7 @@ async def process_one() -> bool:
                     log.warning(
                         "generic static clicking unavailable session=%s error=%s",
                         sid,
-                        type(error).__name__,
+                        f"{type(error).__name__}: {error}",
                     )
                     warnings.append({"code": "generic_visual_unavailable"})
             if scenario_dispatch in _FAMILY_BASELINE_ANALYSIS_VERSIONS:
