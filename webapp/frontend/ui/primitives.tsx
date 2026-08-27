@@ -420,7 +420,9 @@ export function Dialog({ open, onClose, title, children, footer }: DialogProps) 
       >
         <header className="ac-dialog__header">
           <h2 id={titleId}>{title}</h2>
-          <button aria-label="Close" className="ac-dialog__close" onClick={onClose} type="button"><IconClose /></button>
+          {/* 与 Drawer 同源：关闭钮复用 IconButton 原语（hover/命中区/focus 合同集中一处），
+              不再重造裸 button。 */}
+          <IconButton label="Close" onClick={onClose} size="compact"><IconClose /></IconButton>
         </header>
         <div className="ac-dialog__body">{children}</div>
         {footer ? <footer className="ac-dialog__footer">{footer}</footer> : null}

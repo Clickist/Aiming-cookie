@@ -9,6 +9,14 @@
   --duration-fast: 150ms;
   --shadow-overlay: 0 8px 24px color-mix(in srgb, var(--on-surface) 14%, transparent);
   --ring: 0 0 0 3px var(--primary-container);
+  /* frontend-parity digests §9 的六枚 token 缺口（本文件只承载派生/规格型五枚；
+     颜色角色 --ring-color 与其它语义色一起住在 ui/tokens.ts 双主题表中）。
+     派生值跟随各自基色 token，组件内不得再私定同类字面量。 */
+  --overlay-scrim: color-mix(in srgb, var(--inverse-surface) 32%, transparent);
+  --divider-strong: color-mix(in srgb, var(--outline-variant) 50%, var(--outline));
+  --state-hover: color-mix(in srgb, currentColor 8%, transparent);
+  --state-pressed: color-mix(in srgb, currentColor 12%, transparent);
+  --shadow-menu: 0 4px 12px color-mix(in srgb, var(--on-surface) 12%, transparent);
   --duration-surface: 200ms;
   --duration-reduced-motion: 120ms;
   --space-1: 4px;
@@ -178,16 +186,27 @@ a {
   font-size: var(--text-title);
 }
 
+/* 工艺红线（digests §9）：16px 图标的命中区 ≥36px。compact 只压缩非图标控件，
+   icon 变体一律抬回 --control-height 下限；hover/pressed 用共享 state-layer
+   半透明叠层，不再私定实底色。 */
 .ac-icon-button[data-size="compact"] {
-  width: var(--control-height-compact);
-  height: var(--control-height-compact);
+  width: var(--control-height);
+  height: var(--control-height);
+}
+
+.ac-icon-button:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-hover);
+  color: var(--on-surface);
+}
+
+.ac-icon-button:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--state-pressed);
 }
 
 .ac-button:focus-visible,
 .ac-icon-button:focus-visible,
 .ac-field__control:focus-visible,
-.ac-tab:focus-visible,
-.ac-dialog__close:focus-visible {
+.ac-tab:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
@@ -399,20 +418,20 @@ a {
   color: var(--error);
 }
 
+/* 弹层遮罩唯一户口：drawer/dialog 共用同一条规则（原先 dialog 的 transition
+   在文件后部二次声明、必漂移）。scrim 颜色/不透明度收敛进 --overlay-scrim，
+   开关动画只动元素 opacity，符合“阴影与遮罩都走共享 token”的深度合同。 */
 .ac-drawer-backdrop,
 .ac-dialog-backdrop {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: var(--inverse-surface);
-  opacity: 0.32;
+  background: var(--overlay-scrim);
+  transition: opacity var(--duration-surface) var(--ease-out);
 }
 
-.ac-drawer-backdrop {
-  transition: opacity var(--duration-surface) var(--ease-drawer);
-}
-
-.ac-drawer-backdrop[data-state="closed"] {
+.ac-drawer-backdrop[data-state="closed"],
+.ac-dialog-backdrop[data-state="closed"] {
   opacity: 0;
   pointer-events: none;
 }
@@ -442,7 +461,7 @@ a {
 
 .ac-drawer[data-side="left"] {
   inset-block: 0;
-  inset-inline-end: 0;
+  inset-inline-start: 0;
 }
 
 .ac-drawer[data-side="left"][data-state="closed"] {
@@ -491,6 +510,25 @@ a {
   transform: translateY(100%);
 }
 
+/* tone 承接（digests §9：Toast 暴露 tone prop 但样式层零承接＝API 说谎）。
+   Toast 以 inverse 底保可读，tone 用 inline-start 的 2px 语义色强调条区分；
+   颜色全部走既有角色（success/warning 复用 Status/Badge 同款信号色），零字面量。 */
+.ac-toast[data-tone="info"] {
+  border-inline-start: 2px solid var(--tertiary);
+}
+
+.ac-toast[data-tone="success"] {
+  border-inline-start: 2px solid var(--event-kill);
+}
+
+.ac-toast[data-tone="warning"] {
+  border-inline-start: 2px solid var(--event-peak);
+}
+
+.ac-toast[data-tone="error"] {
+  border-inline-start: 2px solid var(--error);
+}
+
 .ac-toast__body {
   min-width: 0;
   flex: 1;
@@ -513,15 +551,6 @@ a {
   background: var(--surface);
   color: var(--on-surface);
   transition: opacity var(--duration-surface) var(--ease-out), transform var(--duration-surface) var(--ease-out);
-}
-
-.ac-dialog-backdrop {
-  transition: opacity var(--duration-surface) var(--ease-out);
-}
-
-.ac-dialog-backdrop[data-state="closed"] {
-  opacity: 0;
-  pointer-events: none;
 }
 
 .ac-dialog[data-state="closed"] {
@@ -551,13 +580,6 @@ a {
 .ac-dialog__footer {
   justify-content: flex-end;
   border-top: 1px solid var(--outline-variant);
-}
-
-.ac-dialog__close {
-  border: 0;
-  background: transparent;
-  color: var(--on-surface-variant);
-  cursor: pointer;
 }
 
 @media (max-width: 640px) {

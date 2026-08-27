@@ -981,7 +981,13 @@ export function CoachPanel({
 
   const send = async () => {
     const content = draft.trim();
-    if (!content || run?.status === "running" || run?.status === "queued") return;
+    if (!content) return;
+    // 最小止血（digests §11 反模式第一名：运行中 send() 静默 return＝击键凭空消失）。
+    // 完整的可见队列编排是后续批次；此刻只保证 Enter 有可见反馈、草稿不被吞。
+    if (run?.status === "running" || run?.status === "queued") {
+      notify("当前回复仍在生成中，这条内容保留在输入框；可停止生成后再发送。");
+      return;
+    }
     // 同步重入锁：必须在任何 await 之前置位，重入直接丢弃。
     if (sendingRef.current) return;
     sendingRef.current = true;

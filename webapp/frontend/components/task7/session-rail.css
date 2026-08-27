@@ -62,31 +62,11 @@
   cursor: pointer;
 }
 
+/* 新建对话：primary 填充/圆角/字号/hover 全部由共享 .ac-button 原语承载
+   （原手抄 color-mix 90% 暗化公式已删除，漂移点消除）；此处只留 rail 内布局。 */
 .task7-session-rail__new {
   flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: var(--control-height);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--primary);
-  border-radius: var(--radius-md);
-  background: var(--primary);
-  color: var(--on-primary);
-  font-size: var(--text-ui);
-  font-weight: 600;
-  transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .task7-session-rail__new:hover {
-    background: color-mix(in srgb, var(--primary) 90%, var(--on-surface));
-  }
-}
-
-.task7-session-rail__new:active {
-  transform: translateY(1px);
+  width: 100%;
 }
 
 .task7-session-rail__search {
@@ -411,7 +391,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task7-session-rail__new,
   .task7-session-rail__search,
   .task7-session-rail__session,
   .task7-session-rail__item-action,

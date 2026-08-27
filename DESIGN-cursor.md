@@ -108,6 +108,7 @@ All themes expose the identical token names below. Values are intentionally sema
 | `inverse-surface` | `#312b25` | `#e9e4dd` | Inverted surface |
 | `inverse-on-surface` | `#f9eee8` | `#3e2c26` | Text on inverted surface |
 | `inverse-primary` | `#ffb59d` | `#ac3400` | Action on inverted surface |
+| `ring-color` | `#c83d00` | `#ff8a5c` | Focus/attention emphasis ring (frontend-parity digests §9) |
 
 ## Component rules
 

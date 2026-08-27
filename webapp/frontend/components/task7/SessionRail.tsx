@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
 import { IconClose, IconHistory, IconPlus, IconSearch, IconSettings } from "@/ui/icons";
+import { Button } from "@/ui/primitives";
 
 export type SessionRailId = string | number;
 
@@ -152,10 +153,12 @@ export function SessionRail({
     <aside aria-label="会话" className={railClassName} ref={railRef}>
       <div className="task7-session-rail__header">
         <div className="task7-session-rail__header-actions">
-          <button className="task7-session-rail__new" onClick={onNewSession} type="button">
+          {/* primary 视觉走共享 Button 原语（digests §9：不再手抄 primary 填充与 hover 公式），
+              本类只保留 rail 内的布局伸缩。 */}
+          <Button className="task7-session-rail__new" onClick={onNewSession} variant="primary">
             <IconPlus />
             <span>新建对话</span>
-          </button>
+          </Button>
         </div>
       </div>
 
