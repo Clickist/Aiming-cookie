@@ -19,10 +19,12 @@ import {
   readSessionMessages,
   sessionExists,
   deleteSessionFile,
+  truncateSessionFromMessage,
   writeConversationMeta,
   type ConversationMeta,
   type SessionMessage,
 } from "./session-repo.ts";
+import { hasActiveAgentRunForSession } from "./agent-runs.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -171,6 +173,33 @@ export async function getCoachSessionDetail(
     legacy_session_id: null,
   }));
   return { ...base, messages };
+}
+
+/**
+ * 编辑重发截断（digests §11 item 7）：把会话可见消息截到前 `keepMessages`
+ * 条，返回截断后的完整 session detail 供前端一次刷新。
+ * 活跃 run 会继续向同一 JSONL 追加——先拒绝（409 session_busy），
+ * 由前端在 run 结束后重试。
+ */
+export async function truncateCoachSession(
+  ownerId: string,
+  sessionId: number,
+  keepMessages: number,
+): Promise<SessionOut & { messages: Array<Record<string, unknown>> }> {
+  if (!Number.isInteger(sessionId) || sessionId <= 0) {
+    throw new CoachDataError(400, "Coach session id is invalid");
+  }
+  if (!Number.isInteger(keepMessages) || keepMessages < 0) {
+    throw new CoachDataError(400, "keep_messages must be a non-negative integer");
+  }
+  if (!(await sessionExists(sessionId))) {
+    throw new CoachDataError(404, "Coach session is unavailable");
+  }
+  if (hasActiveAgentRunForSession(sessionId)) {
+    throw new CoachDataError(409, "session_busy");
+  }
+  await truncateSessionFromMessage(sessionId, keepMessages);
+  return getCoachSessionDetail(ownerId, sessionId);
 }
 
 export async function deleteCoachSession(ownerId: string, sessionId: number): Promise<SessionOut> {

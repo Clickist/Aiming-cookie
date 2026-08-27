@@ -118,12 +118,14 @@ test("session rail's new button composes the shared primary Button primitive", (
   assert.doesNotMatch(railCss, /task7-session-rail__new:hover/);
 });
 
-test("sending while a run is active gives visible feedback instead of swallowing the keystroke", () => {
+test("sending while a run is active enqueues a visible chip instead of swallowing the keystroke", () => {
   const coachPanel = readFileSync(join(frontendRoot, "components", "task6", "CoachPanel.tsx"), "utf8");
-  const sendStart = coachPanel.indexOf("const send = async () =>");
+  const sendStart = coachPanel.indexOf("const sendText = async");
   const guardEnd = coachPanel.indexOf("sendingRef.current = true");
   const guard = coachPanel.slice(sendStart, guardEnd);
-  assert.match(guard, /if \(run\?\.status === "running" \|\| run\?\.status === "queued"\) \{\s*notify\(/);
-  // 止血红线：运行中拒绝发送时草稿必须保留（不 setDraft("")）。
-  assert.ok(guard.indexOf("setDraft") === -1);
+  // 批 5 编排取代批 1 的 notify 止血：运行中发送进可见队列 chips
+  // （Cline #12226 丢消息教训——每条可视可编辑可删）。
+  assert.match(guard, /enqueueQueuedItem\(content\)/);
+  // 受理即清空输入＝移入而非复制；需要改写时走 chip 的回填编辑。
+  assert.match(guard, /enqueueQueuedItem\(content\);\s*setDraft\(""\);/);
 });

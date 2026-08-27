@@ -12,6 +12,7 @@ import {
   getCoachSessionDetail,
   listCoachSessions,
   ownerIdFromRequest,
+  truncateCoachSession,
   updateCoachSession,
 } from "./sidecar-coach-data.ts";
 import {
@@ -713,6 +714,30 @@ export async function handleSidecarRequest(
         }
         writeJson(res, 200, await updateCoachSession(ownerId, sessionId, update));
       }
+    } catch (error) {
+      writeCoachDataError(res, error);
+    }
+    return;
+  }
+
+  // 编辑重发截断（digests §11 item 7）：keep_messages = 保留前 N 条可见消息。
+  const sessionTruncateMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/truncate$/);
+  if (req.method === "POST" && sessionTruncateMatch) {
+    try {
+      let body: unknown;
+      try {
+        body = await parseJsonBody(req);
+      } catch (error) {
+        writeJson(res, 400, { detail: error instanceof Error ? error.message : "Invalid request body" });
+        return;
+      }
+      if (!isRecord(body)) {
+        writeJson(res, 400, { detail: "Request body must be a JSON object" });
+        return;
+      }
+      const sessionId = Number(decodeURIComponent(sessionTruncateMatch[1]));
+      const ownerId = ownerIdFromRequest(req);
+      writeJson(res, 200, await truncateCoachSession(ownerId, sessionId, body.keep_messages as number));
     } catch (error) {
       writeCoachDataError(res, error);
     }

@@ -14,7 +14,10 @@ async function source(relativePath: string): Promise<string> {
 test("Coach composer ignores Enter while an IME composition is active", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   const keydownAt = panel.indexOf("onKeyDown={(event) => {");
-  const composingAt = panel.indexOf("if (event.nativeEvent.isComposing) return;");
+  // 批 5 强化：isComposing + keyCode 229 双守卫（部分浏览器组合期事件只报 229）。
+  const composingAt = panel.indexOf(
+    "if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;",
+  );
   // 中文输入法按 Enter 确认候选词时 isComposing 为 true，不应触发提交。
   assert.ok(keydownAt !== -1 && composingAt !== -1, "composer keydown handler must exist");
   assert.ok(composingAt > keydownAt, "isComposing guard must live in the composer keydown handler");
@@ -23,15 +26,23 @@ test("Coach composer ignores Enter while an IME composition is active", async ()
 test("Coach send holds a synchronous re-entry lock across its awaits", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   assert.match(panel, /const sendingRef = useRef\(false\);/);
-  // 锁在任何 await 之前同步置位，重入直接丢弃。
-  assert.match(panel, /if \(sendingRef\.current\) return;\s*sendingRef\.current = true;/);
+  // 重入直接丢弃；锁在任何 await 之前同步置位。
+  assert.match(panel, /if \(!content \|\| sendingRef\.current\) return false;/);
+  assert.match(panel, /sendingRef\.current = true;/);
   // 成功失败都必须走 finally 释放锁。
   assert.match(panel, /\} finally \{\s*sendingRef\.current = false;\s*\}/);
 });
 
 test("Coach send failure only restores the draft when the user typed nothing new", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
-  assert.doesNotMatch(panel, /setDraft\(content\)/);
+  const sendChunk = panel.slice(
+    panel.indexOf("const sendText = async"),
+    panel.indexOf("const submitComposer"),
+  );
+  // 发送主路径（成功 setDraft("") 之外）不得无条件用原内容覆盖草稿；
+  // 失败回填必须条件式——用户已在等待期重新输入则保留新草稿。
+  assert.doesNotMatch(sendChunk, /setDraft\(content\)/);
+  assert.match(panel, /setDraft\(\(current\) => \(current\.trim\(\) \? current : content\)\)/);
 });
 
 test("AppShell dedupes concurrent coach session creation through an in-flight promise", async () => {

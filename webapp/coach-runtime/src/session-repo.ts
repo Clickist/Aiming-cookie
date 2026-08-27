@@ -272,6 +272,46 @@ export function extractUserFacingText(content: unknown): string {
   return "";
 }
 
+// ── Edit-resend truncation（digests §11 item 7：截断派）──────────────────
+
+/**
+ * 编辑重发的截断实现：丢弃第 `keepMessages` 条可见消息及其后的整段历史。
+ *
+ * 通过 pi Session 的公开 storage 合同把 leaf 重指到最后一条保留的分支条目
+ * （keepMessages===0 时置 null），后续 buildContext/getBranch/appendMessage
+ * 都沿新 leaf 走——单线 JsonlSession 兼容、不引入 branch_id fork 树；
+ * 被剪掉的行留在文件里成为孤儿分支，可追溯但不再参与任何上下文。
+ * 调用方负责保证该会话当前没有活跃 agent run（见 hasActiveAgentRunForSession）。
+ */
+export async function truncateSessionFromMessage(threadId: number, keepMessages: number): Promise<void> {
+  if (!Number.isInteger(keepMessages) || keepMessages < 0) {
+    throw new Error(`invalid keep_messages: ${keepMessages}`);
+  }
+  const session = (await openSession(threadId)) ?? (await migrateLegacyConversation(threadId));
+  if (!session) return; // 会话不存在：幂等 no-op
+
+  const branch = await session.getBranch();
+  const visibleIndexes: number[] = [];
+  for (let index = 0; index < branch.length; index++) {
+    const entry = branch[index]!;
+    if (entry.type !== "message" || !isRecord(entry.message)) continue;
+    const message = entry.message as { role?: unknown; content?: unknown };
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    const content = extractUserFacingText(message.content);
+    if (message.role === "assistant" && !content.trim()) continue;
+    visibleIndexes.push(index);
+  }
+  if (keepMessages >= visibleIndexes.length) return; // 已短于截断点：幂等 no-op
+
+  const cutBranchIndex = visibleIndexes[keepMessages]!;
+  const targetId = cutBranchIndex > 0 ? branch[cutBranchIndex - 1]!.id : null;
+  const storage = session.getStorage() as { setLeafId?: (id: string | null) => Promise<void> };
+  if (typeof storage?.setLeafId !== "function") {
+    throw new Error("session storage does not support setLeafId");
+  }
+  await storage.setLeafId(targetId);
+}
+
 export function deriveConversationTitle(messages: SessionMessage[], fallback: string | null): string {
   const firstUser = messages.find((message) => message.role === "user");
   if (firstUser && firstUser.content.trim()) return firstUser.content.trim().slice(0, 120);

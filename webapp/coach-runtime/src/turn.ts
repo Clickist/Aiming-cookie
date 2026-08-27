@@ -65,8 +65,8 @@ export type CoachPartialRevision = {
 
 export type CoachActivityUpdate = {
   sequence: number;
-  kind: "thinking" | "tool";
-  state: "started" | "completed" | "failed";
+  kind: "thinking" | "tool" | "queue";
+  state: "started" | "completed" | "failed" | "updated";
   tool_call_id?: string;
   tool_name?: string;
   command_name?: string;
@@ -78,6 +78,10 @@ export type CoachActivityUpdate = {
   result_preview?: string;
   /** Wall time of the tool call in ms (present on completion). */
   duration_ms?: number;
+  /** Live engine queue sizes on pi `queue_update`（digests §11 批 5 最小透传）。 */
+  steer_count?: number;
+  follow_up_count?: number;
+  next_turn_count?: number;
 };
 
 export type CoachTurnTiming = {
@@ -871,6 +875,20 @@ export async function runCoachTurn(
         if (isRecord(detailEvent) && (detailEvent.type === "knowledge" || detailEvent.type === "product_command")) {
           collectedToolEvents.push(detailEvent as CoachRuntimeToolEvent);
         }
+        return;
+      }
+
+      if (eventType === "queue_update") {
+        // Pi harness 在 steer/followUp 入列与各排水点同步发布 queue_update。
+        // digests §11 批 5 最小透传：沿用既有 activity 通道把它记进 run
+        // events（SSE 与 GET 同源），前端队列 chips 保持前端权威态，可据此对账。
+        await publishActivity({
+          kind: "queue",
+          state: "updated",
+          steer_count: Array.isArray(event.steer) ? event.steer.length : 0,
+          follow_up_count: Array.isArray(event.followUp) ? event.followUp.length : 0,
+          next_turn_count: Array.isArray(event.nextTurn) ? event.nextTurn.length : 0,
+        });
         return;
       }
 

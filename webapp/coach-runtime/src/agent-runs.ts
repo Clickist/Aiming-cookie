@@ -306,13 +306,32 @@ async function runAgentTurn(
           record.state.phase = "text_generation";
         }
         const payload: AnyDict = {};
-        for (const key of ["sequence", "kind", "state", "tool_call_id", "tool_name", "command_name", "ui_event", "args_preview", "result_preview", "duration_ms"] as const) {
+        for (const key of [
+          "sequence",
+          "kind",
+          "state",
+          "tool_call_id",
+          "tool_name",
+          "command_name",
+          "ui_event",
+          "args_preview",
+          "result_preview",
+          "duration_ms",
+          "steer_count",
+          "follow_up_count",
+          "next_turn_count",
+        ] as const) {
           if (activity[key] !== undefined) (payload as AnyDict)[key] = activity[key];
         }
         const event = appendEvent(
           record,
           activity.kind === "tool" ? "tool" : "phase",
-          activity.kind === "tool" && activity.state === "started" ? "tool_execution" : "text_generation",
+          // 队列事件不代表生成阶段切换：如实记当前阶段，避免前端误改活动标签。
+          activity.kind === "queue"
+            ? record.state.phase
+            : activity.kind === "tool" && activity.state === "started"
+              ? "tool_execution"
+              : "text_generation",
           `${activity.kind}_${activity.state}`,
           "Coach activity update",
           payload,
@@ -634,6 +653,19 @@ export async function steerAgentRun(
     throw new AgentRunError("run_not_steerable", `Coach agent run is not steerable (${result.code})`);
   }
   return { queued: true };
+}
+
+/**
+ * Whether any queued/running agent run is attached to this thread/session.
+ * Edit-resend truncation (POST /v1/sessions/:id/truncate) must refuse while
+ * a run can still append to the same JSONL session.
+ */
+export function hasActiveAgentRunForSession(threadId: number): boolean {
+  for (const record of runs.values()) {
+    if (record.threadId !== threadId) continue;
+    if (record.state.status === "queued" || record.state.status === "running") return true;
+  }
+  return false;
 }
 
 export function decideConfirmation(

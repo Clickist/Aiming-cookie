@@ -1172,6 +1172,29 @@ export async function followUpCoachAgentRun(
   return (await res.json()) as CoachAgentRunQueueV1;
 }
 
+/**
+ * 编辑重发截断（digests §11 item 7 截断派）：保留会话前 keepMessages 条可见
+ * 消息并丢弃其后历史。409 session_busy 表示仍有活跃 run 在写该会话，
+ * 前端须等运行结束后重试。
+ */
+export async function truncateCoachSession(
+  sessionId: number,
+  keepMessages: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachSessionDetail> {
+  const res = await apiFetchSidecar(
+    `/v1/sessions/${encodeURIComponent(String(sessionId))}/truncate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keep_messages: keepMessages }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachSessionDetail;
+}
+
 export async function getCalibrationProfile(
   opts: { signal?: AbortSignal; userId?: string } = {},
 ): Promise<CalibrationProfileV1> {

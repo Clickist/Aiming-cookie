@@ -10,10 +10,28 @@ import {
   getCurrentTraining,
   listSessions,
   retryCoachAgentRun,
+  steerCoachAgentRun,
   stopCoachAgentRun,
+  truncateCoachSession,
 } from "@/lib/api";
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
 import { COACH_PENDING_INTENT_KEY, computeAnalysisEtaSeconds } from "@/lib/contracts";
+import {
+  COACH_DRAFT_DEBOUNCE_MS,
+  activeMentionQuery,
+  applyMentionSelection,
+  buildMentionCandidates,
+  coachDraftStorageKey,
+  filterMentionCandidates,
+  readCoachDraft,
+  removeQueuedChip,
+  stepSentHistory,
+  truncateQueuePreview,
+  writeCoachDraft,
+  type CoachDraftScope,
+  type MentionCandidate,
+  type QueuedChip,
+} from "@/lib/composer";
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
 import { CoachModelMenu } from "./CoachModelMenu";
 import { CoachStepList, CoachThinkingBlock, ElapsedTicker, type CoachToolStep } from "./CoachRunActivity";
@@ -26,7 +44,7 @@ import type {
   ProviderProfileState,
   SessionListItem,
 } from "@/lib/types";
-import { IconChevronDown, IconClose, IconSend, IconStop } from "@/ui/icons";
+import { IconChevronDown, IconClose, IconHistory, IconSend } from "@/ui/icons";
 import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
@@ -328,6 +346,64 @@ export function CoachPanel({
     liveThinkingRef.current = null;
     thinkingTrackerRef.current = { startAt: null, frozenMs: null };
   }, []);
+
+  // ── Composer 编排（digests §11 批 5）───────────────────────────────────
+  // 运行中发送不再静默也不只弹提示：进可见队列 chips（前端权威态，引擎
+  // steer/followUp 无逐条取消动词），每条可视可编辑可删。
+  const [queuedChips, setQueuedChips] = useState<QueuedChip[]>([]);
+  const queuedChipsRef = useRef<QueuedChip[]>([]);
+  queuedChipsRef.current = queuedChips;
+  const chipSeqRef = useRef(0);
+  // 发送键四动作（steer / queue / interrupt-steer / interrupt）
+  const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const sendMenuRef = useRef<HTMLDivElement | null>(null);
+  // @ 引用下拉（LibreChat Mention 骨架）
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionCaretRef = useRef<number | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // 编辑重发（截断派）：记录待编辑消息的展示序号
+  const [editingResend, setEditingResend] = useState<{ index: number } | null>(null);
+  // ↑ 发送历史（会话内存即可）
+  const sentHistoryRef = useRef<string[]>([]);
+  const historyIndexRef = useRef<number | null>(null);
+  const historyBackupRef = useRef<string | null>(null);
+  // send 同步重入之外，还需要随时读取最新 run：409 恢复分支据此分叉
+  const activeRunRef = useRef<CoachAgentRunV1 | null>(null);
+  useEffect(() => {
+    activeRunRef.current = run;
+  }, [run]);
+  const composerBusy = Boolean(run && ["queued", "running"].includes(run.status));
+
+  // 草稿三级持久（digests §11 item 4）：sessionId | PENDING_CONVO | NEW_CONVO，
+  // 多窗格实例按 layoutMode 加 pane 后缀防串；400ms debounce 落 localStorage。
+  const draftScope: CoachDraftScope = draftSession
+    ? { kind: "new-convo" }
+    : sessionId == null
+      ? { kind: "pending-convo" }
+      : { kind: "session", sessionId };
+  const paneSuffix = layoutMode === "full" ? undefined : layoutMode;
+  const draftStorageKey = coachDraftStorageKey(draftScope, paneSuffix);
+  const draftRestoredRef = useRef(false);
+  useEffect(() => {
+    // 恢复先于挂载意图消费：本效果声明在 pending-intent 效果之前，React 按
+    // 声明顺序执行，意图文案会覆盖已恢复草稿。
+    setDraft(readCoachDraft(window.localStorage, draftStorageKey));
+    historyIndexRef.current = null;
+    historyBackupRef.current = null;
+  }, [draftStorageKey]);
+  useEffect(() => {
+    // 首帧跳过：恢复值本身不需要回写。
+    if (!draftRestoredRef.current) {
+      draftRestoredRef.current = true;
+      return;
+    }
+    const timer = setTimeout(
+      () => writeCoachDraft(window.localStorage, draftStorageKey, draft),
+      COACH_DRAFT_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [draft, draftStorageKey]);
 
   const activeSessionKey = draftSession ? "draft" : `session:${sessionId ?? "primary"}`;
   const activeSessionKeyRef = useRef(activeSessionKey);
@@ -991,57 +1067,308 @@ export function CoachPanel({
     </div>
   );
 
-  const send = async () => {
-    const content = draft.trim();
+  // ── 发送/队列编排（digests §11 批 5）───────────────────────────────────
+
+  const pushSentHistory = useCallback((text: string) => {
+    sentHistoryRef.current = [...sentHistoryRef.current, text].slice(-50);
+    historyIndexRef.current = null;
+    historyBackupRef.current = null;
+  }, []);
+
+  /** 队列 chips 入列：前端权威态，逐条可视可编辑可删（丢消息教训）。 */
+  const enqueueQueuedItem = useCallback((text: string) => {
+    const content = text.trim();
     if (!content) return;
-    // 最小止血（digests §11 反模式第一名：运行中 send() 静默 return＝击键凭空消失）。
-    // 完整的可见队列编排是后续批次；此刻只保证 Enter 有可见反馈、草稿不被吞。
-    if (run?.status === "running" || run?.status === "queued") {
-      notify("当前回复仍在生成中，这条内容保留在输入框；可停止生成后再发送。");
-      return;
+    chipSeqRef.current += 1;
+    const id = chipSeqRef.current;
+    setQueuedChips((chips) => [...chips, { id, text: content }]);
+  }, []);
+
+  const appendOptimisticUserMessage = useCallback((content: string) => {
+    const optimisticMessageId = optimisticMessageIdRef.current--;
+    stickToBottomRef.current = true;
+    setMessages((current) => [...current, {
+      id: optimisticMessageId,
+      role: "user",
+      content,
+      created_at: new Date().toISOString(),
+      legacy_session_id: null,
+    }]);
+    return optimisticMessageId;
+  }, []);
+
+  /**
+   * 实际发送，成功受理返回 true。
+   * 运行中且非 force 一律转可见队列 chips——正式编排取代批 1 的 notify 止血，
+   * 击键绝不凭空消失。force 仅供「打断并转向」等显式编排动作使用。
+   */
+  const sendText = async (
+    contentRaw: string,
+    opts: { force?: boolean; editingResend?: { index: number } } = {},
+  ): Promise<boolean> => {
+    const content = contentRaw.trim();
+    if (!content || sendingRef.current) return false;
+    const active = activeRunRef.current;
+    if (!opts.force && active && ["queued", "running"].includes(active.status)) {
+      // 已受理即清空输入：文本已移入 chip（不是复制），需要改写时走回填编辑。
+      enqueueQueuedItem(content);
+      setDraft("");
+      notify("当前回复仍在生成中，这条已加入输入框上方队列，可随时取消、编辑或立即转向。");
+      return true;
     }
     // 同步重入锁：必须在任何 await 之前置位，重入直接丢弃。
-    if (sendingRef.current) return;
     sendingRef.current = true;
     // 新回合开始：清掉上一回合的归档摘要与思考流残留。
     setArchivedTurn(null);
     clearThinkingStream();
+    const editing = opts.editingResend;
+    let truncatedDone = false;
     let optimisticId: number | null = null;
     try {
+      // 编辑重发＝截断派：先把会话截到该消息之前再发送（该消息之后的历史不参与上下文）。
+      if (editing) {
+        if (sessionId == null) {
+          throw Object.assign(new Error("编辑重发需要已保存的会话"), { name: "ComposerEditNeedsSession" });
+        }
+        await truncateCoachSession(sessionId, editing.index);
+        truncatedDone = true;
+        setMessages((current) => current.slice(0, editing.index));
+        window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
+      }
       const effectiveSessionId = sessionId ?? (onEnsureSession ? await onEnsureSession() : null);
       if (sessionId === null && onEnsureSession && effectiveSessionId === null) {
         notify("未能创建会话，草稿已保留，请重试。");
-        return;
+        return false;
       }
-      const optimisticMessageId = optimisticMessageIdRef.current--;
-      optimisticId = optimisticMessageId;
+      optimisticId = appendOptimisticUserMessage(content);
       setDraft("");
       stickToBottomRef.current = true;
-      setMessages((current) => [...current, {
-        id: optimisticMessageId,
-        role: "user",
-        content,
-        created_at: new Date().toISOString(),
-        legacy_session_id: null,
-      }]);
+      pushSentHistory(content);
       const created = await createCoachAgentRun(
         content,
         effectiveSessionId == null ? {} : { sessionId: effectiveSessionId },
       );
       setRun(created);
+      if (editing) setEditingResend(null);
       // 会话标题会随第一条消息更新，通知 AppShell 刷新侧栏列表。
       window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
+      return true;
     } catch (error) {
       if (optimisticId !== null) {
         setMessages((current) => current.filter((message) => message.id !== optimisticId));
       }
       // 仅当等待期间用户没有重新输入时才回填，避免覆盖新草稿。
       setDraft((current) => (current.trim() ? current : content));
-      notify(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
+      if (truncatedDone) {
+        // 截断已在服务端生效但发送失败：退出编辑态防止再次按旧序号重复截断。
+        setEditingResend(null);
+        notify(requestFeedback(error, "消息未发送；截断已生效，请直接重新发送当前内容。"));
+      } else {
+        notify(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
+      }
+      return false;
     } finally {
       sendingRef.current = false;
     }
   };
+
+  const submitComposer = () => {
+    const content = draft.trim();
+    if (!content) return;
+    setMentionQuery(null);
+    setSendMenuOpen(false);
+    const editing = editingResend;
+    void sendText(content, editing ? { editingResend: editing } : undefined);
+  };
+
+  /**
+   * 409 run_not_steerable ＝ 可恢复的正常态（本轮刚结束/亚毫秒注册窗）：
+   * 立即转不进去了就转回可见队列等自动发送；404（run 已不存在）同理。
+   */
+  const isRecoverableSteerReject = (error: unknown): boolean => {
+    const name = error instanceof Error ? error.name : "";
+    return name === "ApiError_409" || name === "ApiError_404";
+  };
+
+  const activeRunIsBusy = () =>
+    Boolean(activeRunRef.current && ["queued", "running"].includes(activeRunRef.current!.status));
+
+  /** 四动作之 steer：把当前草稿立即注入运行中的回合。 */
+  const steerWithDraft = async () => {
+    const content = draft.trim();
+    if (!content) return;
+    setSendMenuOpen(false);
+    const active = activeRunRef.current;
+    if (!active || !["queued", "running"].includes(active.status)) {
+      void sendText(content);
+      return;
+    }
+    try {
+      await steerCoachAgentRun(active.run_ref, content);
+      pushSentHistory(content);
+      setDraft("");
+      appendOptimisticUserMessage(content);
+    } catch (error) {
+      if (isRecoverableSteerReject(error)) {
+        if (activeRunIsBusy()) {
+          enqueueQueuedItem(content);
+          setDraft("");
+          notify("引擎这一窗口没能接收转向，先排入队列，本轮结束后自动发送。");
+        } else {
+          void sendText(content);
+        }
+      } else {
+        notify(requestFeedback(error, "未能立即转向，草稿已保留，请重试。"));
+      }
+    }
+  };
+
+  /** 队列 chip 上浮：能转则立即 steer 并展示乐观气泡，不能转走可恢复分支。 */
+  const promoteChipToSteer = async (chip: QueuedChip) => {
+    const acceptAndRemove = () => setQueuedChips((chips) => removeQueuedChip(chips, chip.id));
+    const active = activeRunRef.current;
+    if (!active || !["queued", "running"].includes(active.status)) {
+      if (await sendText(chip.text)) acceptAndRemove();
+      return;
+    }
+    try {
+      await steerCoachAgentRun(active.run_ref, chip.text);
+      pushSentHistory(chip.text);
+      appendOptimisticUserMessage(chip.text);
+      acceptAndRemove();
+    } catch (error) {
+      if (!isRecoverableSteerReject(error)) {
+        notify(requestFeedback(error, "未能立即插入，内容仍保留在队列中。"));
+        return;
+      }
+      // 本轮已经收不了转向：不再忙就当普通发送放行，仍忙则 chip 留守等自动发送。
+      if (activeRunIsBusy()) {
+        notify("引擎这一窗口没能接收转向，chip 保留在队列里，本轮结束后自动发送。");
+      } else if (await sendText(chip.text)) {
+        acceptAndRemove();
+      }
+    }
+  };
+
+  const backfillChipToDraft = (chip: QueuedChip) => {
+    setQueuedChips((chips) => removeQueuedChip(chips, chip.id));
+    setDraft(chip.text);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  /** 四动作之 interrupt-steer：停止当前生成并以此草稿开启新回复。 */
+  const interruptAndSteer = async () => {
+    const content = draft.trim();
+    if (!content) return;
+    setSendMenuOpen(false);
+    const active = activeRunRef.current;
+    if (!active) {
+      void sendText(content);
+      return;
+    }
+    try {
+      setRun(await stopCoachAgentRun(active.run_ref, sessionId == null ? {} : { sessionId }));
+    } catch {
+      notify("未能停止生成，请重试。");
+      return;
+    }
+    // stop 已在服务端收敛终态：绕过运行守卫立即开始新回复。
+    void sendText(content, { force: true });
+  };
+
+  // 成功终态自动放行队首 chip：让排队语义在多轮长对话中自然流转。
+  const prevStatusRef = useRef<CoachAgentRunV1["status"] | null>(null);
+  useEffect(() => {
+    const status = run?.status ?? null;
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (!prev || !["queued", "running"].includes(prev) || status !== "succeeded") return;
+    const first = queuedChipsRef.current[0];
+    if (!first) return;
+    void sendText(first.text).then((accepted) => {
+      if (accepted) setQueuedChips((chips) => removeQueuedChip(chips, first.id));
+    });
+  }, [run]);
+
+  // ── ↑ 发送历史（item 5，内存 sent array，会话内有效）───────────────────
+  const navigateSentHistory = useCallback(
+    (direction: "up" | "down") => {
+      const history = sentHistoryRef.current;
+      if (history.length === 0) return;
+      if (direction === "up" && historyIndexRef.current === null) {
+        historyBackupRef.current = draft;
+      }
+      const next = stepSentHistory(history.length, historyIndexRef.current, direction);
+      historyIndexRef.current = next;
+      setDraft(next === null ? (historyBackupRef.current ?? "") : history[next] ?? "");
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        el?.setSelectionRange(el.value.length, el.value.length);
+      });
+    },
+    [draft],
+  );
+
+  // ── @ 引用下拉（item 3）：候选与查询状态 ───────────────────────────────
+  const syncMentionQuery = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) {
+      setMentionQuery(null);
+      return;
+    }
+    setMentionQuery(activeMentionQuery(el.value, el.selectionStart ?? el.value.length));
+    setMentionIndex(0);
+  }, []);
+
+  const mentionCandidates = useMemo(
+    () =>
+      buildMentionCandidates({
+        analysisIds: [
+          ...new Set([...discussionAnalysisIds, ...pendingAnalyses.map((analysis) => analysis.id)]),
+        ],
+        scenarioByAnalysisId: Object.fromEntries(
+          Object.entries(analysisScenarios).map(([id, info]) => [Number(id), info.scenario]),
+        ),
+        scenarioNames: [
+          ...(currentTraining?.items.map((item) => item.display_name) ?? []),
+          ...sessionsSnapshot.map((session) => session.scenario),
+        ],
+      }),
+    [discussionAnalysisIds, pendingAnalyses, analysisScenarios, currentTraining, sessionsSnapshot],
+  );
+  const filteredMentionCandidates = useMemo(
+    () => filterMentionCandidates(mentionCandidates, mentionQuery ?? ""),
+    [mentionCandidates, mentionQuery],
+  );
+  const mentionOpen = mentionQuery !== null && filteredMentionCandidates.length > 0;
+
+  const selectMentionCandidate = (candidate: MentionCandidate) => {
+    const el = textareaRef.current;
+    const caret = mentionCaretRef.current ?? el?.selectionStart ?? draft.length;
+    const next = applyMentionSelection(draft, caret, candidate.token);
+    setDraft(next.text);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  /** 编辑重发：把原消息放回输入框并记录截断点（展示序号）。 */
+  const startEditResend = (index: number, content: string) => {
+    setEditingResend({ index });
+    setDraft(content);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      el?.focus();
+      el?.setSelectionRange(el.value.length, el.value.length);
+    });
+  };
+
 
   const retry = async () => {
     if (!run) return;
@@ -1060,6 +1387,45 @@ export function CoachPanel({
       notify("未能停止生成，请重试。");
     }
   };
+
+  // 运行中发送键下拉：外点关闭、Esc 关闭、↑↓ 在动作间移动焦点（IME 守卫）。
+  useEffect(() => {
+    if (!sendMenuOpen) return undefined;
+    const menuButtons = () =>
+      sendMenuRef.current
+        ? [...sendMenuRef.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")]
+        : [];
+    const onPointerDown = (event: MouseEvent) => {
+      if (sendMenuRef.current && !sendMenuRef.current.contains(event.target as Node)) {
+        setSendMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      // IME 守卫与 textarea 同款：isComposing + keyCode 229。
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Escape") {
+        setSendMenuOpen(false);
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        const buttons = menuButtons();
+        if (buttons.length === 0) return;
+        event.preventDefault();
+        const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const next = current < 0
+          ? (event.key === "ArrowDown" ? 0 : buttons.length - 1)
+          : (current + delta + buttons.length) % buttons.length;
+        buttons[next]?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sendMenuOpen]);
 
   const headerState = capability === "loading"
     ? { state: "neutral", label: "正在读取" }
@@ -1176,7 +1542,7 @@ export function CoachPanel({
         ) : (
           <div aria-hidden="true" className="task6-msg-spacer" />
         )}
-        {messages.map((message) => (
+        {messages.map((message, index) => (
           <div className="task6-message-entry" data-role={message.role} key={message.id}>
             <article className="task6-message" data-role={message.role}>
               <p>
@@ -1185,6 +1551,18 @@ export function CoachPanel({
                   : message.content}
               </p>
             </article>
+            {/* 编辑重发（截断派，item 7）：仅空闲且已落库消息提供入口 */}
+            {message.role === "user" && message.id > 0 && !composerBusy ? (
+              <IconButton
+                className="task6-message-edit"
+                label="编辑重发"
+                onClick={() => startEditResend(index, message.content)}
+                size="compact"
+                title="编辑这条消息并重发；其后的历史将不参与本次上下文"
+              >
+                <IconHistory />
+              </IconButton>
+            ) : null}
           </div>
         ))}
         {run?.partial_text ? (
@@ -1251,34 +1629,155 @@ export function CoachPanel({
       </div>
 
       <footer className="task6-composer">
+        {/* 编辑重发横幅（item 7）：明确的截断语义提示 */}
+        {editingResend ? (
+          <div className="task6-editing-banner" role="status">
+            <span>
+              正在编辑第 {editingResend.index + 1} 条消息 · 发送后其后的历史将不参与本次上下文
+            </span>
+            <Button onClick={() => setEditingResend(null)} size="compact" variant="ghost">取消编辑</Button>
+          </div>
+        ) : null}
+        {/* 运行中队列 chips（item 1）：96 字符预览，逐条可上浮转向/回填编辑/取消 */}
+        {queuedChips.length > 0 ? (
+          <div aria-label="待发送队列" className="task6-queue-chips" role="list">
+            {queuedChips.map((chip) => (
+              <div className="task6-queue-chip" key={chip.id} role="listitem">
+                <span className="task6-queue-chip-text" title={chip.text}>{truncateQueuePreview(chip.text)}</span>
+                <IconButton label="上浮立即转向" onClick={() => void promoteChipToSteer(chip)} size="compact" title="立即插入当前回复">
+                  <IconChevronDown className="task6-icon-flip" />
+                </IconButton>
+                <IconButton label="回填编辑" onClick={() => backfillChipToDraft(chip)} size="compact" title="放回输入框编辑">
+                  <IconHistory />
+                </IconButton>
+                <IconButton label="取消发送" onClick={() => setQueuedChips((chips) => removeQueuedChip(chips, chip.id))} size="compact" title="取消这条排队消息">
+                  <IconClose />
+                </IconButton>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="task6-composer-input">
           <textarea
             aria-label="向 Coach 提问"
             id="coach-draft"
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              mentionCaretRef.current = event.target.selectionStart;
+              setDraft(event.target.value);
+              syncMentionQuery();
+            }}
             onKeyDown={(event) => {
               // 中文等输入法按 Enter 确认候选词时 isComposing 为 true，不应提交。
-              if (event.nativeEvent.isComposing) return;
+              if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+              // @ 引用下拉（item 3）：↑↓ 导航 / Enter 选中 / Esc 关闭
+              if (mentionOpen) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setMentionIndex((current) => (current + 1) % filteredMentionCandidates.length);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setMentionIndex((current) => (current - 1 + filteredMentionCandidates.length) % filteredMentionCandidates.length);
+                  return;
+                }
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  selectMentionCandidate(filteredMentionCandidates[Math.min(mentionIndex, filteredMentionCandidates.length - 1)]!);
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setMentionQuery(null);
+                  return;
+                }
+              }
+              // ↑ 翻发送历史（item 5）：空草稿或正在翻页时接管
+              if (!event.shiftKey && event.key === "ArrowUp" && (draft.trim() === "" || historyIndexRef.current !== null)) {
+                event.preventDefault();
+                navigateSentHistory("up");
+                return;
+              }
+              if (!event.shiftKey && event.key === "ArrowDown" && historyIndexRef.current !== null) {
+                event.preventDefault();
+                navigateSentHistory("down");
+                return;
+              }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                void send();
+                submitComposer();
               }
             }}
             placeholder="向 Coach 提问，可以聊训练，也可以让它帮你操作应用…"
+            ref={textareaRef}
             rows={3}
             value={draft}
           />
-          {run && ["queued", "running"].includes(run.status) ? (
-            <button aria-label="停止生成" className="task6-composer-send" onClick={() => void stop()} type="button" title="停止生成"><IconStop /></button>
+          {/* @ 引用下拉浮层（item 3） */}
+          {mentionOpen ? (
+            <div
+              aria-label="@ 引用候选"
+              className="task6-mention-menu"
+              role="listbox"
+            >
+              {filteredMentionCandidates.slice(0, 8).map((candidate, index) => (
+                <button
+                  aria-selected={index === mentionIndex}
+                  className="task6-mention-item"
+                  key={`${candidate.token}-${index}`}
+                  onClick={() => selectMentionCandidate(candidate)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  role="option"
+                  type="button"
+                >
+                  <strong>{candidate.token}</strong>
+                  <small>{candidate.label}</small>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {composerBusy ? (
+            /* 运行中发送键四动作（item 2）：steer / queue / interrupt-steer / interrupt */
+            <div className="task6-send-actions" ref={sendMenuRef}>
+              <button
+                aria-expanded={sendMenuOpen}
+                aria-haspopup="menu"
+                aria-label="运行中发送选项"
+                className="task6-composer-send"
+                data-open={sendMenuOpen || undefined}
+                onClick={() => setSendMenuOpen((open) => !open)}
+                title="发送选项：转向 / 排队 / 打断"
+                type="button"
+              >
+                <IconSend />
+              </button>
+              {sendMenuOpen ? (
+                <div aria-label="运行中发送选项" className="task6-send-menu" role="menu">
+                  <button disabled={!draft.trim()} onClick={() => void steerWithDraft()} role="menuitem" type="button">
+                    立即转向<small>不打断当前回复，直接注入本回合</small>
+                  </button>
+                  <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); enqueueQueuedItem(draft); setDraft(""); }} role="menuitem" type="button">
+                    加入队列<small>本轮结束后按顺序自动发送，可随时取消</small>
+                  </button>
+                  <button disabled={!draft.trim()} onClick={() => void interruptAndSteer()} role="menuitem" type="button">
+                    打断并转向<small>停止当前生成并以此内容开始新回复</small>
+                  </button>
+                  <div className="task6-send-menu-separator" role="separator" />
+                  <button onClick={() => void stop()} role="menuitem" type="button">
+                    停止生成<small>结束本轮回复</small>
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ) : (
-            <button aria-label="发送" className="task6-composer-send" disabled={!draft.trim()} onClick={() => void send()} type="button"><IconSend /></button>
+            <button aria-label="发送" className="task6-composer-send" disabled={!draft.trim()} onClick={submitComposer} type="button"><IconSend /></button>
           )}
         </div>
         {/* 工具行拆出（digests §8）：模型菜单不再与 textarea 同行抢占宽度，
-            textarea 只为发送钮保留右侧空间。 */}
+            textarea 只为发送钮保留右侧空间。模型选择器运行中保持可用（item 6，
+            选择对下一段回复生效），不随运行态连坐 disabled。 */}
         <div className="task6-composer-tools">
           <CoachModelMenu
-            disabled={run !== null && ["queued", "running"].includes(run.status)}
             onError={(message) => notify(message)}
           />
         </div>
