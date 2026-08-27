@@ -1327,3 +1327,43 @@ async def test_vertical_slice_response_loss_startup_reconcile_then_removes_only_
     assert Path(final["mouse_trace_path"]).is_file()
     assert kovaak_run_store.public_kovaak_run(final)["video_artifact_ref"] is None
     assert all(path.read_bytes() == contents for path, contents in source_bytes.items())
+
+
+@pytest.mark.asyncio
+async def test_flush_snapshot_failure_leaves_a_log_trail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from webapp.backend import config
+
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    _configure_parsers(monkeypatch, time_limit=1.0)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    original_flush = client.flush_raw_snapshot
+
+    def failing_flush(capture_session_id: str) -> dict:
+        raise NativeCaptureRetryableError("raw_snapshot_failed")
+
+    client.flush_raw_snapshot = failing_flush  # type: ignore[method-assign]
+    finalizer = _finalizer(tmp_path, client)
+    discovery = KovaaKFileDiscovery(
+        stem="flush-failure",
+        stats_path=stats,
+        performance_path=performance,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="webapp.backend.kovaak_capture_finalizer"):
+        run = await finalizer.finalize(discovery)
+
+    assert any(
+        "flush_raw_snapshot failed" in record.getMessage()
+        and "raw_snapshot_failed" in record.getMessage()
+        for record in caplog.records
+    ), "flush failure must leave a log trail instead of vanishing silently"
+    assert run["trace_state"] in {"pending", "unavailable"}
+    client.flush_raw_snapshot = original_flush  # type: ignore[method-assign]

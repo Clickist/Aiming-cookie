@@ -941,7 +941,7 @@ async def get_product_state(user_id: str) -> dict:
         from . import kovaak_run_store
         run_summaries = await kovaak_run_store.list_kovaak_run_summaries(user_id)
     except Exception:
-        pass
+        log.exception("run summaries read failed user=%s", user_id)
     run_count = len(run_summaries)
     analysis_count = sum(1 for s in sessions if s.get("status") != "uploading")
     pending_runs = any(
