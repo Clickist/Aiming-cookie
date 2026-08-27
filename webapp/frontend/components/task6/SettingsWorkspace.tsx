@@ -27,6 +27,7 @@ import {
   submitProviderAuthInput,
   takeProviderAuthResult,
   testProviderProfile,
+  testProviderProfileDraft,
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
 import { exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
@@ -43,6 +44,7 @@ import type {
   ProviderAuthOperation,
   ProviderCatalogV1,
   ProviderProfile,
+  ProviderProfileCreate,
   ProviderProfileState,
   StorageResponse,
 } from "@/lib/types";
@@ -67,6 +69,13 @@ type ConfirmAction = {
   impact: string;
   run: () => Promise<void>;
 } | null;
+
+// Raycast 式先验后存：干跑结果绑定提交时的表单指纹，
+// 表单任何变动都会让旧结论失效并回到未验证态。
+type DraftCheck =
+  | { phase: "idle" }
+  | { phase: "checking"; fingerprint: string }
+  | { phase: "done"; fingerprint: string; passed: boolean; message: string };
 
 const STORAGE_COLORS = [
   "var(--on-surface)",
@@ -206,6 +215,8 @@ export function SettingsWorkspace() {
   const [diagnosticExporting, setDiagnosticExporting] = useState(false);
   const previousProviderSelection = useRef<string | null>(null);
   const pickerRef = useRef<HTMLDivElement | null>(null);
+  const [draftCheck, setDraftCheck] = useState<DraftCheck>({ phase: "idle" });
+  const draftCheckAbort = useRef<AbortController | null>(null);
 
   const desktop = isDesktopRuntime();
 
@@ -407,21 +418,86 @@ export function SettingsWorkspace() {
     return () => window.clearTimeout(timer);
   }, [authOperation, authProfileId, refresh]);
 
+  const customProvider = providerId === "custom";
+  const canAddProvider = customProvider
+    ? Boolean(baseUrl.trim() && modelId.trim() && newApiKey.trim() && customProtocolConfirmed)
+    : Boolean(selectedCatalogProvider && modelId.trim() && (newAuthMode !== "api_key" || newApiKey.trim()));
+
+  const selectedCustomModel = customModels.find((model) => model.model_id === modelId);
+  // 干跑与入库共用同一份候选 payload：「检查连接」验的就是将来要存的内容。
+  const draftPayload: ProviderProfileCreate | null = !canAddProvider ? null : {
+    name: profileName.trim() || (customProvider ? "自定义 Provider" : selectedCatalogProvider?.provider_name ?? "Provider"),
+    kind: customProvider ? customKind : "builtin",
+    provider_id: customProvider ? null : selectedCatalogProvider?.provider_id,
+    base_url: customProvider ? baseUrl.trim() : null,
+    model_id: modelId.trim(),
+    context_window: customProvider ? selectedCustomModel?.context_window ?? null : null,
+    max_tokens: customProvider ? selectedCustomModel?.max_tokens ?? null : null,
+    api_key: customProvider || newAuthMode === "api_key" ? newApiKey : null,
+    is_default: profiles.length === 0,
+  };
+  const draftFingerprint = draftPayload ? JSON.stringify(draftPayload) : null;
+  // OAuth 档的授权流程必须挂在已保存档上（authorize/take-result 都按
+  // profile id 寻址），保存前无从验证；门控只约束能凭表单内 key 直接
+  // 干跑的形态，OAuth 保持原有「先保存、后授权与测试」路径。
+  const draftVerifyApplies = customProvider || newAuthMode !== "oauth";
+  const checkingDraftNow = draftCheck.phase === "checking" && draftCheck.fingerprint === draftFingerprint;
+  const draftVerified = draftCheck.phase === "done"
+    && draftCheck.passed
+    && draftCheck.fingerprint === draftFingerprint;
+
+  // 表单任何变动都会改变指纹：中止在途检查，回到未验证态并锁住保存。
+  useEffect(() => {
+    if (draftCheck.phase === "checking" && draftCheck.fingerprint !== draftFingerprint) {
+      draftCheckAbort.current?.abort();
+    }
+  }, [draftCheck, draftFingerprint]);
+
+  useEffect(() => () => draftCheckAbort.current?.abort(), []);
+
+  const verifyDraftProfile = async () => {
+    if (checkingDraftNow) {
+      draftCheckAbort.current?.abort(); // 再次点击即取消，不阻塞离开表单。
+      return;
+    }
+    // 冻结本次检查对应的 payload 与指纹：期间表单再变，结论也不解锁保存。
+    const payload = draftPayload;
+    const fingerprint = draftFingerprint;
+    if (!payload || !fingerprint) return;
+    const controller = new AbortController();
+    draftCheckAbort.current = controller;
+    setDraftCheck({ phase: "checking", fingerprint });
+    try {
+      const status = await testProviderProfileDraft(payload, { signal: controller.signal });
+      setDraftCheck({
+        phase: "done",
+        fingerprint,
+        passed: status.status === "ready",
+        message: status.status === "ready"
+          ? `检查通过 · ${payload.name}`
+          : `${status.message}。请核对 API Key、Base URL 与所选模型后重试。`,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        setDraftCheck({ phase: "idle" });
+        return;
+      }
+      setDraftCheck({
+        phase: "done",
+        fingerprint,
+        passed: false,
+        message: `${error instanceof Error && error.message ? error.message : "无法连接本地服务"}。请确认本地服务运行正常后重新检查。`,
+      });
+    } finally {
+      if (draftCheckAbort.current === controller) draftCheckAbort.current = null;
+    }
+  };
+
   const addProfile = async () => {
-    const custom = providerId === "custom";
-    const selectedCustomModel = customModels.find((model) => model.model_id === modelId);
-    const created = await createProviderProfile({
-      name: profileName.trim() || (custom ? "自定义 Provider" : selectedCatalogProvider?.provider_name ?? "Provider"),
-      kind: custom ? customKind : "builtin",
-      provider_id: custom ? null : selectedCatalogProvider?.provider_id,
-      base_url: custom ? baseUrl.trim() : null,
-      model_id: modelId.trim(),
-      context_window: custom ? selectedCustomModel?.context_window ?? null : null,
-      max_tokens: custom ? selectedCustomModel?.max_tokens ?? null : null,
-      api_key: custom || newAuthMode === "api_key" ? newApiKey : null,
-      is_default: profiles.length === 0,
-    });
+    if (!draftPayload) throw new Error("draft provider profile is incomplete");
+    const created = await createProviderProfile(draftPayload);
     setNewApiKey("");
+    setDraftCheck({ phase: "idle" });
     setFeedback(`已添加 ${created.name}`);
     await refresh(true);
   };
@@ -506,10 +582,6 @@ export function SettingsWorkspace() {
     }
   };
 
-  const customProvider = providerId === "custom";
-  const canAddProvider = customProvider
-    ? Boolean(baseUrl.trim() && modelId.trim() && newApiKey.trim() && customProtocolConfirmed)
-    : Boolean(selectedCatalogProvider && modelId.trim() && (newAuthMode !== "api_key" || newApiKey.trim()));
   const latestStatsCalibration = runs.find((run) => run.stats_calibration)?.stats_calibration ?? null;
 
   const storageCategories = storage ? presentStorageCategories(storage.categories) : [];
@@ -754,7 +826,33 @@ export function SettingsWorkspace() {
                   </Field>
                 ) : null}
                 <div className="task6-inline-actions">
-                  <Button disabled={!canAddProvider} onClick={() => void addProfile().catch(() => setFeedback("Provider 未能添加，请检查输入后重试。"))}>添加 Provider</Button>
+                  {draftVerifyApplies ? (
+                    <Button disabled={!canAddProvider} onClick={() => void verifyDraftProfile()} size="compact" variant="secondary">
+                      {checkingDraftNow ? "停止检查" : "检查连接"}
+                    </Button>
+                  ) : null}
+                  <Button
+                    disabled={!canAddProvider || (draftVerifyApplies && !draftVerified)}
+                    onClick={() => void addProfile().catch(() => setFeedback("Provider 未能添加，请检查输入后重试。"))}
+                  >
+                    添加 Provider
+                  </Button>
+                </div>
+                <div aria-live="polite" style={{ display: "grid", gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
+                  {!draftVerifyApplies ? (
+                    <p className="task6-muted">OAuth 认证需先保存 Provider，再发起授权；保存后可用「测试连接」确认。</p>
+                  ) : null}
+                  {draftVerifyApplies && draftCheck.phase === "idle" ? (
+                    <p className="task6-muted">先「检查连接」，通过后才能添加；表单再改动就需重新检查。</p>
+                  ) : null}
+                  {draftVerifyApplies && draftCheck.phase === "checking" ? (
+                    <p className="task6-muted">正在检查候选 Provider 的连接…再次点击「停止检查」可取消。</p>
+                  ) : null}
+                  {draftCheck.phase === "done" && draftCheck.fingerprint === draftFingerprint ? (
+                    draftCheck.passed
+                      ? <p className="task6-ok">{draftCheck.message}（可点「添加 Provider」保存）</p>
+                      : <Notice tone="error">{draftCheck.message}</Notice>
+                  ) : null}
                 </div>
               </div>
             </Panel>
