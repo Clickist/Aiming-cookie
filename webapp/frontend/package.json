@@ -9,6 +9,7 @@
     "build:tauri": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../scripts/build-tauri-frontend.ps1",
     "start": "next start",
     "lint": "tsc --noEmit",
+    "sync-types": "node scripts/sync-api-types.mjs",
     "type-check": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:contracts",
     "test:unit": "node --import ../../third_party/pi/node_modules/tsx/dist/loader.mjs --test lib/*.test.ts mocks/*.test.ts",
@@ -34,6 +35,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/react-plotly.js": "^2.6.3",
+    "openapi-typescript": "7.13.0",
     "tailwindcss": "4.3.2",
     "typescript": "^5.7.0"
   }
