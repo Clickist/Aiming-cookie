@@ -22,10 +22,8 @@
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "next": "16.2.10",
-    "plotly.js-dist-min": "^2.35.2",
     "react": "19.2.7",
-    "react-dom": "19.2.7",
-    "react-plotly.js": "^2.6.0"
+    "react-dom": "19.2.7"
   },
   "devDependencies": {
     "@playwright/test": "1.51.1",
@@ -34,7 +32,6 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@types/react-plotly.js": "^2.6.3",
     "openapi-typescript": "7.13.0",
     "tailwindcss": "4.3.2",
     "typescript": "^5.7.0"
