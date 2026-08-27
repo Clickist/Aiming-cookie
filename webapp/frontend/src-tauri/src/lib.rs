@@ -782,6 +782,29 @@ pub fn run() {
             app.manage(raw_input);
             app.manage(window_capture);
             app.manage(coordinator);
+            // 无边框窗口（decorations:false）在 Windows 上默认是直角；显式请求
+            // DWM 画圆角（Win11+，dwmapi.dll）。失败（如 Win10 不支持该属性）
+            // 静默忽略——圆角是渐进增强，不能阻塞启动。
+            #[cfg(target_os = "windows")]
+            {
+                use windows::Win32::Graphics::Dwm::{
+                    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE,
+                    DWM_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+                };
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(hwnd) = window.hwnd() {
+                        let preference = DWMWCP_ROUND;
+                        unsafe {
+                            let _ = DwmSetWindowAttribute(
+                                hwnd,
+                                DWMWA_WINDOW_CORNER_PREFERENCE,
+                                &preference as *const DWM_WINDOW_CORNER_PREFERENCE as *const _,
+                                std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+                            );
+                        }
+                    }
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
