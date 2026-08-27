@@ -3,8 +3,11 @@ import { test } from "node:test";
 
 import {
   MAX_TABLE_COLUMNS,
+  formatTimecode,
+  formatTimecodeRange,
   parseBoldSegments,
   parseRichText,
+  parseTimeSegments,
   type RichInline,
 } from "./rich-text";
 
@@ -164,3 +167,54 @@ test("list/table/bold structures coexist inside one reply like a training plan",
 function parseRawForTest(text: string): ReturnType<typeof parseRichText> {
   return parseRichText(text);
 }
+
+// ── @time 时间码（视频面板复盘升级 P0.3，brief D7）────────────────────────
+
+test("timecode format keeps one decimal for fractional seconds and pads minutes", () => {
+  assert.equal(formatTimecode(51.5), "00:51.5");
+  assert.equal(formatTimecode(0), "00:00");
+  assert.equal(formatTimecode(38), "00:38");
+  assert.equal(formatTimecode(59.96), "01:00"); // 十分位四舍五入进位
+  assert.equal(formatTimecode(75.04), "01:15");
+});
+
+test("timecode carries into h:mm:ss beyond one hour", () => {
+  assert.equal(formatTimecode(3671.2), "1:01:11");
+  assert.equal(formatTimecode(3600), "1:00:00");
+});
+
+test("timecode range floors both ends to whole seconds with en dash", () => {
+  assert.equal(formatTimecodeRange(38.2, 43.7), "00:38–00:43");
+  assert.equal(formatTimecodeRange(0, 9.9), "00:00–00:09");
+});
+
+test("parseTimeSegments extracts point chips with raw label and millisecond target", () => {
+  const segments = parseTimeSegments("先看 @51.5s 的甩枪，再看收枪。");
+  assert.deepEqual(
+    segments.map((segment) => segment.chip?.kind ?? null),
+    [null, "point", null],
+  );
+  const chip = segments[1].chip;
+  assert.ok(chip && chip.kind === "point");
+  if (chip && chip.kind === "point") {
+    assert.equal(chip.raw, "@51.5s");
+    assert.equal(chip.label, "00:51.5");
+    assert.equal(chip.timeMs, 51500);
+  }
+});
+
+test("parseTimeSegments supports range tokens and keeps plain text untouched", () => {
+  const segments = parseTimeSegments("@38.2-43.7s 是信号窗口，@3s 之前是热身。");
+  const rangeChip = segments.find((segment) => segment.chip?.kind === "range")?.chip;
+  assert.ok(rangeChip && rangeChip.kind === "range");
+  if (rangeChip && rangeChip.kind === "range") {
+    assert.equal(rangeChip.raw, "@38.2-43.7s");
+    assert.equal(rangeChip.label, "00:38–00:43");
+    assert.equal(rangeChip.startMs, 38200);
+    assert.equal(rangeChip.endMs, 43700);
+  }
+  // 无命中文本一字不动；原文（含 @ 记号）保留在 text 字段。
+  assert.deepEqual(parseTimeSegments("没有时间标记的一段话。"), [
+    { text: "没有时间标记的一段话。" },
+  ]);
+});

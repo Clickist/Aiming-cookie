@@ -4,34 +4,16 @@ import { Fragment, type ReactNode } from "react";
 
 import {
   parseRichText,
+  parseTimeSegments,
   type RichInline,
   type RichItem,
   type RichNode,
+  type TimeChip,
 } from "@/lib/rich-text";
 
-const TIME_POINT_PATTERN = /@(\d+\.?\d*)s/g;
-
-interface TextSegment {
-  text: string;
-  timeMs: number | null;
-}
-
-function parseTimePoints(text: string): TextSegment[] {
-  const segments: TextSegment[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  TIME_POINT_PATTERN.lastIndex = 0;
-  while ((match = TIME_POINT_PATTERN.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ text: text.slice(lastIndex, match.index), timeMs: null });
-    }
-    segments.push({ text: match[0], timeMs: Math.round(parseFloat(match[1]) * 1000) });
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) {
-    segments.push({ text: text.slice(lastIndex), timeMs: null });
-  }
-  return segments.length ? segments : [{ text, timeMs: null }];
+/** 区间 chip 点击跳到起点（brief P0.3：点击行为不变，跳转＋暂停）。 */
+function chipTargetMs(chip: TimeChip): number {
+  return chip.kind === "range" ? chip.startMs : chip.timeMs;
 }
 
 type TimeLinkCtx = {
@@ -48,22 +30,25 @@ function renderSegments(
 ): ReactNode[] {
   const out: ReactNode[] = [];
   segments.forEach((segment, segIndex) => {
-    const pieces = parseTimePoints(segment.text).map((piece, pieceIndex) =>
-      piece.timeMs !== null && ctx.analysisRef && ctx.onOpenVideo ? (
-        <button
-          className="task6-time-link"
-          key={pieceIndex}
-          onClick={() => ctx.onOpenVideo?.(ctx.analysisRef as string, piece.timeMs ?? undefined)}
-          type="button"
-        >
-          {piece.text}
-        </button>
-      ) : piece.timeMs !== null ? (
-        <span className="task6-time-link task6-time-link--static" key={pieceIndex}>{piece.text}</span>
-      ) : (
-        <Fragment key={pieceIndex}>{piece.text}</Fragment>
-      ),
-    );
+    // D7：显示层不再透出原文 @51.5s / @38.2-43.7s，渲染为时间码 chip；
+    // task6-time-link 语义色与「跳转＋暂停」点击行为原样保留。
+    const pieces = parseTimeSegments(segment.text).map((piece, pieceIndex) => {
+      const chip = piece.chip;
+      if (!chip) return <Fragment key={pieceIndex}>{piece.text}</Fragment>;
+      if (ctx.analysisRef && ctx.onOpenVideo) {
+        return (
+          <button
+            className="task6-time-link"
+            key={pieceIndex}
+            onClick={() => ctx.onOpenVideo?.(ctx.analysisRef as string, chipTargetMs(chip))}
+            type="button"
+          >
+            {chip.label}
+          </button>
+        );
+      }
+      return <span className="task6-time-link task6-time-link--static" key={pieceIndex}>{chip.label}</span>;
+    });
     if (segment.bold) {
       out.push(
         <strong className="task7-rich-bold" key={`${keyPrefix}-${segIndex}`}>{pieces}</strong>,

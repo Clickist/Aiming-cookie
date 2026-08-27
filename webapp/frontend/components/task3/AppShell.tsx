@@ -30,7 +30,7 @@ import { startWindowDragging, TauriWindowControls } from "@/components/task3/Tau
 import { Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
-type CoachVideoTarget = { analysisRef: string; timeMs: number };
+type CoachVideoTarget = { analysisRef: string; timeMs: number; seq: number };
 
 function parseSessionId(raw: string | null): number | null {
   if (!raw || !/^[1-9][0-9]*$/.test(raw)) return null;
@@ -52,6 +52,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const hasRestoredLastSessionRef = useRef(false);
   const [draftSession, setDraftSession] = useState(false);
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
+  // @time 点击序号：同一时间码连续点击也要构成新的跳转意图信号
+  // （到达即暂停＋脉冲，复盘升级 P0.3/D1），不能靠 initialTimeMs 值变化。
+  const videoSeqRef = useRef(0);
   const [sessionFeedback, setSessionFeedback] = useState<{ text: string; seq: number } | null>(null);
   const sessionFeedbackSeqRef = useRef(0);
   // 与 CoachPanel.notify 同款：Toast 关闭是 200ms 后的延迟回调，用户
@@ -374,7 +377,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 style={{ display: coachWorkspaceRoute ? undefined : "none" }}
               >
                 {coachWorkspaceRoute ? (
-                  videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} onClose={() => setVideoTarget(null)} /> : null
+                  videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} jumpSeq={videoTarget.seq} onClose={() => setVideoTarget(null)} /> : null
                 ) : null}
                 <div className="task3-coach-conversation">
                   <CoachPanel
@@ -382,7 +385,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     draftSession={draftSession}
                     layoutMode="full"
                     onEnsureSession={ensureCoachSession}
-                    onOpenVideo={(analysisRef, timeMs = 0) => setVideoTarget({ analysisRef, timeMs })}
+                    onOpenVideo={(analysisRef, timeMs = 0) => setVideoTarget({ analysisRef, seq: (videoSeqRef.current += 1), timeMs })}
                     pathname={pathname}
                     sessionId={selectedCoachSessionId}
                     softStartRun={softStartRun}

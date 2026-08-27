@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { VideoView } from "@/components/task5/VideoView";
 import { getSession } from "@/lib/api";
@@ -22,10 +22,13 @@ const runIdCache = new Map<number, number | null>();
 export function CoachVideoPane({
   analysisRef,
   initialTimeMs = 0,
+  jumpSeq = 0,
   onClose,
 }: {
   analysisRef: string;
   initialTimeMs?: number;
+  /** 每次 @time 点击递增（AppShell 维护）：同一时间码重复点击也构成新跳转意图。 */
+  jumpSeq?: number;
   onClose: () => void;
 }) {
   const [presentation, setPresentation] = useState<AnalysisWorkspacePresentation | null>(null);
@@ -33,6 +36,10 @@ export function CoachVideoPane({
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [playheadMs, setPlayheadMs] = useState(initialTimeMs);
+  // @time 跳转意图信号（复盘升级 P0.3/D1）：seq 每次 initialTimeMs 变化递增，
+  // 与播放反馈、手动拖动解耦——VideoView 只在该信号上做「到达即暂停＋脉冲」。
+  const [jumpTarget, setJumpTarget] = useState<{ seq: number; ms: number } | null>(null);
+  const jumpSeqRef = useRef(0);
   const [revision, setRevision] = useState(0);
 
   const load = useCallback(async (signal: AbortSignal) => {
@@ -77,9 +84,11 @@ export function CoachVideoPane({
   useEffect(() => {
     const controller = new AbortController();
     setPlayheadMs(initialTimeMs);
+    jumpSeqRef.current = Math.max(jumpSeqRef.current + 1, jumpSeq);
+    setJumpTarget({ seq: jumpSeqRef.current, ms: initialTimeMs });
     void load(controller.signal);
     return () => controller.abort();
-  }, [initialTimeMs, load, revision]);
+  }, [initialTimeMs, jumpSeq, load, revision]);
 
   return (
     <section aria-label="Coach 视频讲解" className="task7-coach-video-pane">
@@ -102,6 +111,7 @@ export function CoachVideoPane({
           <VideoView
             analysisId={presentation.analysisId}
             currentTimeMs={playheadMs}
+            jumpTarget={jumpTarget}
             onCurrentTimeChange={setPlayheadMs}
             presentation={presentation}
           />

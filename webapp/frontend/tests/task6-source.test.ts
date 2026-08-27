@@ -378,13 +378,19 @@ test("Coach current training animates expand and collapse without leaving intera
 test("Coach renders time-point links without parsing model prose", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
   const text = await source("components/task7/CoachMessageText.tsx");
+  // 复盘升级 P0.3（brief D7）：@time 解析与时间码格式化收敛到 lib/rich-text，
+  // 渲染层只消费 chip 数据（label=显示文案，点击仍跳原始毫秒）。
+  const lib = await source("lib/rich-text.ts");
   assert.match(coach, /CoachMessageText/);
   assert.match(coach, /defaultAnalysisRef/);
   assert.match(coach, /analysis_refs/);
-  assert.match(text, /TIME_POINT_PATTERN/);
+  assert.match(text, /parseTimeSegments/);
+  assert.match(text, /from "@\/lib\/rich-text"/);
+  // 区间模式：可选的「-(数值)」段与只在末尾出现的 s 缀。
+  assert.match(lib, /TIME_TOKEN_PATTERN = \/@\(/);
+  assert.match(lib, /TIME_TOKEN_PATTERN[^\n]*\?\:-\(/);
   assert.match(text, /onOpenVideo/);
   assert.match(text, /task6-time-link/);
-  assert.match(text, /\* 1000/);
 });
 
 
