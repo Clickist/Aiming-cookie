@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   createCoachAgentRun,
@@ -23,15 +23,28 @@ import {
   buildMentionCandidates,
   coachDraftStorageKey,
   filterMentionCandidates,
-  readCoachDraft,
+  readCoachDraftEnvelope,
   removeQueuedChip,
   stepSentHistory,
   truncateQueuePreview,
-  writeCoachDraft,
+  writeCoachDraftEnvelope,
   type CoachDraftScope,
   type MentionCandidate,
   type QueuedChip,
 } from "@/lib/composer";
+import {
+  QUOTE_HEADER,
+  QUOTE_MAX_CHARS,
+  SEND_BUDGET_CHARS,
+  composeQuotedContent,
+  evaluateAssistantSelection,
+  isWithinSendBudget,
+  messageArticleFromNode,
+  parseQuotedContent,
+  selectionAnchorRect,
+  snapshotQuote,
+  type CoachQuote,
+} from "@/lib/quote";
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
 import { CoachModelMenu } from "./CoachModelMenu";
 import { CoachStepList, CoachThinkingBlock, ElapsedTicker, type CoachToolStep } from "./CoachRunActivity";
@@ -98,6 +111,9 @@ function trainingSummaryItem(training: CurrentTrainingV1): CurrentTrainingItemV1
 function validKovaaKItemName(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 120;
 }
+
+/** 划选浮层「引用」条的估算半宽（px），用于把浮层横向钳制在面板宽度内。 */
+const SELECTION_TOOLBAR_HALF_WIDTH = 84;
 
 /** 步骤形态与呈现组件共享；解析由 deriveToolSteps 完成，本文件不再持有展示逻辑。 */
 type ToolStep = CoachToolStep;
@@ -271,6 +287,26 @@ function pendingIntentDraft(value: unknown): string | null {
   return kovaakIntentDraft(value);
 }
 
+/**
+ * 已发送用户消息的引用回显（调研 §3.5）：拼装串里的 `[引用 Coach]` 段渲染
+ * 为引用块视觉，正文正常呈现；未命中固定开头形状的 legacy 消息按原文纯文本
+ * 渲染。Codex 客户端「发送后看不到选了什么」是长期 open bug——这里必须做。
+ */
+function UserMessageBody({ content }: { content: string }): ReactNode {
+  const parsed = parseQuotedContent(content);
+  return (
+    <>
+      {parsed.quotes.map((text, index) => (
+        <blockquote className="task6-quote-block" key={index}>
+          <span className="task6-quote-head">{QUOTE_HEADER}</span>
+          <p className="task6-quote-body">{text}</p>
+        </blockquote>
+      ))}
+      <p>{parsed.text}</p>
+    </>
+  );
+}
+
 export function CoachPanel({
   capability,
   draftSession = false,
@@ -364,6 +400,17 @@ export function CoachPanel({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // 编辑重发（截断派）：记录待编辑消息的展示序号
   const [editingResend, setEditingResend] = useState<{ index: number } | null>(null);
+  // ── 划选引用（quote-reply，docs/quote-feature-research.md）───────────
+  // 引用块是 composer 外挂结构（独立数组），不混进 textarea 字符串：
+  // 每块可整块删除、文字锁定不可编辑；发送时才由 composeQuotedContent 拼装。
+  const [quotes, setQuotes] = useState<CoachQuote[]>([]);
+  const quoteSeqRef = useRef(0);
+  // 划选浮层状态：文本在 mouseup 时已快照进 state（WKWebView 上点击按钮
+  // 可能折叠原生选区，点击「引用」只读快照不再依赖 window.getSelection）。
+  const [selectionBar, setSelectionBar] = useState<
+    { text: string; left: number; top: number; flipBelow: boolean } | null
+  >(null);
+  const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   // ↑ 发送历史（会话内存即可）
   const sentHistoryRef = useRef<string[]>([]);
   const historyIndexRef = useRef<number | null>(null);
@@ -375,8 +422,9 @@ export function CoachPanel({
   }, [run]);
   const composerBusy = Boolean(run && ["queued", "running"].includes(run.status));
 
-  // 草稿三级持久（digests §11 item 4）：sessionId | PENDING_CONVO | NEW_CONVO，
+  // 草稿三级持久（digests §11 item 4 + 拍板③）：sessionId | PENDING_CONVO | NEW_CONVO，
   // 多窗格实例按 layoutMode 加 pane 后缀防串；400ms debounce 落 localStorage。
+  // 存储值为 envelope v2 { v:2, text, quotes }；读端兼容 legacy 纯文本。
   const draftScope: CoachDraftScope = draftSession
     ? { kind: "new-convo" }
     : sessionId == null
@@ -388,7 +436,9 @@ export function CoachPanel({
   useEffect(() => {
     // 恢复先于挂载意图消费：本效果声明在 pending-intent 效果之前，React 按
     // 声明顺序执行，意图文案会覆盖已恢复草稿。
-    setDraft(readCoachDraft(window.localStorage, draftStorageKey));
+    const restored = readCoachDraftEnvelope(window.localStorage, draftStorageKey);
+    setDraft(restored.text);
+    setQuotes(restored.quotes);
     historyIndexRef.current = null;
     historyBackupRef.current = null;
   }, [draftStorageKey]);
@@ -399,11 +449,11 @@ export function CoachPanel({
       return;
     }
     const timer = setTimeout(
-      () => writeCoachDraft(window.localStorage, draftStorageKey, draft),
+      () => writeCoachDraftEnvelope(window.localStorage, draftStorageKey, { text: draft, quotes }),
       COACH_DRAFT_DEBOUNCE_MS,
     );
     return () => clearTimeout(timer);
-  }, [draft, draftStorageKey]);
+  }, [draft, quotes, draftStorageKey]);
 
   const activeSessionKey = draftSession ? "draft" : `session:${sessionId ?? "primary"}`;
   const activeSessionKeyRef = useRef(activeSessionKey);
@@ -945,6 +995,105 @@ export function CoachPanel({
     setUnreadCount(0);
   };
 
+  // ── 划选 → 浮层（quote-reply，调研 §2.1/§2.2）────────────────────────
+  // 主判定用 mouseup（WebKit 的 selectionchange 触发时机不稳，只用于收起清理）；
+  // 合格选区必须完整落在同一条非流式 assistant 消息容器内（纯逻辑在
+  // evaluateAssistantSelection，node:test 直测）。定位锚定消息滚动区内部
+  // （absolute 相对滚动内容），滚动即收起、不做跟随重算。
+  const closeSelectionBar = useCallback(() => {
+    setSelectionBar(null);
+  }, []);
+
+  const handleMessagesMouseUp = () => {
+    const scroller = messagesRef.current;
+    const selection = typeof window.getSelection === "function" ? window.getSelection() : null;
+    const anchor = messageArticleFromNode(selection?.anchorNode ?? null);
+    const focus = messageArticleFromNode(selection?.focusNode ?? null);
+    const target = evaluateAssistantSelection({
+      collapsed: !selection || selection.isCollapsed,
+      selectedText: selection?.toString() ?? "",
+      anchorArticle: anchor,
+      focusArticle: focus,
+    });
+    if (!target || !scroller || !selection) {
+      closeSelectionBar();
+      return;
+    }
+    const rect = selectionAnchorRect(selection);
+    if (!rect) {
+      // WKWebView 折叠边界可能拿不到任何矩形：宁可不弹浮层。
+      closeSelectionBar();
+      return;
+    }
+    const hostRect = scroller.getBoundingClientRect();
+    const rawLeft = rect.cx - hostRect.left + scroller.scrollLeft;
+    const clampedLeft = Math.min(
+      Math.max(rawLeft, Math.min(SELECTION_TOOLBAR_HALF_WIDTH, scroller.clientWidth / 2)),
+      Math.max(scroller.clientWidth - SELECTION_TOOLBAR_HALF_WIDTH, SELECTION_TOOLBAR_HALF_WIDTH),
+    );
+    const localTop = rect.top - hostRect.top + scroller.scrollTop;
+    setSelectionBar({
+      text: target.text,
+      left: clampedLeft,
+      top: localTop,
+      // 选区贴近视口顶部时翻到选区下方弹出。
+      flipBelow: rect.top < 64,
+    });
+  };
+
+  // 关闭路径：点击别处 / 选区折叠（selectionchange 收起清理）/ 消息列表滚动 /
+  // Esc。点击工具条自身不关（mousedown preventDefault 同时保住原生选区）。
+  useEffect(() => {
+    if (!selectionBar) return undefined;
+    const scroller = messagesRef.current;
+    const onScroll = () => setSelectionBar(null);
+    const onSelectionChange = () => {
+      const sel = document.getSelection();
+      if (!sel || sel.isCollapsed) setSelectionBar(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Escape") setSelectionBar(null);
+    };
+    const onPointerDown = (event: MouseEvent) => {
+      if (selectionToolbarRef.current && !selectionToolbarRef.current.contains(event.target as Node)) {
+        setSelectionBar(null);
+      }
+    };
+    scroller?.addEventListener("scroll", onScroll, { passive: true });
+    document.addEventListener("selectionchange", onSelectionChange);
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onPointerDown);
+    return () => {
+      scroller?.removeEventListener("scroll", onScroll);
+      document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onPointerDown);
+    };
+  }, [selectionBar]);
+
+  /** 点击「引用」：消费 mouseup 时快照的文本；折叠原选区并聚焦输入框。 */
+  const addQuoteFromSelection = () => {
+    const snapshot = selectionBar ? snapshotQuote(selectionBar.text) : null;
+    setSelectionBar(null);
+    window.getSelection()?.removeAllRanges();
+    if (!snapshot) return;
+    if (!snapshot.ok) {
+      notify(`选中的引文超过 ${QUOTE_MAX_CHARS} 字符上限，请选择更短的内容再引用。`);
+      return;
+    }
+    quoteSeqRef.current += 1;
+    setQuotes((current) => [...current, { id: quoteSeqRef.current, text: snapshot.text }]);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
+  /** 删除单条引用块（整块删除，文字本身锁定不可编辑）。 */
+  const removeQuote = (id: number) => {
+    setQuotes((current) => current.filter((item) => item.id !== id));
+  };
+
   // 头部瘦身（digests §8）：折叠态训练卡并入 header 行成单 chip；
   // 展开细节沿用 .task6-training-reveal 的动画合同（useAnimatedPresence + inert），
   // 读取失败/不可用也收敛进 chip 的展开区，不再三层常驻压顶。
@@ -1111,8 +1260,10 @@ export function CoachPanel({
     const active = activeRunRef.current;
     if (!opts.force && active && ["queued", "running"].includes(active.status)) {
       // 已受理即清空输入：文本已移入 chip（不是复制），需要改写时走回填编辑。
+      // 引用块已随拼装串进入 chip（拍板②降级为纯文本），待拼装引用一并消费。
       enqueueQueuedItem(content);
       setDraft("");
+      setQuotes([]);
       notify("当前回复仍在生成中，这条已加入输入框上方队列，可随时取消、编辑或立即转向。");
       return true;
     }
@@ -1142,6 +1293,8 @@ export function CoachPanel({
       }
       optimisticId = appendOptimisticUserMessage(content);
       setDraft("");
+      // 受理成功即消费待拼装引用：拼装串已进入消息；失败分支保留引用回 composer。
+      setQuotes([]);
       stickToBottomRef.current = true;
       pushSentHistory(content);
       const created = await createCoachAgentRun(
@@ -1172,9 +1325,39 @@ export function CoachPanel({
     }
   };
 
+  /**
+   * 出站内容统一组装口（调研 §3.3）：composer 的四条出站路径（普通提交 /
+   * 立即转向 / 打断并转向 / 加入队列）都先经此处把引用块拼进最终串再分流，
+   * 保证 steer 这类直连引擎的路径同样携带引文。长度预算与 quote-only
+   * （拍板①）在此给出用户可见拒绝，不依赖 sidecar 静默切尾。
+   */
+  const composeOutgoing = (): string | null => {
+    const body = draft.trim();
+    if (quotes.length === 0) {
+      if (!body) return null;
+      if (body.length > SEND_BUDGET_CHARS) {
+        notify(`消息 ${body.length} 字符，超出单条 ${SEND_BUDGET_CHARS} 上限，请精简后再发送。`);
+        return null;
+      }
+      return body;
+    }
+    const composed = composeQuotedContent({ quotes, text: draft });
+    if (composed === null) {
+      // 拍板①：只有引用、没有正文时禁止发送。
+      notify("只有引用、没有正文时不能发送，请补充你的问题或要求。");
+      return null;
+    }
+    if (!isWithinSendBudget(composed)) {
+      notify(`引用加正文合计 ${composed.length} 字符，超出单条 ${SEND_BUDGET_CHARS} 上限，请缩短引用或正文。`);
+      return null;
+    }
+    return composed;
+  };
+
   const submitComposer = () => {
-    const content = draft.trim();
-    if (!content) return;
+    if (!draft.trim() && quotes.length === 0) return;
+    const content = composeOutgoing();
+    if (content === null) return;
     setMentionQuery(null);
     setSendMenuOpen(false);
     const editing = editingResend;
@@ -1195,8 +1378,9 @@ export function CoachPanel({
 
   /** 四动作之 steer：把当前草稿立即注入运行中的回合。 */
   const steerWithDraft = async () => {
-    const content = draft.trim();
-    if (!content) return;
+    if (!draft.trim() && quotes.length === 0) return;
+    const content = composeOutgoing();
+    if (content === null) return;
     setSendMenuOpen(false);
     const active = activeRunRef.current;
     if (!active || !["queued", "running"].includes(active.status)) {
@@ -1207,6 +1391,8 @@ export function CoachPanel({
       await steerCoachAgentRun(active.run_ref, content);
       pushSentHistory(content);
       setDraft("");
+      // 引用已随拼装串注入本回合：待拼装引用一并消费。
+      setQuotes([]);
       appendOptimisticUserMessage(content);
     } catch (error) {
       if (isRecoverableSteerReject(error)) {
@@ -1261,8 +1447,9 @@ export function CoachPanel({
 
   /** 四动作之 interrupt-steer：停止当前生成并以此草稿开启新回复。 */
   const interruptAndSteer = async () => {
-    const content = draft.trim();
-    if (!content) return;
+    if (!draft.trim() && quotes.length === 0) return;
+    const content = composeOutgoing();
+    if (content === null) return;
     setSendMenuOpen(false);
     const active = activeRunRef.current;
     if (!active) {
@@ -1357,7 +1544,11 @@ export function CoachPanel({
     });
   };
 
-  /** 编辑重发：把原消息放回输入框并记录截断点（展示序号）。 */
+  /**
+   * 编辑重发：把原消息放回输入框并记录截断点（展示序号）。
+   * 拍板②：历史串里的引用以纯文本形态回到 textarea（可编辑降级语义）；
+   * composer 中尚未发送的引用块不受影响，仍会作为新引用参与下次拼装。
+   */
   const startEditResend = (index: number, content: string) => {
     setEditingResend({ index });
     setDraft(content);
@@ -1532,7 +1723,13 @@ export function CoachPanel({
       ) : null}
 
       <div className="task6-messages-wrap">
-      <section aria-label="Coach 消息" className="task6-messages" onScroll={handleMessagesScroll} ref={messagesRef}>
+      <section
+        aria-label="Coach 消息"
+        className="task6-messages"
+        onScroll={handleMessagesScroll}
+        onMouseUp={handleMessagesMouseUp}
+        ref={messagesRef}
+      >
         {/* 底部锚定（digests §8 病灶①）：非空会话 spacer 吸收剩余空间把消息压向
             钉底 composer；空会话时同槽位换成占满剩余空间的 hero 空态。 */}
         {messages.length === 0 && !run ? (
@@ -1550,7 +1747,9 @@ export function CoachPanel({
                    不再套 <p>（表格/列表不能内嵌在段落里）。 */
                 <CoachMessageText text={message.content} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
               ) : (
-                <p>{message.content}</p>
+                /* 已发送用户消息的引用块回显（Codex 不做回显是长期 bug）；
+                   未命中拼装形状的 legacy 内容按原文纯文本渲染。 */
+                <UserMessageBody content={message.content} />
               )}
             </article>
             {/* 编辑重发（截断派，item 7）：仅空闲且已落库消息提供入口 */}
@@ -1568,7 +1767,14 @@ export function CoachPanel({
           </div>
         ))}
         {run?.partial_text ? (
-          <article className="task6-message" data-role="assistant">
+          <article
+            className="task6-message"
+            data-role="assistant"
+            /* 流式禁划标记（调研 §2.5）：划选判定看到 data-streaming 即不出浮层；
+               不用 user-select 强禁，保留 Cmd+C 复制自由。终态残留的 partial
+               文本是可引用的最终快照，不携带该标记。 */
+            data-streaming={composerBusy ? "true" : undefined}
+          >
             {/* 流式期间与最终答案同一渲染路径：@time 链接实时可点，
                 消除完成后裸文本→格式化的跳变；光标经 tail 插在续写位。 */}
             <CoachMessageText
@@ -1626,6 +1832,21 @@ export function CoachPanel({
             ))}
           </div>
         ) : null}
+        {/* 划选浮层：锚定在消息滚动内容内部（随滚动归位由 scroll 关闭接管） */}
+        {selectionBar ? (
+          <div
+            aria-label="划选操作"
+            className="task6-selection-toolbar"
+            data-flip={selectionBar.flipBelow ? "below" : "above"}
+            onMouseDown={(event) => event.preventDefault()}
+            onMouseUp={(event) => event.stopPropagation()}
+            ref={selectionToolbarRef}
+            role="toolbar"
+            style={{ left: `${selectionBar.left}px`, top: `${selectionBar.top}px` }}
+          >
+            <button onClick={addQuoteFromSelection} type="button">引用</button>
+          </div>
+        ) : null}
       </section>
       {unreadCount > 0 ? (
         <button className="task6-unread-prompt" onClick={scrollToLatest} type="button">
@@ -1660,6 +1881,21 @@ export function CoachPanel({
                   <IconClose />
                 </IconButton>
               </div>
+            ))}
+          </div>
+        ) : null}
+        {/* 划选引用块（textarea 上方独立插槽）：多条并存，逐条整块删除；
+            文本体锁定不可编辑（只读呈现元素），超长块内部滚动。 */}
+        {quotes.length > 0 ? (
+          <div aria-label="引用 Coach 的发言" className="task6-quote-list" role="list">
+            {quotes.map((quote) => (
+              <blockquote className="task6-quote-block" key={quote.id} role="listitem">
+                <span className="task6-quote-head">引用 Coach</span>
+                <p className="task6-quote-body" title={quote.text}>{quote.text}</p>
+                <IconButton label="删除这条引用" onClick={() => removeQuote(quote.id)} size="compact" title="删除整块引用（文字不可编辑）">
+                  <IconClose />
+                </IconButton>
+              </blockquote>
             ))}
           </div>
         ) : null}
@@ -1762,7 +1998,7 @@ export function CoachPanel({
                   <button disabled={!draft.trim()} onClick={() => void steerWithDraft()} role="menuitem" type="button">
                     立即转向<small>不打断当前回复，直接注入本回合</small>
                   </button>
-                  <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); enqueueQueuedItem(draft); setDraft(""); }} role="menuitem" type="button">
+                  <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); const content = composeOutgoing(); if (content === null) return; enqueueQueuedItem(content); setDraft(""); setQuotes([]); }} role="menuitem" type="button">
                     加入队列<small>本轮结束后按顺序自动发送，可随时取消</small>
                   </button>
                   <button disabled={!draft.trim()} onClick={() => void interruptAndSteer()} role="menuitem" type="button">
@@ -1776,7 +2012,15 @@ export function CoachPanel({
               ) : null}
             </div>
           ) : (
-            <button aria-label="发送" className="task6-composer-send" disabled={!draft.trim()} onClick={submitComposer} type="button"><IconSend /></button>
+            /* 拍板①：quote-only 仍被禁用（引用不构成正文），悬停给出发送提示。 */
+            <button
+              aria-label="发送"
+              className="task6-composer-send"
+              disabled={!draft.trim()}
+              onClick={submitComposer}
+              title={draft.trim() || quotes.length === 0 ? undefined : "只有引用、没有正文时不能发送，请补充你的问题或要求"}
+              type="button"
+            ><IconSend /></button>
           )}
         </div>
         {/* 工具行拆出（digests §8）：模型菜单不再与 textarea 同行抢占宽度，

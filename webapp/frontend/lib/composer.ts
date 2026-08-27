@@ -6,6 +6,8 @@
  * CoachPanel；这里不 import React，便于 node:test 直接覆盖。
  */
 
+import type { CoachQuote } from "./quote";
+
 // ── 运行中队列 chips（item 1）────────────────────────────────────────────
 
 /** chips 预览 96 字符截断（超出补省略号），规格出处 digests §11。 */
@@ -87,6 +89,65 @@ export function writeCoachDraft(storage: Storage | null | undefined, key: string
 
 export function clearCoachDraft(storage: Storage | null | undefined, key: string): void {
   writeCoachDraft(storage, key, "");
+}
+
+// ── 草稿 envelope v2（划选引用持久化，digests §11 批5 + quote-feature 调研 §3.2）──
+
+/**
+ * 拍板③：引用块随草稿持久化。存储值升级为 JSON envelope
+ * `{ v: 2, text, quotes }`；读取端遇到历史纯文本值（不以 `{` 开头）按
+ * legacy v1 处理——text 原样、quotes 为空。text/quotes 双空时移除键，
+ * 与旧 writeCoachDraft 的「空值清除」语义一致。
+ */
+export type CoachDraftEnvelopeV2 = { v: 2; text: string; quotes: CoachQuote[] };
+export type RestoredCoachDraft = { text: string; quotes: CoachQuote[] };
+
+function isCoachQuoteEntry(value: unknown): value is CoachQuote {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { id?: unknown; text?: unknown };
+  return typeof candidate.id === "number" && Number.isFinite(candidate.id) && typeof candidate.text === "string";
+}
+
+export function readCoachDraftEnvelope(storage: Storage | null | undefined, key: string): RestoredCoachDraft {
+  if (!storageAvailable(storage)) return { text: "", quotes: [] };
+  let raw: string;
+  try {
+    raw = storage.getItem(key) ?? "";
+  } catch {
+    return { text: "", quotes: [] };
+  }
+  if (!raw) return { text: "", quotes: [] };
+  // 不以 { 开头＝legacy v1 纯文本草稿。
+  if (!raw.startsWith("{")) return { text: raw, quotes: [] };
+  try {
+    const parsed = JSON.parse(raw) as { v?: unknown; text?: unknown; quotes?: unknown };
+    if (parsed.v !== 2) throw new Error("unsupported envelope version");
+    return {
+      text: typeof parsed.text === "string" ? parsed.text : "",
+      quotes: Array.isArray(parsed.quotes) ? parsed.quotes.filter(isCoachQuoteEntry) : [],
+    };
+  } catch {
+    // 以 { 开头但不是合法 envelope：按 legacy 文本保底，不丢用户草稿。
+    return { text: raw, quotes: [] };
+  }
+}
+
+export function writeCoachDraftEnvelope(
+  storage: Storage | null | undefined,
+  key: string,
+  value: { text: string; quotes: CoachQuote[] },
+): void {
+  if (!storageAvailable(storage)) return;
+  try {
+    if (!value.text.trim() && value.quotes.length === 0) {
+      storage.removeItem(key);
+      return;
+    }
+    const envelope: CoachDraftEnvelopeV2 = { v: 2, text: value.text, quotes: value.quotes };
+    storage.setItem(key, JSON.stringify(envelope));
+  } catch {
+    // 配额满/隐私模式等写失败必须静默：持久化是增强不是功能依赖。
+  }
 }
 
 // ── @ 引用下拉（item 3，LibreChat Mention 骨架）──────────────────────────

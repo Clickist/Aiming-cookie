@@ -67,8 +67,13 @@ test("coach drafts persist under three-level scoped keys with pane suffix and de
   assert.match(panel, /const paneSuffix = layoutMode === "full" \? undefined : layoutMode;/);
   assert.match(panel, /coachDraftStorageKey\(draftScope, paneSuffix\)/);
   // 切换作用域先恢复已存草稿；写入经 300–500ms debounce 落 localStorage。
-  assert.match(panel, /setDraft\(readCoachDraft\(window\.localStorage, draftStorageKey\)\)/);
-  assert.match(panel, /setTimeout\(\s*\(\) => writeCoachDraft\(window\.localStorage, draftStorageKey, draft\),\s*COACH_DRAFT_DEBOUNCE_MS,/s);
+  // （2026-08-27 划选引用拍板③升级：存储值改为 envelope v2 { v:2, text, quotes }，
+  // 恢复入口同步恢复引用数组；v1 纯文本读兼容下沉到 lib/composer 单测锁定。）
+  assert.match(
+    panel,
+    /const restored = readCoachDraftEnvelope\(window\.localStorage, draftStorageKey\);\s*setDraft\(restored\.text\);\s*setQuotes\(restored\.quotes\);/,
+  );
+  assert.match(panel, /setTimeout\(\s*\(\) => writeCoachDraftEnvelope\(window\.localStorage, draftStorageKey, \{ text: draft, quotes \}\),\s*COACH_DRAFT_DEBOUNCE_MS,/s);
 });
 
 test("ArrowUp walks the in-memory sent history and restores the pre-walk draft", async () => {

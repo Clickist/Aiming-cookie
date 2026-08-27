@@ -9,9 +9,11 @@ import {
   coachDraftStorageKey,
   filterMentionCandidates,
   readCoachDraft,
+  readCoachDraftEnvelope,
   stepSentHistory,
   truncateQueuePreview,
   writeCoachDraft,
+  writeCoachDraftEnvelope,
 } from "./composer";
 
 // frontend-parity 批 5（输入框编排）纯助手行为锁定。
@@ -54,6 +56,46 @@ test("coach draft helpers degrade silently without usable storage and empty writ
   assert.equal(readCoachDraft(store, "k"), "草稿");
   writeCoachDraft(store, "k", "");
   assert.equal(readCoachDraft(store, "k"), "");
+});
+
+// 草稿 envelope v2（拍板③：引用块随草稿持久化；读端兼容 v1 纯文本）。
+
+test("envelope v2 round-trips text plus quotes through the scoped key", () => {
+  const store = fakeStorage();
+  writeCoachDraftEnvelope(store, "k", { text: "正文草稿", quotes: [{ id: 3, text: "引用一" }] });
+  // 存储值是显式 v2 envelope
+  const raw = store.getItem("k");
+  assert.ok(raw?.startsWith("{"));
+  assert.deepEqual(JSON.parse(raw as string), { v: 2, text: "正文草稿", quotes: [{ id: 3, text: "引用一" }] });
+  assert.deepEqual(readCoachDraftEnvelope(store, "k"), { text: "正文草稿", quotes: [{ id: 3, text: "引用一" }] });
+});
+
+test("envelope reads accept legacy plain-text drafts with empty quotes", () => {
+  const store = fakeStorage(new Map([["k", "旧版纯文本草稿"]]));
+  assert.deepEqual(readCoachDraftEnvelope(store, "k"), { text: "旧版纯文本草稿", quotes: [] });
+  assert.deepEqual(readCoachDraftEnvelope(fakeStorage(), "missing"), { text: "", quotes: [] });
+});
+
+test("envelope writes clear the key only when text and quotes are both empty", () => {
+  const store = fakeStorage();
+  writeCoachDraftEnvelope(store, "k", { text: "", quotes: [] });
+  assert.equal(store.getItem("k"), null);
+  // 仅剩引用块也要持久化
+  writeCoachDraftEnvelope(store, "k", { text: "", quotes: [{ id: 1, text: "孤引" }] });
+  assert.deepEqual(readCoachDraftEnvelope(store, "k"), { text: "", quotes: [{ id: 1, text: "孤引" }] });
+  writeCoachDraftEnvelope(store, "k", { text: "", quotes: [] });
+  assert.equal(store.getItem("k"), null);
+});
+
+test("envelope reads drop malformed quote entries and keep a salvageable draft", () => {
+  const malformed = JSON.stringify({ v: 2, text: "在", quotes: [{ id: 1 }, null, { id: 2, text: "好的" }, 42] });
+  const store = fakeStorage(new Map([["k", malformed]]));
+  assert.deepEqual(readCoachDraftEnvelope(store, "k"), { text: "在", quotes: [{ id: 2, text: "好的" }] });
+  // 坏 JSON 或未知版本：按 legacy 文本保底，不丢用户输入
+  const broken = fakeStorage(new Map([["k", "{oops"]]));
+  assert.deepEqual(readCoachDraftEnvelope(broken, "k"), { text: "{oops", quotes: [] });
+  const future = fakeStorage(new Map([["k", JSON.stringify({ v: 99, text: "新版本" })]]));
+  assert.deepEqual(readCoachDraftEnvelope(future, "k"), { text: JSON.stringify({ v: 99, text: "新版本" }), quotes: [] });
 });
 
 test("debounce constant stays inside the spec window", () => {
