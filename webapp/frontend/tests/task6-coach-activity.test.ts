@@ -26,11 +26,16 @@ test("Coach panel consumes SSE thinking_text into the collapsible thinking block
 test("streaming answer renders through the same text pipeline as final answers", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   const activity = await source("components/task6/CoachRunActivity.tsx");
-  // 流式文字不再裸渲染
-  assert.match(
-    panel,
-    /<CoachMessageText text=\{run\.partial_text\} analysisRef=\{defaultAnalysisRef\} onOpenVideo=\{onOpenVideo\} \/>/,
-  );
+  // 流式文字不再裸渲染：批7（digests §10）起 partial 与最终答案同走受控富
+  // 渲染管线 CoachMessageText；流式光标经 tail 插到续写位，不游离在组件外。
+  // （旧断言锁单行 JSX 属性串，因批7 加 tail 属性换行而更新。）
+  const at = panel.indexOf("text={run.partial_text}");
+  assert.ok(at > -1, "streaming partial must render through CoachMessageText");
+  const start = panel.lastIndexOf("<CoachMessageText", at);
+  const end = panel.indexOf("/>", at);
+  const streamingBlock = panel.slice(Math.max(0, start), end);
+  assert.match(streamingBlock, /text=\{run\.partial_text\}/);
+  assert.match(streamingBlock, /task6-streaming-cursor/);
   // 归档回合保留活动摘要与思考秒数
   assert.match(panel, /archivedTurn\.thinkingMs/);
   assert.match(panel, /deriveToolSteps\(archivedTurn\.run\)/);

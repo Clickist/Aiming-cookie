@@ -1545,11 +1545,13 @@ export function CoachPanel({
         {messages.map((message, index) => (
           <div className="task6-message-entry" data-role={message.role} key={message.id}>
             <article className="task6-message" data-role={message.role}>
-              <p>
-                {message.role === "assistant"
-                  ? <CoachMessageText text={message.content} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
-                  : message.content}
-              </p>
+              {message.role === "assistant" ? (
+                /* 受控富渲染（digests §10）：助手消息走 task7-rich 块结构，
+                   不再套 <p>（表格/列表不能内嵌在段落里）。 */
+                <CoachMessageText text={message.content} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
+              ) : (
+                <p>{message.content}</p>
+              )}
             </article>
             {/* 编辑重发（截断派，item 7）：仅空闲且已落库消息提供入口 */}
             {message.role === "user" && message.id > 0 && !composerBusy ? (
@@ -1568,11 +1570,15 @@ export function CoachPanel({
         {run?.partial_text ? (
           <article className="task6-message" data-role="assistant">
             {/* 流式期间与最终答案同一渲染路径：@time 链接实时可点，
-                消除完成后裸文本→格式化的跳变。 */}
-            <p>
-              <CoachMessageText text={run.partial_text} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
-              {run && ["queued", "running"].includes(run.status) ? <span className="task6-streaming-cursor" /> : null}
-            </p>
+                消除完成后裸文本→格式化的跳变；光标经 tail 插在续写位。 */}
+            <CoachMessageText
+              text={run.partial_text}
+              analysisRef={defaultAnalysisRef}
+              onOpenVideo={onOpenVideo}
+              tail={
+                run && ["queued", "running"].includes(run.status) ? <span className="task6-streaming-cursor" /> : null
+              }
+            />
           </article>
         ) : null}
         {run && ["queued", "running", "failed", "stopped"].includes(run.status) ? (

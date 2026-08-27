@@ -1312,8 +1312,88 @@
   color: var(--on-surface-variant);
 }
 
-/* Time links in Coach messages（@12.3s → 点击跳转视频） */
+/* ── 受控富渲染（digests §10 批7）＋中文排印 ───────────────────────
+   受限子集＝GFM 表格（≤5 列，超出由解析器降级段落）/有序无序列表/行内
+   加粗。颜色一律 token；排印按 §10 十条用 CSS 原生特性实现（禁 JS 文本
+   变换、禁伪斜体）；聊天列宽维持批 3 定稿的 720px（~42em 一条未采纳）。 */
 
+.task7-rich {
+  /* 排印①：行高 1.75±0.10 */
+  line-height: 1.75;
+  /* 排印②⑨：CJK×Latin 混排间隙与拼音空隙交原生 text-autospace；
+     不支持的原生层静默忽略（渐进增强），红线：任何 JS 插空格都算违规。 */
+  text-autospace: normal;
+  /* 排印⑥：CJK 禁 break-all；长词/URL 用 anywhere 兜底断行 */
+  overflow-wrap: anywhere;
+}
+
+.task7-rich p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* 块间距只在相邻块之间补，不引入顶部悬空 */
+.task7-rich > * + * {
+  margin-block-start: var(--space-2);
+}
+
+/* 排印④：受控行内加粗固定 600 档（400 正文 ＋ 600 强调两档制） */
+.task7-rich .task7-rich-bold {
+  font-weight: 600;
+}
+
+.task7-rich ol,
+.task7-rich ul {
+  margin: 0;
+  padding-inline-start: calc(var(--space-4) + 2px);
+}
+
+.task7-rich li + li {
+  margin-block-start: var(--space-1);
+}
+
+.task7-rich li::marker {
+  color: var(--on-surface-variant);
+}
+
+/* 表格：横向滚动容器保护对话列；数值列 tabular-nums（排印⑤） */
+.task7-rich-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.task7-rich table {
+  border-collapse: collapse;
+  font-size: var(--text-caption);
+}
+
+.task7-rich th,
+.task7-rich td {
+  padding: var(--space-2) var(--space-3);
+  text-align: start;
+  vertical-align: top;
+}
+
+.task7-rich thead th {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.task7-rich tbody tr + tr td,
+.task7-rich thead + tbody td {
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task7-rich td[data-num="true"],
+.task7-rich th[data-num="true"] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Time links in Coach messages（@12.3s → 点击跳转视频） */
 .task6-time-link {
   padding: 0;
   border: 0;
