@@ -1203,6 +1203,18 @@
   display: grid;
   max-width: 100%;
   gap: var(--space-2);
+  animation: task6-enter var(--duration-surface) var(--ease-out) both;
+}
+
+@keyframes task6-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .task6-message-entry[data-role="user"] {
@@ -1472,6 +1484,170 @@
 @keyframes task6-blink {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0.15; }
+}
+
+/* ── 工作态动效（Coach 回合活动块）────────────────────────────────
+   循环动画按 design-system 规则豁免时长 token 约束；全部在 reduced-motion 下关闭。 */
+
+/* 进行中文本的扫光：background-clip 文字渐变位移，循环一次 1.8s */
+.task6-shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--on-surface-variant) 0%,
+    var(--on-surface) 50%,
+    var(--on-surface-variant) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: task6-shimmer 1.8s linear infinite;
+}
+
+@keyframes task6-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* 活动步骤圆点与 pending chip 的呼吸：只用 transform/opacity，
+   不引入合同外阴影形状 */
+.task6-pulse-dot {
+  animation: task6-pulse 1.6s var(--ease-out) infinite;
+}
+
+@keyframes task6-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.95; }
+  50% { transform: scale(0.7); opacity: 0.5; }
+}
+
+.task6-chip-dot {
+  width: 7px;
+  height: 7px;
+  align-self: center;
+  flex: none;
+  border-radius: 50%;
+  background: var(--on-surface);
+}
+
+/* 折叠容器：静态显隐。展开过渡动画走 training-reveal 的既有合同模式，
+   闭合内容的可交互性由组件层的 inert 属性保证 */
+.task6-collapse[data-state="closed"] {
+  display: none;
+}
+
+/* 思考折叠块 */
+.task6-think-block {
+  padding: var(--space-1) 0;
+  font-size: var(--text-caption);
+}
+
+.task6-think-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.task6-think-head:hover {
+  color: var(--on-surface);
+}
+
+.task6-think-dot {
+  position: relative;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--outline);
+  background: transparent;
+}
+
+.task6-think-dot[data-live] {
+  border-color: var(--on-surface);
+  background: var(--on-surface);
+  animation: task6-pulse 1.6s var(--ease-out) infinite;
+}
+
+.task6-think-timer {
+  color: var(--on-surface-variant);
+}
+
+.task6-think-body {
+  max-height: 180px;
+  overflow-y: auto;
+  margin: var(--space-1) 0 0 var(--space-2);
+  padding: var(--space-2);
+  border-left: 2px solid var(--outline-variant);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 完成步收敛行的展开控件 */
+.task6-done-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  cursor: pointer;
+  text-align: left;
+}
+
+.task6-done-toggle:hover .task6-tool-meta {
+  color: var(--on-surface);
+}
+
+.task6-done-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-4) 0 calc(var(--space-4) + 6px);
+}
+
+/* 已完成步骤的可展开摘要 */
+.task6-tool-detail-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.task6-tool-detail-toggle:hover {
+  color: var(--on-surface);
+}
+
+.task6-tool-detail {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  max-height: 160px;
+  overflow-y: auto;
+  border-left: 2px solid var(--outline-variant);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Suggestions */
@@ -2010,9 +2186,16 @@
   }
 
   .task6-streaming-cursor,
-  .task6-tool-step[data-state="active"] .task6-tool-dot,
-  .task6-tool-step[data-state="active"] .task6-tool-dot::after {
+  .task6-shimmer-text,
+  .task6-pulse-dot,
+  .task6-think-dot[data-live] {
     animation: none;
+  }
+
+  /* shimmer 关闭后必须保留可读的文字颜色 */
+  .task6-shimmer-text {
+    background: none;
+    color: var(--on-surface-variant);
   }
 
   .task6-info-tooltip {
