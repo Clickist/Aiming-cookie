@@ -124,7 +124,7 @@ export type ErrorCategory =
   | "storage_disk"
   | "internal_unknown";
 export type NarrationStatus = "available" | "unavailable" | "not_requested";
-export type ArtifactStatus = "available" | "missing" | "deleted";
+export type ArtifactStatus = "available" | "missing";
 
 export interface NarrationMetadataV1 {
   status: NarrationStatus;
@@ -788,9 +788,6 @@ export interface KovaaKRunListItem {
   video_quality: KovaaKRunVideoQuality;
   limitations: string[];
   stats_calibration?: KovaaKRunStatsCalibration | null;
-  analysis_completed_at?: string | null;
-  presentation_label?: string | null;
-  training_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -973,7 +970,7 @@ export interface ProviderAuthOperation {
   action: "login" | "refresh";
   provider_id: string;
   mode: "api_key" | "oauth" | null;
-  status: "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | "timed_out" | "interrupted";
+  status: "running" | "awaiting_input" | "succeeded" | "failed" | "cancelled" | "timed_out";
   prompt: ProviderAuthPrompt | null;
   prompts: ProviderAuthPrompt[];
   events: ProviderAuthEvent[];
@@ -1069,6 +1066,7 @@ export interface RunEvidenceRemovalResponse {
   availability: "unavailable";
   removal_state: "completed" | "pending_cleanup" | "already_unavailable";
   reclaimed_bytes: number;
+  affected_modes: InputMode[];
 }
 
 export interface IncompleteCaptureItemV1 {
@@ -1282,7 +1280,7 @@ export interface CoachAgentRunV1 {
   phase: "queued" | "text_generation" | "tool_execution" | "completed";
   partial_text: string | null;
   error: {
-    domain: "network" | "model" | "permission" | "tool";
+    domain: "network" | "model" | "permission" | "tool" | "coach_runtime";
     code: string;
     message: string;
     retryable: boolean;

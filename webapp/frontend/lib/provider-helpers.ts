@@ -14,7 +14,7 @@ export function isCustomProviderKind(kind: string): kind is CustomProviderKind {
 }
 
 export function isAuthTerminal(operation: ProviderAuthOperation): boolean {
-  return ["succeeded", "failed", "cancelled", "timed_out", "interrupted"].includes(operation.status);
+  return ["succeeded", "failed", "cancelled", "timed_out"].includes(operation.status);
 }
 
 export function firstAuthMode(modes: ProviderAuthMode[] | undefined): ProviderAuthMode {
