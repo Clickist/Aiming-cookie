@@ -7,6 +7,7 @@
  */
 
 import type { AnalysisMetricPresentation } from "./contracts";
+import type { TimelineEvent } from "./types";
 
 /* 事件与行类型的自然语言命名（原稿「事件命名」面板 + 分布图） */
 export const EVENT_KIND_LABELS: Record<string, string> = {
@@ -92,4 +93,54 @@ export function availabilityLabel(availability: string): string {
 
 export function limitationLabel(limitation: string): string {
   return LIMITATION_LABELS[limitation] ?? limitation;
+}
+
+/* ── 视频面板复盘升级 P1 事件上轴（brief §二 P1）────────────────────────
+   标记数据契约对齐 videojs-markers 四元组习惯，收敛为 { timeMs, type, label }。
+   数据源是 AnalysisWorkspacePresentation.timeline（presentTimelineEvent 投影）：
+   type/label 后端齐备；时间无现成 ms 字段，由 relative_ms ?? time_s×1000
+   纯前端推导，不改底层合同。 */
+
+/** 事件类型 → 时间轴标记语义桶（决定 --event-* token 与形状）。
+    miss/death 归入同一"失误"桶（brief：miss/death → --event-miss）。 */
+const MARKER_TYPE_BUCKETS: Record<string, TimelineMarker["type"]> = {
+  kill: "kill",
+  miss: "miss",
+  death: "miss",
+  peak: "peak",
+};
+
+export interface TimelineMarker {
+  timeMs: number;
+  type: "kill" | "miss" | "peak";
+  label: string;
+}
+
+/**
+ * 把分析 timeline 投影为上轴标记：只保留 kill / miss(death) / peak 三类
+ * 高频事件。corrective 本批不上——后端 corrective_frames 是 peak→end 中点
+ * 的粗估质心（worker extras 显式标注 corrective_frame_estimated），锚帧精度
+ * 不足以支撑「seek 并暂停在锚点帧」的语义。无有效时间的事件丢弃不编造。
+ */
+export function projectTimelineMarkers(events: ReadonlyArray<TimelineEvent>): TimelineMarker[] {
+  const markers: Array<TimelineMarker & { sortMs: number }> = [];
+  for (const event of events) {
+    const type = MARKER_TYPE_BUCKETS[event.type];
+    if (!type) continue;
+    // relative_ms 是首选权威值（原样使用）；否则由秒转毫秒。
+    const sortMs = typeof event.relative_ms === "number" && Number.isFinite(event.relative_ms)
+      ? event.relative_ms
+      : typeof event.time_s === "number" && Number.isFinite(event.time_s)
+        ? Math.round(event.time_s * 1000)
+        : null;
+    if (sortMs === null || sortMs < 0) continue;
+    markers.push({
+      timeMs: sortMs,
+      type,
+      label: event.label || EVENT_KIND_LABELS[event.type] || event.type,
+      sortMs,
+    });
+  }
+  markers.sort((left, right) => left.sortMs - right.sortMs);
+  return markers.map(({ timeMs, type, label }) => ({ timeMs, type, label }));
 }

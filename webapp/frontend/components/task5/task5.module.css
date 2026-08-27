@@ -1145,6 +1145,130 @@
   background: var(--on-surface-variant);
 }
 
+/* ── P1 事件上轴（brief §二 P1）：标记视觉层 ──────────────────────────
+   契约栈序：track → progress → markers(此处，P2 band 将插在本行与 progress
+   行之间) → cursor(z6) → input(z7)。竖条容器对齐轨道 10px 内边距，
+   百分比按真实轨道宽计算；纯展示层不接管任何指针。 */
+.timelineMarkers {
+  position: absolute;
+  inset-inline: 10px;
+  top: 14px;
+  height: 20px;
+  pointer-events: none;
+}
+
+/* 颜色＋形状双通道防色盲不可辨：kill=菱形头◆、peak=上三角头▲、
+   miss/death=下三角头∨；竖干均 2px 宽，语义色一律 --event-* token。 */
+.timelineMarker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  transform: translateX(-50%);
+}
+
+.timelineMarker::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 1px);
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  background: inherit;
+  transform: translateX(-50%);
+}
+
+.timelineMarker[data-event="kill"] {
+  background: var(--event-kill);
+}
+
+.timelineMarker[data-event="kill"]::before {
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+.timelineMarker[data-event="miss"] {
+  background: var(--event-miss);
+}
+
+.timelineMarker[data-event="miss"]::before {
+  clip-path: polygon(0% 0%, 100% 0%, 50% 100%);
+}
+
+.timelineMarker[data-event="peak"] {
+  background: var(--event-peak);
+}
+
+.timelineMarker[data-event="peak"]::before {
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+}
+
+/* 标记命中层：range input 盖满全轴是拖动主干道，下方元素无法命中，
+   故浮在其上（z8）放窄命中按钮承载 hover tooltip 与点击 seek。 */
+.timelineMarkerLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.timelineMarkerHit {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  transform: translateX(-50%);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.timelineMarkerHit:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* hover/focus 提示 label tooltip：与 evidenceTooltip/profileTooltip 同一
+   显隐惯例（focus-within 常显 + 精确指针设备 hover 显示）。 */
+.markerTip {
+  position: absolute;
+  z-index: 10;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  max-width: 220px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-high);
+  box-shadow: var(--shadow-overlay);
+  color: var(--on-surface);
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate(-50%, -2px);
+  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.timelineMarkerHit:focus-visible .markerTip {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .timelineMarkerHit:hover .markerTip {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+  }
+}
+
 
 
 
@@ -1358,6 +1482,12 @@
   }
 
   .volumePopover {
+    transition: opacity var(--duration-reduced-motion) var(--ease-out);
+    transform: translate(-50%, 0);
+  }
+
+  /* tooltip 只剩静态淡入：去位移（保留居中锚定），状态仍可辨识。 */
+  .markerTip {
     transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: translate(-50%, 0);
   }

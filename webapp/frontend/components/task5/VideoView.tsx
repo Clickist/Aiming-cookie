@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAnalysisVideoBlob } from "@/lib/api";
 import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { getManagedVideoUrl, isDesktopRuntime } from "@/lib/desktop";
+import { projectTimelineMarkers } from "@/lib/metric-format";
 import { Button, Empty, Loading, Notice } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
@@ -120,10 +121,34 @@ export function VideoView({
 
   const timelineMax = Math.max(durationMs, 1);
 
+  /* P1 事件上轴：分析 timeline → { timeMs, type, label } 标记（kill/miss/
+     peak 三类；corrective 数据粗估本批不上）。换分析才重算，与播放解耦。 */
+  const timelineMarkers = useMemo(
+    () => projectTimelineMarkers(presentation.timeline),
+    [presentation.timeline],
+  );
+  /** 标记在轨道上的百分比位置（与 progress/cursor 同一约定）。 */
+  const markerPercent = (timeMs: number) =>
+    clamp((timeMs / timelineMax) * 100, 0, 100);
+
   const seek = (timeMs: number) => {
     const next = clamp(timeMs, 0, timelineMax);
     onCurrentTimeChange(next);
     if (videoRef.current) videoRef.current.currentTime = next / 1000;
+  };
+
+  /* P1 标记点击＝seek 并暂停在锚点帧：复用 P0.3 的到达链路（暂停 +
+     arriveSeq 驱动 cursor key 重放一次性脉冲），与 jumpTarget 效果同一套
+     状态机制，但不经过外部跳转信号。 */
+  const seekAndArrive = (timeMs: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = clamp(timeMs, 0, timelineMax) / 1000;
+    if (!video.paused) video.pause();
+    setArriveActive(true);
+    setArriveSeq((seq) => seq + 1);
+    if (arriveClearRef.current) clearTimeout(arriveClearRef.current);
+    arriveClearRef.current = setTimeout(() => setArriveActive(false), ARRIVE_FLASH_MS);
   };
 
   const togglePlay = () => {
@@ -460,6 +485,23 @@ export function VideoView({
         <div className={styles.timeline}>
           <div className={styles.timelineTrack} />
           <div className={styles.timelineProgress} style={{ width: `${progress}%` }} />
+          {/* P1 事件上轴——视觉标记层（2px 竖条＋类型形状头），契约栈序插在
+              progress 与 cursor 之间；P2 band 层预留在本行与上行之间。
+              纯展示不接管指针：竖条容器的 inset-inline 对齐轨道 10px 内边距，
+              百分比按真实轨道宽计算；进度/播放头的 ±10px 斜差不在此顺手修正
+              （不得动拖动输入层命中区）。 */}
+          {timelineMarkers.length > 0 ? (
+            <div aria-hidden="true" className={styles.timelineMarkers}>
+              {timelineMarkers.map((marker, index) => (
+                <span
+                  className={styles.timelineMarker}
+                  data-event={marker.type}
+                  key={`${marker.type}-${marker.timeMs}-${index}`}
+                  style={{ insetInlineStart: `${markerPercent(marker.timeMs)}%` }}
+                />
+              ))}
+            </div>
+          ) : null}
           {/* key 随到达序号变化＝一次性脉冲重放；data-arrive 窗口内
               呈现 var(--ring) 高亮（reduced-motion 下为静态高亮一次）。 */}
           <div
@@ -478,6 +520,29 @@ export function VideoView({
             type="range"
             value={clamp(currentTimeMs, 0, timelineMax)}
           />
+          {/* P1 标记命中层：时间轴 range 盖满全轴是拖动主干道，标记的
+              hover/点击无法从其下方命中，故以窄命中区按钮浮在其上（z8）；
+              点击＝seek 并暂停在锚点帧。窄宽把对拖动的占用压到最小。 */}
+          {timelineMarkers.length > 0 ? (
+            <div className={styles.timelineMarkerLayer}>
+              {timelineMarkers.map((marker, index) => {
+                const tip = `${formatRelativeTime(marker.timeMs)} ${marker.label}`;
+                return (
+                  <button
+                    aria-label={tip}
+                    className={styles.timelineMarkerHit}
+                    data-event={marker.type}
+                    key={`hit-${marker.type}-${marker.timeMs}-${index}`}
+                    onClick={() => seekAndArrive(marker.timeMs)}
+                    style={{ insetInlineStart: `${markerPercent(marker.timeMs)}%` }}
+                    type="button"
+                  >
+                    <span aria-hidden="true" className={styles.markerTip} role="tooltip">{tip}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
           <span className={styles.timelineTimeLeft}>{formatRelativeTime(0)}</span>
           <span className={styles.timelineTimeRight}>{formatRelativeTime(timelineMax)}</span>
         </div>
