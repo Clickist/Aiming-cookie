@@ -390,17 +390,18 @@ test("Coach renders time-point links without parsing model prose", async () => {
 
 test("Coach tool steps collapse done steps, show analysis ETA, and mark stopped runs", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
+  const activity = await source("components/task6/CoachRunActivity.tsx");
   const styles = await source("components/task6/task6.css");
-  // 已完成的步骤折叠成「已完成 N 步」计数行。
-  assert.match(coach, /task6-tool-done-count/);
-  assert.match(coach, /已完成 \{doneToolStepCount\} 步/);
+  // 已完成的步骤收敛为一行计数（呈现逻辑在 CoachRunActivity，面板只喂解析结果）。
+  assert.match(coach, /<CoachStepList steps=\{toolSteps\}/);
+  assert.match(activity, /已完成 \{doneSteps\.length\} 步 · 查看/);
   // ETA 只对分析类命令显示，且样本来自真实执行时长（started_at 优先）。
   assert.match(coach, /ANALYSIS_ETA_COMMANDS = new Set\(\["analysis\.create_from_run", "analysis\.retry"\]\)/);
   assert.match(coach, /computeAnalysisEtaSeconds\(sessionsSnapshot\)/);
-  assert.match(coach, /task6-tool-eta/);
+  assert.match(activity, /task6-tool-eta/);
   // 停止态渲染灰色状态点与「回答已停止」行。
-  assert.match(coach, /data-state=\{stepState\}/);
-  assert.match(coach, /回答已停止，可重新提问/);
+  assert.match(coach, /stopped=\{run\.status === "stopped"\}/);
+  assert.match(activity, /回答已停止，可重新提问/);
   // 新 UI 的样式存在，已删的 composer 状态行不留孤儿规则。
   assert.match(styles, /\.task6-tool-step/);
   assert.doesNotMatch(styles, /task6-composer-status/);

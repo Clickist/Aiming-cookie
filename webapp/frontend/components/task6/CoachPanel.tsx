@@ -16,6 +16,7 @@ import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
 import { COACH_PENDING_INTENT_KEY, computeAnalysisEtaSeconds } from "@/lib/contracts";
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
 import { CoachModelMenu } from "./CoachModelMenu";
+import { CoachStepList, CoachThinkingBlock, ElapsedTicker, type CoachToolStep } from "./CoachRunActivity";
 import type {
   CoachAgentRunEventV1,
   CoachAgentRunV1,
@@ -80,16 +81,8 @@ function validKovaaKItemName(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 120;
 }
 
-type ToolStepState = "done" | "active" | "fail";
-
-interface ToolStep {
-  key: string;
-  label: string;
-  meta: string | null;
-  state: ToolStepState;
-  /** product command 名（合成步骤为 null）；用于识别需要预估时间的分析类步骤。 */
-  command: string | null;
-}
+/** 步骤形态与呈现组件共享；解析由 deriveToolSteps 完成，本文件不再持有展示逻辑。 */
+type ToolStep = CoachToolStep;
 
 /* 工具步骤标签：已知 product command 用中文呈现，未知的回退为合同里的 command_name；
    标签映射是纯前端呈现层，不改任何后端合同。 */
@@ -158,6 +151,14 @@ function deriveToolSteps(run: CoachAgentRunV1 | null): ToolStep[] {
       const commandName = typeof payload.command_name === "string" ? payload.command_name : null;
       const topic = typeof payload.topic === "string" ? payload.topic : null;
       const activityState = typeof payload.state === "string" ? payload.state : null;
+      const argsPreview = typeof payload.args_preview === "string" ? payload.args_preview : null;
+      const resultPreview = typeof payload.result_preview === "string" ? payload.result_preview : null;
+      const durationMs =
+        typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms)
+          ? Math.round(payload.duration_ms)
+          : null;
+      // 开始事件的 created_at 是活动步「经过时间跳动」的基准（分钟:秒）。
+      const createdAtMs = Date.parse(event.created_at);
       const warning = payload.warning_or_error;
       const warningMessage = warning && typeof warning === "object" && typeof (warning as { message?: unknown }).message === "string"
         ? (warning as { message: string }).message
@@ -172,9 +173,16 @@ function deriveToolSteps(run: CoachAgentRunV1 | null): ToolStep[] {
           : previous?.label ?? (toolName
             ? TOOL_COMMAND_LABELS[toolName] ?? toolName
             : topic ? "查阅训练知识" : event.message),
-        meta: warningMessage ?? (commandName ? null : topic),
-        state: (failed ? "fail" : activityState === "started" ? "active" : "done") as ToolStepState,
-        command: commandName,
+        meta: warningMessage ?? (commandName ? null : topic ?? previous?.meta ?? null),
+        state: (failed ? "fail" : activityState === "started" ? "active" : "done") as ToolStep["state"],
+        command: commandName ?? previous?.command ?? null,
+        durationMs: durationMs ?? previous?.durationMs ?? null,
+        startedAtMs:
+          activityState === "started" && Number.isFinite(createdAtMs)
+            ? createdAtMs
+            : previous?.startedAtMs ?? null,
+        argsPreview: argsPreview ?? previous?.argsPreview ?? null,
+        resultPreview: resultPreview ?? previous?.resultPreview ?? null,
       });
     });
   const steps = [...stepMap.values()];
@@ -300,6 +308,27 @@ export function CoachPanel({
   // send 的同步重入锁：setRun(created) 在两次 await 网络往返之后，窗口期内
   // 第二次 Enter/双击会完整重入并产生重复会话与消息；进入函数即置位，finally 必清。
   const sendingRef = useRef(false);
+  // 思考流（SSE partial 帧的 thinking_text）。REST 轮询兜底不携带该字段，
+  // 降级路径不显示思考块，行为与旧版一致。
+  const [liveThinking, setLiveThinking] = useState<string | null>(null);
+  const liveThinkingRef = useRef<string | null>(null);
+  // startAt=首个思考帧时刻；frozenMs=首个回答 token 到达时冻结的思考窗口，
+  // 回合结束后归档展示「已思考 N 秒」。
+  const thinkingTrackerRef = useRef<{ startAt: number | null; frozenMs: number | null }>({
+    startAt: null,
+    frozenMs: null,
+  });
+  type ArchivedTurn = { run: CoachAgentRunV1; thinkingText: string | null; thinkingMs: number | null };
+  // 成功回合的活动摘要：对话流不再「成功即消失」，工具步骤收敛行保留在
+  // 已落库回答之上，直到下一次发送或切换会话。
+  const [archivedTurn, setArchivedTurn] = useState<ArchivedTurn | null>(null);
+
+  const clearThinkingStream = useCallback(() => {
+    setLiveThinking(null);
+    liveThinkingRef.current = null;
+    thinkingTrackerRef.current = { startAt: null, frozenMs: null };
+  }, []);
+
   const activeSessionKey = draftSession ? "draft" : `session:${sessionId ?? "primary"}`;
   const activeSessionKeyRef = useRef(activeSessionKey);
   const runBySessionRef = useRef(new Map<string, CoachAgentRunV1>());
@@ -354,7 +383,9 @@ export function CoachPanel({
     setRun(runBySessionRef.current.get(activeSessionKey) ?? null);
     setUnreadCount(0);
     stickToBottomRef.current = true;
-  }, [activeSessionKey]);
+    clearThinkingStream();
+    setArchivedTurn(null);
+  }, [activeSessionKey, clearThinkingStream]);
 
   useEffect(() => {
     if (run) {
@@ -412,10 +443,12 @@ export function CoachPanel({
     return () => { cancelled = true; };
   }, [discussionAnalysisKey]);
 
-  // 进行中的分析挂进「本次讨论」条：显示「正在分析：场景名」，完成后由
-  // 自动开讲接管变成可点击的视频 chip。有分析在跑时 3s 轮询，空闲 10s。
-  // 同一轮询顺带保存会话快照，供分析步骤的预估耗时计算复用。
-  const [pendingAnalyses, setPendingAnalyses] = useState<{ id: number; scenario: string | null; runId: number | null }[]>([]);
+  // 进行中的分析挂进「本次讨论」条：显示「正在分析：场景名」+ 呼吸点与经过
+  // 时间，完成后由自动开讲接管变成可点击的视频 chip。有分析在跑时 3s 轮询，
+  // 空闲 10s。同一轮询顺带保存会话快照，供分析步骤的预估耗时计算复用。
+  const [pendingAnalyses, setPendingAnalyses] = useState<
+    { id: number; scenario: string | null; runId: number | null; startedAtMs: number | null }[]
+  >([]);
   const [sessionsSnapshot, setSessionsSnapshot] = useState<SessionListItem[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -430,7 +463,16 @@ export function CoachPanel({
         const pending = response.sessions
           .filter((item) => item.status === "queued" || item.status === "running")
           .sort((a, b) => b.id - a.id)
-          .map((item) => ({ id: item.id, scenario: item.scenario ?? null, runId: item.kovaak_run_id ?? null }));
+          .map((item) => ({
+            id: item.id,
+            scenario: item.scenario ?? null,
+            runId: item.kovaak_run_id ?? null,
+            // started_at 优先（已在跑），否则从入队时间起算。
+            startedAtMs: (() => {
+              const parsed = Date.parse(item.started_at ?? item.created_at);
+              return Number.isFinite(parsed) ? parsed : null;
+            })(),
+          }));
         setPendingAnalyses(pending);
         fast = pending.length > 0;
       } catch {
@@ -487,12 +529,14 @@ export function CoachPanel({
     appliedSoftStartRef.current = softStartRun.run_ref;
     stickToBottomRef.current = true;
     if (["queued", "running"].includes(softStartRun.status)) {
+      setArchivedTurn(null);
+      clearThinkingStream();
       setRun(softStartRun);
       return;
     }
     setRun(null);
     void refresh();
-  }, [refresh, softStartRun]);
+  }, [refresh, softStartRun, clearThinkingStream]);
 
   useEffect(() => {
     void refreshCurrentTraining();
@@ -558,6 +602,17 @@ export function CoachPanel({
 
     const fetchRun = () => getCoachAgentRun(runRef, sessionId == null ? {} : { sessionId });
 
+    // 成功终态统一收敛：回合摘要归档（工具步骤收敛行 + 思考秒数），思考流清空，
+    // 本地 run 解除以落库消息接管对话。
+    const settleSucceeded = (next: CoachAgentRunV1) => {
+      const tracker = thinkingTrackerRef.current;
+      const frozenMs =
+        tracker.frozenMs ?? (tracker.startAt !== null ? Date.now() - tracker.startAt : null);
+      setArchivedTurn({ run: next, thinkingText: liveThinkingRef.current, thinkingMs: frozenMs });
+      clearThinkingStream();
+      setRun(null);
+    };
+
     // 轮询兜底的有限退避：瞬断不杀轮询（1s→2s→4s…上限 10s），连续失败达到
     // 上限才放弃并把本地 run 收敛为明确的中断终态；任何一次成功即清零计数、
     // 恢复正常节奏。
@@ -576,7 +631,7 @@ export function CoachPanel({
         if (cancelled) return;
         setRun(next);
         await Promise.all([refresh(), refreshCurrentTraining()]);
-        if (next.status === "succeeded") setRun(null);
+        if (next.status === "succeeded") settleSucceeded(next);
       } catch (error) {
         if (cancelled) return;
         // 终态确认不能一次失败就丢：run 已消失立即中断收敛，
@@ -608,7 +663,7 @@ export function CoachPanel({
             schedulePoll();
           } else {
             await Promise.all([refresh(), refreshCurrentTraining()]);
-            if (next.status === "succeeded") setRun(null);
+            if (next.status === "succeeded") settleSucceeded(next);
           }
         } catch (error) {
           if (cancelled) return;
@@ -641,6 +696,7 @@ export function CoachPanel({
       clearPollTimer();
       closeStream();
       streamActive = false;
+      clearThinkingStream();
       setRun((prev) => prev
         ? {
           ...prev,
@@ -692,9 +748,23 @@ export function CoachPanel({
       es.addEventListener("partial", (event: MessageEvent) => {
         if (cancelled || !opened) return;
         try {
-          const data = JSON.parse(event.data) as { text?: unknown };
-          const text = data.text;
-          if (typeof text === "string") {
+          // partial 帧同时携带 text 与 thinking_text（思考帧的 text 为 null 或
+          // 重发的最新正文）。思考帧进入折叠块；首个非空回答 token 冻结
+          // 思考窗口时长供归档展示。
+          const data = JSON.parse(event.data) as { text?: unknown; thinking_text?: unknown };
+          const thinking = typeof data.thinking_text === "string" ? data.thinking_text : "";
+          if (thinking.trim()) {
+            if (thinkingTrackerRef.current.startAt === null) {
+              thinkingTrackerRef.current.startAt = Date.now();
+            }
+            liveThinkingRef.current = thinking;
+            setLiveThinking(thinking);
+          }
+          if (typeof data.text === "string") {
+            const text = data.text;
+            if (text.length > 0 && thinkingTrackerRef.current.startAt !== null && thinkingTrackerRef.current.frozenMs === null) {
+              thinkingTrackerRef.current.frozenMs = Date.now() - thinkingTrackerRef.current.startAt;
+            }
             setRun((prev) => (prev ? { ...prev, partial_text: text } : prev));
           }
         } catch {
@@ -752,12 +822,17 @@ export function CoachPanel({
       clearPollTimer();
       closeStream();
     };
-  }, [liveRunRef, refresh, refreshCurrentTraining, sessionId]);
+  }, [liveRunRef, refresh, refreshCurrentTraining, sessionId, clearThinkingStream]);
 
-  const toolSteps = useMemo(() => deriveToolSteps(run), [run]);
-  // 已完成的工具步骤不逐条列，收敛为一行计数；执行中/失败的保持可见。
-  const visibleToolSteps = toolSteps.filter((step) => step.state !== "done");
-  const doneToolStepCount = toolSteps.length - visibleToolSteps.length;
+  const toolSteps = useMemo(
+    () =>
+      deriveToolSteps(run).map((step) =>
+        step.command && ANALYSIS_ETA_COMMANDS.has(step.command)
+          ? { ...step, etaSeconds: analysisEtaSeconds }
+          : step,
+      ),
+    [run, analysisEtaSeconds],
+  );
   // 对话流条目数：历史消息 + 当前 run 块（流式文字/工具步骤/卡片合记为 1 条）
   const feedCount = messages.length + (run ? 1 : 0);
 
@@ -910,6 +985,9 @@ export function CoachPanel({
     // 同步重入锁：必须在任何 await 之前置位，重入直接丢弃。
     if (sendingRef.current) return;
     sendingRef.current = true;
+    // 新回合开始：清掉上一回合的归档摘要与思考流残留。
+    setArchivedTurn(null);
+    clearThinkingStream();
     let optimisticId: number | null = null;
     try {
       const effectiveSessionId = sessionId ?? (onEnsureSession ? await onEnsureSession() : null);
@@ -1050,7 +1128,9 @@ export function CoachPanel({
               key={`pending-${item.id}`}
               title="分析完成后可点击打开视频"
             >
-              正在分析：{item.scenario ?? `分析 #${item.id}`}{item.runId != null ? ` · run ${item.runId}` : ""}
+              <span aria-hidden="true" className="task6-pulse-dot task6-chip-dot" />
+              {item.scenario ?? `分析 #${item.id}`}{item.runId != null ? ` · run ${item.runId}` : ""}
+              <ElapsedTicker sinceMs={item.startedAtMs} />
             </span>
           ))}
           {discussionAnalysisIds.map((id) => (
@@ -1085,43 +1165,35 @@ export function CoachPanel({
         ))}
         {run?.partial_text ? (
           <article className="task6-message" data-role="assistant">
-            <p>{run.partial_text}{run && ["queued", "running"].includes(run.status) ? <span className="task6-streaming-cursor" /> : null}</p>
+            {/* 流式期间与最终答案同一渲染路径：@time 链接实时可点，
+                消除完成后裸文本→格式化的跳变。 */}
+            <p>
+              <CoachMessageText text={run.partial_text} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
+              {run && ["queued", "running"].includes(run.status) ? <span className="task6-streaming-cursor" /> : null}
+            </p>
           </article>
         ) : null}
-        {visibleToolSteps.length || doneToolStepCount || run?.status === "stopped" ? (
-          <ol aria-label="工具执行步骤" className="task6-tool-tl">
-            {visibleToolSteps.map((step) => {
-              const stepState = run?.status === "stopped" ? "stopped" : step.state;
-              return (
-                <li className="task6-tool-step" data-state={stepState} key={step.key}>
-                  <span aria-hidden="true" className="task6-tool-dot" />
-                  <span className="task6-tool-body">
-                    <span className="task6-tool-label">{step.label}</span>
-                    {step.meta ? <span className="task6-tool-meta">{step.meta}</span> : null}
-                    {stepState === "active" && step.command && ANALYSIS_ETA_COMMANDS.has(step.command) && analysisEtaSeconds !== null ? (
-                      <span className="task6-tool-eta">预计约 {analysisEtaSeconds} 秒</span>
-                    ) : null}
-                  </span>
-                </li>
-              );
-            })}
-            {doneToolStepCount > 0 ? (
-              <li className="task6-tool-step task6-tool-done-count" data-state="done">
-                <span aria-hidden="true" className="task6-tool-dot" />
-                <span className="task6-tool-body">
-                  <span className="task6-tool-meta">已完成 {doneToolStepCount} 步</span>
-                </span>
-              </li>
+        {run && ["queued", "running", "failed", "stopped"].includes(run.status) ? (
+          <>
+            <CoachThinkingBlock
+              streaming={liveThinking !== null && ["queued", "running"].includes(run.status)}
+              text={liveThinking}
+              startedAtMs={thinkingTrackerRef.current.startAt}
+            />
+            <CoachStepList steps={toolSteps} stopped={run.status === "stopped"} />
+          </>
+        ) : null}
+        {!run && archivedTurn ? (
+          <>
+            {archivedTurn.thinkingText !== null || archivedTurn.thinkingMs != null ? (
+              <CoachThinkingBlock
+                frozenSeconds={archivedTurn.thinkingMs}
+                streaming={false}
+                text={archivedTurn.thinkingText}
+              />
             ) : null}
-            {run?.status === "stopped" ? (
-              <li className="task6-tool-step" data-state="stopped">
-                <span aria-hidden="true" className="task6-tool-dot" />
-                <span className="task6-tool-body">
-                  <span className="task6-tool-label">回答已停止，可重新提问</span>
-                </span>
-              </li>
-            ) : null}
-          </ol>
+            <CoachStepList steps={deriveToolSteps(archivedTurn.run)} />
+          </>
         ) : null}
         {run?.status === "failed" ? (
           <div className="task6-error-card" role="alert">
