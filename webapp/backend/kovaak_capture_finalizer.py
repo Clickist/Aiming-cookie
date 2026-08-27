@@ -326,8 +326,11 @@ class KovaaKCaptureFinalizer:
                         self._native_client.flush_raw_snapshot,
                         capture_session_id,
                     )
-                except (NativeCaptureRetryableError, NativeCaptureTerminalError):
-                    pass
+                except (NativeCaptureRetryableError, NativeCaptureTerminalError) as error:
+                    log.warning(
+                        "flush_raw_snapshot failed run=%s session=%s code=%s",
+                        run.get("id"), capture_session_id, getattr(error, "code", None),
+                    )
             run, trace_pending = await self._attach_trace_snapshot(
                 run, snapshot,
             )

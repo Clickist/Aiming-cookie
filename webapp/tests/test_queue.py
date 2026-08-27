@@ -1280,3 +1280,27 @@ async def test_stale_worker_cannot_overwrite_after_reclaim():
     s = await queue.get_session(sid)
     assert s["status"] == "done"
     assert s["result"]["winner"] == "B"
+
+
+@pytest.mark.asyncio
+async def test_product_state_run_summary_failure_leaves_a_log_trail(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from webapp.backend import kovaak_run_store
+
+    async def fail_summaries(_user_id: str):
+        raise RuntimeError("store corrupted")
+
+    monkeypatch.setattr(
+        kovaak_run_store, "list_kovaak_run_summaries", fail_summaries,
+    )
+    with caplog.at_level(logging.ERROR, logger="webapp.backend.queue"):
+        state = await queue.get_product_state("u1")
+    assert state["has_runs"] is False
+    assert any(
+        "run summaries read failed" in record.getMessage()
+        for record in caplog.records
+    ), "run summary read failure must leave a log trail instead of vanishing silently"
