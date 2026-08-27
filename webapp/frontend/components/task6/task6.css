@@ -1181,7 +1181,9 @@
 
 /* Messages */
 
+/* position:relative：划选浮层的定位锚（随滚动内容坐标，scroll 即收起） */
 .task6-messages {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -2095,6 +2097,122 @@
   font: 400 var(--text-caption)/1.4 var(--font-ui);
 }
 
+/* ── 划选引用（quote-reply，docs/quote-feature-research.md）──────────
+   composer 引用块与已发送消息回显共用一套块样式：左侧竖线来源标注 +
+   小字 pre-wrap 文本体。竖线用 --divider-strong、底色沿用浮层家族的
+   surface-container-high；无实阴影（与 send-menu 家族一致）、无循环动画，
+   颜色一律 token，不需要新增 reduced-motion 分支以外的规则。 */
+
+.task6-quote-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  padding-bottom: var(--space-2);
+}
+
+.task6-quote-block {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border-inline-start: 2px solid var(--divider-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--surface-container-high);
+}
+
+.task6-quote-head {
+  flex: none;
+  padding-top: 2px;
+  color: var(--on-surface-variant);
+  font: 600 var(--text-micro)/1.4 var(--font-ui);
+  white-space: nowrap;
+}
+
+.task6-quote-body {
+  flex: 1;
+  min-width: 0;
+  max-height: 7.5em;
+  overflow-y: auto;
+  margin: 0;
+  color: var(--on-surface-variant);
+  font: 400 var(--text-caption)/1.5 var(--font-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task6-quote-block > .ac-icon-button {
+  flex: none;
+  opacity: 0.72;
+}
+
+.task6-quote-block:hover > .ac-icon-button,
+.task6-quote-block:focus-within > .ac-icon-button {
+  opacity: 1;
+}
+
+/* 回显块在用户气泡内：整段可见不内部滚动，底色降一档贴合气泡，
+   与正文之间用 margin 分隔 */
+.task6-message[data-role="user"] .task6-quote-block {
+  background: var(--surface-container);
+  margin-bottom: var(--space-1);
+}
+
+.task6-message[data-role="user"] .task6-quote-body {
+  max-height: none;
+  overflow-y: visible;
+}
+
+/* 划选浮层：单动作「引用」小操作条，复用 send-menu 视觉配方；
+   fixed 家族改走滚动内容锚定（absolute），坐标由组件内联注入。 */
+.task6-selection-toolbar {
+  position: absolute;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  padding: var(--space-1);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-high);
+  box-shadow: none;
+  animation: task6-selbar-in var(--duration-fast) var(--ease-out);
+}
+
+@keyframes task6-selbar-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.task6-selection-toolbar[data-flip="above"] {
+  transform: translate(-50%, -100%);
+}
+
+.task6-selection-toolbar[data-flip="below"] {
+  transform: translate(-50%, 0);
+}
+
+.task6-selection-toolbar > button {
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+  font: 500 var(--text-ui)/1.3 var(--font-ui);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.task6-selection-toolbar > button:hover {
+  background: var(--surface-container);
+}
+
+.task6-selection-toolbar > button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+}
+
 /* 编辑重发入口弱化常显、hover/聚焦增强：不用过渡动画，
    避免在文件中段新增 prefers-reduced-motion 媒体块——既有合同测试按
    媒体块出现顺序切片（Settings/nav 断言）。 */
@@ -2420,6 +2538,11 @@
   .task6-shimmer-text,
   .task6-pulse-dot,
   .task6-think-dot[data-live] {
+    animation: none;
+  }
+
+  /* 划选浮层入场淡入同关（非循环，工艺一致性起见一并关闭） */
+  .task6-selection-toolbar {
     animation: none;
   }
 
