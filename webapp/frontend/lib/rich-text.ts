@@ -11,6 +11,92 @@
 
 export const MAX_TABLE_COLUMNS = 5;
 
+// ── 聊天 @time 时间标记（视频面板复盘升级 P0.3，brief §二.3 D7）─────────────
+//
+// 渲染层格式化＝JSONL 原文不动、历史消息零迁移：解析层只产出 chip 数据，
+// 显示文案（00:51.5 / 00:38–00:43）由格式化函数给出，点击仍跳原始毫秒。
+
+/** 单点 @51.5s；区间 @38.2-43.7s——连字符衔接两个数值，秒缀只在区间末尾。 */
+export const TIME_TOKEN_PATTERN = /@(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?s/g;
+
+export type TimeChip =
+  | { kind: "point"; raw: string; label: string; timeMs: number }
+  | { kind: "range"; raw: string; label: string; startMs: number; endMs: number };
+
+export type TimeSegment = { text: string; chip?: TimeChip };
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/**
+ * 时间码显示格式（D7）：分钟补两位 00:xx 起步；秒带小数时保留一位
+ * （51.5 → 00:51.5，整数不补 .0）；超过 1 小时进位到 h:mm:ss 且不再展示
+ * 亚秒精度。
+ */
+export function formatTimecode(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "00:00";
+  const totalTenths = Math.max(0, Math.round(seconds * 10));
+  if (totalTenths >= 36000) {
+    const hours = Math.floor(totalTenths / 36000);
+    return `${hours}:${pad2(Math.floor((totalTenths % 36000) / 600))}:${pad2(Math.floor((totalTenths % 600) / 10))}`;
+  }
+  const minutes = Math.floor(totalTenths / 600);
+  const remainder = totalTenths % 600;
+  const wholeSeconds = Math.floor(remainder / 10);
+  const tenths = remainder % 10;
+  return tenths
+    ? `${pad2(minutes)}:${pad2(wholeSeconds)}.${tenths}`
+    : `${pad2(minutes)}:${pad2(wholeSeconds)}`;
+}
+
+/** 区间渲染为「起–止」整秒（en dash）：38.2–43.7 → 00:38–00:43。 */
+export function formatTimecodeRange(startSeconds: number, endSeconds: number): string {
+  return `${formatTimecode(Math.max(0, Math.floor(startSeconds)))}–${formatTimecode(Math.max(0, Math.floor(endSeconds)))}`;
+}
+
+function chipFromMatch(match: RegExpExecArray): TimeChip {
+  const startSeconds = parseFloat(match[1]);
+  if (match[2] !== undefined) {
+    const endSeconds = parseFloat(match[2]);
+    return {
+      kind: "range",
+      raw: match[0],
+      label: formatTimecodeRange(startSeconds, endSeconds),
+      startMs: Math.round(startSeconds * 1000),
+      endMs: Math.round(endSeconds * 1000),
+    };
+  }
+  return {
+    kind: "point",
+    raw: match[0],
+    label: formatTimecode(startSeconds),
+    timeMs: Math.round(startSeconds * 1000),
+  };
+}
+
+/**
+ * 把一段文本拆成 @time 芯片与普通文本分段（芯片原文保留在 chip.raw，
+ * 展示文案取 chip.label）。无命中时原样单段返回，一字不动。
+ */
+export function parseTimeSegments(text: string): TimeSegment[] {
+  const segments: TimeSegment[] = [];
+  let lastIndex = 0;
+  TIME_TOKEN_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = TIME_TOKEN_PATTERN.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, match.index) });
+    }
+    segments.push({ text: match[0], chip: chipFromMatch(match) });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex) });
+  }
+  return segments.length ? segments : [{ text }];
+}
+
 export type RichInline = { text: string; bold: boolean };
 
 export type RichItem = {

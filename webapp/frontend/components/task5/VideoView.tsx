@@ -13,14 +13,32 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/* ── 视频面板复盘升级 P0（brief §二）常量 ────────────────────────────────
+   P0.1 逐帧步进：HTML 标准不在 video 元数据上暴露帧率，用
+   getVideoPlaybackQuality 起播后的短窗差分总解码帧数推算，不可得时回退
+   33ms（≈30fps）。Shift 按 FRAME_COARSE_FACTOR 加倍粗调。原 ⏮⏭ ±5s
+   不删除语义——保留为按钮长按快速跳转。 */
+const FRAME_STEP_FALLBACK_MS = 33;
+const FRAME_COARSE_FACTOR = 2;
+const LONG_STEP_MS = 5000;
+const HOLD_DELAY_MS = 350;
+const HOLD_REPEAT_MS = 180;
+/** P0.2 变速三档循环：0.25× → 0.5× → 1× → 回 0.25×。 */
+const SPEED_STEPS = [0.25, 0.5, 1];
+/** P0.3 到达脉冲：动画两拍后回到静息可读态；reduced-motion 由 CSS 关掉动画只留静态高亮。 */
+const ARRIVE_FLASH_MS = 900;
+
 export function VideoView({
   analysisId,
   currentTimeMs,
+  jumpTarget = null,
   onCurrentTimeChange,
   presentation,
 }: {
   analysisId: number;
   currentTimeMs: number;
+  /** 外部证据跳转意图信号（Coach @time / 讨论芯片）：seq 每次点击递增。 */
+  jumpTarget?: { seq: number; ms: number } | null;
   onCurrentTimeChange: (timeMs: number) => void;
   presentation: AnalysisWorkspacePresentation;
 }) {
@@ -34,6 +52,16 @@ export function VideoView({
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  // 逐帧步进档位（ms）：fps 推算成功后原地更新，不触发重渲染。
+  const frameStepRef = useRef(FRAME_STEP_FALLBACK_MS);
+  const fpsSampledRef = useRef(false);
+  // ±5s 长按（旧快进退的保留路径）与到达脉冲计时器。
+  const holdDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdRepeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const holdingLongRef = useRef(false);
+  const arriveClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [arriveSeq, setArriveSeq] = useState(0);
+  const [arriveActive, setArriveActive] = useState(false);
   const lastAudibleVolumeRef = useRef(1);
 
   const loadEvidence = useCallback(async () => {
@@ -108,10 +136,58 @@ export function VideoView({
     }
   };
 
-  const step = (direction: number) => {
+  /* P0.1 逐帧步进：按钮与 ,/. 键共用同一函数，呈现天然同步。
+     coarse=true 为 Shift 加倍粗调。 */
+  const stepFrame = (direction: number, coarse: boolean) => {
     const video = videoRef.current;
     if (!video) return;
-    seek((video.currentTime * 1000) + direction * 5000);
+    seek((video.currentTime * 1000) + direction * frameStepRef.current * (coarse ? FRAME_COARSE_FACTOR : 1));
+  };
+
+  /** ±5s 长按跳转：替换旧 ⏮⏭ 固定快进退后的保留语义。 */
+  const stepLong = (direction: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    seek((video.currentTime * 1000) + direction * LONG_STEP_MS);
+  };
+
+  /** 键盘步进入口经 latestRef 转发，监听器免随渲染重挂（时长/帧率读 ref）。 */
+  const stepFrameRef = useRef(stepFrame);
+  stepFrameRef.current = stepFrame;
+
+  const clearHoldJump = useCallback(() => {
+    if (holdDelayRef.current) {
+      clearTimeout(holdDelayRef.current);
+      holdDelayRef.current = null;
+    }
+    if (holdRepeatRef.current) {
+      clearInterval(holdRepeatRef.current);
+      holdRepeatRef.current = null;
+    }
+    holdingLongRef.current = false;
+  }, []);
+
+  useEffect(() => () => {
+    clearHoldJump();
+    if (arriveClearRef.current) clearTimeout(arriveClearRef.current);
+  }, [clearHoldJump]);
+
+  /** 长按超过 HOLD_DELAY_MS 即进入 ±5s 连发；期间放行的 click 只算一次帧步进。 */
+  const beginHoldJump = (direction: number) => {
+    clearHoldJump();
+    holdDelayRef.current = setTimeout(() => {
+      holdingLongRef.current = true;
+      stepLong(direction);
+      holdRepeatRef.current = setInterval(() => stepLong(direction), HOLD_REPEAT_MS);
+    }, HOLD_DELAY_MS);
+  };
+
+  /** P0.2 三档循环：越界值（理论不可达）安全回落到第一档。 */
+  const cycleSpeed = () => {
+    setSpeed((current) => {
+      const index = SPEED_STEPS.indexOf(current);
+      return SPEED_STEPS[(index + 1) % SPEED_STEPS.length] ?? SPEED_STEPS[0];
+    });
   };
 
   const setPlayerVolume = (nextVolume: number) => {
@@ -144,15 +220,84 @@ export function VideoView({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return undefined;
-    const onPlay = () => setIsPlaying(true);
+    // P0.1 帧率推算：换源即重置为兜底常量，起播后短窗差分推算实际 fps。
+    frameStepRef.current = FRAME_STEP_FALLBACK_MS;
+    fpsSampledRef.current = false;
+    let sampleTimer: ReturnType<typeof setTimeout> | null = null;
+    const estimateFrameStep = () => {
+      if (fpsSampledRef.current || typeof video.getVideoPlaybackQuality !== "function") return;
+      fpsSampledRef.current = true;
+      const base = video.getVideoPlaybackQuality();
+      const baseAt = performance.now();
+      sampleTimer = setTimeout(() => {
+        sampleTimer = null;
+        const elapsed = performance.now() - baseAt;
+        const frames = video.getVideoPlaybackQuality().totalVideoFrames - base.totalVideoFrames;
+        // 暂停中解码帧不推进；窗口太短或无推进都保持 33ms 兜底，不编造。
+        if (!video.paused && elapsed >= 300 && frames > 0) {
+          const fps = (frames * 1000) / elapsed;
+          if (fps >= 8 && fps <= 120) {
+            frameStepRef.current = clamp(Math.round(1000 / fps), 4, 120);
+          }
+        }
+      }, 600);
+    };
+    const onPlay = () => {
+      setIsPlaying(true);
+      estimateFrameStep();
+    };
     const onPause = () => setIsPlaying(false);
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
     return () => {
+      if (sampleTimer) clearTimeout(sampleTimer);
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
     };
   }, [videoUrl]);
+
+  /* P0.1 键盘 ,/. 逐帧步进——只由本组件挂载时生效（本组件只在视频面板
+     内渲染），且 composer/任何输入面聚焦时不抢键，杜绝全域字母键误触；
+     IME 守卫与仓库既有惯例一致（isComposing + keyCode 229）。 */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "," && event.key !== ".") return;
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        // 文本输入面（composer 等）不劫持；时间轴 range 不在此列
+        // （滑杆聚焦时仍可逐帧），按钮聚焦同样照常步进。
+        const textEntry =
+          tag === "TEXTAREA"
+          || tag === "SELECT"
+          || target.isContentEditable
+          || (tag === "INPUT" && (target as HTMLInputElement).type !== "range");
+        if (textEntry) return;
+      }
+      event.preventDefault();
+      stepFrameRef.current(event.key === "," ? -1 : 1, event.shiftKey);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  /* P0.3 @time 到达即暂停＋一次性高亮脉冲（D1/D7）：跳转意图由 jumpTarget
+     显式携带（seq 每次 @time 点击递增），与播放反馈、手动拖动天然隔离——
+     手动拖进度条走 onChange → seek 的自身通道，不会触发这里。
+     ms=0 是「打开这条分析」的普通入口（讨论芯片等），不暂停不脉冲。 */
+  useEffect(() => {
+    if (!jumpTarget || jumpTarget.ms <= 0) return;
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = jumpTarget.ms / 1000;
+    if (!video.paused) video.pause();
+    setArriveActive(true);
+    setArriveSeq((seq) => seq + 1);
+    if (arriveClearRef.current) clearTimeout(arriveClearRef.current);
+    arriveClearRef.current = setTimeout(() => setArriveActive(false), ARRIVE_FLASH_MS);
+  }, [jumpTarget]);
 
   if (presentation.video.kind === "native-only") {
     return (
@@ -223,14 +368,52 @@ export function VideoView({
       </section>
 
       <div className={styles.playerBar}>
-        <button className={styles.playerBarBtn} onClick={() => step(-1)} type="button">⏮</button>
+        <button
+          aria-label="后退一帧"
+          className={styles.playerBarBtn}
+          onBlur={clearHoldJump}
+          onClick={() => {
+            // 长按连发期间放行的 click 不再叠加帧步进。
+            if (holdingLongRef.current) return;
+            stepFrame(-1, false);
+          }}
+          onPointerCancel={clearHoldJump}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            beginHoldJump(-1);
+          }}
+          onPointerLeave={clearHoldJump}
+          onPointerUp={clearHoldJump}
+          title="逐帧后退（, 键；Shift 加倍）· 长按连续回退 5 秒"
+          type="button"
+        >⏮</button>
         <button className={styles.playerBarBtn} onClick={togglePlay} type="button">{isPlaying ? "⏸" : "▶"}</button>
-        <button className={styles.playerBarBtn} onClick={() => step(1)} type="button">⏭</button>
+        <button
+          aria-label="前进一帧"
+          className={styles.playerBarBtn}
+          onBlur={clearHoldJump}
+          onClick={() => {
+            if (holdingLongRef.current) return;
+            stepFrame(1, false);
+          }}
+          onPointerCancel={clearHoldJump}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            beginHoldJump(1);
+          }}
+          onPointerLeave={clearHoldJump}
+          onPointerUp={clearHoldJump}
+          title="逐帧前进（. 键；Shift 加倍）· 长按连续快进 5 秒"
+          type="button"
+        >⏭</button>
         <span className={styles.playerBarTime}>{timeText}</span>
         <div className={styles.playerBarSpacer} />
         <button
+          aria-label={`播放速度 ${speed}×，点击切换到下一档`}
           className={styles.playerBarBtn}
-          onClick={() => setSpeed((current) => current === 1 ? 0.5 : 1)}
+          data-active={speed !== 1 || undefined}
+          onClick={cycleSpeed}
+          title="变速循环：0.25× → 0.5× → 1×"
           type="button"
         >
           {speed}×
@@ -277,7 +460,14 @@ export function VideoView({
         <div className={styles.timeline}>
           <div className={styles.timelineTrack} />
           <div className={styles.timelineProgress} style={{ width: `${progress}%` }} />
-          <div className={styles.timelineCursor} style={{ insetInlineStart: `${cursorLeft}%` }} />
+          {/* key 随到达序号变化＝一次性脉冲重放；data-arrive 窗口内
+              呈现 var(--ring) 高亮（reduced-motion 下为静态高亮一次）。 */}
+          <div
+            className={styles.timelineCursor}
+            data-arrive={arriveActive ? "true" : undefined}
+            key={`cursor-${arriveSeq}`}
+            style={{ insetInlineStart: `${cursorLeft}%` }}
+          />
           <input
             aria-label="分析时间轴"
             className={styles.timelineInput}

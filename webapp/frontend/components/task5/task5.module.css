@@ -1025,6 +1025,11 @@
   color: var(--on-surface);
 }
 
+/* 变速非 1× 档位时点字提亮（当前档位已由按钮文字明示）。 */
+.playerBarBtn[data-active="true"] {
+  color: var(--primary);
+}
+
 
 .volumeControl {
   position: relative;
@@ -1156,6 +1161,28 @@
   z-index: 6;
   transform: translateX(-50%);
   pointer-events: none;
+}
+
+/* 复盘升级 P0.3：@time 到达的一次性高亮脉冲（D7）。
+   阴影合同白名单：只消费完整阴影 token var(--ring)，keyframes 只动
+   opacity（有限两拍，非循环）；终态回到静息可读。 */
+.timelineCursor[data-arrive="true"] {
+  box-shadow: var(--ring);
+  animation: timelineCursorArrive var(--duration-surface) var(--ease-out) 2;
+}
+
+@keyframes timelineCursorArrive {
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+
+  100% {
+    opacity: 1;
+  }
 }
 
 .timelineInput {
@@ -1333,5 +1360,10 @@
   .volumePopover {
     transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: translate(-50%, 0);
+  }
+
+  /* 到达反馈降级为静态高亮一次：不闪动，ring 常亮到窗口结束。 */
+  .timelineCursor[data-arrive="true"] {
+    animation: none;
   }
 }
