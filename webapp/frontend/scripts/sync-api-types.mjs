@@ -10,6 +10,7 @@
  *   node scripts/sync-api-types.mjs --check   # 只校验入库文件与当前 schema 一致，不一致退出码 1
  */
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -66,7 +67,8 @@ const generateTypes = async (jsonPath) => {
 };
 
 const check = process.argv.includes("--check");
-const tempDir = mkdtempSync(join(resolve(process.env.TEMP || process.env.TMP || repoRoot), "aiming-openapi-sync-"));
+// 临时目录一律落系统 tmp：回退 repoRoot 会在并发测试窗把泄漏物丢进仓库根。
+const tempDir = mkdtempSync(join(tmpdir(), "aiming-openapi-sync-"));
 try {
   exportSchemaTo(tempDir);
   const jsonPath = join(tempDir, "openapi.json");

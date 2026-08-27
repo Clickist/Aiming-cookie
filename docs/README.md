@@ -49,6 +49,9 @@
 - [`coach-prescription-manual.md`](coach-prescription-manual.md)：处方规则说明；
 - [`deployment-guide.md`](deployment-guide.md)：2026-07-10 部署候选调研快照；使用前必须重新核实并通过相关测试与发布 Gate；
 - [`landing-brief.md`](landing-brief.md)：落地页纯内容 brief（2026-08-19 草稿）；视觉交由 Open Design 自由发挥；
+- [`video-pane-revamp-brief.md`](video-pane-revamp-brief.md)：视频面板复盘体验升级提案（2026-08-27 草稿：P0 逐帧/三档变速/@time 暂停、P1 事件上轴、P2 信号片段 AB 循环与色带规格）；含四个待拍板决策点，未批准施工；
+- [`handoff-frontend-parity-2026-08-27.md`](handoff-frontend-parity-2026-08-27.md)：前端追平工程交接总纲（2026-08-27：六批未提交改动盘点与提交方案、终验数字、决策积压、实机清单、批次0–10排期草案）；
+- [`frontend-parity-research-digests.md`](frontend-parity-research-digests.md)：十二路调研合订摘要（对话流/Provider接入/侧栏/视频面/训练数据/任务通知/键盘面板/版式诊断/视觉工艺/富文本排印/输入框编排/安装包品牌化）；只供引用，不构成合同；
 - `superpowers/assessments/`：历史评估证据与决策输入，仅供追溯。
 
 ## 归档边界
