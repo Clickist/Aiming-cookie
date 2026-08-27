@@ -1145,6 +1145,60 @@
   background: var(--on-surface-variant);
 }
 
+/* ── P2 循环色带（brief §二 P2＋D4）：契约栈序插在 progress 与 markers
+   之间——track → progress → band(此处) → markers → cursor(z6) → input(z7)。
+   带体＝--event-peak 透明版（color-mix 22%，不新增 token）；两端 2px 实线
+   把手常亮；中央时间码常显（0.1 秒精度由 JSX formatRelativeTime 提供）。
+   纯展示层禁指针；完全静态、无动画，reduced-motion 无需降级。 */
+.timelineBandLayer {
+  position: absolute;
+  inset-inline: 10px;
+  top: 17px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.timelineBand {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: color-mix(in srgb, var(--event-peak) 22%, transparent);
+}
+
+.timelineBand::before,
+.timelineBand::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--event-peak);
+}
+
+.timelineBand::before {
+  inset-inline-start: 0;
+}
+
+.timelineBand::after {
+  inset-inline-end: 0;
+}
+
+.timelineBandLabel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  line-height: 1.4;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+
 /* ── P1 事件上轴（brief §二 P1）：标记视觉层 ──────────────────────────
    契约栈序：track → progress → markers(此处，P2 band 将插在本行与 progress
    行之间) → cursor(z6) → input(z7)。竖条容器对齐轨道 10px 内边距，
@@ -1329,6 +1383,70 @@
   font-size: var(--text-micro);
   color: var(--on-surface-variant);
 }
+
+/* ── P2 时间段按钮排（brief §二 P2/D2）＋ D6 循环变速坞 ───────────────
+   视频播放区域底部既有留白处；横向放不下横向滚动，不做聚合归类。
+   激活按钮高亮＝自身即状态灯（底色混 --event-peak 与色带同源）。 */
+.signalSection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.signalRow {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.signalButton {
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.signalButton:hover {
+  border-color: var(--outline);
+  color: var(--on-surface);
+}
+
+.signalButton:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.signalButton[data-active="true"] {
+  border-color: var(--event-peak);
+  background: color-mix(in srgb, var(--event-peak) 16%, transparent);
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.signalButtonRange {
+  font-family: var(--font-mono);
+}
+
+/* D6 循环变速坞：仅循环激活时随按钮排浮出；复用 playerBarBtn 的尺寸与
+   data-active 提亮惯例，这里只补停靠分隔。档位与全局变速同一状态源。 */
+.speedDock {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  padding-inline-start: var(--space-3);
+  border-inline-start: 1px solid var(--outline-variant);
+}
+
 
 .timelineTimeLeft {
   left: 10px;

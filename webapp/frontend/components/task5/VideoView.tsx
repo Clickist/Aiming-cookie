@@ -2,10 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getAnalysisVideoBlob } from "@/lib/api";
+import { getAnalysisEvidenceSegments, getAnalysisVideoBlob } from "@/lib/api";
 import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { getManagedVideoUrl, isDesktopRuntime } from "@/lib/desktop";
-import { projectTimelineMarkers } from "@/lib/metric-format";
+import {
+  projectEvidenceSegmentButtons,
+  projectPeakFallbackButtons,
+  projectTimelineMarkers,
+  type SegmentButton,
+} from "@/lib/metric-format";
+import { formatTimecodeRange } from "@/lib/rich-text";
 import { Button, Empty, Loading, Notice } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
@@ -28,6 +34,8 @@ const HOLD_REPEAT_MS = 180;
 const SPEED_STEPS = [0.25, 0.5, 1];
 /** P0.3 到达脉冲：动画两拍后回到静息可读态；reduced-motion 由 CSS 关掉动画只留静态高亮。 */
 const ARRIVE_FLASH_MS = 900;
+/** P2 循环色带最小可见宽度（% 轨道宽）：亚秒窗口也要能容下把手与时间码。 */
+const MIN_BAND_WIDTH_PERCENT = 2;
 
 export function VideoView({
   analysisId,
@@ -64,6 +72,32 @@ export function VideoView({
   const [arriveSeq, setArriveSeq] = useState(0);
   const [arriveActive, setArriveActive] = useState(false);
   const lastAudibleVolumeRef = useRef(1);
+
+  /* P2 信号片段循环（brief §二 P2/D2）：权威源 evidence-segments 的播放
+     区间投影；null＝解析中（不渲染整排）。loopTarget 是激活按钮与色带的
+     状态灯，loopRef 镜像供 onTimeUpdate / 原生 pause 事件免闭包读取。 */
+  const [signalButtons, setSignalButtons] = useState<SegmentButton[] | null>(null);
+  const [loopTarget, setLoopTarget] = useState<SegmentButton | null>(null);
+  const loopRef = useRef<SegmentButton | null>(null);
+
+  useEffect(() => {
+    // 换分析：循环目标失效先行清空，再重新拉取权威信号窗口。
+    loopRef.current = null;
+    setLoopTarget(null);
+    setSignalButtons(null);
+    let cancelled = false;
+    getAnalysisEvidenceSegments(analysisId)
+      .then((payload) => {
+        if (!cancelled) setSignalButtons(projectEvidenceSegmentButtons(payload));
+      })
+      .catch(() => {
+        // 接口失败 → 走 timeline peak 降级路径（不弹错，静默降级）。
+        if (!cancelled) setSignalButtons([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisId]);
 
   const loadEvidence = useCallback(async () => {
     if (presentation.video.kind === "native-only") return;
@@ -131,6 +165,16 @@ export function VideoView({
   const markerPercent = (timeMs: number) =>
     clamp((timeMs / timelineMax) * 100, 0, 100);
 
+  /* P2 按钮排数据：权威窗口优先；权威源为空/失败时用 peak±窗口降级推导
+     （时长已知才钳上界，metadata 未到的瞬间不编造终点）。 */
+  const signalSegmentButtons = useMemo(() => {
+    if (signalButtons === null) return [];
+    if (signalButtons.length > 0) return signalButtons;
+    return projectPeakFallbackButtons(timelineMarkers, {
+      maxMs: durationMs > 0 ? timelineMax : undefined,
+    });
+  }, [signalButtons, timelineMarkers, durationMs, timelineMax]);
+
   const seek = (timeMs: number) => {
     const next = clamp(timeMs, 0, timelineMax);
     onCurrentTimeChange(next);
@@ -159,6 +203,35 @@ export function VideoView({
     } else {
       video.pause();
     }
+  };
+
+  /* P2 循环状态机（D5）。状态：loopTarget（loopRef 镜像）＝当前循环段；
+     null＝未循环。退出路径全集：
+     ① 再按同一枚按钮（保持当前位置继续正常播放）；
+     ② 拖动进度条（timelineInput onChange——直接操纵刻度即退出）；
+     ③ 暂停（原生 pause 事件统一兜住：⏸ 按钮、标记点击暂停、@time 到达、
+        媒体自然结束）；
+     ④ 点另一枚按钮＝切换目标（不经过退出态）；
+     ⑤ Esc（可选快捷；输入面聚焦不劫持、无循环时不拦截）。
+     变速不退出：循环中 0.25×/0.5×/1× 与全局同源共用，换源才复位。 */
+  const exitSignalLoop = useCallback(() => {
+    loopRef.current = null;
+    setLoopTarget(null);
+  }, []);
+
+  const toggleSignalLoop = (segment: SegmentButton) => {
+    const video = videoRef.current;
+    if (!video) return;
+    // 同一枚＝退出循环并从当前位置继续正常播放（不动播放头与播放状态）。
+    if (loopRef.current?.id === segment.id) {
+      exitSignalLoop();
+      return;
+    }
+    // 新目标／切换目标：seek 到段起点并开始循环播放。
+    loopRef.current = segment;
+    setLoopTarget(segment);
+    seek(segment.startMs);
+    if (video.paused) void video.play();
   };
 
   /* P0.1 逐帧步进：按钮与 ,/. 键共用同一函数，呈现天然同步。
@@ -271,7 +344,13 @@ export function VideoView({
       setIsPlaying(true);
       estimateFrameStep();
     };
-    const onPause = () => setIsPlaying(false);
+    const onPause = () => {
+      setIsPlaying(false);
+      // P2/D5：任何原生暂停都退出循环（⏸ 按钮/标记点击暂停/@time 到达/
+      // 媒体结束共用一条路径）；循环运转与进入本身不产生 pause 事件。
+      loopRef.current = null;
+      setLoopTarget(null);
+    };
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
     return () => {
@@ -307,6 +386,31 @@ export function VideoView({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  /* P2 可选快捷：Esc 退出循环。非主路径——无循环时不消费不拦截；文本输入
+     面（composer 等）聚焦时不劫持（它们可能有自身的取消语义），守卫与
+     ,/. 监听同一惯例（IME isComposing + 修饰键全排除）。 */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (!loopRef.current) return;
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        const textEntry =
+          tag === "TEXTAREA"
+          || tag === "SELECT"
+          || target.isContentEditable
+          || (tag === "INPUT" && (target as HTMLInputElement).type !== "range");
+        if (textEntry) return;
+      }
+      exitSignalLoop();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [exitSignalLoop]);
 
   /* P0.3 @time 到达即暂停＋一次性高亮脉冲（D1/D7）：跳转意图由 jumpTarget
      显式携带（seq 每次 @time 点击递增），与播放反馈、手动拖动天然隔离——
@@ -369,6 +473,15 @@ export function VideoView({
 
   const progress = timelineMax > 0 ? (currentTimeMs / timelineMax) * 100 : 0;
   const cursorLeft = timelineMax > 0 ? (currentTimeMs / timelineMax) * 100 : 0;
+  /* P2 循环色带几何：与 marker 同一「真实轨道宽」百分比约定（容器
+     inset-inline:10px 吸收轨道内边距），最小宽度地板保住把手与时间码。 */
+  const bandStartPercent = loopTarget ? clamp((loopTarget.startMs / timelineMax) * 100, 0, 100) : 0;
+  const bandWidthPercent = loopTarget
+    ? Math.max(
+      clamp(((loopTarget.endMs - loopTarget.startMs) / timelineMax) * 100, 0, 100),
+      MIN_BAND_WIDTH_PERCENT,
+    )
+    : 0;
   const timeText = `${formatRelativeTime(currentTimeMs)} / ${formatRelativeTime(timelineMax)}`;
   const audibleVolume = muted ? 0 : volume;
   const volumePercent = Math.round(audibleVolume * 100);
@@ -384,7 +497,18 @@ export function VideoView({
             setVideoUrl(null);
             setLoadFailed(true);
           }}
-          onTimeUpdate={(event) => onCurrentTimeChange(event.currentTarget.currentTime * 1000)}
+          onTimeUpdate={(event) => {
+            /* P2/D5 循环运转：播放头越过段终点即回卷起点（保持当前
+               playbackRate）；事件经 loopRef 免闭包读取，无循环时零开销。 */
+            const ms = event.currentTarget.currentTime * 1000;
+            const active = loopRef.current;
+            if (active && ms >= active.endMs) {
+              event.currentTarget.currentTime = active.startMs / 1000;
+              onCurrentTimeChange(active.startMs);
+              return;
+            }
+            onCurrentTimeChange(ms);
+          }}
           preload="metadata"
           ref={videoRef}
           src={videoUrl}
@@ -485,6 +609,25 @@ export function VideoView({
         <div className={styles.timeline}>
           <div className={styles.timelineTrack} />
           <div className={styles.timelineProgress} style={{ width: `${progress}%` }} />
+          {/* P2 循环色带——契约栈序插在 progress 与 markers 之间：track →
+              progress → band(此处) → markers → cursor(z6) → input(z7) → 命中层(z8)。
+              半透明带体＝--event-peak 透明版（color-mix，不新增 token，D4）；
+              两端把手与中央常显时间码由 CSS 承载；纯展示层禁指针。 */}
+          {loopTarget ? (
+            <div aria-hidden="true" className={styles.timelineBandLayer}>
+              <div
+                className={styles.timelineBand}
+                style={{
+                  insetInlineStart: `${bandStartPercent}%`,
+                  width: `${bandWidthPercent}%`,
+                }}
+              >
+                <span className={styles.timelineBandLabel}>
+                  {`${formatRelativeTime(loopTarget.startMs)} – ${formatRelativeTime(loopTarget.endMs)}`}
+                </span>
+              </div>
+            </div>
+          ) : null}
           {/* P1 事件上轴——视觉标记层（2px 竖条＋类型形状头），契约栈序插在
               progress 与 cursor 之间；P2 band 层预留在本行与上行之间。
               纯展示不接管指针：竖条容器的 inset-inline 对齐轨道 10px 内边距，
@@ -515,7 +658,11 @@ export function VideoView({
             className={styles.timelineInput}
             max={timelineMax}
             min={0}
-            onChange={(event) => seek(Number(event.currentTarget.value))}
+            onChange={(event) => {
+              // P2/D5：拖动进度条（含点击轨道/方向键操纵滑杆）退出循环。
+              exitSignalLoop();
+              seek(Number(event.currentTarget.value));
+            }}
             step={10}
             type="range"
             value={clamp(currentTimeMs, 0, timelineMax)}
@@ -547,6 +694,55 @@ export function VideoView({
           <span className={styles.timelineTimeRight}>{formatRelativeTime(timelineMax)}</span>
         </div>
       </section>
+
+      {/* P2/D2 时间段按钮排：视频播放区域底部既有留白处。解析中或无信号段
+          时不渲染整排；横向放不下横向滚动，不做聚合归类。循环激活时按 D6
+          在按钮组旁浮出 0.25×/0.5×/1× 快捷切换——直接 setSpeed 与全局变速
+          同一状态源（同一 playbackRate），不做两套变速逻辑。 */}
+      {signalSegmentButtons.length > 0 ? (
+        <section aria-label="信号片段循环" className={styles.signalSection}>
+          <div className={styles.signalRow}>
+            {signalSegmentButtons.map((segment) => {
+              const active = loopTarget?.id === segment.id;
+              return (
+                <button
+                  aria-label={`循环播放 ${formatTimecodeRange(segment.startMs / 1000, segment.endMs / 1000)} ${segment.kindLabel}`}
+                  aria-pressed={active}
+                  className={styles.signalButton}
+                  data-active={active || undefined}
+                  key={segment.id}
+                  onClick={() => toggleSignalLoop(segment)}
+                  title="点击开始循环播放；再次点击退出"
+                  type="button"
+                >
+                  <span className={styles.signalButtonRange}>
+                    {formatTimecodeRange(segment.startMs / 1000, segment.endMs / 1000)}
+                  </span>
+                  {` ${segment.kindLabel}`}
+                </button>
+              );
+            })}
+          </div>
+          {loopTarget ? (
+            <div aria-label="循环节奏（与全局变速同步）" className={styles.speedDock} role="group">
+              {SPEED_STEPS.map((step) => (
+                <button
+                  aria-label={`循环节奏 ${step}×`}
+                  aria-pressed={speed === step}
+                  className={`${styles.playerBarBtn} ${styles.speedDockBtn}`}
+                  data-active={speed === step || undefined}
+                  key={step}
+                  onClick={() => setSpeed(step)}
+                  title={`慢放精读 ${step}×（与全局变速同源）`}
+                  type="button"
+                >
+                  {step}×
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }
