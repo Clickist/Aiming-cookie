@@ -106,7 +106,6 @@ function authOperationLabel(status: ProviderAuthOperation["status"]): string {
     case "failed": return "授权失败";
     case "cancelled": return "已取消";
     case "timed_out": return "已超时";
-    case "interrupted": return "授权已中断";
   }
 }
 
@@ -671,7 +670,7 @@ export function SettingsWorkspace() {
                 <section aria-live="polite" className="task6-auth-operation">
                   <div className="task6-auth-operation-head">
                     <span className="task6-auth-operation-title">Provider 授权</span>
-                    <Status tone={authOperation.status === "succeeded" ? "success" : authOperation.status === "failed" || authOperation.status === "timed_out" || authOperation.status === "interrupted" ? "error" : "info"}>
+                    <Status tone={authOperation.status === "succeeded" ? "success" : authOperation.status === "failed" || authOperation.status === "timed_out" ? "error" : "info"}>
                       {authOperationLabel(authOperation.status)}
                     </Status>
                   </div>

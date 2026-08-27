@@ -194,7 +194,7 @@ export function OnboardingFlow() {
             const status = await testProviderProfile(profileId);
             setConnectionState(status.status === "ready" ? "ready" : "failed");
             setMessage(status.status === "ready" ? `连接成功 · ${custom ? customModel : selectedModelLabel}` : status.message);
-          } else if (["failed", "cancelled", "timed_out", "interrupted"].includes(next.status)) {
+          } else if (["failed", "cancelled", "timed_out"].includes(next.status)) {
             setConnectionState("failed");
             setMessage("Provider 认证未完成，可重新尝试。");
           }
