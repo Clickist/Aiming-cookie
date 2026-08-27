@@ -19,12 +19,30 @@ test("SessionRail stays a prop-driven, client-only surface", async () => {
   assert.doesNotMatch(component, /fetch\(/);
 });
 
-test("SessionRail includes flat time-sorted navigation, search, and keyboard semantics", async () => {
+test("SessionRail groups sessions into 今天/昨天/近 7 天/更早 with static headers", async () => {
   const component = await source("components/task7/SessionRail.tsx");
   const styles = await source("components/task7/session-rail.css");
+  // 分桶仍基于既有时间戳字段（updated_at 优先），组内保持倒序
   assert.match(component, /sessionTimestamp/);
   assert.match(component, /\.sort\(/);
-  assert.doesNotMatch(component, /UNASSOCIATED_SCENARIO|<details/);
+  // 四个时间分组文案与数量角标
+  assert.match(component, /"今天"/);
+  assert.match(component, /"昨天"/);
+  assert.match(component, /"近 7 天"/);
+  assert.match(component, /"更早"/);
+  assert.match(component, /task7-session-rail__count/);
+  // 组头复用既有分组样式类；第一版静态组头，无 <details> 折叠
+  assert.match(component, /task7-session-rail__group-summary/);
+  assert.match(component, /task7-session-rail__group-label/);
+  assert.match(component, /task7-session-rail__group-items/);
+  assert.doesNotMatch(component, /<details/);
+  assert.doesNotMatch(component, /collapsed/);
+  assert.match(styles, /\.task7-session-rail__group\s*\{/);
+});
+
+test("SessionRail includes search and keyboard semantics", async () => {
+  const component = await source("components/task7/SessionRail.tsx");
+  const styles = await source("components/task7/session-rail.css");
   assert.match(component, /type="search"/);
   assert.match(component, /aria-current=\{current \? "page"/);
   assert.match(component, /aria-label="训练历史"/);
@@ -32,6 +50,32 @@ test("SessionRail includes flat time-sorted navigation, search, and keyboard sem
   assert.match(component, /aria-label=\{`归档/);
   assert.match(component, /aria-label=\{`删除/);
   assert.match(styles, /:focus-visible/);
+  assert.match(styles, /prefers-reduced-motion/);
+});
+
+test("SessionRail deletes only after an inline two-step confirmation", async () => {
+  const component = await source("components/task7/SessionRail.tsx");
+  // 第一次点击只进入待确认态，第二次点击「确认删除」才触发软删回调
+  assert.match(component, /pendingDeleteId/);
+  assert.match(component, /setPendingDeleteId\(session\.id\)/);
+  assert.match(component, /aria-label=\{`确认删除 /);
+  assert.match(component, />确认删除</);
+  // 文案必须是删除而非归档；禁止浏览器原生 confirm 与全屏对话框
+  assert.doesNotMatch(component, /window\.confirm/);
+  assert.doesNotMatch(component, /<dialog/i);
+});
+
+test("SessionRail keeps hover actions off the session date", async () => {
+  const component = await source("components/task7/SessionRail.tsx");
+  const styles = await source("components/task7/session-rail.css");
+  // 操作条位于 session 按钮之后的兄弟节点，绝不嵌套进按钮覆盖内容
+  assert.match(
+    component,
+    /task7-session-rail__session-date[\s\S]*?<\/button>\s*\{session\.id !== "draft"[\s\S]*?<span className="task7-session-rail__item-actions">/,
+  );
+  // 操作条不允许绝对定位盖在日期上；显隐只靠透明度，不改动文档流
+  assert.doesNotMatch(styles, /\.task7-session-rail__item-actions[^}]*position:\s*absolute/);
+  assert.match(styles, /\.task7-session-rail__item-actions\s*\{[^}]*opacity:\s*0;/);
   assert.match(styles, /prefers-reduced-motion/);
 });
 

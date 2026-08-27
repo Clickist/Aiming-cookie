@@ -63,6 +63,33 @@ function sessionTimestamp(session: SessionRailSession): number {
   return new Date(value).getTime() || 0;
 }
 
+// 无时间戳的会话（如草稿）视为最新，排在所在分组首位，而不是沉底到"更早"。
+function sessionOrderStamp(session: SessionRailSession): number {
+  return sessionTimestamp(session) || Number.MAX_SAFE_INTEGER;
+}
+
+const SESSION_GROUP_DEFS = [
+  { key: "today", label: "今天" },
+  { key: "yesterday", label: "昨天" },
+  { key: "week", label: "近 7 天" },
+  { key: "older", label: "更早" },
+] as const;
+
+type SessionGroupKey = (typeof SESSION_GROUP_DEFS)[number]["key"];
+
+// 按本地自然日边界分桶；缺时间戳归入"今天"。用日历日而非固定 86400 秒，避免夏令时偏移。
+function localDayStart(offsetDays: number): number {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - offsetDays).getTime();
+}
+
+function sessionGroupKey(timestamp: number, dayBounds: readonly [number, number, number]): SessionGroupKey {
+  if (!timestamp || timestamp >= dayBounds[0]) return "today";
+  if (timestamp >= dayBounds[1]) return "yesterday";
+  if (timestamp >= dayBounds[2]) return "week";
+  return "older";
+}
+
 function sessionDate(session: SessionRailSession): string | null {
   const value = session.updatedAt || session.updated_at || session.createdAt || session.created_at;
   if (!value) return null;
@@ -85,6 +112,7 @@ export function SessionRail({
   className,
 }: SessionRailProps) {
   const [query, setQuery] = useState("");
+  const [pendingDeleteId, setPendingDeleteId] = useState<SessionRailId | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const railRef = useRef<HTMLElement>(null);
 
@@ -98,8 +126,20 @@ export function SessionRail({
           .filter(Boolean)
           .some((value) => value!.toLocaleLowerCase().includes(normalizedQuery));
       })
-      .sort((a, b) => sessionTimestamp(b) - sessionTimestamp(a));
+      .sort((a, b) => sessionOrderStamp(b) - sessionOrderStamp(a));
   }, [query, sessions]);
+
+  // 时间分组（今天/昨天/近 7 天/更早），只保留非空组；组内沿用 visible 的倒序。
+  const groups = useMemo(() => {
+    const dayBounds: readonly [number, number, number] = [localDayStart(0), localDayStart(1), localDayStart(7)];
+    const bucketed = new Map<SessionGroupKey, SessionRailSession[]>(SESSION_GROUP_DEFS.map(({ key }) => [key, []]));
+    for (const session of visible) {
+      bucketed.get(sessionGroupKey(sessionTimestamp(session), dayBounds))!.push(session);
+    }
+    return SESSION_GROUP_DEFS
+      .map(({ key, label }) => ({ key, label, items: bucketed.get(key)! }))
+      .filter((group) => group.items.length > 0);
+  }, [visible]);
 
   const handleSearch = (event: ChangeEvent<HTMLInputElement>) => {
     const nextQuery = event.target.value;
@@ -127,7 +167,14 @@ export function SessionRail({
       </label>
 
       <nav aria-label="会话列表" className="task7-session-rail__list">
-    {visible.length ? visible.map((session) => {
+    {groups.length ? groups.map((group) => (
+      <section className="task7-session-rail__group" key={group.key}>
+        <div className="task7-session-rail__group-summary">
+          <span className="task7-session-rail__group-label">{group.label}</span>
+          <span className="task7-session-rail__count">{group.items.length}</span>
+        </div>
+        <div className="task7-session-rail__group-items">
+    {group.items.map((session) => {
       const title = sessionTitle(session);
       const date = sessionDate(session);
       const summaryLine = session.summary && session.summary !== title
@@ -151,12 +198,21 @@ export function SessionRail({
           {session.id !== "draft" && (onArchiveSession || onSoftDeleteSession) ? (
             <span className="task7-session-rail__item-actions">
               {onArchiveSession ? <button aria-label={`归档 ${title}`} className="task7-session-rail__item-action" onClick={(event) => { event.stopPropagation(); onArchiveSession(session); }} type="button">归档</button> : null}
-              {onSoftDeleteSession ? <button aria-label={`删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); onSoftDeleteSession(session); }} type="button">删除</button> : null}
+              {onSoftDeleteSession ? (
+                pendingDeleteId === session.id ? (
+                  <button aria-label={`确认删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger task7-session-rail__item-action--confirm" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(null); onSoftDeleteSession(session); }} type="button">确认删除</button>
+                ) : (
+                  <button aria-label={`删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(session.id); }} type="button">删除</button>
+                )
+              ) : null}
             </span>
           ) : null}
         </div>
       );
-    }) : <p className="task7-session-rail__empty">{query ? "没有匹配的会话" : "还没有会话"}</p>}
+    })}
+        </div>
+      </section>
+    )) : <p className="task7-session-rail__empty">{query ? "没有匹配的会话" : "还没有会话"}</p>}
       </nav>
       <footer className="task7-session-rail__footer">
         <button aria-label="训练历史" className="task7-session-rail__footer-row" onClick={onHistory} type="button"><span className="task7-session-rail__footer-label"><IconHistory /><span>训练历史</span></span>{historyCount === null ? null : <span className="task7-session-rail__footer-count">{historyCount}</span>}</button>

@@ -362,6 +362,12 @@
   }
 }
 
+/* 二次点击确认态：与 danger hover 同源的错误容器色，提示下一步是删除 */
+.task7-session-rail__item-action--confirm {
+  background: var(--error-container);
+  color: var(--on-error-container);
+}
+
 .task7-session-rail__empty {
   margin: var(--space-5) var(--space-3);
   color: var(--on-surface-variant);
