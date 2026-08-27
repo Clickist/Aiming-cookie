@@ -22,7 +22,13 @@ import type {
 import { extractRuntimeSecrets, redactRuntimeSecrets } from "./provider-profile.ts";
 import { loadProfile } from "./provider-store.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
-import { appendUserMessageOnce, runCoachTurn, stopCoachTurn } from "./turn.ts";
+import {
+  appendUserMessageOnce,
+  queueCoachTurnMessage,
+  runCoachTurn,
+  stopCoachTurn,
+  type CoachQueueRequest,
+} from "./turn.ts";
 import { startTask, stopTask, waitForTask, isTaskActive } from "./task-manager.ts";
 import {
   ensureSession,
@@ -602,6 +608,32 @@ export function retryAgentRun(ownerId: string, runRef: string): AgentRunState | 
   startTask(newRunRef, (signal) => runAgentTurn(newRunRef, ownerId, record.threadId, record.content, signal));
 
   return getAgentRun(ownerId, newRunRef);
+}
+
+/**
+ * Forward a Composer queue request (steer / follow-up) onto the live Pi
+ * harness of this run.
+ *
+ * Pure passthrough with zero persistence. Explicit semantics instead of a 500:
+ * - unknown run or wrong owner → null (caller answers 404);
+ * - run not actively running, or the engine rejects the enqueue (e.g. harness
+ *   already idle) → AgentRunError("run_not_steerable") (caller answers 409).
+ */
+export async function steerAgentRun(
+  ownerId: string,
+  runRef: string,
+  request: CoachQueueRequest,
+): Promise<{ queued: true } | null> {
+  const record = runs.get(runRef);
+  if (!record || record.ownerId !== ownerId) return null;
+  if (record.state.status !== "running") {
+    throw new AgentRunError("run_not_steerable", "Coach agent run is not actively running");
+  }
+  const result = await queueCoachTurnMessage(runRef, request);
+  if (!result.ok) {
+    throw new AgentRunError("run_not_steerable", `Coach agent run is not steerable (${result.code})`);
+  }
+  return { queued: true };
 }
 
 export function decideConfirmation(

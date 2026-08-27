@@ -113,7 +113,18 @@ function summarizeForUi(value: unknown, limit: number): string | undefined {
 
 // ── Abort tracking ───────────────────────────────────────────────────────
 
-const activeTurns = new Map<string, { abort: () => void }>();
+/**
+ * Live Pi harness queue hooks for a running turn (P3 Composer 排队/转向透传）。
+ * 纯转发：enqueue 直映 pi AgentHarness.steer()/followUp()，setDrainMode 直映
+ * setSteeringMode()/setFollowUpMode()（QueueMode "all" | "one-at-a-time"）。
+ * harness 随 runCoachTurn 的 turn 结束销毁，队列态零持久化。
+ */
+type TurnQueueTarget = {
+  enqueue: (kind: CoachQueueKind, text: string) => Promise<void>;
+  setDrainMode: (kind: CoachQueueKind, mode: CoachDrainMode) => Promise<void>;
+};
+
+const activeTurns = new Map<string, { abort: () => void; queue?: TurnQueueTarget }>();
 const stopRequested = new Set<string>();
 
 export function stopCoachTurn(runId: string): boolean {
@@ -122,6 +133,60 @@ export function stopCoachTurn(runId: string): boolean {
   stopRequested.add(runId);
   active.abort();
   return true;
+}
+
+// ── Composer queue passthrough (steer / follow-up) ───────────────────────
+
+export type CoachQueueKind = "steer" | "follow_up";
+
+/** pi AgentHarness QueueMode verbatim；不改名、不解释。 */
+export type CoachDrainMode = "all" | "one-at-a-time";
+
+export type CoachQueueRequest = {
+  kind: CoachQueueKind;
+  text: string;
+  drain_mode?: CoachDrainMode;
+};
+
+export type CoachQueueResult =
+  | { ok: true }
+  | { ok: false; code: "turn_not_active" | string };
+
+function engineErrorCode(error: unknown): string {
+  if (error instanceof Error && typeof (error as { code?: unknown }).code === "string") {
+    return `engine:${(error as { code: string }).code}`;
+  }
+  return "engine_error";
+}
+
+/**
+ * Forward a queued message onto the live Pi harness of an active run.
+ *
+ * Pure passthrough with zero persistence: a steer lands in the engine's
+ * steering queue (injected mid-run at the next drain point), a follow_up in
+ * the follow-up queue (drained when the agent would otherwise stop). Returns
+ * turn_not_active when no running harness is registered for the run — the
+ * caller translates that into explicit HTTP semantics.
+ */
+export async function queueCoachTurnMessage(
+  runId: string,
+  request: CoachQueueRequest,
+): Promise<CoachQueueResult> {
+  const active = activeTurns.get(runId);
+  const queue = active?.queue;
+  if (!queue) return { ok: false, code: "turn_not_active" };
+  try {
+    if (request.drain_mode !== undefined) {
+      await queue.setDrainMode(request.kind, request.drain_mode);
+    }
+    await queue.enqueue(request.kind, request.text);
+    return { ok: true };
+  } catch (error) {
+    // e.g. harness already idle between registration and teardown: engine
+    // AgentHarnessError("invalid_state") surfaces as an explicit code instead
+    // of a 500.
+    return { ok: false, code: engineErrorCode(error) };
+  }
 }
 
 // ── Request parsing ──────────────────────────────────────────────────────
@@ -614,6 +679,10 @@ export async function runCoachTurn(
         prompt: (text: string) => Promise<unknown>;
         subscribe: (listener: (event: any, signal?: AbortSignal) => Promise<void> | void) => () => void;
         abort: () => Promise<unknown>;
+        steer: (text: string) => Promise<void>;
+        followUp: (text: string) => Promise<void>;
+        setSteeringMode: (mode: CoachDrainMode) => Promise<void>;
+        setFollowUpMode: (mode: CoachDrainMode) => Promise<void>;
       };
       InMemorySessionRepo: new () => {
         create: () => Promise<{
@@ -832,7 +901,11 @@ export async function runCoachTurn(
       throw new Error("Duplicate active Coach run id");
     }
     activeRunId = request.run_id;
-    activeTurns.set(request.run_id, { abort: () => { void harness.abort(); } });
+    const queueTarget: TurnQueueTarget = {
+      enqueue: (kind, text) => kind === "steer" ? harness.steer(text) : harness.followUp(text),
+      setDrainMode: (kind, mode) => kind === "steer" ? harness.setSteeringMode(mode) : harness.setFollowUpMode(mode),
+    };
+    activeTurns.set(request.run_id, { abort: () => { void harness.abort(); }, queue: queueTarget });
 
     // Run the turn. Analysis engagement is scoped: explicit "analysis:N"
     // references in the user's message pin the discussion subject; analysis

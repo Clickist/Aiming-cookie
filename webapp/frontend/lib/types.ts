@@ -1295,6 +1295,18 @@ export interface CoachAgentRunV1 {
   finished_at: string | null;
 }
 
+/**
+ * Composer 排队/转向的 sidecar 透传合同（零持久化）。steer 在运行中注入，
+ * follow_up 排在停止边界之后；无运行中会话时 sidecar 回 409
+ * run_not_steerable / 404。队列 UI 编排由批 5 消费。
+ */
+export interface CoachAgentRunQueueV1 {
+  schema_version: "coach_agent_run_steer.v1";
+  run_ref: string;
+  kind: "steer" | "follow_up";
+  queued: boolean;
+}
+
 export interface CoachConfirmationV1 {
   schema_version: "coach_confirmation.v1";
   confirmation_ref: string;

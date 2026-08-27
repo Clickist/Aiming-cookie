@@ -33,6 +33,7 @@ import {
   AgentRunError,
   createAgentRun,
   getAgentRun,
+  steerAgentRun,
   stopAgentRun,
   retryAgentRun,
   decideConfirmation,
@@ -448,6 +449,68 @@ export async function handleSidecarRequest(
       }
     } catch (error) {
       writeCoachDataError(res, error);
+    }
+    return;
+  }
+
+  // Composer 排队/转向透传（P3）：steer 运行中注入，follow-up 停止前排入。
+  // 纯转发到 pi AgentHarness 对应入口，零持久化；无运行中会话时用显式
+  // 409（run_not_steerable）/ 404 语义，绝不落 500。
+  const agentRunQueueMatch = url.pathname.match(/^\/v1\/agent-runs\/([^/]+)\/(steer|follow-up)$/);
+  if (req.method === "POST" && agentRunQueueMatch) {
+    const runRef = decodeURIComponent(agentRunQueueMatch[1]);
+    const kind = agentRunQueueMatch[2] === "follow-up" ? "follow_up" as const : "steer" as const;
+    try {
+      let body: unknown;
+      try {
+        body = await parseJsonBody(req);
+      } catch (error) {
+        writeJson(res, 400, { detail: error instanceof Error ? error.message : "Invalid request body" });
+        return;
+      }
+      if (!isRecord(body)) {
+        writeJson(res, 400, { detail: "Request body must be a JSON object" });
+        return;
+      }
+      if (typeof body.text !== "string") {
+        writeJson(res, 400, { detail: "text is required" });
+        return;
+      }
+      const text = body.text.trim().slice(0, 12_000);
+      if (!text) {
+        writeJson(res, 400, { detail: "text must be a non-empty string" });
+        return;
+      }
+      let drainMode: "all" | "one-at-a-time";
+      if (body.drain_mode !== undefined) {
+        if (body.drain_mode !== "all" && body.drain_mode !== "one-at-a-time") {
+          writeJson(res, 400, { detail: 'drain_mode must be "all" or "one-at-a-time"' });
+          return;
+        }
+        drainMode = body.drain_mode;
+      }
+      const ownerId = ownerIdFromRequest(req);
+      const result = await steerAgentRun(
+        ownerId,
+        runRef,
+        { kind, text, ...(drainMode !== undefined ? { drain_mode: drainMode } : {}) },
+      );
+      if (result === null) {
+        writeJson(res, 404, { detail: "Coach agent run is unavailable" });
+      } else {
+        writeJson(res, 200, {
+          schema_version: "coach_agent_run_steer.v1",
+          run_ref: runRef,
+          kind,
+          queued: true,
+        });
+      }
+    } catch (error) {
+      if (error instanceof AgentRunError) {
+        writeJson(res, 409, { detail: error.code });
+      } else {
+        writeCoachDataError(res, error);
+      }
     }
     return;
   }
