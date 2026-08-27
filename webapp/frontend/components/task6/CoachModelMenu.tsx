@@ -7,8 +7,6 @@ import { IconCheck, IconChevronDown } from "@/ui/icons";
 import type { ProviderCatalogV1, ProviderProfile } from "@/lib/types";
 
 interface CoachModelMenuProps {
-  /** Disable switching while an agent run is queued/running. */
-  disabled: boolean;
   /** Surface a failed switch through the CoachPanel Toast. */
   onError: (message: string) => void;
 }
@@ -23,8 +21,11 @@ function displayName(model: { model_id: string; model_name?: string } | null | u
  * catalog offers at least two models; switching Provider still lives in
  * Settings. A switch updates the global default profile (persisted by the
  * sidecar) and the button reflects the resolved model name from the response.
+ *
+ * digests §11 item 6：菜单不随运行态连坐 disabled——运行中保持可切换，
+ * 选择对下一段回复（下一轮 provider 请求）生效。
  */
-export function CoachModelMenu({ disabled, onError }: CoachModelMenuProps) {
+export function CoachModelMenu({ onError }: CoachModelMenuProps) {
   const [profile, setProfile] = useState<ProviderProfile | null>(null);
   const [catalog, setCatalog] = useState<ProviderCatalogV1 | null>(null);
   const [open, setOpen] = useState(false);
@@ -72,6 +73,8 @@ export function CoachModelMenu({ disabled, onError }: CoachModelMenuProps) {
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      // IME 守卫：输入法确认候选词期间的 Escape 不应关闭菜单。
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onPointerDown);
@@ -81,10 +84,6 @@ export function CoachModelMenu({ disabled, onError }: CoachModelMenuProps) {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [open]);
-
-  useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
 
   const models = profile
     ? (catalog?.providers.find((entry) => entry.provider_id === profile.provider_id)?.models ?? [])
@@ -117,9 +116,9 @@ export function CoachModelMenu({ disabled, onError }: CoachModelMenuProps) {
         aria-expanded={open}
         aria-haspopup="menu"
         className="task6-composer-model"
-        disabled={disabled || switching}
+        disabled={switching}
         onClick={toggleOpen}
-        title="切换模型"
+        title="切换模型（对下一段回复生效）"
         type="button"
       >
         <span className="task6-composer-model-label">{currentName}</span>

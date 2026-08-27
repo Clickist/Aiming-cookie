@@ -313,6 +313,57 @@ test("POST /v1/agent-runs/:ref/follow-up queues behind an active stop boundary",
   });
 });
 
+test("steer enqueue surfaces a queue_update activity event on the run stream", async () => {
+  await withServer(async (server) => {
+    const rounds: RoundHandle[] = [];
+    const buildStreamFn = await makeGatedStreamFn();
+
+    const run = createAgentRun("steer-owner-queue-update", "先聊第一局的走位", {
+      sessionId: 7104,
+      streamFn: buildStreamFn(rounds),
+    });
+    await waitForRounds(rounds, 1);
+
+    // Pi 的 steer() 在返回前同步发布 queue_update；经 turn.ts 最小透传
+    // （digests §11 批 5），POST 返回时事件必须已在 run events 里。
+    const steered = await request(
+      server,
+      "POST",
+      `/v1/agent-runs/${encodeURIComponent(run.run_ref)}/steer`,
+      JSON.stringify({ text: "转向：重点讲压枪" }),
+      "steer-owner-queue-update",
+    );
+    assert.equal(steered.statusCode, 200);
+
+    rounds[0].finish("第一轮结论");
+    await waitForRounds(rounds, 2);
+    rounds[1].finish("补充完成");
+    await waitForTask(run.run_ref);
+
+    const done = getAgentRun("steer-owner-queue-update", run.run_ref);
+    assert.ok(done);
+    assert.equal(done.status, "succeeded", `run should succeed, error: ${JSON.stringify(done.error)}`);
+
+    const updates = done.events.filter((event) => event.code === "queue_updated");
+    assert.ok(updates.length >= 1, "engine queue_update must surface as a queue_updated activity event");
+    const first = updates[0]!;
+    // 合同内 type（phase），payload 携带引擎队列实况供前端 chips 对账。
+    assert.equal(first.type, "phase");
+    assert.equal(first.payload?.kind, "queue");
+    assert.deepEqual(
+      {
+        steer: first.payload?.steer_count,
+        follow_up: first.payload?.follow_up_count,
+        next_turn: first.payload?.next_turn_count,
+      },
+      { steer: 1, follow_up: 0, next_turn: 0 },
+    );
+    // 各排水点的后续更新也要可见：队列清空后 steer_count 归零。
+    const last = updates[updates.length - 1]!;
+    assert.equal(last.payload?.steer_count, 0);
+  });
+});
+
 test("drain_mode all forwards QueueMode so queued steers land in a single round", async () => {
   await withServer(async (server) => {
     const rounds: RoundHandle[] = [];
