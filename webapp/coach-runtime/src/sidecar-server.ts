@@ -1,5 +1,8 @@
+import { appendFileSync } from "node:fs";
 import http from "node:http";
+import { join } from "node:path";
 
+import { getDataRoot } from "./app-data.ts";
 import { failureResponse, makeError, type CoachRuntimeTurnSchema, isRecord } from "./contracts.ts";
 import { materializeKnowledgeDir } from "./knowledge-materialize.ts";
 import {
@@ -665,7 +668,17 @@ export function createSidecarServer(options: {
   const authOperations = options.authOperations ?? new ProviderAuthOperationManager();
   const ownsAuthOperations = options.authOperations === undefined;
   const server = http.createServer((req, res) => {
-    handleSidecarRequest(req, res, authOperations, options.turnRunner ?? runCoachTurn).catch(() => {
+    handleSidecarRequest(req, res, authOperations, options.turnRunner ?? runCoachTurn).catch((error) => {
+      console.error("[sidecar] request failed:", error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : error);
+      try {
+        appendFileSync(
+          join(getDataRoot(), "coach-error.log"),
+          `${new Date().toISOString()} [sidecar] ${error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error)}\n`,
+          "utf8",
+        );
+      } catch {
+        // Best-effort error capture; never mask the original failure.
+      }
       if (res.writableEnded) return;
       const failure = failureResponse(
         makeError({

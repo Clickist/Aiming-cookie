@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import type {
@@ -29,6 +31,7 @@ import {
   updateConversationAnalysisIds,
   updateConversationDeepReadAnalysisIds,
 } from "./session-repo.ts";
+import { getDataRoot } from "./app-data.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -362,9 +365,13 @@ async function runAgentTurn(
       appendEvent(record, "status", "completed", "run_succeeded", "Coach run completed");
     } else {
       const error = response.error;
+      // turn 响应的 error 是 CoachRuntimeError（字段是 category/code，没有
+      // domain）。真实可分类的信号只有 code：流中断是网络类瞬断（turn.ts
+      // isTransientProviderError 同款判据），其余归 model。此前读 error.domain
+      // 恒为 undefined，所有上游失败都被折叠成 model。
       const failure: AnyDict = error
         ? {
-            domain: error.domain in { network: 1, model: 1, permission: 1, tool: 1 } ? error.domain : "model",
+            domain: error.code === "provider_stream_interrupted" ? "network" : "model",
             code: error.code,
             message: error.message,
             retryable: error.retryable,
@@ -390,9 +397,18 @@ async function runAgentTurn(
       appendEvent(record, "error", "completed", failure.code, failure.message);
     }
   } catch (error) {
+    try {
+      appendFileSync(
+        join(getDataRoot(), "coach-error.log"),
+        `${new Date().toISOString()} [agent-run] ${error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error)}\n`,
+        "utf8",
+      );
+    } catch {
+      // Best-effort error capture; never mask the original failure.
+    }
     const failure = error instanceof AgentRunError
       ? { domain: "tool", code: error.code, message: error.message, retryable: false }
-      : { domain: "model", code: "generation_failed", message: "Coach generation failed", retryable: true };
+      : { domain: "coach_runtime", code: "internal_error", message: "Coach internal error", retryable: false };
     setRunStatus(record, "failed", "completed", { error: failure, finished: true });
     appendEvent(record, "error", "completed", failure.code, failure.message);
   }
