@@ -16,6 +16,8 @@ import {
   getAnalysisVideoBlob,
   getCoachSession,
   createCoachAgentRun,
+  followUpCoachAgentRun,
+  steerCoachAgentRun,
   listCoachSessions,
   listCustomProviderModels,
   listSessions,
@@ -329,6 +331,49 @@ test("Coach session adapters forward the selected session identity", async () =>
     schema_version: "coach_agent_run_request.v1",
     content: "先看稳定性",
     session_id: 17,
+  });
+});
+
+test("Composer steer adapters forward queue requests to the sidecar queue verbs", async () => {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  Reflect.set(globalThis, "isTauri", false);
+  Reflect.set(globalThis, "window", {});
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), init });
+    const kind = String(input).endsWith("/follow-up") ? "follow_up" : "steer";
+    return new Response(JSON.stringify({
+      schema_version: "coach_agent_run_steer.v1",
+      run_ref: "agent_run:r1",
+      kind,
+      queued: true,
+    }), { status: 200 });
+  }) as typeof fetch;
+
+  const steered = await steerCoachAgentRun("agent_run:r1", "转向：重点讲准度", { drainMode: "all" });
+  const followUp = await followUpCoachAgentRun("agent_run:r1", "追问：下一段练什么");
+
+  // Route refs keep the sidecar verb contract; the colon stays percent-encoded.
+  assert.equal(requests[0]?.input, "/api/coach/agent-runs/agent_run%3Ar1/steer");
+  assert.equal(requests[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
+    drain_mode: "all",
+    text: "转向：重点讲准度",
+  });
+  assert.equal(requests[1]?.input, "/api/coach/agent-runs/agent_run%3Ar1/follow-up");
+  assert.deepEqual(JSON.parse(String(requests[1]?.init?.body)), {
+    text: "追问：下一段练什么",
+  });
+  assert.deepEqual(steered, {
+    schema_version: "coach_agent_run_steer.v1",
+    run_ref: "agent_run:r1",
+    kind: "steer",
+    queued: true,
+  });
+  assert.deepEqual(followUp, {
+    schema_version: "coach_agent_run_steer.v1",
+    run_ref: "agent_run:r1",
+    kind: "follow_up",
+    queued: true,
   });
 });
 

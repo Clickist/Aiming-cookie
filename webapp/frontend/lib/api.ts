@@ -22,6 +22,7 @@ import type {
   CoachSessionListResponse,
   CoachSessionOut,
   CoachRuntimeStatusResponse,
+  CoachAgentRunQueueV1,
   CoachAgentRunV1,
   CustomProviderModelDiscoveryResponse,
   CustomProviderModelListRequest,
@@ -1122,6 +1123,53 @@ export async function retryCoachAgentRun(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachAgentRunV1;
+}
+
+/**
+ * Composer 排队/转向透传（纯转发，零持久化）。steer 在运行中注入 pi 会话，
+ * followUp 排到停止边界之后；运行中 send 不再静默丢失。409
+ * run_not_steerable / 404 语义由 sidecar 显式给出，批 5 UI 据此编排。
+ */
+export async function steerCoachAgentRun(
+  runRef: string,
+  text: string,
+  opts: { signal?: AbortSignal; userId?: string; drainMode?: "all" | "one-at-a-time" } = {},
+): Promise<CoachAgentRunQueueV1> {
+  const res = await apiFetchSidecar(
+    `/v1/agent-runs/${encodeURIComponent(runRef)}/steer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(opts.drainMode ? { drain_mode: opts.drainMode } : {}),
+        text,
+      }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachAgentRunQueueV1;
+}
+
+export async function followUpCoachAgentRun(
+  runRef: string,
+  text: string,
+  opts: { signal?: AbortSignal; userId?: string; drainMode?: "all" | "one-at-a-time" } = {},
+): Promise<CoachAgentRunQueueV1> {
+  const res = await apiFetchSidecar(
+    `/v1/agent-runs/${encodeURIComponent(runRef)}/follow-up`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(opts.drainMode ? { drain_mode: opts.drainMode } : {}),
+        text,
+      }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachAgentRunQueueV1;
 }
 
 export async function getCalibrationProfile(
