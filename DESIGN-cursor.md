@@ -39,7 +39,7 @@ Mockups, Stitch output, root `DESIGN.md`, design HTML, and other drafts are refe
 
 The executable scales and usage rules live in `docs/design-system.md` and are enforced by `webapp/frontend/tests/design-system-contract.test.ts`. At the intent level:
 
-- Geometry: six-step type scale (`--text-micro..display`), three-step radius scale, 4px spacing grid, two control heights (36/32). Components invent no one-off sizes.
+- Geometry: six-step type scale (`--text-micro..display`), four-step radius scale (`--radius-sm..xl`; xl=16 is the chat-bubble pill tier from frontend-parity digests §8), 4px spacing grid, two control heights (36/32). Components invent no one-off sizes.
 - Primary stays scarce: true CTAs and `:focus-visible` only. Identity, selection, hover, and badges ride the neutral surface ladder; informational/busy states use tertiary; success reads as event-kill text; `event-*` colors mark data only.
 - Motion: two transition durations (150ms state, 200ms open/close) plus the 120ms reduced-motion override, one easing family. Loops (loading pulses, caret blink) are exempt.
 - Depth: one overlay shadow token and one focus ring token; elevation otherwise comes from surface steps and hairlines.

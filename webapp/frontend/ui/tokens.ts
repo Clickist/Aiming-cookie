@@ -124,6 +124,8 @@ export const SCALE_TOKENS = {
   "radius-sm": "4px",
   "radius-md": "6px",
   "radius-lg": "8px",
+  // frontend-parity digests §8：user 气泡 pill 向档位。
+  "radius-xl": "16px",
   "text-micro": "11px",
   "text-caption": "12px",
   "text-ui": "13px",

@@ -26,7 +26,7 @@ import type {
   ProviderProfileState,
   SessionListItem,
 } from "@/lib/types";
-import { IconClose, IconSend, IconStop } from "@/ui/icons";
+import { IconChevronDown, IconClose, IconSend, IconStop } from "@/ui/icons";
 import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
@@ -869,6 +869,9 @@ export function CoachPanel({
     setUnreadCount(0);
   };
 
+  // 头部瘦身（digests §8）：折叠态训练卡并入 header 行成单 chip；
+  // 展开细节沿用 .task6-training-reveal 的动画合同（useAnimatedPresence + inert），
+  // 读取失败/不可用也收敛进 chip 的展开区，不再三层常驻压顶。
   const summaryItem = currentTraining ? trainingSummaryItem(currentTraining) : null;
   const visibleTrainingItems = currentTraining?.items.slice(0, 3) ?? [];
   const noCurrentPlan = currentTraining?.reason === "no_current_plan";
@@ -911,72 +914,81 @@ export function CoachPanel({
     );
   };
 
-  const trainingSection = (
-    <section aria-label="当前训练计划" className="task6-current-training" role="region">
-      <div className="task6-current-training-head">
-        <span className="task6-current-training-title">当前训练计划</span>
-        {currentTraining?.plan_status === "paused" ? <Status tone="warning">已暂停</Status> : null}
-        {currentTraining?.plan_status === "active" ? <Status tone="info">进行中</Status> : null}
-        {noCurrentPlan ? <span className="task6-training-empty-title">还没有当前训练安排</span> : null}
-        {summaryItem && !trainingExpanded ? (
-          <span className="task6-training-summary" title={summaryItem.display_name ?? "未命名项目"}>
-            {summaryItem.display_name ?? "未命名项目"}
-          </span>
-        ) : null}
+  // 头部瘦身（digests §8）：折叠态训练卡并入 header 行成单 chip；
+  // 展开细节沿用 .task6-training-reveal 的动画合同（useAnimatedPresence + inert），
+  // 读取失败/不可用也收敛进 chip 的展开区，不再三层常驻压顶。
+  const trainingUnavailable =
+    currentTraining?.availability === "unavailable" && currentTraining.reason !== "no_current_plan";
+
+  const trainingChipLabel =
+    currentTrainingError && !currentTraining
+      ? "训练计划暂不可读"
+      : trainingUnavailable
+        ? "当前训练暂不可用"
+        : noCurrentPlan
+          ? "还没有当前训练安排"
+          : summaryItem
+            ? summaryItem.display_name ?? "未命名项目"
+            : null;
+  const trainingExpandable = Boolean(summaryItem) || (currentTrainingError && !currentTraining) || trainingUnavailable;
+
+  const trainingChip = trainingChipLabel === null ? null : (
+    <button
+      aria-expanded={trainingExpandable ? trainingExpanded : undefined}
+      aria-label="当前训练计划"
+      className="task6-training-chip"
+      onClick={() => setTrainingExpanded((expanded) => !expanded)}
+      title={trainingChipLabel}
+      type="button"
+    >
+      <span className="task6-training-chip-label">{trainingChipLabel}</span>
+      {trainingExpandable ? <IconChevronDown className="task6-training-chip-caret" /> : null}
+    </button>
+  );
+
+  const trainingReveal = (
+    <div
+      aria-hidden={!trainingExpanded || undefined}
+      className="task6-training-reveal"
+      data-state={trainingPresence.state}
+      inert={!trainingExpanded || undefined}
+    >
+      <div className="task6-training-reveal-inner">
+        {currentTrainingError && !currentTraining ? <ErrorState title="当前训练暂时无法读取" /> : null}
+        {trainingUnavailable ? <Notice tone="warning" title="当前训练暂不可用">本地训练摘要暂时无法读取，稍后再试。</Notice> : null}
         {summaryItem ? (
-          <button
-            aria-expanded={trainingExpanded}
-            className="task6-training-toggle"
-            onClick={() => setTrainingExpanded((expanded) => !expanded)}
-            type="button"
-          >
-            {trainingExpanded ? "收起" : "展开"}
-          </button>
+          <section aria-label="当前训练计划" className="task6-training-details">
+            <div className="task6-current-training-scenario">
+              <span className="task6-training-scenario-label">当前训练项目</span>
+              <strong>{summaryItem.display_name ?? "未命名项目"}</strong>
+            </div>
+            <dl className="task6-training-kv">
+              <dt>练什么</dt><dd>{summaryItem.practice_condition ?? "暂未说明"}</dd>
+              <dt>练多少</dt><dd>{summaryItem.dose_guardrail ?? "暂未说明"}</dd>
+              <dt>注意</dt><dd>{summaryItem.cue ?? "暂未说明"}</dd>
+              <dt>观察</dt><dd>{summaryItem.observation ?? "暂未说明"}</dd>
+              <dt>复测</dt><dd>{summaryItem.retest ?? "暂未说明"}</dd>
+            </dl>
+            <div className="task6-training-list">
+              {visibleTrainingItems.map((item, index) => (
+                <article className="task6-training-item" data-status={item.status} key={`${item.display_name ?? "item"}-${index}`}>
+                  <div className="task6-training-item-title">
+                    <strong>{item.display_name ?? "当前训练项目"}</strong>
+                    <Status tone={item.status === "completed" ? "success" : item.status === "cancelled" ? "warning" : "neutral"}>{trainingStatusLabel(item.status)}</Status>
+                  </div>
+                  <p>{item.cue ?? item.practice_condition ?? "暂无可展示的训练说明。"}</p>
+                  {item.scenario_availability === "unavailable" ? <small className="task6-training-unavailable">项目暂不可用</small> : null}
+                  <div className="task6-training-item-actions">
+                    {renderTrainingLaunch(item)}
+                    <Button disabled={capability !== "ready" || !item.display_name} onClick={() => writeTrainingQuestion(item)} size="compact" variant="secondary">问 Coach</Button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         ) : null}
       </div>
-      {currentTrainingError && !currentTraining ? <ErrorState title="当前训练暂时无法读取" /> : null}
-      {currentTraining?.availability === "unavailable" && currentTraining.reason !== "no_current_plan" ? <Notice tone="warning" title="当前训练暂不可用">本地训练摘要暂时无法读取，稍后再试。</Notice> : null}
-      {summaryItem && trainingPresence.present ? (
-        <div
-          aria-hidden={!trainingExpanded || undefined}
-          className="task6-training-reveal"
-          data-state={trainingPresence.state}
-          inert={!trainingExpanded || undefined}
-        >
-          <div className="task6-training-reveal-inner">
-            <div className="task6-training-details">
-              <div className="task6-current-training-scenario">
-                <span className="task6-training-scenario-label">当前训练项目</span>
-                <strong>{summaryItem.display_name ?? "未命名项目"}</strong>
-              </div>
-              <dl className="task6-training-kv">
-                <dt>练什么</dt><dd>{summaryItem.practice_condition ?? "暂未说明"}</dd>
-                <dt>练多少</dt><dd>{summaryItem.dose_guardrail ?? "暂未说明"}</dd>
-                <dt>注意</dt><dd>{summaryItem.cue ?? "暂未说明"}</dd>
-                <dt>观察</dt><dd>{summaryItem.observation ?? "暂未说明"}</dd>
-                <dt>复测</dt><dd>{summaryItem.retest ?? "暂未说明"}</dd>
-              </dl>
-              <div className="task6-training-list">
-                {visibleTrainingItems.map((item, index) => (
-                  <article className="task6-training-item" data-status={item.status} key={`${item.display_name ?? "item"}-${index}`}>
-                    <div className="task6-training-item-title">
-                      <strong>{item.display_name ?? "当前训练项目"}</strong>
-                      <Status tone={item.status === "completed" ? "success" : item.status === "cancelled" ? "warning" : "neutral"}>{trainingStatusLabel(item.status)}</Status>
-                    </div>
-                    <p>{item.cue ?? item.practice_condition ?? "暂无可展示的训练说明。"}</p>
-                    {item.scenario_availability === "unavailable" ? <small className="task6-training-unavailable">项目暂不可用</small> : null}
-                    <div className="task6-training-item-actions">
-                      {renderTrainingLaunch(item)}
-                      <Button disabled={capability !== "ready" || !item.display_name} onClick={() => writeTrainingQuestion(item)} size="compact" variant="secondary">问 Coach</Button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </section>
+    </div>
   );
 
   const send = async () => {
@@ -1072,9 +1084,11 @@ export function CoachPanel({
         <span className="task6-coach-title">Aiming Coach</span>
         <span className="task6-coach-availability" data-state={headerState.state}>{headerState.label}</span>
         <div className="task6-coach-header-actions">
+          {trainingChip}
           {onClose ? <IconButton label="关闭 Coach" onClick={onClose} title="关闭 Coach"><IconClose /></IconButton> : null}
         </div>
       </div>
+      {trainingChip ? trainingReveal : null}
     </header>
   );
 
@@ -1093,7 +1107,6 @@ export function CoachPanel({
     return (
       <div className="task6-coach-panel">
         {header}
-        {trainingSection}
         <div className="task6-coach-state">
           <Status tone={capability === "unavailable" ? "error" : "warning"}>
             {capabilityLabel(capability)}
@@ -1110,7 +1123,6 @@ export function CoachPanel({
     return (
       <div className="task6-coach-panel">
         {header}
-        {trainingSection}
         <div className="task6-coach-state">
           <ErrorState title="Coach 暂时不可用"><Button onClick={() => void refresh()} variant="secondary">重试</Button></ErrorState>
         </div>
@@ -1121,10 +1133,10 @@ export function CoachPanel({
   return (
     <div className="task6-coach-panel">
       {header}
-      {trainingSection}
 
-      {/* 本次讨论常驻顶栏：不随对话流滚动，项目名点击打开左侧视频 */}
-      {discussionAnalysisIds.length > 0 || pendingAnalyses.length > 0 ? (
+      {/* 本次讨论的分析挂载条：只在有进行中的分析（pending）时出现；
+          完成后条收起，入口回落到消息内 @time 链接与 History。 */}
+      {pendingAnalyses.length > 0 ? (
         <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" role="region">
           <span>本次讨论</span>
           {pendingAnalyses.map((item) => (
@@ -1155,9 +1167,15 @@ export function CoachPanel({
 
       <div className="task6-messages-wrap">
       <section aria-label="Coach 消息" className="task6-messages" onScroll={handleMessagesScroll} ref={messagesRef}>
+        {/* 底部锚定（digests §8 病灶①）：非空会话 spacer 吸收剩余空间把消息压向
+            钉底 composer；空会话时同槽位换成占满剩余空间的 hero 空态。 */}
         {messages.length === 0 && !run ? (
-          <Empty title="开始一段 Coach 对话">可以直接提问训练问题，Coach 会读取你的分析数据。</Empty>
-        ) : null}
+          <div className="task6-empty-hero">
+            <Empty title="开始一段 Coach 对话">可以直接提问训练问题，Coach 会读取你的分析数据。</Empty>
+          </div>
+        ) : (
+          <div aria-hidden="true" className="task6-msg-spacer" />
+        )}
         {messages.map((message) => (
           <div className="task6-message-entry" data-role={message.role} key={message.id}>
             <article className="task6-message" data-role={message.role}>
@@ -1250,15 +1268,19 @@ export function CoachPanel({
             rows={3}
             value={draft}
           />
-          <CoachModelMenu
-            disabled={run !== null && ["queued", "running"].includes(run.status)}
-            onError={(message) => notify(message)}
-          />
           {run && ["queued", "running"].includes(run.status) ? (
             <button aria-label="停止生成" className="task6-composer-send" onClick={() => void stop()} type="button" title="停止生成"><IconStop /></button>
           ) : (
             <button aria-label="发送" className="task6-composer-send" disabled={!draft.trim()} onClick={() => void send()} type="button"><IconSend /></button>
           )}
+        </div>
+        {/* 工具行拆出（digests §8）：模型菜单不再与 textarea 同行抢占宽度，
+            textarea 只为发送钮保留右侧空间。 */}
+        <div className="task6-composer-tools">
+          <CoachModelMenu
+            disabled={run !== null && ["queued", "running"].includes(run.status)}
+            onError={(message) => notify(message)}
+          />
         </div>
       </footer>
 

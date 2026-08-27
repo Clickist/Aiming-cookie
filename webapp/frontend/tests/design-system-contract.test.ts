@@ -14,7 +14,8 @@ function cssFiles(): string[] {
   return [...files, join(frontendRoot, "ui", "theme.css")];
 }
 
-// design-system.md：可执行字号 --text-micro..display、圆角 --radius-sm..lg、
+// design-system.md：可执行字号 --text-micro..display、圆角 --radius-sm..lg＋xl
+// （批3 新增第四档 --radius-xl:16px，user 气泡 pill 向，digests §8）、
 // 间距 --space-1..6；旧 board 别名层已废除。
 const LEGACY_ALIASE = [
   "--fg", "--fg2", "--s-low", "--s-cont", "--s-high", "--s-highest",
@@ -42,7 +43,7 @@ test("all stylesheet radii use the radius scale or micro shapes", () => {
     for (const match of css.matchAll(/border-radius\s*:\s*([^;{}]+)/g)) {
       for (const part of match[1].trim().split(/\s+/)) {
         const ok =
-          allowed.has(part) || /^var\(--radius-(sm|md|lg)\)$/.test(part);
+          allowed.has(part) || /^var\(--radius-(sm|md|lg|xl)\)$/.test(part);
         assert.ok(
           ok,
           `${file}: 圆角必须使用 --radius-* token（或 1-3px 微形状/50%/999px），禁止 "${part}"`,
