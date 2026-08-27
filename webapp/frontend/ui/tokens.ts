@@ -50,6 +50,8 @@ export const LIGHT_TOKENS = {
   "inverse-surface": "#312b25",
   "inverse-on-surface": "#f9eee8",
   "inverse-primary": "#ffb59d",
+  // frontend-parity digests §9 定稿的聚焦/强调色（浅 #c83d00 / 深 #ff8a5c）。
+  "ring-color": "#c83d00",
 } as const;
 
 export const DARK_TOKENS: { [K in keyof typeof LIGHT_TOKENS]: string } = {
@@ -104,6 +106,7 @@ export const DARK_TOKENS: { [K in keyof typeof LIGHT_TOKENS]: string } = {
   "inverse-surface": "#e9e4dd",
   "inverse-on-surface": "#3e2c26",
   "inverse-primary": "#ac3400",
+  "ring-color": "#ff8a5c",
 };
 
 export type TokenName = keyof typeof LIGHT_TOKENS;
