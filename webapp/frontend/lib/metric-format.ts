@@ -7,7 +7,7 @@
  */
 
 import type { AnalysisMetricPresentation } from "./contracts";
-import type { TimelineEvent } from "./types";
+import type { FrontendEvidenceSegmentsV1, TimelineEvent } from "./types";
 
 /* 事件与行类型的自然语言命名（原稿「事件命名」面板 + 分布图） */
 export const EVENT_KIND_LABELS: Record<string, string> = {
@@ -143,4 +143,92 @@ export function projectTimelineMarkers(events: ReadonlyArray<TimelineEvent>): Ti
   }
   markers.sort((left, right) => left.sortMs - right.sortMs);
   return markers.map(({ timeMs, type, label }) => ({ timeMs, type, label }));
+}
+
+/* ── 视频面板复盘升级 P2 信号片段循环（brief §二 P2＋D2/D4/D5/D6）────────
+   数据核查结论（brief §四核查项 2）：精确信号窗口的权威源是
+   GET /api/sessions/{id}/evidence-segments（frontend_evidence_segments.v1，
+   前端已有 getAnalysisEvidenceSegments 接线）——playback.relative_start_ms /
+   relative_end_ms 由 canonical_time_window 与 MP4 preroll 校正为「视频相对
+   毫秒」，availability 门控，segment_id 可关联 analysis:。segment_kind 词表
+   是 worst / typical / improved（worker rank_reason），映射短类型词。
+   接口失败 / 响应为空 / 全部 playback unavailable 时降级：用 P1 的
+   projectTimelineMarkers 结果里的 peak（速度峰值类）锚点 ± 固定窗口做前端
+   推导按钮；kill/miss 保持 P1 的点标记语义不出循环窗。均不改底层合同。 */
+
+/** 视频底部时间段按钮的数据形状：视频相对毫秒区间＋短类型词。 */
+export interface SegmentButton {
+  id: string;
+  startMs: number;
+  endMs: number;
+  kindLabel: string;
+}
+
+/** segment_kind → 短类型词；未知 kind 原样透传（不编造语义）。 */
+export const SEGMENT_KIND_LABELS: Record<string, string> = {
+  worst: "最差",
+  typical: "典型",
+  improved: "改善",
+};
+
+/**
+ * 权威路径：evidence-segments 投影 → 时间段按钮。
+ * 只接受 playback.available 且起止毫秒齐备、区间有限的段；其余静默丢弃，
+ * 交给调用方的降级路径。结果按起点升序（与时间轴阅读方向一致）。
+ */
+export function projectEvidenceSegmentButtons(
+  payload: FrontendEvidenceSegmentsV1,
+): SegmentButton[] {
+  const buttons: SegmentButton[] = [];
+  for (const segment of payload.segments) {
+    const playback = segment.playback;
+    if (playback?.availability !== "available") continue;
+    const startMs = playback.relative_start_ms;
+    const endMs = playback.relative_end_ms;
+    if (
+      typeof startMs !== "number" || !Number.isFinite(startMs)
+      || typeof endMs !== "number" || !Number.isFinite(endMs)
+      || startMs < 0 || endMs <= startMs
+    ) continue;
+    buttons.push({
+      id: segment.segment_id,
+      startMs,
+      endMs,
+      kindLabel: (segment.segment_kind && SEGMENT_KIND_LABELS[segment.segment_kind])
+        || segment.segment_kind
+        || "片段",
+    });
+  }
+  return buttons.sort((left, right) => left.startMs - right.startMs);
+}
+
+/** 降级窗口半径：峰值锚点前后各 2.5s＝一次约 5s 的精读循环。 */
+export const SIGNAL_SEGMENT_FALLBACK_WINDOW_MS = 2500;
+/** 降级来源可能高产（逐次挥击都算 peak），排超限截断保护按钮排可用性。 */
+export const SIGNAL_SEGMENT_FALLBACK_LIMIT = 12;
+
+/**
+ * 降级路径：peak 标记 ± 固定窗口推导按钮。maxMs 提供时把终点钳在视频时长内；
+ * clamp 后退化为空区间的窗口剔除。
+ */
+export function projectPeakFallbackButtons(
+  markers: ReadonlyArray<TimelineMarker>,
+  options: { maxMs?: number; limit?: number } = {},
+): SegmentButton[] {
+  const { maxMs, limit = SIGNAL_SEGMENT_FALLBACK_LIMIT } = options;
+  const clampEnd = (value: number) =>
+    typeof maxMs === "number" && Number.isFinite(maxMs) && maxMs > 0
+      ? Math.min(value, maxMs)
+      : value;
+  return markers
+    .filter((marker) => marker.type === "peak")
+    .sort((left, right) => left.timeMs - right.timeMs)
+    .slice(0, limit)
+    .map((marker) => ({
+      id: `peak-${marker.timeMs}`,
+      startMs: Math.max(0, marker.timeMs - SIGNAL_SEGMENT_FALLBACK_WINDOW_MS),
+      endMs: clampEnd(marker.timeMs + SIGNAL_SEGMENT_FALLBACK_WINDOW_MS),
+      kindLabel: marker.label,
+    }))
+    .filter((button) => button.endMs > button.startMs);
 }
