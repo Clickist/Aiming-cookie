@@ -16,6 +16,13 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 	});
 
+	it("includes xhigh and max for Anthropic Opus 5 on anthropic-messages API", () => {
+		const model = getModel("anthropic", "claude-opus-5");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+		expect(getSupportedThinkingLevels(model!)).toContain("max");
+	});
+
 	it("includes max but not xhigh for Anthropic Sonnet 4.6 on anthropic-messages API", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-6");
 		expect(model).toBeDefined();
@@ -59,15 +66,7 @@ describe("getSupportedThinkingLevels", () => {
 		(modelId) => {
 			const model = getModel("openai", modelId);
 			expect(model).toBeDefined();
-			expect(getSupportedThinkingLevels(model!)).toEqual([
-				"off",
-				"minimal",
-				"low",
-				"medium",
-				"high",
-				"xhigh",
-				"max",
-			]);
+			expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
 		},
 	);
 
@@ -110,6 +109,18 @@ describe("getSupportedThinkingLevels", () => {
 		}
 	});
 
+	it.each(["moonshotai", "moonshotai-cn"] as const)("uses the verified effort options for %s Kimi K3", (provider) => {
+		const model = getModel(provider, "kimi-k3");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
+	});
+
+	it("includes only low, high, max for Kimi Coding K3", () => {
+		const model = getModel("kimi-coding", "k3");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
+	});
+
 	it("includes only high for OpenCode Grok Build", () => {
 		const model = getModel("opencode", "grok-build-0.1");
 		expect(model).toBeDefined();
@@ -127,6 +138,13 @@ describe("getSupportedThinkingLevels", () => {
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 		expect(getSupportedThinkingLevels(model!)).not.toContain("xhigh");
+	});
+
+	it("includes xhigh and max for Bedrock Claude Opus 5", () => {
+		const model = getModel("amazon-bedrock", "global.anthropic.claude-opus-5");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+		expect(getSupportedThinkingLevels(model!)).toContain("max");
 	});
 
 	it("includes xhigh and max but not off for Bedrock Claude Fable 5", () => {

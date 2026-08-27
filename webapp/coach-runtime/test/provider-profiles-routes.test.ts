@@ -469,7 +469,8 @@ test("POST /v1/provider-profiles/model switches the active profile model and per
     assert.equal(status.ok, true);
     assert.equal(status.status, "unconfigured");
     assert.equal(status.model?.model_id, "deepseek-v4-pro");
-    assert.equal(status.model?.model_name, "DeepSeek V4 Pro");
+    // 0.83.0 起 opencode-go 目录把该条目改名带 (New) 后缀，投影忠实反映。
+    assert.equal(status.model?.model_name, "DeepSeek V4 Pro (New)");
 
     // Re-reading through a fresh request must still see the switched model.
     const listed = await request(server, "GET", "/v1/provider-profiles");

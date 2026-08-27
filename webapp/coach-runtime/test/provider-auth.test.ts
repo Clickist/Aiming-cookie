@@ -53,7 +53,8 @@ test("auth capabilities project every pinned Pi provider without product filteri
   );
   assert.deepEqual(
     capabilities.providers.find((provider) => provider.provider_id === "google-vertex")?.auth_modes,
-    ["ambient"],
+    // 0.83.0 起 Pi 目录为 Vertex 增补了 api_key 登录通道。
+    ["api_key", "ambient"],
   );
   assert.deepEqual(
     capabilities.providers.find((provider) => provider.provider_id === "openai-codex")?.auth_modes,

@@ -1805,11 +1805,16 @@ export class DefaultPackageManager implements PackageManager {
 		if (!existsSync(installRoot)) {
 			return;
 		}
-		if (this.getPackageManagerName() === "bun") {
+		const packageManagerName = this.getPackageManagerName();
+		if (packageManagerName === "bun") {
 			await this.runNpmCommand(["uninstall", source.name, "--cwd", installRoot]);
 			return;
 		}
-		await this.runNpmCommand(["uninstall", source.name, "--prefix", installRoot]);
+		const args = ["uninstall", source.name, "--prefix", installRoot];
+		if (packageManagerName !== "pnpm") {
+			args.push("--legacy-peer-deps");
+		}
+		await this.runNpmCommand(args);
 	}
 
 	private async installGit(source: GitSource, scope: SourceScope): Promise<void> {
@@ -1829,13 +1834,19 @@ export class DefaultPackageManager implements PackageManager {
 		}
 		mkdirSync(dirname(targetDir), { recursive: true });
 
-		await this.runCommand("git", ["clone", source.repo, targetDir]);
-		if (source.ref) {
-			await this.runCommand("git", ["checkout", source.ref], { cwd: targetDir });
-		}
-		const packageJsonPath = join(targetDir, "package.json");
-		if (existsSync(packageJsonPath)) {
-			await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+		try {
+			await this.runCommand("git", ["clone", source.repo, targetDir]);
+			if (source.ref) {
+				await this.runCommand("git", ["checkout", source.ref], { cwd: targetDir });
+			}
+			const packageJsonPath = join(targetDir, "package.json");
+			if (existsSync(packageJsonPath)) {
+				await this.runNpmCommand(this.getGitDependencyInstallArgs(), { cwd: targetDir });
+			}
+		} catch (error) {
+			rmSync(targetDir, { recursive: true, force: true });
+			this.pruneEmptyGitParents(targetDir, gitRoot);
+			throw error;
 		}
 	}
 

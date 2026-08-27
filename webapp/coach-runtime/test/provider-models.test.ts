@@ -231,8 +231,9 @@ test("catalog projects dynamic Pi auth modes and labels without credential data"
   assert.deepEqual(anthropic?.auth_modes, ["api_key", "ambient", "oauth"]);
   assert.equal(anthropic?.api_key_auth?.name, "Anthropic API key");
   assert.equal(anthropic?.oauth_auth?.name, "Anthropic (Claude Pro/Max)");
-  assert.deepEqual(vertex?.auth_modes, ["ambient"]);
-  assert.equal(vertex?.api_key_auth?.interactive, false);
+  assert.deepEqual(vertex?.auth_modes, ["api_key", "ambient"]);
+  // 0.83.0 起 Vertex 的 api_key 通道升级为可交互登录。
+  assert.equal(vertex?.api_key_auth?.interactive, true);
   assert.ok(!JSON.stringify(catalog).includes(SECRET));
 });
 
@@ -245,7 +246,9 @@ test("generic type-tagged OAuth credential is injected into pinned Pi Models aut
       type: "oauth",
       access: SECRET,
       refresh: "refresh-secret",
-      expires: Date.now() + 60_000,
+      // 0.83.0 起 Pi 在解析期会主动刷新剩余有效期 <5 分钟的 OAuth token；
+      // 夹具放远期有效期，避免测试触发真实刷新网络请求。
+      expires: Date.now() + 30 * 60_000,
       accountId: "extra-field",
     },
   });
@@ -260,7 +263,7 @@ test("generic type-tagged OAuth credential is injected into pinned Pi Models aut
       type: "oauth",
       access: SECRET,
       refresh: "refresh-secret",
-      expires: Date.now() + 60_000,
+      expires: Date.now() + 30 * 60_000,
       accountId: "extra-field",
     },
   });
