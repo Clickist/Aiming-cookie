@@ -40,7 +40,7 @@ test("development path remains available when release root is absent", () => {
     delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     process.env.PI_SOURCE_DIR = join(repoRoot, "third_party", "pi");
     assert.match(loadDefaultCoachSystemPrompt(), /Aiming Cookie/);
-    assert.match(readFileSync(join(piSourceRoot(), "packages", "agent", "package.json"), "utf8"), /0\.80\.6/);
+    assert.match(readFileSync(join(piSourceRoot(), "packages", "agent", "package.json"), "utf8"), /0\.83\.0/);
   } finally {
     if (previousResourceRoot === undefined) delete process.env.AIMING_COOKIE_RESOURCE_ROOT;
     else process.env.AIMING_COOKIE_RESOURCE_ROOT = previousResourceRoot;

@@ -44,9 +44,15 @@ Push-Location third_party\pi
 npm.cmd exec --workspace @earendil-works/pi-ai -- tsgo -p tsconfig.build.json --noCheck
 npm.cmd exec --workspace @earendil-works/pi-agent-core -- tsgo -p tsconfig.build.json --noCheck
 Pop-Location
+
+# 0.81+ 必需：providers/*.models.ts import 的 src/providers/data/*.json 不入
+# git，必须生成（只写被 ignore 的 data 目录）
+Push-Location third_party\pi\packages\ai
+npm.cmd run hydrate-model-data
+Pop-Location
 ```
 
-这里的定向 emit 使用仓库已提交的 generated TypeScript，不调用 `@earendil-works/pi-ai` 的 `generate-models` / `generate-image-models` 在线生成步骤；不要用根级 `npm run build` 代替恢复命令，否则可能改写 pinned source。恢复后必须运行下文的 Coach runtime focused tests，确认 `compat.js` 可加载且 fake stream 正常结束。
+这里的定向 emit 只编译仓库已提交的 generated TypeScript；`hydrate-model-data`（即 `generate-models.ts --data-only`）只写被 gitignore 的 `src/providers/data/` JSON，两者都不会改写 pinned source。**不要**调用完整版 `generate-models` 或根级 `npm run build`，它们会重写已提交的 `.models.ts` 分片与 `src/models.generated.ts`。缺数据文件的症状：coach 测试爆发大量 `ERR_MODULE_NOT_FOUND ... providers/data/xxx.json` 导入失败。恢复后必须运行下文的 Coach runtime focused tests，确认 `compat.js` 可加载且 fake stream 正常结束。
 
 桌面壳开发还需要本机 Rust toolchain 和 Tauri 2 的平台依赖。
 
