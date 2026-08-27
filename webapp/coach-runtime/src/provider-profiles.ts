@@ -368,6 +368,20 @@ export async function handleProviderProfileRequest(
     return true;
   }
 
+  // Raycast 式先验后存：对「尚未持久化的完整候选 profile」执行与
+  // /{id}/test 相同的连通性/凭据校验。只读干跑——任何分支都不触碰
+  // provider store；响应复用既有 status 投影（profile_id 恒为 null）。
+  if (req.method === "POST" && pathname === "/v1/provider-profiles/test") {
+    try {
+      const body = await readJsonBody(req);
+      const profile = coachProfileFromCreate(body);
+      writeJson(res, 200, projectStatus(await testProviderConnection(profile), null));
+    } catch (error) {
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
   if (req.method === "GET" && pathname === "/v1/provider-profiles") {
     try {
       const store = loadProviderStore();

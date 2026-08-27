@@ -832,6 +832,29 @@ export async function testProviderProfile(
   return (await res.json()) as ProviderProfileStatus;
 }
 
+/**
+ * Dry-run the same connectivity check as `testProviderProfile` against a
+ * complete but not-yet-persisted candidate profile (Raycast-style verify
+ * before save). The sidecar must not touch its stored profiles; the response
+ * reuses the regular status projection with `profile_id` fixed at null.
+ */
+export async function testProviderProfileDraft(
+  profile: ProviderProfileCreate,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<ProviderProfileStatus> {
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles/test",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ProviderProfileStatus;
+}
+
 export async function authorizeProviderProfile(
   profileId: number,
   mode: "api_key" | "oauth",
