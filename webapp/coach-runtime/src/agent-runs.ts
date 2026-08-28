@@ -310,6 +310,7 @@ async function runAgentTurn(
           "sequence",
           "kind",
           "state",
+          "thinking_text",
           "tool_call_id",
           "tool_name",
           "command_name",
