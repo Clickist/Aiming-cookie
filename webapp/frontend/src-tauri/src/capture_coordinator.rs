@@ -28,6 +28,42 @@ const RAW_UNHEALTHY_RESTART_TIMEOUT: Duration = Duration::from_secs(6);
 // 必须大于桌面后端的 release 硬 grace（30s），留出正常 release 的窗口。
 const FINALIZING_STALE_TIMEOUT: Duration = Duration::from_secs(45);
 const DIAGNOSTIC_EVENT_LIMIT: usize = 64;
+// 捕获总开关的持久化文件，落在 capture 数据根（= app_data_dir）。用户显式
+// 关闭也是一种要记住的状态，因此只写这一个布尔位、没有删除语义。
+const CAPTURE_ENABLED_FILE_NAME: &str = "capture-enabled.json";
+
+#[derive(Serialize, Deserialize)]
+struct StoredCaptureEnabled {
+    enabled: bool,
+}
+
+fn capture_enabled_file_path(data_root: &Path) -> PathBuf {
+    data_root.join(CAPTURE_ENABLED_FILE_NAME)
+}
+
+fn write_capture_enabled_file(data_root: &Path, enabled: bool) -> Result<(), String> {
+    let payload = serde_json::to_vec(&StoredCaptureEnabled { enabled })
+        .map_err(|error| format!("capture enabled serialization failed: {error}"))?;
+    fs::create_dir_all(data_root)
+        .map_err(|error| format!("capture enabled persistence failed: {error}"))?;
+    crate::atomic_write_file(&capture_enabled_file_path(data_root), &payload)
+        .map_err(|error| format!("capture enabled persistence failed: {error}"))
+}
+
+/// 读取持久化的总开关：Ok(Some(value)) 是正常读到的状态；Ok(None) 表示首
+/// 启动尚无持久化文件（默认关）；Err 为损坏/不可读，调用方保守按关处理并
+/// 落日志——排障现场「重启后捕获为什么关了」靠它定位。保持无日志副作用，
+/// 便于单测覆盖且不污染全局日志 sink。
+fn load_capture_enabled_file(data_root: &Path) -> Result<Option<bool>, String> {
+    let bytes = match fs::read(capture_enabled_file_path(data_root)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("stored state unreadable: {error}")),
+    };
+    serde_json::from_slice::<StoredCaptureEnabled>(&bytes)
+        .map(|stored| Some(stored.enabled))
+        .map_err(|error| format!("stored state malformed: {error}"))
+}
 
 fn diagnostic_now_ms() -> i64 {
     SystemTime::now()
@@ -876,8 +912,12 @@ impl CaptureCoordinatorState {
         self: &Arc<Self>,
         enabled: bool,
     ) -> Result<CaptureCoordinatorStatus, String> {
+        let previously_enabled = self.status().enabled;
         if !enabled {
             self.disable()?;
+            if previously_enabled {
+                self.persist_capture_enabled(false);
+            }
             return Ok(self.status());
         }
         let next_status = {
@@ -895,7 +935,34 @@ impl CaptureCoordinatorState {
             self.replace_status(monitor_start_failure_status());
             return Err(error);
         }
+        self.persist_capture_enabled(true);
         Ok(self.status())
+    }
+
+    /// 启动时恢复持久化的总开关（setup 里、窗口展示之前调用）。文件缺失或
+    /// 损坏保持默认关；恢复失败同样不阻塞启动，残留的 enabled 文件会让下一
+    /// 次启动继续尝试。与前端后续的重复 enable 幂等共存。
+    pub fn restore_persisted_enabled(self: &Arc<Self>) {
+        match load_capture_enabled_file(&self.data_root) {
+            Ok(Some(true)) => {
+                if let Err(error) = self.set_enabled(true) {
+                    crate::dlog!("[capture-enabled] restore failed, staying disabled: {error}");
+                } else {
+                    crate::dlog!("[capture-enabled] restored enabled=true from persisted state");
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                crate::dlog!("[capture-enabled] {error}, staying disabled");
+            }
+        }
+    }
+
+    /// 总开关持久化是 best-effort：写失败只落日志，不回滚已生效的内存状态。
+    fn persist_capture_enabled(&self, enabled: bool) {
+        if let Err(error) = write_capture_enabled_file(&self.data_root, enabled) {
+            crate::dlog!("[capture-enabled] persistence failed: {error}");
+        }
     }
 
     fn start_monitor(self: &Arc<Self>) -> Result<(), String> {
@@ -1913,10 +1980,11 @@ fn is_current_kovaak_window(_hwnd: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_diagnostic_text, control_error_response, join_control_connections,
-        managed_export_paths, monitor_start_failure_status, parse_control_request,
-        read_control_line, replay_failure_code, resized_video_degraded_status,
-        response_type_for_request, track_control_connection_thread, CaptureCoordinatorStatus,
+        bounded_diagnostic_text, capture_enabled_file_path, control_error_response,
+        join_control_connections, load_capture_enabled_file, managed_export_paths,
+        monitor_start_failure_status, parse_control_request, read_control_line,
+        replay_failure_code, resized_video_degraded_status, response_type_for_request,
+        track_control_connection_thread, write_capture_enabled_file, CaptureCoordinatorStatus,
         CapturePhase, CaptureSourceState, CaptureSourceStatus, ControlRequest, ExportReplayRequest,
         FileFingerprint, ReceiptRecord, CONTROL_MAX_MESSAGE_BYTES,
     };
@@ -2348,5 +2416,60 @@ mod tests {
         let released = CaptureCoordinatorStatus::after_release(false);
         assert_eq!(released.phase, CapturePhase::WaitingForKovaak);
         assert!(released.capture_session_id.is_none());
+    }
+
+    #[test]
+    fn capture_enabled_state_roundtrips_and_leaves_no_temp_artifacts() {
+        let root = std::env::temp_dir().join(format!(
+            "aiming-cookie-coordinator-capture-enabled-{}",
+            std::process::id()
+        ));
+        // 缺省关：首启动没有持久化文件时保持 disabled。
+        assert_eq!(load_capture_enabled_file(&root), Ok(None));
+        write_capture_enabled_file(&root, true).expect("persist enabled");
+        assert_eq!(load_capture_enabled_file(&root), Ok(Some(true)));
+        // 用户显式关闭也是要记住的状态。
+        write_capture_enabled_file(&root, false).expect("persist disabled");
+        assert_eq!(load_capture_enabled_file(&root), Ok(Some(false)));
+        // 原子写不残留临时文件：目录里只有 capture-enabled.json 本身。
+        let entries: Vec<String> = fs::read_dir(&root)
+            .expect("read root")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            entries,
+            vec![capture_enabled_file_path(&root)
+                .file_name()
+                .expect("name")
+                .to_string_lossy()
+                .into_owned()]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupted_capture_enabled_state_falls_back_to_disabled() {
+        let root = std::env::temp_dir().join(format!(
+            "aiming-cookie-coordinator-capture-corrupt-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("mkdir");
+        let path = capture_enabled_file_path(&root);
+        for payload in [
+            &b"{not json"[..],
+            b"",
+            // 合法 JSON 但缺 enabled 字段同样不可解析。
+            b"{}",
+            // 类型不对的 enabled 也按损坏处理，而不是 panic 或误判为开。
+            br#"{"enabled":"yes"}"#,
+        ] {
+            fs::write(&path, payload).expect("write corrupt fixture");
+            assert!(
+                matches!(load_capture_enabled_file(&root), Err(_)),
+                "corrupt payload must be rejected: {payload:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
     }
 }

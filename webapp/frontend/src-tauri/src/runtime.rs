@@ -94,7 +94,9 @@ impl RuntimeProcess {
             .env(COACH_SIDECAR_URL_ENV, &coach_sidecar_url)
             .env(
                 "CORS_ORIGINS",
-                "http://localhost:3000,http://tauri.localhost,tauri://localhost",
+                // 3001 = 旁路端口开发（3000 被占时 Next dev --port 3001 + devUrl 覆盖）；
+                // 本地单用户应用的 localhost 开发源，无跨站暴露面。
+                "http://localhost:3000,http://localhost:3001,http://tauri.localhost,tauri://localhost",
             )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
