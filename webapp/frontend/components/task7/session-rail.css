@@ -7,7 +7,8 @@
   min-width: 0;
   min-height: 0;
   border-inline-end: 1px solid var(--outline-variant);
-  background: var(--surface-container-lowest);
+  /* 衬托面：侧栏比内容区暗一档（light=米色衬底 / dark=最深黑）。 */
+  background: var(--surface-container-low);
   color: var(--on-surface);
   font-family: var(--font-ui);
 }
@@ -231,6 +232,28 @@
   flex-direction: column;
   gap: 2px;
   padding: 0 0 var(--space-2) var(--space-3);
+}
+
+/* 组尾「显示全部 / 显示前 5 条」开关（0827 拍板组内预览截断）：低调文本钮，
+   token 与 hover 语义沿用 item-action，不与会话条目抢视觉层级。 */
+.task7-session-rail__group-toggle {
+  align-self: flex-start;
+  min-height: 24px;
+  margin-top: 2px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task7-session-rail__group-toggle:hover {
+    background: var(--surface-container-high);
+    color: var(--on-surface);
+  }
 }
 
 .task7-session-rail__item {

@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import {
   createCoachAgentRun,
@@ -32,6 +32,12 @@ import { Toast, useAnimatedPresence } from "@/ui/primitives";
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachVideoTarget = { analysisRef: string; timeMs: number; seq: number };
 
+// 冷启动的捕获恢复要等 PyInstaller 后端起来才有产品状态可读：指数退避
+// 重试（1s 起步、封顶 30s、最多 10 次），不与启动路由的首次请求绑定。
+const CAPTURE_RESTORE_MAX_ATTEMPTS = 10;
+const CAPTURE_RESTORE_FIRST_DELAY_MS = 1_000;
+const CAPTURE_RESTORE_MAX_DELAY_MS = 30_000;
+
 function parseSessionId(raw: string | null): number | null {
   if (!raw || !/^[1-9][0-9]*$/.test(raw)) return null;
   return Number(raw);
@@ -44,6 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const shellHidden = pathname.startsWith("/onboarding");
   const coachWorkspaceRoute = pathname === "/" || pathname === "/s" || pathname === "/s/";
   const settingsRoute = pathname.startsWith("/settings");
+  const historyRoute = pathname.startsWith("/history");
   const [capability, setCapability] = useState<CoachCapability>("loading");
   const [startupRouteResolved, setStartupRouteResolved] = useState(false);
   const [coachSessions, setCoachSessions] = useState<SessionRailSession[]>([]);
@@ -52,9 +59,65 @@ export function AppShell({ children }: { children: ReactNode }) {
   const hasRestoredLastSessionRef = useRef(false);
   const [draftSession, setDraftSession] = useState(false);
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
+  // 视频面板开关动效（0827 拍板 reveal/cover 模型）：关闭先置 closing 让对话
+  // 面板立即滑回盖住视频面板（data-video-open 随 closing 提前翻），滑完再真正
+  // 卸载。面板绝对定位不占布局，提前翻状态不会引起任何回流挤压。
+  const [videoClosing, setVideoClosing] = useState(false);
+  const videoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // @time 点击序号：同一时间码连续点击也要构成新的跳转意图信号
   // （到达即暂停＋脉冲，复盘升级 P0.3/D1），不能靠 initialTimeMs 值变化。
   const videoSeqRef = useRef(0);
+  const openVideoPane = (analysisRef: string, timeMs = 0) => {
+    if (videoCloseTimerRef.current) {
+      clearTimeout(videoCloseTimerRef.current);
+      videoCloseTimerRef.current = null;
+    }
+    setVideoClosing(false);
+    setVideoTarget({ analysisRef, seq: (videoSeqRef.current += 1), timeMs });
+  };
+  const closeVideoPane = () => {
+    if (!videoTarget || videoClosing) return;
+    setVideoClosing(true);
+    videoCloseTimerRef.current = setTimeout(() => {
+      videoCloseTimerRef.current = null;
+      setVideoTarget(null);
+      setVideoClosing(false);
+    }, 340);
+  };
+  // ── 对话列宽度拖拽（0827）：视频面板开启时，对话列左缘的把手可左右拖动
+  // 调节对话列宽（视频面板吃剩余空间）。宽度持久化到 localStorage，null =
+  // 走 CSS 默认 clamp。拖拽期间经 data-split-dragging 关掉宽度过渡防拖影。
+  const VIDEO_SPLIT_MIN = 380;
+  const VIDEO_SPLIT_KEY = "aiming-cookie.video-split-width";
+  const coachViewRef = useRef<HTMLDivElement | null>(null);
+  const [conversationWidth, setConversationWidth] = useState<number | null>(() => {
+    // AppShell 会走 SSR，window 仅在客户端存在；服务端一律回落默认宽。
+    if (typeof window === "undefined") return null;
+    const stored = Number(window.localStorage.getItem(VIDEO_SPLIT_KEY));
+    return Number.isFinite(stored) && stored >= VIDEO_SPLIT_MIN ? stored : null;
+  });
+  const startSplitDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const view = coachViewRef.current;
+    if (!view) return;
+    const viewRect = view.getBoundingClientRect();
+    const clampWidth = (px: number) =>
+      Math.round(Math.min(viewRect.width - VIDEO_SPLIT_MIN, Math.max(VIDEO_SPLIT_MIN, px)));
+    view.dataset.splitDragging = "true";
+    const onMove = (move: PointerEvent) => {
+      setConversationWidth(clampWidth(viewRect.right - move.clientX));
+    };
+    const onUp = (up: PointerEvent) => {
+      const final = clampWidth(viewRect.right - up.clientX);
+      setConversationWidth(final);
+      window.localStorage.setItem(VIDEO_SPLIT_KEY, String(final));
+      delete view.dataset.splitDragging;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
   const [sessionFeedback, setSessionFeedback] = useState<{ text: string; seq: number } | null>(null);
   const sessionFeedbackSeqRef = useRef(0);
   // 与 CoachPanel.notify 同款：Toast 关闭是 200ms 后的延迟回调，用户
@@ -68,6 +131,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [softStartRun, setSoftStartRun] = useState<CoachAgentRunV1 | null>(null);
   const settingsChildrenRef = useRef<ReactNode>(null);
   const settingsPresence = useAnimatedPresence(settingsRoute, 160);
+  const historyPresence = useAnimatedPresence(historyRoute, 160);
   const startupPending = coachWorkspaceRoute && !startupRouteResolved;
   const showSessionRail = !shellHidden && !settingsRoute && !startupPending;
   const keepSessionRailMounted = !shellHidden && !startupPending;
@@ -86,9 +150,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           router.replace("/onboarding");
           return;
         }
-        if (isDesktopRuntime()) {
-          try { await setDesktopCaptureEnabled(true); } catch { /* best-effort capture restore on restart */ }
-        }
         setStartupRouteResolved(true);
       })
       .catch(() => {
@@ -96,6 +157,38 @@ export function AppShell({ children }: { children: ReactNode }) {
       });
     return () => controller.abort();
   }, [coachWorkspaceRoute, router]);
+
+  // 桌面端捕获总开关的自动恢复：此前它挂在冷启动的一次 getProductState 上，
+  // 首连失败（后端尚未就绪）就静默放弃，重启后捕获会一直停留在关闭状态。
+  // 现在独立退避重试直到后端就绪并完成门控判断；门控语义与启动路由一致
+  // （未走完 onboarding 不恢复），Rust 侧启动恢复先行成功时这里是幂等重放。
+  useEffect(() => {
+    if (!coachWorkspaceRoute || !isDesktopRuntime()) return undefined;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const restore = async (attempt: number): Promise<void> => {
+      try {
+        const state = await getProductState();
+        if (cancelled) return;
+        // 与启动路由同一门控：未完成 onboarding 明确无需恢复，立即停止。
+        if (state.availability === "available" && state.onboarding_completed !== true) return;
+        await setDesktopCaptureEnabled(true);
+        return; // 成功恢复或明确无需恢复即停。
+      } catch {
+        if (cancelled) return;
+        if (attempt + 1 >= CAPTURE_RESTORE_MAX_ATTEMPTS) return;
+        timer = setTimeout(
+          () => void restore(attempt + 1),
+          Math.min(CAPTURE_RESTORE_FIRST_DELAY_MS * 2 ** attempt, CAPTURE_RESTORE_MAX_DELAY_MS),
+        );
+      }
+    };
+    void restore(0);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [coachWorkspaceRoute]);
 
   useEffect(() => {
     if (shellHidden) return undefined;
@@ -373,11 +466,15 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div
                 aria-hidden={!coachWorkspaceRoute || undefined}
                 className="task3-coach-view"
-                data-video-open={Boolean(videoTarget) || undefined}
-                style={{ display: coachWorkspaceRoute ? undefined : "none" }}
+                data-video-open={Boolean(videoTarget) && !videoClosing || undefined}
+                ref={coachViewRef}
+                style={{
+                  display: coachWorkspaceRoute ? undefined : "none",
+                  "--task3-conv-w": conversationWidth != null ? `${conversationWidth}px` : undefined,
+                } as CSSProperties}
               >
                 {coachWorkspaceRoute ? (
-                  videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} jumpSeq={videoTarget.seq} onClose={() => setVideoTarget(null)} /> : null
+                  videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} jumpSeq={videoTarget.seq} onClose={closeVideoPane} /> : null
                 ) : null}
                 <div className="task3-coach-conversation">
                   <CoachPanel
@@ -385,14 +482,32 @@ export function AppShell({ children }: { children: ReactNode }) {
                     draftSession={draftSession}
                     layoutMode="full"
                     onEnsureSession={ensureCoachSession}
-                    onOpenVideo={(analysisRef, timeMs = 0) => setVideoTarget({ analysisRef, seq: (videoSeqRef.current += 1), timeMs })}
+                    onOpenVideo={openVideoPane}
                     pathname={pathname}
                     sessionId={selectedCoachSessionId}
                     softStartRun={softStartRun}
                   />
                 </div>
+                {/* 对话列左缘拖拽把手（0827）：仅视频面板开启时存在，横向拖动
+                    调节对话列宽（视频面板吃剩余空间），只调宽度。 */}
+                {videoTarget && !videoClosing ? (
+                  <div
+                    aria-label="调节对话面板宽度"
+                    aria-orientation="vertical"
+                    className="task3-video-split-handle"
+                    onPointerDown={startSplitDrag}
+                    role="separator"
+                  />
+                ) : null}
               </div>
-              {!coachWorkspaceRoute && !settingsRoute ? <div className="task3-page-view">{children}</div> : null}
+              {!coachWorkspaceRoute && !settingsRoute ? (
+                <div
+                  className="task3-page-view"
+                  data-page-motion={historyPresence.state === "open" ? "open" : "opening"}
+                >
+                  {children}
+                </div>
+              ) : null}
             </>
           )}
         </main>

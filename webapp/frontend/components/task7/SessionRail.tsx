@@ -76,6 +76,10 @@ const SESSION_GROUP_DEFS = [
   { key: "older", label: "更早" },
 ] as const;
 
+// 组内默认只渲染前 N 条（0827 拍板）：超出的部分收进组尾「显示全部」开关，
+// 点开全量后再点一次回到预览条数。
+const SESSION_GROUP_PREVIEW_COUNT = 5;
+
 type SessionGroupKey = (typeof SESSION_GROUP_DEFS)[number]["key"];
 
 // 按本地自然日边界分桶；缺时间戳归入"今天"。用日历日而非固定 86400 秒，避免夏令时偏移。
@@ -114,6 +118,9 @@ export function SessionRail({
 }: SessionRailProps) {
   const [query, setQuery] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<SessionRailId | null>(null);
+  // 每组一个独立开关，用一个 record 统一管理：缺省（false）＝只显示前
+  // SESSION_GROUP_PREVIEW_COUNT 条；纯 UI 状态，不参与数据获取。
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const searchRef = useRef<HTMLInputElement>(null);
   const railRef = useRef<HTMLElement>(null);
 
@@ -170,14 +177,19 @@ export function SessionRail({
       </label>
 
       <nav aria-label="会话列表" className="task7-session-rail__list">
-    {groups.length ? groups.map((group) => (
+    {groups.length ? groups.map((group) => {
+      // 默认只渲染前 5 条，超出走组尾「显示全部」开关（0827 拍板）；
+      // 数量角标始终展示该组总数，不受预览截断影响。
+      const expanded = expandedGroups[group.key] ?? false;
+      const shownItems = expanded ? group.items : group.items.slice(0, SESSION_GROUP_PREVIEW_COUNT);
+      return (
       <section className="task7-session-rail__group" key={group.key}>
         <div className="task7-session-rail__group-summary">
           <span className="task7-session-rail__group-label">{group.label}</span>
           <span className="task7-session-rail__count">{group.items.length}</span>
         </div>
         <div className="task7-session-rail__group-items">
-    {group.items.map((session) => {
+    {shownItems.map((session) => {
       const title = sessionTitle(session);
       const date = sessionDate(session);
       const summaryLine = session.summary && session.summary !== title
@@ -213,9 +225,20 @@ export function SessionRail({
         </div>
       );
     })}
+    {group.items.length > SESSION_GROUP_PREVIEW_COUNT ? (
+      <button
+        aria-expanded={expanded}
+        className="task7-session-rail__group-toggle"
+        onClick={() => setExpandedGroups((current) => ({ ...current, [group.key]: !expanded }))}
+        type="button"
+      >
+        {expanded ? `显示前 ${SESSION_GROUP_PREVIEW_COUNT} 条` : `显示全部 ${group.items.length} 条`}
+      </button>
+    ) : null}
         </div>
       </section>
-    )) : <p className="task7-session-rail__empty">{query ? "没有匹配的会话" : "还没有会话"}</p>}
+      );
+    }) : <p className="task7-session-rail__empty">{query ? "没有匹配的会话" : "还没有会话"}</p>}
       </nav>
       <footer className="task7-session-rail__footer">
         <button aria-label="训练历史" className="task7-session-rail__footer-row" onClick={onHistory} type="button"><span className="task7-session-rail__footer-label"><IconHistory /><span>训练历史</span></span>{historyCount === null ? null : <span className="task7-session-rail__footer-count">{historyCount}</span>}</button>

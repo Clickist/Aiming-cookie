@@ -861,6 +861,14 @@ export interface ProviderAuthCapabilitiesV1 {
 export type CustomProviderKind = "custom_openai_compatible" | "custom_anthropic_compatible";
 export type CustomProviderProtocol = "openai-completions" | "anthropic-messages";
 export type ProviderKind = "builtin" | CustomProviderKind;
+
+/**
+ * Profile 级 reasoning effort 旋钮（与 sidecar contracts 的 CoachReasoningEffort
+ * 五档一致；xhigh/max 是 Pi 内部档位，不对用户开放）。"off" = 显式关闭思考，
+ * 未设置 = 维持运行时默认（推理模型回落高档），对下一段回复生效。
+ */
+export type ProviderReasoningEffort = "minimal" | "low" | "medium" | "high" | "off";
+
 export type ProviderProfileState =
   | "unconfigured"
   | "auth_expired"
@@ -875,6 +883,7 @@ export interface ProviderProfileCreate {
   provider_id?: string | null;
   base_url?: string | null;
   model_id: string;
+  reasoning_effort?: ProviderReasoningEffort | null;
   context_window?: number | null;
   max_tokens?: number | null;
   api_key?: string | null;
@@ -888,6 +897,7 @@ export interface ProviderProfile {
   kind: ProviderKind;
   base_url: string | null;
   model_id: string;
+  reasoning_effort?: ProviderReasoningEffort | null;
   context_window?: number | null;
   max_tokens?: number | null;
   is_default: boolean;
