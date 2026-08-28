@@ -21,6 +21,8 @@
   --state-pressed: color-mix(in srgb, currentColor 12%, transparent);
   --shadow-menu: 0 4px 12px color-mix(in srgb, var(--on-surface) 12%, transparent);
   --duration-surface: 200ms;
+  /* 面板级开合（视频讲解页等大块结构的出入场）：比 surface 慢一档。 */
+  --duration-slow: 300ms;
   --duration-reduced-motion: 120ms;
   --space-1: 4px;
   --space-2: 8px;
@@ -597,6 +599,37 @@ a {
     max-width: 100vw;
     width: 100vw;
   }
+}
+
+/* ── Global scrollbars ─────────────────────────────────────── */
+
+/* Chromium / WebKit */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--outline-variant);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--outline);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--outline-variant) transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

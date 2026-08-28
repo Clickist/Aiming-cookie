@@ -1,9 +1,20 @@
 .task7-coach-video-pane {
+  /* reveal/cover 模型（0827 拍板）：面板绝对定位垫在对话面板下层，宽度为
+     对话列让位后的全部剩余空间（几何反转回 Mac 原版：视频面板是弹性大头）。
+     isolation 把面板内部的全局 z-index（时间轴游标 z6/输入层 z7/标记层 z8）
+     关进本面板的堆叠上下文——否则盖板关闭后这些层仍穿透对话面板可见。 */
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: calc(100% - var(--task3-conv-w));
+  isolation: isolate;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  background: var(--background);
+  /* 与对话面板同面（0827）：surface 在 light 是全窗最亮、dark 比侧栏亮
+     一档——内容区恒为主面，参照 ZCode 的明暗关系两主题方向一致。 */
+  background: var(--surface);
 }
 
 .task7-coach-video-pane__header {
@@ -69,4 +80,4 @@
   min-height: 0;
   overflow: auto;
   padding: var(--space-4);
-}
+}

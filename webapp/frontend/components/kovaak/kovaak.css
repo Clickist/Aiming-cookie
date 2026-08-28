@@ -300,8 +300,8 @@
 }
 
 @keyframes kovaak-pulse {
-  0%, 100% { opacity: 0.55; }
-  50% { opacity: 0.85; }
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.9; }
 }
 
 /* Compact score list for narrow contexts / onboarding */

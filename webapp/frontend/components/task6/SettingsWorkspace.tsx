@@ -46,6 +46,7 @@ import type {
   ProviderProfile,
   ProviderProfileCreate,
   ProviderProfileState,
+  ProviderReasoningEffort,
   StorageResponse,
 } from "@/lib/types";
 import {
@@ -202,6 +203,8 @@ export function SettingsWorkspace() {
   const [customProtocolNeedsChoice, setCustomProtocolNeedsChoice] = useState(false);
   const [newApiKey, setNewApiKey] = useState("");
   const [newAuthMode, setNewAuthMode] = useState<ProviderAuthMode>("api_key");
+  // 新档的思考力度旋钮：空串 = 未设置（运行时对推理模型回落高档）。
+  const [newReasoningEffort, setNewReasoningEffort] = useState<ProviderReasoningEffort | "">("");
   const [credentialDrafts, setCredentialDrafts] = useState<Record<number, string>>({});
   const [authOperation, setAuthOperation] = useState<ProviderAuthOperation | null>(null);
   const [authProfileId, setAuthProfileId] = useState<number | null>(null);
@@ -424,6 +427,10 @@ export function SettingsWorkspace() {
     : Boolean(selectedCatalogProvider && modelId.trim() && (newAuthMode !== "api_key" || newApiKey.trim()));
 
   const selectedCustomModel = customModels.find((model) => model.model_id === modelId);
+  // 内置目录带 reasoning 元数据：仅当选中的模型确认支持推理时，表单才露出
+  // 思考力度旋钮。自定义 Provider 的发现结果没有该元数据，保持未设置（默认）。
+  const selectedModelIsReasoning = !customProvider
+    && selectedCatalogProvider?.models.find((model) => model.model_id === modelId)?.reasoning === true;
   // 干跑与入库共用同一份候选 payload：「检查连接」验的就是将来要存的内容。
   const draftPayload: ProviderProfileCreate | null = !canAddProvider ? null : {
     name: profileName.trim() || (customProvider ? "自定义 Provider" : selectedCatalogProvider?.provider_name ?? "Provider"),
@@ -431,6 +438,7 @@ export function SettingsWorkspace() {
     provider_id: customProvider ? null : selectedCatalogProvider?.provider_id,
     base_url: customProvider ? baseUrl.trim() : null,
     model_id: modelId.trim(),
+    reasoning_effort: selectedModelIsReasoning && newReasoningEffort ? newReasoningEffort : null,
     context_window: customProvider ? selectedCustomModel?.context_window ?? null : null,
     max_tokens: customProvider ? selectedCustomModel?.max_tokens ?? null : null,
     api_key: customProvider || newAuthMode === "api_key" ? newApiKey : null,
@@ -822,6 +830,21 @@ export function SettingsWorkspace() {
                     <select onChange={(event) => setModelId(event.target.value)} value={modelId}>
                       <option value="">选择 Model</option>
                       {selectedCatalogProvider.models.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_name ?? model.model_id}</option>)}
+                    </select>
+                  </Field>
+                ) : null}
+                {selectedModelIsReasoning ? (
+                  <Field label="思考力度">
+                    <select
+                      onChange={(event) => setNewReasoningEffort(event.target.value as ProviderReasoningEffort | "")}
+                      value={newReasoningEffort}
+                    >
+                      <option value="">默认（推理模型回落高档）</option>
+                      <option value="off">关闭</option>
+                      <option value="minimal">极简</option>
+                      <option value="low">低</option>
+                      <option value="medium">中</option>
+                      <option value="high">高</option>
                     </select>
                   </Field>
                 ) : null}

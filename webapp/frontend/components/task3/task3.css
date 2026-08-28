@@ -132,29 +132,56 @@
 }
 
 .task3-coach-view {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  justify-content: center;
+  /* 对话列宽（视频开启时）：默认窄列（Mac 原版几何——视频面板吃弹性大头），
+     左缘把手拖动后由 AppShell 内联覆盖为具体 px。 */
+  --task3-conv-w: clamp(380px, 34vw, 520px);
   height: 100%;
   min-height: 0;
   min-width: 0;
   background: var(--surface-container-low);
 }
 
-.task3-coach-view[data-video-open="true"] {
-  grid-template-columns: minmax(0, 1fr) clamp(380px, 34vw, 520px);
-  justify-content: stretch;
-}
-
+/* 视频面板开关动效（0827 拍板 reveal/cover 模型）：面板绝对定位垫在下层、
+   恒定完整尺寸不自变形；只动画对话面板的左缘——margin-left 与 width 互补
+   同步过渡（两侧状态的和恒为 100%），“打开/关闭”＝对话面板整体滑开让出/
+   滑回盖住视频面板。 */
 .task3-coach-conversation {
+  position: relative;
+  z-index: 1;
   display: flex;
+  /* 显式 100%：过渡需要两端都是可插值长度；缺省 auto 会让打开方向跳变。 */
+  width: 100%;
   min-width: 0;
   min-height: 0;
   justify-content: center;
+  transition:
+    margin-left var(--duration-slow) var(--ease-out),
+    width var(--duration-slow) var(--ease-out);
 }
 
 .task3-coach-view[data-video-open="true"] .task3-coach-conversation {
+  margin-left: calc(100% - var(--task3-conv-w));
+  width: var(--task3-conv-w);
   border-inline-start: 1px solid var(--outline-variant);
+}
+
+/* 拖拽中关掉宽度过渡：把手每帧更新宽度，过渡会造成拖影滞后。 */
+.task3-coach-view[data-split-dragging] .task3-coach-conversation {
+  transition: none;
+}
+
+.task3-video-split-handle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(100% - var(--task3-conv-w));
+  z-index: 2;
+  width: 9px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+  touch-action: none;
 }
 
 .task3-coach-view[hidden],
@@ -164,6 +191,16 @@
 
 .task3-page-view {
   min-width: 0;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.task3-page-view[data-page-motion="opening"] {
+  opacity: 0;
+  transform: translateX(8px);
 }
 
 .task3-route-content[data-settings-page="true"] {
@@ -394,6 +431,10 @@
   animation: task3-onboarding-enter var(--duration-fast) var(--ease-out);
 }
 
+.task3-onboarding-step[data-exiting] {
+  animation: task3-onboarding-exit var(--duration-fast) var(--ease-out) forwards;
+}
+
 @keyframes task3-onboarding-enter {
   from {
     opacity: 0;
@@ -402,6 +443,17 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes task3-onboarding-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
   }
 }
 
@@ -888,14 +940,21 @@
 @media (prefers-reduced-motion: reduce) {
   .task3-skip-link,
   .task3-onboarding-step,
+  .task3-onboarding-step[data-exiting],
   .task3-onboarding-dropdown-menu {
     transition: none;
     animation: none !important;
     transform: none;
   }
 
+  /* 视频面板开合动效同关：对话面板滑移回退为瞬变。 */
+  .task3-coach-conversation {
+    transition: none;
+  }
+
   .task3-route-content[data-settings-motion="opening"],
-  .task3-route-content[data-settings-motion="closing"] {
+  .task3-route-content[data-settings-motion="closing"],
+  .task3-page-view[data-page-motion="opening"] {
     transform: none;
     transition: opacity var(--duration-reduced-motion) var(--ease-out);
   }

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getProviderCatalog, listProviderProfiles, switchProviderModel } from "@/lib/api";
 import { IconCheck, IconChevronDown } from "@/ui/icons";
-import type { ProviderCatalogV1, ProviderProfile } from "@/lib/types";
+import type { ProviderCatalogV1, ProviderProfile, ProviderReasoningEffort } from "@/lib/types";
 
 interface CoachModelMenuProps {
   /** Surface a failed switch through the CoachPanel Toast. */
@@ -15,6 +15,18 @@ function displayName(model: { model_id: string; model_name?: string } | null | u
   if (!model) return null;
   return model.model_name && model.model_name.trim() ? model.model_name : model.model_id;
 }
+
+// 思考力度档位：value 为空串表示「默认」（未设置 → 运行时对推理模型回落
+// 高档）。「关闭」是显式 off，与「默认」语义不同。写回默认档，对下一段
+// 回复生效（与切模型同语义）。
+const EFFORT_OPTIONS: Array<{ value: ProviderReasoningEffort | ""; label: string }> = [
+  { value: "", label: "默认" },
+  { value: "off", label: "关闭" },
+  { value: "minimal", label: "极简" },
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+];
 
 /**
  * Composer model picker. Only renders for a builtin Provider whose pinned
@@ -110,6 +122,26 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
     }
   };
 
+  // 力度挂在默认档上：model_id 传当前值即「只改力度」。null 表示清回默认。
+  const activeEffort = profile.reasoning_effort ?? "";
+  const handleEffortSelect = async (effort: ProviderReasoningEffort | "") => {
+    if (switching) return;
+    const nextEffort: ProviderReasoningEffort | null = effort === "" ? null : effort;
+    if ((profile.reasoning_effort ?? null) === nextEffort) return;
+    setSwitching(true);
+    try {
+      await switchProviderModel(activeModelId, { reasoningEffort: nextEffort });
+      setProfile((current) => (current ? { ...current, reasoning_effort: nextEffort } : current));
+    } catch (error) {
+      onError(error instanceof Error && error.message.trim() ? error.message : "思考力度调整失败，请重试。");
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  // 力度段只在当前模型确认支持推理时出现（目录元数据）。
+  const showEffortSection = currentModel?.reasoning === true;
+
   return (
     <div className="task6-composer-model-wrap" ref={containerRef}>
       <button
@@ -142,6 +174,39 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
               </button>
             );
           })}
+          {showEffortSection ? (
+            <>
+              {/* task6.css 本特性禁改：分隔与段标题用 token 内联样式。 */}
+              <div role="separator" style={{ borderTop: "1px solid var(--outline-variant)", margin: "var(--space-1) 0" }} />
+              <div
+                aria-label="思考力度"
+                role="group"
+                style={{
+                  padding: "var(--space-1) var(--space-3)",
+                  color: "var(--on-surface-variant)",
+                  font: "500 var(--text-ui)/1.3 var(--font-ui)",
+                }}
+              >
+                思考力度（对下一段回复生效）
+              </div>
+              {EFFORT_OPTIONS.map((option) => {
+                const selected = activeEffort === option.value;
+                return (
+                  <button
+                    aria-checked={selected}
+                    className="task6-composer-model-item"
+                    key={option.value || "default"}
+                    onClick={() => void handleEffortSelect(option.value)}
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    <span>{option.label}</span>
+                    {selected ? <IconCheck className="task6-composer-model-check" /> : null}
+                  </button>
+                );
+              })}
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -56,6 +56,7 @@ import type {
   ProviderProfileListResponse,
   ProviderProfileStatus,
   ProviderProfileStatusDetail,
+  ProviderReasoningEffort,
   RunEvidenceRemovalResponse,
   SessionStatus,
   SessionListResponse,
@@ -802,17 +803,25 @@ export async function updateProviderProfile(
  * Switch the default profile's model within the current Provider. The sidecar
  * validates the model (builtin: must be in the pinned catalog) before
  * persisting; the response carries the resolved model with its display name.
+ *
+ * `reasoningEffort` 走同一路由调整档级思考力度：缺省 = 沿用已存值（切模型
+ * 不动力度），null = 清除回「未设置」，否则必须落在五档枚举内。选择对下
+ * 一段回复生效。
  */
 export async function switchProviderModel(
   modelId: string,
-  opts: { signal?: AbortSignal; userId?: string } = {},
+  opts: { signal?: AbortSignal; userId?: string; reasoningEffort?: ProviderReasoningEffort | null } = {},
 ): Promise<ProviderProfileStatusDetail> {
   const res = await apiFetchSidecar(
     "/v1/provider-profiles/model",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ schema_version: "coach_provider_model_switch.v1", model_id: modelId }),
+      body: JSON.stringify({
+        schema_version: "coach_provider_model_switch.v1",
+        model_id: modelId,
+        ...(opts.reasoningEffort !== undefined ? { reasoning_effort: opts.reasoningEffort } : {}),
+      }),
     },
     opts,
   );

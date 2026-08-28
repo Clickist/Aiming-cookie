@@ -33,13 +33,14 @@ function renderSegments(
     // D7：显示层不再透出原文 @51.5s / @38.2-43.7s，渲染为时间码 chip；
     // task6-time-link 语义色与「跳转＋暂停」点击行为原样保留。
     const pieces = parseTimeSegments(segment.text).map((piece, pieceIndex) => {
+      const pieceKey = `${keyPrefix}-${segIndex}-${pieceIndex}`;
       const chip = piece.chip;
-      if (!chip) return <Fragment key={pieceIndex}>{piece.text}</Fragment>;
+      if (!chip) return <Fragment key={pieceKey}>{piece.text}</Fragment>;
       if (ctx.analysisRef && ctx.onOpenVideo) {
         return (
           <button
             className="task6-time-link"
-            key={pieceIndex}
+            key={pieceKey}
             onClick={() => ctx.onOpenVideo?.(ctx.analysisRef as string, chipTargetMs(chip))}
             type="button"
           >
@@ -47,7 +48,7 @@ function renderSegments(
           </button>
         );
       }
-      return <span className="task6-time-link task6-time-link--static" key={pieceIndex}>{chip.label}</span>;
+      return <span className="task6-time-link task6-time-link--static" key={pieceKey}>{chip.label}</span>;
     });
     if (segment.bold) {
       out.push(
