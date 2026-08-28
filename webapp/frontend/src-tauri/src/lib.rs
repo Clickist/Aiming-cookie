@@ -106,7 +106,7 @@ const DIAG_RECENT_ANALYSES_LIMIT: usize = 10;
 const DIAG_RECENT_COACH_TURNS_LIMIT: usize = 3;
 const DIAG_EVENTS_TAIL_BYTES: usize = 4 * 1024;
 const DIAG_COACH_TURN_TAIL_BYTES: usize = 8 * 1024;
-static DIAGNOSTIC_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static ATOMIC_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// 读取日志文件尾部；`start > 0` 时优先丢弃被截断的首行，但窗口内整段
 /// 无换行（Coach jsonl 单条 assistant 消息可超窗口大小）时原样返回窗口
@@ -519,13 +519,14 @@ fn collect_watcher_snapshot(data_root: &Path) -> Option<serde_json::Value> {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
 }
 
-fn diagnostic_temp_path(path: &Path) -> PathBuf {
+/// 诊断包与开关持久化共用的临时文件名：pid + 时间戳 + 序列号避免并发冲突。
+fn atomic_temp_path(path: &Path) -> PathBuf {
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     path.with_file_name(format!(
         ".{file_name}.tmp-{}-{}-{}",
         std::process::id(),
         diagnostic_now_ms(),
-        DIAGNOSTIC_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ATOMIC_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ))
 }
 
@@ -558,8 +559,10 @@ fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
     }
 }
 
-fn atomic_write_diagnostic_bundle(path: &Path, payload: &[u8]) -> io::Result<()> {
-    let temporary_path = diagnostic_temp_path(path);
+/// 诊断包与捕获开关持久化共用的小文件原子写：临时文件 + MoveFileExW
+/// （MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH）替换目标。
+fn atomic_write_file(path: &Path, payload: &[u8]) -> io::Result<()> {
+    let temporary_path = atomic_temp_path(path);
     fs::write(&temporary_path, payload)?;
     match atomic_replace(&temporary_path, path) {
         Ok(()) => Ok(()),
@@ -707,8 +710,7 @@ fn desktop_export_capture_diagnostics(
     };
     let payload =
         serde_json::to_vec_pretty(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))?;
-    atomic_write_diagnostic_bundle(&path, &payload)
-        .map_err(|error| format!("诊断包写入失败: {error}"))?;
+    atomic_write_file(&path, &payload).map_err(|error| format!("诊断包写入失败: {error}"))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -756,6 +758,9 @@ pub fn run() {
                 Arc::clone(&window_capture),
             )
             .map_err(io::Error::other)?;
+            // 窗口展示之前恢复持久化的捕获总开关：setup 完成前 WebView 不能
+            // 发起任何命令，前端首次查询见到的就是恢复后的状态；失败只落日志。
+            coordinator.restore_persisted_enabled();
             let runtime_layout =
                 runtime_layout(&app.path().resource_dir()?).map_err(io::Error::other)?;
             let capture_control = coordinator.control_connection().map_err(io::Error::other)?;
@@ -1056,7 +1061,7 @@ mod tests {
         fs::create_dir_all(&root).expect("mkdir");
         let destination = root.join("diagnostics.json");
         fs::write(&destination, "old bundle").expect("seed destination");
-        atomic_write_diagnostic_bundle(&destination, b"new bundle").expect("atomic write");
+        atomic_write_file(&destination, b"new bundle").expect("atomic write");
         assert_eq!(
             fs::read(&destination).expect("read destination"),
             b"new bundle"
