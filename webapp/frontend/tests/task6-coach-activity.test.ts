@@ -9,15 +9,23 @@ async function source(relativePath: string): Promise<string> {
   return readFile(path.join(root, relativePath), "utf8");
 }
 
-test("Coach panel consumes SSE thinking_text into the collapsible thinking block", async () => {
+test("Coach panel consumes SSE thinking_text into the interleaved work stream", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
-  // partial 帧字段接入
+  // partial 帧字段接入：thinking_text＝当前思考段全文，写进 liveSegments
   assert.match(panel, /thinking_text\?: unknown/);
-  assert.match(panel, /setLiveThinking\(thinking\)/);
-  // 首个回答 token 冻结思考窗口，供归档展示
-  assert.match(panel, /frozenMs = Date\.now\(\) - thinkingTrackerRef\.current\.startAt/);
-  // 成功回合归档而非静默丢弃
-  assert.match(panel, /setArchivedTurn\(\{ run: next/);
+  assert.match(panel, /text: thinking/);
+  // 0828 修复：帧内 thinking/text 交错——正文增量不得冻结思考段（开段只由
+  // 轮边界 activity 驱动），否则每帧交错都会撕裂出新段。
+  assert.match(panel, /正文增量只更新正文/);
+  assert.doesNotMatch(panel, /text\.length > 0\)[\s\S]{0,120}freezeThinkingSegment/);
+  // activity 驱动的实时段推进（thinking started＝新段，tool＝步骤入列）
+  assert.match(panel, /applyLiveActivity\(streamedEvent\)/);
+  assert.match(panel, /const settledSegments = source/);
+  // 成功回合归档而非静默丢弃（0827 拍板：按会话键 Map 缓存，切换会话不丢；
+  // 0828 升级：归档交错的思考段/工具段并持久化 localStorage v2，可恢复）
+  assert.match(panel, /nextTurns\.set\(activeSessionKeyRef\.current, \{ segments: settledSegments \}\)/);
+  assert.match(panel, /persistArchivedTurns\(nextTurns\)/);
+  assert.match(panel, /useState<Map<string, ArchivedTurn>>\(readArchivedTurns\)/);
   // 轮询兜底路径共享同一归档收敛
   const settleCount = panel.match(/settleSucceeded\(next\)/g)?.length ?? 0;
   assert.ok(settleCount >= 2, "finalize 与轮询两条终态路径都要走 settleSucceeded");
@@ -36,12 +44,15 @@ test("streaming answer renders through the same text pipeline as final answers",
   const streamingBlock = panel.slice(Math.max(0, start), end);
   assert.match(streamingBlock, /text=\{run\.partial_text\}/);
   assert.match(streamingBlock, /task6-streaming-cursor/);
-  // 归档回合保留活动摘要与思考秒数
-  assert.match(panel, /archivedTurn\.thinkingMs/);
-  assert.match(panel, /deriveToolSteps\(archivedTurn\.run\)/);
-  // 思考块标题状态机：进行中→完成后冻结秒数
-  assert.match(activity, /正在思考/);
-  assert.match(activity, /已思考 \$\{Math\.max\(1, Math\.round\(frozenSeconds \/ 1000\)\)\} 秒/);
+  // 归档回合渲染交错的思考段/工具段时序（0828：CoachWorkStream 统一呈现）
+  assert.match(panel, /<CoachWorkStream segments=\{archivedTurn\.segments\} \/>/);
+  assert.match(panel, /<CoachWorkStream segments=\{workSegments\}/);
+  // 思考段与工具段交错（前因后果可读，不再思考一堆动作一堆）
+  assert.match(activity, /export type CoachWorkSegment/);
+  assert.match(activity, /export function CoachWorkStream/);
+  // 思考块标题状态机：流式「思考中」扫光 → 完成后冻结秒数（0828 拍板改文案）
+  assert.match(activity, /思考中/);
+  assert.match(activity, /思考过程 · 持续了 \$\{Math\.max\(1, Math\.round\(frozenSeconds \/ 1000\)\)\} 秒/);
 });
 
 test("tool steps surface duration and detail previews from existing contract fields", async () => {

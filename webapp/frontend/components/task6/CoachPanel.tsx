@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import {
   createCoachAgentRun,
@@ -12,7 +12,6 @@ import {
   retryCoachAgentRun,
   steerCoachAgentRun,
   stopCoachAgentRun,
-  truncateCoachSession,
 } from "@/lib/api";
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
 import { COACH_PENDING_INTENT_KEY, computeAnalysisEtaSeconds } from "@/lib/contracts";
@@ -47,7 +46,7 @@ import {
 } from "@/lib/quote";
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
 import { CoachModelMenu } from "./CoachModelMenu";
-import { CoachStepList, CoachThinkingBlock, ElapsedTicker, type CoachToolStep } from "./CoachRunActivity";
+import { CoachWorkStream, ElapsedTicker, type CoachToolStep, type CoachWorkSegment } from "./CoachRunActivity";
 import type {
   CoachAgentRunEventV1,
   CoachAgentRunV1,
@@ -173,65 +172,143 @@ const TOOL_COMMAND_LABELS: Record<string, string> = {
   "navigation.open": "打开界面",
 };
 
-function deriveToolSteps(run: CoachAgentRunV1 | null): ToolStep[] {
+/** 从单个 tool activity 事件装配步骤（SSE 实时与 events 重建共用）。 */
+function stepFromToolEvent(event: CoachAgentRunEventV1, previous: CoachToolStep | null): CoachToolStep {
+  const payload = event.payload ?? {};
+  const toolCallId = typeof payload.tool_call_id === "string" ? payload.tool_call_id : null;
+  const toolName = typeof payload.tool_name === "string" ? payload.tool_name : null;
+  const commandName = typeof payload.command_name === "string" ? payload.command_name : null;
+  const topic = typeof payload.topic === "string" ? payload.topic : null;
+  const activityState = typeof payload.state === "string" ? payload.state : null;
+  const argsPreview = typeof payload.args_preview === "string" ? payload.args_preview : null;
+  const resultPreview = typeof payload.result_preview === "string" ? payload.result_preview : null;
+  const durationMs =
+    typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms)
+      ? Math.round(payload.duration_ms)
+      : null;
+  // 开始事件的 created_at 是活动步「经过时间跳动」的基准（分钟:秒）。
+  const createdAtMs = Date.parse(event.created_at);
+  const warning = payload.warning_or_error;
+  const warningMessage = warning && typeof warning === "object" && typeof (warning as { message?: unknown }).message === "string"
+    ? (warning as { message: string }).message
+    : null;
+  const failed = activityState === "failed" || event.code === "failed" || event.code === "cancelled" || event.code === "unavailable";
+  return {
+    key: toolCallId ?? event.event_ref ?? `tool-${event.sequence}`,
+    label: commandName
+      ? TOOL_COMMAND_LABELS[commandName] ?? commandName
+      : previous?.label ?? (toolName
+        ? TOOL_COMMAND_LABELS[toolName] ?? toolName
+        : topic ? "查阅训练知识" : event.message),
+    meta: warningMessage ?? (commandName ? null : topic ?? previous?.meta ?? null),
+    state: (failed ? "fail" : activityState === "started" ? "active" : "done") as CoachToolStep["state"],
+    command: commandName ?? previous?.command ?? null,
+    durationMs: durationMs ?? previous?.durationMs ?? null,
+    startedAtMs:
+      activityState === "started" && Number.isFinite(createdAtMs)
+        ? createdAtMs
+        : previous?.startedAtMs ?? null,
+    argsPreview: argsPreview ?? previous?.argsPreview ?? null,
+    resultPreview: resultPreview ?? previous?.resultPreview ?? null,
+  };
+}
+
+/** 冻结一个思考段：终文落定、流式终止、时长按冻结时刻与段起点差补算。 */
+function freezeThinkingSegment(
+  segment: Extract<CoachWorkSegment, { kind: "thinking" }>,
+  text: string | null,
+  frozenAtMs: number | null,
+): Extract<CoachWorkSegment, { kind: "thinking" }> {
+  return {
+    ...segment,
+    text: text ?? segment.text,
+    streaming: false,
+    frozenMs:
+      segment.frozenMs
+      ?? (segment.startedAtMs != null && frozenAtMs != null && frozenAtMs > segment.startedAtMs
+        ? frozenAtMs - segment.startedAtMs
+        : null),
+  };
+}
+
+/**
+ * 从 run 事件序列重建交错工作流段（轮询兜底与刷新恢复路径；SSE 实时路径
+ * 走 liveSegments 增量）。thinking_started 事件＝上一思考段边界：其 payload
+ * 的 thinking_text 是上一段终文（sidecar 每轮冻结下发），据此补齐丢帧。
+ */
+function deriveWorkSegments(run: CoachAgentRunV1 | null): CoachWorkSegment[] {
   if (!run) return [];
-  const stepMap = new Map<string, ToolStep>();
-  run.events
-    .filter((event) => event.type === "tool")
-    .forEach((event, index) => {
-      const payload = event.payload ?? {};
-      const toolCallId = typeof payload.tool_call_id === "string" ? payload.tool_call_id : null;
-      const toolName = typeof payload.tool_name === "string" ? payload.tool_name : null;
-      const commandName = typeof payload.command_name === "string" ? payload.command_name : null;
-      const topic = typeof payload.topic === "string" ? payload.topic : null;
-      const activityState = typeof payload.state === "string" ? payload.state : null;
-      const argsPreview = typeof payload.args_preview === "string" ? payload.args_preview : null;
-      const resultPreview = typeof payload.result_preview === "string" ? payload.result_preview : null;
-      const durationMs =
-        typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms)
-          ? Math.round(payload.duration_ms)
-          : null;
-      // 开始事件的 created_at 是活动步「经过时间跳动」的基准（分钟:秒）。
-      const createdAtMs = Date.parse(event.created_at);
-      const warning = payload.warning_or_error;
-      const warningMessage = warning && typeof warning === "object" && typeof (warning as { message?: unknown }).message === "string"
-        ? (warning as { message: string }).message
-        : null;
-      const failed = activityState === "failed" || event.code === "failed" || event.code === "cancelled" || event.code === "unavailable";
-      const key = toolCallId ?? event.event_ref ?? `tool-${index}`;
-      const previous = stepMap.get(key);
-      stepMap.set(key, {
-        key,
-        label: commandName
-          ? TOOL_COMMAND_LABELS[commandName] ?? commandName
-          : previous?.label ?? (toolName
-            ? TOOL_COMMAND_LABELS[toolName] ?? toolName
-            : topic ? "查阅训练知识" : event.message),
-        meta: warningMessage ?? (commandName ? null : topic ?? previous?.meta ?? null),
-        state: (failed ? "fail" : activityState === "started" ? "active" : "done") as ToolStep["state"],
-        command: commandName ?? previous?.command ?? null,
-        durationMs: durationMs ?? previous?.durationMs ?? null,
-        startedAtMs:
-          activityState === "started" && Number.isFinite(createdAtMs)
-            ? createdAtMs
-            : previous?.startedAtMs ?? null,
-        argsPreview: argsPreview ?? previous?.argsPreview ?? null,
-        resultPreview: resultPreview ?? previous?.resultPreview ?? null,
+  const segments: CoachWorkSegment[] = [];
+  const stepIndex = new Map<string, number>();
+  let thinkingCount = 0;
+  const freezeLastThinking = (text: string | null, frozenAtMs: number | null) => {
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      const segment = segments[i];
+      if (segment.kind !== "thinking") continue;
+      if (segment.streaming) {
+        segments[i] = freezeThinkingSegment(segment, text, frozenAtMs);
+      } else if (text) {
+        // 已冻结的段也接受终文补写（partial 只写到过中间态）。
+        segments[i] = { ...segment, text };
+      }
+      return;
+    }
+  };
+  for (const event of run.events) {
+    const payload = event.payload ?? {};
+    if (event.type === "phase" && event.code === "thinking_started") {
+      // 旧协议（字段缺失）：events 无分段终文，不按轮开段（无内容可填）。
+      if (payload.thinking_text === undefined) continue;
+      const settledText = typeof payload.thinking_text === "string" ? payload.thinking_text : null;
+      freezeLastThinking(settledText, Date.parse(event.created_at) || null);
+      thinkingCount += 1;
+      const startedAtMs = Date.parse(event.created_at);
+      segments.push({
+        kind: "thinking",
+        key: event.event_ref ?? `think-${event.sequence}-${thinkingCount}`,
+        text: "",
+        streaming: true,
+        startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : null,
+        frozenMs: null,
       });
-    });
-  const steps = [...stepMap.values()];
-  if ((run.status === "queued" || run.status === "running") && !steps.some((step) => step.state === "active")) {
-    steps.push({
-      key: "coach-active",
-      label: run.phase === "queued"
-        ? "等待开始"
-        : run.partial_text ? "正在组织回复" : "正在理解问题和分析上下文",
-      meta: null,
-      state: "active",
-      command: null,
-    });
+      continue;
+    }
+    if (event.type === "tool") {
+      const key = typeof payload.tool_call_id === "string" ? payload.tool_call_id : event.event_ref ?? `tool-${event.sequence}`;
+      const previousIndex = stepIndex.get(key);
+      const previous = previousIndex != null ? segments[previousIndex] : undefined;
+      const step = stepFromToolEvent(event, previous?.kind === "tool" ? previous.step : null);
+      freezeLastThinking(null, Date.parse(event.created_at) || null);
+      if (previousIndex != null && previous?.kind === "tool") {
+        segments[previousIndex] = { kind: "tool", step };
+      } else {
+        stepIndex.set(step.key, segments.length);
+        segments.push({ kind: "tool", step });
+      }
+      continue;
+    }
+    if (event.type === "text") {
+      // 首个正文增量＝思考段终结（首个回答 token 冻结思考窗口的既有语义）。
+      freezeLastThinking(null, Date.parse(event.created_at) || null);
+    }
   }
-  return steps;
+  if ((run.status === "queued" || run.status === "running") && !segments.some((segment) => segment.kind === "tool" && segment.step.state === "active")) {
+    // 0828 拍板：思考期/正文期的占位步骤（"正在理解问题和分析上下文"等）
+    // 是废话——思考行与流式正文本身就是状态；仅排队且无任何可见活动时保留。
+    if (run.status === "queued") {
+      segments.push({
+        kind: "tool",
+        step: {
+          key: "coach-active",
+          label: "等待开始",
+          meta: null,
+          state: "active",
+          command: null,
+        },
+      });
+    }
+  }
+  return segments;
 }
 
 /**
@@ -307,6 +384,68 @@ function UserMessageBody({ content }: { content: string }): ReactNode {
   );
 }
 
+/** 已完成回合的归档：交错的思考段/工具段时序（0828 起思考按 provider 轮
+   分段，与工具步骤按发生顺序共存；run 原始事件不保留，段在归档时一次性
+   冻结）。持久化到 localStorage——跨页面刷新/应用重启仍能恢复（桌面单机
+   场景，无跨机诉求；配额超限等失败静默降级为不恢复）。 */
+type ArchivedTurn = { segments: CoachWorkSegment[] };
+const ARCHIVED_TURNS_KEY = "aiming-cookie.coach-archived-turns";
+const ARCHIVED_TURNS_MAX = 24;
+
+/** v1 归档（单思考流 + 步骤列表）迁移：思考段在前、步骤在后——旧数据的
+   时序已不可恢复，按旧呈现顺序平移。 */
+function archivedTurnFromLegacy(value: unknown): ArchivedTurn | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as { segments?: unknown; thinkingText?: unknown; thinkingMs?: unknown; steps?: unknown };
+  if (Array.isArray(record.segments)) return { segments: record.segments as CoachWorkSegment[] };
+  const thinkingText = typeof record.thinkingText === "string" && record.thinkingText.trim().length > 0
+    ? record.thinkingText
+    : null;
+  const steps = Array.isArray(record.steps) ? (record.steps as CoachToolStep[]) : [];
+  if (!thinkingText && steps.length === 0) return null;
+  const segments: CoachWorkSegment[] = [];
+  if (thinkingText) {
+    segments.push({
+      kind: "thinking",
+      key: "legacy-think",
+      text: thinkingText,
+      streaming: false,
+      startedAtMs: null,
+      frozenMs: typeof record.thinkingMs === "number" ? record.thinkingMs : null,
+    });
+  }
+  for (const step of steps) segments.push({ kind: "tool", step });
+  return { segments };
+}
+
+function readArchivedTurns(): Map<string, ArchivedTurn> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = window.localStorage.getItem(ARCHIVED_TURNS_KEY);
+    if (!raw) return new Map();
+    const entries = Object.entries(JSON.parse(raw) as Record<string, unknown>);
+    const restored = new Map<string, ArchivedTurn>();
+    for (const [key, value] of entries) {
+      const turn = archivedTurnFromLegacy(value);
+      if (turn) restored.set(key, turn);
+    }
+    return restored;
+  } catch {
+    return new Map();
+  }
+}
+
+function persistArchivedTurns(map: Map<string, ArchivedTurn>) {
+  if (typeof window === "undefined") return;
+  try {
+    let entries = [...map.entries()];
+    if (entries.length > ARCHIVED_TURNS_MAX) entries = entries.slice(-ARCHIVED_TURNS_MAX);
+    window.localStorage.setItem(ARCHIVED_TURNS_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // 配额超限/隐私模式等：持久化失败只影响刷新后的恢复，不阻断当次会话。
+  }
+}
+
 export function CoachPanel({
   capability,
   draftSession = false,
@@ -351,7 +490,7 @@ export function CoachPanel({
   const [analysisSessionIds, setAnalysisSessionIds] = useState<number[]>([]);
   const [deepReadAnalysisSessionIds, setDeepReadAnalysisSessionIds] = useState<number[]>([]);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const messagesRef = useRef<HTMLElement | null>(null);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
   const seenFeedCountRef = useRef(0);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -362,25 +501,86 @@ export function CoachPanel({
   // send 的同步重入锁：setRun(created) 在两次 await 网络往返之后，窗口期内
   // 第二次 Enter/双击会完整重入并产生重复会话与消息；进入函数即置位，finally 必清。
   const sendingRef = useRef(false);
-  // 思考流（SSE partial 帧的 thinking_text）。REST 轮询兜底不携带该字段，
-  // 降级路径不显示思考块，行为与旧版一致。
-  const [liveThinking, setLiveThinking] = useState<string | null>(null);
-  const liveThinkingRef = useRef<string | null>(null);
-  // startAt=首个思考帧时刻；frozenMs=首个回答 token 到达时冻结的思考窗口，
-  // 回合结束后归档展示「已思考 N 秒」。
-  const thinkingTrackerRef = useRef<{ startAt: number | null; frozenMs: number | null }>({
-    startAt: null,
-    frozenMs: null,
-  });
-  type ArchivedTurn = { run: CoachAgentRunV1; thinkingText: string | null; thinkingMs: number | null };
-  // 成功回合的活动摘要：对话流不再「成功即消失」，工具步骤收敛行保留在
-  // 已落库回答之上，直到下一次发送或切换会话。
-  const [archivedTurn, setArchivedTurn] = useState<ArchivedTurn | null>(null);
+  // 思考段与工具段的实时时序流（0828）：SSE activity/partial 逐段增量；
+  // 轮询兜底无实时 activity，渲染时从 run.events 重建（deriveWorkSegments）。
+  // 段内文本 full-replace；思考段在下一轮开始/首个正文/回合终结时冻结。
+  const [liveSegments, setLiveSegments] = useState<CoachWorkSegment[]>([]);
+  const liveSegmentsRef = useRef<CoachWorkSegment[]>([]);
+  liveSegmentsRef.current = liveSegments;
+  // 丢帧兜底段的 key 序号（partial 帧没有稳定事件标识）。
+  const partialKeyRef = useRef(0);
+  // 分段协议握手：thinking started 帧恒带 thinking_text（null 也带）＝新
+  // 协议；字段缺失＝旧版 sidecar（partial 是累积全文）——按轮写段会把同一
+  // 份全文重复写进每一段（表现为"十几个思考块点开都一样"），必须整体
+  // 降级为单思考块模式。
+  const segmentedThinkingRef = useRef(false);
 
   const clearThinkingStream = useCallback(() => {
-    setLiveThinking(null);
-    liveThinkingRef.current = null;
-    thinkingTrackerRef.current = { startAt: null, frozenMs: null };
+    setLiveSegments([]);
+  }, []);
+
+  // 成功回合的活动摘要：对话流不再「成功即消失」，工作流时序段保留在
+  // 已落库回答之上，直到下一次发送（切换会话不再清除，见 archivedTurns）。
+  // 按会话键缓存 + localStorage 持久化（0828 拍板）：刷新/重启后切回原会话，
+  // 思考/步骤归档块仍可恢复；仅保留最近 ARCHIVED_TURNS_MAX 个会话的归档。
+  const [archivedTurns, setArchivedTurns] = useState<Map<string, ArchivedTurn>>(readArchivedTurns);
+  // 渲染期镜像：settle 归档要在 updater 外组装下一份 Map（updater 可能被
+  // React 延迟到渲染阶段才执行，不能在里面读可变 ref / 做持久化副作用）。
+  const archivedTurnsRef = useRef(archivedTurns);
+  archivedTurnsRef.current = archivedTurns;
+
+  /** SSE activity：thinking started＝新思考段开始（上一段由帧内终文冻结）；
+      tool started/completed＝工具段入列/收尾。 */
+  const applyLiveActivity = useCallback((event: CoachAgentRunEventV1) => {
+    const payload = event.payload ?? {};
+    const createdAtMs = Date.parse(event.created_at);
+    if (event.type === "phase" && event.code === "thinking_started") {
+      // 旧协议（字段缺失）：不按轮开段，保持单思考块降级模式。
+      if (payload.thinking_text === undefined) return;
+      segmentedThinkingRef.current = true;
+      const settledText = typeof payload.thinking_text === "string" ? payload.thinking_text : null;
+      setLiveSegments((current) => {
+        const next = [...current];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          const segment = next[i];
+          if (segment.kind !== "thinking") continue;
+          if (segment.streaming) next[i] = freezeThinkingSegment(segment, settledText, createdAtMs || Date.now());
+          break;
+        }
+        next.push({
+          kind: "thinking",
+          key: event.event_ref ?? `live-think-${event.sequence}`,
+          text: "",
+          streaming: true,
+          startedAtMs: Number.isFinite(createdAtMs) ? createdAtMs : Date.now(),
+          frozenMs: null,
+        });
+        return next;
+      });
+      return;
+    }
+    if (event.type === "tool") {
+      const step = stepFromToolEvent(event, null);
+      // 动手即思考段终结（想完才做）：冻结最后一个流式思考段。
+      const frozenAt = Number.isFinite(createdAtMs) ? createdAtMs : Date.now();
+      setLiveSegments((current) => {
+        const next = [...current];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          const segment = next[i];
+          if (segment.kind !== "thinking") continue;
+          if (segment.streaming) next[i] = freezeThinkingSegment(segment, null, frozenAt);
+          break;
+        }
+        const index = next.findIndex((segment) => segment.kind === "tool" && segment.step.key === step.key);
+        if (index >= 0) {
+          const existing = next[index];
+          if (existing.kind === "tool") next[index] = { kind: "tool", step: stepFromToolEvent(event, existing.step) };
+        } else {
+          next.push({ kind: "tool", step });
+        }
+        return next;
+      });
+    }
   }, []);
 
   // ── Composer 编排（digests §11 批 5）───────────────────────────────────
@@ -398,8 +598,6 @@ export function CoachPanel({
   const [mentionIndex, setMentionIndex] = useState(0);
   const mentionCaretRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  // 编辑重发（截断派）：记录待编辑消息的展示序号
-  const [editingResend, setEditingResend] = useState<{ index: number } | null>(null);
   // ── 划选引用（quote-reply，docs/quote-feature-research.md）───────────
   // 引用块是 composer 外挂结构（独立数组），不混进 textarea 字符串：
   // 每块可整块删除、文字锁定不可编辑；发送时才由 composeQuotedContent 拼装。
@@ -459,6 +657,17 @@ export function CoachPanel({
   const activeSessionKeyRef = useRef(activeSessionKey);
   const runBySessionRef = useRef(new Map<string, CoachAgentRunV1>());
   activeSessionKeyRef.current = activeSessionKey;
+  // 当前会话的归档回合（渲染与清除都只看当前键；键是字符串，可直接作 Map key）。
+  const archivedTurn = archivedTurns.get(activeSessionKey) ?? null;
+  // 新回合开始时清除本会话的归档摘要；其他会话的条目保留。
+  const clearArchivedTurn = useCallback(() => {
+    setArchivedTurns((current) => {
+      const nextTurns = new Map(current);
+      nextTurns.delete(activeSessionKeyRef.current);
+      persistArchivedTurns(nextTurns);
+      return nextTurns;
+    });
+  }, []);
 
   // The active run's reads win (streamed live); the session's engaged-analysis
   // list (persisted from completed runs) is the fallback after the run clears.
@@ -510,7 +719,8 @@ export function CoachPanel({
     setUnreadCount(0);
     stickToBottomRef.current = true;
     clearThinkingStream();
-    setArchivedTurn(null);
+    // 归档摘要按会话键缓存在 archivedTurns 里，切换会话不再删除对应条目，
+    // 切回时可恢复（0827 拍板）；活跃 run 的思考流维持不跨会话保留。
   }, [activeSessionKey, clearThinkingStream]);
 
   useEffect(() => {
@@ -655,14 +865,14 @@ export function CoachPanel({
     appliedSoftStartRef.current = softStartRun.run_ref;
     stickToBottomRef.current = true;
     if (["queued", "running"].includes(softStartRun.status)) {
-      setArchivedTurn(null);
+      clearArchivedTurn();
       clearThinkingStream();
       setRun(softStartRun);
       return;
     }
     setRun(null);
     void refresh();
-  }, [refresh, softStartRun, clearThinkingStream]);
+  }, [refresh, softStartRun, clearThinkingStream, clearArchivedTurn]);
 
   useEffect(() => {
     void refreshCurrentTraining();
@@ -728,13 +938,26 @@ export function CoachPanel({
 
     const fetchRun = () => getCoachAgentRun(runRef, sessionId == null ? {} : { sessionId });
 
-    // 成功终态统一收敛：回合摘要归档（工具步骤收敛行 + 思考秒数），思考流清空，
-    // 本地 run 解除以落库消息接管对话。
+    // 成功终态统一收敛：回合工作流时序归档（思考段/工具段交错，思考段在
+    // 归档时刻统一冻结），实时段清空，本地 run 解除以落库消息接管对话。
     const settleSucceeded = (next: CoachAgentRunV1) => {
-      const tracker = thinkingTrackerRef.current;
-      const frozenMs =
-        tracker.frozenMs ?? (tracker.startAt !== null ? Date.now() - tracker.startAt : null);
-      setArchivedTurn({ run: next, thinkingText: liveThinkingRef.current, thinkingMs: frozenMs });
+      const settledAt = Date.now();
+      // SSE 模式用实时段；轮询兜底（无 activity 直送）从 events 重建。
+      // 立即快照冻结：下面 clearThinkingStream 会同步清空实时状态，任何
+      // 延迟到渲染阶段的行为都不能再影响归档内容。
+      const source = liveSegmentsRef.current.length > 0 ? liveSegmentsRef.current : deriveWorkSegments(next);
+      const settledSegments = source
+        .map((segment) =>
+          segment.kind === "thinking" && segment.streaming
+            ? freezeThinkingSegment(segment, null, settledAt)
+            : segment,
+        )
+        .filter((segment) => segment.kind !== "thinking" || segment.text.trim().length > 0);
+      // 写入当前会话键的归档条目（Map + localStorage 持久化，切换/刷新不丢）。
+      const nextTurns = new Map(archivedTurnsRef.current);
+      nextTurns.set(activeSessionKeyRef.current, { segments: settledSegments });
+      setArchivedTurns(nextTurns);
+      persistArchivedTurns(nextTurns);
       clearThinkingStream();
       setRun(null);
     };
@@ -875,23 +1098,56 @@ export function CoachPanel({
         if (cancelled || !opened) return;
         try {
           // partial 帧同时携带 text 与 thinking_text（思考帧的 text 为 null 或
-          // 重发的最新正文）。思考帧进入折叠块；首个非空回答 token 冻结
-          // 思考窗口时长供归档展示。
+          // 重发的最新正文）。thinking_text＝当前思考段全文（full-replace），
+          // 写进最后一个流式思考段；首个非空回答 token 冻结思考段时长。
           const data = JSON.parse(event.data) as { text?: unknown; thinking_text?: unknown };
           const thinking = typeof data.thinking_text === "string" ? data.thinking_text : "";
           if (thinking.trim()) {
-            if (thinkingTrackerRef.current.startAt === null) {
-              thinkingTrackerRef.current.startAt = Date.now();
-            }
-            liveThinkingRef.current = thinking;
-            setLiveThinking(thinking);
+            setLiveSegments((current) => {
+              const next = [...current];
+              if (segmentedThinkingRef.current) {
+                // 新协议：thinking_text＝当前思考段全文。开段只由轮边界
+                // activity 驱动——帧里 thinking/text 可能交错（sidecar 同帧
+                // 双字段），这里永远写回最后一个思考段，绝不新开段。
+                for (let i = next.length - 1; i >= 0; i -= 1) {
+                  const segment = next[i];
+                  if (segment.kind !== "thinking") continue;
+                  next[i] = { ...segment, text: thinking };
+                  return next;
+                }
+                // 完全没段（activity 全丢）才兜底开段。
+                next.push({
+                  kind: "thinking",
+                  key: `live-think-p${partialKeyRef.current += 1}`,
+                  text: thinking,
+                  streaming: true,
+                  startedAtMs: Date.now(),
+                  frozenMs: null,
+                });
+                return next;
+              }
+              // 旧协议：累积全文，覆盖唯一思考块（v1 呈现语义）。
+              const only = next.findIndex((segment) => segment.kind === "thinking");
+              if (only >= 0) {
+                const segment = next[only];
+                if (segment.kind === "thinking") next[only] = { ...segment, text: thinking };
+              } else {
+                next.push({
+                  kind: "thinking",
+                  key: `live-think-legacy${partialKeyRef.current += 1}`,
+                  text: thinking,
+                  streaming: true,
+                  startedAtMs: Date.now(),
+                  frozenMs: null,
+                });
+              }
+              return next;
+            });
           }
           if (typeof data.text === "string") {
-            const text = data.text;
-            if (text.length > 0 && thinkingTrackerRef.current.startAt !== null && thinkingTrackerRef.current.frozenMs === null) {
-              thinkingTrackerRef.current.frozenMs = Date.now() - thinkingTrackerRef.current.startAt;
-            }
-            setRun((prev) => (prev ? { ...prev, partial_text: text } : prev));
+            // 正文增量只更新正文；思考段的冻结交给轮边界 activity / tool /
+            // settle——同轮内 thinking 与 text 可能交替，这里冻结会撕裂段落。
+            setRun((prev) => (prev ? { ...prev, partial_text: data.text as string } : prev));
           }
         } catch {
           // Ignore malformed stream frames.
@@ -913,6 +1169,8 @@ export function CoachPanel({
                 events: [...prev.events, streamedEvent],
               };
             });
+            // 实时段时序同步推进（新思考段/工具步入列与收尾）。
+            applyLiveActivity(streamedEvent);
           }
         } catch {
           // Ignore malformed stream frames.
@@ -948,17 +1206,20 @@ export function CoachPanel({
       clearPollTimer();
       closeStream();
     };
-  }, [liveRunRef, refresh, refreshCurrentTraining, sessionId, clearThinkingStream]);
+  }, [liveRunRef, refresh, refreshCurrentTraining, sessionId, clearThinkingStream, applyLiveActivity]);
 
-  const toolSteps = useMemo(
-    () =>
-      deriveToolSteps(run).map((step) =>
-        step.command && ANALYSIS_ETA_COMMANDS.has(step.command)
-          ? { ...step, etaSeconds: analysisEtaSeconds }
-          : step,
-      ),
-    [run, analysisEtaSeconds],
-  );
+  /** 工作流时序段（run 期间）：SSE 实时优先，轮询兜底从 events 重建；
+      分析类长任务注入本机历史 ETA。 */
+  const workSegments = useMemo(() => {
+    const source = liveSegments.length > 0 ? liveSegments : deriveWorkSegments(run);
+    return source.map((segment) =>
+      segment.kind === "tool"
+        && segment.step.command
+        && ANALYSIS_ETA_COMMANDS.has(segment.step.command)
+        ? { ...segment, step: { ...segment.step, etaSeconds: analysisEtaSeconds } }
+        : segment,
+    );
+  }, [liveSegments, run, analysisEtaSeconds]);
   // 对话流条目数：历史消息 + 当前 run 块（流式文字/工具步骤/卡片合记为 1 条）
   const feedCount = messages.length + (run ? 1 : 0);
 
@@ -998,14 +1259,16 @@ export function CoachPanel({
   // ── 划选 → 浮层（quote-reply，调研 §2.1/§2.2）────────────────────────
   // 主判定用 mouseup（WebKit 的 selectionchange 触发时机不稳，只用于收起清理）；
   // 合格选区必须完整落在同一条非流式 assistant 消息容器内（纯逻辑在
-  // evaluateAssistantSelection，node:test 直测）。定位锚定消息滚动区内部
-  // （absolute 相对滚动内容），滚动即收起、不做跟随重算。
+  // evaluateAssistantSelection，node:test 直测）。0828 滚动容器上移 panel 后：
+  // 浮层仍锚定消息内容区（absolute 相对滚动内容，滚动即收起、不做跟随重算），
+  // rect 取 mouseup 的消息区，滚动状态取 panel。
   const closeSelectionBar = useCallback(() => {
     setSelectionBar(null);
   }, []);
 
-  const handleMessagesMouseUp = () => {
+  const handleMessagesMouseUp = (event: ReactMouseEvent<HTMLElement>) => {
     const scroller = messagesRef.current;
+    const hostRect = event.currentTarget.getBoundingClientRect();
     const selection = typeof window.getSelection === "function" ? window.getSelection() : null;
     const anchor = messageArticleFromNode(selection?.anchorNode ?? null);
     const focus = messageArticleFromNode(selection?.focusNode ?? null);
@@ -1025,11 +1288,10 @@ export function CoachPanel({
       closeSelectionBar();
       return;
     }
-    const hostRect = scroller.getBoundingClientRect();
     const rawLeft = rect.cx - hostRect.left + scroller.scrollLeft;
     const clampedLeft = Math.min(
-      Math.max(rawLeft, Math.min(SELECTION_TOOLBAR_HALF_WIDTH, scroller.clientWidth / 2)),
-      Math.max(scroller.clientWidth - SELECTION_TOOLBAR_HALF_WIDTH, SELECTION_TOOLBAR_HALF_WIDTH),
+      Math.max(rawLeft, Math.min(SELECTION_TOOLBAR_HALF_WIDTH, hostRect.width / 2)),
+      Math.max(hostRect.width - SELECTION_TOOLBAR_HALF_WIDTH, SELECTION_TOOLBAR_HALF_WIDTH),
     );
     const localTop = rect.top - hostRect.top + scroller.scrollTop;
     setSelectionBar({
@@ -1253,7 +1515,7 @@ export function CoachPanel({
    */
   const sendText = async (
     contentRaw: string,
-    opts: { force?: boolean; editingResend?: { index: number } } = {},
+    opts: { force?: boolean } = {},
   ): Promise<boolean> => {
     const content = contentRaw.trim();
     if (!content || sendingRef.current) return false;
@@ -1269,23 +1531,11 @@ export function CoachPanel({
     }
     // 同步重入锁：必须在任何 await 之前置位，重入直接丢弃。
     sendingRef.current = true;
-    // 新回合开始：清掉上一回合的归档摘要与思考流残留。
-    setArchivedTurn(null);
+    // 新回合开始：清掉本会话上一回合的归档摘要与思考流残留。
+    clearArchivedTurn();
     clearThinkingStream();
-    const editing = opts.editingResend;
-    let truncatedDone = false;
     let optimisticId: number | null = null;
     try {
-      // 编辑重发＝截断派：先把会话截到该消息之前再发送（该消息之后的历史不参与上下文）。
-      if (editing) {
-        if (sessionId == null) {
-          throw Object.assign(new Error("编辑重发需要已保存的会话"), { name: "ComposerEditNeedsSession" });
-        }
-        await truncateCoachSession(sessionId, editing.index);
-        truncatedDone = true;
-        setMessages((current) => current.slice(0, editing.index));
-        window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
-      }
       const effectiveSessionId = sessionId ?? (onEnsureSession ? await onEnsureSession() : null);
       if (sessionId === null && onEnsureSession && effectiveSessionId === null) {
         notify("未能创建会话，草稿已保留，请重试。");
@@ -1302,7 +1552,6 @@ export function CoachPanel({
         effectiveSessionId == null ? {} : { sessionId: effectiveSessionId },
       );
       setRun(created);
-      if (editing) setEditingResend(null);
       // 会话标题会随第一条消息更新，通知 AppShell 刷新侧栏列表。
       window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
       return true;
@@ -1312,13 +1561,7 @@ export function CoachPanel({
       }
       // 仅当等待期间用户没有重新输入时才回填，避免覆盖新草稿。
       setDraft((current) => (current.trim() ? current : content));
-      if (truncatedDone) {
-        // 截断已在服务端生效但发送失败：退出编辑态防止再次按旧序号重复截断。
-        setEditingResend(null);
-        notify(requestFeedback(error, "消息未发送；截断已生效，请直接重新发送当前内容。"));
-      } else {
-        notify(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
-      }
+      notify(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
       return false;
     } finally {
       sendingRef.current = false;
@@ -1360,8 +1603,7 @@ export function CoachPanel({
     if (content === null) return;
     setMentionQuery(null);
     setSendMenuOpen(false);
-    const editing = editingResend;
-    void sendText(content, editing ? { editingResend: editing } : undefined);
+    void sendText(content);
   };
 
   /**
@@ -1544,23 +1786,6 @@ export function CoachPanel({
     });
   };
 
-  /**
-   * 编辑重发：把原消息放回输入框并记录截断点（展示序号）。
-   * 拍板②：历史串里的引用以纯文本形态回到 textarea（可编辑降级语义）；
-   * composer 中尚未发送的引用块不受影响，仍会作为新引用参与下次拼装。
-   */
-  const startEditResend = (index: number, content: string) => {
-    setEditingResend({ index });
-    setDraft(content);
-    setMentionQuery(null);
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      el?.focus();
-      el?.setSelectionRange(el.value.length, el.value.length);
-    });
-  };
-
-
   const retry = async () => {
     if (!run) return;
     try {
@@ -1688,84 +1913,86 @@ export function CoachPanel({
   }
 
   return (
-    <div className="task6-coach-panel">
-      {header}
+    /* 滚动容器（0828）：滚动条挂在面板本身——贯穿全列高、贴窗口右缘；
+       messagesRef 供吸底/未读/划选坐标共用，onScroll 检测吸底状态。 */
+    <div className="task6-coach-panel" ref={messagesRef} onScroll={handleMessagesScroll}>
+      {/* 悬浮顶区（0828）：header 与讨论挂载条一起 sticky 钉在滚动口顶部。 */}
+      <div className="task6-coach-top">
+        {header}
 
-      {/* 本次讨论的分析挂载条：只在有进行中的分析（pending）时出现；
-          完成后条收起，入口回落到消息内 @time 链接与 History。 */}
-      {pendingAnalyses.length > 0 ? (
-        <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" role="region">
-          <span>本次讨论</span>
-          {pendingAnalyses.map((item) => (
-            <span
-              className="task6-suggestion"
-              data-pending="true"
-              key={`pending-${item.id}`}
-              title="分析完成后可点击打开视频"
-            >
-              <span aria-hidden="true" className="task6-pulse-dot task6-chip-dot" />
-              {item.scenario ?? `分析 #${item.id}`}{item.runId != null ? ` · run ${item.runId}` : ""}
-              <ElapsedTicker sinceMs={item.startedAtMs} />
-            </span>
-          ))}
-          {discussionAnalysisIds.map((id) => (
-            <button
-              className="task6-suggestion"
-              key={id}
-              onClick={() => onOpenVideo?.(`analysis:${id}`, 0)}
-              title="打开视频讲解"
-              type="button"
-            >
-              {(analysisScenarios[id]?.scenario ?? `分析 #${id}`)}{analysisScenarios[id]?.runId != null ? ` · run ${analysisScenarios[id]?.runId}` : ""}
-            </button>
-          ))}
-        </div>
-      ) : null}
+        {/* 本次讨论的分析挂载条：进行中的分析以 pending chip 呈现；已完成的
+            讨论 chip 常驻保留（0827 拍板），作为打开视频讲解的常设入口。 */}
+        {(pendingAnalyses.length > 0 || discussionAnalysisIds.length > 0) ? (
+          <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" role="region">
+            <span>本次讨论</span>
+            {pendingAnalyses.map((item) => (
+              <span
+                className="task6-suggestion"
+                data-pending="true"
+                key={`pending-${item.id}`}
+                title="分析完成后可点击打开视频"
+              >
+                <span aria-hidden="true" className="task6-pulse-dot task6-chip-dot" />
+                {item.scenario ?? `分析 #${item.id}`}{item.runId != null ? ` · run ${item.runId}` : ""}
+                <ElapsedTicker sinceMs={item.startedAtMs} />
+              </span>
+            ))}
+            {discussionAnalysisIds.map((id) => (
+              <button
+                className="task6-suggestion"
+                key={id}
+                onClick={() => onOpenVideo?.(`analysis:${id}`, 0)}
+                title="打开视频讲解"
+                type="button"
+              >
+                {(analysisScenarios[id]?.scenario ?? `分析 #${id}`)}{analysisScenarios[id]?.runId != null ? ` · run ${analysisScenarios[id]?.runId}` : ""}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       <div className="task6-messages-wrap">
       <section
         aria-label="Coach 消息"
         className="task6-messages"
-        onScroll={handleMessagesScroll}
         onMouseUp={handleMessagesMouseUp}
-        ref={messagesRef}
       >
-        {/* 底部锚定（digests §8 病灶①）：非空会话 spacer 吸收剩余空间把消息压向
-            钉底 composer；空会话时同槽位换成占满剩余空间的 hero 空态。 */}
+        {/* 顶部锚定（0827 拍板，回退底部锚定）：消息从上往下自然排布，短
+            会话不再在头部留大空洞；空会话时同槽位换成占满剩余空间的 hero 空态。 */}
         {messages.length === 0 && !run ? (
           <div className="task6-empty-hero">
             <Empty title="开始一段 Coach 对话">可以直接提问训练问题，Coach 会读取你的分析数据。</Empty>
           </div>
-        ) : (
-          <div aria-hidden="true" className="task6-msg-spacer" />
-        )}
+        ) : null}
         {messages.map((message, index) => (
-          <div className="task6-message-entry" data-role={message.role} key={message.id}>
-            <article className="task6-message" data-role={message.role}>
-              {message.role === "assistant" ? (
-                /* 受控富渲染（digests §10）：助手消息走 task7-rich 块结构，
-                   不再套 <p>（表格/列表不能内嵌在段落里）。 */
-                <CoachMessageText text={message.content} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
-              ) : (
-                /* 已发送用户消息的引用块回显（Codex 不做回显是长期 bug）；
-                   未命中拼装形状的 legacy 内容按原文纯文本渲染。 */
-                <UserMessageBody content={message.content} />
-              )}
-            </article>
-            {/* 编辑重发（截断派，item 7）：仅空闲且已落库消息提供入口 */}
-            {message.role === "user" && message.id > 0 && !composerBusy ? (
-              <IconButton
-                className="task6-message-edit"
-                label="编辑重发"
-                onClick={() => startEditResend(index, message.content)}
-                size="compact"
-                title="编辑这条消息并重发；其后的历史将不参与本次上下文"
-              >
-                <IconHistory />
-              </IconButton>
+          <Fragment key={message.id}>
+            {/* 归档回合的过程摘要（已思考/步骤计数）挂在它产出的那条回复上方
+                （0827 拍板 Codex 式次序），而不是回复下面。 */}
+            {!run && archivedTurn != null && index === messages.length - 1 && message.role === "assistant" ? (
+              /* 归档的工作流时序段（思考/工具交错，v2 localStorage）挂回复上方。 */
+              <CoachWorkStream segments={archivedTurn.segments} />
             ) : null}
-          </div>
+            <div className="task6-message-entry" data-role={message.role}>
+              <article className="task6-message" data-role={message.role}>
+                {message.role === "assistant" ? (
+                  /* 受控富渲染（digests §10）：助手消息走 task7-rich 块结构，
+                     不再套 <p>（表格/列表不能内嵌在段落里）。 */
+                  <CoachMessageText text={message.content} analysisRef={defaultAnalysisRef} onOpenVideo={onOpenVideo} />
+                ) : (
+                  /* 已发送用户消息的引用块回显（Codex 不做回显是长期 bug）；
+                     未命中拼装形状的 legacy 内容按原文纯文本渲染。 */
+                  <UserMessageBody content={message.content} />
+                )}
+              </article>
+            </div>
+          </Fragment>
         ))}
+        {/* 工作流时序流（思考段/工具段交错）在回复文字上方（0827 拍板 Codex
+            式次序）。0828：条件从"进行中状态枚举"放宽为 run 存在即显示——
+            succeeded 到归档接管之间有 refresh 网络往返，按枚举会在该空窗里
+            整个消失。 */}
+        {run ? <CoachWorkStream segments={workSegments} stopped={run.status === "stopped"} /> : null}
         {run?.partial_text ? (
           <article
             className="task6-message"
@@ -1786,28 +2013,6 @@ export function CoachPanel({
               }
             />
           </article>
-        ) : null}
-        {run && ["queued", "running", "failed", "stopped"].includes(run.status) ? (
-          <>
-            <CoachThinkingBlock
-              streaming={liveThinking !== null && ["queued", "running"].includes(run.status)}
-              text={liveThinking}
-              startedAtMs={thinkingTrackerRef.current.startAt}
-            />
-            <CoachStepList steps={toolSteps} stopped={run.status === "stopped"} />
-          </>
-        ) : null}
-        {!run && archivedTurn ? (
-          <>
-            {archivedTurn.thinkingText !== null || archivedTurn.thinkingMs != null ? (
-              <CoachThinkingBlock
-                frozenSeconds={archivedTurn.thinkingMs}
-                streaming={false}
-                text={archivedTurn.thinkingText}
-              />
-            ) : null}
-            <CoachStepList steps={deriveToolSteps(archivedTurn.run)} />
-          </>
         ) : null}
         {run?.status === "failed" ? (
           <div className="task6-error-card" role="alert">
@@ -1848,22 +2053,14 @@ export function CoachPanel({
           </div>
         ) : null}
       </section>
-      {unreadCount > 0 ? (
-        <button className="task6-unread-prompt" onClick={scrollToLatest} type="button">
-          ↓ {unreadCount} 条新内容 · 回到底部
-        </button>
-      ) : null}
       </div>
 
       <footer className="task6-composer">
-        {/* 编辑重发横幅（item 7）：明确的截断语义提示 */}
-        {editingResend ? (
-          <div className="task6-editing-banner" role="status">
-            <span>
-              正在编辑第 {editingResend.index + 1} 条消息 · 发送后其后的历史将不参与本次上下文
-            </span>
-            <Button onClick={() => setEditingResend(null)} size="compact" variant="ghost">取消编辑</Button>
-          </div>
+        {/* 未读提示（0828）：挂 composer 钉在其上沿之外，随悬浮输入框恒定可见。 */}
+        {unreadCount > 0 ? (
+          <button className="task6-unread-prompt" onClick={scrollToLatest} type="button">
+            ↓ {unreadCount} 条新内容 · 回到底部
+          </button>
         ) : null}
         {/* 运行中队列 chips（item 1）：96 字符预览，逐条可上浮转向/回填编辑/取消 */}
         {queuedChips.length > 0 ? (
@@ -1978,58 +2175,58 @@ export function CoachPanel({
               ))}
             </div>
           ) : null}
-          {composerBusy ? (
-            /* 运行中发送键四动作（item 2）：steer / queue / interrupt-steer / interrupt */
-            <div className="task6-send-actions" ref={sendMenuRef}>
+          {/* 右下角簇（0827 拍板 B1）：模型选择挪到与发送键同一行、发送键左侧，
+              取代旧「输入卡下方工具行」；wrap 自带 position:relative 锚点，
+              菜单仍向上弹出。 */}
+          <div className="task6-composer-corner">
+            <CoachModelMenu
+              onError={(message) => notify(message)}
+            />
+            {composerBusy ? (
+              /* 运行中发送键四动作（item 2）：steer / queue / interrupt-steer / interrupt */
+              <div className="task6-send-actions" ref={sendMenuRef}>
+                <button
+                  aria-expanded={sendMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="运行中发送选项"
+                  className="task6-composer-send"
+                  data-open={sendMenuOpen || undefined}
+                  onClick={() => setSendMenuOpen((open) => !open)}
+                  title="发送选项：转向 / 排队 / 打断"
+                  type="button"
+                >
+                  <IconSend />
+                </button>
+                {sendMenuOpen ? (
+                  <div aria-label="运行中发送选项" className="task6-send-menu" role="menu">
+                    <button disabled={!draft.trim()} onClick={() => void steerWithDraft()} role="menuitem" type="button">
+                      立即转向<small>不打断当前回复，直接注入本回合</small>
+                    </button>
+                    <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); const content = composeOutgoing(); if (content === null) return; enqueueQueuedItem(content); setDraft(""); setQuotes([]); }} role="menuitem" type="button">
+                      加入队列<small>本轮结束后按顺序自动发送，可随时取消</small>
+                    </button>
+                    <button disabled={!draft.trim()} onClick={() => void interruptAndSteer()} role="menuitem" type="button">
+                      打断并转向<small>停止当前生成并以此内容开始新回复</small>
+                    </button>
+                    <div className="task6-send-menu-separator" role="separator" />
+                    <button onClick={() => void stop()} role="menuitem" type="button">
+                      停止生成<small>结束本轮回复</small>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              /* 拍板①：quote-only 仍被禁用（引用不构成正文），悬停给出发送提示。 */
               <button
-                aria-expanded={sendMenuOpen}
-                aria-haspopup="menu"
-                aria-label="运行中发送选项"
+                aria-label="发送"
                 className="task6-composer-send"
-                data-open={sendMenuOpen || undefined}
-                onClick={() => setSendMenuOpen((open) => !open)}
-                title="发送选项：转向 / 排队 / 打断"
+                disabled={!draft.trim()}
+                onClick={submitComposer}
+                title={draft.trim() || quotes.length === 0 ? undefined : "只有引用、没有正文时不能发送，请补充你的问题或要求"}
                 type="button"
-              >
-                <IconSend />
-              </button>
-              {sendMenuOpen ? (
-                <div aria-label="运行中发送选项" className="task6-send-menu" role="menu">
-                  <button disabled={!draft.trim()} onClick={() => void steerWithDraft()} role="menuitem" type="button">
-                    立即转向<small>不打断当前回复，直接注入本回合</small>
-                  </button>
-                  <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); const content = composeOutgoing(); if (content === null) return; enqueueQueuedItem(content); setDraft(""); setQuotes([]); }} role="menuitem" type="button">
-                    加入队列<small>本轮结束后按顺序自动发送，可随时取消</small>
-                  </button>
-                  <button disabled={!draft.trim()} onClick={() => void interruptAndSteer()} role="menuitem" type="button">
-                    打断并转向<small>停止当前生成并以此内容开始新回复</small>
-                  </button>
-                  <div className="task6-send-menu-separator" role="separator" />
-                  <button onClick={() => void stop()} role="menuitem" type="button">
-                    停止生成<small>结束本轮回复</small>
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            /* 拍板①：quote-only 仍被禁用（引用不构成正文），悬停给出发送提示。 */
-            <button
-              aria-label="发送"
-              className="task6-composer-send"
-              disabled={!draft.trim()}
-              onClick={submitComposer}
-              title={draft.trim() || quotes.length === 0 ? undefined : "只有引用、没有正文时不能发送，请补充你的问题或要求"}
-              type="button"
-            ><IconSend /></button>
-          )}
-        </div>
-        {/* 工具行拆出（digests §8）：模型菜单不再与 textarea 同行抢占宽度，
-            textarea 只为发送钮保留右侧空间。模型选择器运行中保持可用（item 6，
-            选择对下一段回复生效），不随运行态连坐 disabled。 */}
-        <div className="task6-composer-tools">
-          <CoachModelMenu
-            onError={(message) => notify(message)}
-          />
+              ><IconSend /></button>
+            )}
+          </div>
         </div>
       </footer>
 

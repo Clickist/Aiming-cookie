@@ -66,3 +66,37 @@ export function IconStop(props: IconProps) {
 export function IconCheck(props: IconProps) {
   return <Icon {...props}><path d="m3.5 8.2 2.8 2.8 6.2-6.5" {...stroke} /></Icon>;
 }
+
+/* 工作态语义图标（0828：思考/工具步骤行首的 glyph，替代原圆点时间线）。 */
+
+export function IconSpark(props: IconProps) {
+  return <Icon {...props}><path d="M8 1.8c.55 3.4 2.1 4.95 5.5 5.5-3.4.55-4.95 2.1-5.5 5.5-.55-3.4-2.1-4.95-5.5-5.5 3.4-.55 4.95-2.1 5.5-5.5Z" fill="currentColor" /></Icon>;
+}
+
+export function IconFileText(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9.5 2H4.75v12h6.5V4L9.5 2Z" {...stroke} />
+      <path d="M9.5 2v2h2" {...stroke} />
+      <path d="M6.4 8h3.2M6.4 10.4h3.2" {...stroke} />
+    </Icon>
+  );
+}
+
+export function IconFolder(props: IconProps) {
+  return <Icon {...props}><path d="M2.5 4.2h4l1.3 1.6h5.7v7H2.5v-8.6Z" {...stroke} /></Icon>;
+}
+
+export function IconChart(props: IconProps) {
+  return <Icon {...props}><path d="M2.5 2.5v11h11" {...stroke} /><path d="m4.8 9.8 2.4-3 2 1.6 3.1-4" {...stroke} /></Icon>;
+}
+
+export function IconDatabase(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <ellipse cx="8" cy="3.8" rx="5" ry="1.9" {...stroke} />
+      <path d="M3 3.8v8.4c0 1.05 2.24 1.9 5 1.9s5-.85 5-1.9V3.8" {...stroke} />
+      <path d="M3 8c0 1.05 2.24 1.9 5 1.9S13 9.05 13 8" {...stroke} />
+    </Icon>
+  );
+}

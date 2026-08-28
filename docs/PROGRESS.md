@@ -2,7 +2,7 @@
 
 > Updated: 2026-08-27. This is a current implementation snapshot, not a product or architecture source. Earlier detailed status is retained in [`archive/history/2026-08-10-progress-prelaunch-history.md`](archive/history/2026-08-10-progress-prelaunch-history.md).
 
-## 2026-08-27 Session Changes — v0.1.10（未提交）：History 空白修复收尾 + 08-26 报障闭环
+## 2026-08-27 Session Changes — v0.1.10：History 空白修复收尾 + 08-26 报障闭环
 
 - **08-26 两位内测用户报障定案**（v0.1.9 诊断包 (4)/(5)）：**(4) 历史空白** = v0.1.0 起结构性缺陷——Steam 多库发现多份 KovaaK 安装时 fail-closed 返回 None → 零 watcher 且零日志（或用户未开统计导出，两种形态 v0.1.9 诊断不可区分）；捕获/DB/backend 全正常，`runs/` 自始为空。**(5) CV 不工作** = 三因叠加：8/10 run 在未开捕获时打的（无视频无 trace 素材）、唯一一次分析的视觉子进程降级（日志仅 `error=RuntimeError`，v0.1.9 无正文）、分析需 UI 手动触发而用户预期自动。
 - **v0.1.10 修复（本批未提交，另含并行 coach/透传工作流）**：多候选 watcher（发现几套盯几套，不再"唯一才用"）；KovaaK 目录确认 API + Settings 面板（desktop-token 鉴权、原子持久化、热重配）；watcher 快照每 5s 落盘 `diagnostics/kovaak-watcher.json` 并入诊断包 v4；ingest 重试改 10 分钟保留窗口（不再 5 连败永久放弃）；History 桌面版空列表持续 5s 轮询。
