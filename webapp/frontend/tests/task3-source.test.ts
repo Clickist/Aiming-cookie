@@ -54,6 +54,28 @@ test("frameless startup keeps window controls mounted while product state resolv
   assert.match(shell, /const keepSessionRailMounted = !shellHidden && !startupPending/);
 });
 
+test("desktop capture restore retries with backoff instead of giving up after the first failed read", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  // 旧的 best-effort 单发恢复（挂在冷启动第一次 getProductState 上）已移除：
+  // 后端未就绪时静默放弃会让重启后的捕获一直停留在关闭状态。
+  assert.doesNotMatch(shell, /best-effort capture restore on restart/);
+  assert.match(shell, /const CAPTURE_RESTORE_MAX_ATTEMPTS = 10;/);
+  assert.match(shell, /const CAPTURE_RESTORE_FIRST_DELAY_MS = 1_000;/);
+  assert.match(shell, /const CAPTURE_RESTORE_MAX_DELAY_MS = 30_000;/);
+  assert.match(
+    shell,
+    /Math\.min\(CAPTURE_RESTORE_FIRST_DELAY_MS \* 2 \*\* attempt, CAPTURE_RESTORE_MAX_DELAY_MS\)/,
+  );
+  assert.match(shell, /attempt \+ 1 >= CAPTURE_RESTORE_MAX_ATTEMPTS\) return;/);
+  // 门控语义与启动路由一致：未走完 onboarding 明确无需恢复、立即停止。
+  assert.match(
+    shell,
+    /未完成 onboarding 明确无需恢复[\s\S]{0,200}?state\.availability === "available" && state\.onboarding_completed !== true\) return;[\s\S]{0,200}?await setDesktopCaptureEnabled\(true\);/,
+  );
+  // 组件卸载或路由离开 Coach 工作区时清理退避定时器并停止重试。
+  assert.match(shell, /\(\) => \{\s*cancelled = true;\s*if \(timer\) clearTimeout\(timer\);\s*\};/);
+});
+
 test("AppShell is the only mounted Coach owner on Coach routes", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   const routePage = await source("components/task7/CoachWorkspacePage.tsx");

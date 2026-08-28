@@ -118,22 +118,4 @@ test("model selector stays usable during runs and takes effect next turn", async
   assert.match(menu, /对下一段回复生效/);
 });
 
-test("edit-resend truncates the saved session before starting the replacement run", async () => {
-  const panel = await source("components/task6/CoachPanel.tsx");
-  const sendChunk = panel.slice(
-    panel.indexOf("const sendText = async"),
-    panel.indexOf("const submitComposer"),
-  );
-  // 截断派（item 7）：先剪服务端历史再建新 run——其后的历史不参与本次上下文。
-  assert.match(sendChunk, /await truncateCoachSession\(sessionId, editing\.index\);/);
-  assert.ok(
-    sendChunk.indexOf("truncateCoachSession") < sendChunk.indexOf("createCoachAgentRun("),
-    "truncation must happen before the replacement run is created",
-  );
-  // 截断已落服务端但发送失败的窗口：退出编辑态并明示「截断已生效」，防重复截断。
-  assert.match(sendChunk, /truncatedDone/);
-  assert.match(panel, /截断已生效/);
-  // 编辑横幅与入口只面向已落库用户消息，且仅在空闲时提供。
-  assert.match(panel, /正在编辑第 /);
-  assert.match(panel, /message\.role === "user" && message\.id > 0 && !composerBusy/);
-});
+// 编辑重发（截断派）已按点点 0827 拍板整体移除：小时钟入口、横幅、sendText 截断分支与本锁定测试一并删除。
