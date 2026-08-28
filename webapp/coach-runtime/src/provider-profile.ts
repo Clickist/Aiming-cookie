@@ -2,6 +2,7 @@ import {
   PROVIDER_PROFILE_STATUS_SCHEMA,
   isRecord,
   makeError,
+  type CoachReasoningEffort,
   type CoachRuntimeProviderProfile,
   type ProviderCredential,
   type ProviderProfileStatusResponse,
@@ -38,6 +39,20 @@ function optionalPositiveInteger(raw: Record<string, unknown>, field: string): n
     throw new ProviderProfileError("invalid_profile", `model.${field} must be a positive integer when supplied`);
   }
   return value;
+}
+
+const REASONING_EFFORT_VALUES: readonly CoachReasoningEffort[] = ["minimal", "low", "medium", "high", "off"];
+
+function optionalReasoningEffort(raw: Record<string, unknown>): CoachReasoningEffort | undefined {
+  const value = raw.reasoning_effort;
+  if (value === undefined) return undefined;
+  if (!REASONING_EFFORT_VALUES.includes(value as CoachReasoningEffort)) {
+    throw new ProviderProfileError(
+      "invalid_profile",
+      "model.reasoning_effort must be one of minimal|low|medium|high|off when supplied",
+    );
+  }
+  return value as CoachReasoningEffort;
 }
 
 function normalizeHttpBaseUrl(value: string, kind?: unknown): string {
@@ -104,10 +119,12 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
 
   if (raw.kind === "builtin") {
     const credential = parseRuntimeCredential(raw);
+    const reasoningEffort = optionalReasoningEffort(raw);
     return {
       kind: "builtin",
       provider_id: requiredString(raw, "provider_id"),
       model_id: requiredString(raw, "model_id"),
+      ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
       ...(credential ? { credential } : {}),
     };
   }
@@ -125,6 +142,7 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
       raw.provider_id === undefined ? providerName : requiredString(raw, "provider_id");
     const contextWindow = optionalPositiveInteger(raw, "context_window");
     const maxTokens = optionalPositiveInteger(raw, "max_tokens");
+    const reasoningEffort = optionalReasoningEffort(raw);
     return {
       kind: raw.kind,
       provider_id: providerId,
@@ -132,6 +150,7 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
       base_url: normalizeHttpBaseUrl(requiredString(raw, "base_url"), raw.kind),
       credential,
       model_id: requiredString(raw, "model_id"),
+      ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
       ...(contextWindow !== undefined ? { context_window: contextWindow } : {}),
       ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
     };
@@ -146,6 +165,7 @@ export function sanitizeProviderProfile(profile: CoachRuntimeProviderProfile): R
       kind: profile.kind,
       provider_id: profile.provider_id,
       model_id: profile.model_id,
+      ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
     };
   }
   return {
@@ -154,6 +174,7 @@ export function sanitizeProviderProfile(profile: CoachRuntimeProviderProfile): R
     provider_name: profile.provider_name,
     base_url: profile.base_url,
     model_id: profile.model_id,
+    ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
     ...(profile.context_window !== undefined ? { context_window: profile.context_window } : {}),
     ...(profile.max_tokens !== undefined ? { max_tokens: profile.max_tokens } : {}),
   };
