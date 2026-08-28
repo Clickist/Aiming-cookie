@@ -456,6 +456,7 @@ export function CoachPanel({
   onOpenVideo,
   pathname = "/history",
   softStartRun = null,
+  onActiveRunChange,
 }: {
   capability: CoachCapability;
   draftSession?: boolean;
@@ -466,6 +467,7 @@ export function CoachPanel({
   onOpenVideo?: (analysisRef: string, timeMs?: number) => void;
   pathname?: string;
   softStartRun?: CoachAgentRunV1 | null;
+  onActiveRunChange?: (active: boolean) => void;
 }) {
   const [messages, setMessages] = useState<CoachThreadMessageOut[]>([]);
   const [draft, setDraft] = useState("");
@@ -873,6 +875,12 @@ export function CoachPanel({
     setRun(null);
     void refresh();
   }, [refresh, softStartRun, clearThinkingStream, clearArchivedTurn]);
+
+  // 向 AppShell 上报回合活跃状态：分析完成自动开讲据此在回合进行中让路
+  // （分析由当前回合自行讲述，再开讲等于同一分析问两遍）。
+  useEffect(() => {
+    onActiveRunChange?.(run !== null && ["queued", "running"].includes(run.status));
+  }, [onActiveRunChange, run]);
 
   useEffect(() => {
     void refreshCurrentTraining();

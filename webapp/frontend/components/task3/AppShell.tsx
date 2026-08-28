@@ -292,9 +292,18 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("aiming-cookie:coach-session-updated", handleSessionUpdated);
   }, [reloadCoachSessions]);
 
+  // Coach 回合活跃上报的落点：自动开讲据此让路（见下方 handleAutoTeach）。
+  const activeCoachRunRef = useRef(false);
+  const handleCoachActiveRunChange = useCallback((active: boolean) => {
+    activeCoachRunRef.current = active;
+  }, []);
+
   // 分析完成自动开讲：AnalysisWorkspace 活体观察到 done 时派发事件；这里在
   // Provider 可用时为该分析创建一次 Coach run（每个 Analysis 只开讲一次），
-  // 由 CoachPanel 的 softStartRun 承接展示。
+  // 由 CoachPanel 的 softStartRun 承接展示。当前分析只由 Coach 的
+  // analysis.create_from_run 触发且该回合会阻塞到分析完成、直接讲述结果，
+  // 回合进行中再开讲等于同一分析问两遍——故活跃回合期间跳过（不标记，
+  // 之后重试等无回合场景仍可开讲）。开讲并入当前选中会话，不再每次新建。
   useEffect(() => {
     const seen = readAutoTaughtAnalyses(window.localStorage);
     const handleAutoTeach = async (event: Event) => {
@@ -302,11 +311,15 @@ export function AppShell({ children }: { children: ReactNode }) {
       const analysisRef = detail?.analysis_ref;
       if (typeof analysisRef !== "string" || !/^analysis:[1-9][0-9]*$/.test(analysisRef)) return;
       if (seen.has(analysisRef)) return;
+      if (activeCoachRunRef.current) return;
       seen.add(analysisRef);
       markAnalysisAutoTaught(window.localStorage, analysisRef);
       if (capability !== "ready") return;
       try {
-        const run = await createCoachAgentRun(buildAnalysisAutoTeachContent(analysisRef));
+        const run = await createCoachAgentRun(
+          buildAnalysisAutoTeachContent(analysisRef),
+          selectedCoachSessionId == null ? {} : { sessionId: selectedCoachSessionId },
+        );
         setSoftStartRun(run);
         setSelectedCoachSessionId((current) => (current === run.session_id ? current : run.session_id));
         window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
@@ -316,7 +329,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
     window.addEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);
     return () => window.removeEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);
-  }, [capability]);
+  }, [capability, selectedCoachSessionId]);
 
   // 自动开讲不能依赖用户守在分析页：轮询会话列表，把「本生命周期内
   // 观察到 running → done」的分析以同一事件派发（防重沿用 localStorage）。
@@ -481,6 +494,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     capability={capability}
                     draftSession={draftSession}
                     layoutMode="full"
+                    onActiveRunChange={handleCoachActiveRunChange}
                     onEnsureSession={ensureCoachSession}
                     onOpenVideo={openVideoPane}
                     pathname={pathname}
