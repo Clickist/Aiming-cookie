@@ -63,9 +63,25 @@ test("AppShell auto-teaches once per analysis when the Provider is ready", async
   assert.match(shell, /if \(capability !== "ready"\) return;/);
   assert.match(shell, /seen\.has\(analysisRef\)/);
   assert.match(shell, /markAnalysisAutoTaught\(window\.localStorage, analysisRef\)/);
-  assert.match(shell, /createCoachAgentRun\(buildAnalysisAutoTeachContent\(analysisRef\)\)/);
+  // 开讲并入当前选中会话：有选中会话时带 session_id，不再每次新建会话。
+  assert.match(shell, /createCoachAgentRun\(\s*buildAnalysisAutoTeachContent\(analysisRef\)/);
+  assert.match(shell, /sessionId: selectedCoachSessionId/);
   assert.match(shell, /softStartRun=\{softStartRun\}/);
   // CoachPanel 承接开讲 run（已有 softStartRun 合同），不自动发送用户文案。
   assert.match(panel, /softStartRun/);
   assert.match(panel, /appliedSoftStartRef/);
+});
+
+test("auto-teach yields while a Coach run is active (analysis is narrated by that turn)", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  const panel = await source("components/task6/CoachPanel.tsx");
+  // 活跃回合期间跳过开讲且不打去重标记（重试等无回合场景仍可开讲）。
+  assert.match(shell, /if \(activeCoachRunRef\.current\) return;/);
+  assert.match(shell, /activeCoachRunRef\.current = active;/);
+  assert.match(shell, /onActiveRunChange=\{handleCoachActiveRunChange\}/);
+  // CoachPanel 以 run 状态驱动活跃上报。
+  assert.match(
+    panel,
+    /onActiveRunChange\?\.\(run !== null && \["queued", "running"\]\.includes\(run\.status\)\)/,
+  );
 });
