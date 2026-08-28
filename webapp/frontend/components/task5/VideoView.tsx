@@ -58,6 +58,9 @@ export function VideoView({
   const [loadFailed, setLoadFailed] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  // 舞台比例跟随真实视频（0828）：固定 16:9 占位会让宽幅录像上下 letterbox
+  // 出白条，视觉上像"播放区与操作条没接上"；元数据到达前保持 16:9 兜底。
+  const [stageRatio, setStageRatio] = useState<number | null>(null);
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -103,6 +106,7 @@ export function VideoView({
     if (presentation.video.kind === "native-only") return;
     setLoading(true);
     setLoadFailed(false);
+    setStageRatio(null);
     if (presentation.video.kind !== "seekable") {
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
@@ -489,9 +493,17 @@ export function VideoView({
 
   return (
     <div className={styles.videoView}>
-      <section className={styles.playerStage} aria-label="视频证据播放器">
+      <section
+        aria-label="视频证据播放器"
+        className={styles.playerStage}
+        style={stageRatio ? { aspectRatio: String(stageRatio) } : undefined}
+      >
         <video
           className={styles.video}
+          onLoadedMetadata={(event) => {
+            const v = event.currentTarget;
+            if (v.videoWidth > 0 && v.videoHeight > 0) setStageRatio(v.videoWidth / v.videoHeight);
+          }}
           onDurationChange={(event) => setDurationMs(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration * 1000 : 0)}
           onError={() => {
             setVideoUrl(null);
@@ -513,7 +525,6 @@ export function VideoView({
           ref={videoRef}
           src={videoUrl}
         />
-        <span className={styles.playerBadge}>{timeText}</span>
       </section>
 
       <div className={styles.playerBar}>
@@ -608,7 +619,13 @@ export function VideoView({
       <section className={styles.timelineSection} aria-label="分析时间轴">
         <div className={styles.timeline}>
           <div className={styles.timelineTrack} />
-          <div className={styles.timelineProgress} style={{ width: `${progress}%` }} />
+          {/* 进度填充按真实轨道宽计算（容器 - 两侧 10px 内边距），与 markers
+              /band 的「真实轨道宽」约定对齐；否则填充右缘恒比游标多探出
+              ~10px、满进度时越出轨道（0827 修）。 */}
+          <div
+            className={styles.timelineProgress}
+            style={{ width: `calc((100% - 20px) * ${(progress / 100).toFixed(6)})` }}
+          />
           {/* P2 循环色带——契约栈序插在 progress 与 markers 之间：track →
               progress → band(此处) → markers → cursor(z6) → input(z7) → 命中层(z8)。
               半透明带体＝--event-peak 透明版（color-mix，不新增 token，D4）；
@@ -651,7 +668,7 @@ export function VideoView({
             className={styles.timelineCursor}
             data-arrive={arriveActive ? "true" : undefined}
             key={`cursor-${arriveSeq}`}
-            style={{ insetInlineStart: `${cursorLeft}%` }}
+            style={{ insetInlineStart: `calc(10px + (100% - 20px) * ${(cursorLeft / 100).toFixed(6)})` }}
           />
           <input
             aria-label="分析时间轴"

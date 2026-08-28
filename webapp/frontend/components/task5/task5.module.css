@@ -133,19 +133,19 @@
   box-shadow: var(--shadow-overlay);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-2px);
+  transform: translateY(-4px) scale(0.98);
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .evidenceSummary:focus-within .evidenceTooltip {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .evidenceSummary:hover .evidenceTooltip {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -259,21 +259,21 @@
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translateY(-2px);
+  transform: translateY(-4px) scale(0.98);
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .profileLabel:focus-within .profileTooltip {
   opacity: 1;
   visibility: visible;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .profileLabel:hover .profileTooltip {
     opacity: 1;
     visibility: visible;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -948,7 +948,8 @@
 .videoView {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  /* gap=0（0828）：操作条要贴合舞台下沿（border-top:0 + 仅下圆角的设计前提）；
+     时间轴区的呼吸由它自身的 margin-top 承担。 */
   max-width: 1120px;
   margin-inline: auto;
 }
@@ -968,19 +969,6 @@
   height: 100%;
   object-fit: contain;
   background: var(--surface-container-lowest);
-}
-
-.playerBadge {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  z-index: 2;
-  background: color-mix(in srgb, black 80%, transparent);
-  color: color-mix(in srgb, white 94%, transparent);
-  font: 500 var(--text-micro) var(--font-mono);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  pointer-events: none;
 }
 
 
@@ -1116,6 +1104,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  /* 与操作条之间保留一档呼吸（原 videoView flex gap 承担）。 */
+  margin-top: var(--space-3);
 }
 
 .timeline {
@@ -1332,9 +1322,11 @@
 
 .timelineCursor {
   position: absolute;
-  top: 8px;
+  /* 高度收到与标记层同一族：轨道中线 y=24（track top22+高4），16px 高即
+     top:16px；旧 32px 长杆越出整行观感（0827 修）。 */
+  top: 16px;
   width: 1.5px;
-  height: 32px;
+  height: 16px;
   background: var(--on-surface);
   z-index: 6;
   transform: translateX(-50%);
@@ -1391,6 +1383,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  /* 与上方时间轴拉开一档（0828 点点：贴在一起不美观） */
+  margin-top: var(--space-3);
   min-width: 0;
 }
 
