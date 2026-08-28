@@ -9,6 +9,7 @@ import {
   isRecord,
   makeError,
   successResponse,
+  type CoachReasoningEffort,
   type CoachRuntimeMessage,
   type CoachRuntimeProviderProfile,
   type CoachRuntimeTurnResponse,
@@ -67,6 +68,9 @@ export type CoachActivityUpdate = {
   sequence: number;
   kind: "thinking" | "tool" | "queue";
   state: "started" | "completed" | "failed" | "updated";
+  /** thinking started 专用：上一轮思考段终文（full-replace）。恒带——null＝
+     该轮无前置思考段；undefined＝旧版 sidecar（无分段协议）。 */
+  thinking_text?: string | null;
   tool_call_id?: string;
   tool_name?: string;
   command_name?: string;
@@ -639,7 +643,20 @@ function userFacingErrorMessage(error: unknown, stopped: boolean): string {
 // 此前靠中转站忽略 disabled 才碰巧正常，显式传档转为明确正确。不支持
 // high 的模型由 Pi 的 clampThinkingLevel 自动落到最近可用档；非推理模型
 // 维持默认 off 不动请求形态。
-export function defaultThinkingLevel(model: unknown): "high" | undefined {
+//
+// 档级旋钮 reasoning_effort 覆盖默认值："off" = 显式关闭思考（用户拍板
+// 接受说出声回归），"minimal".."high" 原样下发（非推理模型由 Pi 收敛为
+// off）；未设置（含手工改库产生的未知值）走默认分支——默认路径行为不得
+// 变化，这是 deepseek 说出声 bug 的回归红线。
+export function defaultThinkingLevel(
+  model: unknown,
+  reasoningEffort?: CoachReasoningEffort,
+): Exclude<CoachReasoningEffort, "off"> | undefined {
+  if (reasoningEffort === "off") return undefined;
+  if (reasoningEffort === "minimal" || reasoningEffort === "low"
+    || reasoningEffort === "medium" || reasoningEffort === "high") {
+    return reasoningEffort;
+  }
   if (!isRecord(model)) return undefined;
   return model.reasoning === true ? "high" : undefined;
 }
@@ -697,6 +714,10 @@ export async function runCoachTurn(
   };
   let activeRunId: string | null = null;
   let partialRevision = 0;
+  // 思考按 provider 轮分段（0828：前端要按"想一段→做一步"的时序交错呈现，
+  // 单一累积流给不出前因后果）。buffer 只累积当前段：message_start（每轮
+  // assistant 消息开始）时把已累积内容作为上一段终文随 activity 下发并清空；
+  // partial 帧的 thinking_text 因此恒为当前段全文。
   let thinkingBuffer = "";
   let activitySequence = 0;
   let lastPartialText: string | null = null;
@@ -796,8 +817,9 @@ export async function runCoachTurn(
     // 不传思考档时 Pi 会下发 thinking:{type:"disabled"}，模型转而把推理
     // 过程"说出声"写进正文——回复被内部独白淹没（2026-08-25 内测 onboarding
     // 实测）。显式开思考档，API 才会把推理分离进 reasoning_content。
-    // 其余 provider 维持默认（off），不改既有请求形态。
-    const thinkingLevel = defaultThinkingLevel(resolved.model);
+    // 其余 provider 维持默认（off），不改既有请求形态。档级 reasoning_effort
+    // 显式设置时覆盖默认（见 defaultThinkingLevel）。
+    const thinkingLevel = defaultThinkingLevel(resolved.model, request.model.reasoning_effort);
 
     const harness = new AgentHarness({
       env,
@@ -855,7 +877,16 @@ export async function runCoachTurn(
       }
 
       if (eventType === "message_start" && isRecord(event.message) && event.message.role === "assistant") {
-        await publishActivity({ kind: "thinking", state: "started" });
+        // 每轮 assistant 消息开始＝上一轮思考段终结：把已累积的 buffer 作为
+        // 上一段终文随 thinking started 帧下发（前端据此开新思考段并补齐
+        // 丢帧；GET 轮询经 run events 也能重建完整分段）。字段恒带（null 也
+        // 带）：前端以 undefined 区分旧版 sidecar（无分段）并整体降级单块。
+        await publishActivity({
+          kind: "thinking",
+          state: "started",
+          thinking_text: thinkingBuffer.trim() ? thinkingBuffer : null,
+        });
+        thinkingBuffer = "";
         return;
       }
 

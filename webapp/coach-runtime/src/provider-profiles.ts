@@ -14,6 +14,7 @@ import http from "node:http";
 import {
   PROVIDER_MODEL_SWITCH_SCHEMA,
   isRecord,
+  type CoachReasoningEffort,
   type CoachRuntimeProviderProfile,
   type CustomProviderModel,
   type ProviderCredential,
@@ -49,6 +50,7 @@ export type ProviderProfileView = {
   kind: "builtin" | "custom_openai_compatible" | "custom_anthropic_compatible";
   base_url: string | null;
   model_id: string;
+  reasoning_effort: CoachReasoningEffort | null;
   context_window: number | null;
   max_tokens: number | null;
   is_default: boolean;
@@ -167,6 +169,7 @@ async function projectProfile(
     kind: entry.kind,
     base_url: fields.base_url,
     model_id: entry.model_id,
+    reasoning_effort: entry.reasoning_effort ?? null,
     context_window: fields.context_window,
     max_tokens: fields.max_tokens,
     is_default: isDefault,
@@ -218,6 +221,11 @@ function coachProfileFromCreate(raw: unknown): CoachRuntimeProviderProfile {
       kind: "builtin",
       provider_id: typeof raw.provider_id === "string" ? raw.provider_id : "",
       model_id: typeof raw.model_id === "string" ? raw.model_id : "",
+      // reasoning_effort 缺省/null 都按未设置处理；非法值交给
+      // parseProviderProfile 的枚举校验统一 400。
+      ...(raw.reasoning_effort === undefined || raw.reasoning_effort === null
+        ? {}
+        : { reasoning_effort: raw.reasoning_effort }),
       ...(typeof raw.api_key === "string" && raw.api_key.trim() ? { api_key: raw.api_key.trim() } : {}),
     });
   }
@@ -230,6 +238,9 @@ function coachProfileFromCreate(raw: unknown): CoachRuntimeProviderProfile {
       provider_id: typeof raw.provider_id === "string" && raw.provider_id.trim() ? raw.provider_id.trim() : undefined,
       base_url: typeof raw.base_url === "string" ? raw.base_url : "",
       model_id: typeof raw.model_id === "string" ? raw.model_id : "",
+      ...(raw.reasoning_effort === undefined || raw.reasoning_effort === null
+        ? {}
+        : { reasoning_effort: raw.reasoning_effort }),
       context_window: typeof raw.context_window === "number" ? raw.context_window : undefined,
       max_tokens: typeof raw.max_tokens === "number" ? raw.max_tokens : undefined,
       api_key: typeof raw.api_key === "string" ? raw.api_key : "",
@@ -246,6 +257,7 @@ function profileWithApiKey(profile: CoachRuntimeProviderProfile, apiKey: string)
       kind: "builtin",
       provider_id: profile.provider_id,
       model_id: profile.model_id,
+      ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
       api_key: key,
     });
   }
@@ -255,6 +267,7 @@ function profileWithApiKey(profile: CoachRuntimeProviderProfile, apiKey: string)
     provider_name: profile.provider_name,
     base_url: profile.base_url,
     model_id: profile.model_id,
+    ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
     context_window: profile.context_window,
     max_tokens: profile.max_tokens,
     api_key: key,
@@ -263,7 +276,12 @@ function profileWithApiKey(profile: CoachRuntimeProviderProfile, apiKey: string)
 
 function profileWithoutCredential(profile: CoachRuntimeProviderProfile): CoachRuntimeProviderProfile {
   if (profile.kind === "builtin") {
-    return { kind: "builtin", provider_id: profile.provider_id, model_id: profile.model_id };
+    return {
+      kind: "builtin",
+      provider_id: profile.provider_id,
+      model_id: profile.model_id,
+      ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
+    };
   }
   return {
     kind: profile.kind,
@@ -271,6 +289,7 @@ function profileWithoutCredential(profile: CoachRuntimeProviderProfile): CoachRu
     provider_name: profile.provider_name,
     base_url: profile.base_url,
     model_id: profile.model_id,
+    ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
     context_window: profile.context_window,
     max_tokens: profile.max_tokens,
   };
@@ -285,6 +304,7 @@ function profileWithCredential(
       kind: "builtin",
       provider_id: profile.provider_id,
       model_id: profile.model_id,
+      ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
       credential,
     });
   }
@@ -294,6 +314,7 @@ function profileWithCredential(
     provider_name: profile.provider_name,
     base_url: profile.base_url,
     model_id: profile.model_id,
+    ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
     context_window: profile.context_window,
     max_tokens: profile.max_tokens,
     credential,
@@ -438,6 +459,16 @@ export async function handleProviderProfileRequest(
         writeJson(res, 400, { detail: "model switch body must include schema_version and a non-empty model_id" });
         return true;
       }
+      // reasoning_effort 是档级旋钮：缺省=沿用已存值（切模型不动力度），
+      // null=清除回「未设置」，其余必须落在五档枚举内。与 model_id 同门控、
+      // 同落盘，对下一段回复生效。
+      const effortRaw = body.reasoning_effort;
+      if (effortRaw !== undefined && effortRaw !== null
+        && effortRaw !== "minimal" && effortRaw !== "low"
+        && effortRaw !== "medium" && effortRaw !== "high" && effortRaw !== "off") {
+        writeJson(res, 400, { detail: "reasoning_effort must be minimal|low|medium|high|off or null when supplied" });
+        return true;
+      }
       // `profile_id` scopes the switch to one stored profile; without it the
       // active profile (the one Coach turns use) is switched.
       const profileIdRaw = body.profile_id;
@@ -461,6 +492,11 @@ export async function handleProviderProfileRequest(
       // Switch within the current Provider: provider_id and credential are
       // preserved; only model_id changes.
       const updated = { ...entry, model_id: body.model_id.trim() };
+      if (effortRaw === null) {
+        delete updated.reasoning_effort;
+      } else if (effortRaw !== undefined) {
+        updated.reasoning_effort = effortRaw;
+      }
       // Reject a model that cannot resolve (builtin: must exist in the pinned
       // catalog; custom: must still construct a resolvable provider) before
       // writing, so the UI capability stays consistent with what is persisted.

@@ -179,10 +179,19 @@ export type OAuthCredential = {
 /** Pinned Pi's current type-tagged provider credential union. */
 export type ProviderCredential = ApiKeyCredential | OAuthCredential;
 
+/**
+ * Profile 级 reasoning effort 旋钮暴露给 UI 的语义档。xhigh/max 是 Pi 内部
+ * 档位，不对用户开放；"off" = 显式关闭思考，缺省 = 维持运行时默认（推理
+ * 模型回落高档，见 turn.ts defaultThinkingLevel 的 deepseek 回归背景）。
+ */
+export type CoachReasoningEffort = "minimal" | "low" | "medium" | "high" | "off";
+
 export type BuiltinProviderProfile = {
   kind: "builtin";
   provider_id: string;
   model_id: string;
+  /** Per-profile thinking knob (see CoachReasoningEffort); absent = runtime default. */
+  reasoning_effort?: CoachReasoningEffort;
   /** Runtime-only credential injected into a request-scoped Pi CredentialStore. */
   credential?: ProviderCredential;
   /** Migration compatibility; normalized to an api_key credential during parsing. */
@@ -195,6 +204,8 @@ export type CustomOpenAiCompatibleProfile = {
   provider_name: string;
   base_url: string;
   model_id: string;
+  /** Per-profile thinking knob (see CoachReasoningEffort); absent = runtime default. */
+  reasoning_effort?: CoachReasoningEffort;
   /** Limits returned by this Provider's model discovery response. */
   context_window?: number;
   max_tokens?: number;
@@ -210,6 +221,8 @@ export type CustomAnthropicCompatibleProfile = {
   provider_name: string;
   base_url: string;
   model_id: string;
+  /** Per-profile thinking knob (see CoachReasoningEffort); absent = runtime default. */
+  reasoning_effort?: CoachReasoningEffort;
   /** Limits returned by this Provider's model discovery response. */
   context_window?: number;
   max_tokens?: number;
