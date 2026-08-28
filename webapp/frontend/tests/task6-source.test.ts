@@ -356,8 +356,11 @@ test("Coach composer uses a raised input surface without an outer divider", asyn
   assert.match(panel, /padding-inline:\s*max\(14px, calc\(\(100% - var\(--task6-coach-content-width\)\) \/ 2\)\)/);
   assert.match(messagesWrap, /width:\s*100%/);
   assert.match(composer, /width:\s*100%/);
-  assert.match(composer, /background:\s*var\(--surface-container-low\)/);
-  assert.match(input, /background:\s*var\(--surface-container-high\)/);
+  // 0827 面板升为 surface 主面；0828 composer sticky 钉底悬浮——同主面
+  // 底色不透明遮挡滚过的消息，输入卡用 surface-bright——两主题下都比主面
+  // 亮一档（light 白卡 / dark 浮起卡）。
+  assert.match(composer, /background:\s*var\(--surface\)/);
+  assert.match(input, /background:\s*var\(--surface-bright\)/);
 });
 
 test("Coach current training animates expand and collapse without leaving interactive hidden content", async () => {
@@ -369,10 +372,32 @@ test("Coach current training animates expand and collapse without leaving intera
   assert.match(coach, /aria-hidden=\{!trainingExpanded \|\| undefined\}/);
   assert.match(coach, /inert=\{!trainingExpanded \|\| undefined\}/);
   assert.match(styles, /\.task6-training-reveal\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-4px\)[\s\S]*transition:\s*opacity var\(--duration-surface\) var\(--ease-out/);
-  assert.doesNotMatch(styles, /grid-template-rows/);
+  // 红线（缩窄 0828）：训练卡动画不允许 grid-template-rows 方案；该技术
+  // 已被 .task6-collapse 的折叠显隐动画采用（另一合同），不再全局禁。
+  const revealRules = styles.match(/\.task6-training-reveal[^{]*\{[^}]*\}/g) ?? [];
+  assert.ok(revealRules.length > 0, "training reveal rules must exist");
+  for (const rule of revealRules) assert.doesNotMatch(rule, /grid-template-rows/);
   assert.match(styles, /\.task6-training-reveal\[data-state="open"\]\s*\{[\s\S]*opacity:\s*1;[\s\S]*translateY\(0\)/);
   assert.match(styles, /\.task6-training-reveal\[data-state="closed"\]\s*\{[\s\S]*position:\s*absolute;[\s\S]*pointer-events:\s*none;/);
   assert.match(styles, /prefers-reduced-motion:\s*reduce[\s\S]*\.task6-training-reveal/);
+});
+
+test("Coach activity collapse animates height and the thinking block auto-manages open state", async () => {
+  const activity = await source("components/task6/CoachRunActivity.tsx");
+  const styles = await source("components/task6/task6.css");
+  // 折叠容器：grid 行高过渡（0828 调研对齐 MIT 系聊天前端共识），替代瞬时显隐
+  assert.match(styles, /\.task6-collapse\s*\{[^}]*grid-template-rows:\s*0fr/);
+  assert.match(styles, /\.task6-collapse\[data-state="open"\]\s*\{[^}]*grid-template-rows:\s*1fr/);
+  assert.match(styles, /\.task6-collapse-inner\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(styles, /\.task6-collapse,\s*\n\s*\.task6-caret\s*\{[^}]*transition:\s*none/);
+  // 思考块状态机（0828 再拍板）：任何时刻默认折叠——流式也不自动展开，
+  // 展开与否全归用户；无自动开合计时器。
+  assert.match(activity, /const \[open, setOpen\] = useState\(false\);/);
+  assert.doesNotMatch(activity, /setAutoOpen|everStreamedRef|manualOpen/);
+  assert.doesNotMatch(activity, /setTimeout\(\(\) => setAutoOpen\(false\), 1000\)/);
+  // chevron 展开指示替代文字「· 收起」
+  assert.doesNotMatch(activity, /· 收起/);
+  assert.match(activity, /className="task6-caret" data-open=\{open\}/);
 });
 
 test("Coach renders time-point links without parsing model prose", async () => {
@@ -398,18 +423,27 @@ test("Coach tool steps collapse done steps, show analysis ETA, and mark stopped 
   const coach = await source("components/task6/CoachPanel.tsx");
   const activity = await source("components/task6/CoachRunActivity.tsx");
   const styles = await source("components/task6/task6.css");
-  // 已完成的步骤收敛为一行计数（呈现逻辑在 CoachRunActivity，面板只喂解析结果）。
-  assert.match(coach, /<CoachStepList steps=\{toolSteps\}/);
-  assert.match(activity, /已完成 \{doneSteps\.length\} 步 · 查看/);
+  // 0828 拍板：思考段与工具段按时序交错（CoachWorkStream），连续同名完成步
+  // 聚合成一行摘要（点击展开逐行明细），呈现逻辑在 CoachRunActivity，
+  // 面板只喂 segments（SSE 实时优先，轮询从 events 重建）。
+  assert.match(coach, /<CoachWorkStream segments=\{workSegments\}/);
+  assert.match(activity, /task6-done-list/);
+  assert.match(activity, /function WorkStepLine/);
+  assert.match(activity, /function WorkGroupLine/);
   // ETA 只对分析类命令显示，且样本来自真实执行时长（started_at 优先）。
   assert.match(coach, /ANALYSIS_ETA_COMMANDS = new Set\(\["analysis\.create_from_run", "analysis\.retry"\]\)/);
   assert.match(coach, /computeAnalysisEtaSeconds\(sessionsSnapshot\)/);
   assert.match(activity, /task6-tool-eta/);
-  // 停止态渲染灰色状态点与「回答已停止」行。
+  // 停止态渲染「回答已停止」收尾行。
   assert.match(coach, /stopped=\{run\.status === "stopped"\}/);
   assert.match(activity, /回答已停止，可重新提问/);
-  // 新 UI 的样式存在，已删的 composer 状态行不留孤儿规则。
-  assert.match(styles, /\.task6-tool-step/);
+  // 0828 视觉：行首语义图标槽 + 行尾折叠箭头，无点线时间线。
+  assert.match(activity, /task6-tool-glyph/);
+  assert.match(styles, /\.task6-tool-glyph/);
+  assert.match(styles, /\.task6-work-stream/);
+  assert.doesNotMatch(styles, /\.task6-tool-dot/);
+  assert.doesNotMatch(activity, /task6-tool-dot/);
+  // 已删的 composer 状态行不留孤儿规则。
   assert.doesNotMatch(styles, /task6-composer-status/);
 });
 

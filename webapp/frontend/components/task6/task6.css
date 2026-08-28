@@ -460,13 +460,13 @@
   line-height: 1.5;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(2px);
+  transform: translateY(4px) scale(0.98);
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .task6-info:focus-within .task6-info-tooltip {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -477,7 +477,7 @@
 
   .task6-info:hover .task6-info-tooltip {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -899,10 +899,6 @@
   margin-top: 2px;
 }
 
-.task6-coach-full-header {
-  background: var(--surface-container-low);
-}
-
 /* Body */
 
 .task6-coach-panel {
@@ -912,11 +908,25 @@
   display: flex;
   flex-direction: column;
   width: 100%;
+  /* 0828：滚动容器上移到面板本身——滚动条贯穿全列高（标题区之下直到
+     窗口底）、贴窗口右缘；头部与 composer 改 sticky 悬浮钉住。 */
+  overflow-y: auto;
+  /* 工作区主面（0827）：surface——dark 下比侧栏亮一档、light 下暖白，
+     侧栏用 container-low 作衬托面，两主题关系一致。 */
+  background: var(--surface);
   min-height: 0;
   min-width: 0;
   flex: 1;
   padding-inline: max(14px, calc((100% - var(--task6-coach-content-width)) / 2));
-  background: var(--surface-container-low);
+}
+
+/* 悬浮顶区（0828）：header + 讨论挂载条一起钉在滚动口顶部，消息从其下
+   滚过——背景取面板主面同色，不透明遮挡滚过的内容。 */
+.task6-coach-top {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
 }
 
 .task6-coach-body {
@@ -1181,26 +1191,22 @@
 
 /* Messages */
 
-/* position:relative：划选浮层的定位锚（随滚动内容坐标，scroll 即收起） */
+/* position:relative：划选浮层的定位锚（随滚动内容坐标，scroll 即收起）。
+   0828：滚动上移到 panel（滚动条贯穿全列高、贴窗口右缘），本区只留
+   内容自然高——不设 min-height:0/overflow，长内容撑高驱动 panel 滚动。 */
 .task6-messages {
   position: relative;
   flex: 1;
-  min-height: 0;
-  overflow-y: auto;
   padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
-/* 底部锚定（digests §8 病灶①）：非空会话由零高 auto-margin spacer 吸收全部
-   剩余空间，把消息流压向钉底的 composer，消除顶部锚定留下的中段大空洞；
-   溢出滚动时 margin 收敛为 0，不影响 scrollTop 行为。 */
-.task6-msg-spacer {
-  margin-top: auto;
-}
+/* 顶部锚定（0827 拍板，回退底部锚定）：消息流从上往下自然排布，不再用
+   auto-margin spacer 把内容压向钉底 composer（旧方案短会话时头部留大空洞）。 */
 
-/* 空对话 hero：顶替同一槽位，flex 占满剩余空间后网格居中。 */
+/* 空对话 hero：占满剩余空间后网格居中。 */
 .task6-empty-hero {
   flex: 1;
   display: grid;
@@ -1428,87 +1434,67 @@
   cursor: default;
 }
 
-/* Tool execution timeline（逐步时间线：done/active/fail） */
+/* 工作流时序流（0828 拍板重构）：思考段与工具段按发生顺序交错；每行＝
+   语义图标 + 内容 + 行尾折叠箭头，无点线装饰。状态用文字与图标色表达——
+   进行中 shimmer + 计时、失败红字、完成淡色时长。 */
 
-.task6-tool-tl {
-  list-style: none;
-  margin: 0;
-  padding: 2px 0 var(--space-1);
+.task6-work-stream {
   display: flex;
   flex-direction: column;
+  padding: 2px 0 var(--space-1);
 }
 
 .task6-tool-step {
-  position: relative;
   display: flex;
-  gap: var(--space-2);
   align-items: flex-start;
+  gap: var(--space-2);
   padding: var(--space-1) 0;
   font-size: var(--text-caption);
+  min-width: 0;
 }
 
-.task6-tool-step:not(:last-child)::before {
-  content: "";
-  position: absolute;
-  left: 5.25px;
-  top: 18px;
-  bottom: -4px;
-  width: 1.5px;
-  background: var(--outline-variant);
-}
-
-.task6-tool-step[data-state="done"]:not(:last-child)::before {
-  background: var(--event-kill);
-}
-
-.task6-tool-dot {
-  position: relative;
+/* 行首语义图标：按 command 映射（读取=文件、查询=库、趋势=图……），
+   固定槽位保证各行文字起点整齐；fail 行随状态转红。 */
+.task6-tool-glyph {
   flex: none;
-  width: 8px;
-  height: 8px;
-  margin-top: var(--space-1);
-  border-radius: 50%;
-  border: 1.5px solid var(--outline);
-  background: transparent;
-}
-
-.task6-tool-step[data-state="done"] .task6-tool-dot {
-  border-color: var(--event-kill);
-  background: var(--event-kill);
-}
-
-.task6-tool-step[data-state="active"] .task6-tool-dot {
-  border-color: var(--on-surface);
-  background: var(--on-surface);
-}
-
-.task6-tool-step[data-state="fail"] .task6-tool-dot {
-  border-color: var(--error);
-  background: var(--error);
-}
-
-/* 用户取消：原橙点变灰点 */
-.task6-tool-step[data-state="stopped"] .task6-tool-dot {
-  border-color: var(--on-surface-variant);
-  background: var(--on-surface-variant);
-}
-
-.task6-tool-eta {
-  align-self: flex-start;
-  margin-top: 2px;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
   color: var(--on-surface-variant);
-  font: 400 var(--text-micro)/1.3 var(--font-ui);
 }
 
-.task6-tool-done-count .task6-tool-meta {
-  color: var(--on-surface-variant);
+.task6-tool-step[data-state="fail"] .task6-tool-glyph,
+.task6-tool-step[data-state="fail"] .task6-tool-label {
+  color: var(--error);
 }
 
 .task6-tool-body {
+  flex: 1;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+  row-gap: 2px;
   min-width: 0;
+}
+
+/* 行内明细折叠块换行占满，不与标签挤同一行 */
+.task6-tool-body > .task6-collapse {
+  flex-basis: 100%;
+}
+
+/* 折叠箭头在行尾（点点 0828 拍板）：与首行文字垂直对齐 */
+.task6-tool-step > .task6-caret {
+  flex: none;
+  margin-top: 3px;
+}
+
+/* 顶层步骤列表与消息正文同缘；组内明细与组行「读取文件」的文字头
+   天然同列（collapse 就在组行文字列内），不再额外加缩进。 */
+.task6-done-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .task6-tool-label {
@@ -1526,13 +1512,18 @@
   color: var(--error);
 }
 
-/* 未读新内容提示（用户向上阅读时出现，点击回到底部） */
+.task6-tool-eta {
+  color: var(--on-surface-variant);
+  font: 400 var(--text-micro)/1.5 var(--font-ui);
+}
 
+/* 未读新内容提示（用户向上阅读时出现，点击回到底部）。
+   0828：滚动上移到 panel 后改挂 composer，钉在其上沿之外——composer
+   悬浮钉底，提示随之恒定可见，不随消息滚走。 */
 .task6-messages-wrap {
   position: relative;
   flex: 1;
   width: 100%;
-  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1540,7 +1531,7 @@
 .task6-unread-prompt {
   position: absolute;
   left: 50%;
-  bottom: 10px;
+  bottom: calc(100% + 10px);
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
@@ -1621,16 +1612,45 @@
   background: var(--on-surface);
 }
 
-/* 折叠容器：静态显隐。展开过渡动画走 training-reveal 的既有合同模式，
-   闭合内容的可交互性由组件层的 inert 属性保证 */
-.task6-collapse[data-state="closed"] {
-  display: none;
+/* 折叠容器：grid 行高过渡（0828 调研对齐 MIT 系聊天前端共识做法——
+   0fr↔1fr 高度动画 + 淡入，替代瞬时 display:none；可交互性由组件层
+   inert 保证）。inner 必须 overflow:hidden + min-height:0 才能被 0fr 压扁。 */
+.task6-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--duration-surface) var(--ease-out),
+    opacity var(--duration-surface) var(--ease-out);
+}
+
+.task6-collapse[data-state="open"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.task6-collapse-inner {
+  overflow: hidden;
+  min-height: 0;
 }
 
 /* 思考折叠块 */
 .task6-think-block {
   padding: var(--space-1) 0;
   font-size: var(--text-caption);
+}
+
+/* 展开指示（0828 调研对齐行业做法）：chevron 随开合旋转，替代文字「· 收起」 */
+.task6-caret {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--on-surface-variant);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.task6-caret[data-open="true"] {
+  transform: rotate(180deg);
 }
 
 .task6-think-head {
@@ -1651,39 +1671,38 @@
   color: var(--on-surface);
 }
 
-.task6-think-dot {
-  position: relative;
+/* 思考星芒（0828 拍板替代圆点）：流式时呼吸，语义＝认知活动 */
+.task6-think-glyph {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid var(--outline);
-  background: transparent;
+  width: 13px;
+  height: 13px;
+  color: var(--on-surface-variant);
 }
 
-.task6-think-dot[data-live] {
-  border-color: var(--on-surface);
-  background: var(--on-surface);
+.task6-think-glyph[data-live] {
+  color: var(--on-surface);
   animation: task6-pulse 1.6s var(--ease-out) infinite;
 }
 
-.task6-think-timer {
-  color: var(--on-surface-variant);
+/* 行尾折叠箭头（点点 0828 拍板）：推到标题行最右 */
+.task6-think-head > .task6-caret {
+  margin-left: auto;
 }
 
 .task6-think-body {
-  max-height: 180px;
+  max-height: 240px;
   overflow-y: auto;
-  margin: var(--space-1) 0 0 var(--space-2);
-  padding: var(--space-2);
-  border-left: 2px solid var(--outline-variant);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: var(--surface-container-low);
+  /* 与标题行「思考过程」的文字头对齐（星芒 13px + 间距 8px），不对齐符号 */
+  margin: var(--space-1) 0 0 calc(13px + var(--space-2));
+  /* 辅助层：小一号、淡一档，与正文拉开层级（0828 拍板）。内容走受控富
+     渲染（task7-rich），行高在 rich 上覆写收紧。 */
   color: var(--on-surface-variant);
   font-size: var(--text-caption);
-  line-height: 1.55;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.task6-think-body .task7-rich {
+  line-height: 1.55;
 }
 
 /* 完成步收敛行的展开控件 */
@@ -1705,14 +1724,11 @@
   color: var(--on-surface);
 }
 
-.task6-done-list {
-  list-style: none;
-  margin: 0;
-  padding: 0 var(--space-4) 0 calc(var(--space-4) + 6px);
-}
-
 /* 已完成步骤的可展开摘要 */
 .task6-tool-detail-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   padding: 0;
   border: 0;
   background: transparent;
@@ -1759,13 +1775,17 @@
   color: var(--on-surface);
   font-size: var(--text-caption);
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .task6-suggestion:hover {
   background: var(--surface-container-high);
   border-color: var(--outline);
   color: var(--on-surface);
+}
+
+.task6-suggestion:active:not([data-pending="true"]) {
+  transform: scale(0.96);
 }
 
 .task6-suggestion:focus-visible {
@@ -1790,18 +1810,29 @@
 .task6-discussion-bar {
   position: relative;
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   width: 100%;
   padding: var(--space-2) var(--space-4);
-  background: var(--surface-container-low);
+  /* 透明融入面板主面（0828）：旧 container-low 底在 surface 主面上成为
+     突兀色带；结构与分隔由 chip 自身边框承担。 */
 }
 
 /* Composer */
 
 .task6-composer {
+  /* sticky 钉底（0828）：滚动容器是面板本身，composer 悬浮在滚动口底部，
+     消息从其下滚过；背景改主面同色不透明遮挡（原透明让主面透出的拍板
+     由本规则承接——同色即等价视觉）。 */
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
   flex: none;
   width: 100%;
-  padding: var(--space-3) var(--space-3);
-  background: var(--surface-container-low);
+  /* 底部留白加大一档（0827）：贴底过近不协调。 */
+  padding: var(--space-3) var(--space-3) var(--space-5);
+  background: var(--surface);
 }
 
 .task6-composer-input {
@@ -1809,7 +1840,9 @@
   min-height: 72px;
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
-  background: var(--surface-container-high);
+  /* surface-bright（0827 对齐 ZCode 参照）：light 下为白卡、dark 下为
+     比主面亮一档的浮起卡——输入卡恒为视觉焦点。 */
+  background: var(--surface-bright);
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
@@ -1839,9 +1872,6 @@
 }
 
 .task6-composer-send {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
   width: 32px;
   height: 32px;
   border: 0;
@@ -1866,17 +1896,26 @@
   outline-offset: 2px;
 }
 
-/* Composer model picker: tools row sits under the input card; menu pops upward.
-   工具行拆出（digests §8 病灶④/⑤）：textarea 不再为同行模型菜单预留
-   padding-right，视频面板压缩面板宽度时 composer 全宽可用。 */
+/* Composer model picker: 右下角簇内静态锚点（0827 拍板 B1，取代旧「工具行拆出」），
+   wrap 跟随模型钮渲染，菜单继续向上弹出。 */
 
-.task6-composer-tools {
-  flex: none;
+/* 右下角簇：模型钮 + 发送钮同一行右对齐；绝对定位移到簇容器上，
+   发送钮退为簇内静态项。 */
+.task6-composer-corner {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  padding-top: var(--space-2);
+  gap: var(--space-1);
+}
+
+/* 仅当模型钮实际渲染（wrap 存在）时才为底部按钮簇让位（点点 0828：右侧
+   整条预留不合理——改为只加 padding-bottom 一段，文字左右全宽可用，
+   按钮簇仅占据其 footprint；无模型可切时沿用基础 52px 右预留。 */
+.task6-composer-input:has(.task6-composer-model) textarea {
+  padding-right: var(--space-3);
+  padding-bottom: 44px;
 }
 
 .task6-composer-model-wrap {
@@ -2086,17 +2125,6 @@
   background: var(--outline-variant);
 }
 
-.task6-editing-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
-  padding-block: var(--space-1);
-  color: var(--on-surface-variant);
-  font: 400 var(--text-caption)/1.4 var(--font-ui);
-}
-
 /* ── 划选引用（quote-reply，docs/quote-feature-research.md）──────────
    composer 引用块与已发送消息回显共用一套块样式：左侧竖线来源标注 +
    小字 pre-wrap 文本体。竖线用 --divider-strong、底色沿用浮层家族的
@@ -2185,12 +2213,13 @@
   }
 }
 
+/* 浮层与选区之间留 6px 呼吸（0828 点点：不要贴着 Coach 的话） */
 .task6-selection-toolbar[data-flip="above"] {
-  transform: translate(-50%, -100%);
+  transform: translate(-50%, calc(-100% - 6px));
 }
 
 .task6-selection-toolbar[data-flip="below"] {
-  transform: translate(-50%, 0);
+  transform: translate(-50%, 6px);
 }
 
 .task6-selection-toolbar > button {
@@ -2211,18 +2240,6 @@
 .task6-selection-toolbar > button:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: -1px;
-}
-
-/* 编辑重发入口弱化常显、hover/聚焦增强：不用过渡动画，
-   避免在文件中段新增 prefers-reduced-motion 媒体块——既有合同测试按
-   媒体块出现顺序切片（Settings/nav 断言）。 */
-.task6-message-entry .task6-message-edit {
-  opacity: 0.55;
-}
-
-.task6-message-entry:hover .task6-message-edit,
-.task6-message-entry .task6-message-edit:focus-visible {
-  opacity: 1;
 }
 
 /* Empty / error states inside coach */
@@ -2526,6 +2543,10 @@
     transform: none !important;
   }
 
+  .task6-message-entry {
+    animation: none;
+  }
+
   .task6-message {
     transition: opacity var(--duration-reduced-motion) var(--ease-out);
   }
@@ -2537,13 +2558,19 @@
   .task6-streaming-cursor,
   .task6-shimmer-text,
   .task6-pulse-dot,
-  .task6-think-dot[data-live] {
+  .task6-think-glyph[data-live] {
     animation: none;
   }
 
   /* 划选浮层入场淡入同关（非循环，工艺一致性起见一并关闭） */
   .task6-selection-toolbar {
     animation: none;
+  }
+
+  /* 折叠高度过渡与 chevron 旋转同关（无 transitionend 依赖，直接归零） */
+  .task6-collapse,
+  .task6-caret {
+    transition: none;
   }
 
   /* shimmer 关闭后必须保留可读的文字颜色 */
@@ -2556,4 +2583,4 @@
     transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: none;
   }
-}
+}
