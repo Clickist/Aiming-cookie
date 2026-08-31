@@ -34,6 +34,7 @@ import { exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEna
 import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import { KovaaKDirectoriesPanel } from "@/components/kovaak/KovaaKDirectoriesPanel";
+import { ExternalTelemetryPanel } from "@/components/kovaak/ExternalTelemetryPanel";
 import type {
   CalibrationProfileV1,
   CaptureStatusV1,
@@ -997,6 +998,15 @@ export function SettingsWorkspace() {
             </div>
             <Panel>
               <KovaaKDirectoriesPanel context="settings" />
+            </Panel>
+          </section>
+
+          <section className="task6-settings-section" id="external-telemetry">
+            <div className="task6-settings-section-header">
+              <span className="task6-settings-section-title">外部遥测导入</span>
+            </div>
+            <Panel>
+              <ExternalTelemetryPanel />
             </Panel>
           </section>
 

@@ -570,6 +570,48 @@ export interface KovaaKLocalDirectoriesUpdateV1 {
   performance_dir: string;
 }
 
+/** External telemetry watch-root configuration (external_telemetry_config.v1). */
+export interface ExternalTelemetryConfigV1 {
+  schema_version: "external_telemetry_config.v1";
+  watch_root: string | null;
+  source: "unset" | "confirmed" | "automatic";
+  run_count: number;
+  activation?: "not_requested" | "activated" | "runtime_unavailable" | "failed";
+  /** external watcher 健康投影；null/缺省表示 runtime 不可用。 */
+  watcher?: Record<string, unknown> | null;
+}
+
+export interface ExternalTelemetryWatchRootUpdateV1 {
+  watch_root: string;
+}
+
+/** Shallow ExternalTelemetryRun projection for lists (external_run_list.v1). */
+export interface ExternalRunListItemV1 {
+  external_run_id: string;
+  schema_version: string;
+  source_file: string | null;
+  round: number | null;
+  index_file: string | null;
+  imported_at: string | null;
+  proposal_status: string | null;
+  proposal_label: string | null;
+  proposal_score: number | null;
+  t2k_p50: number | null;
+  n_targets: number | null;
+  spawns: number | null;
+  deaths: number | null;
+  timeouts: number | null;
+  matched_run_ids: Array<number | string>;
+  label_agreement: string | null;
+  quality_issues: string[];
+}
+
+export interface ExternalRunListResponseV1 {
+  schema_version: "external_run_list.v1";
+  total: number;
+  items: ExternalRunListItemV1[];
+}
+
 export interface KovaaKScoreStageV1 {
   stage: "easier" | "medium";
   completed: number;

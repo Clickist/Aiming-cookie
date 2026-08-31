@@ -712,3 +712,51 @@ class CurrentTrainingResponse(BaseModel):
     items: list[CurrentTrainingItem] = Field(default_factory=list)
 
 
+class ExternalTelemetryWatchRootUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    watch_root: str
+
+
+class ExternalTelemetryConfigResponse(BaseModel):
+    schema_version: Literal["external_telemetry_config.v1"]
+    watch_root: Optional[str] = None
+    source: Literal["unset", "confirmed", "automatic"]
+    run_count: int
+    activation: Literal["not_requested", "activated", "runtime_unavailable", "failed"] = "not_requested"
+    # external watcher 健康投影；null/缺省表示 runtime 不可用。与主 KovaaK
+    # watcher 的诊断字典互相独立（两者任一失败不影响另一条摄取链）。
+    watcher: Optional[dict] = None
+
+
+class ExternalRunListItem(BaseModel):
+    external_run_id: str
+    schema_version: str
+    source_file: Optional[str] = None
+    round: Optional[int] = None
+    index_file: Optional[str] = None
+    imported_at: Optional[str] = None
+    proposal_status: Optional[str] = None
+    proposal_label: Optional[str] = None
+    proposal_score: Optional[float] = None
+    t2k_p50: Optional[float] = None
+    n_targets: Optional[int] = None
+    spawns: Optional[int] = None
+    deaths: Optional[int] = None
+    timeouts: Optional[int] = None
+    matched_run_ids: list[object] = Field(default_factory=list)
+    label_agreement: Optional[str] = None
+    quality_issues: list[str] = Field(default_factory=list)
+
+
+class ExternalRunListResponse(BaseModel):
+    schema_version: Literal["external_run_list.v1"]
+    total: int
+    items: list[ExternalRunListItem]
+
+
+class ExternalRunDetailResponse(BaseModel):
+    schema_version: Literal["external_run_detail.v1"]
+    run: dict
+
+

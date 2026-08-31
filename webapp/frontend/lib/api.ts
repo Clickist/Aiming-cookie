@@ -30,6 +30,9 @@ import type {
   CustomProviderProtocol,
   CurrentTrainingV1,
   DeleteSessionResponse,
+  ExternalRunListResponseV1,
+  ExternalTelemetryConfigV1,
+  ExternalTelemetryWatchRootUpdateV1,
   FrontendAnalysisDataV1,
   FrontendAnalysisFamilyDataV1,
   HistoryTrend,
@@ -361,6 +364,51 @@ export async function saveKovaaKLocalDirectories(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as KovaaKLocalDirectoriesV1;
+}
+
+/** Desktop-only external telemetry (cleaned KovaaK rounds) watch-root state. */
+export async function getExternalTelemetry(
+  opts: { signal?: AbortSignal } = {},
+): Promise<ExternalTelemetryConfigV1> {
+  const res = await apiFetch(
+    "/api/external-telemetry",
+    { method: "GET" },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ExternalTelemetryConfigV1;
+}
+
+/** Desktop-only external telemetry watch-root update (hot reconfigures the watcher). */
+export async function saveExternalTelemetryWatchRoot(
+  body: ExternalTelemetryWatchRootUpdateV1,
+  opts: { signal?: AbortSignal } = {},
+): Promise<ExternalTelemetryConfigV1> {
+  const res = await apiFetch(
+    "/api/external-telemetry",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ExternalTelemetryConfigV1;
+}
+
+/** Imported ExternalTelemetryRun list (shallow, newest first). */
+export async function listExternalRuns(
+  opts: { limit?: number; signal?: AbortSignal } = {},
+): Promise<ExternalRunListResponseV1> {
+  const query = opts.limit ? `?limit=${opts.limit}` : "";
+  const res = await apiFetch(
+    `/api/external-runs${query}`,
+    { method: "GET" },
+    { signal: opts.signal, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as ExternalRunListResponseV1;
 }
 
 /** Desktop-only submission from a path-free persisted Run. */
