@@ -4,6 +4,7 @@ import datetime
 import asyncio
 import logging
 import os
+import re
 import shutil
 from pathlib import Path as FilePath
 from typing import Literal, Optional
@@ -18,6 +19,8 @@ from . import (
     calibration_profile_store,
     config,
     evidence_store,
+    external_telemetry_ingest,
+    external_telemetry_store,
     file_store,
     history_trends,
     kovaak_benchmark_provider,
@@ -89,6 +92,11 @@ from .schemas import (
     FrontendAnalysisDataResponse,
     CurrentTrainingResponse,
     EvidenceSegmentPlayback,
+    ExternalRunDetailResponse,
+    ExternalRunListItem,
+    ExternalRunListResponse,
+    ExternalTelemetryConfigResponse,
+    ExternalTelemetryWatchRootUpdateRequest,
     ManagedVideoUnavailableResponse,
     TimelineEvent,
     CaptureStatusResponse,
@@ -1351,3 +1359,135 @@ async def get_session_timeline(
             )
         )
     return Timeline(fps=fps, duration_frames=duration_frames, events=events)
+
+
+# --------------------------------------------------------------- 外部遥测（ExternalTelemetryRun）
+# 数据合同见 docs/EXTERNAL_TELEMETRY_IMPORT.md；上游格式 FORMAT.md v2（只读）。
+
+_EXTERNAL_RUN_ID_RE = re.compile(r"ext-[0-9a-f]{16}")
+
+
+def _external_run_list_item(meta: dict) -> ExternalRunListItem:
+    origin = meta.get("origin") if isinstance(meta.get("origin"), dict) else {}
+    counts = meta.get("counts") if isinstance(meta.get("counts"), dict) else {}
+    proposal = meta.get("scenario_proposal") if isinstance(meta.get("scenario_proposal"), dict) else {}
+    pairing = meta.get("pairing") if isinstance(meta.get("pairing"), dict) else {}
+    rollups = meta.get("rollups") if isinstance(meta.get("rollups"), dict) else {}
+    t2k = rollups.get("t2k") if isinstance(rollups.get("t2k"), dict) else {}
+    quality = meta.get("quality") if isinstance(meta.get("quality"), dict) else {}
+    return ExternalRunListItem(
+        external_run_id=str(meta.get("external_run_id")),
+        schema_version=str(meta.get("schema_version")),
+        source_file=origin.get("source_file") if isinstance(origin.get("source_file"), str) else None,
+        round=origin.get("round") if isinstance(origin.get("round"), int) else None,
+        index_file=origin.get("index_file") if isinstance(origin.get("index_file"), str) else None,
+        imported_at=meta.get("imported_at") if isinstance(meta.get("imported_at"), str) else None,
+        proposal_status=proposal.get("status") if isinstance(proposal.get("status"), str) else None,
+        proposal_label=proposal.get("label") if isinstance(proposal.get("label"), str) else None,
+        proposal_score=(
+            float(proposal["score"])
+            if isinstance(proposal.get("score"), (int, float)) and not isinstance(proposal.get("score"), bool)
+            else None
+        ),
+        t2k_p50=t2k.get("p50") if isinstance(t2k.get("p50"), (int, float)) else None,
+        n_targets=counts.get("n_targets") if isinstance(counts.get("n_targets"), int) else None,
+        spawns=counts.get("spawns") if isinstance(counts.get("spawns"), int) else None,
+        deaths=counts.get("deaths") if isinstance(counts.get("deaths"), int) else None,
+        timeouts=counts.get("timeouts") if isinstance(counts.get("timeouts"), int) else None,
+        matched_run_ids=pairing.get("matched_run_ids") if isinstance(pairing.get("matched_run_ids"), list) else [],
+        label_agreement=pairing.get("label_agreement") if isinstance(pairing.get("label_agreement"), str) else None,
+        quality_issues=[
+            str(issue) for issue in (quality.get("known_issues") or []) if isinstance(issue, str)
+        ],
+    )
+
+
+def _current_external_watcher_snapshot(request: Request) -> Optional[dict]:
+    service = getattr(request.app.state, "external_telemetry_service", None)
+    diagnostics = getattr(service, "diagnostics", None)
+    if not callable(diagnostics):
+        return None
+    try:
+        return diagnostics()
+    except Exception:
+        log.exception("External telemetry diagnostics read failed")
+        return None
+
+
+@router.get("/external-telemetry", response_model=ExternalTelemetryConfigResponse)
+async def get_external_telemetry(
+    request: Request,
+    _: None = Depends(require_desktop_token),
+):
+    watch_root = external_telemetry_store.get_watch_root()
+    if watch_root is None:
+        source = "unset"
+    else:
+        service = getattr(request.app.state, "external_telemetry_service", None)
+        source = "confirmed" if service is not None and service.watch_root is not None else "automatic"
+    return ExternalTelemetryConfigResponse(
+        schema_version="external_telemetry_config.v1",
+        watch_root=str(watch_root) if watch_root is not None else None,
+        source=source,
+        run_count=external_telemetry_store.count_external_runs(),
+        watcher=_current_external_watcher_snapshot(request),
+    )
+
+
+@router.put("/external-telemetry", response_model=ExternalTelemetryConfigResponse)
+async def save_external_telemetry_watch_root(
+    body: ExternalTelemetryWatchRootUpdateRequest,
+    request: Request,
+    _: None = Depends(require_desktop_token),
+):
+    try:
+        watch_root = external_telemetry_store.save_watch_root(body.watch_root)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+    service = getattr(request.app.state, "external_telemetry_service", None)
+    if service is None:
+        activation = "runtime_unavailable"
+    else:
+        try:
+            await asyncio.to_thread(service.reconfigure, watch_root)
+            activation = "activated"
+        except Exception:
+            log.exception("External telemetry reconfiguration failed")
+            activation = "failed"
+    response = ExternalTelemetryConfigResponse(
+        schema_version="external_telemetry_config.v1",
+        watch_root=str(watch_root),
+        source="confirmed" if activation == "activated" else "automatic",
+        run_count=external_telemetry_store.count_external_runs(),
+        watcher=_current_external_watcher_snapshot(request),
+        activation=activation,
+    )
+    return response
+
+
+@router.get("/external-runs", response_model=ExternalRunListResponse)
+async def list_external_runs(
+    limit: int = Query(100, ge=1, le=500),
+    _: None = Depends(require_desktop_token),
+):
+    metas = external_telemetry_store.list_external_runs(limit=limit)
+    return ExternalRunListResponse(
+        schema_version="external_run_list.v1",
+        total=external_telemetry_store.count_external_runs(),
+        items=[_external_run_list_item(meta) for meta in metas],
+    )
+
+
+@router.get("/external-runs/{external_run_id}", response_model=ExternalRunDetailResponse)
+async def get_external_run(
+    external_run_id: str,
+    _: None = Depends(require_desktop_token),
+):
+    # id 直接拼进 DATA_ROOT 相对路径：白名单校验防路径穿越。
+    if _EXTERNAL_RUN_ID_RE.fullmatch(external_run_id) is None:
+        raise HTTPException(404, "external run not found")
+    meta = external_telemetry_store.load_meta(external_run_id)
+    if meta is None:
+        raise HTTPException(404, "external run not found")
+    return ExternalRunDetailResponse(schema_version="external_run_detail.v1", run=meta)

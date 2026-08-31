@@ -19,6 +19,7 @@ from typing import Any
 import uvicorn
 
 from . import config, file_store, kovaak_ingest, kovaak_run_store, worker
+from . import external_telemetry_ingest
 from .app import app
 from .kovaak_capture_finalizer import KovaaKCaptureFinalizer
 from .native_capture_client import NativeCaptureClient
@@ -412,6 +413,31 @@ async def monitor_kovaak_ingestion_diagnostics(
             continue
 
 
+def create_external_telemetry_service() -> external_telemetry_ingest.ExternalTelemetryService | None:
+    """Create the external telemetry watcher (parallel data source, optional).
+
+    Failure here must never block the main KovaaK ingest chain: without a
+    configured watch root the service simply runs inert.
+    """
+    try:
+        return external_telemetry_ingest.create_external_telemetry_service()
+    except Exception:
+        log.exception("External telemetry service creation failed")
+        return None
+
+
+def persist_external_telemetry_diagnostics(
+    service: external_telemetry_ingest.ExternalTelemetryService | None,
+) -> None:
+    """Persist path-redacted external watcher health for diagnostics export."""
+    diagnostics = getattr(service, "diagnostics", None)
+    if not callable(diagnostics):
+        return
+    snapshot = diagnostics()
+    snapshot.pop("recent_candidates", None)
+    file_store.write_json("diagnostics/external-telemetry-watcher.json", snapshot)
+
+
 async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
     """Run API and worker until Tauri requests shutdown or either exits."""
     shutdown_requested = stop_event or asyncio.Event()
@@ -432,6 +458,8 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         asyncio.get_running_loop(), finalizer, finalizer_futures,
     )
     app.state.kovaak_ingestion_service = ingestion_service
+    external_service = create_external_telemetry_service()
+    app.state.external_telemetry_service = external_service
 
     try:
         port = await _wait_for_server_start(server, server_task)
@@ -456,6 +484,9 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         ingestion_diagnostics_task = asyncio.create_task(
             monitor_kovaak_ingestion_diagnostics(ingestion_service, shutdown_requested)
         )
+        if external_service is not None:
+            external_service.start()
+            persist_external_telemetry_diagnostics(external_service)
 
         # This is intentionally the runtime's only stdout protocol write.
         print(
@@ -495,6 +526,11 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
                 await ingestion_diagnostics_task
         await capture_exit_releases.drain()
         ingestion_service.stop()
+        if external_service is not None:
+            external_service.stop()
+            with contextlib.suppress(Exception):
+                persist_external_telemetry_diagnostics(external_service)
+        app.state.external_telemetry_service = None
         with contextlib.suppress(Exception):
             persist_kovaak_ingestion_diagnostics(ingestion_service)
         app.state.kovaak_ingestion_service = None
