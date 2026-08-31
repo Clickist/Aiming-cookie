@@ -1268,8 +1268,10 @@ export function CoachPanel({
   // 主判定用 mouseup（WebKit 的 selectionchange 触发时机不稳，只用于收起清理）；
   // 合格选区必须完整落在同一条非流式 assistant 消息容器内（纯逻辑在
   // evaluateAssistantSelection，node:test 直测）。0828 滚动容器上移 panel 后：
-  // 浮层仍锚定消息内容区（absolute 相对滚动内容，滚动即收起、不做跟随重算），
-  // rect 取 mouseup 的消息区，滚动状态取 panel。
+  // 浮层仍锚定消息内容区（absolute 相对滚动内容，滚动即收起、不做跟随重算）。
+  // 坐标取消息区（currentTarget）当前视口位置——它随面板滚动一起移动，
+  // `rect - hostRect` 已是内容坐标；再加 scrollTop/scrollLeft 会把滚动量
+  // 双算进定位，浮层随滚动量向下偏出屏幕（0.1.12 修复）。
   const closeSelectionBar = useCallback(() => {
     setSelectionBar(null);
   }, []);
@@ -1296,12 +1298,12 @@ export function CoachPanel({
       closeSelectionBar();
       return;
     }
-    const rawLeft = rect.cx - hostRect.left + scroller.scrollLeft;
+    const rawLeft = rect.cx - hostRect.left;
     const clampedLeft = Math.min(
       Math.max(rawLeft, Math.min(SELECTION_TOOLBAR_HALF_WIDTH, hostRect.width / 2)),
       Math.max(hostRect.width - SELECTION_TOOLBAR_HALF_WIDTH, SELECTION_TOOLBAR_HALF_WIDTH),
     );
-    const localTop = rect.top - hostRect.top + scroller.scrollTop;
+    const localTop = rect.top - hostRect.top;
     setSelectionBar({
       text: target.text,
       left: clampedLeft,
