@@ -3,11 +3,43 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
+import { settleTerminalWorkSegments, type CoachWorkSegment } from "../components/task6/CoachRunActivity";
+
 const root = path.resolve(import.meta.dirname, "..");
 
 async function source(relativePath: string): Promise<string> {
   return readFile(path.join(root, relativePath), "utf8");
 }
+
+test("terminal settlement freezes a trailing streaming thinking segment in place", () => {
+  const segments: CoachWorkSegment[] = [
+    { kind: "thinking", key: "t1", text: "半截思考", streaming: true, startedAtMs: 1_200, frozenMs: null },
+    { kind: "tool", step: { key: "s1", label: "读取文件", meta: null, state: "active", command: "read" } },
+  ];
+  const settled = settleTerminalWorkSegments(segments, 2_000);
+  // 思考段：流式终止、终文保留、时长按冻结时刻补算（0.8 秒）
+  const thinking = settled[0];
+  assert.ok(thinking?.kind === "thinking");
+  assert.equal(thinking.streaming, false);
+  assert.equal(thinking.frozenMs, 800);
+  assert.equal(thinking.text, "半截思考");
+  // 活动工具步按 stepFromToolEvent 的 cancelled→fail 同款语义收尾
+  const tool = settled[1];
+  assert.ok(tool?.kind === "tool");
+  assert.equal(tool.step.state, "fail");
+});
+
+test("terminal settlement leaves already settled segments untouched", () => {
+  const frozen: CoachWorkSegment = {
+    kind: "thinking", key: "t1", text: "已冻结", streaming: false, startedAtMs: null, frozenMs: 400,
+  };
+  const done: CoachWorkSegment = {
+    kind: "tool",
+    step: { key: "s1", label: "查询训练记录", meta: null, state: "done", command: "run.list", durationMs: 1_200 },
+  };
+  const settled = settleTerminalWorkSegments([frozen, done], 9_000);
+  assert.deepEqual(settled, [frozen, done]);
+});
 
 test("Coach panel consumes SSE thinking_text into the interleaved work stream", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
@@ -89,4 +121,19 @@ test("working-state motion loops are disabled under reduced motion", async () =>
   assert.match(reduced, /background:\s*none;\s*\n\s*color: var\(--on-surface-variant\)/);
   // 不再引用不存在的旧伪元素动画（死规则清理）
   assert.doesNotMatch(reduced, /task6-tool-dot::after/);
+});
+
+test("failed and stopped runs settle the live work stream instead of leaving it thinking", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  // 终态收敛接线：workSegments 对非 queued/running 的 run 就地冻结残留流式段
+  // （0.1.12 真机修复：失败路径没有 settleSucceeded 的归档清场，且实时段
+  // 清空后会从 events 重建——渲染层统一终结，「思考中」不得挂在错误卡片上方）。
+  const memoAt = panel.indexOf("const workSegments = useMemo");
+  assert.ok(memoAt > -1, "workSegments memo must exist");
+  const memoChunk = panel.slice(memoAt, panel.indexOf("}, [liveSegments, run, analysisEtaSeconds]", memoAt));
+  assert.match(memoChunk, /settleTerminalWorkSegments\(source, Date\.now\(\)\)/);
+  assert.match(memoChunk, /!\["queued", "running"\]\.includes\(run\.status\)/);
+  // 纯逻辑在 CoachRunActivity（呈现组件与收敛逻辑同模块，types 就地复用）
+  const activity = await source("components/task6/CoachRunActivity.tsx");
+  assert.match(activity, /export function settleTerminalWorkSegments/);
 });

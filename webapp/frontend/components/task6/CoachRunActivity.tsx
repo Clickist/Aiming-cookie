@@ -60,6 +60,51 @@ export type CoachWorkSegment =
   }
   | { kind: "tool"; step: CoachToolStep };
 
+/** 冻结一个思考段：终文落定、流式终止、时长按冻结时刻与段起点差补算。 */
+export function freezeThinkingSegment(
+  segment: Extract<CoachWorkSegment, { kind: "thinking" }>,
+  text: string | null,
+  frozenAtMs: number | null,
+): Extract<CoachWorkSegment, { kind: "thinking" }> {
+  return {
+    ...segment,
+    text: text ?? segment.text,
+    streaming: false,
+    frozenMs:
+      segment.frozenMs
+      ?? (segment.startedAtMs != null && frozenAtMs != null && frozenAtMs > segment.startedAtMs
+        ? frozenAtMs - segment.startedAtMs
+        : null),
+  };
+}
+
+/**
+ * 终结收敛（0.1.12 真机修复）：回合到达终态（failed/stopped，以及 succeeded
+ * 与归档清场之间的空窗）后，残留的流式思考段与活动工具步必须就地终结。
+ * 失败路径没有成功路径 settleSucceeded 的归档清场，且实时段清空后会从
+ * events 重建——不冻结，「思考中」扫光与经过计时就会永远挂在错误卡片上方。
+ * 思考段冻结为「思考过程 · 持续了 N 秒」；活动工具步按 stepFromToolEvent 的
+ * cancelled→fail 同款语义收尾为失败态。
+ */
+export function settleTerminalWorkSegments(
+  segments: CoachWorkSegment[],
+  settledAtMs: number | null,
+): CoachWorkSegment[] {
+  let changed = false;
+  const next = segments.map((segment) => {
+    if (segment.kind === "thinking" && segment.streaming) {
+      changed = true;
+      return freezeThinkingSegment(segment, null, settledAtMs);
+    }
+    if (segment.kind === "tool" && segment.step.state === "active") {
+      changed = true;
+      return { kind: "tool" as const, step: { ...segment.step, state: "fail" as const } };
+    }
+    return segment;
+  });
+  return changed ? next : segments;
+}
+
 function formatClock(totalSeconds: number): string {
   const safe = Math.max(0, Math.round(totalSeconds));
   const minutes = Math.floor(safe / 60);
