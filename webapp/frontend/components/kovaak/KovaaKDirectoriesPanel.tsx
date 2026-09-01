@@ -93,7 +93,7 @@ export function KovaaKDirectoriesPanel({ context, onContinue }: KovaaKDirectorie
       setSelected({});
       if (next.activation === "failed") setFeedback("目录已保存，但监听未能切换。请重新打开应用后检查。 ");
       else if (next.stats.matching_files === "no_matching_files" || next.performance.matching_files === "no_matching_files") {
-        setFeedback("目录已启用，但尚未发现 KovaaK 训练文件。请在 KovaaK 中打开 设置 → 其他 → 统计数据输出，选择 Challenge Completion，然后完成一次 Challenge。 ");
+        setFeedback("目录已启用。AC 会在每次启动时自动开启 KovaaK 统计导出（Challenge Completion；若 KovaaK 正在运行会跳过，下次启动 AC 时补开）。仍未发现文件时可手动设置：设置 → 其他 → 统计数据输出 → Challenge Completion（英文界面：Settings → MAIN → Statistics Export → Challenge Completion），改完需完全退出并重启 KovaaK。 ");
       }
     } catch {
       setFeedback("目录没有保存。请确认选择的是两个可读取的不同文件夹。 ");

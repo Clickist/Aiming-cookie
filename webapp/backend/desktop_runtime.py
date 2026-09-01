@@ -19,6 +19,7 @@ from typing import Any
 import uvicorn
 
 from . import config, file_store, kovaak_ingest, kovaak_run_store, worker
+from . import kovaak_stats_export_setup
 from . import external_telemetry_ingest
 from .app import app
 from .kovaak_capture_finalizer import KovaaKCaptureFinalizer
@@ -479,6 +480,13 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
                 "KovaaK video reconciliation completed: %s",
                 video_reconciliation,
             )
+        # 启动即保底开启 KovaaK 统计导出（SaveStatistics + Challenge Completion），
+        # 保证每局落盘 stats CSV + .perf（History 数据源）。幂等且 fail-soft：
+        # 结果与失败原因由包装层写入 backend.log，任何失败都不阻塞桌面启动。
+        await asyncio.to_thread(
+            kovaak_stats_export_setup.ensure_kovaak_stats_export,
+            config.resolve_kovaak_install_dir(),
+        )
         ingestion_service.start()
         persist_kovaak_ingestion_diagnostics(ingestion_service)
         ingestion_diagnostics_task = asyncio.create_task(
