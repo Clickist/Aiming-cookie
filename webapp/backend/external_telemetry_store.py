@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import threading
 from pathlib import Path
 
 from . import file_store
@@ -113,6 +114,42 @@ def write_frozen_frames(external_run_id: str, payload: bytes) -> None:
     os.replace(tmp_path, path)
 
 
+def sidecar_path(external_run_id: str, name: str) -> str:
+    """Path of a frozen sidecar copy (kept under its original file name)."""
+    return f"external/{external_run_id}/{name}"
+
+
+def sidecar_source_name(key: str, round_file: str) -> str | None:
+    """Original file name of one sidecar key (SIDECARS.md §0).
+
+    与 ingest._sidecar_names 是同一命名合同（views/inputs 按轮号 NN 对应
+    round_NN.jsonl，bb/merge_manifest 固定名）；分析快照侧按它定位冻结副本。
+    """
+    round_no = ""
+    if round_file.startswith("round_") and round_file.endswith(".jsonl"):
+        round_no = round_file[len("round_"):-len(".jsonl")]
+    names = {
+        "views": f"views_{round_no}.jsonl",
+        "inputs": f"inputs_{round_no}.jsonl",
+        "bb": "bb.json",
+        "merge_manifest": "merge_manifest.json",
+    }
+    return names.get(key)
+
+
+def write_frozen_sidecar(external_run_id: str, name: str, payload: bytes) -> None:
+    """Freeze a copy of one sidecar file under DATA_ROOT (atomic tmp+replace).
+
+    旁车合同（FPSAimTrainer analysis/external/SIDECARS.md v1）：views/inputs/
+    bb/merge_manifest 与 round.jsonl 同目录原样冻结，供分析侧消费。
+    """
+    path = file_store._data_root() / sidecar_path(external_run_id, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_bytes(payload)
+    os.replace(tmp_path, path)
+
+
 def count_external_runs() -> int:
     """Count imported runs from the ledger without reading every meta."""
     return sum(
@@ -134,3 +171,66 @@ def list_external_runs(limit: int = 200) -> list[dict]:
         items.append(meta)
     items.sort(key=lambda meta: str(meta.get("imported_at", "")), reverse=True)
     return items[: max(1, min(limit, 500))]
+
+
+# ---- matched-run 反向索引（分析快照路径用） ----
+
+# pairing.matched_run_id -> [external_run_id] 的轻量反向索引：分析快照每次都
+# 要按 KovaaK run 找配对的遥测轮，全量重扫 meta 是 O(外部轮数×分析次数)。
+# 这里惰性构建一次，并按台账 (path, mtime_ns, size) 失效——导入、修订、
+# proposal 补丁与旁车补齐都会写台账，是外部库变化的充分信号。取舍：台账
+# 之外手改 meta 不会触发重建（本地单用户场景可接受）；索引只存 id，命中时
+# 再读 meta，保证拿到的是最新内容。
+_MATCHED_INDEX_LOCK = threading.Lock()
+_MATCHED_INDEX: dict[str, object] = {"signature": None, "by_run_id": {}}
+
+
+def _matched_index_signature() -> tuple[str, int, int] | None:
+    path = file_store._data_root() / LEDGER_PATH
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def _rebuild_matched_index() -> dict[int, list[str]]:
+    index: dict[int, list[str]] = {}
+    for path in file_store.list_subdirs("external"):
+        if not path.name.startswith("ext-"):
+            continue
+        meta = load_meta(path.name)
+        if meta is None:
+            continue
+        pairing = meta.get("pairing")
+        matched = pairing.get("matched_run_ids") if isinstance(pairing, dict) else None
+        if not isinstance(matched, list):
+            continue
+        external_id = meta.get("external_run_id")
+        if not isinstance(external_id, str) or not external_id:
+            continue
+        for run_id in matched:
+            if isinstance(run_id, int) and not isinstance(run_id, bool):
+                index.setdefault(run_id, []).append(external_id)
+    return index
+
+
+def find_latest_matched_meta(kovaak_run_id: int) -> dict | None:
+    """Return the newest imported meta whose pairing matched this KovaaK run."""
+    signature = _matched_index_signature()
+    with _MATCHED_INDEX_LOCK:
+        cached = _MATCHED_INDEX["by_run_id"]
+        if signature is not None and _MATCHED_INDEX["signature"] == signature:
+            external_ids = cached.get(int(kovaak_run_id)) if isinstance(cached, dict) else None
+        else:
+            by_run_id = _rebuild_matched_index()
+            _MATCHED_INDEX["signature"] = signature
+            _MATCHED_INDEX["by_run_id"] = by_run_id
+            external_ids = by_run_id.get(int(kovaak_run_id))
+    if not external_ids:
+        return None
+    metas = [meta for meta in (load_meta(item) for item in external_ids) if meta is not None]
+    if not metas:
+        return None
+    metas.sort(key=lambda meta: str(meta.get("imported_at", "")), reverse=True)
+    return metas[0]

@@ -42,7 +42,18 @@ ERROR_SCHEMA_VERSION = "error.v1"
 _LEGACY_SAFE_ERROR_MESSAGE = "分析失败，请重试；若持续失败请联系维护者。"
 
 _NARRATION_STATUSES = frozenset({"available", "unavailable", "not_requested"})
-_INPUT_MODES_V2 = frozenset({"input_native", "multimodal", "video_fallback"})
+_INPUT_MODES_V2 = frozenset(
+    {"input_native", "multimodal", "video_fallback", "telemetry_multimodal"}
+)
+
+
+def _effective_input_mode(mode: object) -> str | None:
+    """telemetry_multimodal 本切片只完成 tier 选择与全链路流动：执行与持久化
+    语义与 multimodal 完全等价（同一条 CV 路径），tier 名留在会话记录与输入
+    快照（sources.external_telemetry）中供观测；producer 切换属下一切片。"""
+    if mode == "telemetry_multimodal":
+        return "multimodal"
+    return mode if isinstance(mode, str) else None
 _ARTIFACT_AVAILABILITIES_V2 = frozenset(
     {"available", "missing", "unsupported", "unavailable", "invalid"}
 )
@@ -872,6 +883,7 @@ def _validate_analysis_result_v2(result: dict) -> dict:
     input_mode = result.get("input_mode")
     if input_mode not in _INPUT_MODES_V2:
         raise ValueError(f"invalid input_mode: {input_mode}")
+    effective_input_mode = _effective_input_mode(input_mode)
     kovaak_run_ref = result.get("kovaak_run_ref")
     if kovaak_run_ref is not None:
         _validate_stable_ref("kovaak_run_ref", kovaak_run_ref)
@@ -899,7 +911,9 @@ def _validate_analysis_result_v2(result: dict) -> dict:
         and input_snapshot.get("source_requirements_version") == "automatic_quality_tier.v1"
     ):
         source_gate = validate_source_requirements(input_snapshot)
-        if not source_gate["ready"] or source_gate["selected_mode"] != input_mode:
+        if not source_gate["ready"] or _effective_input_mode(
+            source_gate["selected_mode"]
+        ) != effective_input_mode:
             missing = ", ".join(str(item) for item in source_gate["missing"])
             raise ValueError(f"Run input snapshot does not match its automatic tier: {missing}")
     snapshot_version = input_snapshot.get("schema_version")
@@ -910,13 +924,13 @@ def _validate_analysis_result_v2(result: dict) -> dict:
         if scenario_resolution is not None:
             validate_scenario_resolution_v1(scenario_resolution)
         canonical_value = input_snapshot.get("canonical_time_window")
-        if canonical_value is None and input_mode in {"input_native", "multimodal"}:
+        if canonical_value is None and effective_input_mode in {"input_native", "multimodal"}:
             raise ValueError("native input snapshot requires a canonical time window")
         if canonical_value is not None:
             canonical_window = _validate_canonical_time_window(canonical_value)
         else:
             canonical_window = None
-        if input_mode in {"input_native", "multimodal"} and canonical_window is not None:
+        if effective_input_mode in {"input_native", "multimodal"} and canonical_window is not None:
             alignment = result["evidence"].get("alignment") or {}
             if (
                 alignment.get("challenge_start_epoch_ms")
@@ -1005,7 +1019,7 @@ def build_analysis_result_v2(
     if analysis_version is None:
         analysis_version = (
             NATIVE_ANALYSIS_VERSION
-            if input_mode in {"input_native", "multimodal"}
+            if _effective_input_mode(input_mode) in {"input_native", "multimodal"}
             else ANALYSIS_VERSION
         )
     result = {
@@ -1203,7 +1217,7 @@ def validate_analysis_result_v2_for_persistence(
         raise ValueError("analysis_result.v2 analysis_id must match the session")
     if validated.get("analysis_type") != analysis_type:
         raise ValueError("analysis_result.v2 analysis_type must match the session request")
-    if validated.get("input_mode") != input_mode:
+    if _effective_input_mode(validated.get("input_mode")) != _effective_input_mode(input_mode):
         raise ValueError("analysis_result.v2 input_mode must match the session request")
     if validated.get("kovaak_run_ref") != kovaak_run_ref:
         raise ValueError("analysis_result.v2 kovaak_run_ref must match the session request")

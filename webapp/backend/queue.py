@@ -34,7 +34,9 @@ log = logging.getLogger(__name__)
 _LEGACY_RESULT_KEYS = frozenset(
     {"diagnosis", "figures", "narration", "notes", "timeline"},
 )
-_INPUT_MODES = frozenset({"input_native", "multimodal", "video_fallback"})
+# telemetry_multimodal：外部遥测首选档。本切片只完成 tier 选择与全链路流动，
+# 执行语义与 multimodal 等价（同一条 CV 路径），producer 切换在后续切片。
+_INPUT_MODES = frozenset({"input_native", "multimodal", "video_fallback", "telemetry_multimodal"})
 
 _QUEUE_LOCK = asyncio.Lock()
 _SESSIONS_DIR = "sessions"
@@ -462,7 +464,7 @@ async def requeue_for_retry(session_id: int) -> dict:
     try:
         copied_video = None
         copied_csv = None
-        if input_mode in {"video_fallback", "multimodal"}:
+        if input_mode in {"video_fallback", "multimodal", "telemetry_multimodal"}:
             if source.get("video_path"):
                 copied_video = session_dir(new_id) / "video.mp4"
                 copy_path_to_path(Path(source["video_path"]), copied_video)
@@ -532,7 +534,7 @@ async def mark_done(
             if isinstance(candidate, dict):
                 calibration_snapshot = candidate
         if (
-            session.get("input_mode") == "multimodal"
+            session.get("input_mode") in {"multimodal", "telemetry_multimodal"}
             and isinstance(result.get("evidence"), dict)
             and isinstance(result["evidence"].get("availability"), dict)
             and result["evidence"]["availability"].get("mp4") in {

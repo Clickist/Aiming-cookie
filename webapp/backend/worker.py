@@ -100,6 +100,20 @@ class ContinuousTrackingAnalysisProcessError(RuntimeError):
         self.visual_result = visual_result
 
 
+class TelemetryPipelineError(RuntimeError):
+    """外部遥测 producer 管线不可用（对齐回执不达标/冻结旁车缺失/投影失败）。
+
+    仿 ContinuousTrackingAnalysisProcessError 携带稳定 code：遥测可用时
+    producer 失败必须可观测地回退——video 可用则回退 CV 子进程，否则落
+    outcome_only；code 以 external_telemetry_unavailable:<code> 进 result
+    warnings/limitations（见 _mark_telemetry_fallback 与各 family 分支）。
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
 async def _run_isolated_analysis_request(payload: dict) -> dict:
     from .visual_worker_process import build_child_environment
     from kovaak_tracker.visual_signals import VisualPreprocessingUnavailable
@@ -1372,6 +1386,177 @@ def _target_switching_production_gate(
     return True
 
 
+def _execution_input_mode(mode: object, *, default: str) -> str:
+    """telemetry_multimodal 的执行语义与 multimodal 完全等价（同一条 family
+    分发）；producer 选择只看快照的 external_telemetry 源是否可用，与档位名
+    解耦。"""
+    mode = mode or default
+    return "multimodal" if mode == "telemetry_multimodal" else mode
+
+
+def _external_telemetry_source(job: dict) -> dict | None:
+    """快照里可用的外部遥测源；缺失/不可用返回 None（行为与无遥测一致）。"""
+    snapshot = job.get("input_snapshot") or {}
+    source = (snapshot.get("sources") or {}).get("external_telemetry")
+    if isinstance(source, dict) and source.get("availability") == "available":
+        return source
+    return None
+
+
+def _build_external_telemetry_visual_result(job: dict) -> dict:
+    """外部遥测冻结副本 -> 与 CV 同形的 visual_result（本进程投影，不 import cv2）。
+
+    绑定契约与 CV 路径对齐：analysis_ref=analysis:{job_id}，顶层
+    canonical_time_window 原样取快照窗口（family adapter 与证据提交都按它
+    校验绑定）；对齐回执 merge_manifest.alignment.accepted != True 时
+    fail-closed 拒绝遥测路径。
+    """
+    from . import external_telemetry_store as telemetry_store
+
+    source = _external_telemetry_source(job)
+    if source is None:
+        raise TelemetryPipelineError("telemetry_source_unavailable")
+    external_id = source.get("external_run_id")
+    frames_path = source.get("frames_path")
+    if (
+        not isinstance(external_id, str) or not external_id
+        or not isinstance(frames_path, str) or not frames_path
+    ):
+        raise TelemetryPipelineError("telemetry_source_incomplete")
+    meta = telemetry_store.load_meta(external_id)
+    if meta is None:
+        raise TelemetryPipelineError("telemetry_meta_missing")
+    origin = meta.get("origin") if isinstance(meta.get("origin"), dict) else {}
+    try:
+        round_number = int(origin.get("round"))
+    except (TypeError, ValueError):
+        raise TelemetryPipelineError("telemetry_round_missing") from None
+    snapshot = job.get("input_snapshot") or {}
+    window = snapshot.get("canonical_time_window")
+    start_ms = window.get("start_ms") if isinstance(window, dict) else None
+    end_ms = window.get("end_ms") if isinstance(window, dict) else None
+    if (
+        isinstance(start_ms, bool) or isinstance(end_ms, bool)
+        or not isinstance(start_ms, int) or not isinstance(end_ms, int)
+        or end_ms <= start_ms
+    ):
+        raise TelemetryPipelineError("telemetry_canonical_window_missing")
+    # 对齐回执：合并清单未声明几何+时间对齐达标就不做真值投影（fail-closed）。
+    try:
+        from . import file_store
+
+        manifest = file_store.read_json(
+            telemetry_store.sidecar_path(external_id, "merge_manifest.json"),
+        )
+    except (OSError, ValueError):
+        manifest = None
+    if manifest is None:
+        raise TelemetryPipelineError("telemetry_alignment_missing")
+    alignment = (
+        manifest.get("alignment") if isinstance(manifest.get("alignment"), dict) else None
+    )
+    if alignment is None or alignment.get("accepted") is not True:
+        raise TelemetryPipelineError("telemetry_alignment_not_accepted")
+    # 冻结副本文件名映射：轮帧固定为 round.jsonl；views/inputs 保留源名，
+    # NN 取自 origin.round_file，避免轮号补零口径差异。
+    round_file = str(origin.get("round_file") or "").replace("\\", "/").rsplit("/", 1)[-1]
+    file_names = {
+        "round": "round.jsonl",
+        "views": (
+            telemetry_store.sidecar_source_name("views", round_file)
+            or f"views_{round_number:02d}.jsonl"
+        ),
+        "inputs": (
+            telemetry_store.sidecar_source_name("inputs", round_file)
+            or f"inputs_{round_number:02d}.jsonl"
+        ),
+    }
+    try:
+        from kovaak_tracker.telemetry_signals import build_telemetry_visual_result
+
+        visual_result = build_telemetry_visual_result(
+            Path(frames_path).parent,
+            round_number,
+            canonical_window=(start_ms, end_ms),
+            analysis_ref=f"analysis:{job['id']}",
+            file_names=file_names,
+            # 冻结目录名不等于上游会话目录名：rounds_index 按 (round, file) 兜底。
+            index_round_file=round_file,
+        )
+    except TelemetryPipelineError:
+        raise
+    except Exception:
+        # 旁车缺（views/round 不可读）与几何/窗口异常都归并为同一稳定 code，
+        # 具体原因已在 producer 内部 limitation 中可观测。
+        raise TelemetryPipelineError("telemetry_projection_failed") from None
+    visual_result["canonical_time_window"] = window
+    return visual_result
+
+
+async def _external_telemetry_visual_or_none(
+    job: dict,
+) -> tuple[dict | None, str | None]:
+    """遥测源可用时跑 producer；任何失败返回 (None, code) 供回退观测。"""
+    if _external_telemetry_source(job) is None:
+        return None, None
+    try:
+        return await asyncio.to_thread(_build_external_telemetry_visual_result, job), None
+    except TelemetryPipelineError as error:
+        return None, error.code
+
+
+async def _visual_result_with_telemetry_preference(
+    job: dict,
+) -> tuple[dict, str | None]:
+    """family 分支共用的 visual_result 取数点：遥测优先，CV 兜底。
+
+    返回 (visual_result, telemetry_unavailable_code)。无遥测源时 code=None 且
+    直接走 CV 子进程，行为与改动前完全一致；producer 失败时先记日志，video
+    可用则回退 CV（CV 异常带 telemetry_unavailable_code 属性供分支 except
+    观测），无 video 抛 TelemetryPipelineError 让分支落 outcome_only。
+    """
+    visual_result, code = await _external_telemetry_visual_or_none(job)
+    if visual_result is None and code is None:
+        return await run_visual_preprocessing_isolated(job), None
+    if visual_result is None:
+        log.warning(
+            "external telemetry producer unavailable session=%s code=%s; "
+            "falling back to CV visual pipeline",
+            job.get("id"),
+            code,
+        )
+        if not job.get("video_path"):
+            raise TelemetryPipelineError(code)
+        try:
+            visual_result = await run_visual_preprocessing_isolated(job)
+        except Exception as error:
+            error.telemetry_unavailable_code = code
+            raise
+    return visual_result, code
+
+
+def _mark_telemetry_fallback(result: dict, code: str) -> dict:
+    """producer 失败后的结果层来源降级标记（history/前端可区分遥测回退）。"""
+    limitation = f"external_telemetry_unavailable:{code}"
+    warnings = [
+        item
+        for item in (result.get("warnings") or [])
+        if not (isinstance(item, dict) and item.get("code") == limitation)
+    ]
+    warnings.append({"code": limitation})
+    updated = dict(result)
+    updated["warnings"] = warnings
+    deterministic = updated.get("deterministic")
+    if isinstance(deterministic, dict):
+        limitations = list(deterministic.get("limitations") or [])
+        if limitation not in limitations:
+            limitations.append(limitation)
+        deterministic = dict(deterministic)
+        deterministic["limitations"] = limitations
+        updated["deterministic"] = deterministic
+    return updated
+
+
 def _scenario_dispatch(job: dict, input_mode: str) -> str:
     snapshot = job.get("input_snapshot") or {}
     resolution = snapshot.get("scenario_resolution")
@@ -1563,7 +1748,7 @@ def _build_outcome_only_result_v2(
 
     snapshot = job.get("input_snapshot") or {}
     resolution = snapshot.get("scenario_resolution") or {}
-    input_mode = job.get("input_mode") or "video_fallback"
+    input_mode = _execution_input_mode(job.get("input_mode"), default="video_fallback")
     include_video = input_mode in {"multimodal", "video_fallback"}
     public_snapshot = public_analysis_input_snapshot(snapshot)
     if input_mode == "input_native":
@@ -1950,7 +2135,7 @@ def _build_native_result_v2(
     analysis_id = f"analysis:{job['id']}"
     owner_id, local_profile = _result_owner(job)
     run_ref = f"run:{run_id}"
-    input_mode = job.get("input_mode") or "input_native"
+    input_mode = _execution_input_mode(job.get("input_mode"), default="input_native")
     deterministic = _native_deterministic_v2(native_result, input_mode=input_mode)
     resolution = snapshot.get("scenario_resolution")
     active_static = (
@@ -2762,7 +2947,9 @@ async def process_one() -> bool:
     stop_hb = asyncio.Event()
     hb_task = asyncio.create_task(_heartbeat_loop(sid, stop_hb))
     try:
-        input_mode = job.get("input_mode") or "video_fallback"
+        # raw_input_mode 仅供视频合同校验区分遥测档；执行语义一律走归一化值。
+        raw_input_mode = job.get("input_mode") or "video_fallback"
+        input_mode = _execution_input_mode(raw_input_mode, default="video_fallback")
         created_at_iso = _sqlite_created_at_to_iso_z(job.get("created_at"))
         completed_at_iso = _utc_now_iso_z()
         frozen_stats = None
@@ -2772,10 +2959,15 @@ async def process_one() -> bool:
         tracking_result = None
         switching_result = None
         outcome_event_bundle = None
+        # 非空 = 遥测 producer 失败但会话声明了可用遥测源：结果层必须带降级标记。
+        telemetry_unavailable_code = None
+        # True = visual_result 来自遥测 producer：tracking 证据提交走本进程
+        # （CV 子进程 import 链拉起 cv2，遥测路径不得依赖它）。
+        telemetry_visual_used = False
         await asyncio.to_thread(
             _assert_managed_video_matches_snapshot,
             job,
-            input_mode,
+            raw_input_mode,
         )
         calibration_request = job.get("calibration_request")
         profile_default = (
@@ -2810,18 +3002,42 @@ async def process_one() -> bool:
             )
             _freeze_job_calibration(job, frozen_stats)
             try:
-                visual_result = await run_visual_preprocessing_isolated(job)
+                # 遥测源可用时优先 producer（真值投影，无 cv2）；producer 失败
+                # 回退 CV 子进程，无 video 则抛 TelemetryPipelineError 落 outcome_only。
+                visual_result, telemetry_unavailable_code = (
+                    await _visual_result_with_telemetry_preference(job)
+                )
             except SourceSnapshotChangedError:
                 raise
+            except TelemetryPipelineError as error:
+                telemetry_unavailable_code = error.code
+                limitation = f"external_telemetry_unavailable:{error.code}"
+                log.warning(
+                    "external telemetry pipeline unavailable session=%s code=%s",
+                    sid,
+                    error.code,
+                )
+                result = _build_outcome_only_result_v2(
+                    job,
+                    created_at=created_at_iso,
+                    completed_at=completed_at_iso,
+                    limitations_override=[limitation],
+                    visual_validation=_unavailable_visual_summary(limitation),
+                    extra_warnings=[{"code": limitation}],
+                    analysis_type_override="dynamic_clicking",
+                )
             except Exception as error:
                 from kovaak_tracker.visual_signals import (
                     VisualPreprocessingUnavailable,
                 )
 
+                telemetry_unavailable_code = getattr(
+                    error, "telemetry_unavailable_code", telemetry_unavailable_code,
+                )
                 await asyncio.to_thread(
                     _assert_managed_video_matches_snapshot,
                     job,
-                    input_mode,
+                    raw_input_mode,
                 )
                 limitation = (
                     error.code
@@ -2937,16 +3153,57 @@ async def process_one() -> bool:
             )
             _freeze_job_calibration(job, frozen_stats)
             try:
-                visual_result, tracking_result = (
-                    await run_continuous_tracking_pipeline_isolated(job)
+                visual_result, telemetry_unavailable_code = (
+                    await _external_telemetry_visual_or_none(job)
                 )
+                if visual_result is not None:
+                    # 遥测路径：family adapter 在本进程跑（纯数值）；adapter 失败
+                    # 沿用 CV 管线的 family 失败落点（保留 visual 作 validation）。
+                    telemetry_visual_used = True
+                    try:
+                        # 本进程 adapter 也必须有界：挂死则 heartbeat 续租、
+                        # 作业永不完成。超时对齐 CV 子进程路径的量级；wait_for
+                        # 取消的是 await（线程体无法中断），超时后作业沿
+                        # ContinuousTrackingAnalysisProcessError 走 outcome_only。
+                        tracking_result = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                run_continuous_tracking_analysis,
+                                job,
+                                visual_result,
+                            ),
+                            timeout=VISUAL_WORKER_TIMEOUT_SECONDS,
+                        )
+                    except SourceSnapshotChangedError:
+                        raise
+                    except Exception as error:
+                        raise ContinuousTrackingAnalysisProcessError(
+                            "continuous_tracking_analysis_unavailable",
+                            visual_result,
+                        ) from error
+                else:
+                    if telemetry_unavailable_code is not None:
+                        # 与 dynamic 分支同一回退策略：无 video 不空转 CV 子进程。
+                        if not job.get("video_path"):
+                            raise TelemetryPipelineError(telemetry_unavailable_code)
+                        log.warning(
+                            "external telemetry producer unavailable session=%s "
+                            "code=%s; falling back to CV visual pipeline",
+                            sid,
+                            telemetry_unavailable_code,
+                        )
+                    visual_result, tracking_result = (
+                        await run_continuous_tracking_pipeline_isolated(job)
+                    )
             except SourceSnapshotChangedError:
                 raise
             except ContinuousTrackingAnalysisProcessError as error:
+                telemetry_unavailable_code = getattr(
+                    error, "telemetry_unavailable_code", telemetry_unavailable_code,
+                )
                 await asyncio.to_thread(
                     _assert_managed_video_matches_snapshot,
                     job,
-                    input_mode,
+                    raw_input_mode,
                 )
                 visual_result = error.visual_result
                 visual_validation = dict(visual_result.get("safe_summary") or {})
@@ -2964,15 +3221,36 @@ async def process_one() -> bool:
                     extra_warnings=[{"code": "continuous_tracking_analyzer_unavailable"}],
                     analysis_type_override="continuous_tracking",
                 )
+            except TelemetryPipelineError as error:
+                # producer 失败且无 video 可回退：outcome_only + 来源降级标记。
+                telemetry_unavailable_code = error.code
+                limitation = f"external_telemetry_unavailable:{error.code}"
+                log.warning(
+                    "external telemetry pipeline unavailable session=%s code=%s",
+                    sid,
+                    error.code,
+                )
+                result = _build_outcome_only_result_v2(
+                    job,
+                    created_at=created_at_iso,
+                    completed_at=completed_at_iso,
+                    limitations_override=[limitation],
+                    visual_validation=_unavailable_visual_summary(limitation),
+                    extra_warnings=[{"code": limitation}],
+                    analysis_type_override="continuous_tracking",
+                )
             except Exception as error:
                 from kovaak_tracker.visual_signals import (
                     VisualPreprocessingUnavailable,
                 )
 
+                telemetry_unavailable_code = getattr(
+                    error, "telemetry_unavailable_code", telemetry_unavailable_code,
+                )
                 await asyncio.to_thread(
                     _assert_managed_video_matches_snapshot,
                     job,
-                    input_mode,
+                    raw_input_mode,
                 )
                 limitation = (
                     error.code
@@ -3072,7 +3350,7 @@ async def process_one() -> bool:
                 await asyncio.to_thread(
                     _assert_managed_video_matches_snapshot,
                     job,
-                    input_mode,
+                    raw_input_mode,
                 )
                 limitation = (
                     error.code
@@ -3214,19 +3492,39 @@ async def process_one() -> bool:
                 if snapshot.get("schema_version") in {
                     "analysis_input_snapshot.v2", "analysis_input_snapshot.v3",
                 }:
-                    video_availability = "available"
+                    # evidence mp4 按真实情况记录：无视频不能标 available，
+                    # 否则 queue 的 partial_outcome 判定漏标（与 artifact
+                    # manifest 的 missing 词汇一致）。
+                    video_availability = "available" if job.get("video_path") else "missing"
                     try:
-                        visual_result = await run_visual_preprocessing_isolated(job)
+                        # 遥测源可用时 visual_validation 优先来自 producer 真值
+                        # 投影；失败回退 CV 子进程（无 video 则走下方降级标记）。
+                        visual_result, telemetry_unavailable_code = (
+                            await _visual_result_with_telemetry_preference(job)
+                        )
                         visual_validation = visual_result["safe_summary"]
+                    except TelemetryPipelineError as error:
+                        telemetry_unavailable_code = error.code
+                        limitation = f"external_telemetry_unavailable:{error.code}"
+                        visual_validation = _unavailable_visual_summary(limitation)
+                        warnings.append({"code": limitation})
+                        log.warning(
+                            "external telemetry pipeline unavailable session=%s code=%s",
+                            sid,
+                            error.code,
+                        )
                     except Exception as error:
                         from kovaak_tracker.visual_signals import (
                             VisualPreprocessingUnavailable,
                         )
 
+                        telemetry_unavailable_code = getattr(
+                            error, "telemetry_unavailable_code", telemetry_unavailable_code,
+                        )
                         await asyncio.to_thread(
                             _assert_managed_video_matches_snapshot,
                             job,
-                            input_mode,
+                            raw_input_mode,
                         )
                         if isinstance(error, VisualPreprocessingUnavailable):
                             limitation = error.code
@@ -3265,7 +3563,7 @@ async def process_one() -> bool:
                         await asyncio.to_thread(
                             _assert_managed_video_matches_snapshot,
                             job,
-                            input_mode,
+                            raw_input_mode,
                         )
                         log.warning("multimodal video validation unavailable session=%s", sid)
                         video_availability = "unavailable"
@@ -3353,7 +3651,7 @@ async def process_one() -> bool:
                 await asyncio.to_thread(
                     _assert_managed_video_matches_snapshot,
                     job,
-                    input_mode,
+                    raw_input_mode,
                 )
                 log.warning(
                     "video fallback analysis unavailable session=%s error=%s",
@@ -3364,7 +3662,7 @@ async def process_one() -> bool:
             await asyncio.to_thread(
                 _assert_managed_video_matches_snapshot,
                 job,
-                input_mode,
+                raw_input_mode,
             )
             summary = dict(summary)
             sparc_distribution = summary.get("sparc")
@@ -3386,16 +3684,21 @@ async def process_one() -> bool:
                 completed_at=completed_at_iso,
                 narration_status="not_requested",
             )
+        if telemetry_unavailable_code:
+            # producer 失败但会话带可用遥测源：无论最终走 CV 还是 outcome_only，
+            # 结果层都要可观测地标记来源降级（history/前端可区分）。
+            result = _mark_telemetry_fallback(result, telemetry_unavailable_code)
         await asyncio.to_thread(
             _assert_managed_video_matches_snapshot,
             job,
-            input_mode,
+            raw_input_mode,
         )
         await queue.set_task_phase(sid, "generating_diagnostics", worker_id=WORKER_ID)
         if (
             scenario_dispatch == CONTINUOUS_TRACKING_ANALYSIS_VERSION
             and isinstance(visual_result, dict)
             and isinstance(tracking_result, dict)
+            and not telemetry_visual_used
         ):
             result = await commit_continuous_tracking_evidence_isolated(
                 job,

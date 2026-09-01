@@ -36,7 +36,7 @@ _TARGET_SWITCHING_COMPARISON_METRICS = {
 }
 _ALIGNMENT_STATUSES = {"aligned", "partial", "failed", "unavailable", "not_required"}
 _EVIDENCE_AVAILABILITIES = {"available", "missing", "unsupported", "unavailable", "invalid"}
-_V2_INPUT_MODES = {"input_native", "multimodal", "video_fallback"}
+_V2_INPUT_MODES = {"input_native", "multimodal", "video_fallback", "telemetry_multimodal"}
 
 
 def _safe_identity(value: object) -> str | None:
@@ -51,7 +51,11 @@ def _safe_identity(value: object) -> str | None:
 
 
 def _safe_input_mode(value: object) -> str | None:
-    return value if isinstance(value, str) and value in _V2_INPUT_MODES else None
+    # telemetry_multimodal 执行语义与 multimodal 等价（本切片仅完成 tier 流动）：
+    # 趋势可比性按等价档位判定，避免遥测 run 与既有 multimodal 基线失配。
+    if not (isinstance(value, str) and value in _V2_INPUT_MODES):
+        return None
+    return "multimodal" if value == "telemetry_multimodal" else value
 
 
 def _metric(result: dict, key: str) -> dict | None:

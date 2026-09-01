@@ -4,6 +4,7 @@ import pytest
 
 from webapp.backend.source_requirements import (
     MISSING_CANONICAL_WINDOW,
+    MISSING_EXTERNAL_TELEMETRY,
     MISSING_PERFORMANCE,
     MISSING_RAW_INPUT,
     MISSING_STATS,
@@ -53,8 +54,9 @@ def test_complete_bundle_is_ready_and_has_bounded_public_summary():
 
     assert result == {
         "ready": True,
-        "missing": [],
+        "missing": [MISSING_EXTERNAL_TELEMETRY],
         "availability": {
+            "external_telemetry": "invalid",
             "stats": "available",
             "performance": "available",
             "raw_input": "available",
@@ -65,7 +67,7 @@ def test_complete_bundle_is_ready_and_has_bounded_public_summary():
         "selected_mode": "multimodal",
         "summary": {
             "mode": "multimodal",
-            "source_count": 4,
+            "source_count": 5,
             "canonical_window": "available",
         },
     }
@@ -96,14 +98,14 @@ def test_missing_required_source_returns_stable_code(field: str, code: str):
     result = validate_source_requirements(snapshot)
 
     assert result["ready"] is (field != "stats")
-    assert result["missing"] == [code]
+    assert result["missing"] == [MISSING_EXTERNAL_TELEMETRY, code]
     assert result["summary"] == {
         "mode": (
             "input_native" if field == "video"
             else "video_fallback" if field in {"performance", "trace", "canonical_time_window"}
             else None
         ),
-        "source_count": 4,
+        "source_count": 5,
         "canonical_window": "available" if field != "canonical_time_window" else "missing",
     }
 
@@ -149,11 +151,13 @@ def test_unavailable_and_malformed_sources_fail_closed_without_echoing_values():
 
     assert result["ready"] is False
     assert result["missing"] == [
+        MISSING_EXTERNAL_TELEMETRY,
         MISSING_PERFORMANCE,
         MISSING_VIDEO,
         MISSING_CANONICAL_WINDOW,
     ]
     assert result["availability"] == {
+        "external_telemetry": "invalid",
         "stats": "available",
         "performance": "unavailable",
         "raw_input": "available",
@@ -175,5 +179,38 @@ def test_unknown_fields_do_not_become_requirements_or_public_output():
     result = validate_source_requirements(snapshot)
 
     assert result["ready"] is True
-    assert result["summary"]["source_count"] == 4
+    assert result["summary"]["source_count"] == 5
     assert "untrusted_extra" not in json.dumps(result, ensure_ascii=False)
+
+
+def test_external_telemetry_takes_priority_over_the_visual_tier():
+    snapshot = _complete_snapshot()
+    snapshot["sources"]["external_telemetry"] = {
+        "availability": "available",
+        "external_run_id": "ext-abc123",
+        "pairing_confidence": "coarse",
+    }
+
+    result = validate_source_requirements(snapshot)
+
+    # 外部遥测是首选数据源：telemetry_multimodal 排最前，CV 视频降为 fallback。
+    assert result["supported_modes"] == [
+        "telemetry_multimodal", "multimodal", "input_native", "video_fallback",
+    ]
+    assert result["selected_mode"] == "telemetry_multimodal"
+    assert result["missing"] == []
+
+
+def test_unavailable_external_telemetry_falls_back_to_the_visual_tier():
+    snapshot = _complete_snapshot()
+    snapshot["sources"]["external_telemetry"] = {
+        "availability": "unavailable",
+        "external_run_id": None,
+        "reason": "telemetry_not_paired",
+    }
+
+    result = validate_source_requirements(snapshot)
+
+    assert result["selected_mode"] == "multimodal"
+    assert "telemetry_multimodal" not in result["supported_modes"]
+    assert MISSING_EXTERNAL_TELEMETRY in result["missing"]

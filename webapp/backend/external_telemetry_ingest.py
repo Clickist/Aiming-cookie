@@ -14,6 +14,10 @@ camera frames or fine alignment S belongs to the analysis side. Rule of
 thumb: a rollup that would reference ``calibration_profile``, ``window_*``,
 an input trace or camera frames must not live in this module.
 
+SIDECARS.md v1 sidecars (``views_NN.jsonl``/``inputs_NN.jsonl``/``bb.json``/
+``merge_manifest.json``) are frozen verbatim next to the frames for the
+analysis side; nothing is computed from them here.
+
 Upstream ``cleaned/`` is read-only; frozen frame copies land in DATA_ROOT.
 """
 
@@ -324,6 +328,22 @@ def known_target_count(label: object) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _sidecar_names(round_file: str) -> tuple[tuple[str, str], ...]:
+    """(meta key, source filename) pairs of one round's sidecars (SIDECARS.md §0).
+
+    views/inputs 按轮号 NN 与 round_NN.jsonl 一一对应；bb/merge_manifest 是轮
+    目录级共享件。命名铁律（SIDECARS.md）：旁车不以 round_ 开头，不会被
+    round_*.jsonl glob 误当孤儿轮。
+    """
+    round_no = round_file[len("round_"):-len(".jsonl")]
+    return (
+        ("views", f"views_{round_no}.jsonl"),
+        ("inputs", f"inputs_{round_no}.jsonl"),
+        ("bb", "bb.json"),
+        ("merge_manifest", "merge_manifest.json"),
+    )
+
+
 def build_targets(index_targets: list[dict]) -> list[dict]:
     """Project index target metadata. addr never becomes identity (pooling);
     target paths are namespaced to ``*_cm`` (AC input-side ``path_length``
@@ -394,7 +414,15 @@ class ExternalTelemetryWatcher:
         self._last_summary: dict | None = None
         self._recent_candidates: list[dict[str, object]] = []
         self._scan_runs: list[dict] | None = None
+        # 旁车每扫缓存（SIDECARS.md v1）：round_dir -> {文件名: (size, mtime_ns)}，
+        # 只含本次 scan 已稳定的旁车源件。
+        self._scan_sidecars: dict[Path, dict[str, tuple[int, int]]] = {}
+        # 上次哈希旁车时的 (size, mtime_ns)：skip 路径据此免重读大文件（幂等快路径）。
+        self._hashed_sidecars: dict[Path, tuple[int, int]] = {}
         self._failed_index_dirs: set[Path] = set()
+        # 本次 scan 内冻结副本写失败次数（如 Windows 杀软锁目标文件）：
+        # 不中止 scan，并入 summary["failed"] 可观测。
+        self._sidecar_write_failures = 0
 
     # ------------------------------------------------------------------ scan
 
@@ -410,7 +438,18 @@ class ExternalTelemetryWatcher:
         index_files = self._stable_files("rounds_index.json")
         round_files = self._stable_files("round_*.jsonl")
         scenario_files = self._stable_files("scenario.json")
+        # 旁车（FPSAimTrainer SIDECARS.md v1）复用同一稳定检测机制：四个 pattern
+        # 在 _states 里按 (pattern, path) 分槽各扫各的，导入侧只冻结已稳定源件。
+        sidecar_patterns = ("views_*.jsonl", "inputs_*.jsonl", "bb.json", "merge_manifest.json")
+        sidecar_files = {pattern: self._stable_files(pattern) for pattern in sidecar_patterns}
         with self._lock:
+            sidecar_index: dict[Path, dict[str, tuple[int, int]]] = {}
+            for pattern, paths in sidecar_files.items():
+                for path in paths:
+                    state = self._states.get((pattern, path))
+                    if state is not None:
+                        sidecar_index.setdefault(path.parent, {})[path.name] = (state.size, state.mtime_ns)
+            self._scan_sidecars = sidecar_index
             self._recent_candidates = [
                 {
                     "path": self._relative(path),
@@ -422,6 +461,7 @@ class ExternalTelemetryWatcher:
             ]
 
         self._scan_runs = None  # per-scan pairing cache, loaded lazily
+        self._sidecar_write_failures = 0
         try:
             seen_index_paths = {path for path in self.watch_root.rglob("rounds_index.json") if path.is_file()}
         except OSError:
@@ -441,6 +481,7 @@ class ExternalTelemetryWatcher:
         self._patch_scenario_proposals(scenario_files, summary)
 
         with self._lock:
+            summary["failed"] += self._sidecar_write_failures
             self._last_summary = dict(summary)
             for key in _SUMMARY_KEYS:
                 self._totals[key] += summary.get(key, 0)
@@ -598,11 +639,16 @@ class ExternalTelemetryWatcher:
         content_hash = _sha256_bytes(payload)
         external_id = store.external_run_id(dedup_key)
         previous = store.read_ledger().get(dedup_key)
+        existing_meta = store.load_meta(external_id)
         if (
             isinstance(previous, dict)
             and previous.get("content_hash") == content_hash
-            and store.load_meta(external_id) is not None
+            and existing_meta is not None
         ):
+            # 同内容 skip：旁车可能后到或 merge 重跑变了哈希——先走轻路径补
+            # 冻结+更新 meta.sidecars，不触发 content revision（revisions 只跟
+            # 轮内容哈希，SIDECARS.md v1）。
+            self._refresh_skip_sidecars(external_id, round_dir, round_file, existing_meta)
             return "skipped"
 
         frame_stats = summarize_frames(payload)
@@ -686,16 +732,20 @@ class ExternalTelemetryWatcher:
         }
 
         outcome = "imported"
+        sidecars_recorded = None
         if isinstance(previous, dict) and previous.get("content_hash") not in (None, content_hash):
             # cleaner 重洗 → 同一 id 下登记 content revision（§2.3）。
             outcome = "revised"
-            existing_meta = store.load_meta(external_id)
+            sidecars_recorded = (existing_meta or {}).get("sidecars")
             meta["revisions"] = list((existing_meta or {}).get("revisions", [])) + [{
                 "round_sha256": previous.get("content_hash"),
                 "imported_at": previous.get("imported_at"),
                 "superseded_at": meta["imported_at"],
             }]
 
+        # 旁车冻结（SIDECARS.md v1）：指纹进 meta.sidecars，副本与帧同目录、保持
+        # 原名；旁车哈希变化只刷指纹+副本，不触发 content revision。
+        meta["sidecars"] = self._freeze_sidecars(external_id, round_dir, round_file, sidecars_recorded)
         store.write_frozen_frames(external_id, payload)
         store.save_meta(external_id, meta)
         self._update_ledger(lambda ledger: ledger.update({
@@ -730,11 +780,14 @@ class ExternalTelemetryWatcher:
         content_hash = _sha256_bytes(payload)
         external_id = store.external_run_id(dedup_key)
         previous = store.read_ledger().get(dedup_key)
+        existing_meta = store.load_meta(external_id)
         if (
             isinstance(previous, dict)
             and previous.get("content_hash") == content_hash
-            and store.load_meta(external_id) is not None
+            and existing_meta is not None
         ):
+            # 同内容 skip 的旁车补齐与带 index 路径同口径（SIDECARS.md v1）。
+            self._refresh_skip_sidecars(external_id, round_path.parent, round_path.name, existing_meta)
             summary["skipped"] += 1
             return
         frame_stats = summarize_frames(payload)
@@ -799,6 +852,8 @@ class ExternalTelemetryWatcher:
             "imported_at": _utc_now(),
             "revisions": [],
         }
+        # 旁车冻结（SIDECARS.md v1）：与带 index 路径同口径。
+        meta["sidecars"] = self._freeze_sidecars(external_id, round_path.parent, round_path.name, None)
         store.write_frozen_frames(external_id, payload)
         store.save_meta(external_id, meta)
         self._update_ledger(lambda ledger: ledger.update({
@@ -815,6 +870,77 @@ class ExternalTelemetryWatcher:
             }
         }))
         summary["imported"] += 1
+
+    # -------------------------------------------------------------- sidecars
+
+    def _freeze_sidecars(
+        self, external_id: str, round_dir: Path, round_file: str, recorded: object,
+    ) -> dict[str, dict]:
+        """Freeze this round's stable sidecars; return the meta.sidecars section.
+
+        旁车合同（FPSAimTrainer analysis/external/SIDECARS.md v1）：views/inputs
+        按轮号对应轮文件；bb/merge_manifest 是轮目录级共享件（该目录任一轮导入
+        时各随轮冻结一份，meta 各轮都记指纹）。只消费稳定检测通过的源件；指纹
+        与 recorded 一致时不重读不重冻（幂等），缺/变才写新副本；源件未稳定
+        （merge 重写中）沿用 recorded 旧指纹，稳定后下轮 scan 补齐。
+        """
+        stable = self._scan_sidecars.get(round_dir, {})
+        section: dict[str, dict] = {}
+        for key, name in _sidecar_names(round_file):
+            path = round_dir / name
+            stat = stable.get(name)
+            recorded_fp = recorded.get(key) if isinstance(recorded, dict) else None
+            known = isinstance(recorded_fp, dict) and recorded_fp.get("present") is True
+            absent = {"present": False, "sha256": None, "size": None}
+            if stat is None:
+                section[key] = recorded_fp if known else absent
+                continue
+            if known and self._hashed_sidecars.get(path) == stat:
+                # 自上次哈希起 size+mtime 未变：指纹必然一致，不重读大文件。
+                section[key] = recorded_fp
+                continue
+            try:
+                payload = path.read_bytes()
+            except OSError:
+                section[key] = recorded_fp if known else absent
+                continue
+            digest = _sha256_bytes(payload)
+            if (
+                known
+                and digest == recorded_fp.get("sha256")
+                and len(payload) == recorded_fp.get("size")
+            ):
+                self._hashed_sidecars[path] = stat
+                section[key] = recorded_fp  # 内容未变：不重写冻结副本
+                continue
+            fingerprint = {"present": True, "sha256": digest, "size": len(payload)}
+            try:
+                store.write_frozen_sidecar(external_id, name, payload)
+            except OSError:
+                # 写副本失败（store 内 mkdir/tmp/replace，如 Windows 杀软锁住
+                # 目标文件触发 PermissionError）：降级保留 recorded 指纹并计入
+                # failed；缓存不写入，下轮 scan 的 size+mtime 快路径不生效，
+                # 会重试写副本。失败必须与读失败一样不逃出逐轮错误隔离。
+                self._sidecar_write_failures += 1
+                section[key] = recorded_fp if known else absent
+                continue
+            self._hashed_sidecars[path] = stat
+            section[key] = fingerprint
+        return section
+
+    def _refresh_skip_sidecars(
+        self, external_id: str, round_dir: Path, round_file: str, meta: dict,
+    ) -> None:
+        """Skip-path light refresh: freeze late/changed sidecars, patch meta.sidecars.
+
+        轻路径（同 §2.5 的读-改-写口径）：只动 sidecars 段，不重建 meta、不动
+        revisions/台账；指纹无变化时连 meta 都不重写（幂等，§SIDECARS 后到件）。
+        """
+        recorded = meta.get("sidecars")
+        section = self._freeze_sidecars(external_id, round_dir, round_file, recorded)
+        if section != recorded:
+            meta["sidecars"] = section
+            store.save_meta(external_id, meta)
 
     # ------------------------------------------------------------- proposals
 
