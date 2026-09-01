@@ -1,0 +1,13 @@
+name = "aiming-stats"
+main = "src/worker.js"
+compatibility_date = "2026-08-01"
+account_id = "db06f26da8dfb170ef578da1ab37b6e2"
+
+routes = [
+  { pattern = "aimingcookie.com/api/stats*", zone_name = "aimingcookie.com" }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aiming-stats"
+database_id = "6466dd4f-b4ad-4234-8c55-0b9dc4abe7a5"

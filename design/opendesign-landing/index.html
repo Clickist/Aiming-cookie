@@ -29,9 +29,7 @@
   <meta name="twitter:title" content="Aiming Cookie · 你的瞄准私教">
   <meta name="twitter:description" content="基于物理与运动学的 KovaaK's 瞄准诊断 + AI 教练，数据驱动定位瞄准短板，AI 私教免费下载。">
   <meta name="twitter:image" content="https://aimingcookie.com/logo.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&amp;family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <link href="fonts.css" rel="stylesheet">
   <style>
     /* ─── tokens（绑定 brand-spec.md · Light）───────────────────────── */
     :root {
@@ -588,7 +586,8 @@
         "@id": "https://aimingcookie.com/#org",
         "name": "Aiming Cookie",
         "url": "https://aimingcookie.com/",
-        "logo": "https://aimingcookie.com/logo.png"
+        "logo": "https://aimingcookie.com/logo.png",
+        "sameAs": ["https://space.bilibili.com/14425468"]
       },
       {
         "@type": "WebSite",
@@ -1232,6 +1231,18 @@
       });
     }
   </script>
-
+  <script>
+    // ─── 极简统计：页面浏览 + 下载点击（自托管 Worker，无 cookie、不存 IP 原文）───
+    (function () {
+      var send = function (d) {
+        try { navigator.sendBeacon('/api/stats/c', new Blob([JSON.stringify(d)], { type: 'application/json' })); } catch (e) {}
+      };
+      send({ t: 'pv', p: location.pathname, r: document.referrer || '' });
+      document.addEventListener('click', function (e) {
+        var a = e.target && e.target.closest ? e.target.closest('a[href$=".exe"]') : null;
+        if (a) send({ t: 'dl', p: location.pathname, d: a.getAttribute('href') });
+      }, { passive: true });
+    })();
+  </script>
 
 </body></html>
