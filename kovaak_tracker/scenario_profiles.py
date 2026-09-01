@@ -12,9 +12,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .telemetry_scenario_features import (
+    LIMITATION_FULL_ROUND_FALLBACK,
+    LIMITATION_GEOMETRY_ABSENT,
+    validate_scenario_observed_profile,
+)
+
 REGISTRY_SCHEMA_VERSION = "scenario_profile_registry.v1"
 MANIFEST_SCHEMA_VERSION = "launch_scenario_manifest.v1"
 RESOLUTION_SCHEMA_VERSION = "scenario_resolution.v1"
+# telemetry_observed 层：冻结旁车观测特征 + 判别树（candidate，插在本地 .sce
+# 之后、challenge_shape 之前）。特征/判别实现在 telemetry_scenario_features，
+# 这里只做合同校验与 resolution 组装。
+TELEMETRY_OBSERVED_CLASSIFICATION_SOURCE = "telemetry_observed"
+_OBSERVED_CANDIDATE_LIMITATION = "telemetry_observed_is_a_statistical_candidate_not_an_identity"
+_OBSERVED_TRACKING_ZERO_KILL_LIMITATION = "telemetry_observed_tracking_without_attributed_kills"
+_OBSERVED_WINDOW_FALLBACK_LIMITATION = "telemetry_observed_full_round_window_fallback"
+_OBSERVED_GEOMETRY_ABSENT_LIMITATION = "telemetry_observed_geometry_features_absent"
 _RESOURCE_ROOT = os.environ.get("AIMING_COOKIE_RESOURCE_ROOT", "").strip()
 SCENARIOS_DIR = (
     Path(_RESOURCE_ROOT) / "knowledge" / "scenarios"
@@ -795,6 +809,42 @@ def _challenge_shape_summary_limitation(verdict: Mapping[str, Any]) -> str:
     )
 
 
+def _telemetry_observed_resolution(
+    *,
+    scenario_hash: str | None,
+    display_name: str | None,
+    registry_version: str,
+    manifest_version: str,
+    observed: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Observed-feature family candidate: confidence candidate, descriptive only."""
+    verdict = observed["verdict"]
+    limitations = [
+        _OBSERVED_CANDIDATE_LIMITATION,
+        str(verdict["basis"]),
+    ]
+    observed_limitations = set(observed.get("limitations") or ())
+    if LIMITATION_FULL_ROUND_FALLBACK in observed_limitations:
+        limitations.append(_OBSERVED_WINDOW_FALLBACK_LIMITATION)
+    if LIMITATION_GEOMETRY_ABSENT in observed_limitations:
+        limitations.append(_OBSERVED_GEOMETRY_ABSENT_LIMITATION)
+    if verdict.get("zero_kill_variant"):
+        limitations.append(_OBSERVED_TRACKING_ZERO_KILL_LIMITATION)
+    limitations.extend(_FAMILY_BASELINE_LIMITATIONS)
+    return _family_baseline_resolution(
+        scenario_hash=scenario_hash,
+        display_name=display_name,
+        registry_version=registry_version,
+        manifest_version=manifest_version,
+        aim_family=verdict["aim_family"],
+        classification_source=TELEMETRY_OBSERVED_CLASSIFICATION_SOURCE,
+        classification_confidence="candidate",
+        subdomains=verdict.get("subdomains") or (),
+        target_motion=dict(verdict["target_motion"]),
+        limitations=limitations,
+    )
+
+
 def _challenge_shape_resolution(
     *,
     scenario_hash: str | None,
@@ -920,14 +970,15 @@ def resolve_scenario_profile(
     manifest: Mapping[str, Any] | None = None,
     behavior_descriptor: Mapping[str, Any] | None = None,
     challenge_shape: Mapping[str, Any] | None = None,
+    observed_profile: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Identify the aim family and dispatch its pipeline for any scenario.
 
     Resolution levels: exact reviewed hash (fast lane to the calibrated full
-    analysis), local `.sce` structure, the Stats-derived challenge shape, a
-    display-name candidate, or the unresolved default. Unreviewed identity only
-    withholds visual and target-relative claims — it never blocks the family
-    baseline pipeline.
+    analysis), local `.sce` structure, the telemetry-observed feature tree,
+    the Stats-derived challenge shape, a display-name candidate, or the
+    unresolved default. Unreviewed identity only withholds visual and
+    target-relative claims — it never blocks the family baseline pipeline.
     """
     data = validate_registry(registry) if registry is not None else load_registry()
     launch_manifest = (
@@ -973,6 +1024,19 @@ def resolve_scenario_profile(
                 target_count_model=(
                     "single" if descriptor["bot_count"] == 1 else "concurrent"
                 ),
+            )
+        observed = (
+            validate_scenario_observed_profile(observed_profile)
+            if observed_profile is not None
+            else None
+        )
+        if observed is not None and observed.get("verdict") is not None:
+            return _telemetry_observed_resolution(
+                scenario_hash=safe_hash,
+                display_name=safe_display_name,
+                registry_version=data["registry_version"],
+                manifest_version=launch_manifest["manifest_version"],
+                observed=observed,
             )
         shape = _valid_challenge_shape_descriptor(challenge_shape)
         shape_verdict = (

@@ -13,6 +13,7 @@ It is the extracted live subset of the old ``coach_commands`` module.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -319,6 +320,125 @@ def _apply_challenge_shape_resolution(
     return next_snapshot
 
 
+def _observed_profile_for_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+    """冻结旁车 -> scenario_observed_profile.v1（worker 遥测同款访问方式）。
+
+    与 worker._build_external_telemetry_visual_result 同缝：external_telemetry
+    源可用 + merge_manifest.alignment.accepted 才计算；判定窗用快照的
+    canonical_time_window（官方挑战窗）经 s_epoch_of_t0 映射；official kills
+    只取 meta.pairing.perf_official.kills。任何缺失返回 None（层让位）。
+    """
+    source = (snapshot.get("sources") or {}).get("external_telemetry")
+    if not isinstance(source, Mapping) or source.get("availability") != "available":
+        return None
+    external_id = source.get("external_run_id")
+    frames_path = source.get("frames_path")
+    if (
+        not isinstance(external_id, str) or not external_id
+        or not isinstance(frames_path, str) or not frames_path
+    ):
+        return None
+    window = snapshot.get("canonical_time_window")
+    start_ms = window.get("start_ms") if isinstance(window, Mapping) else None
+    end_ms = window.get("end_ms") if isinstance(window, Mapping) else None
+    if (
+        isinstance(start_ms, bool) or isinstance(end_ms, bool)
+        or not isinstance(start_ms, int) or not isinstance(end_ms, int)
+        or end_ms <= start_ms
+    ):
+        return None
+    from . import external_telemetry_store as telemetry_store
+    from . import file_store
+    from kovaak_tracker.telemetry_scenario_features import (
+        build_scenario_observed_profile,
+    )
+
+    meta = telemetry_store.load_meta(external_id)
+    if meta is None:
+        return None
+    manifest = file_store.read_json(
+        telemetry_store.sidecar_path(external_id, "merge_manifest.json"),
+    )
+    alignment = (
+        manifest.get("alignment")
+        if isinstance(manifest, dict) and isinstance(manifest.get("alignment"), dict)
+        else None
+    )
+    if alignment is None or alignment.get("accepted") is not True:
+        return None
+    origin = meta.get("origin") if isinstance(meta.get("origin"), dict) else {}
+    try:
+        round_number = int(origin.get("round"))
+    except (TypeError, ValueError):
+        return None
+    round_file = str(origin.get("round_file") or "").replace("\\", "/").rsplit("/", 1)[-1]
+    file_names = {
+        "round": "round.jsonl",
+        "views": (
+            telemetry_store.sidecar_source_name("views", round_file)
+            or f"views_{round_number:02d}.jsonl"
+        ),
+        "inputs": (
+            telemetry_store.sidecar_source_name("inputs", round_file)
+            or f"inputs_{round_number:02d}.jsonl"
+        ),
+    }
+    pairing = meta.get("pairing") if isinstance(meta.get("pairing"), dict) else None
+    perf_official = (
+        pairing.get("perf_official")
+        if isinstance(pairing, dict) and isinstance(pairing.get("perf_official"), dict)
+        else None
+    )
+    official_kills = perf_official.get("kills") if perf_official else None
+    if isinstance(official_kills, bool) or not isinstance(official_kills, int) or official_kills < 0:
+        official_kills = None
+    return build_scenario_observed_profile(
+        Path(frames_path).parent,
+        round_number,
+        file_names=file_names,
+        official_window_epoch_ms=(start_ms, end_ms),
+        official_kills=official_kills,
+    )
+
+
+def _apply_telemetry_observed_resolution(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Let the frozen-sidecar feature tree refine name/default identifications.
+
+    层序：reviewed hash 与用户 override 在顶层（override 已先行替换），本地
+    .sce 保持优先；本层只替换 name_heuristic/family_default，且在 challenge
+    shape 之前应用（观测特征是 button_samples 的严格超集）。任何旁车/特征
+    异常都静默让位——分类层绝不阻断分析。返回新快照，不就地修改。
+    """
+    resolution = snapshot.get("scenario_resolution")
+    if (
+        not isinstance(resolution, Mapping)
+        or resolution.get("classification_source")
+        not in {"name_heuristic", "family_default"}
+    ):
+        return snapshot
+    try:
+        profile = _observed_profile_for_snapshot(snapshot)
+    except (OSError, ValueError):
+        return snapshot
+    if profile is None:
+        return snapshot
+    from kovaak_tracker.scenario_profiles import resolve_scenario_profile
+
+    scenario_hash = resolution.get("scenario_hash")
+    scenario = resolution.get("display_name")
+    refined = resolve_scenario_profile(
+        scenario_hash if isinstance(scenario_hash, str) else None,
+        scenario if isinstance(scenario, str) else None,
+        observed_profile=profile,
+    )
+    if refined.get("classification_source") != "telemetry_observed":
+        return snapshot
+    next_snapshot = dict(snapshot)
+    next_snapshot["scenario_observed_profile"] = profile
+    next_snapshot["scenario_resolution"] = refined
+    return next_snapshot
+
+
 async def _run_may_be_reclassified(owner_id: str, run_id: int) -> bool:
     """True when the user-confirmed scenario memory may reclassify a done Run.
 
@@ -539,6 +659,8 @@ async def create_analysis_from_run(
     except (LookupError, ValueError) as exc:
         raise ProductCommandError("input_unavailable", str(exc), kind="unavailable") from exc
     snapshot = _apply_scenario_override_resolution(snapshot)
+    # 旁车观测层：旁车 JSONL 读取较重，放线程避免阻塞事件循环。
+    snapshot = await asyncio.to_thread(_apply_telemetry_observed_resolution, snapshot)
     snapshot = _apply_challenge_shape_resolution(run, snapshot)
     if reclassified:
         # The override leaves the done analysis stale only when it changes the
