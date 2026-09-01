@@ -1508,6 +1508,11 @@
   line-height: 1.5;
 }
 
+/* 汇总行主文字与思考/工具行统一 12px（0901 拍板）；meta 辅助字段仍 11px */
+.task6-tool-step--brief .task6-tool-meta {
+  font-size: var(--text-caption);
+}
+
 .task6-tool-step[data-state="fail"] .task6-tool-meta {
   color: var(--error);
 }
