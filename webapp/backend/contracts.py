@@ -672,7 +672,7 @@ def validate_scenario_resolution_v1(value: object) -> dict:
     if classification_source not in {
         "reviewed_registry", "official_metadata", "unknown", "name_heuristic",
         "user_declaration", "local_scenario_definition", "family_default",
-        "challenge_shape", "scenario_override",
+        "challenge_shape", "scenario_override", "telemetry_observed",
     }:
         raise ValueError("scenario_resolution.classification_source is invalid")
     confidence = value.get("classification_confidence")
@@ -823,10 +823,10 @@ def validate_scenario_resolution_v1(value: object) -> dict:
         # Baseline family dispatch: the identified family pipeline runs on
         # native facts without exact visual calibration. It is granted by a
         # verified local scenario definition, the Stats-derived challenge
-        # shape, a name-only family candidate, the unresolved default, a
-        # user-confirmed scenario override, or a reviewed profile whose
-        # manifest gate is not active (exact-review provenance kept, visual
-        # claims withheld).
+        # shape, the telemetry-observed feature tree, a name-only family
+        # candidate, the unresolved default, a user-confirmed scenario
+        # override, or a reviewed profile whose manifest gate is not active
+        # (exact-review provenance kept, visual claims withheld).
         if not (
             manifest_status != "active"
             and aim_family in {
@@ -841,7 +841,7 @@ def validate_scenario_resolution_v1(value: object) -> dict:
             raise ValueError("scenario_resolution baseline dispatch is inconsistent")
         if profile_ref is None and classification_source not in {
             "local_scenario_definition", "name_heuristic", "family_default",
-            "challenge_shape", "scenario_override",
+            "challenge_shape", "scenario_override", "telemetry_observed",
         }:
             raise ValueError("scenario_resolution baseline dispatch is inconsistent")
     elif dispatch != "none":

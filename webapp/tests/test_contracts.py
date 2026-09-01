@@ -544,6 +544,29 @@ def test_contract_allows_name_heuristic_tracking_baseline_candidate():
     assert validate_scenario_resolution_v1(resolution) == resolution
 
 
+def test_contract_allows_telemetry_observed_baseline_candidate():
+    """telemetry_observed 层：观测特征的 candidate 判别走同一条 baseline 合同。"""
+    resolution = _unknown_scenario_resolution()
+    resolution.update({
+        "classification_source": "telemetry_observed",
+        "classification_confidence": "candidate",
+        "aim_family": "static_clicking",
+        "subdomains": ["precision"],
+        "target_motion": {"model": "static", "target_count_model": "concurrent"},
+        "allowed_analyzers": ["static_clicking.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "family_analyzer_dispatch": "allowed",
+        "limitations": [
+            "telemetry_observed_is_a_statistical_candidate_not_an_identity",
+            "telemetry_observed_basis_precision_static",
+            "exact_visual_profile_unavailable",
+        ],
+    })
+
+    assert validate_scenario_resolution_v1(resolution) == resolution
+
+
 def test_contract_allows_family_default_static_baseline_dispatch():
     resolution = _unknown_scenario_resolution()
     resolution["display_name"] = None

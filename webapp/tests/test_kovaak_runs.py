@@ -2029,6 +2029,179 @@ def test_analysis_service_skips_challenge_shape_in_the_undecided_band():
 _OVERRIDE_HASH = "0123456789abcdef" * 2
 
 
+def _write_frozen_observed_sidecar(
+    *,
+    external_run_id: str,
+    s_epoch_of_t0: float = 1_700_000_000.0,
+    window_s: tuple[float, float] = (3.0, 19.0),
+    official_kills: int | None = 60,
+) -> dict:
+    """DATA_ROOT 里写一份最小冻结旁车：6 个静止并发目标 → 并发格 static_clicking。"""
+    import math
+
+    from webapp.backend import external_telemetry_store, file_store
+
+    round_dir = file_store._data_root() / "external" / external_run_id
+    round_dir.mkdir(parents=True, exist_ok=True)
+
+    def dump_jsonl(name: str, records: list[dict]) -> None:
+        (round_dir / name).write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+
+    views = []
+    frames = []
+    inputs = []
+    for index in range(int(20.0 * 25) + 1):
+        t = round(index * 0.04, 4)
+        views.append({"t": t, "pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, 0.0], "fov": 103.0})
+        targets = [
+            [1000 + slot, 2000.0, (slot - 2.5) * 200.0, 0.0]
+            for slot in range(6)
+        ]
+        frames.append({"ev": "frame", "t": t, "targets": targets})
+    click = window_s[0] + 1.0
+    while click < window_s[1] - 1.0:
+        inputs.append({"t": round(click, 4), "dx": 0, "dy": 0, "btn": ["L_down"]})
+        inputs.append({"t": round(click + 0.05, 4), "dx": 0, "dy": 0, "btn": ["L_up"]})
+        click += 0.5
+    dump_jsonl("round.jsonl", frames)
+    dump_jsonl("views_01.jsonl", views)
+    dump_jsonl("inputs_01.jsonl", inputs)
+    (round_dir / "bb.json").write_text(json.dumps({
+        "schema_version": "round_bb.v1",
+        "challenges": [{
+            "scenario": "synthetic grid",
+            "rounds": [1],
+            "window_t": [0.0, 20.0],
+            "bots": [{"character": {"bb": {"radius": 60.0}}}],
+        }],
+    }), encoding="utf-8")
+    (round_dir / "merge_manifest.json").write_text(json.dumps({
+        "schema_version": "round_merge.v1",
+        "alignment": {"method": "synthetic", "s_epoch_of_t0": s_epoch_of_t0, "accepted": True},
+    }), encoding="utf-8")
+    external_telemetry_store.save_meta(external_run_id, {
+        "schema_version": external_telemetry_store.SCHEMA_VERSION,
+        "external_run_id": external_run_id,
+        "origin": {"source_file": "synthetic.jsonl", "round": 1, "round_file": "round_01.jsonl"},
+        "pairing": {
+            "matched_run_ids": [],
+            "pair_confidence": "coarse",
+            "perf_official": (
+                {"scenario_name": "synthetic grid", "kills": official_kills}
+                if official_kills is not None else None
+            ),
+            "label_agreement": "unverifiable",
+        },
+    })
+    return {
+        "external_run_id": external_run_id,
+        "frames_path": str(round_dir / "round.jsonl"),
+        "canonical_time_window": {
+            "schema_version": "canonical_time_window.v1",
+            "start_ms": int((s_epoch_of_t0 + window_s[0]) * 1000),
+            "end_ms": int((s_epoch_of_t0 + window_s[1]) * 1000),
+            "duration_ms": int((window_s[1] - window_s[0]) * 1000),
+        },
+    }
+
+
+def _observed_refine_snapshot(resolution: dict, source: dict) -> dict:
+    return {
+        "schema_version": "analysis_input_snapshot.v3",
+        "scenario_resolution": resolution,
+        "canonical_time_window": source["canonical_time_window"],
+        "sources": {"external_telemetry": {
+            "availability": "available",
+            "external_run_id": source["external_run_id"],
+            "round": 1,
+            "frames_path": source["frames_path"],
+        }},
+    }
+
+
+def test_analysis_service_refines_name_candidates_with_telemetry_observation():
+    from webapp.backend import analysis_service, kovaak_run_projection
+    from webapp.backend.contracts import validate_scenario_resolution_v1
+    from webapp.backend.external_telemetry_store import external_run_id
+    from kovaak_tracker import scenario_profiles
+
+    name_resolution = scenario_profiles.resolve_scenario_profile(
+        "unreviewed-hash", display_name="Synthetic Grid Six",
+    )
+    assert name_resolution["classification_source"] == "name_heuristic"
+    source = _write_frozen_observed_sidecar(
+        external_run_id=external_run_id("synthetic|1|observed-grid"),
+    )
+    snapshot = _observed_refine_snapshot(name_resolution, source)
+
+    refined = analysis_service._apply_telemetry_observed_resolution(snapshot)
+
+    refined_resolution = refined["scenario_resolution"]
+    assert refined_resolution["classification_source"] == "telemetry_observed"
+    assert refined_resolution["classification_confidence"] == "candidate"
+    assert refined_resolution["aim_family"] == "static_clicking"
+    assert refined_resolution["allowed_analyzers"] == ["static_clicking.baseline.v1"]
+    assert refined_resolution["claim_ceiling"] == "descriptive_only"
+    validate_scenario_resolution_v1(refined_resolution)
+    profile = refined["scenario_observed_profile"]
+    assert profile["verdict"]["basis"] == "telemetry_observed_basis_concurrent_targets"
+    assert profile["window"]["kind"] == "official_pairing_window"
+    # 原快照不被就地修改；公开投影带观测特征束。
+    assert snapshot["scenario_resolution"]["classification_source"] == "name_heuristic"
+    assert "scenario_observed_profile" not in snapshot
+    public = kovaak_run_projection.public_analysis_input_snapshot(refined)
+    assert public["scenario_observed_profile"]["schema_version"] == (
+        "scenario_observed_profile.v1"
+    )
+    # 后续 challenge shape 层不再覆盖 telemetry_observed。
+    shaped = analysis_service._apply_challenge_shape_resolution(
+        _shape_refine_run(), refined,
+    )
+    assert shaped["scenario_resolution"]["classification_source"] == "telemetry_observed"
+    # family 驱动 analysis_type。
+    assert analysis_service._analysis_type_for_snapshot(refined) == "static_clicking"
+
+
+def test_analysis_service_telemetry_observation_respects_layer_precedence():
+    from webapp.backend import analysis_service
+    from webapp.backend.external_telemetry_store import external_run_id
+    from kovaak_tracker import scenario_profiles
+
+    source = _write_frozen_observed_sidecar(
+        external_run_id=external_run_id("synthetic|1|observed-precedence"),
+    )
+
+    # reviewed profile 与本地 .sce 在顶层，观测层不覆盖。
+    exact = scenario_profiles.resolve_scenario_profile(
+        "b2ae4a24b710e36afc6e57c61f590ab4",
+        display_name="WHJ SmoothStrafeSphere Easy",
+    )
+    assert analysis_service._apply_telemetry_observed_resolution(
+        _observed_refine_snapshot(exact, source),
+    )["scenario_resolution"] == exact
+    local_definition = dict(exact, classification_source="local_scenario_definition")
+    assert analysis_service._apply_telemetry_observed_resolution(
+        _observed_refine_snapshot(local_definition, source),
+    )["scenario_resolution"] == local_definition
+
+    # 遥测源不可用 → 安静让位。
+    missing_source_snapshot = _observed_refine_snapshot(
+        scenario_profiles.resolve_scenario_profile(
+            "unreviewed-hash", display_name="Synthetic Grid Six",
+        ),
+        source,
+    )
+    missing_source_snapshot["sources"]["external_telemetry"]["availability"] = "missing"
+    unchanged = analysis_service._apply_telemetry_observed_resolution(
+        missing_source_snapshot,
+    )
+    assert unchanged["scenario_resolution"]["classification_source"] == "name_heuristic"
+    assert "scenario_observed_profile" not in unchanged
+
+
 def _write_scenario_overrides(overrides: dict) -> None:
     from webapp.backend import config as backend_config
 
