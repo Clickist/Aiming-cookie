@@ -215,8 +215,8 @@ def _rebuild_matched_index() -> dict[int, list[str]]:
     return index
 
 
-def find_latest_matched_meta(kovaak_run_id: int) -> dict | None:
-    """Return the newest imported meta whose pairing matched this KovaaK run."""
+def _matched_external_ids(kovaak_run_id: int) -> list[str]:
+    """Matched external ids for one KovaaK run from the (lazily rebuilt) index."""
     signature = _matched_index_signature()
     with _MATCHED_INDEX_LOCK:
         cached = _MATCHED_INDEX["by_run_id"]
@@ -227,10 +227,21 @@ def find_latest_matched_meta(kovaak_run_id: int) -> dict | None:
             _MATCHED_INDEX["signature"] = signature
             _MATCHED_INDEX["by_run_id"] = by_run_id
             external_ids = by_run_id.get(int(kovaak_run_id))
-    if not external_ids:
-        return None
-    metas = [meta for meta in (load_meta(item) for item in external_ids) if meta is not None]
-    if not metas:
-        return None
+    return list(external_ids or [])
+
+
+def matched_metas(kovaak_run_id: int) -> list[dict]:
+    """All metas whose pairing matched this KovaaK run, newest import first."""
+    metas = [
+        meta
+        for meta in (load_meta(item) for item in _matched_external_ids(kovaak_run_id))
+        if meta is not None
+    ]
     metas.sort(key=lambda meta: str(meta.get("imported_at", "")), reverse=True)
-    return metas[0]
+    return metas
+
+
+def find_latest_matched_meta(kovaak_run_id: int) -> dict | None:
+    """Return the newest imported meta whose pairing matched this KovaaK run."""
+    metas = matched_metas(kovaak_run_id)
+    return metas[0] if metas else None

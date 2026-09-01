@@ -372,7 +372,92 @@ def _local_scenario_behavior_descriptor(
     return parse_local_scenario_behavior_descriptor(data, expected_display_name=scenario)
 
 
-def _external_telemetry_source(run_id: int, user_id: object) -> dict[str, object]:
+def _ext_epoch_window_ms(meta: dict) -> tuple[float, float] | None:
+    """ext meta 的绝对纪元窗（ms）：time.t_start/t_end + epoch anchor 换算。
+
+    anchor 或 t 域缺失/不可信（t_end <= t_start）时返回 None——该候选无法
+    参与挑战窗贴合度比较。
+    """
+    time_meta = meta.get("time") if isinstance(meta.get("time"), dict) else {}
+    anchor = (
+        time_meta.get("epoch_anchor")
+        if isinstance(time_meta.get("epoch_anchor"), dict) else {}
+    )
+    anchor_start = anchor.get("epoch_start_est")
+    t_start = time_meta.get("t_start")
+    t_end = time_meta.get("t_end")
+    numeric = (int, float)
+    if (
+        not isinstance(anchor_start, numeric) or isinstance(anchor_start, bool)
+        or not isinstance(t_start, numeric) or isinstance(t_start, bool)
+        or not isinstance(t_end, numeric) or isinstance(t_end, bool)
+        or t_end <= t_start
+    ):
+        return None
+    return ((anchor_start + t_start) * 1000.0, (anchor_start + t_end) * 1000.0)
+
+
+def _select_external_telemetry_meta(
+    metas: list[dict],
+    run_id: int,
+    run_window_ms: tuple[object, object] | None,
+) -> dict | None:
+    """为 run 从多个配对 ext 轮里按挑战窗贴合度选优（快照选轮用）。
+
+    粗配对（±1s 窗交集）可能把同一 run 匹配给多条 ext 轮（相邻轮边界重叠），
+    只按 imported_at 取最新会选错轮次。这里换算每条 ext 的绝对纪元窗，与 run
+    的官方挑战窗比较：
+
+    1. 覆盖率降序（交集时长 / run 窗时长，夹到 [0,1]）；
+    2. 平手时优先"该 run 是其唯一匹配"，再优先"该 run 是其 perf_official
+       主匹配"的 ext；
+    3. 再平手取 ext 起点接近度；最终平手保持 imported_at 最新（旧语义兜底）。
+
+    run 窗缺失/无效，或候选窗不可换算时，回退旧行为（imported_at 最新）。
+    输入 metas 约定已按 imported_at 新→旧排序（matched_metas 的输出），
+    排序稳定，完整平手时保持该顺序。
+    """
+    if not metas:
+        return None
+    start_ms, end_ms = run_window_ms if run_window_ms is not None else (None, None)
+    numeric = (int, float)
+    window_valid = (
+        isinstance(start_ms, numeric) and not isinstance(start_ms, bool)
+        and isinstance(end_ms, numeric) and not isinstance(end_ms, bool)
+        and end_ms > start_ms
+    )
+    if not window_valid:
+        return metas[0]
+    duration_ms = end_ms - start_ms
+
+    def _sort_key(meta: dict) -> tuple:
+        window = _ext_epoch_window_ms(meta)
+        if window is None:
+            # 不可换算的候选排在一切可换算候选之后（coverage 哨兵 -1）。
+            return (1.0, 0, 0, float("inf"))
+        overlap = min(end_ms, window[1]) - max(start_ms, window[0])
+        coverage = max(0.0, min(1.0, overlap / duration_ms))
+        pairing = meta.get("pairing") if isinstance(meta.get("pairing"), dict) else {}
+        matched = (
+            pairing.get("matched_run_ids")
+            if isinstance(pairing.get("matched_run_ids"), list) else []
+        )
+        unique = 1 if len(matched) == 1 and matched[0] == run_id else 0
+        official = (
+            pairing.get("perf_official")
+            if isinstance(pairing.get("perf_official"), dict) else {}
+        )
+        primary = 1 if official.get("run_id") == run_id else 0
+        return (-coverage, -unique, -primary, abs(window[0] - start_ms))
+
+    return min(metas, key=_sort_key)
+
+
+def _external_telemetry_source(
+    run_id: int,
+    user_id: object,
+    run_window_ms: tuple[object, object] | None = None,
+) -> dict[str, object]:
     """外部遥测源以“可用/不可用 + 原因”进入快照（照抄 video 不可用桩模式）：
     分析结果、progressive disclosure 与 Coach 才能区分“没有配对轮”与“配对
     了但冻结侧已过期”，而不是把事实静默吞掉。
@@ -381,6 +466,10 @@ def _external_telemetry_source(run_id: int, user_id: object) -> dict[str, object
     meta.sidecars（SIDECARS.md v1 冻结旁车）记录的指纹与冻结侧现状不符
     （含副本缺失）即 unavailable + sidecars_stale，绝不把对不上的旧副本
     当新数据用；帧副本缺失单独给 frames_missing。
+
+    多条 ext 轮匹配同一 run 时按挑战窗贴合度选优（run_window_ms =
+    (window_start_epoch_ms, window_end_epoch_ms)，见
+    _select_external_telemetry_meta）；窗缺失时保持旧行为（最新导入优先）。
     """
     from . import external_telemetry_store as telemetry_store
 
@@ -394,7 +483,9 @@ def _external_telemetry_source(run_id: int, user_id: object) -> dict[str, object
         "pairing_confidence": None,
         "reason": "telemetry_not_paired",
     }
-    meta = telemetry_store.find_latest_matched_meta(run_id)
+    meta = _select_external_telemetry_meta(
+        telemetry_store.matched_metas(run_id), run_id, run_window_ms,
+    )
     # 外部遥测按本机单用户导入；owner 不一致的配对视为不存在（fail-closed）。
     if meta is None or meta.get("user_id") != user_id:
         return source
@@ -541,8 +632,16 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
         }
     # 外部遥测源（ExternalTelemetryRun）：无论可用与否都进快照，理由同上——
     # “没配对/已过期/可用”三种事实都要可观测（telemetry_multimodal tier 的
-    # producer 在后续切片接入，本切片只做源注入与档位门控）。
-    sources["external_telemetry"] = _external_telemetry_source(run_id, run.get("user_id"))
+    # producer 在后续切片接入，本切片只做源注入与档位门控）。选轮按挑战窗
+    # 贴合度选优，避免相邻轮窗交叠时粗配对把别的轮错配给本 run。
+    sources["external_telemetry"] = _external_telemetry_source(
+        run_id,
+        run.get("user_id"),
+        run_window_ms=(
+            run.get("window_start_epoch_ms"),
+            run.get("window_end_epoch_ms"),
+        ),
+    )
     canonical_time_window = _canonical_time_window_from_run(run)
     performance_summary = run.get("performance_summary")
     performance_header = (
