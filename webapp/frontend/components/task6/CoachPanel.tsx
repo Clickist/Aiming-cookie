@@ -46,7 +46,7 @@ import {
 } from "@/lib/quote";
 import { CoachMessageText } from "@/components/task7/CoachMessageText";
 import { CoachModelMenu } from "./CoachModelMenu";
-import { CoachWorkStream, ElapsedTicker, type CoachToolStep, type CoachWorkSegment } from "./CoachRunActivity";
+import { CoachWorkStream, ElapsedTicker, freezeThinkingSegment, settleTerminalWorkSegments, type CoachToolStep, type CoachWorkSegment } from "./CoachRunActivity";
 import type {
   CoachAgentRunEventV1,
   CoachAgentRunV1,
@@ -210,24 +210,6 @@ function stepFromToolEvent(event: CoachAgentRunEventV1, previous: CoachToolStep 
         : previous?.startedAtMs ?? null,
     argsPreview: argsPreview ?? previous?.argsPreview ?? null,
     resultPreview: resultPreview ?? previous?.resultPreview ?? null,
-  };
-}
-
-/** 冻结一个思考段：终文落定、流式终止、时长按冻结时刻与段起点差补算。 */
-function freezeThinkingSegment(
-  segment: Extract<CoachWorkSegment, { kind: "thinking" }>,
-  text: string | null,
-  frozenAtMs: number | null,
-): Extract<CoachWorkSegment, { kind: "thinking" }> {
-  return {
-    ...segment,
-    text: text ?? segment.text,
-    streaming: false,
-    frozenMs:
-      segment.frozenMs
-      ?? (segment.startedAtMs != null && frozenAtMs != null && frozenAtMs > segment.startedAtMs
-        ? frozenAtMs - segment.startedAtMs
-        : null),
   };
 }
 
@@ -1217,10 +1199,13 @@ export function CoachPanel({
   }, [liveRunRef, refresh, refreshCurrentTraining, sessionId, clearThinkingStream, applyLiveActivity]);
 
   /** 工作流时序段（run 期间）：SSE 实时优先，轮询兜底从 events 重建；
-      分析类长任务注入本机历史 ETA。 */
+      分析类长任务注入本机历史 ETA。run 到达终态后残留的流式思考段/活动
+      工具步就地终结——失败路径没有 settleSucceeded 的归档清场，不冻结的话
+      「思考中」扫光与经过计时会永远挂在错误卡片上方（0.1.12 真机修复）。 */
   const workSegments = useMemo(() => {
     const source = liveSegments.length > 0 ? liveSegments : deriveWorkSegments(run);
-    return source.map((segment) =>
+    const terminal = run != null && !["queued", "running"].includes(run.status);
+    return (terminal ? settleTerminalWorkSegments(source, Date.now()) : source).map((segment) =>
       segment.kind === "tool"
         && segment.step.command
         && ANALYSIS_ETA_COMMANDS.has(segment.step.command)

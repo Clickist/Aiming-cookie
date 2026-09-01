@@ -510,6 +510,11 @@ a {
   opacity: 1;
   transform: translateY(0);
   transition: opacity var(--duration-surface) var(--ease-out), transform var(--duration-surface) var(--ease-out);
+  /* Toast 悬浮在窗口右下角，与 Coach composer 的发送键几何重叠（窗口宽度
+       <~1568px 时必重叠，视频面板开启的窄对话列同样命中）；5 秒存活期内
+       它会整块吃掉发送键的点击（0.1.12 真机「发送键要点好几次」）。
+       正文是被动状态提示，不拦截下层点击；只保留关闭按钮可点。 */
+  pointer-events: none;
 }
 
 .ac-toast[data-state="closed"] {
@@ -545,6 +550,8 @@ a {
 .ac-toast__close {
   flex: 0 0 auto;
   color: var(--inverse-on-surface);
+  /* 容器 pointer-events:none 后，关闭按钮自己恢复可点。 */
+  pointer-events: auto;
 }
 
 .ac-dialog {

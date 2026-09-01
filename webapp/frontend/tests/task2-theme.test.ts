@@ -207,3 +207,12 @@ test("dialog and toast motion is state-driven and compositor-friendly", () => {
   assert.match(css, /\.ac-dialog\[data-state="closed"\][^{]*\{[^}]*opacity:\s*0[^}]*transform:\s*translate\(-50%, -50%\) scale\(0\.97\)/s);
   assert.doesNotMatch(css, /\.ac-(?:toast|dialog)[^}]*transition:[^;}]*(?:height|width|margin|padding|top|left)/s);
 });
+
+test("toast body is click-transparent so it never blocks the composer send key", () => {
+  const css = readFileSync(join(frontendRoot, "ui", "theme.css"), "utf8");
+
+  // Toast 固定在窗口右下角，与 Coach composer 发送键几何重叠（0.1.12 真机
+  // 「发送键要点好几次」）：5 秒存活期内正文不得拦截下层点击，只留关闭钮可点。
+  assert.match(css, /\.ac-toast\s*\{[^}]*pointer-events:\s*none;/);
+  assert.match(css, /\.ac-toast__close\s*\{[^}]*pointer-events:\s*auto;/);
+});
