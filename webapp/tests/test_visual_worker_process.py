@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -485,3 +489,40 @@ async def test_parent_fails_bounded_and_kills_a_hung_visual_child(monkeypatch) -
         await worker.run_visual_preprocessing_isolated({"id": 10})
 
     assert hung.terminated is True
+
+
+def test_fresh_interpreter_visual_worker_never_returns_attribute_error(
+    tmp_path: Path,
+) -> None:
+    # Regression: a brand-new `python -m webapp.backend.visual_worker_process`
+    # used to answer code=attribute_error because importing config eagerly
+    # re-entered kovaak_directory_store -> file_store while file_store was
+    # still partially initialized. In-process tests hide the ring (they import
+    # config first), so this must run in a fresh interpreter. The KOVAAK_*
+    # overrides are dropped because they short-circuit the eager resolution
+    # and would mask the cycle (conftest sets KOVAAK_INSTALL_DIR).
+    repo_root = Path(__file__).resolve().parents[2]
+    child_env = dict(os.environ)
+    child_env["DATA_ROOT"] = str(tmp_path / "data-root")
+    for name in ("KOVAAK_INSTALL_DIR", "KOVAAK_STATS_DIR", "KOVAAK_PERFORMANCE_DIR"):
+        child_env.pop(name, None)
+    child_env["PYTHONPATH"] = (
+        str(repo_root) + os.pathsep + child_env.get("PYTHONPATH", "")
+    ).rstrip(os.pathsep)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "webapp.backend.visual_worker_process"],
+        input=json.dumps({"job": {"id": 7, "input_snapshot": {}}}).encode("ascii"),
+        capture_output=True,
+        cwd=repo_root,
+        env=child_env,
+        timeout=120,
+    )
+
+    if not completed.stdout and b"cv2" in completed.stderr:
+        pytest.skip("cv2 unavailable: child cannot reach the visual job path")
+    response = json.loads(completed.stdout.decode("utf-8"))
+    assert response["ok"] is False
+    assert response["error"]["code"] != "attribute_error", (
+        completed.stderr.decode("utf-8", "replace")
+    )

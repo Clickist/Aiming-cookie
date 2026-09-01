@@ -344,8 +344,22 @@ def resolve_kovaak_data_dirs() -> tuple[Path | None, Path | None]:
     )
 
 
-KOVAAK_STATS_DIR, KOVAAK_PERFORMANCE_DIR = resolve_kovaak_data_dirs()
-KOVAAK_STATS_DIRS, KOVAAK_PERFORMANCE_DIRS = resolve_kovaak_data_dir_candidates()
+# Resolved lazily on first attribute access (PEP 562). Import-time resolution
+# re-enters kovaak_directory_store -> file_store, which fails with
+# AttributeError when file_store is still partially initialized (the visual
+# worker subprocess imports file_store/analysis_output before config).
+def __getattr__(name: str):
+    if name in ("KOVAAK_STATS_DIR", "KOVAAK_PERFORMANCE_DIR"):
+        stats, performance = resolve_kovaak_data_dirs()
+        globals()["KOVAAK_STATS_DIR"] = stats
+        globals()["KOVAAK_PERFORMANCE_DIR"] = performance
+    elif name in ("KOVAAK_STATS_DIRS", "KOVAAK_PERFORMANCE_DIRS"):
+        stats_dirs, performance_dirs = resolve_kovaak_data_dir_candidates()
+        globals()["KOVAAK_STATS_DIRS"] = stats_dirs
+        globals()["KOVAAK_PERFORMANCE_DIRS"] = performance_dirs
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return globals()[name]
 KOVAAK_WATCH_POLL_SECONDS = float(os.environ.get("KOVAAK_WATCH_POLL_SECONDS", "1.0"))
 
 # Legacy compatibility inputs only. Active Coach/worker provider selection is
