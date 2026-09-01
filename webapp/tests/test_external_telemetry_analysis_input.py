@@ -60,8 +60,18 @@ def _write_paired_external_run(
     *,
     external_run_id: str,
     imported_at: str,
+    t_start: float = 0.0,
+    t_end: float = 0.031,
+    epoch_start_est: float | None = None,
+    matched_run_ids: list[int] | None = None,
+    perf_official: dict | None = None,
 ) -> dict:
-    """写一个配对到指定 KovaaK run 的 ExternalTelemetryRun（meta + 冻结件）。"""
+    """写一个配对到指定 KovaaK run 的 ExternalTelemetryRun（meta + 冻结件）。
+
+    epoch_start_est 给出时写入 time.epoch_anchor，使选轮逻辑可用绝对纪元窗
+    做挑战窗贴合度比较；matched_run_ids/perf_official 默认照旧（单匹配、
+    无主指认）。
+    """
     frames = b'{"ev":"frame","t":0.0}\n{"ev":"frame","t":0.031}\n'
     sidecar_sources = {
         "bb": b'{"bb": [1, 2, 3]}',
@@ -72,6 +82,12 @@ def _write_paired_external_run(
         name = store.sidecar_source_name(key, "round_03.jsonl")
         assert name is not None
         store.write_frozen_sidecar(external_run_id, name, payload)
+    time_meta: dict = {"t_start": t_start, "t_end": t_end, "duration": t_end - t_start}
+    if epoch_start_est is not None:
+        time_meta["epoch_anchor"] = {
+            "epoch_start_est": epoch_start_est,
+            "method": "filename_stamp",
+        }
     meta = {
         "schema_version": store.SCHEMA_VERSION,
         "external_run_id": external_run_id,
@@ -91,13 +107,15 @@ def _write_paired_external_run(
             "round_mtime_ns": 0,
             "import_parser_version": store.IMPORT_PARSER_VERSION,
         },
-        "time": {"t_start": 0.0, "t_end": 0.031, "duration": 0.031},
+        "time": time_meta,
         "scenario_proposal": {"source": "pending"},
         # pairing.matched_run_ids 由 ingest.pair_runs 生成（±1s 窗配对）。
         "pairing": {
-            "matched_run_ids": [run_id],
+            "matched_run_ids": (
+                [run_id] if matched_run_ids is None else matched_run_ids
+            ),
             "pair_confidence": "coarse",
-            "perf_official": None,
+            "perf_official": perf_official,
             "label_agreement": "unverifiable",
         },
         "sidecars": {
@@ -109,7 +127,7 @@ def _write_paired_external_run(
     }
     store.save_meta(external_run_id, meta)
     ledger = store.read_ledger()
-    ledger[f"demo|3|demo"] = {
+    ledger[f"demo|3|{external_run_id}"] = {
         "status": "imported",
         "external_run_id": external_run_id,
         "content_hash": _sha256(frames),
@@ -233,3 +251,80 @@ async def test_newest_paired_external_run_wins(tmp_path: Path):
     snapshot = await kovaak_run_store.build_analysis_input_snapshot(run["id"], "u1")
 
     assert snapshot["sources"]["external_telemetry"]["external_run_id"] == "ext-new0001"
+
+
+@pytest.mark.asyncio
+async def test_multiple_matched_rounds_pick_best_window_fit(tmp_path: Path):
+    """多 ext 轮匹配同一 run：按挑战窗覆盖度选优，不按最新导入。
+
+    回归 0901 真机 54044：相邻轮窗交叠使粗配对同时命中 round 2/round 3，
+    旧逻辑按 imported_at 取 latest 错选 round 2（1wall6 的靶子数据）。
+    """
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id="u1", source_key="multi-match-telemetry-run",
+    )
+    # 全覆盖轮（旧导入）：绝对窗 [0, 4000]ms 完整罩住 run 窗 [1000, 2000]ms。
+    _write_paired_external_run(
+        run["id"], "u1",
+        external_run_id="ext-fullcov1", imported_at="2026-08-30T00:00:00Z",
+        t_start=0.0, t_end=4.0, epoch_start_est=0.0,
+    )
+    # 边缘重叠轮（新导入）：绝对窗 [1900, 3000]ms 只盖 run 窗尾部 10%。
+    _write_paired_external_run(
+        run["id"], "u1",
+        external_run_id="ext-edgecov1", imported_at="2026-08-31T12:00:00Z",
+        t_start=1.9, t_end=3.0, epoch_start_est=0.0,
+    )
+
+    snapshot = await kovaak_run_store.build_analysis_input_snapshot(run["id"], "u1")
+
+    assert snapshot["sources"]["external_telemetry"]["external_run_id"] == "ext-fullcov1"
+
+
+@pytest.mark.asyncio
+async def test_window_tie_prefers_run_unique_primary_match(tmp_path: Path):
+    """覆盖率平手：优先“该 run 是其唯一/主要匹配”的 ext，而非最新导入。"""
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id="u1", source_key="tie-telemetry-run",
+    )
+    # 唯一匹配 + perf_official 主指认（旧导入），窗口与共享轮同样全覆盖。
+    _write_paired_external_run(
+        run["id"], "u1",
+        external_run_id="ext-uniq0001", imported_at="2026-08-30T00:00:00Z",
+        t_start=0.5, t_end=2.5, epoch_start_est=0.0,
+        perf_official={"run_id": run["id"], "scenario_name": "Fixture"},
+    )
+    # 多匹配、无主指认（新导入），覆盖率同为 1.0。
+    _write_paired_external_run(
+        run["id"], "u1",
+        external_run_id="ext-shared01", imported_at="2026-08-31T12:00:00Z",
+        t_start=0.5, t_end=2.5, epoch_start_est=0.0,
+        matched_run_ids=[run["id"], 999_999],
+    )
+
+    snapshot = await kovaak_run_store.build_analysis_input_snapshot(run["id"], "u1")
+
+    assert snapshot["sources"]["external_telemetry"]["external_run_id"] == "ext-uniq0001"
+
+
+@pytest.mark.asyncio
+async def test_single_and_no_match_selection_unchanged(tmp_path: Path):
+    """单匹配照选唯一轮；无匹配照旧 unavailable + telemetry_not_paired。"""
+    run, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id="u1", source_key="single-match-telemetry-run",
+    )
+    _write_paired_external_run(
+        run["id"], "u1",
+        external_run_id="ext-single01", imported_at="2026-08-30T00:00:00Z",
+        t_start=0.0, t_end=4.0, epoch_start_est=0.0,
+    )
+    snapshot = await kovaak_run_store.build_analysis_input_snapshot(run["id"], "u1")
+    assert snapshot["sources"]["external_telemetry"]["external_run_id"] == "ext-single01"
+    assert snapshot["sources"]["external_telemetry"]["availability"] == "available"
+
+    unpaired, _, _, _ = await _complete_multimodal_run(
+        tmp_path, user_id="u1", source_key="no-match-telemetry-run",
+    )
+    snapshot = await kovaak_run_store.build_analysis_input_snapshot(unpaired["id"], "u1")
+    assert snapshot["sources"]["external_telemetry"]["availability"] == "unavailable"
+    assert snapshot["sources"]["external_telemetry"]["reason"] == "telemetry_not_paired"

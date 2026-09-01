@@ -3483,12 +3483,23 @@ async def process_one() -> bool:
             video_availability = None
             warnings: list[dict] = []
             visual_validation = None
+            snapshot = job.get("input_snapshot") or {}
             if (
                 input_mode == "multimodal"
-                and scenario_dispatch not in _FAMILY_BASELINE_ANALYSIS_VERSIONS
+                and (
+                    scenario_dispatch not in _FAMILY_BASELINE_ANALYSIS_VERSIONS
+                    or (
+                        # baseline 档默认不进视觉管线（无遥测源时行为不变）；
+                        # 但声明了可用遥测源的作业优先 producer 真值投影，
+                        # 失败回退/CV 兜底语义与本块其余分支一致。
+                        snapshot.get("schema_version") in {
+                            "analysis_input_snapshot.v2", "analysis_input_snapshot.v3",
+                        }
+                        and _external_telemetry_source(job) is not None
+                    )
+                )
             ):
                 await queue.set_task_phase(sid, "analyzing_video", worker_id=WORKER_ID)
-                snapshot = job.get("input_snapshot") or {}
                 if snapshot.get("schema_version") in {
                     "analysis_input_snapshot.v2", "analysis_input_snapshot.v3",
                 }:

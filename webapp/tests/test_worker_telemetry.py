@@ -340,6 +340,8 @@ async def _run_process_one(
     telemetry_builder=None,
     cv_pipeline=None,
     tracking_analysis=None,
+    native_analysis=None,
+    dynamic_analysis=None,
 ):
     """跑一次 process_one，返回 result 与各 mock。queue 与重活全部隔离；
     传 None 的分析函数不 patch（走真实实现）。"""
@@ -404,6 +406,16 @@ async def _run_process_one(
         conditional.append(("tracking", patch(
             "webapp.backend.worker.run_continuous_tracking_analysis",
             side_effect=tracking_analysis,
+        )))
+    if native_analysis is not None:
+        conditional.append(("native", patch(
+            "webapp.backend.worker.run_native_analysis",
+            side_effect=native_analysis,
+        )))
+    if dynamic_analysis is not None:
+        conditional.append(("dynamic", patch(
+            "webapp.backend.worker.run_dynamic_clicking_analysis",
+            side_effect=dynamic_analysis,
         )))
     if telemetry_builder is not None:
         conditional.append(("builder", patch(
@@ -732,3 +744,227 @@ async def test_tracking_adapter_timeout_falls_back_to_outcome_only():
         "continuous_tracking_analysis_unavailable",
     ]
     assert {"code": "continuous_tracking_analyzer_unavailable"} in result["warnings"]
+
+
+def _baseline_scenario_resolution(aim_family: str) -> dict:
+    """baseline 档分辨率（telemetry_observed 分类、unlisted——0901 真机 33/34
+    session 快照口径）：dispatch 落 {family}.baseline.v1。"""
+    resolution = _scenario_resolution()
+    resolution.update({
+        "aim_family": aim_family,
+        "display_name": f"Fixture {aim_family}",
+        "scenario_profile_ref": None,
+        "classification_source": "telemetry_observed",
+        "classification_confidence": "candidate",
+        "profile_status": "unknown",
+        "reviewed_at": None,
+        "source_refs": [],
+        "supersedes": [],
+        "manifest_status": "unlisted",
+        "fixture_ref": None,
+        "review_source_ref": None,
+        "manifest_reviewed_at": None,
+        "family_gate_refs": [],
+        "allowed_analyzers": [f"{aim_family}.baseline.v1"],
+        "allowed_metric_families": ["outcome", "input_kinematics"],
+        "claim_ceiling": "descriptive_only",
+        "target_motion": {"model": "static", "target_count_model": "concurrent"},
+        "limitations": ["exact_visual_profile_unavailable"],
+    })
+    return resolution
+
+
+def _dynamic_family_fixture() -> dict:
+    """run_dynamic_clicking_analysis 的最小桩（形状对齐 _family_fixture）。"""
+    metric_key = "dynamic_clicking.normalized_click_error"
+    fixture = _family_fixture()
+    fixture.update({
+        "schema_version": "dynamic_clicking_analysis.v1",
+        "analysis_version": "dynamic_clicking.v1",
+        "analysis_type": "dynamic_clicking",
+    })
+    metric = next(iter(fixture["metrics"].values()))
+    metric.update({
+        "metric_key": metric_key,
+        "metric_version": f"{metric_key}.v1",
+    })
+    fixture["metrics"] = {metric_key: metric}
+    return fixture
+
+
+def _cv_visual_stub(*, enabled_families: tuple[str, ...] = ("tracking",)) -> dict:
+    """CV 子进程产物桩（形状同 _cv_visual）；enabled_families 供各 family
+    质量门调整，避免与模块级 _cv_visual 混用。"""
+    visual = _cv_visual()
+    visual["quality"]["enabled_metric_families"] = list(enabled_families)
+    visual["safe_summary"]["enabled_metric_families"] = list(enabled_families)
+    return visual
+
+
+@pytest.mark.asyncio
+async def test_baseline_dispatch_with_telemetry_uses_producer():
+    """baseline 档 + 遥测源：producer 被调用（真值投影进 evidence 链），
+    CV 子进程不触发，结果保持 baseline 档且无降级标记（0901 真机 33/34
+    静默跳过遥测的回归）。"""
+    ext_dir = _write_frozen_external_run(_data_root())
+    job = _telemetry_job(ext_dir)
+    job["input_snapshot"]["scenario_resolution"] = _baseline_scenario_resolution(
+        "dynamic_clicking",
+    )
+
+    mocks = await _run_process_one(
+        job,
+        telemetry_builder=MagicMock(return_value=_cv_visual()),
+        native_analysis=lambda *_args, **_kwargs: (_native_result_stub(), None),
+    )
+
+    mocks["builder"].assert_called_once()
+    mocks["cv_plain"].assert_not_called()
+    result = mocks["result"]
+    assert result["analysis_version"] == "dynamic_clicking.baseline.v1"
+    assert result["analysis_type"] == "dynamic_clicking"
+    assert not [
+        warning for warning in result["warnings"]
+        if str(warning.get("code", "")).startswith("external_telemetry_unavailable")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_baseline_producer_failure_falls_back_to_cv_with_marker():
+    """baseline 档 + producer 失败 + video 可用：回退 CV 子进程，结果带
+    external_telemetry_unavailable 降级标记（_mark_telemetry_fallback）。"""
+    ext_dir = _write_frozen_external_run(_data_root())
+    job = _telemetry_job(ext_dir)
+    job["input_snapshot"]["scenario_resolution"] = _baseline_scenario_resolution(
+        "continuous_tracking",
+    )
+    job["video_path"] = "managed.mp4"
+
+    def _boom(_job):
+        raise worker.TelemetryPipelineError("telemetry_projection_failed")
+
+    mocks = await _run_process_one(
+        job,
+        telemetry_builder=_boom,
+        native_analysis=lambda *_args, **_kwargs: (_native_result_stub(), None),
+    )
+
+    mocks["builder"].assert_called_once()
+    mocks["cv_plain"].assert_called_once()
+    result = mocks["result"]
+    assert result["analysis_version"] == "continuous_tracking.baseline.v1"
+    marker = "external_telemetry_unavailable:telemetry_projection_failed"
+    assert {"code": marker} in result["warnings"]
+    assert marker in result["deterministic"]["limitations"]
+
+
+@pytest.mark.asyncio
+async def test_baseline_without_telemetry_keeps_previous_path():
+    """baseline 档无遥测源：不碰 producer 也不碰 CV 视觉管线，行为与改动前
+    完全一致（generic 视觉链路不在本测范围）。"""
+    ext_dir = _write_frozen_external_run(_data_root())
+    job = _telemetry_job(ext_dir, with_telemetry=False)
+    job["input_snapshot"]["scenario_resolution"] = _baseline_scenario_resolution(
+        "dynamic_clicking",
+    )
+
+    mocks = await _run_process_one(
+        job,
+        telemetry_builder=MagicMock(),  # 不该被调用；仅作断言桩
+        native_analysis=lambda *_args, **_kwargs: (_native_result_stub(), None),
+    )
+
+    mocks["builder"].assert_not_called()
+    mocks["cv_plain"].assert_not_called()
+    result = mocks["result"]
+    assert result["analysis_version"] == "dynamic_clicking.baseline.v1"
+    assert "external_telemetry_unavailable" not in str(result["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_static_native_without_telemetry_keeps_cv_path():
+    """static（native_flicking.v1）无遥测源：producer 不被调用，visual 走
+    CV 子进程——与接线前行为一致。"""
+    ext_dir = _write_frozen_external_run(_data_root())
+    job = _telemetry_job(ext_dir, with_telemetry=False)
+    job["input_snapshot"]["scenario_resolution"] = _static_scenario_resolution()
+    job["video_path"] = "managed.mp4"
+
+    mocks = await _run_process_one(
+        job,
+        telemetry_builder=MagicMock(),  # 不该被调用；仅作断言桩
+        native_analysis=lambda *_args, **_kwargs: (_native_result_stub(), None),
+    )
+
+    mocks["builder"].assert_not_called()
+    mocks["cv_plain"].assert_called_once()
+    result = mocks["result"]
+    assert result["analysis_version"] == worker.NATIVE_ANALYSIS_VERSION
+    assert "external_telemetry_unavailable" not in str(result["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_static_native_with_telemetry_uses_producer():
+    """static（native_flicking.v1）+ 遥测源：producer 被调用、CV 子进程不触发
+    （既有接线的分支级回归锚点）。"""
+    ext_dir = _write_frozen_external_run(_data_root())
+    job = _telemetry_job(ext_dir)
+    job["input_snapshot"]["scenario_resolution"] = _static_scenario_resolution()
+
+    mocks = await _run_process_one(
+        job,
+        telemetry_builder=MagicMock(return_value=_cv_visual()),
+        native_analysis=lambda *_args, **_kwargs: (_native_result_stub(), None),
+    )
+
+    mocks["builder"].assert_called_once()
+    mocks["cv_plain"].assert_not_called()
+    result = mocks["result"]
+    assert result["analysis_version"] == worker.NATIVE_ANALYSIS_VERSION
+    assert not [
+        warning for warning in result["warnings"]
+        if str(warning.get("code", "")).startswith("external_telemetry_unavailable")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dynamic_dispatch_with_telemetry_uses_producer():
+    """dynamic（dynamic_clicking.v1）+ 遥测源：producer 被调用、CV 子进程不
+    触发，family adapter 消费 producer 产物（既有接线的分支级回归锚点）。"""
+    ext_dir = _write_frozen_external_run(_data_root())
+    job = _telemetry_job(ext_dir)
+    resolution = _static_scenario_resolution()
+    resolution.update({
+        "aim_family": "dynamic_clicking",
+        "display_name": "Fixture Dynamic",
+        "allowed_analyzers": [worker.DYNAMIC_CLICKING_ANALYSIS_VERSION],
+        "allowed_metric_families": ["dynamic_clicking"],
+        "claim_ceiling": "family_specific",
+        "target_motion": {"model": "reactive", "target_count_model": "concurrent"},
+    })
+    job["input_snapshot"]["scenario_resolution"] = resolution
+
+    async def _no_baseline(*_args, **_kwargs):
+        return {"comparable": False, "reason": "no_baseline"}
+
+    with patch(
+        "webapp.backend.history_trends.matched_dynamic_baseline_for_user",
+        new=AsyncMock(side_effect=_no_baseline),
+    ):
+        mocks = await _run_process_one(
+            job,
+            telemetry_builder=MagicMock(
+                return_value=_cv_visual_stub(enabled_families=("dynamic_clicking",)),
+            ),
+            dynamic_analysis=lambda _job, _visual, _bundle: _dynamic_family_fixture(),
+        )
+
+    mocks["builder"].assert_called_once()
+    mocks["cv_plain"].assert_not_called()
+    result = mocks["result"]
+    assert result["analysis_version"] == worker.DYNAMIC_CLICKING_ANALYSIS_VERSION
+    assert result["analysis_type"] == "dynamic_clicking"
+    assert not [
+        warning for warning in result["warnings"]
+        if str(warning.get("code", "")).startswith("external_telemetry_unavailable")
+    ]
