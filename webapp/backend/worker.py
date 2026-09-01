@@ -3535,7 +3535,7 @@ async def process_one() -> bool:
                         log.warning(
                             "multimodal visual preprocessing unavailable session=%s error=%s",
                             sid,
-                            type(error).__name__,
+                            f"{type(error).__name__}: {error}",
                         )
                 else:
                     try:
