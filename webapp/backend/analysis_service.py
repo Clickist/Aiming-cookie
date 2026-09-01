@@ -637,7 +637,8 @@ async def create_analysis_from_run(
         managed_video = ""
         managed_csv = ""
         workspace = session_dir(session_id)
-        uses_video = selected_mode in {"multimodal", "video_fallback"}
+        # telemetry_multimodal 与 multimodal 同为视频参与档：工作区视频别名照常冻结。
+        uses_video = selected_mode in {"multimodal", "video_fallback", "telemetry_multimodal"}
         if uses_video and managed_video_source is not None:
             video_destination = workspace / "video.mp4"
             try:

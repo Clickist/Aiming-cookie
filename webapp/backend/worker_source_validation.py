@@ -58,7 +58,11 @@ def _read_frozen_source_bytes(kind: str, source: object) -> bytes:
 
 
 def _managed_video_contract(job: dict, input_mode: str) -> tuple[str, str, int] | None:
-    if input_mode not in {"multimodal", "video_fallback"}:
+    if input_mode not in {"multimodal", "video_fallback", "telemetry_multimodal"}:
+        return None
+    if input_mode == "telemetry_multimodal" and not job.get("video_path"):
+        # 遥测档的视频是可选增强（tier 只要求遥测+原生五源）：无冻结视频
+        # 别名时跳过视频合同校验，走 CV 降级路径，而不是硬判 source_unavailable。
         return None
     if job.get("kovaak_run_id") is None:
         return None

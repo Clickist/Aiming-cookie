@@ -6,8 +6,8 @@ spot checks, T2K rollup parity against session_quant, coarse pairing,
 proposal-only label passthrough, quality gates, API endpoints, failure
 isolation and the docs contract.
 
-Frozen test set: the upstream ``cleaned/`` tree (66 index-covered rounds +
-5 index-less validation rounds = 71 at freeze time). The integration tests
+Frozen test set: the upstream ``cleaned/`` tree (69 index-covered rounds +
+5 index-less validation rounds = 74 at freeze time). The integration tests
 derive counts/expectations from that tree and SKIP when it is absent, so the
 suite stays green on machines without the upstream checkout. The tree is
 never written to; frozen frame copies land in the isolated DATA_ROOT only.
@@ -15,6 +15,7 @@ never written to; frozen frame copies land in the isolated DATA_ROOT only.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -364,8 +365,8 @@ def test_d1_full_backfill_of_frozen_cleaned_tree(
 ) -> None:
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
     expected = expected_frozen_round_count(FROZEN_ROOT)
-    # 冻结集钉死：66 个 index 覆盖轮 + 5 个无 index 验证轮（再演进需重钉）。
-    assert expected == 71, "frozen cleaned/ tree changed; re-pin DoD expectations"
+    # 冻结集钉死：69 个 index 覆盖轮 + 5 个无 index 验证轮（再演进需重钉）。
+    assert expected == 74, "frozen cleaned/ tree changed; re-pin DoD expectations"
     before = _tree_snapshot(FROZEN_ROOT)
     watcher = _watcher(FROZEN_ROOT)
     summary = watcher.scan_once()
@@ -521,8 +522,8 @@ def test_d6_label_passthrough_is_field_exact_and_never_touches_overrides(
         # tie_group 各态（当前冻结集：缺失 12 + 非空列表 50；历史数据另有 null/[]）。
         saw_tie_group_missing = saw_tie_group_missing or "tie_group" not in proposal
         saw_tie_group_list = saw_tie_group_list or isinstance(proposal.get("tie_group"), list)
-    assert passthrough + pending == 71
-    assert pending == 9  # night_0830_fixed 副本目录无旁车
+    assert passthrough + pending == 74
+    assert pending == 12  # 030352 主目录 9 轮 + verify0831（0831_192538）3 轮无 scenario.json
     assert saw_uncertain and saw_tie_group_missing and saw_tie_group_list
     assert not overrides_path.exists()  # proposal-only：绝不写 scenario-overrides.json
 
@@ -533,7 +534,7 @@ def test_d5_unpaired_rounds_without_any_runs_stay_healthy(
 ) -> None:
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
     summary = _watcher(FROZEN_ROOT).scan_once()
-    assert summary["imported"] == 71 and summary["failed"] == 0
+    assert summary["imported"] == 74 and summary["failed"] == 0
     meta = _meta_for("round_01.jsonl|0|validation_static_1wall6targets_001352")
     assert meta["pairing"]["matched_run_ids"] == []
     assert meta["pairing"]["pair_confidence"] is None
@@ -664,6 +665,216 @@ def test_import_never_writes_scenario_overrides(
     (root / "late" / "scenario.json").write_text("{}", encoding="utf-8")
     watcher.scan_once()
     assert not (config.DATA_ROOT / "config" / "scenario-overrides.json").exists()
+
+
+# ------------------------------------------------- sidecars (SIDECARS.md v1)
+
+_ABSENT_SIDECAR = {"present": False, "sha256": None, "size": None}
+
+
+def _sidecar_payloads(round_number: int = 1) -> dict[str, bytes]:
+    """Contract-shaped minimal sidecar bytes (SIDECARS.md §0 件清单)。"""
+    nn = f"{round_number:02d}"
+    views = "\n".join(
+        json.dumps({"t": 900.0 + i * 0.031, "pos": [1.0, 2.0, 3.0],
+                    "rot": [0.0, float(i), 0.0], "fov": 103.0})
+        for i in range(4)
+    ) + "\n"
+    inputs = "\n".join(
+        json.dumps({"t": 900.1 + i * 0.05, "dx": 12, "dy": -3, "btn": ["L_down"] if i == 0 else []})
+        for i in range(3)
+    ) + "\n"
+    bb = json.dumps({
+        "schema_version": "round_bb.v1",
+        "challenges": [{"perf_file": "x.perf", "scenario": "s", "rounds": [round_number],
+                        "window_t": [900.0, 901.2], "timescale": 1.0, "bots": []}],
+    })
+    manifest = json.dumps({
+        "alignment": {"method": "xcorr", "s_epoch_of_t0": 1788107500.368, "accepted": True},
+        "rounds": [{"round": round_number, "n_views": 4, "n_inputs": 3, "view_gaps_gt_200ms": 0}],
+    })
+    return {
+        f"views_{nn}.jsonl": views.encode("utf-8"),
+        f"inputs_{nn}.jsonl": inputs.encode("utf-8"),
+        "bb.json": bb.encode("utf-8"),
+        "merge_manifest.json": manifest.encode("utf-8"),
+    }
+
+
+def make_sidecar_tree(tmp_path: Path, *, with_sidecars: bool = True) -> Path:
+    """两轮 index 目录：round_01 全套旁车；round_02 只有共享件（无 views/inputs）。"""
+    root = tmp_path / "cleaned"
+    source_dir = root / "batch" / "target_poll_out_0101_010203"
+    source_dir.mkdir(parents=True)
+    (source_dir / "round_01.jsonl").write_bytes(_round_payload())
+    (source_dir / "round_02.jsonl").write_bytes(_round_payload(n_frames=45, t0=905.0))
+    if with_sidecars:
+        for name, payload in _sidecar_payloads(1).items():
+            (source_dir / name).write_bytes(payload)
+    _write_index(root / "batch" / "rounds_index.json", rounds=[
+        _index_entry(),
+        _index_entry(round_number=2, file="round_02.jsonl", t_start=905.0, t_end=906.35),
+    ])
+    return root
+
+
+def test_sidecar_import_freezes_copies_and_records_fingerprints(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    root = make_sidecar_tree(tmp_path)
+    summary = _watcher(root).scan_once()
+    assert summary["imported"] == 2 and summary["failed"] == 0
+
+    payloads = _sidecar_payloads(1)
+    meta1 = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    sidecars = meta1["sidecars"]
+    assert set(sidecars) == {"views", "inputs", "bb", "merge_manifest"}
+    for key, name in (("views", "views_01.jsonl"), ("inputs", "inputs_01.jsonl"),
+                      ("bb", "bb.json"), ("merge_manifest", "merge_manifest.json")):
+        assert sidecars[key] == {
+            "present": True,
+            "sha256": hashlib.sha256(payloads[name]).hexdigest(),
+            "size": len(payloads[name]),
+        }
+        frozen = config.DATA_ROOT / store.sidecar_path(meta1["external_run_id"], name)
+        assert frozen.read_bytes() == payloads[name]  # 原名冻结、字节一致
+
+    # round_02 无 views_02/inputs_02 → present=False；目录级共享件照记同一指纹。
+    meta2 = _meta_for("target_poll_out_0101_010203.jsonl|2|batch")
+    assert meta2["sidecars"]["views"] == _ABSENT_SIDECAR
+    assert meta2["sidecars"]["inputs"] == _ABSENT_SIDECAR
+    assert meta2["sidecars"]["bb"]["sha256"] == sidecars["bb"]["sha256"]
+    assert meta2["sidecars"]["merge_manifest"]["sha256"] == sidecars["merge_manifest"]["sha256"]
+
+
+def test_late_sidecars_freeze_without_content_revision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    root = make_sidecar_tree(tmp_path, with_sidecars=False)
+    watcher = _watcher(root)
+    assert watcher.scan_once()["imported"] == 2
+    meta = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    assert all(fp["present"] is False for fp in meta["sidecars"].values())
+
+    # 旁车后到（merge_channels 滞后于 cleaner）→ skip 轻路径补冻结，身份不变。
+    source_dir = root / "batch" / "target_poll_out_0101_010203"
+    payloads = _sidecar_payloads(1)
+    for name, payload in payloads.items():
+        (source_dir / name).write_bytes(payload)
+    summary = watcher.scan_once()
+    assert summary["imported"] == 0 and summary["revised"] == 0 and summary["failed"] == 0
+    refreshed = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    assert refreshed["external_run_id"] == meta["external_run_id"]
+    assert refreshed["revisions"] == []
+    assert refreshed["sidecars"]["views"]["sha256"] == hashlib.sha256(payloads["views_01.jsonl"]).hexdigest()
+    frozen = config.DATA_ROOT / store.sidecar_path(refreshed["external_run_id"], "views_01.jsonl")
+    assert frozen.read_bytes() == payloads["views_01.jsonl"]
+
+    # merge 重跑（bb.json 变化）→ 刷指纹+副本，仍不触发 content revision。
+    new_bb = payloads["bb.json"] + b"\n"
+    (source_dir / "bb.json").write_bytes(new_bb)
+    summary = watcher.scan_once()
+    assert summary["revised"] == 0 and summary["imported"] == 0
+    rerun = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    assert rerun["sidecars"]["bb"]["sha256"] == hashlib.sha256(new_bb).hexdigest()
+    frozen_bb = config.DATA_ROOT / store.sidecar_path(rerun["external_run_id"], "bb.json")
+    assert frozen_bb.read_bytes() == new_bb
+    assert rerun["revisions"] == []
+
+
+def test_sidecar_rescan_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    root = make_sidecar_tree(tmp_path)
+    watcher = _watcher(root)
+    watcher.scan_once()
+    meta = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    meta_path = config.DATA_ROOT / store.meta_path(meta["external_run_id"])
+    frozen = {
+        name: config.DATA_ROOT / store.sidecar_path(meta["external_run_id"], name)
+        for name in ("views_01.jsonl", "inputs_01.jsonl", "bb.json", "merge_manifest.json")
+    }
+    meta_mtime = meta_path.stat().st_mtime_ns
+    frozen_mtimes = {name: path.stat().st_mtime_ns for name, path in frozen.items()}
+
+    assert watcher.scan_once()["imported"] == 0
+    # 换新 watcher（无内存快路径，走 hash-equal 路径）重扫：同样不重写。
+    assert _watcher(root).scan_once()["imported"] == 0
+
+    after = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    assert after["sidecars"] == meta["sidecars"]
+    assert meta_path.stat().st_mtime_ns == meta_mtime
+    for name, path in frozen.items():
+        assert path.stat().st_mtime_ns == frozen_mtimes[name]
+
+
+def test_sidecar_freeze_write_failure_is_isolated_and_retried(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """P2-4：冻结副本写失败（如 Windows 杀软锁目标文件触发 PermissionError）
+    不中止 scan——其余旁车与轮次照常导入、failed 可观测、哈希缓存不滞留旧
+    stat（快路径不得沿用旧指纹），写恢复后下轮 scan 成功补齐副本。"""
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    root = make_sidecar_tree(tmp_path)
+    watcher = _watcher(root)
+    assert watcher.scan_once()["imported"] == 2
+
+    source_dir = root / "batch" / "target_poll_out_0101_010203"
+    v1 = _sidecar_payloads(1)
+    views_path = source_dir / "views_01.jsonl"
+    v2 = v1["views_01.jsonl"] + b'{"t": 900.2, "x": 1}\n'
+    views_path.write_bytes(v2)
+
+    real_write = store.write_frozen_sidecar
+
+    def locked_write(external_run_id: str, name: str, payload: bytes) -> None:
+        if name == "views_01.jsonl":
+            raise PermissionError("antivirus lock")
+        real_write(external_run_id, name, payload)
+
+    monkeypatch.setattr(store, "write_frozen_sidecar", locked_write)
+    # 写失败被隔离：skip 刷新照常完成，failed 计数可观测，指纹保持 recorded。
+    summary = watcher.scan_once()
+    assert summary["imported"] == 0 and summary["failed"] == 1
+    meta = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    assert meta["sidecars"]["views"] == {
+        "present": True,
+        "sha256": hashlib.sha256(v1["views_01.jsonl"]).hexdigest(),
+        "size": len(v1["views_01.jsonl"]),
+    }
+    # 缓存不滞留：连续失败 scan 每轮都重试写（快路径不得沿用旧指纹）。
+    assert watcher.scan_once()["failed"] == 1
+
+    monkeypatch.setattr(store, "write_frozen_sidecar", real_write)
+    assert watcher.scan_once()["failed"] == 0
+    recovered = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    assert recovered["sidecars"]["views"] == {
+        "present": True,
+        "sha256": hashlib.sha256(v2).hexdigest(),
+        "size": len(v2),
+    }
+    frozen = config.DATA_ROOT / store.sidecar_path(
+        recovered["external_run_id"], "views_01.jsonl",
+    )
+    assert frozen.read_bytes() == v2
+
+
+def test_dirs_without_sidecars_are_unaffected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    root = make_cleaned_tree(tmp_path)
+    summary = _watcher(root).scan_once()
+    assert summary["imported"] == 2 and summary["failed"] == 0
+    for key in ("target_poll_out_0101_010203.jsonl|1|batch", "round_01.jsonl|0|late"):
+        meta = _meta_for(key)
+        assert meta["sidecars"] == {name: _ABSENT_SIDECAR for name in
+                                    ("views", "inputs", "bb", "merge_manifest")}
+        ext_dir = config.DATA_ROOT / "external" / meta["external_run_id"]
+        assert sorted(path.name for path in ext_dir.iterdir()) == ["meta.json", "round.jsonl"]
 
 
 # ------------------------------------------------------------------- D8 API

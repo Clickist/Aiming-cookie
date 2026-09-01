@@ -372,6 +372,107 @@ def _local_scenario_behavior_descriptor(
     return parse_local_scenario_behavior_descriptor(data, expected_display_name=scenario)
 
 
+def _external_telemetry_source(run_id: int, user_id: object) -> dict[str, object]:
+    """外部遥测源以“可用/不可用 + 原因”进入快照（照抄 video 不可用桩模式）：
+    分析结果、progressive disclosure 与 Coach 才能区分“没有配对轮”与“配对
+    了但冻结侧已过期”，而不是把事实静默吞掉。
+
+    可用性判定以导入清单为基准：meta.fingerprints（round.jsonl）与
+    meta.sidecars（SIDECARS.md v1 冻结旁车）记录的指纹与冻结侧现状不符
+    （含副本缺失）即 unavailable + sidecars_stale，绝不把对不上的旧副本
+    当新数据用；帧副本缺失单独给 frames_missing。
+    """
+    from . import external_telemetry_store as telemetry_store
+
+    source: dict[str, object] = {
+        "artifact_ref": f"run:{run_id}:external_telemetry",
+        "availability": "unavailable",
+        "external_run_id": None,
+        "round": None,
+        "frames_path": None,
+        "sidecars": {},
+        "pairing_confidence": None,
+        "reason": "telemetry_not_paired",
+    }
+    meta = telemetry_store.find_latest_matched_meta(run_id)
+    # 外部遥测按本机单用户导入；owner 不一致的配对视为不存在（fail-closed）。
+    if meta is None or meta.get("user_id") != user_id:
+        return source
+    origin = meta.get("origin") if isinstance(meta.get("origin"), dict) else {}
+    pairing = meta.get("pairing") if isinstance(meta.get("pairing"), dict) else {}
+    fingerprints = (
+        meta.get("fingerprints") if isinstance(meta.get("fingerprints"), dict) else {}
+    )
+    sidecars = meta.get("sidecars") if isinstance(meta.get("sidecars"), dict) else {}
+    frames_rel = meta.get("frames_path")
+    source.update({
+        "artifact_ref": f"external:{meta.get('external_run_id')}",
+        "external_run_id": meta.get("external_run_id"),
+        "round": origin.get("round"),
+        "frames_path": (
+            str((file_store._data_root() / str(frames_rel)).resolve())
+            if isinstance(frames_rel, str) and frames_rel
+            else None
+        ),
+        "sidecars": {
+            key: {
+                "present": record.get("present") is True,
+                "sha256": record.get("sha256"),
+                "size": record.get("size"),
+            }
+            for key, record in sidecars.items()
+            if isinstance(record, dict)
+        },
+        "pairing_confidence": pairing.get("pair_confidence"),
+    })
+
+    data_root = file_store._data_root()
+    frames_stale = False
+    frames_missing = True
+    if isinstance(frames_rel, str) and frames_rel:
+        frozen_frames = data_root / frames_rel
+        if frozen_frames.is_file():
+            frames_missing = False
+            observed = _file_fingerprint(frozen_frames)
+            frames_stale = (
+                observed["sha256"] != fingerprints.get("round_sha256")
+                or observed["size"] != fingerprints.get("round_size")
+            )
+    sidecars_stale = False
+    if not frames_missing and not frames_stale:
+        external_id = str(meta.get("external_run_id") or "")
+        round_file = str(origin.get("round_file") or "").replace("\\", "/").rsplit("/", 1)[-1]
+        for key, record in source["sidecars"].items():
+            if record["present"] is not True:
+                continue
+            name = telemetry_store.sidecar_source_name(key, round_file)
+            if name is None:
+                sidecars_stale = True
+                break
+            frozen = data_root / telemetry_store.sidecar_path(external_id, name)
+            if not frozen.is_file():
+                sidecars_stale = True
+                break
+            observed = _file_fingerprint(frozen)
+            if (
+                observed["sha256"] != record["sha256"]
+                or observed["size"] != record["size"]
+            ):
+                sidecars_stale = True
+                break
+    if frames_missing:
+        source["availability"] = "unavailable"
+        source["reason"] = "frames_missing"
+    elif frames_stale or sidecars_stale:
+        # 过期判定统一给 sidecars_stale：导入清单与冻结侧任何一处对不上，
+        # 该遥测源都不能作为分析输入（fail-closed）。
+        source["availability"] = "unavailable"
+        source["reason"] = "sidecars_stale"
+    else:
+        source["availability"] = "available"
+    return source
+
+
 async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
     run = await get_kovaak_run(run_id, user_id)
     if run is None:
@@ -438,6 +539,10 @@ async def build_analysis_input_snapshot(run_id: int, user_id: str) -> dict:
             or f"video_state_{run.get('video_state') or 'none'}",
             "ownership": "run",
         }
+    # 外部遥测源（ExternalTelemetryRun）：无论可用与否都进快照，理由同上——
+    # “没配对/已过期/可用”三种事实都要可观测（telemetry_multimodal tier 的
+    # producer 在后续切片接入，本切片只做源注入与档位门控）。
+    sources["external_telemetry"] = _external_telemetry_source(run_id, run.get("user_id"))
     canonical_time_window = _canonical_time_window_from_run(run)
     performance_summary = run.get("performance_summary")
     performance_header = (

@@ -16,8 +16,9 @@ MISSING_PERFORMANCE: Final = "performance_missing"
 MISSING_RAW_INPUT: Final = "raw_input_missing"
 MISSING_VIDEO: Final = "video_missing"
 MISSING_CANONICAL_WINDOW: Final = "canonical_window_missing"
+MISSING_EXTERNAL_TELEMETRY: Final = "external_telemetry_missing"
 
-_SOURCE_KEYS: Final = ("stats", "performance", "raw_input", "video")
+_SOURCE_KEYS: Final = ("external_telemetry", "stats", "performance", "raw_input", "video")
 _AVAILABILITIES: Final = frozenset(
     {"available", "missing", "unavailable", "invalid", "not_present"}
 )
@@ -71,6 +72,7 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
         "performance": sources.get("performance"),
         "raw_input": bundle.get("trace") if isinstance(bundle, Mapping) else None,
         "video": sources.get("video"),
+        "external_telemetry": sources.get("external_telemetry"),
     }
     availability = {
         key: _availability(source_values[key]) for key in _SOURCE_KEYS
@@ -91,6 +93,7 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
         "raw_input": MISSING_RAW_INPUT,
         "video": MISSING_VIDEO,
         "canonical_window": MISSING_CANONICAL_WINDOW,
+        "external_telemetry": MISSING_EXTERNAL_TELEMETRY,
     }
     missing = [
         code_for[key]
@@ -101,6 +104,12 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
     supported_modes = [
         mode
         for mode, required in (
+            # telemetry_multimodal 排最前：外部遥测是首选数据源，CV 视频降为
+            # fallback；五源可用才可选（遥测 + 原生输入 + 时间窗，视频不参与）。
+            ("telemetry_multimodal", (
+                "external_telemetry", "stats", "performance", "raw_input",
+                "canonical_window",
+            )),
             ("multimodal", ("stats", "performance", "raw_input", "video", "canonical_window")),
             ("input_native", ("stats", "performance", "raw_input", "canonical_window")),
             ("video_fallback", ("stats", "video")),
@@ -124,6 +133,7 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
 
 __all__ = [
     "MISSING_CANONICAL_WINDOW",
+    "MISSING_EXTERNAL_TELEMETRY",
     "MISSING_PERFORMANCE",
     "MISSING_RAW_INPUT",
     "MISSING_STATS",
