@@ -214,3 +214,56 @@ def test_unavailable_external_telemetry_falls_back_to_the_visual_tier():
     assert result["selected_mode"] == "multimodal"
     assert "telemetry_multimodal" not in result["supported_modes"]
     assert MISSING_EXTERNAL_TELEMETRY in result["missing"]
+
+
+def test_telemetry_tier_is_selectable_without_raw_input_or_video():
+    """遥测 + KovaaK stats 即可选 telemetry_multimodal：无 trace/视频不拦门。
+
+    回归 0901 真机 54052-54055（dev 应用离线期间只有 stats + 外部遥测的
+    run 被旧五源定义卡成 raw_input_missing, video_missing）。
+    """
+    snapshot = {
+        "schema_version": "analysis_input_snapshot.v3",
+        "sources": {
+            "stats": _source(kind="stats"),
+            "performance": _source(kind="performance"),
+            "external_telemetry": {
+                "availability": "available",
+                "external_run_id": "ext-20cb34d8e31ac028",
+                "pairing_confidence": "coarse",
+            },
+        },
+        "canonical_time_window": _window(),
+    }
+
+    result = validate_source_requirements(snapshot)
+
+    assert result["ready"] is True
+    assert result["supported_modes"] == ["telemetry_multimodal"]
+    assert result["selected_mode"] == "telemetry_multimodal"
+    # raw/video 缺失事实仍逐项可观测，但不再阻断 ready。
+    assert MISSING_RAW_INPUT in result["missing"]
+    assert MISSING_VIDEO in result["missing"]
+
+
+def test_stats_run_without_telemetry_or_visual_sources_stays_fail_closed():
+    """stats 有、遥测无、无 video/raw：无任何可选档，fail-closed 不变。"""
+    snapshot = {
+        "schema_version": "analysis_input_snapshot.v3",
+        "sources": {
+            "stats": _source(kind="stats"),
+            "performance": _source(kind="performance"),
+        },
+        "canonical_time_window": _window(),
+    }
+
+    result = validate_source_requirements(snapshot)
+
+    assert result["ready"] is False
+    assert result["supported_modes"] == []
+    assert result["selected_mode"] is None
+    assert result["missing"] == [
+        MISSING_EXTERNAL_TELEMETRY,
+        MISSING_RAW_INPUT,
+        MISSING_VIDEO,
+    ]
