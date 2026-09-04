@@ -25,11 +25,26 @@ test("running-send lands in visible queue chips with a 96-char preview and three
   assert.match(panel, /backfillChipToDraft[\s\S]*?textareaRef\.current\?\.focus\(\)/s);
 });
 
-test("busy composer send key becomes the four-action steer menu", async () => {
+test("send key always submits; running-state actions live beside it in a caret menu", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
-  // 运行中才渲染下拉；空闲仍是普通提交键（复用同一入口 submitComposer）。
-  assert.match(panel, /\{composerBusy \? \(/);
-  assert.match(panel, /aria-label="发送"/);
+  const styles = await source("components/task6/task6.css");
+  // 发送键恒为 submitComposer：运行中点击走 sendText busy 分支＝自动入队
+  // （点点 09-01 拍板：移除批5 ed8d067 的"首击只开菜单"四动作开关——它被
+  // 真机感知为"第一次点击永远发不出去"的防误触）。
+  const sendAt = panel.indexOf('aria-label="发送"');
+  assert.ok(sendAt !== -1, "send button must exist");
+  const clickAt = panel.indexOf("onClick={submitComposer}", sendAt);
+  assert.ok(clickAt > sendAt, "send button must submit directly");
+  // 发送键本体不得再被运行态替换成菜单开关（旧防误触的吞击点）。
+  const btnChunk = panel.slice(
+    panel.indexOf('className="task6-composer-send"'),
+    panel.indexOf("<IconSend /></button>"),
+  );
+  assert.match(btnChunk, /onClick=\{submitComposer\}/);
+  assert.doesNotMatch(btnChunk, /setSendMenuOpen/);
+  // 转向/打断/停止不消失：收敛到旁挂 caret 菜单（仅运行中渲染）。
+  assert.match(panel, /className="task6-send-caret"/);
+  assert.match(styles, /\.task6-send-caret\s*\{/);
   const menuChunk = panel.slice(panel.indexOf('className="task6-send-menu"'));
   assert.match(menuChunk, /立即转向/);
   assert.match(menuChunk, /加入队列/);
