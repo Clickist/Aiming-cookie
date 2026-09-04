@@ -838,8 +838,6 @@ def run_native_analysis(
     trace_path = trace.get("path")
     if not isinstance(stats_path, str) or not isinstance(performance_path, str):
         raise ValueError("native analysis requires stats and performance sources")
-    if not isinstance(trace_path, str):
-        raise ValueError("native analysis requires a raw input trace")
     canonical_window = snapshot.get("canonical_time_window")
     if snapshot.get("schema_version") in {
         "analysis_input_snapshot.v2", "analysis_input_snapshot.v3",
@@ -850,7 +848,6 @@ def run_native_analysis(
     performance_bytes = _read_frozen_source_bytes(
         "performance", sources.get("performance"),
     )
-    trace_bytes = _read_frozen_source_bytes("raw_input", trace)
     parsed_stats = parse_stats_bytes(stats_bytes, file_name=Path(stats_path).name)
     manual_override = _manual_override_or_legacy(
         manual_override, cm_per_360=cm_per_360, fov=fov,
@@ -877,7 +874,19 @@ def run_native_analysis(
             getattr(parsed_stats, "field_presence", {}) or {}
         ),
     }
-    trace_points = decode_mouse_snapshot_bytes(trace_bytes)
+    trace_points: list[dict[str, int]] | None
+    telemetry_limitations: list[str] = []
+    if isinstance(trace_path, str):
+        trace_points = decode_mouse_snapshot_bytes(
+            _read_frozen_source_bytes("raw_input", trace),
+        )
+    else:
+        # 遥测-only 运行（无 raw input trace，如应用停机期间的局）：从冻结的
+        # 外部遥测 inputs 旁车合成等价轨迹输入；旁车不可用时 analyze 层落
+        # unavailable + limitation（受控降级），绝不硬抛崩掉整场分析。
+        from .telemetry_input_adapter import telemetry_mouse_trace_points
+
+        trace_points, telemetry_limitations = telemetry_mouse_trace_points(snapshot)
     performance = parse_performance_bytes(performance_bytes)
     result = analyze_native_flicking(
         trace_points,
@@ -887,6 +896,10 @@ def run_native_analysis(
     )
     if isinstance(result, dict):
         result["calibration"] = calibration
+        if telemetry_limitations:
+            result["limitations"] = list(dict.fromkeys([
+                *(result.get("limitations") or []), *telemetry_limitations,
+            ]))
     return (result, parsed_stats) if return_parsed_stats else result
 
 
@@ -1015,6 +1028,12 @@ def _native_quality_projection(native_result: Mapping[str, object]) -> dict:
         and has_flick_evidence
     )
     quality_limitations = list(dict.fromkeys(limitations)) if not complete else []
+    # 遥测合成轨迹的来源标注（mouse_trajectory_*）是 provenance，不是质量
+    # 告警：完整结果也必须保留，下游才能区分遥测轨迹与原生 Raw Input 轨迹。
+    quality_limitations = list(dict.fromkeys([
+        *quality_limitations,
+        *(item for item in limitations if item.startswith("mouse_trajectory_")),
+    ]))
     return {
         "status": "available" if complete else "limited",
         "coverage": coverage,
@@ -1210,7 +1229,26 @@ def _native_source_contract(
 ) -> dict:
     if kind == "raw_input":
         snapshot_source = snapshot.get("trace") or {}
-        version = snapshot_source.get("format_version", 1)
+        if snapshot_source.get("artifact_ref"):
+            version = snapshot_source.get("format_version", 1)
+        else:
+            # raw input trace 缺失：轨迹要么由遥测冻结 inputs 旁车合成（ref
+            # 如实指向遥测 artifact，provenance 可追溯），要么受控降级为 run
+            # 域占位 ref（evidence 合同要求每个 source 都有稳定 ref）。
+            telemetry = (snapshot.get("sources") or {}).get(
+                "external_telemetry",
+            )
+            if isinstance(telemetry, dict) and (
+                telemetry.get("availability") == "available"
+                and telemetry.get("artifact_ref")
+            ):
+                snapshot_source = telemetry
+                version = "telemetry_inputs_sidecar.v1"
+            else:
+                snapshot_source = {
+                    "artifact_ref": f"run:{snapshot.get('run_id')}:raw_input",
+                }
+                version = "raw_input_unavailable.v1"
     else:
         snapshot_source = (snapshot.get("sources") or {}).get(kind) or {}
         version = _source_parser_version(kind, snapshot_source)
