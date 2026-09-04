@@ -316,8 +316,22 @@ def run_dynamic_clicking_analysis(
     ):
         raise ValueError("dynamic visual result is bound to another analysis")
     trace = snapshot.get("trace")
-    trace_bytes = worker._read_frozen_source_bytes("raw_input", trace)
-    trace_points = decode_mouse_snapshot_bytes(trace_bytes)
+    telemetry_limitations: list[str] = []
+    if isinstance(trace, Mapping):
+        trace_points = decode_mouse_snapshot_bytes(
+            worker._read_frozen_source_bytes("raw_input", trace),
+        )
+    else:
+        # 遥测-only 运行（无 raw input trace）：从冻结的外部遥测 inputs 旁车
+        # 合成等价点击锚输入；不可用时落 unavailable 语义的 ValueError，由
+        # worker 分支降级 outcome_only（受控），不让整场分析 crash。
+        from .telemetry_input_adapter import telemetry_mouse_trace_points
+
+        trace_points, telemetry_limitations = telemetry_mouse_trace_points(snapshot)
+    if trace_points is None:
+        raise ValueError(
+            "dynamic analysis requires a raw input trace or telemetry inputs",
+        )
     start_ms = window.get("start_ms")
     end_ms = window.get("end_ms")
     if (
@@ -385,6 +399,11 @@ def run_dynamic_clicking_analysis(
         "predictability_evidence": [],
         "comparison": None,
     })
+    if telemetry_limitations:
+        analysis["limitations"] = list(dict.fromkeys([
+            *(analysis.get("limitations") or []), *telemetry_limitations,
+        ]))
+    return analysis
 
 
 def run_continuous_tracking_analysis(
