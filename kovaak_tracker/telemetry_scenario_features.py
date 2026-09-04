@@ -30,8 +30,13 @@ merge_manifest epoch 锚）计算火控/点击误差/节奏/角速度/活性/几
 - speed 子域（甩枪）：任务原条件 err_p10>3° 且 cv>0.6 在 final_0831 无命中
   样本（Valorant 2.49°/0.304），实测可分离的甩枪签名是点击时刻误差
   err_at_click_p50（Valorant 5.13° vs 点击类 ≤0.67°），两条路径取或；
-- bearing_delta>60° → target_switching：final_0831 无干净 switching 局，
-  未实证，仅合成单测覆盖；
+- 持续火力分支内的转火判定（0901 实证，n=1/类）：官方杀率 >=0.2/s →
+  target_switching（TileFrenzy 1.41/s vs HumStrafe 0.087/s、Controlsphere 0）；
+  官方窗未采用时退位给误差锯齿率 err_spike_rate_per_s >= 0.3/s 兜底
+  （TileFrenzy 0.91/s，纯跟枪 0，HumStrafe <=0.24/s）；
+- 旧 bearing_delta_at_kill_med>60° → target_switching 分支已拆除：0901 实测
+  该签名反向（poll addr 池化+物件抖动产生伪消亡，Controlsphere 0 杀被它打出
+  75.96°>60°，真转火 TileFrenzy 仅 51.53°）；特征保留在束内只作诊断；
 - clicks_per_kill>1.5 且 err_at_click_p50<1° → reclick（血厚）；
 - tracking 且官方 kills∈{None,0} → invincible 变体：合同 baseline dispatch
   只允许 descriptive_only，变体以 limitation 表达（claim_ceiling 不再降）。
@@ -73,7 +78,15 @@ DIST_PRECISION_MIN_CM = 3000.0
 ERR_AT_CLICK_FLICK_MIN_DEG = 2.0
 ERR_P10_FLICK_MIN_DEG = 3.0
 INTER_CLICK_CV_FLICK_MIN = 0.6
-BEARING_DELTA_SWITCH_MIN_DEG = 60.0
+# 持续火力分支内转火判定（0901 实证；n=1/类，未跨场景校准，非生产阈值）：
+# - 官方杀率主签名：TileFrenzy 1.41/s 在上 7 倍，HumStrafe 0.087/s 在下 2.3 倍；
+# - 误差锯齿兜底（官方窗未采用时）：TileFrenzy 0.91/s，HumStrafe <=0.24/s，
+#   纯跟枪（Controlsphere）0；
+# - 旧 BEARING_DELTA_SWITCH_MIN_DEG=60° 分支已拆除：签名实测反向（伪消亡
+#   方位跳变 Controlsphere 0 杀 75.96° > 真转火 TileFrenzy 51.53°）。
+KILL_RATE_SWITCH_MIN_PER_S = 0.2
+ERR_SPIKE_RATE_SWITCH_MIN = 0.3
+ERR_SPIKE_EXCURSION_MIN_DEG = 15.0
 CLICKS_PER_KILL_RECLICK_MIN = 1.5
 ERR_AT_CLICK_RECLICK_MAX_DEG = 1.0
 
@@ -101,6 +114,7 @@ _FEATURE_KEYS = (
     "err_at_click_p50",
     "err_at_click_lt1deg_share",
     "err_p10",
+    "err_spike_rate_per_s",
     "inter_click_cv",
     "omega_p99",
     "omega_frac_20_200",
@@ -401,6 +415,26 @@ def compute_observed_features(
     rest_errors.sort()
     features["err_p10"] = _round(_percentile(rest_errors, 0.1), 3)
 
+    # ---- 误差锯齿率（持续火力转火的遥测兜底签名，0901 实证） ----
+    # 逐帧“准心->最近存活目标最小角误差”序列中 >15° excursion 次数/s；
+    # 口径与 heldfire_analysis.py 研究脚本一致（>15° 进入、<=15° 退出计一次，
+    # 窗末仍未退出的 excursion 不计；无存活目标帧跳过）。
+    err_spikes = 0
+    in_excursion = False
+    err_sample_count = 0
+    for index, _frame_t, pos, rot in window_views:
+        error = _min_angular_error_deg(world, index, pos, rot)
+        if error is None:
+            continue
+        err_sample_count += 1
+        if error > ERR_SPIKE_EXCURSION_MIN_DEG:
+            in_excursion = True
+        elif in_excursion:
+            in_excursion = False
+            err_spikes += 1
+    if err_sample_count:
+        features["err_spike_rate_per_s"] = _round(err_spikes / duration, 4)
+
     # ---- 节奏 ----
     gaps = [
         later - earlier
@@ -514,11 +548,15 @@ def decide_scenario_family_verdict(
     features: Mapping[str, float | None],
     *,
     official_kills: int | None,
+    official_window_duration_s: float | None = None,
 ) -> dict[str, Any] | None:
     """判别树：按序短路；全部不满足 → None（瀑布走下一级）。
 
-    分支次序与 final_0831 校准说明见模块 docstring；target_switching 分支
-    无真实样本验证（final_0831 无干净 switching 局），未实证。
+    official_window_duration_s：官方配对窗时长（秒，裁剪前）。仅持续火力
+    分支的转火杀率用它做分母——pairing meta 的 kills 是挑战级总数，归属于
+    官方窗而非被轮数据裁剪后的子窗（HumStrafe：10 杀/114.96s=0.087/s；
+    若除以 12-21s 子轮窗会虚高 5-9 倍越过阈值）。官方窗未采用（回退全轮）
+    时 kills 不可归因到本轮判别窗，杀率置 None，只走锯齿兜底。
     """
     hold_frac = features.get("hold_frac")
     clicks_per_min = features.get("clicks_per_min")
@@ -530,7 +568,6 @@ def decide_scenario_family_verdict(
     inter_click_cv = features.get("inter_click_cv")
     ang_radius = features.get("ang_radius_med")
     dist = features.get("dist_med")
-    bearing_delta = features.get("bearing_delta_at_kill_med")
     clicks_per_kill = features.get("clicks_per_kill")
 
     def verdict(
@@ -552,13 +589,43 @@ def decide_scenario_family_verdict(
             "zero_kill_variant": zero_kill_variant,
         }
 
-    # 1. continuous_tracking（含 invincible 变体）
+    # 1. 持续火力（held-fire）：先查转火签名（0901 实证，n=1/类，阈值处注释
+    #    有样本量 caveat），无签名才落 continuous_tracking（含 invincible 零杀
+    #    变体）。
     tracking_reason: dict[str, float | None] | None = None
     if hold_frac is not None and hold_frac > HOLD_FRAC_TRACKING_MAX:
         tracking_reason = {"hold_frac": hold_frac}
     elif clicks_per_min is not None and clicks_per_min < CLICKS_PER_MIN_TRACKING_MAX:
         tracking_reason = {"clicks_per_min": clicks_per_min}
     if tracking_reason is not None:
+        # 主签名：官方杀率 >=0.2/s。按住火力且目标持续死亡——每次死亡必然
+        # 伴随一次切靶（因果签名）。
+        kill_rate = (
+            official_kills / official_window_duration_s
+            if official_kills is not None and official_window_duration_s
+            else None
+        )
+        if kill_rate is not None and kill_rate >= KILL_RATE_SWITCH_MIN_PER_S:
+            return verdict(
+                "target_switching",
+                basis="heldfire_switch_by_kill_rate",
+                basis_values={"official_kill_rate_per_s": kill_rate},
+                target_count_model="sequential",
+            )
+        # 兜底签名：官方杀率缺失（官方窗未采用）时用误差锯齿率——只需
+        # views+targets，无击杀时刻依赖。
+        err_spike_rate = features.get("err_spike_rate_per_s")
+        if (
+            kill_rate is None
+            and err_spike_rate is not None
+            and err_spike_rate >= ERR_SPIKE_RATE_SWITCH_MIN
+        ):
+            return verdict(
+                "target_switching",
+                basis="heldfire_switch_by_err_sawtooth",
+                basis_values={"err_spike_rate_per_s": err_spike_rate},
+                target_count_model="sequential",
+            )
         return verdict(
             "continuous_tracking",
             basis="sustained_hold_or_slow_fire",
@@ -628,16 +695,11 @@ def decide_scenario_family_verdict(
             },
         )
 
-    # 6. target_switching（未实证：无真实样本，合成单测覆盖）
-    if bearing_delta is not None and bearing_delta > BEARING_DELTA_SWITCH_MIN_DEG:
-        return verdict(
-            "target_switching",
-            basis="bearing_switch",
-            basis_values={"bearing_delta_at_kill_med": bearing_delta},
-            target_count_model="sequential",
-        )
-
-    # 7. reclick（血厚）：多发才一杀且点击时已到位
+    # 6. reclick（血厚）：多发才一杀且点击时已到位。原 bearing_delta>60° →
+    #    target_switching 分支已拆除（0901 实测签名反向：poll addr 池化与物件
+    #    抖动产生的伪消亡使 Controlsphere 0 杀打出 75.96°>60°，而真转火
+    #    TileFrenzy 仅 51.53°）；bearing_delta_at_kill_med 特征保留在束内仅作
+    #    诊断，不进入任何判定分支。
     if (
         clicks_per_kill is not None and clicks_per_kill > CLICKS_PER_KILL_RECLICK_MIN
         and err_at_click is not None and err_at_click < ERR_AT_CLICK_RECLICK_MAX_DEG
@@ -731,7 +793,17 @@ def build_scenario_observed_profile(
         window=window_t,
         official_kills=official_kills,
     )
-    verdict = decide_scenario_family_verdict(features, official_kills=official_kills)
+    # 官方窗被采用时，pairing 挑战级 kills 才可归因（转火杀率分母用裁剪前的
+    # 官方窗时长）；回退全轮时置 None，见 decide docstring 的归因规则。
+    verdict = decide_scenario_family_verdict(
+        features,
+        official_kills=official_kills,
+        official_window_duration_s=(
+            requested_window[1] - requested_window[0]
+            if window_kind == WINDOW_OFFICIAL
+            else None
+        ),
+    )
     return {
         "schema_version": SCENARIO_OBSERVED_PROFILE_SCHEMA_VERSION,
         "round_dir_name": directory.name,

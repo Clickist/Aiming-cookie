@@ -1,8 +1,8 @@
 """telemetry_scenario_features 单元测试（合成旁车 fixture，小而快）。
 
 判别树每个分支 + 特征计算单元（churn 过滤、dt 丢弃、wrap、官方窗映射）。
-target_switching 分支无真实样本验证（final_0831 无干净 switching 局），
-只有这里的合成覆盖——未实证，阈值校准待真实 switching 数据。
+持续火力转火分支有 0901 真实样本支撑（TileFrenzy r3 翻转、Controlsphere
+零翻转，见文末真实数据用例）；合成用例覆盖阈值两侧与归因规则。
 """
 
 from __future__ import annotations
@@ -258,6 +258,80 @@ def test_tracking_sustained_hold_zero_kill_variant(tmp_path):
     assert profile["features"]["hold_frac"] > 0.6
 
 
+def test_heldfire_switch_by_kill_rate(tmp_path):
+    """①持续火力 + 官方杀率 >=0.2/s → 转火（主签名，0901 TileFrenzy 实证）。"""
+    duration = 16.0
+    # 全程按住（删失于窗末）+ 4 条顺序消亡的静止目标；官方窗 16s、kills=4
+    # → 0.25/s。
+    lives = [
+        (round(2.0 + 2.5 * index, 4), round(4.0 + 2.5 * index, 4), 2000.0, 0.0, 0.0, 300 + index)
+        for index in range(4)
+    ]
+    profile = _profile(
+        tmp_path, "heldfire_switch_kr",
+        views=_views(duration, yaw_at=lambda t: 0.0),
+        frames=_frames_from_lives(lives),
+        inputs=[{"t": 0.2, "dx": 0, "dy": 0, "btn": ["L_down"]}],
+        official_window_t=(0.0, duration),
+        official_kills=4,
+    )
+    verdict = profile["verdict"]
+    assert profile["features"]["hold_frac"] > 0.6
+    assert verdict["aim_family"] == "target_switching"
+    assert verdict["basis"] == "telemetry_observed_basis_heldfire_switch_by_kill_rate"
+    assert verdict["basis_values"] == {"official_kill_rate_per_s": 0.25}
+    assert verdict["target_motion"] == {"model": "unknown", "target_count_model": "sequential"}
+    assert verdict["zero_kill_variant"] is False
+    assert validate_scenario_observed_profile(profile) is not None
+
+
+def test_heldfire_zero_kill_rate_stays_tracking(tmp_path):
+    """②持续火力 + 官方杀率 0 → 仍 tracking（invincible 变体不回归）。"""
+    duration = 16.0
+    lives = [
+        (round(2.0 + 2.5 * index, 4), round(4.0 + 2.5 * index, 4), 2000.0, 0.0, 0.0, 300 + index)
+        for index in range(4)
+    ]
+    profile = _profile(
+        tmp_path, "heldfire_kr0",
+        views=_views(duration, yaw_at=lambda t: 0.0),
+        frames=_frames_from_lives(lives),
+        inputs=[{"t": 0.2, "dx": 0, "dy": 0, "btn": ["L_down"]}],
+        official_window_t=(0.0, duration),
+        official_kills=0,
+    )
+    verdict = profile["verdict"]
+    assert verdict["aim_family"] == "continuous_tracking"
+    assert verdict["basis"] == "telemetry_observed_basis_sustained_hold_or_slow_fire"
+    assert verdict["zero_kill_variant"] is True
+
+
+def test_heldfire_switch_by_err_sawtooth_fallback(tmp_path):
+    """③持续火力 + 官方杀率缺失 + 误差锯齿率 >=0.3/s → 转火（兜底签名）。"""
+    duration = 12.0
+    # 准星贴住目标（误差≈0），每 2s 甩开 >15° 达 0.2s 再收回：4 次 excursion
+    # / 12s = 0.333/s。official_window 缺失 → 杀率 None，只走锯齿兜底。
+    swings = (2.0, 4.0, 6.0, 8.0)
+
+    def yaw_at(t: float) -> float:
+        return 30.0 if any(start <= t < start + 0.2 for start in swings) else 0.0
+
+    profile = _profile(
+        tmp_path, "heldfire_sawtooth",
+        views=_views(duration, yaw_at=yaw_at),
+        frames=_frames_from_lives(_static_target_lives(duration, count=1, dist=2000.0)),
+        inputs=[{"t": 0.2, "dx": 0, "dy": 0, "btn": ["L_down"]}],
+    )
+    features = profile["features"]
+    assert features["err_spike_rate_per_s"] == pytest.approx(4 / 12.0, abs=0.01)
+    verdict = profile["verdict"]
+    assert verdict["aim_family"] == "target_switching"
+    assert verdict["basis"] == "telemetry_observed_basis_heldfire_switch_by_err_sawtooth"
+    assert verdict["basis_values"]["err_spike_rate_per_s"] == pytest.approx(0.3333, abs=0.001)
+    assert verdict["target_motion"]["target_count_model"] == "sequential"
+    assert validate_scenario_observed_profile(profile) is not None
+
+
 def test_flick_speed_via_click_error(tmp_path):
     duration = 16.0
     # 两个相距 30° 的目标；点击时刻准星停在正中（对任一目标误差 ~15°）——甩枪签名。
@@ -300,8 +374,12 @@ def test_flick_speed_via_rest_error_and_irregular_rhythm(tmp_path):
     assert verdict["subdomains"] == ["speed"]
 
 
-def test_target_switching_bearing_delta_synthetic(tmp_path):
-    """未实证分支（无真实样本）：交替出现在 ±40° 方位的静止目标被逐个击杀。"""
+def test_bearing_delta_feature_kept_but_no_branch(tmp_path):
+    """⑤bearing_delta>60° 不再触发转火：branch-6 已拆除（0901 实测签名反向）。
+
+    特征本身保留在束内（诊断价值）；该合成场景（交替 ±40° 方位、bearing_delta
+    远超旧 60° 阈值）在新树中无分支命中 → verdict None。
+    """
     duration = 12.0
     lives = []
     click_targets = []
@@ -313,8 +391,8 @@ def test_target_switching_bearing_delta_synthetic(tmp_path):
         end = round(start + slot - 0.5, 4)
         lives.append((start, end, 1500.0 * math.cos(rad), 1500.0 * math.sin(rad), 0.0, 500 + index))
         click_targets.append((start + slot - 0.9, yaw))
-    # 每条生命 3 发点击（避免 cpm<30 误入 tracking 分支）；准星持续贴住当前
-    # 存活目标（休息位误差≈0），确保只靠 bearing 信号进入本分支。
+    # 每条生命 3 发点击（避免 cpm<30 误入持续火力分支）；准星持续贴住当前
+    # 存活目标（误差≈0），确保旧树里只有 bearing 信号能命中该分支。
     inputs = []
     for (t, _yaw) in click_targets:
         for shot in range(3):
@@ -340,11 +418,8 @@ def test_target_switching_bearing_delta_synthetic(tmp_path):
         inputs=inputs,
         bb_bots_radius=50.0,
     )
-    verdict = profile["verdict"]
     assert profile["features"]["bearing_delta_at_kill_med"] > 60.0
-    assert verdict["aim_family"] == "target_switching"
-    assert verdict["basis"] == "telemetry_observed_basis_bearing_switch"
-    assert verdict["target_motion"]["target_count_model"] == "sequential"
+    assert profile["verdict"] is None
 
 
 def test_reclick_thick_target(tmp_path):
@@ -692,3 +767,58 @@ def test_final0831_real_challenge_windows(
     )
     assert resolution["classification_source"] == "telemetry_observed"
     assert resolution["aim_family"] == want_family
+
+
+# session_0901 两局：持续火力转火判定的真实样本（官方窗+kills 来自上游
+# crosscheck_session_0901_* 回执，只读）。TileFrenzy r3 是本分支要捕捉的翻转
+# （tracking→switching），Controlsphere r3 是零杀纯跟枪对照（不得翻转）。
+
+_REAL_SESSIONS_0901 = [
+    # (局名, 旁车目录, 轮号, bb window_t, 官方 kills, 预期 family)
+    (
+        "Controlsphere 0901",
+        _REAL_CLEANED / "session_0901_2132" / "target_poll_out_0901_213256",
+        3, (275.052, 335.538), 0, "continuous_tracking",
+    ),
+    (
+        "Tile Frenzy 0901",
+        _REAL_CLEANED / "session_0901_2156" / "target_poll_out_0901_215050",
+        3, (262.157, 322.635), 85, "target_switching",
+    ),
+]
+
+_requires_real_0901 = pytest.mark.skipif(
+    not all(session_dir.is_dir() for _n, session_dir, *_rest in _REAL_SESSIONS_0901),
+    reason="session_0901 telemetry sidecar data is not available on this machine",
+)
+
+
+@_requires_real_0901
+@pytest.mark.parametrize(
+    ("name", "session_dir", "round_number", "window_t", "kills", "want_family"),
+    _REAL_SESSIONS_0901,
+)
+def test_session0901_heldfire_switching(
+    name: str,
+    session_dir: Path,
+    round_number: int,
+    window_t: tuple[float, float],
+    kills: int,
+    want_family: str,
+):
+    profile = build_scenario_observed_profile(
+        session_dir,
+        round_number,
+        official_window_t=window_t,
+        official_kills=kills,
+    )
+    assert validate_scenario_observed_profile(profile) is not None
+    verdict = profile["verdict"]
+    print(f"\n{name}: family={verdict['aim_family']} basis={verdict['basis']}")
+    print(f"  err_spike_rate_per_s={profile['features']['err_spike_rate_per_s']}")
+    assert verdict["aim_family"] == want_family
+    if want_family == "target_switching":
+        assert verdict["basis"] == "telemetry_observed_basis_heldfire_switch_by_kill_rate"
+        assert verdict["target_motion"]["target_count_model"] == "sequential"
+    else:
+        assert verdict["zero_kill_variant"] is True
