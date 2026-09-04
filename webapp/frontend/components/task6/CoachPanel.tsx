@@ -1799,6 +1799,11 @@ export function CoachPanel({
     }
   };
 
+  // 回合结束收起菜单：caret 随 composerBusy 卸载，开启态不带到下一回合。
+  useEffect(() => {
+    if (!composerBusy) setSendMenuOpen(false);
+  }, [composerBusy]);
+
   // 运行中发送键下拉：外点关闭、Esc 关闭、↑↓ 在动作间移动焦点（IME 守卫）。
   useEffect(() => {
     if (!sendMenuOpen) return undefined;
@@ -2177,41 +2182,10 @@ export function CoachPanel({
             <CoachModelMenu
               onError={(message) => notify(message)}
             />
-            {composerBusy ? (
-              /* 运行中发送键四动作（item 2）：steer / queue / interrupt-steer / interrupt */
-              <div className="task6-send-actions" ref={sendMenuRef}>
-                <button
-                  aria-expanded={sendMenuOpen}
-                  aria-haspopup="menu"
-                  aria-label="运行中发送选项"
-                  className="task6-composer-send"
-                  data-open={sendMenuOpen || undefined}
-                  onClick={() => setSendMenuOpen((open) => !open)}
-                  title="发送选项：转向 / 排队 / 打断"
-                  type="button"
-                >
-                  <IconSend />
-                </button>
-                {sendMenuOpen ? (
-                  <div aria-label="运行中发送选项" className="task6-send-menu" role="menu">
-                    <button disabled={!draft.trim()} onClick={() => void steerWithDraft()} role="menuitem" type="button">
-                      立即转向<small>不打断当前回复，直接注入本回合</small>
-                    </button>
-                    <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); const content = composeOutgoing(); if (content === null) return; enqueueQueuedItem(content); setDraft(""); setQuotes([]); }} role="menuitem" type="button">
-                      加入队列<small>本轮结束后按顺序自动发送，可随时取消</small>
-                    </button>
-                    <button disabled={!draft.trim()} onClick={() => void interruptAndSteer()} role="menuitem" type="button">
-                      打断并转向<small>停止当前生成并以此内容开始新回复</small>
-                    </button>
-                    <div className="task6-send-menu-separator" role="separator" />
-                    <button onClick={() => void stop()} role="menuitem" type="button">
-                      停止生成<small>结束本轮回复</small>
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              /* 拍板①：quote-only 仍被禁用（引用不构成正文），悬停给出发送提示。 */
+            {/* 发送键恒为提交（点点 09-01 拍板移除批5 ed8d067 的四动作开关式防误触）：
+                运行中点击走 sendText busy 分支＝自动入队 chips + toast，首击必响应；
+                转向/打断/停止收敛到旁挂 caret 菜单——停止生成仍必须有入口。 */}
+            <div className="task6-send-actions" ref={sendMenuRef}>
               <button
                 aria-label="发送"
                 className="task6-composer-send"
@@ -2220,7 +2194,40 @@ export function CoachPanel({
                 title={draft.trim() || quotes.length === 0 ? undefined : "只有引用、没有正文时不能发送，请补充你的问题或要求"}
                 type="button"
               ><IconSend /></button>
-            )}
+              {composerBusy ? (
+                <>
+                  <button
+                    aria-expanded={sendMenuOpen}
+                    aria-haspopup="menu"
+                    aria-label="运行中发送选项"
+                    className="task6-send-caret"
+                    data-open={sendMenuOpen || undefined}
+                    onClick={() => setSendMenuOpen((open) => !open)}
+                    title="运行中操作：转向 / 排队 / 打断 / 停止"
+                    type="button"
+                  >
+                    <IconChevronDown className="task6-send-caret-icon" />
+                  </button>
+                  {sendMenuOpen ? (
+                    <div aria-label="运行中发送选项" className="task6-send-menu" role="menu">
+                      <button disabled={!draft.trim()} onClick={() => void steerWithDraft()} role="menuitem" type="button">
+                        立即转向<small>不打断当前回复，直接注入本回合</small>
+                      </button>
+                      <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); const content = composeOutgoing(); if (content === null) return; enqueueQueuedItem(content); setDraft(""); setQuotes([]); }} role="menuitem" type="button">
+                        加入队列<small>本轮结束后按顺序自动发送，可随时取消</small>
+                      </button>
+                      <button disabled={!draft.trim()} onClick={() => void interruptAndSteer()} role="menuitem" type="button">
+                        打断并转向<small>停止当前生成并以此内容开始新回复</small>
+                      </button>
+                      <div className="task6-send-menu-separator" role="separator" />
+                      <button onClick={() => void stop()} role="menuitem" type="button">
+                        停止生成<small>结束本轮回复</small>
+                      </button>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
           </div>
         </div>
       </footer>

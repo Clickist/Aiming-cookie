@@ -136,6 +136,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/external-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List External Runs */
+        get: operations["list_external_runs_api_external_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/external-runs/{external_run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get External Run */
+        get: operations["get_external_run_api_external_runs__external_run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/external-telemetry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get External Telemetry */
+        get: operations["get_external_telemetry_api_external_telemetry_get"];
+        /** Save External Telemetry Watch Root */
+        put: operations["save_external_telemetry_watch_root_api_external_telemetry_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/history/trends/{metric_key}": {
         parameters: {
             query?: never;
@@ -997,6 +1049,99 @@ export interface components {
             schema_version: "evidence_segment_playback.v1";
             /** Video Route */
             video_route?: string | null;
+        };
+        /** ExternalRunDetailResponse */
+        ExternalRunDetailResponse: {
+            /** Run */
+            run: {
+                [key: string]: unknown;
+            };
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "external_run_detail.v1";
+        };
+        /** ExternalRunListItem */
+        ExternalRunListItem: {
+            /** Deaths */
+            deaths?: number | null;
+            /** External Run Id */
+            external_run_id: string;
+            /** Imported At */
+            imported_at?: string | null;
+            /** Index File */
+            index_file?: string | null;
+            /** Label Agreement */
+            label_agreement?: string | null;
+            /** Matched Run Ids */
+            matched_run_ids?: unknown[];
+            /** N Targets */
+            n_targets?: number | null;
+            /** Proposal Label */
+            proposal_label?: string | null;
+            /** Proposal Score */
+            proposal_score?: number | null;
+            /** Proposal Status */
+            proposal_status?: string | null;
+            /** Quality Issues */
+            quality_issues?: string[];
+            /** Round */
+            round?: number | null;
+            /** Schema Version */
+            schema_version: string;
+            /** Source File */
+            source_file?: string | null;
+            /** Spawns */
+            spawns?: number | null;
+            /** T2K P50 */
+            t2k_p50?: number | null;
+            /** Timeouts */
+            timeouts?: number | null;
+        };
+        /** ExternalRunListResponse */
+        ExternalRunListResponse: {
+            /** Items */
+            items: components["schemas"]["ExternalRunListItem"][];
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "external_run_list.v1";
+            /** Total */
+            total: number;
+        };
+        /** ExternalTelemetryConfigResponse */
+        ExternalTelemetryConfigResponse: {
+            /**
+             * Activation
+             * @default not_requested
+             * @enum {string}
+             */
+            activation: "not_requested" | "activated" | "runtime_unavailable" | "failed";
+            /** Run Count */
+            run_count: number;
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "external_telemetry_config.v1";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "unset" | "confirmed" | "automatic";
+            /** Watch Root */
+            watch_root?: string | null;
+            /** Watcher */
+            watcher?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ExternalTelemetryWatchRootUpdateRequest */
+        ExternalTelemetryWatchRootUpdateRequest: {
+            /** Watch Root */
+            watch_root: string;
         };
         /** FrontendAnalysisDataDistribution */
         FrontendAnalysisDataDistribution: {
@@ -2218,6 +2363,121 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalyzeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_external_runs_api_external_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalRunListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_external_run_api_external_runs__external_run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalRunDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_external_telemetry_api_external_telemetry_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalTelemetryConfigResponse"];
+                };
+            };
+        };
+    };
+    save_external_telemetry_watch_root_api_external_telemetry_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExternalTelemetryWatchRootUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalTelemetryConfigResponse"];
                 };
             };
             /** @description Validation Error */
