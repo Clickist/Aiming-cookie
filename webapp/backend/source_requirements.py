@@ -105,10 +105,11 @@ def validate_source_requirements(bundle: Mapping[str, object] | object) -> dict[
         mode
         for mode, required in (
             # telemetry_multimodal 排最前：外部遥测是首选数据源，CV 视频降为
-            # fallback；五源可用才可选（遥测 + 原生输入 + 时间窗，视频不参与）。
+            # fallback；遥测档只要求遥测 + KovaaK stats + 性能事件 + 时间窗，
+            # 原生输入与视频都不参与（遥测 producer 是本进程真值投影，不依赖
+            # trace/cv2——dev 应用离线期间的无视频 run 也必须能选到档）。
             ("telemetry_multimodal", (
-                "external_telemetry", "stats", "performance", "raw_input",
-                "canonical_window",
+                "external_telemetry", "stats", "performance", "canonical_window",
             )),
             ("multimodal", ("stats", "performance", "raw_input", "video", "canonical_window")),
             ("input_native", ("stats", "performance", "raw_input", "canonical_window")),

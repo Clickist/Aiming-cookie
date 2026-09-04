@@ -366,7 +366,7 @@ def test_d1_full_backfill_of_frozen_cleaned_tree(
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
     expected = expected_frozen_round_count(FROZEN_ROOT)
     # 冻结集钉死：69 个 index 覆盖轮 + 5 个无 index 验证轮（再演进需重钉）。
-    assert expected == 82, "frozen cleaned/ tree changed; re-pin DoD expectations"
+    assert expected == 93, "frozen cleaned/ tree changed; re-pin DoD expectations"
     before = _tree_snapshot(FROZEN_ROOT)
     watcher = _watcher(FROZEN_ROOT)
     summary = watcher.scan_once()
@@ -527,8 +527,8 @@ def test_d6_label_passthrough_is_field_exact_and_never_touches_overrides(
         # tie_group 各态（当前冻结集：缺失 12 + 非空列表 50；历史数据另有 null/[]）。
         saw_tie_group_missing = saw_tie_group_missing or "tie_group" not in proposal
         saw_tie_group_list = saw_tie_group_list or isinstance(proposal.get("tie_group"), list)
-    assert passthrough + pending == 82
-    assert pending == 20  # 030352 主目录 9 轮 + verify0831（0831_192538）3 轮 + 0901 三个新会话（2021/2132/2156）共 8 轮无 scenario.json
+    assert passthrough + pending == 93
+    assert pending == 31  # 030352 9 + verify0831 3 + 0901 四个会话（2021/2132/2156/2359）共 19 轮无 scenario.json（每次录制会话都会增长，长期应改为固定夹具）
     assert saw_uncertain and saw_tie_group_missing and saw_tie_group_list
     assert not overrides_path.exists()  # proposal-only：绝不写 scenario-overrides.json
 
@@ -539,7 +539,7 @@ def test_d5_unpaired_rounds_without_any_runs_stay_healthy(
 ) -> None:
     monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
     summary = _watcher(FROZEN_ROOT).scan_once()
-    assert summary["imported"] == 82 and summary["failed"] == 0
+    assert summary["imported"] == 93 and summary["failed"] == 0
     meta = _meta_for("round_01.jsonl|0|validation_static_1wall6targets_001352")
     assert meta["pairing"]["matched_run_ids"] == []
     assert meta["pairing"]["pair_confidence"] is None

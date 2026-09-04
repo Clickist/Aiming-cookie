@@ -328,3 +328,87 @@ async def test_single_and_no_match_selection_unchanged(tmp_path: Path):
     snapshot = await kovaak_run_store.build_analysis_input_snapshot(unpaired["id"], "u1")
     assert snapshot["sources"]["external_telemetry"]["availability"] == "unavailable"
     assert snapshot["sources"]["external_telemetry"]["reason"] == "telemetry_not_paired"
+
+
+async def _stats_only_run(tmp_path: Path, *, user_id: str, source_key: str) -> dict:
+    """stats+performance 就绪、无 trace、无视频的 run（遥测档的目标形态）。"""
+    stats = tmp_path / f"{source_key}-Stats.csv"
+    performance = tmp_path / f"{source_key}-Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=user_id,
+        source_key=source_key,
+        scenario="Complete test scenario",
+        stats_path=str(stats),
+        performance_path=str(performance),
+        stats_summary={
+            "source": kovaak_run_store._source_metadata(
+                stats, kovaak_run_store.STATS_PARSER_VERSION,
+            ),
+        },
+        performance_summary={
+            "source": kovaak_run_store._source_metadata(
+                performance, kovaak_run_store.PERFORMANCE_PARSER_VERSION,
+            ),
+        },
+    )
+    return await kovaak_run_store.set_run_alignment(
+        run["id"],
+        user_id,
+        state="resolved",
+        summary={
+            "start_ms": 1_000,
+            "end_ms": 2_000,
+            "duration_ms": 1_000,
+            "start_source": "test_start",
+            "end_source": "test_end",
+            "timebase_version": "time_alignment.v2",
+            "warnings": [],
+        },
+        start_epoch_ms=1_000,
+        end_epoch_ms=2_000,
+    ) or run
+
+
+@pytest.mark.asyncio
+async def test_create_analysis_passes_with_telemetry_and_stats_only(tmp_path: Path):
+    """回归 0901 真机 54052-54055：遥测+stats、无视频/raw 的 run 创建分析
+    不再被源门以 raw_input_missing/video_missing 拦截，入队 telemetry_multimodal。"""
+    from webapp.backend import analysis_service, queue
+
+    run = await _stats_only_run(
+        tmp_path, user_id="u1", source_key="telemetry-only-create",
+    )
+    _write_paired_external_run(
+        run["id"], "u1",
+        external_run_id="ext-telemonly1", imported_at="2026-09-01T00:00:00Z",
+    )
+
+    created = await analysis_service.create_analysis_from_run("u1", run["id"])
+
+    assert "reused" not in created
+    session = await queue.get_session(created["session_id"])
+    assert session["input_mode"] == "telemetry_multimodal"
+    assert not session.get("video_path")
+    ext = session["input_snapshot"]["sources"]["external_telemetry"]
+    assert ext["availability"] == "available"
+    assert ext["external_run_id"] == "ext-telemonly1"
+
+
+@pytest.mark.asyncio
+async def test_create_analysis_stays_fail_closed_without_telemetry(tmp_path: Path):
+    """stats 有、遥测无、无视频/raw：无可用档，源门保持 fail-closed。"""
+    from webapp.backend import analysis_service
+
+    run = await _stats_only_run(
+        tmp_path, user_id="u1", source_key="no-telemetry-create",
+    )
+
+    with pytest.raises(analysis_service.ProductCommandError) as exc_info:
+        await analysis_service.create_analysis_from_run("u1", run["id"])
+
+    assert exc_info.value.code == "input_unavailable"
+    assert "external_telemetry_missing" in exc_info.value.message
+    assert "raw_input_missing" in exc_info.value.message
+    assert "video_missing" in exc_info.value.message
