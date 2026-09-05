@@ -629,6 +629,34 @@ def test_validator_rejects_corrupt_profile(tmp_path):
     assert validate_scenario_observed_profile(None) is None
 
 
+def test_heldfire_switching_requires_continuous_hold():
+    """点点 0902 定义：转火=全程按住不松，切靶真空期也在按住内；中间松开过
+    的不算转火。真实标定两点：TileFrenzy hold=0.981（转火）vs Humanoid
+    Strafe 0904 局 hold=0.9455 + 锯齿 0.4992/s（中间松开过→不得判转火）。
+    按 0.97 门槛：前者进转火检查、后者被门槛挡回 tracking。"""
+    from kovaak_tracker.telemetry_scenario_features import (
+        decide_scenario_family_verdict,
+    )
+
+    features = {
+        "hold_frac": 0.9455,
+        "clicks_per_min": 8.0,
+        "err_spike_rate_per_s": 0.4992,
+    }
+    verdict = decide_scenario_family_verdict(
+        features, official_kills=None, official_window_duration_s=None,
+    )
+    assert verdict is not None
+    assert verdict["aim_family"] == "continuous_tracking"
+
+    held = dict(features, hold_frac=0.981, official_kill_rate=1.41)
+    verdict_held = decide_scenario_family_verdict(
+        {"hold_frac": 0.981, "clicks_per_min": 2.0, "err_spike_rate_per_s": 0.909},
+        official_kills=85, official_window_duration_s=60.5,
+    )
+    assert verdict_held["aim_family"] == "target_switching"
+
+
 def test_profile_schema_version():
     assert SCENARIO_OBSERVED_PROFILE_SCHEMA_VERSION == "scenario_observed_profile.v1"
 

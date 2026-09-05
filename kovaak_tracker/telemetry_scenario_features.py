@@ -85,6 +85,10 @@ INTER_CLICK_CV_FLICK_MIN = 0.6
 # - 旧 BEARING_DELTA_SWITCH_MIN_DEG=60° 分支已拆除：签名实测反向（伪消亡
 #   方位跳变 Controlsphere 0 杀 75.96° > 真转火 TileFrenzy 51.53°）。
 KILL_RATE_SWITCH_MIN_PER_S = 0.2
+# 转火的"按死"门槛（点点 0902 定义：转火=全程按住不松，切靶路上的真空期也在
+# 按住内；中间松开过的不算转火）。实测两点标定：TileFrenzy 0.981（真转火）vs
+# Humanoid Strafe 0.9455（中间松开过，非转火）——n=1/类，待扩样本。
+HELD_SWITCH_MIN_HOLD_FRAC = 0.97
 ERR_SPIKE_RATE_SWITCH_MIN = 0.3
 ERR_SPIKE_EXCURSION_MIN_DEG = 15.0
 CLICKS_PER_KILL_RECLICK_MIN = 1.5
@@ -605,7 +609,11 @@ def decide_scenario_family_verdict(
             if official_kills is not None and official_window_duration_s
             else None
         )
-        if kill_rate is not None and kill_rate >= KILL_RATE_SWITCH_MIN_PER_S:
+        if (
+            (hold_frac is None or hold_frac >= HELD_SWITCH_MIN_HOLD_FRAC)
+            and kill_rate is not None
+            and kill_rate >= KILL_RATE_SWITCH_MIN_PER_S
+        ):
             return verdict(
                 "target_switching",
                 basis="heldfire_switch_by_kill_rate",
@@ -616,7 +624,8 @@ def decide_scenario_family_verdict(
         # views+targets，无击杀时刻依赖。
         err_spike_rate = features.get("err_spike_rate_per_s")
         if (
-            kill_rate is None
+            (hold_frac is None or hold_frac >= HELD_SWITCH_MIN_HOLD_FRAC)
+            and kill_rate is None
             and err_spike_rate is not None
             and err_spike_rate >= ERR_SPIKE_RATE_SWITCH_MIN
         ):
