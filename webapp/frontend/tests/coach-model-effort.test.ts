@@ -37,11 +37,12 @@ test("CoachModelMenu offers a reasoning-gated effort section in the model menu",
   assert.match(menu, /switchProviderModel\(activeModelId, \{ reasoningEffort: nextEffort \}\)/);
 });
 
-test("SettingsWorkspace gates the effort select and includes it in the shared draft payload", async () => {
-  const settings = await source("components/task6/SettingsWorkspace.tsx");
+test("Settings provider wizard gates the effort select and includes it in the shared payload", async () => {
+  const section = await source("components/task6/ProviderSettingsSection.tsx");
+  const lib = await source("lib/provider-wizard.ts");
   // 内置目录的 reasoning 元数据决定显隐。
-  assert.match(settings, /selectedModelIsReasoning/);
-  assert.match(settings, /<Field label="思考力度">/);
-  // 干跑与入库共用 payload：一处声明两路生效。
-  assert.match(settings, /reasoning_effort: selectedModelIsReasoning && newReasoningEffort \? newReasoningEffort : null,/);
+  assert.match(section, /wizardModelIsReasoning/);
+  assert.match(section, /<Field label="思考力度">/);
+  // 干跑与入库共用 payload：一处声明两路生效（lib 纯函数 buildWizardPayload）。
+  assert.match(lib, /builtinModelIsReasoning[\s\S]*?draft\.reasoningEffort\s*\?\s*draft\.reasoningEffort/);
 });
