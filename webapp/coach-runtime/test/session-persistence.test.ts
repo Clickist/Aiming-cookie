@@ -20,7 +20,7 @@ const {
   nextSessionIdSync,
   readSessionMessages,
 } = await import("../src/session-repo.ts");
-const { wrapCoachSession } = await import("../src/turn.ts");
+const { wrapCoachSession, CLEARED_TOOL_RESULT_PLACEHOLDER: CLEAR_PLACEHOLDER } = await import("../src/turn.ts");
 
 test.after(() => {
   rmSync(dataRoot, { recursive: true, force: true });
@@ -138,28 +138,36 @@ test("wrapped session truncates buildContext to the recent window", async () => 
   );
 });
 
-test("wrapped session enforces the char budget on top of the message window", async () => {
+test("wrapped session clears stale tool results Claude-Code style instead of dropping messages", async () => {
   const session = await ensureSession(105);
   const stamp = Date.now();
   const append = (role: string, text: string) =>
     session.appendMessage({ role, content: [{ type: "text", text }], timestamp: stamp });
-  // 三对小型问答 + 一条巨型 toolResult + 一对收尾问答。全部都在 40 条窗口内，
-  // 触发的是字符预算而不是条数上限。
+  const giantToolResult = (callId: string, ch: string) =>
+    session.appendMessage({
+      role: "toolResult",
+      toolCallId: callId,
+      toolName: "read",
+      content: [{ type: "text", text: ch.repeat(150_000) }],
+      isError: false,
+      timestamp: stamp,
+    });
+  // 对话 + 4 条巨型 toolResult（共 ~600K 字符 > 400K 触发阈值）。
+  // 清除语义：最旧 1 条被占位符替换（keep=3），其余全部保留；对话文本一条不丢。
   await append("user", "u0");
   await append("assistant", "a0");
+  await giantToolResult("call-G", "G");
   await append("user", "u1");
   await append("assistant", "a1");
-  const giant = "G".repeat(150_000);
-  await session.appendMessage({
-    role: "toolResult",
-    toolCallId: "call-1",
-    toolName: "read",
-    content: [{ type: "text", text: giant }],
-    isError: false,
-    timestamp: stamp,
-  });
+  await giantToolResult("call-H", "H");
   await append("user", "u2");
   await append("assistant", "a2");
+  await giantToolResult("call-I", "I");
+  await append("user", "u3");
+  await append("assistant", "a3");
+  await giantToolResult("call-J", "J");
+  await append("user", "u4");
+  await append("assistant", "a4");
   await append("user", "current");
 
   const wrapped = wrapCoachSession(session, []);
@@ -167,33 +175,22 @@ test("wrapped session enforces the char budget on top of the message window", as
   const roles = ctx.messages.map((m) => (m as { role?: string }).role ?? "");
   const serialized = JSON.stringify(ctx.messages);
 
-  // 巨型 toolResult 独超预算且不在最新位置 → 连同更旧消息一起被整条逐出，
-  // 只留放得下的最新消息；头部对齐保证第一条是 user，不会出现孤立
-  // toolResult/assistant(tool_calls) 开头。
-  assert.ok(!serialized.includes("GGGG"), "oversized mid-history tool result should be evicted");
-  assert.ok(!serialized.includes("a0"), "oldest small messages should be dropped");
-  assert.ok(roles[0] === "user", `first message should align to user, got ${roles[0]}`);
+  // 最旧的巨型 toolResult 被替换为占位符，最近 3 条完整保留。
+  assert.ok(!serialized.includes("GGGG"), "stalest oversized tool result should be cleared");
+  assert.ok(serialized.includes(CLEAR_PLACEHOLDER), "clearing placeholder should be present");
+  assert.ok(serialized.includes("HHHH"), "kept tool result H stays intact");
+  assert.ok(serialized.includes("IIII"), "kept tool result I stays intact");
+  assert.ok(serialized.includes("JJJJ"), "kept tool result J stays intact");
+  // 对话文本一条不丢（microcompact 与旧逐出方案的核心差异）。
+  for (const t of ["u0", "a0", "u1", "a1", "u2", "a2", "u3", "a3", "u4", "a4"]) {
+    assert.ok(serialized.includes(`"${t}"`), `conversation text ${t} must survive`);
+  }
+  // 条数与序列不变：清除不改消息条数/角色，天然无孤立 tool 开头。
+  assert.equal(roles.filter((r) => r === "toolResult").length, 4);
+  assert.equal(roles[0], "user");
   assert.equal(roles[roles.length - 1], "assistant");
 
-  // 极端：单条消息独超预算（修复前遗留的旧会话才可能出现）。预算保住最新
-  // 一条后，头部对齐会把非 user/system 开头的孤立 toolResult 丢掉——最终
-  // 上下文为空也不崩溃、不带巨型载荷，回合由 harness 的当前 user 消息兜底。
-  const freshSession = await ensureSession(107);
-  await freshSession.appendMessage({ role: "user", content: [{ type: "text", text: "u0" }], timestamp: stamp });
-  await freshSession.appendMessage({
-    role: "toolResult",
-    toolCallId: "call-2",
-    toolName: "read",
-    content: [{ type: "text", text: giant }],
-    isError: false,
-    timestamp: stamp,
-  });
-  await freshSession.appendMessage({ role: "user", content: [{ type: "text", text: "current" }], timestamp: stamp });
-  const freshCtx = await wrapCoachSession(freshSession, []).buildContext();
-  assert.ok(!JSON.stringify(freshCtx.messages).includes("GGGG"), "oversized payload never reaches the provider");
-  assert.ok(Array.isArray(freshCtx.messages));
-
-  // 小对话不受预算影响：40 条窗口内全保留。
+  // 未超阈值的纯小对话：一切原样，零行为变化。
   const smallSession = await ensureSession(106);
   for (let i = 0; i < 6; i++) {
     await smallSession.appendMessage({ role: "user", content: [{ type: "text", text: `s-u${i}` }], timestamp: stamp });
@@ -204,4 +201,5 @@ test("wrapped session enforces the char budget on top of the message window", as
   const smallSerialized = JSON.stringify(smallCtx.messages);
   assert.ok(smallSerialized.includes("s-u0"), "small conversations keep full history");
   assert.ok(smallSerialized.includes("s-a5"));
+  assert.ok(!smallSerialized.includes("cleared"), "no clearing below the trigger threshold");
 });

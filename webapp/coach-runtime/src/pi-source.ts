@@ -10,6 +10,7 @@ import * as PiOpenAiCompletions from "../../../third_party/pi/packages/ai/src/ap
 import * as PiAnthropicMessages from "../../../third_party/pi/packages/ai/src/api/anthropic-messages.lazy.ts";
 import * as PiAgent from "../../../third_party/pi/packages/agent/src/index.ts";
 import * as PiNodeEnv from "../../../third_party/pi/packages/agent/src/harness/env/nodejs.ts";
+import * as PiCodingTools from "../../../third_party/pi/packages/coding-agent/src/core/tools/index.ts";
 
 export function piSourceRoot(): string {
   const resourceRoot = process.env.AIMING_COOKIE_RESOURCE_ROOT?.trim();
@@ -44,6 +45,10 @@ export async function loadPiAgent(): Promise<Record<string, unknown>> {
 
 export async function loadPiNodeEnv(): Promise<Record<string, unknown>> {
   return PiNodeEnv as Record<string, unknown>;
+}
+
+export async function loadPiCodingTools(): Promise<Record<string, unknown>> {
+  return PiCodingTools as Record<string, unknown>;
 }
 
 export function readPinnedAgentPackageVersion(): string {

@@ -28,7 +28,7 @@ import {
 import { resolveProviderModel, type PiModels, type ResolvedProviderModel } from "./provider-models.ts";
 import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
 import { getDataRoot } from "./app-data.ts";
-import { createReadTool, createWriteTool, createLsTool, explicitAnalysisRefsFromText, runScopedAnalysisReads } from "./fs-tools.ts";
+import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, explicitAnalysisRefsFromText, runScopedAnalysisReads } from "./fs-tools.ts";
 import { extractMessageText } from "./session-repo.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 
@@ -367,11 +367,15 @@ const MAX_CONTEXT_MESSAGES = 40;
 // 条数窗口不够：工具结果单条可达数十万字符（read 整份 evidence.json、
 // product command 全量 JSON），持久化后每回合重发，实测把请求顶到 12-15
 // 万 token——免费中转通道直接 429/空回复（2026-09-06 中转站内测事故）。
-// 按 content 序列化字符数做总预算，从最旧整条丢弃。150K 按合法满配查询
-// 校准：单个 signal_window 满配 ≈85KB（命令上限 96K）+ 常规对话余量，
-// 折算约 4-5 万 token，远低于 128K 模型窗口。pi 原生 compaction 接线后
-// 此项可放宽。
-const MAX_CONTEXT_CHARS = 150_000;
+// 处置对齐 Claude Code 的 microcompact：超过触发阈值时，把旧 toolResult 的
+// 内容替换为占位符，只保留最近几条完整结果；user/assistant 文本永不触碰
+// （Anthropic 官方称清除旧工具结果是"最安全、最轻量的 compaction 形式"）。
+// 触发阈值对齐 Anthropic context editing 默认 100K token，按 OpenAI 口径
+// 1 token≈4 字符折算（上下文大头是 ASCII JSON，折算可信）；真实 token 计数
+// 由 pi compaction（contextWindow−16K 触发，shouldCompactNow）兜底。
+const CONTEXT_CLEAR_TRIGGER_CHARS = 400_000;
+const CLEAR_KEEP_TOOL_RESULTS = 3;
+export const CLEARED_TOOL_RESULT_PLACEHOLDER = "[Old tool result content cleared]";
 
 function contextMessageChars(message: unknown): number {
   if (!isRecord(message)) return 0;
@@ -464,19 +468,28 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
           const withoutCurrent =
             last && (last as { role?: unknown }).role === "user" ? messages.slice(0, -1) : messages;
           let trimmed = withoutCurrent.slice(-MAX_CONTEXT_MESSAGES);
-          // 字符总预算：从最旧整条丢弃，至少保留最新一条；截完再走下面的
-          // user/system 边界对齐，保证不产生孤立的 tool 消息开头。
-          let budget = 0;
-          let cutoff = 0;
-          for (let index = trimmed.length - 1; index >= 0; index -= 1) {
-            const size = contextMessageChars(trimmed[index]);
-            if (budget + size > MAX_CONTEXT_CHARS && index < trimmed.length - 1) {
-              cutoff = index + 1;
-              break;
+          // microcompact：总字符超阈值时清除旧 toolResult 内容（保留最近
+          // CLEAR_KEEP_TOOL_RESULTS 条完整），对话文本不动。只改发往 Provider
+          // 的视图，不回写 session。清除不改变消息条数与角色序列，天然不产生
+          // 孤立 tool 开头。
+          const totalChars = trimmed.reduce((sum, m) => sum + contextMessageChars(m), 0);
+          if (totalChars > CONTEXT_CLEAR_TRIGGER_CHARS) {
+            const toolResultIndexes: number[] = [];
+            trimmed.forEach((m, index) => {
+              if ((m as { role?: unknown }).role === "toolResult") toolResultIndexes.push(index);
+            });
+            const staleCount = toolResultIndexes.length - CLEAR_KEEP_TOOL_RESULTS;
+            if (staleCount > 0) {
+              const staleIndexes = new Set(toolResultIndexes.slice(0, staleCount));
+              trimmed = trimmed.map((m, index) => {
+                if (!staleIndexes.has(index)) return m;
+                return {
+                  ...(m as object),
+                  content: [{ type: "text", text: CLEARED_TOOL_RESULT_PLACEHOLDER }],
+                };
+              });
             }
-            budget += size;
           }
-          if (cutoff > 0) trimmed = trimmed.slice(cutoff);
           // 对齐到 user/system 边界：截断可能切断 assistant(tool_calls)→tool 的配对，
           // 孤立开头的 tool 消息会触发 Provider "tool must follow tool_calls" 错误。
           while (trimmed.length > 0) {
@@ -874,11 +887,17 @@ export async function runCoachTurn(
       );
 
     // Build tools: file system tools + knowledge + product commands
+    // read/write/ls/edit/grep/find/bash 全部来自 pi coding-agent 原版实现
+    // （fs-tools.ts 只加 Coach 产品护栏），read/write 的 Coach 包装见 fs-tools.ts。
     const dataRoot = getDataRoot();
     const tools = [
-      createReadTool(dataRoot),
-      createWriteTool(dataRoot),
-      createLsTool(dataRoot),
+      await createReadTool(dataRoot),
+      await createWriteTool(dataRoot),
+      await createLsTool(dataRoot),
+      await createEditTool(dataRoot),
+      await createGrepTool(dataRoot),
+      await createFindTool(dataRoot),
+      await createBashTool(dataRoot),
       createProductCommandTool(request.tool_bridge ?? null, {
         ownerId: request.user_id,
       }),
