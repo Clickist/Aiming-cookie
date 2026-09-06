@@ -19,27 +19,26 @@ test("lib/api exposes a dry-run provider test against the dedicated sidecar rout
   assert.match(api, /Promise<ProviderProfileStatus>/);
 });
 
-test("SettingsWorkspace gates adding behind a passing dry run", async () => {
-  const settings = await source("components/task6/SettingsWorkspace.tsx");
-  assert.match(settings, /testProviderProfileDraft/);
-  // 未验证通过前「添加 Provider」不可用。
-  assert.match(settings, /disabled=\{!canAddProvider \|\| \(draftVerifyApplies && !draftVerified\)\}/);
+test("Settings provider wizard gates adding behind a passing dry run", async () => {
+  const section = await source("components/task6/ProviderSettingsSection.tsx");
+  assert.match(section, /testProviderProfileDraft/);
+  // 未验证通过前向导第 4 步的「完成」不可用。
+  assert.match(section, /disabled=\{!wizardVerified\}/);
   // 验证结论绑定表单指纹：再次变动即失效回到未验证态。
-  assert.match(settings, /draftCheck\.fingerprint !== draftFingerprint[\s\S]{0,80}abort\(\)/);
-  assert.match(settings, /draftVerified = draftCheck\.phase === "done"\s*\n\s*&& draftCheck\.passed\s*\n\s*&& draftCheck\.fingerprint === draftFingerprint/);
+  assert.match(section, /wizardCheck\.fingerprint !== wizardFingerprint[\s\S]{0,80}abort\(\)/);
+  assert.match(section, /wizardVerified = wizardCheck\.phase === "done"\s*\n\s*&& wizardCheck\.passed\s*\n\s*&& wizardCheck\.fingerprint === wizardFingerprint/);
   // 冻结提交时的候选 payload，期间的表单变动不得解锁保存。
-  assert.match(settings, /const payload = draftPayload;\s*\n\s*const fingerprint = draftFingerprint;/);
+  assert.match(section, /const payload = wizardPayload;\s*\n\s*const fingerprint = wizardFingerprint;/);
 });
 
-test("SettingsWorkspace reports dry-run results inline instead of toast-only", async () => {
-  const settings = await source("components/task6/SettingsWorkspace.tsx");
-  // 表单下方的内联 live 区块承载主要结果反馈。
-  assert.match(settings, /aria-live="polite" style=\{\{ display: "grid"/);
-  assert.match(settings, /检查通过 · /);
-  assert.match(settings, /请核对 API Key、Base URL 与所选模型后重试/);
-  assert.match(settings, /<Notice tone="error">\{draftCheck\.message\}<\/Notice>/);
+test("Settings provider wizard reports dry-run results inline instead of toast-only", async () => {
+  const section = await source("components/task6/ProviderSettingsSection.tsx");
+  // 向导第 4 步的内联 live 区块承载主要结果反馈。
+  assert.match(section, /aria-live="polite" className="task6-wizard-step-body"/);
+  assert.match(section, /连接成功 · /);
+  assert.match(section, /请核对 API Key、Base URL 与所选模型后重试/);
+  assert.match(section, /<Notice tone="error">\{wizardCheck\.message\}<\/Notice>/);
   // 校验进行中可再次点击取消，不卡死 UI；Toast 仅作其余操作的辅助反馈。
-  assert.match(settings, /停止检查/);
-  assert.match(settings, /若 controller\.signal\.aborted|\(controller\.signal\.aborted\)/);
-  assert.match(settings, /\{feedback \? <Toast/);
+  assert.match(section, /停止检查/);
+  assert.match(section, /若 controller\.signal\.aborted|\(controller\.signal\.aborted\)/);
 });

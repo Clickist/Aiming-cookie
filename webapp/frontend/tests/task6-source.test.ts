@@ -47,6 +47,8 @@ test("Coach sends and polls agent runs through the shared API adapter", async ()
 test("Settings route covers Provider, Profile, capture, theme, and Storage", async () => {
   const page = await source("app/settings/page.tsx");
   const settings = await source("components/task6/SettingsWorkspace.tsx");
+  const providerSection = await source("components/task6/ProviderSettingsSection.tsx");
+  const combined = `${settings}\n${providerSection}`;
   assert.match(page, /SettingsWorkspace/);
   for (const label of ["Provider", "配置档", "自动采集", "主题", "存储"]) {
     assert.match(settings, new RegExp(label));
@@ -54,13 +56,14 @@ test("Settings route covers Provider, Profile, capture, theme, and Storage", asy
   assert.match(settings, /useTheme/);
   assert.match(settings, /Stats 自动读取优先/);
   assert.match(settings, /总占用/);
-  assert.match(settings, /getProviderAuthOperation/);
-  assert.match(settings, /cancelProviderAuthOperation/);
+  // Provider 的 OAuth 授权动作与其状态文案随主从式重做搬进分区组件。
+  assert.match(providerSection, /getProviderAuthOperation/);
+  assert.match(providerSection, /cancelProviderAuthOperation/);
   for (const status of ["等待认证输入", "授权成功", "已取消", "已超时", "授权失败"]) {
-    assert.match(settings, new RegExp(status));
+    assert.match(providerSection, new RegExp(status));
   }
-  assert.doesNotMatch(settings, />\s*一键清空\s*</);
-  assert.doesNotMatch(settings, /\{profile\.status\}|\{capture\.raw_input_permission\}|Account/);
+  assert.doesNotMatch(combined, />\s*一键清空\s*</);
+  assert.doesNotMatch(combined, /\{profile\.status\}|\{capture\.raw_input_permission\}|Account/);
 });
 
 test("Settings reuses the in-memory snapshot when revisiting and forces refresh after changes", async () => {
@@ -78,10 +81,12 @@ test("Settings section navigation follows the current URL hash", async () => {
   assert.doesNotMatch(settings, /const activeNav = "llm-provider"/);
 });
 
-test("Settings section navigation stays below the sticky app toolbar", async () => {
+test("Settings section navigation stays visible while the content scrolls", async () => {
   const styles = await source("components/task6/task6.css");
-  assert.match(styles, /\.task6-settings-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*top:\s*68px;/);
-  assert.match(styles, /\.task6-settings-section\s*\{[\s\S]*scroll-margin-top:\s*68px;/);
+  // 设置 overlay 从应用工具栏（48px）下沿开始，左栏 sticky 贴住可视顶，
+  // 内容锚点落点保留呼吸间距——导航与分区标题都不被遮挡。
+  assert.match(styles, /\.task6-settings-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*top:\s*0;/);
+  assert.match(styles, /\.task6-settings-section\s*\{[\s\S]*scroll-margin-top:\s*var\(--space-4\);/);
 });
 
 test("Settings hides section navigation at the narrow breakpoint", async () => {
@@ -111,36 +116,43 @@ test("Settings displays the latest Stats calibration before Profile fallback val
   assert.match(settings, /latestStatsCalibration\?\.fov/);
 });
 
-test("Settings Provider type and auth selects match the shared field height", async () => {
-  const settings = await source("components/task6/SettingsWorkspace.tsx");
+test("Settings provider wizard selects match the shared field height", async () => {
+  const providerSection = await source("components/task6/ProviderSettingsSection.tsx");
   const theme = await source("ui/theme.css");
-  assert.match(settings, /<select className="ac-field__control" onChange=\{\(event\) => \{\s*const nextProviderId/);
-  assert.match(settings, /<select className="ac-field__control" onChange=\{\(event\) => setNewAuthMode/);
+  // 向导的 Model / 思考力度下拉与共享字段同一控件高度。
+  assert.match(providerSection, /<select className="ac-field__control" onChange=\{\(event\) => wizardSetDraft\(\{ modelId: event\.target\.value \}\)\} value=\{wizardDraft\.modelId\}>/);
+  assert.match(providerSection, /className="ac-field__control"\s*\n\s*onChange=\{\(event\) => wizardSetDraft\(\{ reasoningEffort/);
   assert.match(theme, /\.ac-field__control\s*\{[\s\S]*height:\s*var\(--control-height\)/);
 });
 
 test("Settings auto-detects custom Provider protocols and keeps a fallback choice", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
+  const providerSection = await source("components/task6/ProviderSettingsSection.tsx");
   const helpers = await source("lib/provider-helpers.ts");
-  assert.match(settings, /custom_anthropic_compatible/);
+  assert.match(providerSection, /custom_anthropic_compatible/);
   assert.match(helpers, /anthropic-messages/);
-  assert.match(settings, /customKind === "custom_anthropic_compatible" \? "https:\/\/provider\.example" : "https:\/\/provider\.example\/v1"/);
-  assert.match(settings, /discoverCustomProviderModels/);
-  assert.match(settings, /customProtocolNeedsChoice/);
-  assert.match(settings, /customProtocolConfirmed/);
+  assert.match(providerSection, /customKind === "custom_anthropic_compatible" \? "https:\/\/provider\.example" : "https:\/\/provider\.example\/v1"/);
+  assert.match(providerSection, /discoverCustomProviderModels/);
+  // 协议识别失败的回退：hook 保留 needsProtocolChoice，向导留手动 Model ID。
+  assert.match(helpers, /needsProtocolChoice/);
+  assert.match(providerSection, /列表中没有需要的 Model ID/);
+  assert.match(providerSection, /customProtocolConfirmed/);
   assert.match(settings, /getProviderCatalog\(\)\.catch\(\(\) => null\)/);
-  assert.match(settings, /window\.setTimeout\(\(\) => \{/);
-  assert.doesNotMatch(settings, /onClick=\{\(\) => void discoverCustomModels\(\)\}/);
-  assert.match(settings, /列表中没有需要的 Model ID/);
-  assert.match(settings, /isCustomProviderKind\(activeProfile\.kind\)/);
+  // capture 首载 3s 竞速与 OAuth 授权轮询的异步形态各自保留。
+  assert.match(settings, /window\.setTimeout\(\(\) => resolve\(null\), CAPTURE_STATUS_FIRST_LOAD_TIMEOUT_MS\)/);
+  assert.match(providerSection, /window\.setTimeout\(\(\) => \{/);
+  assert.doesNotMatch(providerSection, /onClick=\{\(\) => void discoverCustomModels\(\)\}/);
+  assert.match(providerSection, /isCustomProviderKind\(selectedProfile\.kind\)/);
 });
 
 test("Provider model selection does not reset the API key draft", async () => {
-  const settings = await source("components/task6/SettingsWorkspace.tsx");
-  assert.match(settings, /previousProviderSelection = useRef<string \| null>\(null\)/);
-  assert.match(settings, /previousProviderSelection\.current === selectedProviderKey/);
-  assert.match(settings, /<select onChange=\{\(event\) => setModelId\(event\.target\.value\)\} value=\{modelId\}>/);
-  assert.doesNotMatch(settings, /setModelId\(event\.target\.value\);\s*setNewApiKey/);
+  const providerSection = await source("components/task6/ProviderSettingsSection.tsx");
+  // 向导中换 Model 只落 modelId；key 草稿不被清空。
+  assert.match(providerSection, /<select className="ac-field__control" onChange=\{\(event\) => wizardSetDraft\(\{ modelId: event\.target\.value \}\)\} value=\{wizardDraft\.modelId\}>/);
+  assert.doesNotMatch(providerSection, /modelId: event\.target\.value[\s\S]{0,80}apiKey: ""/);
+  // 只有类型切换 / 自定义端点与 key 自身的变动才重置检查结论。
+  const resetGuard = providerSection.match(/const wizardSetDraft = \(patch: Partial<WizardDraft>\) => \{[\s\S]*?\n  \};/)?.[0] ?? "";
+  assert.match(resetGuard, /patch\.typeId !== undefined \|\| patch\.baseUrl !== undefined \|\| patch\.apiKey !== undefined/);
 });
 
 test("Settings refreshes native capture status while it is open", async () => {
@@ -456,10 +468,34 @@ test("Coach pins the discussion analysis bar above the scrolling conversation an
   assert.ok(discussionAt !== -1 && messagesAt !== -1, "discussion bar and messages section must exist");
   assert.ok(discussionAt < messagesAt, "discussion bar must render before the scrolling messages section");
   assert.match(coach, /task6-discussion-bar task6-suggestions/);
-  // 项目名是按钮：点击打开左侧视频讲解
-  assert.match(coach, /onClick=\{\(\) => onOpenVideo\?\.\(`analysis:\$\{id\}`, 0\)\}/);
+  // 项目名是按钮：点击打开左侧视频讲解（平铺 chip 与下拉菜单项同一行为）
+  assert.match(coach, /onClick=\{\(\) => onOpenVideo\?\.\(`analysis:\$\{chip\.id\}`, 0\)\}/);
   // 吸顶条样式：flex 收缩为 none，不参与对话滚动
   assert.match(styles, /\.task6-discussion-bar\s*\{[\s\S]*flex:\s*none;[\s\S]*\}/);
   // 吸顶条与整面板同底色，不再有 ::after 发丝线切开
   assert.doesNotMatch(styles, /\.task6-discussion-bar::after/);
+});
+
+test("Discussion bar pins at most three finished chips and folds the rest behind an overflow menu", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  const lib = await source("lib/discussion-bar.ts");
+  const styles = await source("components/task6/task6.css");
+  // 平铺/溢出分组收敛到 lib 纯函数（单测在 lib/discussion-bar.test.ts），
+  // 面板只消费 pinned/overflow 两组；pending chip 独立平铺，不参与折叠。
+  assert.match(lib, /export const DISCUSSION_BAR_MAX_PINNED = 3;/);
+  assert.match(coach, /groupDiscussionChips\(discussionChips\)/);
+  assert.match(coach, /pinnedDiscussionChips\.map/);
+  assert.match(coach, /overflowDiscussionChips\.length > 0 \? \(/);
+  // 箭头按钮：suggestion chip 体系 + aria-expanded + 计数 aria-label。
+  assert.match(coach, /className="task6-suggestion task6-discussion-toggle"/);
+  assert.match(coach, /aria-expanded=\{discussionOverflowOpen\}/);
+  assert.match(coach, /aria-label=\{`展开其余 \$\{overflowDiscussionChips\.length\} 个讨论过的分析`\}/);
+  // 菜单项点击＝关菜单并打开视频（与平铺 chip 同一行为）。
+  assert.match(coach, /setDiscussionOverflowOpen\(false\);\s*onOpenVideo\?\.\(`analysis:\$\{chip\.id\}`, 0\);/);
+  // 关闭路径（CoachModelMenu 同款惯例）：外点 mousedown + IME 守卫的 Escape。
+  assert.match(coach, /document\.addEventListener\("mousedown", onPointerDown\)/);
+  assert.match(coach, /if \(event\.isComposing \|\| event\.keyCode === 229\) return;\s*if \(event\.key === "Escape"\) setDiscussionOverflowOpen\(false\);/);
+  // 下拉样式：绝对定位悬浮层挂在吸顶条右缘，宽度有界不溢出面板。
+  assert.match(styles, /\.task6-discussion-menu\s*\{[^}]*position:\s*absolute;[^}]*top:\s*calc\(100% \+ var\(--space-1\)\);[^}]*right:\s*var\(--space-4\);[^}]*max-width:\s*320px;[^}]*\}/s);
+  assert.match(styles, /\.task6-discussion-item/);
 });
