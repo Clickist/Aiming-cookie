@@ -57,3 +57,9 @@ viscose-youtube/
 
 # wrangler local state
 .wrangler/
+
+# 本地参考料/运行产物（09-06 清扫出库，文件保留在本地不入库）
+output/
+.firecrawl/
+macos-vibrancy-style-pack/
+aiming-theory-compendium*.html
