@@ -11,7 +11,12 @@ import { formatTimecode, formatTimecodeRange } from "../lib/rich-text";
 const root = path.resolve(import.meta.dirname, "..");
 
 async function source(relativePath: string): Promise<string> {
-  return readFile(path.join(root, relativePath), "utf8");
+  // 统一换行符为 LF 再供断言。为什么：下方有跨行正则（如 frameStepRef 与
+  // fpsSampledRef 两连行）按 `\n` 匹配，而 Windows 检出的源码是 CRLF（\r\n），
+  // 多出的 \r 会让正确的代码在 Windows 上稳定误报失败（2026-08-29 起的既有坑，
+  // 2026-09-06 修复）。归一后本文件的断言对两种换行符都能通过。
+  const raw = await readFile(path.join(root, relativePath), "utf8");
+  return raw.replace(/\r\n/g, "\n");
 }
 
 test("P0.1 frame stepping: ,/. keys plus buttons step by inferred fps with 33ms fallback", async () => {

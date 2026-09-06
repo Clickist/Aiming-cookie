@@ -38,7 +38,10 @@ test("P2 row renders at the video bottom from mapped buttons only and hides whil
   // 数据链路：getAnalysisEvidenceSegments → 权威投影；空响应触发 peak 降级；
   // 解析中（null）不渲染整排，最终为空也不渲染整排。
   assert.match(video, /getAnalysisEvidenceSegments\(analysisId\)/);
-  assert.match(video, /projectEvidenceSegmentButtons\(payload\)/);
+  // 权威负载先存 state，投影在按钮排 memo 里做：扩窗右界的时长钳制随
+  // metadata 更新（与降级路径同一 maxMs 机制）。
+  assert.match(video, /projectEvidenceSegmentButtons\(evidenceSegments, \{/);
+  assert.match(video, /maxMs: durationMs > 0 \? timelineMax : undefined/);
   assert.match(video, /projectPeakFallbackButtons\(timelineMarkers, \{/);
   assert.match(video, /\{signalSegmentButtons\.length > 0 \? \(/);
   // 文案「00:38–00:43 类型词」复用 metric/rich-text 时间码约定。

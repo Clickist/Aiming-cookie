@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
 import { COACH_PENDING_INTENT_KEY, computeAnalysisEtaSeconds } from "@/lib/contracts";
+import { discussionChipLabel, groupDiscussionChips } from "@/lib/discussion-bar";
 import {
   COACH_DRAFT_DEBOUNCE_MS,
   activeMentionQuery,
@@ -762,6 +763,37 @@ export function CoachPanel({
       });
     return () => { cancelled = true; };
   }, [discussionAnalysisKey]);
+
+  // 已完成讨论 chip 的折叠态（0905 拍板）：只平铺前 3 个，余量收进行尾 ▾
+  // 下拉。面板长驻、切换会话不重置——条目由 discussionAnalysisIds 驱动，
+  // 开关状态只归用户。进行中的 pending chip 不参与折叠（调用方永远平铺）。
+  const [discussionOverflowOpen, setDiscussionOverflowOpen] = useState(false);
+  const discussionBarRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!discussionOverflowOpen) return undefined;
+    // 关闭路径（CoachModelMenu 同款惯例）：点击菜单外部 mousedown 关闭 +
+    // Escape 关闭（IME 守卫，输入法确认候选词期间不消费 Esc）。
+    const onPointerDown = (event: MouseEvent) => {
+      if (discussionBarRef.current && !discussionBarRef.current.contains(event.target as Node)) {
+        setDiscussionOverflowOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Escape") setDiscussionOverflowOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [discussionOverflowOpen]);
+  const discussionChips = discussionAnalysisIds.map((id) => ({
+    id,
+    label: discussionChipLabel(id, analysisScenarios[id]),
+  }));
+  const { pinned: pinnedDiscussionChips, overflow: overflowDiscussionChips } = groupDiscussionChips(discussionChips);
 
   // 进行中的分析挂进「本次讨论」条：显示「正在分析：场景名」+ 呼吸点与经过
   // 时间，完成后由自动开讲接管变成可点击的视频 chip。有分析在跑时 3s 轮询，
@@ -1920,10 +1952,12 @@ export function CoachPanel({
       <div className="task6-coach-top">
         {header}
 
-        {/* 本次讨论的分析挂载条：进行中的分析以 pending chip 呈现；已完成的
-            讨论 chip 常驻保留（0827 拍板），作为打开视频讲解的常设入口。 */}
+        {/* 本次讨论的分析挂载条：进行中的分析以 pending chip 呈现（永远平铺，
+            不参与折叠）；已完成的讨论 chip 常驻保留（0827 拍板），只平铺前 3
+            个（0905 拍板防挤压），余量收进行尾 ▾ 下拉，点击项与平铺 chip 同
+            一行为：打开视频讲解。 */}
         {(pendingAnalyses.length > 0 || discussionAnalysisIds.length > 0) ? (
-          <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" role="region">
+          <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" ref={discussionBarRef} role="region">
             <span>本次讨论</span>
             {pendingAnalyses.map((item) => (
               <span
@@ -1937,17 +1971,49 @@ export function CoachPanel({
                 <ElapsedTicker sinceMs={item.startedAtMs} />
               </span>
             ))}
-            {discussionAnalysisIds.map((id) => (
+            {pinnedDiscussionChips.map((chip) => (
               <button
                 className="task6-suggestion"
-                key={id}
-                onClick={() => onOpenVideo?.(`analysis:${id}`, 0)}
+                key={chip.id}
+                onClick={() => onOpenVideo?.(`analysis:${chip.id}`, 0)}
                 title="打开视频讲解"
                 type="button"
               >
-                {(analysisScenarios[id]?.scenario ?? `分析 #${id}`)}{analysisScenarios[id]?.runId != null ? ` · run ${analysisScenarios[id]?.runId}` : ""}
+                {chip.label}
               </button>
             ))}
+            {overflowDiscussionChips.length > 0 ? (
+              <button
+                aria-expanded={discussionOverflowOpen}
+                aria-haspopup="menu"
+                aria-label={`展开其余 ${overflowDiscussionChips.length} 个讨论过的分析`}
+                className="task6-suggestion task6-discussion-toggle"
+                onClick={() => setDiscussionOverflowOpen((open) => !open)}
+                title="展开其余讨论过的分析"
+                type="button"
+              >
+                <IconChevronDown className="task6-discussion-caret" />
+              </button>
+            ) : null}
+            {discussionOverflowOpen && overflowDiscussionChips.length > 0 ? (
+              <div aria-label="更多讨论过的分析" className="task6-discussion-menu" role="menu">
+                {overflowDiscussionChips.map((chip) => (
+                  <button
+                    className="task6-discussion-item"
+                    key={chip.id}
+                    onClick={() => {
+                      setDiscussionOverflowOpen(false);
+                      onOpenVideo?.(`analysis:${chip.id}`, 0);
+                    }}
+                    role="menuitem"
+                    title="打开视频讲解"
+                    type="button"
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

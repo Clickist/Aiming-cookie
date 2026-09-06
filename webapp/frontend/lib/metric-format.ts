@@ -174,11 +174,22 @@ export const SEGMENT_KIND_LABELS: Record<string, string> = {
 /**
  * 权威路径：evidence-segments 投影 → 时间段按钮。
  * 只接受 playback.available 且起止毫秒齐备、区间有限的段；其余静默丢弃，
- * 交给调用方的降级路径。结果按起点升序（与时间轴阅读方向一致）。
+ * 交给调用方的降级路径。后端 focus 窗口是「瞬间」级（实测 400-700ms 宽），
+ * 原样当循环区间是不到 1 秒的眨眼循环——输出时扩成最小有效循环窗：取
+ * 焦点区间与「焦点中心 ± SIGNAL_SEGMENT_FALLBACK_WINDOW_MS」的并集（与
+ * 降级路径同一哲学；焦点区间自身 ≥ 2×窗口时并集即原区间，不再扩大）。
+ * maxMs 提供时把终点钳在视频时长内（起点恒 ≥ 0）；钳后退化为空区间的段
+ * 剔除。结果按起点升序（与时间轴阅读方向一致）。
  */
 export function projectEvidenceSegmentButtons(
   payload: FrontendEvidenceSegmentsV1,
+  options: { maxMs?: number } = {},
 ): SegmentButton[] {
+  const { maxMs } = options;
+  const clampEnd = (value: number) =>
+    typeof maxMs === "number" && Number.isFinite(maxMs) && maxMs > 0
+      ? Math.min(value, maxMs)
+      : value;
   const buttons: SegmentButton[] = [];
   for (const segment of payload.segments) {
     const playback = segment.playback;
@@ -190,14 +201,18 @@ export function projectEvidenceSegmentButtons(
       || typeof endMs !== "number" || !Number.isFinite(endMs)
       || startMs < 0 || endMs <= startMs
     ) continue;
-    buttons.push({
+    // 中心取整到毫秒，避免奇数区间和产生半毫秒窗口。
+    const centerMs = Math.round((startMs + endMs) / 2);
+    const button: SegmentButton = {
       id: segment.segment_id,
-      startMs,
-      endMs,
+      startMs: Math.max(0, Math.min(startMs, centerMs - SIGNAL_SEGMENT_FALLBACK_WINDOW_MS)),
+      endMs: clampEnd(Math.max(endMs, centerMs + SIGNAL_SEGMENT_FALLBACK_WINDOW_MS)),
       kindLabel: (segment.segment_kind && SEGMENT_KIND_LABELS[segment.segment_kind])
         || segment.segment_kind
         || "片段",
-    });
+    };
+    if (button.endMs <= button.startMs) continue;
+    buttons.push(button);
   }
   return buttons.sort((left, right) => left.startMs - right.startMs);
 }

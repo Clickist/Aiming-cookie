@@ -12,6 +12,7 @@ import {
   type SegmentButton,
 } from "@/lib/metric-format";
 import { formatTimecodeRange } from "@/lib/rich-text";
+import type { FrontendEvidenceSegmentsV1 } from "@/lib/types";
 import { Button, Empty, Loading, Notice } from "@/ui/primitives";
 
 import styles from "./task5.module.css";
@@ -76,10 +77,12 @@ export function VideoView({
   const [arriveActive, setArriveActive] = useState(false);
   const lastAudibleVolumeRef = useRef(1);
 
-  /* P2 信号片段循环（brief §二 P2/D2）：权威源 evidence-segments 的播放
-     区间投影；null＝解析中（不渲染整排）。loopTarget 是激活按钮与色带的
-     状态灯，loopRef 镜像供 onTimeUpdate / 原生 pause 事件免闭包读取。 */
-  const [signalButtons, setSignalButtons] = useState<SegmentButton[] | null>(null);
+  /* P2 信号片段循环（brief §二 P2/D2）：权威源 evidence-segments 的原始
+     负载；null＝解析中（不渲染整排）。投影延后到按钮排 memo 里做——扩窗
+     的上界钳制依赖 metadata 到位后的 durationMs，随取随钳。loopTarget 是
+     激活按钮与色带的状态灯，loopRef 镜像供 onTimeUpdate / 原生 pause 事件
+     免闭包读取。 */
+  const [evidenceSegments, setEvidenceSegments] = useState<FrontendEvidenceSegmentsV1 | null>(null);
   const [loopTarget, setLoopTarget] = useState<SegmentButton | null>(null);
   const loopRef = useRef<SegmentButton | null>(null);
 
@@ -87,15 +90,24 @@ export function VideoView({
     // 换分析：循环目标失效先行清空，再重新拉取权威信号窗口。
     loopRef.current = null;
     setLoopTarget(null);
-    setSignalButtons(null);
+    setEvidenceSegments(null);
     let cancelled = false;
     getAnalysisEvidenceSegments(analysisId)
       .then((payload) => {
-        if (!cancelled) setSignalButtons(projectEvidenceSegmentButtons(payload));
+        if (!cancelled) setEvidenceSegments(payload);
       })
       .catch(() => {
-        // 接口失败 → 走 timeline peak 降级路径（不弹错，静默降级）。
-        if (!cancelled) setSignalButtons([]);
+        // 接口失败 → 置空负载走 timeline peak 降级路径（不弹错，静默降级）。
+        if (!cancelled) {
+          setEvidenceSegments({
+            schema_version: "frontend_evidence_segments.v1",
+            analysis_ref: `analysis:${analysisId}`,
+            video_availability: "unavailable",
+            video_route: null,
+            canonical_window_start_ms: null,
+            segments: [],
+          });
+        }
       });
     return () => {
       cancelled = true;
@@ -169,15 +181,19 @@ export function VideoView({
   const markerPercent = (timeMs: number) =>
     clamp((timeMs / timelineMax) * 100, 0, 100);
 
-  /* P2 按钮排数据：权威窗口优先；权威源为空/失败时用 peak±窗口降级推导
-     （时长已知才钳上界，metadata 未到的瞬间不编造终点）。 */
+  /* P2 按钮排数据：权威窗口优先（焦点区间扩成最小有效循环窗，时长已知才
+     钳上界，metadata 未到的瞬间不编造终点）；权威源为空/失败时用 peak±
+     窗口降级推导。 */
   const signalSegmentButtons = useMemo(() => {
-    if (signalButtons === null) return [];
-    if (signalButtons.length > 0) return signalButtons;
+    if (evidenceSegments === null) return [];
+    const projected = projectEvidenceSegmentButtons(evidenceSegments, {
+      maxMs: durationMs > 0 ? timelineMax : undefined,
+    });
+    if (projected.length > 0) return projected;
     return projectPeakFallbackButtons(timelineMarkers, {
       maxMs: durationMs > 0 ? timelineMax : undefined,
     });
-  }, [signalButtons, timelineMarkers, durationMs, timelineMax]);
+  }, [evidenceSegments, timelineMarkers, durationMs, timelineMax]);
 
   const seek = (timeMs: number) => {
     const next = clamp(timeMs, 0, timelineMax);
