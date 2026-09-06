@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     # tauri build 产出的 NSIS 安装包（本地名可带空格；上传 R2 前会转下划线名）
     [Parameter(Mandatory = $true)][string]$InstallerPath,
