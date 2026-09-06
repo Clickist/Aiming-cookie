@@ -2,18 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { getVersion } from "@tauri-apps/api/app";
 
 import {
-  authorizeProviderProfile,
-  cancelProviderAuthOperation,
-  createProviderProfile,
-  discoverCustomProviderModels,
   deleteCalibrationProfile,
-  deleteProviderCredential,
-  deleteProviderProfile,
   getCalibrationProfile,
   getCaptureStatus,
-  getProviderAuthOperation,
   getProviderCatalog,
   getStorage,
   listIncompleteCaptures,
@@ -22,32 +16,22 @@ import {
   removeIncompleteCapture,
   removeRunEvidence,
   saveCalibrationProfile,
-  setDefaultProviderProfile,
-  setProviderApiKey,
-  submitProviderAuthInput,
-  takeProviderAuthResult,
-  testProviderProfile,
-  testProviderProfileDraft,
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
+import { describeCaptureRunEvent } from "@/lib/capture-events";
 import { exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
-import { firstAuthMode, isAuthTerminal, isCustomProviderKind, useCustomModelDiscovery } from "@/lib/provider-helpers";
+import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import { KovaaKDirectoriesPanel } from "@/components/kovaak/KovaaKDirectoriesPanel";
 import { ExternalTelemetryPanel } from "@/components/kovaak/ExternalTelemetryPanel";
+import { ProviderSettingsSection } from "@/components/task6/ProviderSettingsSection";
 import type {
   CalibrationProfileV1,
   CaptureStatusV1,
-  CustomProviderKind,
   IncompleteCaptureItemV1,
   KovaaKRunListItem,
-  ProviderAuthMode,
-  ProviderAuthOperation,
   ProviderCatalogV1,
   ProviderProfile,
-  ProviderProfileCreate,
-  ProviderProfileState,
-  ProviderReasoningEffort,
   StorageResponse,
 } from "@/lib/types";
 import {
@@ -63,7 +47,7 @@ import {
   Status,
   Toast,
 } from "@/ui/primitives";
-import { IconCheck, IconChevronDown, IconChevronLeft } from "@/ui/icons";
+import { IconChevronLeft } from "@/ui/icons";
 import { useTheme } from "@/ui/theme";
 
 type ConfirmAction = {
@@ -72,19 +56,96 @@ type ConfirmAction = {
   run: () => Promise<void>;
 } | null;
 
-// Raycast 式先验后存：干跑结果绑定提交时的表单指纹，
-// 表单任何变动都会让旧结论失效并回到未验证态。
-type DraftCheck =
-  | { phase: "idle" }
-  | { phase: "checking"; fingerprint: string }
-  | { phase: "done"; fingerprint: string; passed: boolean; message: string };
-
 const STORAGE_COLORS = [
   "var(--on-surface)",
   "var(--outline)",
   "var(--on-surface-variant)",
   "var(--outline-variant)",
 ];
+
+// 「最近采集事件」最多展示的局数（新→旧）。
+const RECENT_CAPTURE_EVENTS_LIMIT = 8;
+
+type AppUpdateCheckState =
+  | { phase: "idle" }
+  | { phase: "checking" }
+  | { phase: "latest" }
+  | { phase: "available"; update: DesktopUpdate }
+  | { phase: "error" };
+
+// 设置页的「应用更新」：与启动静默检查共用 lib/updater 的同一端点与验签；
+// 安装期间锁住按钮，成功时进程直接重启（不会回到 idle）。
+function AppUpdatePanel() {
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [checkState, setCheckState] = useState<AppUpdateCheckState>({ phase: "idle" });
+  const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return undefined;
+    let cancelled = false;
+    void getVersion()
+      .then((version) => {
+        if (!cancelled) setAppVersion(version);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const checkNow = useCallback(async () => {
+    setCheckState({ phase: "checking" });
+    try {
+      const update = await checkForDesktopUpdate();
+      setCheckState(update ? { phase: "available", update } : { phase: "latest" });
+    } catch {
+      setCheckState({ phase: "error" });
+    }
+  }, []);
+
+  const installNow = useCallback(async () => {
+    if (checkState.phase !== "available") return;
+    setInstalling(true);
+    try {
+      await checkState.update.install();
+      // 安装成功时进程会重启；走到这里说明重启未发生，恢复为可重试。
+      setInstalling(false);
+    } catch {
+      setInstalling(false);
+    }
+  }, [checkState]);
+
+  if (!isDesktopRuntime()) {
+    return <p className="task6-muted">浏览器预览不提供应用更新检查。</p>;
+  }
+  return (
+    <div className="task6-app-update">
+      <p className="task6-muted">
+        当前版本{appVersion ? ` ${appVersion}` : ""}。
+        {checkState.phase === "checking" ? " 正在检查更新…" : null}
+        {checkState.phase === "latest" ? " 已是最新版本。" : null}
+        {checkState.phase === "error" ? " 检查失败，请稍后再试。" : null}
+        {checkState.phase === "available" ? ` 发现新版本 ${checkState.update.version}。` : null}
+        {installing ? " 正在下载并安装，完成后应用会自动重启…" : null}
+      </p>
+      <div className="task6-inline-actions">
+        <Button
+          disabled={checkState.phase === "checking" || installing}
+          onClick={() => void checkNow()}
+          size="compact"
+          variant="secondary"
+        >
+          检查更新
+        </Button>
+        {checkState.phase === "available" && !installing ? (
+          <Button onClick={() => void installNow()} size="compact">
+            更新到 {checkState.update.version}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -98,55 +159,20 @@ function captureLabel(value: boolean | null | undefined, yes: string, no: string
   return value ? yes : no;
 }
 
-function providerStateLabel(status: ProviderProfileState): string {
-  switch (status) {
-    case "unconfigured": return "未配置";
-    case "auth_expired": return "认证已过期";
-    case "needs_reauth": return "需要重新认证";
-    case "ready": return "可用";
-    case "model_unavailable": return "模型不可用";
-    case "connection_failed": return "连接失败";
-  }
-}
-
-function authOperationLabel(status: ProviderAuthOperation["status"]): string {
-  switch (status) {
-    case "running": return "正在连接 Provider";
-    case "awaiting_input": return "等待认证输入";
-    case "succeeded": return "授权成功";
-    case "failed": return "授权失败";
-    case "cancelled": return "已取消";
-    case "timed_out": return "已超时";
-  }
-}
-
 function rawPermissionLabel(value: CaptureStatusV1["raw_input_permission"]): string {
   return value === "granted" ? "已允许" : value === "denied" ? "已拒绝" : "尚未决定";
 }
 
-function finalizationLabel(value: string): string {
-  const labels: Record<string, string> = {
-    idle: "待命",
-    discovered: "已发现训练",
-    capturing: "采集中",
-    pending: "等待整理",
-    finalizing: "整理中",
-    finalized: "已完成",
-    failed: "整理失败",
-    unknown: "状态未知",
-  };
-  return labels[value] ?? "状态未知";
+function runtimeHealthLabel(value: CaptureStatusV1["runtime_health"]): string {
+  return value === "healthy" ? "采集服务正常" : value === "degraded" ? "采集服务降级" : "采集服务不可用";
+}
+
+function runtimeHealthTone(value: CaptureStatusV1["runtime_health"]): "success" | "warning" | "error" {
+  return value === "healthy" ? "success" : value === "degraded" ? "warning" : "error";
 }
 
 function incompleteReasonLabel(value: IncompleteCaptureItemV1["reason"]): string {
   return value === "interrupted_finalization" ? "整理过程被中断" : "未归类的采集产物";
-}
-
-function providerStatusTone(status: ProviderProfileState): "success" | "warning" | "error" | "neutral" {
-  if (status === "ready") return "success";
-  if (status === "needs_reauth" || status === "auth_expired") return "warning";
-  if (status === "connection_failed" || status === "model_unavailable") return "error";
-  return "neutral";
 }
 
 const NAV_ITEMS = [
@@ -197,30 +223,12 @@ export function SettingsWorkspace() {
   const [loadError, setLoadError] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
-  const [profileName, setProfileName] = useState("");
-  const [providerId, setProviderId] = useState("");
-  const [modelId, setModelId] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [customProtocolNeedsChoice, setCustomProtocolNeedsChoice] = useState(false);
-  const [newApiKey, setNewApiKey] = useState("");
-  const [newAuthMode, setNewAuthMode] = useState<ProviderAuthMode>("api_key");
-  // 新档的思考力度旋钮：空串 = 未设置（运行时对推理模型回落高档）。
-  const [newReasoningEffort, setNewReasoningEffort] = useState<ProviderReasoningEffort | "">("");
-  const [credentialDrafts, setCredentialDrafts] = useState<Record<number, string>>({});
-  const [authOperation, setAuthOperation] = useState<ProviderAuthOperation | null>(null);
-  const [authProfileId, setAuthProfileId] = useState<number | null>(null);
-  const [authPromptValue, setAuthPromptValue] = useState("");
   const [cmPer360, setCmPer360] = useState("");
   const [fov, setFov] = useState("");
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [switchingProvider, setSwitchingProvider] = useState(false);
   const [activeNav, setActiveNav] = useState(NAV_ITEMS[0].id);
   const [captureConsent, setCaptureConsent] = useState(false);
   const [diagnosticExporting, setDiagnosticExporting] = useState(false);
-  const previousProviderSelection = useRef<string | null>(null);
-  const pickerRef = useRef<HTMLDivElement | null>(null);
-  const [draftCheck, setDraftCheck] = useState<DraftCheck>({ phase: "idle" });
-  const draftCheckAbort = useRef<AbortController | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   const desktop = isDesktopRuntime();
 
@@ -236,20 +244,6 @@ export function SettingsWorkspace() {
     }
   };
 
-  const customDiscovery = useCustomModelDiscovery({
-    baseUrl,
-    apiKey: newApiKey,
-    enabled: providerId === "custom" && !customProtocolNeedsChoice,
-    discover: discoverCustomProviderModels,
-  });
-  const {
-    models: customModels,
-    state: customModelState,
-    message: customModelMessage,
-    protocolConfirmed: customProtocolConfirmed,
-    kind: customKind,
-  } = customDiscovery;
-
   const applySnapshot = useCallback((snapshot: SettingsSnapshot) => {
     setProfiles(snapshot.profiles);
     setCatalog(snapshot.catalog);
@@ -262,55 +256,69 @@ export function SettingsWorkspace() {
     setRuns(snapshot.runs);
   }, []);
 
+  const refreshRemote = useCallback(async () => {
+    // 存储与未完成采集是重扫描端点：与其余请求一次性并行发出，到货后各自
+    // 分区独立上屏，不再阻塞 Provider / Profile 首屏（数据先到先显示）。
+    const heavyPromise = desktop
+      ? Promise.all([getStorage(), listIncompleteCaptures()])
+        .then(([nextStorage, nextIncomplete]) => {
+          setStorage(nextStorage);
+          setIncomplete(nextIncomplete.items);
+          if (settingsSnapshot) {
+            settingsSnapshot = { ...settingsSnapshot, storage: nextStorage, incomplete: nextIncomplete.items };
+          }
+        })
+        .catch(() => {
+          // 重数据拉取失败时保留上一份已知内容，不阻塞其余分区展示。
+        })
+      : null;
+    const captureTimeout = new Promise<null>((resolve) => {
+      window.setTimeout(() => resolve(null), CAPTURE_STATUS_FIRST_LOAD_TIMEOUT_MS);
+    });
+    const [profileResult, catalogResult, calibrationResult, captureResult, runResult] = await Promise.all([
+      listProviderProfiles(),
+      getProviderCatalog().catch(() => null),
+      getCalibrationProfile(),
+      desktop ? Promise.race([getCaptureStatus(), captureTimeout]) : Promise.resolve(null),
+      desktop ? listKovaakRuns().then((result) => result.runs) : Promise.resolve<KovaaKRunListItem[]>([]),
+    ]);
+    setProfiles(profileResult.profiles);
+    setCatalog(catalogResult);
+    setCalibration(calibrationResult);
+    setCmPer360(calibrationResult.values.cm_per_360?.toString() ?? "");
+    setFov(calibrationResult.values.fov?.toString() ?? "");
+    setCapture(captureResult);
+    setRuns(runResult);
+    setLoadError(catalogResult === null);
+    settingsSnapshot = {
+      profiles: profileResult.profiles,
+      catalog: catalogResult,
+      calibration: calibrationResult,
+      capture: captureResult,
+      storage: settingsSnapshot?.storage ?? null,
+      incomplete: settingsSnapshot?.incomplete ?? [],
+      runs: runResult,
+    };
+  }, [desktop]);
+
   const refresh = useCallback(async (force = false) => {
     if (!force && settingsSnapshot) {
+      // stale-while-revalidate：有缓存先渲染（立即出屏），后台静默刷新，
+      // 各分区数据先到先显示，不整页回 loading。
       applySnapshot(settingsSnapshot);
       setLoadError(settingsSnapshot.catalog === null);
       setLoading(false);
+      void refreshRemote().catch(() => setLoadError(true));
       return;
     }
     try {
-      const [profileResult, catalogResult, calibrationResult] = await Promise.all([
-        listProviderProfiles(),
-        getProviderCatalog().catch(() => null),
-        getCalibrationProfile(),
-      ]);
-      let captureResult: CaptureStatusV1 | null = null;
-      let storageResult: StorageResponse | null = null;
-      let incompleteResult: IncompleteCaptureItemV1[] = [];
-      let runResult: KovaaKRunListItem[] = [];
-      if (desktop) {
-        const captureTimeout = new Promise<null>((resolve) => {
-          window.setTimeout(() => resolve(null), CAPTURE_STATUS_FIRST_LOAD_TIMEOUT_MS);
-        });
-        const [nextCapture, nextStorage, nextIncomplete, nextRuns] = await Promise.all([
-          Promise.race([getCaptureStatus(), captureTimeout]),
-          getStorage(),
-          listIncompleteCaptures(),
-          listKovaakRuns(),
-        ]);
-        captureResult = nextCapture;
-        storageResult = nextStorage;
-        incompleteResult = nextIncomplete.items;
-        runResult = nextRuns.runs;
-      }
-      settingsSnapshot = {
-        profiles: profileResult.profiles,
-        catalog: catalogResult,
-        calibration: calibrationResult,
-        capture: captureResult,
-        storage: storageResult,
-        incomplete: incompleteResult,
-        runs: runResult,
-      };
-      applySnapshot(settingsSnapshot);
-      setLoadError(catalogResult === null);
+      await refreshRemote();
     } catch {
       setLoadError(true);
     } finally {
       setLoading(false);
     }
-  }, [applySnapshot, desktop]);
+  }, [applySnapshot, refreshRemote]);
 
   useEffect(() => {
     void refresh();
@@ -353,228 +361,36 @@ export function SettingsWorkspace() {
     return () => window.removeEventListener("hashchange", syncActiveNav);
   }, []);
 
+  // Scroll spy：内容区一页长滚动，导航条目是锚点；滚动时左侧当前分区高亮跟随。
+  // 滚动容器是设置 overlay 的 <main>（task3-route-content[data-settings-page]）。
   useEffect(() => {
-    if (!pickerOpen) return undefined;
-    const onPointerDown = (event: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) {
-        setPickerOpen(false);
+    const root = rootRef.current;
+    const scroller = root?.closest("main");
+    if (!root || !scroller) return;
+    let ticking = false;
+    const compute = () => {
+      ticking = false;
+      const top = scroller.getBoundingClientRect().top;
+      let current = NAV_ITEMS[0].id;
+      for (const item of NAV_ITEMS) {
+        const section = document.getElementById(item.id);
+        if (!section) continue;
+        if (section.getBoundingClientRect().top - top <= 120) current = item.id;
       }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPickerOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [pickerOpen]);
-
-  const selectedCatalogProvider = useMemo(
-    () => catalog?.providers.find((provider) => provider.provider_id === providerId)
-      ?? (providerId ? undefined : catalog?.providers[0]),
-    [catalog, providerId],
-  );
-  const selectedProviderKey = providerId || selectedCatalogProvider?.provider_id || "";
-  const selectedAuthModesKey = selectedCatalogProvider?.auth_modes.join(",") ?? "";
-
-  // 当前使用的档 = 默认档（与 Coach 实际解析一致），无默认时回退第一档。
-  const activeProfile = useMemo(
-    () => profiles.find((profile) => profile.is_default) ?? profiles[0] ?? null,
-    [profiles],
-  );
-  const activeProfileAuthModes = !activeProfile
-    ? []
-    : catalog?.providers.find((provider) => provider.provider_id === activeProfile.provider_id)?.auth_modes
-      ?? (isCustomProviderKind(activeProfile.kind) ? ["api_key" as const] : []);
-
-  useEffect(() => {
-    if (providerId === "custom") return;
-    if (previousProviderSelection.current === selectedProviderKey) return;
-    previousProviderSelection.current = selectedProviderKey;
-    setModelId("");
-    setNewAuthMode(firstAuthMode(selectedCatalogProvider?.auth_modes));
-  }, [providerId, selectedProviderKey, selectedAuthModesKey, selectedCatalogProvider?.auth_modes]);
-
-  useEffect(() => {
-    if (customDiscovery.needsProtocolChoice && !customProtocolNeedsChoice) {
-      setCustomProtocolNeedsChoice(true);
-    }
-  }, [customDiscovery.needsProtocolChoice, customProtocolNeedsChoice]);
-
-  useEffect(() => {
-    if (!authOperation || isAuthTerminal(authOperation)) return;
-    const timer = window.setTimeout(() => {
-      void getProviderAuthOperation(authOperation.id)
-        .then(async (next) => {
-          setAuthOperation(next);
-          if (next.status === "succeeded") {
-            if (authProfileId !== null) {
-              await takeProviderAuthResult(authProfileId, next.id);
-            }
-            setFeedback("Provider 授权成功，可以测试连接。");
-            await refresh(true);
-          }
-        })
-        .catch(() => setFeedback("认证状态暂时无法读取，可重试或取消。"));
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [authOperation, authProfileId, refresh]);
-
-  const customProvider = providerId === "custom";
-  const canAddProvider = customProvider
-    ? Boolean(baseUrl.trim() && modelId.trim() && newApiKey.trim() && customProtocolConfirmed)
-    : Boolean(selectedCatalogProvider && modelId.trim() && (newAuthMode !== "api_key" || newApiKey.trim()));
-
-  const selectedCustomModel = customModels.find((model) => model.model_id === modelId);
-  // 内置目录带 reasoning 元数据：仅当选中的模型确认支持推理时，表单才露出
-  // 思考力度旋钮。自定义 Provider 的发现结果没有该元数据，保持未设置（默认）。
-  const selectedModelIsReasoning = !customProvider
-    && selectedCatalogProvider?.models.find((model) => model.model_id === modelId)?.reasoning === true;
-  // 干跑与入库共用同一份候选 payload：「检查连接」验的就是将来要存的内容。
-  const draftPayload: ProviderProfileCreate | null = !canAddProvider ? null : {
-    name: profileName.trim() || (customProvider ? "自定义 Provider" : selectedCatalogProvider?.provider_name ?? "Provider"),
-    kind: customProvider ? customKind : "builtin",
-    provider_id: customProvider ? null : selectedCatalogProvider?.provider_id,
-    base_url: customProvider ? baseUrl.trim() : null,
-    model_id: modelId.trim(),
-    reasoning_effort: selectedModelIsReasoning && newReasoningEffort ? newReasoningEffort : null,
-    context_window: customProvider ? selectedCustomModel?.context_window ?? null : null,
-    max_tokens: customProvider ? selectedCustomModel?.max_tokens ?? null : null,
-    api_key: customProvider || newAuthMode === "api_key" ? newApiKey : null,
-    is_default: profiles.length === 0,
-  };
-  const draftFingerprint = draftPayload ? JSON.stringify(draftPayload) : null;
-  // OAuth 档的授权流程必须挂在已保存档上（authorize/take-result 都按
-  // profile id 寻址），保存前无从验证；门控只约束能凭表单内 key 直接
-  // 干跑的形态，OAuth 保持原有「先保存、后授权与测试」路径。
-  const draftVerifyApplies = customProvider || newAuthMode !== "oauth";
-  const checkingDraftNow = draftCheck.phase === "checking" && draftCheck.fingerprint === draftFingerprint;
-  const draftVerified = draftCheck.phase === "done"
-    && draftCheck.passed
-    && draftCheck.fingerprint === draftFingerprint;
-
-  // 表单任何变动都会改变指纹：中止在途检查，回到未验证态并锁住保存。
-  useEffect(() => {
-    if (draftCheck.phase === "checking" && draftCheck.fingerprint !== draftFingerprint) {
-      draftCheckAbort.current?.abort();
-    }
-  }, [draftCheck, draftFingerprint]);
-
-  useEffect(() => () => draftCheckAbort.current?.abort(), []);
-
-  const verifyDraftProfile = async () => {
-    if (checkingDraftNow) {
-      draftCheckAbort.current?.abort(); // 再次点击即取消，不阻塞离开表单。
-      return;
-    }
-    // 冻结本次检查对应的 payload 与指纹：期间表单再变，结论也不解锁保存。
-    const payload = draftPayload;
-    const fingerprint = draftFingerprint;
-    if (!payload || !fingerprint) return;
-    const controller = new AbortController();
-    draftCheckAbort.current = controller;
-    setDraftCheck({ phase: "checking", fingerprint });
-    try {
-      const status = await testProviderProfileDraft(payload, { signal: controller.signal });
-      setDraftCheck({
-        phase: "done",
-        fingerprint,
-        passed: status.status === "ready",
-        message: status.status === "ready"
-          ? `检查通过 · ${payload.name}`
-          : `${status.message}。请核对 API Key、Base URL 与所选模型后重试。`,
-      });
-    } catch (error) {
-      if (controller.signal.aborted) {
-        setDraftCheck({ phase: "idle" });
-        return;
+      if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
+        current = NAV_ITEMS[NAV_ITEMS.length - 1].id;
       }
-      setDraftCheck({
-        phase: "done",
-        fingerprint,
-        passed: false,
-        message: `${error instanceof Error && error.message ? error.message : "无法连接本地服务"}。请确认本地服务运行正常后重新检查。`,
-      });
-    } finally {
-      if (draftCheckAbort.current === controller) draftCheckAbort.current = null;
-    }
-  };
-
-  const addProfile = async () => {
-    if (!draftPayload) throw new Error("draft provider profile is incomplete");
-    const created = await createProviderProfile(draftPayload);
-    setNewApiKey("");
-    setDraftCheck({ phase: "idle" });
-    setFeedback(`已添加 ${created.name}`);
-    await refresh(true);
-  };
-
-  const resetCustomModels = () => {
-    setModelId("");
-    setCustomProtocolNeedsChoice(false);
-    customDiscovery.reset();
-  };
-
-  const startAuthorization = async (profileId: number) => {
-    const operation = await authorizeProviderProfile(profileId, "oauth");
-    setAuthProfileId(profileId);
-    setAuthOperation(operation);
-    setAuthPromptValue("");
-    setFeedback("请按 Provider 指引完成授权。");
-  };
-
-  const switchActiveProvider = async (profileId: number) => {
-    if (switchingProvider || profileId === activeProfile?.id) {
-      setPickerOpen(false);
-      return;
-    }
-    setSwitchingProvider(true);
-    try {
-      await setDefaultProviderProfile(profileId);
-      setPickerOpen(false);
-      await refresh(true);
-    } catch {
-      setFeedback("默认 Provider 未能更新。");
-    } finally {
-      setSwitchingProvider(false);
-    }
-  };
-
-  const submitAuthPrompt = async () => {
-    const prompt = authOperation?.prompts[0];
-    if (!authOperation || !prompt || !authPromptValue.trim()) return;
-    try {
-      setAuthOperation(await submitProviderAuthInput(
-        authOperation.id,
-        prompt.prompt_id,
-        authPromptValue,
-      ));
-      setAuthPromptValue("");
-    } catch {
-      setFeedback("认证输入未被接受，请重试。");
-    }
-  };
-
-  const cancelAuthorization = async () => {
-    if (!authOperation) return;
-    try {
-      setAuthOperation(await cancelProviderAuthOperation(authOperation.id));
-      setFeedback("Provider 授权已取消。");
-    } catch {
-      setFeedback("授权未能取消，请重试。");
-    }
-  };
-
-  const saveProfileCalibration = async () => {
-    const result = await saveCalibrationProfile({
-      cm_per_360: cmPer360 ? Number(cmPer360) : null,
-      fov: fov ? Number(fov) : null,
-    });
-    setCalibration(result);
-    setFeedback("配置档默认值已保存");
-  };
+      setActiveNav(current);
+    };
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(compute);
+    };
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    compute();
+    return () => scroller.removeEventListener("scroll", onScroll);
+  }, []);
 
   const ask = (title: string, impact: string, run: () => Promise<void>) => {
     setConfirmAction({ title, impact, run });
@@ -591,6 +407,15 @@ export function SettingsWorkspace() {
     }
   };
 
+  const saveProfileCalibration = async () => {
+    const result = await saveCalibrationProfile({
+      cm_per_360: cmPer360 ? Number(cmPer360) : null,
+      fov: fov ? Number(fov) : null,
+    });
+    setCalibration(result);
+    setFeedback("配置档默认值已保存");
+  };
+
   const latestStatsCalibration = runs.find((run) => run.stats_calibration)?.stats_calibration ?? null;
 
   const storageCategories = storage ? presentStorageCategories(storage.categories) : [];
@@ -599,450 +424,315 @@ export function SettingsWorkspace() {
     ? storageCategories.map(([, bytes]) => Math.max(0, bytes / totalBytes * 100))
     : [];
 
+  const recentRuns = useMemo(
+    () => [...runs]
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
+      .slice(0, RECENT_CAPTURE_EVENTS_LIMIT),
+    [runs],
+  );
+
   const themeOptions = [
     { value: "system", label: "跟随系统" },
     { value: "light", label: "浅色" },
     { value: "dark", label: "深色" },
   ] as const;
 
-  if (loading) return <div className="task6-settings-page"><div className="task6-settings-state-header"><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><Loading>正在读取设置</Loading></div>;
+  // 渐进渲染：页面框架常驻，不再整页 return Loading。各分区（Provider /
+  // 采集 / 存储）在各自数据到达前显示局部 skeleton，数据先到先显示。
   if (loadError && !catalog && profiles.length === 0) {
     return <div className="task6-settings-page"><div className="task6-settings-state-header"><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><ErrorState title="设置暂时不可用"><Button onClick={() => void refresh(true)} variant="secondary">重试</Button></ErrorState></div>;
   }
 
   return (
-    <div className="task6-settings-page">
-      <div className="task6-settings-layout">
-        <nav className="task6-settings-nav" aria-label="设置分区">
+    <div className="task6-settings-page" ref={rootRef}>
+      <aside className="task6-settings-nav" aria-label="设置分区">
+        {/* 背景随内容拉满整高；sticky 放内层，滚动时导航仍跟随。 */}
+        <div className="task6-settings-nav-inner">
           <div className="task6-settings-nav-title-row">
             <SettingsExit onExit={() => router.push("/")} />
             <div className="task6-settings-nav-title">设置</div>
           </div>
-          {NAV_ITEMS.map((item) => (
-            <a
-              aria-current={item.id === activeNav ? "true" : undefined}
-              className={["task6-settings-nav-link", item.id === activeNav ? "task6-active" : ""].filter(Boolean).join(" ")}
-              href={`#${item.id}`}
-              key={item.id}
-            >
-              {item.label}
-            </a>
-          ))}
-        </nav>
+          <nav aria-label="设置导航">
+            {NAV_ITEMS.map((item) => (
+              <a
+                aria-current={item.id === activeNav ? "true" : undefined}
+                className="task6-settings-nav-link"
+                data-current={item.id === activeNav || undefined}
+                href={`#${item.id}`}
+                key={item.id}
+              >
+                {item.label}
+              </a>
+            ))}
+          </nav>
+        </div>
+      </aside>
 
-        <div className="task6-settings-content">
-          {loadError ? <Notice className="task6-settings-notice" tone="warning" title="部分设置未能刷新">已保留当前可用内容。请检查本地服务后重试。</Notice> : null}
+      <div className="task6-settings-content">
+        {loadError ? <Notice className="task6-settings-notice" tone="warning" title="部分设置未能刷新">已保留当前可用内容。请检查本地服务后重试。</Notice> : null}
 
-          <section className="task6-settings-section" data-guidance-target="settings.provider_auth" id="llm-provider" tabIndex={-1}>
-            <div className="task6-settings-section-header">
-              <span className="task6-settings-section-title">LLM Provider</span>
+        <section className="task6-settings-section" data-guidance-target="settings.provider_auth" id="llm-provider" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">LLM Provider</span>
+            <span className="task6-settings-section-note">管理 Coach 使用的模型服务：添加、切换当前使用、测试连接。</span>
+          </div>
+          <ProviderSettingsSection
+            catalog={catalog}
+            loading={loading}
+            notify={setFeedback}
+            profiles={profiles}
+            refresh={refresh}
+          />
+        </section>
+
+        <section className="task6-settings-section" id="profile" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">Profile</span>
+            <span className="task6-settings-section-note">配置档默认值：按相关性分组的灵敏度与视野设置。</span>
+          </div>
+          <Panel>
+            <div className="task6-profile-group">
+              <h3 className="task6-profile-group-title">手动校准</h3>
+              <p className="task6-muted">读取失败时才使用的默认值；不影响已完成分析。</p>
+              <div className="task6-profile-fields">
+                <Field label="cm/360"><FieldControl inputMode="decimal" min="0.01" onChange={(event) => setCmPer360(event.target.value)} step="any" type="number" value={cmPer360} /></Field>
+                <Field label="FOV"><FieldControl inputMode="decimal" max="180" min="0.01" onChange={(event) => setFov(event.target.value)} step="any" type="number" value={fov} /></Field>
+              </div>
             </div>
-            <Panel className="task6-provider-panel">
-              {activeProfile ? (
-                <div className="task6-provider-active" ref={pickerRef}>
-                  <button
-                    aria-expanded={pickerOpen}
-                    aria-haspopup="menu"
-                    className="task6-provider-picker"
-                    disabled={switchingProvider}
-                    onClick={() => setPickerOpen((open) => !open)}
-                    title="选择要使用的 Provider"
-                    type="button"
-                  >
-                    <span className="task6-provider-picker-label">{activeProfile.name}</span>
-                    <IconChevronDown className="task6-provider-picker-caret" />
-                  </button>
-                  {pickerOpen ? (
-                    <div aria-label="切换默认 Provider" className="task6-provider-picker-menu" role="menu">
-                      {profiles.map((entry) => {
-                        const selected = entry.id === activeProfile.id;
-                        return (
-                          <button
-                            aria-checked={selected}
-                            className="task6-provider-picker-item"
-                            key={entry.id}
-                            onClick={() => void switchActiveProvider(entry.id)}
-                            role="menuitemradio"
-                            type="button"
-                          >
-                            <span aria-hidden="true" className="task6-provider-dot" data-ready={entry.status === "ready"} />
-                            <span className="task6-provider-picker-name">{entry.name}</span>
-                            {selected ? <IconCheck className="task6-provider-picker-check" /> : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
+            <div className="task6-profile-group">
+              <h3 className="task6-profile-group-title">Stats 自动读取</h3>
+              <div className="task6-profile-fields">
+                <div className="task6-profile-stat">
+                  <span className="task6-profile-stat-label">DPI</span>
+                  <span className="task6-mono">{latestStatsCalibration?.dpi ?? calibration?.dpi ?? "待读取"}</span>
                 </div>
-              ) : null}
-              {activeProfile ? (
-                <article className="task6-provider-detail" key={activeProfile.id}>
-                  <div className="task6-provider-head">
-                    <span className="task6-provider-name">{activeProfile.name}</span>
-                    <Status tone={providerStatusTone(activeProfile.status)}>{providerStateLabel(activeProfile.status)}</Status>
-                    <span className="task6-provider-actions">
-                      <Button
-                        onClick={() => void testProviderProfile(activeProfile.id).then((status) => setFeedback(status.message)).catch(() => setFeedback("连接测试失败，请检查 Provider 与网络。"))}
-                        size="compact"
-                        variant="ghost"
-                      >
-                        测试连接
-                      </Button>
-                    </span>
-                  </div>
-                  <p className="task6-provider-meta">
-                    {activeProfile.model_id ?? "未指定模型"}
-                    {activeProfile.provider_id ? ` · ${activeProfile.provider_id}` : null}
-                    {activeProfile.status === "ready" ? " · 上次测试：可用" : null}
-                  </p>
-                  <div className="task6-provider-detail-actions">
-                    {activeProfileAuthModes.includes("oauth") ? (
-                      <Button
-                        onClick={() => ask("开始 Provider 授权", "将打开 Provider 支持的 OAuth 或设备码授权流程。", () => startAuthorization(activeProfile.id))}
-                        size="compact"
-                        variant="secondary"
-                      >
-                        重新认证
-                      </Button>
-                    ) : null}
-                    {activeProfileAuthModes.includes("api_key") ? (
-                      <>
-                        <Field className="task6-provider-credential-field" label="更换 API key" hint="仅本次提交保存在内存，提交后立即清空。">
-                          <FieldControl
-                            autoComplete="off"
-                            onChange={(event) => setCredentialDrafts((current) => ({ ...current, [activeProfile.id]: event.target.value }))}
-                            type="password"
-                            value={credentialDrafts[activeProfile.id] ?? ""}
-                          />
-                        </Field>
-                        <Button
-                          disabled={!credentialDrafts[activeProfile.id]}
-                          onClick={() => ask("更换 Provider credential", "现有 credential 将被替换，Coach 连接可能需要重新测试。", async () => {
-                            await setProviderApiKey(activeProfile.id, credentialDrafts[activeProfile.id] ?? "");
-                            setCredentialDrafts((current) => ({ ...current, [activeProfile.id]: "" }));
-                          })}
-                          size="compact"
-                          variant="secondary"
-                        >
-                          更换
-                        </Button>
-                      </>
-                    ) : null}
-                    {activeProfile.credential_configured ? (
-                      <Button
-                        onClick={() => ask("移除 Provider credential", "移除或撤销认证后 Coach 将不可用，本地分析不受影响。", async () => { await deleteProviderCredential(activeProfile.id); })}
-                        size="compact"
-                        variant="ghost"
-                      >
-                        移除认证
-                      </Button>
-                    ) : null}
-                    <Button
-                      onClick={() => ask("删除 Provider", "删除此本地 Provider 配置与 credential，不会删除 Analysis。", async () => { await deleteProviderProfile(activeProfile.id); })}
-                      size="compact"
-                      variant="danger"
-                    >
-                      删除
-                    </Button>
-                  </div>
-                </article>
-              ) : null}
-              {authOperation ? (
-                <section aria-live="polite" className="task6-auth-operation">
-                  <div className="task6-auth-operation-head">
-                    <span className="task6-auth-operation-title">Provider 授权</span>
-                    <Status tone={authOperation.status === "succeeded" ? "success" : authOperation.status === "failed" || authOperation.status === "timed_out" ? "error" : "info"}>
-                      {authOperationLabel(authOperation.status)}
-                    </Status>
-                  </div>
-                  {authOperation.events.map((event, index) => (
-                    <div key={`${event.type}-${index}`}>
-                      {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank">打开 Provider 授权页</a> : null}
-                      {event.type === "device_code" ? <p>设备码：<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank">前往验证</a></p> : null}
-                      {event.type === "progress" ? <p>{event.message}</p> : null}
-                    </div>
-                  ))}
-                  {authOperation.prompts[0] ? (
-                    <Field label={authOperation.prompts[0].message}>
-                      <div className="task6-inline-actions">
-                        {authOperation.prompts[0].type === "select" ? (
-                          <select onChange={(event) => setAuthPromptValue(event.target.value)} value={authPromptValue}>
-                            <option value="">请选择</option>
-                            {authOperation.prompts[0].options?.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                          </select>
-                        ) : <FieldControl autoComplete="off" onChange={(event) => setAuthPromptValue(event.target.value)} type={authOperation.prompts[0].type === "secret" ? "password" : "text"} value={authPromptValue} />}
-                        <Button disabled={!authPromptValue.trim()} onClick={() => void submitAuthPrompt()} variant="secondary">提交</Button>
-                      </div>
-                    </Field>
-                  ) : null}
-                  {!isAuthTerminal(authOperation) ? <Button onClick={() => void cancelAuthorization()} variant="ghost">取消授权</Button> : null}
-                  {authOperation.error ? <Notice tone="error">{authOperation.error.message}</Notice> : null}
-                </section>
-              ) : null}
-              <div className="task6-provider-form">
-                <h3 className="task6-provider-form-title">添加 Provider</h3>
-                <Field label="类型">
-                  <select className="ac-field__control" onChange={(event) => {
-                    const nextProviderId = event.target.value;
-                    setProviderId(nextProviderId);
-                    if (nextProviderId === "custom") resetCustomModels();
-                  }} value={providerId || selectedCatalogProvider?.provider_id || ""}>
-                    {catalog?.providers.map((provider) => <option key={provider.provider_id} value={provider.provider_id}>{provider.provider_name}</option>)}
-                    <option value="custom">自定义 Provider</option>
-                  </select>
-                </Field>
-                <Field label="显示名称"><FieldControl onChange={(event) => setProfileName(event.target.value)} value={profileName} /></Field>
-                {customProvider ? <Field label="Base URL"><FieldControl onChange={(event) => { setBaseUrl(event.target.value); resetCustomModels(); }} placeholder={customKind === "custom_anthropic_compatible" ? "https://provider.example" : "https://provider.example/v1"} value={baseUrl} /></Field> : null}
-                {customProvider ? (
-                  <>
-                    <Field label="API key"><FieldControl autoComplete="off" onChange={(event) => { setNewApiKey(event.target.value); resetCustomModels(); }} type="password" value={newApiKey} /></Field>
-                    {customProtocolNeedsChoice ? <Field label="接口协议">
-                      <select onChange={(event) => {
-                        customDiscovery.confirmProtocol(event.target.value as CustomProviderKind);
-                      }} value={customKind}>
-                        <option value="custom_openai_compatible">OpenAI-compatible</option>
-                        <option value="custom_anthropic_compatible">Anthropic-compatible</option>
-                      </select>
-                    </Field> : null}
-                    {customModelState === "loading" ? <p className="task6-muted" aria-live="polite">正在读取可用模型…</p> : null}
-                    {customModelMessage ? <p className="task6-muted" aria-live="polite">{customModelMessage}</p> : null}
-                    {customModelState === "loaded" ? (
-                      <Field label="Model">
-                        <select onChange={(event) => setModelId(event.target.value)} value={modelId}>
-                          <option value="">选择 Model</option>
-                          {customModels.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_id}</option>)}
-                        </select>
-                        <Button onClick={() => { setModelId(""); customDiscovery.enterManualMode(); }} size="compact" variant="ghost">列表中没有需要的 Model ID</Button>
-                      </Field>
-                    ) : null}
-                    {customModelState === "manual" ? <Field label="Model ID"><FieldControl autoComplete="off" onChange={(event) => setModelId(event.target.value)} value={modelId} /></Field> : null}
-                  </>
-                ) : null}
-                {!customProvider && selectedCatalogProvider ? (
-                  <Field label="认证方式">
-                    <select className="ac-field__control" onChange={(event) => setNewAuthMode(event.target.value as ProviderAuthMode)} value={newAuthMode}>
-                      {selectedCatalogProvider.auth_modes.map((mode) => <option key={mode} value={mode}>{mode === "api_key" ? "API Key" : mode === "oauth" ? "OAuth / 设备码" : "环境凭据"}</option>)}
-                    </select>
-                  </Field>
-                ) : null}
-                {!customProvider && newAuthMode === "api_key" ? <Field label="API key"><FieldControl autoComplete="off" onChange={(event) => setNewApiKey(event.target.value)} type="password" value={newApiKey} /></Field> : null}
-                {!customProvider && selectedCatalogProvider && (newAuthMode !== "api_key" || newApiKey.trim()) ? (
-                  <Field label="Model">
-                    <select onChange={(event) => setModelId(event.target.value)} value={modelId}>
-                      <option value="">选择 Model</option>
-                      {selectedCatalogProvider.models.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_name ?? model.model_id}</option>)}
-                    </select>
-                  </Field>
-                ) : null}
-                {selectedModelIsReasoning ? (
-                  <Field label="思考力度">
-                    <select
-                      onChange={(event) => setNewReasoningEffort(event.target.value as ProviderReasoningEffort | "")}
-                      value={newReasoningEffort}
-                    >
-                      <option value="">默认（推理模型回落高档）</option>
-                      <option value="off">关闭</option>
-                      <option value="minimal">极简</option>
-                      <option value="low">低</option>
-                      <option value="medium">中</option>
-                      <option value="high">高</option>
-                    </select>
-                  </Field>
-                ) : null}
-                <div className="task6-inline-actions">
-                  {draftVerifyApplies ? (
-                    <Button disabled={!canAddProvider} onClick={() => void verifyDraftProfile()} size="compact" variant="secondary">
-                      {checkingDraftNow ? "停止检查" : "检查连接"}
-                    </Button>
-                  ) : null}
-                  <Button
-                    disabled={!canAddProvider || (draftVerifyApplies && !draftVerified)}
-                    onClick={() => void addProfile().catch(() => setFeedback("Provider 未能添加，请检查输入后重试。"))}
-                  >
-                    添加 Provider
-                  </Button>
+                <div className="task6-profile-stat">
+                  <span className="task6-profile-stat-label">Sensitivity</span>
+                  <span className="task6-mono">{latestStatsCalibration?.sensitivity ?? calibration?.sensitivity ?? "待读取"}</span>
                 </div>
-                <div aria-live="polite" style={{ display: "grid", gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
-                  {!draftVerifyApplies ? (
-                    <p className="task6-muted">OAuth 认证需先保存 Provider，再发起授权；保存后可用「测试连接」确认。</p>
-                  ) : null}
-                  {draftVerifyApplies && draftCheck.phase === "idle" ? (
-                    <p className="task6-muted">先「检查连接」，通过后才能添加；表单再改动就需重新检查。</p>
-                  ) : null}
-                  {draftVerifyApplies && draftCheck.phase === "checking" ? (
-                    <p className="task6-muted">正在检查候选 Provider 的连接…再次点击「停止检查」可取消。</p>
-                  ) : null}
-                  {draftCheck.phase === "done" && draftCheck.fingerprint === draftFingerprint ? (
-                    draftCheck.passed
-                      ? <p className="task6-ok">{draftCheck.message}（可点「添加 Provider」保存）</p>
-                      : <Notice tone="error">{draftCheck.message}</Notice>
-                  ) : null}
+                <div className="task6-profile-stat">
+                  <span className="task6-profile-stat-label">FOV</span>
+                  <span className="task6-mono">{latestStatsCalibration?.fov ?? "待读取"}</span>
                 </div>
               </div>
-            </Panel>
-          </section>
+              <p className="task6-profile-summary">
+                <span>
+                  Stats 自动读取优先，此处仅在读取失败时使用。已完成分析冻结当时数值，改这里不影响历史；无法推导时显示「无法确定」，不猜值。
+                </span>
+                <span className="task6-info">
+                  <button aria-describedby="task6-profile-help" aria-label="配置档默认值说明" className="task6-info-trigger" type="button">!</button>
+                  <span className="task6-info-tooltip" id="task6-profile-help" role="tooltip">
+                    Stats 自动读取优先，此处仅在读取失败时使用。已完成分析冻结当时数值，改这里不影响历史；无法推导时显示「无法确定」，不猜值。
+                  </span>
+                </span>
+              </p>
+            </div>
+            <div className="task6-profile-footer">
+              <div className="task6-profile-actions">
+                <Button disabled={!cmPer360 && !fov} onClick={() => void saveProfileCalibration().catch(() => setFeedback("配置档未能保存，请检查数值。"))} size="compact" variant="secondary">保存</Button>
+                <Button onClick={() => ask("删除配置档默认值", "之后仍会优先使用 Stats 或本局手动覆盖。", async () => { await deleteCalibrationProfile(); })} size="compact" variant="danger">删除</Button>
+              </div>
+            </div>
+          </Panel>
+        </section>
 
-          <div className="task6-settings-grid-2">
-            <section className="task6-settings-section" id="profile">
-              <div className="task6-settings-section-header">
-                <span className="task6-settings-section-title">Profile</span>
+        <section className="task6-settings-section" id="theme" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">主题</span>
+            <span className="task6-settings-section-note">外观模式只影响本机界面。</span>
+          </div>
+          <Panel>
+            <div className="task6-theme-row">
+              <div className="task6-theme-row-text">
+                <span className="task6-theme-row-name">外观模式</span>
+                <span className="task6-muted">跟随系统、浅色或深色，立即生效。</span>
               </div>
-              <Panel>
-                <div className="task6-profile-fields">
-                  <Field label="cm/360"><FieldControl inputMode="decimal" min="0.01" onChange={(event) => setCmPer360(event.target.value)} step="any" type="number" value={cmPer360} /></Field>
-                  <Field label="FOV"><FieldControl inputMode="decimal" max="180" min="0.01" onChange={(event) => setFov(event.target.value)} step="any" type="number" value={fov} /></Field>
-                </div>
-                <div className="task6-profile-footer">
-                  <div className="task6-profile-summary">
-                    <span>
-                      Stats：DPI {latestStatsCalibration?.dpi ?? calibration?.dpi ?? "待读取"}
-                      {" · "}Sensitivity {latestStatsCalibration?.sensitivity ?? calibration?.sensitivity ?? "待读取"}
-                      {" · "}FOV {latestStatsCalibration?.fov ?? "待读取"}
-                    </span>
-                    <span className="task6-info">
-                      <button aria-describedby="task6-profile-help" aria-label="配置档默认值说明" className="task6-info-trigger" type="button">!</button>
-                      <span className="task6-info-tooltip" id="task6-profile-help" role="tooltip">
-                        Stats 自动读取优先，此处仅在读取失败时使用。已完成分析冻结当时数值，改这里不影响历史；无法推导时显示「无法确定」，不猜值。
-                      </span>
-                    </span>
-                  </div>
-                  <div className="task6-profile-actions">
-                    <Button disabled={!cmPer360 && !fov} onClick={() => void saveProfileCalibration().catch(() => setFeedback("配置档未能保存，请检查数值。"))} size="compact" variant="secondary">保存</Button>
-                    <Button onClick={() => ask("删除配置档默认值", "之后仍会优先使用 Stats 或本局手动覆盖。", async () => { await deleteCalibrationProfile(); })} size="compact" variant="danger">删除</Button>
-                  </div>
-                </div>
-              </Panel>
-            </section>
-
-            <section className="task6-settings-section" id="theme">
-              <div className="task6-settings-section-header">
-                <span className="task6-settings-section-title">主题</span>
-              </div>
-              <div className="task6-theme-options">
+              <div className="task6-theme-segments" role="radiogroup" aria-label="外观模式">
                 {themeOptions.map((mode) => (
-                  <label className="task6-mode-card" data-selected={preference === mode.value} key={mode.value} onClick={() => setPreference(mode.value)}>
+                  <label className="task6-theme-segment" data-selected={preference === mode.value} key={mode.value}>
                     <input checked={preference === mode.value} name="theme" onChange={() => setPreference(mode.value)} type="radio" value={mode.value} />
-                    <span className="task6-mode-card-name">{mode.label}</span>
+                    <span>{mode.label}</span>
                   </label>
                 ))}
               </div>
-            </section>
+            </div>
+            <div aria-hidden="true" className="task6-theme-preview">
+              <span className="task6-theme-preview-chip" data-chip="primary" />
+              <span className="task6-theme-preview-chip" data-chip="surface" />
+              <span className="task6-theme-preview-chip" data-chip="outline" />
+              <span className="task6-theme-preview-chip" data-chip="accent" />
+            </div>
+          </Panel>
+        </section>
+
+        <section className="task6-settings-section" data-guidance-target="desktop.capture_control" id="capture" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">自动采集与 Raw Input</span>
+            <span className="task6-settings-section-note">检测到 KovaaK 对局时自动录制画面与相对鼠标输入，只保存在本机。</span>
           </div>
+          <Panel>
+            {!desktop ? <Notice className="task6-settings-notice" tone="warning" title="浏览器模式">自动采集、Raw Input、硬件回放缓冲和权限管理仅在 Desktop 可用。</Notice> : null}
+            {desktop && capture === null ? <Loading>正在读取采集状态</Loading> : null}
+            {capture?.availability === "unavailable" ? <Notice className="task6-settings-notice" tone="error" title="采集状态不可用">{capture.error?.message ?? "本地采集服务暂时不可用。"}</Notice> : null}
+            {capture?.availability === "available" ? (
+              <div className="task6-capture-health">
+                <Status tone={runtimeHealthTone(capture.runtime_health)}>{runtimeHealthLabel(capture.runtime_health)}</Status>
+                <span className="task6-muted">{captureLabel(capture.kovaak_process_present, "KovaaK 已检测到", "KovaaK 未运行")}</span>
+              </div>
+            ) : null}
+            {capture ? (
+              <div className="task6-toggle-rows">
+                <div className="task6-toggle-row">
+                  <div className="task6-toggle-row-text">
+                    <span className="task6-toggle-row-name">自动采集</span>
+                    <span className="task6-muted">检测到 KovaaK 进程后开始采集{capture.capture_enabled == null ? "" : capture.capture_enabled ? "，当前待命" : "，当前已关闭"}</span>
+                  </div>
+                  <div className="task6-toggle-row-side">
+                    {desktop && capture.capture_enabled != null ? (
+                      <Button
+                        disabled={!capture.capture_enabled && !captureConsent}
+                        onClick={() => void setDesktopCaptureEnabled(!capture.capture_enabled).then(() => refresh(true))}
+                        variant="secondary"
+                      >
+                        {capture.capture_enabled ? "关闭未来采集" : "授权并启用自动采集"}
+                      </Button>
+                    ) : (
+                      <span className={capture.capture_enabled ? "task6-ok" : undefined}>{captureLabel(capture.capture_enabled, "待命", "已关闭")}</span>
+                    )}
+                  </div>
+                </div>
+                {desktop && capture.capture_enabled === false ? (
+                  <label className="task6-consent">
+                    <input checked={captureConsent} onChange={(event) => setCaptureConsent(event.target.checked)} type="checkbox" />
+                    <span>我同意采集 Raw Input 和 KovaaK 窗口回放，用于本机训练分析。</span>
+                  </label>
+                ) : null}
+                <div className="task6-toggle-row">
+                  <div className="task6-toggle-row-text">
+                    <span className="task6-toggle-row-name">Raw Input 授权</span>
+                    <span className="task6-muted">只采集 KovaaK 进程内的相对鼠标输入；不采集键盘与桌面坐标；只保存在本机。<a href="#">查看范围说明</a></span>
+                  </div>
+                  <div className="task6-toggle-row-side">{rawPermissionLabel(capture.raw_input_permission)}</div>
+                </div>
+                <div className="task6-toggle-row">
+                  <div className="task6-toggle-row-text">
+                    <span className="task6-toggle-row-name">回放缓冲</span>
+                    <span className="task6-muted">仅保留最近 300 秒、仅 KovaaK 窗口画面，不录桌面与其它窗口</span>
+                  </div>
+                  <div className="task6-toggle-row-side">{captureLabel(capture.replay_buffer_active, "维护中", "未活动")}</div>
+                </div>
+                <div className="task6-toggle-row">
+                  <div className="task6-toggle-row-text">
+                    <span className="task6-toggle-row-name">平台支持</span>
+                    <span className="task6-muted">非 Windows 提供视频兼容路径</span>
+                  </div>
+                  <div className="task6-toggle-row-side"><span className="task6-ok">{captureLabel(capture.platform_supported, "✓ Windows", "✗ 不支持")}</span></div>
+                </div>
+                <div className="task6-toggle-row">
+                  <div className="task6-toggle-row-text">
+                    <span className="task6-toggle-row-name">暂停局处理</span>
+                    <span className="task6-muted">Stats 显示暂停的对局不生成永久录像，证据保留为部分/不可用（fail-closed）</span>
+                  </div>
+                  <div className="task6-toggle-row-side">{capture.pause_fail_closed ? "fail-closed" : "clear"}</div>
+                </div>
+              </div>
+            ) : null}
+            {desktop && recentRuns.length > 0 ? (
+              <div className="task6-capture-events">
+                <h3 className="task6-profile-group-title">最近采集事件</h3>
+                <ul className="task6-capture-event-list">
+                  {recentRuns.map((run) => {
+                    const described = describeCaptureRunEvent({
+                      scenario: run.scenario,
+                      video_attached: Boolean(run.video_artifact_ref),
+                      raw_attached: run.trace_quality.state === "attached",
+                      video_error: run.video_error,
+                      trace_error: run.trace_error,
+                      finalization_state: run.finalization_state,
+                    });
+                    return (
+                      <li className="task6-capture-event" data-healthy={described.healthy || undefined} key={run.run_ref}>
+                        <span className="task6-capture-event-scenario">{described.scenario}</span>
+                        <span className="task6-capture-event-detail">
+                          视频：{described.videoLabel} · 输入轨迹：{described.traceLabel}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
+            {desktop ? (
+              <div className="task6-capture-diagnostics">
+                <Button disabled={diagnosticExporting} onClick={() => void exportCaptureDiagnostics()} variant="secondary">
+                  {diagnosticExporting ? "正在导出诊断包…" : "导出采集诊断包"}
+                </Button>
+                <span className="task6-settings-section-hint">给开发者排障用的：复现问题后立即导出，包含完整 native 错误、环境和采集状态，不包含 Raw 数据或 MP4。</span>
+              </div>
+            ) : null}
+          </Panel>
+        </section>
 
-          <section className="task6-settings-section" data-guidance-target="desktop.capture_control" id="capture" tabIndex={-1}>
-            <div className="task6-settings-section-header">
-              <span className="task6-settings-section-title">自动采集与 Raw Input</span>
-            </div>
-            <Panel>
-              {!desktop ? <Notice className="task6-settings-notice" tone="warning" title="浏览器模式">自动采集、Raw Input、硬件回放缓冲和权限管理仅在 Desktop 可用。</Notice> : null}
-              {capture?.availability === "unavailable" ? <Notice className="task6-settings-notice" tone="error" title="采集状态不可用">{capture.error?.message ?? "本地采集服务暂时不可用。"}</Notice> : null}
-              {capture ? (
-                <dl className="task6-st-rows">
-                  <div className="task6-st-row">
-                    <dt>平台支持</dt>
-                    <dd><span className="task6-ok">{captureLabel(capture.platform_supported, "✓ Windows", "✗ 不支持")}</span>（非 Windows 提供视频兼容路径）</dd>
-                  </div>
-                  <div className="task6-st-row">
-                    <dt>Raw Input 授权</dt>
-                    <dd>{rawPermissionLabel(capture.raw_input_permission)} — 只采集 KovaaK 进程内的相对鼠标输入；不采集键盘与桌面坐标；只保存在本机。<a href="#">查看范围说明</a> · <a href="#">关闭授权</a></dd>
-                  </div>
-                  <div className="task6-st-row">
-                    <dt>自动采集</dt>
-                    <dd><span className="task6-ok">{captureLabel(capture.capture_enabled, "待命", "已关闭")}</span> — 检测到 KovaaK 进程后开始采集</dd>
-                  </div>
-                  <div className="task6-st-row">
-                    <dt>KovaaK 进程</dt>
-                    <dd>{captureLabel(capture.kovaak_process_present, "已检测到", "未运行")}</dd>
-                  </div>
-                  <div className="task6-st-row">
-                    <dt>回放缓冲</dt>
-                    <dd>{captureLabel(capture.replay_buffer_active, "维护中", "未活动")} — 仅保留最近 300 秒、仅 KovaaK 窗口画面，不录桌面与其它窗口</dd>
-                  </div>
-                  <div className="task6-st-row">
-                    <dt>暂停局处理</dt>
-                    <dd>Stats 显示暂停的对局不生成永久录像，证据保留为部分/不可用（fail-closed）</dd>
-                  </div>
+        <section className="task6-settings-section" id="kovaak-directories" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">KovaaK 本地目录</span>
+            <span className="task6-settings-section-note">确认 KovaaK 的 Stats 与 Performance 文件夹，AC 据此发现训练并自动开启统计导出。</span>
+          </div>
+          <Panel>
+            <KovaaKDirectoriesPanel context="settings" />
+          </Panel>
+        </section>
+
+        <section className="task6-settings-section" id="external-telemetry" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">外部遥测导入</span>
+          </div>
+          <Panel>
+            <ExternalTelemetryPanel />
+          </Panel>
+        </section>
+
+        <section className="task6-settings-section" id="kovaak" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">KovaaK 成绩</span>
+            <span className="task6-settings-section-note">连接 Steam 资料读取 S2 训练单成绩；数据只在本机展示。</span>
+          </div>
+          <Panel>
+            <KovaaKConnectionPanel context="settings" />
+          </Panel>
+        </section>
+
+        <section className="task6-settings-section" data-guidance-target="storage.incomplete" id="storage" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">存储</span>
+            <span className="task6-settings-section-note">本机分析产物、录像与遥测的占用与清理。</span>
+          </div>
+          <Panel>
+            {!desktop ? <Notice className="task6-settings-notice" tone="warning" title="Desktop 能力不可用">浏览器不会伪造本地占用或删除操作。</Notice> : null}
+            {desktop && storage === null ? <Loading>正在读取存储占用</Loading> : null}
+            {storage ? (
+              <>
+                <div className="task6-storage-total">
+                  <span className="task6-storage-total-number">{formatBytes(totalBytes)}</span>
+                  <span className="task6-muted">总占用</span>
+                </div>
+                <div className="task6-storage-bar">
+                  {storageBar.map((width, index) => (
+                    <div key={index} style={{ width: `${width}%`, background: STORAGE_COLORS[index % STORAGE_COLORS.length] }} />
+                  ))}
+                </div>
+                <dl className="task6-storage-kv">
+                  {storageCategories.map(([label, bytes], index) => (
+                    <div key={label}>
+                      <dt><span className="task6-storage-swatch" style={{ background: STORAGE_COLORS[index % STORAGE_COLORS.length] }} />{label}</dt>
+                      <dd><span className="task6-mono">{formatBytes(bytes)} · {totalBytes > 0 ? `${Math.round(bytes / totalBytes * 100)}%` : "0%"}</span> · {index === 0 || index === 2 ? <a href="#">管理…</a> : null}</dd>
+                    </div>
+                  ))}
                 </dl>
-              ) : null}
-              {desktop && capture?.capture_enabled === false ? (
-                <label className="task6-consent">
-                  <input checked={captureConsent} onChange={(event) => setCaptureConsent(event.target.checked)} type="checkbox" />
-                  <span>我同意采集 Raw Input 和 KovaaK 窗口回放，用于本机训练分析。</span>
-                </label>
-              ) : null}
-              {desktop && capture?.capture_enabled != null ? (
-                <div className="task6-inline-actions" style={{ marginTop: "var(--space-3)" }}>
-                  <Button
-                    disabled={!capture.capture_enabled && !captureConsent}
-                    onClick={() => void setDesktopCaptureEnabled(!capture.capture_enabled).then(() => refresh(true))}
-                    variant="secondary"
-                  >
-                    {capture.capture_enabled ? "关闭未来采集" : "授权并启用自动采集"}
-                  </Button>
-                </div>
-              ) : null}
-              {desktop ? (
-                <div className="task6-inline-actions" style={{ marginTop: "var(--space-3)" }}>
-                  <Button disabled={diagnosticExporting} onClick={() => void exportCaptureDiagnostics()} variant="secondary">
-                    {diagnosticExporting ? "正在导出诊断包…" : "导出采集诊断包"}
-                  </Button>
-                  <span className="task6-settings-section-hint">复现问题后立即导出，包含完整 native 错误、环境和采集状态，不包含 Raw 数据或 MP4。</span>
-                </div>
-              ) : null}
-            </Panel>
-          </section>
-
-          <section className="task6-settings-section" id="kovaak-directories">
-            <div className="task6-settings-section-header">
-              <span className="task6-settings-section-title">KovaaK 本地目录</span>
-            </div>
-            <Panel>
-              <KovaaKDirectoriesPanel context="settings" />
-            </Panel>
-          </section>
-
-          <section className="task6-settings-section" id="external-telemetry">
-            <div className="task6-settings-section-header">
-              <span className="task6-settings-section-title">外部遥测导入</span>
-            </div>
-            <Panel>
-              <ExternalTelemetryPanel />
-            </Panel>
-          </section>
-
-          <section className="task6-settings-section" id="kovaak">
-            <div className="task6-settings-section-header">
-              <span className="task6-settings-section-title">KovaaK 成绩</span>
-            </div>
-            <Panel>
-              <KovaaKConnectionPanel context="settings" />
-            </Panel>
-          </section>
-
-          <section className="task6-settings-section" data-guidance-target="storage.incomplete" id="storage" tabIndex={-1}>
-            <div className="task6-settings-section-header">
-              <span className="task6-settings-section-title">存储</span>
-              <span className="task6-settings-section-hint">总占用 {formatBytes(totalBytes)}</span>
-            </div>
-            <Panel>
-              {!desktop ? <Notice className="task6-settings-notice" tone="warning" title="Desktop 能力不可用">浏览器不会伪造本地占用或删除操作。</Notice> : null}
-              {storage ? (
-                <>
-                  <div className="task6-storage-bar">
-                    {storageBar.map((width, index) => (
-                      <div key={index} style={{ width: `${width}%`, background: STORAGE_COLORS[index % STORAGE_COLORS.length] }} />
-                    ))}
-                  </div>
-                  <dl className="task6-storage-kv">
-                    {storageCategories.map(([label, bytes], index) => (
-                      <div key={label}>
-                        <dt><span className="task6-storage-swatch" style={{ background: STORAGE_COLORS[index % STORAGE_COLORS.length] }} />{label}</dt>
-                        <dd><span className="task6-mono">{formatBytes(bytes)} · {totalBytes > 0 ? `${Math.round(bytes / totalBytes * 100)}%` : "0%"}</span> · {index === 0 || index === 2 ? <a href="#">管理…</a> : null}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </>
-              ) : null}
+              </>
+            ) : null}
+            <div className="task6-storage-cleanup">
+              <h3 className="task6-profile-group-title">清理</h3>
               {runs.filter((run) => run.video_artifact_ref || run.trace_quality.state === "attached").map((run) => (
                 <article className="task6-storage-row" key={run.run_ref}>
                   <div>
@@ -1064,9 +754,22 @@ export function SettingsWorkspace() {
                   <Button disabled={!item.removable} onClick={() => ask("移除未完成采集", item.impact.message, async () => { await removeIncompleteCapture(item.item_ref); })} size="compact" variant="danger">移除</Button>
                 </article>
               ))}
-            </Panel>
-          </section>
-        </div>
+              {desktop && runs.filter((run) => run.video_artifact_ref || run.trace_quality.state === "attached").length === 0 && incomplete.length === 0 ? (
+                <p className="task6-muted">没有可清理的录像、Raw trace 或未完成采集。</p>
+              ) : null}
+            </div>
+          </Panel>
+        </section>
+
+        <section className="task6-settings-section" id="app-update" tabIndex={-1}>
+          <div className="task6-settings-section-header">
+            <span className="task6-settings-section-title">应用更新</span>
+            <span className="task6-settings-section-note">检查并安装 Aiming Cookie 新版本；更新包来自官方下载源并在本机验签。</span>
+          </div>
+          <Panel>
+            <AppUpdatePanel />
+          </Panel>
+        </section>
       </div>
 
       <Dialog

@@ -1,10 +1,13 @@
 /* Settings + Coach — 统一使用 app tokens（ui/theme.css） */
 
 /* ── Settings page ─────────────────────────────────────────── */
+/* 骨架与教练工作区同款：左栏复用会话列表栏（.task7-session-rail）的宽度 /
+   衬托底色 / 分隔线 / 圆角选中态，条目即设置分区锚点；右侧内容一页长滚动。 */
 
 .task6-settings-page {
+  display: flex;
+  align-items: flex-start;
   min-height: calc(100vh - 48px);
-  padding: 56px var(--space-5) var(--space-6);
   background: var(--background);
   color: var(--on-surface);
 }
@@ -19,31 +22,37 @@
   font: 600 var(--text-display)/1.25 var(--font-display);
 }
 
-.task6-settings-layout {
-  display: flex;
-  gap: var(--space-6);
-  max-width: 1040px;
-  margin: 0 auto;
-}
-
+/* 左栏（同款断点宽度：264px / 288px，与 .task7-session-rail 一致）。
+   背景随内容区拉满整高，sticky 收在 .task6-settings-nav-inner。 */
 .task6-settings-nav {
-  position: sticky;
-  top: 68px;
-  align-self: flex-start;
-  flex: none;
-  width: 172px;
-  margin-top: -8px;
+  flex: 0 0 288px;
+  width: 288px;
+  align-self: stretch;
+  border-inline-end: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
 }
 
-.task6-settings-nav-title {
-  margin-bottom: var(--space-3);
-  font: 600 var(--text-display)/1.25 var(--font-display);
-  opacity: 1;
-  transform: translateY(0);
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out),
-    display var(--duration-fast) allow-discrete;
+.task6-settings-nav-inner {
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-2) var(--space-4);
+}
+
+/* 与 .task7-session-rail 同款的两档断点宽度。 */
+@media (max-width: 1359px) and (min-width: 1120px) {
+  .task6-settings-nav {
+    flex-basis: 264px;
+    width: 264px;
+  }
+}
+
+.task6-settings-nav nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-1);
 }
 
 .task6-settings-nav-title-row {
@@ -51,10 +60,12 @@
   align-items: center;
   gap: var(--space-1);
   margin-bottom: var(--space-3);
+  padding-inline: var(--space-1);
 }
 
-.task6-settings-nav-title-row .task6-settings-nav-title {
-  margin-bottom: 0;
+.task6-settings-nav-title {
+  color: var(--on-surface);
+  font: 600 var(--text-title)/1.2 var(--font-display);
 }
 
 .task6-settings-back {
@@ -69,38 +80,53 @@
   background: var(--surface-container);
 }
 
-@starting-style {
-  .task6-settings-nav-title {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
-}
-
+/* 条目样式同会话列表：ui/600 主行、radius-md、选中态衬一层容器色。 */
 .task6-settings-nav-link {
   display: block;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
   border-radius: var(--radius-md);
-  color: var(--on-surface-variant);
+  color: var(--on-surface);
   font-size: var(--text-ui);
+  font-weight: 600;
   text-decoration: none;
 }
 
+.task6-settings-nav-link[data-current="true"],
 .task6-settings-nav-link[aria-current="true"],
 .task6-settings-nav-link.task6-active {
   background: var(--surface-container-high);
-  color: var(--on-surface);
-  font-weight: 600;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-settings-nav-link:hover {
+    background: var(--surface-container);
+  }
+
+  .task6-settings-nav-link[data-current="true"]:hover {
+    background: var(--surface-container-highest);
+  }
 }
 
 .task6-settings-content {
   flex: 1;
   min-width: 0;
   max-width: 980px;
+  margin-inline: auto;
+  padding: var(--space-5) var(--space-6) var(--space-6);
 }
 
 .task6-settings-section {
-  margin-top: var(--space-5);
-  scroll-margin-top: 68px;
+  margin-top: var(--space-6);
+  scroll-margin-top: var(--space-4);
+}
+
+/* 锚点平滑滚动：滚动容器是设置 overlay 的 main（task3.css 的
+   data-settings-page 规则），选择器 scoped 到设置页、不触碰 task3.css；
+   减少动态偏好下回退为浏览器默认瞬时跳转。 */
+@media (prefers-reduced-motion: no-preference) {
+  .task3-route-content[data-settings-page="true"] {
+    scroll-behavior: smooth;
+  }
 }
 
 .task6-settings-section:first-child {
@@ -112,10 +138,16 @@
   align-items: baseline;
   gap: var(--space-3);
   margin-bottom: var(--space-3);
+  flex-wrap: wrap;
 }
 
 .task6-settings-section-title {
   font: 600 var(--text-title)/1.2 var(--font-display);
+}
+
+.task6-settings-section-note {
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
 }
 
 .task6-settings-section-hint {
@@ -124,18 +156,84 @@
   font-size: var(--text-caption);
 }
 
-.task6-settings-row {
+/* ── Provider 主从式：左档案列表 + 右详情（添加走模态向导） ────────── */
+
+.task6-provider-master {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  padding: var(--space-3) var(--space-4);
+  gap: var(--space-5);
+  align-items: stretch;
 }
 
-.task6-settings-row + .task6-settings-row,
-.task6-storage-row + .task6-storage-row,
-.task6-st-row + .task6-st-row {
-  border-top: 1px solid var(--outline-variant);
+.task6-provider-list {
+  display: flex;
+  flex: 0 0 240px;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.task6-provider-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--on-surface);
+  text-align: start;
+  cursor: pointer;
+}
+
+.task6-provider-list-item[aria-current="true"] {
+  background: var(--surface-container-high);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-provider-list-item:hover {
+    background: var(--surface-container);
+  }
+
+  .task6-provider-list-item[aria-current="true"]:hover {
+    background: var(--surface-container-highest);
+  }
+}
+
+.task6-provider-list-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.task6-provider-list-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.task6-provider-list-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+}
+
+.task6-provider-add {
+  margin-top: var(--space-3);
+}
+
+.task6-provider-detail-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.task6-provider-empty {
+  padding: var(--space-4) 0;
 }
 
 .task6-provider-head {
@@ -145,147 +243,109 @@
   flex-wrap: wrap;
 }
 
-.task6-provider-name {
-  font-weight: 600;
-  font-size: var(--text-ui);
-}
-
-.task6-provider-meta {
-  margin: var(--space-1) 0 0;
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-  line-height: 1.45;
-}
-
-.task6-provider-actions {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-
-.task6-provider-head > .task6-provider-actions {
-  margin-left: var(--space-3);
-}
-
-.task6-provider-form {
-  display: grid;
-  gap: var(--space-3);
-  max-width: 720px;
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--outline-variant);
-}
-
-.task6-provider-form-title {
-  margin: 0;
-  font: 600 var(--text-body)/1.25 var(--font-display);
-}
-
-/* Active Provider picker: one dropdown selects the active profile and the
-   detail card below shows its info and actions. */
-
-.task6-provider-active {
-  position: relative;
-  padding: var(--space-3) var(--space-4);
-}
-
-.task6-provider-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-  height: var(--control-height);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-  font: 500 var(--text-ui)/1 var(--font-ui);
-  cursor: pointer;
-}
-
-.task6-provider-picker:hover:not(:disabled),
-.task6-provider-picker[aria-expanded="true"] {
-  border-color: var(--outline);
-}
-
-.task6-provider-picker:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.task6-provider-picker:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-
-.task6-provider-picker-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task6-provider-picker-caret {
-  flex: none;
-  font-size: var(--text-micro);
-}
-
-.task6-provider-picker-menu {
-  position: absolute;
-  top: calc(100% - var(--space-2));
-  left: var(--space-4);
-  z-index: 20;
-  min-width: min(320px, calc(100% - var(--space-6)));
-  max-height: 280px;
-  overflow-y: auto;
-  padding: var(--space-1);
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-lg);
-  background: var(--surface-container-high);
-}
-
-/* 嵌套圆角公式：菜单外R(lg=8) − 菜单padding(space-1=4) = item 半径 sm=4 */
-.task6-provider-picker-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
+.task6-provider-name-edit {
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--on-surface);
-  font: 400 var(--text-ui)/1.3 var(--font-ui);
-  text-align: left;
-  cursor: pointer;
+  font: 600 var(--text-title)/1.2 var(--font-display);
+  cursor: text;
+  text-align: start;
 }
 
-.task6-provider-picker-item:hover {
-  background: var(--surface-container);
+@media (hover: hover) and (pointer: fine) {
+  .task6-provider-name-edit:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
 }
 
-.task6-provider-picker-item[aria-checked="true"] {
+.task6-provider-name-input {
+  max-width: 320px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-2);
+  height: var(--control-height-compact);
+  background: var(--surface);
   color: var(--on-surface);
-  font-weight: 600;
+  font: 600 var(--text-title)/1.2 var(--font-display);
 }
 
-.task6-provider-picker-item:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: -2px;
+.task6-provider-conn {
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-3) 0 0;
+  border-top: 1px solid var(--outline-variant);
 }
 
-.task6-provider-picker-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.task6-provider-conn-row {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--outline-variant);
+  font-size: var(--text-caption);
+  line-height: 1.55;
 }
 
-.task6-provider-picker-check {
+.task6-provider-conn-row dt {
   flex: none;
+  width: 96px;
+  color: var(--on-surface-variant);
+}
+
+.task6-provider-conn-row dd {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
   color: var(--on-surface);
+}
+
+.task6-provider-keyline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.task6-provider-keydraft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.task6-provider-keydraft input {
+  width: min(320px, 100%);
+}
+
+.task6-provider-preview {
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+.task6-provider-danger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--divider-strong);
+  border-radius: var(--radius-md);
+  flex-wrap: wrap;
+}
+
+.task6-provider-danger strong {
+  font-size: var(--text-ui);
+}
+
+.task6-provider-danger .task6-muted {
+  margin-top: var(--space-1);
 }
 
 /* Status dot: green = ready, orange = every other state (error / unverified /
@@ -303,22 +363,33 @@
   background: var(--event-kill);
 }
 
-.task6-provider-detail {
-  padding: var(--space-3) var(--space-4) var(--space-4);
-  border-top: 1px solid var(--outline-variant);
-}
+/* 添加向导：步骤条 + 四步表单；最后一步测连通过才解锁「完成」。 */
 
-.task6-provider-detail-actions {
+.task6-wizard-steps {
   display: flex;
-  gap: var(--space-2);
-  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
   flex-wrap: wrap;
-  margin-top: var(--space-3);
 }
 
-.task6-provider-detail-actions .ac-field {
-  min-width: 180px;
-  max-width: 260px;
+.task6-wizard-steps li[data-state="current"] {
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.task6-wizard-type-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.task6-wizard-step-body {
+  display: grid;
+  gap: var(--space-3);
 }
 
 .task6-auth-operation {
@@ -359,29 +430,6 @@
 
 .task6-muted {
   margin: 0;
-}
-
-/* Profile + Theme grid */
-
-.task6-settings-grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-}
-
-.task6-settings-grid-2 > .task6-settings-section {
-  display: flex;
-  flex-direction: column;
-  margin-top: 0;
-}
-
-.task6-settings-grid-2 .ac-panel__body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  gap: var(--space-3);
-  justify-content: space-between;
 }
 
 .task6-profile-fields {
@@ -481,13 +529,7 @@
   }
 }
 
-/* Theme mode cards */
-
-.task6-theme-options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
+/* Theme mode cards（添加向导类型选择复用） */
 
 .task6-mode-card {
   display: flex;
@@ -519,42 +561,171 @@
   font-size: var(--text-ui);
 }
 
-/* Status / Capture rows */
+/* 主题分区：一行「名称+说明 | 三段切换」，下方 token 预览条。 */
 
-.task6-st-rows {
+.task6-theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.task6-theme-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.task6-theme-row-name {
+  font-weight: 600;
+  font-size: var(--text-ui);
+}
+
+.task6-theme-segments {
+  display: inline-flex;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.task6-theme-segment {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-height-compact);
+  padding: 0 var(--space-3);
+  color: var(--on-surface-variant);
+  font-size: var(--text-ui);
+  cursor: pointer;
+}
+
+.task6-theme-segment + .task6-theme-segment {
+  border-inline-start: 1px solid var(--outline-variant);
+}
+
+.task6-theme-segment input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.task6-theme-segment[data-selected="true"] {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+.task6-theme-segment:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.task6-theme-preview {
+  display: flex;
+  gap: var(--space-1);
+  height: 8px;
+  margin-top: var(--space-3);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.task6-theme-preview-chip {
+  flex: 1;
+}
+
+.task6-theme-preview-chip[data-chip="primary"] { background: var(--primary); }
+.task6-theme-preview-chip[data-chip="surface"] { background: var(--surface-container-high); }
+.task6-theme-preview-chip[data-chip="outline"] { background: var(--outline-variant); }
+.task6-theme-preview-chip[data-chip="accent"] { background: var(--tertiary); }
+
+/* Profile 分组：按相关性的两列网格（手动校准 / Stats 自动读取）。 */
+
+.task6-profile-group {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+}
+
+.task6-profile-group + .task6-profile-group {
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task6-profile-group-title {
+  margin: 0;
+  font: 600 var(--text-body)/1.25 var(--font-display);
+}
+
+.task6-profile-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption);
+}
+
+.task6-profile-stat-label {
+  color: var(--on-surface-variant);
+}
+
+/* Status / Capture rows：每行 = 功能名+说明在左，开关或状态在右。 */
+
+.task6-capture-health {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.task6-toggle-rows {
   display: flex;
   flex-direction: column;
 }
 
-.task6-st-row {
+.task6-toggle-row {
   display: flex;
-  gap: var(--space-3);
-  align-items: flex-start;
-  padding: var(--space-2) 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
   border-top: 1px solid var(--outline-variant);
   font-size: var(--text-caption);
   line-height: 1.55;
 }
 
-.task6-st-row:first-of-type {
+.task6-toggle-row:first-of-type {
   border-top: 0;
 }
 
-.task6-st-row dt {
-  flex: none;
-  width: 150px;
-  color: var(--on-surface-variant);
-}
-
-.task6-st-row dd {
-  flex: 1;
+.task6-toggle-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  margin: 0;
-  color: var(--on-surface);
 }
 
-.task6-st-row dd a,
-.task6-provider-meta a,
+.task6-toggle-row-name {
+  color: var(--on-surface);
+  font-weight: 600;
+  font-size: var(--text-ui);
+}
+
+.task6-toggle-row-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--on-surface);
+  text-align: end;
+}
+
+.task6-toggle-row a,
 .task6-storage-row a,
 .task6-kovaak-note a {
   color: var(--tertiary);
@@ -563,23 +734,79 @@
   transition: border-color var(--duration-fast) var(--ease-out);
 }
 
-.task6-st-row dd a:hover,
-.task6-provider-meta a:hover,
+.task6-toggle-row a:hover,
 .task6-storage-row a:hover,
 .task6-kovaak-note a:hover {
   border-bottom-color: var(--on-surface);
 }
 
-.task6-st-row dd .task6-ok {
+.task6-ok {
   color: var(--event-kill);
   font-weight: 600;
+}
+
+/* 最近采集事件：run meta 的视频 / 输入轨迹结果，人话一行一条。 */
+
+.task6-capture-events {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task6-capture-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task6-capture-event {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption);
+}
+
+.task6-capture-event-scenario {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: var(--text-ui);
+}
+
+.task6-capture-event-detail {
+  min-width: 0;
+  color: var(--on-surface-variant);
+}
+
+.task6-capture-event[data-healthy="true"] .task6-capture-event-detail {
+  color: var(--on-surface);
+}
+
+.task6-capture-diagnostics {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--outline-variant);
+  flex-wrap: wrap;
 }
 
 .task6-consent {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  margin-top: var(--space-3);
+  margin: var(--space-3) 0;
+  padding: 0 var(--space-1);
   color: var(--on-surface);
   font-size: var(--text-caption);
   line-height: 1.5;
@@ -590,7 +817,19 @@
   flex: none;
 }
 
-/* Storage */
+/* Storage：总占用大数字 + 分类占比条；清理动作独立放底部。 */
+
+.task6-storage-total {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.task6-storage-total-number {
+  font: 600 var(--text-display)/1.1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
 
 .task6-storage-bar {
   display: flex;
@@ -659,6 +898,14 @@
 
 .task6-storage-row strong {
   font-size: var(--text-ui);
+}
+
+.task6-storage-cleanup {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--outline-variant);
 }
 
 /* Notices in settings */
@@ -1825,6 +2072,59 @@
      突兀色带；结构与分隔由 chip 自身边框承担。 */
 }
 
+/* 本次讨论溢出折叠（0905 拍板）：已完成 chip 只平铺前 3 个，余量收进行尾
+   ▾ 按钮的下拉里。箭头沿用 suggestion chip 体系（同 pill 同交互），菜单
+   沿用 model menu 先例＝仅边框分层不加阴影；绝对定位挂在吸顶条右缘，
+   超宽向下滚动，不溢出面板。 */
+.task6-discussion-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2);
+}
+
+.task6-discussion-caret {
+  color: var(--on-surface-variant);
+}
+
+.task6-discussion-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: var(--space-4);
+  min-width: 228px;
+  max-width: 320px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-high);
+}
+
+/* 嵌套圆角公式同 model menu：菜单外 R(lg=8) − 菜单 padding(space-1=4)
+   ＝ item 半径 sm=4。 */
+.task6-discussion-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+  font: 400 var(--text-ui)/1.3 var(--font-ui);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.task6-discussion-item:hover {
+  background: var(--surface-container);
+}
+
+.task6-discussion-item:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
 /* Composer */
 
 .task6-composer {
@@ -2520,24 +2820,14 @@
 /* Responsive */
 
 @media (max-width: 839px) {
-  .task6-settings-layout {
-    flex-direction: column;
-  }
-
   .task6-settings-nav {
     display: none;
   }
 
-  .task6-settings-grid-2,
   .task6-profile-fields,
-  .task6-storage-row,
-  .task6-provider-actions {
+  .task6-wizard-type-grid,
+  .task6-storage-row {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .task6-settings-grid-2 {
-    display: flex;
-    flex-direction: column;
   }
 
   .task6-storage-row {
@@ -2545,33 +2835,33 @@
     flex-direction: column;
   }
 
-  .task6-provider-actions {
-    margin-left: 0;
-    justify-content: flex-start;
-  }
-
-  .task6-provider-head > .task6-provider-actions {
-    margin-left: 0;
-  }
-
-  .task6-st-row {
+  .task6-provider-master {
     flex-direction: column;
-    gap: var(--space-1);
   }
 
-  .task6-st-row dt {
-    width: auto;
+  .task6-provider-list {
+    flex: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .task6-provider-add {
+    margin-top: 0;
+    margin-inline-start: auto;
+  }
+
+  .task6-toggle-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .task6-toggle-row-side {
+    text-align: start;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task6-settings-nav-title {
-    transform: none;
-    transition:
-      opacity var(--duration-reduced-motion) var(--ease-out),
-      display var(--duration-reduced-motion) allow-discrete;
-  }
-
   .task6-coach-sidebar,
   .task6-coach-sidebar-wrap[data-mode="overlay"] .task6-coach-sidebar,
   .task6-coach-sidebar-wrap[data-mode="full"] .task6-coach-sidebar {
