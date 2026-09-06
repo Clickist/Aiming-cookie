@@ -13,6 +13,15 @@ def main() -> None:
         worker_main()
         return
 
+    # Same reuse pattern for the KovaaK telemetry capture scripts (standalone
+    # stdlib-only files under telemetry_capture/): "--telemetry-child <script>
+    # [args...]" re-enters the frozen interpreter with the script as __main__.
+    if len(sys.argv) >= 3 and sys.argv[1] == "--telemetry-child":
+        from webapp.backend.telemetry_capture_service import run_telemetry_child
+
+        run_telemetry_child(sys.argv[2], sys.argv[3:])
+        return
+
     from webapp.backend.desktop_runtime import main as runtime_main
 
     runtime_main()
