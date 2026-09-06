@@ -12,13 +12,22 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 → bounded evidence-backed Coach → local history, plan, and retest
 ```
 
-现阶段仍为 **No-Go**。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测，后续数据采集核心通路未改动。当前发布仍受真实 Tauri product-path、Tracking 时延和发布工程约束。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 与 video-fallback 是正式但有界的降级路径，真实现场与发布 Gate 仍单独维护。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺；v1 不把未具备条件的 AMD/Intel 物理验证设为发布阻塞。
+现阶段为**内测进行中**（v0.1.7 起向内测用户发布，2026-09-06 当前版本 v0.1.14，已内置自动更新链路）。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测，后续数据采集核心通路未改动。真实 Tauri 打包/发版链路已由 v0.1.10–v0.1.14 五个版本的实际发布验证（installer + NSIS + updater 三件套 + 落地页切换）；仍开放的工程 Gate 是 Tracking 时延与 AMD/Intel 支持（v1 不把 AMD/Intel 物理验证设为发布阻塞）。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 与 video-fallback 是正式但有界的降级路径，真实现场与发布 Gate 仍单独维护。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺。
 
-完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留不可跳过的 Provider + 采集授权 onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化，不包含 Aiming Cookie 账号、登录、鉴权服务器或账号型云同步。
+完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留不可跳过的 Provider + 采集授权 onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化；本地诊断闭环不需要产品账号。商业化形态以 PRD 2026-09-06 修订为准（官方托管套餐 + BYOK 双轨，套餐/注册/订阅/支付页为自建售卖链路，见「当前优先级」）。
 
 当前分析策略是 Coach 自动选择 `multimodal > input_native > video_fallback`。三种路径分别表示完整多源、输入证据优先和视频证据优先；不提供用户 mode selector。只有三条路径均不可用时才不创建 Analysis，由 Coach 说明缺失来源和修复动作。安装前已有的 Stats/Performance 文件可导入、展示为历史 Run。
 
 ## 2. 当前施工优先级
+
+### 当前优先级（2026-09-06 快照；完成项移入 PROGRESS）
+
+1. **内测循环**：两位内测用户复测「中转站 + AC 搭配」（v0.1.14 上下文治理已换 microcompact）＋ 新版本经自动更新触达的验证；
+2. **Coach 收尾接线**：usage 面板与 Composer next_turn 触发（后端合同与 API 函数已就绪，前端入口未做）；新工具（bash/grep/find 等）前端中文标签补齐；
+3. **设置页**：右侧 7 分区 layout 提案拍板后施工（Provider 主从 + 四步向导已发布）；
+4. **营销**：B站口播定稿进入拍摄（录屏基准 v0.1.14）；HyperFrames hook 工作台推进（`Desktop\Aiming-cookie-video-fx`）；
+5. **售卖链路**（拍板为不急）：官方托管套餐 + BYOK 双轨的自建套餐/注册/订阅/支付页；
+6. Tracking 时延 Gate 与跨厂商（AMD/Intel）验证维持既有定位：v1 不阻塞。
 
 ### P0 — 完整 Coach launch 闭环
 
@@ -59,14 +68,13 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 
 ### P1 — 预览与发布工程
 
-OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成，Raw Input 1000 Hz canonical 归一化及高 polling-rate 实测也已完成。发布工程继续按以下顺序推进：先完成真实 Tauri product-path、当前 NVIDIA 支持路径与 Tracking 时延 Gate；再生成真实产品截图与演示 MP4，设计和实现 Landing；最后完成 installer、版本、校验值、真实下载链接与发布验证。Worker/stale-job 恢复、Coach 对话继续/停止/失败轮次隔离均按已完成能力回归保护；OAuth/device-code 和 AMD/Intel 支持延后，不阻塞当前发布范围。Browser 通过不替代 Tauri 或 Windows release Gate。
+已完成（截至 v0.1.14）：OpenDesign 桌面设计与 Frontend reconstruction Task 1–7；Raw Input 1000 Hz canonical 归一化及高 polling-rate 实测；落地页（含 SEO 批、D1 stats Worker、favicon/sitemap）；真实产品截图与演示 MP4（落地页 hero）；installer/NSIS 打包链与版本化；自动更新（minisign 签名 + latest.json 三件套 + 客户端静默检查）；v0.1.10–v0.1.14 五次真实发版验证全链路。发布工程剩余：
 
-- frontend static/bundle 策略；
-- Python runtime distribution；
-- installer、正式 icon、签名、公证和 updater；
 - supervisor/structured logs/运行指标；
-- 完整 browser/Desktop E2E 与真实素材 Gate；
+- 完整 browser/Desktop E2E 与真实素材 Gate 常态化；
 - Windows 生命周期与 CI（若进入首发范围）。
+
+Worker/stale-job 恢复、Coach 对话继续/停止/失败轮次隔离均按已完成能力回归保护；OAuth/device-code 和 AMD/Intel 支持延后，不阻塞当前发布范围。Browser 通过不替代 Tauri 或 Windows release Gate。
 
 ### P1 — 产品闭环质量
 
@@ -99,7 +107,7 @@ OpenDesign 桌面设计与 Frontend reconstruction Task 1–7 已完成，Raw In
 下一切片建议遵守：
 
 1. RefleK Task 6A backend History/evidence read model 与 comparability 已完成；Task 6B 与正式 frontend 继续 deferred；
-2. Pi coding-agent、AgentHarness/skills/prompt/filesystem harness 的上游 Windows 全仓失败不属于当前产品 Gate；若未来采纳对应 capability，先明确范围和验证方式；
+2. Pi coding-agent capability 已大规模采纳（2026-09，v0.1.14）：pi harness 直连、原版 fs 工具（read/write/ls/edit/grep/find/bash）、pi compaction + microcompact 上下文治理、usage 统计端点；上游 Windows 失败仅剩 `skills-loading` 一项已知既有问题，不挡发版；
 3. Frontend reconstruction Task 1–7 已完成并归档；新的 UI、Landing 或发布工程按当前任务、相关合同和测试推进，不能直接复用已归档结论；
 4. Analysis deletion/reconciliation Task 1–3 已完成并归档；terminal Analysis 的本地文件删除（删 `sessions/{id}.json`、`analyses/{id}/` 输出目录与 workspace）、managed workspace cleanup 与 startup/API Gate 已闭合；
 5. Windows Desktop pre-frontend Task 1–2 已完成并归档；后续切片按当前任务和验证结果决定；
