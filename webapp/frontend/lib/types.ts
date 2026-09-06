@@ -819,6 +819,8 @@ export interface KovaaKRunListItem {
   trace_state: string;
   /** Kept for diagnostics only; the UI intentionally does not render it. */
   trace_error: string | null;
+  /** Kept for diagnostics only; 最近采集事件把错误码翻译成人话。可选：旧缓存快照缺字段。 */
+  video_error?: string | null;
   video_artifact_ref: string | null;
   finalization_state: string;
   finalization_error?: string | null;
@@ -1349,13 +1351,13 @@ export interface CoachAgentRunV1 {
 
 /**
  * Composer 排队/转向的 sidecar 透传合同（零持久化）。steer 在运行中注入，
- * follow_up 排在停止边界之后；无运行中会话时 sidecar 回 409
- * run_not_steerable / 404。队列 UI 编排由批 5 消费。
+ * follow_up 排在停止边界之后，next_turn 排进下一轮开头（同 run 连续 turn）；
+ * 无运行中会话时 sidecar 回 409 run_not_steerable / 404。队列 UI 编排由批 5 消费。
  */
 export interface CoachAgentRunQueueV1 {
   schema_version: "coach_agent_run_steer.v1";
   run_ref: string;
-  kind: "steer" | "follow_up";
+  kind: "steer" | "follow_up" | "next_turn";
   queued: boolean;
 }
 
