@@ -21,6 +21,7 @@ import uvicorn
 from . import config, file_store, kovaak_ingest, kovaak_run_store, worker
 from . import kovaak_stats_export_setup
 from . import external_telemetry_ingest
+from . import telemetry_capture_service
 from .app import app
 from .kovaak_capture_finalizer import KovaaKCaptureFinalizer
 from .native_capture_client import NativeCaptureClient
@@ -459,8 +460,13 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         asyncio.get_running_loop(), finalizer, finalizer_futures,
     )
     app.state.kovaak_ingestion_service = ingestion_service
+    # 采集工具随产品分发（2026-09-06 拍板）：先保证 watch 根自动指向托管
+    # cleaned 根（已配置则不动），再创建外部遥测服务让它读到该配置。
+    telemetry_capture_service.ensure_managed_watch_root()
     external_service = create_external_telemetry_service()
     app.state.external_telemetry_service = external_service
+    capture_service = telemetry_capture_service.create_telemetry_capture_service()
+    app.state.telemetry_capture_service = capture_service
 
     try:
         port = await _wait_for_server_start(server, server_task)
@@ -495,6 +501,9 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         if external_service is not None:
             external_service.start()
             persist_external_telemetry_diagnostics(external_service)
+        if capture_service is not None:
+            # start() 可能带旧会话收尾（cleaner/merge 子进程），放线程避免阻塞事件循环。
+            await asyncio.to_thread(capture_service.start)
 
         # This is intentionally the runtime's only stdout protocol write.
         print(
@@ -542,6 +551,10 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
         with contextlib.suppress(Exception):
             persist_kovaak_ingestion_diagnostics(ingestion_service)
         app.state.kovaak_ingestion_service = None
+        if capture_service is not None:
+            # 终止采集伴生进程；有未收尾的原始件则留给下次启动扫尾。
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(capture_service.stop)
         worker_stop.set()
         await finalizer_futures.drain()
         server.should_exit = True

@@ -1,0 +1,26 @@
+{
+  "_format": "KovaaK's 遥测录制器版本偏移表。键=目标进程 exe 的 sha256（小写 hex 全量）。",
+  "_fields": {
+    "label": "人类可读版本描述（用于日志与未知版本报错）",
+    "rva_guobjectarray": "FUObjectArray GUObjectArray 的 RVA（代码引用其结构起始；chunked 子数组在 +0x10）",
+    "rva_slot_target": "ATheMetaTrainerTarget 类注册静态结构槽 RVA（文件值为 {.rdata 指针, sizeof}；非 UClass 缓存）",
+    "rva_slot_scene": "USceneComponent 类注册静态结构槽 RVA（同上，sizeof=0x200）",
+    "rva_blocks_expect": "FNamePool.Blocks 槽期望 RVA（自扫描层的对照值；自扫描失败时的人工核对基准）"
+  },
+  "_howto": "新增版本见 RUNBOOK_OFFSETS.md §3。定位工具: E:\\DevCache\\temp\\reoffset_func_align.py(投票) + reoffset_slot_bootstrap.py(类槽) + reoffset_validate.py(在线校验)。",
+
+  "847d79e3cea87ccc34468626915ba71a70f9f61e1997ada97c1fa15552515180": {
+    "label": "旧副本 Desktop\\FPSAimTrainer 2026-07-04 (92,191,232 B)",
+    "rva_guobjectarray": "0x53B4508",
+    "rva_slot_target": "0x506FBC8",
+    "rva_slot_scene": "0x51286A8",
+    "rva_blocks_expect": "0x5387350"
+  },
+  "c4cdd77739b3de1268d72365b460bc10e5cbe90079f0835353a7aee4b6c22d19": {
+    "label": "Steam E:\\SteamLibrary 2026-08-28 (92,340,736 B, TimeDateStamp 1787762591)",
+    "rva_guobjectarray": "0x53D7978",
+    "rva_slot_target": "0x5092A38",
+    "rva_slot_scene": "0x514B4F8",
+    "rva_blocks_expect": "0x53AA710"
+  }
+}
