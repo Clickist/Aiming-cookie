@@ -741,6 +741,8 @@ pub fn run() {
             media_handler.response(request)
         })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(move |app| {
             let app_data_dir = app.path().app_data_dir()?;
             diag_log::init(app_data_dir.join("logs"));

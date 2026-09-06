@@ -21,7 +21,8 @@
   color: var(--on-surface);
 }
 
-.task3-skip-link:focus {
+/* 仅键盘导航（Tab）聚焦时滑入；辅助工具/鼠标的焦点不触发，避免常驻遮挡 logo。 */
+.task3-skip-link:focus-visible {
   transform: translateY(0);
 }
 
@@ -43,8 +44,23 @@
   color: var(--on-surface);
   font: 600 var(--text-title)/1 var(--font-display);
   letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   user-select: none;
   white-space: nowrap;
+}
+
+.task3-logo-mark {
+  width: 20px;
+  height: 20px;
+  display: block;
+  /* 素材是白色 logo：亮模式下反色成黑色，暗模式保持白色。 */
+  filter: invert(1);
+}
+
+:root[data-theme="dark"] .task3-logo-mark {
+  filter: none;
 }
 
 .task3-toolbar-spacer {
@@ -958,4 +974,49 @@
     transform: none;
     transition: opacity var(--duration-reduced-motion) var(--ease-out);
   }
+}
+
+/* ── 桌面更新提示卡（右下角浮层，task3/UpdatePrompt）────────────────── */
+.task3-update-prompt {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 320px;
+  padding: var(--space-4);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container);
+  color: var(--on-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.task3-update-prompt-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.task3-update-prompt-note {
+  margin: 0;
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  color: var(--on-surface-variant);
+}
+
+.task3-update-prompt-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.task3-update-prompt-busy {
+  font-size: var(--text-caption);
+  color: var(--on-surface-variant);
 }

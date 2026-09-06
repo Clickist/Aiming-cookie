@@ -3,6 +3,8 @@ param(
     [string]$RepoRoot,
     [string]$CertificateThumbprint,
     [string]$TimestampUrl,
+    [string]$UpdaterSigningKeyPath,
+    [string]$UpdaterSigningKeyPassword,
     [switch]$Unsigned
 )
 
@@ -41,6 +43,12 @@ if ($CertificateThumbprint) {
 
 Push-Location $frontend
 try {
+    # 更新签名（minisign）：给了密钥路径才生成 .sig 与 latest.json 所需的签名文件；
+    # 私钥不入仓库，由发版人放在本机用户目录。
+    if ($UpdaterSigningKeyPath) {
+        $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -LiteralPath $UpdaterSigningKeyPath -Raw).Trim()
+        $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $UpdaterSigningKeyPassword
+    }
     $tauriArgs = @("run", "tauri", "--", "build", "--bundles", "nsis")
     if ($CertificateThumbprint) {
         $overlay = @{
