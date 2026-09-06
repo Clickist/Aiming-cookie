@@ -1230,6 +1230,28 @@ export async function followUpCoachAgentRun(
 }
 
 /**
+ * next_turn 队列（审计#13）：排进当前 run 的下一轮开头，run_id 不变。
+ * 供 Composer 在"回复刚结束、run 尚未销毁"的窗口使用，避免被迫发新 run。
+ */
+export async function nextTurnCoachAgentRun(
+  runRef: string,
+  text: string,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CoachAgentRunQueueV1> {
+  const res = await apiFetchSidecar(
+    `/v1/agent-runs/${encodeURIComponent(runRef)}/next-turn`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CoachAgentRunQueueV1;
+}
+
+/**
  * 编辑重发截断（digests §11 item 7 截断派）：保留会话前 keepMessages 条可见
  * 消息并丢弃其后历史。409 session_busy 表示仍有活跃 run 在写该会话，
  * 前端须等运行结束后重试。
