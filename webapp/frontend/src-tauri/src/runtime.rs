@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 
 use crate::capture_coordinator::CaptureControlConnection;
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
+// Windows 冷启动（node/tsx 首次加载 + Defender 扫描）实测可超 15s，两晚各翻车
+// 一次（2026-09-06）；成功路径不受影响，只有真死才等到失败。
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(45);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(800);
 const TOKEN_ENV: &str = "AIMING_COOKIE_DESKTOP_TOKEN";
 const WATCH_PARENT_STDIN_ENV: &str = "AIMING_COOKIE_WATCH_PARENT_STDIN";
