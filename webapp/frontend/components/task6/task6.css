@@ -1730,10 +1730,25 @@
   flex-basis: 100%;
 }
 
-/* 折叠箭头在行尾（点点 0828 拍板）：与首行文字垂直对齐 */
-.task6-tool-step > .task6-caret {
+/* 折叠箭头在行尾（点点 0828 拍板）：与首行文字垂直对齐。
+   0906 起箭头包进真实按钮成为第二展开热区；热区略大于图标本体。 */
+.task6-tool-step > .task6-caret-toggle {
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 3px;
+  padding: 3px;
+  margin-right: -3px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.task6-tool-step > .task6-caret-toggle:hover {
+  color: var(--on-surface);
 }
 
 /* 顶层步骤列表与消息正文同缘；组内明细与组行「读取文件」的文字头

@@ -98,6 +98,13 @@ test("tool steps surface duration and detail previews from existing contract fie
   assert.match(activity, /formatDuration\(step\.durationMs\)/);
   assert.match(activity, /task6-tool-detail-toggle/);
   assert.match(activity, /aria-expanded/);
+  // 行尾箭头是第二展开热区（0906 点点实测点箭头无反应）：单步行与组行
+  // 都经 CaretToggle 渲染，CSS 有对应热区规则，裸箭头选择器退役
+  assert.match(activity, /function CaretToggle/);
+  assert.equal((activity.match(/<CaretToggle /g) ?? []).length, 2, "single-step and group rows both render CaretToggle");
+  const task6Css = await source("components/task6/task6.css");
+  assert.match(task6Css, /\.task6-tool-step > \.task6-caret-toggle/);
+  assert.doesNotMatch(task6Css, /\.task6-tool-step > \.task6-caret \{/);
 });
 
 test("long analysis steps tick elapsed time next to the local ETA", async () => {

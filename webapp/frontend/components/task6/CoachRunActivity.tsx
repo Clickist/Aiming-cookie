@@ -268,16 +268,33 @@ function hasStepDetail(step: CoachToolStep): boolean {
   return (step.argsPreview ?? "").trim().length > 0 || (step.resultPreview ?? "").trim().length > 0;
 }
 
+/** 行尾箭头开关：箭头是用户最自然的点击目标（0906 点点实测点箭头无反应），
+    与行首文字开关共用同一展开状态，故与文字开关互不嵌套、各自绑定。 */
+function CaretToggle({ open, onToggle, label }: { open: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button
+      aria-expanded={open}
+      aria-label={`${open ? "收起" : "展开"}${label}明细`}
+      className="task6-caret-toggle"
+      onClick={onToggle}
+      type="button"
+    >
+      <IconChevronDown aria-hidden="true" className="task6-caret" data-open={open} />
+    </button>
+  );
+}
+
 /** 单步行（active/fail/done）：done 且带摘要时可展开明细。 */
 function WorkStepLine({ step }: { step: CoachToolStep }) {
   const [open, setOpen] = useState(false);
   const expandable = step.state === "done" && hasStepDetail(step);
+  const toggle = () => setOpen(!open);
   return (
     <li className="task6-tool-step" data-state={step.state}>
       <CommandGlyph command={step.command} />
       <span className="task6-tool-body">
         {expandable ? (
-          <button aria-expanded={open} className="task6-tool-detail-toggle" onClick={() => setOpen(!open)} type="button">
+          <button aria-expanded={open} className="task6-tool-detail-toggle" onClick={toggle} type="button">
             {step.label}
           </button>
         ) : (
@@ -288,7 +305,7 @@ function WorkStepLine({ step }: { step: CoachToolStep }) {
         <StepBody step={step} />
         <StepDetail step={step} open={open} />
       </span>
-      {expandable ? <IconChevronDown aria-hidden="true" className="task6-caret" data-open={open} /> : null}
+      {expandable ? <CaretToggle open={open} onToggle={toggle} label={step.label} /> : null}
     </li>
   );
 }
@@ -333,12 +350,13 @@ function WorkGroupLine({ label, steps }: { label: string; steps: CoachToolStep[]
   const expandable = steps.some((step) => (stepBrief(step) ?? step.meta)?.trim().length ? true : false);
   const totalTail = totalMs >= 1000 ? ` · 共 ${formatDuration(totalMs)}` : "";
   const summary = count > 1 ? `${label} · ${count} 次${totalTail}` : label;
+  const toggle = () => setOpen(!open);
   return (
     <li className="task6-tool-step" data-state="done">
       <CommandGlyph command={steps[0]?.command ?? null} />
       <span className="task6-tool-body">
         {expandable ? (
-          <button aria-expanded={open} className="task6-tool-detail-toggle" onClick={() => setOpen(!open)} type="button">
+          <button aria-expanded={open} className="task6-tool-detail-toggle" onClick={toggle} type="button">
             {summary}
           </button>
         ) : (
@@ -356,7 +374,7 @@ function WorkGroupLine({ label, steps }: { label: string; steps: CoachToolStep[]
           </div>
         ) : null}
       </span>
-      {expandable ? <IconChevronDown aria-hidden="true" className="task6-caret" data-open={open} /> : null}
+      {expandable ? <CaretToggle open={open} onToggle={toggle} label={summary} /> : null}
     </li>
   );
 }
