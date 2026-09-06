@@ -30,7 +30,7 @@
 
 基于物理 + 运动学的 **KovaaK's 瞄准诊断 + AI 教练**。桌面应用：采集真实训练输入 → 完整动作级数据与公平指标 → 可追溯候选诊断 → AI Coach 综合解释与训练 → 长期进步追踪。
 
-**产品关系（2026-07-10 澄清；2026-07-13 输入原生与商业模式更新）**：这是以 **Aiming Coach** 为核心的一个开源免费产品，不分免费版 / 付费版，也不以订阅、credits 或能力墙向用户收费。长期上，**Aiming Coach 是常驻关系与产品操作层**——降低用户对界面与流程的学习成本；KovaaK Run、输入原生运动学、视频增强、确定性报告和持久化的瞄准表现记录，都是教练的客观观测、专业判断依据与长期病历，而不是与教练并列的第二套产品。
+**产品关系（2026-07-10 澄清；2026-07-13 输入原生更新；2026-09-06 商业模式修订）**：这是以 **Aiming Coach** 为核心的一个开源免费产品，不分免费版 / 付费版，产品能力不以能力墙向用户收费；在此之上可提供**可选的官方托管模型服务（订阅套餐）**作为模型供给渠道，是否购买不影响任何产品能力。长期上，**Aiming Coach 是常驻关系与产品操作层**——降低用户对界面与流程的学习成本；KovaaK Run、输入原生运动学、视频增强、确定性报告和持久化的瞄准表现记录，都是教练的客观观测、专业判断依据与长期病历，而不是与教练并列的第二套产品。
 
 ## 2. 为什么做（原始设想）
 
@@ -62,7 +62,7 @@
 | 2 | 三层候选诊断 | 观察 → 候选机制/替代解释 → 处方（规则引擎 `advice.py` / `advice_tracking.py`）；不把未测因果升级为事实 |
 | 3 | AI 教练对话 | 可调用应用能力的常驻 Coach；能查询整局完整动作级 processed data、寻找规律与反例并形成最终教学解释，而不是确定性报告的转述层 |
 | 4 | 长期进步追踪 | 趋势 + ④ 渐进式训练计划（`progress.py` / `planning.py`） |
-| 5 | 可配置 LLM Coach | 当前产品不设付费墙；用户在 Settings 中选择并连接可用 LLM provider，Coach 与确定性诊断属于同一产品闭环 |
+| 5 | 可配置 LLM Coach | 当前产品不设付费墙；用户在 Settings 中选择并连接可用 LLM provider（自带 Key，或可选开通官方托管套餐），Coach 与确定性诊断属于同一产品闭环 |
 | 6 | 常驻教练降学习成本 | provider 可用时 coach agent 可随时进入并调用当前用户拥有的产品能力；用户少记「该点哪个菜单」，多靠对话完成回访、分析与计划 |
 | 7 | 输入原生而非视频依赖 | Raw Input + KovaaK Performance / Stats 直接生成输入运动学；MP4 主要用于直观回放、问题定位和视觉证据，不是基础运动学的主事实源 |
 
@@ -72,17 +72,17 @@
 - **开源免费的桌面 hybrid 应用**：当前技术基线为 Tauri 2 壳 + 本地分析 runtime（Raw Input / KovaaK 数据解析 / Python CV）+ Coach Agent runtime（以项目内 Pi 源码为基线，由项目接管并产品化改造）+ 用户自行选择并连接的 LLM provider。具体开源许可证与发布义务在 release 准备中单独确认，不改变产品能力免费开放的方向。
 - **Web 技术开发、桌面应用交付**：当前可用 Web 前端快速开发和验证，但最终界面按本地桌面应用而不是网站设计；营销落地页与应用分离，应用 Logo 仅作静态品牌标识，不承担导航。
 - **Coach-first 工作区 + 左侧会话 rail**：Coach 是默认主工作区；`/` 进入 Coach 首页，`/s/:sessionId` 打开指定会话。左侧 Session rail 负责会话、History 与 Settings 导航；顶部只承载应用状态，不再提供右侧 Coach 开关。
-- **无产品账号的本地优先工具**：画像、Coach 关系与 History 都属于当前 OS 用户的本地 profile。Aiming Cookie 不要求注册、登录或产品鉴权服务器；Provider 是否需要认证由其自身决定；如需认证，只发生在用户与其选择的模型服务之间。
+- **本地优先 + 可选账号**：画像、Coach 关系与 History 都属于当前 OS 用户的本地 profile。不注册、不登录时，全部本地能力与自带 Key 路径照常可用；账号仅服务于官方托管模型服务（订阅套餐）的注册、登录与额度管理。第三方 Provider 是否需要认证由其自身决定；如需认证，只发生在用户与其选择的模型服务之间。
 
 ### 5.2 分阶段
 | 阶段 | 形态 | 商业模式 |
 |---|---|---|
 | **内部技术预览** | 受控环境，flicking-only；验证进程 gate 内 Raw + KovaaK 窗口回放缓冲、Stats / Performance 事后 Run 切分、三种分析模式和核心闭环，不是完整 v1 | 无付费墙；用户自行配置可用 LLM provider；不引入商业推荐 |
-| **v1 开源早期版** | 开源桌面应用；支持自动采集并生成待分析 Run、static/dynamic clicking、continuous tracking 与 target switching 的完整 Coach 闭环、独立手动 fallback、Windows Raw Input beta 与 Provider Settings；movement aiming 无移动遥测时保持 outcome-only | 全部产品能力免费；不销售订阅、credits 或托管 LLM 额度 |
+| **v1 开源早期版** | 开源桌面应用；支持自动采集并生成待分析 Run、static/dynamic clicking、continuous tracking 与 target switching 的完整 Coach 闭环、独立手动 fallback、Windows Raw Input beta 与 Provider Settings；movement aiming 无移动遥测时保持 outcome-only | 全部产品能力免费；官方托管模型套餐为可选订阅，不作为产品能力门槛 |
 | **B Coach 闭环深化** | 在首发闭环之上迭代档案、训练计划、复测和产品命令的质量与覆盖 | 继续开源免费；商业推荐不作为 Coach 闭环的前置条件 |
 | **C 推荐与生态成熟** | 国际化和经验证的外设目录逐步接通 | 官方购买链接可通过联盟代码获得佣金；必须清晰披露，且佣金不影响诊断、推荐触发或排序 |
 
-> “免费”指 Aiming Cookie 不销售产品能力或 LLM 使用额度。用户选择的第三方 LLM provider 可能按其自身规则收费，该费用属于用户与 provider 的独立关系，不是 Aiming Cookie 收入。
+> “免费”指 Aiming Cookie 不因产品能力向用户收费；官方托管模型套餐（订阅）销售的是模型供给服务，不是产品能力。用户选择的第三方 LLM provider 可能按其自身规则收费，该费用属于用户与 provider 的独立关系，不是 Aiming Cookie 收入。
 
 ### 5.3 产品能力优先关系（不等于当前施工队列）
 
@@ -109,9 +109,9 @@
 | 原则 | 说明 |
 |---|---|
 | **一个开源产品** | Aiming Cookie 只有一条产品身份和一套能力，不拆免费版 / 付费版，不用闭源高级版承载核心 Coach 能力 |
-| **产品能力不收费** | 分析、确定性诊断、Coach、History、长期档案、训练计划和产品命令不设订阅、credits 或能力墙；未配置 provider 时没有 Coach 对话、AI 解释、长期档案维护、训练计划或 Coach 产品命令，但本地指标、确定性诊断、规则化提示和 History 继续可用 |
-| **无产品账号** | Aiming Cookie 不要求注册、登录、云端用户身份、session/JWT、entitlement 或鉴权服务器；本地 profile 是 Desktop 数据和 Coach 关系的归属边界 |
-| **Provider 成本与连接方式独立** | 用户自行选择并连接 LLM provider；Provider 本身可以没有账号或登录概念，连接方式可以是无需认证、本地 endpoint、API key、OAuth 或 device-code。需要认证时，它只属于用户与 Provider 的关系。第三方 provider 可能产生的费用由其直接定义，Aiming Cookie 不转售 token 或托管额度 |
+| **产品能力不收费** | 分析、确定性诊断、Coach、History、长期档案、训练计划和产品命令不设能力墙，不随官方套餐的付费状态变化；官方托管模型套餐只影响模型供给渠道。未配置 provider 时没有 Coach 对话、AI 解释、长期档案维护、训练计划或 Coach 产品命令，但本地指标、确定性诊断、规则化提示和 History 继续可用 |
+| **可选账号** | 账号不是使用产品的前提：不注册、不登录时，本地能力与自带 Key（BYOK）路径完整可用。账号由用户自愿开通，仅用于官方托管模型服务（订阅套餐）的注册、登录与额度管理；本地 profile 仍是 Desktop 数据和 Coach 关系的归属边界 |
+| **Provider 成本与连接方式独立** | 用户自行选择并连接 LLM provider；Provider 本身可以没有账号或登录概念，连接方式可以是无需认证、本地 endpoint、API key、OAuth 或 device-code。需要认证时，它只属于用户与 Provider 的关系。第三方 provider 可能产生的费用由其直接定义；官方托管模型套餐是 Aiming Cookie 自营的可选供给渠道，与第三方 provider 并列，由用户自由选择 |
 | **Pi catalog 即产品 catalog** | pinned Pi 的内置 provider/model catalog 直接作为 Aiming Cookie 的产品目录，不另设 provider/model allow-list；所有 Pi 支持的 built-in 都应暴露并可用。自定义 OpenAI-compatible profile 由用户提供 provider name、base URL、API key 和 model ID |
 | **联盟佣金是收入来源** | 当 Coach 有合理依据认为外设可能帮助用户解决问题时，可以提供可选商品推荐；官方购买链接可包含 Aiming Cookie 的联盟代码并产生佣金 |
 | **商业防火墙** | 佣金、品牌合作、库存或转化率不得进入诊断、推荐触发或商品排序；推荐必须说明依据、不确定性、免费替代方案和商业关系 |
@@ -295,9 +295,9 @@ history（待分析训练 + 训练记录 + 分析记录）
 | 2 | Desktop 主路径自动采集 Raw + KovaaK 窗口回放缓冲，并在 Stats / Performance 到达后事后切成独立 Run；手动 MP4 + Stats 是独立 fallback 界面，不与主路径混在一起 | v1 |
 | 3 | processing 可后台；教学时刻 = 指标科普 + 软件教学；空状态给预告卡 | v1 |
 | 4 | Analysis 作为内部本地对象保留；用户通过 History 安全摘要或 Coach 解释消费结果。Provider 可用时 Coach 可在消息中发出确定性的指标、时间线和证据卡片，未配置时提供可恢复的激活入口 | v1 |
-| 5 | coach_dialogue 与其他产品能力永久不设订阅、credits 或能力墙；Settings 只管理用户选择的 provider、model 与认证状态，Aiming Cookie 不转售 LLM 额度 | 全阶段 |
+| 5 | coach_dialogue 与其他产品能力永久不设能力墙，不随官方托管套餐的付费状态变化；Settings 管理用户选择的 provider、model 与认证状态，官方托管套餐作为可选供给渠道与自带 Key 并列 | 全阶段 |
 | 6 | History 与 Coach 长期资料以本地 profile 为 canonical；支持删 / 导出 / 导入和显式迁移，不规划账号型云同步 | 全阶段 |
-| 7 | 产品不提供注册、登录、Aiming Cookie 账号、session/JWT、entitlement 或用户鉴权服务器；Provider 可无需认证，也可使用其自身支持的认证方式，这些都不创建产品身份 | 全阶段 |
+| 7 | 账号是可选能力而非使用前提：默认本地免登录、全部本地能力与自带 Key 路径完整可用；账号仅服务官方托管模型服务（注册、登录、订阅与额度管理），不承载产品云身份；Provider 可无需认证，也可使用其自身支持的认证方式，这些都不创建产品身份 | 全阶段 |
 | 8 | 失败态：本地 CV / Provider LLM / 网络断分开写明白，Provider 故障不阻塞本地闭环 | v1 |
 | 9 | 日志 cross-cutting：本地 CV / agent / Provider 请求各层分离，secret 不进入普通日志 | v1 |
 | 10 | KovaaK Run 自动发现、Windows Raw Input opt-in 与仅 KovaaK 窗口自动录屏进入 v1；没有实时 Challenge hook 时使用进程 gate 连续硬件编码和 300 秒有界回放缓冲，并按 Stats / Performance 事后切窗；normal/timescale-only 生成永久 MP4，暂停局 fail closed | v1 |
@@ -318,20 +318,22 @@ history（待分析训练 + 训练记录 + 分析记录）
 |---|---|---|
 | Capture Coordinator + KovaaK Run 解析 + 输入原生运动学 + 视频 pan_tracker/flick 指标计算 | **本地 sidecar / Tauri native layer** | 进程 gate 内统一采集 Raw 与 KovaaK 窗口回放缓冲，Stats / Performance 事后切 Run；输入原生路径优先，视频用于多源增强和 fallback |
 | Coach Agent runtime（agent loop / tool registry / workspace / event stream） | **本地 sidecar** | 以项目内 Pi 源码为基线并允许产品化修改，不以持续兼容或跟随 Pi 上游升级为约束；Aiming Cookie 通过稳定领域工具、权限边界与持久 Coach 状态连接业务数据 |
-| LLM 推理请求 | **用户选择的 Provider 或本地模型** | Desktop 直接使用用户配置的 Provider credential；Aiming Cookie 不销售 token、托管额度或中转用户请求 |
+| LLM 推理请求 | **用户选择的 Provider、本地模型或官方托管服务** | Desktop 直接使用用户配置的 Provider credential（自带 Key），或官方托管套餐下发到本地的用户凭据；模型请求走向用户选择的 Provider 或官方托管服务 |
 | Landing / release / 可选外设目录 | **无用户身份的在线表面** | 不保存用户 profile、Coach、History 或 credential，不建立产品账号和鉴权服务 |
+| 官方托管模型服务（可选订阅） | **自建在线服务** | 唯一承载用户身份的官方在线表面：账号、订阅与额度数据只服务模型供给，与 Desktop 本地数据边界分离 |
 
-> FastAPI、worker 和 Coach sidecar 服务本地产品能力；不得为了复用既有 Web 资产恢复产品账号、session/JWT、云端 LLM 代理或用户数据库。营销落地页、release 分发和未来外设目录与 Desktop 本地数据边界分离。
+> FastAPI、worker 和 Coach sidecar 服务本地产品能力；不得为了复用既有 Web 资产把本地 runtime 变成产品账号、session/JWT 或用户数据库的载体。官方托管模型服务是独立的外部在线表面（见 9.1），其账号与订阅数据不进入 Desktop 本地数据边界。营销落地页、release 分发和未来外设目录与 Desktop 本地数据边界分离。
 
-### 9.1 无鉴权服务器的在线表面
+### 9.1 在线表面与身份边界
 
-Aiming Cookie 不需要产品账号后端或用户鉴权服务器。官方在线表面只承担不依赖用户身份的发布与教学职责：
+Aiming Cookie 的发布与教学在线表面不依赖用户身份；官方托管模型服务（可选订阅）是唯一承载用户身份的官方在线表面：
 
 | 组件 | 部署 | 说明 |
 |---|---|---|
 | landing 落地页 | 静态托管 / CDN | 说明 Coach 价值、Provider 成本与数据边界，提供带字幕/文字步骤的演示和下载入口；不收集 credential |
 | 桌面安装包分发 | 版本化对象存储或 release 托管 | 支持校验、回滚和目标地区可用性验证 |
 | 可选外设目录 | 静态版本化数据或无身份服务 | 只提供商品事实、适配信息、商业披露和联盟链接，不保存用户训练档案 |
+| 官方托管模型服务（可选订阅） | 自建服务器 | 承载可选账号的注册登录、订阅套餐与模型额度管理；只服务模型供给与订阅，不保存用户训练档案、Coach 资料或本地凭据 |
 | 域名 | 合规注册与解析 | 不把规避备案作为产品目标 |
 
 Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/local callback 或 Provider 官方流程完成；不得以此为由建立 Aiming Cookie 用户账号、中心 credential broker 或鉴权服务器。具体托管、地区可用性和合规义务在发布前复核。
@@ -368,13 +370,13 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 
 - Dashboard 独立页（合并进 history 趋势卡）
 - Academy（有真实训练内容前不进导航）
-- Aiming Cookie 产品账号、注册、登录、社交登录、session/JWT、entitlement 和用户鉴权服务器
+- 强制账号与账号型云身份（账号仅为官方托管模型服务的可选项；产品使用不以注册登录为前提，History / Coach 资料不做账号云同步）
 - 多游戏（先 KovaaK's）
 - 手部摄像头 v1（远期）
 - Raw Input 目前不扩展到键盘、桌面绝对坐标、后台任意应用或非 KovaaK 进程
 - Raw Input 不直接替代目标/准星视觉证据；没有可靠来源时不输出目标相对误差、视觉反应时刻等结论
 - 桌面发布工程细节（Python bundling、installer、签名、公证、自动更新，另 plan）
-- 订阅、credits、能力付费墙或 LLM 额度转售
+- 能力付费墙，以及把产品能力绑定为订阅条件的做法（官方托管模型套餐作为可选的模型供给服务除外）
 - 通用 Benchmark 平台、排行榜浏览、社交比较、后台自动抓取和任意 Benchmark provider 不进入 v1。v1 只允许用户明确同意后，以 Steam Profile URL 或 17 位 ID 手动读取一组随产品审核的 KovaaK 训练项目最高分、项目档位和完成度；用户可在本地保存一个本人已连接账号以便后续手动刷新。聊天中临时提交的其它 Profile 只在该回合查询，身份和成绩都不持久化；两类身份均不进入 Coach Provider。用户界面只称“KovaaK 成绩”或“训练项目成绩”，不突出外部作者、课程代号或难度体系。Coach 可用去身份成绩决定先检查哪个项目，但不能凭分数或课程标签直接诊断 reading、动作机制、身体状态或外设问题
 
 ## 12. 约束与依赖
