@@ -41,6 +41,18 @@ async def isolated_db():
         raise RuntimeError("test data root was not isolated before backend import")
     _clean_test_data_root()
     TEST_DATA_ROOT.mkdir(parents=True)
+    # queue 的 session 缓存靠 stat 指纹自愈，但每个测试用全新 DATA_ROOT，
+    # 先清空避免上个测试的残留条目参与断言（也让缓存计数类断言确定）。
+    from webapp.backend import queue as _queue
+    _queue._SESSION_CACHE.clear()
+    # kovaak_run_store 的 meta/轻缓存与存储台账校验表、workspace 工作区记账
+    # 同理：进程级派生缓存，测试间必须清空保证断言确定。
+    from webapp.backend import kovaak_run_store as _runs
+    from webapp.backend import workspace as _workspace
+    _runs._RUN_META_CACHE.clear()
+    _runs._SESSION_LIGHT_CACHE.clear()
+    _runs._LEDGER_VALIDATED_DIR_MTIME.clear()
+    _workspace._WORKSPACE_SIZE_LEDGER.clear()
     try:
         yield
     finally:

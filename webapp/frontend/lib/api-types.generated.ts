@@ -1545,6 +1545,8 @@ export interface components {
             updated_at: string;
             /** Video Artifact Ref */
             video_artifact_ref?: string | null;
+            /** Video Error */
+            video_error?: string | null;
             /** Video Quality */
             video_quality?: {
                 [key: string]: unknown;
@@ -1612,6 +1614,8 @@ export interface components {
             updated_at: string;
             /** Video Artifact Ref */
             video_artifact_ref?: string | null;
+            /** Video Error */
+            video_error?: string | null;
             /** Video Quality */
             video_quality?: {
                 [key: string]: unknown;

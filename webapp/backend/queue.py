@@ -44,6 +44,14 @@ _COUNTER_PATH = "sessions/_counter.json"
 _ONBOARDING_PATH = "config/onboarding.json"
 _ANALYSES_TOMBSTONES = "sessions/_deletion_tombstones.json"
 
+# sessions/ 的内存派生缓存（可随时从文件全量重建，不是第二事实源——见
+# ARCHITECTURE §4.1「JSON 文件是唯一事实源，不与任何第二份数据库双写」）。
+# 条目不含 result：单文件含完整结果可达数百 KB，全量驻留内存会随历史无限增长；
+# 轮询热路径（claim_next / list_sessions）只需要的派生小字段随条目一起缓存。
+# 一致性：所有写入经 _save_session 落盘后同步更新缓存；扫描时按 (mtime_ns, size)
+# 指纹校验，不匹配即单文件重读（覆盖测试直写、其他进程写入），文件消失即驱逐。
+_SESSION_CACHE: dict[int, tuple[tuple[int, int], dict]] = {}
+
 
 class ActiveSessionExists(RuntimeError):
     pass
@@ -140,28 +148,84 @@ def _load_session(session_id: int) -> dict | None:
 
 def _save_session(session: dict) -> None:
     file_store.write_json(_session_path(session["id"]), session)
+    _cache_put(session)
 
 
 def _delete_session_file(session_id: int) -> None:
     file_store.delete_file(_session_path(session_id))
+    _SESSION_CACHE.pop(session_id, None)
+
+
+def _cache_entry_from_session(data: dict) -> dict:
+    """Build the cached view of one session file: everything except `result`,
+    plus the tiny derived fields the hot read projections need."""
+    entry = dict(data)
+    result = entry.pop("result", None)
+    entry["_summary_label"] = _summary_label_from_result(result)
+    entry["_analysis_version"] = (
+        result.get("analysis_version") if isinstance(result, dict) else None
+    )
+    return entry
+
+
+def _summary_label_from_result(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    diagnosis = result.get("diagnosis")
+    if not isinstance(diagnosis, dict):
+        deterministic = result.get("deterministic")
+        diagnosis = (
+            deterministic.get("diagnosis")
+            if isinstance(deterministic, dict)
+            else None
+        )
+    if not isinstance(diagnosis, dict):
+        return None
+    profile = diagnosis.get("profile")
+    if isinstance(profile, dict) and isinstance(profile.get("label"), str):
+        return profile["label"]
+    return None
+
+
+def _cache_put(session: dict) -> None:
+    fingerprint = file_store.stat_json(_session_path(session["id"]))
+    if fingerprint is None:
+        _SESSION_CACHE.pop(session["id"], None)
+        return
+    _SESSION_CACHE[session["id"]] = (fingerprint, _cache_entry_from_session(session))
 
 
 def _all_sessions(user_id: str | None = None) -> list[dict]:
     sessions = []
+    seen_ids: set[int] = set()
     for p in file_store.list_dir(_SESSIONS_DIR, "*.json"):
         try:
-            int(p.stem)
+            session_id = int(p.stem)
         except ValueError:
             continue
         try:
-            data = file_store.read_json(f"{_SESSIONS_DIR}/{p.name}")
-        except (OSError, ValueError):
-            log.warning("skipping unreadable session %s", f"{_SESSIONS_DIR}/{p.name}")
+            st = p.stat()
+        except OSError:
             continue
-        if data is None:
-            continue
-        if user_id is None or data.get("user_id") == user_id:
-            sessions.append(data)
+        fingerprint = (st.st_mtime_ns, st.st_size)
+        cached = _SESSION_CACHE.get(session_id)
+        if cached is None or cached[0] != fingerprint:
+            try:
+                data = file_store.read_json(f"{_SESSIONS_DIR}/{p.name}")
+            except (OSError, ValueError):
+                log.warning("skipping unreadable session %s", f"{_SESSIONS_DIR}/{p.name}")
+                continue
+            if data is None:
+                continue
+            cached = (fingerprint, _cache_entry_from_session(data))
+            _SESSION_CACHE[session_id] = cached
+        seen_ids.add(session_id)
+        entry = cached[1]
+        if user_id is None or entry.get("user_id") == user_id:
+            # 浅拷贝：调用方（如 claim_next）会就地改顶层字段，不能污染缓存。
+            sessions.append(dict(entry))
+    for stale_id in [sid for sid in _SESSION_CACHE if sid not in seen_ids]:
+        _SESSION_CACHE.pop(stale_id, None)
     sessions.sort(key=lambda s: (s.get("created_at", ""), s.get("id", 0)), reverse=True)
     return sessions
 
@@ -615,14 +679,11 @@ async def get_run_analysis_states(user_id: str, run_id: int) -> list[dict]:
     for s in _all_sessions(user_id):
         if s.get("kovaak_run_id") != run_id:
             continue
-        result = s.get("result")
         states.append({
             "id": s["id"],
             "status": s.get("status"),
             "kovaak_run_id": s.get("kovaak_run_id"),
-            "analysis_version": (
-                result.get("analysis_version") if isinstance(result, dict) else None
-            ),
+            "analysis_version": s.get("_analysis_version"),
         })
     return states
 
@@ -673,14 +734,20 @@ async def reconcile_stale_uploads() -> dict[str, int]:
 
 
 async def list_storage_sessions(user_id: str) -> list[dict]:
+    sessions = _all_sessions(user_id)
+    # workspace_size_bytes 的冷路径（记账未命中）是纯读 os.walk 扫描，
+    # 放线程池避免首个 /api/storage 请求阻塞事件循环；记账命中后为 stat 级。
+    sizes = await asyncio.to_thread(
+        lambda: [workspace_size_bytes(s["id"]) for s in sessions],
+    )
     return [
         {
             "session_id": s["id"],
             "status": s.get("status"),
             "created_at": timestamp_to_wire_utc(s.get("created_at")) or "",
-            "workspace_bytes": workspace_size_bytes(s["id"]),
+            "workspace_bytes": size,
         }
-        for s in _all_sessions(user_id)
+        for s, size in zip(sessions, sizes)
     ]
 
 
@@ -696,7 +763,7 @@ async def list_sessions(user_id: str) -> list[dict]:
         item["scenario"] = snapshot_scenario if snapshot_scenario is not None else item.get("run_scenario")
         _flatten_snapshot_sources(item, snapshot)
         item["training_at"] = _resolve_training_at(item)
-        item["summary_label"] = _resolve_summary_label(item)
+        item["summary_label"] = item.pop("_summary_label", None)
         projected = history_trends.analysis_list_item(item)
         projected["training_at"] = item["training_at"]
         projected["analysis_completed_at"] = projected.get("finished_at")
@@ -744,26 +811,6 @@ def _resolve_training_at(item: dict) -> str | None:
     if run is None:
         return None
     return timestamp_to_wire_utc(run.get("created_at"))
-
-
-def _resolve_summary_label(item: dict) -> str | None:
-    result = item.get("result")
-    if not isinstance(result, dict):
-        return None
-    diagnosis = result.get("diagnosis")
-    if not isinstance(diagnosis, dict):
-        deterministic = result.get("deterministic")
-        diagnosis = (
-            deterministic.get("diagnosis")
-            if isinstance(deterministic, dict)
-            else None
-        )
-    if not isinstance(diagnosis, dict):
-        return None
-    profile = diagnosis.get("profile")
-    if isinstance(profile, dict) and isinstance(profile.get("label"), str):
-        return profile["label"]
-    return None
 
 
 async def delete_session(session_id: int, user_id: str) -> dict:
@@ -852,8 +899,12 @@ async def reconcile_analysis_deletions() -> dict[str, int]:
     # Rebuild profile contributions from completed sessions
     try:
         from . import aiming_profile_store
-        for session in _all_sessions():
-            if session.get("status") != "done" or session.get("result") is None:
+        for cached in _all_sessions():
+            if cached.get("status") != "done":
+                continue
+            # 缓存条目不含 result：档案重建是低频运维路径，按需单文件读完整结果。
+            session = _load_session(int(cached["id"]))
+            if session is None or session.get("result") is None:
                 continue
             try:
                 payload = aiming_profile_store.build_contribution_from_analysis_result(
@@ -894,6 +945,11 @@ async def get_task_rows(task_ref: str, user_id: str) -> list[dict]:
 
 def _task_row(session: dict) -> dict:
     item = dict(session)
+    # 缓存条目不含 result：tasks 投影（_partial_outcome）在 done+multimodal 行仍会
+    # 读它，此处按需回填保持 wire 兼容。/tasks 非轮询热路径，成本与旧实现持平。
+    item["result"] = (_load_session(int(session["id"])) or {}).get("result")
+    for key in ("_summary_label", "_analysis_version"):
+        item.pop(key, None)
     for key in ("created_at", "started_at", "finished_at", "training_at"):
         item[key] = timestamp_to_wire_utc(item.get(key))
     snapshot = item.get("input_snapshot")

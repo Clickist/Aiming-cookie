@@ -71,11 +71,11 @@ def remove_session_workspace(session_id: int | str) -> bool:
     return True
 
 
-def workspace_size_bytes(session_id: int | str) -> int:
-    """Return managed workspace size; the resolved directory must remain under sessions/."""
-    path = session_dir(session_id)
-    if not path.is_dir():
-        return 0
+_WORKSPACE_SIZE_LEDGER: dict[str, tuple[int, int]] = {}
+
+
+def _measure_workspace(path: Path) -> int:
+    """Pure read/scan: sum managed workspace file sizes."""
     total = 0
     for root, _, files in os.walk(path):
         for name in files:
@@ -83,6 +83,29 @@ def workspace_size_bytes(session_id: int | str) -> int:
                 total += (Path(root) / name).stat().st_size
             except OSError:
                 continue
+    return total
+
+
+def workspace_size_bytes(session_id: int | str) -> int:
+    """Return managed workspace size; the resolved directory must remain under sessions/.
+
+    记账：以工作区目录 mtime 为变更信号，内容未变时直接复用上次测量值，
+    /api/storage 不再每次 os.walk 全部工作区。目录 mtime 对文件的创建/
+    删除/重命名敏感；上传结束时的 tmp→正式名 replace 会触发重算。
+    """
+    path = session_dir(session_id)
+    if not path.is_dir():
+        return 0
+    try:
+        dir_mtime_ns = os.stat(path).st_mtime_ns
+    except OSError:
+        return 0
+    key = str(path)
+    recorded = _WORKSPACE_SIZE_LEDGER.get(key)
+    if recorded is not None and recorded[0] == dir_mtime_ns:
+        return recorded[1]
+    total = _measure_workspace(path)
+    _WORKSPACE_SIZE_LEDGER[key] = (dir_mtime_ns, total)
     return total
 
 

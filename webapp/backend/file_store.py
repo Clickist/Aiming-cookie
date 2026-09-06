@@ -32,6 +32,20 @@ def read_json(relative_path: str) -> dict | list | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def stat_json(relative_path: str) -> tuple[int, int] | None:
+    """Return (mtime_ns, size) for a data-root file, or None if missing.
+
+    Queue 的 session 缓存用它做变更检测：stat 比 parse 便宜两个数量级，
+    指纹不变即可信任缓存条目，无需重新解析 JSON。
+    """
+    path = _data_root() / relative_path
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 def _sanitize_json_value(value):
     """Replace non-finite floats with null so files stay strict JSON.
 
