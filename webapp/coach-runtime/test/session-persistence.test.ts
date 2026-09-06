@@ -137,3 +137,71 @@ test("wrapped session truncates buildContext to the recent window", async () => 
     "a49",
   );
 });
+
+test("wrapped session enforces the char budget on top of the message window", async () => {
+  const session = await ensureSession(105);
+  const stamp = Date.now();
+  const append = (role: string, text: string) =>
+    session.appendMessage({ role, content: [{ type: "text", text }], timestamp: stamp });
+  // 三对小型问答 + 一条巨型 toolResult + 一对收尾问答。全部都在 40 条窗口内，
+  // 触发的是字符预算而不是条数上限。
+  await append("user", "u0");
+  await append("assistant", "a0");
+  await append("user", "u1");
+  await append("assistant", "a1");
+  const giant = "G".repeat(150_000);
+  await session.appendMessage({
+    role: "toolResult",
+    toolCallId: "call-1",
+    toolName: "read",
+    content: [{ type: "text", text: giant }],
+    isError: false,
+    timestamp: stamp,
+  });
+  await append("user", "u2");
+  await append("assistant", "a2");
+  await append("user", "current");
+
+  const wrapped = wrapCoachSession(session, []);
+  const ctx = await wrapped.buildContext();
+  const roles = ctx.messages.map((m) => (m as { role?: string }).role ?? "");
+  const serialized = JSON.stringify(ctx.messages);
+
+  // 巨型 toolResult 独超预算且不在最新位置 → 连同更旧消息一起被整条逐出，
+  // 只留放得下的最新消息；头部对齐保证第一条是 user，不会出现孤立
+  // toolResult/assistant(tool_calls) 开头。
+  assert.ok(!serialized.includes("GGGG"), "oversized mid-history tool result should be evicted");
+  assert.ok(!serialized.includes("a0"), "oldest small messages should be dropped");
+  assert.ok(roles[0] === "user", `first message should align to user, got ${roles[0]}`);
+  assert.equal(roles[roles.length - 1], "assistant");
+
+  // 极端：单条消息独超预算（修复前遗留的旧会话才可能出现）。预算保住最新
+  // 一条后，头部对齐会把非 user/system 开头的孤立 toolResult 丢掉——最终
+  // 上下文为空也不崩溃、不带巨型载荷，回合由 harness 的当前 user 消息兜底。
+  const freshSession = await ensureSession(107);
+  await freshSession.appendMessage({ role: "user", content: [{ type: "text", text: "u0" }], timestamp: stamp });
+  await freshSession.appendMessage({
+    role: "toolResult",
+    toolCallId: "call-2",
+    toolName: "read",
+    content: [{ type: "text", text: giant }],
+    isError: false,
+    timestamp: stamp,
+  });
+  await freshSession.appendMessage({ role: "user", content: [{ type: "text", text: "current" }], timestamp: stamp });
+  const freshCtx = await wrapCoachSession(freshSession, []).buildContext();
+  assert.ok(!JSON.stringify(freshCtx.messages).includes("GGGG"), "oversized payload never reaches the provider");
+  assert.ok(Array.isArray(freshCtx.messages));
+
+  // 小对话不受预算影响：40 条窗口内全保留。
+  const smallSession = await ensureSession(106);
+  for (let i = 0; i < 6; i++) {
+    await smallSession.appendMessage({ role: "user", content: [{ type: "text", text: `s-u${i}` }], timestamp: stamp });
+    await smallSession.appendMessage({ role: "assistant", content: [{ type: "text", text: `s-a${i}` }], timestamp: stamp });
+  }
+  await smallSession.appendMessage({ role: "user", content: [{ type: "text", text: "current" }], timestamp: stamp });
+  const smallCtx = await wrapCoachSession(smallSession, []).buildContext();
+  const smallSerialized = JSON.stringify(smallCtx.messages);
+  assert.ok(smallSerialized.includes("s-u0"), "small conversations keep full history");
+  assert.ok(smallSerialized.includes("s-a5"));
+});

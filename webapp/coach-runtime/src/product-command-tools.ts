@@ -257,6 +257,21 @@ type NativeCommandResult = {
   warning_or_error?: { code: string; message: string };
 };
 
+// 子命令各有条数限（LIST_MAX=200 等）但没有字节总限。上限按设计内满配
+// 查询校准：signal_window 4通道×600点序列化实测 ≈85KB，events.list 200 条
+// ≈32KB，都必须完整通过；96K 只拦真正的失控返回（未封顶前 read 整读
+// evidence.json 可达数百 KB）。结果持久化进 session 后在窗口内每回合重发，
+// 实测把请求顶到十几万 token（2026-09-06 中转站内测事故根因之一）。
+const COMMAND_RESULT_MAX_CHARS = 96_000;
+
+function capResultText(text: string): string {
+  if (text.length <= COMMAND_RESULT_MAX_CHARS) return text;
+  return `${text.slice(0, COMMAND_RESULT_MAX_CHARS)
+  }\n…[结果超限已截断：原文 ${text.length} 字符。请用更窄的参数（减少条数/字段/时间窗）重新查询]`;
+}
+
+export { capResultText };
+
 function nativeToToolResult(commandName: string, nativeResult: NativeCommandResult) {
   const uiEvent = isRecord(nativeResult.result)
     && nativeResult.result.schema_version === "coach_ui_event.v1"
@@ -281,7 +296,7 @@ function nativeToToolResult(commandName: string, nativeResult: NativeCommandResu
     ...(nativeResult.result !== undefined ? { result: nativeResult.result } : {}),
     ...(nativeResult.warning_or_error ? { warning_or_error: nativeResult.warning_or_error } : {}),
   });
-  return { content: [{ type: "text", text: responseText }], details: { event } };
+  return { content: [{ type: "text", text: capResultText(responseText) }], details: { event } };
 }
 
 function writeResultToToolResult(commandName: string, result: NativeWriteResult) {
@@ -305,7 +320,7 @@ function writeResultToToolResult(commandName: string, result: NativeWriteResult)
   if (result.result !== undefined) responseObj.result = result.result;
   if (result.ui_event) responseObj.ui_event = result.ui_event;
   if (result.warning_or_error) responseObj.warning_or_error = result.warning_or_error;
-  return { content: [{ type: "text", text: JSON.stringify(responseObj) }], details: { event } };
+  return { content: [{ type: "text", text: capResultText(JSON.stringify(responseObj)) }], details: { event } };
 }
 
 export function createProductCommandTool(

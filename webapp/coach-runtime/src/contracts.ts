@@ -260,6 +260,20 @@ export type CoachRuntimeError = {
   retryable: boolean;
 };
 
+/**
+ * pi 每条 assistant 消息自带的 provider usage（审计#20）。字段缺失时为 null，
+ * 不用 0 充数——0 是真实计量，null 才是"这个 provider 没报"。
+ */
+export type CoachRuntimeUsage = {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  reasoning_tokens: number | null;
+  total_tokens: number | null;
+  cost: number | null;
+};
+
 export type CoachRuntimeTurnResponse = {
   schema_version: CoachRuntimeTurnSchema;
   run_id: string | null;
@@ -267,6 +281,8 @@ export type CoachRuntimeTurnResponse = {
   reply: string | null;
   partial_reply: string | null;
   error: CoachRuntimeError | null;
+  /** 最终 assistant 消息的 provider 用量；无法取得时为 null。 */
+  usage: CoachRuntimeUsage | null;
   notes: string[];
   tool_events: CoachRuntimeToolEvent[];
   /** Analysis ids the turn engaged with via file reads (`analysis:{id}`). */
@@ -418,6 +434,7 @@ export function successResponse(
   runId: string | null = null,
   analysisRefs: string[] = [],
   deepReadAnalysisRefs: string[] = [],
+  usage: CoachRuntimeUsage | null = null,
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
@@ -430,6 +447,7 @@ export function successResponse(
     tool_events: toolEvents,
     analysis_refs: analysisRefs,
     deep_read_analysis_refs: deepReadAnalysisRefs,
+    usage,
   };
 }
 
@@ -442,6 +460,7 @@ export function failureResponse(
   runId: string | null = null,
   analysisRefs: string[] = [],
   deepReadAnalysisRefs: string[] = [],
+  usage: CoachRuntimeUsage | null = null,
 ): CoachRuntimeTurnResponse {
   return {
     schema_version: schemaVersion,
@@ -454,5 +473,6 @@ export function failureResponse(
     tool_events: toolEvents,
     analysis_refs: analysisRefs,
     deep_read_analysis_refs: deepReadAnalysisRefs,
+    usage,
   };
 }

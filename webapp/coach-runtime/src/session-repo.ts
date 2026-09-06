@@ -66,6 +66,8 @@ export type SessionLike = {
   appendMessage(message: unknown): Promise<string>;
   buildContext(options?: unknown): Promise<{ messages: unknown[] }>;
   getStorage(): unknown;
+  /** pi Session 内建的会话级 token/费用统计（审计#20）；pi 0.83 全量实现。 */
+  getSessionStats?(): Promise<unknown>;
 };
 
 type JsonlRepoLike = {
@@ -105,6 +107,21 @@ export async function openSession(threadId: number): Promise<SessionLike | null>
   const metadata = await findSessionMetadata(threadId);
   if (!metadata) return null;
   return (await getSessionRepo()).open(metadata);
+}
+
+/**
+ * pi Session 内建的会话级 token/费用统计（审计#20）：messageCount、
+ * cachedTokens、uncachedTokens、totalTokens、costTotal。会话不存在或底层
+ * 未实现时返回 null（调用方自行降级），统计失败不抛——这是展示型数据。
+ */
+export async function readSessionStats(threadId: number): Promise<unknown | null> {
+  const session = await openSession(threadId);
+  if (!session?.getSessionStats) return null;
+  try {
+    return await session.getSessionStats();
+  } catch {
+    return null;
+  }
 }
 
 export async function ensureSession(threadId: number): Promise<SessionLike> {
