@@ -23,10 +23,12 @@ import {
 } from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import type { CoachAgentRunV1, ProviderProfileState } from "@/lib/types";
+import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { CoachPanel } from "@/components/task6/CoachPanel";
 import { CoachVideoPane } from "@/components/task7/CoachVideoPane";
 import SessionRail, { type SessionRailSession } from "@/components/task7/SessionRail";
 import { startWindowDragging, TauriWindowControls } from "@/components/task3/TauriWindowControls";
+import { UpdatePrompt } from "@/components/task3/UpdatePrompt";
 import { Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
@@ -129,6 +131,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     setSessionFeedback({ text: message, seq });
   }, []);
   const [softStartRun, setSoftStartRun] = useState<CoachAgentRunV1 | null>(null);
+  // 桌面端更新可用提示：启动静默检查命中后由右下角 UpdatePrompt 呈现。
+  const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdate | null>(null);
   const settingsChildrenRef = useRef<ReactNode>(null);
   const settingsPresence = useAnimatedPresence(settingsRoute, 160);
   const historyPresence = useAnimatedPresence(historyRoute, 160);
@@ -189,6 +193,24 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (timer) clearTimeout(timer);
     };
   }, [coachWorkspaceRoute]);
+
+  // 桌面端启动静默检查更新：延迟到首屏稳定之后再问，检查失败完全静默；
+  // 端点与验签公钥配置在 tauri.conf.json 的 plugins.updater。
+  useEffect(() => {
+    if (!isDesktopRuntime()) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void checkForDesktopUpdate()
+        .then((update) => {
+          if (!cancelled && update) setDesktopUpdate(update);
+        })
+        .catch(() => undefined);
+    }, 4_000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (shellHidden) return undefined;
@@ -439,7 +461,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           if (event.button === 0) void startWindowDragging();
         }}
       >
-        <span className="task3-logo" aria-label="Aiming Cookie">Aiming&nbsp;Cookie</span>
+        <span className="task3-logo" aria-label="Aiming Cookie">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="task3-logo-mark" src="/logo-mark.png" alt="" />
+          Aiming&nbsp;Cookie
+        </span>
         <div className="task3-toolbar-spacer" />
         <TauriWindowControls />
       </header>
@@ -540,6 +566,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           </main>
         ) : null}
       </div>
+      {desktopUpdate ? (
+        <UpdatePrompt onDismiss={() => setDesktopUpdate(null)} update={desktopUpdate} />
+      ) : null}
       {sessionFeedback ? (
         <Toast key={sessionFeedback.seq} onClose={() => setSessionFeedback((current) => (current && current.seq === sessionFeedback.seq ? null : current))}>
           {sessionFeedback.text}
