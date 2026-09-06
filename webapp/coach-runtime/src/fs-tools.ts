@@ -1,29 +1,20 @@
 /**
- * File system tools for the Coach agent.
+ * File system + shell tools for the Coach agent.
  *
- * Provides read/write/ls tools that resolve relative paths against a given
- * cwd (the app-data directory). These are local implementations equivalent
- * to Pi coding-agent's tools, kept here to avoid importing the heavy
- * coding-agent package (which has TUI dependencies).
+ * The heavy lifting (truncation, offset/limit paging, image handling, grep,
+ * file-mutation queueing, shell execution) comes from pi coding-agent's
+ * canonical tool implementations — we stopped hand-rolling those when we
+ * adopted the upstream tools (2026-09-06). This layer only adds Coach product
+ * guards: protected product-state files on write, and analysis-read
+ * notifications that drive the @time video links.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { readFile, writeFile, readdir } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
+import { constants } from "node:fs";
+import { access as fsAccess, readFile } from "node:fs/promises";
+import { isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
 
-import { loadPiAi } from "./pi-source.ts";
-
-type TypeBuilder = {
-  Object(properties: Record<string, unknown>, options?: Record<string, unknown>): unknown;
-  Optional(schema: unknown): unknown;
-  String(options?: Record<string, unknown>): unknown;
-};
-
-const { Type } = (await loadPiAi()) as unknown as { Type: TypeBuilder };
-
-function resolveToCwd(path: string, cwd: string): string {
-  return isAbsolute(path) ? path : resolvePath(cwd, path);
-}
+import { loadPiCodingTools } from "./pi-source.ts";
 
 // ── Coach-managed product state guard ──────────────────────────────────
 //
@@ -48,14 +39,11 @@ function protectedStateFile(absolutePath: string, cwd: string): { relative: stri
   return command ? { relative: relativePath, command } : null;
 }
 
-// ── Analysis read tracking ──────────────────────────────────────────────
-//
-// When the Coach reads (or lists) a file under `analyses/{id}/`, the id is
-// reported through module-level listeners so the enclosing turn can attach the
-// analysis to the run/session state. The frontend uses that analysis_ref to
-// turn `@3.4s` time links into video seeks.
+function resolveToCwd(path: string, cwd: string): string {
+  return isAbsolute(path) ? path : resolvePath(cwd, path);
+}
 
-type AnalysisReadListener = (analysisId: number, subject: boolean) => void;
+// ── Analysis-read notifications (@time video links) ─────────────────────
 
 const analysisReadListeners = new Set<AnalysisReadListener>();
 
@@ -63,6 +51,8 @@ const analysisReadListeners = new Set<AnalysisReadListener>();
 // analysis reads are dispatched only to that turn's listener. This prevents
 // concurrent turns from cross-reporting analysis ids into each other's refs.
 const analysisReadScope = new AsyncLocalStorage<Set<AnalysisReadListener>>();
+
+type AnalysisReadListener = (analysisId: number, subject: boolean) => void;
 
 export function subscribeAnalysisReads(listener: AnalysisReadListener): () => void {
   analysisReadListeners.add(listener);
@@ -126,68 +116,56 @@ function notifyAnalysisRead(path: string): void {
   dispatchAnalysisRead(Number(match[1]));
 }
 
-// read 结果会持久化进 session，并在 40 条消息窗口内每回合重发。系统提示词
-// 引导教练 read analyses/{id}/ 下的 events.json/evidence.json，这些文件可达
-// 数百 KB，不封顶时单次 read 就能把请求顶到十几万 token——免费中转通道
-// 直接 429/空回复（2026-09-06 中转站内测事故根因）。封顶保头尾，模型应
-// 改用 run_product_command 的窄查询（section_ref 等）取数。
-const READ_MAX_CHARS = 20_000;
-const READ_HEAD_CHARS = 16_000;
-const READ_TAIL_CHARS = 2_000;
+type CoachTool = {
+  name: string;
+  label: string;
+  description: string;
+  parameters: unknown;
+  execute: (id: string, args: any, signal?: AbortSignal) => Promise<unknown>;
+};
 
-function capReadContent(content: string): string {
-  if (content.length <= READ_MAX_CHARS) return content;
-  const omitted = content.length - READ_HEAD_CHARS - READ_TAIL_CHARS;
-  return `${content.slice(0, READ_HEAD_CHARS)
-  }\n…[文件过大已截断：原文 ${content.length} 字符，略去中间 ${omitted} 字符。请改用 run_product_command 的窄查询获取所需数据，不要整读大文件]\n${content.slice(-READ_TAIL_CHARS)}`;
-}
-
-export function createReadTool(cwd: string) {
-  return {
-    name: "read",
-    label: "read",
-    description:
-      "Read the contents of a file. Relative paths resolve against the app-data directory. Large files are truncated; use run_product_command for targeted data access.",
-    parameters: Type.Object({
-      path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
-    }),
-    async execute(
-      _id: string,
-      { path }: { path: string },
-      signal?: AbortSignal,
-    ) {
-      if (signal?.aborted) throw new Error("Operation aborted");
-      const absolutePath = resolveToCwd(path, cwd);
-      try {
-        const content = await readFile(absolutePath, "utf8");
-        notifyAnalysisRead(absolutePath);
-        return { content: [{ type: "text" as const, text: capReadContent(content) }] };
-      } catch (error) {
-        throw new Error(
-          `Failed to read ${path}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    },
+async function loadTools() {
+  return (await loadPiCodingTools()) as unknown as {
+    createReadTool: (cwd: string, options?: Record<string, unknown>) => CoachTool;
+    createWriteTool: (cwd: string, options?: Record<string, unknown>) => CoachTool;
+    createLsTool: (cwd: string, options?: Record<string, unknown>) => CoachTool;
+    createEditTool: (cwd: string, options?: Record<string, unknown>) => CoachTool;
+    createGrepTool: (cwd: string, options?: Record<string, unknown>) => CoachTool;
+    createFindTool: (cwd: string, options?: Record<string, unknown>) => CoachTool;
+    createBashTool: (cwd: string, options?: Record<string, unknown>) => CoachTool;
   };
 }
 
-export function createWriteTool(cwd: string) {
+/**
+ * read: pi 原版（2000 行/50KB 截断、offset/limit 分页、图片支持）+ Coach 层
+ * 注入 readFile 操作以触发 analysis-read 通知——原版 resolve 完路径后才读，
+ * 这里拿到的一定是绝对路径。
+ */
+export async function createReadTool(cwd: string) {
+  const { createReadTool: create } = await loadTools();
+  // operations 是整体替换不是合并——必须把默认的 access/detectImageMimeType 一起带上。
+  return create(cwd, {
+    operations: {
+      access: (absolutePath: string) => fsAccess(absolutePath, constants.R_OK),
+      readFile: async (absolutePath: string) => {
+        const buffer = await readFile(absolutePath);
+        notifyAnalysisRead(absolutePath);
+        return buffer;
+      },
+    },
+  });
+}
+
+/**
+ * write: pi 原版（自带同文件写入排队）+ 写前拦截产品状态文件。
+ */
+export async function createWriteTool(cwd: string) {
+  const { createWriteTool: create } = await loadTools();
+  const inner = create(cwd);
   return {
-    name: "write",
-    label: "write",
-    description:
-      "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
-    parameters: Type.Object({
-      path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
-      content: Type.String({ description: "Content to write to the file" }),
-    }),
-    async execute(
-      _id: string,
-      { path, content }: { path: string; content: string },
-      signal?: AbortSignal,
-    ) {
-      if (signal?.aborted) throw new Error("Operation aborted");
-      const absolutePath = resolveToCwd(path, cwd);
+    ...inner,
+    execute: async (id: string, args: { path: string; content: string }, signal?: AbortSignal) => {
+      const absolutePath = resolveToCwd(args.path, cwd);
       const protectedFile = protectedStateFile(absolutePath, cwd);
       if (protectedFile) {
         throw new Error(
@@ -195,55 +173,51 @@ export function createWriteTool(cwd: string) {
           `Use run_product_command with that command instead of the write tool.`,
         );
       }
-      try {
-        const { mkdir } = await import("node:fs/promises");
-        await mkdir(dirname(absolutePath), { recursive: true });
-        if (signal?.aborted) throw new Error("Operation aborted");
-        await writeFile(absolutePath, content, "utf8");
-        return {
-          content: [
-            { type: "text" as const, text: `Successfully wrote ${content.length} bytes to ${path}` },
-          ],
-        };
-      } catch (error) {
-        throw new Error(
-          `Failed to write ${path}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+      return inner.execute(id, args, signal);
     },
   };
 }
 
-export function createLsTool(cwd: string) {
+// ls / edit / grep / find / bash：原版直通，Coach 层无附加逻辑。
+// 各工具的截断/上限/排队语义全部来自 pi coding-agent 原版（如 ls 默认 500
+// 条上限、edit 走同文件变更队列、bash 自带超时与 Windows shell 选择）。
+
+export async function createLsTool(cwd: string) {
+  const { createLsTool: create } = await loadTools();
+  const inner = create(cwd);
   return {
-    name: "ls",
-    label: "ls",
-    description:
-      "List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories.",
-    parameters: Type.Object({
-      path: Type.Optional(
-        Type.String({ description: "Directory to list (default: app-data root)" }),
-      ),
-    }),
-    async execute(
-      _id: string,
-      { path }: { path?: string },
-      signal?: AbortSignal,
-    ) {
-      if (signal?.aborted) throw new Error("Operation aborted");
-      const dirPath = resolveToCwd(path || ".", cwd);
+    ...inner,
+    async execute(id: string, args: { path?: string } | undefined, signal?: AbortSignal) {
+      const result = await inner.execute(id, args, signal);
+      // 旧版 Coach ls 在列目录成功后上报 analysis-read——Coach"列出
+      // analyses/N 目录"也是一次分析读取，讨论列表与 @time 链依赖它；
+      // pi 原版直通没有这一步，这里补回（2026-09-06 重构回归修复）。
       try {
-        const entries = await readdir(dirPath, { withFileTypes: true });
-        notifyAnalysisRead(dirPath);
-        entries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-        const lines = entries.map((entry) => entry.name + (entry.isDirectory() ? "/" : ""));
-        const output = lines.length > 0 ? lines.join("\n") : "(empty directory)";
-        return { content: [{ type: "text" as const, text: output }] };
-      } catch (error) {
-        throw new Error(
-          `Failed to list ${path || "."}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        notifyAnalysisRead(resolveToCwd(args?.path || ".", cwd));
+      } catch {
+        // best-effort
       }
+      return result;
     },
   };
+}
+
+export async function createEditTool(cwd: string) {
+  const { createEditTool: create } = await loadTools();
+  return create(cwd);
+}
+
+export async function createGrepTool(cwd: string) {
+  const { createGrepTool: create } = await loadTools();
+  return create(cwd);
+}
+
+export async function createFindTool(cwd: string) {
+  const { createFindTool: create } = await loadTools();
+  return create(cwd);
+}
+
+export async function createBashTool(cwd: string) {
+  const { createBashTool: create } = await loadTools();
+  return create(cwd);
 }

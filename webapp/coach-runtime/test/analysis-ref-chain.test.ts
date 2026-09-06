@@ -35,11 +35,11 @@ test("deep reads of analyses/N/ join the discussion list", async () => {
   const seen: number[] = [];
   const unsubscribe = subscribeAnalysisReads((id) => seen.push(id));
   try {
-    const read = createReadTool(dataRoot);
+    const read = await createReadTool(dataRoot);
     await read.execute("call", { path: "analyses/1/overview.json" });
     await read.execute("call", { path: join(dataRoot, "analyses", "1", "overview.json") });
     await read.execute("call", { path: "conversations/x.txt" });
-    const ls = createLsTool(dataRoot);
+    const ls = await createLsTool(dataRoot);
     await ls.execute("call", { path: "analyses/1" });
     assert.deepEqual(seen, [1, 1, 1]);
   } finally {
