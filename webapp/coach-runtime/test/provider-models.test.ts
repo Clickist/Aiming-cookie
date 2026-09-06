@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   createModelsStreamFn,
   listBuiltinProviderCatalog,
-  looksLikeReasoningModelId,
   resolveProviderModel,
   type PiModels,
 } from "../src/provider-models.ts";
@@ -463,64 +462,46 @@ test("expired OAuth profile status reports readiness state without refreshing or
   assert.ok(!JSON.stringify(status).includes("refresh-secret"));
 });
 
-test("custom profile reasoning detection is a model_id name heuristic", async () => {
-  // 启发式（大小写不敏感）：reasoner / thinking / qwq 子串；r1、o1、o3、o4 词边界。
-  const hits = [
-    "deepseek-reasoner",
-    "DeepSeek-R1",
-    "r1-0528",
-    "o1",
-    "o3-mini",
-    "o4-mini-2025",
-    "QwQ-32B",
-    "vendor-thinking-preview",
-  ];
-  for (const modelId of hits) {
-    assert.equal(
-      looksLikeReasoningModelId(modelId),
-      true,
-      `expected ${modelId} to be detected as a reasoning model`,
-    );
-  }
-
-  const misses = [
-    "deepseek-chat",
-    "deepseek-v3",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "claude-sonnet-4",
-    "qwen2.5-instruct",
-    "gemini-1.5-pro",
-    "r10",
-    "fixture-model",
-  ];
-  for (const modelId of misses) {
-    assert.equal(
-      looksLikeReasoningModelId(modelId),
-      false,
-      `expected ${modelId} NOT to be detected as a reasoning model`,
-    );
-  }
-});
-
-test("custom OpenAI-compatible reasoning models resolve with reasoning enabled", async () => {
-  const resolved = await resolveProviderModel({
+test("custom profile capabilities resolve from the pi catalog by model_id, defaulting to reasoning", async () => {
+  // 目录命中：deepseek-v4-flash 在 vendored 目录里标 reasoning:true，并整体
+  // 继承方言与回传合同（thinkingFormat:"deepseek" + reasoning_content 回传）
+  // ——缺失正是"思考说出声"复发的根因（审计#24）。
+  const catalogHit = await resolveProviderModel({
     kind: "custom_openai_compatible",
-    provider_id: "reasoning-detect-provider",
-    provider_name: "Reasoning Detect Provider",
+    provider_id: "reasoning-catalog-provider",
+    provider_name: "Reasoning Catalog Provider",
     base_url: "https://provider.example/v1",
     credential: { type: "api_key", key: SECRET },
-    model_id: "deepseek-reasoner",
+    model_id: "deepseek-v4-flash",
   });
-  assert.equal(resolved.model.reasoning, true);
+  assert.equal(catalogHit.model.reasoning, true);
+  const compat = (catalogHit.model as { compat?: Record<string, unknown> }).compat;
+  assert.equal(compat?.thinkingFormat, "deepseek");
+  assert.equal(compat?.requiresReasoningContentOnAssistantMessages, true);
+  assert.equal(
+    (catalogHit.model as { thinkingLevelMap?: unknown }).thinkingLevelMap !== undefined,
+    true,
+  );
 
-  const plain = await resolveProviderModel({
+  // 目录未收录：按"会思考"兜底（默认开，参数报错的降级重试留待真实案例）。
+  const unknown = await resolveProviderModel({
     kind: "custom_openai_compatible",
-    provider_id: "plain-custom-provider",
-    provider_name: "Plain Custom Provider",
+    provider_id: "unknown-custom-provider",
+    provider_name: "Unknown Custom Provider",
     base_url: "https://provider.example/v1",
     credential: { type: "api_key", key: SECRET },
-    model_id: "deepseek-chat",
+    model_id: "totally-unknown-private-model",
   });
-  assert.equal(plain.model.reasoning, false);
+  assert.equal(unknown.model.reasoning, true);
+
+  // 目录命中但标注不会思考的模型维持 false（如 gpt-4o-mini 系）。
+  const catalogPlain = await resolveProviderModel({
+    kind: "custom_openai_compatible",
+    provider_id: "plain-catalog-provider",
+    provider_name: "Plain Catalog Provider",
+    base_url: "https://provider.example/v1",
+    credential: { type: "api_key", key: SECRET },
+    model_id: "gpt-4o-mini",
+  });
+  assert.equal(catalogPlain.model.reasoning, false);
 });

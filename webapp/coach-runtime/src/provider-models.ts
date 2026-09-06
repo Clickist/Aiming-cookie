@@ -185,27 +185,6 @@ async function resolveBuiltinProfile(
   };
 }
 
-/**
- * Name-based heuristic for reasoning models on custom OpenAI-compatible /
- * Anthropic-compatible endpoints. Vendored Pi's pinned catalog cannot cover
- * third-party endpoints, so custom models carry no `reasoning` metadata —
- * hardcoding false kept defaultThinkingLevel from raising a thinking level,
- * and deepseek-reasoner-style models then "think out loud" into the reply
- * body (2026-08 内测复发). Case-insensitive keyword list, conservative by
- * design; a false positive is harmless because Pi's clampThinkingLevel
- * collapses unsupported levels back to an available one for non-reasoning
- * request shapes.
- */
-export function looksLikeReasoningModelId(modelId: string): boolean {
-  return (
-    /reasoner/i.test(modelId)
-    || /thinking/i.test(modelId)
-    || /qwq/i.test(modelId)
-    || /\br1\b/i.test(modelId)
-    || /\bo[134]\b/i.test(modelId)
-  );
-}
-
 async function resolveCustomProfile(
   profile: Extract<
     CoachRuntimeProviderProfile,
@@ -234,20 +213,35 @@ async function resolveCustomProfile(
   const api = profile.kind === "custom_anthropic_compatible"
     ? "anthropic-messages"
     : "openai-completions";
-  // reasoning 走 model_id 名称启发式（见 looksLikeReasoningModelId）：
-  // 自定义端点不在 vendored 目录里，没有元数据可查；误判由 Pi 的
-  // clampThinkingLevel 收敛兜底。
-  const model: PiModel & { cost: Record<string, number> } = {
+  // 能力与方言查 pi 内建目录（models.dev 元数据，随 pi 版本更新），不猜
+  // 名字：按发现的 model_id 匹配，命中即整体继承 reasoning、thinkingFormat
+  // 方言、reasoning_content 回传标志与档位映射（如 deepseek-v4-flash 自带
+  // thinkingFormat:"deepseek" 与回传标志——缺失正是"说出声"复发的根因，
+  // 审计#24）。目录未收录的模型按"会思考"处理：Pi 的 clampThinkingLevel
+  // 对真不支持者收敛；极端端点报参数错时的降级重试留待真实案例出现再加。
+  const catalogModels = (await createBuiltinModels(credentialStore)).getModels();
+  const catalogHit = (
+    catalogModels as Array<
+      PiModel & { compat?: Record<string, unknown>; thinkingLevelMap?: unknown }
+    >
+  ).find((candidate) => candidate.id === profile.model_id);
+  const model: PiModel & {
+    cost: Record<string, number>;
+    compat?: Record<string, unknown>;
+    thinkingLevelMap?: unknown;
+  } = {
     id: profile.model_id,
-    name: profile.model_id,
+    name: catalogHit?.name ?? profile.model_id,
     api,
     provider: profile.provider_id,
     baseUrl: profile.base_url,
-    reasoning: looksLikeReasoningModelId(profile.model_id),
-    input: ["text"],
+    reasoning: catalogHit ? catalogHit.reasoning === true : true,
+    input: catalogHit ? [...catalogHit.input] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: profile.context_window ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
-    maxTokens: profile.max_tokens ?? CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
+    contextWindow: profile.context_window ?? catalogHit?.contextWindow ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: profile.max_tokens ?? catalogHit?.maxTokens ?? CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
+    ...(catalogHit?.compat ? { compat: catalogHit.compat } : {}),
+    ...(catalogHit?.thinkingLevelMap ? { thinkingLevelMap: catalogHit.thinkingLevelMap } : {}),
   };
   const provider = ai.createProvider({
     id: profile.provider_id,
