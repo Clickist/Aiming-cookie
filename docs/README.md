@@ -53,8 +53,10 @@
 - [`landing-truth-update.md`](landing-truth-update.md)：落地页真值化口径更新清单（2026-08-31 待执行：约 10 处 A 级失实点位、hero 视频去留决策、话术升级方向；发版 runbook 的一部分）；
 - [`marketing/`](marketing/)：B站宣传视频脚本三件套——口播定稿 v3（活跃使用：基准=点点 08-31 念稿，含 D 方案 15 秒钩子与五处闪现清单；**段二管线句等遥测升级定论后改词**）、Gemini 原稿、砍字对比稿（后两者仅供追溯）；HyperFrames 动效制作的已拍板决策、实机校准事实、官方模板参考与下一 session 开工顺序见 [`marketing/hyperframes-bilibili-hook-handoff-2026-09-03.md`](marketing/hyperframes-bilibili-hook-handoff-2026-09-03.md)；交给 OpenDesign 直接接手制作的交接提示词（含本轮视频机制踩坑、素材路径、实现路径二选一）见 [`marketing/opendesign-hyperframes-handoff.md`](marketing/opendesign-hyperframes-handoff.md)。
 - [`video-pane-revamp-brief.md`](video-pane-revamp-brief.md)：视频面板复盘体验升级提案（2026-08-27 草稿：P0 逐帧/三档变速/@time 暂停、P1 事件上轴、P2 信号片段 AB 循环与色带规格）；含四个待拍板决策点，未批准施工；
-- [`handoff-frontend-parity-2026-08-27.md`](handoff-frontend-parity-2026-08-27.md)：前端追平工程交接总纲（2026-08-27：六批未提交改动盘点与提交方案、终验数字、决策积压、实机清单、批次0–10排期草案）；
+- [`handoff-frontend-parity-2026-08-27.md`](archive/history/handoff-frontend-parity-2026-08-27.md)：前端追平工程交接总纲（**已归档至 archive/history**：其「六批未提交改动」已全部提交并随 v0.1.13/v0.1.14 发布，只供追溯，不再反映当前工作区）；
 - [`frontend-parity-research-digests.md`](frontend-parity-research-digests.md)：十二路调研合订摘要（对话流/Provider接入/侧栏/视频面/训练数据/任务通知/键盘面板/版式诊断/视觉工艺/富文本排印/输入框编排/安装包品牌化）；只供引用，不构成合同；
+- [`quote-feature-research.md`](quote-feature-research.md)：Coach 引用回复（划选引用到输入框）实现调研（2026-08-27 草稿，供拍板，非实施合同；功能本体此前已上线，v0.1.12 为其浮层偏移修复）；
+- [`pro-benchmark-smoke-plan.md`](pro-benchmark-smoke-plan.md)：高手基准 CV 冒烟验证方案（2026-08-27 落库，状态待执行：立项「高手基准离线提取工具」前用真实高手录像量化免校准 CV 管线精度边界）；
 - `superpowers/assessments/`：历史评估证据与决策输入，仅供追溯。
 
 ## 归档边界
