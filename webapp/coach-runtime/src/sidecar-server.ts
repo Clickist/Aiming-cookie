@@ -22,6 +22,7 @@ import {
 import { getProviderProfileStatus, testProviderConnection } from "./provider-profile.ts";
 import { listBuiltinProviderCatalog } from "./provider-models.ts";
 import { handleProviderProfileRequest } from "./provider-profiles.ts";
+import { readSessionStats } from "./session-repo.ts";
 import {
   runCoachTurn,
   stopCoachTurn,
@@ -454,13 +455,19 @@ export async function handleSidecarRequest(
     return;
   }
 
-  // Composer 排队/转向透传（P3）：steer 运行中注入，follow-up 停止前排入。
+  // Composer 排队/转向透传（P3）：steer 运行中注入，follow-up 停止前排入，
+  // next-turn 排进下一轮开头（审计#13；同 run 连续 turn，run_id 不变）。
   // 纯转发到 pi AgentHarness 对应入口，零持久化；无运行中会话时用显式
   // 409（run_not_steerable）/ 404 语义，绝不落 500。
-  const agentRunQueueMatch = url.pathname.match(/^\/v1\/agent-runs\/([^/]+)\/(steer|follow-up)$/);
+  const agentRunQueueMatch = url.pathname.match(/^\/v1\/agent-runs\/([^/]+)\/(steer|follow-up|next-turn)$/);
   if (req.method === "POST" && agentRunQueueMatch) {
     const runRef = decodeURIComponent(agentRunQueueMatch[1]);
-    const kind = agentRunQueueMatch[2] === "follow-up" ? "follow_up" as const : "steer" as const;
+    const queueVerb = agentRunQueueMatch[2];
+    const kind = queueVerb === "follow-up"
+      ? "follow_up" as const
+      : queueVerb === "next-turn"
+        ? "next_turn" as const
+        : "steer" as const;
     try {
       let body: unknown;
       try {
@@ -686,6 +693,28 @@ export async function handleSidecarRequest(
       const body = await parseJsonBody(req);
       const title = isRecord(body) && typeof body.title === "string" ? body.title : undefined;
       writeJson(res, 201, await createCoachSession(ownerId, title));
+    } catch (error) {
+      writeCoachDataError(res, error);
+    }
+    return;
+  }
+
+  // 会话级 token/费用统计（审计#20）：pi Session.getSessionStats 的透传，
+  // 展示型数据——会话不存在回 404，底层取数失败回 null 字段而非 500。
+  const sessionStatsMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/stats$/);
+  if (req.method === "GET" && sessionStatsMatch) {
+    try {
+      const sessionId = Number(decodeURIComponent(sessionStatsMatch[1]));
+      if (!Number.isInteger(sessionId) || sessionId <= 0) {
+        writeJson(res, 400, { detail: "Coach session id is invalid" });
+        return;
+      }
+      const stats = await readSessionStats(sessionId);
+      if (stats === null) {
+        writeJson(res, 404, { detail: "Coach session is unavailable" });
+        return;
+      }
+      writeJson(res, 200, { session_id: sessionId, stats });
     } catch (error) {
       writeCoachDataError(res, error);
     }

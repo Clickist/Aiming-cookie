@@ -15,6 +15,7 @@ import {
   type CoachRuntimeTurnResponse,
   type CoachRuntimeTurnSchema,
   type CoachRuntimeToolEvent,
+  type CoachRuntimeUsage,
 } from "./contracts.ts";
 import { createProductCommandTool } from "./product-command-tools.ts";
 import { resolveSystemPrompt } from "./load-system-prompt.ts";
@@ -145,7 +146,12 @@ export function stopCoachTurn(runId: string): boolean {
 
 // ── Composer queue passthrough (steer / follow-up) ───────────────────────
 
-export type CoachQueueKind = "steer" | "follow_up";
+/**
+ * Composer 排队的三条队列。next_turn 的排队缓冲在我们这层（见 queueTarget），
+ * 排水用同一个 harness 连续 prompt()——pi 的 turn 循环负责把排队消息作为
+ * 下一轮开头注入；不直接透传 harness.nextTurn() 的原因见 queueTarget 注释。
+ */
+export type CoachQueueKind = "steer" | "follow_up" | "next_turn";
 
 /** pi AgentHarness QueueMode verbatim；不改名、不解释。 */
 export type CoachDrainMode = "all" | "one-at-a-time";
@@ -195,6 +201,55 @@ export async function queueCoachTurnMessage(
     // of a 500.
     return { ok: false, code: engineErrorCode(error) };
   }
+}
+
+/**
+ * 从最终 assistant 消息提取 provider usage（审计#20）。pi 的 Usage 结构字段
+ * 缺失时映射为 null——0 是真实计量，null 才是"provider 没报"。cost 可能是
+ * 分项对象（{input,output,...,total}），取其 total。
+ */
+export function extractUsage(message: unknown): CoachRuntimeUsage | null {
+  if (!isRecord(message) || !isRecord(message.usage)) return null;
+  const usage = message.usage;
+  const hasAny = ["input", "output", "cacheRead", "cacheWrite", "reasoning", "totalTokens", "cost"]
+    .some((key) => usage[key] !== undefined);
+  if (!hasAny) return null;
+  const num = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  return {
+    input_tokens: num(usage.input),
+    output_tokens: num(usage.output),
+    cache_read_tokens: num(usage.cacheRead),
+    cache_write_tokens: num(usage.cacheWrite),
+    reasoning_tokens: num(usage.reasoning),
+    total_tokens: num(usage.totalTokens),
+    cost: typeof usage.cost === "number"
+      ? usage.cost
+      : isRecord(usage.cost) && typeof usage.cost.total === "number"
+        ? usage.cost.total
+        : null,
+  };
+}
+
+/**
+ * 长会话压缩判定（审计#18）：用 pi 内建的 estimateContextTokens + shouldCompact
+ * 按 token 余量判断是否该让 harness.compact() 压缩。contextWindow 未知（≤0）
+ * 时明确返回 false——宁可用 40 条兜底也不盲目压缩每一轮。
+ */
+export async function shouldCompactNow(session: unknown, contextWindow: number): Promise<boolean> {
+  if (typeof contextWindow !== "number" || contextWindow <= 0) return false;
+  const { estimateContextTokens, shouldCompact, DEFAULT_COMPACTION_SETTINGS } = (await loadPiAgent()) as {
+    estimateContextTokens: (messages: unknown[]) => { tokens: number };
+    shouldCompact: (tokens: number, contextWindow: number, settings: unknown) => boolean;
+    DEFAULT_COMPACTION_SETTINGS: unknown;
+  };
+  const target = session as { getBranch(): Promise<unknown[]> };
+  const branch = await target.getBranch();
+  const messages = branch
+    .filter((entry) => isRecord(entry) && entry.type === "message" && isRecord(entry.message))
+    .map((entry) => (entry as { message: unknown }).message);
+  const estimate = estimateContextTokens(messages);
+  return shouldCompact(estimate.tokens, contextWindow, DEFAULT_COMPACTION_SETTINGS);
 }
 
 // ── Request parsing ──────────────────────────────────────────────────────
@@ -309,6 +364,20 @@ function splitConversation(messages: CoachRuntimeMessage[], model: ResolvedProvi
 /** Upper bound on context messages so long conversations don't grow unbounded. */
 const MAX_CONTEXT_MESSAGES = 40;
 
+// 条数窗口不够：工具结果单条可达数十万字符（read 整份 evidence.json、
+// product command 全量 JSON），持久化后每回合重发，实测把请求顶到 12-15
+// 万 token——免费中转通道直接 429/空回复（2026-09-06 中转站内测事故）。
+// 按 content 序列化字符数做总预算，从最旧整条丢弃。150K 按合法满配查询
+// 校准：单个 signal_window 满配 ≈85KB（命令上限 96K）+ 常规对话余量，
+// 折算约 4-5 万 token，远低于 128K 模型窗口。pi 原生 compaction 接线后
+// 此项可放宽。
+const MAX_CONTEXT_CHARS = 150_000;
+
+function contextMessageChars(message: unknown): number {
+  if (!isRecord(message)) return 0;
+  return JSON.stringify((message as { content?: unknown }).content ?? "").length;
+}
+
 function isMessageEntry(entry: unknown): entry is {
   type: string;
   id: string;
@@ -395,6 +464,19 @@ export function wrapCoachSession(session: unknown, secrets: string[]): unknown {
           const withoutCurrent =
             last && (last as { role?: unknown }).role === "user" ? messages.slice(0, -1) : messages;
           let trimmed = withoutCurrent.slice(-MAX_CONTEXT_MESSAGES);
+          // 字符总预算：从最旧整条丢弃，至少保留最新一条；截完再走下面的
+          // user/system 边界对齐，保证不产生孤立的 tool 消息开头。
+          let budget = 0;
+          let cutoff = 0;
+          for (let index = trimmed.length - 1; index >= 0; index -= 1) {
+            const size = contextMessageChars(trimmed[index]);
+            if (budget + size > MAX_CONTEXT_CHARS && index < trimmed.length - 1) {
+              cutoff = index + 1;
+              break;
+            }
+            budget += size;
+          }
+          if (cutoff > 0) trimmed = trimmed.slice(cutoff);
           // 对齐到 user/system 边界：截断可能切断 assistant(tool_calls)→tool 的配对，
           // 孤立开头的 tool 消息会触发 Provider "tool must follow tool_calls" 错误。
           while (trimmed.length > 0) {
@@ -749,6 +831,7 @@ export async function runCoachTurn(
         followUp: (text: string) => Promise<void>;
         setSteeringMode: (mode: CoachDrainMode) => Promise<void>;
         setFollowUpMode: (mode: CoachDrainMode) => Promise<void>;
+        compact: (customInstructions?: string) => Promise<unknown>;
       };
       InMemorySessionRepo: new () => {
         create: () => Promise<{
@@ -829,7 +912,13 @@ export async function runCoachTurn(
       tools,
       model: resolved.model,
       resources: { skills },
-      streamOptions: { maxRetries: 2 },
+      // 超时硬顶 8 分钟（pi/SDK 默认 10 分钟）+ 重试等待 15 秒封顶（默认 60
+      // 秒会让限流后的流式像"挂死"，审计#14）。推理模型的长思考单请求通常
+      // 远小于该顶；触顶会变成显式可重试错误而不是无限等待。
+      streamOptions: { maxRetries: 2, timeoutMs: 480_000, maxRetryDelayMs: 15_000 },
+      // 压缩/分支摘要生成的重试（pi RetryPolicy，区别于流式 maxRetries）：
+      // compaction 本身是一次网络调用，抖动不该判死整轮压缩（审计#19）。
+      retry: { enabled: true, maxRetries: 2, baseDelayMs: 1_000 },
       ...(thinkingLevel ? { thinkingLevel } : {}),
     });
 
@@ -950,16 +1039,36 @@ export async function runCoachTurn(
         return;
       }
 
+      if (eventType === "after_provider_response") {
+        // 限流/服务端错误可见化（审计#16）：此前 429/5xx 的 HTTP 状态不可
+        // 观测，排障只能翻 provider 端。非 2xx 落诊断日志，不打断对话。
+        const status = (event as { status?: unknown }).status;
+        if (typeof status === "number" && status >= 400) {
+          try {
+            appendFileSync(
+              join(getDataRoot(), "coach-error.log"),
+              `${new Date().toISOString()} [coach-turn] provider HTTP ${status} run=${request.run_id}\n`,
+              "utf8",
+            );
+          } catch {
+            // best-effort
+          }
+        }
+        return;
+      }
+
       if (eventType === "queue_update") {
         // Pi harness 在 steer/followUp 入列与各排水点同步发布 queue_update。
         // digests §11 批 5 最小透传：沿用既有 activity 通道把它记进 run
         // events（SSE 与 GET 同源），前端队列 chips 保持前端权威态，可据此对账。
+        lastSteerCount = Array.isArray(event.steer) ? event.steer.length : 0;
+        lastFollowUpCount = Array.isArray(event.followUp) ? event.followUp.length : 0;
         await publishActivity({
           kind: "queue",
           state: "updated",
-          steer_count: Array.isArray(event.steer) ? event.steer.length : 0,
-          follow_up_count: Array.isArray(event.followUp) ? event.followUp.length : 0,
-          next_turn_count: Array.isArray(event.nextTurn) ? event.nextTurn.length : 0,
+          steer_count: lastSteerCount,
+          follow_up_count: lastFollowUpCount,
+          next_turn_count: Array.isArray(event.nextTurn) ? event.nextTurn.length : nextTurnTexts.length,
         });
         return;
       }
@@ -991,11 +1100,56 @@ export async function runCoachTurn(
       throw new Error("Duplicate active Coach run id");
     }
     activeRunId = request.run_id;
+    // next_turn 的排队缓冲在我们这层：pi 的 nextTurnQueue 排水语义是把排队
+    // 消息 prepend 进"下一次 prompt"的消息列表，而 harness 随单次 run 生死，
+    // 直接透传会把排水时机丢掉、排队消息随 run 销毁。这里缓冲入列文本，run
+    // 的首轮 prompt 结束后用同一 harness 连续 prompt() 排水（见下方循环），
+    // 引擎机制仍是 pi 的 turn 循环 + 会话持久化。
+    const nextTurnTexts: string[] = [];
+    let lastSteerCount = 0;
+    let lastFollowUpCount = 0;
     const queueTarget: TurnQueueTarget = {
-      enqueue: (kind, text) => kind === "steer" ? harness.steer(text) : harness.followUp(text),
-      setDrainMode: (kind, mode) => kind === "steer" ? harness.setSteeringMode(mode) : harness.setFollowUpMode(mode),
+      enqueue: async (kind, text) => {
+        if (kind === "steer") return harness.steer(text);
+        if (kind === "follow_up") return harness.followUp(text);
+        nextTurnTexts.push(text);
+        await publishActivity({
+          kind: "queue",
+          state: "updated",
+          steer_count: lastSteerCount,
+          follow_up_count: lastFollowUpCount,
+          next_turn_count: nextTurnTexts.length,
+        });
+      },
+      setDrainMode: (kind, mode) => {
+        if (kind === "steer") return harness.setSteeringMode(mode);
+        if (kind === "follow_up") return harness.setFollowUpMode(mode);
+        return Promise.resolve(); // next_turn 单槽先进先出，无排水模式概念
+      },
     };
     activeTurns.set(request.run_id, { abort: () => { void harness.abort(); }, queue: queueTarget });
+
+    // 长会话压缩（pi 内建 compaction，审计#18）：token 余量不足时先让 pi 把
+    // 旧历史压成摘要——compaction entry 写进会话后，pi 的 buildContext 自动
+    // 用摘要替换被压缩历史，查询侧零改动；下方 MAX_CONTEXT_MESSAGES=40 降级
+    // 为极端兜底。压缩失败绝不拦对话，只落诊断日志。
+    try {
+      const shouldCompact = await shouldCompactNow(
+        session,
+        (resolved.model as { contextWindow?: number }).contextWindow ?? 0,
+      );
+      if (shouldCompact) await harness.compact();
+    } catch (compactionError) {
+      try {
+        appendFileSync(
+          join(getDataRoot(), "coach-error.log"),
+          `${new Date().toISOString()} [coach-turn] compaction skipped: ${compactionError instanceof Error ? compactionError.message : String(compactionError)}\n`,
+          "utf8",
+        );
+      } catch {
+        // best-effort
+      }
+    }
 
     // Run the turn. Analysis engagement is scoped: explicit "analysis:N"
     // references in the user's message pin the discussion subject; analysis
@@ -1009,9 +1163,15 @@ export async function runCoachTurn(
     )) {
       recordAnalysisRead(id, true);
     }
-    const replyMessage = await runScopedAnalysisReads(recordAnalysisRead, () =>
+    let replyMessage = await runScopedAnalysisReads(recordAnalysisRead, () =>
       harness.prompt(lastMessage),
     );
+    // next_turn 排水：首轮结束后用同一 harness 连续 prompt()，排队的追问依次
+    // 成为后续 turn 的用户消息——会话持续、run_id 不变，前端无需新开 run。
+    while (nextTurnTexts.length > 0 && !stopRequested.has(request.run_id)) {
+      replyMessage = await harness.prompt(nextTurnTexts.shift()!);
+    }
+    const turnUsage = extractUsage(replyMessage);
 
     if (stopRequested.has(request.run_id)) {
       return failureResponse(
@@ -1052,6 +1212,7 @@ export async function runCoachTurn(
           request.run_id,
           analysisRefs,
           deepReadAnalysisRefs,
+          turnUsage,
         );
       }
     }
@@ -1113,6 +1274,7 @@ export async function runCoachTurn(
       request.run_id,
       analysisRefs,
       deepReadAnalysisRefs,
+      turnUsage,
     );
   } catch (error) {
     const stopped = activeRunId !== null && stopRequested.has(activeRunId);

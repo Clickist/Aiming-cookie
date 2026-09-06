@@ -18,6 +18,7 @@ import { performance } from "node:perf_hooks";
 import type {
   CoachRuntimeProviderProfile,
   CoachRuntimeToolEvent,
+  CoachRuntimeUsage,
 } from "./contracts.ts";
 import { extractRuntimeSecrets, redactRuntimeSecrets } from "./provider-profile.ts";
 import { loadProfile } from "./provider-store.ts";
@@ -64,6 +65,8 @@ export type AgentRunState = {
    * analysis_refs is empty; these are viewable but NOT 本次讨论 subjects.
    */
   deep_read_analysis_refs: string[];
+  /** 最终 assistant 消息的 provider 用量（审计#20）；无法取得或未结束时 null。 */
+  usage: CoachRuntimeUsage | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -368,6 +371,9 @@ async function runAgentTurn(
       if (deepReadIds.length > 0) updateConversationDeepReadAnalysisIds(threadId, deepReadIds);
     }
 
+    // Provider 用量（审计#20）：成功与失败路径都可能带部分用量，原样透出。
+    record.state.usage = response.usage ?? null;
+
     if (signal.aborted || record.stopRequested) {
       setRunStatus(record, "stopped", "completed", { finished: true });
       appendEvent(record, "status", "completed", "run_stopped", "Coach run stopped by the user");
@@ -475,6 +481,7 @@ export function createAgentRun(
       events: [],
       analysis_refs: [],
       deep_read_analysis_refs: [],
+      usage: null,
       created_at: now,
       started_at: null,
       finished_at: null,

@@ -126,12 +126,28 @@ function notifyAnalysisRead(path: string): void {
   dispatchAnalysisRead(Number(match[1]));
 }
 
+// read 结果会持久化进 session，并在 40 条消息窗口内每回合重发。系统提示词
+// 引导教练 read analyses/{id}/ 下的 events.json/evidence.json，这些文件可达
+// 数百 KB，不封顶时单次 read 就能把请求顶到十几万 token——免费中转通道
+// 直接 429/空回复（2026-09-06 中转站内测事故根因）。封顶保头尾，模型应
+// 改用 run_product_command 的窄查询（section_ref 等）取数。
+const READ_MAX_CHARS = 20_000;
+const READ_HEAD_CHARS = 16_000;
+const READ_TAIL_CHARS = 2_000;
+
+function capReadContent(content: string): string {
+  if (content.length <= READ_MAX_CHARS) return content;
+  const omitted = content.length - READ_HEAD_CHARS - READ_TAIL_CHARS;
+  return `${content.slice(0, READ_HEAD_CHARS)
+  }\n…[文件过大已截断：原文 ${content.length} 字符，略去中间 ${omitted} 字符。请改用 run_product_command 的窄查询获取所需数据，不要整读大文件]\n${content.slice(-READ_TAIL_CHARS)}`;
+}
+
 export function createReadTool(cwd: string) {
   return {
     name: "read",
     label: "read",
     description:
-      "Read the contents of a file. Relative paths resolve against the app-data directory.",
+      "Read the contents of a file. Relative paths resolve against the app-data directory. Large files are truncated; use run_product_command for targeted data access.",
     parameters: Type.Object({
       path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
     }),
@@ -145,7 +161,7 @@ export function createReadTool(cwd: string) {
       try {
         const content = await readFile(absolutePath, "utf8");
         notifyAnalysisRead(absolutePath);
-        return { content: [{ type: "text" as const, text: content }] };
+        return { content: [{ type: "text" as const, text: capReadContent(content) }] };
       } catch (error) {
         throw new Error(
           `Failed to read ${path}: ${error instanceof Error ? error.message : String(error)}`,

@@ -615,3 +615,36 @@ test("native retry fails closed on backend errors without echoing secrets", asyn
     globalThis.fetch = originalFetch;
   }
 });
+
+test("native command results are capped before entering the context", async () => {
+  const { capResultText } = await import("../src/product-command-tools.ts");
+  const small = capResultText(JSON.stringify({ result: { ok: true } }));
+  assert.ok(!small.includes("截断"), "small results pass through unchanged");
+
+  // 设计内满配（signal_window ≈85KB）必须原样通过，不被误伤。
+  const maxedSignalWindow = JSON.stringify({ result: { blob: "y".repeat(90_000) } });
+  assert.ok(!capResultText(maxedSignalWindow).includes("截断"), "legal maxed-out queries pass intact");
+
+  const giant = JSON.stringify({ result: { blob: "y".repeat(130_000) } });
+  const capped = capResultText(giant);
+  assert.ok(capped.length < 110_000, `capped result should stay bounded, got ${capped.length}`);
+  assert.match(capped, /结果超限已截断：原文 \d+ 字符/);
+});
+
+test("history.list hits the result cap on oversized fixtures end-to-end", async () => {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  for (let i = 1; i <= 30; i++) {
+    const dir = join(dataRoot, "analyses", String(i));
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "overview.json"),
+      JSON.stringify({ run_ref: `run:${i}`, status: "done", summary_label: "L".repeat(4_000) }),
+      "utf8",
+    );
+  }
+  const tool = createProductCommandTool(null);
+  const result = await tool.execute("history-capped", { command_name: "history.list", parameters: {} });
+  const text = result.content[0]?.text ?? "";
+  assert.match(text, /结果超限已截断：原文 \d+ 字符/);
+  assert.ok(text.length < 110_000, `capped history.list should stay bounded, got ${text.length}`);
+});
