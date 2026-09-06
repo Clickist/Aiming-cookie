@@ -1,8 +1,14 @@
-"""端到端:真实 KovaaK 录像跑通完整 pipeline。
+"""CV/视频回退管线的真实录像回归锚（非现役主路径 E2E）。
+
+现役主路径是遥测优先（watcher → ingest → 分析，Stats/perf 为真值），
+其真值验证走遥测链路（2026-08-31 起落地，2026-09-01 R7 e2e 跑通）。
+本文件锚的是仍随产品发布的 video_fallback/multimodal 视觉档：单测喂
+手工假数据照不到的「真实录像上的算法回归」（如 08-2x degraded 回退点
+污染导致命中率虚高 96.8%）只有真录像能暴露。
 
 默认 skip(需 E2E_VIDEO + E2E_CSV 环境变量指向真实录像 + Stats CSV)。
 点点睡醒后设环境变量跑:
-    E2E_VIDEO="6月23日.mp4" E2E_CSV="stats.csv" pytest webapp/tests/test_e2e.py -v -s
+    E2E_VIDEO="data/6月23日.mp4" E2E_CSV="data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv" pytest webapp/tests/test_e2e.py -v -s
 
 验证:Worker ↔ kovaak_tracker 真实衔接(analyze_flicking_fair_summary → fair-summary dict
 → build_report(backend=) → CoachReport)。真实 LLM 需配 DeepSeek key,无 key 时
