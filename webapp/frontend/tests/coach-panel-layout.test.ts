@@ -87,7 +87,9 @@ test("user bubbles adopt the pill-tier radius and menu items follow the nested f
   const userBubble = styles.match(/\.task6-message\[data-role="user"\]\s*\{[^}]*\}/)?.[0] ?? "";
   assert.match(userBubble, /border-radius:\s*var\(--radius-xl\)/);
   // 嵌套公式：菜单外R(lg=8) − 菜单padding(space-1=4) = item 半径 sm=4
-  for (const name of ["task6-composer-model-item", "task6-provider-picker-item"]) {
+  // provider-picker 菜单已随设置页主从式重做移除；嵌套公式仅约束仍存在的
+  // 菜单项（composer 模型菜单）。
+  for (const name of ["task6-composer-model-item"]) {
     const item = styles.match(new RegExp(`\\.${name}\\s*\\{[^}]*\\}`))?.[0] ?? "";
     assert.match(item, /border-radius:\s*var\(--radius-sm\)/, name);
     assert.doesNotMatch(item, /--radius-md/, name);

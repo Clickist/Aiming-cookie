@@ -123,7 +123,8 @@ test("P2 authoritative windows map evidence-segments into ordered segment button
       },
     }),
   ]));
-  // 起止毫秒用 preroll 校正后的视频相对区间；id 保留关联锚；结果按起点升序。
+  // 瞬间级 focus 窗口扩成焦点中心 ±2.5s 的最小有效循环窗；未传时长不钳
+  // 右界（交给 VideoView clamp）。id 保留关联锚；结果按起点升序。
   assert.equal(buttons.length, 2);
   assert.deepEqual(
     buttons.map((button) => button.id),
@@ -131,8 +132,108 @@ test("P2 authoritative windows map evidence-segments into ordered segment button
   );
   assert.deepEqual(
     buttons.map((button) => [button.startMs, button.endMs, button.kindLabel]),
-    [[1000, 2000, SEGMENT_KIND_LABELS.improved], [9393, 9870, SEGMENT_KIND_LABELS.worst]],
+    [[0, 4000, SEGMENT_KIND_LABELS.improved], [7132, 12132, SEGMENT_KIND_LABELS.worst]],
   );
+});
+
+test("P2 expansion widens moment-scale focus spans around their center and keeps intervals of 5s or more untouched", () => {
+  const buttons = projectEvidenceSegmentButtons(payload([
+    // 600ms 瞬间窗（实测典型宽度）：中心 4300 → ±2500 → [1800, 6800]。
+    segment({
+      segment_id: "analysis:42:segment:typical:1",
+      segment_kind: "typical",
+      playback: {
+        schema_version: "evidence_segment_playback.v1",
+        availability: "available",
+        video_route: "/api/sessions/42/video",
+        relative_start_ms: 4000,
+        relative_end_ms: 4600,
+        limitations: [],
+      },
+    }),
+    // 已 ≥ 5s 的区间是焦点区间与 ±2.5s 窗的并集＝原区间，不再扩大。
+    segment({
+      segment_id: "analysis:42:segment:worst:2",
+      playback: {
+        schema_version: "evidence_segment_playback.v1",
+        availability: "available",
+        video_route: "/api/sessions/42/video",
+        relative_start_ms: 10000,
+        relative_end_ms: 16000,
+        limitations: [],
+      },
+    }),
+    // 恰好 5s：±2.5s 窗与原区间重合，同样原样保留。
+    segment({
+      segment_id: "analysis:42:segment:improved:3",
+      segment_kind: "improved",
+      playback: {
+        schema_version: "evidence_segment_playback.v1",
+        availability: "available",
+        video_route: "/api/sessions/42/video",
+        relative_start_ms: 10000,
+        relative_end_ms: 15000,
+        limitations: [],
+      },
+    }),
+  ]));
+  // 同起点平局保持稳定排序（插入序：worst 在 improved 之前）。
+  assert.deepEqual(
+    buttons.map((button) => [button.startMs, button.endMs]),
+    [[1800, 6800], [10000, 16000], [10000, 15000]],
+  );
+});
+
+test("P2 expansion clamps to media duration and drops windows that clamp empty", () => {
+  const buttons = projectEvidenceSegmentButtons(payload([
+    // 贴视频开头：中心 1100 → [0, 3600]，右界钳进时长 → [0, 3000]。
+    segment({
+      segment_id: "analysis:42:segment:a:1",
+      playback: {
+        schema_version: "evidence_segment_playback.v1",
+        availability: "available",
+        video_route: "/api/sessions/42/video",
+        relative_start_ms: 1000,
+        relative_end_ms: 1200,
+        limitations: [],
+      },
+    }),
+    // 视频末尾：中心 2750 → [250, 5250]，右界钳在时长 → [250, 3000]。
+    segment({
+      segment_id: "analysis:42:segment:b:2",
+      segment_kind: "typical",
+      playback: {
+        schema_version: "evidence_segment_playback.v1",
+        availability: "available",
+        video_route: "/api/sessions/42/video",
+        relative_start_ms: 2600,
+        relative_end_ms: 2900,
+        limitations: [],
+      },
+    }),
+    // 扩窗钳制后整段越过时长（起点 ≥ maxMs）→ 剔除，不产出不可用按钮。
+    segment({
+      segment_id: "analysis:42:segment:c:3",
+      playback: {
+        schema_version: "evidence_segment_playback.v1",
+        availability: "available",
+        video_route: "/api/sessions/42/video",
+        relative_start_ms: 5600,
+        relative_end_ms: 5900,
+        limitations: [],
+      },
+    }),
+  ]), { maxMs: 3000 });
+  assert.deepEqual(
+    buttons.map((button) => [button.id, button.startMs, button.endMs]),
+    [
+      ["analysis:42:segment:a:1", 0, 3000],
+      ["analysis:42:segment:b:2", 250, 3000],
+    ],
+  );
+  for (const button of buttons) {
+    assert.ok(button.startMs >= 0 && button.endMs <= 3000 && button.endMs > button.startMs);
+  }
 });
 
 test("P2 segment mapping fails closed on unusable playback windows and unknown kinds", () => {

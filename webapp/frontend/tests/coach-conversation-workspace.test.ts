@@ -23,7 +23,8 @@ test("History and Settings use a centered bounded consumption width", async () =
     source("components/task6/task6.css"),
   ]);
   assert.match(historyStyles, /\.task4-page\s*\{[\s\S]*max-width:\s*1040px[\s\S]*margin-inline:\s*auto/);
-  assert.match(settingsStyles, /\.task6-settings-layout\s*\{[\s\S]*max-width:\s*1040px[\s\S]*margin:\s*0 auto/);
+  // 设置页改为工作区同款左栏布局后，内容列自身承载有界居中消费宽度。
+  assert.match(settingsStyles, /\.task6-settings-content\s*\{[\s\S]*max-width:\s*980px[\s\S]*margin-inline:\s*auto/);
 });
 
 test("Coach opens a center video pane from time-link analysis refs", async () => {
@@ -57,5 +58,8 @@ test("legacy Tasks and Analysis URLs are compatibility redirects", async () => {
 test("Settings exposes a return action in every top-level state", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   assert.match(settings, /function SettingsExit/);
-  assert.ok((settings.match(/<SettingsExit/g) ?? []).length >= 3);
+  // 渐进渲染（加载慢专项 D）后 loading 不再整页 return：主框架（含退出
+  // 按钮）常驻，独立顶层状态只剩错误兜底页，因此出现次数从 3 降为 2。
+  assert.doesNotMatch(settings, /if \(loading\) return/);
+  assert.ok((settings.match(/<SettingsExit/g) ?? []).length >= 2);
 });
