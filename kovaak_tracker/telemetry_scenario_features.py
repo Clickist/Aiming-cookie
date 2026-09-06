@@ -30,10 +30,21 @@ merge_manifest epoch 锚）计算火控/点击误差/节奏/角速度/活性/几
 - speed 子域（甩枪）：任务原条件 err_p10>3° 且 cv>0.6 在 final_0831 无命中
   样本（Valorant 2.49°/0.304），实测可分离的甩枪签名是点击时刻误差
   err_at_click_p50（Valorant 5.13° vs 点击类 ≤0.67°），两条路径取或；
-- 持续火力分支内的转火判定（0901 实证，n=1/类）：官方杀率 >=0.2/s →
-  target_switching（TileFrenzy 1.41/s vs HumStrafe 0.087/s、Controlsphere 0）；
-  官方窗未采用时退位给误差锯齿率 err_spike_rate_per_s >= 0.3/s 兜底
-  （TileFrenzy 0.91/s，纯跟枪 0，HumStrafe <=0.24/s）；
+- 持续火力分支内的转火判定（0906 方向修正，0901/0904 实测 n=1/类）：
+  计分结构先验一票否决 + 行为签名。官方计分结构对未命中/时间流失罚分的
+  场景（Humanoid Strafe 系：ScorePerTime=1.0 → .perf score 事件逐秒 -1 负
+  delta）按住扫射持续失分，理性玩法是打完即停——转火结构不成立，直接落
+  tracking；计分中性场景（TileFrenzy 系：ScorePerKill=1.0，.perf score 事件
+  零负 delta，miss 上百不扣分）切靶期扫射零代价，按死扫是理性策略——
+  官方杀率 >=0.2/s → target_switching（TileFrenzy 1.41/s vs HumStrafe
+  0.087/s、Controlsphere 0）；官方窗未采用时退位给误差锯齿率
+  err_spike_rate_per_s >= 0.3/s 兜底（TileFrenzy 0.91/s，纯跟枪 0，
+  HumStrafe <=0.24/s；弱证据通道保留 hold>=0.97 按死门槛——0904 HumStrafe
+  fallback 轮 r7/r8 实测无门槛会误翻）。未收录场景（先验 None）退化为
+  行为签名判定；
+- 9b5886a 的 hold_frac>=0.97 硬门槛已撤销：转火局打失误也会松手，硬 hold
+  门槛误伤真转火；"中间松没松手"是两类图计分规则差异的行为投影，不是类别
+  边界；
 - 旧 bearing_delta_at_kill_med>60° → target_switching 分支已拆除：0901 实测
   该签名反向（poll addr 池化+物件抖动产生伪消亡，Controlsphere 0 杀被它打出
   75.96°>60°，真转火 TileFrenzy 仅 51.53°）；特征保留在束内只作诊断；
@@ -78,18 +89,20 @@ DIST_PRECISION_MIN_CM = 3000.0
 ERR_AT_CLICK_FLICK_MIN_DEG = 2.0
 ERR_P10_FLICK_MIN_DEG = 3.0
 INTER_CLICK_CV_FLICK_MIN = 0.6
-# 持续火力分支内转火判定（0901 实证；n=1/类，未跨场景校准，非生产阈值）：
+# 持续火力分支内转火判定（0906 方向修正；0901/0904 实测，n=1/类，非生产阈值）：
+# - 计分结构先验一票否决（下方 SCENARIO_SCORING_PRIOR）：罚分结构不得判转火；
 # - 官方杀率主签名：TileFrenzy 1.41/s 在上 7 倍，HumStrafe 0.087/s 在下 2.3 倍；
 # - 误差锯齿兜底（官方窗未采用时）：TileFrenzy 0.91/s，HumStrafe <=0.24/s，
 #   纯跟枪（Controlsphere）0；
-# - 旧 BEARING_DELTA_SWITCH_MIN_DEG=60° 分支已拆除：签名实测反向（伪消亡
-#   方位跳变 Controlsphere 0 杀 75.96° > 真转火 TileFrenzy 51.53°）。
+# - 9b5886a 的 hold_frac>=0.97 硬门槛已从杀率主签名撤销：真转火打失误也会
+#   松手（TileFrenzy hold 0.981、HumStrafe 0.9455 的差距是计分规则差异的
+#   行为投影，不是类别边界），硬 hold 门槛误伤；误翻由计分结构先验拦截。
+# - 锯齿兜底保留按死形态门槛（0904 实测回归依据）：无官方窗的弱证据场景里，
+#   HumStrafe 0904 局的旁车 fallback 轮（r7/r8）hold 0.97+、锯齿 0.3+/s，
+#   无门槛会误翻成转火——弱证据通道保守，强证据（官方杀率）才放宽。
 KILL_RATE_SWITCH_MIN_PER_S = 0.2
-# 转火的"按死"门槛（点点 0902 定义：转火=全程按住不松，切靶路上的真空期也在
-# 按住内；中间松开过的不算转火）。实测两点标定：TileFrenzy 0.981（真转火）vs
-# Humanoid Strafe 0.9455（中间松开过，非转火）——n=1/类，待扩样本。
-HELD_SWITCH_MIN_HOLD_FRAC = 0.97
 ERR_SPIKE_RATE_SWITCH_MIN = 0.3
+HELD_SWITCH_SAWTOOTH_MIN_HOLD_FRAC = 0.97
 ERR_SPIKE_EXCURSION_MIN_DEG = 15.0
 CLICKS_PER_KILL_RECLICK_MIN = 1.5
 ERR_AT_CLICK_RECLICK_MAX_DEG = 1.0
@@ -109,6 +122,32 @@ WINDOW_OFFICIAL = "official_pairing_window"
 WINDOW_FULL_ROUND = "full_round_fallback"
 LIMITATION_FULL_ROUND_FALLBACK = "observed_window_full_round_fallback"
 LIMITATION_GEOMETRY_ABSENT = "observed_bb_absent_geometry_features_absent"
+
+# ---- 场景级计分结构先验（"未命中惩罚结构"，0906 方向修正） ----
+# 键为 casefold 场景名；值：True = 罚分结构（计分对未命中/时间流失罚分），
+# False = 中性结构（击杀是唯一得分源），未收录场景无先验（退化为行为签名）。
+# 依据（.sce 官方计分字段 + .perf 逐事件 score 负 delta 实测，2026-08-31/09-01/09-04 真机）：
+# - TileFrenzy 0901/0904：.sce ScorePerKill=1.0、无罚分字段；.perf score 事件
+#   负 delta 0 个（59/59 正，miss 181/185 不扣分）→ 中性，转火结构成立；
+# - Humanoid Strafe 0904 / Humanoid Strafe Flat 0831：.sce ScorePerTime=1.0
+#   （时间罚分；ScoreLossPerMiss 显式 0），.perf score 事件逐秒 -1 负 delta
+#   （各 13 个）→ 罚分结构，按住扫射持续失分，转火结构不成立；
+# - Controlsphere 0831/0901（未收录对照）：score 负 delta 0 个、纯伤害分，
+#   0 杀由杀率签名挡转火，无需先验。
+SCENARIO_SCORING_PRIOR = {
+    "tile frenzy 180 strafing tracking": False,
+    "humanoid strafe": True,
+    "humanoid strafe flat": True,
+}
+# 罚分结构下的持续火力判定依据（machine-readable basis 后缀）。
+BASIS_SCORING_PENALIZES_FIRE = "sustained_hold_scoring_penalizes_fire"
+
+
+def scenario_scoring_penalizes_fire(display_name: str | None) -> bool | None:
+    """场景级计分结构先验查询；未收录/空名返回 None（无先验）。"""
+    if not isinstance(display_name, str) or not display_name.strip():
+        return None
+    return SCENARIO_SCORING_PRIOR.get(display_name.strip().casefold())
 
 _FEATURE_KEYS = (
     "hold_frac",
@@ -553,6 +592,7 @@ def decide_scenario_family_verdict(
     *,
     official_kills: int | None,
     official_window_duration_s: float | None = None,
+    official_scoring_penalizes_fire: bool | None = None,
 ) -> dict[str, Any] | None:
     """判别树：按序短路；全部不满足 → None（瀑布走下一级）。
 
@@ -561,6 +601,12 @@ def decide_scenario_family_verdict(
     官方窗而非被轮数据裁剪后的子窗（HumStrafe：10 杀/114.96s=0.087/s；
     若除以 12-21s 子轮窗会虚高 5-9 倍越过阈值）。官方窗未采用（回退全轮）
     时 kills 不可归因到本轮判别窗，杀率置 None，只走锯齿兜底。
+
+    official_scoring_penalizes_fire：官方计分结构对未命中/时间流失是否罚分
+    （场景级先验，scenario_scoring_penalizes_fire 查询）。True = 罚分结构
+    （如 Humanoid Strafe 的 ScorePerTime 逐秒 -1）：按住扫射持续失分，转火
+    结构不成立，一票否决落回 tracking；False = 中性（如 TileFrenzy：miss
+    不扣分）；None = 未收录场景，退化为行为签名判定。
     """
     hold_frac = features.get("hold_frac")
     clicks_per_min = features.get("clicks_per_min")
@@ -593,27 +639,33 @@ def decide_scenario_family_verdict(
             "zero_kill_variant": zero_kill_variant,
         }
 
-    # 1. 持续火力（held-fire）：先查转火签名（0901 实证，n=1/类，阈值处注释
-    #    有样本量 caveat），无签名才落 continuous_tracking（含 invincible 零杀
-    #    变体）。
+    # 1. 持续火力（held-fire）：先查计分结构先验一票否决，再查转火行为签名
+    #    （0901 实证，n=1/类，阈值处注释有样本量 caveat），无签名才落
+    #    continuous_tracking（含 invincible 零杀变体）。
     tracking_reason: dict[str, float | None] | None = None
     if hold_frac is not None and hold_frac > HOLD_FRAC_TRACKING_MAX:
         tracking_reason = {"hold_frac": hold_frac}
     elif clicks_per_min is not None and clicks_per_min < CLICKS_PER_MIN_TRACKING_MAX:
         tracking_reason = {"clicks_per_min": clicks_per_min}
     if tracking_reason is not None:
-        # 主签名：官方杀率 >=0.2/s。按住火力且目标持续死亡——每次死亡必然
-        # 伴随一次切靶（因果签名）。
+        # 计分结构先验一票否决（0906 方向修正）：罚分结构下按住扫射持续失分，
+        # 理性玩法是打完即停——即使行为上全程按死、杀率不高，也不得判转火。
+        if official_scoring_penalizes_fire is True:
+            return verdict(
+                "continuous_tracking",
+                basis=BASIS_SCORING_PENALIZES_FIRE,
+                basis_values=tracking_reason,
+                zero_kill_variant=official_kills in (None, 0),
+            )
+        # 主签名：官方杀率 >=0.2/s（计分中性或无先验时）。按住火力且目标持续
+        # 死亡——每次死亡必然伴随一次切靶（因果签名）。不设 hold 上限门槛：
+        # 真转火打失误也会松手（9b5886a 硬门槛已撤销）。
         kill_rate = (
             official_kills / official_window_duration_s
             if official_kills is not None and official_window_duration_s
             else None
         )
-        if (
-            (hold_frac is None or hold_frac >= HELD_SWITCH_MIN_HOLD_FRAC)
-            and kill_rate is not None
-            and kill_rate >= KILL_RATE_SWITCH_MIN_PER_S
-        ):
+        if kill_rate is not None and kill_rate >= KILL_RATE_SWITCH_MIN_PER_S:
             return verdict(
                 "target_switching",
                 basis="heldfire_switch_by_kill_rate",
@@ -621,11 +673,13 @@ def decide_scenario_family_verdict(
                 target_count_model="sequential",
             )
         # 兜底签名：官方杀率缺失（官方窗未采用）时用误差锯齿率——只需
-        # views+targets，无击杀时刻依赖。
+        # views+targets，无击杀时刻依赖。弱证据通道保留按死形态门槛：
+        # 0904 HumStrafe 局的 fallback 轮（无官方窗、先验未接线时）hold
+        # 0.97+ 且锯齿超阈，无门槛会误翻（0904 r7/r8 实测回归）。
         err_spike_rate = features.get("err_spike_rate_per_s")
         if (
-            (hold_frac is None or hold_frac >= HELD_SWITCH_MIN_HOLD_FRAC)
-            and kill_rate is None
+            kill_rate is None
+            and (hold_frac is None or hold_frac >= HELD_SWITCH_SAWTOOTH_MIN_HOLD_FRAC)
             and err_spike_rate is not None
             and err_spike_rate >= ERR_SPIKE_RATE_SWITCH_MIN
         ):
@@ -730,6 +784,7 @@ def build_scenario_observed_profile(
     official_window_epoch_ms: tuple[int, int] | None = None,
     official_window_t: tuple[float, float] | None = None,
     official_kills: int | None = None,
+    official_scoring_penalizes_fire: bool | None = None,
 ) -> dict[str, Any]:
     """冻结旁车目录 -> scenario_observed_profile.v1（特征束 + 判别结论）。
 
@@ -737,10 +792,16 @@ def build_scenario_observed_profile(
     canonical_time_window），经 merge_manifest.alignment.s_epoch_of_t0 映射到
     旁车 t 域；official_window_t：已折算好的 t 域窗口（bb.json window_t 同域，
     供测试/上游直算）。两者都缺或映射后过短 → 全轮 + limitation。
+    official_scoring_penalizes_fire：场景级计分结构先验（bool|None），透传
+    判别树的转火一票否决，见 decide_scenario_family_verdict。
     """
     directory = Path(round_dir)
     if official_kills is not None and (isinstance(official_kills, bool) or official_kills < 0):
         raise ValueError("official_kills must be a non-negative int or None")
+    if official_scoring_penalizes_fire is not None and not isinstance(
+        official_scoring_penalizes_fire, bool
+    ):
+        raise ValueError("official_scoring_penalizes_fire must be a bool or None")
     name_overrides = {
         key: value
         for key, value in (file_names or {}).items()
@@ -812,6 +873,7 @@ def build_scenario_observed_profile(
             if window_kind == WINDOW_OFFICIAL
             else None
         ),
+        official_scoring_penalizes_fire=official_scoring_penalizes_fire,
     )
     return {
         "schema_version": SCENARIO_OBSERVED_PROFILE_SCHEMA_VERSION,
@@ -966,10 +1028,12 @@ def validate_scenario_observed_profile(value: object) -> dict[str, Any] | None:
 
 __all__ = [
     "SCENARIO_OBSERVED_PROFILE_SCHEMA_VERSION",
+    "SCENARIO_SCORING_PRIOR",
     "WINDOW_FULL_ROUND",
     "WINDOW_OFFICIAL",
     "build_scenario_observed_profile",
     "compute_observed_features",
     "decide_scenario_family_verdict",
+    "scenario_scoring_penalizes_fire",
     "validate_scenario_observed_profile",
 ]

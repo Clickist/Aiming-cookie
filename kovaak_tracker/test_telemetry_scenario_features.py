@@ -147,7 +147,10 @@ def _static_target_lives(
     return lives
 
 
-_PROFILE_ONLY_ARGS = ("official_kills", "official_window_epoch_ms", "official_window_t")
+_PROFILE_ONLY_ARGS = (
+    "official_kills", "official_window_epoch_ms", "official_window_t",
+    "official_scoring_penalizes_fire",
+)
 
 
 def _profile(tmp_path: Path, name: str, **kwargs) -> dict:
@@ -629,32 +632,98 @@ def test_validator_rejects_corrupt_profile(tmp_path):
     assert validate_scenario_observed_profile(None) is None
 
 
-def test_heldfire_switching_requires_continuous_hold():
-    """点点 0902 定义：转火=全程按住不松，切靶真空期也在按住内；中间松开过
-    的不算转火。真实标定两点：TileFrenzy hold=0.981（转火）vs Humanoid
-    Strafe 0904 局 hold=0.9455 + 锯齿 0.4992/s（中间松开过→不得判转火）。
-    按 0.97 门槛：前者进转火检查、后者被门槛挡回 tracking。"""
+def test_switch_scoring_prior_veto_and_no_hold_gate():
+    """0906 方向修正：转火判定=计分结构先验一票否决+行为签名，无 hold 硬门槛。
+
+    - Humanoid Strafe 真实形态（hold 0.9455、中间松手过、锯齿 0.4992/s）：
+      罚分结构先验 True → 一票否决落 tracking（新 basis）；锯齿兜底在先验
+      True 下也不生效。
+    - 真转火打失误也会松手：hold 0.90 + 官方杀率 1.4/s + 计分中性 → 转火
+      （9b5886a 的 hold>=0.97 硬门槛撤销后放行；杀率签名只看杀率）。
+    - 无先验（None）时退化为行为签名：同样放行杀率/锯齿路径。
+    """
     from kovaak_tracker.telemetry_scenario_features import (
         decide_scenario_family_verdict,
     )
 
-    features = {
+    hum_strafe = {
         "hold_frac": 0.9455,
         "clicks_per_min": 8.0,
         "err_spike_rate_per_s": 0.4992,
     }
-    verdict = decide_scenario_family_verdict(
-        features, official_kills=None, official_window_duration_s=None,
+    vetoed = decide_scenario_family_verdict(
+        hum_strafe,
+        official_kills=None,
+        official_window_duration_s=None,
+        official_scoring_penalizes_fire=True,
     )
-    assert verdict is not None
-    assert verdict["aim_family"] == "continuous_tracking"
+    assert vetoed is not None
+    assert vetoed["aim_family"] == "continuous_tracking"
+    assert vetoed["basis"] == "telemetry_observed_basis_sustained_hold_scoring_penalizes_fire"
+    assert vetoed["basis_values"] == {"hold_frac": 0.9455}
 
-    held = dict(features, hold_frac=0.981, official_kill_rate=1.41)
-    verdict_held = decide_scenario_family_verdict(
-        {"hold_frac": 0.981, "clicks_per_min": 2.0, "err_spike_rate_per_s": 0.909},
-        official_kills=85, official_window_duration_s=60.5,
+    vetoed_held = decide_scenario_family_verdict(
+        dict(hum_strafe, hold_frac=0.981),
+        official_kills=85,
+        official_window_duration_s=60.5,
+        official_scoring_penalizes_fire=True,
     )
-    assert verdict_held["aim_family"] == "target_switching"
+    assert vetoed_held["aim_family"] == "continuous_tracking"
+    assert vetoed_held["zero_kill_variant"] is False
+
+    relaxed = decide_scenario_family_verdict(
+        {"hold_frac": 0.90, "clicks_per_min": 2.0},
+        official_kills=85,
+        official_window_duration_s=60.5,
+    )
+    assert relaxed is not None
+    assert relaxed["aim_family"] == "target_switching"
+    assert relaxed["basis"] == "telemetry_observed_basis_heldfire_switch_by_kill_rate"
+    assert relaxed["basis_values"] == {"official_kill_rate_per_s": pytest.approx(1.405, abs=0.001)}
+
+    # 锯齿兜底是弱证据通道（无官方窗/kills）：保留按死形态门槛——0904
+    # HumStrafe 局 fallback 轮（hold 0.97+、锯齿 0.3+/s）无门槛会误翻。
+    sawtooth_below_gate = decide_scenario_family_verdict(
+        {"hold_frac": 0.90, "clicks_per_min": 2.0, "err_spike_rate_per_s": 0.91},
+        official_kills=None,
+        official_window_duration_s=None,
+    )
+    assert sawtooth_below_gate["aim_family"] == "continuous_tracking"
+    sawtooth_above_gate = decide_scenario_family_verdict(
+        {"hold_frac": 0.98, "clicks_per_min": 2.0, "err_spike_rate_per_s": 0.91},
+        official_kills=None,
+        official_window_duration_s=None,
+    )
+    assert sawtooth_above_gate["aim_family"] == "target_switching"
+    assert sawtooth_above_gate["basis"] == "telemetry_observed_basis_heldfire_switch_by_err_sawtooth"
+
+
+def test_scenario_scoring_prior_lookup():
+    """先验表查询：casefold+strip 匹配；未收录/空名 → None（无先验）。"""
+    from kovaak_tracker.telemetry_scenario_features import (
+        SCENARIO_SCORING_PRIOR,
+        scenario_scoring_penalizes_fire,
+    )
+
+    assert scenario_scoring_penalizes_fire("Tile Frenzy 180 Strafing Tracking") is False
+    assert scenario_scoring_penalizes_fire("  humanoid strafe FLAT ") is True
+    assert scenario_scoring_penalizes_fire("1w2ts reload") is None
+    assert scenario_scoring_penalizes_fire("") is None
+    assert scenario_scoring_penalizes_fire(None) is None
+    # 表内条目只允许 bool（先验语义无第三态）。
+    assert all(isinstance(v, bool) for v in SCENARIO_SCORING_PRIOR.values())
+
+
+def test_build_rejects_non_bool_scoring_prior(tmp_path):
+    duration = 6.0
+    with pytest.raises(ValueError, match="official_scoring_penalizes_fire"):
+        _profile(
+            tmp_path, "bad_prior",
+            views=_views(duration, yaw_at=lambda t: 0.0),
+            frames=_frames_from_lives(_static_target_lives(duration, count=1, dist=2000.0)),
+            inputs=[],
+            official_scoring_penalizes_fire="yes",
+        )
 
 
 def test_profile_schema_version():
@@ -731,13 +800,13 @@ _REAL_CLEANED = Path(
 _REAL_SESSION = _REAL_CLEANED / "final_0831" / "target_poll_out_0831_003140"
 
 _REAL_CASES = [
-    # (局名, 轮号, bb window_t, 官方 kills, 预期 family, 预期 subdomains)
-    ("beanClick", 2, (83.967, 144.45), 121, "static_clicking", []),
-    ("1wall6targets", 3, (196.892, 257.312), 111, "static_clicking", ["precision"]),
-    ("pasu", 3, (271.312, 357.511), 109, "dynamic_clicking", []),
-    ("Controlsphere", 3, (366.632, 427.122), None, "continuous_tracking", []),
-    ("Humanoid Strafe", 6, (442.932, 557.892), 10, "continuous_tracking", []),
-    ("Valorant Flick", 12, (581.372, 641.855), 47, "static_clicking", ["speed"]),
+    # (局名, 轮号, bb window_t, 官方 kills, 计分先验, 预期 family, 预期 subdomains)
+    ("beanClick", 2, (83.967, 144.45), 121, None, "static_clicking", []),
+    ("1wall6targets", 3, (196.892, 257.312), 111, None, "static_clicking", ["precision"]),
+    ("pasu", 3, (271.312, 357.511), 109, None, "dynamic_clicking", []),
+    ("Controlsphere", 3, (366.632, 427.122), None, None, "continuous_tracking", []),
+    ("Humanoid Strafe", 6, (442.932, 557.892), 10, True, "continuous_tracking", []),
+    ("Valorant Flick", 12, (581.372, 641.855), 47, None, "static_clicking", ["speed"]),
 ]
 
 _requires_real_sidecars = pytest.mark.skipif(
@@ -748,7 +817,7 @@ _requires_real_sidecars = pytest.mark.skipif(
 
 @_requires_real_sidecars
 @pytest.mark.parametrize(
-    ("name", "round_number", "window_t", "kills", "want_family", "want_subdomains"),
+    ("name", "round_number", "window_t", "kills", "scoring_prior", "want_family", "want_subdomains"),
     _REAL_CASES,
 )
 def test_final0831_real_challenge_windows(
@@ -756,6 +825,7 @@ def test_final0831_real_challenge_windows(
     round_number: int,
     window_t: tuple[float, float],
     kills: int | None,
+    scoring_prior: bool | None,
     want_family: str,
     want_subdomains: list[str],
 ):
@@ -764,6 +834,7 @@ def test_final0831_real_challenge_windows(
         round_number,
         official_window_t=window_t,
         official_kills=kills,
+        official_scoring_penalizes_fire=scoring_prior,
     )
     assert validate_scenario_observed_profile(profile) is not None
     verdict = profile["verdict"]
@@ -800,18 +871,19 @@ def test_final0831_real_challenge_windows(
 # session_0901 两局：持续火力转火判定的真实样本（官方窗+kills 来自上游
 # crosscheck_session_0901_* 回执，只读）。TileFrenzy r3 是本分支要捕捉的翻转
 # （tracking→switching），Controlsphere r3 是零杀纯跟枪对照（不得翻转）。
+# 计分先验来自场景级表（.perf score 事件实测：TileFrenzy 零负 delta → False）。
 
 _REAL_SESSIONS_0901 = [
-    # (局名, 旁车目录, 轮号, bb window_t, 官方 kills, 预期 family)
+    # (局名, 旁车目录, 轮号, bb window_t, 官方 kills, 计分先验, 预期 family)
     (
         "Controlsphere 0901",
         _REAL_CLEANED / "session_0901_2132" / "target_poll_out_0901_213256",
-        3, (275.052, 335.538), 0, "continuous_tracking",
+        3, (275.052, 335.538), 0, None, "continuous_tracking",
     ),
     (
         "Tile Frenzy 0901",
         _REAL_CLEANED / "session_0901_2156" / "target_poll_out_0901_215050",
-        3, (262.157, 322.635), 85, "target_switching",
+        3, (262.157, 322.635), 85, False, "target_switching",
     ),
 ]
 
@@ -823,7 +895,7 @@ _requires_real_0901 = pytest.mark.skipif(
 
 @_requires_real_0901
 @pytest.mark.parametrize(
-    ("name", "session_dir", "round_number", "window_t", "kills", "want_family"),
+    ("name", "session_dir", "round_number", "window_t", "kills", "scoring_prior", "want_family"),
     _REAL_SESSIONS_0901,
 )
 def test_session0901_heldfire_switching(
@@ -832,6 +904,7 @@ def test_session0901_heldfire_switching(
     round_number: int,
     window_t: tuple[float, float],
     kills: int,
+    scoring_prior: bool | None,
     want_family: str,
 ):
     profile = build_scenario_observed_profile(
@@ -839,6 +912,7 @@ def test_session0901_heldfire_switching(
         round_number,
         official_window_t=window_t,
         official_kills=kills,
+        official_scoring_penalizes_fire=scoring_prior,
     )
     assert validate_scenario_observed_profile(profile) is not None
     verdict = profile["verdict"]
@@ -850,3 +924,66 @@ def test_session0901_heldfire_switching(
         assert verdict["target_motion"]["target_count_model"] == "sequential"
     else:
         assert verdict["zero_kill_variant"] is True
+
+
+# session_0904 三局（官方窗由 perf start_unix - merge_manifest t0 折算，
+# crosscheck_session_0904 回执提供 kills，只读）。TileFrenzy r2 是转火正例
+# （84 杀/60.5s、计分中性）；Pasu r5 是动态点击对照；1w2ts r11 是静态点击
+# 对照。Humanoid Strafe 0904 局的旁车映射失败（members=-），不进轮级断言，
+# 其罚分结构由 0831 Flat 局与先验表单测覆盖。
+
+_REAL_SESSION_0904 = _REAL_CLEANED / "session_0904_2359" / "target_poll_out_0904_234457"
+
+_REAL_SESSIONS_0904 = [
+    # (局名, 轮号, 官方窗 t 域, 官方 kills, 计分先验, 预期 family)
+    (
+        "Tile Frenzy 0904",
+        2, (151.261, 211.744), 84, False, "target_switching",
+    ),
+    (
+        "Pasu SuperbAim 0904",
+        5, (582.261, 642.734), 69, None, "dynamic_clicking",
+    ),
+    (
+        "1w2ts reload 0904",
+        11, (806.261, 866.721), 92, None, "static_clicking",
+    ),
+]
+
+_requires_real_0904 = pytest.mark.skipif(
+    not _REAL_SESSION_0904.is_dir(),
+    reason="session_0904 telemetry sidecar data is not available on this machine",
+)
+
+
+@_requires_real_0904
+@pytest.mark.parametrize(
+    ("name", "round_number", "window_t", "kills", "scoring_prior", "want_family"),
+    _REAL_SESSIONS_0904,
+)
+def test_session0904_challenge_windows(
+    name: str,
+    round_number: int,
+    window_t: tuple[float, float],
+    kills: int,
+    scoring_prior: bool | None,
+    want_family: str,
+):
+    profile = build_scenario_observed_profile(
+        _REAL_SESSION_0904,
+        round_number,
+        official_window_t=window_t,
+        official_kills=kills,
+        official_scoring_penalizes_fire=scoring_prior,
+    )
+    assert validate_scenario_observed_profile(profile) is not None
+    verdict = profile["verdict"]
+    print(f"\n{name}: family={verdict['aim_family']} basis={verdict['basis']}")
+    print(f"  features={json.dumps({k: profile['features'][k] for k in ('hold_frac', 'clicks_per_min', 'moving_time_share', 'alive_mean', 'err_spike_rate_per_s')})}")
+    assert verdict is not None, f"{name}: no verdict"
+    assert verdict["aim_family"] == want_family, (
+        f"{name}: family {verdict['aim_family']} != {want_family}"
+    )
+    if want_family == "target_switching":
+        assert verdict["basis"] == "telemetry_observed_basis_heldfire_switch_by_kill_rate"
+        assert verdict["target_motion"]["target_count_model"] == "sequential"
