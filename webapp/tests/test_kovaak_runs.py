@@ -3391,3 +3391,55 @@ async def test_remove_failure_keeps_tombstone_and_reconciliation_retries_exact_r
     assert stats.is_file() and performance.is_file()
     remaining = file_store.read_json("runs/_evidence_tombstones.json") or []
     assert all(t.get("run_id") != run["id"] for t in remaining)
+
+
+@pytest.mark.asyncio
+async def test_public_run_read_models_project_video_error_code_for_capture_events(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """设置页「最近采集事件」的增量合同：公共 Run 投影带 video_error 码。
+
+    错误码是无路径的受控枚举（与 trace_error 同级清洗）；列表与详情都必须
+    原样透传给前端的人话映射层，缺失时为 None。
+    """
+    from httpx import ASGITransport, AsyncClient
+    from webapp.backend import config
+    from webapp.backend.app import app
+
+    monkeypatch.setattr(config, "DESKTOP_LAUNCH_TOKEN", "run-token")
+    stats = tmp_path / "capture Stats.csv"
+    performance = tmp_path / "capture Performance.perf"
+    stats.write_text("stats", encoding="utf-8")
+    performance.write_text("performance", encoding="utf-8")
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=config.DESKTOP_LOCAL_PROFILE,
+        source_key="capture-events",
+        scenario="Capture Events Scenario",
+        stats_path=str(stats),
+        performance_path=str(performance),
+        stats_summary={},
+        performance_summary={},
+    )
+    await kovaak_run_store.mark_run_video_unavailable(
+        run["id"], config.DESKTOP_LOCAL_PROFILE, "video_capture_unavailable",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed_response = await client.get(
+            "/api/kovaak-runs",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+        detail_response = await client.get(
+            f"/api/kovaak-runs/{run['id']}",
+            headers={"X-Aiming-Cookie-Desktop-Token": "run-token"},
+        )
+
+    assert listed_response.status_code == 200, listed_response.text
+    assert detail_response.status_code == 200, detail_response.text
+    listed = next(
+        item for item in listed_response.json()["runs"] if item["run_ref"] == f"run:{run['id']}"
+    )
+    assert listed["video_error"] == "video_capture_unavailable"
+    assert listed["trace_error"] is None
+    assert detail_response.json()["video_error"] == "video_capture_unavailable"

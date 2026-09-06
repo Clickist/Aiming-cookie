@@ -299,6 +299,8 @@ class KovaaKRunListItem(BaseModel):
     trace_quality: TraceQualityOut
     trace_state: str = "none"
     trace_error: Optional[str] = None
+    # 增量字段：视频失败码（受控枚举、无路径），设置页最近采集事件消费。
+    video_error: Optional[str] = None
     video_artifact_ref: Optional[str] = None
     finalization_state: str = "discovered"
     finalization_error: Optional[str] = None

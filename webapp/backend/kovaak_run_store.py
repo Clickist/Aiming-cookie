@@ -7,6 +7,7 @@ Session.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import hashlib
 import logging
@@ -110,6 +111,38 @@ _RUN_ID_LOCK = threading.Lock()
 _EVIDENCE_TOMBSTONES = "runs/_evidence_tombstones.json"
 _INCOMPLETE_TOMBSTONES = "runs/_incomplete_tombstones.json"
 
+# runs/*/meta.json 的内存派生缓存（queue._SESSION_CACHE 同款模式）。文件仍是
+# 唯一事实源：写入经 _save_run 落盘后同步更新缓存；扫描时按 (mtime_ns, size)
+# 指纹校验，不匹配即单文件重读（覆盖测试直写、其他进程写入），目录消失即驱逐。
+_RUN_META_CACHE: dict[int, tuple[tuple[int, int], dict]] = {}
+
+# sessions/*.json 的只读轻缓存：_analysis_counts_by_run 每次只需要
+# user_id / kovaak_run_id 两个字段，按 (mtime_ns, size) 指纹校验后复用，
+# 不再每次全量解析全部 session JSON（热态 ~8.7MB/次）。
+_SESSION_LIGHT_CACHE: dict[str, tuple[tuple[int, int], tuple[object, object]]] = {}
+
+# ---- run 存储台账（storage ledger）----
+# 每个 run 目录的内容摘要持久化在 meta.json 的 storage_ledger 字段：
+# 分类字节数 + 逐文件 stat 指纹（size + mtime_ns，不做全文件 SHA-256）。
+# 读取路径只汇总各 run 的台账，不再 os.walk；目录 mtime 变化（进程内记账）
+# 或台账缺失（存量自愈/重启兜底）时对该 run 重算一次并回写。
+_STORAGE_LEDGER_VERSION = "run_storage_ledger.v1"
+_STORAGE_LEDGER_KEY = "storage_ledger"
+# run_id -> 上次台账校验时的 run 目录 mtime（仅进程内；重启后首个读路径
+# 对全部 run 各付一次重算，即冷启动首次成本，见加载慢专项工作流 C）。
+_LEDGER_VALIDATED_DIR_MTIME: dict[int, int] = {}
+
+
+def _run_root(data_root: str | Path, run_id: int) -> Path:
+    return Path(data_root) / "runs" / str(run_id)
+
+
+def _run_dir_mtime_ns(run_id: int, data_root: str | Path) -> int | None:
+    try:
+        return os.stat(_run_root(data_root, run_id)).st_mtime_ns
+    except OSError:
+        return None
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -156,63 +189,107 @@ def _next_run_id() -> int:
 
 
 def _load_run(run_id: int) -> Optional[dict]:
-    return file_store.read_json(_run_meta_path(run_id))
+    rel = _run_meta_path(run_id)
+    fingerprint = file_store.stat_json(rel)
+    if fingerprint is None:
+        _RUN_META_CACHE.pop(run_id, None)
+        return None
+    cached = _RUN_META_CACHE.get(run_id)
+    if cached is not None and cached[0] == fingerprint:
+        return dict(cached[1])
+    data = file_store.read_json(rel)
+    if data is None:
+        return None
+    _RUN_META_CACHE[run_id] = (fingerprint, data)
+    return dict(data)
 
 
 def _save_run(run: dict) -> None:
-    file_store.write_json(_run_meta_path(run["id"]), run)
+    rel = _run_meta_path(run["id"])
+    file_store.write_json(rel, run)
+    fingerprint = file_store.stat_json(rel)
+    if fingerprint is None:
+        _RUN_META_CACHE.pop(run["id"], None)
+        return
+    _RUN_META_CACHE[run["id"]] = (fingerprint, run)
 
 
 def _all_runs(user_id: str | None = None) -> list[dict]:
     runs = []
+    seen_ids: set[int] = set()
     for p in file_store.list_subdirs(_RUNS_DIR):
         try:
-            int(p.name)
+            run_id = int(p.name)
         except ValueError:
             continue
-        try:
-            data = file_store.read_json(f"{_RUNS_DIR}/{p.name}/meta.json")
-        except (OSError, ValueError):
-            log.warning("skipping unreadable run meta %s", f"{_RUNS_DIR}/{p.name}/meta.json")
+        rel = f"{_RUNS_DIR}/{p.name}/meta.json"
+        fingerprint = file_store.stat_json(rel)
+        if fingerprint is None:
             continue
-        if data is None:
-            continue
+        cached = _RUN_META_CACHE.get(run_id)
+        if cached is None or cached[0] != fingerprint:
+            try:
+                data = file_store.read_json(rel)
+            except (OSError, ValueError):
+                log.warning("skipping unreadable run meta %s", rel)
+                continue
+            if data is None:
+                continue
+            cached = (fingerprint, data)
+            _RUN_META_CACHE[run_id] = cached
+        seen_ids.add(run_id)
+        data = cached[1]
         if user_id is None or data.get("user_id") == user_id:
-            runs.append(data)
+            # 浅拷贝：调用方（如 upsert 的 existing 分支）会就地改顶层字段。
+            runs.append(dict(data))
+    for stale_id in [rid for rid in _RUN_META_CACHE if rid not in seen_ids]:
+        _RUN_META_CACHE.pop(stale_id, None)
     runs.sort(key=lambda r: (r.get("created_at", ""), r.get("id", 0)), reverse=True)
     return runs
 
 
 def _get_analysis_count_for_run(run_id: int, user_id: str) -> int:
-    count = 0
-    for p in file_store.list_dir("sessions", "*.json"):
-        try:
-            int(p.stem)
-        except ValueError:
-            continue
-        session = file_store.read_json(f"sessions/{p.name}")
-        if session and session.get("kovaak_run_id") == run_id and session.get("user_id") == user_id:
-            count += 1
-    return count
+    return _analysis_counts_by_run(user_id).get(run_id, 0)
 
 def _analysis_counts_by_run(user_id: str) -> dict[int, int]:
     """One pass over the sessions directory yielding run_id -> analysis count.
 
     ``_public_run`` used to rescan every session file per run, making run
     lists O(runs x sessions). Batch callers pass this map instead.
+    扫描按 (mtime_ns, size) 指纹校验：指纹未变的文件直接复用轻缓存里的
+    (user_id, kovaak_run_id)，不匹配即单文件重读——1s 级轮询热路径不再
+    全量解析 session JSON。
     """
     counts: dict[int, int] = {}
+    seen_names: set[str] = set()
     for p in file_store.list_dir("sessions", "*.json"):
         try:
             int(p.stem)
         except ValueError:
             continue
-        session = file_store.read_json(f"sessions/{p.name}")
-        if not session or session.get("user_id") != user_id:
+        try:
+            st = p.stat()
+        except OSError:
             continue
-        run_id = session.get("kovaak_run_id")
-        if isinstance(run_id, int):
-            counts[run_id] = counts.get(run_id, 0) + 1
+        seen_names.add(p.name)
+        fingerprint = (st.st_mtime_ns, st.st_size)
+        cached = _SESSION_LIGHT_CACHE.get(p.name)
+        if cached is None or cached[0] != fingerprint:
+            session = file_store.read_json(f"sessions/{p.name}")
+            if not session:
+                continue
+            run_id = session.get("kovaak_run_id")
+            cached = (
+                fingerprint,
+                (session.get("user_id"), run_id if isinstance(run_id, int) else None),
+            )
+            _SESSION_LIGHT_CACHE[p.name] = cached
+        owner, run_id = cached[1]
+        if owner != user_id or not isinstance(run_id, int):
+            continue
+        counts[run_id] = counts.get(run_id, 0) + 1
+    for stale in [name for name in _SESSION_LIGHT_CACHE if name not in seen_names]:
+        _SESSION_LIGHT_CACHE.pop(stale, None)
     return counts
 
 
@@ -337,17 +414,54 @@ def _public_run(
 
 
 async def list_kovaak_run_summaries(user_id: str, limit: int = 100) -> list[dict]:
-    runs = _all_runs(user_id)[:max(1, min(limit, 500))]
-    counts = _analysis_counts_by_run(user_id)
-    summaries = []
-    for raw in runs:
-        public = _public_run(
-            raw, shallow=True, analysis_count=counts.get(int(raw["id"]), 0),
-        )
-        public.pop("stats_summary", None)
-        public.pop("performance_summary", None)
-        summaries.append(public)
-    return summaries
+    def _build() -> list[dict]:
+        runs = _all_runs(user_id)[:max(1, min(limit, 500))]
+        counts = _analysis_counts_by_run(user_id)
+        summaries = []
+        for raw in runs:
+            public = _public_run(
+                raw, shallow=True, analysis_count=counts.get(int(raw["id"]), 0),
+            )
+            public.pop("stats_summary", None)
+            public.pop("performance_summary", None)
+            summaries.append(public)
+        return summaries
+
+    # 缓存温热后仍是一轮 stat 指纹扫描 + 每行浅投影（对用户源文件的可用性
+    # stat 校验）。整段是纯读组合，放线程池：1s 级 capture-status 轮询与
+    # History 5s 轮询不再把同步 IO 串到事件循环上。
+    return await asyncio.to_thread(_build)
+
+
+async def list_kovaak_run_attachments(user_id: str) -> list[dict]:
+    """Minimal per-Run attachment view for the 1s capture-status poll.
+
+    capture-status 的投影只消费 run_ref / trace_state / video_artifact_ref /
+    alignment / finalization_state 五个字段；源文件可用性校验（对用户 KovaaK
+    目录的逐文件 stat）与它无关。这里跳过全量 summaries 投影，轮询只付
+    meta 指纹扫描 + attached 视频的 size 校验，且整段纯读放线程池。
+    输出字段与 list_kovaak_run_summaries 逐字段同义。
+    """
+
+    def _build() -> list[dict]:
+        attachments: list[dict] = []
+        for raw in _all_runs(user_id):
+            video_availability, video = _current_video_evidence(raw, shallow=True)
+            alignment_summary = raw.get("alignment_summary")
+            attachments.append({
+                "run_ref": f"run:{raw['id']}",
+                "trace_state": raw.get("trace_state"),
+                "video_artifact_ref": (
+                    video.get("artifact_ref") if isinstance(video, dict) else None
+                ),
+                "alignment": alignment_summary
+                if isinstance(alignment_summary, dict)
+                else {},
+                "finalization_state": raw.get("finalization_state"),
+            })
+        return attachments
+
+    return await asyncio.to_thread(_build)
 
 
 def _local_scenario_behavior_descriptor(
@@ -1827,54 +1941,141 @@ async def reconcile_run_evidence_deletions(
     return outcome
 
 
-async def run_storage_usage(
-    user_id: str, data_root: str | Path,
-) -> dict[str, int]:
-    totals = {
-        "run_video_bytes": 0,
-        "run_raw_bytes": 0,
-        "incomplete_recovery_bytes": 0,
-    }
-    root = Path(data_root).resolve()
-    for run in _all_runs(user_id):
-        run_id = int(run["id"])
-        run_root = (root / "runs" / str(run_id)).resolve()
-        if not run_root.is_dir():
+def _owned_artifact_names(run: dict, data_root: str | Path) -> dict[str, str]:
+    """Managed evidence file names -> storage bucket.
+
+    Managed video/raw artifacts are always direct children of the run root
+    (``_managed_evidence_artifact`` enforces it), so name equality inside the
+    flat run directory is equivalent to the resolved-path set it replaces —
+    without paying a ``Path.resolve()`` per walked file.
+    """
+    owned: dict[str, str] = {}
+    run_id = int(run["id"])
+    candidates: list[tuple[str, str, object]] = [
+        ("video", "video", run.get("video_path") if run.get("video_state") == "attached" else None),
+        ("raw", "raw", run.get("mouse_trace_path") if run.get("trace_state") == "attached" else None),
+    ]
+    for kind, bucket, path_value in candidates:
+        if not path_value:
             continue
-        video_files: set[Path] = set()
-        raw_files: set[Path] = set()
         try:
-            if run.get("video_state") == "attached" and run.get("video_path"):
-                video, _ = _managed_evidence_artifact(
-                    data_root, run_id, "video", run["video_path"],
-                )
-                video_files.update({video, _video_receipt_path(video)})
-            if run.get("trace_state") == "attached" and run.get("mouse_trace_path"):
-                trace, _ = _managed_evidence_artifact(
-                    data_root, run_id, "raw", run["mouse_trace_path"],
-                )
-                raw_files.add(trace)
+            artifact, _relpath = _managed_evidence_artifact(
+                data_root, run_id, kind, path_value,
+            )
         except ValueError:
-            pass
-        for directory, _, names in os.walk(run_root, followlinks=False):
+            continue
+        owned[artifact.name] = bucket
+        if kind == "video":
+            owned[_video_receipt_path(artifact).name] = bucket
+    return owned
+
+
+def _scan_run_storage(run: dict, data_root: str | Path) -> dict[str, object]:
+    """Pure read/scan: classify every regular file under runs/{id}/ except
+    meta.json. No hashing, no writes — safe to run inside asyncio.to_thread.
+    """
+    run_id = int(run["id"])
+    root = _run_root(data_root, run_id)
+    owned = _owned_artifact_names(run, data_root)
+    totals = {"video_bytes": 0, "raw_bytes": 0, "other_bytes": 0}
+    files: dict[str, dict[str, object]] = {}
+    if root.is_dir():
+        for directory, _subdirs, names in os.walk(root, followlinks=False):
             for name in names:
-                candidate = Path(directory) / name
-                if candidate.name == "meta.json":
+                if name == "meta.json":
                     # store-internal run metadata is not a user artifact.
                     continue
+                candidate = Path(directory) / name
                 try:
                     metadata = candidate.lstat()
                 except OSError:
                     continue
                 if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
                     continue
-                resolved = candidate.resolve()
-                if resolved in video_files:
-                    totals["run_video_bytes"] += metadata.st_size
-                elif resolved in raw_files:
-                    totals["run_raw_bytes"] += metadata.st_size
+                # 键与 tombstone 体系同口径：相对 DATA_ROOT 的 posix 路径
+                # （runs/{id}/name），_resolve_incomplete_relpath 直接可用。
+                in_run_root = "/" not in candidate.relative_to(root).as_posix()
+                relpath = f"runs/{run_id}/{candidate.relative_to(root).as_posix()}"
+                bucket = owned.get(name) if in_run_root else None
+                size = metadata.st_size
+                if bucket == "video":
+                    totals["video_bytes"] += size
+                elif bucket == "raw":
+                    totals["raw_bytes"] += size
                 else:
-                    totals["incomplete_recovery_bytes"] += metadata.st_size
+                    bucket = "other"
+                    totals["other_bytes"] += size
+                files[relpath] = {
+                    "bucket": bucket,
+                    "size": size,
+                    "mtime_ns": metadata.st_mtime_ns,
+                }
+    return {
+        "schema_version": _STORAGE_LEDGER_VERSION,
+        "video_bytes": totals["video_bytes"],
+        "raw_bytes": totals["raw_bytes"],
+        "other_bytes": totals["other_bytes"],
+        "files": files,
+    }
+
+
+def _storage_ledger_is_current(run: dict, data_root: str | Path) -> bool:
+    ledger = run.get(_STORAGE_LEDGER_KEY)
+    if not isinstance(ledger, dict) or ledger.get("schema_version") != _STORAGE_LEDGER_VERSION:
+        return False
+    run_id = int(run["id"])
+    validated = _LEDGER_VALIDATED_DIR_MTIME.get(run_id)
+    if validated is None:
+        return False
+    return _run_dir_mtime_ns(run_id, data_root) == validated
+
+
+def _adopt_run_storage_ledger(run: dict, ledger: dict[str, object], data_root: str | Path) -> None:
+    """Persist one freshly scanned ledger (self-heal write happens on the
+    event loop; the pure scan runs in to_thread at the call sites)."""
+    run_id = int(run["id"])
+    existing = run.get(_STORAGE_LEDGER_KEY)
+    if not isinstance(existing, dict) or existing != ledger:
+        run[_STORAGE_LEDGER_KEY] = ledger
+        try:
+            _save_run(run)
+        except OSError:
+            log.exception("run %s storage ledger write-back failed", run.get("id"))
+    # 内容未变（典型：进程重启后的首轮重算）不重复落盘，只刷新进程内的
+    # 目录 mtime 记账，让后续读取直接命中台账。
+    dir_mtime = _run_dir_mtime_ns(run_id, data_root)
+    if dir_mtime is not None:
+        _LEDGER_VALIDATED_DIR_MTIME[run_id] = dir_mtime
+
+
+async def run_storage_usage(
+    user_id: str, data_root: str | Path,
+) -> dict[str, int]:
+    def _collect() -> tuple[list[dict], dict[int, dict[str, object]]]:
+        runs = _all_runs(user_id)
+        stale = [run for run in runs if not _storage_ledger_is_current(run, data_root)]
+        scanned = {int(run["id"]): _scan_run_storage(run, data_root) for run in stale}
+        return runs, scanned
+
+    # 台账校验与缺失重算都是纯读扫描（walk + lstat），放线程池；
+    # meta 回写（self-heal）是唯一写动作，留在事件循环上。
+    runs, scanned = await asyncio.to_thread(_collect)
+    for run in runs:
+        ledger = scanned.get(int(run["id"]))
+        if ledger is not None:
+            _adopt_run_storage_ledger(run, ledger, data_root)
+    totals = {
+        "run_video_bytes": 0,
+        "run_raw_bytes": 0,
+        "incomplete_recovery_bytes": 0,
+    }
+    for run in runs:
+        ledger = run.get(_STORAGE_LEDGER_KEY)
+        if not isinstance(ledger, dict):
+            continue
+        totals["run_video_bytes"] += int(ledger.get("video_bytes") or 0)
+        totals["run_raw_bytes"] += int(ledger.get("raw_bytes") or 0)
+        totals["incomplete_recovery_bytes"] += int(ledger.get("other_bytes") or 0)
     return totals
 
 
@@ -1890,16 +2091,19 @@ def _incomplete_item(
     owner_id: str,
     run_id: int,
     relative_path: str,
-    path: Path,
+    size_bytes: int,
+    mtime_ns: int,
 ) -> dict[str, object]:
-    fingerprint = _file_fingerprint(path)
+    # item_ref 以 stat 指纹（size + mtime_ns）为身份：列表读取不再对每个
+    # 未完成产物做全文件 SHA-256（热态 113 个文件曾拖住整个端点 ~800ms）。
+    # 真实内容哈希只在用户发起移除时对单个文件计算并进 tombstone。
     item_key = json.dumps(
         {
             "owner_id": owner_id,
             "run_id": run_id,
             "relative_path": relative_path,
-            "sha256": fingerprint["sha256"],
-            "size": fingerprint["size"],
+            "size": size_bytes,
+            "mtime_ns": mtime_ns,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -1909,8 +2113,8 @@ def _incomplete_item(
         "schema_version": "incomplete_capture_item.v1",
         "item_ref": item_ref,
         "run_ref": f"run:{run_id}",
-        "size_bytes": int(fingerprint["size"]),
-        "reason": _incomplete_reason(path),
+        "size_bytes": int(size_bytes),
+        "reason": _incomplete_reason(Path(relative_path)),
         "removable": True,
         "impact": {
             "code": "incomplete_recovery_only",
@@ -1920,10 +2124,9 @@ def _incomplete_item(
             ),
         },
         "created_at": datetime.fromtimestamp(
-            path.stat().st_mtime, tz=timezone.utc,
+            mtime_ns / 1_000_000_000, tz=timezone.utc,
         ).isoformat().replace("+00:00", "Z"),
         "_relative_path": relative_path,
-        "_sha256": fingerprint["sha256"],
     }
 
 
@@ -1931,49 +2134,37 @@ async def list_incomplete_capture_items(
     owner_id: str,
     data_root: str | Path,
 ) -> list[dict[str, object]]:
-    root = Path(data_root).resolve()
+    def _collect() -> tuple[list[dict], dict[int, dict[str, object]]]:
+        runs = _all_runs(owner_id)
+        stale = [run for run in runs if not _storage_ledger_is_current(run, data_root)]
+        scanned = {int(run["id"]): _scan_run_storage(run, data_root) for run in stale}
+        return runs, scanned
+
+    runs, scanned = await asyncio.to_thread(_collect)
+    for run in runs:
+        ledger = scanned.get(int(run["id"]))
+        if ledger is not None:
+            _adopt_run_storage_ledger(run, ledger, data_root)
     items: list[dict[str, object]] = []
-    for run in _all_runs(owner_id):
+    for run in runs:
         run_id = int(run["id"])
-        run_root = (root / "runs" / str(run_id)).resolve()
-        if not run_root.is_dir():
+        ledger = run.get(_STORAGE_LEDGER_KEY)
+        if not isinstance(ledger, dict):
             continue
-        owned: set[Path] = set()
-        try:
-            if run.get("video_state") == "attached" and run.get("video_path"):
-                video, _ = _managed_evidence_artifact(
-                    data_root, run_id, "video", run["video_path"],
-                )
-                owned.update({video, _video_receipt_path(video)})
-            if run.get("trace_state") == "attached" and run.get("mouse_trace_path"):
-                raw, _ = _managed_evidence_artifact(
-                    data_root, run_id, "raw", run["mouse_trace_path"],
-                )
-                owned.add(raw)
-        except ValueError:
-            pass
-        for directory, _, names in os.walk(run_root, followlinks=False):
-            for name in names:
-                candidate = Path(directory) / name
-                try:
-                    metadata = candidate.lstat()
-                except OSError:
-                    continue
-                if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-                    continue
-                resolved = candidate.resolve()
-                if resolved in owned:
-                    continue
-                try:
-                    relative_path = resolved.relative_to(root).as_posix()
-                except ValueError:
-                    continue
-                items.append(_incomplete_item(
-                    owner_id=owner_id,
-                    run_id=run_id,
-                    relative_path=relative_path,
-                    path=resolved,
-                ))
+        files = ledger.get("files")
+        if not isinstance(files, dict):
+            continue
+        for relative_path in sorted(files):
+            entry = files[relative_path]
+            if not isinstance(entry, dict) or entry.get("bucket") != "other":
+                continue
+            items.append(_incomplete_item(
+                owner_id=owner_id,
+                run_id=run_id,
+                relative_path=relative_path,
+                size_bytes=int(entry.get("size") or 0),
+                mtime_ns=int(entry.get("mtime_ns") or 0),
+            ))
     return items
 
 
@@ -2087,13 +2278,19 @@ async def remove_incomplete_capture_item(
         return None
     run_ref = str(current["run_ref"])
     run_id = int(run_ref.split(":", 1)[1])
+    artifact = _resolve_incomplete_relpath(
+        data_root, run_id, str(current["_relative_path"]),
+    )
+    # 内容哈希只在移除时对单个文件计算：tombstone 的 expected_sha256 用于
+    # 删除前复核“用户确认的文件没有中途被替换”。
+    fingerprint = _file_fingerprint(artifact)
     all_tombstones.append({
         "item_ref": item_ref,
         "owner_id": owner_id,
         "run_id": run_id,
         "artifact_relpath": current["_relative_path"],
-        "expected_sha256": current["_sha256"],
-        "expected_size": current["size_bytes"],
+        "expected_sha256": fingerprint["sha256"],
+        "expected_size": fingerprint["size"],
     })
     file_store.write_json(_INCOMPLETE_TOMBSTONES, all_tombstones)
     # Re-read the tombstone we just wrote

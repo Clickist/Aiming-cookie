@@ -764,7 +764,10 @@ async def create_analysis_from_run(
         if uses_video and managed_video_source is not None:
             video_destination = workspace / "video.mp4"
             try:
-                copy_path_to_path(managed_video_source, video_destination)
+                # 源视频整文件复制放线程池：数百 MB 级复制不能占住事件循环。
+                await asyncio.to_thread(
+                    copy_path_to_path, managed_video_source, video_destination,
+                )
             except OSError as exc:
                 try:
                     observed_fingerprint = _freeze_video_source(managed_video_source)

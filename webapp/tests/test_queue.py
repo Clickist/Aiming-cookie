@@ -1304,3 +1304,128 @@ async def test_product_state_run_summary_failure_leaves_a_log_trail(
         "run summaries read failed" in record.getMessage()
         for record in caplog.records
     ), "run summary read failure must leave a log trail instead of vanishing silently"
+
+
+# ---- session 缓存（_all_sessions 派生缓存）----
+
+
+@pytest.mark.asyncio
+async def test_all_sessions_cache_skips_rereading_unchanged_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """指纹未变的文件不得重复解析：这是 2s 空闲扫描降本的整条合同。"""
+    await queue.enqueue("cache-owner", "v.mp4", "s.csv")
+    await queue.enqueue("cache-owner", "v2.mp4", "s2.csv")
+
+    calls = {"read_json": 0}
+    real_read_json = file_store.read_json
+
+    def counting_read_json(relative_path: str):
+        calls["read_json"] += 1
+        return real_read_json(relative_path)
+
+    monkeypatch.setattr(file_store, "read_json", counting_read_json)
+
+    def scan_reads() -> int:
+        """_all_sessions 一次扫描触发的 read_json 次数（差值，不受助手函数干扰）。"""
+        before = calls["read_json"]
+        queue._all_sessions("cache-owner")
+        return calls["read_json"] - before
+
+    # enqueue 已写时预热缓存：热扫描零解析。
+    first = queue._all_sessions("cache-owner")
+    assert len(first) == 2
+    assert calls["read_json"] == 0, "writes pre-warm the cache; scans must not re-parse"
+
+    # 冷启动（缓存为空）→ 恰好每文件一次解析。
+    queue._SESSION_CACHE.clear()
+    cold = queue._all_sessions("cache-owner")
+    assert len(cold) == 2
+    assert calls["read_json"] == 2
+
+    # 再次扫描：指纹未变 → 仍然零解析。
+    assert len(queue._all_sessions("cache-owner")) == 2
+    assert scan_reads() == 0, "unchanged files must be served from cache"
+
+    # 模拟外部进程改写其中一个 session 文件 → 只重读该文件。
+    await _rewrite_session(cold[0]["id"], status="failed")
+    assert scan_reads() == 1, "exactly the rewritten file must be re-parsed"
+    third = queue._all_sessions("cache-owner")
+    by_id = {s["id"]: s for s in third}
+    assert by_id[cold[0]["id"]]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_cache_strips_result_but_keeps_derived_fields() -> None:
+    """result 不得驻留内存缓存（可达数百 KB/场）；派生小字段必须等价可用。"""
+    sid = await queue.enqueue("derived-owner", "v.mp4", "s.csv")
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_done(
+        sid,
+        {"diagnosis": {"profile": {"label": "精准卡壳"}}},
+        0.0,
+        worker_id=TEST_WORKER,
+    )
+
+    cached = queue._SESSION_CACHE.get(sid)
+    assert cached is not None
+    entry = cached[1]
+    assert "result" not in entry, "result must not be retained in the cache"
+    assert entry["_summary_label"] == "精准卡壳"
+
+    sessions = queue._all_sessions("derived-owner")
+    assert sessions[0]["_summary_label"] == "精准卡壳"
+    listed = await queue.list_sessions("derived-owner")
+    assert listed[0]["summary_label"] == "精准卡壳"
+    assert all(not key.startswith("_") for key in listed[0])
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_states_read_version_without_full_result() -> None:
+    sid = await queue.enqueue("runstate-owner", "v.mp4", "s.csv")
+    await _rewrite_session(
+        sid,
+        kovaak_run_id=31,
+        result={"analysis_version": "native_flicking.v1", "signals": []},
+    )
+    states = await queue.get_run_analysis_states("runstate-owner", 31)
+    assert len(states) == 1
+    assert states[0]["analysis_version"] == "native_flicking.v1"
+
+
+@pytest.mark.asyncio
+async def test_cache_tracks_external_deletion_and_creation() -> None:
+    sid = await queue.enqueue("life-owner", "v.mp4", "s.csv")
+    assert len(queue._all_sessions("life-owner")) == 1
+
+    file_store.delete_file(f"sessions/{sid}.json")
+    assert queue._all_sessions("life-owner") == []
+    assert sid not in queue._SESSION_CACHE, "deleted files must be evicted"
+
+    # 绕过 queue 直写一个 session 文件（模拟其他进程播种）→ 下次扫描可见。
+    raw = {
+        "id": 4242,
+        "user_id": "life-owner",
+        "status": "done",
+        "created_at": "2030-01-01T00:00:00Z",
+        "result": None,
+    }
+    file_store.write_json("sessions/4242.json", raw)
+    sessions = queue._all_sessions("life-owner")
+    assert [s["id"] for s in sessions] == [4242]
+
+
+@pytest.mark.asyncio
+async def test_task_rows_keep_result_wire_compatibility() -> None:
+    sid = await queue.enqueue("tasks-owner", "v.mp4", "s.csv")
+    await queue.claim_next(TEST_WORKER)
+    await queue.mark_done(
+        sid,
+        {"diagnosis": {"profile": {"label": "L1"}}},
+        0.0,
+        worker_id=TEST_WORKER,
+    )
+    rows = await queue.list_task_rows("tasks-owner")
+    assert len(rows) == 1
+    assert rows[0]["result"] == {"diagnosis": {"profile": {"label": "L1"}}}
+    assert "_summary_label" not in rows[0]

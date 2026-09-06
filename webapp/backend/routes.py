@@ -231,8 +231,9 @@ async def analyze_paths(
     temp_video = workspace / "video.mp4.tmp"
     temp_csv = workspace / "stats.csv.tmp"
     try:
-        copy_path_to_path(FilePath(video_path), temp_video)
-        copy_path_to_path(FilePath(csv_path), temp_csv)
+        # 整视频复制可达数百 MB，放线程池执行，避免冻结事件循环上所有并发请求。
+        await asyncio.to_thread(copy_path_to_path, FilePath(video_path), temp_video)
+        await asyncio.to_thread(copy_path_to_path, FilePath(csv_path), temp_csv)
         temp_video.replace(managed_video)
         temp_csv.replace(managed_csv)
         await _update_session_input_paths(
@@ -347,7 +348,9 @@ async def get_capture_status(
 ):
     """Aggregate native coordinator status with path-free Run attachments."""
     try:
-        runs = await kovaak_run_store.list_kovaak_run_summaries(
+        # 1s 轮询专用轻投影：不做全量 summaries 投影、不触发任何 session
+        # 解析或重扫描（native status 本身 1-2ms，必须与重活拆开）。
+        runs = await kovaak_run_store.list_kovaak_run_attachments(
             config.DESKTOP_LOCAL_PROFILE,
         )
         native_status = None
@@ -1471,10 +1474,14 @@ async def list_external_runs(
     limit: int = Query(100, ge=1, le=500),
     _: None = Depends(require_desktop_token),
 ):
-    metas = external_telemetry_store.list_external_runs(limit=limit)
+    # 外部库目录遍历 + 台账整读是同步 I/O，放线程池避免占住事件循环。
+    metas = await asyncio.to_thread(
+        external_telemetry_store.list_external_runs, limit=limit,
+    )
+    total = await asyncio.to_thread(external_telemetry_store.count_external_runs)
     return ExternalRunListResponse(
         schema_version="external_run_list.v1",
-        total=external_telemetry_store.count_external_runs(),
+        total=total,
         items=[_external_run_list_item(meta) for meta in metas],
     )
 

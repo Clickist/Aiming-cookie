@@ -467,6 +467,9 @@ def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
         "trace_quality": trace_quality,
         "trace_state": run.get("trace_state", "none"),
         "trace_error": _public_string(run.get("trace_error")),
+        # 增量字段：设置页「最近采集事件」把视频失败码翻译成人话；错误码是
+        # 无路径的受控枚举，与 trace_error 同等对待（_public_string 清洗）。
+        "video_error": _public_string(run.get("video_error")),
         "finalization_state": run.get("finalization_state") or "discovered",
         "finalization_error": _public_string(run.get("finalization_error")),
         "readiness_state": evidence["readiness_state"],
@@ -477,8 +480,17 @@ def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
         "video_quality": evidence["video_quality"],
         "limitations": evidence["limitations"],
         "stats_calibration": _public_stats_calibration(run),
-        "stats_summary": _public_summary(run.get("stats_summary")),
-        "performance_summary": _public_summary(run.get("performance_summary")),
+        # shallow 列表投影（run summaries）随后总会 pop 这两个大 summary：
+        # _public_summary 的全树 sanitize 是每行 ~2ms 的纯 CPU，这里直接跳过，
+        # 输出与“投影后立刻 pop”的旧行为逐字段一致。
+        **(
+            {}
+            if shallow
+            else {
+                "stats_summary": _public_summary(run.get("stats_summary")),
+                "performance_summary": _public_summary(run.get("performance_summary")),
+            }
+        ),
         "created_at": kovaak_run_store._timestamp_to_wire_utc(run.get("created_at")),
         "updated_at": kovaak_run_store._timestamp_to_wire_utc(run.get("updated_at")),
     }
