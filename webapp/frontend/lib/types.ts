@@ -1000,6 +1000,11 @@ export interface CustomProviderModelListRequest {
   api_key: string;
 }
 
+/** 已存档模型发现（Coach 模型菜单，点点 09-08 拍板）：key 不出 sidecar，后端用档内凭证。 */
+export interface StoredCustomProviderModelListRequest {
+  profile_id: number;
+}
+
 export interface ProviderAuthPrompt {
   prompt_id: string;
   type: "text" | "secret" | "select" | "manual_code";

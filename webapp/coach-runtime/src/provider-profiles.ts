@@ -370,6 +370,36 @@ export async function handleProviderProfileRequest(
   if (req.method === "POST" && pathname === "/v1/provider-profiles/custom/models") {
     try {
       const body = await readJsonBody(req);
+      // 已存档模式（点点 09-08 拍板：Coach 模型菜单对 custom 档同样可用）：
+      // key 不出 sidecar，用档内已存凭证就地发现；协议按档 kind 推断。
+      if (isRecord(body) && body.protocol === undefined && body.base_url === undefined) {
+        const profileIdRaw = body.profile_id;
+        if (typeof profileIdRaw !== "number" || !Number.isSafeInteger(profileIdRaw) || profileIdRaw <= 0) {
+          writeJson(res, 400, { detail: "profile_id must be a positive integer" });
+          return true;
+        }
+        const store = loadProviderStore();
+        const entry = findStoredProfile(store, profileIdRaw);
+        if (!entry) {
+          writeJson(res, 404, { detail: "Provider profile 不存在" });
+          return true;
+        }
+        if (entry.kind !== "custom_openai_compatible" && entry.kind !== "custom_anthropic_compatible") {
+          writeJson(res, 400, { detail: "只有自定义 Provider 支持模型发现" });
+          return true;
+        }
+        const apiKey = entry.credential?.type === "api_key" && typeof entry.credential.key === "string"
+          ? entry.credential.key
+          : null;
+        if (!apiKey) {
+          writeJson(res, 400, { detail: "这个 Provider 还没有保存 API Key" });
+          return true;
+        }
+        const protocol = entry.kind === "custom_anthropic_compatible" ? "anthropic-messages" : "openai-completions";
+        const models: CustomProviderModel[] = await fetchCustomProviderModels(protocol, entry.base_url, apiKey);
+        writeJson(res, 200, { models });
+        return true;
+      }
       if (!isRecord(body)
         || (body.protocol !== "openai-completions" && body.protocol !== "anthropic-messages")
         || typeof body.base_url !== "string"

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getProviderCatalog, listProviderProfiles, switchProviderModel } from "@/lib/api";
+import { getProviderCatalog, listProviderProfiles, listStoredCustomProviderModels, switchProviderModel } from "@/lib/api";
 import { IconCheck, IconChevronDown } from "@/ui/icons";
 import type { ProviderCatalogV1, ProviderProfile, ProviderReasoningEffort } from "@/lib/types";
 
@@ -29,10 +29,12 @@ const EFFORT_OPTIONS: Array<{ value: ProviderReasoningEffort | ""; label: string
 ];
 
 /**
- * Composer model picker. Only renders for a builtin Provider whose pinned
- * catalog offers at least two models; switching Provider still lives in
- * Settings. A switch updates the global default profile (persisted by the
- * sidecar) and the button reflects the resolved model name from the response.
+ * Composer model picker. Renders for the active (default) profile: builtin
+ * Providers need a pinned catalog with at least two models; custom Providers
+ * (点点 09-08 拍板) discover their own /models list server-side and render from
+ * one model up. Switching Provider still lives in Settings. A switch updates
+ * the global default profile (persisted by the sidecar) and the button
+ * reflects the resolved model name from the response.
  *
  * digests §11 item 6：菜单不随运行态连坐 disabled——运行中保持可切换，
  * 选择对下一段回复（下一轮 provider 请求）生效。
@@ -48,8 +50,32 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
     try {
       const [profiles, nextCatalog] = await Promise.all([listProviderProfiles(), getProviderCatalog()]);
       // 多档存储下菜单只操作默认档（coach 回合实际解析的档）。
-      setProfile(profiles.profiles.find((entry) => entry.is_default) ?? profiles.profiles[0] ?? null);
-      setCatalog(nextCatalog);
+      const active = profiles.profiles.find((entry) => entry.is_default) ?? profiles.profiles[0] ?? null;
+      setProfile(active);
+      // custom 档不在 builtin 目录里（点点 09-08 拍板：菜单同样可用）：就地
+      // 发现该档自己的 /models 列表，key 不出 sidecar；失败=菜单隐藏，不坏 composer。
+      if (active && (active.kind === "custom_openai_compatible" || active.kind === "custom_anthropic_compatible")) {
+        try {
+          const discovered = await listStoredCustomProviderModels(active.id);
+          setCatalog({
+            providers: [{
+              provider_id: active.provider_id,
+              provider_name: active.name,
+              auth_modes: ["api_key"],
+              base_url: active.base_url,
+              models: discovered.models.map((model) => ({
+                model_id: model.model_id,
+                context_window: model.context_window ?? undefined,
+                max_tokens: model.max_tokens ?? undefined,
+              })),
+            }],
+          });
+        } catch {
+          setCatalog(null);
+        }
+      } else {
+        setCatalog(nextCatalog);
+      }
       return true;
     } catch {
       // The picker is an enhancement; a sidecar hiccup must not break the composer.
@@ -100,7 +126,11 @@ export function CoachModelMenu({ onError }: CoachModelMenuProps) {
   const models = profile
     ? (catalog?.providers.find((entry) => entry.provider_id === profile.provider_id)?.models ?? [])
     : [];
-  if (!profile || profile.kind !== "builtin" || models.length < 2) return null;
+  // builtin 沿用 0827 门槛（目录 ≥2 才有切换意义）；custom 档 ≥1 即渲染——
+  // 单模型也值得显示当前模型名（点点 09-08：不再对 custom 档设多余限制）。
+  if (!profile) return null;
+  const minModels = profile.kind === "builtin" ? 2 : 1;
+  if (models.length < minModels) return null;
 
   const activeModelId = profile.model_id;
   const currentModel = models.find((model) => model.model_id === activeModelId) ?? null;
