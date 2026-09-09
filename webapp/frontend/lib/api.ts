@@ -65,6 +65,7 @@ import type {
   SessionListResponse,
   StorageResponse,
   FrontendEvidenceSegmentsV1,
+  StoredCustomProviderModelListRequest,
   TaskDetailV1,
   TaskListV1,
 } from "./types";
@@ -788,6 +789,28 @@ export async function listCustomProviderModels(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+    },
+    opts,
+  );
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as CustomProviderModelListResponse;
+}
+
+/**
+ * 已存 custom 档的模型发现（Coach 模型菜单，点点 09-08 拍板）：只传
+ * profile_id，key 不出 sidecar，由后端读档内凭证就地拉取该 Provider 的
+ * /models 列表。
+ */
+export async function listStoredCustomProviderModels(
+  profileId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<CustomProviderModelListResponse> {
+  const res = await apiFetchSidecar(
+    "/v1/provider-profiles/custom/models",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id: profileId } satisfies StoredCustomProviderModelListRequest),
     },
     opts,
   );

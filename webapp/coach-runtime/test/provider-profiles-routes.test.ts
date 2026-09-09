@@ -443,6 +443,71 @@ test("POST /v1/provider-profiles/custom/models proxies the custom /models endpoi
   });
 });
 
+test("POST /v1/provider-profiles/custom/models with profile_id discovers via the stored credential (点点 09-08)", async () => {
+  const seen: Array<{ url: string; auth: string | undefined }> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes("/models")) {
+      seen.push({
+        url,
+        auth: (init?.headers as Record<string, string> | undefined)?.Authorization,
+      });
+      return new Response(JSON.stringify({ data: [
+        { id: "relay-model-x", context_window: 131072 },
+      ] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "custom_openai_compatible",
+      name: "自家中转站",
+      base_url: "https://relay.example/v1",
+      model_id: "relay-model-x",
+      api_key: "stored-key",
+    });
+
+    const res = await request(server, "POST", "/v1/provider-profiles/custom/models", JSON.stringify({
+      profile_id: created.id,
+    }));
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, {
+      models: [{ model_id: "relay-model-x", context_window: 131072, max_tokens: null }],
+    });
+    // 档内凭证就地发现：key 不出 sidecar，URL 取档 base_url。
+    assert.equal(seen.length, 1);
+    assert.ok(seen[0]!.url.startsWith("https://relay.example/v1"));
+    assert.equal(seen[0]!.auth, "Bearer stored-key");
+  }).finally(() => {
+    globalThis.fetch = realFetch;
+  });
+});
+
+test("custom/models with profile_id: missing profile returns 404, builtin profile returns 400", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const missing = await request(server, "POST", "/v1/provider-profiles/custom/models", JSON.stringify({
+      profile_id: 9999,
+    }));
+    assert.equal(missing.statusCode, 404);
+
+    await createProfile(server, {
+      kind: "builtin",
+      provider_id: "deepseek",
+      model_id: "deepseek-v4-flash",
+      api_key: "builtin-key",
+    });
+    const listed = await listedProfiles(server);
+    const builtin = await request(server, "POST", "/v1/provider-profiles/custom/models", JSON.stringify({
+      profile_id: listed[0]!.id,
+    }));
+    assert.equal(builtin.statusCode, 400);
+  });
+});
+
 test("POST /v1/provider-profiles with invalid input returns 400", async () => {
   await withServer(async (server) => {
     const res = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
