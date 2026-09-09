@@ -94,15 +94,19 @@ test("quote-only sends are blocked with a visible hint at both gates (拍板①)
   assert.match(idleSend, /只有引用、没有正文时不能发送，请补充你的问题或要求/);
 });
 
-test("quotes are consumed on accepted sends and preserved when the send fails", async () => {
+test("quotes are consumed optimistically on send and restored when the send fails", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   const sendText = chunkBetween(panel, "const sendText = async", "const composeOutgoing");
+  // 乐观 UI（点点 09-08 拍板）：消费/清框随气泡上屏前置到任何 await 之前
   const acceptBlock = chunkBetween(sendText, "optimisticId = appendOptimisticUserMessage(content)", "pushSentHistory(content)");
   assert.match(acceptBlock, /setQuotes\(\[\]\)/);
-  // 失败分支只回填草稿文本，保留引用块等待重试
+  // 失败走整体回滚：气泡撤下 + 引用快照恢复（用户可见结果＝引用仍留在 composer）
   const failureBlock = chunkBetween(sendText, "} catch (error) {", "} finally {");
-  assert.doesNotMatch(failureBlock, /setQuotes\(/);
-  assert.match(failureBlock, /setDraft\(\(current\) => \(current\.trim\(\) \? current : content\)\)/);
+  assert.match(failureBlock, /rollbackOptimisticSend\(optimisticId, content, quotesSnapshot\)/);
+  // 回滚的草稿回填必须条件式——用户已在等待期重新输入则保留新草稿
+  const rollback = chunkBetween(panel, "const rollbackOptimisticSend =", "const sendText = async");
+  assert.match(rollback, /setDraft\(\(current\) => \(current\.trim\(\) \? current : content\)\)/);
+  assert.match(rollback, /setQuotes\(\(current\) => \(current\.length \? current : quotesSnapshot\)\)/);
   // steer 成功分支同步消费
   const steerSuccess = chunkBetween(panel, "await steerCoachAgentRun(active.run_ref, content)", "appendOptimisticUserMessage(content)");
   assert.match(steerSuccess, /setQuotes\(\[\]\)/);

@@ -829,25 +829,54 @@ export function writeLastCoachSessionId(storage: Storage | null | undefined, ses
  * 分析类步骤的预估耗时：本机历史已完成分析的实际执行时长中位数
  * （finished_at - started_at；旧会话无 started_at 时退回 created_at），
  * 向上取整到 5 秒档，无样本或全是排队失真样本时返回 null（不编造数字）。
+ *
+ * 点点 09-08 拍板修正：分析耗时随 analysis_type 差一个量级（点击类 ~12s、
+ * 跟枪类 ~49s、甩枪类 ~133s），全局中位数对长尾类型严重失真——
+ * 传入 currentAnalysisType 时优先取同类型样本的中位数（≥3 条才分桶，
+ * 不足回退全局）。样本另有 14 天新鲜度门槛：管线切换/长期不用后，
+ * 旧样本不再支撑预估，宁可显示空也不显示误导数字。
  */
+const ANALYSIS_ETA_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const ANALYSIS_ETA_TYPE_BUCKET_MIN = 3;
+
 export function computeAnalysisEtaSeconds(
-  sessions: ReadonlyArray<Pick<SessionListItem, "status" | "created_at" | "started_at" | "finished_at">>,
+  sessions: ReadonlyArray<
+    Pick<SessionListItem, "status" | "created_at" | "started_at" | "finished_at" | "analysis_type">
+  >,
+  opts: { currentAnalysisType?: string | null } = {},
 ): number | null {
-  const durations = sessions
-    .filter((item) => item.status === "done" && item.finished_at)
-    .map((item) => {
-      const startAt = item.started_at ?? item.created_at;
-      if (!startAt) return Number.NaN;
-      return (Date.parse(item.finished_at as string) - Date.parse(startAt)) / 1000;
-    })
+  const minFinishedMs = Date.now() - ANALYSIS_ETA_MAX_AGE_MS;
+  const durations: Array<{ seconds: number; type: string | null }> = [];
+  for (const item of sessions) {
+    if (item.status !== "done" || !item.finished_at) continue;
+    const startAt = item.started_at ?? item.created_at;
+    if (!startAt) continue;
+    const finishedMs = Date.parse(item.finished_at);
+    if (!Number.isFinite(finishedMs) || finishedMs < minFinishedMs) continue;
+    const seconds = (finishedMs - Date.parse(startAt)) / 1000;
     // 排队时间失真样本（无 started_at 的旧会话跨重启排队）与异常值过滤：
     // 真实分析时长远小于 1 小时。
-    .filter((seconds) => Number.isFinite(seconds) && seconds > 0 && seconds <= 3600);
+    if (Number.isFinite(seconds) && seconds > 0 && seconds <= 3600) {
+      durations.push({ seconds, type: item.analysis_type ?? null });
+    }
+  }
   if (durations.length === 0) return null;
-  durations.sort((a, b) => a - b);
-  const mid = Math.floor(durations.length / 2);
-  const median = durations.length % 2 ? durations[mid] : (durations[mid - 1] + durations[mid]) / 2;
-  return Math.max(5, Math.ceil(median / 5) * 5);
+
+  const medianOf = (list: number[]): number => {
+    const sorted = [...list].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  };
+
+  // 同类型样本足够时按类型分桶（甩枪局不该用点击局的中位数预估）。
+  const currentType = opts.currentAnalysisType ?? null;
+  if (currentType) {
+    const sameType = durations.filter((entry) => entry.type === currentType);
+    if (sameType.length >= ANALYSIS_ETA_TYPE_BUCKET_MIN) {
+      return Math.max(5, Math.ceil(medianOf(sameType.map((entry) => entry.seconds)) / 5) * 5);
+    }
+  }
+  return Math.max(5, Math.ceil(medianOf(durations.map((entry) => entry.seconds)) / 5) * 5);
 }
 
 export interface HistorySections {
