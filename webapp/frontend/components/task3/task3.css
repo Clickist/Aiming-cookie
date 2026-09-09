@@ -954,7 +954,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task3-skip-link,
+  /* .task3-skip-link 不得进入下方名单：transform: none 会抹掉它的
+     translateY(-160%) 藏匿位移，链接将常驻遮住左上角 logo（0908 内测报障根因）。 */
   .task3-onboarding-step,
   .task3-onboarding-step[data-exiting],
   .task3-onboarding-dropdown-menu {

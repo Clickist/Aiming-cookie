@@ -137,6 +137,14 @@ test("onboarding step and listbox entrances use short transform-and-opacity moti
   assert.match(value, /@keyframes task3-onboarding-dropdown-enter[\s\S]*scale\(0\.97\)/);
 });
 
+test("skip link keeps its hiding transform under prefers-reduced-motion", async () => {
+  const value = await source("components/task3/task3.css");
+  const reduced = value.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/);
+  assert.ok(reduced, "reduced-motion override block exists");
+  const rules = reduced[0].replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(rules, /task3-skip-link/);
+});
+
 test("session selection updates the Coach deep link", async () => {
   const value = await source("components/task3/AppShell.tsx");
   assert.match(value, /const coachWorkspaceRoute = pathname === "\/" \|\| pathname === "\/s" \|\| pathname === "\/s\/"/);
