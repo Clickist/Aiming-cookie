@@ -4,7 +4,7 @@
 
 ## 1. 架构结论
 
-Aiming Cookie 的目标形态是 **Desktop-first local product**：分析、History、Coach 关系、长期 profile 和主要数据留在用户机器。产品不建立账号、登录、session/JWT、entitlement、用户鉴权服务器、云端 LLM 代理或账号型同步。
+Aiming Cookie 的目标形态是 **Desktop-first local product**：分析、History、Coach 关系、长期 profile 和主要数据留在用户机器。产品不建立云端 LLM 代理或账号型同步。
 
 ```text
 Desktop Client (Next.js UI in Tauri)
@@ -16,7 +16,7 @@ Desktop Client (Next.js UI in Tauri)
   └─ Local canonical data and managed artifacts
              │
              ├── User-selected LLM Provider or local model
-             └── Online Surfaces without user identity
+             └── Online Surfaces
                  ├─ landing / documentation
                  ├─ release distribution
                  └─ optional versioned equipment catalog
@@ -32,7 +32,7 @@ Desktop Client (Next.js UI in Tauri)
 | **Local Analysis Runtime** | Capture Coordinator、job、worker、KovaaK Run finalization、输入时间对齐、managed workspace、本地 History、分析合同 | 产品账号、Provider 推理、通用 Agent 行为 |
 | **Coach Agent Runtime** | 本地长期 Coach 关系、Agent run/event、与本地 profile 能力对齐的产品命令编排、上下文衔接 | 重新定义确定性诊断、绕过本地 ownership/capability、直接拥有 `KovaaKRun` 或分析文件 |
 | **Client Surfaces** | Desktop/Web UI、onboarding、交互状态、Provider 认证状态呈现、native bridge | 数据真相、业务规则、密钥持久化 |
-| **Online Distribution Surfaces** | 无用户身份的 landing、文档、release 分发和可选外设目录 | 用户账号、credential、Coach、History、训练档案或 LLM 请求代理 |
+| **Online Distribution Surfaces** | landing、文档、release 分发和可选外设目录 | Coach、History、训练档案或 LLM 请求代理 |
 
 依赖方向应面向领域合同：UI 和 runtime 适配 Domain Core；Provider 与在线分发表面通过明确边界接入，不让领域逻辑依赖 FastAPI、Tauri、具体 LLM provider 或远端身份。
 
@@ -322,7 +322,7 @@ Guidance 层只做确定性的产品编排（引导用户到正确的 UI 控件�
 
 ### 5.2 Provider、model 与认证
 
-Coach 是否可用取决于当前本地 profile 是否选择并连接了可工作的 LLM Provider/model。Provider 可以无需认证，也可以要求 API key、OAuth、device-code 或其它 Pi 支持的认证方式；认证只发生在用户与模型服务之间，不创建 Aiming Cookie 账号或产品 session。
+Coach 是否可用取决于当前本地 profile 是否选择并连接了可工作的 LLM Provider/model。Provider 可以无需认证，也可以要求 API key、OAuth、device-code 或其它 Pi 支持的认证方式；认证只发生在用户与模型服务之间。
 
 稳定边界：
 
@@ -340,7 +340,6 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 
 ## 6. 本地归属与安全
 
-- Aiming Cookie 不提供产品账号、注册、登录、session/JWT、entitlement 或用户鉴权服务器；
 - Desktop 本地数据默认属于当前 OS 用户/本地 profile；内部 `owner/profile` 字段表达本地数据隔离和稳定引用，不代表云端用户身份；
 - Windows Raw Input 默认关闭，首次启用必须有明确 opt-in 和采集范围说明；
 - Raw Input 只允许 KovaaK process gate 内的相对鼠标输入；不得采集键盘、桌面绝对坐标或其它应用的后台输入；
