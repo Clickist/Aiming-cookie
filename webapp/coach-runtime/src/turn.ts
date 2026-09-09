@@ -17,6 +17,7 @@ import {
   type CoachRuntimeToolEvent,
   type CoachRuntimeUsage,
 } from "./contracts.ts";
+import { skillsExecutionEnv } from "./skills-env.ts";
 import { createProductCommandTool } from "./product-command-tools.ts";
 import { resolveSystemPrompt } from "./load-system-prompt.ts";
 import {
@@ -563,46 +564,6 @@ function coachSkillsDir(): string {
  * normalize file-read inputs before delegating. Only the loadSkills call uses
  * this wrapper; the harness receives the original env.
  */
-function skillsExecutionEnv(base: Record<string, unknown>): Record<string, unknown> {
-  const forwardSlash = (value: string) => value.replace(/\\/g, "/");
-  const slashPath = (value: unknown) => (typeof value === "string" ? forwardSlash(value) : value);
-  const normalizeResultPath = (result: unknown): unknown => {
-    if (result && typeof result === "object" && (result as { ok?: boolean }).ok === true) {
-      const value = (result as { value?: unknown }).value;
-      if (Array.isArray(value)) {
-        return {
-          ...(result as object),
-          value: value.map((entry) =>
-            entry && typeof entry === "object" && typeof (entry as { path?: unknown }).path === "string"
-              ? { ...entry, path: forwardSlash((entry as { path: string }).path) }
-              : entry,
-          ),
-        };
-      }
-      if (value && typeof value === "object") {
-        const path = (value as { path?: unknown }).path;
-        if (typeof path === "string") {
-          return { ...(result as object), value: { ...(value as object), path: forwardSlash(path) } };
-        }
-      }
-    }
-    return result;
-  };
-  const call = (name: string, args: unknown[]): Promise<unknown> =>
-    (base[name] as (...args: unknown[]) => Promise<unknown>)(...args);
-  return {
-    cwd: forwardSlash(String(base.cwd ?? "")),
-    fileInfo: async (path: unknown, signal?: unknown) =>
-      normalizeResultPath(await call("fileInfo", [slashPath(path), signal])),
-    listDir: async (path: unknown, signal?: unknown) =>
-      normalizeResultPath(await call("listDir", [slashPath(path), signal])),
-    canonicalPath: async (path: unknown, signal?: unknown) =>
-      normalizeResultPath(await call("canonicalPath", [slashPath(path), signal])),
-    readTextFile: (path: unknown, signal?: unknown) => call("readTextFile", [slashPath(path), signal]),
-    readTextLines: (path: unknown, options?: unknown) => call("readTextLines", [slashPath(path), options]),
-    exists: (path: unknown, signal?: unknown) => call("exists", [slashPath(path), signal]),
-  };
-}
 
 // ── Text helpers ─────────────────────────────────────────────────────────
 
@@ -861,7 +822,7 @@ export async function runCoachTurn(
     // Create execution environment with cwd pointing to app-data
     const env = new NodeExecutionEnv({ cwd: getDataRoot() });
 
-    // Load Coach skills (peripheral reference, KovaaK data reference, teaching).
+    // Load the bundled Coach skills (all skills under prompts/skills; see skills-env.ts).
     const skills = (await loadSkills(skillsExecutionEnv(env as Record<string, unknown>), coachSkillsDir())).skills;
 
     // Use the persistent Coach thread session when the caller provides one

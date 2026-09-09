@@ -11,6 +11,11 @@ $coach = Join-Path $runtimeRoot "coach-sidecar.exe"
 foreach ($path in @($backend, $coach, (Join-Path $runtimeRoot "knowledge"), (Join-Path $runtimeRoot "coach-system.md"))) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Packaged runtime resource is missing: $path" }
 }
+$skillsRoot = Join-Path $runtimeRoot "skills"
+if (-not (Test-Path -LiteralPath $skillsRoot)) { throw "Packaged runtime resource is missing: $skillsRoot" }
+$expectedSkills = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot "webapp\coach-runtime\prompts\skills") -Recurse -Filter SKILL.md).Count
+$packagedSkills = (Get-ChildItem -LiteralPath $skillsRoot -Recurse -Filter SKILL.md).Count
+if ($packagedSkills -ne $expectedSkills) { throw "Packaged skills mismatch: expected $expectedSkills SKILL.md files, found $packagedSkills" }
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ("aiming-cookie-packaged-smoke-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $root | Out-Null
