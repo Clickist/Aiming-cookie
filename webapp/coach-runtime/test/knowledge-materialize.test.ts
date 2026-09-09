@@ -94,13 +94,13 @@ test("startSidecarServer materializes the knowledge directory at startup", async
   }
 });
 
-test("the v9 registry materializes all 37 entries", () => {
+test("the v10 registry materializes all 45 entries", () => {
   materializeKnowledgeDir();
   const index = JSON.parse(readFileSync(join(knowledgeDir, "index.json"), "utf-8")) as {
     registry_version: string;
     entries: Array<{ entry_file: string }>;
   };
-  assert.equal(index.registry_version, "2026-08-20.v9");
-  assert.equal(index.entries.length, 37);
-  assert.equal(readdirSync(join(knowledgeDir, "entries")).length, 37);
+  assert.equal(index.registry_version, "2026-09-09.v10");
+  assert.equal(index.entries.length, 45);
+  assert.equal(readdirSync(join(knowledgeDir, "entries")).length, 45);
 });

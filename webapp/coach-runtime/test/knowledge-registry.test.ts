@@ -377,8 +377,8 @@ test("v8 adds the x76 wiki community batch", () => {
   }
 });
 
-test("v9 corrects the reversed cm/360 direction wording as the default registry", () => {
-  const registry = loadKnowledgeRegistry();
+test("v9 corrects the reversed cm/360 direction wording", () => {
+  const registry = loadKnowledgeRegistry("2026-08-20.v9");
   assert.equal(registry.registry_version, "2026-08-20.v9");
   assert.equal(registry.entries.length, 37);
 
@@ -412,4 +412,74 @@ test("v9 corrects the reversed cm/360 direction wording as the default registry"
 
   // v8 stays loadable as history after v9 is packaged.
   assert.equal(loadKnowledgeRegistry("2026-08-16.v8").registry_version, "2026-08-16.v8");
+});
+
+test("v10 adds coach capability entries as the default registry", () => {
+  const registry = loadKnowledgeRegistry();
+  assert.equal(registry.registry_version, "2026-09-09.v10");
+  assert.equal(registry.entries.length, 45);
+  assert.equal(registry.sources!.length, 75);
+
+  const newIds = [
+    "ergonomics.desk-monitor-selfcheck",
+    "ergonomics.compensatory-strain-and-hand-pain",
+    "ergonomics.rehab-to-specific-ramp",
+    "community.arm-first-sensitivity-fitting",
+    "community.joint-role-division-and-isolation",
+    "practice.subcategory-daily-rotation",
+    "practice.benchmark-diagnose-then-isolate",
+    "practice.smoothness-sweep",
+  ];
+  for (const id of newIds) {
+    const entry = registry.entries.find((item) => item.entry_id === id);
+    if (!entry || entry.status !== "active") throw new Error(`missing v10 entry ${id}`);
+    assert.deepEqual(entry.supported_uses, [
+      "explanation_only", "diagnosis_support", "candidate_experiment",
+    ]);
+    for (const field of ["cue", "dose_guardrail", "matched_retest", "stop_adjust_rule"] as const) {
+      const value = (entry as Record<string, unknown>)[field];
+      if (value === undefined || value === "not_applicable") {
+        throw new Error(`v10 entry ${id} lacks ${field}`);
+      }
+    }
+    assert.ok(!("scenario_prescription" in entry), id);
+  }
+
+  // Body entries stay advice-layer: sections never exceed community_practice,
+  // and the stop rule leads with the medical red line.
+  for (const id of newIds.slice(0, 3)) {
+    const entry = registry.entries.find((item) => item.entry_id === id)!;
+    const sections = [
+      entry.definition, entry.scope, entry.expected_direction, ...entry.mechanisms,
+      ...(entry.cue && entry.cue !== "not_applicable" ? [entry.cue] : []),
+      ...(entry.dose_guardrail && entry.dose_guardrail !== "not_applicable" ? entry.dose_guardrail : []),
+      ...(entry.stop_adjust_rule && entry.stop_adjust_rule !== "not_applicable" ? entry.stop_adjust_rule : []),
+    ];
+    for (const section of sections) {
+      assert.ok(
+        section.claim_level === "community_practice" || section.claim_level === "experimental",
+        `${id}: ${section.section_ref}`,
+      );
+    }
+    const stopText = entry.stop_adjust_rule && entry.stop_adjust_rule !== "not_applicable"
+      ? entry.stop_adjust_rule.map((section) => section.text).join(" ")
+      : "";
+    assert.match(stopText, /numbness/);
+    assert.match(stopText, /not medical advice/);
+  }
+
+  // tension-management keeps its cue-not-measurement boundary at @5.
+  const tension = registry.entries.find(
+    (entry) => entry.entry_id === "hypothesis.tension-management",
+  );
+  if (!tension) throw new Error("missing tension entry");
+  assert.equal(tension.entry_version, 5);
+  assert.ok(tension.mechanisms.some((section) =>
+    section.section_ref.endsWith("mechanism.subjective-scale")));
+  assert.ok(tension.mechanisms.some((section) =>
+    section.section_ref.endsWith("mechanism.two-force-model")));
+  assert.match(tension.definition.text, /not a measurement/);
+
+  // v9 stays loadable as history after v10 is packaged.
+  assert.equal(loadKnowledgeRegistry("2026-08-20.v9").registry_version, "2026-08-20.v9");
 });
