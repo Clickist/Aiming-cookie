@@ -324,7 +324,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-08-20.v9"
+    assert result["registry_version"] == "2026-09-09.v10"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -950,7 +950,7 @@ def test_v8_adds_x76_wiki_knowledge_with_schema_and_validator_agreement():
     assert errors == [], [error.message for error in errors[:5]]
     loaded = registry.load_registry(registry_version="2026-08-16.v8")
     assert loaded == registry.validate_registry(packaged)
-    assert registry.load_registry()["registry_version"] == "2026-08-20.v9"
+    assert registry.load_registry()["registry_version"] == "2026-09-09.v10"
     assert registry.MAX_RESULTS == 8
     assert len(loaded["entries"]) == 37
 
@@ -1074,7 +1074,7 @@ def test_v8_remains_backward_compatible_with_v7():
 
 
 def test_v9_fixes_the_reversed_cm360_direction_wording():
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-08-20.v9")
     assert loaded["registry_version"] == "2026-08-20.v9"
     assert len(loaded["entries"]) == 37
 
@@ -1108,3 +1108,104 @@ def test_v9_remains_backward_compatible_with_v8():
     previous = registry.load_registry(registry_version="2026-08-16.v8")
     assert previous["registry_version"] == "2026-08-16.v8"
     assert len(previous["entries"]) == 37
+
+
+_V10_NEW_ENTRY_IDS = {
+    "ergonomics.desk-monitor-selfcheck",
+    "ergonomics.compensatory-strain-and-hand-pain",
+    "ergonomics.rehab-to-specific-ramp",
+    "community.arm-first-sensitivity-fitting",
+    "community.joint-role-division-and-isolation",
+    "practice.subcategory-daily-rotation",
+    "practice.benchmark-diagnose-then-isolate",
+    "practice.smoothness-sweep",
+}
+
+
+def test_v10_adds_coach_capability_entries_as_the_default_registry():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v10.json").read_text(encoding="utf-8"))
+
+    Draft202012Validator.check_schema(schema)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(packaged),
+        key=lambda error: list(error.path),
+    )
+    assert errors == [], [error.message for error in errors[:5]]
+    loaded = registry.load_registry()
+    assert loaded == registry.validate_registry(packaged)
+    assert loaded["registry_version"] == "2026-09-09.v10"
+    assert len(loaded["entries"]) == 45
+    assert len(loaded["sources"]) == 75
+
+    entries = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    assert _V10_NEW_ENTRY_IDS <= set(entries)
+    for entry_id in _V10_NEW_ENTRY_IDS:
+        entry = entries[entry_id]
+        assert entry["supported_uses"] == [
+            "explanation_only", "diagnosis_support", "candidate_experiment",
+        ]
+        for name in ("cue", "dose_guardrail", "matched_retest", "stop_adjust_rule"):
+            assert name in entry, (entry_id, name)
+        for name in ("near_transfer_retest", "scenario_prescription"):
+            assert name not in entry, (entry_id, name)
+
+    # Body-related content stays an experimental candidate hypothesis: every
+    # section is community_practice at most, and no entry claims AC data can
+    # observe desk setup, posture, compensation, or recovery progress.
+    body_ids = {
+        "ergonomics.desk-monitor-selfcheck",
+        "ergonomics.compensatory-strain-and-hand-pain",
+        "ergonomics.rehab-to-specific-ramp",
+    }
+    for entry_id in body_ids:
+        entry = entries[entry_id]
+        section_values = [entry["definition"], entry["scope"], entry["expected_direction"]]
+        section_values.extend(entry["mechanisms"])
+        section_values.extend([entry["cue"]])
+        section_values.extend(entry["dose_guardrail"])
+        section_values.extend(entry["stop_adjust_rule"])
+        assert all(
+            section_value["claim_level"] in {"community_practice", "experimental"}
+            for section_value in section_values
+        ), entry_id
+
+    # The medical red line is present in every body entry's stop rule and the
+    # entries state they relay a coach's process rather than medical advice.
+    for entry_id in body_ids:
+        stop_text = " ".join(
+            section["text"] for section in entries[entry_id]["stop_adjust_rule"]
+        )
+        assert "numbness" in stop_text and ("doctor" in stop_text or "medical" in stop_text)
+        assert "not medical advice" in stop_text
+
+    # tension-management keeps its boundary while folding in the reinforce pack.
+    tension = entries["hypothesis.tension-management"]
+    assert tension["entry_version"] == 5
+    new_mechanism_refs = {
+        section["section_ref"] for section in tension["mechanisms"]
+    }
+    assert {
+        "hypothesis.tension-management.mechanism.subjective-scale",
+        "hypothesis.tension-management.mechanism.two-force-model",
+        "hypothesis.tension-management.mechanism.tension-creep",
+        "hypothesis.tension-management.mechanism.rigidity-elastic-cycle",
+    } <= new_mechanism_refs
+    assert "matched-retest" in tension["stop_adjust_rule"][0]["text"]
+    assert "near-transfer" not in tension["stop_adjust_rule"][0]["text"]
+
+
+def test_v10_remains_backward_compatible_with_v9():
+    previous = registry.load_registry(registry_version="2026-08-20.v9")
+    assert previous["registry_version"] == "2026-08-20.v9"
+    assert len(previous["entries"]) == 37
+
+    current = registry.load_registry()
+    previous_by_id = {
+        entry["entry_id"]: entry for entry in previous["entries"]
+        if entry["entry_id"] != "hypothesis.tension-management"
+    }
+    current_by_id = {entry["entry_id"]: entry for entry in current["entries"]}
+    for entry_id, entry in previous_by_id.items():
+        assert current_by_id[entry_id] == entry, entry_id

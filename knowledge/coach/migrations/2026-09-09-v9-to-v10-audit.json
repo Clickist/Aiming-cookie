@@ -1,0 +1,130 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-08-20.v9",
+  "target_registry_version": "2026-09-09.v10",
+  "generated_at": "2026-09-09",
+  "migration_kind": "coach_capability_extension",
+  "summary": "Capability extension sourced from the 2026-09-09 Bilibili coaching corpus (kb-candidates 01/02/03/10/11/12/13/14/15). v10 adds eight active entries: three advice-layer ergonomics entries (desk-monitor self-check, compensatory strain behind hand pain, post-injury rehab-to-specific ramp), two community technique entries (arm-first sensitivity fitting, joint-role division and isolation), and three training-organization entries (subcategory daily rotation, benchmark diagnose-then-isolate, smoothness sweep). hypothesis.tension-management is upgraded from @4 to @5 by folding in the task-graded subjective tension scale, the two-force model, tension creep, and the rigidity-elasticity cycle while keeping its existing boundary (a cue and candidate experiment, never a measurement) and its stop rule unchanged. Twenty-seven coach_first_party sources are added for the corpus; every section claim stays at or below its source ceiling (community_practice). All eight new entries carry the candidate_experiment capability prefix and therefore a cue, dose guardrail, matched retest, and stop rule; the three ergonomics entries and every training entry's stop rule lead with the medical red line (persistent pain, numbness, or weakness stops training and is referred to a doctor or rehabilitation professional; the entries relay a coach's process and are not medical advice). Body-related content stays at the experimental candidate-hypothesis ceiling per ARCHITECTURE 4.5: no entry claims that desk setup, posture, compensation, or recovery progress is observable from Aiming Cookie input or outcome data. The schema (coach_knowledge_registry.v3), the signal_aliases map, the capability prefix ladder, all 37 v9 entry ids other than the tension upgrade, and every v9 entry_version are unchanged, and v9 remains loadable as history.",
+  "capability_discipline": {
+    "body_content_ceiling": "experimental candidate hypothesis; no measured or deterministic body cause is generated",
+    "new_entry_supported_uses": [
+      "explanation_only",
+      "diagnosis_support",
+      "candidate_experiment"
+    ],
+    "medical_red_line": "Persistent pain, numbness, or weakness stops training immediately and is referred to a doctor or rehabilitation professional; ergonomics entries state they are process relays, not medical advice or treatment.",
+    "sensitivity_rule_compatibility": "community.arm-first-sensitivity-fitting.scope restates that only the current scenario's own run data supports an in-product sensitivity value, keeping coach-system.md L80 intact."
+  },
+  "added_entries": [
+    {
+      "entry_ref": "knowledge:ergonomics.desk-monitor-selfcheck@1",
+      "source_candidates": "kb-candidates 01",
+      "note": "Advice-layer desk/chair/monitor self-check (10-15 degree armpit angle, monitor straight ahead at eye level, forearm-pad pivot with floating wrist); trigger is user report only, never data inference."
+    },
+    {
+      "entry_ref": "knowledge:ergonomics.compensatory-strain-and-hand-pain@1",
+      "source_candidates": "kb-candidates 02",
+      "note": "Hand pain as a compensation signal; tuning sensitivity does not remove the transferred burden; self-check three questions; medical red line."
+    },
+    {
+      "entry_ref": "knowledge:ergonomics.rehab-to-specific-ramp@1",
+      "source_candidates": "kb-candidates 03",
+      "note": "Post-injury descale relay (release, activation, basic motions, 0.5x specific ramp) with the medical red line in front; stated as a process relay, not medical advice."
+    },
+    {
+      "entry_ref": "knowledge:community.arm-first-sensitivity-fitting@1",
+      "source_candidates": "kb-candidates 12",
+      "note": "Fit the arm range first, then the wrist/fingertip value inside it; low-sensitivity burden transfer and micro-adjustment suppression as the counter-claim."
+    },
+    {
+      "entry_ref": "knowledge:community.joint-role-division-and-isolation@1",
+      "source_candidates": "kb-candidates 11",
+      "note": "Shoulder/arm/wrist/finger division by movement scale plus isolation via sensitivity range, scenario choice, and physical constraints; combat ratio kept as one coach's estimate."
+    },
+    {
+      "entry_ref": "knowledge:practice.subcategory-daily-rotation@1",
+      "source_candidates": "kb-candidates 13",
+      "note": "Daily subcategory rotation with a same-subcategory scenario ban across weeks; structure example, not a dose prescription."
+    },
+    {
+      "entry_ref": "knowledge:practice.benchmark-diagnose-then-isolate@1",
+      "source_candidates": "kb-candidates 14",
+      "note": "Benchmark diagnosis, one-skill isolation with feedback, benchmark re-run; deathmatch demoted to warm-up; scheduling schools kept side by side."
+    },
+    {
+      "entry_ref": "knowledge:practice.smoothness-sweep@1",
+      "source_candidates": "kb-candidates 15",
+      "note": "Multi-difficulty multi-sensitivity sweep to expose weak form zones with first-run-effect discount, plus the 5-10 minute weakest-category warm-up; author's doubled specialization volume explicitly not copied."
+    }
+  ],
+  "upgraded_entries": [
+    {
+      "entry_ref": "knowledge:hypothesis.tension-management@4 -> knowledge:hypothesis.tension-management@5",
+      "action": "fold_in_reinforce_pack",
+      "source_candidates": "kb-candidates 10",
+      "added_sections": [
+        "hypothesis.tension-management.mechanism.subjective-scale",
+        "hypothesis.tension-management.mechanism.two-force-model",
+        "hypothesis.tension-management.mechanism.tension-creep",
+        "hypothesis.tension-management.mechanism.rigidity-elastic-cycle",
+        "hypothesis.tension-management.dose.internalization"
+      ],
+      "added_limitations": [
+        "Scale values, graded ranges, and the two-force model are single-coach verbal heuristics without physiological measurement."
+      ],
+      "added_sources": [
+        "community.xen2.bilibili.tension-advanced",
+        "community.xen2.bilibili.apex-force-posture",
+        "community.xen2.bilibili.grip-tension",
+        "community.mattyow.bilibili.scucchi-smoothness",
+        "community.keli.qianlima.extreme-postures"
+      ],
+      "unchanged_invariants": "definition, scope, expected_direction, original mechanisms, cue, original dose guardrail, matched_retest, and stop_adjust_rule are byte-identical to @4; the entry stays 'a cue and candidate experiment, not a measurement'."
+    }
+  ],
+  "added_sources": [
+    "community.keli.bilibili.desk-height-logic",
+    "community.keli.bilibili.wrist-elbow-posture",
+    "community.keli.bilibili.screen-placement-qa",
+    "community.keli.bilibili.kang-hand-injury",
+    "community.keli.bilibili.sens-body-parts",
+    "community.keli.bilibili.rehab-specific-transfer",
+    "community.keli.bilibili.sens-selection",
+    "community.keli.bilibili.tracking-static-warmup",
+    "community.keli.qianlima.rushia-analysis",
+    "community.keli.qianlima.xiaoyu-analysis",
+    "community.keli.qianlima.babyblue-analysis",
+    "community.keli.qianlima.qingxun-2",
+    "community.keli.qianlima.qingxun-3",
+    "community.keli.qianlima.extreme-postures",
+    "community.xen2.bilibili.form-isolation",
+    "community.xen2.bilibili.arm-aim-training",
+    "community.xen2.bilibili.deathmatch-limits",
+    "community.xen2.bilibili.pro-aim-strategy",
+    "community.xen2.bilibili.rank-up-method",
+    "community.xen2.bilibili.smooth-tracking-master",
+    "community.xen2.bilibili.control-tracking",
+    "community.xen2.bilibili.1000h-retrospective",
+    "community.xen2.bilibili.tension-advanced",
+    "community.xen2.bilibili.apex-force-posture",
+    "community.xen2.bilibili.grip-tension",
+    "community.mattyow.bilibili.break-plateau",
+    "community.mattyow.bilibili.scucchi-smoothness"
+  ],
+  "audited_unchanged": [
+    {
+      "scope": "all 36 non-tension v9 entries",
+      "note": "entry_id, entry_version, and every section are carried over unchanged from v9; signal_aliases and the existing 48 sources are untouched."
+    },
+    {
+      "scope": "schema and loader contract",
+      "note": "schema_version stays coach_knowledge_registry.v3; both the Python and TypeScript loaders register 2026-09-09.v10 as the packaged default and keep every historical version loadable by exact version."
+    }
+  ],
+  "approval": {
+    "approved_by": "点点",
+    "approved_at": "2026-09-10",
+    "scope": "8 条新增条目 + hypothesis.tension-management 升 @5，追认 09-09 生成的整组 v10 变更",
+    "note": "仓库内无 09-09 当日的逐条批准记录，本字段为 09-10 事后追认留痕（09-10 工作区审计 P1-2 的闭环动作）"
+  }
+}
