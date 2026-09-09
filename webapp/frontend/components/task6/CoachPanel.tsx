@@ -842,10 +842,18 @@ export function CoachPanel({
 
   // 分析类步骤的预估耗时：本机历史已完成分析的实际执行时长中位数
   // （纯前端启发式，见 computeAnalysisEtaSeconds；无样本时不显示，不编造数字）。
+  // 点点 09-08：分析耗时随 analysis_type 差一个量级，进行中的分析会话入列后
+  // （3s 轮询）按其类型分桶——发起的头一两秒用全局中位数，随后渐进精确。
   const ANALYSIS_ETA_COMMANDS = new Set(["analysis.create_from_run", "analysis.retry"]);
-  const analysisEtaSeconds = useMemo(
-    () => computeAnalysisEtaSeconds(sessionsSnapshot),
+  const currentAnalysisType = useMemo(
+    () =>
+      sessionsSnapshot.find((item) => item.status === "queued" || item.status === "running")
+        ?.analysis_type ?? null,
     [sessionsSnapshot],
+  );
+  const analysisEtaSeconds = useMemo(
+    () => computeAnalysisEtaSeconds(sessionsSnapshot, { currentAnalysisType }),
+    [sessionsSnapshot, currentAnalysisType],
   );
 
   const refreshCurrentTraining = useCallback(async () => {
@@ -1536,9 +1544,22 @@ export function CoachPanel({
   }, []);
 
   /**
+   * 乐观发送的失败回滚：气泡撤下；草稿/引用按守卫回填——等待期用户已重新
+   * 输入/挂引用则保留新值，不用旧内容覆盖。
+   */
+  const rollbackOptimisticSend = (optimisticId: number, content: string, quotesSnapshot: CoachQuote[]) => {
+    setMessages((current) => current.filter((message) => message.id !== optimisticId));
+    setDraft((current) => (current.trim() ? current : content));
+    setQuotes((current) => (current.length ? current : quotesSnapshot));
+  };
+
+  /**
    * 实际发送，成功受理返回 true。
    * 运行中且非 force 一律转可见队列 chips——正式编排取代批 1 的 notify 止血，
    * 击键绝不凭空消失。force 仅供「打断并转向」等显式编排动作使用。
+   * 乐观 UI（点点 09-08 拍板）：气泡上屏/清框/消费引用全部在任何 await 之前，
+   * 新会话首条的 ensureSession 串行链不再阻塞点击反馈；失败由
+   * rollbackOptimisticSend 整体回滚（引用快照恢复＝失败后引用仍在 composer）。
    */
   const sendText = async (
     contentRaw: string,
@@ -1561,19 +1582,21 @@ export function CoachPanel({
     // 新回合开始：清掉本会话上一回合的归档摘要与思考流残留。
     clearArchivedTurn();
     clearThinkingStream();
-    let optimisticId: number | null = null;
+    // 乐观上屏（点击后的第一个可见反馈，必须在 ensureSession 之前）：
+    // 拼装串已进入消息，引用块此刻消费，失败时由回滚恢复快照。
+    const optimisticId = appendOptimisticUserMessage(content);
+    const quotesSnapshot = quotes;
+    setDraft("");
+    setQuotes([]);
+    stickToBottomRef.current = true;
+    pushSentHistory(content);
     try {
       const effectiveSessionId = sessionId ?? (onEnsureSession ? await onEnsureSession() : null);
       if (sessionId === null && onEnsureSession && effectiveSessionId === null) {
+        rollbackOptimisticSend(optimisticId, content, quotesSnapshot);
         notify("未能创建会话，草稿已保留，请重试。");
         return false;
       }
-      optimisticId = appendOptimisticUserMessage(content);
-      setDraft("");
-      // 受理成功即消费待拼装引用：拼装串已进入消息；失败分支保留引用回 composer。
-      setQuotes([]);
-      stickToBottomRef.current = true;
-      pushSentHistory(content);
       const created = await createCoachAgentRun(
         content,
         effectiveSessionId == null ? {} : { sessionId: effectiveSessionId },
@@ -1583,11 +1606,7 @@ export function CoachPanel({
       window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
       return true;
     } catch (error) {
-      if (optimisticId !== null) {
-        setMessages((current) => current.filter((message) => message.id !== optimisticId));
-      }
-      // 仅当等待期间用户没有重新输入时才回填，避免覆盖新草稿。
-      setDraft((current) => (current.trim() ? current : content));
+      rollbackOptimisticSend(optimisticId, content, quotesSnapshot);
       notify(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
       return false;
     } finally {

@@ -444,7 +444,7 @@ test("Coach tool steps collapse done steps, show analysis ETA, and mark stopped 
   assert.match(activity, /function WorkGroupLine/);
   // ETA 只对分析类命令显示，且样本来自真实执行时长（started_at 优先）。
   assert.match(coach, /ANALYSIS_ETA_COMMANDS = new Set\(\["analysis\.create_from_run", "analysis\.retry"\]\)/);
-  assert.match(coach, /computeAnalysisEtaSeconds\(sessionsSnapshot\)/);
+  assert.match(coach, /computeAnalysisEtaSeconds\(sessionsSnapshot, \{ currentAnalysisType \}\)/);
   assert.match(activity, /task6-tool-eta/);
   // 停止态渲染「回答已停止」收尾行。
   assert.match(coach, /stopped=\{run\.status === "stopped"\}/);
