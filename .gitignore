@@ -63,3 +63,11 @@ output/
 .firecrawl/
 macos-vibrancy-style-pack/
 aiming-theory-compendium*.html
+
+# 本地 agent 工作区与运行日志（09-10 审计补口：PROGRESS 09-06 声称已忽略，实际漏加）
+.zcode/
+*.log
+
+# 本地参考快照与废弃素材（不入库：x76 原站 robots ai-train=no；logo.jfif 为废弃草稿）
+x76-wiki-markdown-*/
+*.jfif
