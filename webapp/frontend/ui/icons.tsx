@@ -87,6 +87,27 @@ export function IconFolder(props: IconProps) {
   return <Icon {...props}><path d="M2.5 4.2h4l1.3 1.6h5.7v7H2.5v-8.6Z" {...stroke} /></Icon>;
 }
 
+export function IconArchive(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect height="2.4" rx="0.6" width="11" x="2.5" y="2.8" {...stroke} />
+      <path d="M3.8 5.2v6.4a1.4 1.4 0 0 0 1.4 1.4h5.6a1.4 1.4 0 0 0 1.4-1.4V5.2" {...stroke} />
+      <path d="M6.4 8.2h3.2" {...stroke} />
+    </Icon>
+  );
+}
+
+export function IconTrash(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 4h11" {...stroke} />
+      <path d="M5.5 4V2.9a.9.9 0 0 1 .9-.9h3.2a.9.9 0 0 1 .9.9V4" {...stroke} />
+      <path d="m4 4 .7 8.6a1.4 1.4 0 0 0 1.4 1.3h3.8a1.4 1.4 0 0 0 1.4-1.3L12 4" {...stroke} />
+      <path d="M6.7 7v3.8M9.3 7v3.8" {...stroke} />
+    </Icon>
+  );
+}
+
 export function IconChart(props: IconProps) {
   return <Icon {...props}><path d="M2.5 2.5v11h11" {...stroke} /><path d="m4.8 9.8 2.4-3 2 1.6 3.1-4" {...stroke} /></Icon>;
 }

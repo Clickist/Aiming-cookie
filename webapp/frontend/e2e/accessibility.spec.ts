@@ -60,7 +60,8 @@ test.describe("Task 7 accessibility", () => {
       const checks = [
         { selector: ".ac-button:not([data-size='compact'])", minimum: 36 },
         { selector: ".ac-button[data-size='compact']", minimum: 32 },
-        { selector: ".task3-toolbar a, .task3-toolbar button", minimum: 36 },
+        // 横跨顶栏已全局拆除（0910 拍板）：三键常浮于全局浮层，仍守 36px 命中区。
+        { selector: ".task3-wincontrols-global button", minimum: 36 },
         { selector: ".ac-icon-button", minimum: 32 },
       ];
       return checks.flatMap(({ selector, minimum }) =>

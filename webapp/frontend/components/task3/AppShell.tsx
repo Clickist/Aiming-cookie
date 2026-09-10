@@ -22,7 +22,8 @@ import {
   writeLastCoachSessionId,
 } from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
-import type { CoachAgentRunV1, ProviderProfileState } from "@/lib/types";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { CoachAgentRunV1, CoachSessionOut, ProviderProfileState } from "@/lib/types";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { CoachPanel } from "@/components/task6/CoachPanel";
 import { CoachVideoPane } from "@/components/task7/CoachVideoPane";
@@ -92,12 +93,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const VIDEO_SPLIT_MIN = 380;
   const VIDEO_SPLIT_KEY = "aiming-cookie.video-split-width";
   const coachViewRef = useRef<HTMLDivElement | null>(null);
-  const [conversationWidth, setConversationWidth] = useState<number | null>(() => {
-    // AppShell 会走 SSR，window 仅在客户端存在；服务端一律回落默认宽。
-    if (typeof window === "undefined") return null;
+  const [conversationWidth, setConversationWidth] = useState<number | null>(null);
+  // 上次拖拽列宽的恢复放在水合之后：初始化器里同步读 localStorage 会让
+  // 客户端首帧比 SSR HTML 多出 --task3-conv-w，触发 hydration mismatch
+  //（0910 点点报）。晚一帧恢复，CSS 默认 clamp 兜底，肉眼不可见。
+  useEffect(() => {
     const stored = Number(window.localStorage.getItem(VIDEO_SPLIT_KEY));
-    return Number.isFinite(stored) && stored >= VIDEO_SPLIT_MIN ? stored : null;
-  });
+    if (Number.isFinite(stored) && stored >= VIDEO_SPLIT_MIN) setConversationWidth(stored);
+  }, []);
   const startSplitDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const view = coachViewRef.current;
@@ -193,6 +196,34 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (timer) clearTimeout(timer);
     };
   }, [coachWorkspaceRoute]);
+
+  // 圆角窗口（0910 拍板，Win10 自绘）：桌面运行时给根元素挂 ac-window-rounded
+  //（task3.css 据此画圆角+自绘阴影）；最大化/还原（含 Win+方向 snap）时切
+  // ac-window-maximized，inset 归零铺满回直角。浏览器运行时不挂类，零影响。
+  useEffect(() => {
+    if (!isDesktopRuntime()) return undefined;
+    const root = document.documentElement;
+    root.classList.add("ac-window-rounded");
+    const win = getCurrentWindow();
+    let disposed = false;
+    const syncMaximized = async () => {
+      try {
+        const maximized = await win.isMaximized();
+        if (!disposed) root.classList.toggle("ac-window-maximized", maximized);
+      } catch {
+        // is-maximized 不可用时保持圆角态，不影响其余功能。
+      }
+    };
+    void syncMaximized();
+    const unlisten = win.onResized(() => {
+      void syncMaximized();
+    });
+    return () => {
+      disposed = true;
+      void unlisten.then((off) => off());
+      root.classList.remove("ac-window-rounded", "ac-window-maximized");
+    };
+  }, []);
 
   // 桌面端启动静默检查更新：延迟到首屏稳定之后再问，检查失败完全静默；
   // 端点与验签公钥配置在 tauri.conf.json 的 plugins.updater。
@@ -292,10 +323,22 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.requestAnimationFrame(() => document.getElementById("main-content")?.focus());
   }, [settingsPresence.present, settingsRoute]);
 
+  // 路线 B（0910）：模型命名在 run 终态后 1~8s 才落库——列表里见到
+  // title_pending 就安排一次延迟补刷（去重，卸载清理），其余场景不空转。
+  const titlePendingTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (titlePendingTimerRef.current !== null) window.clearTimeout(titlePendingTimerRef.current);
+  }, []);
   const reloadCoachSessions = useCallback(async (nextSelectedId?: number | null) => {
     const result = await listCoachSessions();
     const sessions = result.sessions as SessionRailSession[];
     setCoachSessions(sessions);
+    if (sessions.some((session) => (session as CoachSessionOut).title_pending) && titlePendingTimerRef.current === null) {
+      titlePendingTimerRef.current = window.setTimeout(() => {
+        titlePendingTimerRef.current = null;
+        void reloadCoachSessions();
+      }, 5000);
+    }
     setSelectedCoachSessionId((current) => {
       if (nextSelectedId !== undefined && nextSelectedId !== null && sessions.some((session) => Number(session.id) === nextSelectedId)) {
         return nextSelectedId;
@@ -408,7 +451,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     const promise = (async () => {
       try {
         const session = await createCoachSession();
-        await reloadCoachSessions(session.id);
+        // 会话列表整表刷新不阻塞首条发送链（0910 点点报"等了半天没反应"）：
+        // 大会话量下这次 GET 可能数秒，await 会把 run 的创建一直压在后面。
+        // rail 稍后自行追平；这里只负责立刻切路由与消息区。
+        void reloadCoachSessions(session.id).catch(() => {});
         setDraftSession(false);
         router.push(`/s?sessionId=${session.id}`);
         return session.id;
@@ -450,28 +496,23 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   };
 
+  // v6：空对话首页无顶栏（点点拍板），窗口三键独立常浮。
+  const [coachHomeActive, setCoachHomeActive] = useState(false);
+
   if (shellHidden) return <>{children}</>;
 
   return (
     <div className="task3-app">
       <a className="task3-skip-link" href="#main-content">跳到主要内容</a>
-      <header
-        className="task3-toolbar"
-        onMouseDown={(event) => {
-          if (event.button === 0) void startWindowDragging();
-        }}
-      >
-        <span className="task3-logo" aria-label="Aiming Cookie">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="task3-logo-mark" src="/logo-mark.png" alt="" />
-          Aiming&nbsp;Cookie
-        </span>
-        <div className="task3-toolbar-spacer" />
+      {/* 横跨顶栏已全局拆除（0910 拍板）：窗口三键改为全局常浮浮层，
+          覆盖所有路由（Coach/历史/设置）；onboarding 自带一份，不经此处。 */}
+      <div className="task3-wincontrols-global">
         <TauriWindowControls />
-      </header>
+      </div>
       <div
         className="task3-workspace"
         data-coach-workspace={coachWorkspaceRoute || undefined}
+        data-page-workspace={!coachWorkspaceRoute && !settingsRoute || undefined}
         data-settings-route={settingsRoute || undefined}
         data-session-rail={showSessionRail || undefined}
       >
@@ -513,15 +554,42 @@ export function AppShell({ children }: { children: ReactNode }) {
                 } as CSSProperties}
               >
                 {coachWorkspaceRoute ? (
-                  videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} jumpSeq={videoTarget.seq} onClose={closeVideoPane} /> : null
-                ) : null}
-                <div className="task3-coach-conversation">
+                  <>
+                    {/* 共用顶栏（v6）：状态点 + 模型命名的会话标题；固定不动，
+                        视频/对话面板的开合只发生在下方交换区。空对话首页
+                        不渲染（窗口三键由全局浮层承担）。 */}
+                    {coachHomeActive ? null : (
+                      <div
+                        className="task3-coach-topbar"
+                        onMouseDown={(event) => {
+                          if (event.button === 0) void startWindowDragging();
+                        }}
+                      >
+                        <span
+                          className="task3-coach-status-dot"
+                          data-state={capability}
+                          title={capability === "ready" ? "Coach 已就绪" : capability === "loading" ? "正在读取 Coach 状态" : capability === "unavailable" ? "Coach 不可用" : "Coach 待配置"}
+                        />
+                        <span className="task3-coach-topbar-title">
+                          {draftSession
+                            ? "新对话"
+                            : (coachSessions.find((session) => Number(session.id) === selectedCoachSessionId)?.title ?? "新对话")}
+                        </span>
+                        {/* 讨论条 portal 挂载点（v6 四轮）：CoachPanel 经 portal
+                            把"本次讨论"条渲染到这里（标题之后、三键之前）。 */}
+                        <div className="task3-coach-topbar-slot" id="task3-coach-topbar-slot" />
+                      </div>
+                    )}
+                    <div className="task3-coach-stage">
+                      {videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} jumpSeq={videoTarget.seq} onClose={closeVideoPane} /> : null}
+                      <div className="task3-coach-conversation">
                   <CoachPanel
                     capability={capability}
                     draftSession={draftSession}
                     layoutMode="full"
                     onActiveRunChange={handleCoachActiveRunChange}
                     onEnsureSession={ensureCoachSession}
+                    onHomeShellChange={setCoachHomeActive}
                     onOpenVideo={openVideoPane}
                     pathname={pathname}
                     sessionId={selectedCoachSessionId}
@@ -538,6 +606,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                     onPointerDown={startSplitDrag}
                     role="separator"
                   />
+                ) : null}
+                    </div>
+                  </>
                 ) : null}
               </div>
               {!coachWorkspaceRoute && !settingsRoute ? (

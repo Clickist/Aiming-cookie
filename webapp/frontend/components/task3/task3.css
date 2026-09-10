@@ -1,8 +1,42 @@
 @import "../kovaak/kovaak.css";
 @import "../task7/coach-video-pane.css";
 
+/* 圆角窗口（0910 拍板，Win10 自绘；Win11 由本方案统一覆盖，lib.rs 的 DWM
+   调用对透明窗口无害）：窗口透明，.task3-app 四角画圆角，缺口像素透出桌面。
+   0910 深夜复盘：阴影+外扩边距方案废弃——暗色主题下阴影发白、body 滚动条
+   被顶进边距区、fixed 浮层飘出圆角区、部分页面 100vh 未扣边距导致底角被
+   裁掉。无边距后滚动条/浮层/高度全部回到原生行为。最大化（含 snap）时收
+   圆角。桌面运行时由 AppShell 挂 html.ac-window-rounded；浏览器不挂类。 */
+:root {
+  /* 历史遗留脚手架：曾支持"外扩边距"方案，现恒为 0。保留是为让各处
+     calc(100vh - ... - inset*2) 无需回改即可保持正确。 */
+  --task3-window-inset: 0px;
+}
+
+html.ac-window-rounded {
+  background: transparent;
+}
+
+html.ac-window-rounded body {
+  background: transparent;
+}
+
+html.ac-window-rounded:not(.ac-window-maximized) .task3-app {
+  border-radius: var(--radius-lg);
+  /* 用 outline 画描边：border 会在文档高度上 +2px，把 body 顶出一条
+     2px 的外层滚动条（0910 实测）；outline 不占布局且跟随圆角。 */
+  outline: 1px solid var(--outline-variant);
+  outline-offset: -1px;
+  overflow: hidden;
+}
+
+html.ac-window-rounded.ac-window-maximized .task3-app {
+  border-radius: 0;
+  border: 0;
+}
+
 .task3-app {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--task3-window-inset) * 2);
   overflow-x: clip;
   background: var(--background);
   color: var(--on-background);
@@ -26,41 +60,17 @@
   transform: translateY(0);
 }
 
-.task3-toolbar {
-  position: sticky;
-  inset-block-start: 0;
-  z-index: 30;
+/* 窗口三键全局常浮（0910 拍板）：横跨顶栏拆除后，三键脱离路由布局，
+   fixed 浮层覆盖所有路由（Coach/历史/设置）。高度给 44px，让
+   .task3-window-control 的 height:100% 保持与旧顶栏一致的命中区。 */
+.task3-wincontrols-global {
+  position: fixed;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-3);
+  z-index: 60;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  height: 48px;
-  padding: 0 var(--space-3) 0 var(--space-4);
-  border-bottom: 1px solid var(--outline-variant);
-  background: var(--surface);
-  user-select: none;
-}
-
-.task3-logo {
-  color: var(--on-surface);
-  font: 600 var(--text-title)/1 var(--font-display);
-  letter-spacing: 0.01em;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  user-select: none;
-  white-space: nowrap;
-}
-
-.task3-logo-mark {
-  width: 20px;
-  height: 20px;
-  display: block;
-  /* 素材是白色 logo：亮模式下反色成黑色，暗模式保持白色。 */
-  filter: invert(1);
-}
-
-:root[data-theme="dark"] .task3-logo-mark {
-  filter: none;
+  height: 44px;
 }
 
 .task3-toolbar-spacer {
@@ -113,7 +123,7 @@
 .task3-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  min-height: calc(100vh - 48px);
+  min-height: calc(100vh - var(--task3-window-inset) * 2);
 }
 
 .task3-workspace[data-session-rail="true"] {
@@ -121,8 +131,36 @@
 }
 
 .task3-workspace[data-coach-workspace="true"] {
-  height: calc(100vh - 48px);
+  /* v6（0910）：横跨顶栏拆除，工作区底 = 左栏色（一体贯通）；
+     四周 4px 小空隙（点点 0910 二轮拍板），主面板微浮于底色上。 */
+  height: calc(100vh - var(--task3-window-inset) * 2);
+  padding: var(--space-1);
+  gap: var(--space-1);
   overflow: hidden;
+  background: var(--surface-container-low);
+}
+
+/* v6（0910）：常规页路由（历史等，非 coach/非设置）同款面板化——
+   工作区底 = 左栏色一体贯通，四周 4px 小空隙，.task3-page-view 为
+   浮起圆角面板；滚动收进面板内部。 */
+.task3-workspace[data-page-workspace="true"] {
+  height: calc(100vh - var(--task3-window-inset) * 2);
+  grid-template-rows: minmax(0, 1fr);
+  padding: var(--space-1);
+  gap: var(--space-1);
+  overflow: hidden;
+  background: var(--surface-container-low);
+}
+
+/* 工作区带 4px 内距后，左栏改随行轨撑满（同 coach 路由先例）。 */
+.task3-workspace[data-page-workspace="true"] > .task7-session-rail {
+  position: static;
+  height: auto;
+}
+
+.task3-workspace[data-page-workspace="true"] > main {
+  height: 100%;
+  min-height: 0;
 }
 
 .task3-workspace > main {
@@ -143,21 +181,80 @@
 
 .task3-workspace > .task7-session-rail {
   position: sticky;
-  inset-block-start: 48px;
-  height: calc(100vh - 48px);
+  inset-block-start: 0;
+  height: calc(100vh - var(--task3-window-inset) * 2);
+}
+
+/* 横跨顶栏拆除后（0910 拍板），Coach 工作区的左栏改随行轨撑满（无 48px
+   顶栏可让位，同 data-page-workspace 先例）。 */
+.task3-workspace[data-coach-workspace="true"] > .task7-session-rail {
+  position: static;
+  height: auto;
 }
 
 .task3-coach-view {
+  /* v6（0910）：主面板化——贴边满铺 + 四角圆角 + 比工作区浅一档的底色，
+     "浮起感"只来自色差（禁阴影/光效/空隙）。内部分两段：共用顶栏（固定）
+     + 面板交换区（视频/对话滑移）。 */
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  /* 0910 四轮：左缘不做渐变（点点否决），色差边界保留。 */
   /* 对话列宽（视频开启时）：默认窄列（Mac 原版几何——视频面板吃弹性大头），
      左缘把手拖动后由 AppShell 内联覆盖为具体 px。 */
   --task3-conv-w: clamp(380px, 34vw, 520px);
   height: 100%;
   min-height: 0;
   min-width: 0;
-  background: var(--surface-container-low);
+  background: var(--surface-container);
+}
+
+/* 共用顶栏：状态点 + 模型命名的会话标题 + 窗口三键；固定不随面板开闭。 */
+.task3-coach-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 44px;
+  /* 右侧留出常浮三键的宽度，避免标题顶到键下。 */
+  padding: 0 150px 0 var(--space-4);
+  border-block-end: 1px solid var(--outline-variant);
+  user-select: none;
+}
+
+.task3-coach-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--outline);
+}
+
+.task3-coach-status-dot[data-state="ready"] { background: var(--event-kill); }
+.task3-coach-status-dot[data-state="loading"] { background: var(--outline); }
+.task3-coach-status-dot[data-state="waiting"] { background: var(--event-peak); }
+.task3-coach-status-dot[data-state="unavailable"] { background: var(--error); }
+
+.task3-coach-topbar-title {
+  /* 按内容收缩、超长截断，把右侧空间让给讨论 chips（0910 拍板）。 */
+  flex: 0 1 auto;
+  max-width: min(45%, 360px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface);
+  font: 600 var(--text-ui)/1.2 var(--font-ui);
+}
+
+/* 面板交换区：视频/对话面板的开合只发生在这里。 */
+.task3-coach-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 /* 视频面板开关动效（0827 拍板 reveal/cover 模型）：面板绝对定位垫在下层、
@@ -165,7 +262,8 @@
    同步过渡（两侧状态的和恒为 100%），“打开/关闭”＝对话面板整体滑开让出/
    滑回盖住视频面板。 */
 .task3-coach-conversation {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
   display: flex;
   /* 显式 100%：过渡需要两端都是可插值长度；缺省 auto 会让打开方向跳变。 */
@@ -206,7 +304,14 @@
 }
 
 .task3-page-view {
+  /* v6（0910）：主面板化（同 .task3-coach-view 配方）——贴边满铺 + 四角
+     圆角 + 比工作区浅一档的底色，浮起感只来自色差（禁阴影/光效/渐变）；
+     内部滚动由各页自己承担（如 .task4-page）。 */
+  height: 100%;
   min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--surface-container);
   opacity: 1;
   transform: translateX(0);
   transition:
@@ -220,11 +325,20 @@
 }
 
 .task3-route-content[data-settings-page="true"] {
+  /* v6（0910）：设置 overlay 改为面板承托层——底色取工作区底（container-low）
+     并自带 4px 内距露出，面板本体是内部的 .task6-settings-page（圆角 +
+     container 主面）；滚动收进面板内容列，本层只做裁切。clip（而非
+     hidden）：锚点跳转会程序化滚动 overflow:hidden 祖先（面板被整体顶出
+     4px 缝，0910 实测），clip 连程序化滚动一并禁止。 */
   position: fixed;
   z-index: 20;
-  inset: 48px 0 0;
-  overflow: auto;
-  background: var(--background);
+  /* 横跨顶栏拆除（0910 拍板）：overlay 直接满铺，不再给顶栏让 48px。
+     inset 4px + 圆角跟随窗口（0910 四轮）：fixed inset:0 会把圆角窗口的
+     四角缺口涂成实心方块（右上角穿帮）；最大化时随窗口归零回直角。 */
+  inset: var(--space-1);
+  border-radius: var(--radius-lg);
+  overflow: clip;
+  background: var(--surface-container-low);
   opacity: 1;
   transform: translateX(0);
   transition:
@@ -232,9 +346,14 @@
     transform var(--duration-fast) var(--ease-out);
 }
 
+html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
+  inset: 0;
+  border-radius: 0;
+}
+
 .task3-workspace[data-settings-route="true"] {
   display: block;
-  min-height: calc(100vh - 48px);
+  min-height: calc(100vh - var(--task3-window-inset) * 2);
 }
 
 .task3-route-content[data-settings-motion="opening"],
@@ -247,7 +366,7 @@
 .task3-coach-rail {
   position: sticky;
   inset-block-start: 48px;
-  height: calc(100vh - 48px);
+  height: calc(100vh - 48px - var(--task3-window-inset) * 2);
   border-inline-start: 1px solid var(--outline-variant);
   background: var(--surface-container-low);
 }
@@ -365,7 +484,7 @@
 
 .task3-startup {
   display: grid;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--task3-window-inset) * 2);
   place-items: center;
   padding: var(--space-5);
   background: var(--background);
@@ -381,7 +500,7 @@
 .task3-onboarding {
   display: grid;
   align-content: start;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--task3-window-inset) * 2);
   padding: 0 var(--space-5) var(--space-6);
   background: var(--background);
 }
@@ -898,14 +1017,6 @@
 }
 
 @media (max-width: 720px) {
-  .task3-toolbar {
-    padding-inline: var(--space-2);
-  }
-
-  .task3-logo {
-    padding-inline: var(--space-2) var(--space-3);
-  }
-
   .task3-page-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -913,12 +1024,6 @@
 }
 
 @media (max-width: 560px) {
-  .task3-logo {
-    max-width: 90px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
   .task3-onboarding {
     padding: 0 var(--space-4) var(--space-5);
   }

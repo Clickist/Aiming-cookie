@@ -95,8 +95,10 @@ export function CoachVideoPane({
       <header className="task7-coach-video-pane__header">
         <div>
           <span>视频讲解</span>
-          <h2>{presentation?.scenario ?? "训练视频"}</h2>
-          {runId != null ? <small className="task7-coach-video-pane__run">run {runId}</small> : null}
+          <h2>
+            {presentation?.scenario ?? "训练视频"}
+            {runId != null ? ` · run ${runId}` : ""}
+          </h2>
         </div>
         <button aria-label="关闭视频讲解" className="task7-coach-video-pane__close" onClick={onClose} title="关闭视频讲解" type="button"><IconClose /></button>
       </header>

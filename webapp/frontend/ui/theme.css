@@ -30,11 +30,12 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  /* frontend-parity digests §8：user 气泡 pill 向的第四档半径（≥16px），
-     归并后体系为 sm=4 / md=6 两档控件圆角 + lg=8 卡片菜单 + xl=16 大面气泡。 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  /* 0910 拍板（点点）：整体变软对齐新线框——sm=6 小标签 / md=10 控件与
+     菜单项（嵌套公式 lg−space-1=md）/ lg=14 输入卡卡片菜单 / xl=16 大面
+     气泡（frontend-parity digests §8 不变）。1-3px 微形状豁免不变。 */
   --radius-xl: 16px;
   --text-micro: 11px;
   --text-caption: 12px;
@@ -42,6 +43,8 @@
   --text-body: 14px;
   --text-title: 15px;
   --text-display: 20px;
+  /* 0910 拍板（点点）：空对话首页大问候档，参考桌面 Agent 客户端起始页感觉。 */
+  --text-display-xl: 28px;
   --control-height: 36px;
   --control-height-compact: 32px;
   font-family: var(--font-ui);

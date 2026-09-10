@@ -16,6 +16,7 @@ import {
 import type { KovaaKLocalDirectoriesV1, KovaaKRunListItem, KovaaKWatcherStatusV1, SessionListItem } from "@/lib/types";
 import { IconChevronLeft } from "@/ui/icons";
 import { Button, Empty, ErrorState, IconButton, Notice } from "@/ui/primitives";
+import { startWindowDraggingOnBackground } from "@/components/task3/TauriWindowControls";
 
 type RefreshState = "idle" | "loading" | "unavailable";
 type RunDiscoveryState = "loading" | "available" | "browser_unavailable" | "service_unavailable";
@@ -346,7 +347,7 @@ export function HistoryClient() {
   if (initialError && runs.length === 0 && sessions.length === 0) {
     return (
       <div className="task4-page">
-        <div className="task4-page-head">
+        <div className="task4-page-head" onMouseDown={startWindowDraggingOnBackground}>
           <div>
             <div className="task4-page-title">历史</div>
             <div className="task4-page-sub">训练记录和分析记录会在这里分层显示。</div>
@@ -361,8 +362,9 @@ export function HistoryClient() {
   }
 
   return (
-    <div className="task4-page">
-      <div className="task4-page-head">
+      <div className="task4-page">
+        {/* 页头兼作窗口拖拽区（左键空白处）：横跨顶栏拆除后的拖拽补偿。 */}
+        <div className="task4-page-head" onMouseDown={startWindowDraggingOnBackground}>
         <div className="task4-page-title-row">
           <IconButton label="返回 Coach" onClick={() => router.push("/")} size="compact" title="返回 Coach"><IconChevronLeft /></IconButton>
           <div className="task4-page-title">历史</div>

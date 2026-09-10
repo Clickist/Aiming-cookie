@@ -956,7 +956,9 @@
 
 .playerStage {
   position: relative;
-  border-radius: var(--radius-md);
+  /* 只圆上角（0910 点点）：下沿与 playerBar 直边相接，接缝不得有圆角豁口；
+     下圆角由 playerBar 的 0 0 md md 承担。 */
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   overflow: hidden;
   background: color-mix(in srgb, black 90%, var(--on-surface) 10%);
   aspect-ratio: 16 / 9;

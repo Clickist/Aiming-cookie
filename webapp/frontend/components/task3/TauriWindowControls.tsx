@@ -30,6 +30,14 @@ export async function startWindowDragging() {
   await appWindow.startDragging();
 }
 
+// 横跨顶栏拆除后的拖拽补偿（0910 拍板）：品牌行/页头等局部标题区接管拖拽。
+// 只在左键按在空白处时拖动窗口；按在按钮/链接/输入等交互元素上时放行点击。
+export function startWindowDraggingOnBackground(event: MouseEvent<HTMLElement>) {
+  if (event.button !== 0) return;
+  if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea")) return;
+  void startWindowDragging();
+}
+
 function stopTitleBarDrag(event: MouseEvent<HTMLDivElement>) {
   event.stopPropagation();
 }

@@ -55,11 +55,13 @@ test("SessionRail includes search and keyboard semantics", async () => {
 
 test("SessionRail deletes only after an inline two-step confirmation", async () => {
   const component = await source("components/task7/SessionRail.tsx");
-  // 第一次点击只进入待确认态，第二次点击「确认删除」才触发软删回调
+  // 第一次点击只进入待确认态（0910 拍板：动作键图标化，删除键变红色✓，
+  // aria-label 与 title 承载"确认删除"语义），第二次点击才触发软删回调
   assert.match(component, /pendingDeleteId/);
   assert.match(component, /setPendingDeleteId\(session\.id\)/);
   assert.match(component, /aria-label=\{`确认删除 /);
-  assert.match(component, />确认删除</);
+  assert.match(component, /item-action--confirm/);
+  assert.match(component, /title="再次点击确认删除"/);
   // 文案必须是删除而非归档；禁止浏览器原生 confirm 与全屏对话框
   assert.doesNotMatch(component, /window\.confirm/);
   assert.doesNotMatch(component, /<dialog/i);
@@ -73,8 +75,11 @@ test("SessionRail keeps hover actions off the session date", async () => {
     component,
     /task7-session-rail__session-date[\s\S]*?<\/button>\s*\{session\.id !== "draft"[\s\S]*?<span className="task7-session-rail__item-actions">/,
   );
-  // 操作条不允许绝对定位盖在日期上；显隐只靠透明度，不改动文档流
-  assert.doesNotMatch(styles, /\.task7-session-rail__item-actions[^}]*position:\s*absolute/);
+  // 0910 二次拍板（浮层化替代旧"禁止绝对定位"）：操作条绝对定位＋右缘
+  // scrim 渐变，日期/摘要是"被淡出遮住"而非挤压或硬叠；显隐仍只靠透明度
+  assert.match(styles, /\.task7-session-rail__item-actions\s*\{[^}]*position:\s*absolute/);
+  assert.match(styles, /--rail-action-scrim:\s*var\(--surface-container\)/);
+  assert.match(styles, /linear-gradient\(to right, transparent, var\(--rail-action-scrim\)/);
   assert.match(styles, /\.task7-session-rail__item-actions\s*\{[^}]*opacity:\s*0;/);
   assert.match(styles, /prefers-reduced-motion/);
 });

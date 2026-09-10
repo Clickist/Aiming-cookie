@@ -27,10 +27,14 @@ test("Coach shell renders the existing full workspace in the main column", async
 test("Coach availability and empty states keep separate responsive semantics", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   const styles = await source("components/task6/task6.css");
-  assert.match(panel, /className="task6-coach-availability" data-state=\{headerState\.state\}/);
+  const shell = await source("components/task3/AppShell.tsx");
+  const shellStyles = await source("components/task3/task3.css");
+  // v6（0910）：旧 header 退役——状态点移入 AppShell 共用顶栏（仅绿点无文字），
+  // "可用"文案与 availability 行不再存在。
+  assert.doesNotMatch(panel, /task6-coach-availability/);
   assert.doesNotMatch(panel, /<span className="task6-coach-state" data-state=/);
-  assert.match(styles, /\.task6-coach-header-row\s*\{[\s\S]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto/);
-  assert.match(styles, /\.task6-coach-availability\s*\{[\s\S]*overflow-wrap:\s*anywhere/);
+  assert.match(shell, /className="task3-coach-status-dot"\s+data-state=\{capability\}/);
+  assert.match(shellStyles, /\.task3-coach-status-dot\[data-state="ready"\]/);
   assert.match(styles, /\.task6-coach-context-line\s*\{[\s\S]*overflow-wrap:\s*anywhere/);
   assert.match(styles, /\.task6-coach-panel > \.task6-coach-state\s*\{[\s\S]*white-space:\s*normal/);
   assert.doesNotMatch(styles, /^\.task6-coach-state\s*\{/m);
@@ -320,11 +324,14 @@ test("Coach keeps each session's active or failed run when switching conversatio
   assert.match(panel, /runBySessionRef\.current\.set\(activeSessionKeyRef\.current, run\)/);
 });
 
-test("Coach shows empty state and suggestions only when there are no messages or runs", async () => {
+test("Coach shows the empty home only when there are no messages or runs, with no in-chat suggestions", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
-  assert.match(panel, /messages\.length === 0 && !run/);
+  assert.match(panel, /const homeMode = messages\.length === 0 && !run && !homeExit;/);
   assert.match(panel, /messages\.map/);
-  assert.match(panel, /!run \? \(/);
+  // 对话中建议条已整体移除（点点 0910 拍板）：开局引导由空对话首页专属
+  // chips 承担，对话进行中不再出现 suggestion 渲染块。
+  assert.doesNotMatch(panel, /suggestionItems/);
+  assert.doesNotMatch(panel, /\{!run && !pendingRunStart && !homeMode && !homeExit \? \(/);
 });
 
 test("Coach composer has an explicit accessible name", async () => {
@@ -486,8 +493,8 @@ test("Discussion bar pins at most three finished chips and folds the rest behind
   assert.match(coach, /groupDiscussionChips\(discussionChips\)/);
   assert.match(coach, /pinnedDiscussionChips\.map/);
   assert.match(coach, /overflowDiscussionChips\.length > 0 \? \(/);
-  // 箭头按钮：suggestion chip 体系 + aria-expanded + 计数 aria-label。
-  assert.match(coach, /className="task6-suggestion task6-discussion-toggle"/);
+  // 箭头按钮：discussion-chip 状态标签档 + aria-expanded + 计数 aria-label。
+  assert.match(coach, /className="task6-discussion-chip task6-discussion-toggle"/);
   assert.match(coach, /aria-expanded=\{discussionOverflowOpen\}/);
   assert.match(coach, /aria-label=\{`展开其余 \$\{overflowDiscussionChips\.length\} 个讨论过的分析`\}/);
   // 菜单项点击＝关菜单并打开视频（与平铺 chip 同一行为）。

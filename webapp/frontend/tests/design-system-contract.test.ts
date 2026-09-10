@@ -14,7 +14,8 @@ function cssFiles(): string[] {
   return [...files, join(frontendRoot, "ui", "theme.css")];
 }
 
-// design-system.md：可执行字号 --text-micro..display、圆角 --radius-sm..lg＋xl
+// design-system.md：可执行字号 --text-micro..display-xl（0910 首页大问候档）、
+// 圆角 --radius-sm..lg＋xl
 // （批3 新增第四档 --radius-xl:16px，user 气泡 pill 向，digests §8）、
 // 间距 --space-1..6；旧 board 别名层已废除。
 const LEGACY_ALIASE = [
@@ -28,7 +29,7 @@ test("all stylesheet font sizes use the text scale", () => {
     const css = readFileSync(file, "utf8");
     for (const match of css.matchAll(/(?:font|font-size)\s*:\s*([^;{}]+)/g)) {
       const value = match[1];
-      if (/inherit|var\(--text-(micro|caption|ui|body|title|display)\)/.test(value) && !/\dpx/.test(value)) continue;
+      if (/inherit|var\(--text-(micro|caption|ui|body|title|display|display-xl)\)/.test(value) && !/\dpx/.test(value)) continue;
       assert.fail(
         `${file}: 字号必须使用 --text-* token，禁止裸 px（"${value.trim()}"）`,
       );

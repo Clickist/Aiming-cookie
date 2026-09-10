@@ -1248,6 +1248,8 @@ export interface CoachSessionOut {
   analysis_session_ids: number[];
   /** 深读跨分析合并进讨论的 session ids；CoachSessionDetail（lib/api.ts）继承本字段。 */
   deep_read_analysis_session_ids?: number[];
+  /** 首轮已落盘但模型命名尚未生成（AppShell 据此安排一次延迟补刷）。 */
+  title_pending?: boolean;
 }
 
 export interface CoachSessionListResponse {

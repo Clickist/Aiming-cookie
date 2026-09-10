@@ -19,15 +19,19 @@ test("Settings shell reuses the workspace rail skeleton with the nav as anchors"
   for (const label of ["LLM Provider", "Profile", "主题", "自动采集与 Raw Input", "KovaaK 本地目录", "KovaaK 成绩", "存储"]) {
     assert.match(settings, new RegExp(label));
   }
-  // 锚点条目 + scroll spy（滚动容器 = 设置 overlay 的 main）+ 平滑滚动。
+  // 锚点条目 + scroll spy（滚动容器 = 面板内容列 .task6-settings-content，
+  // v6 面板化后从 overlay main 下移）+ 平滑滚动。
   assert.match(settings, /href=\{`#\$\{item\.id\}`\}/);
   assert.match(settings, /scroller\.addEventListener\("scroll", onScroll, \{ passive: true \}\)/);
-  assert.match(styles, /@media \(prefers-reduced-motion: no-preference\)\s*\{\s*\.task3-route-content\[data-settings-page="true"\]\s*\{\s*scroll-behavior:\s*smooth;/);
+  assert.match(styles, /@media \(prefers-reduced-motion: no-preference\)\s*\{\s*\.task6-settings-content\s*\{\s*scroll-behavior:\s*smooth;/);
   // 现有返回入口保留；hash 同步与 scroll spy 共存。
   assert.match(settings, /SettingsExit onExit=\{\(\) => router\.push\("\/"\)\}/);
   assert.match(settings, /window\.addEventListener\("hashchange", syncActiveNav\)/);
-  // 左栏与工作区会话列表同款：衬托底色 + 分隔线 + 两档断点宽度。
-  assert.match(styles, /\.task6-settings-nav\s*\{[\s\S]*border-inline-end:\s*1px solid var\(--outline-variant\);[\s\S]*background:\s*var\(--surface-container-low\);/);
+  // 左栏与工作区会话列表同款（0910 四轮更新）：衬托底色融入工作区、
+  // 分隔线取消（内容列圆角子面板自己分层）+ 两档断点宽度。
+  assert.doesNotMatch(styles, /\.task6-settings-nav\s*\{[^}]*border-inline-end/);
+  assert.match(styles, /\.task6-settings-nav\s*\{[\s\S]*background:\s*var\(--surface-container-low\);/);
+  assert.match(styles, /\.task6-settings-content\s*\{[\s\S]*border-radius:\s*var\(--radius-lg\)/);
   assert.match(styles, /@media \(max-width: 1359px\) and \(min-width: 1120px\)\s*\{\s*\.task6-settings-nav\s*\{[^}]*264px/);
 });
 
