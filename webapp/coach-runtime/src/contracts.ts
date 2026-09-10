@@ -49,6 +49,12 @@ export type CoachRuntimeToolEvent =
       audit_ref: string;
       ui_event: Record<string, unknown> | null;
       warning_or_error: Record<string, unknown> | null;
+    }
+  | {
+      /** 模型 read SKILL.md 即视为加载该技能（系统提示词的 available_skills
+       * location 指向该文件）；每个 run 只记首次，供实机评估与前端工作流呈现。 */
+      type: "skill";
+      skill_name: string;
     };
 
 export type CoachRuntimeMessage = {

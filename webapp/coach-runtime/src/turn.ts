@@ -29,7 +29,7 @@ import {
 import { resolveProviderModel, type PiModels, type ResolvedProviderModel } from "./provider-models.ts";
 import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
 import { getDataRoot } from "./app-data.ts";
-import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, explicitAnalysisRefsFromText, runScopedAnalysisReads } from "./fs-tools.ts";
+import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, explicitAnalysisRefsFromText, runScopedAnalysisReads, runScopedSkillReads } from "./fs-tools.ts";
 import { extractMessageText } from "./session-repo.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 
@@ -789,6 +789,14 @@ export async function runCoachTurn(
   const providerStarts: number[] = [];
   const toolStarts = new Map<string, number>();
   let collectedToolEvents: CoachRuntimeToolEvent[] = [];
+  // Skill 调用工作事件（09-10 拍板）：模型 read SKILL.md = 加载该技能，
+  // 每个 run 只记首次；实机评估与前端工作流呈现都吃这个事件。
+  const seenSkillReads = new Set<string>();
+  const recordSkillRead = (skillName: string) => {
+    if (seenSkillReads.has(skillName)) return;
+    seenSkillReads.add(skillName);
+    collectedToolEvents.push({ type: "skill", skill_name: skillName });
+  };
 
   try {
     const request = parseRequest(rawRequest);
@@ -1143,13 +1151,15 @@ export async function runCoachTurn(
     )) {
       recordAnalysisRead(id, true);
     }
-    let replyMessage = await runScopedAnalysisReads(recordAnalysisRead, () =>
-      harness.prompt(lastMessage),
+    let replyMessage = await runScopedSkillReads(recordSkillRead, () =>
+      runScopedAnalysisReads(recordAnalysisRead, () => harness.prompt(lastMessage)),
     );
     // next_turn 排水：首轮结束后用同一 harness 连续 prompt()，排队的追问依次
     // 成为后续 turn 的用户消息——会话持续、run_id 不变，前端无需新开 run。
     while (nextTurnTexts.length > 0 && !stopRequested.has(request.run_id)) {
-      replyMessage = await harness.prompt(nextTurnTexts.shift()!);
+      replyMessage = await runScopedSkillReads(recordSkillRead, () =>
+        harness.prompt(nextTurnTexts.shift()!),
+      );
     }
     const turnUsage = extractUsage(replyMessage);
 
