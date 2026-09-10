@@ -324,7 +324,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-09-09.v10"
+    assert result["registry_version"] == "2026-09-10.v11"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -950,7 +950,7 @@ def test_v8_adds_x76_wiki_knowledge_with_schema_and_validator_agreement():
     assert errors == [], [error.message for error in errors[:5]]
     loaded = registry.load_registry(registry_version="2026-08-16.v8")
     assert loaded == registry.validate_registry(packaged)
-    assert registry.load_registry()["registry_version"] == "2026-09-09.v10"
+    assert registry.load_registry()["registry_version"] == "2026-09-10.v11"
     assert registry.MAX_RESULTS == 8
     assert len(loaded["entries"]) == 37
 
@@ -1122,7 +1122,7 @@ _V10_NEW_ENTRY_IDS = {
 }
 
 
-def test_v10_adds_coach_capability_entries_as_the_default_registry():
+def test_v10_coach_capability_entries_stay_loadable_with_explicit_version():
     root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
     schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
     packaged = json.loads((root / "registry.v10.json").read_text(encoding="utf-8"))
@@ -1133,7 +1133,7 @@ def test_v10_adds_coach_capability_entries_as_the_default_registry():
         key=lambda error: list(error.path),
     )
     assert errors == [], [error.message for error in errors[:5]]
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-09-09.v10")
     assert loaded == registry.validate_registry(packaged)
     assert loaded["registry_version"] == "2026-09-09.v10"
     assert len(loaded["entries"]) == 45
@@ -1201,7 +1201,7 @@ def test_v10_remains_backward_compatible_with_v9():
     assert previous["registry_version"] == "2026-08-20.v9"
     assert len(previous["entries"]) == 37
 
-    current = registry.load_registry()
+    current = registry.load_registry(registry_version="2026-09-09.v10")
     previous_by_id = {
         entry["entry_id"]: entry for entry in previous["entries"]
         if entry["entry_id"] != "hypothesis.tension-management"
@@ -1209,3 +1209,116 @@ def test_v10_remains_backward_compatible_with_v9():
     current_by_id = {entry["entry_id"]: entry for entry in current["entries"]}
     for entry_id, entry in previous_by_id.items():
         assert current_by_id[entry_id] == entry, entry_id
+
+
+_V11_NEW_ENTRY_IDS = {
+    "community.continuous-braking-cue",
+    "community.peak-position-two-phase",
+    "community.wide-wall-speed-progression",
+    "community.predictable-path-control",
+    "hypothesis.directional-bias-external-causes",
+    "static.path-directness",
+}
+
+
+def test_v11_gap_redemption_entries_are_the_default_registry():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v11.json").read_text(encoding="utf-8"))
+
+    Draft202012Validator.check_schema(schema)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(packaged),
+        key=lambda error: list(error.path),
+    )
+    assert errors == [], [error.message for error in errors[:5]]
+    loaded = registry.load_registry()
+    assert loaded == registry.validate_registry(packaged)
+    assert loaded["registry_version"] == "2026-09-10.v11"
+    assert len(loaded["entries"]) == 51
+    assert len(loaded["sources"]) == 92
+
+    entries = {entry["entry_id"]: entry for entry in loaded["entries"]}
+    assert _V11_NEW_ENTRY_IDS <= set(entries)
+    for entry_id in _V11_NEW_ENTRY_IDS:
+        entry = entries[entry_id]
+        assert entry["entry_version"] == 1
+        assert entry["supported_uses"] == [
+            "explanation_only", "diagnosis_support", "candidate_experiment",
+        ]
+        for name in ("cue", "dose_guardrail", "matched_retest", "stop_adjust_rule"):
+            assert name in entry, (entry_id, name)
+        for name in ("near_transfer_retest", "scenario_prescription"):
+            assert name not in entry, (entry_id, name)
+
+    # Each gap signal is carried by exactly the planned entry.
+    signal_owner = {
+        "linearity high": "community.continuous-braking-cue",
+        "decel_frac high": "community.continuous-braking-cue",
+        "decel_frac low": "community.continuous-braking-cue",
+        "peak_position low": "community.peak-position-two-phase",
+        "peak_position high": "community.peak-position-two-phase",
+        "peak_speed below reference": "community.wide-wall-speed-progression",
+        "accuracy low": "community.predictable-path-control",
+        "avg error high": "hypothesis.directional-bias-external-causes",
+        "path_efficiency low": "static.path-directness",
+    }
+    for signal, entry_id in signal_owner.items():
+        assert signal in entries[entry_id]["signals"], (signal, entry_id)
+
+    # The linearity entry carries both decel signals and their metric.
+    braking = entries["community.continuous-braking-cue"]
+    assert braking["signals"] == ["linearity high", "decel_frac high", "decel_frac low"]
+    assert set(braking["metric_refs"]) == {"metric:linearity", "metric:decel_frac"}
+
+    # Community paraphrase stays at or below community_practice everywhere it
+    # is cited, including inside the six new entries.
+    for entry_id in _V11_NEW_ENTRY_IDS:
+        entry = entries[entry_id]
+        section_values = [entry["definition"], entry["scope"], entry["expected_direction"]]
+        section_values.extend(entry["mechanisms"])
+        section_values.extend([entry["cue"], entry["matched_retest"]])
+        section_values.extend(entry["dose_guardrail"])
+        section_values.extend(entry["stop_adjust_rule"])
+        for section_value in section_values:
+            if "community.x76-wiki" in section_value["source_refs"]:
+                assert section_value["claim_level"] in {"community_practice", "experimental"}
+
+    # Revived academic sections stay research_supported, never higher.
+    peak = entries["community.peak-position-two-phase"]
+    time_structure = next(
+        section for section in peak["mechanisms"]
+        if section["section_ref"] == "community.peak-position-two-phase.mechanism.time-structure"
+    )
+    assert time_structure["claim_level"] == "research_supported"
+    assert set(time_structure["source_refs"]) == {
+        "research.woodworth-1899", "research.becker-2020-aiming-kinematics",
+    }
+
+    # Wiring upgrades: tension @6 carries ptc high, overshoot @2 sensitivity high.
+    tension = entries["hypothesis.tension-management"]
+    assert tension["entry_version"] == 6
+    assert tension["signals"] == ["tension hypothesis", "ptc high"]
+    assert "metric:ptc" in tension["metric_refs"]
+    overshoot = entries["community.overshoot-sensitivity-trigger"]
+    assert overshoot["entry_version"] == 2
+    assert overshoot["signals"] == [
+        "persistent overshoot reported", "sensitivity high",
+    ]
+
+    # v10 sources keep their backfilled Bilibili publish dates.
+    sources = {source["source_ref"]: source for source in loaded["sources"]}
+    assert sources["community.keli.qianlima.rushia-analysis"]["published_at"] == "2026-09-07"
+    assert sources["community.mattyow.bilibili.scucchi-smoothness"]["published_at"] == "2024-01-26"
+    assert sources["community.xen2.bilibili.control-tracking"]["published_at"] == "2025-10-10"
+    for source_ref in (
+        "community.keli.bilibili.desk-height-logic",
+        "community.xen2.bilibili.tension-advanced",
+        "community.keli.qianlima.extreme-postures",
+    ):
+        assert sources[source_ref]["published_at"], source_ref
+
+    # v10 stays loadable as history after v11 is packaged.
+    assert registry.load_registry(
+        registry_version="2026-09-09.v10"
+    )["registry_version"] == "2026-09-09.v10"
