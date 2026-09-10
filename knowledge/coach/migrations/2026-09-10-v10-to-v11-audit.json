@@ -1,0 +1,219 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-09-09.v10",
+  "target_registry_version": "2026-09-10.v11",
+  "generated_at": "2026-09-10",
+  "migration_kind": "coach_signal_gap_redemption",
+  "summary": "Gap redemption batch built from the 2026-09-10 dig report (.zcode/kb-gap-dig-2026-09-10.md) and candidates 01-05. v11 adds six active entries closing five uncovered signals: a continuous-braking training cue carrying linearity high plus both decel_frac signals, a two-phase peak-position interpretation carrying peak_position low/high, a wide-wall speed progression for peak_speed below reference, a predictable-path control cue for accuracy low, an external-cause checklist for avg error high, and a revived path-directness entry for path_efficiency low merged from registry.v1's metric and cue entries. hypothesis.tension-management moves to @6 by wiring in the ptc high signal plus the metric:ptc reference, and community.overshoot-sensitivity-trigger moves to @2 by wiring in the sensitivity high signal; in both upgrades every other field is byte-identical to v10. All 27 v10 corpus sources get their Bilibili publish dates backfilled from the 2026-09-10 pubdate research. Seventeen sources are added: fourteen Bilibili transcripts cited by the candidates and three academic revivals (Woodworth 1899, Becker 2020, Flash and Hogan 1985) backing the revived model-boundary sections. Community paraphrase stays at or below community_practice; revived academic sections stay research_supported; body-adjacent content defers to the ergonomics entries and every stop rule carries the medical red line. schema_version, the signal_aliases map, all capability prefixes, the other 43 v10 entries, and every v10 entry_version other than the two upgrades are unchanged, and v10 remains loadable as history.",
+  "capability_discipline": {
+    "body_content_ceiling": "body-adjacent content stays an experimental candidate hypothesis and defers to the ergonomics entries; no entry claims posture, compensation, or sensor state is measured by Aiming Cookie data",
+    "new_entry_supported_uses": [
+      "explanation_only",
+      "diagnosis_support",
+      "candidate_experiment"
+    ],
+    "medical_red_line": "Persistent pain, numbness, or weakness stops training immediately and is referred to a doctor or rehabilitation professional.",
+    "community_paraphrase_ceiling": "community_practice (x76 wiki and Bilibili coach corpus sections never exceed community_practice)",
+    "revival_claim_levels": "revived v1 academic material stays research_supported and product-contract material stays deterministic_rule"
+  },
+  "added_entries": [
+    {
+      "entry_ref": "knowledge:community.continuous-braking-cue@1",
+      "source_candidates": "kb-gap-candidates 01 + registry.v1 revival",
+      "note": "Continuous braking cue reviving v1 cue.flicking.continuous-braking with the braking-linearity definition and the Flash-Hogan model boundary folded in; carries linearity high plus decel_frac high/low so the two half-connected decel signals gain a content anchor."
+    },
+    {
+      "entry_ref": "knowledge:community.peak-position-two-phase@1",
+      "source_candidates": "kb-gap-candidates 02 + registry.v1 revival",
+      "note": "Two-phase movement-timing interpretation carrying peak_position low/high; the reading leans on the community two-phase model plus revived product-contract and Woodworth/Becker academic sections, and says so in limitations."
+    },
+    {
+      "entry_ref": "knowledge:community.wide-wall-speed-progression@1",
+      "source_candidates": "kb-gap-candidates 03",
+      "note": "Speed-supply progression for peak_speed below reference: wide-travel scenarios force the speed, a ninety-percent pressure ruler bounds the accuracy cost, and pushing pace is decoupled from throwing harder."
+    },
+    {
+      "entry_ref": "knowledge:community.predictable-path-control@1",
+      "source_candidates": "kb-gap-candidates 04",
+      "note": "Result-layer cue for accuracy low on readable paths: constant-path control practice, three-band form specialization, strategy-before-strength attribution, de-branded scenario shapes."
+    },
+    {
+      "entry_ref": "knowledge:hypothesis.directional-bias-external-causes@1",
+      "source_candidates": "kb-gap-candidates 05",
+      "note": "External-cause checklist for avg error high with three independent chains (arc accumulation and recentering, postural default offset, sensor skew); posture content only points at the ergonomics entries and the analyzer is explicitly said not to distinguish the causes."
+    },
+    {
+      "entry_ref": "knowledge:static.path-directness@1",
+      "source_candidates": "registry.v1 revival (metric.path-geometry.definition + cue.flicking.path-directness)",
+      "note": "Zero-corpus-increment revival accepted by the decision: product-contract definition plus the voltaic directness cue merged into one entry carrying path_efficiency low."
+    }
+  ],
+  "upgraded_entries": [
+    {
+      "entry_ref": "knowledge:hypothesis.tension-management@5 -> knowledge:hypothesis.tension-management@6",
+      "action": "signal_wiring",
+      "added_signals": [
+        "ptc high"
+      ],
+      "added_metric_refs": [
+        "metric:ptc"
+      ],
+      "unchanged_invariants": "definition, scope, expected_direction, all mechanisms, cue, dose_guardrail, matched_retest, stop_adjust_rule, alternative_explanations, forbidden_inferences, limitations, counterevidence, sources, family_scope, observation_refs, quality_prerequisites, topics, and supported_uses are byte-identical to @5.",
+      "note": "Closes the B6 wiring gap: agent fetch_knowledge matches signals only, so metric_refs alone cannot serve the ptc high finding; v1 precedent hypothesis.tension.tracking carried the same signal."
+    },
+    {
+      "entry_ref": "knowledge:community.overshoot-sensitivity-trigger@1 -> knowledge:community.overshoot-sensitivity-trigger@2",
+      "action": "signal_wiring",
+      "added_signals": [
+        "sensitivity high"
+      ],
+      "unchanged_invariants": "metric_refs and every other field are byte-identical to @1.",
+      "note": "Closes the B7 wiring gap: the analyzer's sensitivity-high trigger has no entry coverage; the overshoot trigger is the one neighbor whose definition, structure, and prescription all match the fast-side reading."
+    }
+  ],
+  "published_at_backfill": [
+    {
+      "source_ref": "community.keli.bilibili.desk-height-logic",
+      "published_at": "2026-07-13"
+    },
+    {
+      "source_ref": "community.keli.bilibili.wrist-elbow-posture",
+      "published_at": "2022-07-11"
+    },
+    {
+      "source_ref": "community.keli.bilibili.screen-placement-qa",
+      "published_at": "2024-11-03"
+    },
+    {
+      "source_ref": "community.keli.bilibili.kang-hand-injury",
+      "published_at": "2026-07-06"
+    },
+    {
+      "source_ref": "community.keli.bilibili.sens-body-parts",
+      "published_at": "2022-01-16"
+    },
+    {
+      "source_ref": "community.keli.bilibili.rehab-specific-transfer",
+      "published_at": "2026-07-07"
+    },
+    {
+      "source_ref": "community.keli.bilibili.sens-selection",
+      "published_at": "2022-02-21"
+    },
+    {
+      "source_ref": "community.keli.bilibili.tracking-static-warmup",
+      "published_at": "2024-10-27"
+    },
+    {
+      "source_ref": "community.keli.qianlima.rushia-analysis",
+      "published_at": "2026-09-07"
+    },
+    {
+      "source_ref": "community.keli.qianlima.xiaoyu-analysis",
+      "published_at": "2026-08-31"
+    },
+    {
+      "source_ref": "community.keli.qianlima.babyblue-analysis",
+      "published_at": "2026-08-27"
+    },
+    {
+      "source_ref": "community.keli.qianlima.qingxun-2",
+      "published_at": "2026-07-31"
+    },
+    {
+      "source_ref": "community.keli.qianlima.qingxun-3",
+      "published_at": "2026-08-31"
+    },
+    {
+      "source_ref": "community.keli.qianlima.extreme-postures",
+      "published_at": "2026-09-02"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.form-isolation",
+      "published_at": "2025-12-17"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.arm-aim-training",
+      "published_at": "2026-02-01"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.deathmatch-limits",
+      "published_at": "2026-05-02"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.pro-aim-strategy",
+      "published_at": "2025-11-14"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.rank-up-method",
+      "published_at": "2026-07-05"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.smooth-tracking-master",
+      "published_at": "2025-10-19"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.control-tracking",
+      "published_at": "2025-10-10"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.1000h-retrospective",
+      "published_at": "2025-10-03"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.tension-advanced",
+      "published_at": "2025-11-30"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.apex-force-posture",
+      "published_at": "2025-11-15"
+    },
+    {
+      "source_ref": "community.xen2.bilibili.grip-tension",
+      "published_at": "2025-10-25"
+    },
+    {
+      "source_ref": "community.mattyow.bilibili.break-plateau",
+      "published_at": "2026-09-06"
+    },
+    {
+      "source_ref": "community.mattyow.bilibili.scucchi-smoothness",
+      "published_at": "2024-01-26"
+    }
+  ],
+  "added_sources": [
+    "community.keli.bilibili.static-positioning-thinking",
+    "community.keli.bilibili.accuracy-vs-speed",
+    "community.keli.bilibili.cursor-drift-causes",
+    "community.keli.bilibili.overshoot-distance-qa",
+    "community.keli.qianlima.rakklin-analysis",
+    "community.mattyow.bilibili.fluid-static-clicking",
+    "community.mattyow.bilibili.snowi-smooth-aiming",
+    "community.mattyow.bilibili.beginner-guidance",
+    "community.xen2.bilibili.coaching-elige-pt1",
+    "community.xen2.bilibili.stable-flick-technique",
+    "community.xen2.bilibili.flicking-ruins-progress",
+    "community.xen2.bilibili.flick-speed-training",
+    "community.xen2.bilibili.constant-speed-tracking",
+    "community.xen2.bilibili.sensor-angle-impact",
+    "research.woodworth-1899",
+    "research.becker-2020-aiming-kinematics",
+    "research.flash-hogan-1985"
+  ],
+  "audited_unchanged": [
+    {
+      "scope": "all 43 non-upgraded v10 entries",
+      "note": "entry_id, entry_version, and every section are carried over byte-identical from v10; signal_aliases and the existing 75 sources are untouched except for the 27 published_at backfills declared above."
+    },
+    {
+      "scope": "schema and loader contract",
+      "note": "schema_version stays coach_knowledge_registry.v3; both the Python and TypeScript loaders register 2026-09-10.v11 as the packaged default and keep every historical version loadable by exact version."
+    }
+  ],
+  "approval": {
+    "approved_by": "点点",
+    "approved_at": "2026-09-10",
+    "scope": "v11 缺口赎回批 + 日期回填：6 条新增、2 条升级（tension@6 / overshoot@2）、27 个 v10 来源 published_at 回填、17 个新来源注册",
+    "note": "提交前终审"
+  }
+}

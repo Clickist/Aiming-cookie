@@ -414,8 +414,8 @@ test("v9 corrects the reversed cm/360 direction wording", () => {
   assert.equal(loadKnowledgeRegistry("2026-08-16.v8").registry_version, "2026-08-16.v8");
 });
 
-test("v10 adds coach capability entries as the default registry", () => {
-  const registry = loadKnowledgeRegistry();
+test("v10 coach capability entries stay loadable with an explicit version", () => {
+  const registry = loadKnowledgeRegistry("2026-09-09.v10");
   assert.equal(registry.registry_version, "2026-09-09.v10");
   assert.equal(registry.entries.length, 45);
   assert.equal(registry.sources!.length, 75);
@@ -482,4 +482,78 @@ test("v10 adds coach capability entries as the default registry", () => {
 
   // v9 stays loadable as history after v10 is packaged.
   assert.equal(loadKnowledgeRegistry("2026-08-20.v9").registry_version, "2026-08-20.v9");
+});
+
+test("v11 closes the signal gaps as the default registry", () => {
+  const registry = loadKnowledgeRegistry();
+  assert.equal(registry.registry_version, "2026-09-10.v11");
+  assert.equal(registry.entries.length, 51);
+  assert.equal(registry.sources!.length, 92);
+
+  const newIds = [
+    "community.continuous-braking-cue",
+    "community.peak-position-two-phase",
+    "community.wide-wall-speed-progression",
+    "community.predictable-path-control",
+    "hypothesis.directional-bias-external-causes",
+    "static.path-directness",
+  ];
+  for (const id of newIds) {
+    const entry = registry.entries.find((item) => item.entry_id === id);
+    if (!entry || entry.status !== "active") throw new Error(`missing v11 entry ${id}`);
+    assert.equal(entry.entry_version, 1);
+    assert.deepEqual(entry.supported_uses, [
+      "explanation_only", "diagnosis_support", "candidate_experiment",
+    ]);
+    for (const field of ["cue", "dose_guardrail", "matched_retest", "stop_adjust_rule"] as const) {
+      const value = (entry as Record<string, unknown>)[field];
+      if (value === undefined || value === "not_applicable") {
+        throw new Error(`v11 entry ${id} lacks ${field}`);
+      }
+    }
+    assert.ok(!("scenario_prescription" in entry), id);
+  }
+
+  // Each gap signal lands on its planned entry; linearity carries both decel
+  // signals and the revived academic section stays research_supported.
+  const byId = new Map(registry.entries.map((entry) => [entry.entry_id, entry]));
+  const braking = byId.get("community.continuous-braking-cue")!;
+  assert.deepEqual(braking.signals, ["linearity high", "decel_frac high", "decel_frac low"]);
+  assert.ok(braking.metric_refs.includes("metric:linearity"));
+  assert.ok(braking.metric_refs.includes("metric:decel_frac"));
+  const peak = byId.get("community.peak-position-two-phase")!;
+  assert.deepEqual(peak.signals.sort(), ["peak_position high", "peak_position low"]);
+  const timeStructure = peak.mechanisms.find((section) =>
+    section.section_ref.endsWith("mechanism.time-structure"));
+  if (!timeStructure) throw new Error("missing time-structure mechanism");
+  assert.equal(timeStructure.claim_level, "research_supported");
+  assert.deepEqual(
+    new Set(timeStructure.source_refs),
+    new Set(["research.woodworth-1899", "research.becker-2020-aiming-kinematics"]),
+  );
+  for (const [signal, id] of [
+    ["peak_speed below reference", "community.wide-wall-speed-progression"],
+    ["accuracy low", "community.predictable-path-control"],
+    ["avg error high", "hypothesis.directional-bias-external-causes"],
+    ["path_efficiency low", "static.path-directness"],
+  ] as const) {
+    assert.ok(byId.get(id)!.signals.includes(signal), `${id}: ${signal}`);
+  }
+
+  // Wiring upgrades: tension @6 carries ptc high, overshoot @2 sensitivity high.
+  const tension = byId.get("hypothesis.tension-management")!;
+  assert.equal(tension.entry_version, 6);
+  assert.deepEqual(tension.signals, ["tension hypothesis", "ptc high"]);
+  assert.ok(tension.metric_refs.includes("metric:ptc"));
+  const overshoot = byId.get("community.overshoot-sensitivity-trigger")!;
+  assert.equal(overshoot.entry_version, 2);
+  assert.deepEqual(overshoot.signals, ["persistent overshoot reported", "sensitivity high"]);
+
+  // The 27 v10 corpus sources keep their backfilled publish dates.
+  const sources = new Map(registry.sources!.map((source) => [source.source_ref, source]));
+  assert.equal(sources.get("community.keli.qianlima.rushia-analysis")?.published_at, "2026-09-07");
+  assert.equal(sources.get("community.mattyow.bilibili.scucchi-smoothness")?.published_at, "2024-01-26");
+
+  // v10 stays loadable as history after v11 is packaged.
+  assert.equal(loadKnowledgeRegistry("2026-09-09.v10").registry_version, "2026-09-09.v10");
 });
