@@ -38,6 +38,7 @@ import {
   updateConversationAnalysisIds,
   updateConversationDeepReadAnalysisIds,
 } from "./session-repo.ts";
+import { maybeAutoTitleSession } from "./session-title.ts";
 import { getDataRoot } from "./app-data.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -395,6 +396,9 @@ async function runAgentTurn(
       const timing: AnyDict = { persistence_ms: Math.max(0, Math.round(performance.now() - persistenceStart)) };
       appendEvent(record, "phase", "completed", "latency_trace", "Coach latency trace", timing);
       appendEvent(record, "status", "completed", "run_succeeded", "Coach run completed");
+      // 路线 B（0910 拍板）：run 成功后 fire-and-forget 自动命名——不阻塞
+      // 终态，失败静默回退首句降级标题；title_source 守卫保证只命名一次。
+      void maybeAutoTitleSession(threadId, content, redactedReply, providerResult);
     } else {
       const error = response.error;
       // turn 响应的 error 是 CoachRuntimeError（字段是 category/code，没有
