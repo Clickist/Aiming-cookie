@@ -57,6 +57,8 @@ interface SessionOut {
   updated_at: string;
   message_count: number;
   last_message_preview: string | null;
+  /** 首轮已落盘但模型命名尚未生成（前端据此安排一次延迟补刷）。 */
+  title_pending?: boolean;
   analysis_session_ids: number[];
   /** Non-subject deep-read analyses (@time-link fallback; NOT 本次讨论). */
   deep_read_analysis_session_ids: number[];
@@ -69,8 +71,10 @@ function shapeSession(
   messages: SessionMessage[],
 ): SessionOut {
   const lastEntry = messages[messages.length - 1];
-  const title = deriveConversationTitle(messages, meta.title);
+  const title = deriveConversationTitle(messages, meta);
   const updatedAt = lastEntry ? lastEntry.timestamp : meta.updated_at;
+  // 首轮已发生但 auto 命名还没落库（异步生成中）→ 前端安排一次延迟补刷
+  const titlePending = !meta.title_source && messages.some((message) => message.role === "user");
   return {
     id,
     user_id: ownerId,
@@ -82,6 +86,7 @@ function shapeSession(
     updated_at: updatedAt,
     message_count: messages.length,
     last_message_preview: lastEntry ? lastEntry.content.slice(0, 240) : null,
+    title_pending: titlePending || undefined,
     analysis_session_ids: meta.analysis_session_ids ?? [],
     deep_read_analysis_session_ids: meta.deep_read_analysis_session_ids ?? [],
   };
@@ -145,6 +150,8 @@ export async function updateCoachSession(
     const title = update.title.trim();
     if (!title) throw new CoachDataError(400, "session title cannot be empty");
     meta.title = title.slice(0, 120);
+    // 手动改名后自动命名永不再覆盖（title_source 守卫）。
+    meta.title_source = "user";
   }
   if (update.status === "archived") {
     meta.status = "archived";

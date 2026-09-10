@@ -24,6 +24,9 @@ export const SESSION_CWD = "coach";
 export type ConversationMeta = {
   id: number;
   title: string | null;
+  /** 谁定的标题（0910 路线 B）："auto"=模型自动命名，"user"=手动改名；
+   *  缺省＝两者都没发生，标题走首句截断降级。手动命名永不被自动覆盖。 */
+  title_source?: "user" | "auto" | null;
   status: "active" | "archived";
   created_at: string;
   updated_at: string;
@@ -329,10 +332,13 @@ export async function truncateSessionFromMessage(threadId: number, keepMessages:
   await storage.setLeafId(targetId);
 }
 
-export function deriveConversationTitle(messages: SessionMessage[], fallback: string | null): string {
+export function deriveConversationTitle(messages: SessionMessage[], meta: ConversationMeta): string {
+  // 优先级（0910 路线 B 修正）：已命名（auto/user）的 meta.title > 首句截断
+  // 降级 > "新对话"。此前首句截断恒优先，会把 LLM 命名盖回去。
+  if (meta.title_source && meta.title?.trim()) return meta.title.trim();
   const firstUser = messages.find((message) => message.role === "user");
   if (firstUser && firstUser.content.trim()) return firstUser.content.trim().slice(0, 120);
-  return fallback ?? "新对话";
+  return meta.title ?? "新对话";
 }
 
 // ── Mutable conversation metadata ────────────────────────────────────────
@@ -350,6 +356,7 @@ export function readConversationMeta(threadId: number): ConversationMeta {
         return {
           id: raw.id,
           title: typeof raw.title === "string" ? raw.title : null,
+          title_source: raw.title_source === "user" || raw.title_source === "auto" ? raw.title_source : null,
           status: raw.status === "archived" ? "archived" : "active",
           created_at: typeof raw.created_at === "string" ? raw.created_at : new Date().toISOString(),
           updated_at: typeof raw.updated_at === "string" ? raw.updated_at : new Date().toISOString(),
@@ -368,6 +375,7 @@ export function readConversationMeta(threadId: number): ConversationMeta {
   return {
     id: threadId,
     title: "新对话",
+    title_source: null,
     status: "active",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
