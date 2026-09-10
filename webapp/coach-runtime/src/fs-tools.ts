@@ -116,6 +116,33 @@ function notifyAnalysisRead(path: string): void {
   dispatchAnalysisRead(Number(match[1]));
 }
 
+// ── Skill 调用通知（与 analysis-read 同款管线）──────────────────────────
+//
+// 系统提示词的 available_skills 块给每个技能 SKILL.md 的绝对路径，模型
+// "调用技能"的实际动作就是 read 该文件（Pi 无显式 skill 工具）。这里在
+// read 包装层识别 skills/<name>/SKILL.md 路径并派发，turn 层转成
+// tool_events 里的 {type:"skill"} 工作事件。
+const SKILL_FILE_PATTERN = /(?:^|[\\/])skills[\\/]([^\\/]+)[\\/]SKILL\.md$/i;
+
+const skillReadScope = new AsyncLocalStorage<Set<(skillName: string) => void>>();
+
+/** Run a turn body so skill reads are reported only to `listener`. */
+export function runScopedSkillReads<T>(
+  listener: (skillName: string) => void,
+  body: () => Promise<T>,
+): Promise<T> {
+  return skillReadScope.run(new Set([listener]), body);
+}
+
+function notifySkillRead(path: string): void {
+  const match = SKILL_FILE_PATTERN.exec(path);
+  if (!match) return;
+  const scoped = skillReadScope.getStore();
+  if (scoped) {
+    for (const listener of scoped) listener(match[1]!);
+  }
+}
+
 type CoachTool = {
   name: string;
   label: string;
@@ -150,6 +177,7 @@ export async function createReadTool(cwd: string) {
       readFile: async (absolutePath: string) => {
         const buffer = await readFile(absolutePath);
         notifyAnalysisRead(absolutePath);
+        notifySkillRead(absolutePath);
         return buffer;
       },
     },
