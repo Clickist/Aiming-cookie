@@ -6,8 +6,7 @@
   width: var(--task7-rail-width);
   min-width: 0;
   min-height: 0;
-  border-inline-end: 1px solid var(--outline-variant);
-  /* 衬托面：侧栏比内容区暗一档（light=米色衬底 / dark=最深黑）。 */
+  /* v6：左栏与窗口底一体，右缘无分界线（分层靠主面板色差）。 */
   background: var(--surface-container-low);
   color: var(--on-surface);
   font-family: var(--font-ui);
@@ -18,10 +17,10 @@
 }
 
 .task7-session-rail__header {
+  /* v6：与搜索区一体（无分界线），节奏靠 padding 呼吸。 */
   display: flex;
   flex-direction: column;
-  padding: var(--space-3);
-  border-block-end: 1px solid var(--outline-variant);
+  padding: var(--space-2) var(--space-3) 0;
 }
 
 .task7-session-rail__header-actions {
@@ -30,9 +29,35 @@
 }
 
 .task7-session-rail__brand {
+  /* v6：横跨顶栏拆除后 logo 归左栏，观感对齐旧顶栏 logo（display 字体 +
+     20px mark）；与下方一体（无分界线、无独立底色）。 */
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  height: 56px;
+  flex: none;
+  padding: 0 var(--space-4);
+  color: var(--on-surface);
+  font: 600 var(--text-display)/1 var(--font-display);
+  letter-spacing: 0.01em;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.task7-session-rail__brand-mark {
+  width: 28px;
+  height: 28px;
+  display: block;
+  /* 素材是白色 logo：亮模式下反色成黑色，暗模式保持白色（同旧顶栏）。 */
+  filter: invert(1);
+}
+
+:root[data-theme="dark"] .task7-session-rail__brand-mark {
+  filter: none;
+}
+
+.task7-session-rail__brand-name {
+  margin-top: 2px;
 }
 
 .task7-session-rail__mark {
@@ -74,9 +99,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--control-height-compact);
+  min-height: 40px;
   margin: var(--space-3) var(--space-3) var(--space-2);
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-3);
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -132,7 +157,24 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 var(--space-2) var(--space-4);
+  padding: 0 var(--space-3) var(--space-4);
+  /* 滚动边缘渐隐（0910 拍板对齐参考图）：默认两端实色，仅当对应一端还有
+     未滚动到的内容（data-fade-*，SessionRail 滚动感知）才过渡到透明。
+     渐隐带宽度需盖过「列表 padding + 条目上半身」，让下一条呈半透明可见
+     ——太窄会整条吞掉下一条，失去"下面还有内容"的暗示。
+     mask 只取 alpha 通道，black/transparent 具名关键字不承载视觉颜色。 */
+  --rail-fade-start: black;
+  --rail-fade-end: black;
+  mask-image: linear-gradient(to bottom, var(--rail-fade-start) 0, black 24px, black calc(100% - 64px), var(--rail-fade-end) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, var(--rail-fade-start) 0, black 24px, black calc(100% - 64px), var(--rail-fade-end) 100%);
+}
+
+.task7-session-rail__list[data-fade-top="true"] {
+  --rail-fade-start: transparent;
+}
+
+.task7-session-rail__list[data-fade-bottom="true"] {
+  --rail-fade-end: transparent;
 }
 
 .task7-session-rail__footer {
@@ -141,7 +183,7 @@
   flex-direction: column;
   gap: 2px;
   padding: var(--space-2) var(--space-3) var(--space-3);
-  border-block-start: 1px solid var(--outline-variant);
+  /* v6：与上方列表无分界线——列表滚动渐隐负责衔接。 */
 }
 
 .task7-session-rail__footer-row {
@@ -231,7 +273,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 0 0 var(--space-2) var(--space-3);
+  padding: 0 0 var(--space-2) 0;
 }
 
 /* 组尾「显示全部 / 显示前 5 条」开关（0827 拍板组内预览截断）：低调文本钮，
@@ -281,6 +323,9 @@
   background: transparent;
   color: var(--on-surface);
   text-align: start;
+  /* 悬浮背景平滑过渡（0910 拍板去僵硬）；纯 background 过渡，
+     不涉 transform，与 reduced-motion 名单无交集。 */
+  transition: background var(--duration-fast) var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -324,12 +369,28 @@
   font-family: var(--font-mono);
 }
 
+/* 悬浮动作区（0910 拍板去生硬）：绝对定位浮层＋右缘实、向左渐透明的
+   scrim，垫在图标底下遮住条目文字——不再挤占布局或与摘要搅在一起。
+   scrim 端点色跟随条目 hover 后的底色（普通/current 两档），视觉无缝。
+   垂直居中用 top/bottom 拉伸，不用 transform（避开 reduced-motion 名单）。 */
+.task7-session-rail__item {
+  --rail-action-scrim: var(--surface-container);
+}
+
+.task7-session-rail__item[data-current="true"] {
+  --rail-action-scrim: var(--surface-container-highest);
+}
+
 .task7-session-rail__item-actions {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
   display: flex;
-  flex: none;
   align-items: center;
   gap: 1px;
-  padding-inline-end: var(--space-1);
+  padding-inline: var(--space-3) var(--space-2);
+  background: linear-gradient(to right, transparent, var(--rail-action-scrim) var(--space-3));
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
 }
@@ -345,12 +406,16 @@
 }
 
 .task7-session-rail__item-action {
-  min-height: 24px;
-  padding: 0 var(--space-1);
-  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--on-surface-variant);
-  font-size: var(--text-micro);
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {

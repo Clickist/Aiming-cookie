@@ -9,9 +9,11 @@ async function source(relativePath: string): Promise<string> {
   return readFile(path.join(frontendRoot, relativePath), "utf8");
 }
 
-test("app shell exposes an AppBar, skip navigation, a SessionRail, and the Coach workspace", async () => {
+test("app shell exposes skip navigation, a SessionRail, and the Coach workspace without a spanning top bar", async () => {
   const value = await source("components/task3/AppShell.tsx");
-  assert.match(value, /<header/);
+  // 横跨顶栏已全局拆除（0910 拍板）：无 task3-toolbar 渲染，窗口三键全局常浮。
+  assert.doesNotMatch(value, /task3-toolbar/);
+  assert.match(value, /task3-wincontrols-global/);
   assert.match(value, /<main/);
   assert.match(value, /skip-link/);
   assert.match(value, /<SessionRail/);
@@ -19,12 +21,17 @@ test("app shell exposes an AppBar, skip navigation, a SessionRail, and the Coach
   assert.doesNotMatch(value, /Account/);
 });
 
-test("AppBar hosts the frameless Tauri window controls", async () => {
+test("window controls float globally and title areas take over window dragging", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   const controls = await source("components/task3/TauriWindowControls.tsx");
   const onboarding = await source("components/task3/OnboardingFlow.tsx");
   const styles = await source("components/task3/task3.css");
-  assert.ok(shell.includes('className="task3-toolbar"'));
+  const rail = await source("components/task7/SessionRail.tsx");
+  const history = await source("components/task4/HistoryClient.tsx");
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  // 横跨顶栏已全局拆除（0910 拍板）：无 task3-toolbar 渲染，窗口三键全局常浮。
+  assert.doesNotMatch(shell, /task3-toolbar/);
+  assert.ok(shell.includes('className="task3-wincontrols-global"'));
   assert.ok(shell.includes('if (event.button === 0) void startWindowDragging();'));
   assert.match(shell, /<TauriWindowControls \/>/);
   assert.match(controls, /@tauri-apps\/api\/window/);
@@ -38,9 +45,16 @@ test("AppBar hosts the frameless Tauri window controls", async () => {
   assert.ok(controls.includes('runWindowControl("minimize")'));
   assert.ok(controls.includes('runWindowControl("toggleMaximize")'));
   assert.ok(controls.includes('runWindowControl("close")'));
+  // 拖拽补偿：左栏品牌行 / 历史页头 / 设置标题行的左键空白处拖拽。
+  assert.match(controls, /startWindowDraggingOnBackground/);
+  assert.match(controls, /closest\("button, a, input, select, textarea"\)/);
+  assert.ok(rail.includes('onMouseDown={startWindowDraggingOnBackground}'));
+  assert.ok(history.includes('onMouseDown={startWindowDraggingOnBackground}'));
+  assert.ok(settings.includes('onMouseDown={startWindowDraggingOnBackground}'));
   assert.match(onboarding, /className="task3-onboarding-brand"/);
   assert.ok(onboarding.includes('if (event.button === 0) void startWindowDragging();'));
   assert.match(onboarding, /<TauriWindowControls \/>/);
+  assert.match(styles, /\.task3-wincontrols-global[^{]*\{[\s\S]*position:\s*fixed/);
   assert.match(styles, /\.task3-window-controls[^{]*\{[\s\S]*align-self:\s*stretch/);
   assert.match(styles, /\.task3-window-control[^{]*\{[\s\S]*width:\s*46px/);
   assert.match(styles, /\.task3-window-control--close:hover[^{]*\{[\s\S]*background:\s*var\(--error\)/);
@@ -98,7 +112,10 @@ test("AppShell opens a fresh draft for intent navigation but keeps the primary s
 test("retired AppBar nav and Tasks center styles are gone", async () => {
   const styles = await source("components/task3/task3.css");
   assert.doesNotMatch(styles, /\.task3-primary-nav|\.task3-tool-nav|\.t-btn\b|\.t-icon\b|\.task3-tasks-panel|\.task3-task-item|\.task3-stage-stepper/);
-  assert.match(styles, /\.task3-toolbar[^{]*\{[\s\S]*height:\s*48px/);
+  // 横跨顶栏已全局拆除（0910 拍板）：.task3-toolbar 样式删除（spacer 仍被
+  // onboarding 品牌行使用），全局常浮三键样式存在。
+  assert.doesNotMatch(styles, /\.task3-toolbar(?!-spacer)[^{]*\{/);
+  assert.match(styles, /\.task3-wincontrols-global[^{]*\{[\s\S]*position:\s*fixed/);
   assert.match(styles, /\.task3-mode-badge|\.task3-preview-badge/);
 });
 
@@ -113,12 +130,14 @@ test("app shell removes transient status controls from the AppBar", async () => 
   assert.doesNotMatch(value, /href="\/tasks"/);
 });
 
-test("app shell styles keep the 48px AppBar and make Settings a top-bar-below overlay", async () => {
+test("app shell removes the spanning top bar and makes Settings a full-bleed overlay", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   const value = await source("components/task3/task3.css");
-  assert.match(value, /\.task3-toolbar[^{]*\{[\s\S]*height:\s*48px/);
+  // 横跨顶栏已全局拆除（0910 拍板）：.task3-toolbar 样式不存在，设置
+  // overlay 不再给顶栏让 48px，直接满铺。
+  assert.doesNotMatch(value, /\.task3-toolbar(?!-spacer)[^{]*\{/);
   assert.match(value, /\.task3-route-content\[data-settings-page="true"\][\s\S]*position:\s*fixed/);
-  assert.match(value, /inset:\s*48px 0 0/);
+  assert.match(value, /inset:\s*0;/);
   assert.doesNotMatch(value, /task3-route-fade/);
   assert.match(shell, /useAnimatedPresence\(settingsRoute, 160\)/);
   assert.match(shell, /settingsOverlayChildren/);
@@ -172,7 +191,7 @@ test("SessionRail is the persistent left navigation without a right Coach sideba
   assert.doesNotMatch(shell, /CoachSidebar/);
   assert.doesNotMatch(shell, /data-coach-open/);
   assert.match(styles, /data-session-rail="true"[^{]*\{[\s\S]*grid-template-columns:\s*var\(--task7-rail-width, 292px\) minmax\(0, 1fr\)/);
-  assert.match(styles, /\.task3-workspace > \.task7-session-rail[\s\S]*height:\s*calc\(100vh - 48px\)/);
+  assert.match(styles, /\.task3-workspace > \.task7-session-rail[^{]*\{[^}]*height:\s*calc\(100vh - var\(--task3-window-inset\) \* 2\)/);
   assert.match(styles, /\.task3-app[^{]*\{[\s\S]*overflow-x:\s*clip/);
 });
 
@@ -180,7 +199,7 @@ test("Coach workspace fills the viewport so the composer stays at the bottom", a
   const shell = await source("components/task3/AppShell.tsx");
   const styles = await source("components/task3/task3.css");
   assert.match(shell, /data-coach-workspace=\{coachWorkspaceRoute \|\| undefined\}/);
-  assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\][^{]*\{[\s\S]*height:\s*calc\(100vh - 48px\)/);
+  assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\][^{]*\{[^}]*height:\s*calc\(100vh - var\(--task3-window-inset\) \* 2\)/);
   assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\] > \.task3-route-content[^{]*\{[\s\S]*display:\s*flex/);
   assert.match(styles, /\.task3-workspace\[data-coach-workspace="true"\] > \.task3-route-content[^{]*\{[\s\S]*flex-direction:\s*column/);
   assert.match(styles, /\.task3-coach-view[^{]*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);

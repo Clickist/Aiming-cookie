@@ -46,9 +46,9 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 
 ## 4. Shared foundations
 
-- **Typography:** UI 使用 Inter + 中文系统 fallback；数据/时间使用 JetBrains Mono；展示字体使用 Outfit + 中文 fallback。可执行字号为 `--text-micro` 到 `--text-display`，定义在 `tokens.ts` 的 `SCALE_TOKENS`。
+- **Typography:** UI 使用 Inter + 中文系统 fallback；数据/时间使用 JetBrains Mono；展示字体使用 Outfit + 中文 fallback。可执行字号为 `--text-micro` 到 `--text-display`，另加首页大问候档 `--text-display-xl`（28px，0910 拍板），定义在 `tokens.ts` 的 `SCALE_TOKENS`。
 - **Spacing:** 工作区控制区留出清晰呼吸空间；密集数据只在图表/表格内部压缩。可执行间距为 `--space-1`（4px）到 `--space-6`（32px）；页面布局级大间距（≥40px）不受该阶梯约束。
-- **Geometry:** 紧凑、精密、机械感的圆角；避免大面积消费级胶囊化。可执行圆角为 `--radius-sm` / `--radius-md` / `--radius-lg`；控件高度为 `--control-height`（36px）与 `--control-height-compact`（32px）。页面不得再发明 5px 圆角或 13.5px 字号；1-3px 微形状（圆点、进度条端头）不算违规。
+- **Geometry:** 柔和统一的圆角层级（0910 拍板由"机械感"整体变软：sm=6 / md=10 / lg=14 / xl=16；建议 chips（首页/对话内）用胶囊 999px、发送键正圆 50%，菜单项遵循嵌套公式 lg−space-1=md；讨论 chips 与建议 chips 均为胶囊 999px（0910 四轮拍板））。可执行圆角为 `--radius-sm` / `--radius-md` / `--radius-lg`；控件高度为 `--control-height`（36px）与 `--control-height-compact`（32px）。页面不得再发明 5px 圆角或 13.5px 字号；1-3px 微形状（圆点、进度条端头）不算违规。
 - **Primary scarcity:** `--primary` 只用于真正的 CTA（发送、新建、继续）和 `:focus-visible`。选中态、hover、badge、工具进行中不得用橙色填充或描边；数据可视化与表单 `accent-color` 不受此限。
 - **Enforcement:** 字号/圆角 token、旧 board 别名层（`--fg`、`--s-high` 等）的废除、transition 动效 token、四级字重与阴影 token 由 `webapp/frontend/tests/design-system-contract.test.ts` 扫描全部 CSS 强制执行。
 - **Depth:** 依赖 surface ladder 与 hairline，不使用装饰性重阴影。浮层（菜单/抽屉/对话框/弹层）唯一投影 `--shadow-overlay`；聚焦光环 `--ring`；1px hairline ring 只用于 focus-within 边框强调。

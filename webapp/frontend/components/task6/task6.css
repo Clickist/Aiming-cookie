@@ -5,10 +5,17 @@
    衬托底色 / 分隔线 / 圆角选中态，条目即设置分区锚点；右侧内容一页长滚动。 */
 
 .task6-settings-page {
+  /* v6 面板化（0910）：本页即浮起圆角面板（外层 overlay 只做承托底 +
+     4px 空隙），高度填满承托层；内部左栏整高固定、内容列自己滚动
+     （滚动条在面板内），分层只靠色差。 */
   display: flex;
-  align-items: flex-start;
-  min-height: calc(100vh - 48px);
-  background: var(--background);
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  /* 0910 四轮：底色改工作区底——导航列融入其中（同左栏一体语言），
+     内容列成为独立圆角子面板（色差 + 圆角分层，去 border 线）。 */
+  background: var(--surface-container-low);
   color: var(--on-surface);
 }
 
@@ -20,22 +27,22 @@
   margin: 0 auto var(--space-5);
   color: var(--on-surface);
   font: 600 var(--text-display)/1.25 var(--font-display);
+  /* 兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
+  user-select: none;
 }
 
 /* 左栏（同款断点宽度：264px / 288px，与 .task7-session-rail 一致）。
-   背景随内容区拉满整高，sticky 收在 .task6-settings-nav-inner。 */
+   v6 面板化：面板整高固定列（随面板 stretch），不再随内容滚动。 */
 .task6-settings-nav {
   flex: 0 0 288px;
   width: 288px;
   align-self: stretch;
-  border-inline-end: 1px solid var(--outline-variant);
+  /* 0910 四轮：与内容列之间不再用 border 线——内容列圆角子面板自己分层。 */
   background: var(--surface-container-low);
 }
 
 .task6-settings-nav-inner {
-  position: sticky;
-  top: 0;
-  max-height: calc(100vh - 48px);
+  height: 100%;
   overflow-y: auto;
   padding: var(--space-3) var(--space-2) var(--space-4);
 }
@@ -61,6 +68,8 @@
   gap: var(--space-1);
   margin-bottom: var(--space-3);
   padding-inline: var(--space-1);
+  /* 兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
+  user-select: none;
 }
 
 .task6-settings-nav-title {
@@ -111,8 +120,16 @@
   flex: 1;
   min-width: 0;
   max-width: 980px;
+  /* 0910 四轮：内容列成为圆角子面板（比导航列底色浅一档），与导航列之间
+     4px 缝自然分层——取代原 border 线。 */
+  border-radius: var(--radius-lg);
+  background: var(--surface-container);
+  margin-block: var(--space-1);
   margin-inline: auto;
   padding: var(--space-5) var(--space-6) var(--space-6);
+  /* v6 面板化：滚动容器从设置 overlay 的 main 下移到本列（面板内部滚动，
+     滚动条在面板内）；锚点平滑滚动目标随之改到这里。 */
+  overflow-y: auto;
 }
 
 .task6-settings-section {
@@ -120,11 +137,11 @@
   scroll-margin-top: var(--space-4);
 }
 
-/* 锚点平滑滚动：滚动容器是设置 overlay 的 main（task3.css 的
-   data-settings-page 规则），选择器 scoped 到设置页、不触碰 task3.css；
-   减少动态偏好下回退为浏览器默认瞬时跳转。 */
+/* 锚点平滑滚动：滚动容器是面板内容列（.task6-settings-content），选择器
+   scoped 到设置页、不触碰 task3.css；减少动态偏好下回退为浏览器默认瞬时
+   跳转。 */
 @media (prefers-reduced-motion: no-preference) {
-  .task3-route-content[data-settings-page="true"] {
+  .task6-settings-content {
     scroll-behavior: smooth;
   }
 }
@@ -1054,72 +1071,27 @@
   display: none;
 }
 
-/* Header */
-
-.task6-coach-header {
+/* v6（0910）：旧 header（Aiming Coach/可用/训练 chip 行）由 AppShell 共用
+   顶栏取代，样式随之退役。训练 chip 改为面板交换区右上的悬浮胶囊。 */
+.task6-coach-shell {
   position: relative;
-  flex: none;
-  width: 100%;
-  padding: var(--space-3) var(--space-4) var(--space-3);
-}
-
-.task6-coach-header-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.task6-coach-title {
-  font: 600 var(--text-body)/1.25 var(--font-display);
-  white-space: nowrap;
-}
-
-.task6-coach-availability {
-  display: inline-flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: var(--space-1);
-  color: var(--on-surface-variant);
-  font: 500 var(--text-micro)/1.25 var(--font-ui);
-  overflow-wrap: anywhere;
-}
-
-.task6-coach-availability::before {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  margin-top: var(--space-1);
-  border-radius: 50%;
-  background: currentColor;
-  content: "";
-}
-
-.task6-coach-availability[data-state="success"] {
-  color: var(--event-kill);
-}
-
-.task6-coach-availability[data-state="warning"] {
-  color: var(--on-surface);
-}
-
-.task6-coach-availability[data-state="error"] {
-  color: var(--error);
-}
-
-.task6-coach-header-actions {
   display: flex;
-  gap: var(--space-1);
-  align-items: center;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
 }
 
-.task6-coach-header-actions .ac-button,
-.task6-coach-header-actions .ac-icon-button {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  font-size: var(--text-caption);
+.task6-coach-floating {
+  position: absolute;
+  inset-block-start: var(--space-4);
+  inset-inline-end: var(--space-4);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
 }
 
 .task6-coach-context {
@@ -1152,6 +1124,7 @@
   /* 版式批3（digests §8）：内容列收敛 ~720px，且只用父容器相对单位——
      视频面板开启压缩本面板时自动退为全宽，composer 不再被 vw 硬挤窄。 */
   --task6-coach-content-width: min(100%, 720px);
+  position: relative;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -1195,14 +1168,14 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  max-width: min(100%, 240px);
-  height: 26px;
-  padding: 0 var(--space-2);
+  max-width: 280px;
+  height: 30px;
+  padding: 0 var(--space-3);
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--on-surface-variant);
-  font: 500 var(--text-micro)/1 var(--font-ui);
+  font: 500 var(--text-caption)/1 var(--font-ui);
   cursor: pointer;
 }
 
@@ -1444,7 +1417,7 @@
 .task6-messages {
   position: relative;
   flex: 1;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-5) var(--space-4) var(--space-3);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -1453,14 +1426,105 @@
 /* 顶部锚定（0827 拍板，回退底部锚定）：消息流从上往下自然排布，不再用
    auto-margin spacer 把内容压向钉底 composer（旧方案短会话时头部留大空洞）。 */
 
-/* 空对话 hero：占满剩余空间后网格居中。 */
+/* 空对话首页（0910 拍板）：占满剩余空间后纵向居中——问候＋居中 composer＋
+   建议 chips；发出首条消息后整个 hero 让位常规消息流。::before 是品牌水印
+   （0910 二轮拍板参考桌面 Agent 客户端起始页）：低透明度大 logo 作背景层，
+   浅色主题下 invert 成深色，pointer-events 放行点击。 */
 .task6-empty-hero {
+  position: relative;
   flex: 1;
-  display: grid;
-  place-content: center;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
   padding: var(--space-5) var(--space-4);
   text-align: center;
+}
+
+.task6-empty-hero::before {
+  content: "";
+  position: absolute;
+  /* 定位与原 center 40% 等价（top = 40% − 半个水印高），改为独立尺寸层后
+     mask 渐隐始终对应 logo 自身下缘、与 hero 高度解耦。 */
+  top: calc(40% - min(26%, 190px));
+  left: 50%;
+  width: min(52%, 380px);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  background: url("/logo-mark.png") center / contain no-repeat;
+  opacity: 0.07;
+  filter: invert(1);
+  pointer-events: none;
+  /* 0910 二轮拍板：仿参考图，水印下缘在输入框上缘附近短暂过渡后消失，
+     不再被 composer 实底硬截。mask 只取 alpha 通道，black/transparent
+     具名关键字不承载视觉颜色，不受"颜色必须 token 化"合同约束。 */
+  mask-image: linear-gradient(to bottom, black 58%, transparent 86%);
+  -webkit-mask-image: linear-gradient(to bottom, black 58%, transparent 86%);
+}
+
+:root[data-theme="dark"] .task6-empty-hero::before {
+  filter: none;
+}
+
+.task6-home-greet {
+  /* 0910 二轮拍板：大字号轻字重才像"打招呼"（display-xl 28px 新档），
+     并在 hero gap 之上再拉开与 composer 一档距离（合计 32px）。 */
+  position: relative;
+  font: 500 var(--text-display-xl)/1.3 var(--font-ui);
+  color: var(--on-surface);
+  margin-bottom: var(--space-4);
+}
+
+.task6-home-composer {
+  position: relative;
+  width: 100%;
+  text-align: left;
+}
+
+/* 首页 hero 的输入卡上下更宽（0910 拍板：更协调的居中比例）。 */
+.task6-home-composer .task6-composer-input,
+.task6-home-composer .task6-composer-input textarea {
+  min-height: 92px;
+}
+
+.task6-home-chips {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+/* 发出首条的过渡帧：hero 骨架淡出让位；气泡飞升与 composer 滑落由
+   CoachPanel 的 WAAPI 驱动，本动画只负责骨架本身。 */
+.task6-home-leaving {
+  animation: task6-home-leave 200ms var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+@keyframes task6-home-leave {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* 首条消息的飞行气泡：复用 user 气泡皮肤，定位与位移由 WAAPI 设置；
+   基态 opacity:0 防止定位前的一帧闪现。 */
+.task6-home-fly {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  opacity: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font: 400 var(--text-body)/1.45 var(--font-ui);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .task6-message-entry {
@@ -2038,7 +2102,8 @@
 .task6-suggestion {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
+  /* 0910 拍板：独立交互 chip 升为胶囊档（线框图同款）。 */
+  border-radius: 999px;
   background: var(--surface);
   color: var(--on-surface);
   font-size: var(--text-caption);
@@ -2052,7 +2117,7 @@
   color: var(--on-surface);
 }
 
-.task6-suggestion:active:not([data-pending="true"]) {
+.task6-suggestion:active {
   transform: scale(0.96);
 }
 
@@ -2061,19 +2126,50 @@
   outline-offset: 1px;
 }
 
-/* 进行中的分析标签：同款 pill，降对比不可点，完成后换成可点击 chip */
-.task6-suggestion[data-pending="true"] {
+/* 本次讨论常驻条：吸顶不随对话流滚动，项目名按钮打开左侧视频。
+   chip 胶囊化（点点 0910 四轮拍板：讨论 chips 与建议 chips 均为 999px）；
+   弱色差无描边：底色取比顶栏亮一档的 container-high，hover 才升 highest。 */
+.task6-discussion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  /* 无边框：button 的 UA 默认 outset 白框会顶出来（0910 四轮验收发现）。 */
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font: 500 var(--text-micro)/1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+button.task6-discussion-chip:hover {
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+}
+
+button.task6-discussion-chip:active {
+  transform: scale(0.96);
+}
+
+button.task6-discussion-chip:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* 进行中的分析标签：降对比不可点，完成后换成可点击 chip。 */
+.task6-discussion-chip[data-pending="true"] {
   cursor: default;
   opacity: 0.68;
 }
 
-.task6-suggestion[data-pending="true"]:hover {
-  background: var(--surface);
-  border-color: var(--outline-variant);
-  color: var(--on-surface);
+.task6-discussion-chip[data-pending="true"]:hover {
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
 }
-
-/* 本次讨论常驻条：吸顶不随对话流滚动，项目名按钮打开左侧视频 */
 
 .task6-discussion-bar {
   position: relative;
@@ -2087,14 +2183,40 @@
      突兀色带；结构与分隔由 chip 自身边框承担。 */
 }
 
+/* v6：讨论条经 portal 挂入共用顶栏（标题之后），去 padding/吸附。
+   bar 保留 position: relative 承载 ▾ 下拉菜单的绝对定位；菜单改挂 bar 右缘
+   （原 var(--space-4) 边距是面板内边距语境，顶栏内归零）。
+   0910 拍板：slot 自身右缘吃掉剩余空白（margin-inline-end: auto），
+   chips 紧跟标题，右侧空间全部让白。 */
+.task3-coach-topbar-slot {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-inline-end: auto;
+}
+.task3-coach-topbar-slot .task6-discussion-bar {
+  position: relative;
+  flex: none;
+  width: auto;
+  padding: 0;
+  overflow: hidden;
+}
+.task3-coach-topbar-slot .task6-discussion-menu {
+  top: calc(100% + var(--space-1));
+  right: 0;
+}
+
 /* 本次讨论溢出折叠（0905 拍板）：已完成 chip 只平铺前 3 个，余量收进行尾
-   ▾ 按钮的下拉里。箭头沿用 suggestion chip 体系（同 pill 同交互），菜单
+   ▾ 按钮的下拉里。箭头同 discussion-chip 一族（同 sm 档同交互），菜单
    沿用 model menu 先例＝仅边框分层不加阴影；绝对定位挂在吸顶条右缘，
    超宽向下滚动，不溢出面板。 */
 .task6-discussion-toggle {
   display: inline-flex;
   align-items: center;
-  padding: var(--space-2);
+  justify-content: center;
+  width: 24px;
+  padding: 0;
 }
 
 .task6-discussion-caret {
@@ -2158,19 +2280,21 @@
 
 .task6-composer-input {
   position: relative;
+  /* 挤压响应的测量容器（点点 0910 拍板）：inline-size containment 只约束
+     自身宽度（块级流中由父级决定），内容高度与绝对定位子元素不受影响。 */
+  container-type: inline-size;
   min-height: 72px;
   border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
+  /* 0910 拍板：输入卡升到 lg=14px——线框图同款圆度。 */
+  border-radius: var(--radius-lg);
   /* surface-bright（0827 对齐 ZCode 参照）：light 下为白卡、dark 下为
      比主面亮一档的浮起卡——输入卡恒为视觉焦点。 */
   background: var(--surface-bright);
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
-.task6-composer-input:focus-within {
-  border-color: var(--outline);
-  box-shadow: 0 0 0 1px var(--outline);
-}
+/* 焦点态不加任何外圈/描边（点点 0910 拍板）：框内光标闪动即是焦点证据，
+   这里刻意不写 :focus-within 规则。 */
 
 .task6-composer-input textarea {
   display: block;
@@ -2178,7 +2302,7 @@
   min-width: 0;
   min-height: 72px;
   max-height: 144px;
-  padding: var(--space-3) 52px var(--space-3) var(--space-3);
+  padding: 20px 52px var(--space-3) 20px;
   border: 0;
   border-radius: inherit;
   outline: 0;
@@ -2196,7 +2320,8 @@
   width: 32px;
   height: 32px;
   border: 0;
-  border-radius: var(--radius-md);
+  /* 0910 拍板：发送键正圆（线框图同款）。 */
+  border-radius: 50%;
   background: var(--primary);
   color: var(--on-primary);
   font-size: var(--text-title);
@@ -2215,6 +2340,36 @@
 .task6-composer-send:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+/* composer 左下角「+」引用钮（点点 0910 拍板）：absolute 锚定输入卡左下，
+   与右下发送键水平对称（发送键所在角簇 right/bottom 均为 8px）；32px 正圆、
+   透明底 + outline-variant 描边的 ghost 形态，与 primary 橙发送键明确区分。 */
+.task6-composer-mention {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--outline-variant);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.task6-composer-mention:hover {
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+}
+
+.task6-composer-mention:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
 /* Composer model picker: 右下角簇内静态锚点（0827 拍板 B1，取代旧「工具行拆出」），
@@ -2239,6 +2394,13 @@
   padding-bottom: 44px;
 }
 
+/* 左下 + 引用钮恒在（0910 拍板）：按钮压在输入卡底部，文字只在滚动到底
+   时让出底部 44px（padding-bottom），左侧不再让位——44px 左缩进是误伤
+   （按钮在底部不在首行侧），placeholder 从左缘起排。 */
+.task6-composer-input:has(.task6-composer-mention) textarea {
+  padding-bottom: 44px;
+}
+
 .task6-composer-model-wrap {
   position: relative;
 }
@@ -2247,7 +2409,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: 136px;
+  /* 完整模型名（点点 0910 拍板：不截断不缩写）；重度挤压档才由 container
+     query 给 label 上限收回 ellipsis。 */
   height: 32px;
   padding: 0 var(--space-3);
   border: 0;
@@ -2307,7 +2470,8 @@
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: var(--radius-sm);
+  /* 嵌套公式（0910 新档）：菜单外 R(lg=14) − 菜单 padding(space-1=4) = md=10。 */
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--on-surface);
   font: 400 var(--text-ui)/1.3 var(--font-ui);
@@ -2332,6 +2496,81 @@
 .task6-composer-model-check {
   flex: none;
   color: var(--on-surface);
+}
+
+/* 思考力度选择（点点 0910 拍板从模型菜单拆出）：紧邻模型钮右侧成组，
+   形态与模型钮同族；交互（开合/外点关闭/Esc/aria）照抄模型菜单。 */
+.task6-composer-effort-wrap {
+  position: relative;
+}
+
+.task6-composer-effort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: 400 var(--text-caption)/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.task6-composer-effort:hover {
+  background: var(--surface-container);
+  color: var(--on-surface);
+}
+
+.task6-composer-effort:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.task6-composer-effort:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 常态显示文字档位；IconSpark glyph 只在中度挤压档显示（container query）。 */
+.task6-composer-effort-glyph {
+  display: none;
+  flex: none;
+}
+
+.task6-composer-effort-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 160px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-high);
+}
+
+/* ── 底行挤压响应（点点 0910 拍板）：.task6-composer-input 为 inline-size
+   container，视频面板开启/对话列拖窄时渐进收缩——
+   ① ≤520px：effort 文字档位收成图标，模型名保持完整；
+   ② ≤400px：模型名允许 ellipsis 截断；
+   + 引用钮、两个菜单按钮与发送键在任何档位永不消失。 */
+@container (max-width: 520px) {
+  .task6-composer-effort .task6-composer-effort-label {
+    display: none;
+  }
+
+  .task6-composer-effort .task6-composer-effort-glyph {
+    display: inline-block;
+  }
+}
+
+@container (max-width: 400px) {
+  .task6-composer-model .task6-composer-model-label {
+    max-width: 96px;
+  }
 }
 
 /* ── Composer 编排（digests §11 批 5）：队列 chips / 发送四动作菜单 /
@@ -2929,4 +3168,18 @@
     transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: none;
   }
-}
+}
+/* 过渡期间（0910 修"闪"）：真实首条气泡与落底的 composer 都藏起来，由
+   飞行克隆与滑入动画全权呈现，落定后（homeExit 清除）同一帧换回。
+   置于文件末尾：嵌套选择器不得排在 .task6-composer-input /
+   .task6-message-entry[data-role="user"] 真规则之前（源码合同取首匹配）。 */
+.task6-messages-wrap[data-home-fly="true"] .task6-message-entry[data-role="user"] {
+  opacity: 0;
+  /* task6-enter 是 fill:both 的动画，结束后仍以 keyframe 值压过静态
+     opacity——必须一并关掉，真气泡才藏得住。 */
+  animation: none;
+}
+
+.task6-composer[data-home-drop="true"] .task6-composer-input {
+  opacity: 0;
+}

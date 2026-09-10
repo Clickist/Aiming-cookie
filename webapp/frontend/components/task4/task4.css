@@ -4,7 +4,16 @@
   width: 100%;
   max-width: 1040px;
   margin-inline: auto;
-  padding: var(--space-5) var(--space-5) var(--space-6);
+  /* 顶部不留 padding：sticky 头要钉在滚动口最顶，若容器自带顶 padding，
+     头上方的空档会露出滚动的行（0910 实测"标题行上面透明"）；顶距由
+     .task4-page-head 自身的 padding 承担，钉住时用它的不透明背景盖严。 */
+  padding: 0 var(--space-5) var(--space-6);
+  /* 0910（点点）：滚动收进内容列——此前文档级滚动把滚动条画在窗口最右缘，
+     离居中的内容列老远（"跑到页面外侧"）；现在滚动条贴着列表右缘。
+     v6 面板化（0910）：外层 .task3-page-view 是圆角面板，本列改为
+     height: 100% 填满面板，滚动条保持在面板内部。 */
+  height: 100%;
+  overflow-y: auto;
 }
 
 .task4-page-head {
@@ -14,10 +23,17 @@
   gap: var(--space-4);
   margin-bottom: var(--space-1);
   position: sticky;
-  top: 48px;
+  /* 滚动口已是 .task4-page 自身，锚到顶即可。 */
+  top: 0;
   z-index: 100;
-  background: var(--background);
-  padding: var(--space-2) 0;
+  /* v6 面板化：取面板主面同色（container），遮挡滚过的行不露色带。 */
+  background: var(--surface-container);
+  padding: var(--space-5) 0 var(--space-2);
+  /* 横跨顶栏拆除后右侧有全局常浮三键（8~52px 高、右侧约 138px 宽），
+     页头动作按钮（刷新等）要让位，避免顶到键下（对齐 coach 顶栏 150px 先例）。 */
+  padding-inline-end: 150px;
+  /* 页头兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
+  user-select: none;
 }
 
 .task4-page-title-row {

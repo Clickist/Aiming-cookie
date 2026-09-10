@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
-import { IconClose, IconHistory, IconPlus, IconSearch, IconSettings } from "@/ui/icons";
+import { IconArchive, IconCheck, IconClose, IconHistory, IconPlus, IconSearch, IconSettings, IconTrash } from "@/ui/icons";
 import { Button } from "@/ui/primitives";
+import { startWindowDraggingOnBackground } from "@/components/task3/TauriWindowControls";
 
 export type SessionRailId = string | number;
 
@@ -121,8 +122,22 @@ export function SessionRail({
   // 每组一个独立开关，用一个 record 统一管理：缺省（false）＝只显示前
   // SESSION_GROUP_PREVIEW_COUNT 条；纯 UI 状态，不参与数据获取。
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  // 列表两端渐隐（0910 拍板对齐参考图）：仅在对应一端还有未滚动到的内容时
+  // 才淡出，滚到边即恢复实色——静态遮罩会一直削首尾条目，故滚动感知。
+  const [edgeFade, setEdgeFade] = useState({ top: false, bottom: false });
   const searchRef = useRef<HTMLInputElement>(null);
   const railRef = useRef<HTMLElement>(null);
+  const listRef = useRef<HTMLElement>(null);
+
+  const syncEdgeFade = useRef(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const next = {
+      top: el.scrollTop > 1,
+      bottom: el.scrollTop + el.clientHeight < el.scrollHeight - 1,
+    };
+    setEdgeFade((prev) => (prev.top === next.top && prev.bottom === next.bottom ? prev : next));
+  }).current;
 
   const visible = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -136,6 +151,13 @@ export function SessionRail({
       })
       .sort((a, b) => sessionOrderStamp(b) - sessionOrderStamp(a));
   }, [query, sessions]);
+
+  // 内容（会话集/搜索过滤/组展开）或窗口尺寸变化后重算渐隐端。
+  useEffect(() => {
+    syncEdgeFade();
+    window.addEventListener("resize", syncEdgeFade);
+    return () => window.removeEventListener("resize", syncEdgeFade);
+  }, [visible, expandedGroups, syncEdgeFade]);
 
   // 时间分组（今天/昨天/近 7 天/更早），只保留非空组；组内沿用 visible 的倒序。
   const groups = useMemo(() => {
@@ -158,6 +180,13 @@ export function SessionRail({
   const railClassName = ["task7-session-rail", className].filter(Boolean).join(" ");
   return (
     <aside aria-label="会话" className={railClassName} ref={railRef}>
+      {/* v6（0910 拍板）：横跨顶栏拆除后 logo 归左栏；与下方一体、无分界线。
+          品牌行兼作窗口拖拽区（左键空白处），补上被拆掉的顶栏拖拽。 */}
+      <div className="task7-session-rail__brand" onMouseDown={startWindowDraggingOnBackground}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="task7-session-rail__brand-mark" src="/logo-mark.png" alt="" />
+        <span className="task7-session-rail__brand-name">Aiming&nbsp;Cookie</span>
+      </div>
       <div className="task7-session-rail__header">
         <div className="task7-session-rail__header-actions">
           {/* primary 视觉走共享 Button 原语（digests §9：不再手抄 primary 填充与 hover 公式），
@@ -176,7 +205,14 @@ export function SessionRail({
         {query ? <button aria-label="清除搜索" className="task7-session-rail__search-clear" onClick={() => { setQuery(""); onSearchChange?.(""); }} type="button"><IconClose /></button> : null}
       </label>
 
-      <nav aria-label="会话列表" className="task7-session-rail__list">
+      <nav
+        aria-label="会话列表"
+        className="task7-session-rail__list"
+        data-fade-bottom={edgeFade.bottom || undefined}
+        data-fade-top={edgeFade.top || undefined}
+        onScroll={syncEdgeFade}
+        ref={listRef}
+      >
     {groups.length ? groups.map((group) => {
       // 默认只渲染前 5 条，超出走组尾「显示全部」开关（0827 拍板）；
       // 数量角标始终展示该组总数，不受预览截断影响。
@@ -212,12 +248,12 @@ export function SessionRail({
           </button>
           {session.id !== "draft" && (onArchiveSession || onSoftDeleteSession) ? (
             <span className="task7-session-rail__item-actions">
-              {onArchiveSession ? <button aria-label={`归档 ${title}`} className="task7-session-rail__item-action" onClick={(event) => { event.stopPropagation(); onArchiveSession(session); }} type="button">归档</button> : null}
+              {onArchiveSession ? <button aria-label={`归档 ${title}`} className="task7-session-rail__item-action" onClick={(event) => { event.stopPropagation(); onArchiveSession(session); }} title="归档" type="button"><IconArchive /></button> : null}
               {onSoftDeleteSession ? (
                 pendingDeleteId === session.id ? (
-                  <button aria-label={`确认删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger task7-session-rail__item-action--confirm" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(null); onSoftDeleteSession(session); }} type="button">确认删除</button>
+                  <button aria-label={`确认删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger task7-session-rail__item-action--confirm" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(null); onSoftDeleteSession(session); }} title="再次点击确认删除" type="button"><IconCheck /></button>
                 ) : (
-                  <button aria-label={`删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(session.id); }} type="button">删除</button>
+                  <button aria-label={`删除 ${title}`} className="task7-session-rail__item-action task7-session-rail__item-action--danger" onClick={(event) => { event.stopPropagation(); setPendingDeleteId(session.id); }} title="删除" type="button"><IconTrash /></button>
                 )
               ) : null}
             </span>

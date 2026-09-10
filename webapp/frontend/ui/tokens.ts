@@ -121,10 +121,10 @@ export const SCALE_TOKENS = {
   "space-4": "16px",
   "space-5": "24px",
   "space-6": "32px",
-  "radius-sm": "4px",
-  "radius-md": "6px",
-  "radius-lg": "8px",
-  // frontend-parity digests §8：user 气泡 pill 向档位。
+  "radius-sm": "6px",
+  "radius-md": "10px",
+  "radius-lg": "14px",
+  // 0910 拍板：整体变软对齐新线框；xl 维持 frontend-parity digests §8 气泡档。
   "radius-xl": "16px",
   "text-micro": "11px",
   "text-caption": "12px",
@@ -132,6 +132,8 @@ export const SCALE_TOKENS = {
   "text-body": "14px",
   "text-title": "15px",
   "text-display": "20px",
+  // 0910 拍板（点点）：空对话首页大问候档，参考桌面 Agent 客户端起始页感觉。
+  "text-display-xl": "28px",
   "control-height": "36px",
   "control-height-compact": "32px",
 } as const;

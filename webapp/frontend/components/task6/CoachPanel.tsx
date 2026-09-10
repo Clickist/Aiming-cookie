@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import {
   createCoachAgentRun,
@@ -16,6 +17,7 @@ import {
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
 import { COACH_PENDING_INTENT_KEY, computeAnalysisEtaSeconds } from "@/lib/contracts";
 import { discussionChipLabel, groupDiscussionChips } from "@/lib/discussion-bar";
+import { coachGreeting, coachHomeChips } from "@/lib/coach-home";
 import {
   COACH_DRAFT_DEBOUNCE_MS,
   activeMentionQuery,
@@ -57,8 +59,8 @@ import type {
   ProviderProfileState,
   SessionListItem,
 } from "@/lib/types";
-import { IconChevronDown, IconClose, IconHistory, IconSend } from "@/ui/icons";
-import { Button, Empty, ErrorState, IconButton, Notice, Status, Toast, useAnimatedPresence } from "@/ui/primitives";
+import { IconChevronDown, IconClose, IconHistory, IconPlus, IconSend } from "@/ui/icons";
+import { Button, ErrorState, IconButton, Notice, Status, Toast, useAnimatedPresence } from "@/ui/primitives";
 
 type CoachCapability = "loading" | ProviderProfileState | "unavailable";
 type CoachLayoutMode = "side-by-side" | "overlay" | "full";
@@ -73,6 +75,21 @@ function capabilityLabel(capability: Exclude<CoachCapability, "loading" | "ready
     case "unavailable": return "Coach 本地服务不可用";
   }
 }
+
+// run 创建期间（ensureSession 串行链 + create 往返）的占位工作段：与 queued
+// 态的"等待开始"同款，落 run 后无缝换成真实事件流（0910 死窗修复）。
+const HOME_PENDING_WORK_SEGMENTS: CoachWorkSegment[] = [
+  {
+    kind: "tool",
+    step: {
+      key: "coach-pending-start",
+      label: "等待开始",
+      meta: null,
+      state: "active",
+      command: null,
+    },
+  },
+];
 
 function runErrorTitle(error: CoachAgentRunV1["error"]): string {
   switch (error?.domain) {
@@ -289,6 +306,20 @@ function deriveWorkSegments(run: CoachAgentRunV1 | null): CoachWorkSegment[] {
           command: null,
         },
       });
+    } else if (segments.length === 0) {
+      // 0910（点点）：running 且全无事件（首 token 延迟、引擎内部重试的沉默
+      // 期）同样要进工作态——占位表达"正在理解问题"，不违反 0828（那条移除
+      // 的是思考/正文已可见时的重复占位）。
+      segments.push({
+        kind: "tool",
+        step: {
+          key: "coach-running-placeholder",
+          label: "正在理解问题和分析上下文",
+          meta: null,
+          state: "active",
+          command: null,
+        },
+      });
     }
   }
   return segments;
@@ -436,6 +467,7 @@ export function CoachPanel({
   layoutMode = "full",
   onEnsureSession,
   onClose,
+  onHomeShellChange,
   onOpenVideo,
   pathname = "/history",
   softStartRun = null,
@@ -446,6 +478,8 @@ export function CoachPanel({
   sessionId?: number | null;
   layoutMode?: CoachLayoutMode;
   onEnsureSession?: () => Promise<number | null>;
+  /** 空对话首页激活态上报（v6：AppShell 据此隐藏共用顶栏，三键常浮）。 */
+  onHomeShellChange?: (active: boolean) => void;
   onClose?: () => void;
   onOpenVideo?: (analysisRef: string, timeMs?: number) => void;
   pathname?: string;
@@ -1009,6 +1043,11 @@ export function CoachPanel({
         const next = await fetchRun();
         if (cancelled) return;
         setRun(next);
+        if (!["queued", "running"].includes(next.status)) {
+          // run 终态：消息与自动命名所需数据均已落盘，通知 AppShell 刷新侧栏
+          //（标题由命名钩子异步落库，AppShell 见 title_pending 会再补刷一次）。
+          window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
+        }
         await Promise.all([refresh(), refreshCurrentTraining()]);
         if (next.status === "succeeded") settleSucceeded(next);
       } catch (error) {
@@ -1041,6 +1080,7 @@ export function CoachPanel({
           if (["queued", "running"].includes(next.status)) {
             schedulePoll();
           } else {
+            window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
             await Promise.all([refresh(), refreshCurrentTraining()]);
             if (next.status === "succeeded") settleSucceeded(next);
           }
@@ -1579,6 +1619,8 @@ export function CoachPanel({
     }
     // 同步重入锁：必须在任何 await 之前置位，重入直接丢弃。
     sendingRef.current = true;
+    // 工作流死窗占位：从这一刻到 setRun(created) 之间也要有"等待开始"。
+    setPendingRunStart(true);
     // 新回合开始：清掉本会话上一回合的归档摘要与思考流残留。
     clearArchivedTurn();
     clearThinkingStream();
@@ -1593,6 +1635,7 @@ export function CoachPanel({
     try {
       const effectiveSessionId = sessionId ?? (onEnsureSession ? await onEnsureSession() : null);
       if (sessionId === null && onEnsureSession && effectiveSessionId === null) {
+        setPendingRunStart(false);
         rollbackOptimisticSend(optimisticId, content, quotesSnapshot);
         notify("未能创建会话，草稿已保留，请重试。");
         return false;
@@ -1601,11 +1644,13 @@ export function CoachPanel({
         content,
         effectiveSessionId == null ? {} : { sessionId: effectiveSessionId },
       );
+      setPendingRunStart(false);
       setRun(created);
-      // 会话标题会随第一条消息更新，通知 AppShell 刷新侧栏列表。
-      window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
+      // 侧栏刷新改由 run 终态（finalizeRun/轮询终态分支）派发——此处派发时
+      // 用户消息尚未落盘，刷新扑空，是新会话一直显示"新对话"的竞态根源。
       return true;
     } catch (error) {
+      setPendingRunStart(false);
       rollbackOptimisticSend(optimisticId, content, quotesSnapshot);
       notify(requestFeedback(error, "消息未发送，草稿已保留，请重试。"));
       return false;
@@ -1647,6 +1692,9 @@ export function CoachPanel({
     if (!draft.trim() && quotes.length === 0) return;
     const content = composeOutgoing();
     if (content === null) return;
+    // 空对话首页的首条发送：先记下居中 composer 的位置交给过渡动画
+    //（气泡飞升＋composer 滑落），再走常规乐观上屏。
+    beginHomeExit(content);
     setMentionQuery(null);
     setSendMenuOpen(false);
     void sendText(content);
@@ -1787,6 +1835,72 @@ export function CoachPanel({
     [draft],
   );
 
+  // ── 空对话首页（点点 0910 拍板）＋首条发送过渡 ─────────────────────────
+  // 首条消息从居中首页发出时：消息以 user 气泡形态从输入框位置飞向消息区、
+  // composer 同步滑落底部（FLIP，WAAPI 驱动）；系统「减少动态效果」开启时
+  // 全部跳切到终态。
+  const [homeExit, setHomeExit] = useState<null | { composerRect: DOMRect; text: string }>(null);
+  // run 创建中的死窗占位（0910 点点报"工作态有点问题"）：ensureSession 串行链
+  // 加 createCoachAgentRun 往返期间 run 还是 null，工作流整块不渲染，UI 假死。
+  const [pendingRunStart, setPendingRunStart] = useState(false);
+  const homeComposerRef = useRef<HTMLDivElement | null>(null);
+  const footerComposerRef = useRef<HTMLElement | null>(null);
+  const homeFlyRef = useRef<HTMLDivElement | null>(null);
+  const homeExitTimerRef = useRef<number | null>(null);
+  const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  useLayoutEffect(() => {
+    if (!homeExit) return;
+    const finish = () => {
+      homeExitTimerRef.current = null;
+      textareaRef.current?.focus();
+      setHomeExit(null);
+    };
+    // 布局 effect 在首帧绘制前完成定位与起动画——旧版 effect+双 rAF 会让
+    // 首帧先画出已落底的 composer 再跳回起点，正是"闪"的来源（0910 点点报）。
+    const fly = homeFlyRef.current;
+    const footer = footerComposerRef.current;
+    if (!fly || !footer || prefersReducedMotion()) {
+      finish();
+      return;
+    }
+    const easing = "cubic-bezier(0.2, 0.7, 0.2, 1)";
+    const from = homeExit.composerRect;
+    const target = messagesRef.current?.querySelector<HTMLElement>('.task6-message-entry[data-role="user"]');
+    if (target) {
+      const to = target.getBoundingClientRect();
+      // 飞行气泡以目标气泡的宽度与位置起形，只位移不改形（文字不拉伸）；
+      // fill forwards 压过 data-home-fly 的隐藏基态，落定后由卸载接管。
+      fly.style.left = `${to.left}px`;
+      fly.style.top = `${to.top}px`;
+      fly.style.width = `${to.width}px`;
+      const dx = from.left + from.width / 2 - (to.left + to.width / 2);
+      const dy = from.top + from.height / 2 - (to.top + to.height / 2);
+      fly.animate(
+        [
+          { transform: `translate(${dx}px, ${dy}px)`, opacity: 1 },
+          { transform: "translate(0px, 0px)", opacity: 1 },
+        ],
+        { duration: 340, easing, fill: "forwards" },
+      );
+    }
+    const drop = from.top - footer.getBoundingClientRect().top;
+    if (Math.abs(drop) > 4) {
+      footer.animate(
+        [
+          { transform: `translateY(${drop}px)`, opacity: 1 },
+          { transform: "translateY(0px)", opacity: 1 },
+        ],
+        { duration: 300, easing, fill: "forwards" },
+      );
+    }
+    homeExitTimerRef.current = window.setTimeout(finish, 380);
+    return () => {
+      if (homeExitTimerRef.current !== null) window.clearTimeout(homeExitTimerRef.current);
+    };
+    // deps 仅 homeExit：textareaRef/messagesRef 都是稳定 ref。
+  }, [homeExit]);
+
   // ── @ 引用下拉（item 3）：候选与查询状态 ───────────────────────────────
   const syncMentionQuery = useCallback(() => {
     const el = textareaRef.current;
@@ -1832,13 +1946,51 @@ export function CoachPanel({
     });
   };
 
+  /**
+   * 错误卡「重试」（0910 点点报"点了不会重试"）：优先走服务端重试（原样重跑
+   * 回合，不重复用户消息）。服务端 409/404 时不许哑掉——409 先与 服务端状态
+   * 对齐（仍在跑＝恢复直播；已完成＝拉取落库消息接管对话；确实不可重试＝
+   * 明说），404（run 已随服务重启丢失）＝把最后一条用户问题放回输入框。
+   */
   const retry = async () => {
     if (!run) return;
+    const runRef = run.run_ref;
     try {
-      setRun(await retryCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId }));
-    } catch {
-      notify("重试未能开始，请稍后再试。");
+      setRun(await retryCoachAgentRun(runRef, sessionId == null ? {} : { sessionId }));
+      return;
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "";
+      if (name !== "ApiError_409" && name !== "ApiError_404") {
+        notify("重试未能开始，请稍后再试。");
+        return;
+      }
+      if (name === "ApiError_409") {
+        try {
+          const resynced = await getCoachAgentRun(runRef, sessionId == null ? {} : { sessionId });
+          if (["queued", "running"].includes(resynced.status)) {
+            setRun(resynced); // 服务端仍在跑：恢复直播/轮询，什么也不用重做。
+            return;
+          }
+          if (resynced.status === "succeeded") {
+            setRun(null); // 回复其实已落库：解除错误卡，拉取消息接管对话。
+            void refresh();
+            notify("回复已完成，已为你载入。");
+            return;
+          }
+          setRun(resynced);
+          notify("这个回合无法重试，请重新描述你的问题。");
+          return;
+        } catch {
+          // 状态拿不到＝run 已丢失，走下方放回输入框兜底。
+        }
+      }
     }
+    // run 已丢失（如本地服务重启）：解除错误卡，把问题放回输入框。
+    const lastUser = [...messages].reverse().find((message) => message.role === "user");
+    if (lastUser) setDraft(lastUser.content);
+    setRun(null);
+    void refresh();
+    notify("原回合已丢失，你的问题已放回输入框，确认后即可重发。");
   };
 
   const stop = async () => {
@@ -1902,28 +2054,276 @@ export function CoachPanel({
         ? { state: "error", label: capabilityLabel(capability) }
         : { state: "warning", label: capabilityLabel(capability) };
 
-  const suggestionItems = useMemo(() => {
-    const base = ["总结最近进步"];
-    if (summaryItem?.display_name) {
-      base.push(`关于「${summaryItem.display_name}」的训练建议`);
+  // ── 空对话首页（点点 0910 拍板）─────────────────────────────────────────
+  const homeGreeting = coachGreeting(new Date());
+  const homeChips = useMemo(() => coachHomeChips(), []);
+  // 纯空对话（无消息、无 run、非过渡帧）才显示首页；发送首条后由常规消息流接管。
+  const homeMode = messages.length === 0 && !run && !homeExit;
+  // 空对话首页壳层（点点 0910 拍板）：header 状态行与"本次讨论"条是上次会话的
+  // 上下文残留，空对话时连同过渡帧一起不渲染，首页只留居中 hero；异常分支
+  // （loading/不可用/加载失败）不在本条件内，状态提示照常显示。
+  const homeShell = messages.length === 0 && !run;
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as unknown as { __acDebug2?: unknown }).__acDebug2 = {
+        messages: messages.length,
+        run: run ? run.status : null,
+        homeExit: homeExit != null,
+      };
     }
-    base.push("今天练什么");
-    return base.slice(0, 3);
-  }, [summaryItem?.display_name]);
+    onHomeShellChange?.(homeShell);
+  }, [homeShell, onHomeShellChange, messages.length, run, homeExit]);
+  // v6 四轮：讨论条 portal 挂载点解析。顶栏（含 task3-coach-topbar-slot）由
+  // homeShell 上报经 AppShell 渲染，槽位 DOM 总是晚本面板一帧出现——render
+  // 期间查询永远落空，改为每次提交后在 DOM 解析一次（无依赖 layout effect）；
+  // 解析到才挂 portal，首页（homeShell）或槽位缺失时保持 null 不渲染。
+  const [discussionBarHost, setDiscussionBarHost] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (homeShell) {
+      if (discussionBarHost !== null) setDiscussionBarHost(null);
+      return;
+    }
+    const host = document.getElementById("task3-coach-topbar-slot");
+    if (host !== discussionBarHost) setDiscussionBarHost(host);
+  });
+  const beginHomeExit = (text: string) => {
+    if (messages.length !== 0 || run || prefersReducedMotion()) return;
+    const rect = homeComposerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setHomeExit({ composerRect: rect, text });
+  };
+  // 首页下半（chips＋提示）：正常帧与退出淡出帧共用。
+  const homeTail = (
+    <>
+      <div aria-label="试试这样问" className="task6-home-chips" role="list">
+        {homeChips.map((chip) => (
+          <button
+            className="task6-suggestion"
+            key={chip.id}
+            onClick={() => {
+              // 拍板：只填入草稿，由用户自己修改后发送，不直发。
+              setDraft(chip.prompt);
+              requestAnimationFrame(() => textareaRef.current?.focus());
+            }}
+            role="listitem"
+            title="填入输入框，可修改后再发送"
+            type="button"
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
 
-  const header = (
-    <header className={["task6-coach-header", layoutMode === "full" ? "task6-coach-full-header" : ""].filter(Boolean).join(" ")}>
-      <div className="task6-coach-header-row">
-        <span className="task6-coach-title">Aiming Coach</span>
-        <span className="task6-coach-availability" data-state={headerState.state}>{headerState.label}</span>
-        <div className="task6-coach-header-actions">
-          {trainingChip}
-          {onClose ? <IconButton label="关闭 Coach" onClick={onClose} title="关闭 Coach"><IconClose /></IconButton> : null}
+  // composer 主体（队列 chips＋引用块＋输入卡）提取为单变量：空对话首页把整个
+  // composer 搬进居中 hero（homeMode 时 footer 不渲染），发送时再落回 footer——
+  // 两处按条件互斥渲染，任一时刻只有一份实例（#coach-draft 唯一）。
+  const composerCore = (
+    <>
+      {/* 运行中队列 chips（item 1）：96 字符预览，逐条可上浮转向/回填编辑/取消 */}
+      {queuedChips.length > 0 ? (
+        <div aria-label="待发送队列" className="task6-queue-chips" role="list">
+          {queuedChips.map((chip) => (
+            <div className="task6-queue-chip" key={chip.id} role="listitem">
+              <span className="task6-queue-chip-text" title={chip.text}>{truncateQueuePreview(chip.text)}</span>
+              <IconButton label="上浮立即转向" onClick={() => void promoteChipToSteer(chip)} size="compact" title="立即插入当前回复">
+                <IconChevronDown className="task6-icon-flip" />
+              </IconButton>
+              <IconButton label="回填编辑" onClick={() => backfillChipToDraft(chip)} size="compact" title="放回输入框编辑">
+                <IconHistory />
+              </IconButton>
+              <IconButton label="取消发送" onClick={() => setQueuedChips((chips) => removeQueuedChip(chips, chip.id))} size="compact" title="取消这条排队消息">
+                <IconClose />
+              </IconButton>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {/* 划选引用块（textarea 上方独立插槽）：多条并存，逐条整块删除；
+          文本体锁定不可编辑（只读呈现元素），超长块内部滚动。 */}
+      {quotes.length > 0 ? (
+        <div aria-label="引用 Coach 的发言" className="task6-quote-list" role="list">
+          {quotes.map((quote) => (
+            <blockquote className="task6-quote-block" key={quote.id} role="listitem">
+              <span className="task6-quote-head">引用 Coach</span>
+              <p className="task6-quote-body" title={quote.text}>{quote.text}</p>
+              <IconButton label="删除这条引用" onClick={() => removeQuote(quote.id)} size="compact" title="删除整块引用（文字不可编辑）">
+                <IconClose />
+              </IconButton>
+            </blockquote>
+          ))}
+        </div>
+      ) : null}
+      <div className="task6-composer-input">
+        <textarea
+          aria-label="向 Coach 提问"
+          id="coach-draft"
+          onChange={(event) => {
+            mentionCaretRef.current = event.target.selectionStart;
+            setDraft(event.target.value);
+            syncMentionQuery();
+          }}
+          onKeyDown={(event) => {
+            // 中文等输入法按 Enter 确认候选词时 isComposing 为 true，不应提交。
+            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+            // @ 引用下拉（item 3）：↑↓ 导航 / Enter 选中 / Esc 关闭
+            if (mentionOpen) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setMentionIndex((current) => (current + 1) % filteredMentionCandidates.length);
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setMentionIndex((current) => (current - 1 + filteredMentionCandidates.length) % filteredMentionCandidates.length);
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                selectMentionCandidate(filteredMentionCandidates[Math.min(mentionIndex, filteredMentionCandidates.length - 1)]!);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setMentionQuery(null);
+                return;
+              }
+            }
+            // ↑ 翻发送历史（item 5）：空草稿或正在翻页时接管
+            if (!event.shiftKey && event.key === "ArrowUp" && (draft.trim() === "" || historyIndexRef.current !== null)) {
+              event.preventDefault();
+              navigateSentHistory("up");
+              return;
+            }
+            if (!event.shiftKey && event.key === "ArrowDown" && historyIndexRef.current !== null) {
+              event.preventDefault();
+              navigateSentHistory("down");
+              return;
+            }
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              submitComposer();
+            }
+          }}
+          placeholder="向 Coach 提问，可以聊训练，也可以让它帮你操作应用…"
+          ref={textareaRef}
+          rows={3}
+          value={draft}
+        />
+        {/* @ 引用下拉浮层（item 3） */}
+        {mentionOpen ? (
+          <div
+            aria-label="@ 引用候选"
+            className="task6-mention-menu"
+            role="listbox"
+          >
+            {filteredMentionCandidates.slice(0, 8).map((candidate, index) => (
+              <button
+                aria-selected={index === mentionIndex}
+                className="task6-mention-item"
+                key={`${candidate.token}-${index}`}
+                onClick={() => selectMentionCandidate(candidate)}
+                onMouseDown={(event) => event.preventDefault()}
+                role="option"
+                type="button"
+              >
+                <strong>{candidate.token}</strong>
+                <small>{candidate.label}</small>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {/* 右下角簇（0827 拍板 B1）：模型/力度选择与发送键同一行、发送键左侧，
+            取代旧「输入卡下方工具行」；wrap 自带 position:relative 锚点，
+            菜单仍向上弹出。@ 引用钮已移至输入卡左下角（0910 拍板，与发送键
+            水平对称），不再占据角簇首位。 */}
+        {/* 左下角 + 引用钮（点点 0910 拍板）：32px 圆形、弱色描边形态，与
+            primary 橙发送键明确区分；点击＝在草稿尾部落一个真实的 @，
+            整条 mention 管线（候选/选中/token 化）零新增。 */}
+        <button
+          aria-label="引用分析或场景"
+          className="task6-composer-mention"
+          onClick={() => {
+            if (mentionCandidates.length === 0) {
+              notify("还没有可引用的分析或场景；完成一次分析后就能在这里引用。");
+              return;
+            }
+            const next = `${draft}@`;
+            setDraft(next);
+            requestAnimationFrame(() => {
+              const el = textareaRef.current;
+              el?.focus();
+              el?.setSelectionRange(next.length, next.length);
+              syncMentionQuery();
+            });
+          }}
+          title="引用一份分析或场景（等同输入 @）"
+          type="button"
+        ><IconPlus /></button>
+        <div className="task6-composer-corner">
+          <CoachModelMenu
+            onError={(message) => notify(message)}
+          />
+          {/* 发送键恒为提交（点点 09-01 拍板移除批5 ed8d067 的四动作开关式防误触）：
+              运行中点击走 sendText busy 分支＝自动入队 chips + toast，首击必响应；
+              转向/打断/停止收敛到旁挂 caret 菜单——停止生成仍必须有入口。 */}
+          <div className="task6-send-actions" ref={sendMenuRef}>
+            <button
+              aria-label="发送"
+              className="task6-composer-send"
+              disabled={!draft.trim()}
+              onClick={submitComposer}
+              title={draft.trim() || quotes.length === 0 ? undefined : "只有引用、没有正文时不能发送，请补充你的问题或要求"}
+              type="button"
+            ><IconSend /></button>
+            {composerBusy ? (
+              <>
+                <button
+                  aria-expanded={sendMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="运行中发送选项"
+                  className="task6-send-caret"
+                  data-open={sendMenuOpen || undefined}
+                  onClick={() => setSendMenuOpen((open) => !open)}
+                  title="运行中操作：转向 / 排队 / 打断 / 停止"
+                  type="button"
+                >
+                  <IconChevronDown className="task6-send-caret-icon" />
+                </button>
+                {sendMenuOpen ? (
+                  <div aria-label="运行中发送选项" className="task6-send-menu" role="menu">
+                    <button disabled={!draft.trim()} onClick={() => void steerWithDraft()} role="menuitem" type="button">
+                      立即转向<small>不打断当前回复，直接注入本回合</small>
+                    </button>
+                    <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); const content = composeOutgoing(); if (content === null) return; enqueueQueuedItem(content); setDraft(""); setQuotes([]); }} role="menuitem" type="button">
+                      加入队列<small>本轮结束后按顺序自动发送，可随时取消</small>
+                    </button>
+                    <button disabled={!draft.trim()} onClick={() => void interruptAndSteer()} role="menuitem" type="button">
+                      打断并转向<small>停止当前生成并以此内容开始新回复</small>
+                    </button>
+                    <div className="task6-send-menu-separator" role="separator" />
+                    <button onClick={() => void stop()} role="menuitem" type="button">
+                      停止生成<small>结束本轮回复</small>
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
         </div>
       </div>
-      {trainingChip ? trainingReveal : null}
-    </header>
+    </>
   );
+
+  // v6（0910 拍板）：旧 header（Aiming Coach/可用文字/训练 chip）由 AppShell
+  // 的共用顶栏（task3-coach-topbar）取代；训练 chip 悬浮在面板交换区右上。
+  const header = trainingChip ? (
+    <div className="task6-coach-floating">
+      {trainingChip}
+      {trainingChip ? trainingReveal : null}
+    </div>
+  ) : null;
 
   if (capability === "loading") {
     return (
@@ -1966,21 +2366,23 @@ export function CoachPanel({
   return (
     /* 滚动容器（0828）：滚动条挂在面板本身——贯穿全列高、贴窗口右缘；
        messagesRef 供吸底/未读/划选坐标共用，onScroll 检测吸底状态。 */
-    <div className="task6-coach-panel" ref={messagesRef} onScroll={handleMessagesScroll}>
-      {/* 悬浮顶区（0828）：header 与讨论挂载条一起 sticky 钉在滚动口顶部。 */}
-      <div className="task6-coach-top">
-        {header}
-
-        {/* 本次讨论的分析挂载条：进行中的分析以 pending chip 呈现（永远平铺，
-            不参与折叠）；已完成的讨论 chip 常驻保留（0827 拍板），只平铺前 3
-            个（0905 拍板防挤压），余量收进行尾 ▾ 下拉，点击项与平铺 chip 同
-            一行为：打开视频讲解。 */}
-        {(pendingAnalyses.length > 0 || discussionAnalysisIds.length > 0) ? (
+    <div className="task6-coach-shell">
+      {/* 训练 chip 悬浮胶囊（v6）：钉在面板交换区右上、顶栏之下，不随消息滚动；
+          放在滚动容器外层以免被 overflow 裁剪。空对话首页不渲染。 */}
+      {homeShell ? null : header}
+      <div className="task6-coach-panel" ref={messagesRef} onScroll={handleMessagesScroll}>
+      {/* 本次讨论的分析挂载条：进行中的分析以 pending chip 呈现（永远平铺，
+          不参与折叠）；已完成的讨论 chip 常驻保留（0827 拍板），只平铺前 3
+          个（0905 拍板防挤压），余量收进行尾 ▾ 下拉，点击项与平铺 chip 同
+          一行为：打开视频讲解。空对话首页不渲染（homeShell 拍板）。
+          v6 四轮：经 portal 挂入共用顶栏（AppShell 的 task3-coach-topbar-slot，
+          标题之后），不再占用面板内 sticky 吸顶区。 */}
+      {(!homeShell && (pendingAnalyses.length > 0 || discussionAnalysisIds.length > 0) && discussionBarHost != null) ? (
+        createPortal(
           <div aria-label="本次讨论的分析" className="task6-discussion-bar task6-suggestions" ref={discussionBarRef} role="region">
-            <span>本次讨论</span>
             {pendingAnalyses.map((item) => (
               <span
-                className="task6-suggestion"
+                className="task6-discussion-chip"
                 data-pending="true"
                 key={`pending-${item.id}`}
                 title="分析完成后可点击打开视频"
@@ -1992,7 +2394,7 @@ export function CoachPanel({
             ))}
             {pinnedDiscussionChips.map((chip) => (
               <button
-                className="task6-suggestion"
+                className="task6-discussion-chip"
                 key={chip.id}
                 onClick={() => onOpenVideo?.(`analysis:${chip.id}`, 0)}
                 title="打开视频讲解"
@@ -2006,7 +2408,7 @@ export function CoachPanel({
                 aria-expanded={discussionOverflowOpen}
                 aria-haspopup="menu"
                 aria-label={`展开其余 ${overflowDiscussionChips.length} 个讨论过的分析`}
-                className="task6-suggestion task6-discussion-toggle"
+                className="task6-discussion-chip task6-discussion-toggle"
                 onClick={() => setDiscussionOverflowOpen((open) => !open)}
                 title="展开其余讨论过的分析"
                 type="button"
@@ -2033,23 +2435,35 @@ export function CoachPanel({
                 ))}
               </div>
             ) : null}
-          </div>
-        ) : null}
-      </div>
+          </div>,
+          discussionBarHost,
+        )
+      ) : null}
 
-      <div className="task6-messages-wrap">
+      <div className="task6-messages-wrap" data-home-fly={homeExit ? "true" : undefined}>
       <section
         aria-label="Coach 消息"
         className="task6-messages"
         onMouseUp={handleMessagesMouseUp}
       >
         {/* 顶部锚定（0827 拍板，回退底部锚定）：消息从上往下自然排布，短
-            会话不再在头部留大空洞；空会话时同槽位换成占满剩余空间的 hero 空态。 */}
-        {messages.length === 0 && !run ? (
+            会话不再在头部留大空洞；空会话时同槽位换成「新对话首页」hero
+            （问候＋居中 composer＋建议 chips＋能力提示，点点 0910 拍板），
+            发出首条消息时由 homeExit 过渡帧接管（气泡飞升＋composer 滑落）。 */}
+        {homeMode ? (
           <div className="task6-empty-hero">
-            <Empty title="开始一段 Coach 对话">可以直接提问训练问题，Coach 会读取你的分析数据。</Empty>
+            <div className="task6-home-greet">{homeGreeting}</div>
+            <div className="task6-home-composer" ref={homeComposerRef}>{composerCore}</div>
+            {homeTail}
+          </div>
+        ) : homeExit ? (
+          /* 过渡帧：hero 骨架淡出让位（CSS 动画），飞行气泡由 WAAPI 驱动。 */
+          <div aria-hidden="true" className="task6-empty-hero task6-home-leaving">
+            <div className="task6-home-greet">{homeGreeting}</div>
+            {homeTail}
           </div>
         ) : null}
+        {homeExit ? <div className="task6-home-fly" ref={homeFlyRef}>{homeExit.text}</div> : null}
         {messages.map((message, index) => (
           <Fragment key={message.id}>
             {/* 归档回合的过程摘要（已思考/步骤计数）挂在它产出的那条回复上方
@@ -2077,7 +2491,13 @@ export function CoachPanel({
             式次序）。0828：条件从"进行中状态枚举"放宽为 run 存在即显示——
             succeeded 到归档接管之间有 refresh 网络往返，按枚举会在该空窗里
             整个消失。 */}
-        {run ? <CoachWorkStream segments={workSegments} stopped={run.status === "stopped"} /> : null}
+        {run ? (
+          <CoachWorkStream segments={workSegments} stopped={run.status === "stopped"} />
+        ) : pendingRunStart ? (
+          /* run 创建中的死窗占位（0910）：与 queued 态"等待开始"同款视觉，
+             落 run 后无缝换成真实事件流。 */
+          <CoachWorkStream segments={HOME_PENDING_WORK_SEGMENTS} />
+        ) : null}
         {run?.partial_text ? (
           <article
             className="task6-message"
@@ -2115,13 +2535,8 @@ export function CoachPanel({
             </div>
           </div>
         ) : null}
-        {!run ? (
-          <div className="task6-suggestions">
-            {suggestionItems.map((text) => (
-              <button className="task6-suggestion" key={text} onClick={() => setDraft(text)} type="button">{text}</button>
-            ))}
-          </div>
-        ) : null}
+        {/* 对话中不再常驻建议 chips（点点 0910 拍板）：开局引导由空对话首页
+            三颗 chips 承担，对话进行中重复出现属干扰。 */}
         {/* 划选浮层：锚定在消息滚动内容内部（随滚动归位由 scroll 关闭接管） */}
         {selectionBar ? (
           <div
@@ -2140,188 +2555,26 @@ export function CoachPanel({
       </section>
       </div>
 
-      <footer className="task6-composer">
-        {/* 未读提示（0828）：挂 composer 钉在其上沿之外，随悬浮输入框恒定可见。 */}
-        {unreadCount > 0 ? (
-          <button className="task6-unread-prompt" onClick={scrollToLatest} type="button">
-            ↓ {unreadCount} 条新内容 · 回到底部
-          </button>
-        ) : null}
-        {/* 运行中队列 chips（item 1）：96 字符预览，逐条可上浮转向/回填编辑/取消 */}
-        {queuedChips.length > 0 ? (
-          <div aria-label="待发送队列" className="task6-queue-chips" role="list">
-            {queuedChips.map((chip) => (
-              <div className="task6-queue-chip" key={chip.id} role="listitem">
-                <span className="task6-queue-chip-text" title={chip.text}>{truncateQueuePreview(chip.text)}</span>
-                <IconButton label="上浮立即转向" onClick={() => void promoteChipToSteer(chip)} size="compact" title="立即插入当前回复">
-                  <IconChevronDown className="task6-icon-flip" />
-                </IconButton>
-                <IconButton label="回填编辑" onClick={() => backfillChipToDraft(chip)} size="compact" title="放回输入框编辑">
-                  <IconHistory />
-                </IconButton>
-                <IconButton label="取消发送" onClick={() => setQueuedChips((chips) => removeQueuedChip(chips, chip.id))} size="compact" title="取消这条排队消息">
-                  <IconClose />
-                </IconButton>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {/* 划选引用块（textarea 上方独立插槽）：多条并存，逐条整块删除；
-            文本体锁定不可编辑（只读呈现元素），超长块内部滚动。 */}
-        {quotes.length > 0 ? (
-          <div aria-label="引用 Coach 的发言" className="task6-quote-list" role="list">
-            {quotes.map((quote) => (
-              <blockquote className="task6-quote-block" key={quote.id} role="listitem">
-                <span className="task6-quote-head">引用 Coach</span>
-                <p className="task6-quote-body" title={quote.text}>{quote.text}</p>
-                <IconButton label="删除这条引用" onClick={() => removeQuote(quote.id)} size="compact" title="删除整块引用（文字不可编辑）">
-                  <IconClose />
-                </IconButton>
-              </blockquote>
-            ))}
-          </div>
-        ) : null}
-        <div className="task6-composer-input">
-          <textarea
-            aria-label="向 Coach 提问"
-            id="coach-draft"
-            onChange={(event) => {
-              mentionCaretRef.current = event.target.selectionStart;
-              setDraft(event.target.value);
-              syncMentionQuery();
-            }}
-            onKeyDown={(event) => {
-              // 中文等输入法按 Enter 确认候选词时 isComposing 为 true，不应提交。
-              if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-              // @ 引用下拉（item 3）：↑↓ 导航 / Enter 选中 / Esc 关闭
-              if (mentionOpen) {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setMentionIndex((current) => (current + 1) % filteredMentionCandidates.length);
-                  return;
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setMentionIndex((current) => (current - 1 + filteredMentionCandidates.length) % filteredMentionCandidates.length);
-                  return;
-                }
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  selectMentionCandidate(filteredMentionCandidates[Math.min(mentionIndex, filteredMentionCandidates.length - 1)]!);
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setMentionQuery(null);
-                  return;
-                }
-              }
-              // ↑ 翻发送历史（item 5）：空草稿或正在翻页时接管
-              if (!event.shiftKey && event.key === "ArrowUp" && (draft.trim() === "" || historyIndexRef.current !== null)) {
-                event.preventDefault();
-                navigateSentHistory("up");
-                return;
-              }
-              if (!event.shiftKey && event.key === "ArrowDown" && historyIndexRef.current !== null) {
-                event.preventDefault();
-                navigateSentHistory("down");
-                return;
-              }
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                submitComposer();
-              }
-            }}
-            placeholder="向 Coach 提问，可以聊训练，也可以让它帮你操作应用…"
-            ref={textareaRef}
-            rows={3}
-            value={draft}
-          />
-          {/* @ 引用下拉浮层（item 3） */}
-          {mentionOpen ? (
-            <div
-              aria-label="@ 引用候选"
-              className="task6-mention-menu"
-              role="listbox"
-            >
-              {filteredMentionCandidates.slice(0, 8).map((candidate, index) => (
-                <button
-                  aria-selected={index === mentionIndex}
-                  className="task6-mention-item"
-                  key={`${candidate.token}-${index}`}
-                  onClick={() => selectMentionCandidate(candidate)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  role="option"
-                  type="button"
-                >
-                  <strong>{candidate.token}</strong>
-                  <small>{candidate.label}</small>
-                </button>
-              ))}
-            </div>
+      {homeMode ? null : (
+        <footer className="task6-composer" ref={footerComposerRef} data-home-drop={homeExit ? "true" : undefined}>
+          {/* 未读提示（0828）：挂 composer 钉在其上沿之外，随悬浮输入框恒定可见。
+              空对话首页（homeMode）时本 footer 不渲染——composer 已整体搬进
+              居中 hero（composerCore），发送首条后随过渡落回此处。 */}
+          {unreadCount > 0 ? (
+            <button className="task6-unread-prompt" onClick={scrollToLatest} type="button">
+              ↓ {unreadCount} 条新内容 · 回到底部
+            </button>
           ) : null}
-          {/* 右下角簇（0827 拍板 B1）：模型选择挪到与发送键同一行、发送键左侧，
-              取代旧「输入卡下方工具行」；wrap 自带 position:relative 锚点，
-              菜单仍向上弹出。 */}
-          <div className="task6-composer-corner">
-            <CoachModelMenu
-              onError={(message) => notify(message)}
-            />
-            {/* 发送键恒为提交（点点 09-01 拍板移除批5 ed8d067 的四动作开关式防误触）：
-                运行中点击走 sendText busy 分支＝自动入队 chips + toast，首击必响应；
-                转向/打断/停止收敛到旁挂 caret 菜单——停止生成仍必须有入口。 */}
-            <div className="task6-send-actions" ref={sendMenuRef}>
-              <button
-                aria-label="发送"
-                className="task6-composer-send"
-                disabled={!draft.trim()}
-                onClick={submitComposer}
-                title={draft.trim() || quotes.length === 0 ? undefined : "只有引用、没有正文时不能发送，请补充你的问题或要求"}
-                type="button"
-              ><IconSend /></button>
-              {composerBusy ? (
-                <>
-                  <button
-                    aria-expanded={sendMenuOpen}
-                    aria-haspopup="menu"
-                    aria-label="运行中发送选项"
-                    className="task6-send-caret"
-                    data-open={sendMenuOpen || undefined}
-                    onClick={() => setSendMenuOpen((open) => !open)}
-                    title="运行中操作：转向 / 排队 / 打断 / 停止"
-                    type="button"
-                  >
-                    <IconChevronDown className="task6-send-caret-icon" />
-                  </button>
-                  {sendMenuOpen ? (
-                    <div aria-label="运行中发送选项" className="task6-send-menu" role="menu">
-                      <button disabled={!draft.trim()} onClick={() => void steerWithDraft()} role="menuitem" type="button">
-                        立即转向<small>不打断当前回复，直接注入本回合</small>
-                      </button>
-                      <button disabled={!draft.trim()} onClick={() => { setSendMenuOpen(false); const content = composeOutgoing(); if (content === null) return; enqueueQueuedItem(content); setDraft(""); setQuotes([]); }} role="menuitem" type="button">
-                        加入队列<small>本轮结束后按顺序自动发送，可随时取消</small>
-                      </button>
-                      <button disabled={!draft.trim()} onClick={() => void interruptAndSteer()} role="menuitem" type="button">
-                        打断并转向<small>停止当前生成并以此内容开始新回复</small>
-                      </button>
-                      <div className="task6-send-menu-separator" role="separator" />
-                      <button onClick={() => void stop()} role="menuitem" type="button">
-                        停止生成<small>结束本轮回复</small>
-                      </button>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </footer>
+          {composerCore}
+        </footer>
+      )}
 
       {feedback ? (
         <Toast key={feedback.seq} onClose={() => setFeedback((current) => (current && current.seq === feedback.seq ? null : current))}>
           {feedback.text}
         </Toast>
       ) : null}
+      </div>
     </div>
   );
 }

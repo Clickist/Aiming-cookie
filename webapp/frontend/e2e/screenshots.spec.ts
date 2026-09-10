@@ -104,7 +104,7 @@ test.describe("Coach-first desktop screenshot baselines", () => {
     await expect(page).toHaveScreenshot("coach-conversation-1920-light.png", { animations: "disabled" });
   });
 
-  // 讲解卡片已下线：现行形态是「本次讨论」分析栏（task6-suggestion
+  // 讲解卡片已下线：现行形态是「本次讨论」分析栏（task6-discussion-chip
   // 按钮，title=打开视频讲解）+ 点击打开 Coach 视频讲解面板。
   test("Coach discussion analysis bar 1280 dark", async ({ page }) => {
     await prepare(page, { theme: "dark", width: 1280, height: 820, scenario: apiScenario({ analysis: seekableAnalysis() }) });

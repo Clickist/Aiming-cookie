@@ -73,7 +73,7 @@ test("scale tokens are theme-independent and declared on :root", () => {
   for (const name of SCALE_NAMES) {
     assert.match(rootBlock, new RegExp(`--${name}:\\s*${SCALE_TOKENS[name].replace("(", "\\(")}`));
   }
-  assert.equal(SCALE_TOKENS["radius-md"], "6px");
+  assert.equal(SCALE_TOKENS["radius-md"], "10px");
   assert.equal(SCALE_TOKENS["control-height"], "36px");
   assert.equal(SCALE_TOKENS["text-ui"], "13px");
 });

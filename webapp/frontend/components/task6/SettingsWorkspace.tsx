@@ -49,6 +49,7 @@ import {
 } from "@/ui/primitives";
 import { IconChevronLeft } from "@/ui/icons";
 import { useTheme } from "@/ui/theme";
+import { startWindowDraggingOnBackground } from "@/components/task3/TauriWindowControls";
 
 type ConfirmAction = {
   title: string;
@@ -362,10 +363,10 @@ export function SettingsWorkspace() {
   }, []);
 
   // Scroll spy：内容区一页长滚动，导航条目是锚点；滚动时左侧当前分区高亮跟随。
-  // 滚动容器是设置 overlay 的 <main>（task3-route-content[data-settings-page]）。
+  // v6 面板化：滚动容器是面板内容列（.task6-settings-content）。
   useEffect(() => {
     const root = rootRef.current;
-    const scroller = root?.closest("main");
+    const scroller = root?.querySelector(".task6-settings-content");
     if (!root || !scroller) return;
     let ticking = false;
     const compute = () => {
@@ -440,7 +441,7 @@ export function SettingsWorkspace() {
   // 渐进渲染：页面框架常驻，不再整页 return Loading。各分区（Provider /
   // 采集 / 存储）在各自数据到达前显示局部 skeleton，数据先到先显示。
   if (loadError && !catalog && profiles.length === 0) {
-    return <div className="task6-settings-page"><div className="task6-settings-state-header"><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><ErrorState title="设置暂时不可用"><Button onClick={() => void refresh(true)} variant="secondary">重试</Button></ErrorState></div>;
+    return <div className="task6-settings-page"><div className="task6-settings-state-header" onMouseDown={startWindowDraggingOnBackground}><SettingsExit onExit={() => router.push("/")} /><span>设置</span></div><ErrorState title="设置暂时不可用"><Button onClick={() => void refresh(true)} variant="secondary">重试</Button></ErrorState></div>;
   }
 
   return (
@@ -448,7 +449,8 @@ export function SettingsWorkspace() {
       <aside className="task6-settings-nav" aria-label="设置分区">
         {/* 背景随内容拉满整高；sticky 放内层，滚动时导航仍跟随。 */}
         <div className="task6-settings-nav-inner">
-          <div className="task6-settings-nav-title-row">
+          {/* 标题行兼作窗口拖拽区（左键空白处）：横跨顶栏拆除后的拖拽补偿。 */}
+          <div className="task6-settings-nav-title-row" onMouseDown={startWindowDraggingOnBackground}>
             <SettingsExit onExit={() => router.push("/")} />
             <div className="task6-settings-nav-title">设置</div>
           </div>
