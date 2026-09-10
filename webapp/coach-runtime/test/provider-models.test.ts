@@ -22,24 +22,73 @@ test("catalog exposes the complete pinned Pi builtin provider/model catalog with
     builtinModels: () => {
       getProviders(): Array<{ id: string }>;
       getModels(provider?: string): Array<{ id: string; provider: string }>;
+      getModel(provider: string, modelId: string): { contextWindow?: number; reasoning?: boolean } | undefined;
     };
   };
   const expected = all.builtinModels();
   const catalog = await listBuiltinProviderCatalog();
 
+  // Pi 内建目录完整透出（无产品过滤），注入的 aiming-cookie-relay 是唯一追加项。
   assert.deepEqual(
-    catalog.providers.map((provider) => provider.provider_id),
+    catalog.providers
+      .map((provider) => provider.provider_id)
+      .filter((id) => id !== "aiming-cookie-relay"),
     expected.getProviders().map((provider) => provider.id),
   );
   assert.deepEqual(
-    catalog.providers.flatMap((provider) =>
-      provider.models.map((model) => `${model.provider_id}/${model.model_id}`),
-    ),
+    catalog.providers
+      .flatMap((provider) =>
+        provider.provider_id === "aiming-cookie-relay"
+          ? []
+          : provider.models.map((model) => `${model.provider_id}/${model.model_id}`),
+      ),
     expected.getModels().map((model) => `${model.provider}/${model.id}`),
   );
   assert.ok(catalog.providers.some((provider) => provider.provider_id === "xiaomi-token-plan-sgp"));
   assert.ok(catalog.providers.length > 30);
   assert.ok(catalog.providers.reduce((count, provider) => count + provider.models.length, 0) > 1000);
+});
+
+test("aiming-cookie-relay injects as a builtin provider with the 26 relay models", async () => {
+  const catalog = await listBuiltinProviderCatalog();
+  const relay = catalog.providers.find((provider) => provider.provider_id === "aiming-cookie-relay");
+  assert.ok(relay, "relay provider present in catalog");
+  assert.equal(relay.provider_name, "Aiming Cookie 官方");
+  assert.equal(relay.base_url, "http://58.60.231.76:3000/v1");
+  assert.ok(relay.auth_modes.includes("api_key"), "interactive api_key auth is advertised");
+
+  assert.equal(relay.models.length, 26);
+  const modelIds = relay.models.map((model) => model.model_id).sort();
+  assert.ok(modelIds.includes("deepseek-v4-flash"));
+  assert.ok(modelIds.includes("opus-5"));
+  assert.ok(modelIds.includes("glm-5.3-free"));
+
+  // 方言继承：flash 与 Pi 内建 deepseek 的同名模型共享能力（contextWindow/reasoning），
+  // 缺失即 thinkingFormat 方言没带上（"说出声"复发根因）。
+  const all = (await loadPiProvidersAll()) as {
+    builtinModels: () => {
+      getModel(provider: string, modelId: string): { contextWindow?: number; reasoning?: boolean } | undefined;
+    };
+  };
+  const builtinFlash = all.builtinModels().getModel("deepseek", "deepseek-v4-flash");
+  assert.ok(builtinFlash);
+  const relayFlash = relay.models.find((model) => model.model_id === "deepseek-v4-flash");
+  assert.ok(relayFlash);
+  assert.equal(relayFlash.context_window, builtinFlash.contextWindow);
+  assert.equal(relayFlash.reasoning, builtinFlash.reasoning);
+});
+
+test("builtin profile aiming-cookie-relay/deepseek-v4-flash resolves with the stored token", async () => {
+  const resolved = await resolveProviderModel({
+    kind: "builtin",
+    provider_id: "aiming-cookie-relay",
+    model_id: "deepseek-v4-flash",
+    api_key: "relay-test-token",
+  });
+  assert.equal(resolved.model.id, "deepseek-v4-flash");
+  assert.equal(resolved.model.provider, "aiming-cookie-relay");
+  assert.equal(resolved.model.baseUrl, "http://58.60.231.76:3000/v1");
+  assert.equal(resolved.hasRuntimeCredential, true);
 });
 
 test("builtin selection resolves through Pi Models.getModel and preserves api/provider/baseUrl", async () => {

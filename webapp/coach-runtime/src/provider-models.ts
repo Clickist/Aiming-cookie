@@ -68,7 +68,94 @@ async function createBuiltinModels(credentials: SnapshotCredentialStore): Promis
   const all = (await loadPiProvidersAll()) as {
     builtinModels: (options?: { credentials?: SnapshotCredentialStore }) => PiModels;
   };
-  return all.builtinModels({ credentials });
+  const models = all.builtinModels({ credentials });
+  await injectAimingCookieRelayProvider(models);
+  return models;
+}
+
+/**
+ * Aiming Cookie 官方（自家中转站，内测）：注入为内置 Provider，目录下发、
+ * 档解析、方言继承三条链路共用 createBuiltinModels，因此都在这里注入。
+ * 模型清单按中转站 2026-09-10 实测 /v1/models（26 个）硬编码，中转站增减
+ * 模型时同步这份列表；计费在中转站侧按额度结算，成本字段记 0。
+ * TODO(内测)：base_url 换正式域名+HTTPS 时只改下方常量。
+ */
+const AIMING_COOKIE_RELAY_PROVIDER_ID = "aiming-cookie-relay";
+const AIMING_COOKIE_RELAY_PROVIDER_NAME = "Aiming Cookie 官方";
+const AIMING_COOKIE_RELAY_BASE_URL = "http://58.60.231.76:3000/v1";
+const AIMING_COOKIE_RELAY_MODEL_IDS = [
+  "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro", "deepseek-v4-pro-0813",
+  "gemini-2.5-pro", "gemini-3.6-flash",
+  "glm-5.3", "glm-5.3-free",
+  "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
+  "haiku-4.5",
+  "kimi-2.7-code", "kimi-k3",
+  "opus-4.6", "opus-4.7", "opus-4.8", "opus-5",
+  "qwen3.6-flash", "qwen3.6-plus", "qwen3.8-flash-free", "qwen3.8-max",
+  "sensenova-6.7-flash-lite", "sensenova-6.8-flash-lite",
+  "sonnet-4.6",
+] as const;
+
+async function injectAimingCookieRelayProvider(models: PiModels): Promise<void> {
+  const ai = (await loadPiAi()) as {
+    createProvider: (options: Record<string, unknown>) => PiProvider;
+  };
+  const openAiCompletions = (await loadPiOpenAiCompletions()) as {
+    stream: (...args: unknown[]) => unknown;
+    streamSimple: (...args: unknown[]) => unknown;
+  };
+  // 能力与方言按 model_id 从 Pi 内建目录继承（与 resolveCustomProfile 的
+  // catalogHit 同款）：deepseek-v4-flash 自带 thinkingFormat 方言，缺失会
+  // 让"说出声"复发。目录未收录的模型按默认能力处理。
+  const catalogModels = models.getModels() as Array<
+    PiModel & { compat?: Record<string, unknown>; thinkingLevelMap?: unknown }
+  >;
+  const relayModels = AIMING_COOKIE_RELAY_MODEL_IDS.map((modelId) => {
+    const catalogHit = catalogModels.find((candidate) => candidate.id === modelId);
+    return {
+      id: modelId,
+      name: catalogHit?.name ?? modelId,
+      api: "openai-completions",
+      provider: AIMING_COOKIE_RELAY_PROVIDER_ID,
+      baseUrl: AIMING_COOKIE_RELAY_BASE_URL,
+      reasoning: catalogHit ? catalogHit.reasoning === true : true,
+      input: catalogHit ? [...catalogHit.input] : ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: catalogHit?.contextWindow ?? CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
+      maxTokens: catalogHit?.maxTokens ?? CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
+      ...(catalogHit?.compat ? { compat: catalogHit.compat } : {}),
+      ...(catalogHit?.thinkingLevelMap ? { thinkingLevelMap: catalogHit.thinkingLevelMap } : {}),
+    };
+  });
+  const provider = ai.createProvider({
+    id: AIMING_COOKIE_RELAY_PROVIDER_ID,
+    name: AIMING_COOKIE_RELAY_PROVIDER_NAME,
+    baseUrl: AIMING_COOKIE_RELAY_BASE_URL,
+    auth: {
+      apiKey: {
+        name: `${AIMING_COOKIE_RELAY_PROVIDER_NAME} token`,
+        login: async (interaction: {
+          prompt: (prompt: { type: string; message: string }) => Promise<string>;
+        }) => ({
+          type: "api_key",
+          key: await interaction.prompt({
+            type: "secret",
+            message: `输入 ${AIMING_COOKIE_RELAY_PROVIDER_NAME} token`,
+          }),
+        }),
+        resolve: async ({ credential }: { credential?: { key?: string } }) =>
+          credential?.key
+            ? { auth: { apiKey: credential.key }, source: "stored credential" }
+            : undefined,
+      },
+    },
+    models: relayModels,
+    api: {
+      stream: openAiCompletions.stream,
+      streamSimple: openAiCompletions.streamSimple,
+    },
+  });
+  models.setProvider(provider);
 }
 
 export function toCatalogModel(model: PiModel): ProviderCatalogModel {
