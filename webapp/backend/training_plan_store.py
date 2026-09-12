@@ -64,6 +64,11 @@ _VERSION_EVIDENCE_REF_PREFIXES = frozenset({"analysis", "metric", "knowledge"})
 
 _PLAN_PATH = "training/plan.json"
 
+# The native TS writer used to store one flat plan object at the file root.
+# That shape is still read (and folded into the doc model below) so a plan
+# written before the fix is not silently orphaned.
+_LEGACY_PLAN_OWNER = "desktop-local"
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -308,10 +313,62 @@ def _decode(value: Any) -> Any:
 
 # ---- File-backed data model ----
 
+def _migrate_flat_plan_doc(flat: dict[str, Any]) -> dict[str, Any]:
+    """Fold a legacy root-level plan object into the ``{plans: {...}}`` doc model.
+
+    Read-only migration: callers may persist the result on their next write, but
+    simply reading (review / current-training) leaves the original file untouched.
+    """
+    plan_id = str(flat.get("plan_id"))
+    version = int(flat.get("version", 1) or 1)
+    timestamp = flat.get("created_at") or _utc_now()
+    versions = {
+        str(version): {
+            "plan_payload": flat.get("plan_payload") if isinstance(flat.get("plan_payload"), Mapping) else {},
+            "adjustment_reason": flat.get("adjustment_reason"),
+            "evidence_refs": flat.get("evidence_refs") if isinstance(flat.get("evidence_refs"), list) else [],
+            "verification_targets": (
+                flat.get("verification_targets")
+                if isinstance(flat.get("verification_targets"), list) else []
+            ),
+            "created_at": flat.get("updated_at") or timestamp,
+        }
+    }
+    items: dict[str, Any] = {}
+    legacy_items = flat.get("items")
+    if isinstance(legacy_items, list):
+        for entry in legacy_items:
+            if isinstance(entry, Mapping) and isinstance(entry.get("item_ref"), str):
+                items[str(entry["item_ref"])] = dict(entry)
+    return {
+        "plans": {
+            plan_id: {
+                "owner_id": _LEGACY_PLAN_OWNER,
+                "status": flat.get("status", "draft"),
+                "current_version": version,
+                "versions": versions,
+                "created_at": timestamp,
+                "updated_at": flat.get("updated_at") or timestamp,
+            }
+        },
+        "transitions": [],
+        "items": items,
+        "executions": [],
+        "retests": [],
+    }
+
+
 def _load_doc() -> dict[str, Any]:
     data = file_store.read_json(_PLAN_PATH)
     if data is None:
         return {"plans": {}, "transitions": [], "items": {}, "executions": [], "retests": []}
+    if (
+        isinstance(data, Mapping)
+        and "plans" not in data
+        and isinstance(data.get("plan_id"), str)
+        and data["plan_id"]
+    ):
+        data = _migrate_flat_plan_doc(dict(data))
     data.setdefault("plans", {})
     data.setdefault("transitions", [])
     data.setdefault("items", {})

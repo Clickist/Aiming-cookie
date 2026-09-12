@@ -366,3 +366,48 @@ async def test_save_reconfigure_runs_off_event_loop_and_keeps_activation(
             delattr(app.state, "kovaak_ingestion_service")
         else:
             app.state.kovaak_ingestion_service = previous_state
+
+
+@pytest.mark.asyncio
+async def test_kovaak_scenarios_endpoint_lists_local_sce_stems_and_requires_token(
+    desktop_token,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    install = tmp_path / "install"
+    scenarios = install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
+    scenarios.mkdir(parents=True)
+    (scenarios / "1wall 6targets small.sce").write_bytes(b"x")
+    (scenarios / "pasu.sce").write_bytes(b"x")
+    (scenarios / "ignore.txt").write_bytes(b"x")
+    _clear_kovaak_overrides(monkeypatch)
+    monkeypatch.setenv("KOVAAK_INSTALL_DIR", str(install))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.get("/api/kovaak-scenarios")
+        listed = await client.get("/api/kovaak-scenarios", headers=_desktop_headers())
+
+    assert missing.status_code == 401
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["schema_version"] == "kovaak_scenarios.v1"
+    assert body["availability"] == "available"
+    assert body["scenarios"] == ["1wall 6targets small", "pasu"]
+
+
+@pytest.mark.asyncio
+async def test_kovaak_scenarios_endpoint_reports_unavailable_without_install(
+    desktop_token,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_kovaak_overrides(monkeypatch)
+    monkeypatch.setenv("KOVAAK_INSTALL_DIR", str(tmp_path / "missing"))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed = await client.get("/api/kovaak-scenarios", headers=_desktop_headers())
+
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["availability"] == "unavailable"
+    assert body["scenarios"] == []

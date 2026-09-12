@@ -291,9 +291,13 @@ class TelemetryCaptureService:
 
     def _spawn_process(self, argv: list[str]) -> subprocess.Popen:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        # 自适应偏移表的用户缓存必须落用户数据目录：打包版内嵌表只读，写不进去
+        child_env = dict(os.environ,
+                         AIMING_COOKIE_OFFSETS_CACHE=str(config.DATA_ROOT / "offsets.local.json"))
         return subprocess.Popen(  # noqa: S603 - argv 由本模块固定拼装
             argv,
             cwd=str(self.scripts_dir),
+            env=child_env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

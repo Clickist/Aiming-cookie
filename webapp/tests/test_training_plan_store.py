@@ -349,3 +349,60 @@ async def test_plan_item_status_changes_are_owner_scoped_and_idempotent():
             reason="coach_teaching_revision.v1:reject",
         )
     assert (await store.list_plan_items("owner-a", draft["plan_id"]))[0]["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_flat_legacy_plan_file_is_readable_through_the_doc_model():
+    """A root-level flat plan object (old native TS writer) must still be read.
+
+    The old writer stored one plan object at the file root; /current-training
+    therefore answered no_current_plan even though a plan existed. Reading must
+    fold that shape into {plans: {...}} instead of ignoring it.
+    """
+    from webapp.backend import file_store
+
+    plan_id = "plan:legacy0000000000000000000000000000"
+    flat = {
+        "plan_id": plan_id,
+        "status": "active",
+        "version": 2,
+        "plan_payload": copy.deepcopy(PLAN_PAYLOAD),
+        "evidence_refs": ["analysis:run-42"],
+        "verification_targets": copy.deepcopy(VERIFICATION_TARGETS),
+        "items": [],
+        "created_at": "2026-09-11T01:41:07Z",
+        "updated_at": "2026-09-11T02:00:00Z",
+    }
+    file_store.write_json("training/plan.json", flat)
+
+    plans = await store.list_plans("desktop-local")
+    assert [plan["plan_id"] for plan in plans] == [plan_id]
+    combined = await store.get_plan("desktop-local", plan_id)
+    assert combined["status"] == "active"
+    assert combined["version"] == 2
+    assert combined["plan_payload"]["title"] == PLAN_PAYLOAD["title"]
+    assert combined["evidence_refs"] == ["analysis:run-42"]
+    assert combined["updated_at"] == "2026-09-11T02:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_legacy_flat_plan_survives_the_next_write_without_regressing():
+    """Reading then transitioning a legacy plan must persist the doc model."""
+    from webapp.backend import file_store
+
+    plan_id = "plan:legacy0000000000000000000000000001"
+    file_store.write_json("training/plan.json", {
+        "plan_id": plan_id,
+        "status": "active",
+        "version": 1,
+        "plan_payload": copy.deepcopy(PLAN_PAYLOAD),
+        "items": [],
+    })
+
+    paused = await store.pause_plan("desktop-local", plan_id)
+    assert paused["status"] == "paused"
+
+    raw = file_store.read_json("training/plan.json")
+    assert set(raw["plans"]) == {plan_id}
+    assert raw["plans"][plan_id]["status"] == "paused"
+    assert raw["transitions"][-1]["event"] == "paused"

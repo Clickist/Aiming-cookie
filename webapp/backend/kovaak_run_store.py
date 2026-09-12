@@ -2311,6 +2311,58 @@ async def remove_incomplete_capture_item(
     return None
 
 
+async def resolve_storage_reveal_path(
+    owner_id: str,
+    kind: str,
+    run_id: int | None,
+    item_ref: str | None,
+    data_root: str | Path,
+) -> Path:
+    """「打开文件位置」的路径解析：输入条目 id/kind，输出一个存在的本地文件。
+
+    安全合同：路径只在后端解析、只用于调起系统文件管理器，绝不下发前端；
+    越权（他人 Run）、未 attached、路径逃出托管 Run 根、文件不存在时分别以
+    PermissionError / LookupError / ValueError / FileNotFoundError 失败。
+    """
+    if kind in {"run_video", "run_raw"}:
+        if run_id is None:
+            raise ValueError("run_id is required for run evidence reveal")
+        run = _load_run(int(run_id))
+        if run is None:
+            raise LookupError("kovaak run not found")
+        if run.get("user_id") != owner_id:
+            raise PermissionError("kovaak run is not owned by this user")
+        state_key = "video_state" if kind == "run_video" else "trace_state"
+        path_key = "video_path" if kind == "run_video" else "mouse_trace_path"
+        state = run.get(state_key)
+        path_value = run.get(path_key)
+        if state != "attached" or not path_value:
+            raise LookupError("run evidence is not attached")
+        artifact, _relative_path = _managed_evidence_artifact(
+            data_root, int(run_id), "video" if kind == "run_video" else "raw",
+            path_value,
+        )
+    elif kind == "incomplete_capture":
+        if not item_ref:
+            raise ValueError("item_ref is required for incomplete capture reveal")
+        current = {
+            str(item["item_ref"]): item
+            for item in await list_incomplete_capture_items(owner_id, data_root)
+        }.get(item_ref)
+        if current is None:
+            raise LookupError("incomplete capture item not found")
+        artifact = _resolve_incomplete_relpath(
+            data_root,
+            int(str(current["run_ref"]).split(":", 1)[1]),
+            str(current["_relative_path"]),
+        )
+    else:
+        raise ValueError("reveal kind must be run_video, run_raw or incomplete_capture")
+    if not artifact.is_file():
+        raise FileNotFoundError("revealed artifact is missing on disk")
+    return artifact
+
+
 async def reconcile_run_videos(data_root: str | Path) -> dict[str, int]:
     await reconcile_run_evidence_deletions(data_root)
     runs_root = (Path(data_root) / "runs").resolve()

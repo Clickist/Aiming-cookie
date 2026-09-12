@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -1448,6 +1449,112 @@ async def test_current_training_projection_is_owner_scoped_bounded_and_launch_re
     assert paused.status_code == 200
     assert paused.json()["plan_status"] == "paused"
     assert "plan_paused" in paused.json()["limitations"]
+
+
+@pytest.mark.asyncio
+async def test_current_training_coach_payload_items_fallback_projects_chip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """Coach 侧 generate_draft 不物化 per-item 记录（sidecar 直写 plan.json）：
+    items 注册表为空时，/api/current-training 必须回退投影 plan_payload.items
+    （plan-builder 口语化契约），否则激活计划后顶栏训练卡整个消失。"""
+    owner_id = "coach-fallback-owner"
+    plan_id = "plan:" + "b" * 32
+    plan_doc = {
+        "plans": {
+            plan_id: {
+                "owner_id": owner_id,
+                "status": "active",
+                "current_version": 1,
+                "versions": {
+                    "1": {
+                        "plan_payload": {
+                            "strategy": "shortcoming_isolation",
+                            "focus": "static_terminal_control",
+                            "cue": "停稳再点",
+                            "summary": "静态点击收尾控制",
+                            "items": [
+                                {
+                                    "name": "静态收尾专项",
+                                    "what": "改练 1w2ts reload 练收尾",
+                                    "when": "每天热身后练",
+                                    "dose": "每天 10-15 分钟",
+                                    "acceptance": "连续两局 93% 以上命中",
+                                    "negative_feedback": "收尾往回修就降一档",
+                                    "forbidden": "不换灵敏度",
+                                    "retest": "一周后回基准场景复测",
+                                },
+                            ],
+                        },
+                        "adjustment_reason": None,
+                        "evidence_refs": [],
+                        "verification_targets": [],
+                        "created_at": "2026-09-13T00:00:00Z",
+                    }
+                },
+                "created_at": "2026-09-13T00:00:00Z",
+                "updated_at": "2026-09-13T00:00:00Z",
+            }
+        },
+        "transitions": [],
+        "items": {},
+        "executions": [],
+        "retests": [],
+    }
+    plan_path = Path(os.environ["DATA_ROOT"]) / "training" / "plan.json"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(json.dumps(plan_doc, ensure_ascii=False), encoding="utf-8")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/current-training", headers={"X-User-Id": owner_id})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["availability"] == "available"
+    assert body["reason"] is None
+    assert body["total_item_count"] == 1
+    item = body["items"][0]
+    assert item["display_name"] == "静态收尾专项"
+    # 口语化 name 不是 reviewed 场景：可启动性保持 unavailable、local_match 未知。
+    assert item["scenario_profile_ref"] is None
+    assert item["scenario_availability"] == "unavailable"
+    assert item["local_match"] is None
+    assert item["status"] == "planned"
+    assert item["practice_condition"] == "改练 1w2ts reload 练收尾；每天热身后练"
+    assert item["dose_guardrail"] == "每天 10-15 分钟"
+    assert "93%" in (item["cue"] or "")
+    assert item["retest"] == "一周后回基准场景复测"
+
+
+def test_current_training_local_match_marks_only_explicitly_uninstalled_scenarios(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """local_match is tri-state: True installed, False missing, None undetectable."""
+    install = tmp_path / "FPSAimTrainer"
+    scenarios = install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
+    scenarios.mkdir(parents=True)
+    # Only the reviewed static scenario is installed, with case/space variance.
+    (scenarios / "1WALL  6targets small.sce").write_text("", encoding="utf-8")
+
+    real_ref = "scenario:static.1wall_6targets_small@1"
+    item = _current_training_item(scenario_profile_ref=real_ref)
+    item.update({"knowledge_ref": "knowledge:static.flicking-terminal-control@3", "status": "planned"})
+
+    monkeypatch.setattr(config, "resolve_kovaak_install_dir", lambda: install)
+    installed = read_models.build_current_training_v1(plan={"status": "active"}, items=[item])
+    assert installed["items"][0]["local_match"] is True
+
+    # Install detectable but the scenario file absent -> explicit False.
+    (scenarios / "1WALL  6targets small.sce").unlink()
+    missing = read_models.build_current_training_v1(plan={"status": "active"}, items=[item])
+    assert missing["items"][0]["local_match"] is False
+
+    # Install not detectable -> never claim "未装".
+    monkeypatch.setattr(config, "resolve_kovaak_install_dir", lambda: None)
+    unknown = read_models.build_current_training_v1(plan={"status": "active"}, items=[item])
+    assert unknown["items"][0]["local_match"] is None
 
 
 @pytest.mark.asyncio

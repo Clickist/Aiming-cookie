@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path as FilePath
 from typing import Literal, Optional
 
@@ -36,6 +38,7 @@ from .read_models import (
     build_frontend_analysis_family_data_v1,
     build_frontend_analysis_data_v1,
     build_current_training_v1,
+    _coach_payload_items,
     build_capture_status_v1,
     build_product_state_v1,
     build_task_detail_v1,
@@ -67,12 +70,15 @@ from .schemas import (
     KovaaKLocalDirectoriesUpdateRequest,
     KovaaKConnectionSaveRequest,
     KovaaKConnectionStatusResponse,
+    KovaaKScenarioListResponse,
     KovaaKScoresResponse,
     KovaaKAnalysisRequest,
     CalibrationProfileOut,
     CalibrationProfileUpdateRequest,
     IncompleteCaptureListResponse,
     IncompleteCaptureRemovalResponse,
+    StorageRevealRequest,
+    StorageRevealResponse,
     RunEvidenceRemovalResponse,
     DeleteSessionResponse,
     KovaaKRunItem,
@@ -300,6 +306,44 @@ async def remove_incomplete_capture_storage(
     if result is None:
         raise HTTPException(404, "Incomplete capture item is unavailable")
     return IncompleteCaptureRemovalResponse(**result)
+
+
+def _reveal_in_explorer(path: FilePath) -> None:
+    """Windows 资源管理器定位：打开所在文件夹并选中该文件。
+
+    独立成模块级函数便于测试替身（测试 monkeypatch 本函数，不真弹窗）。
+    """
+    if sys.platform != "win32":
+        raise OSError("reveal in file manager is only supported on Windows")
+    # explorer /select, 要求反斜杠路径；Popen 不等待资源管理器退出。
+    subprocess.Popen(["explorer", f"/select,{path}"])
+
+
+@router.post("/storage/reveal", response_model=StorageRevealResponse)
+async def reveal_storage_item(
+    request: StorageRevealRequest,
+    _: None = Depends(require_desktop_token),
+):
+    """「打开文件位置」：输入条目 id/kind，后端解析本地路径并调起
+    explorer /select。文件路径绝不下发前端（path-free 合同）。"""
+    try:
+        path = await kovaak_run_store.resolve_storage_reveal_path(
+            config.DESKTOP_LOCAL_PROFILE,
+            request.kind,
+            request.run_id,
+            request.item_ref,
+            config.DATA_ROOT,
+        )
+        await asyncio.to_thread(_reveal_in_explorer, path)
+    except PermissionError as exc:
+        raise HTTPException(403, "无权访问此条目") from exc
+    except LookupError as exc:
+        raise HTTPException(404, "条目不存在或证据已不可用") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "文件已不在磁盘上，请刷新存储列表") from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(409, "无法在本机打开文件位置") from exc
+    return StorageRevealResponse(revealed=True, kind=request.kind)
 
 
 @router.get("/product-state", response_model=ProductStateResponse)
@@ -642,6 +686,11 @@ async def get_current_training(
         projection = build_current_training_v1(plan=None, items=[])
     else:
         items = await training_plan_store.list_plan_items(x_user_id, current["plan_id"])
+        if not items:
+            # Coach 侧 generate_draft 不物化 per-item 记录：items 注册表为空
+            # 时回退投影 plan_payload.items（plan-builder 口语化契约），否则
+            # 激活计划后顶栏训练卡会整个消失（幽灵 active 计划）。
+            items = _coach_payload_items(current.get("plan_payload"))
         projection = build_current_training_v1(plan=current, items=items)
     return CurrentTrainingResponse(**projection)
 
@@ -810,6 +859,18 @@ async def _kovaak_local_directories_response_async(
             activation=activation,
             watcher_status=_current_kovaak_watcher_status(request),
         ),
+    )
+
+
+@router.get("/kovaak-scenarios", response_model=KovaaKScenarioListResponse)
+async def list_kovaak_scenarios(
+    _: None = Depends(require_desktop_token),
+):
+    """Read-only list of locally installed KovaaK scenario names."""
+    names = config.resolve_kovaak_scenario_names()
+    return KovaaKScenarioListResponse(
+        availability="available" if names is not None else "unavailable",
+        scenarios=names if names is not None else [],
     )
 
 

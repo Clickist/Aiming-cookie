@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import kovaak_run_store
@@ -16,6 +17,52 @@ from .kovaak_evidence_artifacts import _file_fingerprint
 
 
 _SHA256_DIGEST = re.compile(r"^[0-9a-fA-F]{64}$")
+
+# KovaaK Stats 文件名词干含对局本地时间（真实形态：
+# "<scenario> - challenge - 2026.09.08-02.58.11"）。created_at 是批次发现
+# 时间——同批扫描的多局共享，历史页拿它当训练时间曾造成"重复卡"假象
+# （0911 审计 §12.6）。
+_KOVAAK_STEM_LOCAL_TIME = re.compile(
+    r"(\d{4})\.(\d{2})\.(\d{2})[-_ ](\d{2})\.(\d{2})\.(\d{2})"
+)
+
+
+def _training_at_from_source_key(source_key: object) -> str | None:
+    """解析文件名词干里的对局本地时间为 UTC wire 格式；解析失败返回 None。"""
+    if not isinstance(source_key, str):
+        return None
+    match = _KOVAAK_STEM_LOCAL_TIME.search(source_key)
+    if match is None:
+        return None
+    year, month, day, hour, minute, second = (int(part) for part in match.groups())
+    try:
+        # naive 值 astimezone() 按本机时区解释（KovaaK 文件名即本地时间）。
+        local = datetime(year, month, day, hour, minute, second).astimezone()
+    except ValueError:
+        return None
+    return local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _run_score(run: dict) -> float | None:
+    """单局 Challenge 分数（KovaaK Challenge Completion Stats summary 块的
+    Score 键）。存量行在 ingest 时已把 summary 原样存进 stats_summary（键值
+    均为字符串），这里在投影期读私有行、只输出一个标量；缺失/不可解析返回
+    None（前端不渲染、不报错），绝不硬造数据。"""
+    summary = run.get("stats_summary")
+    kv = summary.get("summary") if isinstance(summary, dict) else None
+    raw = kv.get("Score") if isinstance(kv, dict) else None
+    if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    # KovaaK Score 语义上是整数计分（部分场景导出浮点）；整数值输出 int，
+    # wire 上干净可读，浮点保留原精度。
+    return int(value) if value.is_integer() else value
+
 
 _DROP_PUBLIC_VALUE = object()
 
@@ -397,6 +444,26 @@ def _run_evidence_view(run: dict, *, shallow: bool = False) -> dict[str, object]
     }
 
 
+def _public_artifact_file_facts(
+    path: object, availability: object,
+) -> tuple[int | None, str | None]:
+    """Attached 产物的当前 size 与文件名（无路径）；不可得时双 None。
+
+    设置页「数据与存储」清理行内联展示大小与文件名用：只暴露 stat 事实，
+    绝不透出本地路径（path-free 合同）。
+    """
+    if availability != "available" or not isinstance(path, str) or not path:
+        return (None, None)
+    candidate = Path(path)
+    try:
+        size = candidate.stat().st_size
+    except OSError:
+        return (None, None)
+    if not candidate.is_file():
+        return (None, None)
+    return (size, candidate.name)
+
+
 def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
     """Project a DB-private run row into a path-free public DTO."""
     stats_path = run.get("stats_path")
@@ -454,7 +521,10 @@ def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
         "id": run["id"],
         "run_ref": f"run:{run['id']}",
         "source_key": _public_string(run.get("source_key")),
+        "training_at": _training_at_from_source_key(run.get("source_key")),
         "scenario": _public_string(run.get("scenario")),
+        # 单局 Challenge 分数（Stats summary 块 Score）；缺失为 None。
+        "score": _run_score(run),
         "stats_source_ref": _source_ref(run["id"], "stats", run.get("stats_summary")),
         "performance_source_ref": _source_ref(
             run["id"], "performance", run.get("performance_summary"),
@@ -463,6 +533,26 @@ def public_kovaak_run(run: dict, *, shallow: bool = False) -> dict:
         "video_artifact_ref": (
             video.get("artifact_ref") if isinstance(video, dict) else None
         ),
+        # 设置页存储清理行的行内事实：attached 产物的当前 size 与文件名
+        # （无路径；不可得为 None——视频证据字典只在 available 时存在且
+        # fingerprint.size 即刚 stat 过的实际大小，Raw 只在可用时补一次 stat）。
+        **(
+            {
+                "video_size_bytes": video["fingerprint"]["size"],
+                "video_name": video.get("basename"),
+            }
+            if isinstance(video, dict)
+            and isinstance(video.get("fingerprint"), dict)
+            and isinstance(video["fingerprint"].get("size"), int)
+            and isinstance(video.get("basename"), str)
+            else {"video_size_bytes": None, "video_name": None}
+        ),
+        **dict(zip(
+            ("raw_size_bytes", "raw_name"),
+            _public_artifact_file_facts(
+                trace_path, trace_quality["availability"],
+            ),
+        )),
         "source_availability": source_availability,
         "trace_quality": trace_quality,
         "trace_state": run.get("trace_state", "none"),
