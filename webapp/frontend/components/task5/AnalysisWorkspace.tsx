@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSession, retrySession } from "@/lib/api";
 import {
   ANALYSIS_AUTO_TEACH_EVENT,
+  COACH_PENDING_INTENT_KEY,
   getAnalysisViewState,
   presentAnalysisWorkspace,
   type AnalysisViewState,
@@ -23,7 +24,6 @@ import { VideoView } from "./VideoView";
 type WorkspaceTab = "diagnosis" | "video" | "data";
 const ANALYSIS_TABS_ID = "analysis-view-tabs";
 const ANALYSIS_PANEL_ID = "analysis-view-panel";
-const COACH_PENDING_INTENT_KEY = "aiming-cookie.ui.coach-pending-intent";
 const ANALYSIS_COACH_DRAFT = "这次分析的核心问题是什么？";
 let cachedDoneSession: SessionStatus | null = null;
 

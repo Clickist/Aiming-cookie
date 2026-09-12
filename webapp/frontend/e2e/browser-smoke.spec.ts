@@ -182,13 +182,13 @@ test.describe("Task 7 browser smoke", () => {
     await expect(page.getByRole("button", { name: "读取可用模型" })).toHaveCount(0);
   });
 
-  test("KovaaK scores are optional in onboarding and grouped in Settings without a stage tab", async ({ page }) => {
+  test("KovaaK scores stay optional in Settings after onboarding converges to two steps", async ({ page }) => {
     await installApiFixtures(page);
     await page.goto("/onboarding");
     await page.getByRole("button", { name: "继续" }).click();
-    await expect(page.getByRole("heading", { name: "连接 KovaaK 成绩", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "跳过这一步" }).click();
+    // 0912 点点拍板：onboarding 收敛为两步，继续直接进入自动采集，不再有 KovaaK 连接步。
     await expect(page.getByRole("heading", { name: "训练后自动整理证据" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "连接 KovaaK 成绩", exact: true })).toHaveCount(0);
 
     await page.unrouteAll({ behavior: "wait" });
     await installApiFixtures(page, apiScenario({ kovaakScores: KOVAAK_SCORES_AVAILABLE }));
@@ -218,7 +218,7 @@ test.describe("Task 7 browser smoke", () => {
     // 只选一个目录时保存保持禁用；两项齐全才允许一次提交。
     // 按行定位：首次选择后按钮文案会从"选择文件夹"变为"更换文件夹"，文案定位会失配。
     const rowButton = (index: number) =>
-      section.locator(".kovaak-directory-row").nth(index).getByRole("button");
+      section.locator(".kovaak-directory-entry").nth(index).getByRole("button");
     await rowButton(0).click();
     await expect(section.getByRole("button", { name: "保存并启用" })).toBeDisabled();
     await rowButton(1).click();

@@ -69,7 +69,8 @@ test("the composer exposes a quote-analysis button that reuses the @ mention pip
   // 点点 0910 拍板：引用钮改为左下角圆形「+」（IconPlus），移出右下角簇，
   // 与右下发送键水平对称；角簇次序变为 corner → 模型/力度菜单 → 发送键。
   const inputAt = coach.indexOf('className="task6-composer-input"');
-  const mentionAt = coach.indexOf("task6-composer-mention");
+  // 用 className 定位按钮本体（外点关闭 effect 里也引用这个类名）。
+  const mentionAt = coach.indexOf('className="task6-composer-mention"');
   const cornerAt = coach.indexOf('className="task6-composer-corner"');
   const modelAt = coach.indexOf("<CoachModelMenu");
   const sendAt = coach.indexOf("task6-composer-send");
@@ -78,9 +79,10 @@ test("the composer exposes a quote-analysis button that reuses the @ mention pip
   assert.ok(modelAt > cornerAt && sendAt > modelAt, "模型/力度菜单须在簇内且位于发送键之前");
   const chunk = coach.slice(mentionAt, cornerAt);
   assert.match(chunk, /<IconPlus \/>/);
-  // 点击＝落一个真实 @ 再同步查询：整条 mention 管线复用，零新增逻辑
-  assert.match(chunk, /setDraft\(next\)/);
-  assert.match(chunk, /syncMentionQuery\(\)/);
+  // 0911 点点拍板：点击＝纯开关打开候选菜单，不碰草稿——分析候选挂结构化
+  // 引用（chip 呈现），不再往输入框落真实 @。
+  assert.match(chunk, /setMentionQuery\(mentionOpen \? null : ""\)/);
+  assert.doesNotMatch(chunk, /setDraft\(/);
   // CSS：absolute 锚定输入卡左下（发送键角簇 right/bottom 对称值 8px），正圆
   const mentionCss = styles.match(/\.task6-composer-mention\s*\{([^}]*)\}/)?.[1] ?? "";
   assert.match(mentionCss, /position:\s*absolute/);
@@ -98,7 +100,7 @@ test("the conversation column converges to ~720px relative to its parent", async
   // 0828 拍板：滚动容器上移到面板本身——滚动条贯穿全列高、贴窗口右缘；
   // 头部与 composer sticky 悬浮，消息内容自然撑高驱动面板滚动。
   assert.match(styles, /\.task6-coach-panel\s*\{[^}]*overflow-y:\s*auto/);
-  assert.match(styles, /\.task6-coach-top\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0/);
+  assert.doesNotMatch(styles, /\.task6-coach-top\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0/);
   assert.match(styles, /\.task6-composer\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0/);
   assert.doesNotMatch(styles, /\.task6-messages\s*\{[^}]*overflow-y/);
   // user 气泡保持栏内短气泡语义（与助手同一对话列上界的不对称消解）

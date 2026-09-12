@@ -31,6 +31,7 @@ import type {
   CurrentTrainingV1,
   DeleteSessionResponse,
   ExternalRunListResponseV1,
+  OfficialRelayBalance,
   ExternalTelemetryConfigV1,
   ExternalTelemetryWatchRootUpdateV1,
   FrontendAnalysisDataV1,
@@ -779,6 +780,26 @@ export async function getDefaultProviderStatus(
   return (await res.json()) as ProviderProfileStatus;
 }
 
+/** 官方中转档余额（点点 0912 拍板）：sidecar 用存档 key 查 new-api 计费端点，
+ * 前端只拿算好的数字。401=Key 无效；502=站点不可达。 */
+export async function getOfficialRelayBalance(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<OfficialRelayBalance> {
+  const res = await apiFetchSidecar("/v1/provider-profiles/official/balance", { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as OfficialRelayBalance;
+}
+
+/** 眼睛按钮的「显示 Key」（点点 0912 拍板）：测试阶段 key 对用户可见。 */
+export async function getProviderCredential(
+  profileId: number,
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<{ api_key: string }> {
+  const res = await apiFetchSidecar(`/v1/provider-profiles/${profileId}/auth/credential`, { method: "GET" }, opts);
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as { api_key: string };
+}
+
 export async function listCustomProviderModels(
   input: CustomProviderModelListRequest,
   opts: { signal?: AbortSignal; userId?: string } = {},
@@ -1141,7 +1162,7 @@ export async function getCoachSession(
 
 export async function createCoachAgentRun(
   content: string,
-  opts: { signal?: AbortSignal; userId?: string; sessionId?: number } = {},
+  opts: { signal?: AbortSignal; userId?: string; sessionId?: number; contextRefs?: string[] } = {},
 ): Promise<CoachAgentRunV1> {
   const res = await apiFetchSidecar(
     "/v1/agent-runs",
@@ -1152,6 +1173,8 @@ export async function createCoachAgentRun(
         schema_version: "coach_agent_run_request.v1",
         content,
         ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
+        // 结构化分析引用（引用菜单选择）：消息文本不再携带 analysis:N 机器码。
+        ...(opts.contextRefs?.length ? { context_refs: opts.contextRefs } : {}),
       }),
     },
     opts,
@@ -1363,4 +1386,25 @@ export async function removeRunEvidence(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as RunEvidenceRemovalResponse;
+}
+
+/** 「打开文件位置」：只发条目 id/kind；本地路径由后端解析，绝不下发前端。 */
+export async function revealStorageItem(
+  request: {
+    kind: "run_video" | "run_raw" | "incomplete_capture";
+    run_id?: number;
+    item_ref?: string;
+  },
+  opts: { signal?: AbortSignal } = {},
+): Promise<void> {
+  const res = await apiFetch(
+    "/api/storage/reveal",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+    { ...opts, desktopToken: true },
+  );
+  if (!res.ok) throw await apiError(res);
 }

@@ -1,1076 +1,3 @@
-/* Settings + Coach — 统一使用 app tokens（ui/theme.css） */
-
-/* ── Settings page ─────────────────────────────────────────── */
-/* 骨架与教练工作区同款：左栏复用会话列表栏（.task7-session-rail）的宽度 /
-   衬托底色 / 分隔线 / 圆角选中态，条目即设置分区锚点；右侧内容一页长滚动。 */
-
-.task6-settings-page {
-  /* v6 面板化（0910）：本页即浮起圆角面板（外层 overlay 只做承托底 +
-     4px 空隙），高度填满承托层；内部左栏整高固定、内容列自己滚动
-     （滚动条在面板内），分层只靠色差。 */
-  display: flex;
-  align-items: stretch;
-  height: 100%;
-  overflow: hidden;
-  border-radius: var(--radius-lg);
-  /* 0910 四轮：底色改工作区底——导航列融入其中（同左栏一体语言），
-     内容列成为独立圆角子面板（色差 + 圆角分层，去 border 线）。 */
-  background: var(--surface-container-low);
-  color: var(--on-surface);
-}
-
-.task6-settings-state-header {
-  display: flex;
-  align-items: center;
-  width: min(100%, 1040px);
-  gap: var(--space-2);
-  margin: 0 auto var(--space-5);
-  color: var(--on-surface);
-  font: 600 var(--text-display)/1.25 var(--font-display);
-  /* 兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
-  user-select: none;
-}
-
-/* 左栏（同款断点宽度：264px / 288px，与 .task7-session-rail 一致）。
-   v6 面板化：面板整高固定列（随面板 stretch），不再随内容滚动。 */
-.task6-settings-nav {
-  flex: 0 0 288px;
-  width: 288px;
-  align-self: stretch;
-  /* 0910 四轮：与内容列之间不再用 border 线——内容列圆角子面板自己分层。 */
-  background: var(--surface-container-low);
-}
-
-.task6-settings-nav-inner {
-  height: 100%;
-  overflow-y: auto;
-  padding: var(--space-3) var(--space-2) var(--space-4);
-}
-
-/* 与 .task7-session-rail 同款的两档断点宽度。 */
-@media (max-width: 1359px) and (min-width: 1120px) {
-  .task6-settings-nav {
-    flex-basis: 264px;
-    width: 264px;
-  }
-}
-
-.task6-settings-nav nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 var(--space-1);
-}
-
-.task6-settings-nav-title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin-bottom: var(--space-3);
-  padding-inline: var(--space-1);
-  /* 兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
-  user-select: none;
-}
-
-.task6-settings-nav-title {
-  color: var(--on-surface);
-  font: 600 var(--text-title)/1.2 var(--font-display);
-}
-
-.task6-settings-back {
-  flex: none;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--on-surface);
-}
-
-.task6-settings-back:hover {
-  background: var(--surface-container);
-}
-
-/* 条目样式同会话列表：ui/600 主行、radius-md、选中态衬一层容器色。 */
-.task6-settings-nav-link {
-  display: block;
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--on-surface);
-  font-size: var(--text-ui);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.task6-settings-nav-link[data-current="true"],
-.task6-settings-nav-link[aria-current="true"],
-.task6-settings-nav-link.task6-active {
-  background: var(--surface-container-high);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .task6-settings-nav-link:hover {
-    background: var(--surface-container);
-  }
-
-  .task6-settings-nav-link[data-current="true"]:hover {
-    background: var(--surface-container-highest);
-  }
-}
-
-.task6-settings-content {
-  flex: 1;
-  min-width: 0;
-  max-width: 980px;
-  /* 0910 四轮：内容列成为圆角子面板（比导航列底色浅一档），与导航列之间
-     4px 缝自然分层——取代原 border 线。 */
-  border-radius: var(--radius-lg);
-  background: var(--surface-container);
-  margin-block: var(--space-1);
-  margin-inline: auto;
-  padding: var(--space-5) var(--space-6) var(--space-6);
-  /* v6 面板化：滚动容器从设置 overlay 的 main 下移到本列（面板内部滚动，
-     滚动条在面板内）；锚点平滑滚动目标随之改到这里。 */
-  overflow-y: auto;
-}
-
-.task6-settings-section {
-  margin-top: var(--space-6);
-  scroll-margin-top: var(--space-4);
-}
-
-/* 锚点平滑滚动：滚动容器是面板内容列（.task6-settings-content），选择器
-   scoped 到设置页、不触碰 task3.css；减少动态偏好下回退为浏览器默认瞬时
-   跳转。 */
-@media (prefers-reduced-motion: no-preference) {
-  .task6-settings-content {
-    scroll-behavior: smooth;
-  }
-}
-
-.task6-settings-section:first-child {
-  margin-top: 0;
-}
-
-.task6-settings-section-header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.task6-settings-section-title {
-  font: 600 var(--text-title)/1.2 var(--font-display);
-}
-
-.task6-settings-section-note {
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-}
-
-.task6-settings-section-hint {
-  margin-left: auto;
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-}
-
-/* ── Provider 主从式：左档案列表 + 右详情（添加走模态向导） ────────── */
-
-.task6-provider-master {
-  display: flex;
-  gap: var(--space-5);
-  align-items: stretch;
-}
-
-.task6-provider-list {
-  display: flex;
-  flex: 0 0 240px;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.task6-provider-list-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--on-surface);
-  text-align: start;
-  cursor: pointer;
-}
-
-.task6-provider-list-item[aria-current="true"] {
-  background: var(--surface-container-high);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .task6-provider-list-item:hover {
-    background: var(--surface-container);
-  }
-
-  .task6-provider-list-item[aria-current="true"]:hover {
-    background: var(--surface-container-highest);
-  }
-}
-
-.task6-provider-list-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.task6-provider-list-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-ui);
-  font-weight: 600;
-}
-
-.task6-provider-list-type {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--on-surface-variant);
-  font-size: var(--text-micro);
-}
-
-.task6-provider-add {
-  margin-top: var(--space-3);
-}
-
-.task6-provider-detail-pane {
-  flex: 1;
-  min-width: 0;
-}
-
-.task6-provider-empty {
-  padding: var(--space-4) 0;
-}
-
-.task6-provider-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.task6-provider-name-edit {
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--on-surface);
-  font: 600 var(--text-title)/1.2 var(--font-display);
-  cursor: text;
-  text-align: start;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .task6-provider-name-edit:hover {
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-}
-
-.task6-provider-name-input {
-  max-width: 320px;
-  border: 1px solid var(--outline);
-  border-radius: var(--radius-md);
-  padding: 0 var(--space-2);
-  height: var(--control-height-compact);
-  background: var(--surface);
-  color: var(--on-surface);
-  font: 600 var(--text-title)/1.2 var(--font-display);
-}
-
-.task6-provider-conn {
-  display: flex;
-  flex-direction: column;
-  margin: var(--space-3) 0 0;
-  border-top: 1px solid var(--outline-variant);
-}
-
-.task6-provider-conn-row {
-  display: flex;
-  gap: var(--space-3);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--outline-variant);
-  font-size: var(--text-caption);
-  line-height: 1.55;
-}
-
-.task6-provider-conn-row dt {
-  flex: none;
-  width: 96px;
-  color: var(--on-surface-variant);
-}
-
-.task6-provider-conn-row dd {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-  margin: 0;
-  color: var(--on-surface);
-}
-
-.task6-provider-keyline {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.task6-provider-keydraft {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.task6-provider-keydraft input {
-  width: min(320px, 100%);
-}
-
-.task6-provider-preview {
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-  line-height: 1.5;
-}
-
-.task6-provider-danger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--divider-strong);
-  border-radius: var(--radius-md);
-  flex-wrap: wrap;
-}
-
-.task6-provider-danger strong {
-  font-size: var(--text-ui);
-}
-
-.task6-provider-danger .task6-muted {
-  margin-top: var(--space-1);
-}
-
-/* Status dot: green = ready, orange = every other state (error / unverified /
-   unconfigured). Token-driven so theme variants stay correct. */
-
-.task6-provider-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--event-peak);
-}
-
-.task6-provider-dot[data-ready="true"] {
-  background: var(--event-kill);
-}
-
-/* 添加向导：步骤条 + 四步表单；最后一步测连通过才解锁「完成」。 */
-
-.task6-wizard-steps {
-  display: flex;
-  gap: var(--space-3);
-  margin: 0 0 var(--space-3);
-  padding: 0;
-  list-style: none;
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-  flex-wrap: wrap;
-}
-
-.task6-wizard-steps li[data-state="current"] {
-  color: var(--on-surface);
-  font-weight: 600;
-}
-
-.task6-wizard-type-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.task6-wizard-step-body {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.task6-auth-operation {
-  display: grid;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-  padding: var(--space-4);
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-
-.task6-auth-operation-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.task6-auth-operation-title {
-  font-weight: 600;
-  font-size: var(--text-ui);
-}
-
-.task6-inline-actions {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.task6-muted,
-.task6-storage-row p {
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-  line-height: 1.5;
-}
-
-.task6-muted {
-  margin: 0;
-}
-
-.task6-profile-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-}
-
-.task6-profile-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.task6-profile-summary {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1;
-  min-width: 0;
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-  line-height: 1.5;
-}
-
-.task6-profile-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-left: auto;
-}
-
-.task6-info {
-  position: static;
-  display: inline-flex;
-  flex: none;
-}
-
-.task6-info-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--outline);
-  border-radius: 50%;
-  background: transparent;
-  color: var(--on-surface-variant);
-  font: 700 var(--text-caption)/1 var(--font-ui);
-  cursor: help;
-}
-
-.task6-info-trigger:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-
-.task6-info-tooltip {
-  position: absolute;
-  left: 0;
-  right: auto;
-  bottom: calc(100% + 8px);
-  z-index: 10;
-  width: min(320px, calc(100vw - 48px));
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
-  background: var(--surface-container-highest);
-  color: var(--on-surface);
-  box-shadow: var(--shadow-overlay);
-  font-size: var(--text-caption);
-  line-height: 1.5;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(4px) scale(0.98);
-  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
-}
-
-.task6-info:focus-within .task6-info-tooltip {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .task6-info-trigger:hover {
-    border-color: var(--on-surface-variant);
-    color: var(--on-surface);
-  }
-
-  .task6-info:hover .task6-info-tooltip {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-/* Theme mode cards（添加向导类型选择复用） */
-
-.task6-mode-card {
-  display: flex;
-  gap: var(--space-3);
-  align-items: flex-start;
-  padding: var(--space-3) var(--space-3);
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  cursor: pointer;
-}
-
-.task6-mode-card[data-selected="true"] {
-  border-color: var(--outline);
-  box-shadow: inset 0 0 0 1px var(--outline);
-  background: var(--surface-container-high);
-}
-
-.task6-mode-card input {
-  width: 14px;
-  height: 14px;
-  margin: var(--space-1) 0 0;
-  accent-color: var(--primary);
-  flex: none;
-}
-
-.task6-mode-card-name {
-  font-weight: 600;
-  font-size: var(--text-ui);
-}
-
-/* 主题分区：一行「名称+说明 | 三段切换」，下方 token 预览条。 */
-
-.task6-theme-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.task6-theme-row-text {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.task6-theme-row-name {
-  font-weight: 600;
-  font-size: var(--text-ui);
-}
-
-.task6-theme-segments {
-  display: inline-flex;
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.task6-theme-segment {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--control-height-compact);
-  padding: 0 var(--space-3);
-  color: var(--on-surface-variant);
-  font-size: var(--text-ui);
-  cursor: pointer;
-}
-
-.task6-theme-segment + .task6-theme-segment {
-  border-inline-start: 1px solid var(--outline-variant);
-}
-
-.task6-theme-segment input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.task6-theme-segment[data-selected="true"] {
-  background: var(--surface-container-high);
-  color: var(--on-surface);
-  font-weight: 600;
-}
-
-.task6-theme-segment:focus-within {
-  outline: 2px solid var(--primary);
-  outline-offset: -2px;
-}
-
-.task6-theme-preview {
-  display: flex;
-  gap: var(--space-1);
-  height: 8px;
-  margin-top: var(--space-3);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.task6-theme-preview-chip {
-  flex: 1;
-}
-
-.task6-theme-preview-chip[data-chip="primary"] { background: var(--primary); }
-.task6-theme-preview-chip[data-chip="surface"] { background: var(--surface-container-high); }
-.task6-theme-preview-chip[data-chip="outline"] { background: var(--outline-variant); }
-.task6-theme-preview-chip[data-chip="accent"] { background: var(--tertiary); }
-
-/* Profile 分组：按相关性的两列网格（手动校准 / Stats 自动读取）。 */
-
-.task6-profile-group {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3) 0;
-}
-
-.task6-profile-group + .task6-profile-group {
-  border-top: 1px solid var(--outline-variant);
-}
-
-.task6-profile-group-title {
-  margin: 0;
-  font: 600 var(--text-body)/1.25 var(--font-display);
-}
-
-.task6-profile-stat {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
-  font-size: var(--text-caption);
-}
-
-.task6-profile-stat-label {
-  color: var(--on-surface-variant);
-}
-
-/* Status / Capture rows：每行 = 功能名+说明在左，开关或状态在右。 */
-
-.task6-capture-health {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-
-.task6-toggle-rows {
-  display: flex;
-  flex-direction: column;
-}
-
-.task6-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-3) 0;
-  border-top: 1px solid var(--outline-variant);
-  font-size: var(--text-caption);
-  line-height: 1.55;
-}
-
-.task6-toggle-row:first-of-type {
-  border-top: 0;
-}
-
-.task6-toggle-row-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.task6-toggle-row-name {
-  color: var(--on-surface);
-  font-weight: 600;
-  font-size: var(--text-ui);
-}
-
-.task6-toggle-row-side {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--on-surface);
-  text-align: end;
-}
-
-.task6-toggle-row a,
-.task6-storage-row a,
-.task6-kovaak-note a {
-  color: var(--tertiary);
-  text-decoration: none;
-  border-bottom: 1px solid transparent;
-  transition: border-color var(--duration-fast) var(--ease-out);
-}
-
-.task6-toggle-row a:hover,
-.task6-storage-row a:hover,
-.task6-kovaak-note a:hover {
-  border-bottom-color: var(--on-surface);
-}
-
-.task6-ok {
-  color: var(--event-kill);
-  font-weight: 600;
-}
-
-/* 最近采集事件：run meta 的视频 / 输入轨迹结果，人话一行一条。 */
-
-.task6-capture-events {
-  margin-top: var(--space-4);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--outline-variant);
-}
-
-.task6-capture-event-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: var(--space-2) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.task6-capture-event {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
-  font-size: var(--text-caption);
-}
-
-.task6-capture-event-scenario {
-  flex: none;
-  max-width: 40%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: var(--text-ui);
-}
-
-.task6-capture-event-detail {
-  min-width: 0;
-  color: var(--on-surface-variant);
-}
-
-.task6-capture-event[data-healthy="true"] .task6-capture-event-detail {
-  color: var(--on-surface);
-}
-
-.task6-capture-diagnostics {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--outline-variant);
-  flex-wrap: wrap;
-}
-
-.task6-consent {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin: var(--space-3) 0;
-  padding: 0 var(--space-1);
-  color: var(--on-surface);
-  font-size: var(--text-caption);
-  line-height: 1.5;
-}
-
-.task6-consent input {
-  margin-top: 2px;
-  flex: none;
-}
-
-/* Storage：总占用大数字 + 分类占比条；清理动作独立放底部。 */
-
-.task6-storage-total {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-
-.task6-storage-total-number {
-  font: 600 var(--text-display)/1.1 var(--font-display);
-  font-variant-numeric: tabular-nums;
-}
-
-.task6-storage-bar {
-  display: flex;
-  height: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-container-high);
-  overflow: hidden;
-}
-
-.task6-storage-bar > div {
-  border-radius: 0;
-}
-
-.task6-storage-bar > div:first-child {
-  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
-}
-
-.task6-storage-bar > div:last-child {
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-}
-
-.task6-storage-kv {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-1) var(--space-4);
-  margin-top: var(--space-3);
-  font-size: var(--text-caption);
-}
-
-.task6-storage-kv dt {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--on-surface-variant);
-  white-space: nowrap;
-}
-
-.task6-storage-kv dd {
-  margin: 0;
-  color: var(--on-surface);
-}
-
-.task6-storage-kv .mono,
-.task6-storage-kv .task6-mono {
-  font-family: var(--font-mono);
-}
-
-.task6-storage-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  flex: none;
-}
-
-.task6-storage-row {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(240px, auto);
-  gap: var(--space-4);
-  padding: var(--space-4) 0;
-  align-items: flex-start;
-}
-
-.task6-storage-row > div:first-child {
-  min-width: 0;
-}
-
-.task6-storage-row strong {
-  font-size: var(--text-ui);
-}
-
-.task6-storage-cleanup {
-  display: grid;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--outline-variant);
-}
-
-/* Notices in settings */
-
-.task6-settings-notice {
-  margin: 0 0 var(--space-4);
-}
-
-.task6-settings-notice:last-child {
-  margin-bottom: 0;
-}
-
-/* ── Coach sidebar ─────────────────────────────────────────── */
-
-.task6-coach-sidebar-wrap {
-  position: relative;
-  flex: 0 0 var(--task6-coach-width);
-  width: var(--task6-coach-width);
-  min-height: calc(100vh - 48px);
-}
-
-.task6-coach-sidebar-wrap[data-state="closed"] {
-  pointer-events: none;
-}
-
-.task6-coach-sidebar-wrap[data-mode="side-by-side"] {
-  overflow: clip;
-}
-
-@media (min-width: 1160px) {
-  .task6-coach-sidebar-wrap[data-mode="side-by-side"] {
-    position: fixed;
-    top: 48px;
-    right: 0;
-    bottom: 0;
-    z-index: 35;
-    min-height: 0;
-  }
-}
-
-.task6-coach-sidebar-wrap[data-mode="overlay"],
-.task6-coach-sidebar-wrap[data-mode="full"] {
-  position: fixed;
-  top: 48px;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 35;
-  flex: none;
-  width: auto;
-  min-height: 0;
-}
-
-.task6-coach-scrim {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.32);
-  z-index: 1;
-  opacity: 1;
-  transition: opacity var(--duration-surface) var(--ease-drawer);
-}
-
-.task6-coach-sidebar {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  width: 100%;
-  height: 100%;
-  background: var(--surface);
-  border-left: 1px solid var(--outline-variant);
-  z-index: 2;
-  opacity: 1;
-  transform: translateX(0);
-  contain: layout paint;
-  will-change: transform, opacity;
-  transition: transform var(--duration-surface) var(--ease-drawer),
-    opacity var(--duration-surface) var(--ease-drawer);
-}
-
-.task6-coach-sidebar-wrap[data-state="closed"] .task6-coach-scrim {
-  opacity: 0;
-  pointer-events: none;
-  transition-duration: var(--duration-surface);
-}
-
-.task6-coach-sidebar-wrap[data-state="closed"] .task6-coach-sidebar {
-  opacity: 0;
-  transform: translateX(16px);
-  transition-duration: var(--duration-surface);
-}
-
-.task6-coach-sidebar-wrap[data-mode="overlay"] .task6-coach-sidebar {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: var(--task6-coach-width, 360px);
-  max-width: 100%;
-  box-shadow: var(--shadow-overlay);
-}
-
-.task6-coach-sidebar-wrap[data-mode="full"] .task6-coach-sidebar {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  border-left: 0;
-  background: var(--background);
-}
-
-/* Resizer */
-
-.task6-resizer {
-  position: absolute;
-  inset: 0 auto 0 0;
-  z-index: 2;
-  width: 10px;
-  cursor: col-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background var(--duration-fast) var(--ease-out);
-}
-
-.task6-resizer::after {
-  width: 3px;
-  height: 28px;
-  border-radius: 2px;
-  background: var(--outline);
-  content: "";
-  transition: background var(--duration-fast) var(--ease-out);
-}
-
-.task6-resizer:hover::after,
-.task6-resizer:focus-visible::after {
-  background: var(--on-surface);
-}
-
-.task6-resizer:focus-visible {
-  outline: none;
-  background: var(--primary-container);
-}
-
-.task6-coach-sidebar-wrap[data-mode="overlay"] .task6-resizer,
-.task6-coach-sidebar-wrap[data-mode="full"] .task6-resizer {
-  display: none;
-}
-
 /* v6（0910）：旧 header（Aiming Coach/可用/训练 chip 行）由 AppShell 共用
    顶栏取代，样式随之退役。训练 chip 改为面板交换区右上的悬浮胶囊。 */
 .task6-coach-shell {
@@ -1092,30 +19,24 @@
   flex-direction: column;
   align-items: flex-end;
   gap: var(--space-2);
+  /* 给变形容器一个确定的百分比基准（面板压缩时也不越出右缘）。 */
+  width: min(360px, calc(100% - var(--space-4) * 2));
+  /* 视频面板打开/关闭时整层淡出/淡入（0912 拍板）：display 切换不可过渡，
+     改 opacity+visibility 150ms；隐藏态由 task3.css 的 data-video-open 规则
+     给出，其间 pointer-events 立即失效，不拦截点击。 */
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility var(--duration-fast) var(--ease-out);
 }
 
-.task6-coach-context {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-
-.task6-coach-context-line {
-  color: var(--on-surface-variant);
-  font-size: var(--text-micro);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.task6-coach-context-line b {
-  color: var(--on-surface);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.task6-coach-context-attachments {
-  margin-top: 2px;
+/* 训练 chip 悬浮右上（v6），首屏内容起点落在其下方——否则第一条长气泡
+   与 chip 相撞（0912 实锤）。滚动后内容从 chip 下穿过按悬浮设计保留。
+   floating 与 coach-panel 是 shell 下的兄弟，:has 钉在 shell 上。
+   让位高度 = chip 顶距(16) + chip 高(30) + 内容间距(16)。 */
+.task6-coach-shell:has(.task6-coach-floating) .task6-messages {
+  padding-block-start: calc(var(--space-4) + 30px + var(--space-4));
 }
 
 /* Body */
@@ -1140,53 +61,79 @@
   padding-inline: max(14px, calc((100% - var(--task6-coach-content-width)) / 2));
 }
 
-/* 悬浮顶区（0828）：header + 讨论挂载条一起钉在滚动口顶部，消息从其下
-   滚过——背景取面板主面同色，不透明遮挡滚过的内容。 */
-.task6-coach-top {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  background: var(--surface);
-}
-
-.task6-coach-body {
-  flex: 1;
-  width: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-3) var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
 /* Current training */
 
-/* 头部瘦身（§8）：折叠态训练卡并入 header 行成单 chip；展开细节继续走
-   .task6-training-reveal 的动画合同（useAnimatedPresence + inert）。 */
-.task6-training-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  max-width: 280px;
-  height: 30px;
-  padding: 0 var(--space-3);
+/* 折叠↔展开 = 同一容器变形长大（0912 拍板，对齐 ZCode 右侧小胶囊→面板）：
+   容器自己 interpolate 宽度（--pop-folded-w，由 useLayoutEffect 量出折叠态
+   头部自然宽）/背景/圆角/阴影，折叠是描边胶囊、展开是 surface 面板；不再是
+   「面板从胶囊下面冒出来」。头部行常驻，面板体在下方做 grid 行高塌缩。 */
+.task6-training-pop {
+  --pop-folded-w: 160px;
+  --pop-open-w: min(300px, 100%);
+  display: flex;
+  flex-direction: column;
+  width: var(--pop-folded-w);
+  max-width: 100%;
   border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md);
+  border-radius: 999px;
+  /* 折叠态实底（0912 拍板）：与顶栏其他 chip 同用 container-high；描边保留。 */
+  background: var(--surface-container-high);
+  overflow: hidden;
+  transition:
+    width var(--duration-surface) var(--ease-out),
+    background-color var(--duration-surface) var(--ease-out),
+    border-color var(--duration-surface) var(--ease-out),
+    border-radius var(--duration-surface) var(--ease-out);
+}
+
+/* 展开态只有背景＋描边（0912 点点：去阴影、去任何橙色光/描边残留）。 */
+.task6-training-pop[data-open] {
+  width: var(--pop-open-w);
+  border-color: var(--outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container);
+}
+
+/* 折叠态 hover 亮一档（与讨论 chip 同档）；展开态面板本身即浮层，
+   背景由 [data-open] 接管。 */
+.task6-training-pop:not([data-open]):hover {
+  background: var(--surface-container-highest);
+}
+
+/* 键盘可达才画环（与旧 chip :focus-visible 一致）：鼠标点击展开不该常驻橙圈。 */
+.task6-training-pop:has(:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* 头部行＝原 chip 按钮：chrome（描边/底色/圆角/阴影）上移到容器，
+   button 退成裸内容行；展开态 space-between 把 caret 顶到右缘。 */
+.task6-training-chip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+  /* 28px + 容器上下描边 2px = 折叠态 30px，与上方让位高度一致。 */
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--on-surface-variant);
   font: 500 var(--text-caption)/1 var(--font-ui);
   cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
 }
 
-.task6-training-chip:hover {
-  background: var(--surface-container-high);
-  color: var(--on-surface);
+.task6-training-pop[data-open] .task6-training-chip {
+  justify-content: space-between;
 }
 
-.task6-training-chip:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 1px;
+.task6-training-pop[data-open] .task6-training-chip-label {
+  flex: 1 1 auto;
 }
 
 .task6-training-chip-label {
@@ -1195,9 +142,18 @@
   white-space: nowrap;
 }
 
+/* caret 合同（与总折叠行一致）：折叠＝向右(-90deg)，展开＝向下(0)。 */
 .task6-training-chip-caret {
   flex: none;
+  width: 16px;
+  height: 16px;
   font-size: var(--text-micro);
+  transition: transform var(--duration-surface) var(--ease-out);
+  transform: rotate(-90deg);
+}
+
+.task6-training-pop[data-open] .task6-training-chip-caret {
+  transform: rotate(0deg);
 }
 
 .task6-current-training-scenario {
@@ -1236,24 +192,24 @@
 }
 
 .task6-training-reveal {
-  position: relative;
+  /* 展开/收起走 grid 行高塌缩（与 .task6-collapse 同语言，0828 起的仓库
+     共识做法）：两种状态都在文档流内、宽度全程不变，inner 负责裁剪——
+     旧收起法（瞬时切 position:absolute + inset-inline）会让文字在淡出的
+     200ms 里重排成一字一行的竖窄条（0912 逐帧审计实锤）。 */
+  display: grid;
+  grid-template-rows: 0fr;
   opacity: 0;
-  transform: translateY(-4px);
-  transition: opacity var(--duration-surface) var(--ease-out),
-    transform var(--duration-surface) var(--ease-out);
-  contain: layout paint;
+  transition:
+    grid-template-rows var(--duration-surface) var(--ease-out),
+    opacity var(--duration-surface) var(--ease-out);
 }
 
+/* 展开态：面板体内容比容器形变晚 80ms 淡入（先长壳、再显字）；
+   收起走基态 0 延迟，保证 260ms 内收干净。 */
 .task6-training-reveal[data-state="open"] {
-  position: relative;
+  grid-template-rows: 1fr;
   opacity: 1;
-  transform: translateY(0);
-}
-
-.task6-training-reveal[data-state="closed"] {
-  position: absolute;
-  inset-inline: 14px;
-  pointer-events: none;
+  transition-delay: 0ms, 80ms;
 }
 
 .task6-training-reveal-inner {
@@ -1262,7 +218,28 @@
 }
 
 .task6-training-details {
-  padding-top: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+/* 空态/不可用态：面板内的简洁文案，不再用蓝框 Notice 窄条。 */
+.task6-training-pop-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.task6-training-pop-empty p,
+.task6-training-pop-note {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  line-height: 1.55;
+}
+
+.task6-training-pop-note {
+  padding: var(--space-2) var(--space-3) var(--space-3);
 }
 
 .task6-training-list {
@@ -1494,11 +471,20 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: var(--space-2);
+  /* hero gap 之上再拉一档，composer 与建议 chips 的间隔和
+     greet↔composer 一致（合计 32px，0911 点点）。 */
+  margin-top: var(--space-4);
 }
 
 /* 发出首条的过渡帧：hero 骨架淡出让位；气泡飞升与 composer 滑落由
    CoachPanel 的 WAAPI 驱动，本动画只负责骨架本身。 */
 .task6-home-leaving {
+  /* 淡出骨架必须脱离布局流（0912 实锤）：过渡帧占流（flex:1 吃满容器）
+     会把首条气泡挤到骨架之后（视口中段），骨架卸载时气泡瞬移数百 px——
+     点点看到的"发送动效乱飞"。absolute 铺满原 flex 区域：视觉不变、
+     布局让位，气泡从第一帧就站在最终位置，与飞行气泡落点无缝衔接。 */
+  position: absolute;
+  inset: 0;
   animation: task6-home-leave 200ms var(--ease-out) forwards;
   pointer-events: none;
 }
@@ -1582,6 +568,17 @@
   color: var(--on-surface);
 }
 
+/* 被停止的半截回复尾标（与停止生成的工作流尾标同一措辞口径）。 */
+.task6-message-stopped {
+  display: inline-block;
+  margin-top: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: 999px;
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+}
+
 .task6-message p {
   margin: 0;
   white-space: pre-wrap;
@@ -1659,6 +656,19 @@
 /* 排印④：受控行内加粗固定 600 档（400 正文 ＋ 600 强调两档制） */
 .task7-rich .task7-rich-bold {
   font-weight: 600;
+}
+
+/* 受控命名链接：解析层只放行联盟域 https（lib/rich-text 白名单），
+   主色＋下划线，hover 走 on-primary-container（M3 明暗各自加深/提亮） */
+.task7-rich .task7-link {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+.task7-rich .task7-link:hover {
+  color: var(--on-primary-container);
 }
 
 .task7-rich ol,
@@ -1755,6 +765,64 @@
   padding: 2px 0 var(--space-1);
 }
 
+/* 总折叠行（0912 点点拍板，默认收起）：一行「已工作 m:ss · 当前活动」，
+   展开区走 .task6-collapse 塌缩（与思考块同合同）。视觉弱于消息正文，
+   hover 才提亮。 */
+.task6-work-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: 500 var(--text-caption)/1.4 var(--font-ui);
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.task6-work-summary:hover {
+  color: var(--on-surface);
+}
+
+.task6-work-summary .task6-caret {
+  font-size: var(--text-micro);
+  /* 总折叠箭头独立合同（0912 点点）：折叠＝向右，展开＝向下——覆盖
+     .task6-caret 全局的「展开＝向上」180° 旋转。 */
+  transform: rotate(-90deg);
+}
+
+.task6-work-summary .task6-caret[data-open="true"] {
+  transform: rotate(0deg);
+}
+
+.task6-work-summary-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+/* 工作流条目进场（0912 点点：瞬闪观感差）：淡入＋4px 上浮，180ms。
+   归档块重挂时整批轻浮入，观感同"完成呈现"；流式中的段文本更新不重挂、
+   不重播。reduced-motion 名单见 task3.css。 */
+@keyframes task6-work-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.task6-work-stream > * {
+  animation: task6-work-row-in 180ms var(--ease-out) backwards;
+}
+
 .task6-tool-step {
   display: flex;
   align-items: flex-start;
@@ -1765,12 +833,14 @@
 }
 
 /* 行首语义图标：按 command 映射（读取=文件、查询=库、趋势=图……），
-   固定槽位保证各行文字起点整齐；fail 行随状态转红。 */
+   固定槽位保证各行文字起点整齐；fail 行随状态转红。
+   margin-top 按条目 11px 行高（16.5px）配 14px 图标的视觉居中值
+   （0911 随字号统一同步重调，此前 3px 是 12px 行高的旧值）。 */
 .task6-tool-glyph {
   flex: none;
   width: 14px;
   height: 14px;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--on-surface-variant);
 }
 
@@ -1823,8 +893,11 @@
   padding: 0;
 }
 
+/* 条目主文字与「思考过程」标题统一字号字色（0911 点点：工具条目
+   11px 暗色，不再比思考标题大一号亮一档）。 */
 .task6-tool-label {
-  color: var(--on-surface);
+  font-size: var(--text-micro);
+  color: var(--on-surface-variant);
   line-height: 1.5;
 }
 
@@ -1834,12 +907,8 @@
   line-height: 1.5;
 }
 
-/* 汇总行主文字与思考/工具行统一 12px + 同亮度（0901 拍板）；meta 辅助字段仍 11px 暗 */
-.task6-tool-step--brief .task6-tool-meta {
-  font-size: var(--text-caption);
-  color: var(--on-surface);
-}
-
+/* 汇总行主文字同步统一（0901 的 12px 提升随 0911 统一退役）；
+   meta 辅助字段同为 11px 暗。 */
 .task6-tool-step[data-state="fail"] .task6-tool-meta {
   color: var(--error);
 }
@@ -2056,7 +1125,7 @@
   color: var(--on-surface);
 }
 
-/* 已完成步骤的可展开摘要 */
+/* 已完成步骤的可展开摘要：文字同条目统一 11px 暗色，hover 变亮提示可点。 */
 .task6-tool-detail-toggle {
   display: inline-flex;
   align-items: center;
@@ -2064,8 +1133,9 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: inherit;
+  color: var(--on-surface-variant);
   font: inherit;
+  font-size: var(--text-micro);
   cursor: pointer;
   text-align: left;
   transition: color var(--duration-fast) var(--ease-out);
@@ -2301,7 +1371,8 @@ button.task6-discussion-chip:focus-visible {
   width: 100%;
   min-width: 0;
   min-height: 72px;
-  max-height: 144px;
+  /* 高度由 autosize（CoachPanel useLayoutEffect）管理：随内容长高、
+     上限 8 行（0911 点点，对齐 ZCode），不再用固定 max-height 144。 */
   padding: 20px 52px var(--space-3) 20px;
   border: 0;
   border-radius: inherit;
@@ -2329,6 +1400,19 @@ button.task6-discussion-chip:focus-visible {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+
+/* 终止形态（0911 点点拍板）：运行中且输入框为空时发送键变终止键——
+   同形正圆换 error 底，图标为方形停止符，与发送键可区分。 */
+.task6-composer-send--stop {
+  background: var(--error);
+  color: var(--on-error);
+}
+
+/* 排队 chip 的「立即」小字：↑ 箭头旁的文字标签（参考线框图）。 */
+.task6-queue-chip-now {
+  font-size: var(--text-caption);
+  font-weight: 600;
 }
 
 .task6-composer-send:disabled {
@@ -2610,7 +1694,6 @@ button.task6-discussion-chip:focus-visible {
   transform: scaleY(-1);
 }
 
-.task6-send-menu,
 .task6-mention-menu {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -2628,16 +1711,10 @@ button.task6-discussion-chip:focus-visible {
   background: var(--surface-container-high);
 }
 
-.task6-send-menu {
-  right: 8px;
-  min-width: 248px;
-}
-
 .task6-mention-menu {
   left: 8px;
 }
 
-.task6-send-menu > button,
 .task6-mention-item {
   display: flex;
   align-items: stretch;
@@ -2654,70 +1731,14 @@ button.task6-discussion-chip:focus-visible {
   cursor: pointer;
 }
 
-/* 嵌套圆角公式：菜单外 R(lg=8) − 菜单 padding(space-1=4) = item 半径 sm=4 */
-.task6-send-menu > button {
-  flex-direction: column;
-  gap: 0;
-}
-
-.task6-send-menu > button small,
 .task6-mention-item small {
   color: var(--on-surface-variant);
   font: 400 var(--text-micro)/1.3 var(--font-ui);
 }
 
-.task6-send-menu > button:hover:not(:disabled),
-.task6-send-menu > button:focus-visible,
 .task6-mention-item:hover,
 .task6-mention-item[aria-selected="true"] {
   background: var(--surface-container);
-}
-
-.task6-send-menu > button:disabled {
-  color: var(--on-surface-variant);
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.task6-send-menu-separator {
-  height: 1px;
-  margin-inline: var(--space-2);
-  background: var(--outline-variant);
-}
-
-/* 发送键旁挂 caret（点点 09-01 拍板）：主点击恒为发送/入队，运行中的
-   转向/打断/停止收敛到这里；chevron 随开合旋转（与 .task6-caret 同合同）。 */
-.task6-send-caret {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 32px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--on-surface-variant);
-  cursor: pointer;
-}
-
-.task6-send-caret:hover {
-  background: var(--surface-container);
-  color: var(--on-surface);
-}
-
-.task6-send-caret:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 1px;
-}
-
-.task6-send-caret-icon {
-  width: 14px;
-  height: 14px;
-  transition: transform var(--duration-fast) var(--ease-out);
-}
-
-.task6-send-caret[data-open="true"] .task6-send-caret-icon {
-  transform: rotate(180deg);
 }
 
 /* ── 划选引用（quote-reply，docs/quote-feature-research.md）──────────
@@ -2725,6 +1746,42 @@ button.task6-discussion-chip:focus-visible {
    小字 pre-wrap 文本体。竖线用 --divider-strong、底色沿用浮层家族的
    surface-container-high；无实阴影（与 send-menu 家族一致）、无循环动画，
    颜色一律 token，不需要新增 reduced-motion 分支以外的规则。 */
+
+/* 引用块加/减动效（0912 点点）：加入＝淡入 + 4px 下浮 + 0.96 缩放，160ms
+   ease-out（与 task6-work-row-in 同语言）；删除＝先标 [data-exiting] 播
+   140ms 收拢退场，动画结束再由组件真正从 state 移除。reduced-motion 名单
+   见 task3.css。 */
+@keyframes task6-quote-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes task6-quote-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.task6-quote-list > .task6-quote-block,
+.task6-queue-chips[data-mention-refs] > .task6-queue-chip {
+  animation: task6-quote-in 160ms var(--ease-out) backwards;
+}
+
+.task6-quote-list > .task6-quote-block[data-exiting],
+.task6-queue-chips[data-mention-refs] > .task6-queue-chip[data-exiting] {
+  animation: task6-quote-out 140ms var(--ease-out) forwards;
+}
 
 .task6-quote-list {
   display: flex;
@@ -3071,58 +2128,7 @@ button.task6-discussion-chip:focus-visible {
   color: var(--on-surface-variant);
 }
 
-/* Responsive */
-
-@media (max-width: 839px) {
-  .task6-settings-nav {
-    display: none;
-  }
-
-  .task6-profile-fields,
-  .task6-wizard-type-grid,
-  .task6-storage-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .task6-storage-row {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .task6-provider-master {
-    flex-direction: column;
-  }
-
-  .task6-provider-list {
-    flex: none;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .task6-provider-add {
-    margin-top: 0;
-    margin-inline-start: auto;
-  }
-
-  .task6-toggle-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .task6-toggle-row-side {
-    text-align: start;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .task6-coach-sidebar,
-  .task6-coach-sidebar-wrap[data-mode="overlay"] .task6-coach-sidebar,
-  .task6-coach-sidebar-wrap[data-mode="full"] .task6-coach-sidebar {
-    transition: opacity var(--duration-reduced-motion) var(--ease-out);
-    transform: none !important;
-  }
-
   .task6-training-reveal {
     transition: opacity var(--duration-reduced-motion) var(--ease-out);
     transform: none !important;
@@ -3158,15 +2164,18 @@ button.task6-discussion-chip:focus-visible {
     transition: none;
   }
 
+  /* 训练胶囊↔面板的宽度/圆角/底色形变与 caret 旋转一并关闭；
+     视频开合时浮层的淡入淡出同样瞬切。 */
+  .task6-coach-floating,
+  .task6-training-pop,
+  .task6-training-chip-caret {
+    transition: none;
+  }
+
   /* shimmer 关闭后必须保留可读的文字颜色 */
   .task6-shimmer-text {
     background: none;
     color: var(--on-surface-variant);
-  }
-
-  .task6-info-tooltip {
-    transition: opacity var(--duration-reduced-motion) var(--ease-out);
-    transform: none;
   }
 }
 /* 过渡期间（0910 修"闪"）：真实首条气泡与落底的 composer 都藏起来，由

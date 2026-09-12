@@ -97,7 +97,7 @@ export function parseTimeSegments(text: string): TimeSegment[] {
   return segments.length ? segments : [{ text }];
 }
 
-export type RichInline = { text: string; bold: boolean };
+export type RichInline = { text: string; bold: boolean; /** 受控命名链接（白名单域，仅 https）的 href。 */ link?: string };
 
 export type RichItem = {
   segments: RichInline[];
@@ -112,21 +112,109 @@ export type RichNode =
   | { kind: "list"; ordered: boolean; items: RichItem[] }
   | { kind: "table"; header: RichCell[] | null; rows: RichCell[][]; numericCols: boolean[] };
 
-// ── 行内加粗 ─────────────────────────────────────────────────────────────
+// ── 受控命名链接 ─────────────────────────────────────────────────────────
+//
+// 只放行联盟域的 https 链接渲染为可点击 <a>（域名白名单单一来源在此）；
+// 其余一切链接形状（非白名单域、http、javascript: 等）一律保持字面文本。
+// React 转义 + 无 innerHTML 的红线不因链接放行而松动。
+
+export const COACH_LINK_HOSTS: ReadonlySet<string> = new Set([
+  "s.click.taobao.com",
+  "item.jd.com",
+  "space.bilibili.com",
+]);
+
+function isAllowedHref(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return url.protocol === "https:" && COACH_LINK_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+// ── 行内加粗与命名链接 ───────────────────────────────────────────────────
+
+/** 裸 URL 的终止字符：空白与中英文常见标点（URL 本体不含这些）。 */
+const BARE_URL_TERMINATOR = /[\s）」】》>"'，。；、！？：,;:!?)}\]]/;
 
 /**
- * 把一段文本拆成加粗分段。对 ** 做配对扫描；落单的 ** 与其后文本保持字面
- * （流式中途未闭合时一字不吞，闭合片段到达后由下一次全量重解析自然收敛）。
+ * 扫描一段文本里最早出现的白名单域裸 https URL（模型不按命名链接形状
+ * 输出时的兜底，1.0.0 前实测身份问答必现）；返回 [起点, 终点)，无则 null。
+ * 终点 = 第一个终止字符或文本末尾；host 不在白名单按字面文本处理。
+ */
+function findBareAllowedUrl(text: string, from: number): { start: number; end: number } | null {
+  let at = text.indexOf("https://", from);
+  while (at !== -1) {
+    let end = at + 8;
+    while (end < text.length && !BARE_URL_TERMINATOR.test(text[end])) end += 1;
+    const candidate = text.slice(at, end);
+    try {
+      const url = new URL(candidate);
+      if (url.protocol === "https:" && COACH_LINK_HOSTS.has(url.hostname) && url.hostname.length > 0) {
+        return { start: at, end };
+      }
+    } catch {
+      // 不是完整 URL（如仅 "https://"），按字面处理，继续找下一处。
+    }
+    at = text.indexOf("https://", end);
+  }
+  return null;
+}
+
+/**
+ * 把一段文本拆成行内分段：** 配对为加粗，`[文字](https://…)` 且域名在
+ * 白名单内配对为链接；白名单域的裸 https URL 也链接化（兜底，不吞字面）；
+ * 落单的 ** 与不成形状的 [ 连同其内容保持字面（流式
+ * 中途未闭合时一字不吞，闭合片段到达后由下一次全量重解析自然收敛）。
+ * 链接 href 按第一个 `)` 截断——联盟链接（淘宝/京东）均为百分号编码，
+ * 不含裸括号。
  */
 export function parseBoldSegments(text: string): RichInline[] {
   const out: RichInline[] = [];
   let start = 0;
   let i = 0;
-  while ((i = text.indexOf("**", i)) !== -1) {
-    const close = text.indexOf("**", i + 2);
+  while (i < text.length) {
+    const boldAt = text.indexOf("**", i);
+    const linkAt = text.indexOf("[", i);
+    const bareUrl = findBareAllowedUrl(text, i);
+    if (boldAt === -1 && linkAt === -1 && bareUrl === null) break;
+    if (
+      bareUrl !== null
+      && (boldAt === -1 || bareUrl.start < boldAt)
+      && (linkAt === -1 || bareUrl.start < linkAt)
+    ) {
+      const href = text.slice(bareUrl.start, bareUrl.end);
+      if (bareUrl.start > start) out.push({ text: text.slice(start, bareUrl.start), bold: false });
+      out.push({ text: href, bold: false, link: href });
+      start = bareUrl.end;
+      i = start;
+      continue;
+    }
+    if (linkAt !== -1 && (boldAt === -1 || linkAt < boldAt)) {
+      const closeBracket = text.indexOf("](https://", linkAt + 1);
+      const lineEnd = text.indexOf("\n", linkAt);
+      if (closeBracket !== -1) {
+        const closeParen = text.indexOf(")", closeBracket);
+        if (closeParen !== -1 && (lineEnd === -1 || closeParen < lineEnd)) {
+          const label = text.slice(linkAt + 1, closeBracket);
+          const href = text.slice(closeBracket + 2, closeParen);
+          if (label.length > 0 && !label.includes("[") && !label.includes("]") && isAllowedHref(href)) {
+            if (linkAt > start) out.push({ text: text.slice(start, linkAt), bold: false });
+            out.push({ text: label, bold: false, link: href });
+            start = closeParen + 1;
+            i = start;
+            continue;
+          }
+        }
+      }
+      i = linkAt + 1;
+      continue;
+    }
+    const close = text.indexOf("**", boldAt + 2);
     if (close === -1) break;
-    if (i > start) out.push({ text: text.slice(start, i), bold: false });
-    out.push({ text: text.slice(i + 2, close), bold: true });
+    if (boldAt > start) out.push({ text: text.slice(start, boldAt), bold: false });
+    out.push({ text: text.slice(boldAt + 2, close), bold: true });
     start = close + 2;
     i = start;
   }

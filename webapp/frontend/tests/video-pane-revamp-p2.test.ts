@@ -24,12 +24,12 @@ test("P2 data contract: segment buttons come from evidence-segments projection w
   assert.match(formats, /startMs: number;/);
   assert.match(formats, /endMs: number;/);
   assert.match(formats, /kindLabel: string;/);
-  assert.match(formats, /worst: "最差",/);
-  assert.match(formats, /typical: "典型",/);
+  assert.match(formats, /worst: "修正最多",/);
+  assert.match(formats, /typical: "参照",/);
   assert.match(formats, /improved: "改善",/);
   assert.match(formats, /if \(playback\?\.availability !== "available"\) continue;/);
   assert.match(formats, /startMs < 0 \|\| endMs <= startMs/);
-  assert.match(formats, /const SIGNAL_SEGMENT_FALLBACK_WINDOW_MS = 2500;/);
+  assert.match(formats, /const SIGNAL_SEGMENT_FALLBACK_WINDOW_MS = 750;/);
   assert.match(formats, /\.filter\(\(marker\) => marker\.type === "peak"\)/);
 });
 
@@ -43,7 +43,11 @@ test("P2 row renders at the video bottom from mapped buttons only and hides whil
   assert.match(video, /projectEvidenceSegmentButtons\(evidenceSegments, \{/);
   assert.match(video, /maxMs: durationMs > 0 \? timelineMax : undefined/);
   assert.match(video, /projectPeakFallbackButtons\(timelineMarkers, \{/);
-  assert.match(video, /\{signalSegmentButtons\.length > 0 \? \(/);
+  // 渲染优先级（拍板）：Coach 讲解有 @time → 用讲解锚点；为空才走
+  // evidence-segments/peak 兜底，两组不同时渲染。
+  assert.match(video, /const coachTimepoints = useMemo\(/);
+  assert.match(video, /\{coachTimepoints\.length > 0 \? \(/);
+  assert.match(video, /\) : signalSegmentButtons\.length > 0 \? \(/);
   // 文案「00:38–00:43 类型词」复用 metric/rich-text 时间码约定。
   assert.match(video, /formatTimecodeRange\(segment\.startMs \/ 1000, segment\.endMs \/ 1000\)/);
   assert.match(video, /aria-label=\{`循环播放 \$\{formatTimecodeRange/);

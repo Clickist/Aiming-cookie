@@ -123,7 +123,7 @@ test("P2 authoritative windows map evidence-segments into ordered segment button
       },
     }),
   ]));
-  // 瞬间级 focus 窗口扩成焦点中心 ±2.5s 的最小有效循环窗；未传时长不钳
+  // 瞬间级 focus 窗口扩成焦点中心 ±0.75s 的最小有效循环窗；未传时长不钳
   // 右界（交给 VideoView clamp）。id 保留关联锚；结果按起点升序。
   assert.equal(buttons.length, 2);
   assert.deepEqual(
@@ -132,13 +132,13 @@ test("P2 authoritative windows map evidence-segments into ordered segment button
   );
   assert.deepEqual(
     buttons.map((button) => [button.startMs, button.endMs, button.kindLabel]),
-    [[0, 4000, SEGMENT_KIND_LABELS.improved], [7132, 12132, SEGMENT_KIND_LABELS.worst]],
+    [[750, 2250, SEGMENT_KIND_LABELS.improved], [8882, 10382, SEGMENT_KIND_LABELS.worst]],
   );
 });
 
-test("P2 expansion widens moment-scale focus spans around their center and keeps intervals of 5s or more untouched", () => {
+test("P2 expansion widens moment-scale focus spans around their center and keeps intervals of 1.5s or more untouched", () => {
   const buttons = projectEvidenceSegmentButtons(payload([
-    // 600ms 瞬间窗（实测典型宽度）：中心 4300 → ±2500 → [1800, 6800]。
+    // 600ms 瞬间窗（实测典型宽度）：中心 4300 → ±750 → [3550, 5050]。
     segment({
       segment_id: "analysis:42:segment:typical:1",
       segment_kind: "typical",
@@ -151,7 +151,7 @@ test("P2 expansion widens moment-scale focus spans around their center and keeps
         limitations: [],
       },
     }),
-    // 已 ≥ 5s 的区间是焦点区间与 ±2.5s 窗的并集＝原区间，不再扩大。
+    // 已 ≥ 1.5s 的区间是焦点区间与 ±0.75s 窗的并集＝原区间，不再扩大。
     segment({
       segment_id: "analysis:42:segment:worst:2",
       playback: {
@@ -163,7 +163,7 @@ test("P2 expansion widens moment-scale focus spans around their center and keeps
         limitations: [],
       },
     }),
-    // 恰好 5s：±2.5s 窗与原区间重合，同样原样保留。
+    // 恰好 1.5s：±0.75s 窗与原区间重合，同样原样保留。
     segment({
       segment_id: "analysis:42:segment:improved:3",
       segment_kind: "improved",
@@ -180,13 +180,13 @@ test("P2 expansion widens moment-scale focus spans around their center and keeps
   // 同起点平局保持稳定排序（插入序：worst 在 improved 之前）。
   assert.deepEqual(
     buttons.map((button) => [button.startMs, button.endMs]),
-    [[1800, 6800], [10000, 16000], [10000, 15000]],
+    [[3550, 5050], [10000, 16000], [10000, 15000]],
   );
 });
 
 test("P2 expansion clamps to media duration and drops windows that clamp empty", () => {
   const buttons = projectEvidenceSegmentButtons(payload([
-    // 贴视频开头：中心 1100 → [0, 3600]，右界钳进时长 → [0, 3000]。
+    // 贴视频开头：中心 1100 → [350, 1850]，右界在时长内。
     segment({
       segment_id: "analysis:42:segment:a:1",
       playback: {
@@ -198,7 +198,7 @@ test("P2 expansion clamps to media duration and drops windows that clamp empty",
         limitations: [],
       },
     }),
-    // 视频末尾：中心 2750 → [250, 5250]，右界钳在时长 → [250, 3000]。
+    // 视频末尾：中心 2750 → [2000, 3500]，右界钳在时长 → [2000, 3000]。
     segment({
       segment_id: "analysis:42:segment:b:2",
       segment_kind: "typical",
@@ -227,8 +227,8 @@ test("P2 expansion clamps to media duration and drops windows that clamp empty",
   assert.deepEqual(
     buttons.map((button) => [button.id, button.startMs, button.endMs]),
     [
-      ["analysis:42:segment:a:1", 0, 3000],
-      ["analysis:42:segment:b:2", 250, 3000],
+      ["analysis:42:segment:a:1", 350, 1850],
+      ["analysis:42:segment:b:2", 2000, 3000],
     ],
   );
   for (const button of buttons) {
@@ -295,11 +295,11 @@ test("P2 fallback derives peak-centered windows from P1 markers; kill/miss stay 
   assert.equal(buttons.length, 2);
   const [early, late] = buttons;
   assert.ok(early && late);
-  // 锚点 ± 固定窗口；label 沿用标记词。
+  // 锚点 ± 固定窗口（±0.75s）；label 沿用标记词。
   assert.equal(early.id, "peak-3400");
-  assert.deepEqual([early.startMs, early.endMs], [900, 5900]);
+  assert.deepEqual([early.startMs, early.endMs], [2650, 4150]);
   assert.equal(early.kindLabel, "甩枪");
-  assert.deepEqual([late.startMs, late.endMs], [7500, 12500]);
+  assert.deepEqual([late.startMs, late.endMs], [9250, 10750]);
 });
 
 test("P2 fallback window bounds clamp to media duration and the row keeps a hard cap", () => {
@@ -317,5 +317,5 @@ test("P2 fallback window bounds clamp to media duration and the row keeps a hard
   }
   const first = clamped[0];
   assert.ok(first);
-  assert.deepEqual([first.startMs, first.endMs], [0, 3500]);
+  assert.deepEqual([first.startMs, first.endMs], [250, 1750]);
 });

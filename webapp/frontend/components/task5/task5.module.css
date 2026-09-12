@@ -1096,6 +1096,9 @@
   font-family: var(--font-mono);
   font-size: var(--text-micro);
   color: var(--on-surface-variant);
+  /* 默认面板宽度下 flex 挤压会把「00:11.0 / 01:00.0」折成两行，观感像坏了。 */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .playerBarSpacer {

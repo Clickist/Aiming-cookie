@@ -31,7 +31,6 @@ import type {
   ProviderProfile,
 } from "@/lib/types";
 import { Button, Field, FieldControl, Notice } from "@/ui/primitives";
-import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import { startWindowDragging, TauriWindowControls } from "@/components/task3/TauriWindowControls";
 
 type ConnectionState = "idle" | "loading" | "authorizing" | "testing" | "ready" | "failed";
@@ -57,7 +56,7 @@ function authModeLabel(mode: ProviderAuthMode): string {
 
 export function OnboardingFlow() {
   const router = useRouter();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2>(1);
   const [providers, setProviders] = useState<ProviderCatalogEntry[]>([]);
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
@@ -208,7 +207,7 @@ export function OnboardingFlow() {
   }, [operation, profileId]);
 
   useEffect(() => {
-    if (step !== 3 || !desktop) return;
+    if (step !== 2 || !desktop) return;
     void getCaptureStatus()
       .then(setCaptureStatus)
       .catch(() => setCaptureStatus(null));
@@ -387,12 +386,10 @@ export function OnboardingFlow() {
         <div className="task3-toolbar-spacer" />
         <TauriWindowControls />
       </div>
-      <div className="task3-onboarding-progress" aria-label={`第 ${step} 步，共 3 步`}>
+      <div className="task3-onboarding-progress" aria-label={`第 ${step} 步，共 2 步`}>
         <span data-active={step === 1 || undefined}>1</span>
         <i />
         <span data-active={step === 2 || undefined}>2</span>
-        <i />
-        <span data-active={step === 3 || undefined}>3</span>
       </div>
 
       {step === 1 ? (
@@ -667,20 +664,9 @@ export function OnboardingFlow() {
             )}
           </div>
         </section>
-      ) : step === 2 ? (
-        <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="kovaak-title" key="kovaak">
-          <div className="task3-eyebrow">第二步 · 可选</div>
-          <h1 id="kovaak-title">连接 KovaaK 成绩</h1>
-          <p className="task3-lead">可选读取一组训练项目成绩，之后也能在设置中连接、刷新或移除。</p>
-          <KovaaKConnectionPanel
-            context="onboarding"
-            onContinue={() => { setMessage(""); setStep(3); }}
-            onSkip={() => { setMessage(""); setStep(3); }}
-          />
-        </section>
       ) : (
         <section className="task3-onboarding-sheet task3-onboarding-step" aria-labelledby="capture-title" key="capture">
-          <div className="task3-eyebrow">第三步 · 自动采集</div>
+          <div className="task3-eyebrow">第二步 · 自动采集</div>
           <h1 id="capture-title">训练后自动整理证据</h1>
           <p className="task3-lead">桌面版可在 KovaaK 运行时准备 300 秒硬件编码回放缓冲，并优先保留 Raw Input。每一局完成后仍由你确认要分析哪一条 Run。</p>
           {desktop ? (
@@ -700,7 +686,7 @@ export function OnboardingFlow() {
           ) : null}
           {message ? <Notice tone="error">{message}</Notice> : null}
           <div className="task3-onboarding-actions">
-            <Button onClick={() => setStep(2)} variant="secondary">返回</Button>
+            <Button onClick={() => setStep(1)} variant="secondary">返回</Button>
             <Button disabled={finishing || !desktop || !captureOptIn} onClick={() => void finish()}>{finishing ? "正在保存" : "进入工作台"}</Button>
           </div>
         </section>

@@ -33,17 +33,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState<ThemePreference>("system");
   const [resolvedTheme, setResolvedTheme] = useState<ThemeMode>("light");
   const preferenceRef = useRef<ThemePreference>("system");
+  const systemThemeRef = useRef<ThemeMode>("light");
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const stored = normalizeThemePreference(window.localStorage.getItem(THEME_STORAGE_KEY));
     const systemTheme: ThemeMode = media.matches ? "dark" : "light";
     preferenceRef.current = stored;
+    systemThemeRef.current = systemTheme;
     setPreferenceState(stored);
     setResolvedTheme(resolveTheme(stored, systemTheme));
     applyThemeToDocument(resolveTheme(stored, systemTheme));
     const onChange = (event: MediaQueryListEvent) => {
       const nextSystemTheme: ThemeMode = event.matches ? "dark" : "light";
+      // WebView2 在窗口/视图操作期间会重评估媒体查询并发出值未变的假 change
+      // 事件：值没变就不重写令牌，防发送交接期整窗闪暗（0911 审计 §12.3）。
+      if (nextSystemTheme === systemThemeRef.current) return;
+      systemThemeRef.current = nextSystemTheme;
       if (preferenceRef.current === "system") {
         setResolvedTheme(nextSystemTheme);
         applyThemeToDocument(nextSystemTheme);
@@ -61,6 +67,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const resolvedTheme = resolveTheme(preference, systemTheme);
     window.localStorage.setItem(THEME_STORAGE_KEY, preference);
     preferenceRef.current = preference;
+    systemThemeRef.current = systemTheme;
     setPreferenceState(preference);
     setResolvedTheme(resolvedTheme);
     applyThemeToDocument(resolvedTheme);

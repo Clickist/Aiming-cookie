@@ -6,10 +6,13 @@ import {
   authorizeProviderProfile,
   cancelProviderAuthOperation,
   createProviderProfile,
-  deleteProviderCredential,
   deleteProviderProfile,
   discoverCustomProviderModels,
   getProviderAuthOperation,
+  getOfficialRelayBalance,
+  getProviderCatalog,
+  getProviderCredential,
+  listStoredCustomProviderModels,
   setDefaultProviderProfile,
   setProviderApiKey,
   submitProviderAuthInput,
@@ -21,17 +24,23 @@ import {
 import {
   isAuthTerminal,
   isCustomProviderKind,
+  isOfficialRelayProfile,
+  OFFICIAL_RELAY_PROVIDER_ID,
   useCustomModelDiscovery,
 } from "@/lib/provider-helpers";
 import {
-  WIZARD_TYPES,
+  WIZARD_STEP_COUNT,
   buildWizardPayload,
+  buildWizardProbePayload,
   emptyWizardDraft,
   isWizardCustom,
   previewBuiltinRequestUrl,
   previewCustomRequestUrl,
   wizardCatalogProvider,
+  wizardCheckFingerprint,
   wizardDefaultName,
+  wizardNameConflicts,
+  wizardTypeOptions,
   type WizardDraft,
 } from "@/lib/provider-wizard";
 import type {
@@ -42,7 +51,8 @@ import type {
   ProviderProfileState,
   ProviderReasoningEffort,
 } from "@/lib/types";
-import { Badge, Button, Dialog, Field, FieldControl, Loading, Notice, Panel, Status } from "@/ui/primitives";
+import { IconEye, IconEyeOff, IconPencil, IconTrash } from "@/ui/icons";
+import { Button, Dialog, Field, FieldControl, Loading, Notice, Panel, Status } from "@/ui/primitives";
 
 // Raycast 式先验后存：干跑结果绑定提交时的表单指纹，
 // 表单任何变动都会让旧结论失效并回到未验证态。
@@ -51,7 +61,7 @@ type DraftCheck =
   | { phase: "checking"; fingerprint: string }
   | { phase: "done"; fingerprint: string; passed: boolean; message: string };
 
-type WizardStep = 1 | 2 | 3 | 4;
+type WizardStep = 1 | 2;
 
 type ConfirmAction = {
   title: string;
@@ -59,7 +69,22 @@ type ConfirmAction = {
   run: () => Promise<void>;
 } | null;
 
-const WIZARD_STEP_LABELS = ["选类型", "名称与端点", "API Key", "测试连接"] as const;
+const WIZARD_STEP_LABELS = ["选类型", "名称与凭据"] as const;
+
+/** 官方档未建档时的合成档案（0911 拍板：未连接也可选中查看详情、可填 Key）。 */
+const SYNTHETIC_OFFICIAL_PROFILE: ProviderProfile = {
+  id: -1,
+  name: "Aiming Cookie 官方",
+  provider_id: OFFICIAL_RELAY_PROVIDER_ID,
+  kind: "builtin",
+  base_url: null,
+  model_id: "",
+  is_default: false,
+  configured: false,
+  credential_configured: false,
+  has_api_key: false,
+  status: "unconfigured",
+};
 
 function providerStateLabel(status: ProviderProfileState): string {
   switch (status) {
@@ -70,13 +95,6 @@ function providerStateLabel(status: ProviderProfileState): string {
     case "model_unavailable": return "模型不可用";
     case "connection_failed": return "连接失败";
   }
-}
-
-function providerStatusTone(status: ProviderProfileState): "success" | "warning" | "error" | "neutral" {
-  if (status === "ready") return "success";
-  if (status === "needs_reauth" || status === "auth_expired") return "warning";
-  if (status === "connection_failed" || status === "model_unavailable") return "error";
-  return "neutral";
 }
 
 function authOperationLabel(status: ProviderAuthOperation["status"]): string {
@@ -98,18 +116,25 @@ function providerTypeLabel(profile: ProviderProfile, catalog: ProviderCatalogV1 
   return entry?.provider_name ?? profile.provider_id ?? "内置 Provider";
 }
 
-function shortTime(value: string | null | undefined): string {
+/** 测活时间的人话相对时长（线框：上次测活成功 · N 小时前）。 */
+function relativeTime(value: string | null | undefined): string {
   if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return "";
+  const minutes = Math.max(0, Math.round((Date.now() - time) / 60_000));
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
 }
 
-/** 第 1–3 步各自的「下一步」门槛（第 4 步的门槛是测连通过）。 */
+/** 第 1 步「下一步」的门槛：所选内置类型须在目录可用（自定义恒可用）。
+ * 第 2 步的门槛在按钮自身：「测试」要求凭据/端点齐备，「完成」要求 payload
+ * 齐备（含测试成功后选定的模型）。 */
 function wizardStepReady(step: WizardStep, draft: WizardDraft, builtinAvailable: boolean): boolean {
   if (step === 1) return isWizardCustom(draft.typeId) || builtinAvailable;
-  if (step === 2) return isWizardCustom(draft.typeId) ? Boolean(draft.baseUrl.trim()) : true;
-  return Boolean(draft.modelId.trim() && (!isWizardCustom(draft.typeId) || draft.apiKey.trim()));
+  return true;
 }
 
 export function ProviderSettingsSection({
@@ -131,6 +156,12 @@ export function ProviderSettingsSection({
     [profiles],
   );
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // 官方档（Aiming Cookie 官方）是常驻内置条目：不依赖用户档案存在，永远置顶可选。
+  const [officialSelected, setOfficialSelected] = useState(false);
+  const relayArchive = useMemo(
+    () => profiles.find((profile) => isOfficialRelayProfile(profile)) ?? null,
+    [profiles],
+  );
   const selectedProfile = useMemo(
     () => profiles.find((profile) => profile.id === selectedId) ?? activeProfile,
     [activeProfile, profiles, selectedId],
@@ -139,20 +170,79 @@ export function ProviderSettingsSection({
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [switchingProvider, setSwitchingProvider] = useState(false);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [baseUrlDraft, setBaseUrlDraft] = useState<string | null>(null);
   const [credentialDraft, setCredentialDraft] = useState("");
-  const [keyDraftVisible, setKeyDraftVisible] = useState(false);
-  const [keyDraftOpen, setKeyDraftOpen] = useState(false);
+  // Key 掩码行编辑态（点点 0912：点 Key 文字进入粘贴，回车/失焦即存，Esc 取消）。
+  const [keyEditing, setKeyEditing] = useState(false);
+  // 眼睛的「显示 Key」（点点 0912 拍板）：点眼睛拉取存档明文切换显示。
+  const [revealedKey, setRevealedKey] = useState<{ id: number; key: string } | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [lastTest, setLastTest] = useState<{ passed: boolean; message: string } | null>(null);
+  // 官方档（aiming-cookie-relay）的计费方式视图：会员计划 / API 计费。
+  const [billingMode, setBillingMode] = useState<"plan" | "api">("plan");
+  const [billingMenuOpen, setBillingMenuOpen] = useState(false);
+  const billingMenuRef = useRef<HTMLDivElement | null>(null);
 
-  // ── 添加向导状态（模态四步，最后一步硬门槛） ─────────────────
+  // 官方档余额（0912 线框拍板）：打开 API 计费视图自动拉一次，「刷新余额」手动重拉。
+  const [relayBalance, setRelayBalance] = useState<
+    { phase: "idle" | "loading" | "ready" | "error"; value: number | null; message: string | null }
+  >({ phase: "idle", value: null, message: null });
+  // 已存自定义档详情的模型发现（点「获取模型」后才有内容；内置档走目录刷新）。
+  const [detailModels, setDetailModels] = useState<
+    { phase: "idle" | "loading" | "ready" | "error"; models: string[]; message: string | null }
+  >({ phase: "idle", models: [], message: null });
+  // 内置档详情「获取模型」：重新拉取 sidecar 目录快照。
+  const [detailCatalogReload, setDetailCatalogReload] = useState<ProviderCatalogV1 | null>(null);
+  const [detailCatalogReloading, setDetailCatalogReloading] = useState(false);
+
+  const loadRelayBalance = () => {
+    setRelayBalance((current) => ({ phase: "loading", value: current.value, message: null }));
+    void getOfficialRelayBalance()
+      .then((next) => setRelayBalance({ phase: "ready", value: next.balance, message: null }))
+      .catch((error: unknown) => {
+        // apiError 约定：状态码编码在 err.name（ApiError_401）。
+        const name = error instanceof Error ? error.name : "";
+        const badKey = name === "ApiError_401" || name === "ApiError_403";
+        setRelayBalance((current) => ({
+          phase: "error",
+          value: current.value,
+          message: badKey ? "API Key 无效或已被重置" : "余额暂时无法读取，请稍后重试。",
+        }));
+      });
+  };
+
+  // 打开 API 计费视图且已存 Key 时自动拉一次（幂等：仅在 idle 态触发）。
+  useEffect(() => {
+    if (!officialSelected || billingMode !== "api" || !relayArchive?.credential_configured) return;
+    if (relayBalance.phase !== "idle") return;
+    loadRelayBalance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [officialSelected, billingMode, relayArchive?.credential_configured, relayBalance.phase]);
+
+  /** 已存自定义档「获取模型」：只传 profile_id，key 留在 sidecar 就地发现并
+   *  更新存档列表（点点 0912 拍板）；成功后刷新投影，下次直接显示。 */
+  const loadDetailModels = (profile: ProviderProfile) => {
+    setDetailModels({ phase: "loading", models: [], message: null });
+    void listStoredCustomProviderModels(profile.id)
+      .then(async (next) => {
+        setDetailModels(next.models.length
+          ? { phase: "ready", models: next.models.map((model) => model.model_id), message: null }
+          : { phase: "error", models: [], message: "没有读取到可用模型" });
+        await refresh(true);
+      })
+      .catch(() => setDetailModels({ phase: "error", models: [], message: "连接失败，请检查设置" }));
+  };
+
+  // ── 添加向导状态（模态两步：①选类型 ②名称与凭据 + 测试/完成） ──
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
   const [wizardDraft, setWizardDraft] = useState<WizardDraft>(emptyWizardDraft);
   const [wizardShowKey, setWizardShowKey] = useState(false);
   const [wizardCheck, setWizardCheck] = useState<DraftCheck>({ phase: "idle" });
-  const [createdProfile, setCreatedProfile] = useState<ProviderProfile | null>(null);
   const wizardCheckAbort = useRef<AbortController | null>(null);
+  // 内置类型「获取模型」：从 sidecar 重新拉取目录（覆盖父级传入的快照）。
+  const [wizardCatalogReload, setWizardCatalogReload] = useState<ProviderCatalogV1 | null>(null);
+  const [wizardCatalogReloading, setWizardCatalogReloading] = useState(false);
 
   // ── OAuth 授权流程（已有档，先保存后授权） ───────────────────
   const [authOperation, setAuthOperation] = useState<ProviderAuthOperation | null>(null);
@@ -160,12 +250,22 @@ export function ProviderSettingsSection({
   const [authPromptValue, setAuthPromptValue] = useState("");
 
   const wizardCustom = isWizardCustom(wizardDraft.typeId);
-  const wizardCatalogEntry = wizardCustom ? undefined : wizardCatalogProvider(catalog, wizardDraft.typeId);
+  const wizardCatalogSource = wizardCatalogReload ?? catalog;
+  const wizardCatalogEntry = wizardCustom ? undefined : wizardCatalogProvider(wizardCatalogSource, wizardDraft.typeId);
+  // 第 1 步类型卡：catalog 派生完整目录 + 自定义兜底（点点 0911 线框拍板）。
+  const wizardTypeList = useMemo(() => wizardTypeOptions(wizardCatalogSource), [wizardCatalogSource]);
+  const wizardFingerprint = wizardCheckFingerprint(wizardDraft);
+  const wizardCheckingNow = wizardCheck.phase === "checking" && wizardCheck.fingerprint === wizardFingerprint;
+  const wizardVerified = wizardCheck.phase === "done"
+    && wizardCheck.passed
+    && wizardCheck.fingerprint === wizardFingerprint;
 
   const customDiscovery = useCustomModelDiscovery({
+    // 模型列表在测试成功后才获取/展示（点点 0911 拍板）；协议确认结论
+    // customKind 由端点+Key 派生，不参与连通指纹（否则确认即解锁死循环）。
     baseUrl: wizardDraft.baseUrl,
     apiKey: wizardDraft.apiKey,
-    enabled: wizardOpen && wizardCustom,
+    enabled: wizardOpen && wizardCustom && wizardVerified,
     discover: discoverCustomProviderModels,
   });
   const {
@@ -181,21 +281,27 @@ export function ProviderSettingsSection({
   // 思考力度旋钮。自定义 Provider 的发现结果没有该元数据，保持未设置（默认）。
   const wizardModelIsReasoning = !wizardCustom
     && wizardCatalogEntry?.models.find((model) => model.model_id === wizardDraft.modelId)?.reasoning === true;
-  // 干跑与入库共用同一份候选 payload：「测试连接」验的就是将来要存的内容。
+  // 「测试」与「完成」各用一份候选 payload：测试走免模型连通探测（内置不选
+  // 模型也能先测连），完成时校验并写入带模型的完整档案。
+  const wizardProbePayload: ProviderProfileCreate | null = buildWizardProbePayload(wizardDraft, {
+    isCustom: wizardCustom,
+    customKind,
+    builtinProviderAvailable: Boolean(wizardCatalogEntry),
+    defaultName: wizardDefaultName(wizardCatalogSource, wizardDraft.typeId),
+  });
   const wizardPayload: ProviderProfileCreate | null = buildWizardPayload(wizardDraft, {
     isCustom: wizardCustom,
     customKind,
     selectedCustomModel,
     builtinModelIsReasoning: wizardModelIsReasoning,
     builtinProviderAvailable: Boolean(wizardCatalogEntry),
-    defaultName: wizardDefaultName(catalog, wizardDraft.typeId),
+    defaultName: wizardDefaultName(wizardCatalogSource, wizardDraft.typeId),
     isFirstProfile: profiles.length === 0,
   });
-  const wizardFingerprint = wizardPayload ? JSON.stringify(wizardPayload) : null;
-  const wizardCheckingNow = wizardCheck.phase === "checking" && wizardCheck.fingerprint === wizardFingerprint;
-  const wizardVerified = wizardCheck.phase === "done"
-    && wizardCheck.passed
-    && wizardCheck.fingerprint === wizardFingerprint;
+  const wizardNameConflict = wizardNameConflicts(
+    wizardDraft.name,
+    profiles.map((profile) => profile.name),
+  );
 
   // 表单任何变动都会改变指纹：中止在途检查，回到未验证态并锁住完成。
   useEffect(() => {
@@ -206,12 +312,23 @@ export function ProviderSettingsSection({
 
   useEffect(() => () => wizardCheckAbort.current?.abort(), []);
 
+  // 计费方式下拉（官方档）：外点即收起（CoachModelMenu 同款 mousedown 惯例）。
+  useEffect(() => {
+    if (!billingMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (event.target instanceof Node && billingMenuRef.current?.contains(event.target)) return;
+      setBillingMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [billingMenuOpen]);
+
   const openWizard = () => {
     setWizardDraft(emptyWizardDraft());
     setWizardStep(1);
     setWizardShowKey(false);
     setWizardCheck({ phase: "idle" });
-    setCreatedProfile(null);
+    setWizardCatalogReload(null);
     customDiscovery.reset();
     setWizardOpen(true);
   };
@@ -235,8 +352,8 @@ export function ProviderSettingsSection({
       wizardCheckAbort.current?.abort(); // 再次点击即取消，不阻塞离开向导。
       return;
     }
-    // 冻结本次检查对应的 payload 与指纹：期间表单再变，结论也不解锁完成。
-    const payload = wizardPayload;
+    // 冻结本次检查对应的探测候选与指纹：期间端点/Key 再变，结论也不解锁完成。
+    const payload = wizardProbePayload;
     const fingerprint = wizardFingerprint;
     if (!payload || !fingerprint) return;
     const controller = new AbortController();
@@ -250,7 +367,7 @@ export function ProviderSettingsSection({
         passed: status.status === "ready",
         message: status.status === "ready"
           ? `连接成功 · ${payload.name}`
-          : `${status.message}。请核对 API Key、Base URL 与所选模型后重试。`,
+          : `${status.message}。请核对 API Key 与端点后重试。`,
       });
     } catch (error) {
       if (controller.signal.aborted) {
@@ -273,8 +390,20 @@ export function ProviderSettingsSection({
     const created = await createProviderProfile(wizardPayload);
     setWizardDraft((current) => ({ ...current, apiKey: "" }));
     setWizardCheck({ phase: "idle" });
-    setCreatedProfile(created);
+    setWizardOpen(false);
+    // 模型发现存档播种（点点 0912 拍板）：新档立即可见模型列表，无需再点获取。
+    if (isCustomProviderKind(created.kind)) {
+      void listStoredCustomProviderModels(created.id).catch(() => undefined);
+    }
     await refresh(true);
+  };
+
+  const reloadWizardCatalog = () => {
+    setWizardCatalogReloading(true);
+    void getProviderCatalog()
+      .then((next) => setWizardCatalogReload(next))
+      .catch(() => notify("模型目录暂时无法刷新，请稍后重试。"))
+      .finally(() => setWizardCatalogReloading(false));
   };
 
   const makeActive = async (profileId: number) => {
@@ -328,6 +457,59 @@ export function ProviderSettingsSection({
     }
   };
 
+  /** 自定义档 Base URL 编辑（线框：Base URL 行自定义可编辑，内置只读端点）。 */
+  const saveBaseUrl = async (profile: ProviderProfile) => {
+    const nextBaseUrl = baseUrlDraft?.trim();
+    if (!nextBaseUrl || nextBaseUrl === (profile.base_url ?? "")) return;
+    try {
+      // PUT 是整档更新；不带新 api_key 时 sidecar 保留现有 credential。
+      await updateProviderProfile(profile.id, {
+        name: profile.name,
+        kind: profile.kind,
+        provider_id: profile.provider_id || null,
+        base_url: nextBaseUrl,
+        model_id: profile.model_id,
+        reasoning_effort: profile.reasoning_effort ?? null,
+        context_window: profile.context_window ?? null,
+        max_tokens: profile.max_tokens ?? null,
+        api_key: null,
+        is_default: profile.is_default,
+      });
+      setBaseUrlDraft(null);
+      await refresh(true);
+    } catch {
+      notify("Base URL 未能保存，请重试。");
+    }
+  };
+
+  /** 换 Key（点点 0912 拍板：粘贴完回车/失焦即存，无按钮、无确认弹窗）。
+   *  官方档未建档时（合成档案 id=-1），保存 Key 即创建 relay 档（0911 拍板）。 */
+  const saveNewCredential = async (profile: ProviderProfile) => {
+    const key = credentialDraft;
+    if (!key) return;
+    try {
+      if (profile.id < 0) {
+        await createProviderProfile({
+          name: "Aiming Cookie 官方",
+          kind: "builtin",
+          provider_id: OFFICIAL_RELAY_PROVIDER_ID,
+          model_id: detailCatalogEntry?.models[0]?.model_id ?? "deepseek-v4-flash",
+          api_key: key,
+          is_default: false,
+        });
+      } else {
+        await setProviderApiKey(profile.id, key);
+      }
+      setCredentialDraft("");
+      setKeyEditing(false);
+      setRevealedKey(null);
+      notify("API Key 已保存。");
+      await refresh(true);
+    } catch {
+      notify("API Key 未能保存，请重试。");
+    }
+  };
+
   const startAuthorization = async (profileId: number) => {
     const operation = await authorizeProviderProfile(profileId, "oauth");
     setAuthProfileId(profileId);
@@ -377,50 +559,179 @@ export function ProviderSettingsSection({
     return () => window.clearTimeout(timer);
   }, [authOperation, authProfileId, notify, refresh]);
 
-  const selectedAuthModes = selectedProfile
-    ? catalog?.providers.find((provider) => provider.provider_id === selectedProfile.provider_id)?.auth_modes
-      ?? (isCustomProviderKind(selectedProfile.kind) ? ["api_key" as const] : [])
-    : [];
+  const selectedAuthModes = officialSelected
+    ? catalog?.providers.find((provider) => provider.provider_id === OFFICIAL_RELAY_PROVIDER_ID)?.auth_modes
+      ?? ["api_key" as const]
+    : selectedProfile
+      ? catalog?.providers.find((provider) => provider.provider_id === selectedProfile.provider_id)?.auth_modes
+        ?? (isCustomProviderKind(selectedProfile.kind) ? ["api_key" as const] : [])
+      : [];
 
   const wizardModelOptions = wizardCustom
     ? customModels.map((model) => ({ id: model.model_id, label: model.model_id }))
     : (wizardCatalogEntry?.models ?? []).map((model) => ({ id: model.model_id, label: model.model_name ?? model.model_id }));
   const wizardBasePreview = wizardCustom
     ? previewCustomRequestUrl(customKind, wizardDraft.baseUrl)
-    : previewBuiltinRequestUrl(catalog, wizardDraft.typeId);
+    : previewBuiltinRequestUrl(wizardCatalogSource, wizardDraft.typeId);
 
-  const detail = selectedProfile;
+  // 0911 点点：官方档常驻置顶，未连接（无档案）也可选中查看详情（登录/填 Key）。
+  // 无存档时用合成档案渲染完整官方详情（0912 线框：官方档永远有详情）。
+  const detail = officialSelected ? (relayArchive ?? SYNTHETIC_OFFICIAL_PROFILE) : selectedProfile;
   const lastKeeper = profiles.length <= 1;
+  // 官方档（线框 B 形态）：无 Base URL/API Key 常规连接行，走计费/套餐模板。
+  const officialDetail = officialSelected || (detail ? isOfficialRelayProfile(detail) : false);
+  // 内置档详情「获取模型」刷新后的目录快照优先于父级传入的快照。
+  const detailCatalogSource = detailCatalogReload ?? catalog;
+  const detailCatalogEntry = officialSelected
+    ? detailCatalogSource?.providers.find((provider) => provider.provider_id === OFFICIAL_RELAY_PROVIDER_ID)
+    : detail && !isCustomProviderKind(detail.kind)
+      ? detailCatalogSource?.providers.find((provider) => provider.provider_id === detail.provider_id)
+      : undefined;
+
+  const reloadDetailCatalog = () => {
+    if (!detail || isCustomProviderKind(detail.kind)) return;
+    setDetailCatalogReloading(true);
+    void getProviderCatalog()
+      .then((next) => setDetailCatalogReload(next))
+      .catch(() => notify("模型目录暂时无法刷新，请稍后重试。"))
+      .finally(() => setDetailCatalogReloading(false));
+  };
+
+  // Key 掩码行（0912 拍板两段语义）：眼睛=显示/隐藏存档明文 Key；点 Key 文字
+  // =进入粘贴编辑（回车/失焦即存、Esc 取消）。非 api_key 档回退只读掩码文本。
+  const renderKeyMaskRow = (profile: ProviderProfile) => {
+    if (!selectedAuthModes.includes("api_key")) {
+      return <span className="task6-mono">{profile.credential_configured ? "••••••••" : "未配置"}</span>;
+    }
+    const revealed = revealedKey?.id === profile.id ? revealedKey.key : null;
+    if (!keyEditing) {
+      return (
+        <span className="task6-provider-keymask">
+          <button
+            className="task6-provider-keymask-text"
+            data-revealed={revealed ? "true" : undefined}
+            disabled={!profile.credential_configured && !revealed}
+            onClick={() => setKeyEditing(true)}
+            title="点击更换 Key"
+            type="button"
+          >
+            {revealed ?? (profile.credential_configured ? "••••••••" : "未配置")}
+          </button>
+          <button
+            aria-label={revealed ? "隐藏 Key" : "显示 Key"}
+            className="task6-provider-mask-btn"
+            onClick={() => {
+              if (revealed) { setRevealedKey(null); return; }
+              if (!profile.credential_configured) { setKeyEditing(true); return; }
+              void getProviderCredential(profile.id)
+                .then((next) => setRevealedKey({ id: profile.id, key: next.api_key }))
+                .catch(() => notify("Key 暂时无法读取，请稍后重试。"));
+            }}
+            title={revealed ? "隐藏 Key" : "显示 Key"}
+            type="button"
+          >
+            {revealed ? <IconEyeOff /> : <IconEye />}
+          </button>
+        </span>
+      );
+    }
+    return (
+      <span className="task6-provider-keymask is-editing">
+        <FieldControl
+          aria-label="粘贴新的 API Key"
+          autoFocus
+          autoComplete="off"
+          className="task6-provider-keymask-input"
+          onBlur={() => { if (credentialDraft) void saveNewCredential(profile); else setKeyEditing(false); }}
+          onChange={(event) => setCredentialDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void saveNewCredential(profile);
+            if (event.key === "Escape") { setCredentialDraft(""); setKeyEditing(false); }
+          }}
+          placeholder="粘贴新 Key，回车保存"
+          type="text"
+          value={credentialDraft}
+        />
+      </span>
+    );
+  };
 
   return (
-    <Panel className="task6-provider-panel">
+    <>
       {loading ? (
         <Loading>正在读取设置</Loading>
       ) : (
         <div className="task6-provider-master">
-          <div aria-label="Provider 档案" className="task6-provider-list">
-            {profiles.map((profile) => (
+          {/* 0912 线框拍板：列表与详情是两张自包含卡，不再共裹一块大板。 */}
+          <Panel className="task6-provider-list-card">
+            <div aria-label="Provider 档案" className="task6-provider-list">
+            {/* 官方档常驻置顶（0911 点点）：未连接也在首位；连接状态来自自动测活。 */}
+            <button
+              aria-current={officialSelected || undefined}
+              className="task6-provider-list-item"
+              data-official
+              key="official-relay"
+              onClick={() => {
+                setOfficialSelected(true);
+                setSelectedId(null);
+                setCredentialDraft("");
+                setKeyEditing(false);
+                setRevealedKey(null);
+                setBaseUrlDraft(null);
+                setLastTest(null);
+                setBillingMode("plan");
+                setBillingMenuOpen(false);
+              }}
+              role="listitem"
+              type="button"
+            >
+              <span className="task6-provider-list-text">
+                <span className="task6-provider-list-name">Aiming Cookie 官方</span>
+                <span className="task6-provider-list-type">内置</span>
+              </span>
+              <span
+                aria-hidden="true"
+                className="task6-provider-dot"
+                data-ready={relayArchive?.status === "ready" || undefined}
+                data-unconfigured={!relayArchive || undefined}
+              />
+            </button>
+            {/* 官方存档由置顶行承载，不再重复渲染用户档案行（0912 去重）。 */}
+            {profiles.filter((profile) => !isOfficialRelayProfile(profile)).map((profile) => (
               <button
-                aria-current={detail?.id === profile.id ? "true" : undefined}
+                aria-current={!officialSelected && detail?.id === profile.id ? "true" : undefined}
                 className="task6-provider-list-item"
                 key={profile.id}
-                onClick={() => { setSelectedId(profile.id); setKeyDraftOpen(false); setCredentialDraft(""); setLastTest(null); }}
+                onClick={() => {
+                  setOfficialSelected(false);
+                  setSelectedId(profile.id);
+                  setCredentialDraft("");
+                  setKeyEditing(false);
+                  setRevealedKey(null);
+                  setBaseUrlDraft(null);
+                  setLastTest(null);
+                  setDetailModels({ phase: "idle", models: [], message: null });
+                  setDetailCatalogReload(null);
+                  setBillingMode("plan");
+                  setBillingMenuOpen(false);
+                }}
                 role="listitem"
                 type="button"
               >
-                <span aria-hidden="true" className="task6-provider-dot" data-ready={profile.status === "ready"} />
                 <span className="task6-provider-list-text">
                   <span className="task6-provider-list-name">{profile.name}</span>
-                  <span className="task6-provider-list-type">{providerTypeLabel(profile, catalog)}</span>
+                  <span className="task6-provider-list-type">{isCustomProviderKind(profile.kind) ? "自定义" : "内置"}</span>
                 </span>
-                {profile.is_default ? <Badge tone="neutral">当前使用</Badge> : null}
+                {/* 行尾绿点＝连接正常，红点＝探测不通（线框；数据来自自动测活）。 */}
+                <span aria-hidden="true" className="task6-provider-dot" data-ready={profile.status === "ready"} />
               </button>
             ))}
             {profiles.length === 0 ? <p className="task6-muted">还没有 Provider 档案。</p> : null}
             <Button className="task6-provider-add" onClick={() => void openWizard()} variant="primary">
               + 添加服务
             </Button>
-          </div>
+            </div>
+          </Panel>
 
           <div className="task6-provider-detail-pane">
             {!detail ? (
@@ -428,177 +739,276 @@ export function ProviderSettingsSection({
                 <p className="task6-muted">在左侧选择一个档案查看详情，或点「+ 添加服务」。</p>
               </div>
             ) : (
+              <Panel className="task6-provider-detail-card">
               <article className="task6-provider-detail" key={detail.id}>
-                <div className="task6-provider-head">
-                  {nameDraft === null ? (
-                    <button
-                      className="task6-provider-name-edit"
-                      onClick={() => setNameDraft(detail.name)}
-                      title="点击修改显示名"
-                      type="button"
-                    >
-                      {detail.name}
-                    </button>
-                  ) : (
-                    <input
-                      aria-label="Provider 显示名"
-                      autoFocus
-                      className="task6-provider-name-input"
-                      onBlur={() => void commitNameEdit(detail)}
-                      onChange={(event) => setNameDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") void commitNameEdit(detail);
-                        if (event.key === "Escape") setNameDraft(null);
-                      }}
-                      value={nameDraft}
-                    />
-                  )}
-                  {detail.is_default ? <Badge tone="neutral">当前使用</Badge> : <Button disabled={switchingProvider} onClick={() => void makeActive(detail.id)} size="compact" variant="secondary">设为当前</Button>}
-                  <Status tone={providerStatusTone(detail.status)}>{providerStateLabel(detail.status)}</Status>
-                </div>
-
-                <dl className="task6-provider-conn">
-                  <div className="task6-provider-conn-row">
-                    <dt>类型</dt>
-                    <dd>{providerTypeLabel(detail, catalog)}</dd>
-                  </div>
-                  <div className="task6-provider-conn-row">
-                    <dt>Base URL</dt>
-                    <dd>
-                      <span className="task6-mono">{detail.base_url || "由服务商标定"}</span>
-                      {isCustomProviderKind(detail.kind) && detail.base_url ? (
-                        <span className="task6-provider-preview">
-                          实际请求地址：<span className="task6-mono">{previewCustomRequestUrl(detail.kind, detail.base_url)}</span>
-                          （带不带 /v1 都行，按服务商文档填写）
-                        </span>
+                {officialDetail ? (
+                  <>
+                    <div className="task6-provider-head">
+                      <span className="task6-provider-name-plain">Aiming Cookie 官方</span>
+                      <span className="task6-provider-head-gap" />
+                      {/* 设为当前收进卡右上角 ghost 小钮（点点 0912 拍板 b）。 */}
+                      {relayArchive && !relayArchive.is_default ? (
+                        <Button disabled={switchingProvider} onClick={() => void makeActive(relayArchive.id)} size="compact" variant="ghost">设为当前</Button>
                       ) : null}
-                    </dd>
-                  </div>
-                  <div className="task6-provider-conn-row">
-                    <dt>API Key</dt>
-                    <dd>
-                      <span className="task6-provider-keyline">
-                        <span className="task6-mono">{detail.credential_configured ? "•••• 已配置" : "未配置"}</span>
-                        <span className="task6-inline-actions">
-                          {selectedAuthModes.includes("api_key") ? (
-                            <Button onClick={() => { setKeyDraftOpen((open) => !open); setCredentialDraft(""); }} size="compact" variant="ghost">
-                              {keyDraftOpen ? "收起" : "更换"}
-                            </Button>
-                          ) : null}
-                          {detail.credential_configured ? (
-                            <Button
-                              onClick={() => setConfirmAction({
-                                title: "移除 Provider credential",
-                                impact: "移除或撤销认证后 Coach 将不可用，本地分析不受影响。",
-                                run: async () => { await deleteProviderCredential(detail.id); },
-                              })}
-                              size="compact"
-                              variant="ghost"
-                            >
-                              移除
-                            </Button>
-                          ) : null}
-                        </span>
-                      </span>
-                      {keyDraftOpen && selectedAuthModes.includes("api_key") ? (
-                        <span className="task6-provider-keydraft">
-                          <FieldControl
-                            autoComplete="off"
-                            onChange={(event) => setCredentialDraft(event.target.value)}
-                            type={keyDraftVisible ? "text" : "password"}
-                            value={credentialDraft}
-                          />
-                          <Button onClick={() => setKeyDraftVisible((open) => !open)} size="compact" variant="ghost">{keyDraftVisible ? "隐藏" : "显示"}</Button>
-                          <Button
-                            disabled={!credentialDraft}
-                            onClick={() => {
-                              const key = credentialDraft;
-                              setConfirmAction({
-                                title: "更换 Provider credential",
-                                impact: "现有 credential 将被替换，Coach 连接可能需要重新测试。",
-                                run: async () => {
-                                  await setProviderApiKey(detail.id, key);
-                                  setCredentialDraft("");
-                                  setKeyDraftOpen(false);
-                                },
-                              });
-                            }}
-                            size="compact"
-                            variant="secondary"
-                          >
-                            保存新 Key
-                          </Button>
-                        </span>
-                      ) : null}
-                      <span className="task6-provider-preview">密钥只存在本机，不会上传。</span>
-                    </dd>
-                  </div>
-                  <div className="task6-provider-conn-row">
-                    <dt>测连状态</dt>
-                    <dd>
-                      {detail.status === "ready" && !lastTest ? (
-                        <span>上次测连成功{shortTime(detail.updated_at) ? ` · ${shortTime(detail.updated_at)}` : ""}</span>
-                      ) : null}
-                      {detail.status !== "ready" && !lastTest ? (
-                        <span>上次测连未通过（{providerStateLabel(detail.status)}）</span>
-                      ) : null}
-                      {lastTest ? (
-                        lastTest.passed ? <span className="task6-ok">{lastTest.message}</span> : <Notice tone="error">{lastTest.message}</Notice>
-                      ) : null}
-                      <span className="task6-inline-actions">
-                        <Button disabled={testingConnection} onClick={() => void testConnection(detail)} size="compact" variant="secondary">
-                          {testingConnection ? "正在测试…" : "测试连接"}
+                      <div className="task6-provider-billing" ref={billingMenuRef}>
+                        <Button
+                          aria-expanded={billingMenuOpen}
+                          onClick={() => setBillingMenuOpen((open) => !open)}
+                          size="compact"
+                          variant="secondary"
+                        >
+                          {billingMode === "plan" ? "会员计划" : "API 计费"} ▾
                         </Button>
-                      </span>
-                    </dd>
-                  </div>
-                  <div className="task6-provider-conn-row">
-                    <dt>模型</dt>
-                    <dd><span className="task6-mono">{detail.model_id || "未指定"}</span></dd>
-                  </div>
-                </dl>
+                        {billingMenuOpen ? (
+                          <div className="task6-provider-billing-menu" role="menu">
+                            <button
+                              className="task6-provider-billing-item"
+                              data-selected={billingMode === "plan"}
+                              onClick={() => { setBillingMode("plan"); setBillingMenuOpen(false); }}
+                              role="menuitem"
+                              type="button"
+                            >
+                              会员计划
+                            </button>
+                            <button
+                              className="task6-provider-billing-item"
+                              data-selected={billingMode === "api"}
+                              onClick={() => { setBillingMode("api"); setBillingMenuOpen(false); }}
+                              role="menuitem"
+                              type="button"
+                            >
+                              API 计费
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
 
-                {selectedAuthModes.includes("oauth") ? (
-                  <div className="task6-inline-actions">
-                    <Button
-                      onClick={() => setConfirmAction({
-                        title: "开始 Provider 授权",
-                        impact: "将打开 Provider 支持的 OAuth 或设备码授权流程。",
-                        run: async () => { await startAuthorization(detail.id); },
-                      })}
-                      size="compact"
-                      variant="secondary"
-                    >
-                      重新认证（OAuth / 设备码）
-                    </Button>
-                  </div>
-                ) : null}
+                    {billingMode === "plan" ? (
+                      <>
+                        {/* 会员系统未上线（点点 0912 拍板）：完整线框 UI + 空态，
+                            数值显示「—」，升级/管理/解绑禁用带提示，上线后接真数据。 */}
+                        <div className="task6-provider-plan" data-placeholder="true">
+                          <div className="task6-provider-plan-head">
+                            <strong>AC 会员 Pro</strong>
+                            <span className="task6-provider-head-gap" />
+                            <Button disabled title="会员系统上线后开放" variant="secondary">升级</Button>
+                          </div>
+                          <p className="task6-provider-plan-meta">
+                            到期 — · <span className="task6-provider-plan-link" title="会员系统上线后开放">管理</span> · <span className="task6-provider-plan-link" title="会员系统上线后开放">解绑</span>
+                          </p>
+                        </div>
+                        <div className="task6-provider-quota-label">剩余额度</div>
+                        <div className="task6-provider-quota" data-placeholder="true">
+                          <div className="task6-provider-quota-head">本月剩余</div>
+                          <div className="task6-provider-quota-value">
+                            <b>—</b>
+                            <span className="task6-provider-quota-sub">重置于 —</span>
+                          </div>
+                          <div className="task6-provider-quota-meter"><i style={{ width: "0%" }} /></div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="task6-provider-conn">
+                          <div className="task6-provider-conn-row">
+                            <dt>API Key</dt>
+                            <dd>{renderKeyMaskRow(relayArchive ?? SYNTHETIC_OFFICIAL_PROFILE)}</dd>
+                          </div>
+                          <div className="task6-provider-conn-row">
+                            <dt>余额</dt>
+                            <dd className="task6-provider-liveness">
+                              <span className="task6-provider-balance">
+                                {relayBalance.phase === "ready" && relayBalance.value !== null ? `¥ ${relayBalance.value.toFixed(2)}` : "¥ --"}
+                              </span>
+                              {relayBalance.phase === "error" ? <span className="task6-provider-balance-error">{relayBalance.message}</span> : null}
+                              <Button
+                                className="task6-provider-liveness-btn"
+                                disabled={!relayArchive?.credential_configured || relayBalance.phase === "loading"}
+                                onClick={loadRelayBalance}
+                                title={relayArchive?.credential_configured ? undefined : "填写 API Key 后可查余额"}
+                                variant="secondary"
+                              >
+                                刷新余额
+                              </Button>
+                            </dd>
+                          </div>
+                        </div>
+                      </>
+                    )}
 
-                <div className="task6-provider-danger">
-                  <div>
-                    <strong>删除此档案</strong>
-                    <p className="task6-muted">
-                      删除本地 Provider 配置与 credential，不会删除 Analysis。
-                      {lastKeeper ? " 至少保留一个档案。" : detail.is_default ? " 它正在使用中，请先切换到其他档案。" : ""}
-                    </p>
-                  </div>
-                  <Button
-                    disabled={lastKeeper || detail.is_default}
-                    onClick={() => setConfirmAction({
-                      title: "删除 Provider",
-                      impact: "删除此本地 Provider 配置与 credential，不会删除 Analysis。",
-                      run: async () => {
-                        await deleteProviderProfile(detail.id);
-                        setSelectedId((current) => (current === detail.id ? null : current));
-                      },
-                    })}
-                    size="compact"
-                    variant="danger"
-                  >
-                    删除档案
-                  </Button>
-                </div>
+                    <div className="task6-provider-models">
+                      <div className="task6-provider-models-title">模型列表</div>
+                      <div className="task6-provider-models-list">
+                        {(detailCatalogEntry?.models ?? []).map((model) => (
+                          <div className="task6-provider-model-row" key={model.model_id}>
+                            <span>{model.model_name ?? model.model_id}</span>
+                          </div>
+                        ))}
+                        {(detailCatalogEntry?.models ?? []).length === 0 ? <p className="task6-muted">模型目录暂时无法读取。</p> : null}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="task6-provider-head">
+                      {nameDraft === null ? (
+                        isCustomProviderKind(detail.kind) ? (
+                          <>
+                            {/* 0912 点点拍板：只有自定义档允许改名（铅笔图标）；内置档名字只读。 */}
+                            <button
+                              className="task6-provider-name-edit"
+                              onClick={() => setNameDraft(detail.name)}
+                              title="点击修改显示名"
+                              type="button"
+                            >
+                              {detail.name}
+                            </button>
+                            <button
+                              aria-label="修改显示名"
+                              className="task6-provider-mask-btn"
+                              onClick={() => setNameDraft(detail.name)}
+                              title="修改显示名"
+                              type="button"
+                            >
+                              <IconPencil />
+                            </button>
+                          </>
+                        ) : (
+                          <span className="task6-provider-name-plain">{detail.name}</span>
+                        )
+                      ) : (
+                        <input
+                          aria-label="Provider 显示名"
+                          autoFocus
+                          className="task6-provider-name-input"
+                          onBlur={() => void commitNameEdit(detail)}
+                          onChange={(event) => setNameDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") void commitNameEdit(detail);
+                            if (event.key === "Escape") setNameDraft(null);
+                          }}
+                          value={nameDraft}
+                        />
+                      )}
+                      <span className="task6-provider-chip">{isCustomProviderKind(detail.kind) ? "自定义 · 协议自动识别" : "内置"}</span>
+                      <span className="task6-provider-head-gap" />
+                      {/* 设为当前收进卡右上角 ghost 小钮（点点 0912 拍板 b），垃圾桶左侧。 */}
+                      {!detail.is_default ? <Button disabled={switchingProvider} onClick={() => void makeActive(detail.id)} size="compact" variant="ghost">设为当前</Button> : null}
+                      {/* 删除档案收进标题行垃圾桶图标（线框），确认弹窗与保留门槛不变。 */}
+                      <button
+                        aria-label="删除此档案"
+                        className="task6-provider-mask-btn"
+                        data-danger="true"
+                        disabled={lastKeeper || detail.is_default}
+                        onClick={() => setConfirmAction({
+                          title: "删除 Provider",
+                          impact: "删除此本地 Provider 配置与 credential，不会删除 Analysis。",
+                          run: async () => {
+                            await deleteProviderProfile(detail.id);
+                            setSelectedId((current) => (current === detail.id ? null : current));
+                          },
+                        })}
+                        title={lastKeeper ? "至少保留一个档案" : detail.is_default ? "当前使用中的档案不能删除，请先切换" : "删除此档案"}
+                        type="button"
+                      >
+                        <IconTrash />
+                      </button>
+                    </div>
+
+                    <dl className="task6-provider-conn">
+                      <div className="task6-provider-conn-row">
+                        <dt>Base URL</dt>
+                        <dd>
+                          {isCustomProviderKind(detail.kind) ? (
+                            <FieldControl
+                              aria-label="Base URL"
+                              autoComplete="off"
+                              /* 点点 0912 拍板：行内保存钮退役，失焦/回车即存（未变更时是空操作）。 */
+                              onBlur={() => void saveBaseUrl(detail)}
+                              onChange={(event) => setBaseUrlDraft(event.target.value)}
+                              onKeyDown={(event) => { if (event.key === "Enter") void saveBaseUrl(detail); }}
+                              value={baseUrlDraft ?? detail.base_url ?? ""}
+                            />
+                          ) : (
+                            /* 0912 点点拍板：内置端点不可改，但用禁用输入框兜住同样几何，
+                                切换自定义档时内容不再位移。 */
+                            <FieldControl
+                              aria-label="Base URL（内置端点，不可修改）"
+                              className="task6-provider-baseurl-readonly"
+                              disabled
+                              readOnly
+                              tabIndex={-1}
+                              value={detailCatalogEntry?.base_url || detail.base_url || "由服务商标定"}
+                            />
+                          )}
+                        </dd>
+                      </div>
+                      <div className="task6-provider-conn-row">
+                        <dt>API Key</dt>
+                        <dd>{renderKeyMaskRow(detail)}</dd>
+                      </div>
+                    </dl>
+
+                    {/* 模型列表（0912 线框补齐）：内置=目录只读行+⟳刷新；
+                        自定义=存档列表直接显示（点点 0912 拍板：先存一份），
+                        「获取模型」只做更新。 */}
+                    <div className="task6-provider-models">
+                      <div className="task6-provider-models-title">模型列表</div>
+                      {isCustomProviderKind(detail.kind) ? (
+                        detailModels.phase === "loading" ? <p className="task6-muted" aria-live="polite">正在读取可用模型…</p>
+                        : detailModels.phase === "error" ? <p className="task6-provider-model-error">{detailModels.message}</p>
+                        : detailModels.phase === "ready" ? (
+                          <div className="task6-provider-models-list">
+                            {detailModels.models.map((modelId) => (
+                              <div className="task6-provider-model-row" key={modelId}><span>{modelId}</span></div>
+                            ))}
+                          </div>
+                        ) : (detail.discovered_models?.length ?? 0) > 0 ? (
+                          <div className="task6-provider-models-list">
+                            {detail.discovered_models!.map((model) => (
+                              <div className="task6-provider-model-row" key={model.model_id}><span>{model.model_id}</span></div>
+                            ))}
+                          </div>
+                        ) : null
+                      ) : (
+                        <div className="task6-provider-models-list">
+                          {(detailCatalogEntry?.models ?? []).map((model) => (
+                            <div className="task6-provider-model-row" key={model.model_id}>
+                              <span>{model.model_name ?? model.model_id}</span>
+                            </div>
+                          ))}
+                          {(detailCatalogEntry?.models ?? []).length === 0 ? <p className="task6-muted">模型目录暂时无法读取。</p> : null}
+                        </div>
+                      )}
+                      <div className="task6-provider-model-actions">
+                        {isCustomProviderKind(detail.kind) ? (
+                          <Button disabled={detailModels.phase === "loading"} onClick={() => loadDetailModels(detail)} size="compact" variant="ghost">⟳ 获取模型</Button>
+                        ) : (
+                          <Button disabled={detailCatalogReloading} onClick={reloadDetailCatalog} size="compact" variant="ghost">⟳ 获取模型</Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {selectedAuthModes.includes("oauth") ? (
+                      <div className="task6-inline-actions">
+                        <Button
+                          onClick={() => setConfirmAction({
+                            title: "开始 Provider 授权",
+                            impact: "将打开 Provider 支持的 OAuth 或设备码授权流程。",
+                            run: async () => { await startAuthorization(detail.id); },
+                          })}
+                          size="compact"
+                          variant="secondary"
+                        >
+                          重新认证（OAuth / 设备码）
+                        </Button>
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </article>
+              </Panel>
             )}
 
             {authOperation ? (
@@ -640,29 +1050,35 @@ export function ProviderSettingsSection({
       <Dialog
         onClose={closeWizard}
         open={wizardOpen}
-        title={`添加 Provider · 第 ${wizardStep}/4 步`}
+        title={`添加 Provider · 第 ${wizardStep}/${WIZARD_STEP_COUNT} 步`}
         footer={
-          createdProfile ? (
+          wizardStep === 1 ? (
             <>
-              <Button onClick={() => void makeActive(createdProfile.id).then(closeWizard)} variant="primary">设为当前并关闭</Button>
-              <Button onClick={closeWizard} variant="secondary">仅保存</Button>
+              <Button onClick={closeWizard} variant="secondary">取消</Button>
+              <Button
+                disabled={!wizardStepReady(wizardStep, wizardDraft, Boolean(wizardCatalogEntry))}
+                onClick={() => setWizardStep(2)}
+                variant="primary"
+              >
+                下一步
+              </Button>
             </>
           ) : (
             <>
-              {wizardStep > 1 ? <Button disabled={wizardCheckingNow} onClick={() => setWizardStep((step) => (step - 1) as WizardStep)} variant="secondary">上一步</Button> : <Button onClick={closeWizard} variant="secondary">取消</Button>}
-              {wizardStep < 4 ? (
-                <Button
-                  disabled={!wizardStepReady(wizardStep, wizardDraft, Boolean(wizardCatalogEntry))}
-                  onClick={() => setWizardStep((step) => (step + 1) as WizardStep)}
-                  variant="primary"
-                >
-                  下一步
-                </Button>
-              ) : (
-                <Button disabled={!wizardVerified} onClick={() => void finishWizard().catch(() => notify("Provider 未能添加，请检查输入后重试。"))} variant="primary">
-                  完成
-                </Button>
-              )}
+              <Button disabled={wizardCheckingNow} onClick={() => setWizardStep(1)} variant="secondary">上一步</Button>
+              <Button
+                disabled={wizardVerified ? !wizardPayload : !wizardProbePayload}
+                onClick={() => {
+                  if (wizardVerified) {
+                    void finishWizard().catch(() => notify("Provider 未能添加，请检查输入后重试。"));
+                    return;
+                  }
+                  void runWizardCheck();
+                }}
+                variant="primary"
+              >
+                {wizardVerified ? "完成" : "测试"}
+              </Button>
             </>
           )
         }
@@ -679,15 +1095,10 @@ export function ProviderSettingsSection({
           ))}
         </ol>
 
-        {createdProfile ? (
-          <div aria-live="polite">
-            <p>已添加「{createdProfile.name}」。</p>
-            <p className="task6-muted">{createdProfile.is_default ? "它是第一个档案，已自动设为当前使用。" : "要让它成为 Coach 当前使用的 Provider 吗？"}</p>
-          </div>
-        ) : wizardStep === 1 ? (
+        {wizardStep === 1 ? (
           <div className="task6-wizard-type-grid" role="radiogroup" aria-label="Provider 类型">
-            {WIZARD_TYPES.map((type) => {
-              const available = type.custom || Boolean(wizardCatalogProvider(catalog, type.id));
+            {wizardTypeList.map((type) => {
+              const available = type.custom || Boolean(wizardCatalogProvider(wizardCatalogSource, type.id));
               return (
                 <label className="task6-mode-card" data-selected={wizardDraft.typeId === type.id} key={type.id}>
                   <input
@@ -699,19 +1110,22 @@ export function ProviderSettingsSection({
                     value={type.id}
                   />
                   <span className="task6-mode-card-name">{type.label}</span>
-                  <span className="task6-muted">{available ? type.hint : "当前目录中暂不可用"}</span>
+                  {available ? null : <span className="task6-muted">当前目录中暂不可用</span>}
                 </label>
               );
             })}
           </div>
-        ) : wizardStep === 2 ? (
+        ) : (
           <div className="task6-wizard-step-body">
             <Field label="显示名称">
               <FieldControl
                 onChange={(event) => wizardSetDraft({ name: event.target.value })}
-                placeholder={wizardDefaultName(catalog, wizardDraft.typeId)}
+                placeholder={wizardDefaultName(wizardCatalogSource, wizardDraft.typeId)}
                 value={wizardDraft.name}
               />
+              {wizardNameConflict ? (
+                <p className="task6-muted">已有同名档案，建议换一个名字以便区分。</p>
+              ) : null}
             </Field>
             {wizardCustom ? (
               <Field label="Base URL" hint="带不带 /v1 都行，按服务商文档填写。">
@@ -728,10 +1142,6 @@ export function ProviderSettingsSection({
             {wizardCustom && wizardBasePreview ? (
               <p className="task6-muted">实际请求地址：<span className="task6-mono">{wizardBasePreview}</span></p>
             ) : null}
-            {wizardCustom && customModelMessage ? <p className="task6-muted" aria-live="polite">{customModelMessage}</p> : null}
-          </div>
-        ) : wizardStep === 3 ? (
-          <div className="task6-wizard-step-body">
             <Field label="API Key">
               <span className="task6-provider-keydraft">
                 <FieldControl
@@ -743,32 +1153,46 @@ export function ProviderSettingsSection({
                 <Button onClick={() => setWizardShowKey((open) => !open)} size="compact" variant="ghost">{wizardShowKey ? "隐藏" : "显示"}</Button>
               </span>
             </Field>
-            <p className="task6-muted">密钥只存在本机，不会上传；此步尚未写入档案。</p>
-            {wizardCustom ? (
-              <>
-                {customModelState === "loading" ? <p className="task6-muted" aria-live="polite">正在读取可用模型…</p> : null}
-                {customModelState === "loaded" ? (
-                  <Field label="Model">
+            <p className="task6-muted">此步尚未写入档案。</p>
+            {wizardVerified ? (
+              wizardCustom ? (
+                <>
+                  {customModelState === "loading" ? <p className="task6-muted" aria-live="polite">正在读取可用模型…</p> : null}
+                  {customModelState === "loaded" ? (
+                    <Field label="Model">
+                      <select className="ac-field__control" onChange={(event) => wizardSetDraft({ modelId: event.target.value })} value={wizardDraft.modelId}>
+                        <option value="">选择 Model</option>
+                        {customModels.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_id}</option>)}
+                      </select>
+                      <span className="task6-inline-actions">
+                        <Button onClick={() => { wizardSetDraft({ modelId: "" }); customDiscovery.enterManualMode(); }} size="compact" variant="ghost">列表中没有需要的 Model ID</Button>
+                        <Button onClick={customDiscovery.refresh} size="compact" variant="ghost">获取模型</Button>
+                      </span>
+                    </Field>
+                  ) : null}
+                  {customModelState === "manual" ? (
+                    <Field label="Model ID">
+                      <FieldControl autoComplete="off" onChange={(event) => wizardSetDraft({ modelId: event.target.value })} value={wizardDraft.modelId} />
+                      <Button onClick={customDiscovery.refresh} size="compact" variant="ghost">获取模型</Button>
+                    </Field>
+                  ) : null}
+                  {customModelMessage ? <p className="task6-muted" aria-live="polite">{customModelMessage}</p> : null}
+                </>
+              ) : (
+                <Field label="Model">
+                  <span className="task6-provider-keydraft">
                     <select className="ac-field__control" onChange={(event) => wizardSetDraft({ modelId: event.target.value })} value={wizardDraft.modelId}>
                       <option value="">选择 Model</option>
-                      {customModels.map((model) => <option key={model.model_id} value={model.model_id}>{model.model_id}</option>)}
+                      {wizardModelOptions.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
                     </select>
-                    <Button onClick={() => { wizardSetDraft({ modelId: "" }); customDiscovery.enterManualMode(); }} size="compact" variant="ghost">列表中没有需要的 Model ID</Button>
-                  </Field>
-                ) : null}
-                {customModelState === "manual" ? (
-                  <Field label="Model ID">
-                    <FieldControl autoComplete="off" onChange={(event) => wizardSetDraft({ modelId: event.target.value })} value={wizardDraft.modelId} />
-                  </Field>
-                ) : null}
-              </>
+                    <Button disabled={wizardCatalogReloading} onClick={reloadWizardCatalog} size="compact" variant="ghost">
+                      {wizardCatalogReloading ? "正在获取…" : "获取模型"}
+                    </Button>
+                  </span>
+                </Field>
+              )
             ) : (
-              <Field label="Model">
-                <select className="ac-field__control" onChange={(event) => wizardSetDraft({ modelId: event.target.value })} value={wizardDraft.modelId}>
-                  <option value="">选择 Model</option>
-                  {wizardModelOptions.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-                </select>
-              </Field>
+              <p className="task6-muted">测试通过后在此获取并选择模型。</p>
             )}
             {wizardModelIsReasoning ? (
               <Field label="思考力度">
@@ -786,21 +1210,23 @@ export function ProviderSettingsSection({
                 </select>
               </Field>
             ) : null}
-          </div>
-        ) : (
-          <div aria-live="polite" className="task6-wizard-step-body">
-            {wizardCheck.phase === "idle" ? <p className="task6-muted">点「测试连接」验证这份配置；通过后才能完成添加。</p> : null}
-            {wizardCheckingNow ? <p className="task6-muted">正在测试连接…再次点击「停止检查」可取消。</p> : null}
+            {wizardVerified && !wizardPayload ? (
+              <p className="task6-muted">选择模型后点「完成」保存。</p>
+            ) : null}
+            {wizardCustom && wizardVerified && !customProtocolConfirmed && wizardDraft.apiKey && wizardDraft.baseUrl ? (
+              <p className="task6-muted">无法自动识别接口协议时，将回退为手动填写 Model ID；可调整端点后重新测试。</p>
+            ) : null}
+            {wizardCheckingNow ? <p className="task6-muted" aria-live="polite">正在测试连接…再次点「测试」可取消。</p> : null}
             {wizardCheck.phase === "done" && wizardCheck.fingerprint === wizardFingerprint ? (
               wizardCheck.passed
-                ? <p className="task6-ok">{wizardCheck.message}（可点「完成」保存）</p>
-                : <Notice tone="error">{wizardCheck.message}</Notice>
+                ? <p className="task6-ok" aria-live="polite">✓ 连接成功</p>
+                : <Notice tone="error">连接失败</Notice>
             ) : null}
-            <Button disabled={!wizardPayload} onClick={() => void runWizardCheck()} variant="secondary">
-              {wizardCheckingNow ? "停止检查" : "测试连接"}
-            </Button>
-            {wizardCustom && !customProtocolConfirmed && wizardDraft.apiKey && wizardDraft.baseUrl ? (
-              <p className="task6-muted">无法自动识别接口协议时，将回退为手动填写 Model ID；可回到第 2 步调整端点后重试。</p>
+            {wizardCheck.phase === "done" && !wizardCheck.passed && wizardCheck.fingerprint === wizardFingerprint ? (
+              <p className="task6-muted">{wizardCheck.message}</p>
+            ) : null}
+            {!wizardVerified && wizardCheck.phase === "idle" ? (
+              <p className="task6-muted">点「测试」验证这份配置；通过后才能完成添加。</p>
             ) : null}
           </div>
         )}
@@ -814,6 +1240,6 @@ export function ProviderSettingsSection({
       >
         <p>{confirmAction?.impact}</p>
       </Dialog>
-    </Panel>
+    </>
   );
 }

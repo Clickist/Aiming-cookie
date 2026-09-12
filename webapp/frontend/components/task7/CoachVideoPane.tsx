@@ -19,13 +19,32 @@ export const presentationCache = new Map<number, AnalysisWorkspacePresentation>(
 /** Run 号缓存：与 presentation 一并抓取，用于标题区分同名场景的多次训练。 */
 const runIdCache = new Map<number, number | null>();
 
+/**
+ * 呈现缓存失效：同一分析重新分析后缓存结果是旧态，不失效的话视频面板
+ * 一直显示旧结果直至重启。传 id 清对应两条缓存项；不传清空。
+ * 两条开讲触发路径（CoachPanel 轮询 + 历史分析页活体观察）都经由
+ * AppShell 的 handleAutoTeach，在这里单点调用即可全覆盖。
+ */
+export function invalidateAnalysisPresentationCache(analysisId?: number): void {
+  if (analysisId === undefined) {
+    presentationCache.clear();
+    runIdCache.clear();
+    return;
+  }
+  presentationCache.delete(analysisId);
+  runIdCache.delete(analysisId);
+}
+
 export function CoachVideoPane({
   analysisRef,
+  coachMessages = [],
   initialTimeMs = 0,
   jumpSeq = 0,
   onClose,
 }: {
   analysisRef: string;
+  /** 当前会话 assistant 讲解文本：底部回看 chips 跟随正文 @time。 */
+  coachMessages?: ReadonlyArray<string>;
   initialTimeMs?: number;
   /** 每次 @time 点击递增（AppShell 维护）：同一时间码重复点击也构成新跳转意图。 */
   jumpSeq?: number;
@@ -112,6 +131,7 @@ export function CoachVideoPane({
         {!loading && presentation ? (
           <VideoView
             analysisId={presentation.analysisId}
+            coachMessages={coachMessages}
             currentTimeMs={playheadMs}
             jumpTarget={jumpTarget}
             onCurrentTimeChange={setPlayheadMs}

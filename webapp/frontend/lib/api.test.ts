@@ -758,7 +758,7 @@ test("desktop managed video URL survives Windows Tauri path encoding", async () 
   assert.doesNotMatch(url ?? "", /Users|AppData|sessions|\\/);
 });
 
-test("KovaaK scenario launch forwards only the reviewed profile ref", async () => {
+test("KovaaK scenario launch forwards the local scenario name", async () => {
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
   Reflect.set(globalThis, "isTauri", true);
   Reflect.set(globalThis, "window", {
@@ -767,7 +767,7 @@ test("KovaaK scenario launch forwards only the reviewed profile ref", async () =
         calls.push({ command, args });
         return {
           status: "scenario_dispatched",
-          scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
+          scenario_name: "1wall 6targets small",
           display_name: "1wall 6targets small",
           message: "已请求打开 KovaaK，请确认目标场景已加载",
         };
@@ -775,12 +775,12 @@ test("KovaaK scenario launch forwards only the reviewed profile ref", async () =
     },
   });
 
-  const result = await openKovaakScenario("scenario:static.1wall_6targets_small@1");
+  const result = await openKovaakScenario("1wall 6targets small");
 
   assert.equal(result.status, "scenario_dispatched");
   assert.deepEqual(calls, [{
     command: "scenario_open",
-    args: { scenarioProfileRef: "scenario:static.1wall_6targets_small@1" },
+    args: { scenarioName: "1wall 6targets small" },
   }]);
 });
 
@@ -788,7 +788,7 @@ test("KovaaK scenario launch reports the browser limitation without invoking Tau
   Reflect.set(globalThis, "isTauri", false);
   Reflect.set(globalThis, "window", {});
 
-  const result = await openKovaakScenario("scenario:static.1wall_6targets_small@1");
+  const result = await openKovaakScenario("1wall 6targets small");
 
   assert.equal(result.status, "desktop_unavailable");
   assert.match(result.message, /网页预览不能启动 KovaaK/);
@@ -806,7 +806,7 @@ test("KovaaK scenario launch rejects arbitrary text before reaching the desktop 
     },
   });
 
-  const result = await openKovaakScenario("steam://run/824270/?name=untrusted");
+  const result = await openKovaakScenario("steam://run/824270/?name=untrusted\u0000");
 
   assert.equal(result.status, "scenario_unmapped");
   assert.equal(invoked, false);

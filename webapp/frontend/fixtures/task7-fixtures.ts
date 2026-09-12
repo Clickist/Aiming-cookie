@@ -799,6 +799,7 @@ export const CURRENT_TRAINING_ACTIVE: CurrentTrainingV1 = {
       display_name: "1wall 6targets small",
       scenario_profile_ref: "scenario:static.1wall_6targets_small@1",
       scenario_availability: "available",
+      local_match: true,
       status: "planned",
       practice_condition: "保持完全相同的静态场景条件，只测试一个终点控制提示。",
       cue: "只使用一个动作效果提示：先受控地到达目标，再让点击跟随已经稳定的瞄点。",

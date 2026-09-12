@@ -102,16 +102,20 @@ test("debounce constant stays inside the spec window", () => {
   assert.ok(COACH_DRAFT_DEBOUNCE_MS >= 300 && COACH_DRAFT_DEBOUNCE_MS <= 500);
 });
 
-test("mention candidates dedupe tokens, labels, and prefer scenario labels over bare refs", () => {
+test("mention candidates dedupe tokens, carry human labels and type hints (0911 点点)", () => {
   const candidates = buildMentionCandidates({
     analysisIds: [3, 5, 3],
-    scenarioByAnalysisId: { 3: "1wall6targets_small" },
+    analysisLabels: { 3: "1wall6targets_small · 9月8日 02:58" },
     scenarioNames: ["1wall6targets_small", null, "Gridshot"],
   });
   assert.deepEqual(candidates, [
-    { token: "analysis:3", label: "1wall6targets_small" },
-    { token: "analysis:5", label: "分析 #5" },
-    { token: "Gridshot", label: "Gridshot" },
+    // 分析候选主标签＝场景 · 对局时间（人话，绝不出现 analysis:N 机器码），
+    // 无需类型说明（label 自明）；无元数据回退「分析 #N」。
+    { token: "analysis:3", label: "1wall6targets_small · 9月8日 02:58", hint: "" },
+    { token: "analysis:5", label: "分析 #5", hint: "" },
+    // 场景候选与分析候选是两种引用（挂载 vs 聊成绩），同名不再互相吞。
+    { token: "1wall6targets_small", label: "1wall6targets_small", hint: "训练场景 · 聊成绩与计划" },
+    { token: "Gridshot", label: "Gridshot", hint: "训练场景 · 聊成绩与计划" },
   ]);
 });
 
@@ -141,8 +145,8 @@ test("mention filtering matches token or label case-insensitively", () => {
     analysisIds: [9],
     scenarioNames: ["Gridshot"],
   });
-  assert.deepEqual(filterMentionCandidates(candidates, "grid"), [{ token: "Gridshot", label: "Gridshot" }]);
-  assert.deepEqual(filterMentionCandidates(candidates, "ANALYSIS"), [{ token: "analysis:9", label: "分析 #9" }]);
+  assert.deepEqual(filterMentionCandidates(candidates, "grid"), [{ token: "Gridshot", label: "Gridshot", hint: "训练场景 · 聊成绩与计划" }]);
+  assert.deepEqual(filterMentionCandidates(candidates, "ANALYSIS"), [{ token: "analysis:9", label: "分析 #9", hint: "" }]);
   assert.deepEqual(filterMentionCandidates(candidates, ""), candidates);
 });
 

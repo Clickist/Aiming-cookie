@@ -62,10 +62,12 @@ html.ac-window-rounded.ac-window-maximized .task3-app {
 
 /* 窗口三键全局常浮（0910 拍板）：横跨顶栏拆除后，三键脱离路由布局，
    fixed 浮层覆盖所有路由（Coach/历史/设置）。高度给 44px，让
-   .task3-window-control 的 height:100% 保持与旧顶栏一致的命中区。 */
+   .task3-window-control 的 height:100% 保持与旧顶栏一致的命中区。
+   顶起点 = 工作区 4px 空隙：三键带与主面板 44px 顶栏同一横带，
+   垂直居中于顶栏（0911 点点）。 */
 .task3-wincontrols-global {
   position: fixed;
-  inset-block-start: var(--space-2);
+  inset-block-start: var(--space-1);
   inset-inline-end: var(--space-3);
   z-index: 60;
   display: flex;
@@ -86,6 +88,8 @@ html.ac-window-rounded.ac-window-maximized .task3-app {
 
 .task3-window-control {
   box-sizing: border-box;
+  position: relative;
+  isolation: isolate;
   display: inline-grid;
   width: 46px;
   height: 100%;
@@ -100,9 +104,24 @@ html.ac-window-rounded.ac-window-maximized .task3-app {
   transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
+/* 悬浮高亮＝填满整个命中区格子的直角色块（0911 点点二轮反转，
+   替换掉此前的 32×32 居中小块）：上下贴满 44px 顶栏带，无圆角；
+   关闭键贴窗口右缘处由窗口圆角自然裁剪，与顶栏形状共形。 */
+.task3-window-control::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  transition: background-color var(--duration-fast) var(--ease-out);
+  z-index: -1;
+}
+
 .task3-window-control:hover {
-  background: var(--surface-container-high);
   color: var(--on-surface);
+}
+
+.task3-window-control:hover::before {
+  background: var(--surface-container-high);
 }
 
 .task3-window-control:focus-visible {
@@ -110,9 +129,17 @@ html.ac-window-rounded.ac-window-maximized .task3-app {
   outline-offset: -2px;
 }
 
-.task3-window-control--close:hover {
-  background: var(--error);
-  color: var(--on-error);
+/* 关闭键 hover 无独立红底（0911 点点终态拍板：与另两键同色，
+   走上方通用 .task3-window-control:hover），仅保留右上圆角适配。 */
+
+/* 关闭键贴窗口右缘，右上角自绘跟随窗口圆角：三键是 fixed 浮层，
+   不受 .task3-app 的 overflow:hidden+radius 裁剪，必须自己带弧。
+   右缘收进工作区 4px 缝隙（与主面板右缘平齐），弧与主面板右上圆角
+   同心共形；条件与窗口圆角精确联动——最大化（窗口直角）或浏览器
+   环境保持贴边直角。 */
+html.ac-window-rounded:not(.ac-window-maximized) .task3-window-control--close::before {
+  inset: 0 var(--space-1) 0 0;
+  border-top-right-radius: var(--radius-lg);
 }
 
 .task3-opt-in-row:focus-within {
@@ -225,6 +252,17 @@ html.ac-window-rounded.ac-window-maximized .task3-app {
   user-select: none;
 }
 
+/* 空对话首页的透明拖拽带（占共用顶栏同一槽位）：首页视觉仍无顶栏，
+   但顶部全宽都能拖窗口，不再只能拖左栏 logo 区（0911 点点）。 */
+.task3-home-drag-band {
+  flex: none;
+  height: 44px;
+  /* 与下方 CoachPanel 同色（surface）：透明会露出 coach-view 的 container 色，
+     暗色下与内容区形成一条 6 阶色差横线（0911 点点）。 */
+  background: var(--surface);
+  user-select: none;
+}
+
 .task3-coach-status-dot {
   flex: none;
   width: 8px;
@@ -285,6 +323,15 @@ html.ac-window-rounded.ac-window-maximized .task3-app {
 /* 拖拽中关掉宽度过渡：把手每帧更新宽度，过渡会造成拖影滞后。 */
 .task3-coach-view[data-split-dragging] .task3-coach-conversation {
   transition: none;
+}
+
+/* 视频面板打开时隐藏右上训练胶囊（0912 拍板）：对话列被压缩后胶囊浮层
+   会压住过多正文。display 切换不可过渡，用 opacity+visibility（150ms，
+   定义在 .task6-coach-floating）；pointer-events 立即失效，过渡期间不拦点击。 */
+.task3-coach-view[data-video-open="true"] .task6-coach-floating {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .task3-video-split-handle {
@@ -361,30 +408,6 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   opacity: 0;
   pointer-events: none;
   transform: translateX(8px);
-}
-
-.task3-coach-rail {
-  position: sticky;
-  inset-block-start: 48px;
-  height: calc(100vh - 48px - var(--task3-window-inset) * 2);
-  border-inline-start: 1px solid var(--outline-variant);
-  background: var(--surface-container-low);
-}
-
-.task3-coach-content {
-  display: grid;
-  align-content: start;
-  gap: var(--space-3);
-  padding: var(--space-5);
-}
-
-.task3-coach-content h2,
-.task3-coach-content p {
-  margin: 0;
-}
-
-.task3-coach-content p {
-  color: var(--on-surface-variant);
 }
 
 .task3-app > .ac-drawer {
@@ -1072,6 +1095,19 @@ html.ac-window-maximized .task3-route-content[data-settings-page="true"] {
   /* 视频面板开合动效同关：对话面板滑移回退为瞬变。 */
   .task3-coach-conversation {
     transition: none;
+  }
+
+  /* Coach 工作流条目进场淡入同关（0912）。 */
+  .task6-work-stream > * {
+    animation: none;
+  }
+
+  /* composer 引用块／@引用 chip 的加/减动效一并关闭（0912）。 */
+  .task6-quote-list > .task6-quote-block,
+  .task6-quote-list > .task6-quote-block[data-exiting],
+  .task6-queue-chips[data-mention-refs] > .task6-queue-chip,
+  .task6-queue-chips[data-mention-refs] > .task6-queue-chip[data-exiting] {
+    animation: none;
   }
 
   .task3-route-content[data-settings-motion="opening"],

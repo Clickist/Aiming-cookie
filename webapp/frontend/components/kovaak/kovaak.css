@@ -65,6 +65,41 @@
   border-color: var(--error);
 }
 
+/* Steam ID 输入与「读取成绩」同一行（线框形态）：输入弹性占满，按钮行尾。 */
+.kovaak-connect-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kovaak-connect-row .ac-field__control {
+  flex: 1;
+  min-width: 0;
+}
+
+.kovaak-connect-row .ac-button {
+  flex: none;
+}
+
+/* 目录卡：提示小字与「保存并启用」同行（按钮行尾，不独占整行）。 */
+.kovaak-directories-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.kovaak-directories-footer .kovaak-module-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.kovaak-directories-footer .ac-button {
+  flex: none;
+}
+
 .kovaak-consent {
   display: flex;
   gap: var(--space-3);
@@ -286,6 +321,14 @@
   gap: var(--space-3);
 }
 
+/* 0912 点点拍板：settings 的卡片壳由外层 Panel 承载，
+   kovaak-module 不再画第二层卡（S2 训练成绩卡套卡问题）。 */
+.kovaak-panel[data-context="settings"] .kovaak-module {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
 /* Skeleton for loading state */
 
 .kovaak-skeleton {
@@ -450,6 +493,27 @@
 }
 
 .kovaak-directory-row .ac-button {
+  flex: none;
+}
+
+/* 设置页「左标签右值」一行式目录条目（布局由 task6-form-row 提供）：
+   只读状态是纯文本行，不再用输入框/徽标壳。 */
+.kovaak-directory-entry .kovaak-directory-entry-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.kovaak-directory-entry .kovaak-directory-entry-info p {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+.kovaak-directory-entry .ac-button {
   flex: none;
 }
 

@@ -487,6 +487,8 @@ export interface CurrentTrainingItemV1 {
   display_name: string | null;
   scenario_profile_ref: string | null;
   scenario_availability: "available" | "unavailable";
+  /** true/false = 本机 KovaaK 是否装有该场景；null = 未探测到安装，不判定。 */
+  local_match: boolean | null;
   status: "planned" | "active" | "completed" | "cancelled";
   practice_condition: string | null;
   cue: string | null;
@@ -514,7 +516,7 @@ export type ScenarioOpenStatus =
 
 export interface ScenarioOpenResultV1 {
   status: ScenarioOpenStatus;
-  scenario_profile_ref: string | null;
+  scenario_name: string | null;
   display_name: string | null;
   message: string;
 }
@@ -813,7 +815,11 @@ export interface KovaaKRunListItem {
   id: number;
   run_ref: string;
   source_key: string | null;
+  /** 对局时间（source_key 词干解析）；null 时回退 created_at（批次发现时间）。 */
+  training_at?: string | null;
   scenario: string | null;
+  /** 单局 Challenge 分数（KovaaK Stats summary 块 Score）；缺失/不可解析为 null，前端不渲染。 */
+  score?: number | null;
   source_availability: Record<string, string>;
   trace_quality: TraceQuality;
   trace_state: string;
@@ -822,6 +828,11 @@ export interface KovaaKRunListItem {
   /** Kept for diagnostics only; 最近采集事件把错误码翻译成人话。可选：旧缓存快照缺字段。 */
   video_error?: string | null;
   video_artifact_ref: string | null;
+  /** attached 产物的当前 size 与文件名（无路径；不可得为 null，不渲染）。 */
+  video_size_bytes?: number | null;
+  video_name?: string | null;
+  raw_size_bytes?: number | null;
+  raw_name?: string | null;
   finalization_state: string;
   finalization_error?: string | null;
   readiness_state: "pending_analysis" | "analyzed" | "incomplete_evidence";
@@ -944,6 +955,8 @@ export interface ProviderProfile {
   reasoning_effort?: ProviderReasoningEffort | null;
   context_window?: number | null;
   max_tokens?: number | null;
+  /** 模型发现存档（点点 0912 拍板）：仅自定义档；null=尚未发现过。 */
+  discovered_models?: CustomProviderModel[] | null;
   is_default: boolean;
   configured: boolean;
   credential_configured: boolean;
@@ -962,6 +975,14 @@ export interface ProviderProfileStatus {
   configured: boolean;
   status: ProviderProfileState;
   message: string;
+}
+
+/** 官方中转档余额（new-api 计费端点折算值，sidecar 算好下发）。 */
+export interface OfficialRelayBalance {
+  schema_version: "coach_provider_balance.v1";
+  balance: number;
+  total: number;
+  used: number;
 }
 
 /** Raw sidecar status detail with the resolved catalog model (model switch response). */
@@ -1199,6 +1220,8 @@ export interface CoachThreadMessageOut {
   content: string;
   created_at: string;
   legacy_session_id: number | null;
+  /** 被用户停止的半截回复（stopReason=aborted 投影）：渲染「已停止」标记。 */
+  stopped?: boolean;
   /** Legacy attach-era field; always absent in the file-based architecture. */
   context_refs?: CoachContextRefV1[];
   /** Legacy attach-era field; always absent in the file-based architecture. */

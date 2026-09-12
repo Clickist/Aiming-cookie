@@ -616,13 +616,17 @@ function safePresentationTimestamp(value: unknown): string | null {
 
 export function presentRecordLabel(input: {
   scenario: unknown;
-  trainingAt: unknown;
-  analysisCompletedAt: unknown;
+  trainingAt?: unknown;
+  analysisCompletedAt?: unknown;
+  /** History 行标题瘦身后只要场景名：时间由副行承载，标题不再裸露 ISO
+      时间戳。默认 false 保持旧行为（Coach 话术、任务卡等调用方不受影响）。 */
+  titleOnly?: boolean;
 }): string {
   const scenario = safePresentationScenario(input.scenario) ?? "未命名场景";
+  if (input.titleOnly) return scenario;
   const trainingAt = safePresentationTimestamp(input.trainingAt) ?? "训练时间未知";
-  const analysisCompletedAt = safePresentationTimestamp(input.analysisCompletedAt) ?? "分析尚未完成";
-  return `${scenario} | 训练：${trainingAt} | 分析：${analysisCompletedAt}`;
+  const analysisText = safePresentationTimestamp(input.analysisCompletedAt) ?? "分析尚未完成";
+  return `${scenario} | 训练：${trainingAt} | 分析：${analysisText}`;
 }
 
 export function presentTask(task: TaskDetailV1): TaskPresentation {
@@ -775,6 +779,8 @@ export function buildAnalysisAutoTeachContent(analysisRef: string): string {
 export const ANALYSIS_AUTO_TEACH_KEY = "aiming-cookie.analysis-auto-teach";
 /** AnalysisWorkspace 在活体观察到 done 转换时派发的事件名。 */
 export const ANALYSIS_AUTO_TEACH_EVENT = "aiming-cookie:analysis-auto-teach";
+/** Coach 会话变更事件：CoachPanel 派发，AppShell 监听后刷新会话列表。 */
+export const COACH_SESSION_UPDATED_EVENT = "aiming-cookie:coach-session-updated";
 
 /** 读取已自动开讲的 analysis ref 集合（损坏数据按空集处理）。 */
 export function readAutoTaughtAnalyses(storage: Storage | null | undefined): Set<string> {
@@ -902,6 +908,7 @@ const HISTORY_STATUS_TEXT: Record<string, string> = {
   available: "可用",
   attached: "已关联",
   partial: "部分结果",
+  not_present: "未提供",
   source_unavailable: "来源不可用",
   unavailable: "来源不可用",
   unsupported: "不支持",

@@ -13,6 +13,14 @@ export function isCustomProviderKind(kind: string): kind is CustomProviderKind {
   return kind === "custom_openai_compatible" || kind === "custom_anthropic_compatible";
 }
 
+/** Aiming Cookie 官方中转（sidecar 注入的托管内置 Provider，计费在官方侧结算）。 */
+export const OFFICIAL_RELAY_PROVIDER_ID = "aiming-cookie-relay";
+
+/** 官方档识别：详情走专属模板（计费方式/套餐/额度），无 Base URL 等常规连接行。 */
+export function isOfficialRelayProfile(profile: { provider_id?: string | null; kind: string }): boolean {
+  return !isCustomProviderKind(profile.kind) && profile.provider_id === OFFICIAL_RELAY_PROVIDER_ID;
+}
+
 export function isAuthTerminal(operation: ProviderAuthOperation): boolean {
   return ["succeeded", "failed", "cancelled", "timed_out"].includes(operation.status);
 }
@@ -41,6 +49,7 @@ export function useCustomModelDiscovery(options: {
   const [needsProtocolChoice, setNeedsProtocolChoice] = useState(false);
   const [protocolConfirmed, setProtocolConfirmed] = useState(false);
   const [kind, setKind] = useState<CustomProviderKind>("custom_openai_compatible");
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!options.enabled || !options.baseUrl.trim() || !options.apiKey.trim()) return;
@@ -79,7 +88,7 @@ export function useCustomModelDiscovery(options: {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [options.baseUrl, options.apiKey, options.enabled, options.discover]);
+  }, [options.baseUrl, options.apiKey, options.enabled, options.discover, reloadTick]);
 
   const reset = useCallback(() => {
     setModels([]);
@@ -88,6 +97,11 @@ export function useCustomModelDiscovery(options: {
     setError(false);
     setNeedsProtocolChoice(false);
     setProtocolConfirmed(false);
+  }, []);
+
+  /** 「获取模型」手动入口：重跑一次发现（沿用既有去抖与中止语义）。 */
+  const refresh = useCallback(() => {
+    setReloadTick((tick) => tick + 1);
   }, []);
 
   const confirmProtocol = useCallback((nextKind: CustomProviderKind) => {
@@ -100,5 +114,5 @@ export function useCustomModelDiscovery(options: {
     setMessage("");
   }, []);
 
-  return { models, state, message, error, needsProtocolChoice, protocolConfirmed, kind, reset, confirmProtocol, enterManualMode };
+  return { models, state, message, error, needsProtocolChoice, protocolConfirmed, kind, reset, refresh, confirmProtocol, enterManualMode };
 }

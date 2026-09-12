@@ -19,7 +19,7 @@ export function truncateQueuePreview(text: string, max: number = QUEUE_PREVIEW_M
 }
 
 /** 本批队列是前端权威态（引擎 steer/followUp 无逐条取消动词）：每条可视可编辑可删。 */
-export type QueuedChip = { id: number; text: string };
+export type QueuedChip = { id: number; text: string; /** 随这条消息一起发送的结构化分析引用。 */ refs?: string[] };
 
 export function removeQueuedChip(items: QueuedChip[], id: number): QueuedChip[] {
   return items.filter((item) => item.id !== id);
@@ -153,20 +153,22 @@ export function writeCoachDraftEnvelope(
 // ── @ 引用下拉（item 3，LibreChat Mention 骨架）──────────────────────────
 
 export type MentionCandidate = {
-  /** 选中后写入输入框的 token（如 `analysis:3` 或场景名）。 */
+  /** 机器引用（analysis:N，随发送结构化挂载）或场景名（写入正文）。 */
   token: string;
-  /** 下拉展示标签。 */
+  /** 下拉展示主标签（人话：场景名 · 对局时间）。 */
   label: string;
+  /** 下拉右侧类型说明。 */
+  hint: string;
 };
 
 /**
- * 汇总引用候选：analysis:N 引用物取自讨论挂载/进行中分析（现有前端状态），
- * 标签优先场景名；场景名候选来自训练安排/会话快照（同样来自现有状态）。
- * 输入重复时去重，顺序稳定。
+ * 汇总引用候选：analysis:N 引用物取自讨论挂载/进行中分析/最近完成的分析，
+ * 主标签由调用方合成（场景名 · 对局时间，人话，绝不出现 analysis:N 机器码——
+ * 0911 点点）；场景名候选来自训练安排/会话快照。输入重复时去重，顺序稳定。
  */
 export function buildMentionCandidates(input: {
   analysisIds?: number[];
-  scenarioByAnalysisId?: Record<number, string | null>;
+  analysisLabels?: Record<number, string | null>;
   scenarioNames?: Array<string | null>;
 }): MentionCandidate[] {
   const candidates: MentionCandidate[] = [];
@@ -175,17 +177,16 @@ export function buildMentionCandidates(input: {
   for (const id of input.analysisIds ?? []) {
     if (!Number.isInteger(id) || id <= 0 || seenTokens.has(`analysis:${id}`)) continue;
     seenTokens.add(`analysis:${id}`);
-    const scenario = input.scenarioByAnalysisId?.[id];
-    const label = scenario && scenario.trim() ? scenario.trim() : `分析 #${id}`;
-    seenLabels.add(label);
-    candidates.push({ token: `analysis:${id}`, label });
+    const composed = input.analysisLabels?.[id];
+    const label = composed && composed.trim() ? composed.trim() : `分析 #${id}`;
+    candidates.push({ token: `analysis:${id}`, label, hint: "" });
   }
   for (const name of input.scenarioNames ?? []) {
     const trimmed = typeof name === "string" ? name.trim() : "";
     if (!trimmed || seenTokens.has(trimmed) || seenLabels.has(trimmed)) continue;
     seenTokens.add(trimmed);
     seenLabels.add(trimmed);
-    candidates.push({ token: trimmed, label: trimmed });
+    candidates.push({ token: trimmed, label: trimmed, hint: "训练场景 · 聊成绩与计划" });
   }
   return candidates;
 }
