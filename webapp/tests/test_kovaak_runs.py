@@ -74,6 +74,51 @@ def test_sqlite_run_timestamps_are_explicit_utc_on_public_projection():
     assert kovaak_run_store._timestamp_to_wire_utc("2026-08-08T08:10:09Z") == "2026-08-08T08:10:09Z"
 
 
+def test_training_at_parsed_from_kovaak_source_key_stem():
+    """对局时间来自文件名词干（本地时间），不是批次发现时间（0911 审计 §12.6）。"""
+    from datetime import datetime, timezone
+
+    from webapp.backend.kovaak_run_projection import _training_at_from_source_key
+
+    expected = datetime(2026, 9, 8, 2, 58, 11).astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+    )
+    # 真实词干形态："<场景> - challenge - <date>-<time>"（时间在词干中部）。
+    assert _training_at_from_source_key(
+        "beanclick - challenge - 2026.09.08-02.58.11",
+    ) == expected
+    # 兼容时间在词干开头的形态。
+    assert _training_at_from_source_key("2026.09.08 02.58.11 beanclick") == expected
+    # 无时间词干 / 缺字段 / 非法日期：回退 None（调用方再回退 created_at）。
+    assert _training_at_from_source_key("beanclick") is None
+    assert _training_at_from_source_key("2026.09.08") is None
+    assert _training_at_from_source_key("2026.13.08-02.58.11") is None
+    assert _training_at_from_source_key(None) is None
+
+
+def test_run_score_projected_from_stats_summary_and_missing_tolerated():
+    """单局分数来自 Stats summary 块的 Score 键；缺失/不可解析为 None，不硬造。"""
+    from webapp.backend.kovaak_run_projection import _run_score, public_kovaak_run
+
+    # 真实 fixture 形态（浮点字符串）与整数形态。
+    assert _run_score({"stats_summary": {"summary": {"Score": "1074.049561"}}}) == 1074.049561
+    assert _run_score({"stats_summary": {"summary": {"Score": "41250"}}}) == 41250
+    # 缺 Score 键 / 缺 summary / 缺 stats_summary / 非 scalar / 非数值：None。
+    assert _run_score({"stats_summary": {"summary": {}}}) is None
+    assert _run_score({"stats_summary": {}}) is None
+    assert _run_score({}) is None
+    assert _run_score({"stats_summary": {"summary": {"Score": None}}}) is None
+    assert _run_score({"stats_summary": {"summary": {"Score": "abc"}}}) is None
+    # 投影输出带 score 标量，浅列表投影同样携带（summary 本身不外泄）。
+    row = {
+        "id": 7,
+        "scenario": "s",
+        "stats_summary": {"summary": {"Score": "41250"}},
+    }
+    assert public_kovaak_run(row, shallow=True)["score"] == 41250
+    assert "stats_summary" not in public_kovaak_run(row, shallow=True)
+
+
 @pytest.mark.asyncio
 async def test_upsert_merges_stats_and_performance_for_same_owner(tmp_path: Path):
     stats = tmp_path / "1wall Stats.csv"

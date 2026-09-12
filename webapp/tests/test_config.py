@@ -456,3 +456,33 @@ def test_non_windows_without_overrides_returns_no_kovaak_directories(
 
     assert config.resolve_kovaak_install_dir() is None
     assert config.resolve_kovaak_data_dirs() == (None, None)
+
+
+def test_resolve_kovaak_scenario_names_lists_sce_stems(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install = tmp_path / "FPSAimTrainer-install"
+    scenarios = install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
+    scenarios.mkdir(parents=True)
+    (scenarios / "1wall 6targets small.sce").write_bytes(b"x")
+    (scenarios / "pasu.sce").write_bytes(b"x")
+    (scenarios / "not-a-scenario.txt").write_bytes(b"x")
+    monkeypatch.setenv("KOVAAK_INSTALL_DIR", str(install))
+
+    assert config.resolve_kovaak_scenario_names() == ["1wall 6targets small", "pasu"]
+
+
+def test_resolve_kovaak_scenario_names_distinguishes_missing_install_from_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No install directory at all -> unknown (None).
+    monkeypatch.setenv("KOVAAK_INSTALL_DIR", str(tmp_path / "missing"))
+    assert config.resolve_kovaak_scenario_names() is None
+
+    # Install present, Scenarios dir present but empty -> known empty list.
+    install = tmp_path / "empty-install"
+    (install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios").mkdir(parents=True)
+    monkeypatch.setenv("KOVAAK_INSTALL_DIR", str(install))
+    assert config.resolve_kovaak_scenario_names() == []

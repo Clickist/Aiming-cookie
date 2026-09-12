@@ -1090,6 +1090,40 @@ def _current_training_text(item: Mapping[str, object], field: str) -> str | None
     return _safe_current_training_text(item.get(field))
 
 
+def _local_scenario_names() -> set[str] | None:
+    """Installed KovaaK scenario names, normalized; None when detection fails.
+
+    None (unknown) is distinct from an empty set (KovaaK found, no scenarios):
+    the frontend only marks a plan item "本机未装" on an explicit False.
+    """
+    try:
+        from .config import resolve_kovaak_install_dir
+
+        install = resolve_kovaak_install_dir()
+        if install is None:
+            return None
+        scenarios_dir = install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
+        if not scenarios_dir.is_dir():
+            return None
+        return {_normalize_scenario_name(path.stem) for path in scenarios_dir.glob("*.sce")}
+    except (KeyError, OSError, RuntimeError, ValueError):
+        return None
+
+
+def _normalize_scenario_name(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().lower()
+
+
+def _local_scenario_match(display_name: str | None) -> bool | None:
+    """True/False when the local scenario list is known, None when unknown."""
+    if display_name is None:
+        return None
+    names = _local_scenario_names()
+    if names is None:
+        return None
+    return _normalize_scenario_name(display_name) in names
+
+
 def _reviewed_scenario(scenario_profile_ref_value: object) -> tuple[str | None, str | None]:
     """Return the safe display name and launch ref for an exact reviewed scenario."""
     if not isinstance(scenario_profile_ref_value, str) or not _PUBLIC_REF.fullmatch(scenario_profile_ref_value):
@@ -1119,6 +1153,51 @@ def _reviewed_scenario(scenario_profile_ref_value: object) -> tuple[str | None, 
     except (KeyError, OSError, TypeError, ValueError):
         return None, None
     return None, None
+
+
+def _coach_payload_items(plan_payload: Mapping[str, object] | None) -> list[dict[str, object]]:
+    """Coach 生成计划的 per-item 读侧回退投影。
+
+    sidecar 的 training_plan.generate_draft 不物化 per-item 记录（doc["items"]
+    为空），item 以 plan-builder 的口语化字段（name/what/when/dose/...）存在
+    plan_payload.items 里。这里把它们归一化成 build_current_training_v1 可
+    渲染的条目，只在 items 注册表为空时使用；字段名映射：
+    what/when → practice_condition、dose → dose_guardrail、
+    acceptance/forbidden → cue、negative_feedback → observation。
+    """
+    if not isinstance(plan_payload, Mapping):
+        return []
+    raw_items = plan_payload.get("items")
+    if isinstance(raw_items, (str, bytes)) or not isinstance(raw_items, Sequence):
+        return []
+
+    def _entry_text(entry: Mapping[str, object], *keys: str, separator: str = "；") -> str | None:
+        parts = []
+        for key in keys:
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+        if not parts:
+            return None
+        return _safe_current_training_text(separator.join(parts)[:240])
+
+    result: list[dict[str, object]] = []
+    for raw_entry in raw_items:
+        if not isinstance(raw_entry, Mapping):
+            continue
+        raw_name = raw_entry.get("name")
+        result.append({
+            "status": "planned",
+            "scenario_profile_ref": None,
+            "name": _safe_current_training_text(raw_name.strip()[:240]) if isinstance(raw_name, str) else None,
+            "practice_condition": _entry_text(raw_entry, "what", "when"),
+            "cue": _entry_text(raw_entry, "cue", "acceptance", "forbidden"),
+            "dose_guardrail": _entry_text(raw_entry, "dose"),
+            "observation": _entry_text(raw_entry, "negative_feedback"),
+            # 投影层复测字段名是 review_date；Coach 契约里叫 retest。
+            "review_date": _entry_text(raw_entry, "retest"),
+        })
+    return result
 
 
 def build_current_training_v1(
@@ -1153,11 +1232,18 @@ def build_current_training_v1(
     )
     projected = []
     for item in ordered_items[:3]:
-        display_name, launch_ref = _reviewed_scenario(item.get("scenario_profile_ref"))
+        reviewed_name, launch_ref = _reviewed_scenario(item.get("scenario_profile_ref"))
+        # Coach 生成计划的 item 没有 scenario_profile_ref，只有口语化的
+        # name（plan-builder 自然语言契约）；此时仍要给出可读的
+        # display_name，但可启动性只认 reviewed 场景 ref（不可据此开 KovaaK）。
+        display_name = reviewed_name or _safe_current_training_text(item.get("name"))
         projected.append({
             "display_name": display_name,
             "scenario_profile_ref": launch_ref,
-            "scenario_availability": "available" if display_name is not None else "unavailable",
+            "scenario_availability": "available" if reviewed_name is not None else "unavailable",
+            # Tri-state local install match: True/False when the local scenario
+            # list is readable, None when it cannot be detected (no install).
+            "local_match": _local_scenario_match(reviewed_name),
             "status": item["status"],
             "practice_condition": _current_training_text(item, "practice_condition"),
             "cue": _current_training_text(item, "cue"),

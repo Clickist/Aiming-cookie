@@ -294,7 +294,12 @@ class KovaaKRunListItem(BaseModel):
     id: int
     run_ref: str
     source_key: Optional[str] = None
+    # 对局时间：从 source_key 文件名词干解析（本地时间转 UTC）；无法解析为
+    # None（调用方回退 created_at=批次发现时间，仅作兜底）。
+    training_at: Optional[str] = None
     scenario: Optional[str] = None
+    # 单局 Challenge 分数（KovaaK Stats summary 块 Score）；缺失/不可解析为 None。
+    score: Optional[float] = None
     source_availability: dict[str, str] = Field(default_factory=dict)
     trace_quality: TraceQualityOut
     trace_state: str = "none"
@@ -302,6 +307,12 @@ class KovaaKRunListItem(BaseModel):
     # 增量字段：视频失败码（受控枚举、无路径），设置页最近采集事件消费。
     video_error: Optional[str] = None
     video_artifact_ref: Optional[str] = None
+    # 增量字段：attached 产物的当前 size 与文件名（无路径；不可得为 None）。
+    # 设置页「数据与存储」清理行内联展示大小/文件名，前端不渲染 None。
+    video_size_bytes: Optional[int] = None
+    video_name: Optional[str] = None
+    raw_size_bytes: Optional[int] = None
+    raw_name: Optional[str] = None
     finalization_state: str = "discovered"
     finalization_error: Optional[str] = None
     readiness_state: Literal[
@@ -450,6 +461,12 @@ class KovaaKLocalDirectoriesResponse(BaseModel):
     watcher_status: Optional[KovaaKWatcherStatus] = None
 
 
+class KovaaKScenarioListResponse(BaseModel):
+    schema_version: Literal["kovaak_scenarios.v1"] = "kovaak_scenarios.v1"
+    availability: Literal["available", "unavailable"]
+    scenarios: list[str] = []
+
+
 class KovaaKScoreStage(BaseModel):
     stage: Literal["easier", "medium"]
     completed: int
@@ -553,6 +570,21 @@ class IncompleteCaptureRemovalResponse(BaseModel):
     removal_state: Literal["completed", "pending_cleanup", "already_unavailable"]
     reclaimed_bytes: int
     impact: IncompleteCaptureImpactOut
+
+
+class StorageRevealRequest(BaseModel):
+    """打开文件位置请求：前端只发条目 id/kind，绝不携带或回显本地路径。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["run_video", "run_raw", "incomplete_capture"]
+    run_id: Optional[int] = None
+    item_ref: Optional[str] = None
+
+
+class StorageRevealResponse(BaseModel):
+    revealed: bool = True
+    kind: Literal["run_video", "run_raw", "incomplete_capture"]
 
 
 class TrainingPlanItemCreateRequest(BaseModel):
@@ -695,6 +727,9 @@ class CurrentTrainingItem(BaseModel):
     display_name: Optional[str] = None
     scenario_profile_ref: Optional[str] = None
     scenario_availability: Literal["available", "unavailable"]
+    # True/False when the local KovaaK scenario list is readable; None when the
+    # install could not be detected (never claim "未装" on a detection failure).
+    local_match: Optional[bool] = None
     status: Literal["planned", "active", "completed", "cancelled"]
     practice_condition: Optional[str] = None
     cue: Optional[str] = None

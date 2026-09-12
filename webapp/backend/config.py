@@ -288,6 +288,38 @@ def resolve_kovaak_install_dir() -> Path | None:
     return None
 
 
+def resolve_kovaak_scenario_names() -> list[str] | None:
+    """Installed KovaaK scenario display names (file stems), None when no install is found.
+
+    None (unknown) is distinct from an empty list (install found, no scenarios):
+    callers use the distinction to avoid claiming a scenario is not installed
+    when the local install simply could not be detected.
+    """
+    override = os.environ.get("KOVAAK_INSTALL_DIR", "").strip()
+    if override:
+        installs = [Path(override).expanduser()]
+    elif sys.platform == "win32":
+        installs = _discover_kovaak_install_dirs()
+    else:
+        installs = []
+    names: set[str] = set()
+    found_dir = False
+    for install in installs:
+        scenarios_dir = install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
+        if not scenarios_dir.is_dir():
+            continue
+        found_dir = True
+        try:
+            for path in scenarios_dir.glob("*.sce"):
+                if path.is_file():
+                    names.add(path.stem)
+        except OSError:
+            continue
+    if not found_dir:
+        return None
+    return sorted(names, key=str.casefold)
+
+
 def resolve_kovaak_data_dir_candidates() -> tuple[list[Path], list[Path]]:
     """Return all automatic directory candidates when no explicit source wins."""
     stats_override = os.environ.get("KOVAAK_STATS_DIR", "").strip()

@@ -8,6 +8,7 @@ from concurrent.futures import Future
 import json
 import logging
 import os
+import platform
 import signal
 import sys
 import threading
@@ -574,6 +575,14 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
 
 def main() -> None:
     configure_file_logging()
+    # 远程排障锚点（0912 日志覆盖审计 P1）：backend.log 首行固定打启动环境，
+    # 否则远程看到日志无法确认对应哪次安装/哪份数据根。
+    log.info(
+        "Aiming Cookie backend runtime starting: data_root=%s executable=%s python=%s",
+        config.DATA_ROOT,
+        sys.executable,
+        platform.python_version(),
+    )
     if not acquire_runtime_lock(config.DATA_ROOT):
         log.error(
             "backend runtime refused to start: another live runtime holds the "
