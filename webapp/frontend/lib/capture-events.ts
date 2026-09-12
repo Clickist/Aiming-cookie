@@ -98,6 +98,34 @@ export function traceErrorCodeLabel(code: string): string {
   return TRACE_ERROR_LABELS[code] ?? code;
 }
 
+/**
+ * 「未录制（打这局时应用未在录制）」→ 状态词 + 括号内细节。
+ * 设置页「最近采集事件」用状态词上屏、细节收进悬停 title；无括号时细节为 null。
+ */
+export function splitStatusLabel(label: string): { word: string; detail: string | null } {
+  const start = label.indexOf("（");
+  if (start < 0) return { word: label, detail: null };
+  const end = label.lastIndexOf("）");
+  if (end <= start) return { word: label, detail: null };
+  return { word: label.slice(0, start), detail: label.slice(start + 1, end) };
+}
+
+export type CaptureRunStatusTone = "ready" | "working" | "missing";
+
+/**
+ * 行级状态归并（设置页「最近采集事件」每行一个圆点 + 一个状态词）：
+ * 任一证整理中 → 整理中（橙）；双证齐 → 已就绪（绿）；
+ * 视频未录制 → 未录制（橙）；其余（视频在、轨迹缺失）→ 缺失（灰）。
+ */
+export function summarizeCaptureRunStatus(videoLabel: string, traceLabel: string): { word: string; tone: CaptureRunStatusTone } {
+  const video = splitStatusLabel(videoLabel).word;
+  const trace = splitStatusLabel(traceLabel).word;
+  if (video === "整理中" || trace === "整理中") return { word: "整理中", tone: "working" };
+  if (video === "已录制" && trace === "已记录") return { word: "已就绪", tone: "ready" };
+  if (video === "未录制") return { word: "未录制", tone: "working" };
+  return { word: "缺失", tone: "missing" };
+}
+
 export function describeCaptureRunEvent(run: CaptureRunEventInput): CaptureRunEventDescription {
   const pending = finalizationInProgress(run.finalization_state);
 

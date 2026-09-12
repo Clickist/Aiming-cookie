@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getAnalysisEvidenceSegments, getAnalysisVideoBlob } from "@/lib/api";
+import { projectCoachTimepoints } from "@/lib/coach-timepoints";
 import type { AnalysisWorkspacePresentation } from "@/lib/contracts";
 import { getManagedVideoUrl, isDesktopRuntime } from "@/lib/desktop";
 import {
@@ -11,7 +12,7 @@ import {
   projectTimelineMarkers,
   type SegmentButton,
 } from "@/lib/metric-format";
-import { formatTimecodeRange } from "@/lib/rich-text";
+import { formatTimecode, formatTimecodeRange } from "@/lib/rich-text";
 import type { FrontendEvidenceSegmentsV1 } from "@/lib/types";
 import { Button, Empty, Loading, Notice } from "@/ui/primitives";
 
@@ -40,12 +41,15 @@ const MIN_BAND_WIDTH_PERCENT = 2;
 
 export function VideoView({
   analysisId,
+  coachMessages = [],
   currentTimeMs,
   jumpTarget = null,
   onCurrentTimeChange,
   presentation,
 }: {
   analysisId: number;
+  /** 当前会话的 assistant 讲解文本：底部回看 chips 跟随正文 @time。 */
+  coachMessages?: ReadonlyArray<string>;
   currentTimeMs: number;
   /** 外部证据跳转意图信号（Coach @time / 讨论芯片）：seq 每次点击递增。 */
   jumpTarget?: { seq: number; ms: number } | null;
@@ -180,6 +184,16 @@ export function VideoView({
   /** 标记在轨道上的百分比位置（与 progress/cursor 同一约定）。 */
   const markerPercent = (timeMs: number) =>
     clamp((timeMs / timelineMax) * 100, 0, 100);
+
+  /* 回看 chips 数据源（拍板：跟随讲解）：当前会话 assistant 正文的 @time
+     → { timeMs, label }。时长已知时丢弃超出视频的锚点；正文无 @time 时
+     为空数组，渲染层降级回 evidence-segments 投影。 */
+  const coachTimepoints = useMemo(
+    () => projectCoachTimepoints(coachMessages, {
+      maxMs: durationMs > 0 ? timelineMax : undefined,
+    }),
+    [coachMessages, durationMs, timelineMax],
+  );
 
   /* P2 按钮排数据：权威窗口优先（焦点区间扩成最小有效循环窗，时长已知才
      钳上界，metadata 未到的瞬间不编造终点）；权威源为空/失败时用 peak±
@@ -728,11 +742,29 @@ export function VideoView({
         </div>
       </section>
 
-      {/* P2/D2 时间段按钮排：视频播放区域底部既有留白处。解析中或无信号段
-          时不渲染整排；横向放不下横向滚动，不做聚合归类。循环激活时按 D6
-          在按钮组旁浮出 0.25×/0.5×/1× 快捷切换——直接 setSpeed 与全局变速
-          同一状态源（同一 playbackRate），不做两套变速逻辑。 */}
-      {signalSegmentButtons.length > 0 ? (
+      {/* 回看按钮排数据源优先级（拍板）：Coach 讲解有 @time → 用讲解锚点
+          渲染（点击＝跳转并暂停在锚点帧，与正文 chip 同语义）；讲解无锚点
+          （旧会话/纯口头讲解）→ 兜底用 evidence-segments/peak 的循环按钮。
+          两组不同时渲染，避免正文与 chips 两套词表并存。 */}
+      {coachTimepoints.length > 0 ? (
+        <section aria-label="讲解回看点" className={styles.signalSection}>
+          <div className={styles.signalRow}>
+            {coachTimepoints.map((point) => (
+              <button
+                aria-label={`回看 ${formatTimecode(point.timeMs / 1000)} ${point.label}`}
+                className={styles.signalButton}
+                key={point.id}
+                onClick={() => seekAndArrive(point.timeMs)}
+                title="点击跳转并暂停到该回看点"
+                type="button"
+              >
+                <span className={styles.signalButtonRange}>{formatTimecode(point.timeMs / 1000)}</span>
+                {` ${point.label}`}
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : signalSegmentButtons.length > 0 ? (
         <section aria-label="信号片段循环" className={styles.signalSection}>
           <div className={styles.signalRow}>
             {signalSegmentButtons.map((segment) => {

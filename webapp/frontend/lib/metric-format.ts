@@ -164,10 +164,11 @@ export interface SegmentButton {
   kindLabel: string;
 }
 
-/** segment_kind → 短类型词；未知 kind 原样透传（不编造语义）。 */
+/** segment_kind → 短类型词；未知 kind 原样透传（不编造语义）。
+    拍板：worst→「修正最多」与诊断页「最差」解歧；typical→「参照」。 */
 export const SEGMENT_KIND_LABELS: Record<string, string> = {
-  worst: "最差",
-  typical: "典型",
+  worst: "修正最多",
+  typical: "参照",
   improved: "改善",
 };
 
@@ -217,8 +218,8 @@ export function projectEvidenceSegmentButtons(
   return buttons.sort((left, right) => left.startMs - right.startMs);
 }
 
-/** 降级窗口半径：峰值锚点前后各 2.5s＝一次约 5s 的精读循环。 */
-export const SIGNAL_SEGMENT_FALLBACK_WINDOW_MS = 2500;
+/** 降级窗口半径：锚点前后各 0.75s＝一次约 1.5s 的精读循环（收窄自 2.5s）。 */
+export const SIGNAL_SEGMENT_FALLBACK_WINDOW_MS = 750;
 /** 降级来源可能高产（逐次挥击都算 peak），排超限截断保护按钮排可用性。 */
 export const SIGNAL_SEGMENT_FALLBACK_LIMIT = 12;
 

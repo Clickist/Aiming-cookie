@@ -1,70 +1,224 @@
 /* History page (task4) — matches OpenDesign history-1280.html / history-960.html */
 
+/* 0911 点点第三批 A：实底顶栏合并了原透明拖拽带与大标题页头——顶栏自身
+   就是那条拖拽带（空白处拖拽）。0911 点点第四轮：顶栏升到 56px，并移出
+   滚动列挂到 shell 层保持全宽，滚动口从顶栏下缘起。 */
+.task4-page-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.task4-col {
+  width: 100%;
+  max-width: 580px;
+  margin-inline: auto;
+}
+
 .task4-page {
   width: 100%;
-  max-width: 1040px;
-  margin-inline: auto;
-  /* 顶部不留 padding：sticky 头要钉在滚动口最顶，若容器自带顶 padding，
-     头上方的空档会露出滚动的行（0910 实测"标题行上面透明"）；顶距由
-     .task4-page-head 自身的 padding 承担，钉住时用它的不透明背景盖严。 */
-  padding: 0 var(--space-5) var(--space-6);
-  /* 0910（点点）：滚动收进内容列——此前文档级滚动把滚动条画在窗口最右缘，
-     离居中的内容列老远（"跑到页面外侧"）；现在滚动条贴着列表右缘。
+  /* 0911 点点：滚动条回归窗口右缘、顶端在 56px 顶栏之下向下填满——
+     滚动容器本身全宽，520px 内容列由 .task4-col 收窄居中。
+     此前 520px 直接挂在滚动容器上，滚动条会悬在窗口中部（点点 0911）。 */
+  /* 顶栏已移到 shell 层，滚动列顶部不再有吸顶元素；顶距由首个区块的
+     margin-top 承担。基础内距只留纵向——桌面下卡片实宽即 520px，
+     窄窗横向内距由下方媒体查询兜底。 */
+  padding: 0 0 var(--space-6);
+  /* 0910（点点）：滚动收进内容列——滚动条贴着列表右缘，不回窗口最右缘。
      v6 面板化（0910）：外层 .task3-page-view 是圆角面板，本列改为
-     height: 100% 填满面板，滚动条保持在面板内部。 */
-  height: 100%;
+     height: 100% 填满面板，滚动条保持在面板内部。
+     0911 点点第四轮：顶栏全宽化后本列即滚动口，从顶栏下缘起。 */
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
 .task4-page-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-bottom: var(--space-1);
+  align-items: center;
+  /* 0911 点点五轮：顶栏内容与 520→580 内容列同缘——「历史」标题左缘
+     对齐「待分析训练」标题；整组不再绝对居中。内容整体下移一点。 */
+  padding-top: 6px;
+  gap: var(--space-3);
   position: sticky;
-  /* 滚动口已是 .task4-page 自身，锚到顶即可。 */
+  /* 顶栏已移出滚动列，吸顶只是兜底；z-index 保证渐隐带盖在滚动内容上。 */
   top: 0;
   z-index: 100;
+  /* 56px 实底顶栏（0911 点点第四轮）：内容离窗顶远一点，整行垂直居中。 */
+  height: 56px;
+  flex: none;
   /* v6 面板化：取面板主面同色（container），遮挡滚过的行不露色带。 */
   background: var(--surface-container);
-  padding: var(--space-5) 0 var(--space-2);
-  /* 横跨顶栏拆除后右侧有全局常浮三键（8~52px 高、右侧约 138px 宽），
-     页头动作按钮（刷新等）要让位，避免顶到键下（对齐 coach 顶栏 150px 先例）。 */
-  padding-inline-end: 150px;
-  /* 页头兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
+  /* 整组居中后不对称左内距会推偏组中心（0911），不再保留。 */
+  /* 0911 点点：顶栏整组居中后右端无内容，三键让位 padding 退役
+     （组右缘距三键区仍有约 220px 余量）。 */
+  /* 空白处兼作窗口拖拽区，拖拽不应选中文本。 */
   user-select: none;
 }
 
-.task4-page-title-row {
+/* 顶栏下缘渐隐（0911 点点第二批 11，顶栏化后保留）：滚过的行靠近顶栏时
+   逐渐变淡而非硬切。绝对定位在顶栏外沿，pointer-events:none 不拦截鼠标。 */
+.task4-page-head::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background: linear-gradient(to bottom, var(--surface-container), transparent);
+  pointer-events: none;
+}
+
+/* 顶栏左组（0911 点点第三批 A）：返回键 + 标题 + 筛选框 + 更新状态，
+   彼此 var(--space-3) 级空隙，紧凑但不贴死，整组靠左。 */
+.task4-head-col {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1);
+  width: 100%;
+}
+
+.task4-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
+}
+
+/* 返回键悬挂在内容列左缘之外，让「历史」标题文字对齐「待分析训练」。 */
+.task4-head-col .task4-topbar-left > .task3-icon-button:first-child,
+.task4-head-col > .task4-topbar-left > button:first-child {
+  margin-left: -48px;
 }
 
 .task4-page-title {
   margin: 0;
   color: var(--on-surface);
-  font: 600 var(--text-display)/1.25 var(--font-display);
+  /* 顶栏化后标题从 20px display 降为顶栏级文字（0911 点点第三批 A）。 */
+  font: 600 var(--text-title)/1.2 var(--font-ui);
+  white-space: nowrap;
 }
 
-.task4-page-sub {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
-  margin-top: 0;
-  margin-left: var(--space-2);
+/* 「让 Coach 分析」常驻胶囊（0911 点点第四轮，线框 .pill）：顶栏左组末尾
+   常驻两态——未勾选 disabled 灰胶囊（点击无意义，原生 disabled +
+   not-allowed 不误导）；勾选后 primary 橙 + 计数。形状照线框：30px 高、
+   999px 圆角、0 16px 内距；字号取最接近 token（--text-caption 12px ≈ 线框
+   12.5px）。 */
+.task4-coach-pill {
+  flex: none;
+  height: 30px;
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: 999px;
+  background: var(--surface-container-low);
   color: var(--on-surface-variant);
-  font-size: var(--text-caption);
+  cursor: pointer;
+  font: 600 var(--text-caption) var(--font-ui);
+  white-space: nowrap;
 }
 
-.task4-page-actions {
-  display: flex;
+.task4-coach-pill[data-active="true"] {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.task4-coach-pill:disabled {
+  cursor: not-allowed;
+}
+
+.task4-coach-pill:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 场景名过滤框（0911 点点第二批 7a）：客户端子串过滤，只影响列表渲染。
+   顶栏化后收窄至约 200px、紧凑高度（0911 点点第三批 A）。页头
+   user-select:none 会继承进来，输入文本要能选中，显式放开。 */
+.task4-filter-input {
+  width: 200px;
+  height: var(--control-height-compact);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--on-surface);
+  font: 400 var(--text-caption) var(--font-ui);
+  user-select: text;
+}
+
+.task4-filter-input::placeholder {
+  color: var(--on-surface-variant);
+}
+
+.task4-filter-input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 「更新于 N 前」状态行（0911 点点第二批 12）：点击 = 重新 loadHistory。 */
+.task4-refresh-status {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  height: var(--control-height-compact);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font: 400 var(--text-caption) var(--font-ui);
+}
+
+.task4-refresh-status:hover {
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+}
+
+.task4-refresh-status:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 防抖动（点点特别要求）：相对时间文案宽度随时间变化（30 秒前→1 分钟前），
+   给文字固定 min-width（按最长常见文案「更新于 59 分钟前」预留），
+   相邻元素（主按钮）位置纹丝不动。状态行是页头 actions 的末位，
+   多余宽度只向右延伸进三键让位区，不推挤任何相邻元素。 */
+.task4-refresh-text {
+  min-width: 96px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* 数据陈旧超过 2 分钟：轻提醒色，不弹窗不打断。 */
+.task4-refresh-status[data-stale="true"] .task4-refresh-text {
+  color: var(--event-peak);
+}
+
+.task4-refresh-icon {
+  display: inline-flex;
+}
+
+.task4-refresh-icon[data-loading="true"] {
+  animation: task4-refresh-spin 1s linear infinite;
+}
+
+@keyframes task4-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 勾选超限提示（0911 点点第二批 5A，顶栏化后改为挂载式浮层）：绝对定位在
+   56px 顶栏下缘（避开 14px 渐隐带），随顶栏常驻视口——用户在页面下方勾选
+   时也能看到；自身实底，盖过滚过的行。 */
+.task4-head-notice {
+  position: absolute;
+  top: calc(100% + 14px);
+  left: 0;
+  right: 0;
+  z-index: 99;
+  user-select: text;
 }
 
 .task4-sec {
@@ -89,10 +243,73 @@
   font: 500 var(--text-micro) var(--font-mono);
 }
 
+/* 可折叠区块头（0911 点点第二批 8；第四轮升级为线框 .fold 圆角面板行，
+   「训练记录」「分析记录」共用）：整个头可点切换，键盘走右侧箭头按钮
+   （aria-expanded）；描边、圆角与面板同款（--radius-md 10px = 线框），
+   内距与行一致（9px 16px ≈ 线框 fold 10px 14px）。 */
+/* 0911 点点五轮：折叠头去面板化——三区块头统一为「标题+条数+箭头」
+   纯文字行（与待分析训练同款），不再套圆角面板框。 */
+.task4-sec-head.task4-sec-collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+.task4-sec-caret {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.task4-sec-caret[aria-expanded="false"] {
+  transform: rotate(-90deg);
+}
+
+.task4-sec-caret:hover {
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+}
+
+.task4-sec-caret:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.task4-sec-caret svg {
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.task4-sec-caret[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+/* 组头加重（0911 点点第三批 B）：格式「9月2日 · N条」，600 字重主文字色；
+   与上方内容拉开组间 margin，与行内文字明显分层。 */
+.task4-day-label {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  color: var(--on-surface);
+  font: 600 var(--text-caption)/1.4 var(--font-ui);
+}
+
+.task4-day-label:first-child {
+  margin-top: 0;
+}
+
 .task4-panel {
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   background: var(--surface);
+  /* 行 hover 高亮的圆角跟随面板内角：由面板统一裁剪，首尾行不必单配圆角。 */
+  overflow: hidden;
 }
 
 .task4-state-panel {
@@ -104,30 +321,138 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  /* 0911 点点第四轮：行距照线框 .row padding:9px 14px 回调（Run/Analysis
+     行共用；9px 无对应 token，按线框字面值）。 */
+  padding: 9px var(--space-4);
 }
 
-.task4-rowline + .task4-rowline {
+/* 分割线新规则（0911 点点第三批 B）：组内 Run 行之间不画线（组与组靠组头
+   margin 分隔）；只有平铺不分天的 AnalysisRow 维持行间线——修饰类区分，
+   避免互相污染。 */
+.task4-analysis-row .task4-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task4-analysis-gap {
+  flex: 1;
+}
+
+.task4-analysis-time {
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task4-analysis-row + .task4-analysis-row {
   border-top: 1px solid var(--outline-variant);
 }
 
-.task4-row-select {
-  display: inline-flex;
-  align-items: center;
+/* 整行可点勾选（0911 点点第二批 6 交互层）：可勾选行 hover 高亮 + pointer，
+   disabled 行不接管点击、cursor 保持默认。 */
+.task4-rowline[data-interactive="true"] {
+  cursor: pointer;
+}
+
+.task4-rowline[data-interactive="true"]:hover {
+  background: var(--surface-container-low);
+}
+
+/* Run 行单行布局（0911 点点第三批 B）：勾选圆点 → 场景名（13px/600，
+   ellipsis 弹性占满）→ 分数 → 时间 → 异常感叹号；第四轮行距回调后
+   行视觉高约 46px（线框）。padding 随 .task4-rowline 统一。 */
+.task4-run-row {
+  font-size: var(--text-ui);
+}
+
+.task4-run-row .task4-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+/* 分数（0911 点点第三批 E）：橙色、tabular-nums，时间列左侧。 */
+.task4-run-score {
   flex: none;
-  padding: 2px;
+  color: var(--event-peak);
+  font-variant-numeric: tabular-nums;
 }
 
-.task4-row-select input {
-  width: 16px;
-  height: 16px;
+/* 时间列（0911 点点第三批 B）：只留时分，右对齐一列，tabular-nums 防抖动。 */
+.task4-run-time {
+  flex: none;
+  min-width: 40px;
+  text-align: right;
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 异常红色感叹号圈标（0911 点点第三批 F），替代 chips 墙与红底 badge。 */
+.task4-run-issue {
+  display: inline-flex;
+  flex: none;
+  color: var(--error);
+}
+
+/* 自绘勾选点（0911 点点第三批 C）：保留原生 input 的语义与键盘（Tab+空格），
+   appearance:none 换皮——14px 正圆；未选中描边空心圆，选中 primary 实心圆
+   （点点明确：实心圆点，不加对勾）。 */
+.task4-check {
+  appearance: none;
+  width: 14px;
+  height: 14px;
   margin: 0;
-  accent-color: var(--primary);
+  border: 1.5px solid var(--outline);
+  border-radius: 50%;
+  background-color: transparent;
+  cursor: pointer;
+  flex: none;
 }
 
-.task4-row-select input:focus-visible {
+.task4-check:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.task4-check:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+.task4-check:disabled {
+  border-color: var(--outline-variant);
+  background-color: var(--surface-container-low);
+  cursor: default;
+}
+
+/* 「显示全部 N 条 / 收起」（0911 点点第三批 D）：面板底部一行整宽按钮。 */
+.task4-expand-toggle {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-top: 1px solid var(--outline-variant);
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font: 500 var(--text-caption) var(--font-ui);
+  text-align: center;
+}
+
+.task4-expand-toggle:hover {
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+}
+
+.task4-expand-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 
 .task4-row-main {
@@ -168,74 +493,6 @@
   gap: var(--space-2);
 }
 
-/* Selection dot (pending rows) */
-.task4-sel-dot {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  border: 1.5px solid var(--outline);
-  border-radius: 50%;
-  position: relative;
-}
-
-.task4-sel-dot[data-selected="true"] {
-  border-color: var(--on-surface);
-}
-
-.task4-sel-dot[data-selected="true"]::after {
-  content: "";
-  position: absolute;
-  inset: 3px;
-  border-radius: 50%;
-  background: var(--on-surface);
-}
-
-/* Evidence chips */
-.task4-ev {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 24px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-sm);
-  background: var(--surface-container-low);
-  font: 500 var(--text-micro) var(--font-ui);
-  color: var(--on-surface-variant);
-  white-space: nowrap;
-}
-
-.task4-ev i {
-  font-style: normal;
-  font-weight: 600;
-}
-
-.task4-ev[data-state="ok"] {
-  color: var(--on-surface);
-}
-
-.task4-ev[data-state="ok"] i {
-  color: var(--event-kill);
-}
-
-.task4-ev[data-state="part"] i {
-  color: var(--event-peak);
-}
-
-.task4-ev[data-state="miss"] i {
-  color: var(--on-surface-variant);
-}
-
-.task4-ev[data-state="bad"] i {
-  color: var(--error);
-}
-
-.task4-ev-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
 /* Badges aligned with mockup (complement ac-badge) */
 .task4-badge {
   display: inline-flex;
@@ -272,11 +529,8 @@
   color: var(--event-kill);
 }
 
-.task4-badge-warn {
-  border-color: var(--outline-variant);
-  background: transparent;
-  color: var(--event-peak);
-}
+/* .task4-badge-warn 已随「来源不可用」badge 退役（0911 点点第三批 F：
+   异常统一由行内红色感叹号表达）。 */
 
 .task4-badge-err {
   background: var(--error-container);
@@ -338,32 +592,17 @@
   font-size: var(--text-body);
 }
 
-@media (min-width: 840px) and (max-width: 1159px) {
-  .task3-workspace[data-coach-open="true"] .task4-page-head {
-    width: calc(100% - var(--task3-coach-width, 360px));
-    flex-wrap: wrap;
-  }
-}
-
 @media (max-width: 960px) {
   .task4-page {
     padding: var(--space-4) var(--space-4) var(--space-5);
   }
 
-  .task4-rowline {
+  .task4-analysis-row {
     align-items: flex-start;
-  }
-
-  .task4-sel-dot {
-    margin-top: var(--space-1);
   }
 
   .task4-row-title {
     flex-wrap: wrap;
-  }
-
-  .task4-ev-row {
-    width: 100%;
   }
 
   .task4-trend-panel {
@@ -385,21 +624,16 @@
 }
 
 @media (max-width: 720px) {
-  .task4-page-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .task4-page-actions {
-    width: 100%;
-    justify-content: flex-start;
+  /* 顶栏化后左右两组仍是单行 48px：窄屏只收窄筛选框，不再折行堆叠。 */
+  .task4-filter-input {
+    width: 140px;
   }
 
   .task4-sec-head {
     flex-wrap: wrap;
   }
 
-  .task4-rowline {
+  .task4-analysis-row {
     display: grid;
     grid-template-columns: 1fr;
     gap: var(--space-3);
@@ -408,14 +642,21 @@
   .task4-row-actions {
     justify-content: flex-start;
   }
-
-  .task4-sel-dot {
-    display: none;
-  }
 }
 
 @media (max-width: 560px) {
   .task4-page {
     padding: var(--space-4);
+  }
+}
+
+/* 减少动态偏好：刷新箭头旋转与折叠箭头转体回退为瞬变（项目既有惯例）。 */
+@media (prefers-reduced-motion: reduce) {
+  .task4-refresh-icon[data-loading="true"] {
+    animation: none;
+  }
+
+  .task4-sec-caret svg {
+    transition: none;
   }
 }

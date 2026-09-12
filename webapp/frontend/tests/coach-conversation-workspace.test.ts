@@ -20,11 +20,16 @@ test("desktop window keeps the Coach workspace above the supported width floor",
 test("History and Settings use a centered bounded consumption width", async () => {
   const [historyStyles, settingsStyles] = await Promise.all([
     source("components/task4/task4.css"),
-    source("components/task6/task6.css"),
+    source("components/task6/task6-settings.css"),
   ]);
-  assert.match(historyStyles, /\.task4-page\s*\{[\s\S]*max-width:\s*1040px[\s\S]*margin-inline:\s*auto/);
-  // 设置页改为工作区同款左栏布局后，内容列自身承载有界居中消费宽度。
-  assert.match(settingsStyles, /\.task6-settings-content\s*\{[\s\S]*max-width:\s*980px[\s\S]*margin-inline:\s*auto/);
+  assert.match(historyStyles, /\.task4-col\s*\{[\s\S]*max-width:\s*580px[\s\S]*margin-inline:\s*auto/);
+  // 设置页右屏升格为满铺浅色面板后（点点拍板），内容列降为面板内全宽
+  // 透明滚动区；有界居中消费宽度（0912 点点：980 收窄到 760 集中）由滚动区
+  // 直接子元素承载；设置页输入框统一 36px 标准档。
+  assert.match(settingsStyles, /\.task6-settings-content\s*\{[^}]*width:\s*100%;/);
+  assert.match(settingsStyles, /\.task6-settings-content\s*\{[^}]*overflow-y:\s*auto;/);
+  assert.match(settingsStyles, /\.task6-settings-content\s*>\s*\*\s*\{[^}]*max-width:\s*760px;/);
+  assert.match(settingsStyles, /\.task6-settings-content \.ac-field__control\s*\{[^}]*height:\s*var\(--control-height\)/);
 });
 
 test("Coach opens a center video pane from time-link analysis refs", async () => {

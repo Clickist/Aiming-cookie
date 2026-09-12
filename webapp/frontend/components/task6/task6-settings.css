@@ -1,0 +1,1381 @@
+/* Settings + Coach — 统一使用 app tokens（ui/theme.css） */
+
+/* ── Settings page ─────────────────────────────────────────── */
+/* 骨架与教练工作区同款：左栏复用会话列表栏（.task7-session-rail）的宽度 /
+   衬托底色 / 圆角选中态，条目是分区切换按钮（点按只显示对应屏，
+   scroll spy 随锚点长卷一起退役）；右侧永远只有一屏内容。 */
+
+.task6-settings-page {
+  /* v6 面板化（0910）：本页即浮起圆角面板（外层 overlay 只做承托底 +
+     4px 空隙），高度填满承托层；内部左栏整高固定、内容列自己滚动
+     （滚动条在面板内），分层只靠色差。 */
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  /* 0910 四轮：底色改工作区底——导航列融入其中（同左栏一体语言）；
+     0912 拍板：右屏主列升格为独立圆角面板（色差 + 圆角分层，去 border 线）。 */
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+}
+
+.task6-settings-state-header {
+  display: flex;
+  align-items: center;
+  width: min(100%, 1040px);
+  gap: var(--space-2);
+  margin: 0 auto var(--space-5);
+  color: var(--on-surface);
+  font: 600 var(--text-display)/1.25 var(--font-display);
+  /* 兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
+  user-select: none;
+}
+
+/* 左栏（同款断点宽度：264px / 288px，与 .task7-session-rail 一致）。
+   v6 面板化：面板整高固定列（随面板 stretch），不再随内容滚动。 */
+.task6-settings-nav {
+  flex: 0 0 288px;
+  width: 288px;
+  align-self: stretch;
+  /* 0910 四轮：与内容列之间不再用 border 线——内容列圆角子面板自己分层。 */
+  background: var(--surface-container-low);
+}
+
+.task6-settings-nav-inner {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-2) var(--space-4);
+}
+
+/* 与 .task7-session-rail 同款的两档断点宽度。 */
+@media (max-width: 1359px) and (min-width: 1120px) {
+  .task6-settings-nav {
+    flex-basis: 264px;
+    width: 264px;
+  }
+}
+
+.task6-settings-nav nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-1);
+}
+
+.task6-settings-nav-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+  padding-inline: var(--space-1);
+  /* 兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
+  user-select: none;
+}
+
+.task6-settings-nav-title {
+  color: var(--on-surface);
+  font: 600 var(--text-title)/1.2 var(--font-display);
+}
+
+.task6-settings-back {
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+}
+
+.task6-settings-back:hover {
+  background: var(--surface-container);
+}
+
+/* 条目样式同会话列表：ui/600 主行、radius-md、选中态衬一层容器色。
+   条目是切换按钮（不再是锚点）：重置 button 默认呈现以保持原观感。 */
+.task6-settings-nav-link {
+  display: block;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--on-surface);
+  font-family: inherit;
+  font-size: var(--text-ui);
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+.task6-settings-nav-link[data-current="true"],
+.task6-settings-nav-link[aria-current="true"],
+.task6-settings-nav-link.task6-active {
+  background: var(--surface-container-high);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-settings-nav-link:hover {
+    background: var(--surface-container);
+  }
+
+  .task6-settings-nav-link[data-current="true"]:hover {
+    background: var(--surface-container-highest);
+  }
+}
+
+/* 主列（0912 拍板）：主列本身就是满铺浅色面板——撑满左栏右侧全部，
+   顶带（窗口拖拽区）是面板内第一行，内容滚动区在其下；与左栏/窗缘
+   保持 4px 缝（承托底透出）。三键常浮在面板右上（窗口 y 4~48），滚动
+   容器从键下缘起，滚动条贴面板右缘（0911 审计 §10.2）。 */
+.task6-settings-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-1);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container);
+  overflow: hidden;
+}
+
+.task6-settings-topband {
+  flex: none;
+  /* 4px 顶距 + 44px 键高 = 底缘 48px，与历史页顶带（0911 起三键 4px 起）同横带。 */
+  height: 48px;
+  /* 透明拖拽带（面板色透出）；底缘 hairline 与内容滚动区分隔。 */
+  border-bottom: 1px solid var(--outline-variant);
+  /* 兼作窗口拖拽区（顶栏拆除后 0910 拍板的补偿），拖拽不应选中文本。 */
+  user-select: none;
+}
+
+.task6-settings-content {
+  flex: 1;
+  min-height: 0;
+  /* 0912 拍板：内容列降为面板内全宽透明滚动区（滚动条贴面板右缘）；
+     原圆角子面板语言（底色 / 圆角 / 有界居中 / 4px 缝）由主列承接。 */
+  width: 100%;
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  /* 内容列居中：Notice 与各屏 section 统一有界消费宽度（980）。 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* v6 面板化：滚动容器在面板内部滚动（滚动条在面板内）。 */
+  overflow-y: auto;
+}
+
+.task6-settings-content > * {
+  width: 100%;
+  /* 0912 点点拍板：内容往中间集中，不随面板撑开（原 980 几乎满幅）。 */
+  max-width: 760px;
+}
+
+/* 设置页输入框统一升到标准档 36px（点点 0912：紧凑 32px 偏细不好看）。 */
+.task6-settings-content .ac-field__control {
+  height: var(--control-height);
+}
+
+/* 切换屏互斥显示（hidden 属性）：每屏都是当前唯一可见分区，屏与屏之间
+   不再有分区间距；锚点平滑滚动随锚点长卷一起退役。 */
+.task6-settings-section {
+  scroll-margin-top: var(--space-4);
+}
+
+/* 合并屏（通用 / KovaaK / 高级）内的小节：保留原分区标题层级，
+   小节间距沿用原分区间距 token。 */
+.task6-settings-subsection + .task6-settings-subsection {
+  margin-top: var(--space-6);
+}
+
+/* KovaaK 屏（0912 拍板）：两小节之间加 hairline 分割，上下各留 space-3。
+   只挂在该屏第二小节，不影响通用 / 高级合并屏的节奏。 */
+.task6-settings-subsection.task6-settings-subsection-divided {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task6-settings-section-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* 0912 点点拍板：全部屏头统一两行式——标题一行、说明小字换行到第二行。 */
+.task6-settings-section-header .task6-settings-section-note {
+  flex-basis: 100%;
+}
+
+.task6-settings-section-title {
+  font: 600 var(--text-title)/1.2 var(--font-display);
+}
+
+.task6-settings-section-note {
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+.task6-settings-section-hint {
+  margin-left: auto;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+/* ── Provider 主从式：左档案列表 + 右详情（添加走模态向导） ────────── */
+
+.task6-provider-master {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+}
+
+/* 列表卡：贴内容的窄卡（0912 线框），内边距同线框 list card 8px。 */
+.task6-provider-list-card {
+  flex: 0 0 190px;
+}
+
+.task6-provider-list-card .ac-panel__body {
+  padding: var(--space-2);
+}
+
+.task6-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.task6-provider-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--on-surface);
+  text-align: start;
+  cursor: pointer;
+}
+
+.task6-provider-list-item[aria-current="true"] {
+  background: var(--surface-container-high);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-provider-list-item:hover {
+    background: var(--surface-container);
+  }
+
+  .task6-provider-list-item[aria-current="true"]:hover {
+    background: var(--surface-container-highest);
+  }
+}
+
+.task6-provider-list-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.task6-provider-list-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-ui);
+  font-weight: 600;
+}
+
+.task6-provider-list-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+}
+
+.task6-provider-add {
+  margin-top: var(--space-3);
+}
+
+.task6-provider-detail-pane {
+  flex: 1;
+  min-width: 0;
+}
+
+.task6-provider-empty {
+  padding: var(--space-4) 0;
+}
+
+.task6-provider-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  /* 定高（点点 0912：切换档案时头部按钮有无导致内容上下跳）。 */
+  min-height: var(--control-height-compact);
+}
+
+.task6-provider-name-edit {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+  font: 600 var(--text-title)/1.2 var(--font-display);
+  cursor: text;
+  text-align: start;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-provider-name-edit:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+
+.task6-provider-name-input {
+  max-width: 320px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-2);
+  height: var(--control-height-compact);
+  background: var(--surface);
+  color: var(--on-surface);
+  font: 600 var(--text-title)/1.2 var(--font-display);
+}
+
+.task6-provider-conn {
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-3) 0 0;
+}
+
+/* 连接行等高（点点 0912：builtin 只读文本行与 custom 输入行同高，
+   切换档案时右侧内容不上下跳动）。 */
+.task6-provider-conn-row dd {
+  justify-content: center;
+  min-height: var(--control-height);
+}
+
+/* 线框 .frow 密度：标签列 96px 定宽、值从标签列同一条左缘起；行 padding
+   上下 ~7px（取最近 token space-2=8px），单行文字行总高 ~34px（12*1.5+16）。 */
+.task6-provider-conn-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  /* 0911 点点：字段行之间不放横分割线，靠行距分层。 */
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+/* 行内输入控件与全设置页同高（36px 标准档）——紧凑覆盖已退役。 */
+
+.task6-provider-conn-row dt {
+  flex: none;
+  width: 96px;
+  color: var(--on-surface-variant);
+}
+
+.task6-provider-conn-row dd {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  color: var(--on-surface);
+}
+
+/* Key 掩码行（0912 线框）：胶囊与输入框同高 36px、拉通整行宽，
+   眼睛固定最右（点点：不管显示还是掩码，位置都不能动）。
+   眼睛=显示/隐藏存档明文 Key；点 Key 文字=进入粘贴编辑。 */
+.task6-provider-keymask {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  height: var(--control-height);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding-inline: var(--space-3) var(--space-1);
+}
+
+.task6-provider-keymask.is-editing {
+  padding-inline: var(--space-2);
+}
+
+.task6-provider-keymask-text {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  letter-spacing: 1px;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* 显示明文时用正文字色（点点：显示出来的 Key 要读得清）。 */
+.task6-provider-keymask-text[data-revealed="true"] {
+  color: var(--on-surface);
+}
+
+.task6-provider-keymask-text[disabled] {
+  cursor: default;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-provider-keymask-text:hover:not([disabled]) {
+    color: var(--on-surface);
+  }
+}
+
+.task6-provider-keymask-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  height: var(--control-height);
+  border: 0;
+  background: transparent;
+  padding-inline: 0;
+}
+
+.task6-provider-mask-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-provider-mask-btn:hover:not(:disabled) {
+    background: var(--surface-container);
+    color: var(--on-surface);
+  }
+
+  .task6-provider-mask-btn[data-danger="true"]:hover:not(:disabled) {
+    color: var(--error);
+  }
+}
+
+.task6-provider-mask-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 测活状态行（线框）：状态文字紧跟标签列左对齐（单行省略），「测试连接」
+   按钮同一行行尾（margin-left:auto），不换行、不居中。选择器带
+   .task6-provider-conn-row 前缀压过下方 dd 规则的 column 方向
+   （否则 0-1-0 输给 0-1-1，按钮会掉到下一行居中）。 */
+.task6-provider-conn-row .task6-provider-liveness {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.task6-provider-liveness-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.task6-provider-liveness-text > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task6-provider-liveness-btn {
+  flex: none;
+  margin-left: auto;
+}
+
+.task6-provider-balance {
+  /* 0912 点点：余额数字加大醒目。 */
+  color: var(--on-surface);
+  font: 600 var(--text-title)/1.2 var(--font-display);
+}
+
+/* 内置档 Base URL：禁用输入框兜住几何，但视觉灰化表达不可改。 */
+.task6-provider-conn-row .ac-field__control[disabled],
+.task6-provider-conn-row .ac-field__control[readonly] {
+  color: var(--on-surface-variant);
+  background: var(--surface-container);
+}
+
+/* 余额读取失败的人话（401=Key 失效 / 站点不可达），行内小红字。 */
+.task6-provider-balance-error {
+  color: var(--error);
+  font-size: var(--text-caption);
+}
+
+/* 官方档（线框 B 形态）：标题行静态名 + 计费方式下拉。 */
+
+.task6-provider-name-plain {
+  color: var(--on-surface);
+  font: 600 var(--text-title)/1.2 var(--font-display);
+}
+
+.task6-provider-chip {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+}
+
+.task6-provider-head-gap {
+  flex: 1;
+}
+
+.task6-provider-billing {
+  position: relative;
+}
+
+.task6-provider-billing-menu {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 5;
+  min-width: 130px;
+  padding: var(--space-1);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+}
+
+.task6-provider-billing-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+  font-size: var(--text-caption);
+  text-align: start;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-provider-billing-item:hover {
+    background: var(--surface-container);
+  }
+}
+
+.task6-provider-billing-item[data-selected="true"] {
+  background: var(--surface-container-high);
+  font-weight: 600;
+}
+
+/* 官方档套餐卡（会员系统未上线：占位禁用态）。 */
+.task6-provider-plan {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-low);
+}
+
+.task6-provider-plan[data-placeholder="true"] {
+  opacity: 0.75;
+}
+
+.task6-provider-plan-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.task6-provider-plan-head strong {
+  font-size: var(--text-ui);
+}
+
+.task6-provider-plan-meta {
+  margin: var(--space-1) 0 0;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+/* 会员计划卡里的「管理 / 解绑」链接态（会员系统上线前禁用带提示）。 */
+.task6-provider-plan-link {
+  color: var(--primary);
+  cursor: help;
+}
+
+/* 官方档剩余额度卡（占位禁用态）：数值 + 进度条。 */
+.task6-provider-quota {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-low);
+}
+
+.task6-provider-quota[data-placeholder="true"] {
+  opacity: 0.75;
+}
+
+/* 「剩余额度」标签在卡外（0912 线框）：卡内首行是「本月剩余 + 重置于X」。 */
+.task6-provider-quota-label {
+  margin: var(--space-3) 0 var(--space-1);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+.task6-provider-quota-head {
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+}
+
+.task6-provider-quota-value {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.task6-provider-quota-value .task6-provider-quota-sub {
+  margin-left: auto;
+}
+
+.task6-provider-quota-value {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.task6-provider-quota-value b {
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.task6-provider-quota-sub {
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+}
+
+.task6-provider-quota-meter {
+  height: 8px;
+  margin-top: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-highest);
+  overflow: hidden;
+}
+
+.task6-provider-quota-meter i {
+  display: block;
+  height: 100%;
+  background: var(--tertiary);
+}
+
+/* 官方档模型列表：catalog 只读目录，超高可滚动。 */
+.task6-provider-models {
+  margin-top: var(--space-3);
+}
+
+.task6-provider-models-title {
+  margin-bottom: var(--space-2);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+.task6-provider-models-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.task6-provider-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  /* 0912 点点拍板：模型行行距加大（原 space-2 太挤）；分隔线只在行间
+     （线框首行上方无线）。 */
+  padding: var(--space-3) 0;
+  font-size: var(--text-caption);
+}
+
+.task6-provider-model-row + .task6-provider-model-row {
+  border-top: 1px solid var(--outline-variant);
+}
+
+/* 模型读取失败的人话（0912 线框「连接失败，请检查设置」）。 */
+.task6-provider-model-error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-caption);
+}
+
+/* 「⟳ 获取模型」行尾右置。 */
+.task6-provider-model-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+.task6-provider-keydraft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.task6-provider-keydraft input {
+  width: min(320px, 100%);
+}
+
+.task6-provider-preview {
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+/* Status dot at row end (wireframe): green = ready, red = probe failed /
+   every other state. Token-driven so theme variants stay correct. */
+
+.task6-provider-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--error);
+}
+
+.task6-provider-dot[data-ready="true"] {
+  background: var(--event-kill);
+}
+
+/* 官方档未连接（无档案实例）：灰点＝未配置，区别于探测不通的红。 */
+.task6-provider-dot[data-unconfigured="true"] {
+  background: var(--outline);
+}
+
+/* 添加向导：步骤条 + 类型目录（完整厂商列表可滚动）+ 两步表单；
+   最后一步测连通过才解锁「完成」。 */
+
+.task6-wizard-steps {
+  display: flex;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  flex-wrap: wrap;
+}
+
+.task6-wizard-steps li[data-state="current"] {
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+/* 点点 0911 拍板：类型卡不止四张，完整厂商目录可滚动。 */
+.task6-wizard-type-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 280px;
+  overflow-y: auto;
+  padding-inline-end: var(--space-1);
+}
+
+.task6-wizard-step-body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.task6-auth-operation {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.task6-auth-operation-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.task6-auth-operation-title {
+  font-weight: 600;
+  font-size: var(--text-ui);
+}
+
+.task6-inline-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.task6-muted,
+.task6-storage-row p {
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+.task6-muted {
+  margin: 0;
+}
+
+/* Profile 字段：线框 frow 语言——单列堆叠，每行左标签（定宽）+ 右值一列左对齐。 */
+.task6-profile-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+/* 「左标签 + 右值」一行式表单语言（全设置页统一；LLM Provider 屏已是此
+   形态）。标签定宽 96px、次要文字色；右侧放输入控件或只读值。 */
+.task6-form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.task6-form-row-label {
+  flex: none;
+  width: 96px;
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+.task6-form-row > .ac-field__control {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+/* 卡内自包含小字行：紧跟卡内标题的说明（线框 card .desc 语言）。 */
+.task6-card-desc {
+  margin: 2px 0 var(--space-3);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+}
+
+/* 卡内右下角动作行（Profile 默认值卡三态按钮）。 */
+.task6-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+
+/* Theme mode cards（添加向导类型选择复用） */
+
+.task6-mode-card {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.task6-mode-card[data-selected="true"] {
+  border-color: var(--outline);
+  box-shadow: inset 0 0 0 1px var(--outline);
+  background: var(--surface-container-high);
+}
+
+.task6-mode-card input {
+  width: 14px;
+  height: 14px;
+  margin: var(--space-1) 0 0;
+  accent-color: var(--primary);
+  flex: none;
+}
+
+.task6-mode-card-name {
+  font-weight: 600;
+  font-size: var(--text-ui);
+}
+
+/* 主题分区：三张横排主题预览卡（线框形态）——上半是目标主题的配色预览块，
+   下方是名称；选中卡描边 accent（app token 为 --primary，与线框 --accent 同值）。
+   预览块用字面色：它表达的是目标主题的样子，不随当前主题翻转。 */
+
+.task6-theme-cards {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.task6-theme-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 120px;
+  padding: var(--space-2);
+  border: 1.5px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--on-surface-variant);
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.task6-theme-card input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.task6-theme-card:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 点点 0912：选中态只留一圈描边——已选中时不再叠加 focus 圈。 */
+.task6-theme-card:focus-within[data-selected="true"] {
+  outline: none;
+}
+
+.task6-theme-card-swatch {
+  height: 36px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.task6-theme-card-swatch[data-mode="dark"] {
+  background: #1c1c1a;
+}
+
+.task6-theme-card-swatch[data-mode="system"] {
+  background: linear-gradient(90deg, #fff 50%, #1c1c1a 50%);
+}
+
+.task6-theme-card-name {
+  font-size: var(--text-caption);
+}
+
+.task6-theme-card[data-selected="true"] {
+  border-color: var(--primary);
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+/* 应用更新（0912 线框复刻）：第一行 = 「应用更新」+ 状态 chip；
+   第二行 = 当前版本与过程提示（左）+ 行尾「检查更新」。 */
+
+.task6-app-update-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.task6-app-update-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.task6-app-update-row > .task6-muted {
+  flex: 1;
+  min-width: 0;
+}
+
+.task6-app-update-row .task6-inline-actions {
+  margin-left: auto;
+}
+
+.task6-update-chip {
+  flex: none;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font-size: var(--text-micro);
+}
+
+.task6-update-chip[data-tone="ok"] {
+  color: var(--event-kill);
+}
+
+.task6-update-chip[data-tone="new"] {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* 卡内标题：通用屏自包含卡的标题行沿用分组标题字级。 */
+
+.task6-profile-group-title {
+  margin: 0;
+  font: 600 var(--text-body)/1.25 var(--font-display);
+}
+
+/* Status / Capture rows：每行 = 功能名+说明在左，开关或状态在右。 */
+
+.task6-capture-health {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.task6-toggle-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.task6-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--outline-variant);
+  font-size: var(--text-caption);
+  line-height: 1.55;
+}
+
+.task6-toggle-row:first-of-type {
+  border-top: 0;
+}
+
+.task6-toggle-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.task6-toggle-row-name {
+  color: var(--on-surface);
+  font-weight: 600;
+  font-size: var(--text-ui);
+}
+
+.task6-toggle-row-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--on-surface);
+  text-align: end;
+}
+
+.task6-toggle-row a,
+.task6-storage-row a,
+.task6-kovaak-note a {
+  color: var(--tertiary);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.task6-toggle-row a:hover,
+.task6-storage-row a:hover,
+.task6-kovaak-note a:hover {
+  border-bottom-color: var(--on-surface);
+}
+
+.task6-ok {
+  color: var(--event-kill);
+  font-weight: 600;
+}
+
+/* 最近采集事件：线框 rowline 形态——纯行（无边框壳），行悬停高亮；
+   语义色圆点（绿=已就绪、橙=整理中/未录制、灰=缺失）+ 场景名 + 行尾精简
+   状态词；完整归因收进行悬停 title。 */
+
+.task6-capture-events {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task6-capture-event-list {
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task6-capture-event {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: var(--text-caption);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task6-capture-event:hover {
+    background: var(--surface-container-high);
+  }
+}
+
+.task6-capture-event-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--event-kill);
+}
+
+.task6-capture-event[data-tone="working"] .task6-capture-event-dot {
+  background: var(--event-peak);
+}
+
+.task6-capture-event[data-tone="missing"] .task6-capture-event-dot {
+  background: var(--on-surface-variant);
+}
+
+.task6-capture-event-scenario {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: var(--text-ui);
+}
+
+.task6-capture-event-status {
+  flex: none;
+  color: var(--on-surface-variant);
+}
+
+.task6-capture-diagnostics {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--outline-variant);
+  flex-wrap: wrap;
+}
+
+.task6-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  padding: 0 var(--space-1);
+  color: var(--on-surface);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+.task6-consent input {
+  margin-top: 2px;
+  flex: none;
+}
+
+/* Storage：总占用大数字 + 分类占比条；清理动作独立放底部。 */
+
+.task6-storage-total {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.task6-storage-total-number {
+  font: 600 var(--text-display)/1.1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.task6-storage-bar {
+  display: flex;
+  height: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-high);
+  overflow: hidden;
+}
+
+.task6-storage-bar > div {
+  border-radius: 0;
+}
+
+.task6-storage-bar > div:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.task6-storage-bar > div:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* 线框图例（0912 点点）：每分类一行内联——色块+名称+大小·%，
+   整排流式换行，不再两行挤一格。 */
+.task6-storage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  font-size: var(--text-caption);
+}
+
+.task6-storage-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+}
+
+.task6-storage-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.task6-storage-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(240px, auto);
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  align-items: flex-start;
+}
+
+/* 清理条目之间的浅分割线（点点 0912 拍板）。 */
+.task6-storage-row + .task6-storage-row {
+  border-top: 1px solid var(--outline-variant);
+}
+
+.task6-storage-row > div:first-child {
+  min-width: 0;
+}
+
+.task6-storage-row strong {
+  font-size: var(--text-ui);
+}
+
+/* 清理行副行第二行：实际文件名（可得时），等宽小字、超长省略。 */
+.task6-storage-row-files {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+}
+
+/* 清理行的破坏性动作降级为描边幽灵（默认灰字灰描边），悬停才转语义色，
+   不再使用大红实心按钮成排贬值。特异性压过 theme 的 ghost hover。 */
+.ac-button.task6-btn-danger-ghost[data-variant="ghost"]:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--error);
+  color: var(--error);
+  background: transparent;
+}
+
+/* 0912 点点拍板：两卡拆分后，清理小标题上不再要分割线（卡边界即分隔）。 */
+.task6-storage-cleanup {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Notices in settings */
+
+.task6-settings-notice {
+  margin: 0 0 var(--space-4);
+}
+
+.task6-settings-notice:last-child {
+  margin-bottom: 0;
+}
+
+/* Responsive */
+
+@media (max-width: 839px) {
+  .task6-settings-nav {
+    display: none;
+  }
+
+  .task6-storage-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task6-storage-row {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .task6-provider-master {
+    flex-direction: column;
+  }
+
+  .task6-provider-list-card {
+    flex: none;
+  }
+
+  .task6-provider-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .task6-provider-add {
+    margin-top: 0;
+    margin-inline-start: auto;
+  }
+
+  .task6-toggle-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .task6-toggle-row-side {
+    text-align: start;
+  }
+}
+
+/* Provider 屏说明小字换行到标题下一行（0911 点点）；仅该屏 header 用 stacked 修饰。 */
+.task6-settings-section-header-stacked .task6-settings-section-note { flex-basis: 100%; }
+
+/* 采集源状态点（点点 0912 拍板）：紧跟「自动采集」标题；绿=整条管线
+   （含外部遥测源）正常；橙=有源异常，悬浮显示「采集服务不正常」。 */
+.task6-capture-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--event-kill);
+}
+
+.task6-capture-status-dot[data-issue="true"] {
+  background: var(--event-peak);
+  cursor: help;
+}

@@ -77,12 +77,14 @@ test("outbound composition funnels steer, interrupt-steer, enqueue, and submit t
     assert.ok(body.includes("composeOutgoing()"), `${name} must compose outbound content`);
   }
   assert.ok(submitAt < steerAt, "compose gate must be declared before its consumers");
-  // 四动作菜单的「加入队列」同样消费拼装结果并在入列后消费待拼装引用
-  const sendMenuAt = panel.indexOf('className="task6-send-menu"');
-  const enqueueCode = panel.indexOf(
-    'setSendMenuOpen(false); const content = composeOutgoing(); if (content === null) return; enqueueQueuedItem(content); setDraft(""); setQuotes([]);',
+  // 0912 拍板：旁挂菜单废弃，运行中排队由 sendText 的入队分支承担——同样
+  // 消费上游 composeOutgoing 的拼装结果（content 参数），入列后消费待拼装引用。
+  const sendTextBody = panel.slice(
+    panel.indexOf("const sendText = async ("),
+    panel.indexOf("const composeOutgoing"),
   );
-  assert.ok(sendMenuAt !== -1 && enqueueCode > sendMenuAt, "menu enqueue must route through the compose gate");
+  assert.match(sendTextBody, /enqueueQueuedItem\(content/);
+  assert.match(sendTextBody, /setMentionRefs\(\[\]\)/);
 });
 
 test("quote-only sends are blocked with a visible hint at both gates (拍板①)", async () => {
@@ -100,13 +102,15 @@ test("quotes are consumed optimistically on send and restored when the send fail
   // 乐观 UI（点点 09-08 拍板）：消费/清框随气泡上屏前置到任何 await 之前
   const acceptBlock = chunkBetween(sendText, "optimisticId = appendOptimisticUserMessage(content)", "pushSentHistory(content)");
   assert.match(acceptBlock, /setQuotes\(\[\]\)/);
-  // 失败走整体回滚：气泡撤下 + 引用快照恢复（用户可见结果＝引用仍留在 composer）
+  // 失败走整体回滚：气泡撤下 + 引用快照恢复（用户可见结果＝引用仍留在 composer）。
+  // 0911：结构化分析引用 chips 同样纳入快照回滚。
   const failureBlock = chunkBetween(sendText, "} catch (error) {", "} finally {");
-  assert.match(failureBlock, /rollbackOptimisticSend\(optimisticId, content, quotesSnapshot\)/);
+  assert.match(failureBlock, /rollbackOptimisticSend\(optimisticId, content, quotesSnapshot, refsSnapshot\)/);
   // 回滚的草稿回填必须条件式——用户已在等待期重新输入则保留新草稿
   const rollback = chunkBetween(panel, "const rollbackOptimisticSend =", "const sendText = async");
   assert.match(rollback, /setDraft\(\(current\) => \(current\.trim\(\) \? current : content\)\)/);
   assert.match(rollback, /setQuotes\(\(current\) => \(current\.length \? current : quotesSnapshot\)\)/);
+  assert.match(rollback, /setMentionRefs\(\(current\) => \(current\.length \? current : refsSnapshot\)\)/);
   // steer 成功分支同步消费
   const steerSuccess = chunkBetween(panel, "await steerCoachAgentRun(active.run_ref, content)", "appendOptimisticUserMessage(content)");
   assert.match(steerSuccess, /setQuotes\(\[\]\)/);
@@ -124,6 +128,35 @@ test("composer renders removable locked quote blocks in the slot above the texta
   assert.match(listChunk, /引用 Coach<\/span>/);
   assert.match(listChunk, /title=\{quote\.text\}\>\{quote\.text\}/);
   assert.match(listChunk, /label="删除这条引用" onClick=\{\(\) => removeQuote\(quote\.id\)\}/);
+});
+
+test("quote blocks and mention chips animate in on mount and out before removal", async () => {
+  const panel = await source("components/task6/CoachPanel.tsx");
+  const styles = await source("components/task6/task6.css");
+  const reduced = await source("components/task3/task3.css");
+  // 退场存在：点击删除只标记 exiting，animationend（或兜底计时）才真删。
+  assert.match(panel, /function useExitAnimation/);
+  assert.match(panel, /const \{ exitingKeys: exitingQuoteIds, requestExit: removeQuote, finalize: finalizeQuoteRemoval \}/);
+  assert.match(panel, /const \{ exitingKeys: exitingMentionTokens, requestExit: removeMentionRef, finalize: finalizeMentionRefRemoval \}/);
+  const listAt = panel.indexOf('className="task6-quote-list"');
+  const inputAt = panel.indexOf('className="task6-composer-input"');
+  const quoteChunk = panel.slice(listAt, inputAt);
+  assert.match(quoteChunk, /data-exiting=\{exitingQuoteIds\.includes\(quote\.id\) \|\| undefined\}/);
+  assert.match(quoteChunk, /event\.animationName === "task6-quote-out"\) finalizeQuoteRemoval\(quote\.id\)/);
+  // @ 引用 chips 同槽同语言：容器带定位标记，chip 带退场标记与 finalize。
+  const mentionAt = panel.indexOf('aria-label="已引用的分析"');
+  const mentionChunk = panel.slice(mentionAt, listAt);
+  assert.match(mentionChunk, /data-mention-refs="true"/);
+  assert.match(mentionChunk, /data-exiting=\{exitingMentionTokens\.includes\(ref\.token\) \|\| undefined\}/);
+  assert.match(mentionChunk, /onClick=\{\(\) => removeMentionRef\(ref\.token\)\}/);
+  // CSS：加入 160ms / 退场 140ms 两条 keyframe，selectors 按父容器限定。
+  assert.match(styles, /@keyframes task6-quote-in\s*\{[\s\S]*?translateY\(-4px\) scale\(0\.96\)/);
+  assert.match(styles, /@keyframes task6-quote-out\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*scale\(0\.96\)/);
+  assert.match(styles, /\.task6-quote-list > \.task6-quote-block,[\s\S]*?\.task6-queue-chips\[data-mention-refs\] > \.task6-queue-chip\s*\{[^}]*animation:\s*task6-quote-in 160ms/);
+  assert.match(styles, /\.task6-quote-list > \.task6-quote-block\[data-exiting\],[\s\S]*?\.task6-queue-chips\[data-mention-refs\] > \.task6-queue-chip\[data-exiting\]\s*\{[^}]*animation:\s*task6-quote-out 140ms/);
+  // reduced-motion：两动画进 task3.css 白名单关闭。
+  assert.match(reduced, /\.task6-quote-list > \.task6-quote-block\[data-exiting\][\s\S]*?animation:\s*none/);
+  assert.match(reduced, /\.task6-queue-chips\[data-mention-refs\] > \.task6-queue-chip\[data-exiting\][\s\S]*?animation:\s*none/);
 });
 
 test("draft persistence upgrades to envelope v2 and restores quotes with the scoped key", async () => {

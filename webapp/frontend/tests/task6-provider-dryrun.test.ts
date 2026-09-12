@@ -22,23 +22,25 @@ test("lib/api exposes a dry-run provider test against the dedicated sidecar rout
 test("Settings provider wizard gates adding behind a passing dry run", async () => {
   const section = await source("components/task6/ProviderSettingsSection.tsx");
   assert.match(section, /testProviderProfileDraft/);
-  // 未验证通过前向导第 4 步的「完成」不可用。
-  assert.match(section, /disabled=\{!wizardVerified\}/);
+  // 测试通过前按钮是「测试」，通过后才变「完成」；完成要求 payload 齐备
+  // （含测试成功后选定的模型）。
+  assert.match(section, /disabled=\{wizardVerified \? !wizardPayload : !wizardProbePayload\}/);
+  assert.match(section, /\{wizardVerified \? "完成" : "测试"\}/);
   // 验证结论绑定表单指纹：再次变动即失效回到未验证态。
   assert.match(section, /wizardCheck\.fingerprint !== wizardFingerprint[\s\S]{0,80}abort\(\)/);
   assert.match(section, /wizardVerified = wizardCheck\.phase === "done"\s*\n\s*&& wizardCheck\.passed\s*\n\s*&& wizardCheck\.fingerprint === wizardFingerprint/);
-  // 冻结提交时的候选 payload，期间的表单变动不得解锁保存。
-  assert.match(section, /const payload = wizardPayload;\s*\n\s*const fingerprint = wizardFingerprint;/);
+  // 冻结提交时的探测候选与指纹，期间的表单变动不得解锁保存。
+  assert.match(section, /const payload = wizardProbePayload;\s*\n\s*const fingerprint = wizardFingerprint;/);
 });
 
 test("Settings provider wizard reports dry-run results inline instead of toast-only", async () => {
   const section = await source("components/task6/ProviderSettingsSection.tsx");
-  // 向导第 4 步的内联 live 区块承载主要结果反馈。
-  assert.match(section, /aria-live="polite" className="task6-wizard-step-body"/);
+  // 步骤 2 的内联 live 文案承载主要结果反馈：成功绿字、失败红字留本步。
+  assert.match(section, /<p className="task6-ok" aria-live="polite">✓ 连接成功<\/p>/);
+  assert.match(section, /<Notice tone="error">连接失败<\/Notice>/);
   assert.match(section, /连接成功 · /);
-  assert.match(section, /请核对 API Key、Base URL 与所选模型后重试/);
-  assert.match(section, /<Notice tone="error">\{wizardCheck\.message\}<\/Notice>/);
+  assert.match(section, /请核对 API Key 与端点后重试/);
   // 校验进行中可再次点击取消，不卡死 UI；Toast 仅作其余操作的辅助反馈。
-  assert.match(section, /停止检查/);
+  assert.match(section, /再次点「测试」可取消/);
   assert.match(section, /若 controller\.signal\.aborted|\(controller\.signal\.aborted\)/);
 });

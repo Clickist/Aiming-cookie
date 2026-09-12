@@ -1,6 +1,7 @@
 import "../ui/theme.css";
 import "../components/task3/task3.css";
 import "../components/task4/task4.css";
+import "../components/task6/task6-settings.css";
 import "../components/task6/task6.css";
 import "../components/task7/session-rail.css";
 

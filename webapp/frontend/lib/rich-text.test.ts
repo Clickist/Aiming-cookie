@@ -24,6 +24,80 @@ test("plain paragraphs pass through verbatim without space insertion", () => {
   assert.equal(flat(nodes[0].kind === "paragraph" ? nodes[0].segments : []), "命中率41.2%，第6杀是转折。");
 });
 
+// ── 受控命名链接（购买链接呈现，2026-09-11）──────────────────────────────
+
+test("whitelisted https named link parses into a link segment", () => {
+  const segments = parseBoldSegments("淘宝在这：[Darmoshark M3 Micro Pro](https://s.click.taobao.com/t?e=m%3D2%26s%3Dx) 自己看");
+  assert.equal(segments.length, 3);
+  assert.equal(segments[0].text, "淘宝在这：");
+  assert.equal(segments[1].link, "https://s.click.taobao.com/t?e=m%3D2%26s%3Dx");
+  assert.equal(segments[1].text, "Darmoshark M3 Micro Pro");
+  assert.equal(segments[2].text, " 自己看");
+});
+
+test("non-whitelisted host and http links stay literal text", () => {
+  const text = "a [x](https://evil.example.com/t) b [y](http://s.click.taobao.com/t) c";
+  const segments = parseBoldSegments(text);
+  assert.equal(flat(segments), text);
+  assert.ok(segments.every((s) => !s.link));
+});
+
+test("unclosed link shape stays literal mid-stream, nothing swallowed", () => {
+  const text = "链接在这：[Darmoshark M3 Micro Pro](https://s.click.taobao.com/t?e=x";
+  const segments = parseBoldSegments(text);
+  assert.equal(flat(segments), text);
+});
+
+test("javascript: and bare-domain shapes never become links", () => {
+  const text = "[点我](javascript:alert(1)) 和 [x](https://sub.item.jd.com/a.html)";
+  const segments = parseBoldSegments(text);
+  assert.equal(flat(segments), text);
+  assert.ok(segments.every((s) => !s.link));
+});
+
+test("whitelisted bare https URL links through (identity answer fallback, 1.0.0)", () => {
+  const text = "他的主页在这里：https://space.bilibili.com/14425468 ，想关注的话可以去看看。";
+  const segments = parseBoldSegments(text);
+  assert.equal(flat(segments), text);
+  const link = segments.find((s) => s.link);
+  assert.ok(link);
+  assert.equal(link.link, "https://space.bilibili.com/14425468");
+  assert.equal(link.text, "https://space.bilibili.com/14425468");
+});
+
+test("bare URL at end of text and before newline both terminate cleanly", () => {
+  const segments = parseBoldSegments("主页：https://space.bilibili.com/14425468");
+  assert.ok(segments.some((s) => s.link === "https://space.bilibili.com/14425468"));
+  const multiline = parseBoldSegments("第一行 https://item.jd.com/1000123.html\n第二行");
+  assert.ok(multiline.some((s) => s.link === "https://item.jd.com/1000123.html"));
+});
+
+test("non-whitelisted bare https URL stays literal text", () => {
+  const text = "先看 https://evil.example.com/x 就好";
+  const segments = parseBoldSegments(text);
+  assert.equal(flat(segments), text);
+  assert.ok(segments.every((s) => !s.link));
+});
+
+test("named link shape wins over bare URL detection (no double processing)", () => {
+  const text = "链接：[B 站主页](https://space.bilibili.com/14425468) 收好";
+  const segments = parseBoldSegments(text);
+  assert.equal(segments.length, 3);
+  assert.equal(segments[0].text, "链接：");
+  assert.equal(segments[1].text, "B 站主页");
+  assert.equal(segments[1].link, "https://space.bilibili.com/14425468");
+  assert.equal(segments[2].text, " 收好");
+});
+
+test("bold and named link can coexist in one paragraph", () => {
+  const nodes = parseRichText("**第一只** [皂品 Z1 Pro](https://s.click.taobao.com/t?e=z) 209 元");
+  const p = nodes[0];
+  assert.ok(p.kind === "paragraph");
+  const segs = p.segments;
+  assert.ok(segs.some((s) => s.bold && s.text === "第一只"));
+  assert.ok(segs.some((s) => s.link === "https://s.click.taobao.com/t?e=z"));
+});
+
 test("paired ** renders bold segments; multi-run paragraphs keep newlines", () => {
   const nodes = parseRichText("先说结论：**主任务全对**。\n然后看细节");
   const p = nodes[0];

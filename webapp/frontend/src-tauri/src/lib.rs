@@ -66,6 +66,12 @@ struct CaptureDiagnosticsBundle {
     recent_coach_turns: Vec<RecentCoachTurn>,
     // v4：watcher 是独立进程，快照只在其正常落盘时可用；读取失败不能阻塞导出。
     watcher_snapshot: Option<serde_json::Value>,
+    // v5：一键上传远程排障补齐（点点 0912）——目标真值采集链与外部遥测源
+    // 的状态机现场（后端已落盘快照，v4 没收），以及最新 telemetry 会话的
+    // finalize.log 尾部（cleaner/merge 失败的第一现场）。
+    telemetry_capture_snapshot: Option<serde_json::Value>,
+    external_telemetry_snapshot: Option<serde_json::Value>,
+    finalize_log_tail: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -104,8 +110,9 @@ const DIAG_RECENT_RUNS_LIMIT: usize = 10;
 const DIAG_EXPORT_RECEIPTS_LIMIT: usize = 10;
 const DIAG_RECENT_ANALYSES_LIMIT: usize = 10;
 const DIAG_RECENT_COACH_TURNS_LIMIT: usize = 3;
-const DIAG_EVENTS_TAIL_BYTES: usize = 4 * 1024;
 const DIAG_COACH_TURN_TAIL_BYTES: usize = 8 * 1024;
+const DIAG_EVENTS_TAIL_BYTES: usize = 4 * 1024;
+const DIAG_FINALIZE_LOG_TAIL_BYTES: usize = 16 * 1024;
 static ATOMIC_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// 读取日志文件尾部；`start > 0` 时优先丢弃被截断的首行，但窗口内整段
@@ -514,9 +521,32 @@ fn last_coach_json_string_field(tail: &str, key: &str) -> Option<String> {
 }
 
 fn collect_watcher_snapshot(data_root: &Path) -> Option<serde_json::Value> {
-    fs::read(data_root.join("diagnostics").join("kovaak-watcher.json"))
+    read_diagnostics_snapshot(data_root, "kovaak-watcher.json")
+}
+
+fn read_diagnostics_snapshot(data_root: &Path, name: &str) -> Option<serde_json::Value> {
+    fs::read(data_root.join("diagnostics").join(name))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+
+/// 最新 telemetry 会话的 finalize.log 尾部：cleaner/merge 失败的唯一第一
+/// 现场（v4 漏收）。会话根 = external-capture/sessions（与后端
+/// managed_capture_roots 对应），按修改时间取最新一个。
+fn collect_finalize_log_tail(data_root: &Path, max_bytes: usize) -> Option<String> {
+    let sessions = data_root.join("external-capture").join("sessions");
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(&sessions).ok()? {
+        let Ok(entry) = entry else { continue };
+        let log = entry.path().join("finalize.log");
+        let Ok(meta) = fs::metadata(&log) else { continue };
+        let Ok(modified) = meta.modified() else { continue };
+        if newest.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
+            newest = Some((modified, log));
+        }
+    }
+    let (_, path) = newest?;
+    log_tail(&path, max_bytes)
 }
 
 /// 诊断包与开关持久化共用的临时文件名：pid + 时间戳 + 序列号避免并发冲突。
@@ -707,6 +737,12 @@ fn desktop_export_capture_diagnostics(
         recent_analyses: collect_recent_analyses(&data_root, DIAG_RECENT_ANALYSES_LIMIT, now_ms),
         recent_coach_turns: collect_recent_coach_turns(&data_root, DIAG_RECENT_COACH_TURNS_LIMIT),
         watcher_snapshot: collect_watcher_snapshot(&data_root),
+        telemetry_capture_snapshot: read_diagnostics_snapshot(&data_root, "telemetry-capture.json"),
+        external_telemetry_snapshot: read_diagnostics_snapshot(
+            &data_root,
+            "external-telemetry-watcher.json",
+        ),
+        finalize_log_tail: collect_finalize_log_tail(&data_root, DIAG_FINALIZE_LOG_TAIL_BYTES),
     };
     let payload =
         serde_json::to_vec_pretty(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))?;

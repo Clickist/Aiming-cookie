@@ -67,6 +67,17 @@ export function IconCheck(props: IconProps) {
   return <Icon {...props}><path d="m3.5 8.2 2.8 2.8 6.2-6.5" {...stroke} /></Icon>;
 }
 
+/* 训练异常标记（0911 点点拍板）：圆圈感叹号，历史页行内用 14px 红 var(--error)。 */
+export function IconAlertCircle(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="5.5" {...stroke} />
+      <path d="M8 4.8v3.4" {...stroke} />
+      <path d="M8 10.9v.05" {...stroke} />
+    </Icon>
+  );
+}
+
 /* 工作态语义图标（0828：思考/工具步骤行首的 glyph，替代原圆点时间线）。 */
 
 export function IconSpark(props: IconProps) {
@@ -108,6 +119,15 @@ export function IconTrash(props: IconProps) {
   );
 }
 
+export function IconRefresh(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M14 8a6 6 0 1 1-6-6c1.68 0 3.29.67 4.49 1.83L14 5.33" {...stroke} />
+      <path d="M14 2v3.33h-3.33" {...stroke} />
+    </Icon>
+  );
+}
+
 export function IconChart(props: IconProps) {
   return <Icon {...props}><path d="M2.5 2.5v11h11" {...stroke} /><path d="m4.8 9.8 2.4-3 2 1.6 3.1-4" {...stroke} /></Icon>;
 }
@@ -118,6 +138,32 @@ export function IconDatabase(props: IconProps) {
       <ellipse cx="8" cy="3.8" rx="5" ry="1.9" {...stroke} />
       <path d="M3 3.8v8.4c0 1.05 2.24 1.9 5 1.9s5-.85 5-1.9V3.8" {...stroke} />
       <path d="M3 8c0 1.05 2.24 1.9 5 1.9S13 9.05 13 8" {...stroke} />
+    </Icon>
+  );
+}
+
+export function IconEye(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M1.8 8s2.3-4 6.2-4 6.2 4 6.2 4-2.3 4-6.2 4S1.8 8 1.8 8Z" {...stroke} />
+      <circle cx="8" cy="8" r="1.9" {...stroke} />
+    </Icon>
+  );
+}
+
+export function IconEyeOff(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M1.8 8s2.3-4 6.2-4c1 0 1.9.25 2.7.64M14.2 8s-2.3 4-6.2 4c-1 0-1.9-.25-2.7-.64" {...stroke} />
+      <path d="m3 13 10-10" {...stroke} />
+    </Icon>
+  );
+}
+
+export function IconPencil(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m11.5 2.5 2 2L6 12l-2.7.7L4 10Z" {...stroke} />
     </Icon>
   );
 }

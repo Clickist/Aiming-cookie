@@ -330,6 +330,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/kovaak-scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Kovaak Scenarios
+         * @description Read-only list of locally installed KovaaK scenario names.
+         */
+        get: operations["list_kovaak_scenarios_api_kovaak_scenarios_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/kovaak-scores": {
         parameters: {
             query?: never;
@@ -609,6 +629,27 @@ export interface paths {
         post?: never;
         /** Remove Incomplete Capture Storage */
         delete: operations["remove_incomplete_capture_storage_api_storage_incomplete__item_ref__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reveal Storage Item
+         * @description 「打开文件位置」：输入条目 id/kind，后端解析本地路径并调起
+         *     explorer /select。文件路径绝不下发前端（path-free 合同）。
+         */
+        post: operations["reveal_storage_item_api_storage_reveal_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -921,6 +962,8 @@ export interface components {
             display_name?: string | null;
             /** Dose Guardrail */
             dose_guardrail?: string | null;
+            /** Local Match */
+            local_match?: boolean | null;
             /** Observation */
             observation?: string | null;
             /** Practice Condition */
@@ -1503,6 +1546,10 @@ export interface components {
             performance_summary?: {
                 [key: string]: unknown;
             } | null;
+            /** Raw Name */
+            raw_name?: string | null;
+            /** Raw Size Bytes */
+            raw_size_bytes?: number | null;
             /**
              * Readiness State
              * @default incomplete_evidence
@@ -1513,6 +1560,8 @@ export interface components {
             run_ref: string;
             /** Scenario */
             scenario?: string | null;
+            /** Score */
+            score?: number | null;
             /** Source Availability */
             source_availability?: {
                 [key: string]: string;
@@ -1541,16 +1590,22 @@ export interface components {
              * @default none
              */
             trace_state: string;
+            /** Training At */
+            training_at?: string | null;
             /** Updated At */
             updated_at: string;
             /** Video Artifact Ref */
             video_artifact_ref?: string | null;
             /** Video Error */
             video_error?: string | null;
+            /** Video Name */
+            video_name?: string | null;
             /** Video Quality */
             video_quality?: {
                 [key: string]: unknown;
             };
+            /** Video Size Bytes */
+            video_size_bytes?: number | null;
         };
         /** KovaaKRunListItem */
         KovaaKRunListItem: {
@@ -1580,6 +1635,10 @@ export interface components {
             id: number;
             /** Limitations */
             limitations?: string[];
+            /** Raw Name */
+            raw_name?: string | null;
+            /** Raw Size Bytes */
+            raw_size_bytes?: number | null;
             /**
              * Readiness State
              * @default incomplete_evidence
@@ -1590,6 +1649,8 @@ export interface components {
             run_ref: string;
             /** Scenario */
             scenario?: string | null;
+            /** Score */
+            score?: number | null;
             /** Source Availability */
             source_availability?: {
                 [key: string]: string;
@@ -1610,21 +1671,46 @@ export interface components {
              * @default none
              */
             trace_state: string;
+            /** Training At */
+            training_at?: string | null;
             /** Updated At */
             updated_at: string;
             /** Video Artifact Ref */
             video_artifact_ref?: string | null;
             /** Video Error */
             video_error?: string | null;
+            /** Video Name */
+            video_name?: string | null;
             /** Video Quality */
             video_quality?: {
                 [key: string]: unknown;
             };
+            /** Video Size Bytes */
+            video_size_bytes?: number | null;
         };
         /** KovaaKRunListResponse */
         KovaaKRunListResponse: {
             /** Runs */
             runs: components["schemas"]["KovaaKRunListItem"][];
+        };
+        /** KovaaKScenarioListResponse */
+        KovaaKScenarioListResponse: {
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable";
+            /**
+             * Scenarios
+             * @default []
+             */
+            scenarios: string[];
+            /**
+             * Schema Version
+             * @default kovaak_scenarios.v1
+             * @constant
+             */
+            schema_version: "kovaak_scenarios.v1";
         };
         /** KovaaKScoreItem */
         KovaaKScoreItem: {
@@ -1884,6 +1970,34 @@ export interface components {
             sessions: components["schemas"]["StorageSessionItem"][];
             /** Total Bytes */
             total_bytes: number;
+        };
+        /**
+         * StorageRevealRequest
+         * @description 打开文件位置请求：前端只发条目 id/kind，绝不携带或回显本地路径。
+         */
+        StorageRevealRequest: {
+            /** Item Ref */
+            item_ref?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "run_video" | "run_raw" | "incomplete_capture";
+            /** Run Id */
+            run_id?: number | null;
+        };
+        /** StorageRevealResponse */
+        StorageRevealResponse: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "run_video" | "run_raw" | "incomplete_capture";
+            /**
+             * Revealed
+             * @default true
+             */
+            revealed: boolean;
         };
         /** StorageSessionItem */
         StorageSessionItem: {
@@ -2779,6 +2893,26 @@ export interface operations {
             };
         };
     };
+    list_kovaak_scenarios_api_kovaak_scenarios_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KovaaKScenarioListResponse"];
+                };
+            };
+        };
+    };
     get_kovaak_scores_api_kovaak_scores_get: {
         parameters: {
             query?: never;
@@ -3183,6 +3317,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IncompleteCaptureRemovalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reveal_storage_item_api_storage_reveal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageRevealRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageRevealResponse"];
                 };
             };
             /** @description Validation Error */

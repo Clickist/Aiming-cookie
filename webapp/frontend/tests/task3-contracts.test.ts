@@ -60,6 +60,12 @@ test("record labels include scenario and available timestamps without exposing t
   );
 });
 
+test("presentRecordLabel titleOnly keeps History row titles to the sanitized scenario name", () => {
+  assert.equal(presentRecordLabel({ scenario: "1wall6targets", titleOnly: true }), "1wall6targets");
+  // 与默认行为同一套场景名净化：路径等可疑值不进标题。
+  assert.equal(presentRecordLabel({ scenario: "C:\\Users\\private\\stats.csv", titleOnly: true }), "未命名场景");
+});
+
 test("run mode availability consumes supported_input_modes without re-deriving evidence", () => {
   const run = {
     id: 7,

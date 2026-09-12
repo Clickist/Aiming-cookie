@@ -54,6 +54,19 @@ function renderSegments(
       out.push(
         <strong className="task7-rich-bold" key={`${keyPrefix}-${segIndex}`}>{pieces}</strong>,
       );
+    } else if (segment.link) {
+      // 受控命名链接（白名单域，解析层已把关）：主色下划线，新标签打开。
+      out.push(
+        <a
+          className="task7-link"
+          key={`${keyPrefix}-${segIndex}`}
+          href={segment.link}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {pieces}
+        </a>,
+      );
     } else {
       out.push(...pieces);
     }

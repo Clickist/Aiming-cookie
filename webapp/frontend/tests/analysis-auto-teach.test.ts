@@ -85,3 +85,22 @@ test("auto-teach yields while a Coach run is active (analysis is narrated by tha
     /onActiveRunChange\?\.\(run !== null && \["queued", "running"\]\.includes\(run\.status\)\)/,
   );
 });
+
+test("done detection lives in CoachPanel's list poll; auto-teach invalidates the presentation cache", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  const panel = await source("components/task6/CoachPanel.tsx");
+  const videoPane = await source("components/task7/CoachVideoPane.tsx");
+  // 双轮询合并（点点拍板）：AppShell 的 5s listSessions 轮询删除，done 检测
+  // 并入 CoachPanel 既有轮询（同一响应维护 seenRunning，只触发新鲜转换）；
+  // AppShell 只保留事件监听。
+  assert.doesNotMatch(shell, /const seenRunning/);
+  assert.match(panel, /const seenRunning = new Set<number>\(\);/);
+  assert.match(
+    panel,
+    /new CustomEvent\(ANALYSIS_AUTO_TEACH_EVENT, \{\s*detail: \{ analysis_ref: `analysis:\$\{id\}` \},\s*\}\)/,
+  );
+  // 重新分析后呈现缓存过期：handleAutoTeach 解析数字 id 单点失效（去重判断
+  // 之前，已开讲过的重分析同样覆盖），两条触发路径都经此收敛。
+  assert.match(shell, /invalidateAnalysisPresentationCache\(Number\(analysisMatch\[1\]\)\)/);
+  assert.match(videoPane, /export function invalidateAnalysisPresentationCache\(analysisId\?: number\): void/);
+});

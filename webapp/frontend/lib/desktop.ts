@@ -57,7 +57,7 @@ export async function exportDesktopCaptureDiagnostics(): Promise<string | null> 
     throw new Error("Capture diagnostics are only available in the desktop app");
   }
   const path = await save({
-    title: "导出采集诊断包",
+    title: "导出运行日志",
     defaultPath: "aiming-cookie-capture-diagnostics.json",
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
@@ -66,26 +66,27 @@ export async function exportDesktopCaptureDiagnostics(): Promise<string | null> 
 }
 
 export async function openKovaakScenario(
-  scenarioProfileRef: string,
+  scenarioName: string,
 ): Promise<ScenarioOpenResultV1> {
-  if (!/^scenario:[a-z0-9._-]+@[1-9][0-9]*$/.test(scenarioProfileRef)) {
+  const trimmed = scenarioName.trim();
+  if (!trimmed || trimmed.length > 200 || /[\u0000-\u001f\u007f]/.test(trimmed)) {
     return {
       status: "scenario_unmapped",
-      scenario_profile_ref: null,
+      scenario_name: null,
       display_name: null,
-      message: "该训练项目没有可验证的 KovaaK 场景",
+      message: "本机 KovaaK 没有这个场景，需要先订阅/下载。",
     };
   }
   if (!isDesktopRuntime()) {
     return {
       status: "desktop_unavailable",
-      scenario_profile_ref: scenarioProfileRef,
+      scenario_name: trimmed,
       display_name: null,
       message: "当前网页预览不能启动 KovaaK，请在桌面版中操作",
     };
   }
   return invoke<ScenarioOpenResultV1>("scenario_open", {
-    scenarioProfileRef,
+    scenarioName: trimmed,
   });
 }
 

@@ -51,13 +51,31 @@ test("window controls float globally and title areas take over window dragging",
   assert.ok(rail.includes('onMouseDown={startWindowDraggingOnBackground}'));
   assert.ok(history.includes('onMouseDown={startWindowDraggingOnBackground}'));
   assert.ok(settings.includes('onMouseDown={startWindowDraggingOnBackground}'));
+  // 0911 审计 §10.1/10.2：设置内容面板上方全宽顶带也接同一拖拽助手；
+  // 历史页 0911 点点第三批顶栏化——实底顶栏自身兼作拖拽带（第四轮升至 56px）。
+  assert.ok(settings.includes('className="task6-settings-topband" onMouseDown={startWindowDraggingOnBackground}'));
+  assert.ok(history.includes('className="task4-page-head" onMouseDown={startWindowDraggingOnBackground}'));
+  assert.doesNotMatch(history, /task4-topbar-band/);
+  const settingsStyles = await source("components/task6/task6-settings.css");
+  // 设置顶带随三键浮层对齐（0911 点点第二批：键 4px 起 + 44px 高 = 底缘 48px）。
+  assert.match(settingsStyles, /\.task6-settings-topband\s*\{[^}]*height:\s*48px/);
+  assert.match(settingsStyles, /\.task6-settings-main\s*\{[^}]*flex-direction:\s*column/);
+  const historyStyles = await source("components/task4/task4.css");
+  // 历史顶栏 56px 实底（0911 点点第三批 A 顶栏化 + 第四轮 56px：内容离窗顶远一点）。
+  assert.match(historyStyles, /\.task4-page-head\s*\{[^}]*height:\s*56px/);
+  assert.match(historyStyles, /\.task4-page-shell\s*\{[^}]*flex-direction:\s*column/);
+  // 0911 点点：空对话首页无顶栏但顶部也要能拖——透明拖拽带占顶栏槽位。
+  assert.match(shell, /coachHomeActive \? \(\s*\/\*[\s\S]*?\*\/\s*<div\s+aria-hidden="true"\s+className="task3-home-drag-band"\s+onMouseDown=\{startWindowDraggingOnBackground\}/);
+  const shellStylesSource = await source("components/task3/task3.css");
+  assert.match(shellStylesSource, /\.task3-home-drag-band\s*\{[^}]*height:\s*44px/);
   assert.match(onboarding, /className="task3-onboarding-brand"/);
   assert.ok(onboarding.includes('if (event.button === 0) void startWindowDragging();'));
   assert.match(onboarding, /<TauriWindowControls \/>/);
   assert.match(styles, /\.task3-wincontrols-global[^{]*\{[\s\S]*position:\s*fixed/);
   assert.match(styles, /\.task3-window-controls[^{]*\{[\s\S]*align-self:\s*stretch/);
   assert.match(styles, /\.task3-window-control[^{]*\{[\s\S]*width:\s*46px/);
-  assert.match(styles, /\.task3-window-control--close:hover[^{]*\{[\s\S]*background:\s*var\(--error\)/);
+  // 关闭键 hover 无独立红底，与另两键同走通用 hover 色（0911 终态拍板）。
+  assert.doesNotMatch(styles, /task3-window-control--close:hover[^{]*\{[^}]*background/);
 });
 
 test("frameless startup keeps window controls mounted while product state resolves", async () => {
@@ -93,11 +111,21 @@ test("desktop capture restore retries with backoff instead of giving up after th
 test("AppShell is the only mounted Coach owner on Coach routes", async () => {
   const shell = await source("components/task3/AppShell.tsx");
   const routePage = await source("components/task7/CoachWorkspacePage.tsx");
-  assert.match(shell, /coachWorkspaceRoute \? \(/);
+  // 保持挂载改版后不再条件卸载：非 coach 路由由 display:none 承担隐藏。
+  assert.match(shell, /display: coachWorkspaceRoute \? undefined : "none",/);
   assert.doesNotMatch(shell, /hidden=\{!coachWorkspaceRoute\}/);
   assert.match(shell, /<CoachPanel/);
   assert.doesNotMatch(routePage, /import[\s\S]*CoachPanel|<CoachPanel|getDefaultProviderStatus|attachCoachContext/);
   assert.match(routePage, /return null/);
+});
+
+test("coach view stays mounted off-coach routes and hides only via display", async () => {
+  const shell = await source("components/task3/AppShell.tsx");
+  // 保持挂载（点点拍板）：切 /history、/settings 不卸载 CoachPanel/顶栏/stage
+  // ——回来不重新拉消息、SSE 与流式思考段不丢；隐藏完全依赖外层
+  // .task3-coach-view 既有的 display:none，不再有条件渲染分支。
+  assert.doesNotMatch(shell, /coachWorkspaceRoute \? \(/);
+  assert.match(shell, /display: coachWorkspaceRoute \? undefined : "none",/);
 });
 
 test("AppShell opens a fresh draft for intent navigation but keeps the primary session otherwise", async () => {
@@ -299,17 +327,23 @@ test("onboarding requires a Provider and enabled desktop capture before completi
   assert.match(styles, /task3-onboarding-status span::before/);
 });
 
-test("KovaaK onboarding is optional and uses the shared identity-free connection panel", async () => {
+test("KovaaK onboarding step is retired while the shared connection panel stays in Settings", async () => {
   const onboarding = await source("components/task3/OnboardingFlow.tsx");
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
   const panel = await source("components/kovaak/KovaaKConnectionPanel.tsx");
-  assert.match(onboarding, /KovaaKConnectionPanel/);
-  assert.match(onboarding, /可选/);
+  // 0912 点点拍板：onboarding 收敛为两步，KovaaK 连接不再引导，仍可在设置中连接。
+  assert.doesNotMatch(onboarding, /KovaaKConnectionPanel/);
+  assert.match(onboarding, /useState<1 \| 2>\(1\)/);
+  assert.match(onboarding, /共 2 步/);
+  assert.doesNotMatch(onboarding, /共 3 步|setStep\(3\)|step !== 3/);
+  assert.match(settings, /<KovaaKConnectionPanel context="settings" \/>/);
   assert.match(panel, /getKovaaKConnection/);
   assert.match(panel, /saveKovaaKConnection/);
   assert.match(panel, /refreshKovaaKConnection/);
   assert.match(panel, /deleteKovaaKConnection/);
   assert.match(panel, /getKovaaKScores/);
-  assert.match(panel, /aiming-cookie\.ui\.coach-pending-intent/);
+  // 0912 点点拍板：成绩单不上屏，Coach 意图触发器随之退役（Coach 侧后台读取保留）。
+  assert.doesNotMatch(panel, /COACH_PENDING_INTENT_KEY|aiming-cookie:coach-kovaak-intent/);
   assert.doesNotMatch(panel, /syncKovaaKScores|steam_id|indexedDB/);
   assert.doesNotMatch(panel, /Storage\.setItem\([^\n]*(?:steamProfile|steam_profile|STEAM_ID|STEAM_PROFILE)/);
 });

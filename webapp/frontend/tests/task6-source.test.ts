@@ -15,7 +15,8 @@ test("Coach shell renders the existing full workspace in the main column", async
   const panel = await source("components/task6/CoachPanel.tsx");
   const styles = await source("components/task6/task6.css");
   assert.match(appShell, /<CoachPanel/);
-  assert.match(appShell, /layoutMode="full"/);
+  // layoutMode 死 prop 已删：唯一调用点固定 full 档，无 pane 后缀派生。
+  assert.doesNotMatch(appShell, /layoutMode/);
   assert.match(appShell, /data-session-rail/);
   assert.doesNotMatch(appShell, /CoachSidebar/);
   assert.match(appStyles, /task3-workspace\[data-session-rail="true"\]/);
@@ -35,7 +36,7 @@ test("Coach availability and empty states keep separate responsive semantics", a
   assert.doesNotMatch(panel, /<span className="task6-coach-state" data-state=/);
   assert.match(shell, /className="task3-coach-status-dot"\s+data-state=\{capability\}/);
   assert.match(shellStyles, /\.task3-coach-status-dot\[data-state="ready"\]/);
-  assert.match(styles, /\.task6-coach-context-line\s*\{[\s\S]*overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(styles, /\.task6-coach-context-line\s*\{[\s\S]*overflow-wrap:\s*anywhere/);
   assert.match(styles, /\.task6-coach-panel > \.task6-coach-state\s*\{[\s\S]*white-space:\s*normal/);
   assert.doesNotMatch(styles, /^\.task6-coach-state\s*\{/m);
 });
@@ -58,7 +59,7 @@ test("Settings route covers Provider, Profile, capture, theme, and Storage", asy
     assert.match(settings, new RegExp(label));
   }
   assert.match(settings, /useTheme/);
-  assert.match(settings, /Stats 自动读取优先/);
+  assert.match(settings, /读取失败时才使用的默认值/);
   assert.match(settings, /总占用/);
   // Provider 的 OAuth 授权动作与其状态文案随主从式重做搬进分区组件。
   assert.match(providerSection, /getProviderAuthOperation/);
@@ -77,47 +78,53 @@ test("Settings reuses the in-memory snapshot when revisiting and forces refresh 
   assert.match(settings, /await refresh\(true\)/);
 });
 
-test("Settings section navigation follows the current URL hash", async () => {
+test("Settings hash deep links map old anchor ids onto the new tabs", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   assert.match(settings, /window\.location\.hash\.slice\(1\)/);
   assert.match(settings, /window\.addEventListener\("hashchange", syncActiveNav\)/);
   assert.match(settings, /window\.removeEventListener\("hashchange", syncActiveNav\)/);
   assert.doesNotMatch(settings, /const activeNav = "llm-provider"/);
+  // 分区切换化后左栏点击只写 state；hash 深链经别名映射落到对应屏，
+  // 历史页的 /settings#kovaak-directories 等旧锚点链接继续可达。
+  assert.match(settings, /HASH_SECTION_ALIASES\[hash\] \?\? NAV_ITEMS\[0\]\.id/);
+  assert.match(settings, /"kovaak-directories": "kovaak"/);
+  assert.match(settings, /"external-telemetry": "capture"/);
+  assert.match(settings, /"app-update": "general"/);
 });
 
 test("Settings section navigation stays visible while the content scrolls", async () => {
-  const styles = await source("components/task6/task6.css");
-  // 设置 overlay 从应用工具栏（48px）下沿开始，左栏 sticky 贴住可视顶，
-  // 内容锚点落点保留呼吸间距——导航与分区标题都不被遮挡。
-  assert.match(styles, /\.task6-settings-nav\s*\{[\s\S]*position:\s*sticky;[\s\S]*top:\s*0;/);
+  const styles = await source("components/task6/task6-settings.css");
+  // 设置 overlay 从应用工具栏（48px）下沿开始；内容锚点落点保留呼吸间距
+  // ——导航与分区标题都不被遮挡。（旧 sticky 断言随 v6 面板化失效：nav 实为
+  // 随面板 stretch，此前仅误匹配已退役的 .task6-coach-top，一并删除。）
   assert.match(styles, /\.task6-settings-section\s*\{[\s\S]*scroll-margin-top:\s*var\(--space-4\);/);
 });
 
 test("Settings hides section navigation at the narrow breakpoint", async () => {
-  const styles = await source("components/task6/task6.css");
+  const styles = await source("components/task6/task6-settings.css");
   assert.match(styles, /@media \(max-width: 839px\)[\s\S]*\.task6-settings-nav\s*\{[\s\S]*display:\s*none;/);
 });
 
-test("Settings keeps Profile actions together and moves boundary copy into an accessible tooltip", async () => {
+test("Settings keeps the Profile override as a single three-state card action", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
-  const styles = await source("components/task6/task6.css");
-  assert.match(settings, /className="task6-profile-actions"/);
-  assert.match(settings, /variant="danger">删除<\/Button>/);
-  assert.match(settings, /aria-describedby="task6-profile-help"/);
-  assert.match(settings, /id="task6-profile-help" role="tooltip"/);
+  const styles = await source("components/task6/task6-settings.css");
+  // 三态按钮（0912 拍板）：灰「保存」（无输入，禁用）→ 橙「保存」（有未保存输入）
+  // →「删除」（已覆盖，点击退回 Stats 读取值）。
+  assert.match(settings, /profileOverrideActive \? \(/);
+  assert.match(settings, /disabled=\{!profileDirty \|\| !profileHasInput\}/);
+  assert.match(settings, /variant="primary">删除<\/Button>/);
+  assert.doesNotMatch(settings, /aria-describedby="task6-profile-help"/);
   assert.doesNotMatch(settings, /<p className="task6-muted">Stats 自动读取优先/);
   assert.doesNotMatch(settings, /profile_default/);
   assert.doesNotMatch(settings, /偏好只保存在本机/);
-  assert.match(styles, /\.task6-profile-summary\s*\{[\s\S]*position:\s*relative;[\s\S]*flex:\s*1;/);
-  assert.match(styles, /\.task6-info\s*\{[\s\S]*position:\s*static;/);
+  assert.match(styles, /\.task6-card-actions\s*\{[^}]*justify-content:\s*flex-end/);
 });
 
-test("Settings displays the latest Stats calibration before Profile fallback values", async () => {
+test("Settings feeds the latest Stats calibration into the Profile placeholders", async () => {
   const settings = await source("components/task6/SettingsWorkspace.tsx");
   assert.match(settings, /run\.stats_calibration/);
-  assert.match(settings, /latestStatsCalibration\?\.dpi \?\? calibration\?\.dpi/);
-  assert.match(settings, /latestStatsCalibration\?\.sensitivity \?\? calibration\?\.sensitivity/);
-  assert.match(settings, /latestStatsCalibration\?\.fov/);
+  assert.match(settings, /latestStatsCalibration\?\.cm_per_360 != null/);
+  assert.match(settings, /latestStatsCalibration\?\.fov != null/);
 });
 
 test("Settings provider wizard selects match the shared field height", async () => {
@@ -205,7 +212,8 @@ test("Settings and Coach use primitives and expose focus-safe dialogs", async ()
 test("KovaaK and Coach status colors follow their semantic state", async () => {
   const panel = await source("components/kovaak/KovaaKConnectionPanel.tsx");
   const coach = await source("components/task6/CoachPanel.tsx");
-  assert.match(panel, /feedback\.tone === "success"\s*\? <Status tone="success">/);
+  // 0912 点点拍板：成功反馈是裸绿字（不带 Status 框）。
+  assert.match(panel, /feedback\.tone === "success"\s*\? <span className="task6-ok">/);
   assert.doesNotMatch(panel, /feedback\.tone === "success" \? "info"/);
   assert.match(coach, /item\.status === "completed" \? "success"/);
 });
@@ -215,16 +223,16 @@ test("Settings hosts the KovaaK connection surface without adding a Benchmark ro
   const panel = await source("components/kovaak/KovaaKConnectionPanel.tsx");
   const fixtures = await source("fixtures/task7-fixtures.ts");
   assert.match(settings, /KovaaKConnectionPanel/);
-  assert.match(panel, /KovaaK 成绩/);
-  assert.match(panel, /S2 训练单/);
-  assert.doesNotMatch(panel, /Viscose S2/);
-  assert.match(panel, /aiming-cookie:coach-kovaak-intent/);
-  assert.match(panel, /sessionStorage\.setItem/);
-  assert.match(panel, /window\.location\.assign\("\/history"\)/);
-  assert.match(panel, /Control Tracking|Reactive Tracking|Flick Tech|Click Timing/);
-  assert.match(panel, /该 ID 会保存在本机/);
-  assert.match(panel, /不会发送给 Coach Provider/);
-  assert.match(panel, /保存在本机，不回显/);
+  // 0912 点点拍板：S2 Benchmark 成绩单有版权不上屏——连接后只显示已连接，
+  // 全界面不出现 S2 字样（改叫 KovaaKs/Steam 在线成绩）；数据留给 Coach 后台读取。
+  assert.match(panel, /已连接 KovaaKs 在线成绩/);
+  assert.doesNotMatch(panel, /S2|Benchmark|成绩单|score-row|让 Coach 看看/);
+  assert.doesNotMatch(settings, /S2|Benchmark/);
+  // 同意勾选（0912 点点拍板）：settings 屏退役，仅 onboarding 向导保留；
+  // 强制关系只在向导上下文靠 disabled 保持。
+  assert.match(panel, /context === "onboarding" && !identityConsent\)/);
+  assert.match(panel, /disabled=\{busy \|\| \(context === "onboarding" && !identityConsent\)\}/);
+  assert.doesNotMatch(panel, /这不是 Aiming Cookie 账号连接/);
   assert.doesNotMatch(panel, /不会保存或展示|仅读取时本次使用/);
   assert.doesNotMatch(panel, /createCoachAgentRun|training-plan|execution|retest/);
   assert.doesNotMatch(settings, /Benchmark/);
@@ -236,12 +244,12 @@ test("Settings hosts the KovaaK connection surface without adding a Benchmark ro
   assert.doesNotMatch(unavailableScoresFixture, /黄金 III|黄金 I|白银 I/);
 });
 
-test("Settings keeps its narrow tooltip inside the viewport and removes unreachable mobile nav animation", async () => {
-  const styles = await source("components/task6/task6.css");
-  assert.match(styles, /\.task6-info-tooltip\s*{[^}]*left:\s*0;[^}]*right:\s*auto;/s);
+test("Settings retires the Stats tooltip with its block and removes unreachable mobile nav animation", async () => {
+  // narrow 断点的滑窗需要 839px 块与 reduced-motion 标记同串（分跨两文件）。
+  const styles = `${await source("components/task6/task6-settings.css")}\n${await source("components/task6/task6.css")}`;
+  // 0912 起 Stats 只读块整体退役，tooltip 基类与 reduced-motion 覆盖随块清理。
+  assert.doesNotMatch(styles, /task6-info-tooltip/);
   assert.doesNotMatch(styles, /task6-settings-open/);
-  assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)\s*\{[^}]*\.task6-info-trigger:hover[^}]*\}[^}]*\.task6-info:hover \.task6-info-tooltip\s*\{[^}]*\}\s*\}/);
-  assert.match(styles, /\.task6-info:focus-within \.task6-info-tooltip/);
   const narrow = styles.slice(
     styles.indexOf("@media (max-width: 839px)"),
     styles.indexOf("@media (prefers-reduced-motion: reduce)"),
@@ -347,7 +355,8 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.match(coach, /task6-training-item-actions/);
   assert.doesNotMatch(coach, /task6-training-actions/);
   assert.match(coach, /在 KovaaK 中开始/);
-  assert.match(coach, /scenario_profile_ref/);
+  assert.match(coach, /display_name/);
+  assert.match(coach, /kind === "scenario"/);
   assert.match(coach, /正在理解问题和分析上下文/);
   assert.match(coach, /读取已附加分析/);
   assert.match(coach, /尚未绑定可启动的 KovaaK 场景/);
@@ -385,20 +394,61 @@ test("Coach composer uses a raised input surface without an outer divider", asyn
 test("Coach current training animates expand and collapse without leaving interactive hidden content", async () => {
   const coach = await source("components/task6/CoachPanel.tsx");
   const styles = await source("components/task6/task6.css");
-  assert.match(coach, /useAnimatedPresence\(trainingExpanded,\s*180\)/);
+  // 0912 逐帧审计改约（推翻 0828 的 absolute 收起法）：closed 态瞬时切
+  // position:absolute + inset-inline 会让文字在 200ms 淡出期重排成一字一行
+  // 的竖窄条（真机逐帧实锤）。收起改走 grid 行高塌缩——两种状态都在文档
+  // 流内、宽度全程不变、inner 裁剪；exitMs 260 > 200ms 过渡，离场卸载不剪
+  // 掉塌缩动画的尾巴。
+  assert.match(coach, /useAnimatedPresence\(trainingExpanded,\s*260\)/);
   assert.match(coach, /className="task6-training-reveal"/);
   assert.match(coach, /data-state=\{trainingPresence\.state\}/);
   assert.match(coach, /aria-hidden=\{!trainingExpanded \|\| undefined\}/);
   assert.match(coach, /inert=\{!trainingExpanded \|\| undefined\}/);
-  assert.match(styles, /\.task6-training-reveal\s*\{[\s\S]*opacity:\s*0;[\s\S]*translateY\(-4px\)[\s\S]*transition:\s*opacity var\(--duration-surface\) var\(--ease-out/);
-  // 红线（缩窄 0828）：训练卡动画不允许 grid-template-rows 方案；该技术
-  // 已被 .task6-collapse 的折叠显隐动画采用（另一合同），不再全局禁。
-  const revealRules = styles.match(/\.task6-training-reveal[^{]*\{[^}]*\}/g) ?? [];
-  assert.ok(revealRules.length > 0, "training reveal rules must exist");
-  for (const rule of revealRules) assert.doesNotMatch(rule, /grid-template-rows/);
-  assert.match(styles, /\.task6-training-reveal\[data-state="open"\]\s*\{[\s\S]*opacity:\s*1;[\s\S]*translateY\(0\)/);
-  assert.match(styles, /\.task6-training-reveal\[data-state="closed"\]\s*\{[\s\S]*position:\s*absolute;[\s\S]*pointer-events:\s*none;/);
+  assert.match(styles, /\.task6-training-reveal\s*\{[^}]*grid-template-rows:\s*0fr;[^}]*opacity:\s*0;/);
+  assert.match(styles, /\.task6-training-reveal\[data-state="open"\]\s*\{[^}]*grid-template-rows:\s*1fr;[^}]*opacity:\s*1;/);
+  // closed 态不得再脱离文档流（竖窄条重排的根源），隐藏内容不可点由 inert 保证。
+  assert.doesNotMatch(styles, /\.task6-training-reveal\[data-state="closed"\]/);
+  assert.match(styles, /\.task6-training-reveal-inner\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/);
   assert.match(styles, /prefers-reduced-motion:\s*reduce[\s\S]*\.task6-training-reveal/);
+});
+
+test("Coach training chip morphs as one container instead of growing a card underneath", async () => {
+  const coach = await source("components/task6/CoachPanel.tsx");
+  const styles = await source("components/task6/task6.css");
+  const shellStyles = await source("components/task3/task3.css");
+  // 0912 改约：折叠↔展开是同一容器变形长大（对齐 ZCode 小胶囊→面板），
+  // chip 与 reveal 同住 .task6-training-pop，data-open 驱动宽度/圆角/底色形变。
+  assert.match(coach, /className="task6-training-pop"/);
+  assert.match(coach, /data-open=\{trainingExpanded \|\| undefined\}/);
+  // 折叠态自然宽写进 --pop-folded-w（max-content 不可插值，必须量出像素）。
+  assert.match(coach, /setProperty\("--pop-folded-w"/);
+  assert.match(styles, /\.task6-training-pop\s*\{[^}]*width:\s*var\(--pop-folded-w\)/);
+  assert.match(styles, /\.task6-training-pop\s*\{[^}]*transition:[^}]*width var\(--duration-surface\)/);
+  assert.match(styles, /\.task6-training-pop\[data-open\]\s*\{[^}]*width:\s*var\(--pop-open-w\)[^}]*border-radius:\s*var\(--radius-lg\)/);
+  // 0912 返工：展开态收窄到 300px，且只有背景＋描边（无阴影、无橙色光）。
+  assert.match(styles, /--pop-open-w:\s*min\(300px,\s*100%\)/);
+  assert.doesNotMatch(styles, /\.task6-training-pop\[data-open\]\s*\{[^}]*box-shadow/);
+  // 0912 折叠态改实底：container-high + 描边保留，hover 升 highest。
+  assert.match(styles, /\.task6-training-pop\s*\{[^}]*background:\s*var\(--surface-container-high\)/);
+  assert.match(styles, /\.task6-training-pop:not\(\[data-open\]\):hover\s*\{[^}]*background:\s*var\(--surface-container-highest\)/);
+  // caret 合同：折叠向右、展开向下。
+  assert.match(styles, /\.task6-training-chip-caret\s*\{[^}]*transform:\s*rotate\(-90deg\)/);
+  assert.match(styles, /\.task6-training-pop\[data-open\]\s+\.task6-training-chip-caret\s*\{[^}]*transform:\s*rotate\(0deg\)/);
+  // 空态不再用蓝框 Notice：面板内文案 + 一键让 Coach 排计划（只填不发）。
+  assert.doesNotMatch(coach, /<Notice/);
+  assert.match(coach, /className="task6-training-pop-empty"/);
+  assert.match(coach, /setDraft\("帮我安排一个训练计划"\)/);
+  assert.match(coach, /requestAnimationFrame\(\(\) => textareaRef\.current\?\.focus\(\)\)/);
+  // 键盘可达才画环（鼠标点击展开不该常驻橙圈）。
+  assert.match(styles, /\.task6-training-pop:has\(:focus-visible\)\s*\{[^}]*outline:\s*2px solid var\(--primary\)/);
+  assert.doesNotMatch(styles, /\.task6-training-pop:focus-within/);
+  // reduced-motion 名单含容器形变与 caret 旋转。
+  assert.match(styles, /prefers-reduced-motion[\s\S]*\.task6-training-pop,[\s\S]*\.task6-training-chip-caret\s*\{[^}]*transition:\s*none/);
+  // 视频面板打开时训练胶囊整层淡出（opacity+visibility，pointer-events 立即失效），
+  // 关闭即回；过渡 150ms = --duration-fast，reduced-motion 下瞬切。
+  assert.match(styles, /\.task6-coach-floating\s*\{[^}]*opacity:\s*1;[^}]*transition:[^}]*opacity var\(--duration-fast\)/);
+  assert.match(shellStyles, /\.task3-coach-view\[data-video-open="true"\]\s+\.task6-coach-floating\s*\{[^}]*opacity:\s*0;[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none/);
+  assert.match(styles, /prefers-reduced-motion[\s\S]*\.task6-coach-floating,/);
 });
 
 test("Coach activity collapse animates height and the thinking block auto-manages open state", async () => {
@@ -505,4 +555,33 @@ test("Discussion bar pins at most three finished chips and folds the rest behind
   // 下拉样式：绝对定位悬浮层挂在吸顶条右缘，宽度有界不溢出面板。
   assert.match(styles, /\.task6-discussion-menu\s*\{[^}]*position:\s*absolute;[^}]*top:\s*calc\(100% \+ var\(--space-1\)\);[^}]*right:\s*var\(--space-4\);[^}]*max-width:\s*320px;[^}]*\}/s);
   assert.match(styles, /\.task6-discussion-item/);
+});
+
+test("retired coach skeleton classes stay dead in task6.css and task3.css", async () => {
+  const styles = await source("components/task6/task6.css");
+  const task3Styles = await source("components/task3/task3.css");
+  // 0910 清理：旧 Coach 骨架类（sidebar/scrim/resizer/top/body/context、
+  // task3 rail/content）已核实 tsx 零引用并删除；不得复活。
+  // 注意 .task6-coach-contexts（复数）仍在使用，\b 词边界不得误伤。
+  for (const name of [
+    "task6-coach-top",
+    "task6-coach-body",
+    "task6-coach-context",
+    "task6-resizer",
+    "task6-coach-sidebar",
+    "task6-coach-scrim",
+  ]) {
+    assert.doesNotMatch(styles, new RegExp(`${name}\\b`), name);
+  }
+  for (const name of ["task3-coach-rail", "task3-coach-content"]) {
+    assert.doesNotMatch(task3Styles, new RegExp(`${name}\\b`), name);
+  }
+});
+
+test("settings keeps 应用更新 reachable as a 通用 subsection (0911 审计 §12.7)", async () => {
+  const settings = await source("components/task6/SettingsWorkspace.tsx");
+  // 分区切换化后应用更新不再是独立分区/导航项：收进置顶「通用」屏三小节
+  // 之一，通用永远在导航里，审计要求的「可达」继续成立。
+  assert.match(settings, /\{ id: "general", label: "通用" \}/);
+  assert.match(settings, /task6-profile-group-title">应用更新/);
 });

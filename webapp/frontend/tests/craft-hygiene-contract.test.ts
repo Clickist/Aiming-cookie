@@ -125,7 +125,8 @@ test("sending while a run is active enqueues a visible chip instead of swallowin
   const guard = coachPanel.slice(sendStart, guardEnd);
   // 批 5 编排取代批 1 的 notify 止血：运行中发送进可见队列 chips
   // （Cline #12226 丢消息教训——每条可视可编辑可删）。
-  assert.match(guard, /enqueueQueuedItem\(content\)/);
+  // 0911：入队携带结构化分析引用（refs 随 chip 走，发送时一并挂载）。
+  assert.match(guard, /enqueueQueuedItem\(content, refs\.length \? refs : undefined\)/);
   // 受理即清空输入＝移入而非复制；需要改写时走 chip 的回填编辑。
-  assert.match(guard, /enqueueQueuedItem\(content\);\s*setDraft\(""\);/);
+  assert.match(guard, /enqueueQueuedItem\(content, refs\.length \? refs : undefined\);\s*setDraft\(""\);/);
 });

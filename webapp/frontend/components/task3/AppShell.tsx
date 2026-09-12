@@ -10,11 +10,11 @@ import {
   getDefaultProviderStatus,
   getProductState,
   listCoachSessions,
-  listSessions,
   updateCoachSession,
 } from "@/lib/api";
 import {
   ANALYSIS_AUTO_TEACH_EVENT,
+  COACH_SESSION_UPDATED_EVENT,
   buildAnalysisAutoTeachContent,
   markAnalysisAutoTaught,
   readAutoTaughtAnalyses,
@@ -25,10 +25,11 @@ import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { CoachAgentRunV1, CoachSessionOut, ProviderProfileState } from "@/lib/types";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
+import { ErrorBoundary } from "@/components/task3/ErrorBoundary";
 import { CoachPanel } from "@/components/task6/CoachPanel";
-import { CoachVideoPane } from "@/components/task7/CoachVideoPane";
+import { CoachVideoPane, invalidateAnalysisPresentationCache } from "@/components/task7/CoachVideoPane";
 import SessionRail, { type SessionRailSession } from "@/components/task7/SessionRail";
-import { startWindowDragging, TauriWindowControls } from "@/components/task3/TauriWindowControls";
+import { startWindowDragging, startWindowDraggingOnBackground, TauriWindowControls } from "@/components/task3/TauriWindowControls";
 import { UpdatePrompt } from "@/components/task3/UpdatePrompt";
 import { Toast, useAnimatedPresence } from "@/ui/primitives";
 
@@ -61,7 +62,20 @@ export function AppShell({ children }: { children: ReactNode }) {
   // 冷启动只尝试恢复一次「上次最后在看的会话」；会话列表未加载前不消耗这次机会。
   const hasRestoredLastSessionRef = useRef(false);
   const [draftSession, setDraftSession] = useState(false);
+  // 首条发送交接窗（0912 审计）：新会话已建、列表刷新在途的窗口里 draft 条目
+  // 已撤、真实条目还没进列表——侧栏条目凭空闪没。这里记住交接中的会话 id，
+  // 渲染时给侧栏补一条占位，列表追平后自然让位。
+  const [handoverSessionId, setHandoverSessionId] = useState<number | null>(null);
   const [videoTarget, setVideoTarget] = useState<CoachVideoTarget | null>(null);
+  // 当前会话 assistant 讲解文本（CoachPanel 上报）：视频面板回看 chips
+  // 跟随正文 @time，与正文引用同一份时间锚点。
+  const [coachAssistantTexts, setCoachAssistantTexts] = useState<ReadonlyArray<string>>([]);
+  const handleCoachMessagesChange = useCallback((texts: ReadonlyArray<string>) => {
+    setCoachAssistantTexts((current) =>
+      current.length === texts.length && current.every((text, index) => text === texts[index])
+        ? current
+        : texts);
+  }, []);
   // 视频面板开关动效（0827 拍板 reveal/cover 模型）：关闭先置 closing 让对话
   // 面板立即滑回盖住视频面板（data-video-open 随 closing 提前翻），滑完再真正
   // 卸载。面板绝对定位不占布局，提前翻状态不会引起任何回流挤压。
@@ -275,13 +289,35 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (draftSession) {
+      pendingBindSessionIdRef.current = null;
+      setHandoverSessionId(null);
       if (selectedCoachSessionId !== null) setSelectedCoachSessionId(null);
       return;
+    }
+    // 交接窗钉扎：新会话绑定完成（选择到位或列表已含）或用户改道别处时
+    // 解除；窗口内保持空选择（顶栏自然渲染「新对话」占位），不跑任何兜底。
+    const pendingBind = pendingBindSessionIdRef.current;
+    if (pendingBind !== null) {
+      if (
+        selectedCoachSessionId === pendingBind
+        || (routeSessionId !== null && routeSessionId !== pendingBind)
+        || coachSessions.some((session) => Number(session.id) === pendingBind)
+      ) {
+        pendingBindSessionIdRef.current = null;
+        setHandoverSessionId(null);
+      } else {
+        return;
+      }
     }
     if (routeSessionId !== null && coachSessions.some((session) => Number(session.id) === routeSessionId)) {
       setSelectedCoachSessionId(routeSessionId);
       return;
     }
+    // 路由指向的会话还没出现在已加载列表里：保持当前选择（null＝顶栏自然
+    // 渲染「新对话」占位），等 reloadCoachSessions 把列表追平后再绑定。
+    // 绝不落到下面的 lastViewed/primary 兜底——回落会把顶栏/消息区闪成旧
+    // 会话再自愈，删除当前会话后跳陈旧会话（§12.5 补遗）同此根。
+    if (routeSessionId !== null) return;
     if (selectedCoachSessionId !== null && coachSessions.some((session) => Number(session.id) === selectedCoachSessionId)) {
       return;
     }
@@ -353,8 +389,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     const handleSessionUpdated = () => {
       void reloadCoachSessions();
     };
-    window.addEventListener("aiming-cookie:coach-session-updated", handleSessionUpdated);
-    return () => window.removeEventListener("aiming-cookie:coach-session-updated", handleSessionUpdated);
+    window.addEventListener(COACH_SESSION_UPDATED_EVENT, handleSessionUpdated);
+    return () => window.removeEventListener(COACH_SESSION_UPDATED_EVENT, handleSessionUpdated);
   }, [reloadCoachSessions]);
 
   // Coach 回合活跃上报的落点：自动开讲据此让路（见下方 handleAutoTeach）。
@@ -363,7 +399,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     activeCoachRunRef.current = active;
   }, []);
 
-  // 分析完成自动开讲：AnalysisWorkspace 活体观察到 done 时派发事件；这里在
+  // 分析完成自动开讲：AnalysisWorkspace 活体观察与 CoachPanel 列表轮询
+  // 观察到 done 时派发同一事件；这里在
   // Provider 可用时为该分析创建一次 Coach run（每个 Analysis 只开讲一次），
   // 由 CoachPanel 的 softStartRun 承接展示。当前分析只由 Coach 的
   // analysis.create_from_run 触发且该回合会阻塞到分析完成、直接讲述结果，
@@ -374,7 +411,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     const handleAutoTeach = async (event: Event) => {
       const detail = (event as CustomEvent<{ analysis_ref?: unknown }>).detail;
       const analysisRef = detail?.analysis_ref;
-      if (typeof analysisRef !== "string" || !/^analysis:[1-9][0-9]*$/.test(analysisRef)) return;
+      if (typeof analysisRef !== "string") return;
+      const analysisMatch = /^analysis:([1-9][0-9]*)$/.exec(analysisRef);
+      if (!analysisMatch) return;
+      // 同一分析重新分析后缓存结果是旧态：开讲入口单点失效呈现缓存，
+      // 视频面板下次打开即拉新（去重判断之前调用，覆盖已开讲过的重分析）。
+      invalidateAnalysisPresentationCache(Number(analysisMatch[1]));
       if (seen.has(analysisRef)) return;
       if (activeCoachRunRef.current) return;
       seen.add(analysisRef);
@@ -387,7 +429,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         );
         setSoftStartRun(run);
         setSelectedCoachSessionId((current) => (current === run.session_id ? current : run.session_id));
-        window.dispatchEvent(new CustomEvent("aiming-cookie:coach-session-updated"));
+        window.dispatchEvent(new CustomEvent(COACH_SESSION_UPDATED_EVENT));
       } catch {
         // 分析完成不再弹 Toast；自动开讲结果由 Coach 面板的动作指示器呈现。
       }
@@ -395,47 +437,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.addEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);
     return () => window.removeEventListener(ANALYSIS_AUTO_TEACH_EVENT, handleAutoTeach);
   }, [capability, selectedCoachSessionId]);
-
-  // 自动开讲不能依赖用户守在分析页：轮询会话列表，把「本生命周期内
-  // 观察到 running → done」的分析以同一事件派发（防重沿用 localStorage）。
-  // 只触发新鲜转换，翻旧记录不开讲。
-  useEffect(() => {
-    const seenRunning = new Set<number>();
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const tick = async () => {
-      if (cancelled) return;
-      try {
-        const response = await listSessions();
-        if (cancelled) return;
-        const finished: number[] = [];
-        for (const item of response.sessions) {
-          if (item.status === "queued" || item.status === "running") {
-            seenRunning.add(item.id);
-          } else if (item.status === "done" && seenRunning.has(item.id)) {
-            seenRunning.delete(item.id);
-            finished.push(item.id);
-          } else {
-            seenRunning.delete(item.id);
-          }
-        }
-        for (const id of finished) {
-          window.dispatchEvent(new CustomEvent(ANALYSIS_AUTO_TEACH_EVENT, {
-            detail: { analysis_ref: `analysis:${id}` },
-          }));
-        }
-      } catch {
-        // 本地 runtime 暂不可达：下一轮重试。
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, 5000);
-      }
-    };
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
 
   const handleNewCoachSession = () => {
     setDraftSession(true);
@@ -446,11 +447,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   // 并发去重：双 Enter 窗口期内会同时调用 ensureCoachSession，共享同一次
   // 创建请求，避免一键产生多个空会话；完成或失败后清掉，下次调用重新创建。
   const ensureSessionInFlightRef = useRef<Promise<number | null> | null>(null);
+  // 首条发送交接窗钉扎（0911 审计 §12.3）：新会话已建、路由提交与列表刷新
+  // 在途的窗口里选择为空——lastViewed/primary 兜底一旦在这个窗口触发，就会
+  // 把标题/消息区闪成旧会话再自愈（发送窗内甚至把消息写进旧会话文件）。
+  const pendingBindSessionIdRef = useRef<number | null>(null);
   const ensureCoachSession = useCallback((): Promise<number | null> => {
     if (ensureSessionInFlightRef.current) return ensureSessionInFlightRef.current;
     const promise = (async () => {
       try {
         const session = await createCoachSession();
+        pendingBindSessionIdRef.current = session.id;
+        setHandoverSessionId(session.id);
         // 会话列表整表刷新不阻塞首条发送链（0910 点点报"等了半天没反应"）：
         // 大会话量下这次 GET 可能数秒，await 会把 run 的创建一直压在后面。
         // rail 稍后自行追平；这里只负责立刻切路由与消息区。
@@ -469,28 +476,42 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [reloadCoachSessions, router]);
 
   const handleArchiveCoachSession = async (session: SessionRailSession) => {
+    const sessionId = Number(session.id);
+    // 乐观摘选（0912 晚）：归档的就是当前会话时立刻回到空选择（空首页），
+    // 不等慢速列表刷新——否则被归档会话的整页视图（含错误卡）僵尸挂屏可达
+    // 十几秒（listCoachSessions 在大会话量下很慢）。
+    if (selectedCoachSessionId === sessionId) setSelectedCoachSessionId(null);
     try {
-      await updateCoachSession(Number(session.id), { status: "archived" });
+      await updateCoachSession(sessionId, { status: "archived" });
     } catch {
       notifySessionFeedback("未能归档会话，请重试。");
       return;
     }
     try {
-      await reloadCoachSessions(selectedCoachSessionId === Number(session.id) ? null : undefined);
+      await reloadCoachSessions(selectedCoachSessionId === sessionId ? null : undefined);
     } catch {
       notifySessionFeedback("操作已完成，但会话列表暂时未能刷新。");
     }
   };
 
   const handleDeleteCoachSession = async (session: SessionRailSession) => {
+    const sessionId = Number(session.id);
+    // 乐观移除：确认后立刻从侧栏消失，不等服务端往返（确认后 1-3s 才消失
+    // 像没点上，0911 审计 §四.8）；失败时 reload 从服务端取回真实列表。
+    setCoachSessions((current) => current.filter((item) => Number(item.id) !== sessionId));
+    // 乐观摘选（0912 晚）：删除的就是当前会话时立刻回空选择——选中态若等
+    // reloadCoachSessions（可达十几秒）才清，被删会话的整页视图会一直挂着。
+    if (selectedCoachSessionId === sessionId) setSelectedCoachSessionId(null);
     try {
-      await deleteCoachSession(Number(session.id));
+      await deleteCoachSession(sessionId);
     } catch {
       notifySessionFeedback("未能删除会话，请重试。");
+      void reloadCoachSessions().catch(() => {});
       return;
     }
+    notifySessionFeedback("会话已删除。");
     try {
-      await reloadCoachSessions(selectedCoachSessionId === Number(session.id) ? null : undefined);
+      await reloadCoachSessions(selectedCoachSessionId === sessionId ? null : undefined);
     } catch {
       notifySessionFeedback("操作已完成，但会话列表暂时未能刷新。");
     }
@@ -499,7 +520,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // v6：空对话首页无顶栏（点点拍板），窗口三键独立常浮。
   const [coachHomeActive, setCoachHomeActive] = useState(false);
 
-  if (shellHidden) return <>{children}</>;
+  if (shellHidden) return <ErrorBoundary>{children}</ErrorBoundary>;
 
   return (
     <div className="task3-app">
@@ -532,7 +553,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             onSettings={() => router.push("/settings")}
             onSoftDeleteSession={(session) => void handleDeleteCoachSession(session)}
             providerStatus={capability === "ready" ? "ready" : capability === "loading" ? "loading" : capability === "unavailable" ? "unavailable" : "waiting"}
-            sessions={draftSession ? [{ id: "draft", title: "新对话", kind: "conversation" }, ...coachSessions] : coachSessions}
+                    sessions={
+                      draftSession
+                        ? [{ id: "draft", title: "新对话", kind: "conversation" }, ...coachSessions]
+                        : handoverSessionId !== null && !coachSessions.some((session) => Number(session.id) === handoverSessionId)
+                          ? [{ id: handoverSessionId, title: "新对话", kind: "conversation" }, ...coachSessions]
+                          : coachSessions
+                    }
           />
         ) : null}
         <main
@@ -553,12 +580,23 @@ export function AppShell({ children }: { children: ReactNode }) {
                   "--task3-conv-w": conversationWidth != null ? `${conversationWidth}px` : undefined,
                 } as CSSProperties}
               >
-                {coachWorkspaceRoute ? (
-                  <>
+                {/* 保持挂载（点点拍板）：切到 /history、/settings 不卸载
+                    CoachPanel/顶栏/stage，隐藏完全依赖外层 div 的 display:none
+                    ——回来不用重新拉消息，SSE 与流式思考段不丢。 */}
+                <ErrorBoundary>
                     {/* 共用顶栏（v6）：状态点 + 模型命名的会话标题；固定不动，
                         视频/对话面板的开合只发生在下方交换区。空对话首页
                         不渲染（窗口三键由全局浮层承担）。 */}
-                    {coachHomeActive ? null : (
+                    {coachHomeActive ? (
+                      /* 首页无顶栏（v6 拍板）保留，但顶部槽位放一条透明拖拽
+                         带：首页右侧顶栏也能拖窗口，不再只能拖 logo 区
+                         （0911 点点）。左键空白才拖（OnBackground 助手）。 */
+                      <div
+                        aria-hidden="true"
+                        className="task3-home-drag-band"
+                        onMouseDown={startWindowDraggingOnBackground}
+                      />
+                    ) : (
                       <div
                         className="task3-coach-topbar"
                         onMouseDown={(event) => {
@@ -581,13 +619,14 @@ export function AppShell({ children }: { children: ReactNode }) {
                       </div>
                     )}
                     <div className="task3-coach-stage">
-                      {videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} initialTimeMs={videoTarget.timeMs} jumpSeq={videoTarget.seq} onClose={closeVideoPane} /> : null}
+                      {videoTarget ? <CoachVideoPane analysisRef={videoTarget.analysisRef} coachMessages={coachAssistantTexts} initialTimeMs={videoTarget.timeMs} jumpSeq={videoTarget.seq} onClose={closeVideoPane} /> : null}
                       <div className="task3-coach-conversation">
                   <CoachPanel
                     capability={capability}
                     draftSession={draftSession}
-                    layoutMode="full"
+                    handoverSessionId={handoverSessionId}
                     onActiveRunChange={handleCoachActiveRunChange}
+                    onCoachMessagesChange={handleCoachMessagesChange}
                     onEnsureSession={ensureCoachSession}
                     onHomeShellChange={setCoachHomeActive}
                     onOpenVideo={openVideoPane}
@@ -608,15 +647,14 @@ export function AppShell({ children }: { children: ReactNode }) {
                   />
                 ) : null}
                     </div>
-                  </>
-                ) : null}
+                </ErrorBoundary>
               </div>
               {!coachWorkspaceRoute && !settingsRoute ? (
                 <div
                   className="task3-page-view"
                   data-page-motion={historyPresence.state === "open" ? "open" : "opening"}
                 >
-                  {children}
+                  <ErrorBoundary>{children}</ErrorBoundary>
                 </div>
               ) : null}
             </>
@@ -633,7 +671,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             id={settingsRoute ? "main-content" : undefined}
             tabIndex={-1}
           >
-            {settingsOverlayChildren}
+            <ErrorBoundary>{settingsOverlayChildren}</ErrorBoundary>
           </main>
         ) : null}
       </div>

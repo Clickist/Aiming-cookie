@@ -158,6 +158,7 @@ const COMMAND_GLYPHS: Record<string, GlyphComponent> = {
   "kovaak_scores.lookup": IconSearch,
   "kovaak_scores.refresh_connected": IconSearch,
   "eloshapes.query": IconSearch,
+  "purchase_links.lookup": IconSearch,
   "profile.aiming.snapshot": IconSearch,
   "peripheral_profile.get": IconSearch,
   "history.trend": IconChart,
@@ -252,14 +253,25 @@ function StepBody({ step }: { step: CoachToolStep }) {
   );
 }
 
-/** 明细（参数/结果摘要）折叠体：done 步可展开时挂在这行 body 下方。 */
+/** 明细（参数/结果摘要）折叠体：done/fail 步可展开时挂在这行 body 下方。 */
 function StepDetail({ step, open }: { step: CoachToolStep; open: boolean }) {
-  const detail =
-    [step.argsPreview, step.resultPreview].find((value) => typeof value === "string" && value.trim().length > 0) ??
-    null;
+  const nonEmpty = (value: string | null | undefined): value is string =>
+    typeof value === "string" && value.trim().length > 0;
+  // fail 行明细＝命令＋报错都展示（stderr 才是用户展开的目的）；
+  // done 行维持单摘要（参数优先）。
+  const first = [step.argsPreview, step.resultPreview].find(nonEmpty);
+  const details = step.state === "fail"
+    ? [step.argsPreview, step.resultPreview].filter(nonEmpty)
+    : first
+      ? [first]
+      : [];
   return (
     <div className="task6-collapse" data-state={open ? "open" : "closed"} inert={!open || undefined}>
-      <div className="task6-collapse-inner">{detail ? <pre className="task6-tool-detail">{detail}</pre> : null}</div>
+      <div className="task6-collapse-inner">
+        {details.map((detail, index) => (
+          <pre className="task6-tool-detail" key={index}>{detail}</pre>
+        ))}
+      </div>
     </div>
   );
 }
@@ -284,10 +296,11 @@ function CaretToggle({ open, onToggle, label }: { open: boolean; onToggle: () =>
   );
 }
 
-/** 单步行（active/fail/done）：done 且带摘要时可展开明细。 */
+/** 单步行（active/fail/done）：done/fail 且带摘要时可展开明细——失败行
+    展开＝让用户看到命令与报错，永远打不开的红行等于没有反馈（0911 审计）。 */
 function WorkStepLine({ step }: { step: CoachToolStep }) {
   const [open, setOpen] = useState(false);
-  const expandable = step.state === "done" && hasStepDetail(step);
+  const expandable = (step.state === "done" || step.state === "fail") && hasStepDetail(step);
   const toggle = () => setOpen(!open);
   return (
     <li className="task6-tool-step" data-state={step.state}>
@@ -391,6 +404,8 @@ export function CoachWorkStream({
   segments: CoachWorkSegment[];
   stopped?: boolean;
 }) {
+  // 总折叠默认收起（0912 点点拍板）；重挂（新回合/切回归档）回到折叠态。
+  const [expanded, setExpanded] = useState(false);
   type Row =
     | { kind: "thinking"; segment: Extract<CoachWorkSegment, { kind: "thinking" }> }
     | { kind: "group"; label: string; steps: CoachToolStep[] }
@@ -418,34 +433,100 @@ export function CoachWorkStream({
   const visible = rows.filter((row) => row.kind !== "thinking" || row.segment.text.trim().length > 0 || row.segment.streaming);
   if (visible.length === 0 && !stopped) return null;
 
+  // 总折叠（0912 点点拍板，默认收起）：折叠行＝「已工作 m:ss」＋当前活动
+  // 摘要，展开才是完整交错时间线。时长：进行中走表（ElapsedTicker，起点＝
+  // 最早段 startedAtMs）；归档按段起点/冻结时长推算静态总时长，推不出退化
+  // 为不带时长的「工作过程」。摘要：流式思考＝「思考中」；活动工具步＝其
+  // label——折叠后 run 状态仍有可读出口。
+  let hasLive = false;
+  let startMs: number | null = null;
+  let endMs: number | null = null;
+  let activityLabel: string | null = null;
+  const noteStep = (step: CoachToolStep) => {
+    if (step.state === "active") {
+      hasLive = true;
+      activityLabel = activityLabel ?? step.label;
+    }
+    if (step.startedAtMs != null) {
+      startMs = startMs === null ? step.startedAtMs : Math.min(startMs, step.startedAtMs);
+      const stepEnd = step.state === "done" && step.durationMs != null
+        ? step.startedAtMs + step.durationMs
+        : step.startedAtMs;
+      endMs = endMs === null ? stepEnd : Math.max(endMs, stepEnd);
+    }
+  };
+  for (const row of visible) {
+    if (row.kind === "thinking") {
+      if (row.segment.streaming) {
+        hasLive = true;
+        activityLabel = activityLabel ?? "思考中";
+      }
+      if (row.segment.startedAtMs != null) {
+        startMs = startMs === null ? row.segment.startedAtMs : Math.min(startMs, row.segment.startedAtMs);
+        const segEnd = row.segment.frozenMs != null ? row.segment.startedAtMs + row.segment.frozenMs : null;
+        if (segEnd != null) endMs = endMs === null ? segEnd : Math.max(endMs, segEnd);
+      }
+    } else if (row.kind === "group") {
+      row.steps.forEach(noteStep);
+    } else {
+      noteStep(row.step);
+    }
+  }
+
   return (
-    <div aria-label="工作过程" className="task6-work-stream" role="list">
-      {visible.map((row, index) => {
-        if (row.kind === "thinking") {
-          const segment = row.segment;
-          return (
-            <CoachThinkingBlock
-              key={segment.key}
-              frozenSeconds={segment.frozenMs}
-              startedAtMs={segment.startedAtMs}
-              streaming={segment.streaming}
-              text={segment.text}
-            />
-          );
-        }
-        if (row.kind === "group") {
-          return <WorkGroupLine key={`g${index}`} label={row.label} steps={row.steps} />;
-        }
-        return <WorkStepLine key={row.step.key} step={row.step} />;
-      })}
-      {stopped ? (
-        <div className="task6-tool-step" data-state="stopped" role="listitem">
-          <CommandGlyph command={null} />
-          <span className="task6-tool-body">
-            <span className="task6-tool-label">回答已停止，可重新提问</span>
-          </span>
+    <div aria-label="工作过程" className="task6-work-stream" role="list" data-summarized="true">
+      <button
+        aria-expanded={expanded}
+        className="task6-work-summary"
+        onClick={() => setExpanded(!(expanded))}
+        type="button"
+      >
+        <IconChevronDown aria-hidden="true" className="task6-caret" data-open={expanded} />
+        {startMs != null ? (
+          hasLive ? (
+            <span className="task6-work-summary-label">
+              已工作&nbsp;<ElapsedTicker sinceMs={startMs} />
+            </span>
+          ) : endMs != null && endMs > startMs ? (
+            <span className="task6-work-summary-label">已工作 {formatDuration(endMs - startMs)}</span>
+          ) : (
+            <span className="task6-work-summary-label">工作过程</span>
+          )
+        ) : (
+          <span className="task6-work-summary-label">工作过程</span>
+        )}
+        {activityLabel ? <span className="task6-work-summary-activity">{activityLabel}</span> : null}
+      </button>
+      <div className="task6-collapse" data-state={expanded ? "open" : "closed"} inert={!expanded || undefined}>
+        <div className="task6-collapse-inner">
+          {visible.map((row, index) => {
+            if (row.kind === "thinking") {
+              const segment = row.segment;
+              return (
+                <CoachThinkingBlock
+                  key={segment.key}
+                  frozenSeconds={segment.frozenMs}
+                  startedAtMs={segment.startedAtMs}
+                  streaming={segment.streaming}
+                  text={segment.text}
+                />
+              );
+            }
+            if (row.kind === "group") {
+              return <WorkGroupLine key={`g${index}`} label={row.label} steps={row.steps} />;
+            }
+            return <WorkStepLine key={row.step.key} step={row.step} />;
+          })}
+          {stopped ? (
+            <div className="task6-tool-step" data-state="stopped" role="listitem">
+              <CommandGlyph command={null} />
+              <span className="task6-tool-body">
+                <span className="task6-tool-label">回答已停止，可重新提问</span>
+              </span>
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
