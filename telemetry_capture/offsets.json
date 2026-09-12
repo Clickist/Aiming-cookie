@@ -22,5 +22,12 @@
     "rva_slot_target": "0x5092A38",
     "rva_slot_scene": "0x514B4F8",
     "rva_blocks_expect": "0x53AA710"
+  },
+  "f16d359948b051469475e120a75344db277387a977cdc7f505c07c1f9d746f15": {
+    "label": "Steam E:\\SteamLibrary 2026-09-12 (95,048,704 B, TimeDateStamp 1788890319, buildid 25192921)",
+    "rva_guobjectarray": "0x56666F8",
+    "rva_slot_target": "0x531BD58",
+    "rva_slot_scene": "0x53D4E18",
+    "rva_blocks_expect": "0x5639290"
   }
 }

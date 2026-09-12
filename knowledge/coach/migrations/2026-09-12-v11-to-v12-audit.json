@@ -1,0 +1,115 @@
+{
+  "schema_version": "coach_knowledge_migration_audit.v3",
+  "source_registry_version": "2026-09-10.v11",
+  "target_registry_version": "2026-09-12.v12",
+  "generated_at": "2026-09-12",
+  "migration_kind": "coach_corpus_prescription_intake",
+  "summary": "Structured prescription-corpus intake: the 60 question→prescription pairs in .zcode/kb-prescriptions-2026-09-12/prescriptions.json enter the registry as 60 active entries under the prescription.* namespace, with the normalize-review.json merges applied. All 51 v11 entries are copied byte-identical (same entry_id, entry_version, fields and text); the 92 v11 sources are copied byte-identical and 30 new coach_first_party Bilibili sources are appended. Each new entry states the problem raw plus tags, the prescription raw with its scenario|method|mixed type, the three-state scenario availability (local / official with leaderboard_id / unresolved-as-transcribed), the video title plus source_file plus verbatim quote as provenance, and the confidence label. Community material stays at community_practice except low-confidence pairs, which are experimental; the medical red line is carried by the ergonomics entries and not asserted here. registry_version advances to 2026-09-12.v12; schema_version stays coach_knowledge_registry.v3; v11 remains loadable as history.",
+  "capability_discipline": {
+    "new_entry_supported_uses": [
+      "explanation_only",
+      "diagnosis_support",
+      "candidate_experiment"
+    ],
+    "community_paraphrase_ceiling": "corpus prescription content stays community_practice; low-confidence pairs are pinned to experimental",
+    "confidence_fidelity": "each entry's limitations names the source confidence honestly (high/medium/low); no confidence is upgraded or dropped",
+    "scenario_availability_fidelity": "local names are given as locally openable, official names carry their leaderboard_id, unresolved names are written as transcription-uncertain and never presented as a canonical official scenario",
+    "deterministic_query_boundary": "prescription.* entries are Coach-facing recommendation content and are excluded from query_registry, so diagnosis/advice candidate top-3 annotations and the advice expected_entry_ref gate are unchanged from v11",
+    "medical_red_line": "The prescription corpus adds no body/medical claims; persistent pain, numbness, or weakness still stops training and is referred to a doctor or rehabilitation professional."
+  },
+  "new_entry_namespace": "prescription.<pair-id>.<primary-tag>",
+  "added_entries": {
+    "count": 60,
+    "source_corpus": ".zcode/kb-prescriptions-2026-09-12/prescriptions.json (60 pairs)",
+    "normalization_merge": ".zcode/kb-prescriptions-2026-09-12/normalize-review.json (28 raw→normalized rows applied; scenarios upgrading unresolved→official: 42)",
+    "entry_ids": [
+      "prescription.p001.continuous-tracking-smooth",
+      "prescription.p002.fine-micro-adjustment",
+      "prescription.p003.practice-plateau",
+      "prescription.p004.continuous-tracking-smooth",
+      "prescription.p005.static-clicking-precision",
+      "prescription.p006.static-clicking-precision",
+      "prescription.p007.practice-plan-structure",
+      "prescription.p008.ergonomics-posture",
+      "prescription.p009.continuous-tracking-smooth",
+      "prescription.p010.fine-micro-adjustment",
+      "prescription.p011.target-switching-transition",
+      "prescription.p012.joint-role-division",
+      "prescription.p013.target-switching-transition",
+      "prescription.p014.static-clicking-terminal-control",
+      "prescription.p015.continuous-tracking-control",
+      "prescription.p016.joint-role-division",
+      "prescription.p017.static-clicking-precision",
+      "prescription.p018.sensitivity-selection",
+      "prescription.p019.static-clicking-flow",
+      "prescription.p020.continuous-tracking-reactive",
+      "prescription.p021.continuous-tracking-smooth",
+      "prescription.p022.continuous-tracking-smooth",
+      "prescription.p023.dynamic-clicking-reactive",
+      "prescription.p024.dynamic-clicking-speed",
+      "prescription.p025.static-clicking-speed",
+      "prescription.p026.tension-management",
+      "prescription.p027.joint-role-division",
+      "prescription.p028.fine-micro-adjustment",
+      "prescription.p029.static-clicking-terminal-control",
+      "prescription.p030.static-clicking-terminal-control",
+      "prescription.p031.joint-role-division",
+      "prescription.p032.static-clicking-speed",
+      "prescription.p033.practice-plan-structure",
+      "prescription.p034.continuous-tracking-control",
+      "prescription.p035.continuous-tracking-smooth",
+      "prescription.p036.practice-plan-structure",
+      "prescription.p037.continuous-tracking-reactive",
+      "prescription.p038.continuous-tracking-smooth",
+      "prescription.p039.target-switching-transition",
+      "prescription.p040.movement-aiming-control",
+      "prescription.p041.mousepad-friction",
+      "prescription.p042.sensor-alignment",
+      "prescription.p043.joint-role-division",
+      "prescription.p044.fine-micro-adjustment",
+      "prescription.p045.joint-role-division",
+      "prescription.p046.static-clicking-terminal-control",
+      "prescription.p047.movement-reading",
+      "prescription.p048.fine-micro-adjustment",
+      "prescription.p049.movement-aiming-control",
+      "prescription.p050.practice-plan-structure",
+      "prescription.p051.practice-intent",
+      "prescription.p052.practice-plateau",
+      "prescription.p053.practice-plan-structure",
+      "prescription.p054.static-clicking-speed",
+      "prescription.p055.practice-plan-structure",
+      "prescription.p056.practice-plan-structure",
+      "prescription.p057.joint-role-division",
+      "prescription.p058.reset-recentering",
+      "prescription.p059.practice-plan-structure",
+      "prescription.p060.practice-plateau"
+    ],
+    "topics_note": "topics use the 32 problem tags verbatim (aligned to v11 topics vocabulary plus the corpus's self-coined kebab-case tags). New tags outside the v11 topic vocabulary are limited to the four the README already calls out (fine-micro-adjustment, practice-plan-structure, tremor-control, wrist-health); the rest are recombinations of existing v11 family/subdomain words.",
+    "signals_note": "signals map each tag to the analyzer's canonical signal words (decel_frac, reverse_ratio, sparc, correction burden, tracking lag, post change error, switch transition, etc.); tags with no analyzer signal leave signals empty and are matched through metric_refs/topics instead."
+  },
+  "upgraded_entries": [],
+  "added_sources": {
+    "count": 30,
+    "note": "Each new corpus video is registered as community.prescription.<bv-id> at source_level coach_first_party, applicability all_families, supporting all eight prescription sections. 29 corpus videos already existed in v11 and are reused rather than duplicated."
+  },
+  "audited_unchanged": [
+    {
+      "scope": "v11 entries",
+      "note": "All 51 v11 entries are copied byte-identical; no entry_version change, no field change, no text change."
+    },
+    {
+      "scope": "v11 sources and signal_aliases",
+      "note": "The 92 v11 sources and the signal_aliases map are byte-identical; the 30 new sources are appended."
+    },
+    {
+      "scope": "deterministic annotations",
+      "note": "query_registry skips the prescription.* namespace, so diagnosis/advice knowledge_entry_refs stay at the v11 top-3."
+    }
+  ],
+  "approval": {
+    "approved_by": "点点",
+    "approved_at": "2026-09-12",
+    "scope": "处方语料入库：60 条新增、30 个新来源、v12 版本推进；基于老板给定的 prescriptions.json + normalize-review.json 生成",
+    "note": "训练推荐链路最后一环，接入 Coach 知识体系"
+  }
+}

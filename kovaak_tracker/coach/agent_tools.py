@@ -18,7 +18,6 @@ from typing import Any, Callable, Optional
 from .agent_kb import BY_TOPIC, KB
 from .diagnosis import CoachDiagnosis
 from .knowledge_registry import claim_ref, entry_ref, load_registry, query_registry
-from .knowledge import KNOWLEDGE
 from .planning import TrainingPlan
 
 # ---------------------------------------------------------------------------
@@ -384,8 +383,15 @@ def make_get_meta(diagnosis: CoachDiagnosis) -> Callable[[], dict[str, Any]]:
 def make_list_signals(diagnosis: CoachDiagnosis) -> Callable[[], dict[str, Any]]:
     def _handler() -> dict[str, Any]:
         sigs = sorted({i.signal for i in diagnosis.issues if i.signal})
-        # 同时报告 knowledge.py 里可查的 signal，便于 LLM 判断 fetch_knowledge 是否能命中
-        known = sorted(set(KNOWLEDGE.keys()))
+        # 与 make_fetch_knowledge 的 valid_signals 同源（当前注册表）——
+        # 报告的 key 必须和 fetch 实际能查到的一致，不再走 v1 兼容清单。
+        data = load_registry()
+        known = sorted({
+            item
+            for entry in data["entries"]
+            if entry["status"] == "active"
+            for item in entry["signals"]
+        })
         return {"signals_in_diagnosis": sigs, "knowledge_known_signals": known}
     return _handler
 

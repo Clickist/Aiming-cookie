@@ -104,7 +104,6 @@ from . import profiles
 
 _MATCH_THRESHOLD = 0.5
 _SEVERITY_WEIGHT = {"fix": 3, "watch": 2, "info": 1}
-_STATIC_REGISTRY_ENTRY_PREFIX = "knowledge:static.flicking-terminal-control@"
 _STATIC_OBSERVATION_REFS = {
     "reverse_ratio high": "metric.terminal_control",
     "submovement two-stage": "metric.terminal_control",
@@ -183,10 +182,10 @@ def _build_issues(findings):
                     for ref in f.metric_refs
                 ],
             )
-            knowledge_entry_refs = [
-                ref for ref in knowledge.entry_refs
-                if ref.startswith(_STATIC_REGISTRY_ENTRY_PREFIX)
-            ]
+            # 撤销"只留 terminal-control"的冻结期前缀过滤（09-10 拍板）：静态
+            # 标注恢复匹配器 top-3。v11 起匹配承接面扩大，过滤只会丢对症条目
+            # （sparc low 本应同时带上平滑度条目）。
+            knowledge_entry_refs = list(knowledge.entry_refs)
             if knowledge_entry_refs:
                 registry_version = knowledge.registry_version
             else:
