@@ -123,6 +123,49 @@ test("POST /v1/provider-profiles persists a builtin profile and returns the proj
   });
 });
 
+test("POST /v1/provider-profiles keeps the user display name for builtin profiles", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
+      kind: "builtin",
+      name: "我的 DeepSeek",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+    }));
+    assert.equal(created.statusCode, 201);
+    assert.equal((created.json as Record<string, unknown>).name, "我的 DeepSeek");
+    const stored = findStoredProfile(loadProviderStore(), (created.json as { id: number }).id);
+    assert.ok(stored);
+    if (stored.kind !== "builtin") assert.fail("expected a builtin profile");
+    assert.equal(stored.name, "我的 DeepSeek");
+
+    // 无 name 的旧式请求体不硬性要求命名：投影回落 provider_id。
+    const unnamed = await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
+    assert.equal(unnamed.statusCode, 201);
+    assert.equal((unnamed.json as Record<string, unknown>).name, "opencode-go");
+  });
+});
+
+test("PUT /v1/provider-profiles/{id} without a name keeps the stored builtin display name", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await createProfile(server, {
+      kind: "builtin",
+      name: "我的 DeepSeek",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+      api_key: "sk-live-key",
+    });
+    const updated = await request(server, "PUT", `/v1/provider-profiles/${created.id}`, JSON.stringify({
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-pro",
+    }));
+    assert.equal(updated.statusCode, 200);
+    assert.equal((updated.json as Record<string, unknown>).name, "我的 DeepSeek");
+  });
+});
+
 test("POST /v1/provider-profiles appends a second profile and keeps the first active", async () => {
   await withServer(async (server) => {
     await clearProfiles(server);
@@ -782,5 +825,167 @@ test("PUT /v1/provider-profiles/{id} with a new api_key replaces the credential"
     } else {
       assert.fail("expected an api_key credential");
     }
+  });
+});
+
+// ── 官方中转档余额（点点 0912 拍板）：new-api 计费兼容端点，sidecar 算好下发 ──
+
+function stubBillingFetch(total: number, used: number, status = 200): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input);
+    if (status !== 200) return new Response("{}", { status });
+    const json = url.endsWith("/dashboard/billing/subscription")
+      ? { hard_limit_usd: total }
+      : { total_usage: used };
+    return new Response(JSON.stringify(json), { status: 200 });
+  }) as typeof fetch;
+  return () => { globalThis.fetch = original; };
+}
+
+test("GET /v1/provider-profiles/official/balance returns 400 before an official key is saved", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const res = await request(server, "GET", "/v1/provider-profiles/official/balance");
+    assert.equal(res.statusCode, 400);
+  });
+});
+
+test("GET /v1/provider-profiles/official/balance computes balance from the billing endpoints", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
+      kind: "builtin",
+      provider_id: "aiming-cookie-relay",
+      model_id: "deepseek-v4-flash",
+      api_key: "sk-test-balance",
+    }));
+    assert.equal(created.statusCode, 201);
+    const restore = stubBillingFetch(200, 53.5);
+    try {
+      const res = await request(server, "GET", "/v1/provider-profiles/official/balance");
+      assert.equal(res.statusCode, 200);
+      assert.equal((res.json as { balance: number }).balance, 146.5);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("GET /v1/provider-profiles/official/balance maps a rejected key to 401", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
+      kind: "builtin",
+      provider_id: "aiming-cookie-relay",
+      model_id: "deepseek-v4-flash",
+      api_key: "sk-test-balance",
+    }));
+    assert.equal(created.statusCode, 201);
+    const restore = stubBillingFetch(0, 0, 401);
+    try {
+      const res = await request(server, "GET", "/v1/provider-profiles/official/balance");
+      assert.equal(res.statusCode, 401);
+      assert.equal((res.json as { detail: string }).detail, "API Key 无效或已被重置");
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("GET /v1/provider-profiles/{id}/auth/credential reveals the stored key", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await request(server, "POST", "/v1/provider-profiles", JSON.stringify({
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: "deepseek-v4-flash",
+      api_key: "sk-visible-in-beta",
+    }));
+    assert.equal(created.statusCode, 201);
+    const id = (created.json as { id: number }).id;
+    const res = await request(server, "GET", `/v1/provider-profiles/${id}/auth/credential`);
+    assert.equal(res.statusCode, 200);
+    assert.equal((res.json as { api_key: string }).api_key, "sk-visible-in-beta");
+  });
+});
+
+test("GET credential returns 404 when the profile has no stored key", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await request(server, "POST", "/v1/provider-profiles", BUILTIN_BODY);
+    assert.equal(created.statusCode, 201);
+    const id = (created.json as { id: number }).id;
+    const res = await request(server, "GET", `/v1/provider-profiles/${id}/auth/credential`);
+    assert.equal(res.statusCode, 404);
+  });
+});
+
+// ── 模型发现存档（点点 0912 拍板）：详情页免点获取模型，获取模型只做更新 ──
+
+function stubCustomModelsFetch(): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(
+    JSON.stringify({ data: [{ id: "mock-model-a" }, { id: "mock-model-b" }] }),
+    { status: 200 },
+  )) as typeof fetch;
+  return () => { globalThis.fetch = original; };
+}
+
+const CUSTOM_BODY = JSON.stringify({
+  kind: "custom_openai_compatible",
+  name: "自家中转站",
+  base_url: "http://127.0.0.1:9/v1",
+  model_id: "mock-model-a",
+  api_key: "sk-custom",
+});
+
+test("stored custom model discovery persists discovered_models into the profile projection", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await request(server, "POST", "/v1/provider-profiles", CUSTOM_BODY);
+    assert.equal(created.statusCode, 201);
+    const id = (created.json as { id: number }).id;
+    const restore = stubCustomModelsFetch();
+    try {
+      const res = await request(server, "POST", "/v1/provider-profiles/custom/models", JSON.stringify({ profile_id: id }));
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual((res.json as { models: Array<{ model_id: string }> }).models.map((m) => m.model_id), ["mock-model-a", "mock-model-b"]);
+      // 投影透出存档列表
+      const listed = await listedProfiles(server);
+      const view = listed;
+      const detailed = await request(server, "GET", "/v1/provider-profiles");
+      const profile = (detailed.json as { profiles: Array<{ id: number; discovered_models: Array<{ model_id: string }> | null }> }).profiles
+        .find((p) => p.id === id);
+      assert.ok(profile?.discovered_models);
+      assert.deepEqual(profile.discovered_models.map((m) => m.model_id), ["mock-model-a", "mock-model-b"]);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("PUT without discovered_models keeps the stored list; rename does not wipe it", async () => {
+  await withServer(async (server) => {
+    await clearProfiles(server);
+    const created = await request(server, "POST", "/v1/provider-profiles", CUSTOM_BODY);
+    const id = (created.json as { id: number }).id;
+    const restore = stubCustomModelsFetch();
+    try {
+      await request(server, "POST", "/v1/provider-profiles/custom/models", JSON.stringify({ profile_id: id }));
+    } finally {
+      restore();
+    }
+    // 改名 + 换 URL 的整档更新（不带 discovered_models）
+    const updated = await request(server, "PUT", `/v1/provider-profiles/${id}`, JSON.stringify({
+      kind: "custom_openai_compatible",
+      name: "改名后的中转",
+      base_url: "http://127.0.0.1:9/v2",
+      model_id: "mock-model-a",
+    }));
+    assert.equal(updated.statusCode, 200);
+    const profile = (updated.json as { discovered_models: Array<{ model_id: string }> | null }).discovered_models;
+    assert.ok(profile);
+    assert.equal(profile.length, 2);
   });
 });

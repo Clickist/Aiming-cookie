@@ -424,7 +424,12 @@ export async function handleSidecarRequest(
       const sessionId = typeof sessionIdValue === "number" && Number.isInteger(sessionIdValue)
         ? sessionIdValue
         : undefined;
-      const result = createAgentRun(ownerId, content, { sessionId });
+      // 结构化分析引用（前端引用菜单）：字符串数组原样透传，合法性由
+      // createAgentRun 过滤（只收 analysis:N，封顶 10 条）。
+      const contextRefs = Array.isArray(body.context_refs)
+        ? body.context_refs.filter((ref): ref is string => typeof ref === "string")
+        : undefined;
+      const result = createAgentRun(ownerId, content, { sessionId, contextRefs });
       writeJson(res, 202, result);
     } catch (error) {
       if (error instanceof AgentRunError) {

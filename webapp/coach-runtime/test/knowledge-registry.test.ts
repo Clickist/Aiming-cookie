@@ -484,8 +484,8 @@ test("v10 coach capability entries stay loadable with an explicit version", () =
   assert.equal(loadKnowledgeRegistry("2026-08-20.v9").registry_version, "2026-08-20.v9");
 });
 
-test("v11 closes the signal gaps as the default registry", () => {
-  const registry = loadKnowledgeRegistry();
+test("v11 closes the signal gaps when loaded as history", () => {
+  const registry = loadKnowledgeRegistry("2026-09-10.v11");
   assert.equal(registry.registry_version, "2026-09-10.v11");
   assert.equal(registry.entries.length, 51);
   assert.equal(registry.sources!.length, 92);
@@ -556,4 +556,54 @@ test("v11 closes the signal gaps as the default registry", () => {
 
   // v10 stays loadable as history after v11 is packaged.
   assert.equal(loadKnowledgeRegistry("2026-09-09.v10").registry_version, "2026-09-09.v10");
+});
+
+test("v12 intake keeps the 51 v11 entries and adds 60 corpus prescriptions", () => {
+  const registry = loadKnowledgeRegistry();
+  assert.equal(registry.registry_version, "2026-09-12.v12");
+  assert.equal(registry.schema_version, "coach_knowledge_registry.v3");
+  assert.equal(registry.entries.length, 111);
+  assert.equal(registry.sources!.length, 122);
+
+  const previous = loadKnowledgeRegistry("2026-09-10.v11");
+  assert.deepEqual(
+    registry.entries.slice(0, previous.entries.length),
+    previous.entries,
+  );
+  assert.deepEqual(registry.signal_aliases, previous.signal_aliases);
+
+  const prescriptions = registry.entries.filter((entry) =>
+    entry.entry_id.startsWith("prescription."));
+  assert.equal(prescriptions.length, 60);
+  assert.equal(new Set(prescriptions.map((entry) => entry.entry_id)).size, 60);
+
+  for (const entry of prescriptions) {
+    assert.equal(entry.status, "active");
+    assert.equal(entry.entry_version, 1);
+    assert.equal(entry.category, "training_cue");
+    assert.ok(entry.topics.length > 0);
+    assert.ok(entry.family_scope.length > 0);
+    assert.deepEqual(entry.supported_uses, [
+      "explanation_only", "diagnosis_support", "candidate_experiment",
+    ]);
+    assert.equal(entry.sources.length, 1);
+    assert.ok(entry.mechanisms.length > 0);
+    const provenance = entry.mechanisms[0].text;
+    assert.match(provenance, /出处：/);
+    assert.match(provenance, /原文引用：/);
+    assert.ok(entry.limitations.some((item) => item.includes("置信度")), entry.entry_id);
+    assert.match(entry.scope.text, /场景可用性：/);
+  }
+
+  // P030 resolves local + official + unresolved together.
+  const overflick = prescriptions.find((entry) =>
+    entry.entry_id === "prescription.p030.static-clicking-terminal-control");
+  if (!overflick) throw new Error("missing P030 prescription entry");
+  assert.match(overflick.scope.text, /本机可开：/);
+  assert.match(overflick.scope.text, /官方库：/);
+  assert.match(overflick.scope.text, /未解析：/);
+  assert.match(overflick.scope.text, /转写存疑，未对应到官方场景/);
+
+  // v11 stays loadable as history after v12 is packaged.
+  assert.equal(loadKnowledgeRegistry("2026-09-10.v11").registry_version, "2026-09-10.v11");
 });

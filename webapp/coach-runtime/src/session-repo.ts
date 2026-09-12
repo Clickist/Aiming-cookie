@@ -43,6 +43,8 @@ export type SessionMessage = {
   role: string;
   content: string;
   timestamp: string;
+  /** 被用户停止的半截回复（stopReason=aborted）：前端据实在消息上挂「已停止」。 */
+  stopped?: boolean;
 };
 
 // ── Pi repo access ───────────────────────────────────────────────────────
@@ -180,8 +182,16 @@ export function nextSessionIdSync(): number {
   }
   if (existsSync(dir)) {
     for (const file of readdirSync(dir)) {
-      const match = file.match(/^(\d+)\.jsonl$/);
-      if (match) maxId = Math.max(maxId, parseInt(match[1], 10));
+      // 删除流只删 JSONL、保留归档 meta：归档 {id}.meta.json 也占号，否则
+      // 删除最新会话后新 id 撞归档 meta，writeConversationMeta 把它覆盖回
+      // active（0911 审计 §12.4 id 撞号复活）。
+      const jsonl = file.match(/^(\d+)\.jsonl$/);
+      if (jsonl) {
+        maxId = Math.max(maxId, parseInt(jsonl[1], 10));
+        continue;
+      }
+      const meta = file.match(/^(\d+)\.meta\.json$/);
+      if (meta) maxId = Math.max(maxId, parseInt(meta[1], 10));
     }
   }
   return maxId + 1;
@@ -195,21 +205,64 @@ export async function readSessionMessages(threadId: number): Promise<SessionMess
   return readLegacyMessages(threadId);
 }
 
-async function messagesFromSession(session: SessionLike): Promise<SessionMessage[]> {
+/**
+ * UI 读取变体：在 readSessionMessages 之上为「被打断的回合」补一条空的
+ * stopped 标记消息。run 在工具阶段被停止时引擎不产出任何带正文的
+ * assistant 消息，回合在会话里完全隐形（1.0.0 前实测）；标记让前端
+ * 渲染「回答已停止」。仅喂 UI——agent-runs 的 priorMessages 走
+ * readSessionMessages 原始路径，标记不得进入 Provider 上下文。
+ */
+export async function readSessionMessagesForUi(threadId: number): Promise<SessionMessage[]> {
+  const session = await openSession(threadId);
+  if (session) return messagesFromSession(session, { withInterruptMarkers: true });
+  return readLegacyMessages(threadId);
+}
+
+async function messagesFromSession(
+  session: SessionLike,
+  opts: { withInterruptMarkers?: boolean } = {},
+): Promise<SessionMessage[]> {
   const entries = await session.getBranch();
   const messages: SessionMessage[] = [];
+  // 自上一条可见消息以来，本轮是否出现过 assistant 工具/思考活动而始终
+  // 没有产出正文（停止/中断的签名）。见到 assistant 正文或 user 边界时结算。
+  let pendingInterruptedTurn = false;
+  let lastTimestamp = "";
+  const flushInterruptMarker = () => {
+    if (opts.withInterruptMarkers && pendingInterruptedTurn) {
+      messages.push({
+        role: "assistant",
+        content: "",
+        timestamp: lastTimestamp || new Date().toISOString(),
+        stopped: true,
+      });
+    }
+    pendingInterruptedTurn = false;
+  };
   for (const entry of entries) {
     if (entry.type !== "message" || !isRecord(entry.message)) continue;
     const message = entry.message;
     if (message.role !== "user" && message.role !== "assistant") continue;
+    lastTimestamp = typeof entry.timestamp === "string" ? entry.timestamp : lastTimestamp;
     const content = extractUserFacingText(message.content);
-    if (message.role === "assistant" && !content.trim()) continue;
+    if (message.role === "assistant" && !content.trim()) {
+      const hasUnshownActivity = Array.isArray(message.content)
+        && message.content.some(
+          (c) => isRecord(c) && (c.type === "toolCall" || c.type === "thinking"),
+        );
+      if (hasUnshownActivity) pendingInterruptedTurn = true;
+      continue;
+    }
+    if (message.role === "user") flushInterruptMarker();
+    pendingInterruptedTurn = false;
     messages.push({
       role: message.role,
       content,
       timestamp: typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
+      ...(message.role === "assistant" && message.stopReason === "aborted" ? { stopped: true } : {}),
     });
   }
+  flushInterruptMarker();
   return messages;
 }
 

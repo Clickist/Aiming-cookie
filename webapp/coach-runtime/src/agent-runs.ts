@@ -38,7 +38,7 @@ import {
   updateConversationAnalysisIds,
   updateConversationDeepReadAnalysisIds,
 } from "./session-repo.ts";
-import { maybeAutoTitleSession } from "./session-title.ts";
+import { maybeAutoTitleSession, type SessionTitleProviders } from "./session-title.ts";
 import { getDataRoot } from "./app-data.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -112,6 +112,8 @@ interface RunRecord {
   ownerId: string;
   threadId: number;
   content: string;
+  /** 结构化分析引用（前端引用菜单选择），随回合传给 turn 钉主题。 */
+  contextRefs: string[] | null;
   stopRequested: boolean;
   /** Test seam: fake provider stream, threaded to runCoachTurn. */
   streamFn?: StreamFn;
@@ -133,6 +135,19 @@ export function loadDefaultProviderProfile(_ownerId: string): {
     profile,
     needsReauth: false,
   };
+}
+
+/**
+ * 自动命名（session-title.ts）期望 {models, fallbackModel}，而
+ * loadDefaultProviderProfile 返回的是 {profile, needsReauth}——直传会在
+ * getModels 处 TypeError 被 session-title 静默吞掉，自动起名永不生效
+ * （0911 审计 §12.1）。须先经 resolveProviderModel 解析。
+ */
+export async function resolveSessionTitleProviders(
+  profile: CoachRuntimeProviderProfile,
+): Promise<SessionTitleProviders> {
+  const resolved = await (await import("./provider-models.ts")).resolveProviderModel(profile);
+  return { models: resolved.models, fallbackModel: resolved.model };
 }
 
 // ── Session management ────────────────────────────────────────────────
@@ -230,8 +245,7 @@ async function runAgentTurn(
   signal: AbortSignal,
 ): Promise<void> {
   const record = runs.get(runRef);
-  if (!record) return;
-  const persistenceStart = performance.now();
+  if (!record) return;  const persistenceStart = performance.now();
 
   try {
     setRunStatus(record, "running", "text_generation", { started: true });
@@ -273,6 +287,8 @@ async function runAgentTurn(
       session_id: `coach-thread:${threadId}`,
       user_id: ownerId,
       messages: [...priorMessages, { role: "user" as const, content }],
+      // 结构化分析引用（前端引用菜单选择）：turn 侧与文本 analysis:N 同效钉主题。
+      context_refs: record.contextRefs ?? undefined,
       model: providerResult.profile,
     };
 
@@ -398,7 +414,12 @@ async function runAgentTurn(
       appendEvent(record, "status", "completed", "run_succeeded", "Coach run completed");
       // 路线 B（0910 拍板）：run 成功后 fire-and-forget 自动命名——不阻塞
       // 终态，失败静默回退首句降级标题；title_source 守卫保证只命名一次。
-      void maybeAutoTitleSession(threadId, content, redactedReply, providerResult);
+      try {
+        const titleProviders = await resolveSessionTitleProviders(providerResult.profile);
+        void maybeAutoTitleSession(threadId, content, redactedReply, titleProviders);
+      } catch {
+        // 命名是锦上添花：档解析失败静默回退首句降级标题。
+      }
     } else {
       const error = response.error;
       // turn 响应的 error 是 CoachRuntimeError（字段是 category/code，没有
@@ -493,6 +514,10 @@ export function createAgentRun(
     ownerId,
     threadId,
     content: safeContent,
+    // 结构化引用：只保留合法 analysis:N，封顶 10 条（与 turn 侧解析同规则）。
+    contextRefs: (options.contextRefs ?? [])
+      .filter((ref) => /^analysis:[1-9][0-9]*$/.test(ref))
+      .slice(0, 10),
     stopRequested: false,
     streamFn: options.streamFn,
     events: [],

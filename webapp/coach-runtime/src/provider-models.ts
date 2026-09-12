@@ -80,7 +80,7 @@ async function createBuiltinModels(credentials: SnapshotCredentialStore): Promis
  * 模型时同步这份列表；计费在中转站侧按额度结算，成本字段记 0。
  * TODO(内测)：base_url 换正式域名+HTTPS 时只改下方常量。
  */
-const AIMING_COOKIE_RELAY_PROVIDER_ID = "aiming-cookie-relay";
+export const AIMING_COOKIE_RELAY_PROVIDER_ID = "aiming-cookie-relay";
 const AIMING_COOKIE_RELAY_PROVIDER_NAME = "Aiming Cookie 官方";
 const AIMING_COOKIE_RELAY_BASE_URL = "http://58.60.231.76:3000/v1";
 const AIMING_COOKIE_RELAY_MODEL_IDS = [
@@ -175,9 +175,16 @@ export function toCatalogModel(model: PiModel): ProviderCatalogModel {
 export async function listBuiltinProviderCatalog(): Promise<ProviderCatalogResponse> {
   const credentials = new SnapshotCredentialStore("__catalog__");
   const models = await createBuiltinModels(credentials);
+  // Aiming Cookie 官方固定在目录首位（1.0.0 前点点拍板）：注入顺序在 pi
+  // 内建 Provider 之后，这里在目录出口重排，onboarding 与设置共用本目录。
+  const providers = models.getProviders();
+  const ordered = [
+    ...providers.filter((provider) => provider.id === AIMING_COOKIE_RELAY_PROVIDER_ID),
+    ...providers.filter((provider) => provider.id !== AIMING_COOKIE_RELAY_PROVIDER_ID),
+  ];
   return {
     schema_version: PROVIDER_CATALOG_SCHEMA,
-    providers: models.getProviders().map((provider) => ({
+    providers: ordered.map((provider) => ({
       ...projectProviderAuthCapability(provider),
       base_url: provider.baseUrl ?? null,
       models: models.getModels(provider.id).map(toCatalogModel),
@@ -246,6 +253,48 @@ export async function fetchCustomProviderModels(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+const OFFICIAL_RELAY_BALANCE_TIMEOUT_MS = 10_000;
+
+export type OfficialRelayBalance = {
+  /** 余额（站点额度单位折算值，保留两位）。 */
+  balance: number;
+  total: number;
+  used: number;
+};
+
+/**
+ * 官方中转档余额（点点 0912 拍板）：new-api 系计费兼容端点
+ * （/dashboard/billing/subscription + /usage），余额 = hard_limit_usd - total_usage。
+ * 用档内存档 key 就地查询；测试阶段 key 本就对用户可见，无脱敏诉求。
+ */
+export async function fetchOfficialRelayBalance(
+  apiKey: string,
+  timeoutMs: number = OFFICIAL_RELAY_BALANCE_TIMEOUT_MS,
+): Promise<OfficialRelayBalance> {
+  const base = AIMING_COOKIE_RELAY_BASE_URL.trim().replace(/\/+$/, "");
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  const fetchJson = async (path: string): Promise<Record<string, unknown>> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    timeout.unref?.();
+    try {
+      const response = await fetch(`${base}${path}`, { headers, signal: controller.signal });
+      if (!response.ok) throw new Error(`billing_${response.status}`);
+      return (await response.json()) as Record<string, unknown>;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  const [subscription, usage] = await Promise.all([
+    fetchJson("/dashboard/billing/subscription"),
+    fetchJson("/dashboard/billing/usage"),
+  ]);
+  const total = typeof subscription.hard_limit_usd === "number" ? subscription.hard_limit_usd : null;
+  const used = typeof usage.total_usage === "number" ? usage.total_usage : null;
+  if (total === null || used === null) throw new Error("billing_shape");
+  return { balance: Math.max(0, Math.round((total - used) * 100) / 100), total, used };
 }
 
 async function resolveBuiltinProfile(
@@ -368,6 +417,77 @@ async function resolveCustomProfile(
 export async function resolveProviderModel(rawProfile: unknown): Promise<ResolvedProviderModel> {
   const profile = parseProviderProfile(rawProfile);
   return profile.kind === "builtin" ? resolveBuiltinProfile(profile) : resolveCustomProfile(profile);
+}
+
+/**
+ * 免模型连通探测（点点 0911 两步式向导）：内置档在选定 model 前先打目录
+ * base_url 的 /models 验证 Key 与连通。协议按目录首个模型的 api 推断；
+ * 运行时未带 api_key 时回落凭据层解析（含环境/系统级凭据），两者皆无则
+ * 视为凭据不可用。只读，不落库。
+ */
+export async function probeBuiltinProvider(
+  providerId: string,
+  credential: ProviderCredential | undefined,
+  timeoutMs: number = CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS,
+): Promise<void> {
+  const credentialStore = new SnapshotCredentialStore(providerId, credential);
+  const models = await createBuiltinModels(credentialStore);
+  const provider = models.getProvider(providerId);
+  if (!provider) {
+    throw new ProviderProfileError("unknown_provider", `Unknown provider: ${providerId}`);
+  }
+  const firstModel = models.getModels(providerId)[0];
+  // 大多数内置 Provider 在目录层带 base_url；个别（如 opencode-go）按模型
+  // 携带端点，回落首个模型的 baseUrl 探测。
+  const baseUrl = provider.baseUrl ?? firstModel?.baseUrl ?? null;
+  if (!baseUrl) {
+    throw new ProviderProfileError("invalid_profile", `Provider ${providerId} has no base URL to probe`);
+  }
+  let apiKey = credential?.type === "api_key" && credential.key ? credential.key : null;
+  if (!apiKey) {
+    const auth = firstModel ? await models.getAuth(firstModel) : undefined;
+    const resolved = auth?.auth?.apiKey;
+    apiKey = typeof resolved === "string" && resolved ? resolved : null;
+  }
+  if (!apiKey) throw new Error("Provider credential is unavailable");
+  const protocol = firstModel?.api === "anthropic-messages" ? "anthropic-messages" : "openai-completions";
+  try {
+    await fetchCustomProviderModels(protocol, baseUrl, apiKey, timeoutMs);
+  } catch {
+    throw new Error("Provider 端点连接失败，请检查网络与 API Key");
+  }
+}
+
+/**
+ * 免模型连通探测的自定义档变体：协议未知（正是探测要回答的问题），按
+ * OpenAI 兼容与 Anthropic 兼容两种协议依次尝试 /models，任一应答即视为
+ * 连通（Key 与端点同时得到验证）。端点应答但清单为空也算连通。
+ */
+export async function probeCustomProvider(
+  rawBaseUrl: string,
+  apiKey: string,
+  timeoutMs: number = CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS,
+): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawBaseUrl.trim());
+  } catch {
+    throw new ProviderProfileError("invalid_profile", "model.base_url must be a valid HTTP(S) URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new ProviderProfileError("invalid_profile", "model.base_url must be a valid HTTP(S) URL");
+  }
+  // 协议各自的 base_url 归一（去尾部 /v1 与否）由 fetchCustomProviderModels
+  // 内部处理，这里不预裁剪，避免 OpenAI 兼容端点丢掉 /v1 前缀。
+  for (const protocol of ["openai-completions", "anthropic-messages"] as const) {
+    try {
+      await fetchCustomProviderModels(protocol, rawBaseUrl, apiKey, timeoutMs);
+      return;
+    } catch {
+      // 换下一种协议重试；两种都失败才按连通失败上报。
+    }
+  }
+  throw new Error("Provider 端点连接失败，请检查 Base URL 与 API Key");
 }
 
 export function createModelsStreamFn(models: PiModels): StreamFn {

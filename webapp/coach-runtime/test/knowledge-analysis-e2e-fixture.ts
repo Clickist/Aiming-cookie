@@ -106,12 +106,23 @@ function refsForSignal(indexText: string, signal: string) {
     .filter((value): value is string => typeof value === "string");
 }
 
+// The v12 index (111 entries) exceeds the read tool's 50KB head truncation, so
+// the model pages it with offset. Mirror that real continuation contract here.
+const READ_CONTINUE = /\n\n\[Showing lines \d+-\d+ of \d+(?: \([^)]*\))?\. Use offset=(\d+) to continue\.\]\s*$/;
+
+function splitReadResult(text: string): { content: string; nextOffset: number | null } {
+  const match = READ_CONTINUE.exec(text);
+  if (!match) return { content: text, nextOffset: null };
+  return { content: text.slice(0, match.index), nextOffset: Number(match[1]) };
+}
+
 export function createAnalysisKnowledgeE2EStream(analysisSummary: string): StreamFn {
   const signal = issueSignalFromAnalysis(analysisSummary);
-  let callCount = 0;
+  let accumulated = "";
+  let started = false;
   return async (_model, context) => {
-    callCount += 1;
-    if (callCount === 1) {
+    if (!started) {
+      started = true;
       return streamAssistant([{
         type: "toolCall",
         id: "read-knowledge-index",
@@ -119,7 +130,17 @@ export function createAnalysisKnowledgeE2EStream(analysisSummary: string): Strea
         arguments: { path: "knowledge/index.json" },
       }], "toolUse");
     }
-    const refs = refsForSignal(toolResultText(context, "read"), signal);
+    const { content, nextOffset } = splitReadResult(toolResultText(context, "read"));
+    accumulated += content;
+    if (nextOffset !== null) {
+      return streamAssistant([{
+        type: "toolCall",
+        id: `read-knowledge-index-${nextOffset}`,
+        name: "read",
+        arguments: { path: "knowledge/index.json", offset: nextOffset },
+      }], "toolUse");
+    }
+    const refs = refsForSignal(accumulated, signal);
     if (refs.length === 0) throw new Error(`knowledge index has no entry for signal ${signal}`);
     return streamAssistant([{
       type: "text",

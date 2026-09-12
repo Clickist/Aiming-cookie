@@ -6,6 +6,8 @@ import { isNativeEvidenceCommand, executeNativeEvidence, predicateStructureError
 import { isNativeWriteCommand, executeNativeWrite, isNativeAnalysisDeleteCommand, executeNativeAnalysisDelete, isNativeAnalysisRetryCommand, executeNativeAnalysisRetry, type NativeWriteResult } from "./product-commands-write.ts";
 import { isNativeEloshapesCommand, executeNativeEloshapes } from "./eloshapes-native.ts";
 import { isNativeKovaakScoreCommand, executeNativeKovaakScore } from "./kovaak-scores-native.ts";
+import { isNativeAffiliateCommand, executeNativeAffiliate } from "./affiliate-native.ts";
+import { isNativeScenarioCommand, executeNativeScenario } from "./scenario-native.ts";
 import { isNativePythonAnalysisCommand, executeNativePythonAnalysis } from "./python-analysis.ts";
 
 type TypeBuilder = {
@@ -33,6 +35,8 @@ export const PRODUCT_COMMAND_NAMES = [
   "product.readiness.get",
   "kovaak_scores.lookup", "kovaak_scores.refresh_connected",
   "eloshapes.query", "peripheral_profile.get", "peripheral_profile.update",
+  "purchase_links.lookup",
+  "scenario.open", "scenario.list",
 ] as const;
 type ProductCommandName = typeof PRODUCT_COMMAND_NAMES[number];
 type ProductCommandToolOptions = {
@@ -222,6 +226,13 @@ function commandParameterError(commandName: ProductCommandName, parameters: Reco
     }
     return null;
   }
+  if (commandName === "scenario.open") {
+    if (!hasExactKeys(parameters, ["scenario_name"])) return 'unsupported fields: scenario.open takes exactly "scenario_name"';
+    return requiredStringError(parameters.scenario_name, "scenario_name");
+  }
+  if (commandName === "scenario.list") {
+    return hasExactKeys(parameters, []) ? null : "unsupported fields: scenario.list takes no parameters";
+  }
   if (commandName.startsWith("analysis.events.")) {
     return eventsCommandError(commandName, parameters);
   }
@@ -336,7 +347,7 @@ export function createProductCommandTool(
   return {
     name: "run_product_command",
     label: "Run product command",
-    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。查 KovaaK 成绩：kovaak_scores.lookup 的 profile_ref 传用户提供的 17 位 Steam ID 或 steamcommunity.com 主页链接。参数形态要点：analysis.events.* 表命令的 table_ref 形如 analysis:<id>:table:<event_kind>（用 events.list 返回的原值），predicates 是 [{field, operator, value}] 数组，operator 取 eq/lt/lte/gt/gte/between/available/unavailable，filter 至少一个谓词；eloshapes.query 只接受 weight_max、size_category、shape、front_flare、side_curvature、hump_placement、hand_compatibility、brand_search、model_search、limit；training_plan.generate_draft 必须传 plan_payload 对象。未知参数会被拒绝并列出允许的字段。不要猜测 ref，只用已返回的 ref。不得提交路径、credential 或任意 payload。",
+    description: "查询分析数据、导航或准备训练动作。Evidence：调用 analysis.evidence.list（仅传 analysis_ref），返回各 segment_ref 及 available_channels。事件：调用 analysis.events.list（传 analysis_ref 与 scope），表结果含 table_ref 与 field_catalog。查 KovaaK 成绩：kovaak_scores.lookup 的 profile_ref 传用户提供的 17 位 Steam ID 或 steamcommunity.com 主页链接。参数形态要点：analysis.events.* 表命令的 table_ref 形如 analysis:<id>:table:<event_kind>（用 events.list 返回的原值），predicates 是 [{field, operator, value}] 数组，operator 取 eq/lt/lte/gt/gte/between/available/unavailable，filter 至少一个谓词；eloshapes.query 只接受 weight_max、size_category、shape、front_flare、side_curvature、hump_placement、hand_compatibility、brand_search、model_search、limit；purchase_links.lookup 只接受 items（1-6 个 {brand, model, variant?} 或 {q}），返回淘宝/拼多多带佣金购买短链，未命中时对应平台为 null；scenario.list 无参数，返回本机 KovaaK 已安装场景名清单（训练推荐优先从这里选）；scenario.open 只接受 scenario_name（本机已装场景名），发 UI 事件让前端打开 KovaaK——**打开前必须先征得用户同意，绝不能自动开**；training_plan.generate_draft 必须传 plan_payload 对象。未知参数会被拒绝并列出允许的字段。不要猜测 ref，只用已返回的 ref。不得提交路径、credential 或任意 payload。",
     parameters: Type.Object({
       command_name: commandSchema,
       parameters: Type.Object({}, { additionalProperties: true }),
@@ -438,6 +449,20 @@ export function createProductCommandTool(
         const nativeResult = await executeNativeKovaakScore(
           params.command_name, params.parameters, ownerId,
         );
+        return nativeToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native purchase links: async HTTP call to the affiliate-links worker,
+      // skip the HTTP bridge. 未配置/失败返回 unavailable，由 skill 降级链兜底。
+      if (isNativeAffiliateCommand(params.command_name)) {
+        const nativeResult = await executeNativeAffiliate(params.command_name, params.parameters);
+        return nativeToToolResult(params.command_name, nativeResult);
+      }
+
+      // Native scenario commands: list local KovaaK scenarios / emit a
+      // scenario-open UI event. No HTTP bridge.
+      if (isNativeScenarioCommand(params.command_name)) {
+        const nativeResult = await executeNativeScenario(params.command_name, params.parameters);
         return nativeToToolResult(params.command_name, nativeResult);
       }
 

@@ -191,9 +191,11 @@ test("loadProviderStore migrates a legacy Python multi-profile document", () => 
   assert.equal(store.active_id, 2);
   assert.equal(store.next_id, 3);
   assert.equal(store.profiles.length, 2);
+  // 旧 Python 文档的显示名随迁移保留（#10 内置显示名落库的向后兼容面）。
   assert.deepEqual(store.profiles[1], {
     id: 2,
     kind: "builtin",
+    name: "Default",
     provider_id: "opencode-go",
     model_id: "deepseek-v4-flash",
     credential: { type: "api_key", key: "legacy-key" },

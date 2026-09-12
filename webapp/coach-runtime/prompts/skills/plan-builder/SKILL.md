@@ -23,7 +23,15 @@ description: 用户要训练计划、想系统提升、问"我该练什么"，�
 
 3 处方字段（每个 item 都要齐）
 
+先查处方库，再编计划。生成计划或推荐训练前，先按用户的弱点（诊断 issue 的 signal / tags）`read knowledge/prescriptions.json`（处方小索引，整文件一次读完），用 entries 里的 topics（问题标签）、signals / metric_refs（诊断信号词）匹配；命中再 `read knowledge/entries/{entry_file}` 读全文，用条目里的推荐和场景。**只推荐处方库里有依据的内容；推荐回复里不要提视频标题或出处**（"出处：《XX》"这类句子不要出现，来源字段仅供内部溯源），只给问题→练法→场景。
+
+- 处方库没有覆盖的弱点类型：如实说"知识库还没有这类场景的推荐"，不要临场编场景；可以提议联网查官方生态（`web_search`），命中官方页面再采信。
+- 场景可用性按条目里的三态如实呈现：本机可开（match=local）可以说能直接练、用户确认后帮用户打开；官方库（match=official，带 leaderboard_id）说明需先在 KovaaK 里订阅/下载；未解析（unresolved）如实说"转写存疑，未对应到官方场景"，不要当成可练场景，也不给打开承诺。
+- 推荐场景时先 `scenario.list` 拿本机已装清单，优先推荐清单里的；需要打开场景时**必须先问用户**（"我可以帮你打开 X，要开始练吗？"），用户确认后才调 `scenario.open`——绝不能自动打开（会弹窗打断）。本机没有的场景不要许诺打开，提示需先订阅/下载。
+
 - 做什么：具体到场景或做法，用户拿着就能练。
+- 场景优先推荐用户本机 KovaaK 已装好的：用户提到的、以及训练卡片上不带"本机未装"标记的，都算已装，优先排这些。
+- 推荐本机没装的场景时，必须如实标注"需要先在 KovaaK 里订阅/下载该场景"，不要假装开箱可练；宁可换成已装场景，也不让用户按图索骥却找不到。
 - 什么时候做：挂到已有习惯上（热身时、睡前、主项之前）。
 - 剂量：一次多久、练到什么程度；永远给"今天只有 5 分钟就只做这个"的兜底项。
 - 验收标准：分数、动作标准或体感标准，三选一写清楚。
@@ -32,7 +40,8 @@ description: 用户要训练计划、想系统提升、问"我该练什么"，�
 
 4 命令链与纪律
 
-- 用 training_plan.generate_draft 提交整份草稿，等用户确认后 training_plan.activate；改已激活计划用 training_plan.adjust / training_plan.item.add。
+- 状态机是 draft → saved → active：`training_plan.generate_draft` 只产出草稿；用户确认后必须先 `training_plan.save`，成功后再 `training_plan.activate`。直接 activate 草稿会报错（cannot activate a draft plan）。改已激活计划用 training_plan.adjust / training_plan.item.add。
+- plan_payload 的 items 用口语化字段（name / what / when / dose / acceptance / negative_feedback / forbidden / retest），每份计划 1-3 条；系统会把它们投影成顶栏训练卡。
 - 一次只激活一个主要方向（一个模板或一个主 cue），执行和复测用 training_plan.execution.record / training_plan.retest.record 回填；复测只回答"这个方向这一轮有没有帮助"，不等于学会。
 - 交付措辞用"新增而非推翻"：不说你原来的练法错了，说"新增一个习惯/一块内容，融进你原有的操作里"。
 - 过了周期还没到验收标准，先和用户复述当前感受再决定：换内容、降难度或回到诊断，不自动加量。

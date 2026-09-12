@@ -1,0 +1,13 @@
+name = "affiliate-links"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+# 自有域名（workers.dev 在国内不可达）；zone gearclickist.com 在同账号
+# 注意：顶层键必须放在任何 [[table]] 之前，否则 routes 会被吞进上一个表
+routes = [
+  { pattern = "affiliate.gearclickist.com", custom_domain = true },
+]
+
+[[kv_namespaces]]
+binding = "AFFILIATE_CACHE"
+id = "657c07206c7144299aa3c6018a7cfd6e"

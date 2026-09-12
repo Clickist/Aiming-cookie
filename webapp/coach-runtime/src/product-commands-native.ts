@@ -845,23 +845,51 @@ const profileAimingSnapshot: CommandHandler = (_params, ownerId) => {
 };
 
 // ── training_plan.review ──────────────────────────────────────────────
+//
+// plan.json stores the Python read side's doc model (see product-commands-write):
+// `{plans: {<plan_id>: {...}}, ...}`. Review surfaces the owner's current plan
+// (active > paused > most recently updated) so the Coach sees what the card shows.
 
-const trainingPlanReview: CommandHandler = (_params, _ownerId) => {
-  const plan = readJsonFile(join(getTrainingDir(), "plan.json"));
-  if (!plan) {
+function isRecord(value: unknown): value is AnyDict {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function currentStoredPlan(ownerId: string): { planId: string; plan: AnyDict } | null {
+  const doc = readJsonFile(join(getTrainingDir(), "plan.json"));
+  const plans = isRecord(doc?.plans) ? doc.plans : {};
+  const candidates = Object.entries(plans)
+    .filter(([, plan]) => isRecord(plan) && (!ownerId || !plan.owner_id || plan.owner_id === ownerId))
+    .map(([planId, plan]) => ({ planId, plan: plan as AnyDict }));
+  if (candidates.length === 0) return null;
+  const rank = (plan: AnyDict) => (plan.status === "active" ? 0 : plan.status === "paused" ? 1 : 2);
+  candidates.sort((a, b) => {
+    const byStatus = rank(a.plan) - rank(b.plan);
+    if (byStatus !== 0) return byStatus;
+    return String(b.plan.updated_at ?? "").localeCompare(String(a.plan.updated_at ?? ""));
+  });
+  return candidates[0]!;
+}
+
+const trainingPlanReview: CommandHandler = (_params, ownerId) => {
+  const current = currentStoredPlan(ownerId);
+  if (!current) {
     return { status: "succeeded", result: { schema_version: "training_plan_review.v1", has_plan: false } };
   }
+  const { planId, plan } = current;
+  const version = Number(plan.current_version ?? 1) || 1;
+  const versions = isRecord(plan.versions) ? plan.versions : {};
+  const currentVersion = isRecord(versions[String(version)]) ? versions[String(version)] as AnyDict : {};
   return {
     status: "succeeded",
     result: {
       schema_version: "training_plan_review.v1",
       has_plan: true,
-      plan_ref: plan.plan_id ?? null,
+      plan_ref: planId,
       status: plan.status ?? null,
-      version: plan.version ?? 1,
-      payload: plan.plan_payload ?? null,
-      evidence_refs: plan.evidence_refs ?? null,
-      verification_targets: plan.verification_targets ?? null,
+      version,
+      payload: currentVersion.plan_payload ?? null,
+      evidence_refs: currentVersion.evidence_refs ?? null,
+      verification_targets: currentVersion.verification_targets ?? null,
       created_at: plan.created_at ?? null,
       updated_at: plan.updated_at ?? null,
     },

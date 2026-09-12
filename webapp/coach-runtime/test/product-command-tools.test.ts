@@ -24,6 +24,27 @@ function writeFixture(relativePath: string, content: unknown): void {
   writeFileSync(absolutePath, JSON.stringify(content), "utf8");
 }
 
+/** Seed training/plan.json in the Python read side's doc model ({plans:{...}}). */
+function writePlanFixture(planId: string, plan: Record<string, unknown>): void {
+  const version = Number(plan.version ?? 1) || 1;
+  writeFixture("training/plan.json", {
+    plans: {
+      [planId]: {
+        owner_id: "desktop-local",
+        status: plan.status ?? "draft",
+        current_version: version,
+        versions: { [String(version)]: { plan_payload: {}, adjustment_reason: null, evidence_refs: [], verification_targets: [] } },
+        created_at: "2026-08-13T10:20:30Z",
+        updated_at: "2026-08-13T10:20:30Z",
+      },
+    },
+    transitions: [],
+    items: {},
+    executions: [],
+    retests: [],
+  });
+}
+
 const BEARER = "bridge-bearer-secret-sentinel";
 const DESKTOP = "desktop-secret-sentinel";
 
@@ -289,12 +310,7 @@ test("KovaaK score command events retain no profile reference or score payload",
 });
 
 test("guided teaching facts are registered as native write commands", async () => {
-  writeFixture("training/plan.json", {
-    plan_id: "plan:1",
-    status: "active",
-    version: 1,
-    items: [],
-  });
+  writePlanFixture("plan:1", { status: "active" });
 
   const tool = createProductCommandTool(null);
   const cases = [
@@ -477,12 +493,7 @@ test("analysis creation is native via the Python REST API (not a native write)",
 // bridge transport anymore.
 
 test("guided teaching facts execute as native writes without TS-side filtering", async () => {
-  writeFixture("training/plan.json", {
-    plan_id: "plan:1",
-    status: "saved",
-    version: 1,
-    items: [],
-  });
+  writePlanFixture("plan:1", { status: "saved" });
 
   const tool = createProductCommandTool(null);
   // Extra params reach the native handler untouched (no TS-side security
@@ -541,12 +552,7 @@ test("provider receives the bounded result while the trace event retains only it
 });
 
 test("guided teaching facts retain only safe audit projections in the trace", async () => {
-  writeFixture("training/plan.json", {
-    plan_id: "plan:1",
-    status: "saved",
-    version: 1,
-    items: [],
-  });
+  writePlanFixture("plan:1", { status: "saved" });
 
   const tool = createProductCommandTool(null);
   const cases = [
@@ -569,12 +575,7 @@ test("guided teaching facts retain only safe audit projections in the trace", as
 });
 
 test("model-supplied authorization and confirmation fields never reach a native command", async () => {
-  writeFixture("training/plan.json", {
-    plan_id: "plan:one",
-    status: "saved",
-    version: 1,
-    items: [],
-  });
+  writePlanFixture("plan:one", { status: "saved" });
 
   const result = await createProductCommandTool(null).execute("call", {
     command_name: "training_plan.activate",
