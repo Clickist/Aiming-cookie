@@ -13,7 +13,6 @@ RootComponent 偏移与 ComponentToWorld 偏移在运行时用强签名自校准
 """
 import ctypes
 import ctypes.wintypes as wt
-import hashlib
 import json
 import os
 import struct
@@ -49,35 +48,23 @@ RVA_SLOTS_SCENE = 0x51286A8       # USceneComponent::StaticClass 槽 (sizeof=0x2
 OFFSETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "offsets.json")
 
 
-def apply_offsets(exe_path):
-    """[v3 2026-09-01] 按目标进程 exe 的 sha256 从 offsets.json 选偏移表并覆写
-    RVA_* 模块全局。未知哈希 → RuntimeError（fail-fast，绝不猜偏移）。
-    表结构/新增版本方法见 RUNBOOK_OFFSETS.md §2-§3。返回完整 sha256。"""
+def apply_offsets(exe_path, proc=None):
+    """[v4 2026-09-12] 偏移表四级分辨率链：包内表 → 用户缓存 → 云表 → 运行时自定位。
+    全链不可用 → RuntimeError（fail-fast，绝不猜偏移）。链实现见 offset_resolver.py，
+    自适应层说明见 RUNBOOK_OFFSETS.md §9。返回完整 sha256。"""
     global RVA_GUOBJECTARRAY, RVA_SLOTTARGET, RVA_SLOTS_SCENE, RVA_BLOCKS_EXPECT
-    h = hashlib.sha256()
-    with open(exe_path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 22), b""):
-            h.update(chunk)
-    digest = h.hexdigest()
-    try:
-        with open(OFFSETS_PATH, "r", encoding="utf-8") as f:
-            tables = json.load(f)
-    except OSError:
-        raise RuntimeError("偏移表缺失: %s（录制器按它选版本锚）" % OFFSETS_PATH)
-    ent = tables.get(digest)
-    if not isinstance(ent, dict):
-        known = "; ".join((v.get("label", k[:16]) if isinstance(v, dict) else k)
-                          for k, v in tables.items() if not k.startswith("_"))
-        raise RuntimeError(
-            "不支持的 exe 版本 sha256=%s…（已知: %s）。"
-            "请按 analysis/external/RUNBOOK_OFFSETS.md 重取偏移并加入 offsets.json"
-            % (digest[:16], known))
+    import offset_resolver as orr
+    digest, ent, source = orr.resolve(exe_path, proc=proc)
     RVA_GUOBJECTARRAY = int(ent["rva_guobjectarray"], 16)
-    RVA_SLOTTARGET = int(ent["rva_slot_target"], 16)
-    RVA_SLOTS_SCENE = int(ent["rva_slot_scene"], 16)
+    slot_t = ent.get("rva_slot_target")
+    slot_s = ent.get("rva_slot_scene")
+    RVA_SLOTTARGET = int(slot_t, 16) if slot_t else None
+    RVA_SLOTS_SCENE = int(slot_s, 16) if slot_s else None
     RVA_BLOCKS_EXPECT = int(ent["rva_blocks_expect"], 16) if ent.get("rva_blocks_expect") else None
-    print("[offsets] 版本: %s\n[offsets] GUObjectArray=0x%x SlotTarget=0x%x SlotScene=0x%x"
-          % (ent.get("label", digest[:16]), RVA_GUOBJECTARRAY, RVA_SLOTTARGET, RVA_SLOTS_SCENE))
+    print("[offsets] 版本(%s): %s\n[offsets] GUObjectArray=0x%x SlotTarget=%s SlotScene=%s"
+          % (source, ent.get("label", digest[:16]), RVA_GUOBJECTARRAY,
+             ("0x%x" % RVA_SLOTTARGET) if RVA_SLOTTARGET else "缺(仅诊断校准用,不影响录制)",
+             ("0x%x" % RVA_SLOTS_SCENE) if RVA_SLOTS_SCENE else "缺(仅诊断校准用,不影响录制)"))
     return digest
 
 
@@ -94,7 +81,7 @@ class Proc:
             raise OSError("OpenProcess(%d) failed err=%d" % (pid, ctypes.get_last_error()))
         self.base = self._module_base()
         self.module_path = self._module_path
-        apply_offsets(self.module_path)   # [v3] 按 exe 哈希选偏移表（fail-fast）
+        apply_offsets(self.module_path, proc=self)   # [v4] 四级链选表；未知版本可运行时自定位
 
     def _module_base(self):
         need = wt.DWORD(0)
@@ -275,6 +262,9 @@ def read_class(p, obj):
 
 
 def calibrate(p, items, nume):
+    if not RVA_SLOTTARGET or not RVA_SLOTS_SCENE:
+        raise RuntimeError("StaticClass 槽 RVA 缺失（自适应表只含录制必需的 GUObjectArray；"
+                           "类槽仅诊断校准用，按 RUNBOOK_OFFSETS.md §3 重取后登记即恢复）")
     slot_t = p.u64(p.base + RVA_SLOTTARGET)
     slot_s = p.u64(p.base + RVA_SLOTS_SCENE)
     if not readable_range(p, slot_t, 0x30) or not readable_range(p, slot_s, 0x30):

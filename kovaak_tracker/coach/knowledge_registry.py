@@ -34,7 +34,8 @@ REGISTRY_PATH_V8 = _REGISTRY_ROOT / "registry.v8.json"
 REGISTRY_PATH_V9 = _REGISTRY_ROOT / "registry.v9.json"
 REGISTRY_PATH_V10 = _REGISTRY_ROOT / "registry.v10.json"
 REGISTRY_PATH_V11 = _REGISTRY_ROOT / "registry.v11.json"
-REGISTRY_PATH = REGISTRY_PATH_V11
+REGISTRY_PATH_V12 = _REGISTRY_ROOT / "registry.v12.json"
+REGISTRY_PATH = REGISTRY_PATH_V12
 _PACKAGED_REGISTRIES = {
     "2026-07-14.v1": REGISTRY_PATH_V1,
     "2026-07-22.v2": REGISTRY_PATH_V2,
@@ -47,10 +48,15 @@ _PACKAGED_REGISTRIES = {
     "2026-08-20.v9": REGISTRY_PATH_V9,
     "2026-09-09.v10": REGISTRY_PATH_V10,
     "2026-09-10.v11": REGISTRY_PATH_V11,
+    "2026-09-12.v12": REGISTRY_PATH_V12,
 }
 MAX_RESULTS = 8
-MAX_REGISTRY_BYTES = 512 * 1024
+# v12 adds 60 corpus prescription entries; the packaged registry now exceeds
+# the v11-era 512 KiB ceiling, so the loader safeguard tracks the new size.
+MAX_REGISTRY_BYTES = 1024 * 1024
 MAX_ENTRIES = 512
+# Corpus prescription entry namespace; see query_registry for why it is skipped.
+_PRESCRIPTION_ENTRY_PREFIX = "prescription."
 MAX_TEXT_LENGTH = 4_000
 MAX_LIST_LENGTH = 64
 MAX_DEPTH = 8
@@ -907,6 +913,15 @@ def query_registry(
     metric_refs: Sequence[str] = (),
     supported_use: str | None = None,
 ) -> list[dict[str, Any]]:
+    """确定性本地标注器（signal+16 / metric+8 / topic+4 / use+2，截 MAX_RESULTS）。
+
+    角色边界（检索设计合同，详见 docs/ARCHITECTURE.md §知识检索）：Coach 对话的
+    知识检索是模型自选——sidecar 物化 knowledge/index.json，模型按 index 的
+    signals/metric_refs/topics 语义定位后 read entry 全文，不经本函数。本函数
+    只服务分析产物的确定性标注（diagnosis 静态引用、advice_*.py 家族候选的
+    expected_entry_ref 收窄），给 overview 提供与对话无关、可回归的引用标签。
+    勿在此扩展为对话检索路径。
+    """
     data = validate_registry(registry) if registry is not None else load_registry()
     topic_value = topic.strip() if isinstance(topic, str) and topic.strip() else None
     signal_value = issue_signal.strip() if isinstance(issue_signal, str) and issue_signal.strip() else None
@@ -922,6 +937,13 @@ def query_registry(
     ranked: list[tuple[int, str, int, dict[str, Any]]] = []
     for entry in data["entries"]:
         if entry["status"] != "active":
+            continue
+        # v12 corpus prescription entries carry the same diagnostic signal words
+        # so the Coach can find them in knowledge/index.json by issue signal.
+        # They are Coach-facing recommendation content, not explanation anchors:
+        # excluding them here keeps diagnosis/advice top-3 annotations (and the
+        # advice expected_entry_ref gate) unchanged from v11.
+        if entry["entry_id"].startswith(_PRESCRIPTION_ENTRY_PREFIX):
             continue
         score = 0
         if canonical_signal and canonical_signal in entry["signals"]:
@@ -940,7 +962,9 @@ def query_registry(
 
 __all__ = [
     "KnowledgeRegistryError", "REGISTRY_PATH", "REGISTRY_PATH_V1", "REGISTRY_PATH_V2",
-    "REGISTRY_PATH_V3", "REGISTRY_PATH_V4", "REGISTRY_PATH_V5", "REGISTRY_PATH_V6", "REGISTRY_SCHEMA_VERSION",
+    "REGISTRY_PATH_V3", "REGISTRY_PATH_V4", "REGISTRY_PATH_V5", "REGISTRY_PATH_V6",
+    "REGISTRY_PATH_V7", "REGISTRY_PATH_V8", "REGISTRY_PATH_V9", "REGISTRY_PATH_V10",
+    "REGISTRY_PATH_V11", "REGISTRY_PATH_V12", "REGISTRY_SCHEMA_VERSION",
     "REGISTRY_SCHEMA_VERSION_V1", "REGISTRY_SCHEMA_VERSION_V2", "REGISTRY_SCHEMA_VERSION_V3",
     "MAX_RESULTS", "claim_ref", "entry_ref", "load_registry", "query_registry",
     "resolve_entry", "validate_registry",

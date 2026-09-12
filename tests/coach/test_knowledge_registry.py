@@ -196,7 +196,15 @@ def _load_audit() -> dict:
 
 
 def test_full_migration_audit_covers_every_legacy_asset_exactly_once():
-    from kovaak_tracker.coach.knowledge import KNOWLEDGE
+    # v1 信号清单原由 knowledge.py 兼容 shim 提供（09-10 删除），此处直接
+    # 从 v1 注册表推导，语义不变：每个 v1 信号在迁移审计里恰好出现一次。
+    v1 = registry.load_registry(registry_version="2026-07-14.v1")
+    v1_signals = {
+        signal
+        for entry in v1["entries"]
+        if entry["status"] == "active"
+        for signal in entry["signals"]
+    }
 
     audit = _load_audit()
     rows = audit["sources"]
@@ -205,7 +213,7 @@ def test_full_migration_audit_covers_every_legacy_asset_exactly_once():
     expected = {
         *((row["source_kind"], row["source_key"]) for row in rows
           if row["source_kind"] == "python_agent_kb"),
-        *(('python_signal_knowledge', signal) for signal in KNOWLEDGE),
+        *(('python_signal_knowledge', signal) for signal in v1_signals),
         *(('typescript_seed', topic) for topic in {
             "movement_timing", "braking_linearity", "smoothness_sparc",
             "stopping_corrections", "submovements", "path_geometry",
@@ -231,19 +239,28 @@ def test_migration_audit_actions_and_targets_are_valid():
 
 
 def test_full_registry_covers_all_flicking_and_tracking_signals():
-    from kovaak_tracker.coach.knowledge import KNOWLEDGE
-
-    loaded = registry.load_registry(registry_version="2026-07-14.v1")
-    for signal in KNOWLEDGE:
-        results = registry.query_registry(loaded, issue_signal=signal)
-        assert results, signal
+    # 09-10 从 v1 迁到当前注册表：v6 收缩曾把 v1 覆盖丢掉（v11 赎回），
+    # 此测试此后守护"分析器实际产出的信号在当前注册表必须有承接"。
+    loaded = registry.load_registry()
+    covered = {
+        signal
+        for entry in loaded["entries"]
+        if entry["status"] == "active"
+        for signal in entry["signals"]
+    }
     tracking_signals = {
         "accuracy low", "loss count high", "off target long", "avg error high",
         "speed mismatch high", "accel mismatch high", "ptc high",
     }
-    assert tracking_signals <= {
-        signal for entry in loaded["entries"] for signal in entry["signals"]
+    v11_redemption_signals = {
+        "linearity high", "decel_frac high", "decel_frac low",
+        "peak_position low", "peak_position high",
+        "peak_speed below reference", "sensitivity high", "path_efficiency low",
     }
+    assert tracking_signals <= covered
+    assert v11_redemption_signals <= covered
+    for signal in tracking_signals | v11_redemption_signals:
+        assert registry.query_registry(loaded, issue_signal=signal), signal
 
 
 def test_full_registry_contains_required_knowledge_domains():
@@ -303,15 +320,11 @@ def test_verification_entries_define_retest_and_insufficient_evidence_behavior()
 
 def test_legacy_python_knowledge_modules_are_registry_backed():
     from kovaak_tracker.coach.agent_kb import BY_TOPIC, KB
-    from kovaak_tracker.coach.knowledge import KNOWLEDGE
 
     loaded = registry.load_registry(registry_version="2026-07-14.v1")
     active = [entry for entry in loaded["entries"] if entry["status"] == "active"]
     assert len(KB) == len(active)
     assert all(chunk["entry_ref"].startswith("knowledge:") for chunk in KB)
-    assert set(KNOWLEDGE) == {
-        signal for entry in active for signal in entry["signals"]
-    }
     assert "sparc" in BY_TOPIC
     assert BY_TOPIC["sparc"][0]["source_ref"]
 
@@ -324,7 +337,7 @@ def test_legacy_signal_fetch_returns_versioned_registry_entries():
     assert 1 <= len(result["entries"]) <= 3
     assert all(item["entry_ref"].startswith("knowledge:") for item in result["entries"])
     assert all(item["max_claim_level"] != "measured" for item in result["entries"])
-    assert result["registry_version"] == "2026-09-10.v11"
+    assert result["registry_version"] == "2026-09-12.v12"
     assert all(item["section_refs"] for item in result["entries"])
     assert all(item["claim_refs"] for item in result["entries"])
     assert all(
@@ -950,7 +963,7 @@ def test_v8_adds_x76_wiki_knowledge_with_schema_and_validator_agreement():
     assert errors == [], [error.message for error in errors[:5]]
     loaded = registry.load_registry(registry_version="2026-08-16.v8")
     assert loaded == registry.validate_registry(packaged)
-    assert registry.load_registry()["registry_version"] == "2026-09-10.v11"
+    assert registry.load_registry()["registry_version"] == "2026-09-12.v12"
     assert registry.MAX_RESULTS == 8
     assert len(loaded["entries"]) == 37
 
@@ -1221,7 +1234,7 @@ _V11_NEW_ENTRY_IDS = {
 }
 
 
-def test_v11_gap_redemption_entries_are_the_default_registry():
+def test_v11_gap_redemption_entries_are_preserved_as_history():
     root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
     schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
     packaged = json.loads((root / "registry.v11.json").read_text(encoding="utf-8"))
@@ -1232,7 +1245,7 @@ def test_v11_gap_redemption_entries_are_the_default_registry():
         key=lambda error: list(error.path),
     )
     assert errors == [], [error.message for error in errors[:5]]
-    loaded = registry.load_registry()
+    loaded = registry.load_registry(registry_version="2026-09-10.v11")
     assert loaded == registry.validate_registry(packaged)
     assert loaded["registry_version"] == "2026-09-10.v11"
     assert len(loaded["entries"]) == 51
@@ -1322,3 +1335,104 @@ def test_v11_gap_redemption_entries_are_the_default_registry():
     assert registry.load_registry(
         registry_version="2026-09-09.v10"
     )["registry_version"] == "2026-09-09.v10"
+
+
+_V12_PRESCRIPTION_COUNT = 60
+
+
+def test_v12_corpus_prescriptions_are_the_default_registry():
+    root = Path(__file__).resolve().parents[2] / "knowledge" / "coach"
+    schema = json.loads((root / "schema.v3.json").read_text(encoding="utf-8"))
+    packaged = json.loads((root / "registry.v12.json").read_text(encoding="utf-8"))
+
+    Draft202012Validator.check_schema(schema)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(packaged),
+        key=lambda error: list(error.path),
+    )
+    assert errors == [], [error.message for error in errors[:5]]
+    loaded = registry.load_registry()
+    assert loaded == registry.validate_registry(packaged)
+    assert loaded["registry_version"] == "2026-09-12.v12"
+    assert loaded["schema_version"] == "coach_knowledge_registry.v3"
+    assert len(loaded["entries"]) == 111
+    assert len(loaded["sources"]) == 122
+
+    # The 51 v11 entries are carried over untouched.
+    previous = registry.load_registry(registry_version="2026-09-10.v11")
+    assert loaded["entries"][: len(previous["entries"])] == previous["entries"]
+    assert loaded["signal_aliases"] == previous["signal_aliases"]
+
+    prescriptions = [
+        entry for entry in loaded["entries"]
+        if entry["entry_id"].startswith("prescription.")
+    ]
+    assert len(prescriptions) == _V12_PRESCRIPTION_COUNT
+    ids = [entry["entry_id"] for entry in prescriptions]
+    assert len(set(ids)) == _V12_PRESCRIPTION_COUNT
+    assert ids == sorted(ids)
+
+    for entry in prescriptions:
+        assert entry["status"] == "active"
+        assert entry["entry_version"] == 1
+        assert entry["category"] == "training_cue"
+        assert entry["topics"]
+        assert entry["family_scope"]
+        assert entry["supported_uses"] == [
+            "explanation_only", "diagnosis_support", "candidate_experiment",
+        ]
+        # Provenance: the source is one of the corpus Bilibili sources,
+        # and the mechanism section carries title + quote.
+        source_refs = entry["sources"]
+        assert len(source_refs) == 1
+        assert entry["mechanisms"]
+        provenance = entry["mechanisms"][0]["text"]
+        assert "出处：" in provenance and "原文引用：" in provenance
+        # confidence is stated honestly in limitations
+        assert any("置信度" in item for item in entry["limitations"])
+        # scenario availability is always stated in scope
+        assert "场景可用性：" in entry["scope"]["text"]
+
+    # The overflick pair (P030) resolves local + official + unresolved together.
+    overflick = next(
+        entry for entry in prescriptions
+        if entry["entry_id"] == "prescription.p030.static-clicking-terminal-control"
+    )
+    scope = overflick["scope"]["text"]
+    assert "本机可开：" in scope
+    assert "官方库：" in scope
+    assert "未解析：" in scope and "转写存疑，未对应到官方场景" in scope
+
+    # query_registry keeps the deterministic annotation surface at v11: the
+    # prescription namespace is Coach-facing content, not an explanation anchor.
+    for signal, metric_refs, refs in (
+        (
+            "reverse_ratio high",
+            ["metric:reverse_ratio"],
+            [
+                "knowledge:static.flicking-terminal-control@3",
+                "knowledge:community.overshoot-sensitivity-trigger@2",
+                "knowledge:tracking.control-smoothness@3",
+            ],
+        ),
+        (
+            "post change error high",
+            ["metric:post_change_error"],
+            [
+                "knowledge:community.reading-vs-execution-decomposition@1",
+                "knowledge:dynamic.speed-matching-and-reading@3",
+            ],
+        ),
+    ):
+        selected = registry.query_registry(
+            registry.load_registry(), issue_signal=signal, metric_refs=metric_refs,
+        )
+        assert [registry.entry_ref(entry) for entry in selected] == refs
+        assert not any(
+            entry["entry_id"].startswith("prescription.") for entry in selected
+        )
+
+    # v11 stays loadable as history after v12 is packaged.
+    assert registry.load_registry(
+        registry_version="2026-09-10.v11"
+    )["registry_version"] == "2026-09-10.v11"
