@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -42,6 +42,30 @@ test("nextSessionIdSync allocates past existing sessions", async () => {
   await ensureSession(3);
   await ensureSession(5);
   assert.equal(nextSessionIdSync(), 6);
+});
+
+test("nextSessionIdSync allocates past archived meta left by deletes (0911 审计 §12.4)", async () => {
+  // 删除流＝JSONL 删、meta 归档保留：92 号会话删除后只剩 92.meta.json，
+  // 分配器不得复用 92（撞号会把归档 meta 覆盖回 active）。
+  const dir = getConversationsDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "92.meta.json"),
+    JSON.stringify({
+      id: 92,
+      title: "验证用",
+      title_source: null,
+      status: "archived",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }),
+    "utf8",
+  );
+  await ensureSession(91);
+  assert.equal(nextSessionIdSync(), 93);
+  // 归档 meta 原样：没有被新分配覆盖回 active。
+  const archived = JSON.parse(readFileSync(join(dir, "92.meta.json"), "utf8")) as { status: string };
+  assert.equal(archived.status, "archived");
 });
 
 test("createCoachSession + detail preserve the frontend shape", async () => {

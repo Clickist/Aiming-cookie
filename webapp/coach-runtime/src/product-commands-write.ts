@@ -502,131 +502,208 @@ export async function executeNativeAnalysisRetry(
 }
 
 // ── Training plan commands ─────────────────────────────────────────────
+//
+// On-disk contract is the Python read side's doc model (training_plan_store):
+// `{plans: {<plan_id>: {...}}, transitions: [], items: {}, executions: [], retests: []}`.
+// The TS write side previously stored one flat plan object at the file root,
+// which the Python reader never saw — `/current-training` therefore always
+// answered no_current_plan and the frontend card never showed a plan. Writing
+// the nested doc (with the owner the route filters on) keeps both sides on one
+// format.
+
+const DEFAULT_OWNER_ID = "desktop-local";
+
+function isPlainRecord(value: unknown): value is AnyDict {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+type PlanDoc = {
+  plans: AnyDict;
+  transitions: AnyDict[];
+  items: AnyDict;
+  executions: AnyDict[];
+  retests: AnyDict[];
+};
 
 function planPath(): string {
   return join(getTrainingDir(), "plan.json");
 }
 
-function readPlan(): AnyDict | null {
-  return readJsonFile(planPath());
+function readPlanDoc(): PlanDoc {
+  const raw = readJsonFile<AnyDict>(planPath());
+  return {
+    plans: isPlainRecord(raw?.plans) ? { ...(raw.plans as AnyDict) } : {},
+    transitions: Array.isArray(raw?.transitions) ? [...(raw.transitions as AnyDict[])] : [],
+    items: isPlainRecord(raw?.items) ? { ...(raw.items as AnyDict) } : {},
+    executions: Array.isArray(raw?.executions) ? [...(raw.executions as AnyDict[])] : [],
+    retests: Array.isArray(raw?.retests) ? [...(raw.retests as AnyDict[])] : [],
+  };
 }
 
-function writePlan(plan: AnyDict): void {
-  writeJsonFile(planPath(), plan);
+function writePlanDoc(doc: PlanDoc): void {
+  writeJsonFile(planPath(), doc);
 }
 
-function planProjection(plan: AnyDict): AnyDict {
+function storedPlanVersion(plan: AnyDict): AnyDict {
+  const version = Number(plan.current_version ?? 1) || 1;
+  const versions = isPlainRecord(plan.versions) ? plan.versions : {};
+  return isPlainRecord(versions[String(version)]) ? versions[String(version)] as AnyDict : {};
+}
+
+function planProjection(planId: string, plan: AnyDict): AnyDict {
+  const version = Number(plan.current_version ?? 1) || 1;
+  const current = storedPlanVersion(plan);
   return safePlan({
-    plan_id: plan.plan_id,
-    plan_ref: plan.plan_id,
+    plan_id: planId,
+    plan_ref: planId,
     status: plan.status,
-    version: plan.version ?? 1,
-    version_ref: `${plan.plan_id}:v${plan.version ?? 1}`,
-    plan_payload: plan.plan_payload,
-    adjustment_reason: plan.adjustment_reason ?? null,
-    evidence_refs: plan.evidence_refs ?? [],
-    verification_targets: plan.verification_targets ?? [],
+    version,
+    version_ref: `${planId}:v${version}`,
+    plan_payload: current.plan_payload,
+    adjustment_reason: current.adjustment_reason ?? null,
+    evidence_refs: current.evidence_refs ?? [],
+    verification_targets: current.verification_targets ?? [],
     created_at: plan.created_at,
     updated_at: plan.updated_at,
   });
 }
 
+function appendPlanTransition(doc: PlanDoc, entry: AnyDict): void {
+  doc.transitions.push(entry);
+}
+
 // training_plan.generate_draft
-const trainingPlanGenerateDraft: WriteHandler = (params, _ownerId) => {
+const trainingPlanGenerateDraft: WriteHandler = (params, ownerId) => {
   const payload = params.plan_payload;
-  if (!payload || typeof payload !== "object") throw new Error("plan_payload is required");
+  if (!isPlainRecord(payload)) throw new Error("plan_payload is required");
   const evidenceRefs = Array.isArray(params.evidence_refs) ? params.evidence_refs : [];
   const verificationTargets = Array.isArray(params.verification_targets) ? params.verification_targets : [];
   const planId = `plan:${randomUUID().replace(/-/g, "")}`;
   const now = nowIso();
-  const plan: AnyDict = {
-    plan_id: planId,
+  const owner = ownerId || DEFAULT_OWNER_ID;
+  const doc = readPlanDoc();
+  doc.plans[planId] = {
+    owner_id: owner,
     status: "draft",
-    version: 1,
-    plan_payload: payload,
-    evidence_refs: evidenceRefs,
-    verification_targets: verificationTargets,
-    items: [],
+    current_version: 1,
+    versions: {
+      "1": {
+        plan_payload: payload,
+        adjustment_reason: null,
+        evidence_refs: evidenceRefs,
+        verification_targets: verificationTargets,
+        created_at: now,
+      },
+    },
     created_at: now,
     updated_at: now,
   };
-  writePlan(plan);
-  return ok(planProjection(plan), plan.plan_id);
+  appendPlanTransition(doc, {
+    owner_id: owner,
+    plan_id: planId,
+    version: 1,
+    event: "generated",
+    from_status: null,
+    to_status: "draft",
+    reason: null,
+    created_at: now,
+  });
+  writePlanDoc(doc);
+  return ok(planProjection(planId, doc.plans[planId]), planId);
 };
+
+type PlanLookup = { plan: AnyDict } | { error: HandlerResult };
+
+function requireStoredPlan(planRef: string, doc: PlanDoc): PlanLookup {
+  const plan = doc.plans[planRef];
+  if (!isPlainRecord(plan)) return { error: fail("not_found", "Training Plan 不存在") };
+  return { plan };
+}
+
+function transitionStoredPlan(
+  params: AnyDict,
+  expected: string[],
+  toStatus: string,
+  event: string,
+): HandlerResult {
+  const planRef = requireString(params.plan_ref, "plan_ref");
+  const doc = readPlanDoc();
+  const lookup = requireStoredPlan(planRef, doc);
+  if ("error" in lookup) return lookup.error;
+  const plan = lookup.plan;
+  if (!expected.includes(plan.status)) {
+    return fail("invalid_training_plan", `cannot ${event} a ${plan.status} plan; expected ${expected.join(" or ")}`);
+  }
+  const now = nowIso();
+  const fromStatus = plan.status;
+  plan.status = toStatus;
+  plan.updated_at = now;
+  appendPlanTransition(doc, {
+    owner_id: plan.owner_id ?? DEFAULT_OWNER_ID,
+    plan_id: planRef,
+    version: Number(plan.current_version ?? 1) || 1,
+    event,
+    from_status: fromStatus,
+    to_status: toStatus,
+    reason: null,
+    created_at: now,
+  });
+  writePlanDoc(doc);
+  return ok(planProjection(planRef, plan), planRef);
+}
 
 // training_plan.save (draft → saved)
-const trainingPlanSave: WriteHandler = (params, _ownerId) => {
-  const planRef = requireString(params.plan_ref, "plan_ref");
-  const plan = readPlan();
-  if (!plan || plan.plan_id !== planRef) {
-    return fail("not_found", "Training Plan 不存在");
-  }
-  if (plan.status !== "draft") {
-    return fail("invalid_training_plan", `cannot save a ${plan.status} plan; expected draft`);
-  }
-  plan.status = "saved";
-  plan.updated_at = nowIso();
-  writePlan(plan);
-  return ok(planProjection(plan), plan.plan_id);
-};
+const trainingPlanSave: WriteHandler = (params, _ownerId) =>
+  transitionStoredPlan(params, ["draft"], "saved", "saved");
 
 // training_plan.pause (active → paused)
-const trainingPlanPause: WriteHandler = (params, _ownerId) => {
-  const planRef = requireString(params.plan_ref, "plan_ref");
-  const plan = readPlan();
-  if (!plan || plan.plan_id !== planRef) {
-    return fail("not_found", "Training Plan 不存在");
-  }
-  if (plan.status !== "active") {
-    return fail("invalid_training_plan", `cannot pause a ${plan.status} plan; expected active`);
-  }
-  plan.status = "paused";
-  plan.updated_at = nowIso();
-  writePlan(plan);
-  return ok(planProjection(plan), plan.plan_id);
-};
+const trainingPlanPause: WriteHandler = (params, _ownerId) =>
+  transitionStoredPlan(params, ["active"], "paused", "paused");
 
 // training_plan.activate (saved/paused → active)
-const trainingPlanActivate: WriteHandler = (params, _ownerId) => {
-  const planRef = requireString(params.plan_ref, "plan_ref");
-  const plan = readPlan();
-  if (!plan || plan.plan_id !== planRef) {
-    return fail("not_found", "Training Plan 不存在");
-  }
-  if (plan.status !== "saved" && plan.status !== "paused") {
-    return fail("invalid_training_plan", `cannot activate a ${plan.status} plan`);
-  }
-  plan.status = "active";
-  plan.updated_at = nowIso();
-  writePlan(plan);
-  return ok(planProjection(plan), plan.plan_id);
-};
+const trainingPlanActivate: WriteHandler = (params, _ownerId) =>
+  transitionStoredPlan(params, ["saved", "paused"], "active", "activated");
 
 // training_plan.adjust (new version)
 const trainingPlanAdjust: WriteHandler = (params, _ownerId) => {
   const planRef = requireString(params.plan_ref, "plan_ref");
   const payload = params.plan_payload;
-  if (!payload || typeof payload !== "object") throw new Error("plan_payload is required");
+  if (!isPlainRecord(payload)) throw new Error("plan_payload is required");
   const adjustmentReason = requireString(params.adjustment_reason, "adjustment_reason");
   const evidenceRefs = Array.isArray(params.evidence_refs) ? params.evidence_refs : [];
   const verificationTargets = Array.isArray(params.verification_targets) ? params.verification_targets : [];
 
-  const plan = readPlan();
-  if (!plan || plan.plan_id !== planRef) {
-    return fail("not_found", "Training Plan 不存在");
-  }
+  const doc = readPlanDoc();
+  const lookup = requireStoredPlan(planRef, doc);
+  if ("error" in lookup) return lookup.error;
+  const plan = lookup.plan;
   if (plan.status === "draft") {
     return fail("invalid_training_plan", "cannot adjust a draft plan before it is saved");
   }
-  const nextVersion = (plan.version ?? 1) + 1;
-  plan.version = nextVersion;
-  plan.plan_payload = payload;
-  plan.adjustment_reason = adjustmentReason;
-  plan.evidence_refs = evidenceRefs;
-  plan.verification_targets = verificationTargets;
-  plan.updated_at = nowIso();
-  writePlan(plan);
-  return ok(planProjection(plan), plan.plan_id);
+  const nextVersion = (Number(plan.current_version ?? 1) || 1) + 1;
+  const now = nowIso();
+  if (!isPlainRecord(plan.versions)) plan.versions = {};
+  plan.versions[String(nextVersion)] = {
+    plan_payload: payload,
+    adjustment_reason: adjustmentReason,
+    evidence_refs: evidenceRefs,
+    verification_targets: verificationTargets,
+    created_at: now,
+  };
+  plan.current_version = nextVersion;
+  plan.updated_at = now;
+  appendPlanTransition(doc, {
+    owner_id: plan.owner_id ?? DEFAULT_OWNER_ID,
+    plan_id: planRef,
+    version: nextVersion,
+    event: "adjusted",
+    from_status: plan.status,
+    to_status: plan.status,
+    reason: adjustmentReason,
+    created_at: now,
+  });
+  writePlanDoc(doc);
+  return ok(planProjection(planRef, plan), planRef);
 };
 
 // ── Training plan item & execution commands ───────────────────────────
@@ -635,34 +712,36 @@ const trainingPlanAdjust: WriteHandler = (params, _ownerId) => {
 const trainingPlanItemAdd: WriteHandler = (params, _ownerId) => {
   const planRef = requireString(params.plan_ref, "plan_ref");
   const itemPayload = params.item_payload;
-  if (!itemPayload || typeof itemPayload !== "object") throw new Error("item_payload is required");
-  const plan = readPlan();
-  if (!plan || plan.plan_id !== planRef) {
-    return fail("not_found", "Training Plan 不存在");
-  }
+  if (!isPlainRecord(itemPayload)) throw new Error("item_payload is required");
+  const doc = readPlanDoc();
+  const lookup = requireStoredPlan(planRef, doc);
+  if ("error" in lookup) return lookup.error;
+  const plan = lookup.plan;
+  const version = Number(plan.current_version ?? 1) || 1;
   const itemRef = `plan-item:${randomUUID().replace(/-/g, "")}`;
-  const item: AnyDict = {
-    item_ref: itemRef,
-    plan_id: plan.plan_id,
-    plan_version: plan.version ?? 1,
+  const now = nowIso();
+  doc.items[itemRef] = {
+    owner_id: plan.owner_id ?? DEFAULT_OWNER_ID,
+    plan_id: planRef,
+    plan_version: version,
     item_revision: 1,
     status: "planned",
-    ...itemPayload as AnyDict,
+    item_payload: itemPayload,
+    created_at: now,
+    updated_at: now,
   };
-  if (!Array.isArray(plan.items)) plan.items = [];
-  plan.items.push(item);
-  plan.updated_at = nowIso();
-  writePlan(plan);
+  plan.updated_at = now;
+  writePlanDoc(doc);
   return ok({
     item_ref: itemRef,
-    plan_id: plan.plan_id,
-    plan_revision: plan.version ?? 1,
-    plan_revision_ref: `${plan.plan_id}:v${plan.version ?? 1}`,
+    plan_id: planRef,
+    plan_revision: version,
+    plan_revision_ref: `${planRef}:v${version}`,
     item_revision: 1,
     item_revision_ref: `${itemRef}:v1`,
     status: "planned",
     status_ref: null,
-    ...itemPayload as AnyDict,
+    ...itemPayload,
   }, itemRef);
 };
 
@@ -686,12 +765,14 @@ const trainingPlanExecutionRecord: WriteHandler = (params, _ownerId) => {
     throw new Error("unknown execution status");
   }
   const executionRef = `plan-execution:${randomUUID().replace(/-/g, "")}`;
-  const plan = readPlan();
+  const doc = readPlanDoc();
+  const storedItem = isPlainRecord(doc.items[itemRef]) ? doc.items[itemRef] : null;
+  const planRef = typeof storedItem?.plan_id === "string" ? storedItem.plan_id : null;
   const record: AnyDict = {
     execution_ref: executionRef,
     item_ref: itemRef,
-    plan_id: plan?.plan_id ?? null,
-    plan_version: plan?.version ?? null,
+    plan_id: planRef,
+    plan_version: typeof storedItem?.plan_version === "number" ? storedItem.plan_version : null,
     scenario_ref: scenarioRef,
     run_refs: runRefs,
     planned_dose: plannedDose,

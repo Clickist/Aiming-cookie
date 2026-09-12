@@ -115,6 +115,44 @@ function withFakeOpenAI(run: (baseUrl: string) => Promise<void>): Promise<void> 
   });
 }
 
+/** Minimal OpenAI-compatible endpoint that also answers GET /models with JSON. */
+function withFakeOpenAIPlusModels(run: (baseUrl: string) => Promise<void>): Promise<void> {
+  const server = http.createServer((req, res) => {
+    if (req.method === "GET" && (req.url ?? "").endsWith("/models")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "fixture-model" }] }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    const chunk = (delta: Record<string, unknown>, finish: string | null) => {
+      res.write(`data: ${JSON.stringify({
+        id: "chatcmpl-dryrun",
+        object: "chat.completion.chunk",
+        created: 1_700_000_000,
+        model: "fixture-model",
+        choices: [{ index: 0, delta, finish_reason: finish }],
+      })}\n\n`);
+    };
+    chunk({ role: "assistant", content: "OK" }, null);
+    chunk({}, "stop");
+    res.write("data: [DONE]\n\n");
+    res.end();
+  });
+  return new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", async () => {
+      const port = (server.address() as AddressInfo).port;
+      try {
+        await run(`http://127.0.0.1:${port}/v1`);
+        resolve();
+      } catch (error) {
+        reject(error);
+      } finally {
+        await new Promise<void>((closeResolve) => server.close(() => closeResolve()));
+      }
+    });
+  });
+}
+
 test("POST /v1/provider-profiles/test rejects an invalid candidate without persisting anything", async () => {
   await withServer(async (server) => {
     const before = dataRootFingerprint(dataRoot);
@@ -213,5 +251,80 @@ test("POST /v1/provider-profiles/test leaves an existing stored profile untouche
     assert.equal(store.next_id, 2);
     const listed = await request(server, "GET", "/v1/provider-profiles");
     assert.equal((listed.json as { profiles: Array<{ model_id: string }> }).profiles[0].model_id, "deepseek-v4-flash");
+  });
+});
+
+test("POST /v1/provider-profiles/test probes a model-less custom draft without persisting anything", async () => {
+  await withFakeOpenAIPlusModels(async (baseUrl) => {
+    await withServer(async (server) => {
+      const before = dataRootFingerprint(dataRoot);
+      const profilesBefore = loadProviderStore().profiles.length;
+      const res = await request(server, "POST", "/v1/provider-profiles/test", JSON.stringify({
+        kind: "custom_openai_compatible",
+        name: "Local Lab",
+        base_url: baseUrl,
+        // model_id 缺省 → 免模型连通探测（点点 0911 两步式向导）。
+        model_id: "",
+        api_key: "draft-key",
+      }));
+      assert.equal(res.statusCode, 200);
+      const status = res.json as Record<string, unknown>;
+      assert.equal(status.profile_id, null);
+      assert.equal(status.status, "ready");
+      assert.equal(status.configured, true);
+
+      assert.deepEqual(dataRootFingerprint(dataRoot), before);
+      assert.equal(loadProviderStore().profiles.length, profilesBefore);
+    });
+  });
+});
+
+test("POST /v1/provider-profiles/test probes a model-less builtin draft for reachability", async () => {
+  await withServer(async (server) => {
+    const before = dataRootFingerprint(dataRoot);
+    const profilesBefore = loadProviderStore().profiles.length;
+    // 未知 provider → model_unavailable（不发网络请求）。
+    const unknown = await request(server, "POST", "/v1/provider-profiles/test", JSON.stringify({
+      kind: "builtin",
+      provider_id: "not-a-provider",
+      model_id: "",
+      api_key: "draft-key",
+    }));
+    assert.equal(unknown.statusCode, 200);
+    assert.equal((unknown.json as Record<string, unknown>).status, "model_unavailable");
+
+    // 已知 provider 但没有可用凭据 → connection_failed（同样零持久化）。
+    const noKey = await request(server, "POST", "/v1/provider-profiles/test", JSON.stringify({
+      kind: "builtin",
+      provider_id: "opencode-go",
+      model_id: " ",
+    }));
+    assert.equal(noKey.statusCode, 200);
+    assert.equal((noKey.json as Record<string, unknown>).status, "connection_failed");
+
+    assert.deepEqual(dataRootFingerprint(dataRoot), before);
+    assert.equal(loadProviderStore().profiles.length, profilesBefore);
+  });
+});
+
+test("POST /v1/provider-profiles/test probes an unreachable custom endpoint as connection_failed", async () => {
+  await withServer(async (server) => {
+    const before = dataRootFingerprint(dataRoot);
+    const profilesBefore = loadProviderStore().profiles.length;
+    const res = await request(server, "POST", "/v1/provider-profiles/test", JSON.stringify({
+      kind: "custom_openai_compatible",
+      name: "Local Lab",
+      // 端口 1 无监听，连接立即被拒；两种协议都失败才判失败。
+      base_url: "http://127.0.0.1:1/v1",
+      model_id: "",
+      api_key: "draft-key",
+    }));
+    assert.equal(res.statusCode, 200);
+    const status = res.json as Record<string, unknown>;
+    assert.equal(status.status, "connection_failed");
+    assert.equal(status.configured, false);
+
+    assert.deepEqual(dataRootFingerprint(dataRoot), before);
+    assert.equal(loadProviderStore().profiles.length, profilesBefore);
   });
 });

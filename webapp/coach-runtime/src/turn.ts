@@ -19,7 +19,7 @@ import {
 } from "./contracts.ts";
 import { skillsExecutionEnv } from "./skills-env.ts";
 import { createProductCommandTool } from "./product-command-tools.ts";
-import { resolveSystemPrompt } from "./load-system-prompt.ts";
+import { resolveSystemPromptWithEnvFacts } from "./load-system-prompt.ts";
 import {
   extractRuntimeSecrets,
   parseProviderProfile,
@@ -30,6 +30,7 @@ import { resolveProviderModel, type PiModels, type ResolvedProviderModel } from 
 import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
 import { getDataRoot } from "./app-data.ts";
 import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, explicitAnalysisRefsFromText, runScopedAnalysisReads, runScopedSkillReads } from "./fs-tools.ts";
+import { createWebSearchTools } from "./web-search-native.ts";
 import { extractMessageText } from "./session-repo.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 
@@ -42,6 +43,9 @@ type ParsedRequest = {
   messages: CoachRuntimeMessage[];
   session_id?: string;
   system_prompt?: string;
+  /** 结构化分析引用（前端引用菜单选择）：与消息文本里的 analysis:N 同效，
+      但用户界面不再出现机器码（0911 点点）。 */
+  context_refs?: string[];
   model: CoachRuntimeProviderProfile;
   tool_bridge?: import("./contracts.ts").CoachToolBridge;
 };
@@ -291,6 +295,13 @@ function parseRequest(raw: unknown): ParsedRequest {
   const toolBridge = raw.tool_bridge;
   if (toolBridge !== undefined && !isRecord(toolBridge)) throw new Error("tool_bridge must be an object");
   const model = parseProviderProfile(raw.model);
+  // 结构化引用：只收合法的 analysis:N，非法项静默丢弃，封顶 10 条
+  // （与单条消息文本里手打多个 ref 的合理上限同量级）。
+  const contextRefs = Array.isArray(raw.context_refs)
+    ? (raw.context_refs.filter(
+        (ref): ref is string => typeof ref === "string" && /^analysis:[1-9][0-9]*$/.test(ref),
+      ).slice(0, 10))
+    : undefined;
 
   return {
     schema_version: schemaVersion,
@@ -299,6 +310,7 @@ function parseRequest(raw: unknown): ParsedRequest {
     messages,
     session_id: sessionId,
     system_prompt: systemPrompt,
+    context_refs: contextRefs,
     model,
     tool_bridge: toolBridge as ParsedRequest["tool_bridge"],
   };
@@ -849,15 +861,18 @@ export async function runCoachTurn(
 
     // Build system prompt via harness callback: the base prompt plus the
     // spec-compatible skills block (Pi injects resources into the callback).
+    // 基础提示词带本机环境实测（探测在 sidecar 启动时已热身，此处命中缓存）。
+    const baseSystemPrompt = await resolveSystemPromptWithEnvFacts(request.system_prompt);
     const systemPrompt = (context: { resources: { skills?: unknown[] } }) =>
       assembleSystemPrompt(
-        resolveSystemPrompt(request.system_prompt),
+        baseSystemPrompt,
         formatSkillsForSystemPrompt(context.resources.skills ?? []),
       );
 
-    // Build tools: file system tools + knowledge + product commands
+    // Build tools: file system tools + knowledge + product commands + web.
     // read/write/ls/edit/grep/find/bash 全部来自 pi coding-agent 原版实现
     // （fs-tools.ts 只加 Coach 产品护栏），read/write 的 Coach 包装见 fs-tools.ts。
+    // web_search/fetch_page 为免 key 联网工具（见 web-search-native.ts）。
     const dataRoot = getDataRoot();
     const tools = [
       await createReadTool(dataRoot),
@@ -870,6 +885,7 @@ export async function runCoachTurn(
       createProductCommandTool(request.tool_bridge ?? null, {
         ownerId: request.user_id,
       }),
+      ...await createWebSearchTools(),
     ];
 
     // Allow a test-injected stream to stand in for the resolved provider
@@ -1143,12 +1159,14 @@ export async function runCoachTurn(
     // references in the user's message pin the discussion subject; analysis
     // creation and native evidence commands report subjects. Reference reads
     // (history comparison via file reads, analysis.get/compare) stay out of
-    // the discussion list.
-    for (const id of explicitAnalysisRefsFromText(
-      typeof lastMessage === "string"
-        ? lastMessage
-        : JSON.stringify(lastMessage ?? ""),
-    )) {
+    // the discussion list. 结构化 context_refs（前端引用菜单）与文本 ref 同效。
+    const explicitRefIds = [
+      ...explicitAnalysisRefsFromText(
+        typeof lastMessage === "string" ? lastMessage : JSON.stringify(lastMessage ?? ""),
+      ),
+      ...(request.context_refs ?? []).map((ref) => Number(ref.slice("analysis:".length))),
+    ];
+    for (const id of explicitRefIds) {
       recordAnalysisRead(id, true);
     }
     let replyMessage = await runScopedSkillReads(recordSkillRead, () =>

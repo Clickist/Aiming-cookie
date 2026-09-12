@@ -194,6 +194,8 @@ export type CoachReasoningEffort = "minimal" | "low" | "medium" | "high" | "off"
 
 export type BuiltinProviderProfile = {
   kind: "builtin";
+  /** 用户命名的显示名；缺省（旧档案）时投影回落 provider_id。 */
+  name?: string;
   provider_id: string;
   model_id: string;
   /** Per-profile thinking knob (see CoachReasoningEffort); absent = runtime default. */
@@ -215,6 +217,8 @@ export type CustomOpenAiCompatibleProfile = {
   /** Limits returned by this Provider's model discovery response. */
   context_window?: number;
   max_tokens?: number;
+  /** 存档的模型发现结果（点点 0912 拍板）：详情页直接显示，获取模型时更新。 */
+  discovered_models?: CustomProviderModel[];
   /** Custom providers require an api_key credential. */
   credential?: ApiKeyCredential;
   /** Migration compatibility; normalized to an api_key credential during parsing. */
@@ -232,6 +236,8 @@ export type CustomAnthropicCompatibleProfile = {
   /** Limits returned by this Provider's model discovery response. */
   context_window?: number;
   max_tokens?: number;
+  /** 存档的模型发现结果（点点 0912 拍板）：详情页直接显示，获取模型时更新。 */
+  discovered_models?: CustomProviderModel[];
   /** Custom providers require an api_key credential. */
   credential?: ApiKeyCredential;
   /** Migration compatibility; normalized to an api_key credential during parsing. */

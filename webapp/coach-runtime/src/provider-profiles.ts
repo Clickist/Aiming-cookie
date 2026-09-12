@@ -23,10 +23,16 @@ import {
 import {
   getProviderProfileStatus,
   parseProviderProfile,
+  probeProviderConnection,
   ProviderProfileError,
   testProviderConnection,
 } from "./provider-profile.ts";
-import { fetchCustomProviderModels, resolveProviderModel } from "./provider-models.ts";
+import {
+  AIMING_COOKIE_RELAY_PROVIDER_ID,
+  fetchCustomProviderModels,
+  fetchOfficialRelayBalance,
+  resolveProviderModel,
+} from "./provider-models.ts";
 import {
   deleteProfileById,
   findStoredProfile,
@@ -53,6 +59,8 @@ export type ProviderProfileView = {
   reasoning_effort: CoachReasoningEffort | null;
   context_window: number | null;
   max_tokens: number | null;
+  /** 模型发现存档（点点 0912 拍板）：仅自定义档，null=尚未发现过。 */
+  discovered_models: CustomProviderModel[] | null;
   is_default: boolean;
   configured: boolean;
   credential_configured: boolean;
@@ -145,7 +153,8 @@ function customFields(profile: CoachRuntimeProviderProfile): {
   provider_name: string;
 } {
   if (profile.kind === "builtin") {
-    return { base_url: null, context_window: null, max_tokens: null, provider_name: profile.provider_id };
+    // 显示名：用户命名优先，旧档案（无 name）回落 provider_id。
+    return { base_url: null, context_window: null, max_tokens: null, provider_name: profile.name ?? profile.provider_id };
   }
   return {
     base_url: profile.base_url,
@@ -172,6 +181,10 @@ async function projectProfile(
     reasoning_effort: entry.reasoning_effort ?? null,
     context_window: fields.context_window,
     max_tokens: fields.max_tokens,
+    // 模型发现存档（点点 0912 拍板）：settings 详情页免点「获取模型」直接显示。
+    discovered_models: (entry.kind === "custom_openai_compatible" || entry.kind === "custom_anthropic_compatible")
+      ? entry.discovered_models ?? null
+      : null,
     is_default: isDefault,
     configured: configuredFromStatus(status),
     credential_configured: credential !== undefined,
@@ -219,6 +232,9 @@ function coachProfileFromCreate(raw: unknown): CoachRuntimeProviderProfile {
   if (raw.kind === "builtin") {
     return parseProviderProfile({
       kind: "builtin",
+      // 内置档同样落用户显示名（点点 0911 拍板 #10）：缺省/空白按未命名，
+      // 投影回落 provider_id；非字符串交给 parseProviderProfile 统一 400。
+      ...(typeof raw.name === "string" && raw.name.trim() ? { name: raw.name.trim() } : {}),
       provider_id: typeof raw.provider_id === "string" ? raw.provider_id : "",
       model_id: typeof raw.model_id === "string" ? raw.model_id : "",
       // reasoning_effort 缺省/null 都按未设置处理；非法值交给
@@ -243,6 +259,17 @@ function coachProfileFromCreate(raw: unknown): CoachRuntimeProviderProfile {
         : { reasoning_effort: raw.reasoning_effort }),
       context_window: typeof raw.context_window === "number" ? raw.context_window : undefined,
       max_tokens: typeof raw.max_tokens === "number" ? raw.max_tokens : undefined,
+      // 模型发现存档（点点 0912 拍板）：请求体带了才覆盖，否则由调用方与
+      // 已存档合并（防止改名/换 URL 的整档更新把存档列表静默抹掉）。
+      ...(Array.isArray(raw.discovered_models)
+        ? {
+            discovered_models: (raw.discovered_models as unknown[]).filter(isRecord).map((item) => ({
+              model_id: typeof item.model_id === "string" ? item.model_id : "",
+              context_window: typeof item.context_window === "number" ? item.context_window : null,
+              max_tokens: typeof item.max_tokens === "number" ? item.max_tokens : null,
+            })).filter((item) => item.model_id),
+          }
+        : {}),
       api_key: typeof raw.api_key === "string" ? raw.api_key : "",
     });
   }
@@ -255,6 +282,7 @@ function profileWithApiKey(profile: CoachRuntimeProviderProfile, apiKey: string)
   if (profile.kind === "builtin") {
     return parseProviderProfile({
       kind: "builtin",
+      ...(profile.name !== undefined ? { name: profile.name } : {}),
       provider_id: profile.provider_id,
       model_id: profile.model_id,
       ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
@@ -278,6 +306,7 @@ function profileWithoutCredential(profile: CoachRuntimeProviderProfile): CoachRu
   if (profile.kind === "builtin") {
     return {
       kind: "builtin",
+      ...(profile.name !== undefined ? { name: profile.name } : {}),
       provider_id: profile.provider_id,
       model_id: profile.model_id,
       ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
@@ -302,6 +331,7 @@ function profileWithCredential(
   if (profile.kind === "builtin") {
     return parseProviderProfile({
       kind: "builtin",
+      ...(profile.name !== undefined ? { name: profile.name } : {}),
       provider_id: profile.provider_id,
       model_id: profile.model_id,
       ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
@@ -367,6 +397,32 @@ export async function handleProviderProfileRequest(
     return true;
   }
 
+  // 官方中转档余额（点点 0912 拍板）：用存档 key 查 new-api 计费兼容端点，
+  // 余额在 sidecar 算好，前端只拿数字。未存 key → 400；站点不可达/形状变了 → 502。
+  if (req.method === "GET" && pathname === "/v1/provider-profiles/official/balance") {
+    try {
+      const store = loadProviderStore();
+      const entry = store.profiles.find(
+        (candidate) => candidate.provider_id === AIMING_COOKIE_RELAY_PROVIDER_ID,
+      );
+      const apiKey = entry?.credential?.type === "api_key" && typeof entry.credential.key === "string"
+        ? entry.credential.key
+        : null;
+      if (!apiKey) {
+        writeJson(res, 400, { detail: "官方档还没有保存 API Key" });
+        return true;
+      }
+      const balance = await fetchOfficialRelayBalance(apiKey);
+      writeJson(res, 200, { schema_version: "coach_provider_balance.v1", ...balance });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      writeJson(res, message.includes("billing_401") || message.includes("billing_403")
+        ? 401
+        : 502, { detail: message.includes("billing_401") || message.includes("billing_403") ? "API Key 无效或已被重置" : "暂时无法读取余额，请稍后重试。" });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && pathname === "/v1/provider-profiles/custom/models") {
     try {
       const body = await readJsonBody(req);
@@ -397,6 +453,10 @@ export async function handleProviderProfileRequest(
         }
         const protocol = entry.kind === "custom_anthropic_compatible" ? "anthropic-messages" : "openai-completions";
         const models: CustomProviderModel[] = await fetchCustomProviderModels(protocol, entry.base_url, apiKey);
+        // 点点 0912 拍板：发现结果存档一份，详情页免点「获取模型」直接显示；
+        // 之后的「获取模型」只是更新这份存档。
+        entry.discovered_models = models;
+        saveProviderStore(store);
         writeJson(res, 200, { models });
         return true;
       }
@@ -425,6 +485,12 @@ export async function handleProviderProfileRequest(
   if (req.method === "POST" && pathname === "/v1/provider-profiles/test") {
     try {
       const body = await readJsonBody(req);
+      // 免模型连通探测（点点 0911 两步式向导）：候选档尚未选定 model 时，
+      // 只验证 Provider 存在性、凭据与端点连通；选定模型后仍走完整干跑。
+      if (isRecord(body) && !(typeof body.model_id === "string" && body.model_id.trim())) {
+        writeJson(res, 200, projectStatus(await probeProviderConnection(body), null));
+        return true;
+      }
       const profile = coachProfileFromCreate(body);
       writeJson(res, 200, projectStatus(await testProviderConnection(profile), null));
     } catch (error) {
@@ -462,7 +528,14 @@ export async function handleProviderProfileRequest(
       const store = loadProviderStore();
       const existing = requestedId !== null ? findStoredProfile(store, requestedId) : undefined;
       if (existing) {
-        const updated = replaceStoredProfile(store, existing.id, profile);
+        // 整档 upsert 未携带模型存档时沿用已存列表（与 PUT 保留法一致）。
+        const mergedProfile: CoachRuntimeProviderProfile
+          = !Array.isArray((profile as { discovered_models?: unknown }).discovered_models)
+            && (existing.kind === "custom_openai_compatible" || existing.kind === "custom_anthropic_compatible")
+            && existing.discovered_models
+            ? { ...profile, discovered_models: existing.discovered_models }
+            : profile;
+        const updated = replaceStoredProfile(store, existing.id, mergedProfile);
         saveProviderStore(store);
         writeJson(res, 200, await projectProfile(updated, isActiveProfile(store, updated)));
         return true;
@@ -589,14 +662,30 @@ export async function handleProviderProfileRequest(
       const suppliesApiKey = isRecord(body)
         && typeof body.api_key === "string"
         && body.api_key.trim().length > 0;
+      // PUT 是整档更新：请求体未携带名称时保留已存内置显示名，避免改名
+      // 链路之外的整档更新把用户命名静默抹回 provider_id（与凭据保留同法）。
+      const suppliesName = isRecord(body)
+        && typeof body.name === "string"
+        && body.name.trim().length > 0;
+      const requestBody: unknown = !suppliesName && entry.kind === "builtin" && entry.name
+        ? { ...(isRecord(body) ? body : {}), name: entry.name }
+        : body;
+      // discovered_models 同credential 保留法（点点 0912 拍板）：整档更新未携带
+      // 模型存档时沿用已存列表，改名/换 URL 不把模型列表静默抹掉。
+      const suppliesDiscoveredModels = isRecord(body) && Array.isArray(body.discovered_models);
+      const requestBodyWithModels: unknown = !suppliesDiscoveredModels
+        && (entry.kind === "custom_openai_compatible" || entry.kind === "custom_anthropic_compatible")
+        && entry.discovered_models
+        ? { ...(isRecord(requestBody) ? requestBody : {}), discovered_models: entry.discovered_models }
+        : requestBody;
       let profile: CoachRuntimeProviderProfile;
       if (!suppliesApiKey && entry.credential?.type === "api_key") {
         profile = coachProfileFromCreate({
-          ...(isRecord(body) ? body : {}),
+          ...(isRecord(requestBodyWithModels) ? requestBodyWithModels : {}),
           api_key: entry.credential.key,
         });
       } else {
-        profile = coachProfileFromCreate(body);
+        profile = coachProfileFromCreate(requestBodyWithModels);
         if (!suppliesApiKey && entry.credential) {
           profile = profileWithCredential(profile, entry.credential);
         }
@@ -676,6 +765,30 @@ export async function handleProviderProfileRequest(
       const updated = replaceStoredProfile(store, entry.id, profileWithApiKey(entry, apiKey));
       saveProviderStore(store);
       writeJson(res, 200, await projectProfile(updated, isActiveProfile(store, updated)));
+    } catch (error) {
+      writeProfileError(res, error);
+    }
+    return true;
+  }
+
+  // 眼睛按钮的「显示 Key」（点点 0912 拍板）：测试阶段 key 对用户可见，
+  // GET 返回存档明文；仅限本地 sidecar，走与删除同一套档案鉴权路径。
+  if (route.action === "credential" && req.method === "GET") {
+    try {
+      const store = loadProviderStore();
+      const entry = routeStoredProfile(store, route.id);
+      if (!entry) {
+        writeJson(res, 404, { detail: "Provider profile 不存在" });
+        return true;
+      }
+      const apiKey = entry.credential?.type === "api_key" && typeof entry.credential.key === "string"
+        ? entry.credential.key
+        : null;
+      if (!apiKey) {
+        writeJson(res, 404, { detail: "这个 Provider 还没有保存 API Key" });
+        return true;
+      }
+      writeJson(res, 200, { schema_version: "coach_provider_credential.v1", api_key: apiKey });
     } catch (error) {
       writeProfileError(res, error);
     }

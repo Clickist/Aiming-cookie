@@ -55,6 +55,16 @@ function optionalReasoningEffort(raw: Record<string, unknown>): CoachReasoningEf
   return value as CoachReasoningEffort;
 }
 
+/** 内置档的用户显示名：缺省/空白都按未命名处理，非字符串按非法输入 400。 */
+function optionalDisplayName(raw: Record<string, unknown>): string | undefined {
+  if (raw.name === undefined) return undefined;
+  if (typeof raw.name !== "string") {
+    throw new ProviderProfileError("invalid_profile", "model.name must be a string when supplied");
+  }
+  const trimmed = raw.name.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function normalizeHttpBaseUrl(value: string, kind?: unknown): string {
   let parsed: URL;
   try {
@@ -120,8 +130,10 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
   if (raw.kind === "builtin") {
     const credential = parseRuntimeCredential(raw);
     const reasoningEffort = optionalReasoningEffort(raw);
+    const name = optionalDisplayName(raw);
     return {
       kind: "builtin",
+      ...(name !== undefined ? { name } : {}),
       provider_id: requiredString(raw, "provider_id"),
       model_id: requiredString(raw, "model_id"),
       ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
@@ -153,6 +165,21 @@ export function parseProviderProfile(raw: unknown): CoachRuntimeProviderProfile 
       ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
       ...(contextWindow !== undefined ? { context_window: contextWindow } : {}),
       ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
+      // 模型发现存档（点点 0912 拍板）：逐项过滤，坏项直接丢弃不 400。
+      ...(Array.isArray(raw.discovered_models)
+        ? {
+            discovered_models: (raw.discovered_models as unknown[])
+              .filter((item) => typeof item === "object" && item !== null && typeof (item as { model_id?: unknown }).model_id === "string")
+              .map((item) => {
+                const record = item as { model_id: string; context_window?: unknown; max_tokens?: unknown };
+                return {
+                  model_id: record.model_id,
+                  context_window: typeof record.context_window === "number" ? record.context_window : null,
+                  max_tokens: typeof record.max_tokens === "number" ? record.max_tokens : null,
+                };
+              }),
+          }
+        : {}),
     };
   }
 
@@ -163,6 +190,7 @@ export function sanitizeProviderProfile(profile: CoachRuntimeProviderProfile): R
   if (profile.kind === "builtin") {
     return {
       kind: profile.kind,
+      ...(profile.name !== undefined ? { name: profile.name } : {}),
       provider_id: profile.provider_id,
       model_id: profile.model_id,
       ...(profile.reasoning_effort !== undefined ? { reasoning_effort: profile.reasoning_effort } : {}),
@@ -398,5 +426,85 @@ export async function testProviderConnection(
     };
   } finally {
     if (timeout) clearTimeout(timeout);
+  }
+}
+
+/**
+ * 免模型的连通性探测（点点 0911 两步式向导拍板）：候选档尚未选定 model 时，
+ * 内置档验证 Provider 目录存在性、凭据与端点连通；自定义档验证 Base URL 与
+ * Key 并顺带探测协议。与 testProviderConnection 同构的状态投影，只读干跑，
+ * 零持久化；选定模型后的完整干跑仍走 testProviderConnection。
+ */
+export async function probeProviderConnection(
+  rawProfile: unknown,
+  options: ConnectionTestOptions = {},
+): Promise<ProviderProfileStatusResponse> {
+  const secrets = extractRuntimeSecrets({ profile: rawProfile });
+  const timeoutMs = connectionTimeout(options.timeoutMs);
+  try {
+    if (!isRecord(rawProfile)) {
+      throw new ProviderProfileError("invalid_profile", "model profile must be a JSON object");
+    }
+    const { probeBuiltinProvider, probeCustomProvider } = await import("./provider-models.ts");
+    if (rawProfile.kind === "builtin") {
+      const providerId = typeof rawProfile.provider_id === "string" ? rawProfile.provider_id.trim() : "";
+      if (!providerId) {
+        throw new ProviderProfileError("invalid_profile", "model.provider_id must be a non-empty string");
+      }
+      await probeBuiltinProvider(providerId, parseRuntimeCredential(rawProfile), timeoutMs);
+    } else if (
+      rawProfile.kind === "custom_openai_compatible"
+      || rawProfile.kind === "custom_anthropic_compatible"
+    ) {
+      const credential = parseRuntimeCredential(rawProfile, "api_key");
+      const apiKey = credential?.type === "api_key" && credential.key ? credential.key : "";
+      if (!apiKey) {
+        throw new ProviderProfileError(
+          "invalid_profile",
+          "model custom provider requires an api_key credential",
+        );
+      }
+      const baseUrl = typeof rawProfile.base_url === "string" ? rawProfile.base_url : "";
+      await probeCustomProvider(baseUrl, apiKey, timeoutMs);
+    } else {
+      throw new ProviderProfileError(
+        "invalid_profile",
+        "model.kind must select a supported provider profile kind",
+      );
+    }
+    return {
+      schema_version: PROVIDER_PROFILE_STATUS_SCHEMA,
+      ok: true,
+      status: "ready",
+      profile: null,
+      model: null,
+      credential_source: null,
+      error: null,
+    };
+  } catch (error) {
+    const code = error instanceof ProviderProfileError ? error.code : "connection_failed";
+    const status =
+      code === "unknown_provider" || code === "unknown_model"
+        ? "model_unavailable"
+        : code === "invalid_profile"
+          ? "unconfigured"
+          : "connection_failed";
+    return {
+      schema_version: PROVIDER_PROFILE_STATUS_SCHEMA,
+      ok: false,
+      status,
+      profile: null,
+      model: null,
+      credential_source: null,
+      error: makeError({
+        category: "provider_connection",
+        code,
+        message: redactRuntimeSecrets(
+          error instanceof Error ? error.message : "Provider connection probe failed",
+          secrets,
+        ),
+        retryable: status === "connection_failed",
+      }),
+    };
   }
 }

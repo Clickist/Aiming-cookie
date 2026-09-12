@@ -16,7 +16,7 @@ function ensureDirs(): void {
   }
 }
 
-test("training_plan.generate_draft writes plan.json", () => {
+test("training_plan.generate_draft writes the plans-doc format plan.json", () => {
   ensureDirs();
   rmSync(join(dataRoot, "training", "plan.json"), { force: true });
   const result = executeNativeWrite(
@@ -27,9 +27,31 @@ test("training_plan.generate_draft writes plan.json", () => {
   assert.equal(result.status, "succeeded");
   const planPath = join(dataRoot, "training", "plan.json");
   assert.ok(existsSync(planPath));
-  const plan = JSON.parse(readFileSync(planPath, "utf-8"));
+  const doc = JSON.parse(readFileSync(planPath, "utf-8"));
+  // Python read side (training_plan_store) reads {plans:{...}}; the write side
+  // must not regress to the flat object that left /current-training empty.
+  assert.deepEqual(Object.keys(doc).sort(), ["executions", "items", "plans", "retests", "transitions"]);
+  const planRef = (result.result as Record<string, unknown>).plan_ref as string;
+  const plan = doc.plans[planRef];
   assert.equal(plan.status, "draft");
-  assert.equal(plan.plan_payload.title, "Test Plan");
+  assert.equal(plan.owner_id, "owner-a");
+  assert.equal(plan.current_version, 1);
+  assert.equal(plan.versions["1"].plan_payload.title, "Test Plan");
+  assert.equal(doc.transitions[0].event, "generated");
+});
+
+test("training_plan.generate_draft defaults the owner to desktop-local", () => {
+  ensureDirs();
+  rmSync(join(dataRoot, "training", "plan.json"), { force: true });
+  const result = executeNativeWrite(
+    "training_plan.generate_draft",
+    { plan_payload: { title: "No Owner" } },
+    "",
+  );
+  assert.equal(result.status, "succeeded");
+  const planRef = (result.result as Record<string, unknown>).plan_ref as string;
+  const doc = JSON.parse(readFileSync(join(dataRoot, "training", "plan.json"), "utf-8"));
+  assert.equal(doc.plans[planRef].owner_id, "desktop-local");
 });
 
 test("training_plan.save transitions draft to saved", () => {
@@ -44,8 +66,9 @@ test("training_plan.save transitions draft to saved", () => {
 
   const result = executeNativeWrite("training_plan.save", { plan_ref: planRef }, "owner-a");
   assert.equal(result.status, "succeeded");
-  const plan = JSON.parse(readFileSync(join(dataRoot, "training", "plan.json"), "utf-8"));
-  assert.equal(plan.status, "saved");
+  const doc = JSON.parse(readFileSync(join(dataRoot, "training", "plan.json"), "utf-8"));
+  assert.equal(doc.plans[planRef].status, "saved");
+  assert.equal(doc.transitions.at(-1).event, "saved");
 });
 
 test("training_plan.activate transitions saved to active", () => {
@@ -61,8 +84,53 @@ test("training_plan.activate transitions saved to active", () => {
 
   const result = executeNativeWrite("training_plan.activate", { plan_ref: planRef }, "owner-a");
   assert.equal(result.status, "succeeded");
-  const plan = JSON.parse(readFileSync(join(dataRoot, "training", "plan.json"), "utf-8"));
-  assert.equal(plan.status, "active");
+  const doc = JSON.parse(readFileSync(join(dataRoot, "training", "plan.json"), "utf-8"));
+  assert.equal(doc.plans[planRef].status, "active");
+  assert.equal(doc.transitions.at(-1).event, "activated");
+});
+
+test("training_plan.adjust appends a version and bumps current_version", () => {
+  ensureDirs();
+  rmSync(join(dataRoot, "training", "plan.json"), { force: true });
+  const draftResult = executeNativeWrite(
+    "training_plan.generate_draft",
+    { plan_payload: { title: "v1" } },
+    "owner-a",
+  );
+  const planRef = (draftResult.result as Record<string, unknown>).plan_ref as string;
+  executeNativeWrite("training_plan.save", { plan_ref: planRef }, "owner-a");
+  const adjusted = executeNativeWrite(
+    "training_plan.adjust",
+    { plan_ref: planRef, plan_payload: { title: "v2" }, adjustment_reason: "test" },
+    "owner-a",
+  );
+  assert.equal(adjusted.status, "succeeded");
+  const doc = JSON.parse(readFileSync(join(dataRoot, "training", "plan.json"), "utf-8"));
+  assert.equal(doc.plans[planRef].current_version, 2);
+  assert.equal(doc.plans[planRef].versions["2"].plan_payload.title, "v2");
+  assert.equal(doc.plans[planRef].versions["1"].plan_payload.title, "v1");
+});
+
+test("training_plan.item.add stores the item in the doc items map", () => {
+  ensureDirs();
+  rmSync(join(dataRoot, "training", "plan.json"), { force: true });
+  const draftResult = executeNativeWrite(
+    "training_plan.generate_draft",
+    { plan_payload: { title: "Plan items" } },
+    "owner-a",
+  );
+  const planRef = (draftResult.result as Record<string, unknown>).plan_ref as string;
+  const itemResult = executeNativeWrite(
+    "training_plan.item.add",
+    { plan_ref: planRef, item_payload: { title: "Practice" } },
+    "owner-a",
+  );
+  assert.equal(itemResult.status, "succeeded");
+  const itemRef = (itemResult.result as Record<string, unknown>).item_ref as string;
+  const doc = JSON.parse(readFileSync(join(dataRoot, "training", "plan.json"), "utf-8"));
+  assert.equal(doc.items[itemRef].plan_id, planRef);
+  assert.equal(doc.items[itemRef].status, "planned");
+  assert.equal(doc.items[itemRef].item_payload.title, "Practice");
 });
 
 test("training_plan.execution.record appends to history.jsonl", () => {

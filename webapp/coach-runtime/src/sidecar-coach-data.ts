@@ -16,7 +16,7 @@ import {
   listSessionIds,
   nextSessionIdSync,
   readConversationMeta,
-  readSessionMessages,
+  readSessionMessagesForUi,
   sessionExists,
   deleteSessionFile,
   truncateSessionFromMessage,
@@ -71,6 +71,8 @@ function shapeSession(
   messages: SessionMessage[],
 ): SessionOut {
   const lastEntry = messages[messages.length - 1];
+  // 侧栏预览向前找最后一条有正文的：末尾的 stopped 空标记不充当预览。
+  const lastVisible = [...messages].reverse().find((message) => message.content.trim().length > 0);
   const title = deriveConversationTitle(messages, meta);
   const updatedAt = lastEntry ? lastEntry.timestamp : meta.updated_at;
   // 首轮已发生但 auto 命名还没落库（异步生成中）→ 前端安排一次延迟补刷
@@ -85,7 +87,7 @@ function shapeSession(
     created_at: meta.created_at,
     updated_at: updatedAt,
     message_count: messages.length,
-    last_message_preview: lastEntry ? lastEntry.content.slice(0, 240) : null,
+    last_message_preview: lastVisible ? lastVisible.content.slice(0, 240) : null,
     title_pending: titlePending || undefined,
     analysis_session_ids: meta.analysis_session_ids ?? [],
     deep_read_analysis_session_ids: meta.deep_read_analysis_session_ids ?? [],
@@ -105,7 +107,7 @@ export async function listCoachSessions(
   const sessions: SessionOut[] = [];
   for (const id of ids) {
     const meta = readConversationMeta(id);
-    const messages = await readSessionMessages(id);
+    const messages = await readSessionMessagesForUi(id);
     sessions.push(shapeSession(ownerId, id, meta, messages));
   }
 
@@ -133,7 +135,7 @@ export async function createCoachSession(ownerId: string, title?: string): Promi
     updated_at: now,
   };
   writeConversationMeta(id, meta);
-  const messages = await readSessionMessages(id);
+  const messages = await readSessionMessagesForUi(id);
   return shapeSession(ownerId, id, meta, messages);
 }
 
@@ -158,7 +160,7 @@ export async function updateCoachSession(
   }
   meta.updated_at = new Date().toISOString();
   writeConversationMeta(sessionId, meta);
-  const messages = await readSessionMessages(sessionId);
+  const messages = await readSessionMessagesForUi(sessionId);
   return shapeSession(ownerId, sessionId, meta, messages);
 }
 
@@ -170,7 +172,7 @@ export async function getCoachSessionDetail(
     throw new CoachDataError(404, "Coach session is unavailable");
   }
   const meta = readConversationMeta(sessionId);
-  const entries = await readSessionMessages(sessionId);
+  const entries = await readSessionMessagesForUi(sessionId);
   const base = shapeSession(ownerId, sessionId, meta, entries);
   const messages = entries.map((entry, index) => ({
     id: index + 1,
@@ -178,6 +180,7 @@ export async function getCoachSessionDetail(
     content: entry.content,
     created_at: entry.timestamp,
     legacy_session_id: null,
+    ...(entry.stopped ? { stopped: true } : {}),
   }));
   return { ...base, messages };
 }
@@ -228,7 +231,7 @@ export async function getCoachPrimary(
   refs: unknown[];
 }> {
   const targetId = sessionId ?? 1;
-  const entries = await readSessionMessages(targetId);
+  const entries = await readSessionMessagesForUi(targetId);
   return {
     thread: {
       id: targetId,

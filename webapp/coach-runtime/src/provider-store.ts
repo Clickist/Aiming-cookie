@@ -139,6 +139,8 @@ function migrateLegacyProfile(
       kind,
       provider_id: providerId,
       model_id: modelId,
+      // 旧 Python 文档若带名称也一并迁移；没有则投影回落 provider_id。
+      ...(typeof profile.name === "string" && profile.name.trim() ? { name: profile.name.trim() } : {}),
       ...(credential ? { credential } : {}),
     };
   }

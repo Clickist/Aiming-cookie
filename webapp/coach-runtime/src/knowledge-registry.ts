@@ -33,9 +33,12 @@ function registryFiles(): Map<string, string> {
     ["2026-08-20.v9", join(registry, "registry.v9.json")],
     ["2026-09-09.v10", join(registry, "registry.v10.json")],
     ["2026-09-10.v11", join(registry, "registry.v11.json")],
+    ["2026-09-12.v12", join(registry, "registry.v12.json")],
   ]);
 }
-const MAX_REGISTRY_BYTES = 512 * 1024;
+// v12 adds 60 corpus prescription entries; the packaged registry now exceeds
+// the v11-era 512 KiB ceiling, so the loader safeguard tracks the new size.
+const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ENTRIES = 512;
 const MAX_TEXT_LENGTH = 4_000;
 const MAX_LIST_LENGTH = 64;
@@ -791,7 +794,7 @@ export function validateKnowledgeRegistry(raw: unknown): KnowledgeRegistry {
 }
 
 const cached = new Map<string, KnowledgeRegistry>();
-export function loadKnowledgeRegistry(registryVersion = "2026-09-10.v11"): KnowledgeRegistry {
+export function loadKnowledgeRegistry(registryVersion = "2026-09-12.v12"): KnowledgeRegistry {
   const existing = cached.get(registryVersion);
   if (existing) return structuredClone(existing);
   const registryFile = registryFiles().get(registryVersion);
