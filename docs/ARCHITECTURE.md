@@ -305,7 +305,7 @@ Coach runtime 以项目内 Pi 源码基线为基础，由 Aiming Cookie 直接�
 - 通过与 UI 共用的稳定产品命令查询、创建、修改和执行当前本地 profile 可用能力；Coach 不是只读投影，也不得绕过本地 ownership、capability 或确认策略；
 - Coach 对诊断拥有综合判断权：应能检查完整 processed event table 的覆盖、条件分布、支持证据与反例，并明确接受、降低或拒绝规则层候选诊断；它不拥有正式指标重算权，也不能把聊天推断回写成测量事实；
 - 工具调用、失败、确认和结果定位必须形成可见事件；
-- 知识检索的唯一正文源是 versioned Registry。运行时物化为 `DATA_ROOT/knowledge/index.json` 与 `knowledge/entries/`，Coach 用受限 `read` 按 index 的 signals / metric_refs / topics 定位后再读 entry 全文；不另设第二份知识 store，也不把研究 Markdown 整份注入上下文；
+- 知识检索的唯一正文源是 versioned Registry。运行时物化为 `DATA_ROOT/knowledge/index.json` 与 `knowledge/entries/`，Coach 用受限 `read` 按 index 的 signals / metric_refs / topics 定位后再读 entry 全文；不另设第二份知识 store，也不把研究 Markdown 整份注入上下文。Python 侧 `query_registry` 打分匹配**不是对话检索路径**——它只在分析产物侧生成确定性的知识引用标注（diagnosis 静态引用与家族候选的 expected_entry_ref 收窄），供 overview 与回归测试消费；两者是"模型自选检索 + 本地确定性标注"的分工，不是双轨检索；
 - 不允许通用 coding-agent 权限无边界暴露给产品用户；
 - workspace、filesystem、shell、network 和 secret 权限遵循最小授权；
 - 无 LLM 或 Coach 不可用时，确定性诊断闭环仍完整。
