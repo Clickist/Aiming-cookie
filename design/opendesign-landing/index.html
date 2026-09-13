@@ -219,13 +219,10 @@
     .feature .feature-mark {
       width: 36px; height: 36px;
       display: grid; place-items: center;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      color: var(--accent);
-      border-color: var(--accent);
+      border: 0;
       margin: 0;
     }
-    .feature .feature-mark svg { width: 18px; height: 18px; }
+    .feature .feature-mark svg { width: 23px; height: 23px; }
     .feature h3 { margin: 0; }
     .feature p  { grid-column: 1 / -1; align-self: start; margin: var(--gap-sm) 0 0; color: var(--muted); font-size: 15px; }
     .ds-table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -516,6 +513,8 @@
     }
     .ac-hv-coach-pill {
       flex: none;
+      /* 0913 点点：右缘与下方内容列对齐（同步 app task4 修复） */
+      margin-inline-start: auto;
       height: 30px;
       padding: 0 16px;
       border: none;
@@ -618,6 +617,12 @@
       background-color: transparent;
       cursor: pointer;
     }
+    .ac-hv-check:checked {
+      border-color: var(--ac-hv-primary);
+      background: radial-gradient(circle, var(--ac-hv-primary) 0 3.5px, transparent 4px);
+    }
+    .ac-hv-coach-pill[data-active="true"] { background: var(--ac-hv-primary); color: #fff; }
+    html.dark .ac-hv-coach-pill[data-active="true"] { color: #1f0a00; }
     .ac-hv-name {
       flex: 1;
       min-width: 0;
@@ -2140,6 +2145,19 @@
         applyTheme(dark);
         try { localStorage.setItem('ac-landing-theme', dark ? 'dark' : 'light'); } catch (e) {}
       });
+    }
+
+    // ─── 历史 mock：勾选联动「让 Coach 分析」胶囊 ────────────────────────
+    const hvChecks = document.querySelectorAll('.ac-hv-check');
+    const hvPill = document.querySelector('.ac-hv-coach-pill');
+    if (hvChecks.length && hvPill) {
+      const syncHv = () => {
+        const n = document.querySelectorAll('.ac-hv-check:checked').length;
+        hvPill.disabled = n === 0;
+        if (n > 0) hvPill.setAttribute('data-active', 'true'); else hvPill.removeAttribute('data-active');
+        hvPill.textContent = n > 0 ? '让 Coach 分析（' + n + '）' : '让 Coach 分析';
+      };
+      hvChecks.forEach(c => c.addEventListener('change', syncHv));
     }
   </script>
 
