@@ -4,11 +4,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="baidu-site-verification" content="codeva-zhLqXj6A6t" />
   <title>Aiming Cookie · 你的瞄准私教 | 基于运动学的 KovaaK's 瞄准诊断与 AI 教练</title>
-  <meta name="description" content="Aiming Cookie 是免费桌面应用，基于物理与运动学做 KovaaK's 瞄准诊断 + AI 教练：读取一手原始数据（Raw Input + 录屏 + KovaaK Stats/Performance），用公平运动学指标定位你的瞄准短板，再由 AI 私教给出针对性训练建议与长期进步追踪。免费下载 Windows 版。">
+  <meta name="description" content="Aiming Cookie 是免费桌面应用，基于物理与运动学做 KovaaK's 瞄准诊断 + AI 教练：读取一手原始数据（Raw Input + 录屏 + KovaaK Stats + 引擎级真值遥测），用公平运动学指标定位你的瞄准短板，再由 AI 私教给出针对性训练建议与长期进步追踪。免费下载 Windows 版。">
   <meta name="keywords" content="Aiming Cookie, aimingcookie, KovaaK's 瞄准诊断, 瞄准分析, 瞄准 AI 教练, 瞄准私教, 运动学指标, 瞄准训练建议, 数据驱动瞄准, FPS 瞄准诊断">
   <meta name="robots" content="index, follow">
   <meta name="author" content="Aiming Cookie">
-  <meta name="theme-color" content="#f7f5f0">
+  <meta name="theme-color" content="#f7f5f0" id="metaThemeColor">
+  <script>
+    // 首屏前应用持久化主题，避免深色用户闪白
+    try { if (localStorage.getItem('ac-landing-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
+  </script>
   <link rel="canonical" href="https://aimingcookie.com/">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
   <link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
@@ -18,7 +22,7 @@
   <meta property="og:site_name" content="Aiming Cookie">
   <meta property="og:locale" content="zh_CN">
   <meta property="og:title" content="Aiming Cookie · 你的瞄准私教">
-  <meta property="og:description" content="Aiming Cookie 基于物理与运动学做 KovaaK's 瞄准诊断 + AI 教练：读取一手原始数据（Raw Input + 录屏 + KovaaK Stats/Performance），用公平运动学指标定位瞄准短板，AI 私教给出针对性训练建议。免费下载 Windows 版。">
+  <meta property="og:description" content="Aiming Cookie 基于物理与运动学做 KovaaK's 瞄准诊断 + AI 教练：读取一手原始数据（Raw Input + 录屏 + KovaaK Stats + 引擎级真值遥测），用公平运动学指标定位瞄准短板，AI 私教给出针对性训练建议。免费下载 Windows 版。">
   <meta property="og:url" content="https://aimingcookie.com/">
   <meta property="og:image" content="https://aimingcookie.com/logo.png">
   <meta property="og:image:width" content="1024">
@@ -30,8 +34,7 @@
   <meta name="twitter:description" content="基于物理与运动学的 KovaaK's 瞄准诊断 + AI 教练，数据驱动定位瞄准短板，AI 私教免费下载。">
   <meta name="twitter:image" content="https://aimingcookie.com/logo.png">
   <link href="fonts.css" rel="stylesheet">
-  <style>
-    /* ─── tokens（绑定 brand-spec.md · Light）───────────────────────── */
+  <style>    /* ─── tokens（绑定 brand-spec.md · Light）───────────────────────── */
     :root {
       --bg:      oklch(96.6% 0.006 85);   /* #f7f5f0 background */
       --surface: oklch(99.2% 0.004 90);   /* #fffdf8 surface */
@@ -69,9 +72,20 @@
 
       --radius: 10px;
       --radius-lg: 16px;
-    }
 
-    /* ─── reset & base ─────────────────────────────────────────────── */
+      color-scheme: light;
+    }
+    /* ─── 深色模式（绑定 app v1.0.1 深色 token）────────────────────── */
+    html.dark {
+      --bg:      #141413;
+      --surface: #1c1c1a;
+      --fg:      #eae8e3;
+      --muted:   #9e9a92;
+      --border:  #3a3833;
+      --accent:  #ff8a5c;
+      color-scheme: dark;
+    }
+    html.dark .truth-tip__pop { box-shadow: 0 0 0 1px #3a3833, 0 10px 28px rgba(0, 0, 0, .5); }
     *, *::before, *::after { box-sizing: border-box; }
     html { -webkit-text-size-adjust: 100%; }
     body {
@@ -92,8 +106,6 @@
     p { text-wrap: pretty; }
     h1, h2, h3, h4 { text-wrap: balance; }
     :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-
-    /* ─── layout primitives ────────────────────────────────────────── */
     .container { max-width: var(--container); margin-inline: auto; padding-inline: var(--gutter); }
     .section { padding-block: clamp(40px, 5vw, 72px); }
     .stack { display: flex; flex-direction: column; }
@@ -106,7 +118,6 @@
     @media (max-width: 920px) {
       .grid-2, .grid-3, .grid-2-1, .grid-1-2 { grid-template-columns: 1fr; }
     }
-
     /* ─── type ─────────────────────────────────────────────────────── */
     .h1, h1 { font-family: var(--font-display); font-size: var(--fs-h1); line-height: 1.08; letter-spacing: -0.02em; font-weight: 600; margin: 0; }
     .h2, h2 { font-family: var(--font-display); font-size: var(--fs-h2); line-height: 1.12; letter-spacing: -0.015em; font-weight: 600; margin: 0; }
@@ -130,8 +141,6 @@
     }
     .meta { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--muted); }
     .num  { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-
-    /* ─── chrome: nav + footer ─────────────────────────────────────── */
     .topnav {
       position: sticky; top: 0; z-index: 10;
       background: color-mix(in oklch, var(--bg) 92%, transparent);
@@ -141,6 +150,7 @@
     .topnav-inner { display: flex; align-items: center; justify-content: space-between; padding-block: 14px; }
     .topnav .logo { display: inline-flex; align-items: center; font-family: var(--font-display); font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
     .topnav .logo-mark { width: 26px; height: 26px; margin-right: 10px; filter: invert(1); display: inline-block; }
+    html.dark .topnav .logo-mark { filter: none; }
     .topnav nav { display: flex; gap: var(--gap-lg); }
     .topnav nav a { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; color: var(--muted); }
     .topnav nav a:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 5px; }
@@ -174,8 +184,6 @@
       margin: 0;
     }
     .meta-notice p + p { margin-top: var(--gap-xs); }
-
-    /* ─── buttons ──────────────────────────────────────────────────── */
     .btn {
       display: inline-flex; align-items: center; gap: 8px;
       padding: 11px 20px; min-height: 44px;
@@ -198,13 +206,9 @@
     .btn-bilibili:hover { background: color-mix(in oklch, var(--fg) 88%, black); border-color: color-mix(in oklch, var(--fg) 88%, black); }
     .btn-arrow::after { content: '→'; transition: transform 0.15s ease; }
     .btn-arrow:hover::after { transform: translateX(2px); }
-
-    /* ─── card / surface ───────────────────────────────────────────── */
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; }
     .card-flat { background: transparent; border: 0; padding: 0; }
     .card-rule { background: transparent; border: 0; border-top: 1px solid var(--fg); padding: 24px 0 0; border-radius: 0; }
-
-    /* ─── feature cell ─────────────────────────────────────────────── */
     .feature {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr);
@@ -224,8 +228,6 @@
     .feature .feature-mark svg { width: 18px; height: 18px; }
     .feature h3 { margin: 0; }
     .feature p  { grid-column: 1 / -1; align-self: start; margin: var(--gap-sm) 0 0; color: var(--muted); font-size: 15px; }
-
-    /* ─── table ────────────────────────────────────────────────────── */
     .ds-table { width: 100%; border-collapse: collapse; font-size: 14px; }
     .ds-table th, .ds-table td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
     .ds-table th { color: var(--muted); font-weight: 500; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -241,7 +243,6 @@
       .ds-table td { border: 0; padding: 3px 0; }
       .ds-table td:first-child { color: var(--fg); font-weight: 600; }
     }
-
     /* ─── image / video placeholder ────────────────────────────────── */
     .ph-img {
       background:
@@ -260,11 +261,7 @@
       line-height: 1.7;
     }
     .ph-img.wide { aspect-ratio: 16 / 9; }
-
-    /* ─── divider ──────────────────────────────────────────────────── */
     .rule-strong { border: 0; border-top: 1px solid var(--fg); margin: 0; }
-
-    /* ─── hero ─────────────────────────────────────────────────────── */
     .hero          { padding-block: clamp(56px, 6vw, 88px); }
     .hero-center   { text-align: center; max-width: 880px; margin-inline: auto; }
     .hero h1       { margin-bottom: 40px; }
@@ -272,11 +269,9 @@
     .hero-cta      { display: inline-flex; gap: var(--gap-sm); flex-wrap: wrap; }
     .hero-center .hero-cta { justify-content: center; }
     @media (min-width: 721px) { .single-line-heading { white-space: nowrap; } }
-
     @media (max-width: 560px) {
       :root { --gutter: 20px; }
     }
-
     /* ─── 本页新增：训练循环 / 场景卡 ─────────────────────────────── */
     .loop { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); font-family: var(--font-mono); font-size: 14px; }
     .loop .step { border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px; background: var(--surface); white-space: nowrap; }
@@ -286,34 +281,7 @@
     .progress-summary > p { margin-inline: auto !important; }
     .scenario svg { width: 100%; height: auto; margin-top: var(--gap-md); border-top: 1px solid var(--border); padding-top: var(--gap-md); }
     .legend { display: flex; gap: var(--gap-md); font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-top: var(--gap-sm); }
-
-    /* ─── 本页新增：hero 产品界面 mock（三栏：会话 / 视频回放 / Coach 讲解）─── */
-    .app-mock {
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      background: var(--surface);
-      overflow: hidden;
-      box-shadow: 0 24px 64px color-mix(in oklch, var(--fg) 10%, transparent);
-      font-size: var(--fs-body);
-    }
-    .app-mock__chrome {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px var(--gap-md);
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-    }
-    .app-mock__brand { font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); }
-    .app-mock__win { display: inline-flex; gap: 8px; color: var(--muted); }
-    .app-mock__win i { font-style: normal; font-size: 11px; line-height: 1; }
-    .app-mock__body {
-      display: grid;
-      grid-template-columns: 260px minmax(0, 1.3fr) minmax(0, 1fr);
-      height: 580px;
-      overflow: hidden;
-      background: var(--bg);
-    }
     /* 明确分界线：三栏之间用实线隔开 */
-    .am-rail { border-right: 1px solid var(--border); }
     .am-video { border-right: 1px solid var(--border); }
     .app-mock__caption {
       margin: 20px auto 0;
@@ -325,258 +293,11 @@
     }
     /* hero 里的产品窗口比正文容器更宽，突出「这是一整个应用窗口」 */
     .app-mock-wrap { max-width: 1280px; }
-
-    /* 左 · 会话栏（对齐真实 session-rail） */
-    .am-rail {
-      display: flex; flex-direction: column;
-      min-height: 0;
-      background: var(--surface-container-lowest, #fff);
-      border-inline-end: 1px solid var(--border);
-      color: var(--fg);
-    }
-    .am-rail__header { display: flex; flex-direction: column; padding: var(--gap-sm); border-bottom: 1px solid var(--border); }
-    .am-rail__actions { display: flex; gap: 8px; }
-    .am-rail__new {
-      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      min-height: 36px; padding: 0 12px;
-      border: 1px solid var(--accent); border-radius: var(--radius-md, 6px);
-      background: var(--accent); color: var(--surface);
-      font-size: 13px; font-weight: 600; cursor: pointer;
-    }
-    .am-rail__new:hover { background: color-mix(in oklch, var(--accent) 90%, var(--fg)); }
-    .am-rail__search {
-      display: flex; align-items: center; gap: 8px;
-      min-height: 32px; margin: var(--gap-sm) var(--gap-sm) var(--gap-sm);
-      padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-md, 6px);
-      background: var(--surface); color: var(--muted);
-    }
-    .am-rail__search svg { flex: none; }
-    .am-rail__search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font-size: 13px; }
-    .am-rail__search input::placeholder { color: var(--muted); }
-    .am-rail__list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px var(--gap-sm); display: flex; flex-direction: column; gap: 2px; }
-    .am-rail__item {
-      display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
-      min-height: 72px; padding: 8px; text-align: left; cursor: pointer;
-      border: 0; border-radius: var(--radius-md, 6px); background: transparent;
-    }
-    .am-rail__item:hover { background: var(--surface-container, #ebe6de); }
-    .am-rail__item[data-current="true"] { background: var(--surface-container-high, #dcd5cb); }
-    .am-rail__title { width: 100%; font-size: 13px; font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .am-rail__summary { width: 100%; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .am-rail__date { width: 100%; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
-    .am-rail__footer { flex: none; display: flex; flex-direction: column; gap: 2px; padding: var(--gap-sm) var(--gap-sm); border-top: 1px solid var(--border); }
-    .am-rail__footer-row { display: flex; align-items: center; min-height: 32px; padding: 0 8px; border: 0; border-radius: var(--radius-sm, 4px); background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; text-align: start; cursor: pointer; }
-    .am-rail__footer-row:hover { background: var(--surface-container-low, #f1ede6); color: var(--fg); }
-
-    /* ─── capture 专用：无感采集 · 完整 AppShell 历史页 mock（对齐真实前端）─── */
-    /* 在 mock 作用域内注入真实应用的 Light token（来自 ui/tokens.ts） */
-    .ch-mock {
-      --background: #f7f5f0;
-      --on-background: #24211d;
-      --surface: #fffdf8;
-      --surface-container-lowest: #ffffff;
-      --surface-container-low: #f1ede6;
-      --surface-container: #ebe6de;
-      --surface-container-high: #e4ded5;
-      --surface-container-highest: #dcd5cb;
-      --on-surface: #24211d;
-      --on-surface-variant: #625c54;
-      --primary: #c83d00;
-      --on-primary: #ffffff;
-      --primary-container: #ffe1d5;
-      --on-primary-container: #4a1300;
-      --outline: #7b746b;
-      --outline-variant: #cec6bc;
-      --event-kill: #16875b;
-      --event-peak: #c83d00;
-      --event-miss: #c53442;
-      --tertiary-container: #d7e7ff;
-      --on-tertiary-container: #003461;
-      --error: #ba1a1a;
-      --error-container: #ffdad6;
-      --on-error-container: #410002;
-
-      position: relative;
-      border: 1px solid var(--outline-variant);
-      border-radius: 10px;
-      background: var(--background);
-      overflow: hidden;
-      box-shadow: 0 24px 64px color-mix(in oklch, var(--on-background) 14%, transparent);
-      display: flex;
-      flex-direction: column;
-      height: 420px;
-      min-width: 0;
-      color: var(--on-surface);
-      font-family: var(--font-body);
-    }
-
     /* 右 · 历史主区（对齐 HistoryClient/task4） */
-    .ch-mock__page {
-      flex: 1; min-height: 0; overflow-y: auto;
-      padding: 16px 20px 20px;
-      background: var(--background);
-    }
-    .ch-mock__page-head {
-      display: flex; align-items: center; justify-content: space-between; gap: 16px;
-      padding: 8px 0 16px;
-      background: var(--background);
-    }
-    .ch-mock__page-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
-    .ch-mock__back { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: var(--on-surface-variant); font-size: 18px; }
-    .ch-mock__back:hover { background: var(--surface-container-low); }
-    .ch-mock__page-title { margin: 0; color: var(--on-surface); font: 600 20px/1.25 var(--font-display); }
-    .ch-mock__page-actions { display: flex; align-items: center; gap: 8px; }
-    .ch-mock__refresh {
-      border: 1px solid var(--outline-variant); border-radius: 6px;
-      min-height: 32px; padding: 0 12px;
-      background: transparent; color: var(--on-surface-variant);
-      font: 500 12px var(--font-body); cursor: pointer;
-    }
-    .ch-mock__refresh:hover { background: var(--surface-container-low); color: var(--on-surface); }
-    .ch-mock__primary {
-      border: 1px solid var(--primary); border-radius: 6px;
-      min-height: 32px; padding: 0 12px;
-      background: var(--primary); color: var(--on-primary);
-      font: 600 12px var(--font-body); cursor: pointer;
-    }
-    .ch-mock__primary:hover { background: color-mix(in oklch, var(--primary) 90%, var(--on-surface)); }
-
-    .ch-mock__sec { margin-top: 24px; }
-    .ch-mock__sec:first-of-type { margin-top: 16px; }
-    .ch-mock__sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
-    .ch-mock__sec-head h4 { margin: 0; color: var(--on-surface); font: 600 15px/1.2 var(--font-display); }
-    .ch-mock__count { color: var(--on-surface-variant); font: 500 11px var(--font-mono); }
-
-    .ch-mock__panel { border: 1px solid var(--outline-variant); border-radius: 6px; background: var(--surface); overflow: hidden; }
-    .ch-mock__rowline { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
-    .ch-mock__rowline + .ch-mock__rowline { border-top: 1px solid var(--outline-variant); }
-    .ch-mock__row-main { flex: 1; min-width: 0; }
-    .ch-mock__row-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-    .ch-mock__name { font-weight: 600; font-size: 13px; color: var(--on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ch-mock__badge {
-      display: inline-flex; align-items: center; gap: 4px;
-      height: 22px; padding: 0 8px; border-radius: 4px;
-      border: 1px solid transparent;
-      font: 500 11px var(--font-body); white-space: nowrap;
-    }
-    .ch-mock__badge-ok   { border-color: var(--outline-variant); color: var(--event-kill); background: transparent; }
-    .ch-mock__badge-dot  { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-    .ch-mock__badge-warn { border-color: var(--outline-variant); color: var(--event-peak); background: transparent; }
-    .ch-mock__badge-mode { background: var(--tertiary-container); color: var(--on-tertiary-container); }
-    .ch-mock__badge-prev { background: var(--surface-container); color: var(--on-surface-variant); }
-    .ch-mock__badge-err  { background: var(--error-container); color: var(--on-error-container); }
-    .ch-mock__row-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 2px; color: var(--on-surface-variant); font-size: 12px; line-height: 1.5; }
-    .ch-mock__ev-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-    .ch-mock__ev {
-      display: inline-flex; align-items: center; gap: 4px;
-      height: 24px; padding: 0 8px;
-      border: 1px solid var(--outline-variant); border-radius: 4px;
-      background: var(--surface-container-low); color: var(--on-surface-variant);
-      font: 500 11px var(--font-body); white-space: nowrap;
-    }
-    .ch-mock__ev i { font-style: normal; font-weight: 600; }
-    .ch-mock__ev[data-state="ok"] i   { color: var(--event-kill); }
-    .ch-mock__ev[data-state="part"] i { color: var(--event-peak); }
-    .ch-mock__ev[data-state="miss"] i { color: var(--on-surface-variant); }
-    .ch-mock__ev[data-state="bad"] i  { color: var(--event-miss); }
-    .ch-mock__row-select { display: inline-flex; align-items: center; flex: none; padding: 2px; }
-    .ch-mock__row-select input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
-
-    .ch-mock__state { display: grid; justify-items: start; gap: 8px; padding: 16px 20px; color: var(--on-surface-variant); }
-    .ch-mock__state-title { color: var(--on-surface); font-weight: 700; }
-    .ch-mock__empty { display: flex; align-items: center; gap: 8px; min-height: 88px; padding: 16px 20px; color: var(--on-surface-variant); font-size: 13px; }
-
-    /* 中 · 视频回放（真实可播放） */
-    .am-video, .am-coach { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-    .am-pane-head {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px var(--gap-md); border-bottom: 1px solid var(--border);
-      background: var(--surface);
-    }
-    .am-pane-head span { color: var(--muted); font-size: 11px; }
-    .am-dot { color: var(--event-kill, #16875b); font-style: normal; margin-inline: 4px; }
-    .am-pane-head h3 { font-size: 15px; font-weight: 600; margin: 2px 0 0; color: var(--fg); }
-    .am-pane-head small { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
-    .am-player { flex: 1; min-height: 0; padding: var(--gap-md); display: flex; flex-direction: column; min-width: 0; }
-    .am-player__stage {
-      position: relative; flex: 1; min-height: 0; border-radius: var(--radius) var(--radius) 0 0;
-      border: 1px solid var(--border); background: var(--surface-container-lowest, #fff);
-      overflow: hidden;
-    }
-    .am-player__stage video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
-    .am-player__badge {
-      position: absolute; left: 10px; bottom: 10px; padding: 3px 8px;
-      background: color-mix(in srgb, black 70%, transparent); color: #fff;
-      font-family: var(--font-mono); font-size: 11px; border-radius: 4px;
-    }
-    .am-player__bar {
-      display: flex; align-items: center; gap: 8px;
-      border: 1px solid var(--border); border-top: 0;
-      border-radius: 0 0 var(--radius) var(--radius);
-      background: var(--surface); padding: 8px 12px;
-    }
-    .am-player__bar button { border: 0; background: transparent; color: var(--fg); font-size: 14px; width: 30px; height: 30px; border-radius: var(--radius); cursor: pointer; }
-    .am-player__bar button:hover { background: var(--surface-container-low, #f1ede6); }
-    .am-player__time { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
-    .am-player__spacer { flex: 1; }
-    .am-player__timeline { position: relative; margin-top: var(--gap-sm); height: 40px; background: var(--surface-container-low, #eee9e1); border: 1px solid var(--border); border-radius: var(--radius); }
-    .am-player__track { position: absolute; left: 10px; right: 10px; top: 14px; height: 3px; border-radius: 2px; background: var(--surface-container-high, #dcd5cb); }
-    .am-player__progress { position: absolute; inset-inline-start: 0; top: 0; height: 100%; border-radius: 2px; background: var(--accent); width: 0; }
-    .am-player__cursor { position: absolute; top: -6px; width: 2px; height: 16px; background: var(--fg); transform: translateX(-50%); }
-    .am-player__tl-left, .am-player__tl-right { position: absolute; bottom: 2px; font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
-    .am-player__tl-left { left: 10px; }
-    .am-player__tl-right { right: 10px; }
-    .am-player__seek { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.001; cursor: pointer; }
-
-    /* 右 · Coach 讲解（对齐真实 task6） */
-    .am-coach__messages {
-      flex: 1; min-height: 0; overflow-y: auto;
-      display: flex; flex-direction: column; gap: var(--gap-sm);
-      padding: var(--gap-md); background: var(--bg);
-    }
-    .am-msg { max-width: 100%; font-size: 13px; line-height: 1.55; }
-    .am-msg p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
-    .am-msg--coach { align-self: stretch; background: transparent; border: 0; }
-    .am-msg--user { align-self: flex-end; max-width: min(36em, 92%); padding: 8px 12px; border-radius: var(--radius-md, 6px); background: var(--surface-container-high, #dcd5cb); }
-    .am-msg--user p { color: var(--fg); }
     .am-seeklink { padding: 0; border: 0; background: transparent; color: var(--primary); font: inherit; line-height: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; transition: color 150ms var(--ease-out, ease); }
     .am-seeklink:hover { color: var(--fg); }
     .am-seeklink:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-radius: 2px; }
-    .am-coach__inputbar {
-      flex: none; display: flex; align-items: flex-start; gap: 8px;
-      padding: var(--gap-sm); background: var(--surface-container-low, #eee9e1);
-    }
-    .am-coach__inputwrap { position: relative; flex: 1; min-height: 72px; }
-    .am-coach__field {
-      display: block; width: 100%; min-height: 72px; max-height: 144px; resize: none;
-      padding: var(--gap-sm) 52px var(--gap-sm) var(--gap-sm);
-      border: 1px solid var(--border); border-radius: var(--radius-md, 6px);
-      outline: 0; background: var(--surface-container-high, #dcd5cb); color: var(--fg);
-      font-size: 13px; line-height: 1.45;
-    }
-    .am-coach__field:focus { border-color: var(--outline, #7b746b); box-shadow: 0 0 0 1px var(--outline, #7b746b); }
-    .am-coach__field::placeholder { color: var(--muted); }
-    .am-coach__send {
-      position: absolute; right: 8px; bottom: 8px;
-      width: 32px; height: 32px; padding: 0;
-      border: 0; border-radius: var(--radius-md, 6px);
-      background: var(--accent); color: var(--surface);
-      font-size: 15px; display: inline-flex; align-items: center; justify-content: center;
-      cursor: pointer;
-    }
-    .am-coach__send:hover { background: color-mix(in oklch, var(--accent) 88%, black); }
-    .am-coach__send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-    @media (max-width: 920px) {
-      .app-mock__body { grid-template-columns: 200px minmax(0, 1fr); }
-      .am-coach { display: none; }
-    }
-    @media (max-width: 640px) {
-      .app-mock__body { grid-template-columns: 1fr; }
-      .am-rail { display: none; }
-      .am-player { padding: var(--gap-sm); }
-    }
-  </style>
+</style>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -602,12 +323,324 @@
         "name": "Aiming Cookie",
         "applicationCategory": "GameApplication",
         "operatingSystem": "Windows",
-        "description": "基于物理与运动学做 KovaaK's 瞄准诊断 + AI 教练：读取一手原始数据与录屏，用公平运动学指标诊断瞄准短板，并给出 AI 私教训练建议。",
+        "description": "基于物理与运动学做 KovaaK's 瞄准诊断 + AI 教练：读取一手原始数据与引擎级真值遥测，用公平运动学指标诊断瞄准短板，并给出 AI 私教训练建议。",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" }
       }
     ]
   }
   </script>
+  <style>
+    /* 「引擎级真值遥测」悬浮名词解释 */
+    .truth-tip { position: relative; border-bottom: 1px dashed currentColor; cursor: help; outline: none; }
+    .truth-tip__pop {
+      position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%);
+      width: min(320px, 78vw); padding: 12px 14px; border-radius: 10px;
+      background: #23211c; color: #f7f5f0; font-size: 13px; line-height: 1.75; text-align: left;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, .22);
+      opacity: 0; visibility: hidden; transition: opacity .15s ease, visibility .15s ease; z-index: 40;
+    }
+    .truth-tip:hover .truth-tip__pop, .truth-tip:focus .truth-tip__pop { opacity: 1; visibility: visible; }
+
+    /* 主题切换按钮（无框，融入顶栏） */
+    .topnav-right { display: flex; align-items: center; gap: var(--gap-sm); }
+    .theme-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 40px; height: 44px; padding: 0;
+      background: transparent; color: var(--muted);
+      border: 0; border-radius: var(--radius);
+      cursor: pointer; transition: color .15s ease;
+    }
+    .theme-toggle:hover { color: var(--fg); }
+    html.dark .icon-moon { display: none; }
+    html:not(.dark) .icon-sun { display: none; }
+  </style>
+  <style>
+    /* 历史页 v6 mock 样式（scoped） */
+    .ac-history-mock-v6 { position: relative; }
+    /* 页面滚动条（对齐真 app ui/theme.css:617-643）：6px、透明轨道、thumb r3、随主题。
+       深色 thumb #3a3833、浅色 thumb #cec6bc，均取当前主题的 outline-variant。 */
+    .ac-history-mock-v6 .ac-hv-page::-webkit-scrollbar { width: 6px; height: 6px; }
+    .ac-history-mock-v6 .ac-hv-page::-webkit-scrollbar-track { background: transparent; }
+    .ac-history-mock-v6 .ac-hv-page::-webkit-scrollbar-thumb {
+      border-radius: 3px; background: var(--ac-hv-outline-variant);
+    }
+/* ══════════════════════════════════════════════════════════════════
+       HISTORY MOCK V6 — scoped under .ac-history-mock-v6
+       真值来源：.zcode/ui-truth/08-history/styles.json（v1.0.1 深色 token）
+       ══════════════════════════════════════════════════════════════════ */
+    .ac-history-mock-v6 {
+      /* 真值 token：浅色为默认值（抄自 08L-history-light/styles.json，91 token 中本 mock 用到的部分） */
+      --ac-hv-surface: #fffdf8;
+      --ac-hv-surface-container: #ebe6de;
+      --ac-hv-surface-container-low: #f1ede6;
+      --ac-hv-on-surface: #24211d;
+      --ac-hv-on-surface-variant: #625c54;
+      --ac-hv-outline: #7b746b;
+      --ac-hv-outline-variant: #cec6bc;
+      --ac-hv-primary: #c83d00;
+      --ac-hv-event-peak: #c83d00;
+      --ac-hv-error: #ba1a1a;
+      --ac-hv-shadow: 0 24px 64px color-mix(in oklch, #24211d 14%, transparent);
+      --ac-hv-font-ui: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      --ac-hv-font-display: 'Outfit', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --ac-hv-font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+
+      position: relative;
+      width: min(900px, 100%);
+      height: 420px;              /* 沿用老 mock 容器契约高度（ch-mock） */
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--ac-hv-outline-variant);
+      border-radius: 10px;        /* 沿用老 mock 圆角契约 */
+      background: var(--ac-hv-surface-container); /* 历史页 v6 面板主面 = task3-page-view */
+      box-shadow: var(--ac-hv-shadow);
+      color: var(--ac-hv-on-surface);
+      font-family: var(--ac-hv-font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    /* 深色：落地页 html.dark 时 mock 回到应用深色 skin（真值 08-history/styles.json） */
+    html.dark .ac-history-mock-v6 {
+      --ac-hv-surface: #1c1c1a;
+      --ac-hv-surface-container: #222220;
+      --ac-hv-surface-container-low: #181816;
+      --ac-hv-on-surface: #eae8e3;
+      --ac-hv-on-surface-variant: #9e9a92;
+      --ac-hv-outline: #6b6660;
+      --ac-hv-outline-variant: #3a3833;
+      --ac-hv-primary: #ff8a5c;
+      --ac-hv-event-peak: #ff8a5c;
+      --ac-hv-error: #ff9aa2;
+      --ac-hv-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    }
+    .ac-history-mock-v6 *,
+    .ac-history-mock-v6 *::before,
+    .ac-history-mock-v6 *::after { box-sizing: border-box; }
+
+    /* ── 56px 实底顶栏（task4-page-head，全宽；内容列 580px 居中） ── */
+    .ac-hv-head {
+      flex: none;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      position: relative;
+      padding-top: 6px;
+      background: var(--ac-hv-surface-container);
+      user-select: none;
+      z-index: 100;
+    }
+    /* 顶栏下缘 14px 渐隐（task4-page-head::after，滚过的行靠近顶栏时变淡） */
+    .ac-hv-head::after {
+      content: "";
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      height: 14px;
+      background: linear-gradient(to bottom, var(--ac-hv-surface-container), transparent);
+      pointer-events: none;
+    }
+    .ac-hv-head-col {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      max-width: 580px;
+      margin-inline: auto;
+    }
+    .ac-hv-topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .ac-hv-back {
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      margin-left: -48px;          /* 返回键悬挂在内容列左缘之外 */
+      padding: 0;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--ac-hv-on-surface-variant);
+      cursor: pointer;
+    }
+    .ac-hv-title {
+      flex: none;
+      color: var(--ac-hv-on-surface);
+      font: 600 15px/1.2 var(--ac-hv-font-ui);
+      white-space: nowrap;
+    }
+    .ac-hv-filter {
+      flex: none;
+      width: 200px;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid var(--ac-hv-outline-variant);
+      border-radius: 6px;
+      background: var(--ac-hv-surface);
+      color: var(--ac-hv-on-surface);
+      font: 400 12px var(--ac-hv-font-ui);
+      user-select: text;
+    }
+    .ac-hv-filter::placeholder { color: var(--ac-hv-on-surface-variant); }
+    .ac-hv-refresh {
+      flex: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 32px;
+      padding: 0 8px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--ac-hv-on-surface-variant);
+      font: 400 12px var(--ac-hv-font-ui);
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .ac-hv-refresh-icon { display: inline-flex; }
+    .ac-hv-refresh-text {
+      display: block;
+      min-width: 96px;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .ac-hv-coach-pill {
+      flex: none;
+      height: 30px;
+      padding: 0 16px;
+      border: none;
+      border-radius: 999px;
+      background: var(--ac-hv-surface-container-low);
+      color: var(--ac-hv-on-surface-variant);
+      font: 600 12px var(--ac-hv-font-ui);
+      white-space: nowrap;
+      cursor: not-allowed;
+    }
+
+    /* ── 滚动列表区（task4-page，全宽 + 580px 内容列居中） ── */
+    .ac-hv-page {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0 0 32px;
+      background: var(--ac-hv-surface-container);
+    }
+    /* Firefox 兜底（@supports 隔离，避免 Chromium 忽略上面的 webkit 规则） */
+    @supports not selector(::-webkit-scrollbar) {
+      .ac-history-mock-v6 .ac-hv-page {
+        scrollbar-width: thin;
+        scrollbar-color: var(--ac-hv-outline-variant) transparent;
+      }
+    }
+    .ac-hv-col {
+      width: 100%;
+      max-width: 580px;
+      margin-inline: auto;
+    }
+    .ac-hv-sec { margin-top: 24px; }
+    .ac-hv-sec-head {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .ac-hv-sec-title {
+      margin: 0;
+      color: var(--ac-hv-on-surface);
+      font: 600 15px/1.2 var(--ac-hv-font-display);
+    }
+    .ac-hv-sec-count {
+      color: var(--ac-hv-on-surface-variant);
+      font: 500 11px var(--ac-hv-font-mono);
+    }
+    .ac-hv-sec-caret {
+      align-self: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--ac-hv-on-surface-variant);
+      cursor: pointer;
+    }
+    .ac-hv-sec-caret svg { transform: rotate(180deg); }
+
+    /* ── 面板 + 按天分组（task4-panel / task4-day-label / task4-rowline） ── */
+    .ac-hv-panel {
+      border: 1px solid var(--ac-hv-outline-variant);
+      border-radius: 10px;
+      background: var(--ac-hv-surface);
+      overflow: hidden;
+    }
+    .ac-hv-day-label {
+      margin-top: 12px;
+      padding: 8px 16px 4px;
+      color: var(--ac-hv-on-surface);
+      font: 600 12px/1.4 var(--ac-hv-font-ui);
+    }
+    .ac-hv-day-label:first-child { margin-top: 0; }
+
+    .ac-hv-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 16px;
+      font-size: 13px;
+    }
+    .ac-hv-row-actions {
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .ac-hv-check {
+      appearance: none;
+      flex: none;
+      width: 14px;
+      height: 14px;
+      margin: 0;
+      border: 1.5px solid var(--ac-hv-outline);
+      border-radius: 50%;
+      background-color: transparent;
+      cursor: pointer;
+    }
+    .ac-hv-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      font-weight: 600;
+      color: var(--ac-hv-on-surface);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ac-hv-run-score {
+      flex: none;
+      color: var(--ac-hv-event-peak);
+      font-variant-numeric: tabular-nums;
+    }
+    .ac-hv-run-time {
+      flex: none;
+      min-width: 40px;
+      text-align: right;
+      color: var(--ac-hv-on-surface-variant);
+      font-variant-numeric: tabular-nums;
+    }
+    .ac-hv-run-issue {
+      display: inline-flex;
+      flex: none;
+      color: var(--ac-hv-error);
+    }
+    </style>
 </head>
 <body>
   <header class="topnav" data-od-id="topnav">
@@ -622,7 +655,13 @@
       <button class="menu-toggle" type="button" aria-label="打开导航菜单" aria-controls="site-nav" aria-expanded="false" data-od-id="menu-toggle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
       </button>
-      <a class="btn btn-bilibili" href="https://space.bilibili.com/14425468?spm_id_from=333.337.0.0" target="_blank" rel="noopener" data-od-id="top-bilibili">Bilibili 主页</a>
+      <div class="topnav-right">
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="切换深色模式" title="切换深色 / 浅色">
+          <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"></path></svg>
+        </button>
+        <a class="btn btn-bilibili" href="https://space.bilibili.com/14425468?spm_id_from=333.337.0.0" target="_blank" rel="noopener" data-od-id="top-bilibili">Bilibili 主页</a>
+      </div>
     </div>
   </header>
 
@@ -632,150 +671,905 @@
     <section class="section hero" data-od-id="hero" id="hero">
       <div class="container hero-center">
         <h1 class="single-line-heading">练一局，向AI教练提问</h1>
-        <p class="lead">Aiming Cookie 在你训练时读取一手数据——鼠标 Raw Input、录屏、KovaaK Stats——用物理与运动学指标结合社区经验诊断你的瞄准，再由 AI 教练为您讲解，并持续训练。</p>
+        <p class="lead">Aiming Cookie 在你训练时读取一手数据——鼠标 Raw Input、录屏、KovaaK Stats，以及<span class="truth-tip" tabindex="0">引擎级真值遥测<span class="truth-tip__pop" role="tooltip">直接从游戏引擎读取目标位置、准星视角等内部真值数据，不需要识别画面。有了它，Coach 能逐发计算准星到目标的真实角误差（击杀点击实测中位 0.2–0.5°），把每一发的问题归因到具体动作。</span></span>——用物理与运动学指标结合社区经验诊断你的瞄准，再由 AI 教练为您讲解，并持续训练。</p>
         <div class="hero-cta">
           <a class="btn btn-primary btn-arrow" href="https://dl.aimingcookie.com/Aiming_Cookie_1.0.1_x64-setup.exe" download>下载 Windows 版</a>
         </div>
       </div>
       <div class="container app-mock-wrap" style="margin-top: clamp(48px, 5vw, 64px);">
-        <div class="app-mock" data-od-id="hero-shot" role="img" aria-label="Aiming Cookie 产品界面示意：左侧会话列表，中间训练视频回放，右侧 Coach 讲解对话">
-          <div class="app-mock__chrome">
-            <span class="app-mock__brand">Aiming Cookie</span>
-            <span class="app-mock__win">
-              <i>—</i><i>□</i><i>×</i>
-            </span>
+<style>
+  /* ══════════════════════════════════════════════════════════════════
+     Aiming Cookie · hero 应用窗口 mock（v6 壳层 + 视频面板打开态）
+     真值源：.zcode/ui-truth/06-video-pane（v1.0.1, 1280×820 @DPR1）
+     所有选择器 scoped 在 .ac-hero-mock-v6 下，不污染落地页全局样式。
+     ══════════════════════════════════════════════════════════════════ */
+  .ac-hero-mock-v6 {
+    /* ── token：浅色为默认值（抄自 06L-video-light/styles.json 的 91 个 token）；
+          深色值在下方 `html.dark .ac-hero-mock-v6` 覆盖块，抄自 06-video-pane/styles.json ── */
+    --acm-bg: #f7f5f0;                        /* --background */
+    --acm-surface: #fffdf8;                   /* --surface */
+    --acm-surface-low: #f1ede6;               /* --surface-container-low / surface-dim */
+    --acm-surface-container: #ebe6de;         /* --surface-container */
+    --acm-surface-high: #e4ded5;              /* --surface-container-high / surface-bright */
+    --acm-surface-bright: #ffffff;            /* --surface-bright（输入卡在浅色是白卡，深色才等于 surface-high） */
+    --acm-surface-highest: #dcd5cb;           /* --surface-variant / surface-container-highest */
+    --acm-on-surface: #24211d;                /* --on-surface */
+    --acm-muted: #625c54;                     /* --on-surface-variant */
+    --acm-outline-variant: #cec6bc;           /* --outline-variant */
+    --acm-primary: #c83d00;                   /* --primary */
+    --acm-on-primary: #ffffff;                /* --on-primary */
+    --acm-kill: #16875b;                      /* --event-kill（顶栏绿点） */
+    --acm-shadow: 0 24px 64px color-mix(in oklch, #24211d 14%, transparent);
+
+    --acm-r-sm: 6px;
+    --acm-r-md: 10px;
+    --acm-r-lg: 14px;
+    --acm-r-xl: 16px;
+
+    --acm-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+              "Segoe UI", "PingFang SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+    --acm-display: Outfit, "PingFang SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+    --acm-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+    position: relative;
+    width: 100%;
+    max-width: 1280px;
+    height: 820px;
+    box-sizing: border-box;
+    overflow: hidden;
+    border-radius: var(--acm-r-lg);
+    background: var(--acm-bg);
+    color: var(--acm-on-surface);
+    font-family: var(--acm-ui);
+    font-size: 14px;
+    line-height: 21px;
+    text-align: start;
+    box-shadow: var(--acm-shadow);
+  }
+  /* 深色：落地页 html.dark 时 mock 回到应用深色 skin（真值 06-video-pane/styles.json） */
+  html.dark .ac-hero-mock-v6 {
+    --acm-bg: #141413;
+    --acm-surface: #1c1c1a;
+    --acm-surface-low: #181816;
+    --acm-surface-container: #222220;
+    --acm-surface-high: #2a2a27;              /* 深色下 = --surface-container-high = --surface-bright */
+    --acm-surface-bright: #2a2a27;
+    --acm-surface-highest: #33332f;
+    --acm-on-surface: #eae8e3;
+    --acm-muted: #9e9a92;
+    --acm-outline-variant: #3a3833;
+    --acm-primary: #ff8a5c;
+    --acm-on-primary: #1f0a00;
+    --acm-kill: #4fdca0;
+    --acm-shadow: 0 24px 64px rgba(0, 0, 0, .55);
+  }
+  .ac-hero-mock-v6 *,
+  .ac-hero-mock-v6 *::before,
+  .ac-hero-mock-v6 *::after { box-sizing: border-box; }
+  .ac-hero-mock-v6 img { display: block; }
+  /* 重置只作用于「没有自己背景」的按钮；带填充的按钮用更高特异性覆盖（见 .acm-new / .acm-composer__send） */
+  .ac-hero-mock-v6 button { font: inherit; color: inherit; background: transparent; border: 0; padding: 0; }
+  .ac-hero-mock-v6 p { margin: 0; }
+
+  /* ── 工作区骨架：4px 内边距 + 4px 间隙，264px 会话栏 + 剩余 ───────── */
+  .acm-workspace {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 264px minmax(0, 1fr);
+    gap: 4px;
+    padding: 4px;
+    background: var(--acm-surface-low);
+    overflow: hidden;
+  }
+
+  /* ══════════════ 左 · 会话栏（task7-session-rail）══════════════ */
+  .acm-rail {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--acm-surface-low);
+  }
+  .acm-rail__brand {
+    flex: 0 0 56px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+  }
+  .acm-rail__brand img { width: 28px; height: 28px; }
+  /* rail 品牌 logo：源文件为白，浅色下反转为深色（真值 01L logo ≈ #030303），深色直用 */
+  .ac-hero-mock-v6 .acm-rail__brand img { filter: invert(1); }
+  html.dark .ac-hero-mock-v6 .acm-rail__brand img { filter: none; }
+  .acm-rail__brand span {
+    font-family: var(--acm-display);
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 20px;
+    letter-spacing: .2px;
+    white-space: nowrap;
+    color: var(--acm-on-surface);
+    margin-top: 2px;
+  }
+  .acm-rail__header { flex: 0 0 auto; padding: 8px 12px 0; }
+  .ac-hero-mock-v6 .acm-new {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: var(--acm-r-md);
+    background: var(--acm-primary);
+    color: var(--acm-on-primary);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 19.5px;
+    white-space: nowrap;
+  }
+  .acm-new svg { flex: 0 0 16px; }
+
+  .acm-search {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    margin: 12px 12px 8px;
+    padding: 0 12px;
+    border: 1px solid var(--acm-outline-variant);
+    border-radius: var(--acm-r-md);
+    background: var(--acm-surface);
+    color: var(--acm-muted);
+  }
+  .acm-search input {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    padding: 1px 2px;
+    font-family: var(--acm-ui);
+    font-size: 13px;
+    line-height: 13px;
+    color: var(--acm-on-surface);
+  }
+  .acm-search input::placeholder { color: var(--acm-muted); }
+
+  .acm-rail__list {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    /* 会话列表可上下滚动；6px 原生滚动条替代原静态复刻条（见文件末尾滚动条样式） */
+    overflow-y: auto;
+    /* 右侧槽位：内容列维持 230px（22px 槽位扣除 6px 滚动条宽度） */
+    padding: 0 16px 16px 12px;
+  }
+  .acm-group__summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 8px;
+    color: var(--acm-muted);
+    font-family: var(--acm-ui);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 18px;
+  }
+  .acm-group__label { flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .acm-group__count {
+    flex: 0 0 auto;
+    min-width: 18px;
+    padding: 2px 4px;
+    border-radius: var(--acm-r-sm);
+    background: var(--acm-surface-container);
+    color: var(--acm-muted);
+    font-family: var(--acm-mono);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 11px;
+    text-align: center;
+  }
+  .acm-group__items { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; }
+  .acm-item { position: relative; overflow: hidden; border-radius: var(--acm-r-md); }
+  .acm-item[data-current="true"] { background: var(--acm-surface-high); }
+  .acm-item__btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    width: 100%;
+    height: 76.5px;
+    padding: 8px;
+    border-radius: var(--acm-r-md);
+    text-align: start;
+  }
+  .acm-item__title {
+    width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 19.5px;
+    color: var(--acm-on-surface);
+  }
+  .acm-item__summary {
+    width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 16.5px;
+    color: var(--acm-muted);
+  }
+  .acm-item__date {
+    font-family: var(--acm-mono);
+    font-size: 11px;
+    line-height: 16.5px;
+    color: var(--acm-muted);
+  }
+  .acm-group__toggle {
+    height: 24px;
+    padding: 0 8px;
+    color: var(--acm-muted);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 18px;
+  }
+
+  .acm-rail__footer { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 12px 12px; }
+  .acm-rail__footer-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: var(--acm-r-sm);
+    color: var(--acm-muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 12px;
+  }
+
+  /* ══════════════ 右 · Coach 工作区（task3-coach-view）══════════════ */
+  .acm-view {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    border-radius: var(--acm-r-lg);
+    background: var(--acm-surface-container);
+  }
+  /* 顶栏与下方面板同底色（--acm-surface），分界只靠 1px 线（对齐 task3-coach-topbar 0913 修复） */
+  .acm-topbar {
+    flex: 0 0 44px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 150px 0 16px;
+    background: var(--acm-surface);
+    border-bottom: 1px solid var(--acm-outline-variant);
+  }
+  .acm-topbar__dot {
+    flex: 0 0 8px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--acm-kill);
+  }
+  .acm-topbar__title {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 15.6px;
+    color: var(--acm-on-surface);
+  }
+  .acm-meta-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--acm-surface-high);
+    color: var(--acm-muted);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 11px;
+    white-space: nowrap;
+  }
+
+  /* 窗口控制钮：贴窗口右上（真值 fixed @ top:4 / right:0，46×44） */
+  .acm-wincontrols {
+    position: absolute;
+    top: 0;
+    /* 真值：窗口控制钮贴整窗右上（x 1142..1280），视图内再右移 4px */
+    right: -4px;
+    display: flex;
+    align-items: center;
+    z-index: 3;
+  }
+  .acm-wincontrol {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 44px;
+    color: var(--acm-muted);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1;
+  }
+
+  /* ── stage：视频面板（595px 固定）+ 对话列（自适应）───────────── */
+  .acm-stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 595px minmax(0, 1fr);
+  }
+
+  /* ══════════════ 视频面板（task7-coach-video-pane）══════════════ */
+  .acm-video-pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--acm-surface);
+  }
+  .acm-video-pane__header {
+    flex: 0 0 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+  }
+  .acm-video-pane__eyebrow {
+    display: block;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 16.5px;
+    color: var(--acm-muted);
+  }
+  .acm-video-pane__title {
+    margin: 2px 0 0;
+    font-family: var(--acm-display);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 17.5px;
+    color: var(--acm-on-surface);
+    white-space: nowrap;
+  }
+  .acm-video-pane__close {
+    display: grid;
+    place-items: center;
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--acm-r-md);
+    color: var(--acm-muted);
+  }
+  .acm-video-pane__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  /* 播放器整块：真值里描边只包住视频舞台（上圆角），播放条满宽 */
+  .acm-player {
+    flex: 0 0 366px;
+    display: flex;
+    flex-direction: column;
+  }
+  .acm-player__stage {
+    position: relative;
+    flex: 1 1 auto;
+    overflow: hidden;
+    border: 1px solid var(--acm-outline-variant);
+    border-radius: var(--acm-r-md) var(--acm-r-md) 0 0;
+    background: var(--acm-surface-low);
+  }
+  /* 整合落地页时：把 .acm-player__ph 换成 <video src="hero-demo.mp4"> 即可 */
+  .acm-player__ph {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(120% 90% at 50% 25%, #2b2b28 0%, #171716 58%, #101010 100%);
+  }
+  .acm-player__ph-play {
+    display: grid;
+    place-items: center;
+    width: 60px;
+    height: 60px;
+    padding-left: 4px;
+    border-radius: 50%;
+    border: 1px solid rgba(234, 232, 227, .22);
+    background: rgba(234, 232, 227, .10);
+    color: var(--acm-on-surface);
+    font-size: 20px;
+    line-height: 1;
+  }
+  .acm-player__bar {
+    flex: 0 0 48px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border-radius: 0 0 var(--acm-r-md) var(--acm-r-md);
+    background: var(--acm-surface);
+  }
+  .acm-pbar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+    padding: 1px 6px;
+    border-radius: var(--acm-r-md);
+    color: var(--acm-muted);
+    font-size: 13px;
+    line-height: 19.5px;
+  }
+  .acm-pbar-btn--volume { font-size: 15px; line-height: 15px; }
+  .acm-pbar-time {
+    flex: 0 0 auto;
+    font-family: var(--acm-mono);
+    font-size: 11px;
+    line-height: 16.5px;
+    color: var(--acm-muted);
+    white-space: nowrap;
+  }
+  .acm-pbar-spacer { flex: 1 1 auto; }
+
+  /* 时间轴 */
+  .acm-timeline {
+    position: relative;
+    flex: 0 0 52px;
+    margin-top: 12px;
+    border: 1px solid var(--acm-outline-variant);
+    border-radius: var(--acm-r-md);
+    background: var(--acm-surface-low);
+  }
+  .acm-timeline__track {
+    position: absolute;
+    left: 11px;
+    right: 11px;
+    top: 23px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--acm-surface-highest);
+  }
+  .acm-timeline__progress {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--acm-muted);
+  }
+  .acm-timeline__cursor {
+    position: absolute;
+    left: 10px;
+    top: 17px;
+    width: 1.5px;
+    height: 16px;
+    background: var(--acm-on-surface);
+  }
+  .acm-timeline__time {
+    position: absolute;
+    bottom: 2.5px;
+    font-family: var(--acm-mono);
+    font-size: 11px;
+    line-height: 16.5px;
+    color: var(--acm-muted);
+  }
+  .acm-timeline__time--left { left: 11px; }
+  .acm-timeline__time--right { right: 11px; }
+
+  /* 回看 chips（task5 signalButton） */
+  .acm-chips {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    overflow: hidden;
+  }
+  .acm-chip {
+    flex: 0 0 auto;
+    height: 28px;
+    padding: 4px 8px;
+    border: 1px solid var(--acm-outline-variant);
+    border-radius: var(--acm-r-sm);
+    background: var(--acm-surface-low);
+    color: var(--acm-muted);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 16.5px;
+    white-space: nowrap;
+  }
+  .acm-chip__range { font-family: var(--acm-mono); }
+
+  /* ══════════════ 对话列（task6-coach-panel）══════════════ */
+  .acm-conv {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .acm-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    /* 右侧不留 padding：滚动条贴视窗右缘；左侧 14px 保持内容列缩进 */
+    padding: 0 0 0 14px;
+    background: var(--acm-surface);
+  }
+  /* 真值：对话列右侧亦有 6px 滚动条，改由 .acm-messages 的原生滚动条承担（贴右缘，零缝隙） */
+  .acm-messages {
+    flex: 1 1 auto;
+    min-height: 0;
+    /* 消息流可上下滚动（高度由 flex 父级限制）；滚动条占右缘 6px 槽位，不额外留白 */
+    margin-right: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 62px 16px 12px;
+    overflow-y: auto;
+  }
+  .acm-entry { display: flex; }
+  .acm-entry--user { justify-content: flex-end; }
+  .acm-bubble {
+    /* 真值用户气泡宽 311/338（两条消息列宽），故 92% 时换行形态与真值一致 */
+    max-width: 92%;
+    padding: 8px 12px;
+    border-radius: var(--acm-r-xl);
+    background: var(--acm-surface-high);
+    color: var(--acm-on-surface);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 20.15px;
+  }
+  .acm-rich {
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 22.75px;
+    color: var(--acm-on-surface);
+  }
+  /* 时间码可点元素：照 task6-time-link 橙色，保留老 mock 的 seeklink 语义 */
+  .acm-time-link {
+    display: inline-block;
+    color: var(--acm-primary);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 22.75px;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  /* composer（task6-composer） */
+  .acm-composer { flex: 0 0 auto; margin-right: 0; padding: 12px 22px 24px 12px; background: var(--acm-surface); }
+  .acm-composer__input {
+    position: relative;
+    height: 123px;
+    border: 1px solid var(--acm-outline-variant);
+    border-radius: var(--acm-r-lg);
+    background: var(--acm-surface-bright);
+  }
+  .acm-composer__field {
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 20px 12px 44px 20px;
+    border: 0;
+    outline: 0;
+    resize: none;
+    background: transparent;
+    border-radius: var(--acm-r-lg);
+    font-family: var(--acm-ui);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 18.85px;
+    color: var(--acm-on-surface);
+  }
+  .acm-composer__field::placeholder { color: var(--acm-muted); }
+  .acm-composer__mention {
+    position: absolute;
+    left: 9px;
+    bottom: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--acm-outline-variant);
+    border-radius: 50%;
+    color: var(--acm-muted);
+  }
+  .acm-composer__corner {
+    position: absolute;
+    right: 9px;
+    bottom: 9px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .acm-composer__model {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--acm-r-md);
+    color: var(--acm-muted);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 12px;
+    white-space: nowrap;
+  }
+  .acm-composer__model-label { display: block; overflow: hidden; }
+  .ac-hero-mock-v6 .acm-composer__send {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 1px 6px;
+    border-radius: 50%;
+    background: var(--acm-primary);
+    color: var(--acm-on-primary);
+  }
+  .ac-hero-mock-v6 .acm-player__video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
+
+  /* ── 滚动条规格（对齐真 app ui/theme.css:617-643）：6px、透明轨道、thumb r3、随主题 ── */
+  .ac-hero-mock-v6 .acm-rail__list::-webkit-scrollbar,
+  .ac-hero-mock-v6 .acm-messages::-webkit-scrollbar { width: 6px; height: 6px; }
+  .ac-hero-mock-v6 .acm-rail__list::-webkit-scrollbar-track,
+  .ac-hero-mock-v6 .acm-messages::-webkit-scrollbar-track { background: transparent; }
+  .ac-hero-mock-v6 .acm-rail__list::-webkit-scrollbar-thumb,
+  .ac-hero-mock-v6 .acm-messages::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: var(--acm-outline-variant);
+  }
+  /* Firefox 兜底（用 @supports 隔离：Chromium 一旦看到 scrollbar-width 就会忽略上面的 webkit 规则） */
+  @supports not selector(::-webkit-scrollbar) {
+    .ac-hero-mock-v6 .acm-rail__list,
+    .ac-hero-mock-v6 .acm-messages {
+      scrollbar-width: thin;
+      scrollbar-color: var(--acm-outline-variant) transparent;
+    }
+  }
+</style>
+
+<div class="ac-hero-mock-v6" role="img"
+     aria-label="Aiming Cookie 产品界面示意：左侧会话列表，工作区顶部为 ● 会话标题，主区是打开的视频讲解面板（播放条与回看节点），被挤到右侧的是 Coach 对话与提问框">
+
+  <div class="acm-workspace">
+
+    <!-- ═════════ 左栏 · 会话 ═════════ -->
+    <aside class="acm-rail">
+      <div class="acm-rail__brand">
+        <img src="logo.png" alt="" aria-hidden="true">
+        <span>Aiming Cookie</span>
+      </div>
+
+      <div class="acm-rail__header">
+        <button class="acm-new" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          <span>新建对话</span>
+        </button>
+      </div>
+
+      <label class="acm-search">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.2-3.2"></path></svg>
+        <input type="text" placeholder="搜索会话" aria-label="搜索会话">
+      </label>
+
+      <nav class="acm-rail__list">
+        <section class="acm-group">
+          <div class="acm-group__summary">
+            <span class="acm-group__label">今天</span>
+            <span class="acm-group__count">9</span>
           </div>
-          <div class="app-mock__body">
-            <!-- 左 · 会话选择 -->
-            <aside class="am-rail">
-              <header class="am-rail__header">
-                <div class="am-rail__actions">
-                  <button class="am-rail__new" type="button">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15"><path d="M12 5v14M5 12h14"></path></svg>
-                    <span>新建对话</span>
+          <div class="acm-group__items">
+            <div class="acm-item">
+              <button class="acm-item__btn" type="button">
+                <span class="acm-item__title">中手抓握轻量化鼠标推荐</span>
+                <span class="acm-item__summary">你 18 厘米手长属于中手，抓握这个搭配在鼠标里最不吃亏——主流轻量化型号基本都</span>
+                <span class="acm-item__date">9/13</span>
+              </button>
+            </div>
+            <div class="acm-item" data-current="true">
+              <button class="acm-item__btn" type="button">
+                <span class="acm-item__title">静态点击减速过长症结分析</span>
+                <span class="acm-item__summary">这一局最该改的一个动作就一个：收尾那一下的刹车方式——甩出去之后，一口气匀减速收</span>
+                <span class="acm-item__date">9/13</span>
+              </button>
+            </div>
+            <div class="acm-item">
+              <button class="acm-item__btn" type="button">
+                <span class="acm-item__title">Overflick修正练习方法</span>
+                <span class="acm-item__summary">已帮你打开 1wall 6targets small。  这个就是你上次分析的那</span>
+                <span class="acm-item__date">9/13</span>
+              </button>
+            </div>
+            <div class="acm-item">
+              <button class="acm-item__btn" type="button">
+                <span class="acm-item__title">1wall 6targets small 瞄准分</span>
+                <span class="acm-item__summary">已经帮你把 1wall 6targets small 打开了，KovaaK 那边</span>
+                <span class="acm-item__date">9/13</span>
+              </button>
+            </div>
+            <div class="acm-item">
+              <button class="acm-item__btn" type="button">
+                <span class="acm-item__title">纠正甩过头：欠甩练习法</span>
+                <span class="acm-item__summary">你本机装好的场景我列给你，按类别分一下——</span>
+                <span class="acm-item__date">9/13</span>
+              </button>
+            </div>
+          </div>
+          <button class="acm-group__toggle" type="button">显示全部 9 条</button>
+        </section>
+
+        <section class="acm-group">
+          <div class="acm-group__summary">
+            <span class="acm-group__label">昨天</span>
+            <span class="acm-group__count">10</span>
+          </div>
+          <div class="acm-group__items">
+            <div class="acm-item">
+              <button class="acm-item__btn" type="button">
+                <span class="acm-item__title">帮我复盘我最近打的一局，讲讲主要…</span>
+                <span class="acm-item__summary">你这局是 1wall 6targets small，静态多点甩枪。我把它</span>
+                <span class="acm-item__date">9/12</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      </nav>
+
+      <div class="acm-rail__footer">
+        <button class="acm-rail__footer-row" type="button">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3.2 2"></path></svg>
+          <span>训练历史</span>
+        </button>
+        <button class="acm-rail__footer-row" type="button">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"></path></svg>
+          <span>系统设置</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ═════════ 右栏 · Coach 工作区 ═════════ -->
+    <div class="acm-view">
+
+      <!-- 顶栏 -->
+      <div class="acm-topbar">
+        <span class="acm-topbar__dot" aria-hidden="true"></span>
+        <span class="acm-topbar__title">静态点击减速过长症结分析</span>
+        <span class="acm-meta-chip">1wall 6targets small · run 54020</span>
+      </div>
+
+      <!-- 窗口控制钮（贴窗口右上角，覆盖在顶栏之上） -->
+      <div class="acm-wincontrols" aria-hidden="true">
+        <span class="acm-wincontrol">-</span>
+        <span class="acm-wincontrol">□</span>
+        <span class="acm-wincontrol">×</span>
+      </div>
+
+      <div class="acm-stage">
+
+        <!-- ═════ 视频面板（打开态，占工作区左侧大部） ═════ -->
+        <section class="acm-video-pane">
+          <header class="acm-video-pane__header">
+            <div>
+              <span class="acm-video-pane__eyebrow">视频讲解</span>
+              <h2 class="acm-video-pane__title">1wall 6targets small · run 54020</h2>
+            </div>
+            <button class="acm-video-pane__close" type="button" aria-label="关闭视频讲解">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+            </button>
+          </header>
+
+          <div class="acm-video-pane__body">
+            <div class="acm-player" id="video">
+              <div class="acm-player__stage">
+                <video class="acm-player__video" id="acmVideo" src="hero-demo.mp4" preload="metadata" playsinline></video>
+              </div>
+              <div class="acm-player__bar">
+                <button class="acm-pbar-btn" id="acmBtnBack" type="button" aria-label="上一段">⏮</button>
+                <button class="acm-pbar-btn" id="acmBtnPlay" type="button" aria-label="播放">▶</button>
+                <button class="acm-pbar-btn" id="acmBtnFwd" type="button" aria-label="下一段">⏭</button>
+                <span class="acm-pbar-time" id="acmTime">00:00.0 / 01:00.9</span>
+                <span class="acm-pbar-spacer"></span>
+                <button class="acm-pbar-btn" id="acmBtnSpeed" type="button" aria-label="倍速">1×</button>
+                <button class="acm-pbar-btn acm-pbar-btn--volume" id="acmBtnMute" type="button" aria-label="音量">🔊</button>
+                <button class="acm-pbar-btn" type="button" aria-label="全屏">⛶</button>
+              </div>
+            </div>
+
+            <!-- 时间轴 -->
+            <div class="acm-timeline">
+              <div class="acm-timeline__track"><span class="acm-timeline__progress" id="acmProgress"></span></div>
+              <span class="acm-timeline__cursor" id="acmCursor"></span>
+              <span class="acm-timeline__time acm-timeline__time--left">00:00.0</span>
+              <span class="acm-timeline__time acm-timeline__time--right">01:00.9</span>
+            </div>
+
+            <!-- 回看 chips -->
+            <div class="acm-chips">
+              <span class="acm-chip"><span class="acm-chip__range">00:00</span> 开局第一甩最典型</span>
+              <span class="acm-chip"><span class="acm-chip__range">00:02.1</span> 准星是慢吞吞蹭过去的</span>
+              <span class="acm-chip"><span class="acm-chip__range">00:04.8</span> 那一甩就干脆很多</span>
+              <span class="acm-chip"><span class="acm-chip__range">00:14.3</span> 最后确认是不是断开的两截</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═════ 被挤到右侧的对话列 ═════ -->
+        <div class="acm-conv">
+          <div class="acm-panel">
+            <div class="acm-messages">
+
+              <!-- 用户气泡 -->
+              <div class="acm-entry acm-entry--user">
+                <article class="acm-bubble">帮我看看我的弱点在哪？我最近练静态点击总是慢半拍</article>
+              </div>
+
+              <!-- Coach 回复（正文含橙色 @时间码 可点元素） -->
+              <div class="acm-entry">
+                <article class="acm-rich">
+                  <p>看完了，弱点其实很明显，就藏在你说"慢半拍"这句里。最新这一局是 1wall 6targets small，一共 123 次甩枪，平均一次移动 470 毫秒，其中只有头 157 毫秒在加速冲到最快，剩下 308 毫秒——整整三分之二的时间——全在减速收力。而且最快那一下出现在移动路程的 1/3 处，也就是说你甩出去一小截就慢下来了，后面全程是慢慢蹭到目标上的。更要紧的是这次最快速度掉到了 32557，是你这个场景四次记录里最低的（之前三次分别是 46486、41036、43174），大约慢了两成五。所以你感觉的慢半拍不是反应慢，是动作形态变了：发力那一下没以前有劲，收尾又拖得长。</p>
+                  <p>你可以自己回看一下验证。开局第一甩最典型，<a class="acm-time-link am-seeklink" href="#video" data-t="0">@00:00</a> 看它几乎九成时间都在减速，准星是慢吞吞蹭过去的；<a class="acm-time-link am-seeklink" href="#video" data-t="2.1">@00:02.1</a> 看主甩和最后确认是不是断开的两截；<a class="acm-time-link am-seeklink" href="#video" data-t="14.3">@00:14.3</a> 看准星到目标附近后有没有往回抖一下再点；再对比 <a class="acm-time-link am-seeklink" href="#video" data-t="4.8">@00:04.8</a> 那一甩就干脆很多，你能直观感觉到两种收尾的差别。不过在下结论前我想先问一句：你最近练这图的时候，是不是在刻意放慢节奏求稳？如果是有意放慢，那这个形态就是你的意图，不算问题；如果没刻意，我们才谈得上"收尾拖、发力虚"。</p>
+                  <p>我的建议是一个口诀：一次甩、一次刹、刹停再点。先别管甩多快，专练减速这一段——鼠标从最快一路匀匀地刹到目标上，刹住了再点。</p>
+                </article>
+              </div>
+
+            </div>
+
+            <!-- composer -->
+            <footer class="acm-composer">
+              <div class="acm-composer__input">
+                <textarea class="acm-composer__field" rows="1" placeholder="向 Coach 提问…" aria-label="向 Coach 提问"></textarea>
+                <button class="acm-composer__mention" type="button" aria-label="引用">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                </button>
+                <div class="acm-composer__corner">
+                  <button class="acm-composer__model" type="button" aria-label="选择模型">
+                    <span class="acm-composer__model-label">deepseek-v4-flash</span>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                  </button>
+                  <button class="acm-composer__send" type="button" aria-label="发送">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
                   </button>
                 </div>
-              </header>
-              <label class="am-rail__search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" width="14" height="14"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.2-3.2"></path></svg><input placeholder="搜索会话" aria-label="搜索会话" /></label>
-              <nav class="am-rail__list">
-                <button class="am-rail__item" data-current="true">
-                  <span class="am-rail__title">1wall 6targets small</span>
-                  <span class="am-rail__summary">127 次甩枪 · 收尾停停走走</span>
-                  <span class="am-rail__date">8/17</span>
-                </button>
-                <button class="am-rail__item">
-                  <span class="am-rail__title">Cata IC Long Strafes</span>
-                  <span class="am-rail__summary">连续跟枪 · 回退比 0.40</span>
-                  <span class="am-rail__date">8/20</span>
-                </button>
-                <button class="am-rail__item">
-                  <span class="am-rail__title">1w2ts reload</span>
-                  <span class="am-rail__summary">切换链 · reacq 偏慢</span>
-                  <span class="am-rail__date">8/14</span>
-                </button>
-                <button class="am-rail__item">
-                  <span class="am-rail__title">Valorant Small Flicks</span>
-                  <span class="am-rail__summary">小目标快速甩枪</span>
-                  <span class="am-rail__date">7/20</span>
-                </button>
-                <button class="am-rail__item">
-                  <span class="am-rail__title">Controlsphere Easy</span>
-                  <span class="am-rail__summary">平滑度 · 控制负担</span>
-                  <span class="am-rail__date">7/18</span>
-                </button>
-                <button class="am-rail__item">
-                  <span class="am-rail__title">Smoothsphere Viscose Easier</span>
-                  <span class="am-rail__summary">连续跟枪 · SPARC 数值</span>
-                  <span class="am-rail__date">7/15</span>
-                </button>
-                <button class="am-rail__item">
-                  <span class="am-rail__title">长期训练</span>
-                  <span class="am-rail__summary">减速节奏 · 复测同一场景</span>
-                  <span class="am-rail__date">7/25</span>
-                </button>
-              </nav>
-              <footer class="am-rail__footer">
-                <button class="am-rail__footer-row">训练历史</button>
-                <button class="am-rail__footer-row">系统设置</button>
-              </footer>
-            </aside>
-            <!-- 中 · 视频回放（真实可播放） -->
-            <section class="am-video">
-              <header class="am-pane-head">
-                <div>
-                  <span>视频讲解</span>
-                  <h3>1wall 6targets small</h3>
-                  <small>run 54020</small>
-                </div>
-              </header>
-              <div class="am-player" id="amPlayer" data-duration="60">
-                <div class="am-player__stage">
-                  <video id="amVideo" preload="metadata" playsinline src="hero-demo.mp4"></video>
-                  <span class="am-player__badge" id="amTimeBadge">00:00 / 01:00</span>
-                </div>
-                <div class="am-player__bar">
-                  <button id="amBtnBack" type="button">⏮</button>
-                  <button id="amBtnPlay" type="button">▶</button>
-                  <button id="amBtnFwd" type="button">⏭</button>
-                  <span class="am-player__time" id="amTime">00:00 / 01:00</span>
-                  <span class="am-player__spacer"></span>
-                  <button id="amBtnSpeed" type="button">1×</button>
-                  <button id="amBtnMute" type="button">🔊</button>
-                </div>
-                <div class="am-player__timeline">
-                  <input id="amSeek" class="am-player__seek" type="range" min="0" max="60" step="0.1" value="0" aria-label="回放时间轴" />
-                  <div class="am-player__track">
-                    <span class="am-player__progress" id="amProgress"></span>
-                    <span class="am-player__cursor" id="amCursor"></span>
-                  </div>
-                  <span class="am-player__tl-left">00:00</span>
-                  <span class="am-player__tl-right">01:00</span>
-                </div>
               </div>
-            </section>
-            <!-- 右 · Coach 讲解对话 -->
-            <section class="am-coach">
-              <header class="am-pane-head">
-                <div>
-                  <span>Aiming Coach <i class="am-dot">●</i> 可用</span>
-                  <h3>讲解</h3>
-                </div>
-              </header>
-              <div class="am-coach__messages" id="amMessages">
-                <article class="am-msg am-msg--user">
-                  <p>请分析我这局训练：1wall 6targets small，昨天 19:36（run:54020），讲讲主要问题和改进方向。</p>
-                </article>
-                <article class="am-msg am-msg--coach">
-                  <p>这局的整体：117 发里中了 106 发，差了 11 发，命中约九成，分数 960。轨迹本身很干净，路线几乎是条直线（效率 0.98），不是手在乱抖——问题不在路线上，在收尾上。</p>
-                  <p>主要问题：每次甩枪平均 476 毫秒里，冲到最快的部分只占 161 毫秒，剩下 315 毫秒全都耗在减速，约占全程三分之二；而且减速这段里有约三分之一的时间带方向反转——先冲过头，再折回来找。合起来看就是典型的两段式：一把甩到目标附近、停住、再单独补一下，而不是一下到。关键指标：减速占比 67.5%、反向修正占比 34%、两段几乎完全分离。对照上次同一张图（analysis 9）：上次减速占比 65.7%、反向 37%，这次基本同一水平——这是你目前的固定习惯，不是偶发。回看重头 <button class="am-seeklink" type="button" data-ms="22600">@22.6s</button>，看那次甩枪冲到最快之后，准星在后面很长一段都在慢慢收；再对比 <button class="am-seeklink" type="button" data-ms="24600">@24.6s</button>，注意收尾时准星过掉目标又折回来的那一下。</p>
-                </article>
-                <article class="am-msg am-msg--user">
-                  <p>你看视频得出了什么结论</p>
-                </article>
-                <article class="am-msg am-msg--coach">
-                  <p>视频这块得出的结论分三层。第一，目标侧：整局 6 个固定小球在视频里都能稳定检测出来，球很小，半径大概只有 4 到 7 个像素，是个视角很小的目标，这对收尾精度要求本身就高。第二，点击侧：视频里检出的每一次点击都被判定为命中，和击杀记录对得上（106 杀），但这类判定只回答"打了没打中"，回答不了"准星离靶心偏了多少"——因为 6 个球同屏、部分目标轨迹只拍到两三帧，靶心相对误差这一层证据不可用，所以这次只能靠鼠标动作形态说话，这也是为什么主要结论都落在减速段和反向修正上。</p>
-                  <p>第三，视频还挑了两段给你回看：一段是整局最典型的甩枪（flick 2，第二次），一段是最乱的一枪（flick 29，第 29 次）。最乱那枪在 <button class="am-seeklink" type="button" data-ms="15200">@15.2s</button>，那一击动作拆出了 7 段发力、6 次小修正，83% 的时间都在减速，是典型的"甩过头、一路往回找"的放大版；典型那枪在 <button class="am-seeklink" type="button" data-ms="1700">@1.7s</button>，形态和你全局平均一致。</p>
-                </article>
-                <article class="am-msg am-msg--user">
-                  <p>22秒那次是什么问题，你看看</p>
-                </article>
-                <article class="am-msg am-msg--coach">
-                  <p>22 秒那次（static-flick 44）其实不是"减速过长"的典型，它反而是告诉你问题真正在哪的一枪。先看数据：这枪全程 363 毫秒，减速段只占 41%，远低于你全局平均的 68%；而且它是一段到底（只有 1 个动作分段、0 次小修正计数），位移很小、速度峰值也很低，属于近距离轻推型的甩枪——所以它收得本来就该快。</p>
-                  <p>但注意两个细节：第一，路径效率只有 0.93，比全局平均的 0.98 明显低，路线带了点轻微的弧度；第二，它的反向修正比例（reverse_ratio）高达 35%，跟全局平均一个水平——也就是说这枪虽然收得快，但收尾那一下速度仍然有回折、有轻微的"往回兜"。合起来看，这一枪证明了你的底问题不在"减速时间长短"，而在"收尾这段总带着回折"：近距离动作你也能收得快，可回折比例压不下来。回看 <button class="am-seeklink" type="button" data-ms="22500">@22.5s</button>，重点看准星到目标附近那最后一小段。</p>
-                </article>
-              </div>
-              <footer class="am-coach__inputbar">
-                <div class="am-coach__inputwrap">
-                  <textarea id="amDraft" class="am-coach__field" rows="1" placeholder="向 Coach 提问，可以聊训练，也可以让它帮你操作应用…" aria-label="向 Coach 提问"></textarea>
-                  <button id="amSend" class="am-coach__send" aria-label="发送" title="发送" type="button">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
-                  </button>
-                </div>
-              </footer>
-            </section>
+            </footer>
+
           </div>
         </div>
-        <div class="app-mock__caption">本局为内测用户真实训练 run 54020 · 讲解来自真实 analysis:10 对话 · 界面为演示示意</div>
+
+      </div>
+    </div>
+  </div>
+</div>
+        <div class="app-mock__caption">本局为内测用户真实训练 run 54020 · 讲解来自真实训练对话 · 界面为演示示意</div>
       </div>
     </section>
 
@@ -798,7 +1592,7 @@
             <tr>
               <td>数据来源</td>
               <td>你的训练录像画面</td>
-              <td>鼠标 Raw Input + 录屏 + KovaaK Stats / Performance</td>
+              <td>鼠标 Raw Input + 录屏 + KovaaK Stats / Performance + 引擎级真值遥测</td>
             </tr>
             <tr>
               <td>分析方式</td>
@@ -808,7 +1602,7 @@
             <tr>
               <td>结论粒度</td>
               <td>「大概」「感觉」「可能是」</td>
-              <td>精确到每一次减速、每一段轨迹</td>
+              <td>精确到每一发——真实角误差、真实反应时，屏幕外的目标也算在内</td>
             </tr>
           </tbody>
         </table>
@@ -823,140 +1617,264 @@
             <h2>Aiming Cookie<br>在后台自动记录</h2>
           </div>
           <div class="stack" style="gap: var(--gap-sm);">
-            <p style="margin: 0;">后台自动采集：鼠标操作数据、录屏、KovaaK 自带 Stats / Performance——全程零操作。</p>
+            <p style="margin: 0;">后台自动采集：鼠标操作数据、录屏、KovaaK 自带 Stats / Performance，外加引擎级真值遥测——全程零操作。</p>
             <p style="margin: 0; color: var(--muted);">练完切回应用，Run 和回放已经同步存好，直接点选需要询问的训练，让Aiming Cookie帮你一起看看。</p>
             <p style="margin: 0; color: var(--muted);">KovaaK's 本身没有录屏和回放，这件事我们顺带补足了。</p>
           </div>
           <p class="meta" style="margin: 0;">覆盖 static / dynamic clicking · continuous tracking · target switching</p>
         </div>
         <div>
-          <div class="ch-mock" data-od-id="capture-mock" role="img" aria-label="Aiming Cookie 历史页面示意：训练记录分层显示，有的已分析、有的待分析">
-            <main class="ch-mock__page">
-              <div class="ch-mock__page-head">
-                <div class="ch-mock__page-title-row">
-                  <span class="ch-mock__back" aria-hidden="true">‹</span>
-                  <h3 class="ch-mock__page-title">历史</h3>
-                </div>
-                <div class="ch-mock__page-actions">
-                  <button class="ch-mock__primary" type="button">让 Coach 分析</button>
-                  <button class="ch-mock__refresh" type="button">刷新</button>
-                </div>
-              </div>
+<div class="ac-history-mock-v6" role="img" aria-label="Aiming Cookie 历史页面示意：按天分组的训练记录，左侧圆点勾选，右侧橙色分数与灰色时长，个别条目带异常红色感叹号">
+  <!-- 56px 实底顶栏 -->
+  <div class="ac-hv-head">
+    <div class="ac-hv-head-col">
+      <div class="ac-hv-topbar-left">
+        <button class="ac-hv-back" type="button" aria-label="返回 Coach">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3.5 5.5 8 10 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+        </button>
+        <div class="ac-hv-title">历史</div>
+        <input class="ac-hv-filter" type="text" placeholder="按场景名筛选…" aria-label="按场景名筛选" readonly>
+        <button class="ac-hv-refresh" type="button" aria-label="刷新（上次更新 0 秒前）">
+          <span class="ac-hv-refresh-icon" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M14 8a6 6 0 1 1-6-6c1.68 0 3.29.67 4.49 1.83L14 5.33" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+              <path d="M14 2v3.33h-3.33" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </span>
+          <span class="ac-hv-refresh-text">更新于 0 秒前</span>
+        </button>
+        <button class="ac-hv-coach-pill" type="button" disabled>让 Coach 分析</button>
+      </div>
+    </div>
+  </div>
 
-              <!-- 待分析训练 -->
-              <section class="ch-mock__sec" aria-label="待分析训练">
-                <div class="ch-mock__sec-head"><h4>待分析训练</h4><span class="ch-mock__count">2</span></div>
-                <div class="ch-mock__panel">
-                  <div class="ch-mock__rowline">
-                    <div class="ch-mock__row-main">
-                      <div class="ch-mock__row-title"><span class="ch-mock__name">Valorant Fireworks Flick Horizontal</span></div>
-                      <div class="ch-mock__row-sub"><span>训练时间：7/27 11:23</span></div>
-                      <div class="ch-mock__ev-row">
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Stats</span></span>
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Perf</span></span>
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Raw</span></span>
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>视频</span></span>
-                      </div>
-                    </div>
-                    <div class="ch-mock__row-select"><input type="checkbox" aria-label="选择 Valorant Fireworks Flick Horizontal" /></div>
-                  </div>
-                  <div class="ch-mock__rowline">
-                    <div class="ch-mock__row-main">
-                      <div class="ch-mock__row-title"><span class="ch-mock__name">1wall 6targets small</span><span class="ch-mock__badge ch-mock__badge-warn">待确认</span></div>
-                      <div class="ch-mock__row-sub"><span>训练时间：7/27 11:23</span></div>
-                      <div class="ch-mock__ev-row">
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Stats</span></span>
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Perf</span></span>
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Raw</span></span>
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>视频</span></span>
-                      </div>
-                    </div>
-                    <div class="ch-mock__row-select"><input type="checkbox" aria-label="选择 1wall 6targets small" /></div>
-                  </div>
-                </div>
-              </section>
+  <!-- 按天分组列表 -->
+  <div class="ac-hv-page">
+    <div class="ac-hv-col">
+      <section class="ac-hv-sec" aria-labelledby="ac-hv-pending-title">
+        <div class="ac-hv-sec-head">
+          <h2 class="ac-hv-sec-title" id="ac-hv-pending-title">待分析训练</h2>
+          <span class="ac-hv-sec-count">30</span>
+          <button class="ac-hv-sec-caret" type="button" aria-expanded="true" aria-label="收起待分析训练">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M3.5 6 8 10.5 12.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+        </div>
 
-              <!-- 分析记录 -->
-              <section class="ch-mock__sec" aria-label="分析记录">
-                <div class="ch-mock__sec-head"><h4>分析记录</h4><span class="ch-mock__count">2</span></div>
-                <div class="ch-mock__panel">
-                  <div class="ch-mock__rowline">
-                    <div class="ch-mock__row-main">
-                      <div class="ch-mock__row-title"><span class="ch-mock__name">Cata IC Long Strafes</span><span class="ch-mock__badge ch-mock__badge-ok"><span class="ch-mock__badge-dot"></span>已完成</span><span class="ch-mock__badge ch-mock__badge-mode">多源模式</span></div>
-                      <div class="ch-mock__row-sub"><span>训练：7/27</span><span>分析：7/27</span><span>摘要：回退比 0.40</span></div>
-                    </div>
-                    <div class="ch-mock__row-select"><input type="checkbox" aria-label="选择分析 Cata IC Long Strafes" /></div>
-                  </div>
-                  <div class="ch-mock__rowline">
-                    <div class="ch-mock__row-main">
-                      <div class="ch-mock__row-title"><span class="ch-mock__name">Controlsphere</span><span class="ch-mock__badge ch-mock__badge-ok"><span class="ch-mock__badge-dot"></span>已完成</span><span class="ch-mock__badge ch-mock__badge-prev">预览</span></div>
-                      <div class="ch-mock__row-sub"><span>训练：7/27</span><span>分析：7/27</span><span>摘要：平滑度 · 控制负担</span></div>
-                    </div>
-                    <div class="ch-mock__row-select"><input type="checkbox" aria-label="选择分析 Controlsphere" /></div>
-                  </div>
-                </div>
-              </section>
-
-              <!-- 训练记录 -->
-              <section class="ch-mock__sec" aria-label="训练记录">
-                <div class="ch-mock__sec-head"><h4>训练记录</h4><span class="ch-mock__count">4</span></div>
-                <div class="ch-mock__panel">
-                  <div class="ch-mock__rowline">
-                    <div class="ch-mock__row-main">
-                      <div class="ch-mock__row-title"><span class="ch-mock__name">Valorant Fireworks Flick Horizontal - Far</span></div>
-                      <div class="ch-mock__row-sub"><span>训练时间：7/27</span></div>
-                      <div class="ch-mock__ev-row">
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Stats</span></span>
-                        <span class="ch-mock__ev" data-state="part"><i>◐</i><span>Perf</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>Raw</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>视频</span></span>
-                      </div>
-                    </div>
-                    <div class="ch-mock__row-select"><input type="checkbox" aria-label="选择 Valorant Fireworks Flick Horizontal - Far" /></div>
-                  </div>
-                  <div class="ch-mock__rowline">
-                    <div class="ch-mock__row-main">
-                      <div class="ch-mock__row-title"><span class="ch-mock__name">Cata IC Fast Strafes</span></div>
-                      <div class="ch-mock__row-sub"><span>训练时间：7/27</span></div>
-                      <div class="ch-mock__ev-row">
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Stats</span></span>
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Perf</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>Raw</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>视频</span></span>
-                      </div>
-                    </div>
-                    <div class="ch-mock__row-select"><input type="checkbox" aria-label="选择 Cata IC Fast Strafes" /></div>
-                  </div>
-                  <div class="ch-mock__rowline">
-                    <div class="ch-mock__row-main">
-                      <div class="ch-mock__row-title"><span class="ch-mock__name">WHJ SmoothStrafeSphere Easy</span></div>
-                      <div class="ch-mock__row-sub"><span>训练时间：7/27</span></div>
-                      <div class="ch-mock__ev-row">
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Stats</span></span>
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Perf</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>Raw</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>视频</span></span>
-                      </div>
-                    </div>
-                    <div class="ch-mock__row-select"><input type="checkbox" aria-label="选择 WHJ SmoothStrafeSphere Easy" /></div>
-                  </div>
-                  <div class="ch-mock__rowline">
-                    <div class="ch-mock__row-main">
-                      <div class="ch-mock__row-title"><span class="ch-mock__name">beanClick</span></div>
-                      <div class="ch-mock__row-sub"><span>训练时间：7/27</span></div>
-                      <div class="ch-mock__ev-row">
-                        <span class="ch-mock__ev" data-state="ok"><i>✓</i><span>Stats</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>Perf</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>Raw</span></span>
-                        <span class="ch-mock__ev" data-state="miss"><i>−</i><span>视频</span></span>
-                      </div>
-                    </div>
-                    <div class="ch-mock__row-select"><input type="checkbox" aria-label="选择 beanClick" /></div>
-                  </div>
-                </div>
-              </section>
-            </main>
+        <div class="ac-hv-panel">
+          <div class="ac-hv-day-label">9月2日 · 3条</div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall 6targets small（9月2日 02:09）"></div>
+            <span class="ac-hv-name">1wall 6targets small</span>
+            <span class="ac-hv-run-score">1,085.2</span>
+            <span class="ac-hv-run-time">02:09</span>
           </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall 6targets small（9月2日 01:52）"></div>
+            <span class="ac-hv-name">1wall 6targets small</span>
+            <span class="ac-hv-run-score">995.6</span>
+            <span class="ac-hv-run-time">01:52</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall5targets_pasu（9月2日 01:43）"></div>
+            <span class="ac-hv-name">1wall5targets_pasu</span>
+            <span class="ac-hv-run-score">84.8</span>
+            <span class="ac-hv-run-time">01:43</span>
+          </div>
+
+          <div class="ac-hv-day-label">9月1日 · 2条</div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Tile Frenzy 180 Strafing Tracking（9月1日 21:47）"></div>
+            <span class="ac-hv-name">Tile Frenzy 180 Strafing Tracking</span>
+            <span class="ac-hv-run-score">83</span>
+            <span class="ac-hv-run-time">21:47</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall 6targets small（9月1日 20:16）"></div>
+            <span class="ac-hv-name">1wall 6targets small</span>
+            <span class="ac-hv-run-score">1,019.8</span>
+            <span class="ac-hv-run-time">20:16</span>
+          </div>
+
+          <div class="ac-hv-day-label">8月27日 · 3条</div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall5targets_pasu（8月27日 00:49）"></div>
+            <span class="ac-hv-name">1wall5targets_pasu</span>
+            <span class="ac-hv-run-score">70.2</span>
+            <span class="ac-hv-run-time">00:49</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall 6targets small（8月27日 00:35）"></div>
+            <span class="ac-hv-name">1wall 6targets small</span>
+            <span class="ac-hv-run-score">1,049.6</span>
+            <span class="ac-hv-run-time">00:35</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall 6targets small（8月27日 00:27）"></div>
+            <span class="ac-hv-name">1wall 6targets small</span>
+            <span class="ac-hv-run-score">1,028.2</span>
+            <span class="ac-hv-run-time">00:27</span>
+          </div>
+
+          <div class="ac-hv-day-label">8月21日 · 2条</div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Cata IC Long Strafes（8月21日 02:15）"></div>
+            <span class="ac-hv-name">Cata IC Long Strafes</span>
+            <span class="ac-hv-run-score">5,595.7</span>
+            <span class="ac-hv-run-time">02:15</span>
+            <span class="ac-hv-run-issue" title="部分采集数据缺失" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"></circle>
+                <path d="M8 5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+                <path d="M8 11h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+              </svg>
+            </span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Cata IC Long Strafes（8月21日 01:22）"></div>
+            <span class="ac-hv-name">Cata IC Long Strafes</span>
+            <span class="ac-hv-run-score">5,515.1</span>
+            <span class="ac-hv-run-time">01:22</span>
+            <span class="ac-hv-run-issue" title="部分采集数据缺失" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"></circle>
+                <path d="M8 5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+                <path d="M8 11h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+              </svg>
+            </span>
+          </div>
+
+          <div class="ac-hv-day-label">8月16日 · 9条</div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Ascended Tracking 90 Small（8月16日 21:17）"></div>
+            <span class="ac-hv-name">Ascended Tracking 90 Small</span>
+            <span class="ac-hv-run-score">9,070.9</span>
+            <span class="ac-hv-run-time">21:17</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall5targets_pasu（8月16日 19:48）"></div>
+            <span class="ac-hv-name">1wall5targets_pasu</span>
+            <span class="ac-hv-run-score">72.2</span>
+            <span class="ac-hv-run-time">19:48</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Controlsphere（8月16日 19:46）"></div>
+            <span class="ac-hv-name">Controlsphere</span>
+            <span class="ac-hv-run-score">5,667</span>
+            <span class="ac-hv-run-time">19:46</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Target Switching 360 Static（8月16日 19:42）"></div>
+            <span class="ac-hv-name">Target Switching 360 Static</span>
+            <span class="ac-hv-run-score">13,217</span>
+            <span class="ac-hv-run-time">19:42</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 patCircleSwitch small NR（8月16日 19:10）"></div>
+            <span class="ac-hv-name">patCircleSwitch small NR</span>
+            <span class="ac-hv-run-score">4,320</span>
+            <span class="ac-hv-run-time">19:10</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 patCircleSwitch small NR（8月16日 19:08）"></div>
+            <span class="ac-hv-name">patCircleSwitch small NR</span>
+            <span class="ac-hv-run-score">4,240</span>
+            <span class="ac-hv-run-time">19:08</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 VSS GP9（8月16日 14:12）"></div>
+            <span class="ac-hv-name">VSS GP9</span>
+            <span class="ac-hv-run-score">4,901.7</span>
+            <span class="ac-hv-run-time">14:12</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 VSS GP9（8月16日 13:56）"></div>
+            <span class="ac-hv-name">VSS GP9</span>
+            <span class="ac-hv-run-score">5,668.4</span>
+            <span class="ac-hv-run-time">13:56</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Valorant Fireworks Flick Horizontal（8月16日 13:53）"></div>
+            <span class="ac-hv-name">Valorant Fireworks Flick Horizontal</span>
+            <span class="ac-hv-run-score">550</span>
+            <span class="ac-hv-run-time">13:53</span>
+          </div>
+
+          <div class="ac-hv-day-label">8月15日 · 11条</div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall5targets_pasu（8月15日 16:03）"></div>
+            <span class="ac-hv-name">1wall5targets_pasu</span>
+            <span class="ac-hv-run-score">70.7</span>
+            <span class="ac-hv-run-time">16:03</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall 6targets small（8月15日 16:00）"></div>
+            <span class="ac-hv-name">1wall 6targets small</span>
+            <span class="ac-hv-run-score">1,015.5</span>
+            <span class="ac-hv-run-time">16:00</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 VSS GP9（8月15日 15:37）"></div>
+            <span class="ac-hv-name">VSS GP9</span>
+            <span class="ac-hv-run-score">5,218.5</span>
+            <span class="ac-hv-run-time">15:37</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1w4ts Voltaic（8月15日 15:07）"></div>
+            <span class="ac-hv-name">1w4ts Voltaic</span>
+            <span class="ac-hv-run-score">103</span>
+            <span class="ac-hv-run-time">15:07</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Ascended Tracking 90 Small（8月15日 15:06）"></div>
+            <span class="ac-hv-name">Ascended Tracking 90 Small</span>
+            <span class="ac-hv-run-score">11,186.2</span>
+            <span class="ac-hv-run-time">15:06</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Ascended Tracking v3（8月15日 15:04）"></div>
+            <span class="ac-hv-name">Ascended Tracking v3</span>
+            <span class="ac-hv-run-score">8,921.3</span>
+            <span class="ac-hv-run-time">15:04</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Vertical Smoothness Training Very Easy（8月15日 15:02）"></div>
+            <span class="ac-hv-name">Vertical Smoothness Training Very Easy</span>
+            <span class="ac-hv-run-score">4,768</span>
+            <span class="ac-hv-run-time">15:02</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Pasu SuperbAim Easy（8月15日 15:01）"></div>
+            <span class="ac-hv-name">Pasu SuperbAim Easy</span>
+            <span class="ac-hv-run-score">74</span>
+            <span class="ac-hv-run-time">15:01</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 ww2t Voltaic Horizontalish（8月15日 15:00）"></div>
+            <span class="ac-hv-name">ww2t Voltaic Horizontalish</span>
+            <span class="ac-hv-run-score">113</span>
+            <span class="ac-hv-run-time">15:00</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 Humanoid Strafe（8月15日 13:19）"></div>
+            <span class="ac-hv-name">Humanoid Strafe</span>
+            <span class="ac-hv-run-score">0</span>
+            <span class="ac-hv-run-time">13:19</span>
+          </div>
+          <div class="ac-hv-row">
+            <div class="ac-hv-row-actions"><input class="ac-hv-check" type="checkbox" aria-label="选择 1wall5targets_pasu（8月15日 13:15）"></div>
+            <span class="ac-hv-name">1wall5targets_pasu</span>
+            <span class="ac-hv-run-score">79.4</span>
+            <span class="ac-hv-run-time">13:15</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
         </div>
       </div>
     </section>
@@ -1092,104 +2010,70 @@
     </div>
   </footer>
   <script>
-    // ─── hero 产品 mock：真实视频播放 + 交互 ───────────────────────────────
+    // ─── hero 产品 mock：真实视频播放 + 交互（v6 界面） ─────────────────
     (function () {
-      const player = document.getElementById('amPlayer');
-      const video = document.getElementById('amVideo');
-      if (!player || !video) return;
-      const seek = document.getElementById('amSeek');
-      const cursor = document.getElementById('amCursor');
-      const progress = document.getElementById('amProgress');
-      const timeLabel = document.getElementById('amTime');
-      const badge = document.getElementById('amTimeBadge');
-      const btnPlay = document.getElementById('amBtnPlay');
-      const btnBack = document.getElementById('amBtnBack');
-      const btnFwd = document.getElementById('amBtnFwd');
-      const btnSpeed = document.getElementById('amBtnSpeed');
-      const btnMute = document.getElementById('amBtnMute');
+      const mock = document.querySelector('.ac-hero-mock-v6');
+      const video = document.getElementById('acmVideo');
+      if (!mock || !video) return;
+      const timeLabel = document.getElementById('acmTime');
+      const progress = document.getElementById('acmProgress');
+      const cursor = document.getElementById('acmCursor');
+      const btnPlay = document.getElementById('acmBtnPlay');
+      const btnBack = document.getElementById('acmBtnBack');
+      const btnFwd = document.getElementById('acmBtnFwd');
+      const btnSpeed = document.getElementById('acmBtnSpeed');
+      const btnMute = document.getElementById('acmBtnMute');
       const fmt = (sec) => {
-        if (!Number.isFinite(sec)) return '00:00';
+        if (!Number.isFinite(sec)) return '00:00.0';
         const m = Math.floor(sec / 60);
-        const s = Math.floor(sec % 60);
-        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        const r = sec % 60;
+        return String(m).padStart(2, '0') + ':' + r.toFixed(1).padStart(4, '0');
       };
-      const fallbackDur = Number(player.dataset.duration) || 60;
       const setProgress = () => {
-        const dur = video.duration || fallbackDur;
+        const dur = video.duration || 60.9;
         const curr = video.currentTime || 0;
         const pct = dur ? (curr / dur) * 100 : 0;
-        if (cursor) cursor.style.insetInlineStart = `${pct}%`;
-        if (progress) progress.style.width = `${pct}%`;
-        if (seek) seek.value = curr;
-        const label = `${fmt(curr)} / ${fmt(dur)}`;
-        if (timeLabel) timeLabel.textContent = label;
-        if (badge) badge.textContent = label;
+        if (progress) progress.style.width = pct + '%';
+        // 播放头骑在轨道线上：轨道左右各留 11px 内距，按真实跨度像素定位
+        if (cursor) {
+          const w = Math.max(0, (cursor.parentElement ? cursor.parentElement.clientWidth : 0) - 22);
+          cursor.style.left = (11 + (pct / 100) * w) + 'px';
+        }
+        if (timeLabel) timeLabel.textContent = fmt(curr) + ' / ' + fmt(dur);
       };
       const togglePlay = () => {
-        if (video.paused) { void video.play(); btnPlay.textContent = '⏸'; }
-        else { video.pause(); btnPlay.textContent = '▶'; }
+        if (video.paused) { void video.play(); if (btnPlay) btnPlay.textContent = '⏸'; }
+        else { video.pause(); if (btnPlay) btnPlay.textContent = '▶'; }
       };
-      const step = (sec) => { video.currentTime = Math.max(0, Math.min(video.duration || fallbackDur, (video.currentTime || 0) + sec)); };
-
+      const step = (sec) => { video.currentTime = Math.max(0, Math.min(video.duration || 60.9, (video.currentTime || 0) + sec)); };
       video.addEventListener('loadedmetadata', setProgress);
       video.addEventListener('timeupdate', setProgress);
-      video.addEventListener('play', () => { btnPlay.textContent = '⏸'; });
-      video.addEventListener('pause', () => { btnPlay.textContent = '▶'; });
-      video.addEventListener('ended', () => { btnPlay.textContent = '▶'; });
-
-      btnPlay.addEventListener('click', togglePlay);
-      btnBack.addEventListener('click', () => step(-5));
-      btnFwd.addEventListener('click', () => step(5));
-      btnSpeed.addEventListener('click', () => {
+      video.addEventListener('play', () => { if (btnPlay) btnPlay.textContent = '⏸'; });
+      video.addEventListener('pause', () => { if (btnPlay) btnPlay.textContent = '▶'; });
+      video.addEventListener('ended', () => { if (btnPlay) btnPlay.textContent = '▶'; });
+      if (btnPlay) btnPlay.addEventListener('click', togglePlay);
+      if (btnBack) btnBack.addEventListener('click', () => step(-5));
+      if (btnFwd) btnFwd.addEventListener('click', () => step(5));
+      if (btnSpeed) btnSpeed.addEventListener('click', () => {
         const next = video.playbackRate === 1 ? 0.5 : 1;
         video.playbackRate = next;
-        btnSpeed.textContent = `${next}×`;
+        btnSpeed.textContent = next + '×';
       });
-      btnMute.addEventListener('click', () => {
+      if (btnMute) btnMute.addEventListener('click', () => {
         video.muted = !video.muted;
         btnMute.textContent = video.muted ? '🔇' : '🔊';
       });
-      seek.addEventListener('input', () => {
-        video.currentTime = Number(seek.value);
-        setProgress();
-      });
-
       // Coach 释义里的时间链接 → 视频跳转
-      document.querySelectorAll('.am-seeklink').forEach((link) => {
+      mock.querySelectorAll('.am-seeklink').forEach((link) => {
         link.addEventListener('click', (event) => {
           event.preventDefault();
-          const ms = Number(link.getAttribute('data-ms'));
-          if (Number.isFinite(ms) && video) { video.currentTime = ms / 1000; setProgress(); }
+          const t = Number(link.getAttribute('data-t'));
+          if (Number.isFinite(t)) { video.currentTime = t; setProgress(); }
         });
       });
-
-      // 发送消息（追加用户气泡 + coach 占位回复，滚动到底）
-      const messages = document.getElementById('amMessages');
-      const draft = document.getElementById('amDraft');
-      const send = document.getElementById('amSend');
-      const append = (role, text) => {
-        const article = document.createElement('article');
-        article.className = `am-msg am-msg--${role}`;
-        const p = document.createElement('p');
-        p.textContent = text;
-        article.appendChild(p);
-        messages.appendChild(article);
-        messages.scrollTop = messages.scrollHeight;
-      };
-      const doSend = () => {
-        const text = draft.value.trim();
-        if (!text) return;
-        append('user', text);
-        draft.value = '';
-        setTimeout(() => append('coach', '收到。我把刚才那段结合你这一局再看一遍，稍等。'), 600);
-      };
-      send.addEventListener('click', doSend);
-      draft.addEventListener('keydown', (event) => { if (event.key === 'Enter') doSend(); });
-
-      // 初始滚到底
-      messages.scrollTop = messages.scrollHeight;
       setProgress();
     })();
+
 
     const menuToggle = document.querySelector('[data-od-id="menu-toggle"]');
     const siteNav = document.querySelector('#site-nav');
@@ -1221,15 +2105,6 @@
     });
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) document.documentElement.classList.add('reduce-motion');
 
-    // ─── capture 历史页 mock：刷新按钮轻量反馈（仅演示） ────────────────
-    const chRefresh = document.querySelector('[data-od-id="capture-mock"] .ch-mock__refresh');
-    if (chRefresh) {
-      chRefresh.addEventListener('click', () => {
-        const original = chRefresh.textContent;
-        chRefresh.textContent = '刷新中…';
-        setTimeout(() => { chRefresh.textContent = original; }, 700);
-      });
-    }
   </script>
   <script>
     // ─── 极简统计：页面浏览 + 下载点击（自托管 Worker，无 cookie、不存 IP 原文）───
@@ -1243,6 +2118,22 @@
         if (a) send({ t: 'dl', p: location.pathname, d: a.getAttribute('href') });
       }, { passive: true });
     })();
+
+    // ─── 深色模式切换（持久化） ──────────────────────────────────────────
+    const themeToggle = document.getElementById('themeToggle');
+    const metaThemeColor = document.getElementById('metaThemeColor');
+    const applyTheme = (dark) => {
+      document.documentElement.classList.toggle('dark', dark);
+      if (metaThemeColor) metaThemeColor.content = dark ? '#141413' : '#f7f5f0';
+    };
+    if (themeToggle) {
+      applyTheme(document.documentElement.classList.contains('dark'));
+      themeToggle.addEventListener('click', () => {
+        const dark = !document.documentElement.classList.contains('dark');
+        applyTheme(dark);
+        try { localStorage.setItem('ac-landing-theme', dark ? 'dark' : 'light'); } catch (e) {}
+      });
+    }
   </script>
 
 </body></html>
