@@ -316,6 +316,11 @@ def _reveal_in_explorer(path: FilePath) -> None:
     if sys.platform != "win32":
         raise OSError("reveal in file manager is only supported on Windows")
     # explorer /select, 要求反斜杠路径；Popen 不等待资源管理器退出。
+    # Windows 合法路径可含逗号，而 explorer 会在 /select, 后的逗号处截断：
+    # 路径含 "," 时退化为打开父目录（仍定位到该文件的文件夹）。
+    if "," in str(path):
+        subprocess.Popen(["explorer", str(path.parent)])
+        return
     subprocess.Popen(["explorer", f"/select,{path}"])
 
 

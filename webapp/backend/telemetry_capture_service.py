@@ -152,6 +152,8 @@ class TelemetryCaptureService:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._children: dict[str, subprocess.Popen] = {}
+        # 已上报死亡的子进程 role：避免每次轮询重复 log/落盘。
+        self._dead_children: set[str] = set()
         self._session_dir: Path | None = None
         self._game_present = False
         self._state = "idle"
@@ -223,6 +225,7 @@ class TelemetryCaptureService:
 
     def _monitor_loop(self) -> None:
         while not self._stop_event.wait(self.poll_interval):
+            self._check_children_alive()
             try:
                 present = bool(self._game_processes_fn())
             except Exception as error:
@@ -249,6 +252,28 @@ class TelemetryCaptureService:
                 self._run_finalize()
                 self._state = "capturing"
                 self._persist_diagnostics()
+
+    def _check_children_alive(self) -> None:
+        """采集子进程死亡的可见性（只记录不重启）。
+
+        子进程 stdout/stderr 都是 DEVNULL，任何崩溃（未知 exe 版本、缺 numpy 等）
+        本会完全静默消失，设置页诊断看不出异常。这里在轮询里主动 poll：退出即
+        log.error 落盘 + 记入 _last_error + 持久化诊断。重启语义需产品决定，不在
+        此处自动重启。
+        """
+        for role, child in self._children.items():
+            if role in self._dead_children:
+                continue
+            returncode = child.poll()
+            if returncode is None:
+                continue
+            self._dead_children.add(role)
+            self._last_error = f"child_exited: {role} rc={returncode}"
+            log.error(
+                "telemetry capture child exited role=%s pid=%s returncode=%s",
+                role, child.pid, returncode,
+            )
+            self._persist_diagnostics()
 
     def _run_finalize(self) -> None:
         try:
@@ -281,6 +306,7 @@ class TelemetryCaptureService:
                 self._terminate_process(child)
             return False
         self._children = spawned
+        self._dead_children = set()
         self._session_dir = session_dir
         self._write_pids_file()
         log.info(

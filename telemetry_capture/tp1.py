@@ -70,7 +70,9 @@ def apply_offsets(exe_path, proc=None):
 
 RVA_BLOCKS_EXPECT = None   # FNamePool.Blocks 期望 RVA（apply_offsets 填充；None=不对照）
 
-OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "target_poll_out.jsonl")
+# 兜底产物路径：打包后脚本目录是只读 MEIPASS，写那里会失败；产品路径恒传
+# --out-dir，只有手工诊断会用到兜底，落到当前工作目录。
+OUT_PATH = os.path.join(os.getcwd(), "target_poll_out.jsonl")
 
 
 class Proc:

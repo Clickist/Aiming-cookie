@@ -1542,7 +1542,8 @@ def test_current_training_local_match_marks_only_explicitly_uninstalled_scenario
     item = _current_training_item(scenario_profile_ref=real_ref)
     item.update({"knowledge_ref": "knowledge:static.flicking-terminal-control@3", "status": "planned"})
 
-    monkeypatch.setattr(config, "resolve_kovaak_install_dir", lambda: install)
+    # 消费 config.resolve_kovaak_scenario_names 的合并口径（多库安装合并全部目录）。
+    monkeypatch.setenv("KOVAAK_INSTALL_DIR", str(install))
     installed = read_models.build_current_training_v1(plan={"status": "active"}, items=[item])
     assert installed["items"][0]["local_match"] is True
 
@@ -1552,9 +1553,29 @@ def test_current_training_local_match_marks_only_explicitly_uninstalled_scenario
     assert missing["items"][0]["local_match"] is False
 
     # Install not detectable -> never claim "未装".
-    monkeypatch.setattr(config, "resolve_kovaak_install_dir", lambda: None)
+    monkeypatch.setenv("KOVAAK_INSTALL_DIR", str(tmp_path / "missing-install"))
     unknown = read_models.build_current_training_v1(plan={"status": "active"}, items=[item])
     assert unknown["items"][0]["local_match"] is None
+
+
+def test_current_training_local_match_consumes_merged_multi_install_scenarios(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """多库安装：任一安装目录里有场景即算装了（与 /kovaak-scenarios 同源）。
+
+    回归 read_models 曾经只用 resolve_kovaak_install_dir()（多库时返回 None →
+    local_match 未知），与 config 的合并口径不一致。
+    """
+    item = _current_training_item(scenario_profile_ref="scenario:static.1wall_6targets_small@1")
+    item.update({"knowledge_ref": "knowledge:static.flicking-terminal-control@3", "status": "planned"})
+
+    # 主库无本场景、次库有：合并口径应判 True。
+    monkeypatch.setattr(
+        config, "resolve_kovaak_scenario_names",
+        lambda: ["other scenario", "1WALL  6targets small"],
+    )
+    merged = read_models.build_current_training_v1(plan={"status": "active"}, items=[item])
+    assert merged["items"][0]["local_match"] is True
 
 
 @pytest.mark.asyncio

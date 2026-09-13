@@ -776,7 +776,7 @@ def run_report(summary: dict) -> dict:
     """Build the deterministic local report without invoking a Provider."""
     from dataclasses import asdict, is_dataclass
     from kovaak_tracker.coach.report import build_report
-    report = build_report(summary, backend=None)
+    report = build_report(summary)
     d = asdict(report) if is_dataclass(report) else {"_raw": str(report)}
     # plotly Figure 不可 JSON 序列化 → 转 dict
     figures = d.get("figures")
@@ -848,6 +848,14 @@ def run_native_analysis(
     performance_bytes = _read_frozen_source_bytes(
         "performance", sources.get("performance"),
     )
+    # Raw input trace 的冻结指纹校验必须先于任何 parse：坏 stats CSV 会让
+    # parse_stats_bytes 先抛 ValueError，raw_input 的 SourceSnapshotChangedError
+    # 永远没机会上报（校验顺序回归）。读出的 bytes 在下方 decode 处复用。
+    trace_bytes = (
+        _read_frozen_source_bytes("raw_input", trace)
+        if isinstance(trace_path, str)
+        else None
+    )
     parsed_stats = parse_stats_bytes(stats_bytes, file_name=Path(stats_path).name)
     manual_override = _manual_override_or_legacy(
         manual_override, cm_per_360=cm_per_360, fov=fov,
@@ -876,10 +884,8 @@ def run_native_analysis(
     }
     trace_points: list[dict[str, int]] | None
     telemetry_limitations: list[str] = []
-    if isinstance(trace_path, str):
-        trace_points = decode_mouse_snapshot_bytes(
-            _read_frozen_source_bytes("raw_input", trace),
-        )
+    if trace_bytes is not None:
+        trace_points = decode_mouse_snapshot_bytes(trace_bytes)
     else:
         # 遥测-only 运行（无 raw input trace，如应用停机期间的局）：从冻结的
         # 外部遥测 inputs 旁车合成等价轨迹输入；旁车不可用时 analyze 层落

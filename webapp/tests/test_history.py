@@ -440,6 +440,47 @@ async def test_session_list_projects_safe_presentation_label_with_training_and_c
 
 
 @pytest.mark.asyncio
+async def test_session_training_at_matches_kovaak_run_stem_local_time(tmp_path: Path):
+    """训练时间口径统一：source_key 词干含对局本地时间时，sessions 视图不再用
+    created_at（批次发现时间），而是与 /kovaak-runs 同源。"""
+    user_id = "u_training_at_stem"
+    stats = tmp_path / "private Stats.csv"
+    stats.write_text("seed", encoding="utf-8")
+    trace = tmp_path / "private-trace.bin"
+    kovaak_run_store.write_mouse_snapshot(trace, [
+        {"timestamp_ms": 1_000, "dx": 1, "dy": 2, "buttons": 0},
+    ])
+    run = await kovaak_run_store.upsert_kovaak_run(
+        user_id=user_id,
+        source_key="Scenario - challenge - 2026.09.08-02.58.11",
+        scenario="Scenario",
+        stats_path=str(stats),
+        mouse_trace_path=str(trace),
+    )
+    sid = await queue.enqueue(
+        user_id,
+        "/private/source/video.mp4",
+        "/private/source/stats.csv",
+        kovaak_run_id=run["id"],
+        input_snapshot={
+            "schema_version": "analysis_input_snapshot.v1",
+            "scenario": "Scenario",
+        },
+    )
+    await _seed_done(sid, finished_at="2026-08-09 09:12:30")
+
+    rows = await queue.list_sessions(user_id)
+    item = next(row for row in rows if row["id"] == sid)
+
+    from webapp.backend.kovaak_run_projection import _training_at_from_source_key
+
+    expected = _training_at_from_source_key(run["source_key"])
+    assert expected is not None
+    assert item["training_at"] == expected
+    assert item["training_at"] != queue.timestamp_to_wire_utc(run["created_at"])
+
+
+@pytest.mark.asyncio
 async def test_queue_list_sessions_never_selects_full_result_blob(monkeypatch):
     sid = await queue.enqueue("u_light", "/private/video.mp4", "/private/stats.csv")
     await _seed_done(sid, result={"sentinel": "FULL_RESULT_MUST_NOT_BE_READ"})

@@ -168,6 +168,26 @@ async def test_reveal_rejects_other_owner_and_unknown_refs(monkeypatch) -> None:
     assert unknown_run.status_code == 404, unknown_run.text
 
 
+def test_reveal_in_explorer_falls_back_to_parent_dir_for_comma_paths(
+    monkeypatch, tmp_path,
+) -> None:
+    """Windows 合法路径可含逗号；/select,<path> 会在逗号处截断 → 退化为打开父目录。"""
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(routes_mod.sys, "platform", "win32")
+    monkeypatch.setattr(
+        routes_mod.subprocess, "Popen", lambda argv, *a, **k: calls.append(argv),
+    )
+
+    plain = tmp_path / "video.mp4"
+    routes_mod._reveal_in_explorer(plain)
+    assert calls[-1] == ["explorer", f"/select,{plain}"]
+
+    with_comma = tmp_path / "my, video.mp4"
+    routes_mod._reveal_in_explorer(with_comma)
+    assert calls[-1] == ["explorer", str(tmp_path)]
+
+
 @pytest.mark.asyncio
 async def test_reveal_path_resolution_helper_contract(monkeypatch) -> None:
     """store 层合同：未 attached / 未知 kind / 缺 run_id 分别失败。"""

@@ -5,7 +5,8 @@
   1. 包内表 offsets.json（随仓库/打包分发，人工策源）
   2. 用户缓存 offsets.local.json（自动定位成功后写入；打包版内嵌表只读，
      缓存必须落用户数据目录——服务经 AIMING_COOKIE_OFFSETS_CACHE 指到 DATA_ROOT）
-  3. 云表（默认关；AIMING_COOKIE_OFFSETS_URL=<base> 开启，"0" 显式关闭。
+  3. 云表（默认开：env 缺省用 DEFAULT_CLOUD_URL=offsets.aimingcookie.com；
+     设 AIMING_COOKIE_OFFSETS_URL=<base> 指向自建，设 "0" 显式关闭。
      只读公开、人工策源，客户端永不上传）
   4. 运行时自定位 GUObjectArray（本 POC 实证：主菜单态签名扫描全镜像唯一命中，
      无需旧 exe、无需进对局，见 RUNBOOK_OFFSETS.md §9）
@@ -234,6 +235,12 @@ def _guoa_probe_ok(p, guoa_addr, blocks_rt, nm):
             if not ch or not p.read(ch, 8):
                 continue
             take = min(per_chunk, nume - c * per_chunk, 200 - probes)
+            if take <= 0:
+                # 布局校验不约束 numc ≤ ceil(nume/per_chunk)：垃圾内存候选可令
+                # nume - c*per_chunk < 0。chunk c 覆盖 [c*per_chunk,(c+1)*per_chunk)，
+                # 此后 chunk 只会更负且无剩余元素——钳到 0 并 break，绝不用负数
+                # 长度调 p.read（会抛 ValueError 穿透打崩采集子进程）。
+                break
             blob = p.read(ch, take * 0x18)
             if not blob:
                 continue
