@@ -108,8 +108,7 @@
 }
 
 .task6-settings-nav-link[data-current="true"],
-.task6-settings-nav-link[aria-current="true"],
-.task6-settings-nav-link.task6-active {
+.task6-settings-nav-link[aria-current="true"] {
   background: var(--surface-container-high);
 }
 
@@ -747,12 +746,6 @@
   width: min(320px, 100%);
 }
 
-.task6-provider-preview {
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-  line-height: 1.5;
-}
-
 /* Status dot at row end (wireframe): green = ready, red = probe failed /
    every other state. Token-driven so theme variants stay correct. */
 
@@ -1045,13 +1038,6 @@
 
 /* Status / Capture rows：每行 = 功能名+说明在左，开关或状态在右。 */
 
-.task6-capture-health {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-
 .task6-toggle-rows {
   display: flex;
   flex-direction: column;
@@ -1095,8 +1081,7 @@
 }
 
 .task6-toggle-row a,
-.task6-storage-row a,
-.task6-kovaak-note a {
+.task6-storage-row a {
   color: var(--tertiary);
   text-decoration: none;
   border-bottom: 1px solid transparent;
@@ -1104,8 +1089,7 @@
 }
 
 .task6-toggle-row a:hover,
-.task6-storage-row a:hover,
-.task6-kovaak-note a:hover {
+.task6-storage-row a:hover {
   border-bottom-color: var(--on-surface);
 }
 
@@ -1117,12 +1101,6 @@
 /* 最近采集事件：线框 rowline 形态——纯行（无边框壳），行悬停高亮；
    语义色圆点（绿=已就绪、橙=整理中/未录制、灰=缺失）+ 场景名 + 行尾精简
    状态词；完整归因收进行悬停 title。 */
-
-.task6-capture-events {
-  margin-top: var(--space-4);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--outline-variant);
-}
 
 .task6-capture-event-list {
   display: flex;

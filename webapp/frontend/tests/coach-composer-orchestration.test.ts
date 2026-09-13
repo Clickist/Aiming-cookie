@@ -55,9 +55,6 @@ test("send key morphs by run/draft state; running actions live beside it in a ca
   assert.doesNotMatch(panel, /className="task6-send-menu"/);
   assert.doesNotMatch(styles, /\.task6-send-caret\s*\{/);
   assert.doesNotMatch(styles, /\.task6-send-menu[\s,{]/);
-  // interrupt-steer＝stop 收敛终态后 force 重发，复用既有 stop 入口而非新动词。
-  assert.match(panel, /interruptAndSteer = async/);
-  assert.match(panel, /stopCoachAgentRun\(active\.run_ref[\s\S]*?sendText\(content, \{ force: true \}\)/s);
 });
 
 test("@ mention dropdown navigates above the submit path and tokenizes the pick", async () => {

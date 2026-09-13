@@ -11,7 +11,6 @@ import {
   getCurrentTraining,
   listSessions,
   retryCoachAgentRun,
-  steerCoachAgentRun,
   stopCoachAgentRun,
 } from "@/lib/api";
 import { isDesktopRuntime, openKovaakScenario } from "@/lib/desktop";
@@ -1284,6 +1283,9 @@ export function CoachPanel({
           window.dispatchEvent(new CustomEvent(COACH_SESSION_UPDATED_EVENT));
         }
         await Promise.all([refresh(), refreshCurrentTraining()]);
+        // 刷新期间用户可能已切走会话（effect cleanup 置 cancelled=true）：
+        // 此时 settleSucceeded 会用新会话键归档并清掉新会话的活跃流，必须复查。
+        if (cancelled) return;
         if (next.status === "succeeded") settleSucceeded(next);
       } catch (error) {
         if (cancelled) return;
@@ -1317,6 +1319,8 @@ export function CoachPanel({
           } else {
             window.dispatchEvent(new CustomEvent(COACH_SESSION_UPDATED_EVENT));
             await Promise.all([refresh(), refreshCurrentTraining()]);
+            // 同 finalizeRun：await 后复查 cancelled，避免切会话后把归档写到新会话键。
+            if (cancelled) return;
             if (next.status === "succeeded") settleSucceeded(next);
           }
         } catch (error) {
@@ -2012,50 +2016,6 @@ export function CoachPanel({
     void sendText(content);
   };
 
-  /**
-   * 409 run_not_steerable ＝ 可恢复的正常态（本轮刚结束/亚毫秒注册窗）：
-   * 立即转不进去了就转回可见队列等自动发送；404（run 已不存在）同理。
-   */
-  const isRecoverableSteerReject = (error: unknown): boolean => {
-    const name = error instanceof Error ? error.name : "";
-    return name === "ApiError_409" || name === "ApiError_404";
-  };
-
-  const activeRunIsBusy = () =>
-    Boolean(activeRunRef.current && ["queued", "running"].includes(activeRunRef.current!.status));
-
-  /** 四动作之 steer：把当前草稿立即注入运行中的回合。 */
-  const steerWithDraft = async () => {
-    if (!draft.trim() && quotes.length === 0) return;
-    const content = composeOutgoing();
-    if (content === null) return;
-    const active = activeRunRef.current;
-    if (!active || !["queued", "running"].includes(active.status)) {
-      void sendText(content);
-      return;
-    }
-    try {
-      await steerCoachAgentRun(active.run_ref, content);
-      pushSentHistory(content);
-      setDraft("");
-      // 引用已随拼装串注入本回合：待拼装引用一并消费。
-      setQuotes([]);
-      appendOptimisticUserMessage(content);
-    } catch (error) {
-      if (isRecoverableSteerReject(error)) {
-        if (activeRunIsBusy()) {
-          enqueueQueuedItem(content);
-          setDraft("");
-          notify("引擎这一窗口没能接收转向，先排入队列，本轮结束后自动发送。");
-        } else {
-          void sendText(content);
-        }
-      } else {
-        notify(requestFeedback(error, "未能立即转向，草稿已保留，请重试。"));
-      }
-    }
-  };
-
   /** 队列 chip 上浮：能转则立即 steer 并展示乐观气泡，不能转走可恢复分支。 */
   /**
    * 排队 chip 的「立即」（0911 点点拍板：立刻打断发送）：停止当前生成并
@@ -2074,6 +2034,8 @@ export function CoachPanel({
       notify("未能停止当前生成，请重试。");
       return;
     }
+    // 打断的回复落库后刷新会话消息（fire-and-forget，不阻塞下面的立即发送）。
+    void refresh().catch(() => {});
     const accepted = await sendText(chip.text, { force: true, refs: chip.refs });
     if (accepted) setQueuedChips((chips) => removeQueuedChip(chips, chip.id));
   };
@@ -2099,26 +2061,6 @@ export function CoachPanel({
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
-  };
-
-  /** 四动作之 interrupt-steer：停止当前生成并以此草稿开启新回复。 */
-  const interruptAndSteer = async () => {
-    if (!draft.trim() && quotes.length === 0) return;
-    const content = composeOutgoing();
-    if (content === null) return;
-    const active = activeRunRef.current;
-    if (!active) {
-      void sendText(content);
-      return;
-    }
-    try {
-      setRun(await stopCoachAgentRun(active.run_ref, sessionId == null ? {} : { sessionId }));
-    } catch {
-      notify("未能停止生成，请重试。");
-      return;
-    }
-    // stop 已在服务端收敛终态：绕过运行守卫立即开始新回复。
-    void sendText(content, { force: true });
   };
 
   // 成功终态自动放行队首 chip：让排队语义在多轮长对话中自然流转。
@@ -2397,6 +2339,9 @@ export function CoachPanel({
     if (!run) return;
     try {
       setRun(await stopCoachAgentRun(run.run_ref, sessionId == null ? {} : { sessionId }));
+      // 被打断的半截回复此刻才随终态落库：补一次会话刷新让它在屏幕上出现，
+      // 否则要等下一回合终态才回来（可达分钟级）。
+      void refresh().catch(() => {});
     } catch {
       notify("未能停止生成，请重试。");
     }
@@ -2420,13 +2365,6 @@ export function CoachPanel({
   // （loading/不可用/加载失败）不在本条件内，状态提示照常显示。
   const homeShell = messages.length === 0 && !run;
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      (window as unknown as { __acDebug2?: unknown }).__acDebug2 = {
-        messages: messages.length,
-        run: run ? run.status : null,
-        homeExit: homeExit != null,
-      };
-    }
     onHomeShellChange?.(homeShell);
   }, [homeShell, onHomeShellChange, messages.length, run, homeExit]);
   // v6 四轮：讨论条 portal 挂载点解析。顶栏（含 task3-coach-topbar-slot）由

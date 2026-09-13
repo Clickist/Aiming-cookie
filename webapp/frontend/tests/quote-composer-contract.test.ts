@@ -61,7 +61,7 @@ test("clicking Quote consumes the mouseup snapshot, rejects oversize, and refocu
   assert.ok(action.indexOf("removeAllRanges") < action.indexOf("textareaRef.current?.focus"));
 });
 
-test("outbound composition funnels steer, interrupt-steer, enqueue, and submit through one gate", async () => {
+test("outbound composition funnels enqueue and submit through one gate", async () => {
   const panel = await source("components/task6/CoachPanel.tsx");
   const gate = chunkBetween(panel, "const composeOutgoing", "const submitComposer");
   // 无引用走原样正文路径；有引用拼装后才可发送
@@ -70,13 +70,8 @@ test("outbound composition funnels steer, interrupt-steer, enqueue, and submit t
   assert.match(gate, /isWithinSendBudget\(composed\)/);
   assert.match(gate, /SEND_BUDGET_CHARS/);
   const submitAt = panel.indexOf("const submitComposer");
-  const steerAt = panel.indexOf("const steerWithDraft");
-  const steerBody = panel.slice(steerAt, panel.indexOf("const promoteChipToSteer"));
-  const interruptBody = chunkBetween(panel, "const interruptAndSteer", "// 成功终态自动放行队首 chip");
-  for (const [name, body] of [["steer", steerBody], ["interrupt-steer", interruptBody]] as const) {
-    assert.ok(body.includes("composeOutgoing()"), `${name} must compose outbound content`);
-  }
-  assert.ok(submitAt < steerAt, "compose gate must be declared before its consumers");
+  const composeAt = panel.indexOf("const composeOutgoing");
+  assert.ok(submitAt > composeAt, "compose gate must be declared before its consumers");
   // 0912 拍板：旁挂菜单废弃，运行中排队由 sendText 的入队分支承担——同样
   // 消费上游 composeOutgoing 的拼装结果（content 参数），入列后消费待拼装引用。
   const sendTextBody = panel.slice(
@@ -111,9 +106,6 @@ test("quotes are consumed optimistically on send and restored when the send fail
   assert.match(rollback, /setDraft\(\(current\) => \(current\.trim\(\) \? current : content\)\)/);
   assert.match(rollback, /setQuotes\(\(current\) => \(current\.length \? current : quotesSnapshot\)\)/);
   assert.match(rollback, /setMentionRefs\(\(current\) => \(current\.length \? current : refsSnapshot\)\)/);
-  // steer 成功分支同步消费
-  const steerSuccess = chunkBetween(panel, "await steerCoachAgentRun(active.run_ref, content)", "appendOptimisticUserMessage(content)");
-  assert.match(steerSuccess, /setQuotes\(\[\]\)/);
 });
 
 test("composer renders removable locked quote blocks in the slot above the textarea", async () => {
