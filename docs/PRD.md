@@ -145,6 +145,7 @@
 |---|---|
 | 首次启动、尚未完成 onboarding | **激活 Coach / Provider onboarding**：先说明 Coach 价值、第三方 Provider 费用和数据边界；连接 Provider 是必须完成的主路径 |
 | onboarding 已完成、无分析历史且无已发现 Run | **进入 Coach 主工作区**，显示自动采集启用/待命状态；不提供 Provider-less 分析入口 |
+| onboarding 已完成且「开场分析」尚未创建 | **自动创建并打开 Coach「开场分析」会话**（首启一次性；不设跳过键，用户开新对话/切到其它会话即视为跳过，之后不再自动创建） |
 | 有待分析 Run、其它 Run 或分析历史 | **历史**，顶部先显示待分析训练，下面区分其它训练记录和分析记录 |
 | Provider 未配置或需要恢复 | 采集与已有 Run/History 记录可以保留，但不创建 Provider-less Analysis、确定性报告或 Coach 回答；Coach 只显示可恢复的“连接 / 重新连接 Provider”入口 |
 | 已有记录且 Provider 可用 | 回访进入 History 或指定 Coach 会话；保留会话与草稿状态，Coach 不以独立右侧开关作为入口 |
@@ -230,6 +231,17 @@ provider 不可用 → 保留本地指标、确定性诊断、规则化提示和
   ↓
 history（待分析训练 + 训练记录 + 分析记录）
 ```
+
+### 6.1.1 开场分析（Intro Session）——首启一次性
+
+Onboarding 完成后首次进入 Coach 时，自动创建并打开「开场分析」会话（首启一次性 flag；不设跳过键，开新对话/切到其它会话即视为跳过）。会话由一次性 intro skill 主导：
+
+- Coach 聊天收集四问：玩什么游戏、KovaaK 练了多久、自评强弱、目标；并邀请提供 Steam 主页链接（可选，可跳过）
+- 用户基本信息（games/experience/self_assessment/goal/steam_profile_url）经白名单校验后存 `config/user-profile.json`，之后所有 Coach 会话可读取
+- 分析只使用**成绩层**数据：本地 KovaaK Stats/Performance、社区基准（S2）分数与段位排名、进步曲线、训练时长，加上用户自评；**禁止动作层断言**（Raw Input/遥测级行为结论只能出自 Run 分析管线）
+- 产出结构：一句类型判断 → 带证据观察（含自评与数据的对照）→ 恰好一个可提升点 → 类别级「下一步」；**具体处方只在 Run 分析（动作层管线）之后提供**，开场分析不给处方卡
+- 本地无 KovaaK 记录且 Steam 查无成绩 → 不做基准局流程，只做使用引导，并提供「社区基准训练单（S2）」一键入口
+- 文案由所选 Provider 模型生成、不写死；引用的数字必须来自喂入的真实数据；术语统一为「社区基准训练单」
 
 ### 6.2 回访旅程（有分析历史）——所有用户
 
@@ -408,6 +420,7 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - **透明联盟链接提前落地**（2026-09-11）：原定 C 阶段的「透明联盟链接」提前实施——自建 affiliate-links Worker 部署于 `affiliate.gearclickist.com`（淘宝联盟/拼多多转链，联盟密钥只存 Worker Secrets），经 Coach `purchase_links.lookup` 在证据支持外设可能成为限制时按需接入；佣金不影响诊断、推荐触发或排序的原则不变。本条目记录该能力相对阶段划分的前移，不改动阶段划分正文
 - **训练事实写入不加确认门**（2026-09-13）：Coach 经原生命令（training_plan.item.add / execution.record / retest.record）可直接写训练事实，不设独立的 confirmation/grant 硬门；写入纪律由 teaching skill 的阶段合同与提示词约束。此前文档声称的 trusted instruction grant 机制从未实现，本条确认按现状维持、不补建。
 - **scenario.open 同意门保持在提示词层**（2026-09-13）：「打开 KovaaK 场景前必须先征得用户同意」由工具描述与教学提示词约束，不加代码层强制拦截（不做过度工程）；防线单层是已知并接受的取舍。
+- **开场分析一次性、成绩层为界**（2026-09-13）：Onboarding 后首启自动创建「开场分析」会话（不设跳过键，切走即跳过）；分析只用成绩层数据（Stats/Perf、社区基准 S2 段位、时长、进步曲线）与用户自评，禁止动作层断言；具体处方保留给 Run 分析管线，开场只给类别级「下一步」；用户基本信息以白名单 JSON（`config/user-profile.json`）承载。数据边界依据：开场时点尚无 Raw Input/遥测证据，低层路径只能声明其实际支撑的结论。
 - **Provider-first onboarding 是硬门槛**（2026-08-09）：首次启动先说明 Coach 价值、Provider 成本和数据边界；连接 Provider 后才进入 Coach-backed 分析。Provider 不可用时采集可继续，但不生成 Provider-less Analysis 或报告；后续回访从既有入口恢复连接
 - **Pi catalog 与本地 credential**（2026-07-13）：pinned Pi built-in provider/model catalog 就是产品 catalog，不维护 Aiming Cookie allow-list；支持自定义 OpenAI-compatible profile。API key 可作为 local-first 权衡明文保存在本地 config/provider.json，secure store 不是前置 Gate，但 secret 绝不进入 AnalysisResult、Coach 上下文/消息、普通日志、诊断或导出
 - **v1 → B → C 分阶段**：v1 建立开源免费的完整 Coach 闭环；B 深化长期档案、训练计划和复测体验；C 在保持信任边界的前提下接通经验证的外设目录与透明联盟链接

@@ -467,6 +467,8 @@ Coach 默认使用有界、版本化、类型化的 L1-L3 context/tool results�
 
 Coach 主工作区不内嵌完整文件管理器；用户资料的完整查看、编辑和管理应由独立界面承载。具体目录结构、文件 schema、更新策略和存储实现由后续用户信息架构文档与 implementation plan 冻结。
 
+> 落地注记（2026-09-13）：结构化基本信息（games/experience/self_assessment/goal/steam_profile_url）当前以白名单 JSON `config/user-profile.json` 承载（结构化文件属本节允许的实现形态），由首启「开场分析」会话经对话写入并供后续会话读取；渐进式 Markdown 用户仓库仍是后续演进方向，schema 冻结文档另行补充。见 PRD §6.1.1。
+
 ### 4.4 消息类型与回答结构
 
 第一版只需要六种消息：
