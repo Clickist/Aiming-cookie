@@ -96,6 +96,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/coach/intro-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Coach Intro Context
+         * @description 开场分析用的本地数据摘要：尽力而为，绝不因缺数据报错。
+         *
+         *     只读现有 store 的公开投影（kovaak_run_store.summaries）；任何读取/字段
+         *     异常都退化为缺省值，不做重计算、不引入新依赖。
+         */
+        get: operations["get_coach_intro_context_api_coach_intro_context_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/current-training": {
         parameters: {
             query?: never;
@@ -110,7 +133,14 @@ export interface paths {
         get: operations["get_current_training_api_current_training_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Current Training
+         * @description Delete the owner's current Training Plan (active first, else paused).
+         *
+         *     Same pick rule as GET /current-training; plans are Coach-regenerable so
+         *     deletion is a plain hard remove with no confirmation round-trip.
+         */
+        delete: operations["delete_current_training_api_current_training_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -682,6 +712,30 @@ export interface paths {
         /** Get Task */
         get: operations["get_task_api_tasks__task_ref__get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get User Profile
+         * @description Intro Session 用户档案；无文件时返回全空默认值，不 404。
+         */
+        get: operations["get_user_profile_api_user_profile_get"];
+        /**
+         * Update User Profile
+         * @description partial 更新白名单字段，校验后原子写，返回完整档案。
+         */
+        put: operations["update_user_profile_api_user_profile_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2441,6 +2495,26 @@ export interface operations {
             };
         };
     };
+    get_coach_intro_context_api_coach_intro_context_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     get_current_training_api_current_training_get: {
         parameters: {
             query?: never;
@@ -2457,6 +2531,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentTrainingResponse"];
+                };
+            };
+        };
+    };
+    delete_current_training_api_current_training_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -3401,6 +3495,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_profile_api_user_profile_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    update_user_profile_api_user_profile_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

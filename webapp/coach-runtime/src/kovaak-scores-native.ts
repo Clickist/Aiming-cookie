@@ -38,7 +38,12 @@ export type NativeScoreResult = {
 
 const _dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(_dirname, "..", "..", "..");
-const CATALOG_PATH = resolve(REPO_ROOT, "knowledge", "benchmarks", "viscose-s2.v1.json");
+// 打包后 import.meta 落在 bun 虚拟文件系统里，resource root 必须走环境变量
+// （与 knowledge-registry.ts 同一惯例；lib.rs spawn 时注入）。
+const RESOURCE_ROOT = process.env.AIMING_COOKIE_RESOURCE_ROOT?.trim();
+const CATALOG_PATH = RESOURCE_ROOT
+  ? resolve(RESOURCE_ROOT, "knowledge", "benchmarks", "viscose-s2.v1.json")
+  : resolve(REPO_ROOT, "knowledge", "benchmarks", "viscose-s2.v1.json");
 
 // ── Constants (mirror Python kovaak_benchmark_provider) ────────────────
 

@@ -2,7 +2,8 @@
  * 受限富文本解析器（frontend-parity 批 7，digests §10）。
  *
  * 只解析 sidecar 白名单归一化后放行的受控子集：GFM 表格、有序/无序列表、
- * 行内加粗（**…**）。纯逻辑、无 React 依赖，流式容错原则＝未闭合的表格/
+ * 行内加粗（**…**）、引用块（`>`，承载 Coach 的「下一步」等结构化块）。纯逻辑、
+ * 无 React 依赖，流式容错原则＝未闭合的表格/
  * 列表按已收到部分渲染、不吞任何字符；唯一例外是代码围栏——沿用 sidecar
  * 归一化语义，围栏开启后的内容一并隐藏，终稿闭合后自然收敛。
  * 输出为纯数据节点树，由 CoachMessageText 渲染成 React 结构；全程不经
@@ -110,13 +111,15 @@ export type RichCell = RichInline[];
 export type RichNode =
   | { kind: "paragraph"; segments: RichInline[] }
   | { kind: "list"; ordered: boolean; items: RichItem[] }
-  | { kind: "table"; header: RichCell[] | null; rows: RichCell[][]; numericCols: boolean[] };
+  | { kind: "table"; header: RichCell[] | null; rows: RichCell[][]; numericCols: boolean[] }
+  | { kind: "blockquote"; children: RichNode[] };
 
 // ── 受控命名链接 ─────────────────────────────────────────────────────────
 //
-// 只放行联盟域的 https 链接渲染为可点击 <a>（域名白名单单一来源在此）；
-// 其余一切链接形状（非白名单域、http、javascript: 等）一律保持字面文本。
-// React 转义 + 无 innerHTML 的红线不因链接放行而松动。
+// 只放行白名单链接渲染为可点击 <a>（单一来源在此）：联盟域/主页的 https，
+// 以及 steam:// 深链（「社区基准训练单」一键装进 KovaaK）。其余一切链接
+// 形状（非白名单域、http、javascript: 等）一律保持字面文本。React 转义 +
+// 无 innerHTML 的红线不因链接放行而松动。
 
 export const COACH_LINK_HOSTS: ReadonlySet<string> = new Set([
   "s.click.taobao.com",
@@ -124,9 +127,16 @@ export const COACH_LINK_HOSTS: ReadonlySet<string> = new Set([
   "space.bilibili.com",
 ]);
 
+/** 深链协议白名单：steam:// 由桌面端 commander/系统处理器拉起外部 Steam 客户端。 */
+export const COACH_LINK_PROTOCOLS: ReadonlySet<string> = new Set(["steam:"]);
+
 function isAllowedHref(href: string): boolean {
   try {
     const url = new URL(href);
+    // steam://run/<appid>/?… 无 https 域语义：协议在名单内且确有内容就放行。
+    // 注意不能用 hostname 判空——Chromium 对 steam: 这类外部协议解析出的
+    // hostname 是空串（Node 里是 "run"），单测环境测不出这个分歧（真机踩过）。
+    if (COACH_LINK_PROTOCOLS.has(url.protocol)) return url.href.length > url.protocol.length + 2;
     return url.protocol === "https:" && COACH_LINK_HOSTS.has(url.hostname);
   } catch {
     return false;
@@ -139,32 +149,48 @@ function isAllowedHref(href: string): boolean {
 const BARE_URL_TERMINATOR = /[\s）」】》>"'，。；、！？：,;:!?)}\]]/;
 
 /**
- * 扫描一段文本里最早出现的白名单域裸 https URL（模型不按命名链接形状
- * 输出时的兜底，1.0.0 前实测身份问答必现）；返回 [起点, 终点)，无则 null。
- * 终点 = 第一个终止字符或文本末尾；host 不在白名单按字面文本处理。
+ * 裸 steam 深链的合法字符集（RFC3986 reserved+unreserved）：`?`/`;`/`&`/`=`
+ * 都是 `steam://run/<appid>/?action=…;sharecode=…` 的组成部分，不能被通用
+ * 终止符截断；命中集合外字符（空白、CJK 标点、引号等）即到界。
  */
-function findBareAllowedUrl(text: string, from: number): { start: number; end: number } | null {
-  let at = text.indexOf("https://", from);
-  while (at !== -1) {
-    let end = at + 8;
-    while (end < text.length && !BARE_URL_TERMINATOR.test(text[end])) end += 1;
-    const candidate = text.slice(at, end);
-    try {
-      const url = new URL(candidate);
-      if (url.protocol === "https:" && COACH_LINK_HOSTS.has(url.hostname) && url.hostname.length > 0) {
-        return { start: at, end };
-      }
-    } catch {
-      // 不是完整 URL（如仅 "https://"），按字面处理，继续找下一处。
-    }
-    at = text.indexOf("https://", end);
-  }
-  return null;
+const BARE_STEAM_URL_CHAR = /[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]/;
+
+/** 裸 URL 扫描的候选前缀（https 联盟域 + steam 深链）。 */
+const BARE_URL_PREFIXES = ["https://", "steam://"] as const;
+
+function isBareUrlEndAt(text: string, index: number, steam: boolean): boolean {
+  const char = text[index];
+  return steam ? !BARE_STEAM_URL_CHAR.test(char) : BARE_URL_TERMINATOR.test(char);
 }
 
 /**
- * 把一段文本拆成行内分段：** 配对为加粗，`[文字](https://…)` 且域名在
- * 白名单内配对为链接；白名单域的裸 https URL 也链接化（兜底，不吞字面）；
+ * 扫描一段文本里最早出现的白名单裸 URL（模型不按命名链接形状输出时的
+ * 兜底）：https 联盟域/主页，或 steam:// 深链。返回 [起点, 终点)，无则 null。
+ * 终点 = 第一个终止字符或文本末尾；不在白名单的 host/协议按字面文本处理。
+ */
+function findBareAllowedUrl(text: string, from: number): { start: number; end: number } | null {
+  let best: { start: number; end: number } | null = null;
+  for (const prefix of BARE_URL_PREFIXES) {
+    const steam = prefix.startsWith("steam");
+    let at = text.indexOf(prefix, from);
+    while (at !== -1) {
+      let end = at + prefix.length;
+      while (end < text.length && !isBareUrlEndAt(text, end, steam)) end += 1;
+      const candidate = text.slice(at, end);
+      if (isAllowedHref(candidate)) {
+        if (!best || at < best.start) best = { start: at, end };
+        break;
+      }
+      at = text.indexOf(prefix, end);
+    }
+  }
+  return best;
+}
+
+/**
+ * 把一段文本拆成行内分段：** 配对为加粗，`[文字](href)` 且 href 在白名单内
+ * （https 联盟域/主页，或 steam:// 深链）配对为链接；白名单裸 URL（含
+ * steam://）也链接化（兜底，不吞字面）；
  * 落单的 ** 与不成形状的 [ 连同其内容保持字面（流式
  * 中途未闭合时一字不吞，闭合片段到达后由下一次全量重解析自然收敛）。
  * 链接 href 按第一个 `)` 截断——联盟链接（淘宝/京东）均为百分号编码，
@@ -192,7 +218,7 @@ export function parseBoldSegments(text: string): RichInline[] {
       continue;
     }
     if (linkAt !== -1 && (boldAt === -1 || linkAt < boldAt)) {
-      const closeBracket = text.indexOf("](https://", linkAt + 1);
+      const closeBracket = text.indexOf("](", linkAt + 1);
       const lineEnd = text.indexOf("\n", linkAt);
       if (closeBracket !== -1) {
         const closeParen = text.indexOf(")", closeBracket);
@@ -286,6 +312,8 @@ type OpenList = { node: Extract<RichNode, { kind: "list" }>; level: number };
 
 const FENCE_RE = /^(?:`{3,}|~{3,})/;
 const FENCE_CLOSE_RE = /^ {0,3}(?:`{3,}|~{3,})\s*$/;
+/** 引用块行：≤3 空格缩进的 `>`（后随一个可选空格），内容是剥记号后的余下部分。 */
+const QUOTE_LINE_RE = /^ {0,3}>\s?(.*)$/;
 
 /**
  * 把受限 Markdown 文本解析为节点树。每条流式 revision 全量重解析，
@@ -348,6 +376,23 @@ export function parseRichText(text: string): RichNode[] {
 
     if (!trimmed) {
       flushParagraph();
+      continue;
+    }
+
+    // 引用块：连续 `>` 行归一段，剥记号后递归解析成内层节点。
+    // 容错同全表语义——流式中途未闭合时按已收到部分渲染，一字不吞；
+    // 只作呈现容器，不引入任何 HTML 通道（内层仍走受限子集）。
+    if (QUOTE_LINE_RE.test(line)) {
+      closeLists();
+      const inner: string[] = [];
+      let end = index;
+      while (end < lines.length && QUOTE_LINE_RE.test(lines[end])) {
+        inner.push(QUOTE_LINE_RE.exec(lines[end])?.[1] ?? "");
+        end += 1;
+      }
+      index = end - 1;
+      const children = parseRichText(inner.join("\n"));
+      if (children.length) nodes.push({ kind: "blockquote", children });
       continue;
     }
 
