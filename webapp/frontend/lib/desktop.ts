@@ -65,6 +65,38 @@ export async function exportDesktopCaptureDiagnostics(): Promise<string | null> 
   return invoke<string>("desktop_export_capture_diagnostics", { path });
 }
 
+// 诊断包直传（ac-logs：洛杉矶机 + CF Tunnel，logs.aimingcookie.com）。
+// token 只是防滥用的轻门禁，不是机密；上传失败由调用方降级到本地导出。
+const DIAGNOSTICS_UPLOAD_URL = "https://logs.aimingcookie.com/upload";
+const DIAGNOSTICS_UPLOAD_TOKEN = "1a7432abc2f8e2bbe03121e953e0b3be2deedde581a5f65d";
+
+export async function uploadDesktopCaptureDiagnostics(): Promise<string> {
+  if (!isDesktopRuntime()) {
+    throw new Error("Capture diagnostics are only available in the desktop app");
+  }
+  const bundle = await invoke<string>("desktop_collect_capture_diagnostics");
+  const response = await fetch(DIAGNOSTICS_UPLOAD_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-AC-Token": DIAGNOSTICS_UPLOAD_TOKEN,
+    },
+    body: bundle,
+  });
+  if (response.status === 429) {
+    throw new Error("UPLOAD_RATE_LIMITED");
+  }
+  if (response.status === 503) {
+    throw new Error("UPLOAD_QUOTA_EXCEEDED");
+  }
+  if (!response.ok) {
+    throw new Error(`diagnostics upload failed with HTTP ${response.status}`);
+  }
+  const data = (await response.json()) as { id?: string };
+  if (!data.id) throw new Error("diagnostics upload response missing id");
+  return data.id;
+}
+
 export async function openKovaakScenario(
   scenarioName: string,
 ): Promise<ScenarioOpenResultV1> {

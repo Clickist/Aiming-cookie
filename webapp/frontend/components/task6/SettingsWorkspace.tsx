@@ -21,7 +21,8 @@ import {
 } from "@/lib/api";
 import { presentStorageCategories } from "@/lib/contracts";
 import { describeCaptureRunEvent, summarizeCaptureRunStatus } from "@/lib/capture-events";
-import { exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
+import { exportDesktopCaptureDiagnostics, isDesktopRuntime, setDesktopCaptureEnabled, uploadDesktopCaptureDiagnostics } from "@/lib/desktop";
+import { logFrontendError } from "@/lib/frontend-log";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
 import { KovaaKConnectionPanel } from "@/components/kovaak/KovaaKConnectionPanel";
 import { KovaaKDirectoriesPanel } from "@/components/kovaak/KovaaKDirectoriesPanel";
@@ -259,6 +260,8 @@ export function SettingsWorkspace() {
   // 采集源状态点（点点 0912 拍板）：外部遥测源不健康时状态点一并转橙。
   const [externalTelemetry, setExternalTelemetry] = useState<ExternalTelemetryConfigV1 | null>(null);
   const [diagnosticExporting, setDiagnosticExporting] = useState(false);
+  const [diagnosticUploading, setDiagnosticUploading] = useState(false);
+  const [diagnosticUploadId, setDiagnosticUploadId] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
 
   const desktop = isDesktopRuntime();
@@ -268,10 +271,34 @@ export function SettingsWorkspace() {
     try {
       const path = await exportDesktopCaptureDiagnostics();
       if (path) setFeedback(`运行日志已导出：${path}`);
-    } catch {
+    } catch (error) {
+      logFrontendError("capture-diagnostics-export", error instanceof Error ? error.message : String(error));
       setFeedback("运行日志导出失败，请重试。");
     } finally {
       setDiagnosticExporting(false);
+    }
+  };
+
+  // 一键上传诊断包到 logs.aimingcookie.com；成功回显编号给开发者对账，
+  // 失败不阻塞用户——提示改用「导出运行日志」走本地文件降级。
+  const uploadCaptureDiagnostics = async () => {
+    setDiagnosticUploading(true);
+    try {
+      const id = await uploadDesktopCaptureDiagnostics();
+      setDiagnosticUploadId(id);
+      setFeedback(`诊断包已上传，编号 ${id}：把这个编号发给开发者即可。`);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      logFrontendError("capture-diagnostics-upload", code || String(error));
+      if (code === "UPLOAD_RATE_LIMITED") {
+        setFeedback("上传太频繁（每小时最多 10 次），请稍后再试；紧急时可改用「导出运行日志」手动发送文件。");
+      } else if (code === "UPLOAD_QUOTA_EXCEEDED") {
+        setFeedback("今天的上传额度已用完，请明天再试；紧急时可改用「导出运行日志」手动发送文件。");
+      } else {
+        setFeedback("诊断包上传失败（网络或服务不可用），可改用「导出运行日志」后手动发送文件。");
+      }
+    } finally {
+      setDiagnosticUploading(false);
     }
   };
 
@@ -700,10 +727,16 @@ export function SettingsWorkspace() {
           ) : null}
           {desktop ? (
             <div className="task6-capture-diagnostics">
+              <Button disabled={diagnosticUploading} onClick={() => void uploadCaptureDiagnostics()} variant="primary">
+                {diagnosticUploading ? "正在上传诊断包…" : "上传诊断包"}
+              </Button>
               <Button disabled={diagnosticExporting} onClick={() => void exportCaptureDiagnostics()} variant="secondary">
                 {diagnosticExporting ? "正在打包运行日志…" : "导出运行日志"}
               </Button>
-              <span className="task6-settings-section-hint">给开发者排障用的：复现问题后立即导出，包含完整 native 错误、环境和采集状态，不包含 Raw 数据或 MP4。</span>
+              {diagnosticUploadId ? (
+                <span className="task6-settings-section-hint">最近上传编号：{diagnosticUploadId}</span>
+              ) : null}
+              <span className="task6-settings-section-hint">给开发者排障用的：复现问题后立即上传，把编号发给开发者即可；上传失败可改用「导出运行日志」手动发送。包含完整 native 错误、环境和采集状态，不包含 Raw 数据或 MP4。</span>
             </div>
           ) : null}
         </section>
