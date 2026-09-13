@@ -245,6 +245,9 @@ html.ac-window-rounded:not(.ac-window-maximized) .task3-window-control--close::b
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  /* 顶栏与下方面板同面（浅色下透明会露出 coach-view 深一档底色形成色差，
+     点点 0913）：分界只靠 border-block-end 一条线。 */
+  background: var(--surface);
   height: 44px;
   /* 右侧留出常浮三键的宽度，避免标题顶到键下。 */
   padding: 0 150px 0 var(--space-4);

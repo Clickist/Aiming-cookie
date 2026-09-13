@@ -625,17 +625,18 @@ export function HistoryClient() {
             </button>
             {/* 「让 Coach 分析」常驻胶囊（0911 点点第四轮）：未勾选为 disabled
                 灰胶囊（点击无意义，原生 disabled + not-allowed 不误导）；勾选后
-                primary 橙 + 计数。 */}
-            <button
-              className="task4-coach-pill"
-              data-active={selectedCount > 0 || undefined}
-              disabled={selectedCount === 0}
-              onClick={startCoachAnalysis}
-              type="button"
-            >
-              {selectedCount > 0 ? `让 Coach 分析（${selectedCount}）` : "让 Coach 分析"}
-            </button>
+                primary 橙 + 计数。0913 点点：移出左组贴 580 列右缘
+                （margin-inline-start: auto），右缘与下方列表面板对齐。 */}
           </div>
+          <button
+            className="task4-coach-pill"
+            data-active={selectedCount > 0 || undefined}
+            disabled={selectedCount === 0}
+            onClick={startCoachAnalysis}
+            type="button"
+          >
+            {selectedCount > 0 ? `让 Coach 分析（${selectedCount}）` : "让 Coach 分析"}
+          </button>
           {/* 勾选超限提示随顶栏常驻视口（绝对定位挂在顶栏下缘渐隐带之下）。 */}
           {selectionNotice ? <Notice className="task4-head-notice" tone="info">{selectionNotice}</Notice> : null}
           </div>

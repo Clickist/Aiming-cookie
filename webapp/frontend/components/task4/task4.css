@@ -106,6 +106,8 @@
    12.5px）。 */
 .task4-coach-pill {
   flex: none;
+  /* 0913 点点：右缘与下方内容列（580 列）右缘对齐，不再跟随左组自然流。 */
+  margin-inline-start: auto;
   height: 30px;
   padding: 0 var(--space-4);
   border: none;
