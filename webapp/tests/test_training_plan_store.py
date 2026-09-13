@@ -406,3 +406,25 @@ async def test_legacy_flat_plan_survives_the_next_write_without_regressing():
     assert set(raw["plans"]) == {plan_id}
     assert raw["plans"][plan_id]["status"] == "paused"
     assert raw["transitions"][-1]["event"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_delete_plan_hard_removes_and_is_owner_scoped():
+    """0913 拍板：删除训练计划=硬删当前计划，Coach 可重新生成，不留墓碑。"""
+    draft = await store.create_draft(
+        "owner-a", PLAN_PAYLOAD, verification_targets=VERIFICATION_TARGETS,
+    )
+    other = await store.create_draft(
+        "owner-b", PLAN_PAYLOAD, verification_targets=VERIFICATION_TARGETS,
+    )
+    await store.save_plan("owner-a", draft["plan_id"])
+    await store.activate_plan("owner-a", draft["plan_id"])
+
+    await store.delete_plan("owner-a", draft["plan_id"])
+
+    assert all(p["plan_id"] != draft["plan_id"] for p in await store.list_plans("owner-a"))
+    with pytest.raises(store.PlanNotFound):
+        await store.delete_plan("owner-a", draft["plan_id"])
+    with pytest.raises(store.PlanForbidden):
+        await store.delete_plan("owner-a", other["plan_id"])
+    assert (await store.list_plans("owner-b"))[0]["plan_id"] == other["plan_id"]

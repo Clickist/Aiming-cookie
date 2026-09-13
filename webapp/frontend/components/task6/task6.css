@@ -142,6 +142,16 @@
   white-space: nowrap;
 }
 
+/* 折叠截断（0913 拍板）：不打省略号，尾端 14px 渐隐消失——对齐左栏
+   session 条目动作区 scrim 的「渐变消失」观感。mask 只作用于文字 alpha，
+   折叠/hover/展开三态底色不同也不穿帮；仅折叠态且真截断时启用，
+   短名不该被抹掉尾巴。 */
+.task6-training-pop:not([data-open])[data-truncated="true"] .task6-training-chip-label {
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(to right, black calc(100% - 14px), transparent 100%);
+}
+
 /* caret 合同（与总折叠行一致）：折叠＝向右(-90deg)，展开＝向下(0)。 */
 .task6-training-chip-caret {
   flex: none;
@@ -309,6 +319,7 @@
 .task6-training-item-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
@@ -713,6 +724,21 @@
 
 .task7-rich li::marker {
   color: var(--on-surface-variant);
+}
+
+/* 引用块：Coach 的结构化「下一步」等块降级形态（sidecar 若以 `>` 引用块
+   输出即落在这里）；仅底色与内边距区分，内层仍是受限子集。 */
+.task7-rich-quote {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: 2px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+}
+
+.task7-rich-quote > * + * {
+  margin-block-start: var(--space-1);
 }
 
 /* 表格：横向滚动容器保护对话列；数值列 tabular-nums（排印⑤） */
