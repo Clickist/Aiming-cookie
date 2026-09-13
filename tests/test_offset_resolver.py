@@ -121,6 +121,36 @@ class TestResolutionChain:
             orr.resolve("/any/exe", digest=isolated_env.digest, proc=None)
 
 
+class TestGuoaProbeBounds:
+    """垃圾内存候选可令 nume - c*per_chunk < 0；探针必须钳到 0 而非负数读。"""
+
+    def test_negative_take_does_not_reach_read(self):
+        class FakeProc:
+            base = 0
+
+            def u64(self, addr):
+                return 0x40000000
+
+            def i32(self, addr):
+                # 0x1020/0x1010=maxe, +4=nume, +8=maxc, +12=numc
+                return {0x1020: 1000, 0x1024: 1, 0x1028: 100, 0x102C: 100,
+                        0x1010: 1000, 0x1014: 1, 0x1018: 100, 0x101C: 100}[addr]
+
+            def read(self, addr, length):
+                if length < 0:
+                    raise AssertionError("negative read length=%d" % length)
+                return b"\x00" * length
+
+        class FakeNames:
+            @staticmethod
+            def read_class_name(p, blocks_rt, idx):
+                return None
+
+        # per_chunk=10, nume=1 → c=1 时 nume-c*per_chunk=-9。修复前会以负数
+        # 长度调 p.read 并抛 ValueError 穿透崩掉采集子进程。
+        assert orr._guoa_probe_ok(FakeProc(), 0x1000, 0, FakeNames) is False
+
+
 class TestCacheWrite:
     def test_save_merges_and_drops_bad(self, isolated_env):
         _write_table(isolated_env.cache, "cd" * 32, {"rva_guobjectarray": "zz"})

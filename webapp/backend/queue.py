@@ -807,10 +807,17 @@ def _resolve_training_at(item: dict) -> str | None:
     if run_id is None:
         return None
     from . import kovaak_run_store
+    from .kovaak_run_projection import _training_at_from_source_key
     run = kovaak_run_store._load_run(int(run_id))
     if run is None:
         return None
-    return timestamp_to_wire_utc(run.get("created_at"))
+    # 与 /kovaak-runs 同一口径：优先从文件名词干解析对局本地时间，解析失败回退
+    # 批次发现时间（created_at）。否则同一局在 /sessions、/tasks 与 /kovaak-runs
+    # 训练时间不同源（0911「重复卡」假象）。
+    return (
+        _training_at_from_source_key(run.get("source_key"))
+        or timestamp_to_wire_utc(run.get("created_at"))
+    )
 
 
 async def delete_session(session_id: int, user_id: str) -> dict:

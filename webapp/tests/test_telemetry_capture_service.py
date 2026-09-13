@@ -41,15 +41,18 @@ class _FakeChild:
         self.pid = pid
         self._handle = _FakeHandle()
         self.terminated = False
+        self.returncode: int | None = None
 
     def poll(self) -> int | None:
-        return 0
+        return self.returncode
 
     def terminate(self) -> None:
         self.terminated = True
+        self.returncode = 0
 
     def kill(self) -> None:
         self.terminated = True
+        self.returncode = 1
 
     def wait(self, timeout: float | None = None) -> int:
         return 0
@@ -224,6 +227,32 @@ def test_lifecycle_spawn_finalize_and_pending(
     # 游戏退场已收尾后再停止：无未收尾原始件 → 回到 idle。
     service.stop()
     assert service.diagnostics()["state"] == "idle"
+
+
+def test_monitor_loop_reports_dead_child_process(
+    tmp_path: Path, stub_scripts: Path, no_diagnostics, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """采集子进程静默退出必须有可见性：log.error + _last_error + 落盘诊断。
+
+    子进程 stdout/stderr 都是 DEVNULL，崩溃本会完全静默；本轮询检查只做可见性，
+    不自动重启。
+    """
+    game_state = {"procs": ["game"]}
+    service = _make_service(tmp_path, stub_scripts, game_state)
+    assert service.start() is True
+    assert _wait_until(lambda: service.diagnostics()["game_present"] is True)
+
+    # target_channel 崩溃退出（非零 rc），其余仍在运行。
+    service.spawned_children[0].returncode = 3  # type: ignore[attr-defined]
+    assert _wait_until(
+        lambda: "child_exited" in str(service.diagnostics()["last_error"] or "")
+    )
+    last_error = service.diagnostics()["last_error"]
+    assert "target" in str(last_error) and "3" in str(last_error)
+    # 诊断确实落盘（no_diagnostics 记录 file_store.write_json 调用）。
+    assert any("telemetry" in rel or "capture" in rel for rel, _ in no_diagnostics)
+
+    service.stop()
 
 
 def test_stop_with_raw_files_marks_pending(

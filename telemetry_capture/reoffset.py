@@ -69,7 +69,10 @@ class Proc:
         if not self.h:
             raise OSError("OpenProcess(%d) failed err=%d" % (pid, ctypes.get_last_error()))
         self.base = self._module_base()
-        t.apply_offsets(self.module_path)   # [v3] 按 exe 哈希选偏移表（与 tp1.Proc 同源）
+        # [v3] 按 exe 哈希选偏移表（与 tp1.Proc 同源）；[v4] 传 proc=self 启用第 4 级
+        # 运行时自定位——“游戏更新后十分钟恢复”正是自定位最能救场的场景，reoffset
+        # 的只读 Proc 已满足 locate_guoa 的读取接口。
+        t.apply_offsets(self.module_path, proc=self)
 
     def _module_base(self):
         need = wt.DWORD(0)
@@ -189,7 +192,9 @@ def main():
         _summary(rows, t0); sys.exit(2)
     try:
         p = Proc(pid)
-    except OSError as e:
+    except (OSError, RuntimeError) as e:
+        # RuntimeError：未知 exe 版本且四级链（含自定位）全败。干净的 FAIL 行
+        # 而非裸 traceback 崩溃。
         rec("进程+模块基址", "FAIL", str(e))
         _summary(rows, t0); sys.exit(2)
     rec("进程+模块基址", "PASS", "pid=%d base=0x%x (%s)" % (pid, p.base, exe))

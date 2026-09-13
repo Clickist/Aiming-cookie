@@ -1094,18 +1094,18 @@ def _local_scenario_names() -> set[str] | None:
     """Installed KovaaK scenario names, normalized; None when detection fails.
 
     None (unknown) is distinct from an empty set (KovaaK found, no scenarios):
-    the frontend only marks a plan item "本机未装" on an explicit False.
+    the frontend only marks a plan item "本机未装" on an explicit False. 用
+    resolve_kovaak_scenario_names 的合并口径（多库安装合并全部安装目录），与
+    /kovaak-scenarios 保持同源，避免多库机器两边答案不同。归一化留在本侧
+    （config 返回未归一化的文件名词干）。
     """
     try:
-        from .config import resolve_kovaak_install_dir
+        from .config import resolve_kovaak_scenario_names
 
-        install = resolve_kovaak_install_dir()
-        if install is None:
+        names = resolve_kovaak_scenario_names()
+        if names is None:
             return None
-        scenarios_dir = install / "FPSAimTrainer" / "Saved" / "SaveGames" / "Scenarios"
-        if not scenarios_dir.is_dir():
-            return None
-        return {_normalize_scenario_name(path.stem) for path in scenarios_dir.glob("*.sce")}
+        return {_normalize_scenario_name(name) for name in names}
     except (KeyError, OSError, RuntimeError, ValueError):
         return None
 

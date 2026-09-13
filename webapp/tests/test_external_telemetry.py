@@ -560,6 +560,41 @@ def test_orphan_round_files_import_with_missing_index_issue(
     assert meta["scenario_proposal"]["label"] == "1wall 6targets small"
 
 
+def test_orphan_rescan_does_not_duplicate_content_already_imported_via_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """覆写式 rounds_index 让已导入轮变孤儿后，同内容跨 key 不得二次导入。
+
+    触发链：会话 A finalize 写 index(A) → 其轮以完整 targets 元数据导入；会话 B
+    finalize 覆写共享根 index 只含 B → A 的轮失去覆盖、也未被 fail-closed 挡住，
+    于是走 orphan 路径（dedup key 与索引路径不同）。回归断言：该轮应按同内容
+    skip 处理，而不是以 targets 空的贫瘠 meta 再导入一条身份。
+    """
+    monkeypatch.setattr(config, "DATA_ROOT", tmp_path / "data")
+    root = tmp_path / "cleaned"
+    source_dir = root / "batch" / "target_poll_out_0101_010203"
+    source_dir.mkdir(parents=True)
+    (source_dir / "round_01.jsonl").write_bytes(_round_payload())
+    _write_index(root / "batch" / "rounds_index.json")
+
+    watcher = _watcher(root)
+    first = watcher.scan_once()
+    assert first["imported"] == 1 and first["skipped"] == 0
+    assert len(_ledger_runs()) == 1
+    index_meta = _meta_for("target_poll_out_0101_010203.jsonl|1|batch")
+    assert index_meta["targets"], "index 路径必须带完整 target 元数据"
+
+    # 覆写式 index：下一次 finalize 只含别的会话 → 本轮失去索引覆盖，变孤儿。
+    (root / "batch" / "rounds_index.json").unlink()
+    second = watcher.scan_once()
+
+    assert second["imported"] == 0
+    assert second["skipped"] == 1
+    runs = _ledger_runs()
+    assert len(runs) == 1, "同一轮文件内容不得产生第二条身份"
+    assert next(iter(runs.values()))["external_run_id"] == index_meta["external_run_id"]
+
+
 # ------------------------------------------------------------- D7 quality gates
 
 def test_unsupported_format_version_is_fail_closed(

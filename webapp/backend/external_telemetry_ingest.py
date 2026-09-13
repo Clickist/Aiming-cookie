@@ -779,7 +779,8 @@ class ExternalTelemetryWatcher:
             return
         content_hash = _sha256_bytes(payload)
         external_id = store.external_run_id(dedup_key)
-        previous = store.read_ledger().get(dedup_key)
+        ledger = store.read_ledger()
+        previous = ledger.get(dedup_key)
         existing_meta = store.load_meta(external_id)
         if (
             isinstance(previous, dict)
@@ -788,6 +789,33 @@ class ExternalTelemetryWatcher:
         ):
             # 同内容 skip 的旁车补齐与带 index 路径同口径（SIDECARS.md v1）。
             self._refresh_skip_sidecars(external_id, round_path.parent, round_path.name, existing_meta)
+            summary["skipped"] += 1
+            return
+        # 跨 key 同内容去重：cleaner 每次 finalize 覆写共享根下的 rounds_index，
+        # 旧会话的轮会失去索引覆盖而落入 orphan 路径（dedup key 与索引路径不同）。
+        # 若同一个轮文件（round_file 相对路径一致）此前已由带索引路径导入，则按
+        # 同内容 skip 处理，不再二次导入——否则 orphan 贫瘠 meta（targets 空）会以
+        # 更新的 imported_at 在选轮时挤掉完整版本。按 round_file 限定只合并「同一
+        # 物理轮」的两种身份，不会误并不同目录下内容恰好相同的两个轮文件。
+        round_rel = self._relative(round_path)
+        for candidate in ledger.values():
+            if not isinstance(candidate, dict):
+                continue
+            if candidate.get("status") != "imported":
+                continue
+            if candidate.get("content_hash") != content_hash:
+                continue
+            if candidate.get("round_file") != round_rel:
+                continue
+            duplicate_id = candidate.get("external_run_id")
+            if not isinstance(duplicate_id, str) or duplicate_id == external_id:
+                continue
+            duplicate_meta = store.load_meta(duplicate_id)
+            if not isinstance(duplicate_meta, dict):
+                continue
+            self._refresh_skip_sidecars(
+                duplicate_id, round_path.parent, round_path.name, duplicate_meta,
+            )
             summary["skipped"] += 1
             return
         frame_stats = summarize_frames(payload)
