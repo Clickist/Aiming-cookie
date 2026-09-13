@@ -110,6 +110,9 @@ async function directAffiliateSearch(item, tok) {
 // ── 小工具 ──────────────────────────────────────────────
 
 const enc = new TextEncoder();
+let kvWriteErrors = 0;
+// isolate 级内存缓存：批测风暴时同 isolate 重复查询不再消耗 KV 写入额度
+const memCache = new Map(); // key → { val, until }
 
 function norm(s) {
   return (s || "").toLowerCase().replace(/[^0-9a-z\u4e00-\u9fff]/g, "");
@@ -462,17 +465,36 @@ async function pddGoodsLink(env, goodsSign) {
 
 async function cached(env, platform, q, fn) {
   const key = "v6:" + platform + ":" + q;
+  const now = Date.now();
+  const mem = memCache.get(key);
+  if (mem && mem.until > now) return mem.val;
+  if (mem) memCache.delete(key);
   try {
     const hit = await env.AFFILIATE_CACHE.get(key);
-    if (hit) return JSON.parse(hit);
+    if (hit) {
+      const val = JSON.parse(hit);
+      memCache.set(key, { val, until: now + 300_000 });
+      return val;
+    }
   } catch {}
   const val = await fn();
+  // 内存层一律记录（api_error 2 分钟、其余 5 分钟），同 isolate 重复查询零 KV 开销
+  memCache.set(key, { val, until: now + (val?.reason === "api_error" ? 120_000 : 300_000) });
+  if (memCache.size > 1000) memCache.clear();
   try {
-    // 命中缓存 7 天；no_match 24h；api_error（多为淘宝瞬时限流）只缓存 2 分钟，
-    // 避免一次限流把错误结果钉住一整天。
-    const ttl = val && !val.miss ? 7 * 86400 : val?.reason === "api_error" ? 120 : 86400;
-    await env.AFFILIATE_CACHE.put(key, JSON.stringify(val), { expirationTtl: ttl });
-  } catch {}
+    // 命中缓存 7 天；no_match 24h；api_error（多为淘宝瞬时限流）**不写 KV**——
+    // 2 分钟就过期，写了没收益，风暴期每 2 分钟重烧一次写入额度
+    // （09-11 打爆 KV 每日 1000 put 的主凶）。
+    if (val && !val.miss) {
+      await env.AFFILIATE_CACHE.put(key, JSON.stringify(val), { expirationTtl: 7 * 86400 });
+    } else if (val?.reason !== "api_error") {
+      await env.AFFILIATE_CACHE.put(key, JSON.stringify(val), { expirationTtl: 86400 });
+    }
+  } catch {
+    // KV 每日写入额度打爆时静默失败（2026-09-11 批测踩过）——计数暴露到
+    // /health，别再瞎着跑。
+    kvWriteErrors++;
+  }
   return val;
 }
 
@@ -492,7 +514,7 @@ export default {
       return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, x-ac-token" } });
     }
     if (url.pathname === "/health") {
-      return json({ ok: true, tb: !!env.TB_APP_KEY, pdd: !!env.PDD_CLIENT_ID, kv: !!env.AFFILIATE_CACHE });
+      return json({ ok: true, tb: !!env.TB_APP_KEY, pdd: !!env.PDD_CLIENT_ID, kv: !!env.AFFILIATE_CACHE, kv_write_errors: kvWriteErrors });
     }
     if (url.pathname === "/debug" && request.headers.get("x-ac-token") === env.AC_SHARED_TOKEN) {
       const q = url.searchParams.get("q") || "罗技 G304";

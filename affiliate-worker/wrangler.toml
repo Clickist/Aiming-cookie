@@ -1,6 +1,8 @@
 name = "affiliate-links"
 main = "worker.js"
 compatibility_date = "2025-09-01"
+# Worker Observability 常开（免费）；2026-09-13 曾因关闭导致 KV 限流时无数据可查
+observability = { enabled = true, head_sampling_rate = 1 }
 
 # 自有域名（workers.dev 在国内不可达）；zone gearclickist.com 在同账号
 # 注意：顶层键必须放在任何 [[table]] 之前，否则 routes 会被吞进上一个表
