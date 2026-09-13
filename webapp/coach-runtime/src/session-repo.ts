@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 import { ensureAppDataDirs, getConversationsDir, getDataRoot } from "./app-data.ts";
 import { isRecord } from "./contracts.ts";
+import { isIntroKickoffMessage } from "./intro-kickoff.ts";
 import { loadPiAgent, loadPiNodeEnv } from "./pi-source.ts";
 
 export const SESSION_CWD = "coach";
@@ -269,6 +270,10 @@ function collectVisibleMessages(
     if (message.role !== "user" && message.role !== "assistant") continue;
     lastTimestamp = typeof entry.timestamp === "string" ? entry.timestamp : lastTimestamp;
     const content = extractUserFacingText(message.content);
+    // Intro Session kickoff: the sidecar synthesizes an internal user turn to
+    // start the flow, but the user must never see a fake user message
+    // (wireframe 状态①). It stays in the branch for the provider context.
+    if (message.role === "user" && isIntroKickoffMessage(content)) continue;
     if (message.role === "assistant" && !content.trim()) {
       const hasUnshownActivity = Array.isArray(message.content)
         && message.content.some(

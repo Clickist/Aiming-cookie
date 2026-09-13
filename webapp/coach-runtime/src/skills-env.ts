@@ -1,6 +1,6 @@
 // Pi 的 NodeExecutionEnv 在 Windows 上把 FileInfo.name 填成完整路径，且 ignore v7
 // 拒绝盘符绝对路径；产品与测试统一经此包装把路径转成正斜杠后再交给 Pi。
-// （skills-loading.test.ts 钉住此行为：8 个打包 skill 必须都能加载。）
+// （skills-loading.test.ts 钉住此行为：9 个打包 skill 必须都能加载。）
 export function skillsExecutionEnv(base: Record<string, unknown>): Record<string, unknown> {
   const forwardSlash = (value: string) => value.replace(/\\/g, "/");
   const slashPath = (value: unknown) => (typeof value === "string" ? forwardSlash(value) : value);

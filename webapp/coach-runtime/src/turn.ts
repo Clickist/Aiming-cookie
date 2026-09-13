@@ -32,6 +32,7 @@ import { getDataRoot } from "./app-data.ts";
 import { createBashTool, createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool, createWriteTool, explicitAnalysisRefsFromText, runScopedAnalysisReads, runScopedSkillReads } from "./fs-tools.ts";
 import { createWebSearchTools } from "./web-search-native.ts";
 import { extractMessageText } from "./session-repo.ts";
+import { isIntroSession } from "./intro-session.ts";
 import type { StreamFn } from "./stream-openai-compatible.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -317,6 +318,12 @@ function parseRequest(raw: unknown): ParsedRequest {
 }
 
 // ── Conversation helpers ─────────────────────────────────────────────────
+
+/** Extract the numeric Coach thread id from an opaque `coach-thread:<id>` id. */
+function threadIdFromSessionId(sessionId: string | undefined): number | null {
+  const match = sessionId ? /^coach-thread:([1-9][0-9]*)$/.exec(sessionId) : null;
+  return match ? Number(match[1]) : null;
+}
 
 const EMPTY_USAGE = {
   input: 0,
@@ -845,6 +852,19 @@ export async function runCoachTurn(
     // Load the bundled Coach skills (all skills under prompts/skills; see skills-env.ts).
     const skills = (await loadSkills(skillsExecutionEnv(env as Record<string, unknown>), coachSkillsDir())).skills;
 
+    // Intro Session（一辈子一次的开场分析）：只对开场分析会话注入 intro skill。
+    // 该 skill 不是模型可选技能，而是本会话的固定流程，所以永不进入模型的
+    // <available_skills> 列表；注入方式是把 SKILL.md 全文追加到系统提示词，
+    // 其他任何会话都拿不到它（防止开场流程泄漏进日常对话）。
+    const introSessionActive = isIntroSession(threadIdFromSessionId(request.session_id));
+    const modelSkills = skills.filter((skill) => (skill as { name?: unknown }).name !== "intro-session");
+    const introSkill = introSessionActive
+      ? skills.find((skill) => (skill as { name?: unknown }).name === "intro-session")
+      : undefined;
+    const introSkillBlock = introSkill
+      ? `\n\n<intro_session_skill>\n${(introSkill as { content?: unknown }).content ?? ""}\n</intro_session_skill>`
+      : "";
+
     // Use the persistent Coach thread session when the caller provides one
     // (agent-runs path) so history comes from Session.buildContext(); otherwise
     // fall back to an in-memory session rebuilt from the request.
@@ -865,7 +885,7 @@ export async function runCoachTurn(
     const baseSystemPrompt = await resolveSystemPromptWithEnvFacts(request.system_prompt);
     const systemPrompt = (context: { resources: { skills?: unknown[] } }) =>
       assembleSystemPrompt(
-        baseSystemPrompt,
+        baseSystemPrompt + introSkillBlock,
         formatSkillsForSystemPrompt(context.resources.skills ?? []),
       );
 
@@ -915,7 +935,7 @@ export async function runCoachTurn(
       systemPrompt,
       tools,
       model: resolved.model,
-      resources: { skills },
+      resources: { skills: modelSkills },
       // 超时硬顶 8 分钟（pi/SDK 默认 10 分钟）+ 重试等待 15 秒封顶（默认 60
       // 秒会让限流后的流式像"挂死"，审计#14）。推理模型的长思考单请求通常
       // 远小于该顶；触顶会变成显式可重试错误而不是无限等待。
