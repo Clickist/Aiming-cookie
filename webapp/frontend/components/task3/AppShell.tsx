@@ -130,12 +130,21 @@ export function AppShell({ children }: { children: ReactNode }) {
       const final = clampWidth(viewRect.right - up.clientX);
       setConversationWidth(final);
       window.localStorage.setItem(VIDEO_SPLIT_KEY, String(final));
+      cleanup();
+    };
+    // pointercancel（触控笔抢指针等）：不落宽度，保持当前宽度，仅摘监听与拖拽态。
+    const onCancel = () => {
+      cleanup();
+    };
+    const cleanup = () => {
       delete view.dataset.splitDragging;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
   };
   const [sessionFeedback, setSessionFeedback] = useState<{ text: string; seq: number } | null>(null);
   const sessionFeedbackSeqRef = useRef(0);
@@ -508,6 +517,14 @@ export function AppShell({ children }: { children: ReactNode }) {
       notifySessionFeedback("未能删除会话，请重试。");
       void reloadCoachSessions().catch(() => {});
       return;
+    }
+    // 删除的正是路由指向的会话：清掉 URL 里的 sessionId，否则死 id 会在
+    // F5 后残留（选择 effect 见 routeSessionId !== null 直接 return，永不落兜底）。
+    if (routeSessionId === sessionId) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("sessionId");
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname);
     }
     notifySessionFeedback("会话已删除。");
     try {

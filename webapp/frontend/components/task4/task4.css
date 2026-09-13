@@ -455,37 +455,6 @@
   outline-offset: -2px;
 }
 
-.task4-row-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.task4-row-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  font-weight: 600;
-  font-size: var(--text-ui);
-}
-
-.task4-row-title .task4-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task4-row-sub {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
-  margin-top: var(--space-1);
-  color: var(--on-surface-variant);
-  font-size: var(--text-caption);
-  line-height: 1.5;
-}
-
 .task4-row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -511,16 +480,6 @@
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-}
-
-.task4-badge-mode {
-  background: var(--tertiary-container);
-  color: var(--on-tertiary-container);
-}
-
-.task4-badge-preview {
-  background: var(--surface-container);
-  color: var(--on-surface-variant);
 }
 
 .task4-badge-ok {
@@ -599,10 +558,6 @@
 
   .task4-analysis-row {
     align-items: flex-start;
-  }
-
-  .task4-row-title {
-    flex-wrap: wrap;
   }
 
   .task4-trend-panel {
