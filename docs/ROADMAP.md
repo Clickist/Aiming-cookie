@@ -12,7 +12,7 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 → bounded evidence-backed Coach → local history, plan, and retest
 ```
 
-现阶段为**内测进行中**（v0.1.7 起向内测用户发布，2026-09-06 当前版本 v0.1.14，已内置自动更新链路）。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测，后续数据采集核心通路未改动。真实 Tauri 打包/发版链路已由 v0.1.10–v0.1.14 五个版本的实际发布验证（installer + NSIS + updater 三件套 + 落地页切换）；仍开放的工程 Gate 是 Tracking 时延与 AMD/Intel 支持（v1 不把 AMD/Intel 物理验证设为发布阻塞）。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 与 video-fallback 是正式但有界的降级路径，真实现场与发布 Gate 仍单独维护。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺。
+现阶段为**内测进行中**（v0.1.7 起向内测用户发布，2026-09-13 当前版本 v1.0.0，已内置自动更新链路）。Capture Coordinator、KovaaK 窗口录制、Stats/Performance 事后 Run finalization、待分析选择与 Run-owned 存储管理已形成实现和自动化/字段验证基础；Raw Input 1000 Hz canonical 归一化已完成自动化与实测，后续数据采集核心通路未改动。真实 Tauri 打包/发版链路已由 v0.1.10–v0.1.15 与 v1.0.0 的实际发布验证（installer + NSIS + updater 三件套 + 落地页切换）；仍开放的工程 Gate 是 Tracking 时延与 AMD/Intel 支持（v1 不把 AMD/Intel 物理验证设为发布阻塞）。完整 Coach 的后端统一时间、场景、证据、专项 analyzer、画像/计划/复测和正式前端 Task 1–7 已形成并通过当前自动化/Focused Desktop 验证；input-native 与 video-fallback 是正式但有界的降级路径，真实现场与发布 Gate 仍单独维护。Static、Dynamic、Tracking 与 Switching 当前各有一个 active exact scenario，但单机 NVIDIA 证据不构成 AMD/Intel 支持承诺。
 
 完整 v1 以 PRD 的 static/dynamic clicking、continuous tracking 与 target switching 为 launch scope；movement aiming 缺少玩家移动遥测时保持 outcome-only。产品保留不可跳过的 Provider + 采集授权 onboarding、本地长期 History、Coach、通知、失败处理、导入导出与透明联盟商业化；本地诊断闭环不需要产品账号。商业化形态以 PRD 2026-09-06 修订为准（官方托管套餐 + BYOK 双轨，套餐/注册/订阅/支付页为自建售卖链路，见「当前优先级」）。
 
@@ -20,7 +20,13 @@ process-gated Raw + KovaaK window capture → post-hoc Run finalization / select
 
 ## 2. 当前施工优先级
 
-### 当前优先级（2026-09-06 快照；完成项移入 PROGRESS）
+### 已拍板排期（2026-09-13，1.0.0 发版后执行）
+
+1. **测试投资（发版后立即启动，两项同批）**：前端约 759 条源码正则测试逐步改写为行为级测试；补写审计确认的覆盖缺口（重点：`reoffset.py`、`lib/desktop.ts`+`lib/updater.ts`、calibration 路由，全清单见 `.zcode/audit-2026-09-13/test-health.md` §三）。
+2. **下次产品更新**：启动扫尾时序——先向壳报就绪，旧会话扫尾转后台执行（改动小，须真机验证）。
+3. **服务器就绪后**：中转站 HTTPS（客户端仅改一行地址，前置条件是中转站配域名与证书）。
+
+### 当前优先级（2026-09-06 快照，1.0.0 后未复核；完成项移入 PROGRESS）
 
 1. **内测循环**：两位内测用户复测「中转站 + AC 搭配」（v0.1.14 上下文治理已换 microcompact）＋ 新版本经自动更新触达的验证；
 2. **Coach 收尾接线**：usage 面板与 Composer next_turn 触发（后端合同与 API 函数已就绪，前端入口未做）；新工具（bash/grep/find 等）前端中文标签补齐；
@@ -68,7 +74,7 @@ Versioned Knowledge Registry、Analysis deletion/reconciliation、Windows develo
 
 ### P1 — 预览与发布工程
 
-已完成（截至 v0.1.14）：OpenDesign 桌面设计与 Frontend reconstruction Task 1–7；Raw Input 1000 Hz canonical 归一化及高 polling-rate 实测；落地页（含 SEO 批、D1 stats Worker、favicon/sitemap）；真实产品截图与演示 MP4（落地页 hero）；installer/NSIS 打包链与版本化；自动更新（minisign 签名 + latest.json 三件套 + 客户端静默检查）；v0.1.10–v0.1.14 五次真实发版验证全链路。发布工程剩余：
+已完成发版工程成果（OpenDesign 桌面设计与 Frontend reconstruction Task 1–7、Raw Input 1000 Hz canonical 归一化、落地页与 SEO/D1 stats Worker、真实截图与演示 MP4、installer/NSIS 打包链、自动更新三件套、v0.1.10–v0.1.15 与 v1.0.0 的实际发版验证）已并入 [`PROGRESS.md`](PROGRESS.md)，本文不重复维护。发布工程剩余：
 
 - supervisor/structured logs/运行指标；
 - 完整 browser/Desktop E2E 与真实素材 Gate 常态化；
