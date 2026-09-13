@@ -95,7 +95,8 @@ def build_dynamic_clicking_candidate_advice(
             continue
         supporting_refs = [
             row["event_ref"] for row in rows
-            if (_number(row.get(row_field)) or float("-inf")) > reference
+            if _number(row.get(row_field)) is not None
+            and float(row[row_field]) > reference
         ]
         counterexample_refs = [
             row["event_ref"] for row in rows

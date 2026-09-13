@@ -11,20 +11,11 @@ def _summary():
 
 
 def test_build_report_without_backend():
-    r = build_report(_summary(), None, {"cm_per_360": 48.0}, backend=None)
+    r = build_report(_summary(), None, {"cm_per_360": 48.0})
     assert r.diagnosis.profile.archetype_id in ("long_decel", "decel_jitter", "unclassified")
     assert r.narration is None
     assert "radar" in r.figures
     assert r.notes == []
-
-
-def test_build_report_llm_failure_degrades():
-    class _Boom:
-        def messages_create(self, *, system, messages, tools, max_tokens=2048):
-            raise RuntimeError("network down")
-    r = build_report(_summary(), None, {}, backend=_Boom())
-    assert r.narration is None
-    assert any("讲解不可用" in n for n in r.notes)
 
 
 def test_sparc_v2_does_not_use_the_legacy_absolute_threshold():
@@ -43,7 +34,7 @@ def test_sparc_v2_does_not_use_the_legacy_absolute_threshold():
 def test_build_report_with_reference():
     ref = _summary()
     ref["decel_frac"] = {"med": 0.45}
-    r = build_report(_summary(), ref, {}, backend=None)
+    r = build_report(_summary(), ref, {})
     assert r.diagnosis.comparison is not None
     assert len(r.diagnosis.comparison) > 0
 
@@ -118,7 +109,6 @@ def test_compare_table_decel_frac_pathological_not_better():
 
     回归保护：decel_frac 是带状指标（健康 [0.40, 0.65]），compare_table
     标 info 让 advise() 的带状判定主导，而非把病态值误判为进步。
-    与 coach/progress._decel_frac_verdict 语义一致。
     """
     from kovaak_tracker.advice import compare_table
     self_sum = {"decel_frac": {"med": 0.30}}   # < 0.40 pathological brake-slam
@@ -127,111 +117,12 @@ def test_compare_table_decel_frac_pathological_not_better():
     assert rows["decel_frac"]["verdict"] == "info"
 
 
-# --- progress loop tests (Task 4) ---
-from kovaak_tracker.coach.report import build_progress_report
-
-
-def test_build_report_persists_history(tmp_path):
-    p = tmp_path / "sessions.jsonl"
-    build_report(_summary(), None, {"cm_per_360": 48.0}, backend=None, history_path=p)
-    build_report(_summary(), None, {"cm_per_360": 48.0}, backend=None, history_path=p)
-    from kovaak_tracker.coach.progress import load_history
-    assert len(load_history(p)) == 2
-
-
-def test_build_report_no_history_path_no_save(tmp_path):
-    p = tmp_path / "sessions.jsonl"
-    build_report(_summary(), None, {}, backend=None)  # no history_path
-    assert not p.exists()
-
-
-def test_build_progress_report_end_to_end(tmp_path):
-    p = tmp_path / "sessions.jsonl"
-    # seed one older, worse session directly as a JSONL line
-    p.write_text(
-        '{"timestamp":"2026-06-01","video_ref":"old.mp4","cm_per_360":48,'
-        '"summary":{"linearity":{"med":0.25},"sparc":{"med":-9.0},'
-        '"decel_frac":{"med":0.80},"reverse_ratio":{"med":0.30},'
-        '"peak_speed_deg":{"med":90}},'
-        '"profile":{},"issues":[],"narration":null}\n',
-        encoding="utf-8",
-    )
-    cur = {k: {"med": v} for k, v in {
-        "linearity": 0.17, "sparc": -6.0, "decel_frac": 0.74,
-        "reverse_ratio": 0.22, "peak_speed_deg": 110,
-    }.items()}
-    rep = build_progress_report(p, cur, ref_summary=None, backend=None)
-    assert rep.progress_narration is None
-    assert len(rep.comparison_table) == 5
-    assert any(r["metric"] == "linearity" and r["verdict"] == "better"
-               for r in rep.comparison_table)
-    assert rep.trend_figure is not None and rep.comparison_figure is not None
-    assert not any("首次" in n for n in rep.notes)  # history was seeded
-
-
-def test_build_progress_report_empty_history(tmp_path):
-    p = tmp_path / "nope.jsonl"
-    rep = build_progress_report(p, _summary(), backend=None)
-    assert any("首次" in n for n in rep.notes)
-
-
-# --- plan integration tests (④ Task 4) ---
-
-def test_build_progress_report_includes_plan(tmp_path):
-    """build_progress_report 应产出 TrainingPlan + schedule_note。"""
-    p = tmp_path / "sessions.jsonl"
-    p.write_text(
-        '{"timestamp":"2026-06-01","video_ref":"old.mp4","cm_per_360":48,'
-        '"summary":{"linearity":{"med":0.25},"sparc":{"med":-9.0},'
-        '"decel_frac":{"med":0.80},"reverse_ratio":{"med":0.30},'
-        '"peak_speed_deg":{"med":90}},'
-        '"profile":{},"issues":[],"narration":null}\n',
-        encoding="utf-8",
-    )
-    cur = {k: {"med": v} for k, v in {
-        "linearity": 0.17, "sparc": -6.0, "decel_frac": 0.74,
-        "reverse_ratio": 0.22, "peak_speed_deg": 110,
-    }.items()}
-    rep = build_progress_report(p, cur, ref_summary=None, backend=None)
-    assert rep.plan is not None
-    assert "每周" in rep.plan.schedule_note or "间隔" in rep.plan.schedule_note
-    assert rep.plan_narration is None  # backend=None
-
-
-def test_build_progress_report_plan_narration_best_effort(tmp_path):
-    """backend 失败时 plan_narration=None + note，plan 结构照常返回。"""
-    p = tmp_path / "sessions.jsonl"
-    p.write_text(
-        '{"timestamp":"2026-06-01","video_ref":"v.mp4","cm_per_360":48,'
-        '"summary":{"linearity":{"med":0.20}},'
-        '"profile":{},"issues":[],"narration":null}\n',
-        encoding="utf-8",
-    )
-    class _Boom:
-        def messages_create(self, *, system, messages, tools, max_tokens=2048):
-            raise RuntimeError("down")
-    rep = build_progress_report(p, {"linearity": {"med": 0.18}}, backend=_Boom())
-    assert rep.plan is not None
-    assert any("不可用" in n for n in rep.notes)
-
-
 def test_build_report_survives_visualization_import_failure(monkeypatch):
     # The deterministic report must not die when the numpy/plotly stack is
     # unavailable: figures degrade to {} with a note instead.
     import sys
     monkeypatch.setitem(sys.modules, "kovaak_tracker.coach.visualization", None)
-    r = build_report(_summary(), None, {"cm_per_360": 48.0}, backend=None)
+    r = build_report(_summary(), None, {"cm_per_360": 48.0})
     assert r.diagnosis is not None
     assert r.figures == {}
     assert any("图表不可用" in n for n in r.notes)
-
-
-def test_build_report_survives_agent_import_failure(monkeypatch):
-    # backend=None never touches the agent stack; even with it sabotaged the
-    # deterministic report (with figures) is produced untouched.
-    import sys
-    monkeypatch.setitem(sys.modules, "kovaak_tracker.coach.agent", None)
-    r = build_report(_summary(), None, {"cm_per_360": 48.0}, backend=None)
-    assert r.narration is None
-    assert "radar" in r.figures
-    assert r.notes == []

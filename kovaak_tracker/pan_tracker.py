@@ -345,7 +345,7 @@ def analyze_flicking_fair_summary(
     max_t = stats.kills["time_s"].max() if len(stats.kills) > 0 else None
     if max_t is None or pd.isna(max_t):
         raise ValueError(
-            "CSV 无 kills 数据,无法确定场景时长。请确认 CSV 含击杀记录或显式传 duration。"
+            "CSV 无 kills 数据,无法确定场景时长。请确认 CSV 含击杀记录。"
         )
     duration_s = float(math.ceil(max_t))
 

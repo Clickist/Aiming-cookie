@@ -390,7 +390,7 @@ def test_advise_tracking_accepts_flat_dict():
 def test_build_report_routes_tracking_by_summary_type():
     """Smoke: pathological tracking metrics via build_report produces issues."""
     m = _pathological_tracking_summary()
-    r = build_report(m, meta={"summary_type": "tracking"}, backend=None)
+    r = build_report(m, meta={"summary_type": "tracking"})
     assert r.diagnosis.issues  # non-empty
     sigs = [i.signal for i in r.diagnosis.issues]
     assert "accuracy low" in sigs
@@ -404,7 +404,7 @@ def test_build_report_routes_flicking_by_summary_type():
         "reverse_ratio": 0.25, "peak_position_pct": 30,
         "path_efficiency": 0.96,
     }.items()}
-    r = build_report(flick_summary, meta={"summary_type": "flicking"}, backend=None)
+    r = build_report(flick_summary, meta={"summary_type": "flicking"})
     # flicking advice should fire on these values
     assert any(i.signal == "decel_frac high" for i in r.diagnosis.issues)
 
@@ -414,7 +414,6 @@ def test_build_report_tracking_meta_uses_fluid_tracker_when_clean():
     r = build_report(
         _healthy_tracking_summary(),
         meta={"summary_type": "tracking"},
-        backend=None,
     )
     assert r.diagnosis.profile.archetype_id == "fluid_tracker"
 
@@ -423,7 +422,7 @@ def test_build_report_flicking_meta_uses_fluid_precise_when_clean():
     """Healthy flicking summary -> fluid_precise profile."""
     healthy_flick = {"decel_frac": {"med": 0.55}, "sparc": {"med": -0.3}}
     r = build_report(
-        healthy_flick, meta={"summary_type": "flicking"}, backend=None
+        healthy_flick, meta={"summary_type": "flicking"}
     )
     assert r.diagnosis.profile.archetype_id == "fluid_precise"
 
@@ -431,7 +430,7 @@ def test_build_report_flicking_meta_uses_fluid_precise_when_clean():
 def test_build_report_fallback_heuristic_routes_tracking_shape():
     """Without summary_type, probe summary shape to route tracking."""
     r = build_report(
-        _pathological_tracking_summary(), meta={}, backend=None
+        _pathological_tracking_summary(), meta={}
     )
     assert r.diagnosis.issues
     assert "accuracy low" in [i.signal for i in r.diagnosis.issues]
@@ -440,7 +439,7 @@ def test_build_report_fallback_heuristic_routes_tracking_shape():
 def test_build_report_fallback_heuristic_routes_flicking_shape():
     """Without summary_type, flicking-shaped summary routes to flicking advice."""
     flick_summary = {"decel_frac": {"med": 0.80}, "sparc": {"med": -8.0}}
-    r = build_report(flick_summary, meta={}, backend=None)
+    r = build_report(flick_summary, meta={})
     assert any(i.signal == "decel_frac high" for i in r.diagnosis.issues)
 
 

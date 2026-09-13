@@ -11,8 +11,8 @@
     E2E_VIDEO="data/6月23日.mp4" E2E_CSV="data/1wall 6targets small - Challenge - 2026.06.23-23.44.51 Stats.csv" pytest webapp/tests/test_e2e.py -v -s
 
 验证:Worker ↔ kovaak_tracker 真实衔接(analyze_flicking_fair_summary → fair-summary dict
-→ build_report(backend=) → CoachReport)。真实 LLM 需配 DeepSeek key,无 key 时
-build_report best-effort(narration=None)。
+→ build_report() → CoachReport)。narration 恒为 None——Python 侧 coach agent
+循环已于 2026-09-13 移除,讲解由 TS coach-runtime 承担。
 """
 from __future__ import annotations
 

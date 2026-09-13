@@ -2,7 +2,7 @@
 
 每个 tool = 一个 OpenAI function schema + 一个 Python handler。数据型 tool
 (diagnosis / meta) 用闭包绑定本次会话 context；知识型 tool 调
-:mod:`agent_kb` / :mod:`knowledge` 按需取预备切片。
+:mod:`knowledge_registry` 按需取预备切片。
 
 设计参考 docs/superpowers/specs/2026-07-05-aiming-coach-agent-design.md §3。
 所有 tool 只返回**预备好的片段**（不返回 LLM 生成内容）——防幻觉铁律落到
@@ -13,12 +13,16 @@ from __future__ import annotations
 import math
 import os
 import re
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
-from .agent_kb import BY_TOPIC, KB
 from .diagnosis import CoachDiagnosis
-from .knowledge_registry import claim_ref, entry_ref, load_registry, query_registry
-from .planning import TrainingPlan
+from .knowledge_registry import (
+    PRESCRIPTION_ENTRY_PREFIX,
+    claim_ref,
+    entry_ref,
+    load_registry,
+    query_registry,
+)
 
 # ---------------------------------------------------------------------------
 # Tool schema builders — OpenAI function-calling form (also understood by
@@ -65,19 +69,10 @@ def schema_list_signals() -> dict[str, Any]:
     )
 
 
-def schema_list_knowledge_topics() -> dict[str, Any]:
-    return _schema(
-        "coach_list_knowledge_topics",
-        "列出可调 coach_fetch_kinematics / coach_fetch_prescription / "
-        "coach_fetch_coaching_theory / coach_fetch_community_example 的 topic key。",
-        _NO_PARAMS,
-    )
-
-
 def schema_fetch_knowledge() -> dict[str, Any]:
     return _schema(
         "coach_fetch_knowledge",
-        "按 signal 取社区归因 + 可操作提示（来自 knowledge.py）。讲解每条 issue 前"
+        "按 signal 取社区归因 + 可操作提示（来自社区知识库注册表）。讲解每条 issue 前"
         "建议先调一次拿社区措辞。",
         {
             "type": "object",
@@ -89,83 +84,6 @@ def schema_fetch_knowledge() -> dict[str, Any]:
             },
             "required": ["signal"],
         },
-    )
-
-
-def _topic_schema(name: str, description: str) -> dict[str, Any]:
-    return _schema(
-        name,
-        description,
-        {
-            "type": "object",
-            "properties": {
-                "topic": {
-                    "type": "string",
-                    "description": "Topic key，必须用 coach_list_knowledge_topics 返回的 key 之一。",
-                },
-            },
-            "required": ["topic"],
-        },
-    )
-
-
-def schema_fetch_kinematics() -> dict[str, Any]:
-    return _topic_schema(
-        "coach_fetch_kinematics",
-        "取运动学理论章节片段（aim-kinematics-research.md：阈值 / min-jerk vs 匀减速 / "
-        "SPARC / submovement / Fitts / sensitivity / scenarios 等）。",
-    )
-
-
-def schema_fetch_prescription() -> dict[str, Any]:
-    return _topic_schema(
-        "coach_fetch_prescription",
-        "取处方手册章节片段（coach-prescription-manual.md：制动代价 / 子动作分类 / "
-        "外部焦点 / 交错编排 / 元认知对抗 / 反馈褪除等）。",
-    )
-
-
-def schema_fetch_coaching_theory() -> dict[str, Any]:
-    return _topic_schema(
-        "coach_fetch_coaching_theory",
-        "取教练理论章节片段（coach-theory-foundation.md：Fitts&Posner 三阶段 / "
-        "刻意练习 / 情境干扰 / KR-KP / guidance hypothesis / Socratic 等）。",
-    )
-
-
-def schema_fetch_community_example() -> dict[str, Any]:
-    return _topic_schema(
-        "coach_fetch_community_example",
-        "取社区前沿 + YouTube 创作者经验片段（Voltaic S5 / static clicking 三步 / "
-        "bardOZ 方法 / 张力预算 / 复盘方法论等）。信源等级 = 社区共识 / 个人经验。",
-    )
-
-
-# Progress / plan context tools (Phase 2.7) ---------------------------------
-
-
-def schema_get_trend() -> dict[str, Any]:
-    return _schema(
-        "coach_get_trend",
-        "取本次进步报告的趋势数据（各指标的历史时间序列）。",
-        _NO_PARAMS,
-    )
-
-
-def schema_get_comparison() -> dict[str, Any]:
-    return _schema(
-        "coach_get_comparison",
-        "取本次进步报告的对比表（current / baseline / last / ref / verdict）。",
-        _NO_PARAMS,
-    )
-
-
-def schema_get_plan() -> dict[str, Any]:
-    return _schema(
-        "coach_get_plan",
-        "取训练计划结构（focus_metrics / adjustments / schedule_note / "
-        "evidence_anchors）。",
-        _NO_PARAMS,
     )
 
 
@@ -390,25 +308,10 @@ def make_list_signals(diagnosis: CoachDiagnosis) -> Callable[[], dict[str, Any]]
             item
             for entry in data["entries"]
             if entry["status"] == "active"
+            and not entry["entry_id"].startswith(PRESCRIPTION_ENTRY_PREFIX)
             for item in entry["signals"]
         })
         return {"signals_in_diagnosis": sigs, "knowledge_known_signals": known}
-    return _handler
-
-
-def make_list_knowledge_topics() -> Callable[[], dict[str, Any]]:
-    def _handler() -> dict[str, Any]:
-        # Keep legacy buckets while deriving every topic from the Registry.
-        kinematics = _topics_for_kind("kinematics")
-        prescription = _topics_for_kind("prescription")
-        theory = _topics_for_kind("theory")
-        community = _topics_for_kind("community")
-        return {
-            "kinematics_topics": kinematics,
-            "prescription_topics": prescription,
-            "coaching_theory_topics": theory,
-            "community_topics": community,
-        }
     return _handler
 
 
@@ -424,6 +327,7 @@ def make_fetch_knowledge() -> Callable[[str], dict[str, Any]]:
                     item
                     for entry in data["entries"]
                     if entry["status"] == "active"
+                    and not entry["entry_id"].startswith(PRESCRIPTION_ENTRY_PREFIX)
                     for item in entry["signals"]
                 }),
             }
@@ -441,27 +345,6 @@ def make_fetch_knowledge() -> Callable[[str], dict[str, Any]]:
             "entries": [_entry_payload(entry, data) for entry in selected],
         }
     return _handler
-
-
-def _matches_kind(chunk: dict[str, Any], kind: str) -> bool:
-    if kind == "kinematics":
-        return chunk["category"] in {
-            "metric_definition", "kinematic_mechanism", "diagnostic_scope",
-            "limitation_counterevidence", "research",
-        }
-    if kind == "prescription":
-        return chunk["category"] in {"training_cue", "prescription_verification"}
-    if kind == "theory":
-        return chunk["category"] in {"practice_structure", "research", "kinematic_mechanism"}
-    return chunk["source_level"] in {
-        "community_consensus", "personal_experience_unverified", "experimental",
-    }
-
-
-def _topics_for_kind(kind: str) -> list[str]:
-    return sorted({topic for topic, chunks in BY_TOPIC.items() if any(
-        _matches_kind(chunk, kind) for chunk in chunks
-    )})
 
 
 def _v2_sections(entry: dict[str, Any]) -> list[dict[str, Any]]:
@@ -545,82 +428,6 @@ def _entry_payload(entry: dict[str, Any], registry_data: dict[str, Any]) -> dict
     }
 
 
-def _make_fetch_by_source(kind: str, tool_name: str) -> Callable[[str], dict[str, Any]]:
-    def _handler(topic: str) -> dict[str, Any]:
-        chunks = [c for c in BY_TOPIC.get(topic, []) if _matches_kind(c, kind)]
-        if not chunks:
-            valid = _topics_for_kind(kind)
-            return {"error": "unknown topic", "tool": tool_name, "valid_topics": valid}
-        c = chunks[0]
-        return {
-            "topic": topic,
-            "content": c["text"],
-            "source_ref": c["source_ref"],
-            "source_level": c["source_level"],
-            "entry_ref": c["entry_ref"],
-            "entry_version": c["entry_version"],
-            "registry_version": c["registry_version"],
-            "max_claim_level": c["max_claim_level"],
-            "limitations": c["limitations"],
-            "counterevidence": c["counterevidence"],
-        }
-    return _handler
-
-
-def make_fetch_kinematics() -> Callable[[str], dict[str, Any]]:
-    return _make_fetch_by_source("kinematics", "coach_fetch_kinematics")
-
-
-def make_fetch_prescription() -> Callable[[str], dict[str, Any]]:
-    return _make_fetch_by_source("prescription", "coach_fetch_prescription")
-
-
-def make_fetch_coaching_theory() -> Callable[[str], dict[str, Any]]:
-    return _make_fetch_by_source("theory", "coach_fetch_coaching_theory")
-
-
-def make_fetch_community_example() -> Callable[[str], dict[str, Any]]:
-    return _make_fetch_by_source("community", "coach_fetch_community_example")
-
-
-# Progress / plan context binders -------------------------------------------
-
-
-def make_get_trend(trend: dict) -> Callable[[], dict[str, Any]]:
-    def _handler() -> dict[str, Any]:
-        # trend 的值是 (timestamp, value) tuple 列表——JSON 化为 list
-        serializable = {
-            k: [list(point) for point in series]
-            for k, series in trend.items()
-        }
-        return {"trend": serializable}
-    return _handler
-
-
-def make_get_comparison(trend: dict, comparison: list[dict]) -> Callable[[], dict[str, Any]]:
-    def _handler() -> dict[str, Any]:
-        return {"comparison": comparison or []}
-    return _handler
-
-
-def make_get_plan(plan: TrainingPlan) -> Callable[[], dict[str, Any]]:
-    def _handler() -> dict[str, Any]:
-        return {
-            "focus_metrics": list(plan.focus_metrics),
-            "adjustments": [
-                {"kind": a.kind, "target_metric": a.target_metric,
-                 "scenarios": [{"scenario": p.scenario, "reason": p.reason}
-                               for p in a.scenarios],
-                 "reason": a.reason, "evidence": a.evidence}
-                for a in plan.adjustments
-            ],
-            "schedule_note": plan.schedule_note,
-            "evidence_anchors": list(plan.evidence_anchors),
-            "notes": list(plan.notes),
-        }
-    return _handler
-
-
 # ---------------------------------------------------------------------------
 # Bounded tool bundle: (schema, handler) pairs keyed by name.
 # ---------------------------------------------------------------------------
@@ -658,42 +465,12 @@ class ToolBundle:
 
 
 def build_diagnosis_tools(diagnosis: CoachDiagnosis) -> ToolBundle:
-    """Tool set for ``narrate_diagnosis`` (full knowledge access)."""
+    """Tool set over the diagnosis payload + knowledge registry."""
     b = ToolBundle()
     b.add(schema_get_diagnosis(), make_get_diagnosis(diagnosis))
     b.add(schema_get_meta(), make_get_meta(diagnosis))
     b.add(schema_list_signals(), make_list_signals(diagnosis))
-    b.add(schema_list_knowledge_topics(), make_list_knowledge_topics())
     b.add(schema_fetch_knowledge(), make_fetch_knowledge())
-    b.add(schema_fetch_kinematics(), make_fetch_kinematics())
-    b.add(schema_fetch_prescription(), make_fetch_prescription())
-    b.add(schema_fetch_coaching_theory(), make_fetch_coaching_theory())
-    b.add(schema_fetch_community_example(), make_fetch_community_example())
-    return b
-
-
-def build_progress_tools(trend: dict, comparison: list[dict]) -> ToolBundle:
-    """Tool set for ``narrate_progress`` (trend/comparison + knowledge)."""
-    b = ToolBundle()
-    b.add(schema_get_trend(), make_get_trend(trend))
-    b.add(schema_get_comparison(), make_get_comparison(trend, comparison))
-    b.add(schema_list_knowledge_topics(), make_list_knowledge_topics())
-    b.add(schema_fetch_kinematics(), make_fetch_kinematics())
-    b.add(schema_fetch_prescription(), make_fetch_prescription())
-    b.add(schema_fetch_coaching_theory(), make_fetch_coaching_theory())
-    b.add(schema_fetch_community_example(), make_fetch_community_example())
-    return b
-
-
-def build_plan_tools(plan: TrainingPlan) -> ToolBundle:
-    """Tool set for ``narrate_plan`` (plan data + theory/prescription KB)."""
-    b = ToolBundle()
-    b.add(schema_get_plan(), make_get_plan(plan))
-    b.add(schema_list_knowledge_topics(), make_list_knowledge_topics())
-    b.add(schema_fetch_kinematics(), make_fetch_kinematics())
-    b.add(schema_fetch_prescription(), make_fetch_prescription())
-    b.add(schema_fetch_coaching_theory(), make_fetch_coaching_theory())
-    b.add(schema_fetch_community_example(), make_fetch_community_example())
     return b
 
 
@@ -701,6 +478,4 @@ __all__ = [
     "ToolBundle",
     "diagnosis_payload",
     "build_diagnosis_tools",
-    "build_progress_tools",
-    "build_plan_tools",
 ]
