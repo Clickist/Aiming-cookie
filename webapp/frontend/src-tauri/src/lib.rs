@@ -72,6 +72,9 @@ struct CaptureDiagnosticsBundle {
     telemetry_capture_snapshot: Option<serde_json::Value>,
     external_telemetry_snapshot: Option<serde_json::Value>,
     finalize_log_tail: Option<String>,
+    // v5：WebView/React 侧错误（打包版 console 不可见）经前端环形日志落盘，
+    // 与 native/backend 日志同在包内，打通前端失败现场。
+    frontend_log_tail: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -113,6 +116,8 @@ const DIAG_RECENT_COACH_TURNS_LIMIT: usize = 3;
 const DIAG_COACH_TURN_TAIL_BYTES: usize = 8 * 1024;
 const DIAG_EVENTS_TAIL_BYTES: usize = 4 * 1024;
 const DIAG_FINALIZE_LOG_TAIL_BYTES: usize = 16 * 1024;
+// 前端错误落盘的单文件上限；超过即轮转为 frontend.log.1（覆盖旧 .1）。
+const FRONTEND_LOG_MAX_BYTES: usize = 256 * 1024;
 static ATOMIC_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// 读取日志文件尾部；`start > 0` 时优先丢弃被截断的首行，但窗口内整段
@@ -690,6 +695,31 @@ fn desktop_export_capture_diagnostics(
     if !path.is_absolute() {
         return Err("诊断包保存路径必须是绝对路径".to_string());
     }
+    let bundle = build_capture_diagnostics_bundle(&app, &coordinator, &raw_input, &window_capture)?;
+    let payload =
+        serde_json::to_vec_pretty(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))?;
+    atomic_write_file(&path, &payload).map_err(|error| format!("诊断包写入失败: {error}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// 上传诊断包的收集命令：只组装并序列化（紧凑格式），不落盘；HTTP 上传由前端 fetch 完成。
+#[tauri::command]
+fn desktop_collect_capture_diagnostics(
+    app: tauri::AppHandle,
+    coordinator: State<'_, Arc<CaptureCoordinatorState>>,
+    raw_input: State<'_, Arc<RawInputState>>,
+    window_capture: State<'_, Arc<Mutex<WindowCaptureState>>>,
+) -> Result<String, String> {
+    let bundle = build_capture_diagnostics_bundle(&app, &coordinator, &raw_input, &window_capture)?;
+    serde_json::to_string(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))
+}
+
+fn build_capture_diagnostics_bundle(
+    app: &tauri::AppHandle,
+    coordinator: &Arc<CaptureCoordinatorState>,
+    raw_input: &Arc<RawInputState>,
+    window_capture: &Arc<Mutex<WindowCaptureState>>,
+) -> Result<CaptureDiagnosticsBundle, String> {
     let mut coordinator_status = coordinator.status();
     // The session id is an internal correlation secret and is not needed by support.
     coordinator_status.capture_session_id = None;
@@ -699,8 +729,8 @@ fn desktop_export_capture_diagnostics(
         .map_err(|_| "window capture state is unavailable".to_string())?
         .status();
     let now_ms = diagnostic_now_ms();
-    let bundle = CaptureDiagnosticsBundle {
-        schema_version: "capture_diagnostics.v4",
+    Ok(CaptureDiagnosticsBundle {
+        schema_version: "capture_diagnostics.v5",
         generated_at_utc_ms: now_ms,
         app_version: app.package_info().version.to_string(),
         target_os: std::env::consts::OS,
@@ -743,11 +773,50 @@ fn desktop_export_capture_diagnostics(
             "external-telemetry-watcher.json",
         ),
         finalize_log_tail: collect_finalize_log_tail(&data_root, DIAG_FINALIZE_LOG_TAIL_BYTES),
-    };
-    let payload =
-        serde_json::to_vec_pretty(&bundle).map_err(|error| format!("诊断包序列化失败: {error}"))?;
-    atomic_write_file(&path, &payload).map_err(|error| format!("诊断包写入失败: {error}"))?;
-    Ok(path.to_string_lossy().into_owned())
+        frontend_log_tail: log_tail(
+            &data_root.join("logs").join("frontend.log"),
+            DIAG_LOG_TAIL_BYTES,
+        ),
+    })
+}
+
+/// 前端错误落盘：WebView 的 console 在打包版不可见，把一行追加到
+/// {DATA_ROOT}/logs/frontend.log；单文件超过 256KB 轮转为 frontend.log.1
+///（原子替换旧 .1）再建新文件。失败返回 Err，由前端静默。
+#[tauri::command]
+fn desktop_append_frontend_log(
+    entry: String,
+    coordinator: State<'_, Arc<CaptureCoordinatorState>>,
+) -> Result<(), String> {
+    let data_root = PathBuf::from(coordinator.diagnostic_data_root());
+    append_frontend_log(&data_root, &entry)
+}
+
+fn append_frontend_log(data_root: &Path, entry: &str) -> Result<(), String> {
+    use std::io::Write;
+    let logs_dir = data_root.join("logs");
+    fs::create_dir_all(&logs_dir).map_err(|error| format!("前端日志目录创建失败: {error}"))?;
+    let path = logs_dir.join("frontend.log");
+    if fs::metadata(&path)
+        .map(|meta| meta.len() >= FRONTEND_LOG_MAX_BYTES as u64)
+        .unwrap_or(false)
+    {
+        atomic_replace(&path, &logs_dir.join("frontend.log.1"))
+            .map_err(|error| format!("前端日志轮转失败: {error}"))?;
+    }
+    // 一行一条：bounded_diagnostic_text 过滤控制字符（保留 \n/\t），再把
+    // 换行/制表折成空格，避免多行错误文本破坏行结构。
+    let line = bounded_diagnostic_text(entry)
+        .replace('\r', " ")
+        .replace('\n', " ")
+        .replace('\t', " ");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("前端日志打开失败: {error}"))?;
+    writeln!(file, "{line}").map_err(|error| format!("前端日志写入失败: {error}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -857,6 +926,8 @@ pub fn run() {
             desktop_window_capture_status,
             desktop_capture_coordinator_status,
             desktop_export_capture_diagnostics,
+            desktop_collect_capture_diagnostics,
+            desktop_append_frontend_log,
             desktop_capture_coordinator_set_enabled,
             scenario_open,
         ])

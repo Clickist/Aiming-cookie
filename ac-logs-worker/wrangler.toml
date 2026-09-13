@@ -1,0 +1,20 @@
+name = "ac-logs"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+# 当前用 MCP/控制台部署也行；此文件供 wrangler deploy 使用。
+# wrangler.toml 里不放 token——令牌在 CF 控制台该 Worker 的环境变量 AC_LOGS_TOKEN。
+
+[[r2_buckets]]
+binding = "LOGS"
+bucket_name = "ac-logs"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ac-logs"
+database_id = "44bbeb32-99bb-47b3-b711-ae2836d5e703"
+
+[observability]
+enabled = true
+
+# 自定义域：logs.aimingcookie.com（zone: aimingcookie.com，CF 自动建 DNS 记录）

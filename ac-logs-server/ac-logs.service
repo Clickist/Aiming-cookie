@@ -1,0 +1,14 @@
+[Unit]
+Description=Aiming Cookie diagnostic log ingest (ac-logs)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ac-logs
+EnvironmentFile=/opt/ac-logs/ac-logs.env
+ExecStart=/usr/bin/python3 /opt/ac-logs/ac_logs_server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
