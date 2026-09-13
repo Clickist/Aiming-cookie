@@ -67,7 +67,7 @@
       --gap-lg: 32px;
       --gap-xl: 56px;
       --gap-2xl: 96px;
-      --container: 1280px;
+      --container: 1200px;
       --gutter: 32px;
 
       --radius: 10px;
@@ -292,7 +292,7 @@
       text-align: center;
     }
     /* hero 里的产品窗口比正文容器更宽，突出「这是一整个应用窗口」 */
-    .app-mock-wrap { max-width: 1280px; }
+    .app-mock-wrap { max-width: 1200px; }
     /* 右 · 历史主区（对齐 HistoryClient/task4） */
     .am-seeklink { padding: 0; border: 0; background: transparent; color: var(--primary); font: inherit; line-height: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; transition: color 150ms var(--ease-out, ease); }
     .am-seeklink:hover { color: var(--fg); }
@@ -329,6 +329,10 @@
     ]
   }
   </script>
+  <style>
+    /* 窄视窗下 hero mock 进一步缩放（内部为 1280 定宽绘制） */
+    @media (max-width: 1180px) { .ac-hero-mock-v6 { zoom: 0.62; } }
+  </style>
   <style>
     /* 「引擎级真值遥测」悬浮名词解释 */
     .truth-tip { position: relative; border-bottom: 1px dashed currentColor; cursor: help; outline: none; }
@@ -712,9 +716,12 @@
     --acm-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
 
     position: relative;
-    width: 100%;
-    max-width: 1280px;
+    width: 1280px;
+    max-width: none;
     height: 820px;
+    /* 等比缩小整窗（0913 点点：页面比例发张，mock 缩 0.88 向中聚拢） */
+    zoom: 0.88;
+    margin-inline: auto;
     box-sizing: border-box;
     overflow: hidden;
     border-radius: var(--acm-r-lg);
