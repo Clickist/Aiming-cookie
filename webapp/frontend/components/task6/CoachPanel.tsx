@@ -1702,7 +1702,9 @@ export function CoachPanel({
 
   const renderTrainingLaunch = (item: CurrentTrainingItemV1) => {
     if (!item.display_name || item.scenario_availability !== "available") {
-      return <small className="task6-training-unavailable">尚未绑定可启动的 KovaaK 场景</small>;
+      // 不可一键开始时保持安静（1.0.0 内测拍板：不可用标签是噪音）：
+      // Coach 生成计划不带 reviewed 场景 ref，这个状态对它是常态而非异常。
+      return null;
     }
     return (
       <Button
@@ -1793,29 +1795,32 @@ export function CoachPanel({
               <span className="task6-training-scenario-label">当前训练项目</span>
               <strong>{summaryItem.display_name ?? "未命名项目"}</strong>
             </div>
+            {/* 面板只讲用户要执行的三件事（1.0.0 内测反馈：注意/观察是
+                Coach 的执行细节，不该进面板；整段文字用两行截断防刷屏）。 */}
             <dl className="task6-training-kv">
-              <dt>练什么</dt><dd>{summaryItem.practice_condition ?? "暂未说明"}</dd>
-              <dt>练多少</dt><dd>{summaryItem.dose_guardrail ?? "暂未说明"}</dd>
-              <dt>注意</dt><dd>{summaryItem.cue ?? "暂未说明"}</dd>
-              <dt>观察</dt><dd>{summaryItem.observation ?? "暂未说明"}</dd>
-              <dt>复测</dt><dd>{summaryItem.retest ?? "暂未说明"}</dd>
+              <dt>练什么</dt>
+              <dd title={summaryItem.practice_condition ?? undefined}>{summaryItem.practice_condition ?? "暂未说明"}</dd>
+              <dt>练多少</dt>
+              <dd title={summaryItem.dose_guardrail ?? undefined}>{summaryItem.dose_guardrail ?? "暂未说明"}</dd>
+              <dt>复测</dt>
+              <dd title={summaryItem.retest ?? undefined}>{summaryItem.retest ?? "暂未说明"}</dd>
             </dl>
-            <div className="task6-training-list">
-              {visibleTrainingItems.map((item, index) => (
-                <article className="task6-training-item" data-status={item.status} key={`${item.display_name ?? "item"}-${index}`}>
-                  <div className="task6-training-item-title">
-                    <strong>{item.display_name ?? "当前训练项目"}</strong>
-                    <Status tone={item.status === "completed" ? "success" : item.status === "cancelled" ? "warning" : "neutral"}>{trainingStatusLabel(item.status)}</Status>
-                  </div>
-                  <p>{item.cue ?? item.practice_condition ?? "暂无可展示的训练说明。"}</p>
-                  {item.scenario_availability === "unavailable" ? <small className="task6-training-unavailable">项目暂不可用</small> : null}
-                  {item.local_match === false ? <small className="task6-training-unavailable">本机未装</small> : null}
-                  <div className="task6-training-item-actions">
-                    {renderTrainingLaunch(item)}
-                    <Button disabled={capability !== "ready" || !item.display_name} onClick={() => writeTrainingQuestion(item)} size="compact" variant="secondary">问 Coach</Button>
-                  </div>
-                </article>
-              ))}
+            {/* 多条目计划才补一行式清单；单条目时 details 已经讲完，不再重复。 */}
+            {visibleTrainingItems.length > 1 ? (
+              <div className="task6-training-list">
+                {visibleTrainingItems
+                  .filter((item) => item !== summaryItem)
+                  .map((item, index) => (
+                    <div className="task6-training-item-row" key={`${item.display_name ?? "item"}-${index}`}>
+                      <strong>{item.display_name ?? "未命名项目"}</strong>
+                      <Status tone={item.status === "completed" ? "success" : item.status === "cancelled" ? "warning" : "neutral"}>{trainingStatusLabel(item.status)}</Status>
+                    </div>
+                  ))}
+              </div>
+            ) : null}
+            <div className="task6-training-item-actions">
+              {renderTrainingLaunch(summaryItem)}
+              <Button disabled={capability !== "ready" || !summaryItem.display_name} onClick={() => writeTrainingQuestion(summaryItem)} size="compact" variant="secondary">问 Coach</Button>
             </div>
           </section>
         ) : null}

@@ -138,3 +138,16 @@ export async function getManagedVideoUrl(sessionId: number): Promise<string | nu
   const protocolBase = convertFileSrc("", "aiming-cookie-media");
   return new URL(`/analysis/${sessionId}`, protocolBase).toString();
 }
+
+
+/** 受控外链统一出口：桌面端经 opener 插件唤起默认浏览器（WebView2 里
+    target=_blank 导航被拦，点链接无反应，1.0.0 内测实测）；纯浏览器
+    预览环境保持原生新标签。 */
+export async function openExternalUrl(url: string): Promise<void> {
+  if (isDesktopRuntime()) {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}

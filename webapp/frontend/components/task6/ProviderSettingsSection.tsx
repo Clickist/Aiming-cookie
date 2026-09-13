@@ -54,6 +54,17 @@ import type {
 import { IconEye, IconEyeOff, IconPencil, IconTrash } from "@/ui/icons";
 import { Button, Dialog, Field, FieldControl, Loading, Notice, Panel, Status } from "@/ui/primitives";
 
+
+/** 授权页等外链：桌面端 opener 唤默认浏览器（WebView2 拦 _blank）。 */
+function handleExternalClick(event: { preventDefault(): void }, url: string): void {
+  void import("@/lib/desktop").then(({ isDesktopRuntime, openExternalUrl }) => {
+    if (isDesktopRuntime()) {
+      event.preventDefault();
+      void openExternalUrl(url);
+    }
+  });
+}
+
 // Raycast 式先验后存：干跑结果绑定提交时的表单指纹，
 // 表单任何变动都会让旧结论失效并回到未验证态。
 type DraftCheck =
@@ -1021,8 +1032,8 @@ export function ProviderSettingsSection({
                 </div>
                 {authOperation.events.map((event, index) => (
                   <div key={`${event.type}-${index}`}>
-                    {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank">打开 Provider 授权页</a> : null}
-                    {event.type === "device_code" ? <p>设备码：<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank">前往验证</a></p> : null}
+                    {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank" onClick={(e) => handleExternalClick(e, event.url)}>打开 Provider 授权页</a> : null}
+                    {event.type === "device_code" ? <p>设备码：<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank" onClick={(e) => handleExternalClick(e, event.verification_uri)}>前往验证</a></p> : null}
                     {event.type === "progress" ? <p>{event.message}</p> : null}
                   </div>
                 ))}

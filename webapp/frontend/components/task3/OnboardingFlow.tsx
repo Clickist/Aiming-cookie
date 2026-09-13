@@ -33,6 +33,17 @@ import type {
 import { Button, Field, FieldControl, Notice } from "@/ui/primitives";
 import { startWindowDragging, TauriWindowControls } from "@/components/task3/TauriWindowControls";
 
+
+/** 授权页等外链：桌面端 opener 唤默认浏览器（WebView2 拦 _blank）。 */
+function handleExternalClick(event: { preventDefault(): void }, url: string): void {
+  void import("@/lib/desktop").then(({ isDesktopRuntime, openExternalUrl }) => {
+    if (isDesktopRuntime()) {
+      event.preventDefault();
+      void openExternalUrl(url);
+    }
+  });
+}
+
 type ConnectionState = "idle" | "loading" | "authorizing" | "testing" | "ready" | "failed";
 type OpenMenu = "provider" | "protocol" | "model" | null;
 
@@ -634,8 +645,8 @@ export function OnboardingFlow() {
             <div className="task3-auth-operation" aria-live="polite">
               {operation.events.map((event, index) => (
                 <div key={`${event.type}-${index}`}>
-                  {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank">打开 Provider 授权页</a> : null}
-                  {event.type === "device_code" ? <p>设备码：<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank">前往验证</a></p> : null}
+                  {event.type === "auth_url" ? <a href={event.url} rel="noreferrer" target="_blank" onClick={(e) => handleExternalClick(e, event.url)}>打开 Provider 授权页</a> : null}
+                  {event.type === "device_code" ? <p>设备码：<strong>{event.user_code}</strong> · <a href={event.verification_uri} rel="noreferrer" target="_blank" onClick={(e) => handleExternalClick(e, event.verification_uri)}>前往验证</a></p> : null}
                   {event.type === "progress" ? <p>{event.message}</p> : null}
                 </div>
               ))}
