@@ -218,28 +218,52 @@ export async function readSessionMessagesForUi(threadId: number): Promise<Sessio
   return readLegacyMessages(threadId);
 }
 
-async function messagesFromSession(
-  session: SessionLike,
+/**
+ * 可见消息的唯一枚举口径：UI 读取（readSessionMessagesForUi）与编辑重发截断
+ * （truncateSessionFromMessage）都从这里取，保证「第 N 条 UI 消息」逐条对应。
+ *
+ * 每条可见项带 `keepThroughIndex`：把它设为会话 leaf，重新读取后这一项恰好
+ * 是最后一条可见项。普通消息即其 branch index；合成标记落在「空正文但有
+ * toolCall/thinking 活动」的 assistant 条目上，截断点落在标记上时 leaf 必须
+ * 是产生标记的底层条目本身——保留它才会让标记继续可见（标记随回合边界合成，
+ * 不能只数不存在的真实消息）。
+ */
+type VisibleMessage = { message: SessionMessage; keepThroughIndex: number };
+
+function collectVisibleMessages(
+  entries: SessionEntryLike[],
   opts: { withInterruptMarkers?: boolean } = {},
-): Promise<SessionMessage[]> {
-  const entries = await session.getBranch();
-  const messages: SessionMessage[] = [];
+): VisibleMessage[] {
+  const visible: VisibleMessage[] = [];
   // 自上一条可见消息以来，本轮是否出现过 assistant 工具/思考活动而始终
   // 没有产出正文（停止/中断的签名）。见到 assistant 正文或 user 边界时结算。
-  let pendingInterruptedTurn = false;
+  let pendingInterruptStart: number | null = null;
   let lastTimestamp = "";
-  const flushInterruptMarker = () => {
-    if (opts.withInterruptMarkers && pendingInterruptedTurn) {
-      messages.push({
-        role: "assistant",
-        content: "",
-        timestamp: lastTimestamp || new Date().toISOString(),
-        stopped: true,
+  // 每条可见项的 keepThroughIndex 覆盖到「下一可见项起点」的前一条：普通
+  // assistant 文本后的 toolResult 等非可见条目属于它的回合，截断时一并保留
+  // （否则会留下有 toolCall 无 toolResult 的悬空调用）。合成标记同理覆盖到
+  // 下一边界前，保证标记原料不被剪掉。
+  const closeGroupBefore = (nextStart: number) => {
+    const previous = visible[visible.length - 1];
+    if (previous && previous.keepThroughIndex < 0) previous.keepThroughIndex = nextStart - 1;
+  };
+  const flushInterruptMarker = (nextStart: number | null) => {
+    if (opts.withInterruptMarkers && pendingInterruptStart !== null) {
+      closeGroupBefore(pendingInterruptStart);
+      visible.push({
+        message: {
+          role: "assistant",
+          content: "",
+          timestamp: lastTimestamp || new Date().toISOString(),
+          stopped: true,
+        },
+        keepThroughIndex: -1,
       });
     }
-    pendingInterruptedTurn = false;
+    pendingInterruptStart = null;
   };
-  for (const entry of entries) {
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
     if (entry.type !== "message" || !isRecord(entry.message)) continue;
     const message = entry.message;
     if (message.role !== "user" && message.role !== "assistant") continue;
@@ -250,20 +274,36 @@ async function messagesFromSession(
         && message.content.some(
           (c) => isRecord(c) && (c.type === "toolCall" || c.type === "thinking"),
         );
-      if (hasUnshownActivity) pendingInterruptedTurn = true;
+      if (hasUnshownActivity && pendingInterruptStart === null) pendingInterruptStart = index;
       continue;
     }
-    if (message.role === "user") flushInterruptMarker();
-    pendingInterruptedTurn = false;
-    messages.push({
-      role: message.role,
-      content,
-      timestamp: typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
-      ...(message.role === "assistant" && message.stopReason === "aborted" ? { stopped: true } : {}),
+    if (message.role === "user") flushInterruptMarker(index);
+    pendingInterruptStart = null;
+    closeGroupBefore(index);
+    visible.push({
+      message: {
+        role: message.role,
+        content,
+        timestamp: typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
+        ...(message.role === "assistant" && message.stopReason === "aborted" ? { stopped: true } : {}),
+      },
+      keepThroughIndex: -1,
     });
   }
-  flushInterruptMarker();
-  return messages;
+  flushInterruptMarker(null);
+  // 最后一条可见项覆盖到分支末尾（truncate 只取 keepMessages-1 < 末项，此值
+  // 不会被截断路径使用，显式填好避免留 -1 误导调用方）。
+  const last = visible[visible.length - 1];
+  if (last && last.keepThroughIndex < 0) last.keepThroughIndex = entries.length - 1;
+  return visible;
+}
+
+async function messagesFromSession(
+  session: SessionLike,
+  opts: { withInterruptMarkers?: boolean } = {},
+): Promise<SessionMessage[]> {
+  const entries = await session.getBranch();
+  return collectVisibleMessages(entries, opts).map((item) => item.message);
 }
 
 function readLegacyMessages(threadId: number): SessionMessage[] {
@@ -364,20 +404,14 @@ export async function truncateSessionFromMessage(threadId: number, keepMessages:
   if (!session) return; // 会话不存在：幂等 no-op
 
   const branch = await session.getBranch();
-  const visibleIndexes: number[] = [];
-  for (let index = 0; index < branch.length; index++) {
-    const entry = branch[index]!;
-    if (entry.type !== "message" || !isRecord(entry.message)) continue;
-    const message = entry.message as { role?: unknown; content?: unknown };
-    if (message.role !== "user" && message.role !== "assistant") continue;
-    const content = extractUserFacingText(message.content);
-    if (message.role === "assistant" && !content.trim()) continue;
-    visibleIndexes.push(index);
-  }
-  if (keepMessages >= visibleIndexes.length) return; // 已短于截断点：幂等 no-op
+  // 与 readSessionMessagesForUi 同一枚举（含合成标记），keepMessages 指的是
+  // UI 列表里的位次：保留前 keepMessages 条即可，标记也参与计数。
+  const visible = collectVisibleMessages(branch, { withInterruptMarkers: true });
+  if (keepMessages >= visible.length) return; // 已短于截断点：幂等 no-op
 
-  const cutBranchIndex = visibleIndexes[keepMessages]!;
-  const targetId = cutBranchIndex > 0 ? branch[cutBranchIndex - 1]!.id : null;
+  const targetId = keepMessages === 0
+    ? null
+    : branch[visible[keepMessages - 1]!.keepThroughIndex]!.id;
   const storage = session.getStorage() as { setLeafId?: (id: string | null) => Promise<void> };
   if (typeof storage?.setLeafId !== "function") {
     throw new Error("session storage does not support setLeafId");

@@ -119,24 +119,44 @@ function prescriptionScenarioAvailability(entry: KnowledgeEntryV2): string {
   return codes.length > 0 ? codes.join("+") : "method";
 }
 
-function buildPrescriptionIndex(registry: KnowledgeRegistry): KnowledgePrescriptionIndex {
+/**
+ * The v2/v3 section shape prescription builders rely on. A future
+ * prescription.* entry written in the v1 shape would crash materialization at
+ * startup (TypeError swallowed by sidecar-server's try/catch, leaving the
+ * knowledge dir on a stale version). Guard structurally instead of casting.
+ */
+function hasV2Sections(entry: KnowledgeEntry): entry is KnowledgeEntryV2 {
+  const candidate = entry as { definition?: unknown; scope?: unknown };
+  return (
+    typeof candidate.definition === "object" && candidate.definition !== null
+    && typeof (candidate.definition as { text?: unknown }).text === "string"
+    && typeof candidate.scope === "object" && candidate.scope !== null
+    && typeof (candidate.scope as { text?: unknown }).text === "string"
+  );
+}
+
+/** Exported as a pure builder so tests can exercise shape guards. */
+export function buildPrescriptionIndex(registry: KnowledgeRegistry): KnowledgePrescriptionIndex {
   return {
     schema_version: PRESCRIPTION_INDEX_SCHEMA_VERSION,
     registry_version: registry.registry_version,
-    entries: registry.entries.filter(isPrescription).map((entry) => {
-      // prescription.* entries always carry the v2/v3 capability fields.
-      const v2 = entry as KnowledgeEntryV2;
-      return {
+    entries: registry.entries
+      .filter(isPrescription)
+      .filter((entry): entry is KnowledgeEntryV2 => {
+        if (hasV2Sections(entry)) return true;
+        console.warn(`[coach] skipping prescription entry without v2 sections: ${entryRef(entry)}`);
+        return false;
+      })
+      .map((entry) => ({
         entry_ref: entryRef(entry),
         entry_file: entryFileName(entry),
         status: entry.status,
         topics: entry.topics,
         signals: entry.signals,
         metric_refs: entry.metric_refs,
-        recommendation: prescriptionRecommendation(v2),
-        scenario_availability: prescriptionScenarioAvailability(v2),
-      };
-    }),
+        recommendation: prescriptionRecommendation(entry),
+        scenario_availability: prescriptionScenarioAvailability(entry),
+      })),
   };
 }
 
