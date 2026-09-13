@@ -2,12 +2,15 @@
 
 全部场景都在 ``tmp_path`` 构造 PUS 副本，绝不触碰真实 KovaaK 安装目录
 （E:/SteamLibrary/...）与 AC 真实 DATA_ROOT；进程检测按 INJECTOR.md §5 的
-打桩方法替换 ``kovaaks_settings_inject.find_game_processes``。
+打桩方法替换 ``kovaaks_settings_inject.find_game_processes``。硬重启路径额外
+替换本模块的进程杀/拉起缝（``_kill_game_processes`` / ``_launch_kovaak``），
+绝不杀/拉起真实进程。
 """
 
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -18,6 +21,37 @@ from webapp.backend import kovaaks_settings_inject as injector
 BOOLEAN_KEY = "EBooleanSettingId::SaveStatistics"
 INTEGER_KEY = "EIntegerSettingId::StatsExportLevel"
 BOM = b"\xef\xbb\xbf"
+
+
+@pytest.fixture(autouse=True)
+def _reset_hard_restart_state():
+    """硬重启退避状态是模块级全局：每个测试前后清零，避免相互污染。"""
+    setup_mod._last_hard_restart_monotonic = None
+    yield
+    setup_mod._last_hard_restart_monotonic = None
+
+
+def _patch_running_game(
+    monkeypatch: pytest.MonkeyPatch,
+    events: list[str],
+) -> dict:
+    """打桩「游戏运行中」：进程检测/杀/拉起全部走状态变量与事件记录。
+
+    杀进程会把状态清空，于是随后的 ``_wait_for_game_exit`` 与注入器守卫都看到
+    「已退出」，写入得以进行。
+    """
+    state = {"running": [(4321, "FPSAimTrainer.exe")]}
+
+    def fake_find() -> list[tuple[int, str]]:
+        return list(state["running"])
+
+    def fake_kill(processes: list[tuple[int, str]]) -> None:
+        events.append("kill")
+        state["running"] = []
+
+    monkeypatch.setattr(injector, "find_game_processes", fake_find)
+    monkeypatch.setattr(setup_mod, "_kill_game_processes", fake_kill)
+    return state
 
 
 def _pus_text(*, save_statistics: bool = False, stats_export_level: int = 0) -> str:
@@ -149,21 +183,153 @@ def test_second_call_is_idempotent_noop(tmp_path: Path, monkeypatch: pytest.Monk
     assert list(pus.parent.glob("*.bak.*")) == backups_after_first
 
 
-def test_game_running_skips_write_without_backup(
+def test_game_running_and_not_at_target_hard_restarts_kill_write_launch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """游戏运行中 + 设置不对：杀进程 → 写 PUS → 重新拉起，三步都发生。"""
+    events: list[str] = []
+    _patch_running_game(monkeypatch, events)
+    text = _pus_text()
+    install_root, pus, raw = _install_from_text(tmp_path, text)
+
+    def fake_launch(root: Path) -> None:
+        # 拉起之前 PUS 必须已经写好（证明顺序是 杀→写→拉起，而非先拉起）。
+        parsed = json.loads(pus.read_bytes().decode("utf-8-sig"))
+        assert parsed["booleanSettings"][BOOLEAN_KEY] is True
+        assert parsed["integerSettings"][INTEGER_KEY] == 1
+        events.append("launch")
+
+    monkeypatch.setattr(setup_mod, "_launch_kovaak", fake_launch)
+
+    result = setup_mod.ensure_kovaak_stats_export(install_root)
+
+    assert result == setup_mod.RESULT_HARD_RESTARTED
+    assert events == ["kill", "launch"]
+    new_text = pus.read_bytes().decode("utf-8-sig")
+    parsed = json.loads(new_text)
+    assert parsed["booleanSettings"][BOOLEAN_KEY] is True
+    assert parsed["integerSettings"][INTEGER_KEY] == 1
+    # 写前自动备份恰好一份，内容等于写前字节。
+    backups = list(pus.parent.glob("*.bak.*"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == raw
+
+
+def test_game_running_but_already_at_target_does_not_touch_game(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """设置已达标时全程不动：不杀、不写、不拉起。"""
+    events: list[str] = []
+    _patch_running_game(monkeypatch, events)
+    monkeypatch.setattr(
+        setup_mod,
+        "_launch_kovaak",
+        lambda _root: events.append("launch"),
+    )
+    text = _pus_text(save_statistics=True, stats_export_level=1)
+    install_root, pus, raw = _install_from_text(tmp_path, text)
+
+    result = setup_mod.ensure_kovaak_stats_export(install_root)
+
+    assert result == setup_mod.RESULT_ALREADY_OK
+    assert events == []
+    assert pus.read_bytes() == raw
+    assert not list(pus.parent.glob("*.bak.*"))
+
+
+def test_hard_restart_backoff_suppresses_second_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """退避窗口内「游戏在跑 + 设置仍不对」只记日志，不二次重启。"""
+    events: list[str] = []
+    _patch_running_game(monkeypatch, events)
+    monkeypatch.setattr(
+        setup_mod,
+        "_launch_kovaak",
+        lambda _root: events.append("launch"),
+    )
+    text = _pus_text()
+    install_root, pus, raw = _install_from_text(tmp_path, text)
+
+    first = setup_mod.ensure_kovaak_stats_export(install_root)
+    assert first == setup_mod.RESULT_HARD_RESTARTED
+    backups_after_first = list(pus.parent.glob("*.bak.*"))
+    assert events == ["kill", "launch"]
+
+    # 状态回滚成「仍在跑 + 仍未达标」，模拟重启后仍不对的下一轮复查。
+    pus.write_bytes(raw)
     monkeypatch.setattr(
         injector,
         "find_game_processes",
         lambda: [(4321, "FPSAimTrainer.exe")],
     )
+    assert setup_mod._last_hard_restart_monotonic is not None
+    assert setup_mod._last_hard_restart_monotonic > time.monotonic() - (
+        setup_mod._HARD_RESTART_BACKOFF_SECONDS
+    )
+
+    second = setup_mod.ensure_kovaak_stats_export(install_root)
+
+    assert second == setup_mod.RESULT_RESTART_BACKOFF
+    assert events == ["kill", "launch"]  # 没有第二次杀/拉起
+    assert pus.read_bytes() == raw  # 退避期间绝不写盘
+    assert list(pus.parent.glob("*.bak.*")) == backups_after_first
+
+
+def test_hard_restart_allowed_again_after_backoff_elapses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    _patch_running_game(monkeypatch, events)
+    monkeypatch.setattr(
+        setup_mod,
+        "_launch_kovaak",
+        lambda _root: events.append("launch"),
+    )
+    install_root, _pus, _raw = _install_from_text(tmp_path, _pus_text())
+    # 把最近重启时刻推远到退避窗口之外。
+    monkeypatch.setattr(
+        setup_mod,
+        "_last_hard_restart_monotonic",
+        time.monotonic() - setup_mod._HARD_RESTART_BACKOFF_SECONDS - 1.0,
+    )
+
+    result = setup_mod.ensure_kovaak_stats_export(install_root)
+
+    assert result == setup_mod.RESULT_HARD_RESTARTED
+    assert events == ["kill", "launch"]
+
+
+def test_hard_restart_aborts_write_when_game_survives_kill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """杀进程失败（进程仍在）：绝不写 PUS，返回 restart_failed。"""
+    events: list[str] = []
+    state = _patch_running_game(monkeypatch, events)
+
+    def kill_but_ignore(_processes: list[tuple[int, str]]) -> None:
+        events.append("kill")
+        state["running"] = [(4321, "FPSAimTrainer.exe")]  # 没杀掉
+
+    monkeypatch.setattr(setup_mod, "_kill_game_processes", kill_but_ignore)
+    monkeypatch.setattr(
+        setup_mod,
+        "_launch_kovaak",
+        lambda _root: events.append("launch"),
+    )
+    monkeypatch.setattr(setup_mod, "_GAME_EXIT_TIMEOUT_SECONDS", 0.0)
     text = _pus_text()
     install_root, pus, raw = _install_from_text(tmp_path, text)
 
     result = setup_mod.ensure_kovaak_stats_export(install_root)
 
-    assert result == setup_mod.RESULT_SKIPPED_GAME_RUNNING
+    assert result == setup_mod.RESULT_RESTART_FAILED
+    assert events == ["kill"]  # 未写、未拉起
     assert pus.read_bytes() == raw
     assert not list(pus.parent.glob("*.bak.*"))
 
