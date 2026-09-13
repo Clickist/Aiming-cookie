@@ -405,6 +405,9 @@ Provider OAuth/device-code 若被支持，必须通过经过审查的 Desktop/lo
 - **桌面 hybrid 而非纯 web**：省 CV 服务器成本 + 解并发；LLM 使用用户选择的 Provider 或本地模型；产品不建立账号、登录、鉴权服务器或账号型同步；资产演进不浪费
 - **开源免费 + 透明联盟佣金**（2026-07-13）：分析、Coach、History、训练计划和产品命令不设付费墙；用户自行承担其所选第三方 provider 的可能费用。只有当证据与上下文支持外设可能成为限制时才可推荐商品，官方联盟链接可产生佣金，但佣金不得影响诊断、推荐触发或排序
 - **History 与 Coach 档案长期本地优先**：本地 profile 是 canonical owner；导出 / 导入负责显式迁移，不建立账号型云同步
+- **透明联盟链接提前落地**（2026-09-11）：原定 C 阶段的「透明联盟链接」提前实施——自建 affiliate-links Worker 部署于 `affiliate.gearclickist.com`（淘宝联盟/拼多多转链，联盟密钥只存 Worker Secrets），经 Coach `purchase_links.lookup` 在证据支持外设可能成为限制时按需接入；佣金不影响诊断、推荐触发或排序的原则不变。本条目记录该能力相对阶段划分的前移，不改动阶段划分正文
+- **训练事实写入不加确认门**（2026-09-13）：Coach 经原生命令（training_plan.item.add / execution.record / retest.record）可直接写训练事实，不设独立的 confirmation/grant 硬门；写入纪律由 teaching skill 的阶段合同与提示词约束。此前文档声称的 trusted instruction grant 机制从未实现，本条确认按现状维持、不补建。
+- **scenario.open 同意门保持在提示词层**（2026-09-13）：「打开 KovaaK 场景前必须先征得用户同意」由工具描述与教学提示词约束，不加代码层强制拦截（不做过度工程）；防线单层是已知并接受的取舍。
 - **Provider-first onboarding 是硬门槛**（2026-08-09）：首次启动先说明 Coach 价值、Provider 成本和数据边界；连接 Provider 后才进入 Coach-backed 分析。Provider 不可用时采集可继续，但不生成 Provider-less Analysis 或报告；后续回访从既有入口恢复连接
 - **Pi catalog 与本地 credential**（2026-07-13）：pinned Pi built-in provider/model catalog 就是产品 catalog，不维护 Aiming Cookie allow-list；支持自定义 OpenAI-compatible profile。API key 可作为 local-first 权衡明文保存在本地 config/provider.json，secure store 不是前置 Gate，但 secret 绝不进入 AnalysisResult、Coach 上下文/消息、普通日志、诊断或导出
 - **v1 → B → C 分阶段**：v1 建立开源免费的完整 Coach 闭环；B 深化长期档案、训练计划和复测体验；C 在保持信任边界的前提下接通经验证的外设目录与透明联盟链接

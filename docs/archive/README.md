@@ -5,6 +5,7 @@
 ## 分类
 
 - [`completed/plans/`](completed/plans/)：已经完成的实施计划，保留批准范围、验收方式与追溯证据；
+- [`blocked/plans/`](blocked/plans/)：实施中卡在验证门、未验收而暂停的计划（例如 [`blocked/plans/2026-07-27-coach-guided-teaching-loop-v1.md`](blocked/plans/2026-07-27-coach-guided-teaching-loop-v1.md) 停在真实 Provider 门）；既非已完成，也非永久 No-Go，不得按 completed 引用或继续执行；
 - [`frozen/plans/`](frozen/plans/)：前置条件未满足或当前阶段明确 No-Go 的计划；
 - [`retired/plans/`](retired/plans/)：技术假设或产品边界已经失效、明确不得执行的计划；
 - [`retired/specs/`](retired/specs/)：已被 PRD、Architecture、UI/UX 文档或新 spec 吸收/取代的旧设计；

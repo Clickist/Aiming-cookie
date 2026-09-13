@@ -57,10 +57,11 @@
 - [`frontend-parity-research-digests.md`](frontend-parity-research-digests.md)：十二路调研合订摘要（对话流/Provider接入/侧栏/视频面/训练数据/任务通知/键盘面板/版式诊断/视觉工艺/富文本排印/输入框编排/安装包品牌化）；只供引用，不构成合同；
 - [`quote-feature-research.md`](quote-feature-research.md)：Coach 引用回复（划选引用到输入框）实现调研（2026-08-27 草稿，供拍板，非实施合同；功能本体此前已上线，v0.1.12 为其浮层偏移修复）；
 - [`pro-benchmark-smoke-plan.md`](pro-benchmark-smoke-plan.md)：高手基准 CV 冒烟验证方案（2026-08-27 落库，状态待执行：立项「高手基准离线提取工具」前用真实高手录像量化免校准 CV 管线精度边界）；
+- [`../affiliate-worker/README.md`](../affiliate-worker/README.md)：透明联盟转链 Worker（Cloudflare Workers，部署于 `affiliate.gearclickist.com`，淘宝联盟/拼多多转链，密钥只存 Worker Secrets）的 API、部署与冒烟入口；被 Coach `purchase_links.lookup` 经 `affiliate-native.ts` 消费；
 - `superpowers/assessments/`：历史评估证据与决策输入，仅供追溯。
 
 ## 归档边界
 
-[`archive/`](archive/) 保存 completed、frozen、retired、review 和 history 材料。归档只用于追溯；不得未经核对把归档 spec/plan 当作当前合同。`archive/superpowers/` 保存了已归档的设计合同（specs）、实施计划（plans）和评估材料（assessments）。
+[`archive/`](archive/) 保存 completed、blocked、frozen、retired、review 和 history 材料。归档只用于追溯；不得未经核对把归档 spec/plan 当作当前合同。`archive/superpowers/` 保存了已归档的设计合同（specs）、实施计划（plans）和评估材料（assessments）。
 
 根目录草稿、mockup、Stitch、HTML 和 `.firecrawl/` 采集结果默认都是参考材料。若要升级为事实源，必须先把结论写入相应活跃主责任文档。

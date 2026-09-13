@@ -173,8 +173,12 @@ KovaaK 本地 ingestion 由 Desktop runtime 在启动时管理：
 - Windows Raw Input 默认关闭，可用 `AIMING_COOKIE_RAW_INPUT_ENABLED=1` 做开发启动 opt-in，正式产品必须通过带说明的 UI 授权；
 - `KovaaKRun` 由 `GET /api/kovaak-runs` 和 `GET /api/kovaak-runs/{id}` 读取，接口受 Desktop launch token 保护；
 - Analysis 完成后，前端通过 `GET /api/sessions/{id}` 读取安全结果，通过 `GET /api/sessions/{id}/evidence-segments` 读取 `frontend_evidence_segments.v1` 与相对 seek anchor，再用 `GET /api/sessions/{id}/video` 播放 managed MP4；这些接口不返回原始 CSV、`.perf`、Raw trace、frame 或绝对路径；
-- Task 11 的用户训练事实接口为 `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions` 和 `POST /api/training-plan-items/{item_ref}/retests`，均必须带 `Idempotency-Key`；Coach bridge 不可调用 execution/retest 写入；
+- 训练事实写入不是 HTTP 端点，而是 coach-runtime 注册的 typed 原生命令 `training_plan.item.add`（写 `DATA_ROOT/training/plan.json` 的 items 注册表）、`training_plan.execution.record` 与 `training_plan.retest.record`（追加 `DATA_ROOT/training/history.jsonl`）；backend 只通过 `GET /api/current-training` 只读投影。这些训练事实写入没有独立 confirmation/grant 门；禁止用受限 `write` 工具直接改这些文件（fs-tools 会拒绝并指向对应命令）；
 - Raw Input 只支持 Windows；macOS/Linux 开发环境必须验证 video fallback，不得把 unsupported 当成捕获成功。
+
+### 透明联盟转链 Worker（affiliate-worker）
+
+`affiliate-worker/` 是部署在 `affiliate.gearclickist.com` 的 Cloudflare Worker（淘宝联盟/拼多多转链），被 coach-runtime 的 `purchase_links.lookup` 经 `webapp/coach-runtime/src/affiliate-native.ts` 调用（服务地址与 token 读 `config/affiliate-service.json`）。它的部署、Secrets 与冒烟命令以 [`../affiliate-worker/README.md`](../affiliate-worker/README.md) 为准，此处不复制长期正文。
 
 ## 4. 常用验证
 

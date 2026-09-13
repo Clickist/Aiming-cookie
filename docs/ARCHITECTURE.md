@@ -19,7 +19,8 @@ Desktop Client (Next.js UI in Tauri)
              └── Online Surfaces
                  ├─ landing / documentation
                  ├─ release distribution
-                 └─ optional versioned equipment catalog
+                 ├─ optional versioned equipment catalog
+                 └─ affiliate link service (affiliate.gearclickist.com)
 ```
 
 当前仓库也可以用 Web 方式开发和验证共享 UI/API，但 Web 验证形态不能反向引入产品账号或云端数据所有权，也不能替代 Desktop 发布验收。
@@ -32,7 +33,7 @@ Desktop Client (Next.js UI in Tauri)
 | **Local Analysis Runtime** | Capture Coordinator、job、worker、KovaaK Run finalization、输入时间对齐、managed workspace、本地 History、分析合同 | 产品账号、Provider 推理、通用 Agent 行为 |
 | **Coach Agent Runtime** | 本地长期 Coach 关系、Agent run/event、与本地 profile 能力对齐的产品命令编排、上下文衔接 | 重新定义确定性诊断、绕过本地 ownership/capability、直接拥有 `KovaaKRun` 或分析文件 |
 | **Client Surfaces** | Desktop/Web UI、onboarding、交互状态、Provider 认证状态呈现、native bridge | 数据真相、业务规则、密钥持久化 |
-| **Online Distribution Surfaces** | landing、文档、release 分发和可选外设目录 | Coach、History、训练档案或 LLM 请求代理 |
+| **Online Distribution Surfaces** | landing、文档、release 分发、可选外设目录和透明联盟转链服务（`affiliate.gearclickist.com`，持有淘宝联盟/拼多多密钥，被 Coach `purchase_links.lookup` 消费） | Coach、History、训练档案或 LLM 请求代理 |
 
 依赖方向应面向领域合同：UI 和 runtime 适配 Domain Core；Provider 与在线分发表面通过明确边界接入，不让领域逻辑依赖 FastAPI、Tauri、具体 LLM provider 或远端身份。
 
@@ -241,7 +242,7 @@ Coach 是用户关系层，不属于某个 analysis session：
 Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 或训练事实：
 
 - 每个 owner 只有一份 guided teaching 状态（`teaching/session.json`，schema `coach_teaching_session.v1`）；它只保存当前阶段、当前 lesson 的受限字段（观察、候选解释、cue、单一变更变量、练习引用）、已完成课程历史和暂停原因，不保存 Raw、路径、Provider secret 或未经确认的训练结果；
-- teaching session 的候选解释、cue、单一变更变量和 retest intent 是教学过程状态。Training Plan item、execution 和 retest 仍是独立、owner-scoped 的正式事实，只有绑定当前用户明确陈述的 trusted instruction grant 或现有 trusted confirmation 可写入；
+- teaching session 的候选解释、cue、单一变更变量和 retest intent 是教学过程状态。Training Plan item、execution 和 retest 仍是独立、owner-scoped 的正式事实，只通过 coach-runtime 的 typed 写命令（`training_plan.item.add` / `training_plan.execution.record` / `training_plan.retest.record`）落盘；
 - 教学流程由 `teaching` skill 在提示词层承载：闭环各阶段、单变量原则和推进纪律写在 SKILL.md，每步推进都通过 `teaching_session.update` 落盘。`TeachingTurnContract` 类型仅作字段参考，不要求 per-run 快照；
 - session 的推进、暂停和不适停止由 `teaching_session.update` 写入口校验和执行：该命令是 coach-runtime 的 native 写命令，原子写 `teaching/session.json`，并按 teaching-policy 强制阶段转移合法性与 lesson 字段白名单；没有 planner、确认机制或合同快照。Provider 不能声明完成、绕过写入口校验选择状态转移或把候选机制升级为测量事实；
 - Analysis/history 是 metric comparability 与 meaningful-change policy 的唯一事实源。没有按 exact metric/version/conditions 注册的重复测量误差、worthwhile change 与必要 guardrail 时，非零 delta 必须保持 inconclusive；Profile 只能将精确相等的可比值显示为 stable，不能把任意非零差异显示为 improving/deteriorating；
@@ -276,7 +277,7 @@ Guided teaching 的持久状态也属于 Coach 层，但不替代 Training Plan 
 - `POST /api/benchmarks/sync/kovaaks`：用户明确同意后手动刷新有限 KovaaK 成绩；失败不覆盖上次成功快照，响应不回显 Steam Profile URL 或 ID；
 - `/api/kovaak-connection`：本地 owner scope 的已连接账号状态、设置和移除；公开响应不回显 Steam Profile URL 或 ID；
 - `POST /api/kovaak-connection/refresh`：使用已连接账号手动刷新有限 KovaaK 成绩；没有连接或上游失败不覆盖上次成功快照；
-- `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions`、`POST /api/training-plan-items/{item_ref}/retests`：显式用户写入训练事实，要求 `Idempotency-Key`。Coach bridge 可预填同一三类训练事实；绑定当前用户明确陈述的 trusted instruction grant 可直接写入，`coach_inferred` 调用只能返回 `needs_confirmation`，现有 trusted UI/backend confirmation 仍可写入。模型不得把推断、沉默或聊天语气伪装为已完成练习、主观反馈或复测结果。
+- `POST /api/training-plans/{plan_ref}/items`、`POST /api/training-plan-items/{item_ref}/executions`、`POST /api/training-plan-items/{item_ref}/retests`：已在 SQLite→JSON 重写时随 coach 死代码移除，**不再是现存 HTTP 边界**。训练事实写入由 coach-runtime 注册的 typed 原生命令直接落盘：`training_plan.item.add` 写入 `DATA_ROOT/training/plan.json` 的 items 注册表，`training_plan.execution.record` 与 `training_plan.retest.record` 追加到 `DATA_ROOT/training/history.jsonl`；`GET /api/current-training` 只读投影训练卡。这三类训练事实写入当前没有独立的 confirmation/grant 门（`decideConfirmation` 恒返回 null，`/v1/confirmations/:ref/decision` 对任何 ref 都返回 404），合规由 teaching skill 的 phase 合同与提示词纪律约束。模型不得把推断、沉默或聊天语气伪装为已完成练习、主观反馈或复测结果。
 
 Analysis 删除后，以上 Analysis/Evidence refs 返回 unavailable/deleted 语义；原有 Coach 消息、画像和训练历史不被级联删除。
 

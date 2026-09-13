@@ -49,6 +49,9 @@ webapp/frontend/mock-*.log
 webapp/frontend/*.err.log
 webapp/frontend/*.out.log
 
+# Playwright 输出目录
+test-results/
+
 # local desktop runtime data (runs, sessions, conversations, teaching state)
 app-data/
 
