@@ -309,6 +309,42 @@ test("KovaaK score command events retain no profile reference or score payload",
   assert.ok(!JSON.stringify(result.details.event).includes("overall_rank"));
 });
 
+test("KovaaK leaderboard lookup is registered and validated as a product command", async () => {
+  assert.ok(PRODUCT_COMMAND_NAMES.includes("kovaak_leaderboard.lookup"));
+
+  const tool = createProductCommandTool(null);
+  // Reaching the native command (not a param rejection) proves the dispatch
+  // branch is wired; with the upstream stubbed to fail it reports unavailable.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("upstream down", { status: 503 })) as typeof fetch;
+  try {
+    const result = await tool.execute("leaderboard", {
+      command_name: "kovaak_leaderboard.lookup",
+      parameters: { leaderboard_id: 185342 },
+    });
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+    assert.equal(parsed.audit_ref, "native");
+    assert.equal(parsed.status, "unavailable");
+    assert.equal((parsed.warning_or_error as { code: string }).code, "kovaak_leaderboard_unavailable");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  for (const parameters of [
+    {},
+    { leaderboard_id: 185342, scenario_name: "Smoothsphere Viscose" },
+    { leaderboard_id: 185342, profile_ref: "76561199033719938", score: 100 },
+    { leaderboard_id: 185342, profile_ref: "not-a-steam-id" },
+    { leaderboard_id: 185342, unknown_field: true },
+  ]) {
+    await assert.rejects(
+      tool.execute("leaderboard-rejected", { command_name: "kovaak_leaderboard.lookup", parameters }),
+      /unsupported fields/,
+      JSON.stringify(parameters),
+    );
+  }
+});
+
 test("guided teaching facts are registered as native write commands", async () => {
   writePlanFixture("plan:1", { status: "active" });
 
