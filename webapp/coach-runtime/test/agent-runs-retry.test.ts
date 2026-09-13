@@ -57,6 +57,43 @@ test("retrying a failed run does not duplicate the user message in the persisten
   assert.equal(duplicates.length, 1, `expected 1 user message, got ${duplicates.length}: ${JSON.stringify(messages.map((m) => m.role))}`);
 });
 
+test("retry inherits contextRefs so the retried turn keeps its pinned analysis", async () => {
+  // contextRefs 是 RunRecord 级字段（前端引用菜单），createAgentRun 只对首次
+  // 回合生效；retryAgentRun 构造 newRecord 时曾漏抄 → 重试回合
+  // context_refs=undefined，主题钉选丢失。analysis_refs 是 context_refs 在本
+  // run 状态里的可观测投影（turn.ts 把 context_refs 记为主题级参与）。
+  let providerCalls = 0;
+  const streamFn = async () => {
+    providerCalls += 1;
+    if (providerCalls === 1) return streamAssistant([], "error");
+    return streamAssistant([{ type: "text", text: "已按原主题重跑。" }], "stop");
+  };
+
+  const created = createAgentRun("retry-owner", "重跑刚才的主题分析", {
+    sessionId: 63,
+    streamFn,
+    contextRefs: ["analysis:7"],
+  });
+  await waitForTask(created.run_ref);
+
+  const failed = getAgentRun("retry-owner", created.run_ref);
+  assert.ok(failed);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.error?.retryable, true);
+
+  const retried = retryAgentRun("retry-owner", created.run_ref);
+  assert.ok(retried);
+  await waitForTask(retried.run_ref);
+
+  const final = getAgentRun("retry-owner", retried.run_ref);
+  assert.ok(final);
+  assert.equal(final.status, "succeeded", `retry should succeed, error: ${JSON.stringify(final.error)}`);
+  assert.ok(
+    final.analysis_refs.includes("analysis:7"),
+    `retried turn must keep the pinned analysis: ${JSON.stringify(final.analysis_refs)}`,
+  );
+});
+
 test("a stream that resolves with stopReason=error and partial text fails retryably", async () => {
   // 2026-08-21 实测形态：provider 中途断流时 harness resolve 一条
   // stopReason=error 的部分消息而非 throw。半截话不能当完整答案交付：

@@ -1131,7 +1131,16 @@ export async function runCoachTurn(
         return Promise.resolve(); // next_turn 单槽先进先出，无排水模式概念
       },
     };
-    activeTurns.set(request.run_id, { abort: () => { void harness.abort(); }, queue: queueTarget });
+    activeTurns.set(request.run_id, {
+      // abort() 返回 Promise：浮动 promise 若拒绝会变成 unhandled rejection
+      // 崩掉整个 sidecar（stopCoachTurn 走同一闭包）。吞掉但落诊断日志。
+      abort: () => {
+        harness.abort().catch((error) => {
+          console.error("[coach] harness abort failed", error);
+        });
+      },
+      queue: queueTarget,
+    });
 
     // 长会话压缩（pi 内建 compaction，审计#18）：token 余量不足时先让 pi 把
     // 旧历史压成摘要——compaction entry 写进会话后，pi 的 buildContext 自动

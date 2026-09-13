@@ -11,7 +11,7 @@ process.env.DATA_ROOT = dataRoot;
 
 const { createSidecarServer } = await import("../src/sidecar-server.ts");
 const { getCoachSessionDetail, truncateCoachSession } = await import("../src/sidecar-coach-data.ts");
-const { ensureSession, readSessionMessages, truncateSessionFromMessage } = await import("../src/session-repo.ts");
+const { ensureSession, readSessionMessages, readSessionMessagesForUi, truncateSessionFromMessage } = await import("../src/session-repo.ts");
 
 function request(server: http.Server, method: string, path: string, body?: string): Promise<{ statusCode: number; json: unknown }> {
   return new Promise((resolve, reject) => {
@@ -103,6 +103,110 @@ test("truncate beyond current length is an idempotent no-op", async () => {
   await truncateSessionFromMessage(812, 99);
   assert.equal((await readSessionMessages(812)).length, 6);
   await truncateSessionFromMessage(813, 0); // 不存在的会话：no-op 而非抛错
+});
+
+test("truncate and UI detail share one visible-message enumeration (interrupted-turn markers)", async () => {
+  // 被停止的回合：assistant 无正文但有工具活动 → UI 合成一条空 stopped 标记。
+  // truncate 的 keepMessages 必须按同一条 UI 列表（含标记）计数；截断点落在
+  // 标记上时，产生标记的空 assistant 原料必须保留，否则标记消失。
+  const threadId = 815;
+  const session = await ensureSession(threadId);
+  const stamp = Date.now();
+  const text = (role: string, value: string) =>
+    session.appendMessage({ role, content: [{ type: "text", text: value }], timestamp: stamp });
+  await text("user", "u0");
+  await text("assistant", "a0");
+  await text("user", "u1");
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "toolCall", id: "call-1", name: "read", arguments: {} }],
+    stopReason: "aborted",
+    timestamp: stamp,
+  });
+  await text("user", "u2");
+  await text("assistant", "a2");
+
+  const label = (message: { role: string; content: string; stopped?: boolean }) =>
+    `${message.role}:${message.content}${message.stopped ? "#stopped" : ""}`;
+
+  const ui = await readSessionMessagesForUi(threadId);
+  assert.deepEqual(
+    ui.map(label),
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped", "user:u2", "assistant:a2"],
+  );
+  const detail = await getCoachSessionDetail("desktop-local", threadId);
+  assert.equal(detail.messages.length, ui.length, "detail 第 N 条必须与 UI 枚举第 N 条同源");
+
+  // keepMessages 落在标记上：保留前 4 条（含标记），底层空 assistant 原料留下。
+  await truncateSessionFromMessage(threadId, 4);
+  const afterMarker = await readSessionMessagesForUi(threadId);
+  assert.deepEqual(
+    afterMarker.map(label),
+    ["user:u0", "assistant:a0", "user:u1", "assistant:#stopped"],
+  );
+  const afterDetail = await getCoachSessionDetail("desktop-local", threadId);
+  assert.deepEqual(afterDetail.messages.map((message) => message.id), [1, 2, 3, 4]);
+});
+
+test("truncate dropping the marker keeps only the visible prefix", async () => {
+  const threadId = 816;
+  const session = await ensureSession(threadId);
+  const stamp = Date.now();
+  await session.appendMessage({ role: "user", content: [{ type: "text", text: "u0" }], timestamp: stamp });
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "thinking", thinking: "想了但没输出" }],
+    stopReason: "aborted",
+    timestamp: stamp,
+  });
+  await session.appendMessage({ role: "user", content: [{ type: "text", text: "u1" }], timestamp: stamp });
+
+  assert.equal((await readSessionMessagesForUi(threadId)).length, 3);
+  // 保留前 2 条 = [u0, marker]；这里改保留前 1 条，标记随之被丢弃。
+  await truncateSessionFromMessage(threadId, 1);
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId)).map((message) => message.content),
+    ["u0"],
+  );
+});
+
+test("truncate keeps the trailing toolResult of the last retained turn", async () => {
+  // 保留回合末尾的非可见条目（toolResult）属于该回合：截断点必须覆盖到下一
+  // 可见消息前一条，否则会留下「有 toolCall 无 toolResult」的悬空调用。
+  const threadId = 817;
+  const session = await ensureSession(threadId);
+  const stamp = Date.now();
+  await session.appendMessage({ role: "user", content: [{ type: "text", text: "u0" }], timestamp: stamp });
+  await session.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text: "先读一下" }, { type: "toolCall", id: "call-x", name: "read", arguments: {} }],
+    stopReason: "toolUse",
+    timestamp: stamp,
+  });
+  await session.appendMessage({
+    role: "toolResult",
+    toolCallId: "call-x",
+    toolName: "read",
+    content: [{ type: "text", text: "结果" }],
+    isError: false,
+    timestamp: stamp,
+  });
+  await session.appendMessage({ role: "user", content: [{ type: "text", text: "u1" }], timestamp: stamp });
+
+  await truncateSessionFromMessage(threadId, 2);
+  // 重新打开会话读取新 leaf（原 session 对象缓存旧分支）。
+  const reopened = await ensureSession(threadId);
+  const branch = await reopened.getBranch();
+  assert.equal(branch[branch.length - 1]?.type, "message");
+  assert.equal(
+    (branch[branch.length - 1]?.message as { role?: string } | undefined)?.role,
+    "toolResult",
+    "cut must keep the toolResult trailing the retained turn",
+  );
+  assert.deepEqual(
+    (await readSessionMessagesForUi(threadId)).map((message) => message.content),
+    ["u0", "先读一下"],
+  );
 });
 
 test("truncateCoachSession route wrapper returns the refreshed detail and enforces contracts", async () => {

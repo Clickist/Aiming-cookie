@@ -258,6 +258,9 @@ export type CoachRuntimeTurnRequest = {
   messages: CoachRuntimeMessage[];
   analysis_summary: string | null;
   system_prompt?: string;
+  /** 结构化分析引用（前端引用菜单选择）：与消息文本里的 analysis:N 同效，
+      但用户界面不再出现机器码（0911 点点）。 */
+  context_refs?: string[];
   model: CoachRuntimeProviderProfile;
   tool_bridge?: CoachToolBridge;
   teaching_turn?: TeachingTurnContract;

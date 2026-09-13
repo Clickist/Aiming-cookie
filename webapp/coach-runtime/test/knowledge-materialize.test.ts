@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { entryRef, loadKnowledgeRegistry } from "../src/knowledge-registry.ts";
-import { materializeKnowledgeDir } from "../src/knowledge-materialize.ts";
+import { entryRef, loadKnowledgeRegistry, type KnowledgeRegistry } from "../src/knowledge-registry.ts";
+import { buildPrescriptionIndex, materializeKnowledgeDir } from "../src/knowledge-materialize.ts";
 
 // Materialization owns DATA_ROOT/knowledge — point DATA_ROOT at a throwaway
 // directory before the first call (getDataRoot caches on first use).
@@ -70,6 +70,72 @@ test("materialized directory mirrors the non-prescription registry entries", () 
     assert.equal(file.schema_version, "coach_knowledge_entry.v1");
     assert.equal(file.registry_version, registry.registry_version);
   }
+});
+
+test("a v1-shaped prescription entry is skipped with a warning, not a crash", () => {
+  // prescription.* 一律走 v2 构建器直接取 definition.text；若未来前缀下出现
+  // 旧 v1 形状（无 definition/scope）条目，启动物化会 TypeError，被 sidecar
+  // 启动的 try/catch 吞掉 → 知识目录停在旧版本。守卫必须跳过并留可见告警。
+  const base = {
+    entry_version: 1,
+    status: "active" as const,
+    topics: ["t"],
+    signals: ["s"],
+    metric_refs: [],
+  };
+  const registry = {
+    schema_version: "coach_knowledge_registry.v1",
+    registry_version: "test",
+    signal_aliases: {},
+    entries: [
+      {
+        ...base,
+        entry_id: "prescription.p999",
+        category: "practice_structure",
+        text: "v1 形状，没有 definition/scope",
+        sources: [],
+        max_claim_level: "community_consensus",
+        limitations: [],
+        counterevidence: [],
+        supported_uses: [],
+      },
+      {
+        ...base,
+        entry_id: "prescription.p001",
+        category: "practice_structure",
+        family_scope: [],
+        observation_refs: [],
+        quality_prerequisites: [],
+        definition: { section_ref: "s1", claim_level: "experimental", source_refs: [], text: "做法" },
+        scope: { section_ref: "s2", claim_level: "experimental", source_refs: [], text: "场景可用性：本机可开" },
+        expected_direction: { section_ref: "s3", claim_level: "experimental", source_refs: [], text: "" },
+        mechanisms: [],
+        alternative_explanations: [],
+        forbidden_inferences: [],
+        limitations: [],
+        counterevidence: [],
+        sources: [],
+        supported_uses: [],
+      },
+    ],
+  } as unknown as KnowledgeRegistry;
+
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+  let index: ReturnType<typeof buildPrescriptionIndex>;
+  try {
+    index = buildPrescriptionIndex(registry);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(index.entries.length, 1);
+  assert.equal(index.entries[0].entry_ref, "knowledge:prescription.p001@1");
+  assert.ok(
+    warnings.some((line) => line.includes("prescription.p999")),
+    `skipped entry should warn with its ref: ${JSON.stringify(warnings)}`,
+  );
 });
 
 test("materialization is idempotent — a current directory is not rewritten", () => {

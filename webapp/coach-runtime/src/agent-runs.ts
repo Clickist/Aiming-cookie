@@ -652,6 +652,9 @@ export function retryAgentRun(ownerId: string, runRef: string): AgentRunState | 
     ownerId,
     threadId: record.threadId,
     content: record.content,
+    // 结构化分析引用是 record 级字段：重试必须原样继承，否则重试回合
+    // context_refs=undefined，主题钉选丢失。
+    contextRefs: record.contextRefs,
     stopRequested: false,
     streamFn: record.streamFn,
     events: [],
