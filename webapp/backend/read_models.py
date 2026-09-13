@@ -1163,7 +1163,9 @@ def _coach_payload_items(plan_payload: Mapping[str, object] | None) -> list[dict
     plan_payload.items 里。这里把它们归一化成 build_current_training_v1 可
     渲染的条目，只在 items 注册表为空时使用；字段名映射：
     what/when → practice_condition、dose → dose_guardrail、
-    acceptance/forbidden → cue、negative_feedback → observation。
+    acceptance/forbidden → cue。
+    （negative_feedback → observation 的映射已删：训练卡 1.0.0 起不再展示
+    观察栏，投影层 observation 恒 None，翻译无人消费。）
     """
     if not isinstance(plan_payload, Mapping):
         return []
@@ -1193,7 +1195,6 @@ def _coach_payload_items(plan_payload: Mapping[str, object] | None) -> list[dict
             "practice_condition": _entry_text(raw_entry, "what", "when"),
             "cue": _entry_text(raw_entry, "cue", "acceptance", "forbidden"),
             "dose_guardrail": _entry_text(raw_entry, "dose"),
-            "observation": _entry_text(raw_entry, "negative_feedback"),
             # 投影层复测字段名是 review_date；Coach 契约里叫 retest。
             "review_date": _entry_text(raw_entry, "retest"),
         })
