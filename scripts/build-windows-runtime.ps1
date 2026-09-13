@@ -89,6 +89,10 @@ Copy-Item -LiteralPath (Join-Path $RepoRoot "webapp\coach-runtime\prompts\coach-
 Copy-Item -LiteralPath (Join-Path $RepoRoot "webapp\coach-runtime\prompts\skills") -Destination (Join-Path $runtimeRoot "skills") -Recurse
 New-Item -ItemType Directory -Path (Join-Path $runtimeRoot "pi\packages\agent") -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $RepoRoot "third_party\pi\packages\agent\package.json") -Destination (Join-Path $runtimeRoot "pi\packages\agent\package.json")
+# EloShapes 外设目录（eloshapes-native 只读这两个文件，打全量 artifacts 会拖包体）。
+New-Item -ItemType Directory -Path (Join-Path $runtimeRoot "artifacts\eloshapes\snapshots"), (Join-Path $runtimeRoot "artifacts\eloshapes\marketplace-mapping") -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $RepoRoot "artifacts\eloshapes\snapshots\eloshapes_mouse_catalog_2026-07-31T211736Z.json") -Destination (Join-Path $runtimeRoot "artifacts\eloshapes\snapshots\eloshapes_mouse_catalog_2026-07-31T211736Z.json")
+Copy-Item -LiteralPath (Join-Path $RepoRoot "artifacts\eloshapes\marketplace-mapping\marketplace-mapping.json") -Destination (Join-Path $runtimeRoot "artifacts\eloshapes\marketplace-mapping\marketplace-mapping.json")
 
 if (Test-Path -LiteralPath $buildRoot) { Remove-Item -LiteralPath $buildRoot -Recurse -Force }
 Write-Host "Packaged runtime ready: $runtimeRoot"

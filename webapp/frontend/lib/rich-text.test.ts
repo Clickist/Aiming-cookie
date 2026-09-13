@@ -79,6 +79,56 @@ test("non-whitelisted bare https URL stays literal text", () => {
   assert.ok(segments.every((s) => !s.link));
 });
 
+// ── steam:// 深链（社区基准训练单，2026-09-13 intro session）─────────────
+
+test("bare steam:// deep link links through with query separators intact", () => {
+  const url =
+    "steam://run/824270/?action=jump-to-playlist;sharecode=KovaaKsScreamingPulledEgg";
+  const segments = parseBoldSegments(`装这套训练单：${url} 完事。`);
+  const link = segments.find((s) => s.link);
+  assert.ok(link);
+  assert.equal(link.link, url);
+  assert.equal(link.text, url);
+});
+
+test("named steam:// link parses even without an https shape", () => {
+  const segments = parseBoldSegments(
+    "[一键装进 KovaaK](steam://run/824270/?action=jump-to-playlist;sharecode=KovaaKsScreamingPulledEgg)",
+  );
+  assert.equal(segments.length, 1);
+  assert.equal(segments[0].text, "一键装进 KovaaK");
+  assert.match(segments[0].link ?? "", /^steam:\/\/run\/824270\//);
+});
+
+test("other custom schemes and host-less steam links stay literal text", () => {
+  const text = "别点 steam: 与 file:///etc/passwd 和 ftp://example.com/x";
+  const segments = parseBoldSegments(text);
+  assert.equal(flat(segments), text);
+  assert.ok(segments.every((s) => !s.link));
+});
+
+// ── 引用块（结构化「下一步」降级形态）────────────────────────────────────
+
+test("consecutive blockquote lines fold into one blockquote node", () => {
+  const nodes = parseRichText("正文\n\n> 下一步\n> 主攻甩枪类\n\n尾段");
+  assert.deepEqual(nodes.map((n) => n.kind), ["paragraph", "blockquote", "paragraph"]);
+  const quote = nodes[1];
+  assert.ok(quote.kind === "blockquote");
+  assert.deepEqual(quote.children.map((c) => c.kind), ["paragraph"]);
+  const para = quote.children[0];
+  assert.ok(para.kind === "paragraph");
+  assert.equal(flat(para.segments), "下一步\n主攻甩枪类");
+});
+
+test("unclosed blockquote renders the partial inner content without swallowing", () => {
+  const nodes = parseRichText("> 半截引用还在");
+  assert.equal(nodes.length, 1);
+  assert.ok(nodes[0].kind === "blockquote");
+  const para = nodes[0].children[0];
+  assert.ok(para.kind === "paragraph");
+  assert.equal(flat(para.segments), "半截引用还在");
+});
+
 test("named link shape wins over bare URL detection (no double processing)", () => {
   const text = "链接：[B 站主页](https://space.bilibili.com/14425468) 收好";
   const segments = parseBoldSegments(text);
