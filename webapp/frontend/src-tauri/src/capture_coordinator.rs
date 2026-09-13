@@ -297,6 +297,18 @@ fn resized_video_degraded_status(
     })
 }
 
+/// 收尾局（游戏退出、phase/raw 进入 finalizing）仍允许取 snapshot 覆盖回执：
+/// raw 后端会保留到 release，回执的覆盖门与时间基校验不变，只放宽取回时机。
+fn raw_snapshot_flush_allowed(phase: CapturePhase, raw_state: CaptureSourceState) -> bool {
+    matches!(
+        phase,
+        CapturePhase::Capturing | CapturePhase::Degraded | CapturePhase::Finalizing
+    ) && matches!(
+        raw_state,
+        CaptureSourceState::Capturing | CaptureSourceState::Finalizing
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct CaptureControlConnection {
     pub address: SocketAddr,
@@ -857,7 +869,9 @@ impl CaptureCoordinatorState {
                 current.phase,
                 CapturePhase::Capturing | CapturePhase::Degraded
             ) {
-                let _ = self.raw_input.set_enabled(false);
+                // 收尾期间保留 raw 后端：Python finalizer 要在 finalizing 相位取回
+                // 覆盖回执才能立即附加 trace（否则收尾局要等满快照保留期）。
+                // raw 真正的终点是 release / stale / disable，见对应分支。
                 self.replace_status(current.after_process_exit());
             } else if current.phase != CapturePhase::Finalizing {
                 self.replace_status(current.after_enable(process_present, hwnd));
@@ -1084,11 +1098,7 @@ impl CaptureCoordinatorState {
         if status.capture_session_id.as_deref() != Some(capture_session_id) {
             return Err("capture_session_mismatch".to_string());
         }
-        if !matches!(
-            status.phase,
-            CapturePhase::Capturing | CapturePhase::Degraded
-        ) || status.raw.state != CaptureSourceState::Capturing
-        {
+        if !raw_snapshot_flush_allowed(status.phase, status.raw.state) {
             return Err("raw_snapshot_unavailable".to_string());
         }
         self.raw_input.flush_snapshot_barrier()
@@ -1178,6 +1188,8 @@ impl CaptureCoordinatorState {
             .lock()
             .map_err(|_| "window capture state is unavailable".to_string())?
             .stop();
+        // finalizing 期间 raw 后端为收尾局的 snapshot 回执而保留，release 才是它的终点。
+        let _ = self.raw_input.set_enabled(false);
         let (process_present, _hwnd) = find_kovaak_window().map_err(str::to_string)?;
         let waiting = CaptureCoordinatorStatus::after_release(process_present);
         self.replace_status(waiting.clone());
@@ -1811,9 +1823,10 @@ mod tests {
     use super::{
         bounded_diagnostic_text, capture_enabled_file_path, control_error_response,
         join_control_connections, load_capture_enabled_file, managed_export_paths,
-        monitor_start_failure_status, parse_control_request, read_control_line,
-        replay_failure_code, resized_video_degraded_status, response_type_for_request,
-        sha256_hex, track_control_connection_thread, write_capture_enabled_file,
+        monitor_start_failure_status, parse_control_request, raw_snapshot_flush_allowed,
+        read_control_line, replay_failure_code, resized_video_degraded_status,
+        response_type_for_request, sha256_hex, track_control_connection_thread,
+        write_capture_enabled_file,
         CaptureCoordinatorStatus, CapturePhase, CaptureSourceState, CaptureSourceStatus,
         ControlRequest, ExportReplayRequest, FileFingerprint, ReceiptRecord, StreamingSha256,
         CONTROL_MAX_MESSAGE_BYTES,
@@ -2275,6 +2288,40 @@ mod tests {
         let released = CaptureCoordinatorStatus::after_release(false);
         assert_eq!(released.phase, CapturePhase::WaitingForKovaak);
         assert!(released.capture_session_id.is_none());
+    }
+
+    #[test]
+    fn snapshot_flush_is_allowed_through_finalizing_but_not_after_release() {
+        // 收尾局：phase/raw 任一进入 finalizing 仍要能取回覆盖回执。
+        assert!(raw_snapshot_flush_allowed(
+            CapturePhase::Finalizing,
+            CaptureSourceState::Capturing,
+        ));
+        assert!(raw_snapshot_flush_allowed(
+            CapturePhase::Finalizing,
+            CaptureSourceState::Finalizing,
+        ));
+        assert!(raw_snapshot_flush_allowed(
+            CapturePhase::Capturing,
+            CaptureSourceState::Capturing,
+        ));
+        assert!(raw_snapshot_flush_allowed(
+            CapturePhase::Degraded,
+            CaptureSourceState::Capturing,
+        ));
+        // release 之后（waiting_for_kovaak / raw waiting）不再有可取的会话缓冲。
+        assert!(!raw_snapshot_flush_allowed(
+            CapturePhase::WaitingForKovaak,
+            CaptureSourceState::Waiting,
+        ));
+        assert!(!raw_snapshot_flush_allowed(
+            CapturePhase::Finalizing,
+            CaptureSourceState::Waiting,
+        ));
+        assert!(!raw_snapshot_flush_allowed(
+            CapturePhase::Disabled,
+            CaptureSourceState::Disabled,
+        ));
     }
 
     #[test]

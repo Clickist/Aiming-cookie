@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { getHistorySessions, getKovaaKLocalDirectories, listKovaakRuns } from "@/lib/api";
 import { isDesktopRuntime } from "@/lib/desktop";
+import { finalizationPendingText } from "@/lib/capture-events";
 import {
   buildCoachAnalysisDraft,
   buildHistorySections,
@@ -104,11 +105,15 @@ function limitationLabel(limitation: string): string {
 }
 
 /** 行内红色感叹号的悬停/读屏文案（0911 点点第三批 F）：替代 chips 墙与红底
-    badge；来源不可用终态统一说「训练来源已不可用」，其余按 limitation 人话。 */
+    badge；来源不可用终态统一说「训练来源已不可用」，其余按 limitation 人话。
+    收尾局仍在等输入/训练数据落盘时（finalization_error 进行中码）要说真实
+    中间态，否则按 limitations 只会误报「Raw 来源不可用」。 */
 function runIssueText(run: KovaaKRunListItem): string | null {
   if (run.finalization_state === "source_unavailable" || run.finalization_state === "unavailable") {
     return "训练来源已不可用";
   }
+  const pending = finalizationPendingText(run.finalization_error);
+  if (pending) return pending;
   if (run.limitations.length === 0) return null;
   return run.limitations.map(limitationLabel).join("；");
 }

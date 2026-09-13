@@ -1367,3 +1367,78 @@ async def test_flush_snapshot_failure_leaves_a_log_trail(
     ), "flush failure must leave a log trail instead of vanishing silently"
     assert run["trace_state"] in {"pending", "unavailable"}
     client.flush_raw_snapshot = original_flush  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_finalizing_session_flushes_snapshot_and_attaches_trace_without_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """收尾局：游戏退出、phase 进入 finalizing 时仍要取回覆盖回执并立即附加 trace。
+
+    修复前该路径不会请求 flush（只认 capturing/degraded），导致收尾局在 10 分钟
+    保留期内反复 trace_pending，直到保留期结束才判 stale。
+    """
+    _configure_parsers(monkeypatch, time_limit=1.0)
+    monkeypatch.setattr(kovaak_run_store, "_now_ms", lambda: 2_001)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": 1_500, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    client.phase = "finalizing"
+    client.kovaak_process_present = False
+    finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
+
+    run = await finalizer.finalize(KovaaKFileDiscovery(
+        stem="finalizing-flush",
+        stats_path=stats,
+        performance_path=performance,
+    ))
+
+    assert client.flush_calls == ["session-1"]
+    assert run["trace_state"] == "attached"
+    assert run["trace_error"] is None
+    assert run["video_state"] == "attached"
+    assert run["finalization_state"] == "finalized"
+
+
+@pytest.mark.asyncio
+async def test_finalizing_session_without_coverage_still_waits_for_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """收尾局 flush 也必须服从覆盖门：覆盖没到窗口末仍保持 trace_pending，不放弃。"""
+    _configure_parsers(monkeypatch, time_limit=1.0)
+    monkeypatch.setattr(kovaak_run_store, "_now_ms", lambda: 2_001)
+    stats = tmp_path / "Scenario Stats.csv"
+    performance = tmp_path / "Scenario Performance.perf"
+    stats.write_bytes(b"stats")
+    performance.write_bytes(b"performance")
+    raw = tmp_path / "raw.bin"
+    kovaak_run_store.write_mouse_snapshot(raw, [
+        {"timestamp_ms": 1_500, "dx": 2, "dy": 3, "buttons": 0},
+    ])
+    client = FakeNativeCaptureClient(tmp_path / "data")
+    client.phase = "finalizing"
+    client.kovaak_process_present = False
+    client.raw_snapshot_covered_through_epoch_ms = 1_999
+    finalizer = _finalizer(tmp_path, client, raw_snapshot=raw)
+    discovery = KovaaKFileDiscovery(
+        stem="finalizing-uncovered",
+        stats_path=stats,
+        performance_path=performance,
+    )
+
+    with pytest.raises(RetryableIngestionError, match="coverage"):
+        await finalizer.finalize(discovery)
+
+    assert client.flush_calls == ["session-1"]
+    pending = (await kovaak_run_store.list_kovaak_runs("u1"))[0]
+    assert pending["trace_state"] == "pending"
+    assert pending["finalization_state"] == "retryable"
+    assert pending["finalization_error"] == "trace_waiting_snapshot"
