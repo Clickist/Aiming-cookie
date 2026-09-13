@@ -20,6 +20,22 @@ export const CAPTURE_PENDING_TRACE_ERRORS = new Set([
   "trace_waiting_snapshot",
 ]);
 
+/**
+ * finalization_error 的「进行中」人话映射（非失败态）。
+ * 收尾局的 trace 附加要等 Raw Input 数据落盘，这段时间 run 是 retryable，
+ * 但历史行上按 limitations 派生只会得到「Raw 来源不可用」——事实相反。
+ * 未知码返回 null，由调用方回退到原有 limitations 派生，不编造解释。
+ */
+export const FINALIZATION_PENDING_LABELS: Record<string, string> = {
+  trace_waiting_snapshot: "正在等待输入数据落盘",
+  waiting_for_sources: "正在等待训练数据落盘",
+};
+
+export function finalizationPendingText(error: string | null | undefined): string | null {
+  if (!error) return null;
+  return FINALIZATION_PENDING_LABELS[error] ?? null;
+}
+
 export const VIDEO_ERROR_LABELS: Record<string, string> = {
   // 打这局时应用未在录制（无 capture 会话 / 采集服务不可用）。
   video_capture_unavailable: "打这局时应用未在录制",

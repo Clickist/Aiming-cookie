@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   describeCaptureRunEvent,
+  finalizationPendingText,
   traceErrorCodeLabel,
   TRACE_ERROR_LABELS,
   videoErrorCodeLabel,
@@ -133,4 +134,16 @@ test("waiting codes and in-flight finalization read as organizing, not failed", 
 test("blank scenario falls back to 未知场景", () => {
   const described = describeCaptureRunEvent({ video_attached: true, raw_attached: true });
   assert.equal(described.scenario, "未知场景");
+});
+
+test("in-flight finalization_error reads as a truthful waiting phrase, unknown codes fall through", () => {
+  // 收尾局等 Raw Input 落盘：必须是进行中的人话，而不是按 limitations 误报成
+  // 「Raw 来源不可用」。
+  assert.equal(finalizationPendingText("trace_waiting_snapshot"), "正在等待输入数据落盘");
+  assert.equal(finalizationPendingText("waiting_for_sources"), "正在等待训练数据落盘");
+  // 终态/未知码不编造：返回 null，让调用方走原有 limitations 派生。
+  assert.equal(finalizationPendingText("video_coverage_gap"), null);
+  assert.equal(finalizationPendingText("brand_new_code"), null);
+  assert.equal(finalizationPendingText(null), null);
+  assert.equal(finalizationPendingText(undefined), null);
 });

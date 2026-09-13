@@ -316,9 +316,13 @@ class KovaaKCaptureFinalizer:
 
         if trace_needs_snapshot:
             snapshot: dict[str, object] | None = None
+            # 收尾局也要取覆盖回执：游戏退出后 phase 进入 finalizing（raw 后端在
+            # release 前仍保留），若只认 capturing/degraded，收尾局的 trace 会一直
+            # 等到 10 分钟保留期结束才被判 stale。这里仅放宽「何时可取回执」，覆盖
+            # 门本身不变（receipt 仍由 attach_mouse_trace_snapshot_window 校验）。
             if (
-                status.get("phase") in {"capturing", "degraded"}
-                and status.get("raw", {}).get("state") == "capturing"
+                status.get("phase") in {"capturing", "degraded", "finalizing"}
+                and status.get("raw", {}).get("state") in {"capturing", "finalizing"}
                 and isinstance(capture_session_id, str)
             ):
                 try:

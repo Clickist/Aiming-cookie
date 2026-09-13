@@ -280,6 +280,8 @@ test("abnormal runs show a red exclamation mark with a human-readable hover titl
   assert.match(client, /run\.finalization_state === "source_unavailable" \|\| run\.finalization_state === "unavailable"/);
   assert.match(client, /训练来源已不可用/);
   assert.match(client, /run\.limitations\.map\(limitationLabel\)/);
+  // 收尾局等输入落盘时给真实中间态，不按 limitations 误报「Raw 来源不可用」。
+  assert.match(client, /finalizationPendingText\(run\.finalization_error\)/);
   assert.match(client, /title=\{issue\}/);
   assert.match(client, /aria-label=\{`训练异常：\$\{issue\}`\}/);
   // 证据 chips 墙与「证据不完整」「来源不可用」badge 同步退役；「已分析」保留。
