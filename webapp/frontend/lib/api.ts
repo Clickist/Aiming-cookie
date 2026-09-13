@@ -11,6 +11,7 @@ import {
   isDesktopRuntime,
   resetDesktopRuntimeConnection,
 } from "./desktop";
+import type { IntroSessionCreated, IntroSessionStatus } from "./intro-session";
 import type {
   AnalyzeResponse,
   BenchmarkRecord,
@@ -174,7 +175,8 @@ async function apiFetchSidecar(
 ): Promise<Response> {
   if (!isDesktopRuntime()) {
     // Browser/dev sessions have no sidecar — fall back to the Python backend.
-    return apiFetch(path.replace(/^\/v1\//, "/api/coach/"), init, opts);
+    // `/v1/*` 与 Coach 原生前缀 `/coach/*` 都映射到后端 `/api/coach/*`。
+    return apiFetch(path.replace(/^\/(?:v1|coach)\//, "/api/coach/"), init, opts);
   }
   const request = async (connection: Awaited<ReturnType<typeof getDesktopRuntimeConnection>>) => {
     const headers = new Headers(init.headers);
@@ -590,6 +592,13 @@ export async function getCurrentTraining(
   const res = await apiFetch("/api/current-training", { method: "GET" }, opts);
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CurrentTrainingV1;
+}
+
+export async function deleteCurrentTraining(
+  opts: { signal?: AbortSignal; userId?: string } = {},
+): Promise<void> {
+  const res = await apiFetch("/api/current-training", { method: "DELETE" }, opts);
+  if (!res.ok) throw await apiError(res);
 }
 
 export async function syncKovaaKScores(
@@ -1118,6 +1127,32 @@ export async function createCoachSession(
   );
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as CoachSessionOut;
+}
+
+// ── 开场分析（Intro Session，PRD §6.1.1）────────────────────────────────
+//
+// sidecar 契约（coach-runtime 并行实现中，尚未进入后端 OpenAPI，故此处手写
+// 局部类型）：GET /coach/intro-session → 首启创建状态；POST 幂等创建/取回会话，
+// 同时由 sidecar 发出首条开场消息（kickoff run）。前端只触发与呈现，标题与
+// 内容全部由 sidecar 决定。契约稳定后并入 types.ts。
+// 类型定义在 lib/intro-session.ts（触发逻辑与 api 客户端共用同一来源）。
+
+/** 查询首启「开场分析」是否已创建；只读，供挂载时的触发守卫判断。 */
+export async function getIntroSession(
+  opts: { signal?: AbortSignal } = {},
+): Promise<IntroSessionStatus> {
+  const res = await apiFetchSidecar("/coach/intro-session", { method: "GET" }, { signal: opts.signal });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as IntroSessionStatus;
+}
+
+/** 幂等创建（或取回既有）「开场分析」会话；标题由 sidecar 定，前端不传。 */
+export async function createIntroSession(
+  opts: { signal?: AbortSignal } = {},
+): Promise<IntroSessionCreated> {
+  const res = await apiFetchSidecar("/coach/intro-session", { method: "POST" }, { signal: opts.signal });
+  if (!res.ok) throw await apiError(res);
+  return (await res.json()) as IntroSessionCreated;
 }
 
 export async function updateCoachSession(

@@ -32,6 +32,7 @@ from . import (
     kovaak_run_store,
     queue,
     training_plan_store,
+    user_profile_store,
 )
 from .auth import get_request_user_id, require_desktop_token
 from .read_models import (
@@ -700,6 +701,25 @@ async def get_current_training(
     return CurrentTrainingResponse(**projection)
 
 
+@router.delete("/current-training")
+async def delete_current_training(
+    x_user_id: str = Depends(get_request_user_id),
+):
+    """Delete the owner's current Training Plan (active first, else paused).
+
+    Same pick rule as GET /current-training; plans are Coach-regenerable so
+    deletion is a plain hard remove with no confirmation round-trip.
+    """
+    plans = await training_plan_store.list_plans(x_user_id)
+    current = next((plan for plan in plans if plan["status"] == "active"), None)
+    if current is None:
+        current = next((plan for plan in plans if plan["status"] == "paused"), None)
+    if current is None:
+        raise HTTPException(status_code=404, detail="no_current_plan")
+    await training_plan_store.delete_plan(x_user_id, current["plan_id"])
+    return {"deleted_plan_id": current["plan_id"]}
+
+
 def _public_benchmark_record(record: dict) -> BenchmarkRecordOut:
     return BenchmarkRecordOut(**{
         field: record[field]
@@ -1130,6 +1150,83 @@ async def delete_calibration_profile(
     return CalibrationProfileOut(
         **await calibration_profile_store.delete_profile(x_user_id),
     )
+
+
+# Intro Session：首启开场分析的用户自述档案 + 本地数据摘要
+# ---------------------------------------------------------------------------
+
+
+@router.get("/user-profile")
+async def get_user_profile(x_user_id: str = Depends(get_request_user_id)):
+    """Intro Session 用户档案；无文件时返回全空默认值，不 404。"""
+    return await user_profile_store.get_profile(x_user_id)
+
+
+@router.put("/user-profile")
+async def update_user_profile(
+    body: dict = Body(...),
+    x_user_id: str = Depends(get_request_user_id),
+):
+    """partial 更新白名单字段，校验后原子写，返回完整档案。"""
+    try:
+        return await user_profile_store.update_profile(x_user_id, body)
+    except user_profile_store.InvalidUserProfile as error:
+        raise HTTPException(422, str(error)) from error
+
+
+@router.get("/coach/intro-context")
+async def get_coach_intro_context(x_user_id: str = Depends(get_request_user_id)):
+    """开场分析用的本地数据摘要：尽力而为，绝不因缺数据报错。
+
+    只读现有 store 的公开投影（kovaak_run_store.summaries）；任何读取/字段
+    异常都退化为缺省值，不做重计算、不引入新依赖。
+    """
+    empty = {
+        "has_local_data": False,
+        "total_runs": 0,
+        "total_playtime_minutes": 0,
+        "last_played_at": None,
+        "top_scenarios": [],
+    }
+    try:
+        runs = await kovaak_run_store.list_kovaak_run_summaries(x_user_id, limit=500)
+        total_playtime_ms = 0.0
+        last_played_at: Optional[str] = None
+        scored: list[dict] = []
+        for run in runs:
+            if not isinstance(run, dict):
+                continue
+            at = run.get("training_at") or run.get("created_at")
+            if isinstance(at, str) and at and (last_played_at is None or at > last_played_at):
+                last_played_at = at
+            alignment = run.get("alignment")
+            duration_ms = alignment.get("duration_ms") if isinstance(alignment, dict) else None
+            if (
+                isinstance(duration_ms, (int, float))
+                and not isinstance(duration_ms, bool)
+                and duration_ms > 0
+            ):
+                total_playtime_ms += float(duration_ms)
+            score = run.get("score")
+            scenario = run.get("scenario")
+            if (
+                isinstance(score, (int, float))
+                and not isinstance(score, bool)
+                and isinstance(scenario, str)
+                and scenario
+            ):
+                scored.append({"name": scenario, "score": score, "at": at})
+        scored.sort(key=lambda item: item["score"], reverse=True)
+        return {
+            "has_local_data": len(runs) > 0,
+            "total_runs": len(runs),
+            "total_playtime_minutes": int(round(total_playtime_ms / 60_000)),
+            "last_played_at": last_played_at,
+            "top_scenarios": scored[:10],
+        }
+    except Exception:
+        log.exception("intro context read failed user=%s", x_user_id)
+        return empty
 
 
 # Coach 页:视频流 + 时间轴 markers
