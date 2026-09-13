@@ -415,11 +415,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [reloadCoachSessions]);
 
   // 首启「开场分析」触发（PRD §6.1.1 / frontend-uiux-design §6.1.1）：
-  // onboarding 已完成且 sidecar flag 未置（created=false）时，幂等创建并
-  // 打开该会话；标题由 sidecar 定，前端只触发+呈现。in-flight promise 存 ref，
-  // 保证同一挂载只发一次（StrictMode 双跑复用同一 promise，不再补发），
-  // 失败静默降级只进前端错误通道。不设跳过键——用户开新对话/切走即视为跳过，
-  // 之后 sidecar flag 已置不再自动创建。
+  // onboarding 已完成时，flag 未置（created=false）走幂等创建；flag 已置但
+  // has_messages=false（当时 Provider 凭据不可用、kickoff 被闸门拦下）也补发
+  // 一次幂等 POST，让 Provider 恢复后开场分析自动补跑（自愈，见
+  // lib/intro-session.ts）。标题由 sidecar 定，前端只触发+呈现。in-flight
+  // promise 存 ref，保证同一挂载只发一次（StrictMode 双跑复用同一 promise，
+  // 不再补发），失败静默降级只进前端错误通道。不设跳过键——用户开新对话/
+  // 切走即视为跳过，之后 sidecar flag 已置不再自动创建。
   const introTriggerRef = useRef<ReturnType<typeof triggerIntroSession> | null>(null);
   useEffect(() => {
     if (!coachWorkspaceRoute || !onboardingResolved || !startupRouteResolved) return undefined;

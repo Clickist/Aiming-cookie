@@ -13,6 +13,7 @@ import { COACH_RUNTIME_TURN_SCHEMA_V1 } from "../src/contracts.ts";
 import { ensureIntroSession, readIntroSessionFlag } from "../src/intro-session.ts";
 import { INTRO_KICKOFF_SENTINEL, isIntroKickoffMessage } from "../src/intro-kickoff.ts";
 import { userProfileUpdateError } from "../src/intro-context-native.ts";
+import { saveProfile } from "../src/provider-store.ts";
 import { readSessionMessages } from "../src/session-repo.ts";
 import { createSidecarServer } from "../src/sidecar-server.ts";
 import { runCoachTurn } from "../src/turn.ts";
@@ -83,30 +84,54 @@ test("intro-session SKILL.md carries the hard constraints", () => {
 });
 
 test("intro-session endpoints create idempotently and persist the flag", async () => {
+  // Provider 可用（当前档凭据此刻解析得出）才允许发 kickoff：先落一份带 key 的
+  // 内置档，否则 provider 闸门会拦下首条消息（见 intro-kickoff-gate.test.ts）。
+  saveProfile({
+    kind: "builtin",
+    provider_id: "opencode-go",
+    model_id: "deepseek-v4-flash",
+    credential: { type: "api_key", key: "intro-test-key" },
+  });
   const server = createSidecarServer();
   await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", () => resolvePromise()));
   try {
     const before = await request(server, "GET", "/coach/intro-session");
     assert.equal(before.statusCode, 200);
-    assert.deepEqual(before.json, { created: false, session_id: null });
+    assert.deepEqual(before.json, { created: false, session_id: null, has_messages: false });
 
     const first = await request(server, "POST", "/coach/intro-session");
     assert.equal(first.statusCode, 200);
-    const firstBody = first.json as { session_id: number; created: boolean; run_ref: string | null };
+    const firstBody = first.json as {
+      session_id: number;
+      created: boolean;
+      run_ref: string | null;
+      provider_ready: boolean;
+    };
     assert.equal(firstBody.created, true);
     assert.ok(Number.isInteger(firstBody.session_id) && firstBody.session_id > 0);
     // First launch auto-sends the first Coach message via a kickoff agent run.
+    assert.equal(firstBody.provider_ready, true);
     assert.ok(typeof firstBody.run_ref === "string" && firstBody.run_ref.startsWith("agent_run:"));
 
     const second = await request(server, "POST", "/coach/intro-session");
     assert.equal(second.statusCode, 200);
-    const secondBody = second.json as { session_id: number; created: boolean };
+    const secondBody = second.json as {
+      session_id: number;
+      created: boolean;
+      run_ref: string | null;
+      provider_ready: boolean;
+    };
     assert.equal(secondBody.session_id, firstBody.session_id, "second POST must return the same session id");
     assert.equal(secondBody.created, false);
     assert.equal(secondBody.run_ref ?? null, null, "second POST must not start another kickoff run");
+    assert.equal(secondBody.provider_ready, true);
 
     const after = await request(server, "GET", "/coach/intro-session");
-    assert.deepEqual(after.json, { created: true, session_id: firstBody.session_id });
+    assert.deepEqual(after.json, {
+      created: true,
+      session_id: firstBody.session_id,
+      has_messages: false,
+    });
 
     // Flag is durable on disk in the sidecar config dir.
     const flagPath = join(dataRoot, "config", "intro-session.json");
