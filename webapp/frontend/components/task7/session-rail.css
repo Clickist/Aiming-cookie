@@ -304,6 +304,9 @@
   align-items: stretch;
   min-width: 0;
   border-radius: var(--radius-md);
+  /* 裁掉操作区 scrim 的矩形背景溢出——不裁，右侧圆角会被盖成直角
+     （1.0.0 内测点点实拍）。 */
+  overflow: hidden;
 }
 
 .task7-session-rail__item[data-current="true"] {
@@ -401,10 +404,6 @@
   }
 }
 
-.task7-session-rail__item:focus-within .task7-session-rail__item-actions {
-  opacity: 1;
-}
-
 .task7-session-rail__item-action {
   display: inline-flex;
   align-items: center;
@@ -448,7 +447,8 @@
 .task7-session-rail summary:focus-visible,
 .task7-session-rail input:focus-visible {
   outline: 2px solid var(--primary);
-  outline-offset: 2px;
+  /* 内缩贴圆角：列表是滚动容器，外扩 outline 会被裁掉半圈。 */
+  outline-offset: -2px;
 }
 .task7-session-rail__sr-only {
   position: absolute;
