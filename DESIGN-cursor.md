@@ -1,7 +1,7 @@
 # Aiming Cookie Desktop — Design Source
 
 **Status:** visual-direction authority for Aiming Cookie Desktop
-**Scope:** the desktop product surfaces defined by `docs/frontend-uiux-design.md`: import, analysis workspace, Coach sidebar, history, settings, and supporting states.
+**Scope:** the desktop product surfaces defined by `docs/frontend-uiux-design.md`: Coach main workspace (with video explanation area), history, settings, and supporting states.
 **Visual direction:** editorial precision tool — warm, measured, information-dense, and quietly technical. It is not a marketing site. Structural page/IA changes come from the UI/UX contract; this file governs how approved structures should feel, not whether they exist.
 
 ## Governance
@@ -41,8 +41,8 @@ The executable scales and usage rules live in `docs/design-system.md` and are en
 
 - Geometry: six-step type scale (`--text-micro..display`), four-step radius scale (`--radius-sm..xl`; xl=16 is the chat-bubble pill tier from frontend-parity digests §8), 4px spacing grid, two control heights (36/32). Components invent no one-off sizes.
 - Primary stays scarce: true CTAs and `:focus-visible` only. Identity, selection, hover, and badges ride the neutral surface ladder; informational/busy states use tertiary; success reads as event-kill text; `event-*` colors mark data only.
-- Motion: two transition durations (150ms state, 200ms open/close) plus the 120ms reduced-motion override, one easing family. Loops (loading pulses, caret blink) are exempt.
-- Depth: one overlay shadow token and one focus ring token; elevation otherwise comes from surface steps and hairlines.
+- Motion: three transition durations (150ms state, 200ms open/close, 300ms panel) plus the 120ms reduced-motion override, one easing family. Loops (loading pulses, caret blink) are exempt.
+- Depth: two shadow tokens (a general overlay shadow and a menu shadow) and one focus ring token; elevation otherwise comes from surface steps and hairlines.
 
 ### Theme behavior
 

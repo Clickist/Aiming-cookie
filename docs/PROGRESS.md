@@ -4,6 +4,8 @@
 
 ## 2026-09-13 — v1.0.1 发布：审计修复版（0913 全量审计的修复批）
 
+v1.0.1（tag `v1.0.1` 指向 `8c4a924`）发版物：NSIS 安装包 149,816,063 字节（Authenticode 未签名，内测预期），R2 三件套（exe + `.sig` + `latest.json`，`latest.json` version=1.0.1，`pub_date` 2026-09-13T06:17:38Z）已上传，落地页下载指向 1.0.1；线上 v1.0.0 老客户端自动收到更新提示。打包采用 bash 预导出签名环境变量的单次跑通法（见本地发版 runbook 记录）。
+
 v1.0.1 承接同日全量审计（`.zcode/audit-2026-09-13/REPORT.md`，主 agent 逐条复核 44 条零误报）后的五路修复 + 休眠代码删除：
 
 - **Python 后端+遥测**：worker.py 冻结源校验顺序回归（v1.0.0 带的 2 条红测试转绿，发版 Gate 恢复）；外遥测孤儿导入跨 key 身份核对（内容哈希+轮文件双匹配，重复导入不再产生）；`training_at` 统一为文件名词干对局时间；本机场景集统一合并口径；offset 探针负 take 防崩；reoffset 修裸栈并启用第 4 级自定位；采集子进程死亡落日志+诊断可见。
@@ -86,4 +88,4 @@ v0.1.14（tag 指向落地页 commit `3355b89`）是**首个内置自动更新�
 - **营销**：B站口播定稿待拍摄（录屏基准 v0.1.14）；HyperFrames hook 工作台推进中（工作台在 `Desktop\Aiming-cookie-video-fx`）。
 - **既有失败**：coach-runtime `skills-loading`（pi 库 Windows 路径 split），不挡发版，待 pi 上游或本地补丁。
 - **仓库卫生（09-06 清扫）**：`.zcode/` 已 gitignore；output/、.firecrawl/、macos-vibrancy-style-pack/、compendium HTML 出库留本地；`data/` 保留（csv=测试夹具，mp4=CV 回退回归锚）；x76-wiki 快照仅本地参考（原站 robots `ai-train=no`，勿入库勿进产品知识库）。
-- **1.0.0 审计遗留（2026-09-13）**：全量审计报告见本地 `.zcode/audit-2026-09-13/REPORT.md`（未入库，不随仓库分发）；另有 5 个活的 P1（回合终态收敛竞态可写错会话、训练卡 observation 映射未接入、外部遥测同一轮重复导入、重试失败回合丢 contextRefs、stopped 标记与 truncate 计数错位）修复进行中，尚未验收；pytest 的 2 个回归随 v1.0.0 tag 发布，待修。
+- **1.0.0 审计遗留（2026-09-13，已随 v1.0.1 清零）**：全量审计报告见本地 `.zcode/audit-2026-09-13/REPORT.md`（未入库，不随仓库分发）；审计的 5 个活 P1 中 4 个已随 v1.0.1 修复发版（回合终态收敛竞态、外部遥测重复导入、重试丢 contextRefs、stopped/truncate 错位），第 5 个（训练卡 observation 映射）经点点拍板删除死映射（UI 已不展示观察栏，翻译无人消费）；pytest 的 2 个回归已随 v1.0.1 修复。

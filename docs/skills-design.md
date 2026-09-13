@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-旧的硬编码状态机和 regex 规则已移除。新方向是把 coaching flow 封装为模块化 skills，由 Coach AI 根据自身理解激活。Skills 不是新的代码模块或注册表条目——它们是系统提示词中的软引导概念，帮助 Coach 在对话中判断"现在该做什么"。实际执行仍通过现有 product command bridge、TeachingSession 和 confirmation 流程。
+旧的硬编码状态机和 regex 规则已移除。新方向是把 coaching flow 封装为模块化 skills，由 Coach AI 根据自身理解激活。Skills 不是新的代码模块或注册表条目——它们是系统提示词中的软引导概念，帮助 Coach 在对话中判断"现在该做什么"。实际执行仍通过现有 product command bridge 与 TeachingSession；用户明确指令由 Coach 直接执行，无代码层 confirmation 门（2026-09-13 拍板），写入纪律由 teaching 阶段合同与提示词约束。
 
 ### 成功语义
 
@@ -117,8 +117,8 @@ TeachingSession 状态机保留为轻量记录，不做对话的硬性门控。
 |---|---|
 | **触发** | 用户明确要求删除某条 Analysis（"删除分析:3"） |
 | **Coach 做什么** | 调 `run_product_command` 的 `analysis.delete`，参数为 `{"analysis_ref":"analysis:N"}` |
-| **工具/状态** | `analysis.delete`（write command，走 confirmation 流程） |
-| **已有支持** | **完整支持。** 提示词有明确规则（第 24 行）；`turn.ts` 有 `DELETE_REFERENCE_PATTERN` 检测；command handler 已实现 confirmation + tombstone。 |
+| **工具/状态** | `analysis.delete`（write command，用户明确指令直接执行，无 confirmation 门） |
+| **已有支持** | **完整支持。** 提示词有明确删除规则；command handler 已实现 direct execute + tombstone（无 confirmation 门，2026-09-13 拍板）。 |
 | **缺失** | 无。 |
 
 ### 4.5 调整训练计划
@@ -127,7 +127,7 @@ TeachingSession 状态机保留为轻量记录，不做对话的硬性门控。
 |---|---|
 | **触发** | 用户明确接受调整，且有具体反馈/可比复测、证据引用和下一次验证目标 |
 | **Coach 做什么** | 调 `training_plan.adjust`（plan_ref + plan_payload + adjustment_reason + evidence_refs + verification_targets） |
-| **工具/状态** | `training_plan.adjust`（write command，走 confirmation 流程） |
+| **工具/状态** | `training_plan.adjust`（write command，用户明确指令直接执行，无 confirmation 门） |
 | **已有支持** | **完整支持。** 提示词第 47 行有规则；command handler 已实现。 |
 | **缺失** | 无。 |
 
@@ -201,7 +201,7 @@ TeachingSession 状态机保留为轻量记录，不做对话的硬性门控。
 
 - Skills 是提示词层的**软引导概念**，不是硬编码分支。提示词用自然语言描述"当你观察到 X 时，通常应做 Y"。
 - 不新增 skill 注册表、skill 参数或 skill schema。Skills 只存在于提示词文本。
-- 现有规则（measured facts、confirmation、teaching loop 等）保留不动。
+- 现有规则（measured facts、teaching loop 等）保留不动。
 - 提示词更新应增加一小段 skill 概述（不超过 15 行），告诉 Coach 三类 skill 的大致分工和触发直觉，然后用现有的逐条规则提供细节。
 
 ### 拟增内容（概念草稿，最终文本由 prompt 维护者定）
@@ -250,8 +250,8 @@ Skill 直觉（软引导，不是硬性分支）：
 | 方面 | 设计 |
 |---|---|
 | 分类 | Write command（需要 idempotency_key） |
-| 授权 | `coach_inferred`（Coach 主动推进），走 `needs_confirmation` 流程 |
-| 验证 | 复用 `validate_state`；参数只允许更新 state 子集，不允许设置 `schema_version` 或伪造 `pending_confirmation_ref` |
+| 授权 | `coach_inferred`（Coach 主动推进），用户明确指令直接执行，无 `needs_confirmation` 代码门（2026-09-13 拍板） |
+| 验证 | 复用 `validate_state`；参数只允许更新 state 子集，不允许设置 `schema_version` 等保留字段 |
 | 版本检查 | `expected_version` 乐观锁；不匹配时返回 conflict |
 | 副作用 | 更新 `teaching_sessions.state_json`，`version += 1`，清除 `active_run_ref`（如果无活跃 run） |
 | 原子性 | 在 `BEGIN IMMEDIATE` 事务中执行 |
@@ -259,7 +259,7 @@ Skill 直觉（软引导，不是硬性分支）：
 ### 安全边界
 
 - 不允许通过此命令设置 `active_run_ref`（仍由 `claim_active_run` 管理）。
-- 不允许设置 `pending_confirmation_ref`（仍由 write command confirmation 流程管理）。
+- 不允许设置 `schema_version` 等保留字段。
 - 不允许跳过 `validate_state` 的所有现有约束（phase 白名单、文本长度、forbidden text、source_refs 格式）。
 - 参数中的 `updates` 是对当前 state 的 partial merge；未提供的字段保留当前值。
 

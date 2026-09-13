@@ -51,8 +51,8 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 - **Geometry:** 柔和统一的圆角层级（0910 拍板由"机械感"整体变软：sm=6 / md=10 / lg=14 / xl=16；建议 chips（首页/对话内）用胶囊 999px、发送键正圆 50%，菜单项遵循嵌套公式 lg−space-1=md；讨论 chips 与建议 chips 均为胶囊 999px（0910 四轮拍板））。可执行圆角为 `--radius-sm` / `--radius-md` / `--radius-lg`；控件高度为 `--control-height`（36px）与 `--control-height-compact`（32px）。页面不得再发明 5px 圆角或 13.5px 字号；1-3px 微形状（圆点、进度条端头）不算违规。
 - **Primary scarcity:** `--primary` 只用于真正的 CTA（发送、新建、继续）和 `:focus-visible`。选中态、hover、badge、工具进行中不得用橙色填充或描边；数据可视化与表单 `accent-color` 不受此限。
 - **Enforcement:** 字号/圆角 token、旧 board 别名层（`--fg`、`--s-high` 等）的废除、transition 动效 token、四级字重与阴影 token 由 `webapp/frontend/tests/design-system-contract.test.ts` 扫描全部 CSS 强制执行。
-- **Depth:** 依赖 surface ladder 与 hairline，不使用装饰性重阴影。浮层（菜单/抽屉/对话框/弹层）唯一投影 `--shadow-overlay`；聚焦光环 `--ring`；1px hairline ring 只用于 focus-within 边框强调。
-- **Motion:** 克制、可中断、尊重 reduced motion。transition 时长只有 `--duration-fast`（150ms，状态/hover）、`--duration-surface`（200ms，开闭/进出）与 `--duration-reduced-motion`（120ms，reduced 覆盖），缓动一律 `--ease-out`（大位移抽屉可用 `--ease-drawer`）；裸写 ms/ease/cubic-bezier 禁止。`animation:` 循环（加载/呼吸/光标闪烁）与关键帧时长不受此约束。处理态动画不让动画成为状态的唯一表达。
+- **Depth:** 依赖 surface ladder 与 hairline，不使用装饰性重阴影。浮层（菜单/抽屉/对话框/弹层）使用投影 token：通用 `--shadow-overlay`，菜单专用 `--shadow-menu`；聚焦光环 `--ring`；1px hairline ring 只用于 focus-within 边框强调。
+- **Motion:** 克制、可中断、尊重 reduced motion。transition 时长使用 `--duration-fast`（150ms，状态/hover）、`--duration-surface`（200ms，开闭/进出）、`--duration-slow`（300ms，面板级开合）与 `--duration-reduced-motion`（120ms，reduced 覆盖），缓动一律 `--ease-out`（大位移抽屉可用 `--ease-drawer`）；裸写 ms/ease/cubic-bezier 禁止。`animation:` 循环（加载/呼吸/光标闪烁）与关键帧时长不受此约束。处理态动画不让动画成为状态的唯一表达。
 - **Status color semantics:** 信息/模式/进行中 = `tertiary-container` 系；预览/降级 = 中性 `surface-container` + `on-surface-variant`；成功 = `event-kill` 文字（透明底+hairline 边）；危险 = `error` 系；`event-*` 只用于数据可视化，不做 chrome 色；身份/选中/hover 一律 surface 阶梯。链接色为中性 `on-surface`。
 - **Button patterns:** 交互按钮统一走 ac-button 形态——高度/圆角/字重用 token；hover：填充变体（primary/danger）`color-mix 90% 暗化`，ghost/默认升一档 surface；active `translateY(1px)`；disabled `opacity: 0.55`；`:focus-visible` 2px primary outline（光环 `--ring`）。
 - **Border semantics:** 分界线与面板边 = 1px `outline-variant`；强调/选中边框 = `outline`；边框不承担 hover 强调（hover 走 surface 阶梯）。
@@ -62,7 +62,7 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 
 - 基础 primitives 先于页面视觉拼装建立；
 - 页面只能组合语义组件和 token，不复制私有按钮/卡片样式；
-- Coach 侧栏、主工作区和系统级导航共享同一视觉语言，但职责和层级由 UI/UX 文档决定；
+- Coach 主工作区和系统级导航共享同一视觉语言，但职责和层级由 UI/UX 文档决定；
 - 训练 Run、证据来源、Raw Input 授权/采集状态和 source unavailable 使用统一语义状态组件；状态必须同时有文字或图标，不得只依赖颜色；
 - input-native、multimodal、video-fallback 是 Coach 自动选择的能力/证据等级，不是用户可切换的模式或装饰性标签；组件应使用一致的 badge、notice、warning 和 disabled 语义；
 - 营销页面不自动继承 Desktop app 的信息密度和组件合同；
@@ -75,7 +75,7 @@ Mockup、Stitch、根目录 `DESIGN.md`、设计 HTML 和 style pack 都只是�
 
 1. token 集在 light/dark 完整且无 raw color 泄漏；
 2. System 首次启动、系统实时变化、显式 Light/Dark 固定三条路径；
-3. 训练来源选择、Run/分析 History、processing、分析工作区、Coach 侧栏、Raw Input 设置和主要错误/空状态；
+3. 训练来源选择、Run/分析 History、Coach 主工作区（含视频讲解区）、Settings、Raw Input 设置和主要错误/空状态；
 4. 文本、outline、事件色、primary action、focus/disabled 对比；
 5. 窄窗口 drawer、视频/图表和 reduced-motion；
 6. screenshot review 与相关 frontend tests/build。

@@ -332,7 +332,7 @@ Coach 是否可用取决于当前本地 profile 是否选择并连接了可工�
 - API key 可以作为 local-first 权衡明文持久化在 app-owned 本地 `config/provider.json`；OS secure store 可以作为后续增强，但不是实现或发布前置条件；
 - UI/API 允许 set/replace/delete/read credential；本地应用中 API key 可读回以便用户确认配置。仍返回 `configured`、`auth_mode`、`credential_source`、`needs_reauth`、`last_test` 等状态；
 - auth/refresh operation 对 credential 状态的完成写入必须绑定其启动时 revision；旧 operation 的成功 credential 或失败 `needs_reauth` 标记都不得覆盖、污染用户随后替换的新 credential；
-- `LLM_PROVIDER` 与 `kovaak_tracker/coach/providers.json` 只保留为旧环境/配置兼容入口，不得继续充当 provider/model 事实源；迁移必须保留显式选择，不能把 obsolete `deepseek-chat` 静默改写为其它 model；
+- `LLM_PROVIDER` 只保留为旧环境兼容入口，不得继续充当 provider/model 事实源；迁移必须保留显式选择，不能把 obsolete `deepseek-chat` 静默改写为其它 model；
 - active Coach turn 只能使用 owner 当前 selected local profile；Analysis worker 不得加载 Provider 或生成 narration，新 `analysis_result.v2` 只保留 `not_requested` / `null` 兼容 envelope，旧 v1/unversioned narration 继续可读；固定 DeepSeek 单价估算、`LLM_DAILY_BUDGET_CNY` 和 legacy `llm_cost_cny` 不得 gate 或记账 selected-provider 请求，除非未来先建立 provider-specific usage/currency contract；
 - provider/model 目录、API key/ambient auth、OAuth/device-code 以及 OpenAI-compatible / Anthropic-compatible 调用由 Pi 的 provider/model/auth 抽象承载；Aiming Cookie 负责本地 profile/credential persistence、owner/profile selection、turn/sidecar bridge、readiness、迁移、错误呈现和 redaction；
 - 首次 onboarding 和每次创建 Analysis 前都必须存在已测试的 selected Provider；Provider 后续请求失败时保留已保存记录，由 Coach 显示错误并引导 Settings 修复，不转为本地无 Provider 分析；Provider-to-Provider fallback 暂不启用；
