@@ -354,6 +354,10 @@ test("Coach training actions distinguish plan context from a reviewed KovaaK lau
   assert.match(coach, /当前训练项目/);
   assert.match(coach, /task6-training-item-actions/);
   assert.doesNotMatch(coach, /task6-training-actions/);
+  // 0913 拍板：展开时头部行泛称化去重名；按钮行右对齐；删除训练计划直删不弹窗。
+  assert.match(coach, /trainingHeaderLabel/);
+  assert.match(coach, /删除训练计划/);
+  assert.match(coach, /deleteCurrentTraining/);
   assert.match(coach, /在 KovaaK 中开始/);
   assert.match(coach, /display_name/);
   assert.match(coach, /kind === "scenario"/);
@@ -425,6 +429,12 @@ test("Coach training chip morphs as one container instead of growing a card unde
   // 折叠态自然宽写进 --pop-folded-w（max-content 不可插值，必须量出像素）。
   assert.match(coach, /setProperty\("--pop-folded-w"/);
   assert.match(styles, /\.task6-training-pop\s*\{[^}]*width:\s*var\(--pop-folded-w\)/);
+  // 0913 拍板：折叠宽上限降到 150px（胶囊悬在正文右上，宽了滚动盖行尾）；
+  // 超限渐隐截断（data-truncated + mask 尾端 14px 渐隐），不打省略号。
+  assert.match(coach, /maxLabel = Math\.max\(0, 150 - padding - suffix - popBorder\)/);
+  assert.match(coach, /pop\.dataset\.truncated/);
+  assert.match(styles, /\.task6-training-pop:not\(\[data-open\]\)\[data-truncated="true"\]\s+\.task6-training-chip-label\s*\{[^}]*text-overflow:\s*clip/);
+  assert.match(styles, /\.task6-training-pop:not\(\[data-open\]\)\[data-truncated="true"\]\s+\.task6-training-chip-label\s*\{[^}]*mask-image:\s*linear-gradient\(to right,\s*black calc\(100% - 14px\),\s*transparent 100%\)/);
   assert.match(styles, /\.task6-training-pop\s*\{[^}]*transition:[^}]*width var\(--duration-surface\)/);
   assert.match(styles, /\.task6-training-pop\[data-open\]\s*\{[^}]*width:\s*var\(--pop-open-w\)[^}]*border-radius:\s*var\(--radius-lg\)/);
   // 0912 返工：展开态收窄到 300px，且只有背景＋描边（无阴影、无橙色光）。

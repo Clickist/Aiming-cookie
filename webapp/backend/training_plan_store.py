@@ -508,6 +508,21 @@ async def list_plans(owner_id: str, *, status: str | None = None) -> list[dict[s
     return result
 
 
+async def delete_plan(owner_id: str, plan_id: str) -> None:
+    """Hard-remove one owner plan. Plans are Coach-regenerable, no tombstone."""
+    owner_id = _required_owner(owner_id)
+    plan_id = _required_plan_id(plan_id)
+    async with _WRITE_LOCK:
+        doc = _load_doc()
+        plan = doc["plans"].get(plan_id)
+        if plan is None:
+            raise PlanNotFound(plan_id)
+        if plan.get("owner_id") != owner_id:
+            raise PlanForbidden(plan_id)
+        del doc["plans"][plan_id]
+        _save_doc(doc)
+
+
 async def save_plan(owner_id: str, plan_id: str) -> dict[str, Any]:
     return await _transition(owner_id, plan_id, expected_status="draft", to_status="saved", event="saved")
 

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 
 import {
   createCoachAgentRun,
+  deleteCurrentTraining,
   getCoachAgentRun,
   getCoachAgentRunStreamUrl,
   getCoachSession,
@@ -1131,6 +1132,17 @@ export function CoachPanel({
     }
   }, []);
 
+  // 删除当前训练计划（0913 拍板）：计划由 Coach 生成可随时重排，直接删不弹
+  // 确认；无论成败都重拉一次——失败时面板原样保留，删除成功则落 no_current_plan
+  // 空态（「让 Coach 安排」接管）。
+  const handleDeleteTrainingPlan = useCallback(async () => {
+    try {
+      await deleteCurrentTraining();
+    } finally {
+      await refreshCurrentTraining();
+    }
+  }, [refreshCurrentTraining]);
+
   useEffect(() => {
     void refresh();
     return () => {
@@ -1744,10 +1756,16 @@ export function CoachPanel({
   // noCurrentPlan 也要可展开：点了只开空面板等于没有反馈（0911 审计 §四.6）。
   const trainingExpandable = Boolean(summaryItem) || (currentTrainingError && !currentTraining) || trainingUnavailable || noCurrentPlan;
 
+  // 0913 拍板：展开时头部行改泛称「当前训练」，面板里的粗体名是唯一标题，
+  // 名字不再出现两次；折叠态 chip 照旧显示条目名（一眼可见当前训练）。
+  const trainingHeaderLabel = trainingExpanded && summaryItem ? "当前训练" : trainingChipLabel;
+
   // 折叠态头部天然宽写进容器 CSS 变量：max-content 不可过渡，量出标签宽 +
   // chip 水平 padding + gap + caret 后按像素插值。文字变化（换场景/空态）重测；
   // chip 会随 homeShell/能力分支整体挂载卸载，deps 不变时 layout effect 不会
   // 重跑——所以量测同时挂在 pop 的 callback ref 上，节点一挂载就量。
+  // 上限 150px（0913 拍板）：胶囊悬在正文右上，宽了滚动时行尾会从它底下
+  // 穿过被盖住；超限就地渐隐截断（data-truncated 驱动 CSS mask），不打底省略号。
   const measureTrainingPopWidth = useCallback(() => {
     const pop = trainingPopRef.current;
     const chip = trainingChipRef.current;
@@ -1759,8 +1777,10 @@ export function CoachPanel({
     const popBorder = parseFloat(window.getComputedStyle(pop).borderLeftWidth) * 2;
     const caret = trainingExpandable ? 16 : 0;
     const suffix = trainingExpandable ? gap + caret : 0;
-    const maxLabel = Math.max(0, 280 - padding - suffix - popBorder);
+    const maxLabel = Math.max(0, 150 - padding - suffix - popBorder);
+    const truncated = label.scrollWidth > maxLabel;
     const labelWidth = Math.min(label.scrollWidth, maxLabel);
+    pop.dataset.truncated = truncated ? "true" : "false";
     pop.style.setProperty("--pop-folded-w", `${Math.ceil(labelWidth + padding + suffix + popBorder)}px`);
   }, [trainingExpandable]);
 
@@ -1771,7 +1791,7 @@ export function CoachPanel({
 
   useLayoutEffect(() => {
     measureTrainingPopWidth();
-  }, [measureTrainingPopWidth, trainingChipLabel]);
+  }, [measureTrainingPopWidth, trainingHeaderLabel]);
 
   const trainingReveal = (
     <div
@@ -1825,6 +1845,7 @@ export function CoachPanel({
             <div className="task6-training-item-actions">
               {renderTrainingLaunch(summaryItem)}
               <Button disabled={capability !== "ready" || !summaryItem.display_name} onClick={() => writeTrainingQuestion(summaryItem)} size="compact" variant="secondary">问 Coach</Button>
+              <Button disabled={capability !== "ready"} onClick={handleDeleteTrainingPlan} size="compact" variant="ghost">删除训练计划</Button>
             </div>
           </section>
         ) : null}
@@ -1849,7 +1870,7 @@ export function CoachPanel({
         title={trainingChipLabel}
         type="button"
       >
-        <span className="task6-training-chip-label" ref={trainingChipLabelRef}>{trainingChipLabel}</span>
+        <span className="task6-training-chip-label" ref={trainingChipLabelRef}>{trainingHeaderLabel}</span>
         {trainingExpandable ? <IconChevronDown className="task6-training-chip-caret" /> : null}
       </button>
       {trainingReveal}
