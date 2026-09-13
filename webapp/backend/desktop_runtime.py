@@ -32,6 +32,8 @@ SERVER_START_POLL_SECONDS = 0.01
 CAPTURE_EXIT_STATUS_POLL_SECONDS = 0.5
 CAPTURE_EXIT_HARD_GRACE_SECONDS = 30
 PARENT_STDIN_WATCH_ENV = "AIMING_COOKIE_WATCH_PARENT_STDIN"
+# 运行期复查 KovaaK 统计导出设置的节流间隔（游戏可能在 AC 启动后才被打开）。
+KOVAAK_EXPORT_RECHECK_SECONDS = 45.0
 log = logging.getLogger(__name__)
 
 
@@ -405,11 +407,35 @@ async def monitor_kovaak_ingestion_diagnostics(
     ingestion_service: kovaak_ingest.KovaaKIngestionService,
     stop_event: asyncio.Event,
 ) -> None:
+    # 僵尸兜底清扫按小时节流即可；启动时的一次性清扫在桌面启动序列里做。
+    next_expire_monotonic = 0.0
+    # 运行期复查统计导出设置按 KOVAAK_EXPORT_RECHECK_SECONDS 节流（启动时已查过，
+    # 这里首次顺延一个周期，避免和启动检查重复）。确保函数自带硬重启 + 退避，
+    # 且整体 fail-soft：任何异常只进日志，不影响诊断监控循环。
+    next_export_recheck_monotonic = time.monotonic() + KOVAAK_EXPORT_RECHECK_SECONDS
     while not stop_event.is_set():
         try:
             persist_kovaak_ingestion_diagnostics(ingestion_service)
         except Exception:
             log.exception("KovaaK ingestion diagnostics snapshot write failed")
+        if time.monotonic() >= next_expire_monotonic:
+            next_expire_monotonic = time.monotonic() + 3600.0
+            try:
+                await kovaak_run_store.expire_stale_pending_runs(config.DESKTOP_LOCAL_PROFILE)
+            except Exception:
+                log.exception("Stale pending run expiry sweep failed")
+        if time.monotonic() >= next_export_recheck_monotonic:
+            next_export_recheck_monotonic = (
+                time.monotonic() + KOVAAK_EXPORT_RECHECK_SECONDS
+            )
+            try:
+                # 进程检测/写盘/拉起都是阻塞调用，放线程避免卡住事件循环。
+                await asyncio.to_thread(
+                    kovaak_stats_export_setup.ensure_kovaak_stats_export,
+                    config.resolve_kovaak_install_dir(),
+                )
+            except Exception:
+                log.exception("Periodic KovaaK stats export recheck failed")
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=5.0)
         except asyncio.TimeoutError:
@@ -494,6 +520,12 @@ async def run_runtime(*, stop_event: asyncio.Event | None = None) -> None:
             kovaak_stats_export_setup.ensure_kovaak_stats_export,
             config.resolve_kovaak_install_dir(),
         )
+        # 启动清扫一次超龄僵尸条目（升级自愈：老版本留下的 pending 永久等待
+        # 在这里就地终态）；此后由诊断监控循环按小时节流补扫。fail-soft。
+        try:
+            await kovaak_run_store.expire_stale_pending_runs(config.DESKTOP_LOCAL_PROFILE)
+        except Exception:
+            log.exception("Startup stale pending run expiry sweep failed")
         ingestion_service.start()
         persist_kovaak_ingestion_diagnostics(ingestion_service)
         ingestion_diagnostics_task = asyncio.create_task(

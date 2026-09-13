@@ -781,6 +781,58 @@ class _FakeServerShell:
         self.servers = [_FakeBoundServer(port)]
 
 
+@pytest.mark.asyncio
+async def test_diagnostics_monitor_rechecks_kovaak_export_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """诊断监控循环按节流间隔复查统计导出设置（游戏可能在 AC 启动后才打开）。"""
+    stop = asyncio.Event()
+    calls: list[str] = []
+
+    class FakeIngestionService:
+        pass
+
+    async def fake_expire(_user_id: str) -> list[int]:
+        return []
+
+    def fake_ensure(install_root) -> str:
+        calls.append(str(install_root))
+        return "already_ok"
+
+    # 节流间隔设为 0：首次迭代即触发复查，测试无需等待真实 45s。
+    monkeypatch.setattr(desktop_runtime, "KOVAAK_EXPORT_RECHECK_SECONDS", 0.0)
+    monkeypatch.setattr(
+        desktop_runtime.kovaak_run_store,
+        "expire_stale_pending_runs",
+        fake_expire,
+    )
+    monkeypatch.setattr(
+        desktop_runtime.kovaak_stats_export_setup,
+        "ensure_kovaak_stats_export",
+        fake_ensure,
+    )
+    monkeypatch.setattr(
+        desktop_runtime.config,
+        "resolve_kovaak_install_dir",
+        lambda: None,
+    )
+
+    task = asyncio.create_task(
+        desktop_runtime.monitor_kovaak_ingestion_diagnostics(
+            FakeIngestionService(), stop,
+        )
+    )
+    try:
+        for _ in range(200):
+            if calls:
+                break
+            await asyncio.sleep(0.01)
+        assert calls == ["None"]
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=2)
+
+
 class _FakeBoundServer:
     def __init__(self, port: int) -> None:
         self.sockets = [_FakeSocket(port)]

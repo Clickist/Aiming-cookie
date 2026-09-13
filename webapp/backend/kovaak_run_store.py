@@ -16,7 +16,7 @@ import re
 import stat
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
@@ -1358,6 +1358,59 @@ async def set_run_finalization_state(
     run["updated_at"] = _utc_now()
     _save_run(run)
     return run
+
+
+# 僵尸条目兜底（20260914 远程诊断包实证）：pending + waiting_for_sources 的 run
+# 等的 KovaaK 侧文件（stats/perf）在采集会话结束时已不可能再出现，却会永远挂着
+# 让历史页转圈。24h（正常场次间隔为分钟级）无进展即终态 source_unavailable；
+# 该终态的历史页文案「训练来源已不可用」前端已内建（HistoryClient runIssueText）。
+PENDING_SOURCES_MAX_AGE = timedelta(hours=24)
+
+
+def _parse_storage_utc(value: object) -> Optional[datetime]:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+async def expire_stale_pending_runs(
+    user_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> list[int]:
+    """把超龄的 pending「waiting_for_sources」run 终态标记为 source_unavailable。
+
+    返回本次标记的 run id 列表（空列表 = 无变化）。只碰这一种组合，其余状态
+    一律不动；就地为终态，finalization_error 原样保留供排查。
+    """
+    current = now or datetime.now(timezone.utc)
+    expired: list[int] = []
+    for run in _all_runs(user_id):
+        if run.get("finalization_state") != "pending":
+            continue
+        if run.get("finalization_error") != "waiting_for_sources":
+            continue
+        created = _parse_storage_utc(run.get("created_at"))
+        if created is None or current - created < PENDING_SOURCES_MAX_AGE:
+            continue
+        run_id = run.get("id")
+        stored = _load_run(run_id) if isinstance(run_id, int) else None
+        if stored is None or stored.get("user_id") != user_id:
+            continue
+        stored["finalization_state"] = "source_unavailable"
+        stored["updated_at"] = _utc_now()
+        _save_run(stored)
+        expired.append(run_id)
+    if expired:
+        log.warning(
+            "expired %s stale waiting_for_sources runs as source_unavailable: %s",
+            len(expired),
+            expired,
+        )
+    return expired
 
 
 async def get_kovaak_run_by_source_key(
