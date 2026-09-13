@@ -6,8 +6,10 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Poin
 import {
   createCoachAgentRun,
   createCoachSession,
+  createIntroSession,
   deleteCoachSession,
   getDefaultProviderStatus,
+  getIntroSession,
   getProductState,
   listCoachSessions,
   updateCoachSession,
@@ -22,6 +24,8 @@ import {
   writeLastCoachSessionId,
 } from "@/lib/contracts";
 import { isDesktopRuntime, setDesktopCaptureEnabled } from "@/lib/desktop";
+import { logFrontendError } from "@/lib/frontend-log";
+import { triggerIntroSession } from "@/lib/intro-session";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { CoachAgentRunV1, CoachSessionOut, ProviderProfileState } from "@/lib/types";
 import { checkForDesktopUpdate, type DesktopUpdate } from "@/lib/updater";
@@ -57,6 +61,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const historyRoute = pathname.startsWith("/history");
   const [capability, setCapability] = useState<CoachCapability>("loading");
   const [startupRouteResolved, setStartupRouteResolved] = useState(false);
+  // onboarding 完成度由启动路由的 getProductState 解析；未完成/未知一律 false，
+  // 首启「开场分析」触发据此门控（未走完 onboarding 不触发）。
+  const [onboardingResolved, setOnboardingResolved] = useState(false);
   const [coachSessions, setCoachSessions] = useState<SessionRailSession[]>([]);
   const [selectedCoachSessionId, setSelectedCoachSessionId] = useState<number | null>(null);
   // 冷启动只尝试恢复一次「上次最后在看的会话」；会话列表未加载前不消耗这次机会。
@@ -180,6 +187,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           router.replace("/onboarding");
           return;
         }
+        // onboarding 明确完成才放行首启「开场分析」触发；null/unknown 一律不触发。
+        setOnboardingResolved(state.onboarding_completed === true);
         setStartupRouteResolved(true);
       })
       .catch(() => {
@@ -258,7 +267,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         .then((update) => {
           if (!cancelled && update) setDesktopUpdate(update);
         })
-        .catch(() => undefined);
+        .catch((error) => {
+          // 启动静默检查失败仍不打扰用户，只留前端错误通道痕迹。
+          logFrontendError("update-check", error instanceof Error ? error.message : String(error));
+        });
     }, 4_000);
     return () => {
       cancelled = true;
@@ -401,6 +413,41 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.addEventListener(COACH_SESSION_UPDATED_EVENT, handleSessionUpdated);
     return () => window.removeEventListener(COACH_SESSION_UPDATED_EVENT, handleSessionUpdated);
   }, [reloadCoachSessions]);
+
+  // 首启「开场分析」触发（PRD §6.1.1 / frontend-uiux-design §6.1.1）：
+  // onboarding 已完成且 sidecar flag 未置（created=false）时，幂等创建并
+  // 打开该会话；标题由 sidecar 定，前端只触发+呈现。in-flight promise 存 ref，
+  // 保证同一挂载只发一次（StrictMode 双跑复用同一 promise，不再补发），
+  // 失败静默降级只进前端错误通道。不设跳过键——用户开新对话/切走即视为跳过，
+  // 之后 sidecar flag 已置不再自动创建。
+  const introTriggerRef = useRef<ReturnType<typeof triggerIntroSession> | null>(null);
+  useEffect(() => {
+    if (!coachWorkspaceRoute || !onboardingResolved || !startupRouteResolved) return undefined;
+    if (introTriggerRef.current === null) {
+      introTriggerRef.current = triggerIntroSession({
+        getStatus: (signal) => getIntroSession({ signal }),
+        create: (signal) => createIntroSession({ signal }),
+        onError: (error) =>
+          logFrontendError("intro-session", error instanceof Error ? error.message : String(error)),
+      });
+    }
+    let cancelled = false;
+    void introTriggerRef.current.then((result) => {
+      if (cancelled || !result?.created || result.sessionId === null) return;
+      const sessionId = result.sessionId;
+      if (!Number.isSafeInteger(sessionId) || sessionId <= 0) return;
+      // 复用既有打开会话路径（与 ensureCoachSession 同一条链）：交接窗钉扎
+      // 防列表追平前选择回落闪旧会话，整表刷新 + 路由切换，标题由 sidecar 定。
+      pendingBindSessionIdRef.current = sessionId;
+      setHandoverSessionId(sessionId);
+      void reloadCoachSessions(sessionId).catch(() => {});
+      setDraftSession(false);
+      router.push(`/s?sessionId=${sessionId}`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [coachWorkspaceRoute, onboardingResolved, reloadCoachSessions, router, startupRouteResolved]);
 
   // Coach 回合活跃上报的落点：自动开讲据此让路（见下方 handleAutoTeach）。
   const activeCoachRunRef = useRef(false);
